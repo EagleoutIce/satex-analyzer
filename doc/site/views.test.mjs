@@ -600,11 +600,11 @@ console.log('table model: ok');
   assert.deepEqual(marks, ['Before', 'begin quote', 'Outer', 'begin center', 'Inner', 'end center', 'end quote', 'After']);
   // a paragraph that may be set carries a switch per conditional
   const may = typesetView([{ kind: 'paragraph', line: 3, detail: 'x', marked: 'x', causes: [{ on: '7', test: '\\ifdraft', line: 3, mark: '{x|}' }] }]);
-  assert.match(may, /<span class="ts-switch" data-on="7" title="may be typeset: depends on \\ifdraft \(line 3\)[^"]*"><span class="ts-switch-q">maybe<\/span><code>\\ifdraft<\/code><select class="ts-pick"[^>]*><option value="both" selected/);
+  assert.match(may, /<span class="ts-switch" data-on="7" title="may be typeset: depends on \\ifdraft \(line 3\)[^"]*"><span class="ts-switch-q">maybe<\/span><code>\\ifdraft<\/code><span class="ts-pick" role="group"[^>]*><button type="button" data-arm="both" aria-pressed="true"/);
   // a macro of several meanings is no test: its options are the texts its paths set
   const meant = typesetView([{ kind: 'paragraph', line: 3, detail: 'x', marked: 'x', causes: [{ on: '8', test: '', parted: '`\\tleapy`', line: 3, mark: '{|not }', arms: ['', 'not '] }] }]);
-  assert.deepEqual([...meant.matchAll(/<option value="(\w+)"[^>]*>(.*?)<\/option>/g)].map((m) => [m[1], m[2]]), [['both', 'every path'], ['true', 'nothing'], ['false', '“not ”']]);
-  assert.match(may, /<option value="true"[^>]*>true<\/option>/);
+  assert.deepEqual([...meant.matchAll(/<button type="button" data-arm="(\w+)"[^>]*>(.*?)<\/button>/g)].map((m) => [m[1], m[2]]), [['both', 'all'], ['true', 'nothing'], ['false', '“not ”']]);
+  assert.match(may, /<button type="button" data-arm="true"[^>]*>true<\/button>/);
   // the document's marks from the open file's lines; a block's header joins its begin mark
   const doc = ['\\documentclass{article}', '\\begin{document}', 'x', '\\begin{figure}[ht]', 'y\\label{f}', '\\end{figure}', '\\end{document}'];
   const fig = { env: 'figure', line: 4, end: 6 };
@@ -977,3 +977,16 @@ assert.deepEqual(layers.groups(['grid', 'glue', 'geometry']), [['layout', 'Layou
   assert.deepEqual(shown('nothing', []), []);
   assert.equal(hue('Article'), hue('article'), 'a kind keeps its colour in every manager, whatever its case');
 }
+
+// Bug pinned: a later edit dropped the history renderer, so the definition history dialog came up empty.
+
+// a definition history's event as text: the augment's added text, the copy, the call holding an older text
+{
+  const { historyEvent } = self.satexViews.history;
+  const e = historyEvent({ by: '\\appto', file: 'main.tex', path: 'main.tex', line: 4, state: 'replaced', owner: 'document', change: { kind: 'appends', added: ' world', removed: '' } });
+  assert.deepEqual([e.by, e.at, e.change, e.when], ['\\appto', 'main.tex:4', 'appends ` world`', '']);
+  assert.equal(historyEvent({ change: { kind: 'replaces', added: '\\oldgreet !', removed: 'Hello world' } }).change, 'replaces `Hello world` by `\\oldgreet !`');
+  const copy = historyEvent({ by: '\\let', copies: { name: '\\greet', file: 'main.tex', line: 4, by: '\\appto' }, calls: [{ name: '\\oldgreet', holds: '\\greet', at: 'main.tex:4' }], when: ['\\ifnum true at main.tex:10'] });
+  assert.deepEqual([copy.copies, copy.calls, copy.when], [{ name: '\\greet', at: 'main.tex:4', by: '\\appto' }, [{ name: '\\oldgreet', note: 'holds \\greet of main.tex:4' }], '\\ifnum true at main.tex:10']);
+}
+assert.equal(typeof self.satexViews.RENDER.history, 'function', 'a history section has a renderer');
