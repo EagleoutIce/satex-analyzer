@@ -153,6 +153,12 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: gh workflow run bench.yml --repo "$GITHUB_REPOSITORY" --ref main -f ref="$GITHUB_REF_NAME" -f version="$GITHUB_REF_NAME"
 
+      # The site names the released version; github-pages deploys from main only.
+      - name: Refresh the site
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run pages.yml --repo "$GITHUB_REPOSITORY" --ref main
+
   crate:
     name: Publish to crates.io
     needs: release

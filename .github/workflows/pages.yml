@@ -2,10 +2,10 @@ name: Pages
 
 # The site (documentation and playground) follows `main`, like the wiki;
 # a change that touches neither satex nor the site leaves it as it is.
+# A release starts it on main (release.yml): github-pages deploys from main only.
 on:
   push:
     branches: [main]
-    tags: ['v*']
     paths-ignore:
       - 'editors/**'
       - 'tests/**'
