@@ -15,6 +15,10 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 
 - `fix` **Windows packages of the extension again.** Packaging on Windows stopped at the webview scripts (it ran `esbuild` as a program, a `.cmd` there), so neither 0.2.1 nor 0.2.2 published the extension. [`802cbdf`](https://github.com/EagleoutIce/satex-analyzer/commit/802cbdf)
 
+### Site and docs
+
+- `docs` **Fair benchmark comparisons.** The charts and deltas count only documents every compared release read to the end, so reading further never counts against a release, and a new table sums each engine against the release before. [`899a58b`](https://github.com/EagleoutIce/satex-analyzer/commit/899a58b)
+
 ## v0.2.2 (2026-11-12)
 
 ### VS Code
