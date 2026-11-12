@@ -1970,7 +1970,8 @@ interface Stream {
     if (n < 3) return false;
     const wrap = row.parentElement!, [prev, next] = wrap.querySelectorAll<HTMLElement>('.cards-nav') as unknown as [HTMLElement, HTMLElement];
     wrap.classList.add('ring');
-    const step = 360 / n;
+    // the front card's scale; it grows from its top edge (style.css), so the ring is that much taller
+    const step = 360 / n, FRONT = 1.16;
     let at = 0, goal = 0, spin = 0, raf = 0, front = -1;
     const norm = (d: number) => ((d % 360) + 540) % 360 - 180;
     const draw = () => {
@@ -1978,13 +1979,13 @@ interface Stream {
       at += (goal - at) * .14;
       if (Math.abs(goal - at) < .05) at = goal;
       const cw = cards[0].offsetWidth, radius = Math.min(cw * .82 / Math.sin(step * Math.PI / 180), cw * 2.6);
-      row.style.height = `${Math.ceil(Math.max(...cards.map((c) => c.offsetHeight)) * 1.07)}px`;
+      row.style.height = `${Math.ceil(Math.max(...cards.map((c) => c.offsetHeight)) * (FRONT + .02))}px`;
       let best = 0, bestCos = -2;
       cards.forEach((c, i) => {
         // each card a step out is a fifth smaller: the front one stands out
         const a = norm(i * step - at - spin), r = a * Math.PI / 180, cos = Math.cos(r);
         const x = Math.sin(r) * radius, z = (cos - 1) * radius * .55;
-        c.style.transform = `translate3d(calc(-50% + ${x.toFixed(1)}px), 0, ${z.toFixed(1)}px) rotateY(${(-a * .22).toFixed(2)}deg) scale(${(1.06 * .8 ** Math.min(3, Math.abs(a) / step)).toFixed(3)})`;
+        c.style.transform = `translate3d(calc(-50% + ${x.toFixed(1)}px), 0, ${z.toFixed(1)}px) rotateY(${(-a * .22).toFixed(2)}deg) scale(${(FRONT * .8 ** Math.min(3, Math.abs(a) / step)).toFixed(3)})`;
         c.style.opacity = Math.max(0, Math.min(1, (cos + .1) / .8)).toFixed(3);
         // a title rides with its card while the card faces the page
         c.style.setProperty('--title', Math.max(0, (cos - .55) / .45).toFixed(3));

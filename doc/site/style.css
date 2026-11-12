@@ -2239,7 +2239,7 @@ main li:has(> .badge) a[href*="/commit/"] code, main li:has(> .badge) a[href*="/
 .cards-wrap.ring { width: 100vw; margin-inline: calc(50% - 50vw); padding-block: var(--s48) var(--s24); overflow-x: clip; }
 .ring .cards { display: block; position: relative; overflow: visible; perspective: 1700px; transform-style: preserve-3d; -webkit-mask-image: none; mask-image: none; cursor: grab; touch-action: pan-y; user-select: none; }
 .ring .cards:active { cursor: grabbing; }
-.ring .cards > .shot { position: absolute; top: 0; left: 50%; width: min(32rem, 34vw); transform-origin: 50% 50%; will-change: transform, opacity; backface-visibility: hidden; }
+.ring .cards > .shot { position: absolute; top: 0; left: 50%; width: min(32rem, 34vw); transform-origin: 50% 0; will-change: transform, opacity; backface-visibility: hidden; }
 .ring .cards > .shot:not(.ring-front) { cursor: pointer; }
 .ring .cards > .shot figcaption > * { transition: opacity .3s var(--ease); }
 .ring .cards > .shot figcaption > h3 { opacity: var(--title, 1); }
@@ -2249,7 +2249,6 @@ main li:has(> .badge) a[href*="/commit/"] code, main li:has(> .badge) a[href*="/
 .shot-live .shot-stage, .shots > .shot-live .shot-win { width: 100%; }
 .ring .cards > .shot:not(.ring-front) figcaption { text-align: center; }
 /* the page settles on the ring when a scroll ends near it: a slight hold, never a lock */
-@media (prefers-reduced-motion: no-preference) and (min-width: 48rem) { html:has(.cards-wrap.ring) { scroll-snap-type: y proximity; } .cards-wrap.ring { scroll-snap-align: center; } }
 @media (max-width: 64rem) { .shot-big .shot-stage, .shot-big:nth-child(even of .shot-big) .shot-stage { justify-self: center; } }
 /* the title: the logo a little larger, the claim and buttons under it with room to breathe */
 .logo-anim { width: min(44rem, 100%); }
