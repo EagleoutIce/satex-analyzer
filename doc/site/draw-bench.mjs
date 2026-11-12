@@ -363,6 +363,8 @@ const shapes = [
   O('pm', 'pm', [line([-.8, -.1], [.8, -.1]), line([0, -.8], [0, .6]), line([-.8, .9], [.8, .9])]),
   O('mp', 'mp', [line([-.8, .1], [.8, .1]), line([0, -.6], [0, .8]), line([-.8, -.9], [.8, -.9])]),
   O('times', 'times', [line([-1, -1], [1, 1]), line([1, -1], [-1, 1])]),
+  // as drawn by hand: one long stroke, a shorter one crossing it off centre (a user's ✗ that found only slashes)
+  O('times-drawn', 'times', [line([-.82, -.7], [.45, .2]), line([.36, -.46], [-.5, .39])]),
   O('div', 'div', [line([-.9, 0], [.9, 0]), ...dot(0, -.65), ...dot(0, .65)]),
   O('oplus', 'oplus|bigoplus', [ell(0, 0, 1, 1), line([-1, 0], [1, 0]), line([0, -1], [0, 1])]),
   O('otimes', 'otimes|bigotimes', [ell(0, 0, 1, 1), line([-.7, -.7], [.7, .7]), line([.7, -.7], [-.7, .7])]),
