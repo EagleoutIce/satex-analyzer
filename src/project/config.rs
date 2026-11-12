@@ -2375,7 +2375,36 @@ impl Default for PackageSuccessor {
             successor: "wrapfig2".into(),
             changes: "`wrapfigure` and `wraptable` keep their arguments. A final `*` makes the line count a correction, and `wraptext` wraps framed text. wrapfig2 needs a LaTeX kernel from 2019 on, loads xparse, xfp, etoolbox, float, xcolor, pict2e and xkeyval, and redefines `\\setfontsize`".into(),
         };
-        PackageSuccessor { successors: vec![wrapfig] }
+        let pair = |package: &str, successor: &str, changes: &str| Successor {
+            package: package.into(),
+            successor: successor.into(),
+            changes: changes.into(),
+        };
+        // here.sty (Karl Berry, 2009): `[H]` lives in float.sty, which here.sty only reads.
+        let here = pair(
+            "here",
+            "float",
+            "`[H]` keeps its meaning, as here.sty only loads float. float also adds `\\newfloat` and the `plain`, `plaintop` and `boxed` styles",
+        );
+        // fancyheadings.sty v4.1 (2022-11-09) and the fancyhdr manual, note 3.
+        let fancyheadings = pair(
+            "fancyheadings",
+            "fancyhdr",
+            "fancyheadings only calls fancyhdr with the same options, so the document runs on it already. The one difference: `\\headrulewidth`, `\\footrulewidth` and their `\\plain...` versions are macros, not lengths, so `\\setlength` on them has to become `\\renewcommand`",
+        );
+        // caption manual, § C.2 (v3.6o, 2023-08-05), and the caption2 manual (v2.2, 2023-07-10).
+        let caption2 = pair(
+            "caption2",
+            "caption",
+            "replacing the name is usually enough, as caption emulates most options and commands of caption2. The option `ignoreLTcapwidth` is not emulated, and caption warns about the other obsolete ones. See § C.2 of the caption manual",
+        );
+        // KOMA-Script guide, ch. 17 intro and § 17.5 (v3.49, 2025-12-01).
+        let scrpage2 = pair(
+            "scrpage2",
+            "scrlayer-scrpage",
+            "a drop-in replacement as long as no internal command of scrpage2 is called. scrlayer-scrpage enters horizontal mode only when it outputs horizontal material, unless the option `hmode` is set, which can change the white space and vertical alignment of headers and footers. See § 17.5 of the KOMA-Script guide",
+        );
+        PackageSuccessor { successors: vec![wrapfig, here, fancyheadings, caption2, scrpage2] }
     }
 }
 

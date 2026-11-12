@@ -56,3 +56,22 @@ fn no_successor_where_the_move_breaks() {
     assert!(found.is_empty(), "{found:?}");
     assert!(self::found("none", "\\usepackage{graphicx}\n", &[]).is_empty());
 }
+
+/// Each pair beyond wrapfig: named, and only its name is replaced. The old
+/// packages that TeX Live no longer ships are stubbed beside the document.
+#[test]
+fn old_packages_are_continued_by_their_successors() {
+    if !installed() {
+        return;
+    }
+    let stub = |name: &str| (format!("{name}.sty"), format!("\\ProvidesPackage{{{name}}}\n"));
+    for (old, new) in
+        [("here", "float"), ("fancyheadings", "fancyhdr"), ("caption2", "caption"), ("scrpage2", "scrlayer-scrpage")]
+    {
+        let (file, body) = stub(old);
+        let found = found(&format!("pair-{old}"), &format!("\\usepackage{{{old}}}\n"), &[(&file, &body)]);
+        assert_eq!(found.len(), 1, "{old}: {found:?}");
+        assert!(found[0].0.starts_with(&format!("`{old}` is continued by `{new}`: ")), "{found:?}");
+        assert_eq!(found[0].1, [new], "{old}");
+    }
+}

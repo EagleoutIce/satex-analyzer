@@ -3264,6 +3264,26 @@
                   "changes": "`wrapfigure` and `wraptable` keep their arguments. A final `*` makes the line count a correction, and `wraptext` wraps framed text. wrapfig2 needs a LaTeX kernel from 2019 on, loads xparse, xfp, etoolbox, float, xcolor, pict2e and xkeyval, and redefines `\\setfontsize`",
                   "package": "wrapfig",
                   "successor": "wrapfig2"
+                },
+                {
+                  "changes": "`[H]` keeps its meaning, as here.sty only loads float. float also adds `\\newfloat` and the `plain`, `plaintop` and `boxed` styles",
+                  "package": "here",
+                  "successor": "float"
+                },
+                {
+                  "changes": "fancyheadings only calls fancyhdr with the same options, so the document runs on it already. The one difference: `\\headrulewidth`, `\\footrulewidth` and their `\\plain...` versions are macros, not lengths, so `\\setlength` on them has to become `\\renewcommand`",
+                  "package": "fancyheadings",
+                  "successor": "fancyhdr"
+                },
+                {
+                  "changes": "replacing the name is usually enough, as caption emulates most options and commands of caption2. The option `ignoreLTcapwidth` is not emulated, and caption warns about the other obsolete ones. See § C.2 of the caption manual",
+                  "package": "caption2",
+                  "successor": "caption"
+                },
+                {
+                  "changes": "a drop-in replacement as long as no internal command of scrpage2 is called. scrlayer-scrpage enters horizontal mode only when it outputs horizontal material, unless the option `hmode` is set, which can change the white space and vertical alignment of headers and footers. See § 17.5 of the KOMA-Script guide",
+                  "package": "scrpage2",
+                  "successor": "scrlayer-scrpage"
                 }
               ],
               "items": {
