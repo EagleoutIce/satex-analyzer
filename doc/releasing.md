@@ -12,7 +12,7 @@ To cut a new release, use the `scripts/release.sh` script:
 scripts/release.sh <patch|minor|major> "<release-title>"
 ```
 
-Before it, curate the changelog. `scripts/changelog.py draft` lists the commits `CHANGELOG.md` does not cover yet, grouped by area. Write them as one-liners under "Unreleased", run `scripts/changelog.py links` to turn `@sha` and `#N` into links, then `scripts/changelog.py mark` to record how far you reviewed. CI runs `scripts/changelog.py check` and warns about user-visible commits still missing.
+Before it, curate the changelog. `scripts/changelog.py draft` lists the commits `CHANGELOG.md` does not cover yet, grouped by area. Write them as one-liners under "Unreleased", run `scripts/changelog.py links` to turn `@sha` and `#N` into links. CI runs `scripts/changelog.py check` and warns about user-visible commits still missing.
 
 The script will:
 1. Verify the working tree is clean

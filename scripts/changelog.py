@@ -3,19 +3,17 @@
 
   changelog.py draft            commits not yet in Unreleased, by area, to curate into one-liners
   changelog.py check            exit 1 when user-visible commits are missing from Unreleased
-  changelog.py mark             record HEAD as reviewed (after curating)
   changelog.py release vX.Y.Z   Unreleased becomes "vX.Y.Z (date)", a fresh Unreleased on top
   changelog.py notes vX.Y.Z     print the section of a release
   changelog.py links            write bare `@abc1234` and `#12` in the file as links
 
-Unreleased starts with `<!-- reviewed: <sha> -->`. Commits up to it count as curated.
+Commits after the one that cut the last release section count as not yet curated.
 """
 import datetime, os, re, subprocess, sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 FILE = ROOT / "CHANGELOG.md"
-MARK = re.compile(r"<!-- reviewed: ([0-9a-f]+) -->")
 VISIBLE = {"feat", "feat-fix", "lint-fix", "perf", "perf-fix", "fix"}
 # commit scope -> area heading; anything else is Analysis (docs types go to the site)
 AREAS = {
@@ -58,17 +56,21 @@ def unreleased():
     return text, m
 
 
-def last_tag():
-    return git("describe", "--tags", "--abbrev=0", "--match", "v*")
+def last_release():
+    """The commit that last added a release heading to the changelog."""
+    return git("log", "-1", "--format=%H", "-G", r"^## v[0-9]", "--", str(FILE))
 
 
 def pending():
-    """(sha, kind, scope, subject) of commits after the reviewed mark that no entry links."""
+    """(sha, kind, scope, subject) of commits after the last release that no entry links."""
     _, m = unreleased()
     body = m.group(1) if m else ""
-    mark = MARK.search(body)
-    base = mark.group(1) if mark else last_tag()
-    refs = set(re.findall(r"\b[0-9a-f]{7,40}\b", MARK.sub("", body)))
+    base = last_release()
+    # A tag cut after that commit (fixes before the tag) moves the base on.
+    tag = subprocess.run(["git", "describe", "--tags", "--abbrev=0", "--match", "v*"], cwd=ROOT, capture_output=True, text=True).stdout.strip()
+    if tag and subprocess.run(["git", "merge-base", "--is-ancestor", base, tag], cwd=ROOT).returncode == 0:
+        base = tag
+    refs = set(re.findall(r"\b[0-9a-f]{7,40}\b", body))
     out = []
     for line in git("log", "--no-merges", "--format=%H %s", f"{base}..HEAD").splitlines():
         sha, subject = line.split(" ", 1)
@@ -95,13 +97,6 @@ def check():
         sys.exit(1)
 
 
-def mark():
-    text, m = unreleased()
-    head = git("rev-parse", "--short", "HEAD")
-    body = MARK.sub("", m.group(1)).lstrip("\n")
-    FILE.write_text(text[:m.start(1)] + f"\n<!-- reviewed: {head} -->\n\n" + body + text[m.end(1):])
-
-
 def release(tag):
     if not re.fullmatch(r"v\d+\.\d+\.\d+(-[\w.]+)?", tag):
         sys.exit(f"not a version tag: {tag}")
@@ -110,12 +105,12 @@ def release(tag):
         sys.exit("no Unreleased section")
     if f"## {tag} " in text:
         sys.exit(f"{tag} is already released")
-    body = MARK.sub("", m.group(1)).strip("\n")
+    body = m.group(1).strip("\n")
     if not body:
         sys.exit("Unreleased is empty")
     day = os.environ.get("SOURCE_DATE_EPOCH")
     day = (datetime.datetime.fromtimestamp(int(day), datetime.UTC) if day else datetime.datetime.now(datetime.UTC)).date()
-    FILE.write_text(text[:m.start()] + f"## Unreleased\n\n<!-- reviewed: {git('rev-parse', '--short', 'HEAD')} -->\n\n## {tag} ({day})\n\n{body}\n\n" + text[m.end():])
+    FILE.write_text(text[:m.start()] + f"## Unreleased\n\n## {tag} ({day})\n\n{body}\n\n" + text[m.end():])
 
 
 REPO = "https://github.com/EagleoutIce/satex-analyzer"
@@ -138,4 +133,4 @@ def notes(tag):
 
 if __name__ == "__main__":
     cmd, *rest = sys.argv[1:] or ["draft"]
-    {"draft": draft, "check": check, "mark": mark, "release": release, "notes": notes, "links": links}[cmd](*rest)
+    {"draft": draft, "check": check, "release": release, "notes": notes, "links": links}[cmd](*rest)
