@@ -2229,6 +2229,16 @@ fn trace(analysis: &Analysis) -> Vec<Record> {
     }
     let calls: HashMap<_, _> = analysis.facts.expansions.iter().map(|e| ((e.span, e.name), e)).collect();
     let defs: HashMap<_, _> = analysis.facts.defs.iter().map(|d| (d.node, d)).collect();
+    // The paragraph so far at a step: its characters from the paragraph's start, the last 200.
+    let chars: Vec<char> = analysis.facts.text.chars.chars().collect();
+    let text = &analysis.facts.text;
+    let so_far = |n: u32| -> String {
+        let n = (n as usize).min(chars.len());
+        let start = text.par_starts.iter().map(|(at, _)| *at as usize).take_while(|at| *at <= n).last().unwrap_or(0);
+        let from =
+            text.pars.iter().map(|at| *at as usize).filter(|at| *at <= n).max().map_or(start, |end| start.max(end));
+        chars[from.max(n.saturating_sub(200))..n].iter().collect()
+    };
     analysis
         .trace
         .iter()
@@ -2271,6 +2281,10 @@ fn trace(analysis: &Analysis) -> Vec<Record> {
             }
             if let Some(text) = set.get(&event.span) {
                 record.insert("sets".into(), json!(text));
+            }
+            let paragraph = so_far(event.set);
+            if !paragraph.is_empty() {
+                record.insert("set_so_far".into(), json!(paragraph));
             }
             record.insert("ahead".into(), json!(event.ahead.as_deref()));
             if !event.queued.is_empty() {

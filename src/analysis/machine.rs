@@ -149,6 +149,9 @@ pub struct Event {
     pub meanings: Box<[(Sym, Box<str>)]>,
     /// Dev mode (`trace_state`): the abstract state at this step ([`Machine::snapshot`]).
     pub state: Option<Box<serde_json::Value>>,
+    /// The characters set before this step ([`crate::analysis::facts::Text::at`]).
+    #[serde(default)]
+    pub set: u32,
 }
 
 /// A loaded file: its path and its [`LoadKind`] (input, package, class).
@@ -5847,6 +5850,7 @@ will look undefined",
             queued,
             meanings,
             state,
+            set: self.out.facts.text.at.len() as u32,
         });
         if self.cfg.trace_stop == Some(index) {
             self.halted = true;

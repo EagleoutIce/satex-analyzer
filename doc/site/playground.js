@@ -3391,6 +3391,7 @@
   function traceStream(i) {
     const box = $('trace-stream');
     if (!box) return;
+    traceSetSoFar(i);
     const r = trace.steps[i];
     // the queued tokens carry their catcodes; the first of them are the ones this step put back
     const putBack = r.step === 'expand' && r.inserts != null ? insTokens(r.inserts).length : 0, queued = r.tokens ?? [];
@@ -3640,7 +3641,14 @@
       if (String(r.path ?? "").endsWith(at.file) && (r.line > at.line || (r.line === at.line && (r.col ?? 1) >= at.col))) break;
       before.push((r.marked ?? r.detail ?? '').replace(/\uE000[^\uE001]*\uE001/g, ''));
     }
-    box.innerHTML = before.length ? `<b>set before</b> <span>${escape(before.slice(-3).join(' ¶ ').slice(-400))}</span>` : '<b>set before</b> <span>nothing yet</span>';
+    traceBefore = before.length ? `<b>set before</b> <span>${escape(before.slice(-3).join(' ¶ ').slice(-400))}</span>` : '<b>set before</b> <span>nothing yet</span>';
+    traceSetSoFar(trace?.cur);
+  }
+  /** Under the input: the paragraph as set up to the shown step (`set_so_far`, src/queries/query.rs), else what was set before the call. */
+  let traceBefore = '';
+  function traceSetSoFar(i) {
+    const box = $('trace-before'), now = i == null ? null : trace?.steps?.[i]?.set_so_far;
+    if (box) box.innerHTML = now ? `<b>set so far</b> <span>${escape(now)}</span>` : traceBefore;
   }
   traceBody.addEventListener('change', (e) => { if (e.target.id === 'trace-fork') { traceFor.fork = e.target.value; traceShow(traceFor.site, traceFor.name, ++traceRun); } });
   traceInternal.onchange = () => { if (traceFor?.records) traceShow(traceFor.site, traceFor.name, ++traceRun); };
