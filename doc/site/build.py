@@ -1970,6 +1970,8 @@ def showcase(out, live):
 
     # TikZ is written with its italic k, as its manual does
     tikz = lambda text: text.replace("TikZ", "Ti<i class=\"tk\">k</i>Z")
+    # each entry's title links to it (`#shot-table`): site.js scrolls there and turns the card row to it
+    title = lambda s: f'<h3><a class="shot-anchor" href="#shot-{s["name"]}">{tikz(html.escape(s["title"]))}</a></h3>'
     figures, cards = [], []
     for s in spec["shots"]:
         name, alt = s["name"], html.escape(f'{s["title"]}: {s["caption"]}')
@@ -1981,7 +1983,7 @@ def showcase(out, live):
                            f'<div class="live-grid"><pre class="src live-src live-poster"><code>{lines}</code></pre><div class="ex-side typeset live-ts" aria-label="what SaTeX computes it typesets"></div></div>'
                            f'<p class="muted live-status" aria-live="polite">{html.escape(s["status"])}</p></div></div>'
                            f'<script type="application/json" class="ex-data">{data}</script>'
-                           f'<figcaption><h3>{tikz(html.escape(s["title"]))}</h3><p>{tikz(html.escape(s["caption"]))}</p>'
+                           f'<figcaption>{title(s)}<p>{tikz(html.escape(s["caption"]))}</p>'
                            f'<a class="shot-try" href="play/index.html">The full playground →</a></figcaption></figure>')
             continue
         if not all((src / f"{name}-{scheme}.png").exists() for scheme in ("light", "dark")):
@@ -1999,8 +2001,8 @@ def showcase(out, live):
                      f'<div><span class="shot-tag">{tags[1]}</span>{window(name, alt)}</div></div>'
                      if (src / f"{name}-before-light.png").exists() else window(name, alt))
         (figures if s.get("big") or s.get("wide") else cards).append(
-            f'<figure class="shot{" shot-big" if s.get("big") or s.get("wide") else ""}{" shot-wide" if s.get("wide") else ""}"><a class="shot-stage" href="{html.escape(try_it)}" tabindex="-1">{stage}</a>'
-            f'<figcaption><h3>{html.escape(s["title"])}</h3><p>{html.escape(s["caption"])}</p>'
+            f'<figure class="shot{" shot-big" if s.get("big") or s.get("wide") else ""}{" shot-wide" if s.get("wide") else ""}" id="shot-{name}"><a class="shot-stage" href="{html.escape(try_it)}" tabindex="-1">{stage}</a>'
+            f'<figcaption>{title(s)}<p>{html.escape(s["caption"])}</p>'
             f'<a class="shot-try" href="{html.escape(try_it)}">Try it in {html.escape(s["file"])} →</a></figcaption></figure>')
     # the small entries: one row that scrolls sideways, a card at a time (site.js steps it)
     nav = lambda d, label, arrow: f'<button type="button" class="cards-nav cards-{d}" aria-label="{label}" disabled>{arrow}</button>'

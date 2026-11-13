@@ -223,6 +223,12 @@ for (const src of shotVideos.flatMap((s) => [`${s}.webm`, `${s}.mp4`])) if (!(ba
 check('landing showcase videos are sized, lazy and served', shotVideos.length >= 2 && !videoMissing.length, videoMissing.join(' '));
 check('landing try-it links open their widget', [...landing.matchAll(/class="shot-try" href="play\/index\.html#([^"]+)"/g)].filter((m) => /&amp;widget=/.test(m[1])).length >= 6);
 // every command of every example comes with what satex explain says of it
+// every showcase entry has an anchor (`#shot-table`), and its title links there
+const shotIds = [...landing.matchAll(/<figure class="shot[^"]*" id="(shot-[a-z]+)"/g)].map((m) => m[1]);
+const shotLinks = new Set([...landing.matchAll(/<a class="shot-anchor" href="#(shot-[a-z]+)">/g)].map((m) => m[1]));
+check('landing showcase entries have linked anchors', shotIds.length >= 8 && new Set(shotIds).size === shotIds.length && shotIds.every((i) => shotLinks.has(i)),
+  shotIds.filter((i) => !shotLinks.has(i)).join(' '));
+
 const exData = [...landing.matchAll(/<script type="application\/json" class="ex-data">(.*?)<\/script>/gs)].map((m) => JSON.parse(m[1]));
 const exCommands = [...landing.matchAll(/data-cs="([^"]*)"/g)].map((m) => m[1].replace(/&amp;/g, '&').replace(/&quot;/g, '"'));
 const unexplained = [...new Set(exCommands)].filter((c) => !exData.some((d) => d.cs[c]?.length));

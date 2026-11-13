@@ -1757,7 +1757,8 @@ interface Stream {
     const t = location.hash ? document.getElementById(decodeURIComponent(location.hash.slice(1))) : null;
     t?.closest('details')?.setAttribute('open', '');
     folds.find((g) => g.f.contains(t) && g.f !== t)?.set(true);
-    t?.scrollIntoView();
+    // a card on the ring sits in a turned row: the ring comes into view, it turns the card to the front
+    (t?.closest('.ring') ?? t)?.scrollIntoView();
   };
   addEventListener('hashchange', unfold);
   unfold();
@@ -2005,12 +2006,17 @@ interface Stream {
     prev.onclick = () => turn(-1);
     next.onclick = () => turn(1);
     row.addEventListener('keydown', (e) => { if ((e.key === 'ArrowLeft' || e.key === 'ArrowRight') && e.target === row) { e.preventDefault(); turn(e.key === 'ArrowLeft' ? -1 : 1); } });
+    const face = (i: number) => { goal += norm(i * step - goal); kick(); };
     // a side card turns to the front first; the front card's links work as usual
     cards.forEach((c, i) => c.addEventListener('click', (e) => {
       if (i === front) return;
       e.preventDefault();
-      goal += norm(i * step - goal); kick();
+      face(i);
     }, true));
+    // a link to a card (`#shot-table`) turns it to the front
+    const linked = () => { const i = cards.findIndex((c) => `#${c.id}` === location.hash); if (i >= 0) face(i); };
+    addEventListener('hashchange', linked);
+    linked();
     // a drag turns the ring with the pointer, then settles on the nearest card
     let drag: { x: number; from: number; moved: boolean } | null = null;
     row.addEventListener('pointerdown', (e: PointerEvent) => { if (e.button === 0) drag = { x: e.clientX, from: goal, moved: false }; });
