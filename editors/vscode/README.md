@@ -31,10 +31,19 @@ The platform-specific packages bundle the matching `satex` binary. The universal
 | `satex.server.maxMemory` | Most memory one analysis may hold (`2GiB`). |
 | `satex.server.maxCores` | CPU cores the server may use on Linux, through its cgroup (`2`, 0 for no cap). |
 | `satex.server.niceness` | Scheduling priority of the server (`10`). Higher yields more to the editor. |
-| `satex.server.cgroup` | On Linux, enforce the memory and core limits in a systemd user scope (`true`). |
+| `satex.server.cgroup` | On Linux, enforce the memory and core limits in a systemd user scope (`true`). Without a user bus (containers, WSL) `ulimit -d` caps the memory instead. |
 | `satex.findings.whileAnalyzing` | What the Problems view shows while an analysis runs. `hide` (default): only findings no pass can change, the rest once the run ends, and the status bar says it runs. `keep`: the last complete findings. `mark`: those, saying they may change. |
 | `satex.rootFile` | Root document, relative to the workspace folder. Empty: the active file. Used by the trace and compile commands. |
 | `satex.trace.server` | `off`, `messages` or `verbose`: trace the language server communication. |
+
+## When the server does not start
+
+Every start problem shows a message with buttons that fix it; the output "satex" logs each step and what the server says.
+
+- **No satex binary runs here.** The extension tries `satex.path`, the bundled binary, then `satex` on the PATH, and skips one that does not run. On a musl system (Alpine) or with an older C library than the release needs, build it there with `cargo install satex-analyzer` and set `satex.path`.
+- **No hard memory cap.** In a container or WSL without a systemd user bus the server is capped with `ulimit -d` instead of a scope. Where neither works, its own budget `satex.server.maxMemory` still ends an analysis that grows past it.
+- **The server keeps stopping.** It is started again three times with growing pauses, then stays off with a message; `satex: Restart Server` starts it again.
+- **No TeX distribution.** satex reads the packages of TeX Live, MiKTeX or MacTeX; install one on the machine (or container) the extension runs on.
 
 ## Try it locally
 

@@ -95,7 +95,7 @@
         "satex.server.cgroup": {
           "type": "boolean",
           "default": true,
-          "description": "On Linux, run the server in a systemd user scope that enforces the memory and core limits (needs systemd-run)."
+          "description": "On Linux, run the server in a systemd user scope that enforces the memory and core limits. Where no user bus runs (containers, WSL) or this is off, `ulimit -d` caps its memory instead."
         },
         "satex.server.maxMemory": {
           "type": "string",
@@ -250,7 +250,7 @@
     "package": "vsce package --no-dependencies",
     "package:local": "node scripts/try.mjs",
     "try": "node scripts/try.mjs --install",
-    "test": "esbuild src/test/*.test.ts --bundle --platform=node --format=cjs --alias:vscode=./src/test/vscode-stub.ts --external:vscode-languageclient --outdir=out/test --log-level=warning && node --test out/test/"
+    "test": "esbuild src/test/*.test.ts --bundle --platform=node --format=cjs --alias:vscode=./src/test/vscode-stub.ts --external:vscode-languageclient --outdir=out/test --log-level=warning && node --test \"out/test/*.test.js\""
   },
   "devDependencies": {
     "@eslint/js": "^9.0.0",
