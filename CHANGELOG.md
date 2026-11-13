@@ -13,6 +13,8 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 
 ### VS Code
 
+- `fix` **The server starts in devcontainers.** Where no systemd user bus runs (containers, WSL) the extension still started the server in a user scope, which failed with "Failed to connect to user scope bus" and left only `write EPIPE`. It now tries the scope first and caps memory with `ulimit -d` where that fails, else runs on the server's own budget. [`786e1e0`](https://github.com/EagleoutIce/satex-analyzer/commit/786e1e0)
+- `fix` **Every failed start says why and how to fix it.** A broken `satex.path` or bundled binary (wrong C library, musl, not executable) falls back to the next one, a server that dies before it answers or crashes later is reported with its reason, and a server that stays off says so, each with buttons to download satex, set the path, show the output or restart. [`786e1e0`](https://github.com/EagleoutIce/satex-analyzer/commit/786e1e0)
 - `fix` **Windows packages of the extension again.** Packaging on Windows stopped at the webview scripts (it ran `esbuild` as a program, a `.cmd` there), so neither 0.2.1 nor 0.2.2 published the extension. [`802cbdf`](https://github.com/EagleoutIce/satex-analyzer/commit/802cbdf)
 
 ### Site and docs
