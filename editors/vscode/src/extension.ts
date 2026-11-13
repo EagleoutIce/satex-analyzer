@@ -1,13 +1,13 @@
 import * as vscode from 'vscode';
-import { execFile, spawn, spawnSync } from 'child_process';
-import { chmodSync, existsSync } from 'fs';
+import { execFile, spawn } from 'child_process';
+import { existsSync } from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { LanguageClient, State, StreamInfo } from 'vscode-languageclient/node';
+import { CloseAction, ErrorHandler, LanguageClient, ResponseError, State, StreamInfo } from 'vscode-languageclient/node';
 import { openDialog } from './dialogs';
 import { Revive } from './revive';
 import { capMiB } from './memory';
-import { binaryProblem, Cap, failure, Ran, startProblem, usableCaps, wrap } from './launch';
+import { Candidate, findBinary, Launcher, run } from './launch';
 import { peers, uninstallCommand, yields } from './peers';
 import { Actions } from './sidebar';
 import { Findings, Mode, moved, Range } from './findings';
@@ -28,12 +28,6 @@ const build = vscode.window.createOutputChannel('satex build');
 const buildDiagnostics = vscode.languages.createDiagnosticCollection('satex build');
 const steps = new Steps();
 
-/** `command args`, waited for at most `ms`. */
-function run(command: string, args: string[], ms = 10_000): Ran {
-    const r = spawnSync(command, args, { timeout: ms, encoding: 'utf8' });
-    return { error: r.error as NodeJS.ErrnoException | undefined, status: r.status, signal: r.signal, stderr: r.stderr };
-}
-
 /** The output "satex": how the server was found and started, then what it says. */
 const serverLog = vscode.window.createOutputChannel('satex');
 function log(line: string): void { serverLog.appendLine(line); }
@@ -42,45 +36,33 @@ function log(line: string): void { serverLog.appendLine(line); }
  * The first binary that runs here: the setting, the bundled one, `satex` on the PATH. A broken
  * one is skipped with a warning; none at all is an error that says how to get one.
  */
-function resolveBinary(context: vscode.ExtensionContext): string | undefined {
+async function resolveBinary(context: vscode.ExtensionContext): Promise<string | undefined> {
     const configured = vscode.workspace.getConfiguration('satex').get<string>('path');
     const bundled = context.asAbsolutePath(path.join('bin', `${process.platform}-${process.arch}`, process.platform === 'win32' ? 'satex.exe' : 'satex'));
-    const problems: string[] = [];
-    const candidates: [string, string][] = [];
-    if (configured) {
-        if (existsSync(configured)) { candidates.push([configured, '`satex.path`']); } else { problems.push(`\`satex.path\` names ${configured}, which does not exist.`); }
-    }
-    if (existsSync(bundled)) { candidates.push([bundled, 'the bundled binary']); }
-    candidates.push(['satex', '`satex` on the PATH']);
-    for (const [binary, from] of candidates) {
-        let r = run(binary, ['--version']);
-        // a package that lost the executable bit: ours to restore
-        if (binary === bundled && r.error?.code === 'EACCES') {
-            try { chmodSync(bundled, 0o755); r = run(binary, ['--version']); } catch { /* reported below */ }
-        }
-        if (binary === 'satex' && r.error?.code === 'ENOENT') { continue; }
-        const problem = binaryProblem(binary, r);
-        if (!problem) {
-            if (problems.length > 0) {
-                log(`satex: using ${from} (${binary}); ${problems.join(' ')}`);
-                void offer('warning', `SaTeX uses ${from}. ${problems.join(' ')}`, 'path', 'output');
-            }
-            return binary;
-        }
-        problems.push(`${from}: ${problem}`);
-    }
+    const candidates: Candidate[] = [
+        ...(configured ? [{ binary: configured, from: '`satex.path`' }] : []),
+        ...(existsSync(bundled) ? [{ binary: bundled, from: 'the bundled binary', ours: true }] : []),
+        { binary: 'satex', from: '`satex` on the PATH' },
+    ];
+    const { binary, from, problems } = await findBinary(candidates, run);
     problems.forEach(p => log(`satex: ${p}`));
+    if (binary) {
+        log(`satex: using ${from} (${binary})`);
+        if (problems.length > 0) { void offer('warning', `SaTeX uses ${from}. ${problems.join(' ')}`, 'path', 'output'); }
+        return binary;
+    }
     void offer('error', `SaTeX cannot start: no satex binary runs here. ${problems.join(' ')} `
         + `Download one for ${process.platform}-${process.arch}, install it with \`cargo install satex-analyzer\`, or set \`satex.path\`.`, 'releases', 'path', 'output');
     return undefined;
 }
 
-type Fix = 'releases' | 'path' | 'output' | 'restart' | 'tex' | 'memory';
+type Fix = 'releases' | 'path' | 'output' | 'restart' | 'reload' | 'tex' | 'memory';
 const FIXES: Record<Fix, [string, () => unknown]> = {
     releases: ['Download satex', () => vscode.env.openExternal(vscode.Uri.parse(RELEASES))],
     path: ['Set satex.path', () => vscode.commands.executeCommand('workbench.action.openSettings', 'satex.path')],
     output: ['Show Output', () => serverLog.show(true)],
     restart: ['Restart Server', () => restartServer()],
+    reload: ['Reload Window', () => vscode.commands.executeCommand('workbench.action.reloadWindow')],
     tex: ['Install TeX Live', () => vscode.env.openExternal(vscode.Uri.parse('https://tug.org/texlive/quickinstall.html'))],
     memory: ['Memory Settings', () => vscode.commands.executeCommand('workbench.action.openSettings', 'satex.server')],
 };
@@ -94,8 +76,9 @@ async function offer(level: 'error' | 'warning' | 'info', message: string, ...fi
 }
 
 /** satex reads the installed TeX distribution; warn when it is missing. */
-function checkTeX(): void {
-    const missing = ['kpsewhich', 'pdflatex'].filter(tool => run(tool, ['--version']).error);
+async function checkTeX(): Promise<void> {
+    const ran = await Promise.all(['kpsewhich', 'pdflatex'].map(async tool => [tool, await run(tool, ['--version'], 10_000)] as const));
+    const missing = ran.filter(([, r]) => r.error?.code === 'ENOENT').map(([tool]) => tool);
     if (missing.length > 0) {
         void offer('warning', `SaTeX uses your TeX distribution, but ${missing.join(' and ')} ${missing.length > 1 ? 'are' : 'is'} not on the PATH`
             + `${vscode.env.remoteName ? ` of the ${vscode.env.remoteName} host` : ''}. Install TeX Live, MiKTeX or MacTeX for full analysis; without it packages are not read.`, 'tex');
@@ -176,15 +159,25 @@ async function compile(): Promise<void> {
     }
 }
 
-/** The caps that work here (probed once), and those that failed while starting the server. */
-let caps: Cap[] | undefined;
-const broken = new Set<Cap>();
-/** What made the last start fail, shown once until the server runs. */
-let lastProblem: string | undefined;
-let told = false;
-let crashTold = false;
-/** A cap failed while starting: start again without it at once. */
-let retry = false;
+/** Messages about the server, each kind shown once until a restart by hand. */
+const shown = new Set<string>();
+function once(kind: string, level: 'error' | 'warning', message: string, ...fixes: Fix[]): void {
+    if (!shown.has(kind)) { shown.add(kind); void offer(level, message, ...fixes); }
+}
+
+const launcher = new Launcher({
+    log,
+    uncapped: () => void offer('warning', 'SaTeX runs without a hard memory cap here (no systemd user scope, no `ulimit`). '
+        + 'Its own budget `satex.server.maxMemory` still ends an analysis that grows past it.', 'output', 'memory'),
+    failedStart: (problem, cap, fallback) => {
+        log(`satex: the server stopped before it answered: ${problem}${fallback ? `; starting it without ${cap}` : ''}`);
+        if (!fallback) { once('failed', 'error', `SaTeX: the server stopped before it answered: ${problem}`, 'output', 'restart', 'path'); }
+    },
+    crashed: problem => {
+        log(`satex: the server stopped: ${problem}`);
+        once('crashed', 'warning', `SaTeX: the server stopped (${problem}). It starts again.`, 'output', 'memory');
+    },
+});
 
 /**
  * The server, at a lower priority and with a memory limit (`satex.server.maxMemory`), so an
@@ -192,86 +185,51 @@ let retry = false;
  * Above the in-process budget, which ends a run cleanly first, a hard cap holds the whole
  * process: a systemd scope where a user bus runs, else `ulimit -d`, else only the budget.
  */
-function startServer(binary: string): Promise<StreamInfo> {
+async function startServer(binary: string): Promise<StreamInfo> {
     const config = vscode.workspace.getConfiguration('satex');
     const memory = config.get<string>('server.maxMemory', '2GiB');
     const cores = config.get<number>('server.maxCores', 2);
     // How long an analysis may run is the project's `limits.seconds` (satex.yaml), not a second setting here.
     const args = ['lsp', ...(memory ? ['--max-memory', memory] : []), ...(cores > 0 ? ['--threads', String(cores)] : [])];
-    const mib = memory ? capMiB(memory) : undefined;
-    if (!caps) {
-        const found = process.platform === 'linux'
-            ? usableCaps((c, a) => run(c, a, 5_000), mib, cores, config.get<boolean>('server.cgroup', true))
-            : { caps: ['plain'] as Cap[], skipped: [] };
-        caps = found.caps;
-        found.skipped.forEach(s => log(`satex: no ${s}`));
-        if (process.platform === 'linux' && mib !== undefined && caps[0] === 'plain') {
-            void offer('warning', 'SaTeX runs without a hard memory cap here (no systemd user scope, no `ulimit`). '
-                + 'Its own budget `satex.server.maxMemory` still ends an analysis that grows past it.', 'output', 'memory');
-        }
-    }
-    retry = false;
-    const cap = caps.find(c => !broken.has(c)) ?? 'plain';
-    const [command, argv] = wrap(cap, [binary, ...args], mib ?? 0, cores);
-    log(`satex: starting ${binary} (${cap === 'plain' ? 'no hard cap' : `capped through ${cap}`})`);
-    const child = spawn(command, argv);
+    const { child } = await launcher.start(binary, args, {
+        mib: memory ? capMiB(memory) : undefined, cores, scope: config.get<boolean>('server.cgroup', true), linux: process.platform === 'linux',
+    });
     if (child.pid !== undefined) {
         try { os.setPriority(child.pid, config.get<number>('server.niceness', 10)); } catch { /* not ours to lower */ }
     }
-    let answered = false;
-    let stderr = '';
-    child.stdout.once('data', () => { answered = true; });
-    child.stderr.on('data', (data: Buffer) => {
-        stderr = (stderr + data.toString()).slice(-4096);
-        log(data.toString().trimEnd());
-    });
-    let ended = false;
-    const failed = (code: number | null, signal: string | null, error?: Error) => {
-        if (ended) { return; }
-        ended = true;
-        // a crash after it ran: say so once, the client starts it again
-        if (answered) {
-            if ((code ?? 0) !== 0 || (signal && signal !== 'SIGTERM')) {
-                const why = startProblem(code, signal, stderr);
-                log(`satex: the server stopped: ${why}`);
-                if (!crashTold) { crashTold = true; void offer('warning', `SaTeX: the server stopped (${why}). It starts again.`, 'output', 'memory'); }
-            }
-            return;
-        }
-        const why = error ? (failure({ error, status: null }) ?? String(error)) : startProblem(code, signal, stderr);
-        if (cap !== 'plain') {
-            broken.add(cap);
-            retry = true;
-            log(`satex: starting through ${cap} failed (${why}); trying without it`);
-            return;
-        }
-        lastProblem = `The satex server stopped before it answered: ${why}`;
-        log(`satex: ${lastProblem}`);
-    };
-    child.on('error', error => failed(null, null, error));
-    child.on('exit', (code, signal) => failed(code, signal));
-    return Promise.resolve({ reader: child.stdout, writer: child.stdin, detached: false });
+    return { reader: child.stdout!, writer: child.stdin!, detached: false };
 }
 
-/** The server changed state: report a failed start once, and give up loudly. */
-function stateChanged(state: State, revive: Revive): void {
-    if (state === State.Running) { lastProblem = undefined; told = false; retry = false; return; }
-    if (state !== State.Stopped) { return; }
-    if (retry) { retry = false; void client?.start().catch(() => undefined); return; }
-    if (revive.exhausted) {
-        void offer('error', `SaTeX stopped and stays off: it failed several times. ${lastProblem ?? 'See the output for why.'}`, 'output', 'restart', 'memory');
-    } else if (lastProblem && !told) {
-        told = true;
-        void offer('error', `SaTeX: ${lastProblem} It starts again in a minute.`, 'output', 'restart', 'path');
-    }
-}
+/**
+ * The client's own restarts (five in three minutes), and at once after a dropped cap. When it
+ * gives up, `Revive` takes over, so its "will not be restarted" stays unsaid.
+ */
+let standardHandler: ErrorHandler | undefined;
+const standard = () => standardHandler ??= client!.createDefaultErrorHandler(4);
+const errorHandler: ErrorHandler = {
+    error: (error, message, count) => standard().error(error, message, count),
+    closed: async () => {
+        if (launcher.takeDropped()) { return { action: CloseAction.Restart, handled: true }; }
+        const result = await standard().closed();
+        return result.action === CloseAction.DoNotRestart ? { action: CloseAction.DoNotRestart, handled: true } : result;
+    },
+};
 
 /** A start by hand: probe the caps again and forget earlier failures. */
 function restartServer(): void {
-    caps = undefined;
-    broken.clear();
-    told = false;
+    launcher.reset();
+    shown.clear();
     void (client?.state === State.Stopped ? client.start() : client?.restart())?.catch(() => undefined);
+}
+
+/** A changed path needs a new window, changed server limits a new server. */
+function configChanged(e: vscode.ConfigurationChangeEvent): void {
+    if (e.affectsConfiguration('satex.path')) {
+        void offer('info', 'SaTeX: reload the window to use the new `satex.path`.', 'reload');
+    } else if (e.affectsConfiguration('satex.server')) {
+        launcher.reset();
+        void offer('info', 'SaTeX: restart the server to apply its new limits.', 'restart');
+    }
 }
 
 /**
@@ -325,20 +283,18 @@ async function warnPeers(context: vscode.ExtensionContext, others: string[]): Pr
         + `Uninstall the others? From a terminal: ${others.map(uninstallCommand).join('; ')}`, remove, 'Keep');
     if (answer !== remove) { return; }
     for (const id of others) { await vscode.commands.executeCommand('workbench.extensions.uninstallExtension', id); }
-    const reload = 'Reload Window';
-    if (await vscode.window.showInformationMessage('SaTeX: reload the window to stop the removed copy.', reload) === reload) {
-        await vscode.commands.executeCommand('workbench.action.reloadWindow');
-    }
+    await offer('info', 'SaTeX: reload the window to stop the removed copy.', 'reload');
 }
 
-export function activate(context: vscode.ExtensionContext): void {
+export async function activate(context: vscode.ExtensionContext): Promise<void> {
     const others = peers(vscode.extensions.all, context.extension.id);
     if (others.length > 0) {
         void warnPeers(context, others);
         // a local build gives way to the published extension
         if (yields(context.extension.id, others)) { return; }
     }
-    const binary = resolveBinary(context);
+    context.subscriptions.push(serverLog, vscode.workspace.onDidChangeConfiguration(configChanged));
+    const binary = await resolveBinary(context);
     if (!binary) { return; }
     binaryPath = binary;
     const bar = (status ??= new Status());
@@ -353,6 +309,14 @@ export function activate(context: vscode.ExtensionContext): void {
         {
             documentSelector: ['latex', 'tex', 'bibtex'].map(language => ({ language })),
             outputChannel: serverLog,
+            errorHandler,
+            // A dead server is explained by the launcher when it exits; the client would only say
+            // "write EPIPE". An error the server answered with is its own to show.
+            initializationFailedHandler: error => {
+                log(`satex: initialize failed: ${String(error)}`);
+                if (error instanceof ResponseError) { once('init', 'error', `SaTeX: the server did not start: ${error.message}`, 'output', 'restart'); }
+                return false;
+            },
             middleware: {
                 handleDiagnostics: (uri, diagnostics) => findings.publish(uri.toString(), diagnostics),
                 // a hover's "Edit table…" link runs `satex.openDialog`; the units hover's values write themselves (`satex.applyEdit`)
@@ -365,7 +329,10 @@ export function activate(context: vscode.ExtensionContext): void {
                 },
             },
         });
-    const revive = new Revive(() => { trace.appendLine('satex: the server stopped; starting it again'); void client?.restart(); }, 60_000);
+    const revive = new Revive(() => {
+        log('satex: the server stopped; starting it again');
+        void client?.restart().catch(error => log(`satex: ${String(error)}`));
+    }, 60_000);
     const working = (work: Work) => {
         bar.working(work);
         findings.status(work);
@@ -377,7 +344,7 @@ export function activate(context: vscode.ExtensionContext): void {
         return d;
     }));
     context.subscriptions.push(
-        trace, build, buildDiagnostics, serverLog, bar, edited, { dispose: () => { status = undefined; } }, steps,
+        trace, build, buildDiagnostics, bar, edited, { dispose: () => { status = undefined; } }, steps,
         command('satex.traceNext', () => steps.move(1)),
         command('satex.tracePrevious', () => steps.move(-1)),
         command('satex.tracePick', () => steps.pick()),
@@ -409,16 +376,22 @@ export function activate(context: vscode.ExtensionContext): void {
             findings.settled(p.uri, await client?.protocol2CodeConverter.asDiagnostics(p.diagnostics) ?? [])),
         // the client gives up on a server that closed five times in three minutes: try again after a minute
         client.onDidChangeState(e => {
-            bar.down(e.newState === State.Stopped);
-            if (!(retry && e.newState === State.Stopped)) { revive.stopped(e.newState === State.Stopped); }
-            stateChanged(e.newState, revive);
+            const stopped = e.newState === State.Stopped;
+            bar.down(stopped, launcher.problem);
+            // a failed initialize stops the client without `closed`: a dropped cap starts again at once
+            if (stopped && launcher.takeDropped()) { void client?.start().catch(error => log(`satex: ${String(error)}`)); return; }
+            revive.stopped(stopped);
+            if (stopped && revive.exhausted) {
+                once('off', 'error', `SaTeX stopped and stays off after several failed starts: ${launcher.problem ?? 'see the output'}.`, 'output', 'restart', 'memory');
+            }
         }),
         { dispose: () => revive.dispose() });
-    checkTeX();
-    // a failed start is reported by `stateChanged`, not as an unhandled rejection
+    void checkTeX();
+    // a failed start is reported by the launcher, not as an unhandled rejection
     void client.start().catch(error => log(`satex: ${String(error)}`));
     void harmonize(context);
 }
-export function deactivate(): Thenable<void> | undefined {
-    return client?.stop();
+export async function deactivate(): Promise<void> {
+    await client?.stop().catch(() => undefined);
+    launcher.stop();
 }

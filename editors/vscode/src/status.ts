@@ -56,6 +56,7 @@ export class Status implements vscode.Disposable {
     private readonly listeners: vscode.Disposable[] = [];
     private busy: Work = { text: '' };
     private stopped = false;
+    private why: string | undefined;
 
     constructor() {
         this.item.name = 'satex';
@@ -74,9 +75,10 @@ export class Status implements vscode.Disposable {
         this.render();
     }
 
-    /** The server stopped (or runs again). */
-    down(stopped: boolean): void {
+    /** The server stopped (or runs again), and why when known. */
+    down(stopped: boolean, why?: string): void {
         this.stopped = stopped;
+        this.why = why;
         this.render();
     }
 
@@ -95,7 +97,7 @@ export class Status implements vscode.Disposable {
         }
         if (this.stopped) {
             this.item.text = '$(error) satex';
-            this.item.tooltip = 'The satex server stopped: see the output "satex". Click to show the findings.';
+            this.item.tooltip = `The satex server stopped${this.why ? `: ${this.why}` : ''}. See the output "satex"; \`satex: Restart Server\` starts it again. Click to show the findings.`;
             this.item.command = 'satex.focus';
         } else if (this.busy.text) {
             const { reached, total } = this.busy;
