@@ -38,6 +38,8 @@ pub struct Timings {
     /// Tokens read since a project file's line was last read, per line:
     /// what each line of the document costs, packages' work included.
     site: Option<(FileId, u32)>,
+    /// Tokens of `site` not yet added to `sites`: a hash per token cost more than the count.
+    site_tokens: u64,
     sites: crate::fixed::HashMap<(FileId, u32), u64>,
     /// What running each written line where it is read back cost, per
     /// writing line: its tokens, how many lines, and the first line's text.
@@ -108,12 +110,25 @@ impl Timings {
 
     /// The project file's line read last: the tokens read next are its cost.
     pub fn at_site(&mut self, file: FileId, line: u32) {
+        self.flush_site();
         self.site = Some((file, line));
+    }
+
+    fn flush_site(&mut self) {
+        if let Some(site) = self.site
+            && self.site_tokens > 0
+        {
+            *self.sites.entry(site).or_default() += std::mem::take(&mut self.site_tokens);
+        }
     }
 
     /// The `n` costliest project lines, most first.
     pub fn top_sites(&self, n: usize) -> Vec<((FileId, u32), u64)> {
-        let mut out: Vec<((FileId, u32), u64)> = self.sites.iter().map(|(&s, &c)| (s, c)).collect();
+        let mut sites = self.sites.clone();
+        if let Some(site) = self.site {
+            *sites.entry(site).or_default() += self.site_tokens;
+        }
+        let mut out: Vec<((FileId, u32), u64)> = sites.into_iter().filter(|&(_, c)| c > 0).collect();
         out.sort_unstable_by_key(|&(s, c)| (std::cmp::Reverse(c), s));
         out.truncate(n);
         out
@@ -170,8 +185,8 @@ impl Timings {
     }
 
     pub fn count_token(&mut self) {
-        if let Some(site) = self.site {
-            *self.sites.entry(site).or_default() += 1;
+        if self.site.is_some() {
+            self.site_tokens += 1;
         }
         if let Some((file, _, _)) = self.stack.last() {
             let slot = *file as usize;
