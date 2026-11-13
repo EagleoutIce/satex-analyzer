@@ -39,11 +39,11 @@ source <(satex completions zsh)                           # zsh: add to ~/.zshrc
 satex completions fish > ~/.config/fish/completions/satex.fish
 ```
 
-Current version: 0.2.2. `satex --version` also lists the plugins included in this build and the configuration in effect:
+Current version: 0.2.3. `satex --version` also lists the plugins included in this build and the configuration in effect:
 
 ```text
 $ satex --version
-satex 0.2.2
+satex 0.2.3
 https://github.com/EagleoutIce/satex-analyzer
 
 plugins: 48 in 11 kinds

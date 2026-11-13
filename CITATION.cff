@@ -7,7 +7,7 @@ authors:
     given-names: Florian
     email: florian.sihler@uni-ulm.de
     affiliation: Ulm University
-version: 0.2.2
+version: 0.2.3
 license: MIT
 repository-code: "https://github.com/EagleoutIce/satex-analyzer"
 url: "https://eagleoutice.github.io/satex-analyzer/"

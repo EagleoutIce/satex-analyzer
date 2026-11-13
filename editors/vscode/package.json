@@ -2,7 +2,7 @@
   "name": "satex",
   "displayName": "SaTeX",
   "description": "SaTeX: a static analyzer and language server for LaTeX and friends.",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "publisher": "eagleoutice",
   "license": "MIT",
   "repository": {
