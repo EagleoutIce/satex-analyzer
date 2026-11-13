@@ -1453,8 +1453,14 @@ type SiteRuns = Vec<(u64, Option<Rc<MacroDef>>)>;
 
 /// Per-load state every cacheable load forgets at its end, read or
 /// replayed alike ([`Machine::end_cacheable_load`]).
+/// A TFM font's path, and its metrics when they parse.
+pub(crate) type FoundFont = (String, Option<Rc<crate::engine::tfm::Metrics>>);
+
 #[derive(Clone, Default)]
 pub(crate) struct Scratch {
+    /// Each TFM font found this run, by name, with its path: a font is
+    /// looked up per character set, and each lookup asks the file system.
+    pub(crate) tfm: HashMap<String, Option<FoundFont>>,
     /// A widened conditional's code may leave text past the value being scanned.
     pub(crate) scan_left: bool,
     /// The call whose arguments are being read, and the typed rests each
@@ -6676,9 +6682,20 @@ will look undefined",
         let same = |a: &MacroDef, b: &MacroDef| {
             a.parameter_text == b.parameter_text && explore::same_text(&a.replacement_text, &b.replacement_text)
         };
+        // Many paths hold few distinct texts: compare in full only texts whose tokens hash alike.
+        let key = |d: &MacroDef| {
+            use std::hash::{BuildHasher, Hash, Hasher};
+            let mut h = crate::engine::tex::NameHash.build_hasher();
+            d.parameter_text.items.len().hash(&mut h);
+            d.replacement_text.iter().for_each(|t| t.tok.hash(&mut h));
+            h.finish()
+        };
         let mut defs: Vec<Rc<MacroDef>> = Vec::new();
+        let mut seen: crate::fixed::LookupMap<u64, Vec<usize>> = Default::default();
         for d in texts.iter().flatten() {
-            if !defs.iter().any(|x| same(x, d)) {
+            let alike = seen.entry(key(d)).or_default();
+            if !alike.iter().any(|&i| Rc::ptr_eq(&defs[i], d) || same(&defs[i], d)) {
+                alike.push(defs.len());
                 defs.push(d.clone());
             }
         }
@@ -13232,6 +13249,11 @@ will look undefined",
             return self.file_ids.get(Path::new(path)).copied();
         }
         self.out.files.iter().position(|f| Path::new(&f.path) == Path::new(path))
+    }
+
+    /// Whether a package's load is being recorded for its cache.
+    pub(crate) fn capturing_package(&self) -> bool {
+        self.package_capture.is_some()
     }
 
     pub fn register_file(&mut self, path: String, kind: LoadKind) -> FileId {
