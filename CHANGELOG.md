@@ -6,6 +6,10 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 
 ## Unreleased
 
+### Site and docs
+
+- `feat` **A link to each showcase entry.** Every entry on the front page (Tables, Colors, Settings and the rest) has an anchor such as `#shot-table`, and its title links to it. Opening one scrolls there and turns the card ring to it. [`e0eb35b`](https://github.com/EagleoutIce/satex-analyzer/commit/e0eb35b)
+
 ## v0.2.3 (2026-11-13)
 
 ### Playground
