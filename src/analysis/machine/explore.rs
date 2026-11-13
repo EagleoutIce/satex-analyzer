@@ -1886,9 +1886,12 @@ impl Machine<'_> {
     /// The closers in `text` of conditionals opened before it (`\fi`,
     /// `\else`, `\or`), and how many conditionals it leaves open.
     fn strays(&self, text: &[Token]) -> (Vec<usize>, usize) {
-        let mut open = crate::analysis::machine::CondDepth::default();
-        let strays = (0..text.len()).filter(|&i| open.feed(self.cond_prim(text[i])).is_some()).collect();
-        (strays, open.0)
+        strays_of(&self.cond_prims(text))
+    }
+
+    /// What skipped text sees of each token of `text` ([`Machine::cond_prim`]).
+    fn cond_prims(&self, text: &[Token]) -> Vec<Option<Primitive>> {
+        text.iter().map(|&t| self.cond_prim(t)).collect()
     }
 
     /// Whether `text` can be replaced by one token: its braces and
@@ -2243,9 +2246,17 @@ impl Machine<'_> {
         let mut pre = p.iter().zip(q).take_while(|(x, y)| x.tok == y.tok).count();
         let mut suf = p.iter().rev().zip(q.iter().rev()).take_while(|(x, y)| x.tok == y.tok).count();
         suf = suf.min(p.len().min(q.len()) - pre);
+        // Each shrink step checks the whole middle again: look each token's
+        // meaning up once ([`Machine::cond_prim`]), and only those of the
+        // middle, which is what a step reads.
+        let (mut cp, mut cq) = (vec![None; p.len()], vec![None; q.len()]);
         let (a, b) = loop {
             let (a, b) = (&p[pre..p.len() - suf], &q[pre..q.len() - suf]);
-            let ((la, ra), (lb, rb)) = (self.unclosed(a), self.unclosed(b));
+            let prims = |memo: &mut Vec<Option<Option<Primitive>>>, text: &[Token], range: std::ops::Range<usize>| {
+                range.map(|i| *memo[i].get_or_insert_with(|| self.cond_prim(text[i]))).collect::<Vec<_>>()
+            };
+            let (la, ra) = unclosed_of(a, &prims(&mut cp, p, pre..p.len() - suf));
+            let (lb, rb) = unclosed_of(b, &prims(&mut cq, q, pre..q.len() - suf));
             let (l, r) = (la || lb, ra || rb);
             if !l && !r {
                 break (a, b);
@@ -2260,22 +2271,6 @@ impl Machine<'_> {
         text.push(self.join_texts(a, b, widen, pass, span)?);
         text.extend_from_slice(&p[p.len() - suf..]);
         Some(text)
-    }
-
-    /// Whether `text` closes a brace or conditional opened before it, and
-    /// whether it leaves one open.
-    fn unclosed(&self, text: &[Token]) -> (bool, bool) {
-        let (strays, open) = self.strays(text);
-        let (mut depth, mut low) = (0i64, 0i64);
-        for t in text {
-            match t.tok {
-                Tok::Chr(_, Catcode::Begin) => depth += 1,
-                Tok::Chr(_, Catcode::End) => depth -= 1,
-                _ => {}
-            }
-            low = low.min(depth);
-        }
-        (!strays.is_empty() || low < 0, open > 0 || depth > low)
     }
 
     /// Joins the input stacks of two alike paths. When they are equally deep,
@@ -3711,4 +3706,28 @@ fn why_apart(paths: &Paths, at: Span, out: &Analysis) -> String {
         sample.unwrap_or_default(),
         first.unwrap_or_default()
     )
+}
+
+/// The closers in a text of conditionals opened before it (`\fi`, `\else`,
+/// `\or`), and how many it leaves open, from its tokens' [`Machine::cond_prim`].
+fn strays_of(prims: &[Option<Primitive>]) -> (Vec<usize>, usize) {
+    let mut open = crate::analysis::machine::CondDepth::default();
+    let strays = (0..prims.len()).filter(|&i| open.feed(prims[i]).is_some()).collect();
+    (strays, open.0)
+}
+
+/// Whether `text` closes a brace or conditional opened before it, and
+/// whether it leaves one open; `prims` are its tokens' [`Machine::cond_prim`].
+fn unclosed_of(text: &[Token], prims: &[Option<Primitive>]) -> (bool, bool) {
+    let (strays, open) = strays_of(prims);
+    let (mut depth, mut low) = (0i64, 0i64);
+    for t in text {
+        match t.tok {
+            Tok::Chr(_, Catcode::Begin) => depth += 1,
+            Tok::Chr(_, Catcode::End) => depth -= 1,
+            _ => {}
+        }
+        low = low.min(depth);
+    }
+    (!strays.is_empty() || low < 0, open > 0 || depth > low)
 }
