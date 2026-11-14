@@ -1335,8 +1335,19 @@ pub(crate) enum Whatsit {
 }
 
 /// The whatsits waiting for the next shipout, one list per alternative the
-/// joined paths left (none: nothing waits).
-type Pending = Rc<Vec<Vec<Whatsit>>>;
+/// joined paths left (none: nothing waits). A list is persistent: a `\write`
+/// appends without copying what saved states share.
+type Pending = Rc<Vec<rpds::Vector<Whatsit>>>;
+
+/// `pending` as plain lists, as package caches store and hash them.
+pub(crate) fn plain_pending(pending: &Pending) -> Vec<Vec<Whatsit>> {
+    pending.iter().map(|alt| alt.iter().cloned().collect()).collect()
+}
+
+/// Plain lists as [`Pending`].
+pub(crate) fn pending_of(lists: &[Vec<Whatsit>]) -> Pending {
+    Rc::new(lists.iter().map(|alt| alt.iter().cloned().collect()).collect())
+}
 
 /// The stream a number satex could not pin down names.  `i64::MIN` is past
 /// what `scan_int` can give (tex.web § 445), so no source reaches it.
@@ -4357,9 +4368,9 @@ will look undefined",
     pub(crate) fn defer(&mut self, what: Whatsit) {
         let pending = Rc::make_mut(&mut self.pending);
         if pending.is_empty() {
-            pending.push(Vec::new());
+            pending.push(rpds::Vector::new());
         }
-        pending.iter_mut().for_each(|alt| alt.push(what.clone()));
+        pending.iter_mut().for_each(|alt| alt.push_back_mut(what.clone()));
     }
 
     /// tex.web § 1374: a shipout runs the whatsits deferred to it, in order,
@@ -15638,9 +15649,9 @@ fn join_pending(a: &Pending, b: &Pending, bound: usize) -> Pending {
     if a == b {
         return a.clone();
     }
-    let none = [Vec::new()];
+    let none = [rpds::Vector::new()];
     let alts = |p: &Pending| if p.is_empty() { none.to_vec() } else { p.to_vec() };
-    let mut all: Vec<Vec<Whatsit>> = Vec::new();
+    let mut all: Vec<rpds::Vector<Whatsit>> = Vec::new();
     for alt in alts(a).into_iter().chain(alts(b)) {
         if !all.contains(&alt) {
             all.push(alt);
@@ -15648,12 +15659,12 @@ fn join_pending(a: &Pending, b: &Pending, bound: usize) -> Pending {
     }
     if all.len() > bound.max(1) {
         let mut held: Vec<Whatsit> = Vec::new();
-        for w in all.into_iter().flatten().flat_map(|w| if let Whatsit::Lost(h) = w { h } else { vec![w] }) {
+        for w in all.iter().flat_map(|alt| alt.iter().cloned()).flat_map(|w| if let Whatsit::Lost(h) = w { h } else { vec![w] }) {
             if !matches!(w, Whatsit::Write { .. }) && !held.contains(&w) {
                 held.push(w);
             }
         }
-        all = vec![vec![Whatsit::Lost(held)]];
+        all = vec![rpds::Vector::new().push_back(Whatsit::Lost(held))];
     }
     Rc::new(all)
 }

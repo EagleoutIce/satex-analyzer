@@ -1333,7 +1333,7 @@ impl Machine<'_> {
             outputs.sort();
             hash.put(&outputs);
             parts.push(("files written".into(), std::mem::replace(&mut hash, Fnv::new()).0));
-            hash.put(&*self.pending);
+            hash.put(&super::plain_pending(&self.pending));
             hash.put(&self.docstrip_dir.as_ref().map(|d| roots.canonical(d)));
             parts.push(("deferred writes and docstrip".into(), std::mem::replace(&mut hash, Fnv::new()).0));
             let mut pinned: Vec<Sym> = self.pinned.iter().copied().collect();
@@ -1413,7 +1413,7 @@ impl Machine<'_> {
                 self.streams.iter().map(|(n, t)| (*n, t.iter().map(|a| (a.lines.to_vec(), a.lo, a.hi)).collect())),
             ),
             outputs: keyed(self.outputs.iter().map(|(n, t)| (n.clone(), t.clone()))),
-            pending: self.pending.to_vec(),
+            pending: super::plain_pending(&self.pending),
             aliases: keyed(self.env.aliases.iter().map(|(k, v)| (*k, *v))),
         }
     }
@@ -2742,7 +2742,7 @@ impl Machine<'_> {
             self.streams =
                 Rc::new(streams.iter().map(|(n, texts)| (*n, Rc::new(texts.iter().map(at).collect()))).collect());
             self.outputs = Rc::new(patched(&from.outputs, &lists.outputs).into_iter().collect());
-            self.pending = Rc::new(lists.pending.clone());
+            self.pending = super::pending_of(&lists.pending);
             self.env.aliases = patched(&from.aliases, &lists.aliases).into_iter().collect();
         }
         // Changes count from the load's start, like the scalars.
