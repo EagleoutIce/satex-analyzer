@@ -40,6 +40,45 @@ Fix by writing `\\Cref{sec:x}` and loading cleveref.",
         run: prefer_cleveref,
     },
     Rule {
+        code: "bare-reference",
+        category: Category::Style,
+        severity: Severity::Info,
+        summary: "a `\\ref` with no name before it, so the reader gets a bare number",
+        explanation: "\
+`see \\ref{sec:x}` sets `see 2`: a number, not what it numbers.
+
+A finding needs a `\\ref` to a label of a named kind (a sectioning unit, a
+figure, anything with a `\\<counter>name` or cleveref name) with no word,
+`\\S` or `§` before it.  Equations in parentheses, items, footnotes and the
+next `\\ref` of a list never count.
+
+The fix writes what the document uses: its own one-argument reference
+command (as last defined), else `\\cref` (`\\Cref` opening a sentence), else
+`\\autoref`, else `\\<counter>name~\\ref`, else `\\S~\\ref` for a section.",
+        references: &[Ref { source: Source::Cleveref, at: "2" }, Ref { source: Source::Hyperref, at: "4" }],
+        fixes: &[Applicability::Unsafe],
+        engines: &[],
+        run: bare_reference,
+    },
+    Rule {
+        code: "reference-name-mismatch",
+        category: Category::Correctness,
+        severity: Severity::Warning,
+        summary: "the name before a `\\ref` is another kind than the label's",
+        explanation: "\
+`Subsection~\\ref{sec:a}` or `Chapter~\\ref{sec:a}` for a section, or
+`Figure~\\ref{tab:b}`, names the wrong kind of thing.  The general word for a
+deeper unit is fine (a subsection is a section), and so is `Appendix` for a
+section or chapter.  Names come from the counter, `\\<counter>name` (babel)
+and cleveref.
+
+Fix by writing the label's own name, or `\\Cref`.",
+        references: &[Ref { source: Source::Cleveref, at: "2" }],
+        fixes: &[Applicability::Unsafe],
+        engines: &[],
+        run: reference_name_mismatch,
+    },
+    Rule {
         code: "unreferenced-numbered-display",
         category: Category::Style,
         severity: Severity::Info,
@@ -235,6 +274,41 @@ fn ref_at(line: &[char], at: usize) -> Option<(String, usize)> {
     Some((line[at + head.len()..close].iter().collect(), close + 1))
 }
 
+/// One `\ref{label}` typed in the document's own text.
+struct Site {
+    span: Span,
+    path: String,
+    /// The source line, and the columns (0-based) of the `\` and after the `}`.
+    line: Vec<char>,
+    at: usize,
+    end: usize,
+    label: String,
+}
+
+/// Every `\ref{label}` of the document's own files, once per place, in order.
+fn ref_sites(report: &Report) -> Vec<Site> {
+    let (analysis, view, edits) = (report.analysis(), report.text(), report.edits());
+    let mut spans: Vec<Span> = (analysis.facts.occurrences.iter())
+        .filter(|o| o.kind == OccKind::Ref && view.document(o.span.file))
+        .map(|o| o.span)
+        .collect();
+    spans.sort_by_key(|s| (s.file, s.line, s.col));
+    spans.dedup();
+    spans
+        .into_iter()
+        .filter_map(|span| {
+            let (path, text) = edits.text(span.file)?;
+            let line: Vec<char> = text.line(span.line).chars().collect();
+            let at = span.col as usize - 1;
+            let (label, end) = ref_at(&line, at)?;
+            Some(Site { span, path, line, at, end, label })
+        })
+        .collect()
+}
+
+/// LaTeX's sectioning units, outermost first (`\part` to `\subparagraph`).
+const SECTIONING: [&str; 7] = ["part", "chapter", "section", "subsection", "subsubsection", "paragraph", "subparagraph"];
+
 /// The name tied or spaced directly before column `at`: letters with an
 /// optional period, and where it starts.
 fn name_before(line: &[char], at: usize) -> Option<(usize, String)> {
@@ -326,27 +400,13 @@ pub(crate) fn names_counter(analysis: &Analysis, cleveref: bool, counter: &str, 
 
 fn prefer_cleveref(report: &mut Report) {
     let analysis = report.analysis();
-    let view = report.text();
     let edits = report.edits();
     let cleveref = crate::linter::shared::loaded(analysis, "cleveref");
     let counters = label_counters(analysis);
     let all_counters: std::collections::BTreeSet<&str> =
         analysis.facts.defs.iter().filter_map(|d| analysis.interner.name(d.name).strip_prefix("c@")).collect();
-    let mut sites: Vec<Span> = analysis
-        .facts
-        .occurrences
-        .iter()
-        .filter(|o| o.kind == OccKind::Ref && view.document(o.span.file))
-        .map(|o| o.span)
-        .collect();
-    sites.sort_by_key(|s| (s.file, s.line, s.col));
-    sites.dedup();
     let mut found: Vec<Named> = Vec::new();
-    for span in sites {
-        let Some((path, text)) = edits.text(span.file) else { continue };
-        let line: Vec<char> = text.line(span.line).chars().collect();
-        let at = span.col as usize - 1;
-        let Some((label, end)) = ref_at(&line, at) else { continue };
+    for Site { span, path, line, at, end, label } in ref_sites(report) {
         // After a plural name, `, ` `and~` or `or~` carry the list on.
         let joined = found.last_mut().filter(|n| {
             let gap: String = line.get(n.end..at).unwrap_or_default().iter().collect();
@@ -411,3 +471,199 @@ fn prefer_cleveref(report: &mut Report) {
         report.add_fix(at, name, message, fix);
     }
 }
+
+/// Kinds a bare number never says enough for: those with a name, but not an
+/// equation (set in parentheses by convention), an item or a footnote.
+fn has_name(analysis: &Analysis, cleveref: bool, kind: &str) -> bool {
+    use crate::linter::shared::macro_text;
+    let quiet = matches!(kind, "equation" | "subequation" | "footnote" | "mpfootnote" | "page" | "line")
+        || kind.starts_with("enum");
+    !quiet
+        && (SECTIONING.contains(&kind)
+            || macro_text(analysis, &format!("{kind}name")).is_some()
+            || (cleveref && macro_text(analysis, &format!("cref@{kind}@name")).is_some()))
+}
+
+/// The document's own one-argument commands that refer to a label: by the
+/// meaning the run gave them last, `Some(kind)` for one that writes the name
+/// of a kind before `\ref{#1}`, `None` for one that hands it to `\cref`,
+/// `\Cref` or `\autoref`.
+fn own_ref_commands(analysis: &Analysis, cleveref: bool, kinds: &[&str]) -> Vec<(String, Option<String>)> {
+    use crate::engine::tex::{Catcode, Meaning, Tok, text_of};
+    let mut names: Vec<crate::engine::tex::Sym> =
+        analysis.facts.defs.iter().filter(|d| d.package.is_none()).map(|d| d.name).collect();
+    names.sort_unstable_by_key(|n| n.0);
+    names.dedup();
+    let mut out = Vec::new();
+    for sym in names {
+        let Meaning::Macro(m) = analysis.env.meaning(sym) else { continue };
+        let toks = &m.replacement_text;
+        if m.arity() != 1 {
+            continue;
+        }
+        let call = toks.windows(4).position(|w| {
+            matches!(w[1].tok, Tok::Chr(_, Catcode::Begin))
+                && matches!(w[2].tok, Tok::Param(1))
+                && matches!(w[3].tok, Tok::Chr(_, Catcode::End))
+                && matches!(w[0].tok, Tok::Cs(c) if matches!(analysis.interner.name(c), "ref" | "cref" | "Cref" | "autoref"))
+        });
+        let Some(k) = call else { continue };
+        let Tok::Cs(c) = toks[k].tok else { continue };
+        let kind = match analysis.interner.name(c) {
+            "ref" => {
+                let before = text_of(&toks[..k], &analysis.interner);
+                let word = before.trim_end_matches([' ', '~', '\u{a0}']).rsplit([' ', '~']).next().unwrap_or_default();
+                match kinds.iter().find(|c| names_counter(analysis, cleveref, c, word)) {
+                    Some(c) => Some(c.to_string()),
+                    None => continue,
+                }
+            }
+            _ => None,
+        };
+        out.push((analysis.interner.name(sym).to_string(), kind));
+    }
+    out
+}
+
+/// Whether the text before column `at` ends a sentence, or the line holds
+/// nothing before it and the line above ends one (or there is none).
+fn sentence_starts(lines: (&[char], Option<&str>), at: usize) -> bool {
+    let before: String = lines.0[..at].iter().collect();
+    let before = before.trim_end_matches([' ', '~']);
+    let last = match before.trim_start().is_empty() {
+        true => lines.1.map_or(Some('.'), |l| l.trim_end().chars().last()),
+        false => before.chars().last(),
+    };
+    last.is_none_or(|c| matches!(c, '.' | '!' | '?'))
+}
+
+fn bare_reference(report: &mut Report) {
+    use crate::linter::shared::{loaded, macro_text};
+    let analysis = report.analysis();
+    let edits = report.edits();
+    let counters = label_counters(analysis);
+    if counters.is_empty() {
+        return;
+    }
+    let (cleveref, hyperref) = (loaded(analysis, "cleveref"), loaded(analysis, "hyperref"));
+    let mut kinds: Vec<&str> = counters.values().map(String::as_str).chain(SECTIONING).collect();
+    kinds.sort_unstable();
+    kinds.dedup();
+    let own = own_ref_commands(analysis, cleveref, &kinds);
+    let mut last: Option<(Span, usize)> = None;
+    let mut found = Vec::new();
+    for site in ref_sites(report) {
+        let previous = last.replace((site.span, site.end));
+        let Some(kind) = counters.get(site.label.as_str()) else { continue };
+        if !has_name(analysis, cleveref, kind) {
+            continue;
+        }
+        let before: String = site.line[..site.at].iter().collect();
+        let before = before.trim_end_matches([' ', '~']);
+        if before.ends_with('(') || before.ends_with("\\S") || before.ends_with('§') {
+            continue;
+        }
+        // A name before it, right or wrong, is the other rules' business.
+        if name_before(&site.line, site.at).is_some_and(|(_, w)| kinds.iter().any(|c| names_counter(analysis, cleveref, c, &w))) {
+            continue;
+        }
+        // The next `\ref` of a list: `Sections~\ref{a} and~\ref{b}`, `\ref{a}--\ref{b}`.
+        if let Some((span, end)) = previous
+            && (span.file, span.line) == (site.span.file, site.span.line)
+        {
+            let gap: String = site.line[end..site.at].iter().filter(|c| !matches!(c, ' ' | '~' | ',')).collect();
+            if matches!(gap.as_str(), "" | "and" | "or" | "to" | "-" | "--") {
+                continue;
+            }
+        }
+        let above = (site.span.line > 1).then(|| edits.text(site.span.file)).flatten();
+        let above = above.as_ref().map(|(_, t)| t.line(site.span.line - 1).to_string());
+        let upper = sentence_starts((&site.line, above.as_deref()), site.at);
+        found.push((site, kind.clone(), upper));
+    }
+    for (site, kind, upper) in found {
+        let key = &site.label;
+        // What the document itself writes for this kind, as the run left it.
+        let own_kind = own.iter().find(|(_, k)| k.as_deref() == Some(kind.as_str()));
+        let own_any = own.iter().find(|(_, k)| k.is_none());
+        let name_command = macro_text(analysis, &format!("{kind}name")).map(|_| format!("\\{kind}name~\\ref{{{key}}}"));
+        let call = match (own_kind.or(own_any), cleveref, hyperref) {
+            (Some((name, _)), ..) => Some(format!("\\{name}{{{key}}}")),
+            (None, true, _) => Some(format!("{}{{{key}}}", if upper { r"\Cref" } else { r"\cref" })),
+            (None, false, true) => Some(format!("\\autoref{{{key}}}")),
+            _ => name_command.or_else(|| SECTIONING.contains(&kind.as_str()).then(|| format!("\\S~\\ref{{{key}}}"))),
+        };
+        let typed: String = site.line[site.at..site.end].iter().collect();
+        let message = format!("`{typed}` sets only the number of a {kind}, not what it numbers");
+        let Some(call) = call else {
+            report.add(site.span, "bare", message, Some(format!("write the name of the {kind} before it")));
+            continue;
+        };
+        let edit = Edit {
+            path: site.path,
+            start: Pos::new(site.span.line, site.at as u32 + 1),
+            end: Pos::new(site.span.line, site.end as u32 + 1),
+            replacement: call.clone(),
+        };
+        let fix = Fix::new(format!("write `{call}`"), Applicability::Unsafe, Some(vec![edit]));
+        report.add_fix(site.span, "bare", message, fix);
+    }
+}
+
+/// The name a kind is called by on the page: its `\<kind>name` text, else
+/// cleveref's, else the counter's own name, capitalized like `word`.
+fn kind_name(analysis: &Analysis, cleveref: bool, kind: &str, word: &str) -> String {
+    use crate::linter::shared::macro_text;
+    let name = macro_text(analysis, &format!("{kind}name"))
+        .or_else(|| cleveref.then(|| macro_text(analysis, &format!("Cref@{kind}@name"))).flatten())
+        .unwrap_or_else(|| kind.to_string());
+    let mut chars = name.chars();
+    let first = chars.next().map(|c| match word.chars().next().is_some_and(char::is_uppercase) {
+        true => c.to_uppercase().collect::<String>(),
+        false => c.to_lowercase().collect(),
+    });
+    first.unwrap_or_default() + chars.as_str()
+}
+
+fn reference_name_mismatch(report: &mut Report) {
+    use crate::linter::shared::{loaded, macro_text};
+    let analysis = report.analysis();
+    let counters = label_counters(analysis);
+    let cleveref = loaded(analysis, "cleveref");
+    let comparable: Vec<&str> = SECTIONING.iter().copied().chain(["figure", "table"]).collect();
+    let rank = |c: &str| SECTIONING.iter().position(|s| *s == c);
+    let appendix = macro_text(analysis, "appendixname");
+    let mut found = Vec::new();
+    for site in ref_sites(report) {
+        let Some(kind) = counters.get(site.label.as_str()).filter(|k| comparable.contains(&k.as_str())) else { continue };
+        let Some((start, word)) = name_before(&site.line, site.at) else { continue };
+        if names_counter(analysis, cleveref, kind, &word) {
+            continue;
+        }
+        // An appendix is a section or chapter under `\appendixname`.
+        if matches!(kind.as_str(), "section" | "chapter") && appendix.as_deref().is_some_and(|a| crate::linter::xref::names(a, &word)) {
+            continue;
+        }
+        let Some(said) = comparable.iter().copied().find(|c| names_counter(analysis, cleveref, c, &word)) else { continue };
+        // A deeper unit may go by the general word: a subsection is a section.
+        let general = matches!(said, "section" | "subsection") && rank(said) < rank(kind);
+        if general {
+            continue;
+        }
+        found.push((site, start, word, said, kind.clone()));
+    }
+    for (site, start, word, said, kind) in found {
+        let right = kind_name(analysis, cleveref, &kind, &word);
+        let message = format!("`{word}` names a {said}, but `{}` labels a {kind}", site.label);
+        let edit = Edit {
+            path: site.path,
+            start: Pos::new(site.span.line, start as u32 + 1),
+            end: Pos::new(site.span.line, (start + word.chars().count()) as u32 + 1),
+            replacement: right.clone(),
+        };
+        let fix = Fix::new(format!("write `{right}`"), Applicability::Unsafe, Some(vec![edit]));
+        let at = Span { col: start as u32 + 1, ..site.span };
+        report.add_fix(at, "mismatch", message, fix);
+    }
+}
+

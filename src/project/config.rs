@@ -2214,6 +2214,7 @@ pub struct Lints {
     pub build_cost: BuildCost,
     pub microtype_available: MicrotypeAvailable,
     pub ellipsis_dots: EllipsisDots,
+    pub sentence_capital: SentenceCapital,
     pub table_rules: TableRules,
     pub itemize_numbered: ItemizeNumbered,
     pub itemize_described: ItemizeDescribed,
@@ -2446,6 +2447,29 @@ pub struct MicrotypeAvailable {
 impl Default for MicrotypeAvailable {
     fn default() -> MicrotypeAvailable {
         MicrotypeAvailable { characters: 2500 }
+    }
+}
+
+/// `lints.sentence-capital:` in `satex.yaml`.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct SentenceCapital {
+    /// The `\languagename`s whose sentences start with a capital letter.
+    pub languages: Vec<String>,
+    /// Words a sentence may start with in lowercase (`iPhone`), and, ending
+    /// in a period, abbreviations whose period ends no sentence (`approx.`).
+    pub exceptions: Vec<String>,
+}
+
+impl Default for SentenceCapital {
+    fn default() -> SentenceCapital {
+        let languages = "english american british USenglish UKenglish canadian australian newzealand \
+                         german ngerman austrian naustrian swissgerman nswissgerman french spanish italian dutch portuguese";
+        let exceptions = "approx. resp. incl. evtl. bspw. inkl. zzgl. iPhone iPad iOS macOS pH eBay arXiv";
+        SentenceCapital {
+            languages: languages.split_whitespace().map(String::from).collect(),
+            exceptions: exceptions.split_whitespace().map(String::from).collect(),
+        }
     }
 }
 
