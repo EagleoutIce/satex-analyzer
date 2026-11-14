@@ -307,7 +307,8 @@ fn ref_sites(report: &Report) -> Vec<Site> {
 }
 
 /// LaTeX's sectioning units, outermost first (`\part` to `\subparagraph`).
-const SECTIONING: [&str; 7] = ["part", "chapter", "section", "subsection", "subsubsection", "paragraph", "subparagraph"];
+const SECTIONING: [&str; 7] =
+    ["part", "chapter", "section", "subsection", "subsubsection", "paragraph", "subparagraph"];
 
 /// The name tied or spaced directly before column `at`: letters with an
 /// optional period, and where it starts.
@@ -564,7 +565,9 @@ fn bare_reference(report: &mut Report) {
             continue;
         }
         // A name before it, right or wrong, is the other rules' business.
-        if name_before(&site.line, site.at).is_some_and(|(_, w)| kinds.iter().any(|c| names_counter(analysis, cleveref, c, &w))) {
+        if name_before(&site.line, site.at)
+            .is_some_and(|(_, w)| kinds.iter().any(|c| names_counter(analysis, cleveref, c, &w)))
+        {
             continue;
         }
         // The next `\ref` of a list: `Sections~\ref{a} and~\ref{b}`, `\ref{a}--\ref{b}`.
@@ -635,16 +638,22 @@ fn reference_name_mismatch(report: &mut Report) {
     let appendix = macro_text(analysis, "appendixname");
     let mut found = Vec::new();
     for site in ref_sites(report) {
-        let Some(kind) = counters.get(site.label.as_str()).filter(|k| comparable.contains(&k.as_str())) else { continue };
+        let Some(kind) = counters.get(site.label.as_str()).filter(|k| comparable.contains(&k.as_str())) else {
+            continue;
+        };
         let Some((start, word)) = name_before(&site.line, site.at) else { continue };
         if names_counter(analysis, cleveref, kind, &word) {
             continue;
         }
         // An appendix is a section or chapter under `\appendixname`.
-        if matches!(kind.as_str(), "section" | "chapter") && appendix.as_deref().is_some_and(|a| crate::linter::xref::names(a, &word)) {
+        if matches!(kind.as_str(), "section" | "chapter")
+            && appendix.as_deref().is_some_and(|a| crate::linter::xref::names(a, &word))
+        {
             continue;
         }
-        let Some(said) = comparable.iter().copied().find(|c| names_counter(analysis, cleveref, c, &word)) else { continue };
+        let Some(said) = comparable.iter().copied().find(|c| names_counter(analysis, cleveref, c, &word)) else {
+            continue;
+        };
         // A deeper unit may go by the general word: a subsection is a section.
         let general = matches!(said, "section" | "subsection") && rank(said) < rank(kind);
         if general {
@@ -666,4 +675,3 @@ fn reference_name_mismatch(report: &mut Report) {
         report.add_fix(at, "mismatch", message, fix);
     }
 }
-

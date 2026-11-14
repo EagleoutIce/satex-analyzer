@@ -15664,7 +15664,11 @@ fn join_pending(a: &Pending, b: &Pending, bound: usize) -> Pending {
     }
     if all.len() > bound.max(1) {
         let mut held: Vec<Whatsit> = Vec::new();
-        for w in all.iter().flat_map(|alt| alt.iter().cloned()).flat_map(|w| if let Whatsit::Lost(h) = w { h } else { vec![w] }) {
+        for w in all
+            .iter()
+            .flat_map(|alt| alt.iter().cloned())
+            .flat_map(|w| if let Whatsit::Lost(h) = w { h } else { vec![w] })
+        {
             if !matches!(w, Whatsit::Write { .. }) && !held.contains(&w) {
                 held.push(w);
             }

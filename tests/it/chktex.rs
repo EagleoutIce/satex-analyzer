@@ -1886,7 +1886,11 @@ fn a_bare_reference_gets_a_name_the_document_uses() {
     let cleveref = "\\documentclass{article}\n\\usepackage{hyperref}\n\\usepackage{cleveref}\n\\begin{document}\n\
                     \\section{A}\\label{sec:a}\nIn \\ref{sec:a} we start. \\ref{sec:a} ends.\n\\end{document}\n";
     let found = records("bare-cleveref", cleveref, "bare-reference");
-    assert_eq!(found.iter().flat_map(replacements).collect::<Vec<_>>(), [r"\cref{sec:a}", r"\Cref{sec:a}"], "{found:?}");
+    assert_eq!(
+        found.iter().flat_map(replacements).collect::<Vec<_>>(),
+        [r"\cref{sec:a}", r"\Cref{sec:a}"],
+        "{found:?}"
+    );
     let own = "\\documentclass{article}\n\\usepackage{hyperref}\n\\newcommand\\secref[1]{Sect.~\\ref{#1}}\n\
                \\renewcommand\\secref[1]{Section~\\ref{#1}}\n\\begin{document}\n\\section{A}\\label{sec:a}\n\
                In \\ref{sec:a} we start, \\secref{sec:a}.\n\\end{document}\n";
@@ -1923,7 +1927,10 @@ fn a_sentence_that_starts_in_lowercase_is_reported() {
     // The two rules split the periods: `approx.` and `etc.` ask for a word space, `here.` does not.
     let Some(doc) = on_disk("capital-spacing", &math_document(body), true) else { return };
     let spacing = findings(&doc.analysis, "sentence-spacing");
-    assert!(spacing.iter().any(|m| m.contains("approx.")) && !spacing.iter().any(|m| m.contains("here.")), "{spacing:?}");
+    assert!(
+        spacing.iter().any(|m| m.contains("approx.")) && !spacing.iter().any(|m| m.contains("here.")),
+        "{spacing:?}"
+    );
 }
 
 /// cleveref's `\cref` sets its name in lowercase, so one that starts a sentence wants `\Cref`.
