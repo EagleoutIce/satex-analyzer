@@ -656,17 +656,9 @@ fn merged(mut edits: Vec<Edit>) -> Result<Vec<Edit>, String> {
     Ok(out)
 }
 
-/// Whether the run defines `\name` (an environment's `\name` too).
-pub(super) fn defined(analysis: &Analysis, name: &str) -> bool {
-    analysis
-        .interner
-        .lookup(name)
-        .is_some_and(|s| !matches!(analysis.env.meaning(s), crate::engine::tex::Meaning::Undefined))
-}
-
 /// Whether the run defined `\name` anywhere, in a group too (tikzpicture's `\node`).
 fn met(analysis: &Analysis, name: &str) -> bool {
-    defined(analysis, name)
+    analysis.defined(name)
         || analysis.interner.lookup(name).is_some_and(|s| analysis.facts.defs.iter().any(|d| d.name == s))
 }
 
@@ -720,7 +712,7 @@ pub fn printed(analysis: &Analysis, doc: &Text, nodes: &[Node]) -> Result<(Vec<E
             };
             let new = n.range.is_none();
             // a new node the run lacks: the names it writes are its package's to define
-            let unknown = new && n.package.is_some() && !defined(analysis, &n.name);
+            let unknown = new && n.package.is_some() && !analysis.defined(&n.name);
             for name in names(&now).into_iter().filter(|m| !names(&was).contains(m) && !met(analysis, m)) {
                 match &n.package {
                     Some(p) if new && name == n.name => wanted.push(p.clone()),

@@ -430,7 +430,7 @@ pub(super) fn blank(cx: &Cx, env: &str, package: &str) -> Option<New> {
         let p = super::handlers::to_lsp(cx.doc, Pos::new(l, 1));
         Range { start: p, end: p }
     };
-    let loaded = cx.analysis.interner.lookup(env).is_some_and(|s| cx.analysis.env.is_defined(s));
+    let loaded = cx.analysis.defined(env);
     let preamble = if loaded { None } else { ensure_package(cx.analysis, cx.doc, package, "").ok().flatten() };
     let end = super::handlers::to_lsp(cx.doc, Pos::new(line, cx.doc.line(line).chars().count() as u32 + 1));
     Some(New { at: Range { start: point(line).start, end }, preamble })

@@ -448,7 +448,7 @@ pub fn edits(plan: &Plan, analysis: &Analysis, new_name: &str) -> Result<Vec<Edi
         if held.contains(renamed.as_str()) {
             continue;
         }
-        if analysis.interner.lookup(&renamed).is_some_and(|sym| analysis.env.is_defined(sym)) {
+        if analysis.defined(&renamed) {
             return Err(format!("`\\{renamed}` is already defined"));
         }
     }

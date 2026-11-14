@@ -533,6 +533,11 @@ impl Analysis {
         })
     }
 
+    /// Whether the run left `\name` defined.
+    pub fn defined(&self, name: &str) -> bool {
+        self.interner.lookup(name).is_some_and(|sym| self.env.is_defined(sym))
+    }
+
     /// The path of `file`, as the run read it.
     pub fn file_path(&self, file: FileId) -> Option<&Path> {
         self.files.get(usize::from(file)).map(|f| Path::new(f.path.as_str()))

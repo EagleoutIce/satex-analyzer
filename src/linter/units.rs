@@ -62,7 +62,7 @@ fn spaced(q: &Quantity) -> bool {
 /// siunitx 2 called `\qty` `\SI`.
 fn call(analysis: &Analysis, number: &str, unit: &str) -> String {
     let units = &analysis.settings.conventions.units;
-    let defined = |name: &str| analysis.interner.lookup(name).is_some_and(|sym| analysis.env.is_defined(sym));
+    let defined = |name: &str| analysis.defined(name);
     let name = match !defined(&units.quantity) && defined(&units.legacy) {
         true => &units.legacy,
         false => &units.quantity,
