@@ -6,6 +6,8 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 
 ## Unreleased
 
+## v0.2.4 (2026-11-15)
+
 ### Lints
 
 - `feat` **Four new lints for references and sentences.** `bare-reference` (S059) flags a `\ref` with no name before it. `reference-name-mismatch` (C054) flags a name that belongs to another kind than the label, such as "Figure" before a table. `doubled-punctuation` (S060) flags two punctuation marks in a row. `sentence-capital` (S061) flags a sentence that starts with a lowercase letter. [#44](https://github.com/EagleoutIce/satex-analyzer/pull/44)
