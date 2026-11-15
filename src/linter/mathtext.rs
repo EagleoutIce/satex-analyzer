@@ -173,9 +173,9 @@ Fix by writing the command.",
         severity: Severity::Warning,
         summary: "two punctuation marks in a row, where one belongs",
         explanation: "\
-`etc..` sets two periods where one does both jobs; `,,`, `;;`, `?.`, `!.`,
-`,.`, `;.` and `:.` are the same slip.  It counts a period a command set
-too.  Three periods (`ellipsis-dots`) and `e.g.,` are fine.
+`etc..` sets two periods where one does both jobs.  `,,`, `;;`, `?.`,
+`!.`, `,.`, `;.` and `:.` are the same slip.  It counts a period a command
+set too.  Three periods (`ellipsis-dots`) and `e.g.,` are fine.
 
 Fix by deleting the extra mark.",
         references: &[],

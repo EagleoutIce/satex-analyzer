@@ -1029,7 +1029,7 @@ See [chktex 39](https://www.nongnu.org/chktex/), [chktex 30](https://www.nongnu.
 
 **two punctuation marks in a row, where one belongs**
 
-`etc..` sets two periods where one does both jobs; `,,`, `;;`, `?.`, `!.`, `,.`, `;.` and `:.` are the same slip. It counts a period a command set too. Three periods (`ellipsis-dots`) and `e.g.,` are fine.
+`etc..` sets two periods where one does both jobs. `,,`, `;;`, `?.`, `!.`, `,.`, `;.` and `:.` are the same slip. It counts a period a command set too. Three periods (`ellipsis-dots`) and `e.g.,` are fine.
 
 Fix by deleting the extra mark.
 
@@ -1309,7 +1309,7 @@ See [chktex 4](https://www.nongnu.org/chktex/), [tex.web § 1113](https://github
 
 `see \ref{sec:x}` sets `see 2`: a number, not what it numbers.
 
-A finding needs a `\ref` to a label of a named kind (a sectioning unit, a figure, anything with a `\<counter>name` or cleveref name) with no word, `\S` or `§` before it. Equations in parentheses, items, footnotes and the next `\ref` of a list never count.
+A finding needs a `\ref` to a label of a named kind (a sectioning unit, a figure, anything with a `\<counter>name` or cleveref name) with no word, `\S` or section sign before it. Equations in parentheses, items, footnotes and the next `\ref` of a list never count.
 
 The fix writes what the document uses: its own one-argument reference command (as last defined), else `\cref` (`\Cref` opening a sentence), else `\autoref`, else `\<counter>name~\ref`, else `\S~\ref` for a section.
 

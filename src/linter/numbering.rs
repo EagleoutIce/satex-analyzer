@@ -49,7 +49,7 @@ Fix by writing `\\Cref{sec:x}` and loading cleveref.",
 
 A finding needs a `\\ref` to a label of a named kind (a sectioning unit, a
 figure, anything with a `\\<counter>name` or cleveref name) with no word,
-`\\S` or `§` before it.  Equations in parentheses, items, footnotes and the
+`\\S` or section sign before it.  Equations in parentheses, items, footnotes and the
 next `\\ref` of a list never count.
 
 The fix writes what the document uses: its own one-argument reference
