@@ -5506,7 +5506,7 @@ fn returning(sequence: &[Vec<(String, String, String)>]) -> Option<String> {
 /// Bug pinned: a finding flickering across a document's passes (gone, then back) in the publishes.
 #[test]
 fn a_multi_pass_document_never_drops_a_finding_it_publishes_again() {
-    let text = "\\documentclass{article}\n\\begin{document}\n\\tableofcontents\n\\section{One}\nSee \\ref{later} and \\ref{never}.\n\\section{Two}\\label{later}\n";
+    let text = "\\documentclass{article}\n\\begin{document}\n\\tableofcontents\n\\section{One}\nSee \\S~\\ref{later} and \\ref{never}.\n\\section{Two}\\label{later}\n";
     let end = "\\end{document}\n";
     let dir = crate::support::tmp_root().join(format!("satex-lsp-passes-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();

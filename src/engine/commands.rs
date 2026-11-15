@@ -1026,12 +1026,22 @@ impl Machine<'_> {
     }
 
     fn find_tfm(&mut self, name: &str) -> Option<Rc<crate::engine::tfm::Metrics>> {
-        let base = self.base().to_path_buf();
-        let roots = self.resolver_mut().distribution().roots.clone();
-        let path = crate::engine::tfm::locate(&base, &roots, name, "tfm")?;
+        // A package being cached looks again: its record must hold the lookup's probes.
+        let found = match self.scratch.tfm.get(name) {
+            Some(found) if !self.capturing_package() => found.clone(),
+            _ => {
+                let base = self.base().to_path_buf();
+                let roots = self.resolver_mut().distribution().roots.clone();
+                let found = crate::engine::tfm::locate(&base, &roots, name, "tfm")
+                    .map(|path| (path.display().to_string(), crate::engine::tfm::load(&path)));
+                self.scratch.tfm.insert(name.to_string(), found.clone());
+                found
+            }
+        };
+        let (path, metrics) = found?;
         // A file the run reads, as `satex query files` lists it.
-        self.register_file(path.display().to_string(), crate::engine::builtins::LoadKind::Font);
-        crate::engine::tfm::load(&path)
+        self.register_file(path, crate::engine::builtins::LoadKind::Font);
+        metrics
     }
 
     /// Whether the font is an OpenType or AAT font (XeTeX's native fonts),

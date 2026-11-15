@@ -2064,6 +2064,9 @@ body:not(.show-lenses) .cm-lens-line { display: none; }
 .cards .shot-pair .shot-win { min-height: 0; } .cards .shot-pair .shot-win img { height: auto; max-height: none; object-fit: contain; }
 .shot-tag { display: inline-block; margin: 0 0 var(--s8) var(--s4); font: 600 .72rem system-ui, sans-serif; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
 .shot figcaption h3 { margin: 0 0 var(--s8); font-size: 1.125rem; line-height: 1.3; letter-spacing: -.01em; }
+/* a title is its own link (`#shot-table`): plain, its # shows on hover */
+.shot-anchor { color: inherit; text-decoration: none; }
+.shot-anchor:hover::after, .shot-anchor:focus-visible::after { content: " #"; color: var(--muted); font-weight: 400; }
 .shot-big figcaption h3 { font-size: 1.5rem; line-height: 1.25; margin-bottom: var(--s12); }
 .shot figcaption p { margin: 0 0 var(--s12); color: var(--muted); text-wrap: pretty; }
 .shot-try { font-weight: 600; font-size: .92rem; }

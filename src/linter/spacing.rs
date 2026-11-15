@@ -89,6 +89,26 @@ Fix by writing `etc.\\ and`, or `the ABC\\@. Next`.",
         run: sentence_spacing,
     },
     Rule {
+        code: "sentence-capital",
+        category: Category::Style,
+        severity: Severity::Warning,
+        summary: "a sentence starts with a lowercase letter",
+        explanation: "\
+In the languages of `lints.sentence-capital.languages` (by `\\languagename`), a
+sentence starts with a capital.  A finding needs `.`, `!` or `?`, a space,
+then a lowercase word.  No sentence ends after a number, an ellipsis or an
+abbreviation: three letters or less (`etc.`), a period inside (`e.g.`), or
+listed in `conventions.ties.abbreviations` or `lints.sentence-capital.exceptions`
+(those go to `sentence-spacing`).  A listed word (`iPhone`) or one with a
+capital inside may start a sentence.
+
+Fix by writing the capital, or `\\Cref` for a `\\cref`.",
+        references: &[],
+        fixes: &[Applicability::Unsafe],
+        engines: &[],
+        run: sentence_capital,
+    },
+    Rule {
         code: "space-before-command",
         category: Category::Style,
         severity: Severity::Warning,
@@ -452,7 +472,10 @@ fn sentence_spacing(report: &mut Report) {
         // A lowercase word is evidence of a sentence running on only where it follows the space
         // in the same line and group: after a line break or a brace (`\textcolor{…}{henlo}`)
         // the source no longer says the two belong to one sentence.
-        let runs_on = (before.is_lowercase() || before.is_numeric()) && after.is_lowercase() && view.joined(i + 2);
+        let runs_on = (before.is_lowercase() || before.is_numeric())
+            && after.is_lowercase()
+            && view.joined(i + 2)
+            && !ends_sentence(report, i);
         if capitals && after.is_uppercase() && !listed {
             let message = format!("the period after `{word}` set a word space, where a sentence ends");
             findings.push(rewrite_space(i..i + 1, "intersentence", message, r"\@."));
@@ -466,6 +489,77 @@ fn sentence_spacing(report: &mut Report) {
     }
     for finding in findings {
         report.rewrite(finding);
+    }
+}
+
+/// Whether the period at `index` ends a sentence although a lowercase word
+/// follows, a missing capital (`sentence-capital`) and no abbreviation: in a
+/// language that capitalizes, after a word of four letters or more that
+/// holds no period and that no list names.
+fn ends_sentence(report: &Report, index: usize) -> bool {
+    let (analysis, view) = (report.analysis, report.text());
+    let spelled = abbreviation(view, index);
+    let listed = |list: &[String]| list.contains(&spelled);
+    capitalizes(analysis)
+        && view.char_at(index) == Some('.')
+        && spelled.chars().filter(|c| c.is_alphabetic()).count() > 3
+        && !spelled[..spelled.len() - 1].contains('.')
+        && !spelled.chars().any(|c| c.is_numeric())
+        && !listed(&analysis.settings.conventions.ties.abbreviations)
+        && !listed(&analysis.settings.lints.sentence_capital.exceptions)
+}
+
+/// Whether the document's language (`\languagename` at the end of the run) starts sentences with a capital.
+fn capitalizes(analysis: &Analysis) -> bool {
+    let languages = &analysis.settings.lints.sentence_capital.languages;
+    crate::linter::shared::macro_text(analysis, "languagename")
+        .is_some_and(|l| languages.iter().any(|c| c.eq_ignore_ascii_case(l.trim())))
+}
+
+fn sentence_capital(report: &mut Report) {
+    let view = report.text();
+    let edits = report.edits();
+    let exceptions = &report.analysis.settings.lints.sentence_capital.exceptions;
+    if !capitalizes(report.analysis) {
+        return;
+    }
+    let mut findings = Vec::new();
+    for (byte, mark) in view.chars().match_indices(['.', '!', '?']) {
+        let i = view.at(byte);
+        let Some(next) = view.char_at(i + 2).filter(|c| c.is_lowercase()) else { continue };
+        if !view.is_prose(i) || !plain_space(report, i + 1) || !view.beside(i + 1) || !view.beside(i + 2) {
+            continue;
+        }
+        if mark == "." && (view.char_at(i.wrapping_sub(1)) == Some('.') || !ends_sentence(report, i)) {
+            continue;
+        }
+        let mut end = i + 2;
+        while view.char_at(end).is_some_and(char::is_alphanumeric) {
+            end += 1;
+        }
+        let word = view.slice(i + 2..end);
+        if exceptions.iter().any(|e| e == word) || word.chars().skip(1).any(char::is_uppercase) {
+            continue;
+        }
+        findings.push((i + 2, next, word.to_string()));
+    }
+    for (at, next, word) in findings {
+        let message = format!("the sentence starts with lowercase `{word}`");
+        if view.is_ours(at) {
+            let capital: String = next.to_uppercase().collect();
+            report.rewrite(Rewrite::new(at..at + 1, "lowercase", message, capital));
+            continue;
+        }
+        // A library set the word: a `\cref` typed after the space sets its name in lowercase.
+        let Some(space) = view.span(at - 1) else { continue };
+        let Some((path, text)) = edits.text(space.file) else { continue };
+        let typed: String = text.line(space.line).chars().skip(space.col as usize).take(5).collect();
+        if typed == r"\cref" {
+            let c = Pos::new(space.line, space.col + 2);
+            let edit = Edit { path, start: c, end: Pos::new(space.line, space.col + 3), replacement: "C".into() };
+            let fix = Fix::new("write `\\Cref`", Applicability::Unsafe, Some(vec![edit]));
+            report.add_fix(Span { col: space.col + 1, ..space }, "lowercase", message, fix);
+        }
     }
 }
 

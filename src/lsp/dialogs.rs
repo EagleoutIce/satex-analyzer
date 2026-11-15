@@ -395,7 +395,7 @@ fn columns(analysis: &Analysis, t: &tabular::Table) -> Option<Package> {
     let tested = |c: char| {
         [format!("#1{c}"), format!("\\@nextchar {c}")].iter().any(|t| pach.as_ref().is_some_and(|p| p.contains(t)))
     };
-    let lacks = |c: char| !tested(c) && !snapshot::defined(analysis, &format!("NC@find@{c}"));
+    let lacks = |c: char| !tested(c) && !analysis.defined(&format!("NC@find@{c}"));
     let wants = |c: &&tabular::Col| {
         c.align.chars().next().is_some_and(lacks)
             || (!c.pre.is_empty() && lacks('>'))

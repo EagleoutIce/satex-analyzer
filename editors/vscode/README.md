@@ -38,12 +38,12 @@ The platform-specific packages bundle the matching `satex` binary. The universal
 
 ## When the server does not start
 
-Every start problem shows a message with buttons that fix it; the output "satex" logs each step and what the server says.
+Every start problem shows a message with buttons that fix it. The output "satex" logs each step and what the server says.
 
 - **No satex binary runs here.** The extension tries `satex.path`, the bundled binary, then `satex` on the PATH, and skips one that does not run. On a musl system (Alpine) or with an older C library than the release needs, build it there with `cargo install satex-analyzer` and set `satex.path`.
 - **No hard memory cap.** In a container or WSL without a systemd user bus the server is capped with `ulimit -d` instead of a scope. Where neither works, its own budget `satex.server.maxMemory` still ends an analysis that grows past it.
-- **The server keeps stopping.** It is started again three times with growing pauses, then stays off with a message; `satex: Restart Server` starts it again.
-- **No TeX distribution.** satex reads the packages of TeX Live, MiKTeX or MacTeX; install one on the machine (or container) the extension runs on.
+- **The server keeps stopping.** It is started again three times with growing pauses, then stays off with a message. `satex: Restart Server` starts it again.
+- **No TeX distribution.** satex reads the packages of TeX Live, MiKTeX or MacTeX. Install one on the machine (or container) the extension runs on.
 
 ## Try it locally
 

@@ -128,10 +128,6 @@ Fix by naming the type after `\\usepackage{cleveref}`:
     },
 ];
 
-fn defined(analysis: &Analysis, name: &str) -> bool {
-    analysis.interner.lookup(name).is_some_and(|sym| analysis.env.is_defined(sym))
-}
-
 /// What `\ref{key}` prints: the first group of `\r@key`, read from the
 /// `.aux` file the run wrote.
 fn label_text(analysis: &Analysis, key: &str) -> Option<String> {
@@ -269,7 +265,7 @@ fn refer_to_item(
 }
 
 /// Whether `word` is `name`, or an abbreviation of it with a period.
-fn names(name: &str, word: &str) -> bool {
+pub(crate) fn names(name: &str, word: &str) -> bool {
     word == name || word.strip_suffix('.').is_some_and(|stem| stem.len() >= 2 && name.starts_with(stem))
 }
 
@@ -475,7 +471,7 @@ fn hand_written_author(report: &mut Report) {
     let analysis = report.analysis();
     let view = report.text();
     let edits = report.edits();
-    let command = ["textcite", "citet", "citeauthor"].into_iter().find(|c| defined(analysis, c));
+    let command = ["textcite", "citet", "citeauthor"].into_iter().find(|c| analysis.defined(c));
     let Some(command) = command else { return };
     let mut authors: std::collections::BTreeMap<String, String> = Default::default();
     let mut read = HashSet::default();

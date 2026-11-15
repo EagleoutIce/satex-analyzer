@@ -135,7 +135,7 @@ conventions:  # how TeX is usually written, where the text alone does not say
       #! affects: output
       #! example: `before+: ['\autocite']`
       #! example: Section `\autocite{x}` then asks for `Section~\autocite{x}`
-    naming: ['\cref', '\Cref', '\crefrange', '\Crefrange', '\cpageref', '\Cpageref', '\autoref', '\vref', '\Vref', '\vrefrange', '\nameref', '\Nameref']  # references that set the name in front of the number themselves, so no tie goes before them
+    naming: ['\cref', '\Cref', '\crefrange', '\Crefrange', '\cpageref', '\Cpageref', '\autoref', '\vref', '\Vref', '\vrefrange', '\nameref', '\Nameref', '\citeauthor', '\Citeauthor', '\textcite', '\Textcite', '\citetitle', '\Citetitle', '\citeyear', '\citedate', '\citet', '\Citet', '\citealt', '\Citealt', '\citealp', '\Citealp']  # references that set the name in front of the number themselves, so no tie goes before them
       #! affects: output
       #! example: `naming+: ['\zcref']`
     unspaced: ['\index']  # commands no space may stand in front of, beside \label
@@ -1209,7 +1209,7 @@ A rule's own settings live under `lints.⟨code⟩`.
 
 ## The clock
 
-`clock` sets `\year`, `\month`, `\day`, `\time` and `\pdfcreationdate` ([tex.web § 241](https://github.com/TeX-Live/texlive-source/blob/2d46cbc90b9920fde91712deea77da0836891873/texk/web2c/tex.web#L5240)).
+`clock` sets `\year`, `\month`, `\day`, `\time` and `\pdfcreationdate` ([tex.web § 241](https://github.com/TeX-Live/texlive-source/blob/dce038dd1bd98fac739254da4a2066c8347cdf6c/texk/web2c/tex.web#L5240)).
 
 | Value | Meaning |
 | --- | --- |

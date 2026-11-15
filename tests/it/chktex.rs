@@ -1850,3 +1850,97 @@ fn a_length_after_an_undefined_command_is_no_hand_set_quantity() {
     let found = findings(&doc.analysis, "hand-set-quantity");
     assert_eq!(found.len(), 1, "only the sentence: {found:?}");
 }
+
+fn records(name: &str, source: &str, code: &str) -> Vec<satex::queries::query::Record> {
+    let Some(doc) = on_disk(name, source, true) else { return Vec::new() };
+    satex::linter::lint(&doc.analysis).into_iter().filter(|r| r["code"] == code).collect()
+}
+
+/// `etc..` and its kind, set by a command or typed; an ellipsis and `e.g.,` are fine.
+#[test]
+fn doubled_punctuation_is_reported_and_the_extra_mark_deleted() {
+    if !crate::support::installed() {
+        return;
+    }
+    let body = "\\newcommand\\etc{etc.}\nApples, pears etc.. And \\etc. Really?. One,, two;. Wait... e.g., so.";
+    let found = records("doubled", &math_document(body), "doubled-punctuation");
+    let messages: Vec<&str> = found.iter().filter_map(|r| r["message"].as_str()).collect();
+    assert_eq!(messages.len(), 5, "{messages:?}");
+    // The typed period after `\etc` goes, and the comma before `.` in `;.` is the slip.
+    let fixes: Vec<String> = found.iter().flat_map(replacements).collect();
+    assert!(fixes.iter().all(String::is_empty), "{found:?}");
+}
+
+/// A bare `\ref` to a section: `\S` without any reference package, `\cref`
+/// with cleveref (`\Cref` opening a sentence), and the document's own command first.
+#[test]
+fn a_bare_reference_gets_a_name_the_document_uses() {
+    if !crate::support::installed() {
+        return;
+    }
+    let plain = "\\documentclass{article}\n\\usepackage{hyperref}\n\\begin{document}\n\\section{A}\\label{sec:a}\n\
+                 \\begin{figure}\\caption{c}\\label{fig:f}\\end{figure}\n\
+                 see \\ref{sec:a}, Section~\\ref{sec:a}, \\S~\\ref{sec:a}, (\\ref{sec:a}).\n\\end{document}\n";
+    let found = records("bare-hyperref", plain, "bare-reference");
+    assert_eq!(found.iter().flat_map(replacements).collect::<Vec<_>>(), [r"\autoref{sec:a}"], "{found:?}");
+    let cleveref = "\\documentclass{article}\n\\usepackage{hyperref}\n\\usepackage{cleveref}\n\\begin{document}\n\
+                    \\section{A}\\label{sec:a}\nIn \\ref{sec:a} we start. \\ref{sec:a} ends.\n\\end{document}\n";
+    let found = records("bare-cleveref", cleveref, "bare-reference");
+    assert_eq!(
+        found.iter().flat_map(replacements).collect::<Vec<_>>(),
+        [r"\cref{sec:a}", r"\Cref{sec:a}"],
+        "{found:?}"
+    );
+    let own = "\\documentclass{article}\n\\usepackage{hyperref}\n\\newcommand\\secref[1]{Sect.~\\ref{#1}}\n\
+               \\renewcommand\\secref[1]{Section~\\ref{#1}}\n\\begin{document}\n\\section{A}\\label{sec:a}\n\
+               In \\ref{sec:a} we start, \\secref{sec:a}.\n\\end{document}\n";
+    let found = records("bare-own", own, "bare-reference");
+    assert_eq!(found.iter().flat_map(replacements).collect::<Vec<_>>(), [r"\secref{sec:a}"], "{found:?}");
+}
+
+/// A section called a subsection or a chapter, a table called a figure; a
+/// subsection called a section is fine.
+#[test]
+fn a_reference_named_for_another_kind_is_reported() {
+    if !crate::support::installed() {
+        return;
+    }
+    let source = "\\documentclass{article}\n\\usepackage{hyperref}\n\\begin{document}\n\\section{A}\\label{sec:a}\n\
+                  \\subsection{B}\\label{sec:b}\n\\begin{table}\\caption{t}\\label{tab:t}\\end{table}\n\
+                  Subsection~\\ref{sec:a}, Chapter~\\ref{sec:a}, Figure~\\ref{tab:t}, Section~\\ref{sec:b}, Sec.~\\ref{sec:a}.\n\
+                  \\end{document}\n";
+    let found = records("mismatch", source, "reference-name-mismatch");
+    assert_eq!(found.iter().flat_map(replacements).collect::<Vec<_>>(), ["Section", "Section", "Table"], "{found:?}");
+}
+
+/// A lowercase word after a sentence's end; an abbreviation (`etc.`, a listed
+/// `approx.`), an ellipsis and an exception word (`iPhone`) are no sentence start.
+#[test]
+fn a_sentence_that_starts_in_lowercase_is_reported() {
+    if !crate::support::installed() {
+        return;
+    }
+    let body = "We stop here. then we go. Words like iPhone. iPhone works. Ask approx. the same. \
+                It runs! next one. Wait... and so etc. and so.";
+    let found = records("capital", &math_document(body), "sentence-capital");
+    assert_eq!(found.iter().flat_map(replacements).collect::<Vec<_>>(), ["T", "N"], "{found:?}");
+    // The two rules split the periods: `approx.` and `etc.` ask for a word space, `here.` does not.
+    let Some(doc) = on_disk("capital-spacing", &math_document(body), true) else { return };
+    let spacing = findings(&doc.analysis, "sentence-spacing");
+    assert!(
+        spacing.iter().any(|m| m.contains("approx.")) && !spacing.iter().any(|m| m.contains("here.")),
+        "{spacing:?}"
+    );
+}
+
+/// cleveref's `\cref` sets its name in lowercase, so one that starts a sentence wants `\Cref`.
+#[test]
+fn a_cref_that_starts_a_sentence_wants_cref_capitalized() {
+    if !crate::support::installed() {
+        return;
+    }
+    let source = "\\documentclass{article}\n\\usepackage{hyperref}\n\\usepackage{cleveref}\n\\begin{document}\n\
+                  \\section{A}\\label{sec:a}\nWe are done here. \\cref{sec:a} shows it.\n\\end{document}\n";
+    let found = records("capital-cref", source, "sentence-capital");
+    assert_eq!(found.iter().flat_map(replacements).collect::<Vec<_>>(), ["C"], "{found:?}");
+}

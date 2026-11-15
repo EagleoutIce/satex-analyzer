@@ -79,7 +79,7 @@ impl TypePlugin for Frame {
 }
 
 fn defined(a: &Analysis) -> bool {
-    a.interner.lookup(COMMAND).is_some_and(|s| a.env.is_defined(s))
+    a.defined(COMMAND)
 }
 
 struct Setup {

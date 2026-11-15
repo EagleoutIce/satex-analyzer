@@ -533,6 +533,11 @@ impl Analysis {
         })
     }
 
+    /// Whether the run left `\name` defined.
+    pub fn defined(&self, name: &str) -> bool {
+        self.interner.lookup(name).is_some_and(|sym| self.env.is_defined(sym))
+    }
+
     /// The path of `file`, as the run read it.
     pub fn file_path(&self, file: FileId) -> Option<&Path> {
         self.files.get(usize::from(file)).map(|f| Path::new(f.path.as_str()))
@@ -1335,8 +1340,19 @@ pub(crate) enum Whatsit {
 }
 
 /// The whatsits waiting for the next shipout, one list per alternative the
-/// joined paths left (none: nothing waits).
-type Pending = Rc<Vec<Vec<Whatsit>>>;
+/// joined paths left (none: nothing waits). A list is persistent: a `\write`
+/// appends without copying what saved states share.
+type Pending = Rc<Vec<rpds::Vector<Whatsit>>>;
+
+/// `pending` as plain lists, as package caches store and hash them.
+pub(crate) fn plain_pending(pending: &Pending) -> Vec<Vec<Whatsit>> {
+    pending.iter().map(|alt| alt.iter().cloned().collect()).collect()
+}
+
+/// Plain lists as [`Pending`].
+pub(crate) fn pending_of(lists: &[Vec<Whatsit>]) -> Pending {
+    Rc::new(lists.iter().map(|alt| alt.iter().cloned().collect()).collect())
+}
 
 /// The stream a number satex could not pin down names.  `i64::MIN` is past
 /// what `scan_int` can give (tex.web § 445), so no source reaches it.
@@ -1453,8 +1469,14 @@ type SiteRuns = Vec<(u64, Option<Rc<MacroDef>>)>;
 
 /// Per-load state every cacheable load forgets at its end, read or
 /// replayed alike ([`Machine::end_cacheable_load`]).
+/// A TFM font's path, and its metrics when they parse.
+pub(crate) type FoundFont = (String, Option<Rc<crate::engine::tfm::Metrics>>);
+
 #[derive(Clone, Default)]
 pub(crate) struct Scratch {
+    /// Each TFM font found this run, by name, with its path: a font is
+    /// looked up per character set, and each lookup asks the file system.
+    pub(crate) tfm: HashMap<String, Option<FoundFont>>,
     /// A widened conditional's code may leave text past the value being scanned.
     pub(crate) scan_left: bool,
     /// The call whose arguments are being read, and the typed rests each
@@ -4351,9 +4373,9 @@ will look undefined",
     pub(crate) fn defer(&mut self, what: Whatsit) {
         let pending = Rc::make_mut(&mut self.pending);
         if pending.is_empty() {
-            pending.push(Vec::new());
+            pending.push(rpds::Vector::new());
         }
-        pending.iter_mut().for_each(|alt| alt.push(what.clone()));
+        pending.iter_mut().for_each(|alt| alt.push_back_mut(what.clone()));
     }
 
     /// tex.web § 1374: a shipout runs the whatsits deferred to it, in order,
@@ -6676,9 +6698,20 @@ will look undefined",
         let same = |a: &MacroDef, b: &MacroDef| {
             a.parameter_text == b.parameter_text && explore::same_text(&a.replacement_text, &b.replacement_text)
         };
+        // Many paths hold few distinct texts: compare in full only texts whose tokens hash alike.
+        let key = |d: &MacroDef| {
+            use std::hash::{BuildHasher, Hash, Hasher};
+            let mut h = crate::engine::tex::NameHash.build_hasher();
+            d.parameter_text.items.len().hash(&mut h);
+            d.replacement_text.iter().for_each(|t| t.tok.hash(&mut h));
+            h.finish()
+        };
         let mut defs: Vec<Rc<MacroDef>> = Vec::new();
+        let mut seen: crate::fixed::LookupMap<u64, Vec<usize>> = Default::default();
         for d in texts.iter().flatten() {
-            if !defs.iter().any(|x| same(x, d)) {
+            let alike = seen.entry(key(d)).or_default();
+            if !alike.iter().any(|&i| Rc::ptr_eq(&defs[i], d) || same(&defs[i], d)) {
+                alike.push(defs.len());
                 defs.push(d.clone());
             }
         }
@@ -13234,6 +13267,11 @@ will look undefined",
         self.out.files.iter().position(|f| Path::new(&f.path) == Path::new(path))
     }
 
+    /// Whether a package's load is being recorded for its cache.
+    pub(crate) fn capturing_package(&self) -> bool {
+        self.package_capture.is_some()
+    }
+
     pub fn register_file(&mut self, path: String, kind: LoadKind) -> FileId {
         // One spelling per file, however its path was joined (Windows takes `/`,
         // and `dir//file` is `dir/file`): cold and replayed runs name it alike.
@@ -15616,9 +15654,9 @@ fn join_pending(a: &Pending, b: &Pending, bound: usize) -> Pending {
     if a == b {
         return a.clone();
     }
-    let none = [Vec::new()];
+    let none = [rpds::Vector::new()];
     let alts = |p: &Pending| if p.is_empty() { none.to_vec() } else { p.to_vec() };
-    let mut all: Vec<Vec<Whatsit>> = Vec::new();
+    let mut all: Vec<rpds::Vector<Whatsit>> = Vec::new();
     for alt in alts(a).into_iter().chain(alts(b)) {
         if !all.contains(&alt) {
             all.push(alt);
@@ -15626,12 +15664,16 @@ fn join_pending(a: &Pending, b: &Pending, bound: usize) -> Pending {
     }
     if all.len() > bound.max(1) {
         let mut held: Vec<Whatsit> = Vec::new();
-        for w in all.into_iter().flatten().flat_map(|w| if let Whatsit::Lost(h) = w { h } else { vec![w] }) {
+        for w in all
+            .iter()
+            .flat_map(|alt| alt.iter().cloned())
+            .flat_map(|w| if let Whatsit::Lost(h) = w { h } else { vec![w] })
+        {
             if !matches!(w, Whatsit::Write { .. }) && !held.contains(&w) {
                 held.push(w);
             }
         }
-        all = vec![vec![Whatsit::Lost(held)]];
+        all = vec![rpds::Vector::new().push_back(Whatsit::Lost(held))];
     }
     Rc::new(all)
 }

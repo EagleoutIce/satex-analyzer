@@ -244,10 +244,17 @@ jobs:
           shared-key: quick-linux
           save-if: false
           cache-on-failure: true
+      # A failure here is drift in upstream packages, not a broken PR: it
+      # shows as a warning, never as a red check.
       - name: Test
+        id: test
+        continue-on-error: true
         env:
           SATEX_REQUIRE_TEX: '1'
         run: "bash scripts/ci-test.sh quick latex:: documents:: termination::"
+      - name: Report drift
+        if: steps.test.outcome == 'failure'
+        run: echo "::warning title=Newest TeX Live::tests fail on texlive/texlive:latest, see the Test step's log"
 
   quick-other:
     name: Test ${{ matrix.os }}

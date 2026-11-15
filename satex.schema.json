@@ -3327,6 +3327,60 @@
           },
           "type": "object"
         },
+        "sentence-capital": {
+          "properties": {
+            "exceptions": {
+              "default": [
+                "approx.",
+                "resp.",
+                "incl.",
+                "evtl.",
+                "bspw.",
+                "inkl.",
+                "zzgl.",
+                "iPhone",
+                "iPad",
+                "iOS",
+                "macOS",
+                "pH",
+                "eBay",
+                "arXiv"
+              ],
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "languages": {
+              "default": [
+                "english",
+                "american",
+                "british",
+                "USenglish",
+                "UKenglish",
+                "canadian",
+                "australian",
+                "newzealand",
+                "german",
+                "ngerman",
+                "austrian",
+                "naustrian",
+                "swissgerman",
+                "nswissgerman",
+                "french",
+                "spanish",
+                "italian",
+                "dutch",
+                "portuguese"
+              ],
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            }
+          },
+          "type": "object"
+        },
         "style-prompt": {
           "description": "an editor asks whether a rule the project breaks often is its style",
           "properties": {

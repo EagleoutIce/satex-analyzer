@@ -316,10 +316,127 @@ pub mod fixed {
         }
     }
 
+    /// Per slot, the assignment its binding came from ([`crate::engine::env::Env`]),
+    /// with an upper bound of each chunk's newest stamp: what was written after
+    /// a mark is found without visiting every slot. Stored as the plain stamps.
+    #[derive(Clone, Default, serde::Serialize, serde::Deserialize)]
+    #[serde(from = "Chunked<u64>", into = "Chunked<u64>")]
+    pub struct Stamps {
+        all: Chunked<u64>,
+        /// Per chunk, at least its largest stamp (a restore may lower a stamp, never this).
+        newest: Vec<u64>,
+    }
+
+    impl From<Chunked<u64>> for Stamps {
+        fn from(all: Chunked<u64>) -> Self {
+            let newest = all.0.iter().map(|c| c.iter().copied().max().unwrap_or(0)).collect();
+            Stamps { all, newest }
+        }
+    }
+
+    impl From<Stamps> for Chunked<u64> {
+        fn from(s: Stamps) -> Self {
+            s.all
+        }
+    }
+
+    impl Stamps {
+        pub fn filled(n: usize) -> Self {
+            Chunked::filled(n, 0).into()
+        }
+
+        pub fn len(&self) -> usize {
+            self.all.len()
+        }
+
+        pub fn is_empty(&self) -> bool {
+            self.all.is_empty()
+        }
+
+        pub fn get(&self, i: usize) -> Option<&u64> {
+            self.all.get(i)
+        }
+
+        pub fn resize(&mut self, n: usize) {
+            self.all.resize(n, 0);
+            self.newest.resize(self.all.0.len(), 0);
+        }
+
+        /// Sets slot `i` to `stamp` and returns the old one.
+        pub fn set(&mut self, i: usize, stamp: u64) -> u64 {
+            let newest = &mut self.newest[i / CHUNK];
+            *newest = (*newest).max(stamp);
+            std::mem::replace(&mut self.all[i], stamp)
+        }
+
+        /// The slots stamped after `mark`, ascending.
+        pub fn after(&self, mark: u64) -> impl Iterator<Item = usize> + '_ {
+            self.all.0.iter().zip(&self.newest).enumerate().filter(move |&(_, (_, &n))| n > mark).flat_map(
+                move |(c, (chunk, _))| {
+                    chunk.iter().enumerate().filter(move |&(_, &at)| at > mark).map(move |(i, _)| c * CHUNK + i)
+                },
+            )
+        }
+    }
+
+    impl std::ops::Index<usize> for Stamps {
+        type Output = u64;
+        fn index(&self, i: usize) -> &u64 {
+            &self.all[i]
+        }
+    }
+
     impl<T> std::ops::Deref for Mutex<T> {
         type Target = std::sync::Mutex<T>;
         fn deref(&self) -> &Self::Target {
             &self.0
+        }
+    }
+}
+
+#[cfg(test)]
+mod stamps_tests {
+    use crate::fixed::{Chunked, Stamps};
+
+    /// `after` skips chunks by their newest stamp: it must find exactly what a
+    /// scan of every slot finds, through restores to older stamps, growth and a
+    /// cache round trip (which stores only the stamps).
+    #[test]
+    fn after_finds_what_a_full_scan_finds() {
+        let mut stamps = Stamps::filled(3000);
+        let mut state = 0x9e37_79b9_7f4a_7c15u64;
+        let mut next = move || {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            state
+        };
+        let mut clock = 0;
+        for round in 0..4000 {
+            if round == 2000 {
+                stamps.resize(5000);
+            }
+            let i = (next() % stamps.len() as u64) as usize;
+            if next() % 4 == 0 {
+                // a group end puts back an older stamp
+                let old = stamps[i];
+                stamps.set(i, old / 2);
+            } else {
+                clock += 1;
+                stamps.set(i, clock);
+            }
+            if round % 97 == 0 {
+                let back: Stamps = postcard::from_bytes(&postcard::to_stdvec(&stamps).unwrap()).unwrap();
+                for s in [&stamps, &back] {
+                    for mark in [0, clock / 3, clock.saturating_sub(5), clock] {
+                        let scan: Vec<usize> = (0..s.len()).filter(|&i| s[i] > mark).collect();
+                        assert_eq!(s.after(mark).collect::<Vec<_>>(), scan, "mark {mark}");
+                    }
+                }
+                // stored as the plain stamps: caches written before read the same
+                let plain: Chunked<u64> = stamps.clone().into();
+                assert_eq!(postcard::to_stdvec(&plain).unwrap(), postcard::to_stdvec(&stamps).unwrap());
+            }
         }
     }
 }

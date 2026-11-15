@@ -126,3 +126,7 @@ A003 unread-document
 S056 itemize-numbered
 S057 itemize-described
 S058 package-successor
+S059 bare-reference
+S060 doubled-punctuation
+C054 reference-name-mismatch
+S061 sentence-capital

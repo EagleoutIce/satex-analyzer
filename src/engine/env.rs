@@ -213,7 +213,7 @@ pub struct Env {
     /// Per slot, [`Env::assignments`] at the write its binding came from.
     /// A group end puts back the old one, so a name whose write a group
     /// end undid is not widened.
-    stamp: crate::fixed::Chunked<u64>,
+    stamp: crate::fixed::Stamps,
     /// What the join the running path came from kept of its arms
     /// ([`Corr`]), less the names written since.
     corr: Option<Rc<Corr>>,
@@ -402,13 +402,36 @@ impl PathEnv {
     }
 }
 
+/// `names` sorted, each once. A loop writes the same few names over and
+/// over: a bitset drops the repeats before the sort.
+fn distinct_sorted(names: &[u32]) -> Vec<u32> {
+    let mut out = if names.len() <= 64 {
+        names.to_vec()
+    } else {
+        let mut seen = vec![0u64; names.iter().max().map_or(0, |&m| m as usize / 64 + 1)];
+        names
+            .iter()
+            .copied()
+            .filter(|&n| {
+                let (word, bit) = (n as usize / 64, 1u64 << (n % 64));
+                let new = seen[word] & bit == 0;
+                seen[word] |= bit;
+                new
+            })
+            .collect()
+    };
+    out.sort_unstable();
+    out.dedup();
+    out
+}
+
 impl Env {
     pub fn with_capacity(n: usize) -> Self {
         Self {
             slots: crate::fixed::Chunked::filled(n, None),
             level: crate::fixed::Chunked::filled(n, 0),
             trailed: crate::fixed::Chunked::filled(n, NONE),
-            stamp: crate::fixed::Chunked::filled(n, 0),
+            stamp: crate::fixed::Stamps::filled(n),
             ..Default::default()
         }
     }
@@ -420,7 +443,7 @@ impl Env {
             self.slots.resize(n, None);
             self.level.resize(n, 0);
             self.trailed.resize(n, NONE);
-            self.stamp.resize(n, 0);
+            self.stamp.resize(n);
         }
     }
 
@@ -932,7 +955,7 @@ impl Env {
         }
         self.recent.push(sym.0);
         self.recent_at.push(self.assignments);
-        let stamp = std::mem::replace(&mut self.stamp[i], self.assignments);
+        let stamp = self.stamp.set(i, self.assignments);
         if (global || self.marks.is_empty()) && writes & ReadKind::Meaning.bit() != 0 && self.paths == 0 {
             self.drop_moot(sym.0);
         }
@@ -1182,7 +1205,7 @@ impl Env {
         Env {
             slots: self.slots.clone(),
             level: crate::fixed::Chunked::filled(self.level.len(), 0),
-            stamp: crate::fixed::Chunked::filled(self.level.len(), 0),
+            stamp: crate::fixed::Stamps::filled(self.level.len()),
             trailed: crate::fixed::Chunked::filled(self.level.len(), NONE),
             aliases: self.aliases.clone(),
             ..Default::default()
@@ -1228,7 +1251,7 @@ impl Env {
 
                     self.log(index);
                     self.level[index] = level;
-                    self.stamp[index] = stamp;
+                    self.stamp.set(index, stamp);
                     self.slots[index] = old;
                     self.changed(index);
                     if let Some(r) = restored.as_deref_mut() {
@@ -1278,10 +1301,12 @@ impl Env {
         if self.recent_from > at {
             return None;
         }
-        let mut syms = self.recent[self.recent_at.partition_point(|&s| s <= at)..].to_vec();
-        syms.sort_unstable();
-        syms.dedup();
-        Some(syms.into_iter().map(Sym).collect())
+        Some(
+            distinct_sorted(&self.recent[self.recent_at.partition_point(|&s| s <= at)..])
+                .into_iter()
+                .map(Sym)
+                .collect(),
+        )
     }
 
     pub fn recent_len(&self) -> usize {
@@ -1313,7 +1338,7 @@ impl Env {
     pub fn written_after(&self, mark: u64) -> Vec<Sym> {
         // Use the stamps, not `recent`: a widening clears `recent`, and a later
         // cut may reach back further.
-        self.stamp.iter().enumerate().filter(|&(_, &at)| at > mark).map(|(i, _)| Sym(i as u32)).collect()
+        self.stamp.after(mark).map(|i| Sym(i as u32)).collect()
     }
 
     /// Makes `syms` hold anything of their kind. With `toward`, each is joined
@@ -1361,7 +1386,7 @@ impl Env {
         self.slot_changes += 1;
         self.recent.push(i as u32);
         self.recent_at.push(self.assignments);
-        self.stamp[i] = self.assignments;
+        self.stamp.set(i, self.assignments);
     }
 
     /// Makes `sym` hold anything, at the group level of its last write. A
@@ -1496,7 +1521,7 @@ impl Env {
         let mut popped = Vec::new();
         while self.trail.len() > fork.trail {
             let (sym, slot, saved, prev, stamp) = self.trail.pop().expect("trail length checked");
-            self.stamp[sym as usize] = stamp;
+            self.stamp.set(sym as usize, stamp);
             self.slots[sym as usize] = slot;
             self.level[sym as usize] = saved;
             self.trailed[sym as usize] = prev;
@@ -1552,7 +1577,7 @@ impl Env {
             self.slots[i] = slot.clone();
             self.level[i] = *saved;
             // What the path wrote counts as written now.
-            self.stamp[i] = self.assignments;
+            self.stamp.set(i, self.assignments);
             self.changed(i);
         }
         if own.is_some() {
@@ -3147,6 +3172,19 @@ pub fn copied_text(meaning: &Meaning) -> Option<&std::rc::Rc<[Token]>> {
 
 #[cfg(test)]
 mod tests {
+    /// Bug guard for the fast path: the same set as sorting everything.
+    #[test]
+    fn distinct_sorted_is_sort_and_dedup() {
+        for len in [0usize, 5, 64, 65, 1000] {
+            let names: Vec<u32> =
+                (0..len as u32).map(|i| (i * 7919 + 13) % (len as u32 / 3 + 2)).chain([100_000]).collect();
+            let mut want = names.clone();
+            want.sort_unstable();
+            want.dedup();
+            assert_eq!(super::distinct_sorted(&names), want);
+        }
+    }
+
     use super::*;
 
     /// A widened macro of digits stays a parameterless macro of unknown

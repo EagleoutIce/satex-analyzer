@@ -168,6 +168,22 @@ Fix by writing the command.",
         run: ellipsis_dots,
     },
     Rule {
+        code: "doubled-punctuation",
+        category: Category::Style,
+        severity: Severity::Warning,
+        summary: "two punctuation marks in a row, where one belongs",
+        explanation: "\
+`etc..` sets two periods where one does both jobs.  `,,`, `;;`, `?.`,
+`!.`, `,.`, `;.` and `:.` are the same slip.  It counts a period a command
+set too.  Three periods (`ellipsis-dots`) and `e.g.,` are fine.
+
+Fix by deleting the extra mark.",
+        references: &[],
+        fixes: &[Applicability::Unsafe],
+        engines: &[],
+        run: doubled_punctuation,
+    },
+    Rule {
         code: "dimension-times",
         category: Category::Style,
         severity: Severity::Warning,
@@ -315,10 +331,6 @@ fn scans_delimiter(meaning: &Meaning) -> bool {
 
 fn meaning_of(analysis: &Analysis, name: &str) -> Meaning {
     analysis.interner.lookup(name).map_or(Meaning::Undefined, |sym| analysis.env.meaning(sym))
-}
-
-fn defined(analysis: &Analysis, name: &str) -> bool {
-    analysis.interner.lookup(name).is_some_and(|sym| analysis.env.is_defined(sym))
 }
 
 // chktex warnings 45 and 46: `Use \[ ... \] instead of $$ ... $$.` and
@@ -618,7 +630,7 @@ fn math_mode_mismatch(report: &mut Report) {
     let view = report.text();
     let wanted: Vec<(Sym, Modes, bool)> = DELIMITERS
         .iter()
-        .filter(|(name, _, _)| defined(analysis, name))
+        .filter(|(name, _, _)| analysis.defined(name))
         .filter_map(|(name, modes, on)| Some((analysis.interner.lookup(name)?, *modes, *on)))
         .collect();
     // Only a use that raised the error counts: an expansion-only context
@@ -747,11 +759,11 @@ fn body_sets(body: &[Token], word: &str) -> bool {
 fn ellipsis_dots(report: &mut Report) {
     let analysis = report.analysis();
     let view = report.text();
-    let plain = match defined(analysis, "dots") {
+    let plain = match analysis.defined("dots") {
         true => "\\dots",
         false => "\\ldots",
     };
-    let centered = defined(analysis, "cdots").then_some("\\cdots");
+    let centered = analysis.defined("cdots").then_some("\\cdots");
     let mut findings = Vec::new();
     let mut i = 0;
     while i + 2 < view.len() {
@@ -782,6 +794,40 @@ fn ellipsis_dots(report: &mut Report) {
             ),
         };
         report.rewrite(finding);
+    }
+}
+
+/// Which of two marks set side by side is the slip, `None` for a pair that
+/// is no slip: the second of two equal ones or after `?` and `!`, else the
+/// first (the period ends the sentence).
+fn extra_mark(a: char, b: char) -> Option<usize> {
+    match (a, b) {
+        ('.', '.') | (',', ',') | (';', ';') | ('?' | '!', '.') => Some(1),
+        (',' | ';' | ':', '.') => Some(0),
+        _ => None,
+    }
+}
+
+fn doubled_punctuation(report: &mut Report) {
+    let view = report.text();
+    let mut findings = Vec::new();
+    for i in 0..view.len().saturating_sub(1) {
+        let (Some(a), Some(b)) = (view.char_at(i), view.char_at(i + 1)) else { continue };
+        let Some(extra) = extra_mark(a, b) else { continue };
+        // Three periods or more are an ellipsis, the business of `ellipsis-dots`.
+        let dots = |k: Option<usize>| k.and_then(|k| view.char_at(k)) == Some('.');
+        if a == '.' && (dots(i.checked_sub(1)) || dots(Some(i + 2))) {
+            continue;
+        }
+        if !view.beside(i + 1) || !view.is_prose_text(i) || !view.is_prose_text(i + 1) {
+            continue;
+        }
+        findings.push((i + extra, format!("{a}{b}")));
+    }
+    for (at, pair) in findings {
+        let message = format!("`{pair}` sets two punctuation marks in a row, where one belongs");
+        let gone = view.char_at(at).unwrap_or_default();
+        report.rewrite(Rewrite::new(at..at + 1, "doubled", message, "").fix(format!("delete the extra `{gone}`")));
     }
 }
 

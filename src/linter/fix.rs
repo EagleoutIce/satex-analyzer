@@ -376,7 +376,7 @@ impl<'a> Edits<'a> {
     }
 
     fn defined(&self, name: &str) -> bool {
-        self.analysis.interner.lookup(name).is_some_and(|sym| self.analysis.env.is_defined(sym))
+        self.analysis.defined(name)
     }
 
     /// Delete `\usepackage[…]{name}`, or only `name` when the command loads
