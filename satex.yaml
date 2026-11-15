@@ -1049,3 +1049,5 @@ limits:
   trace_state: 32  # most entries each list of a dev-mode step state holds (bindings, stacks, catcodes)
     #! affects: memory, output
     #! example: 8 keeps a long dev-mode trace small
+style_prompt:
+  keep+: [primitive-tex-command]

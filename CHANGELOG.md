@@ -6,9 +6,21 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 
 ## Unreleased
 
+### Lints
+
+- `feat` **Four new lints for references and sentences.** `bare-reference` (S059) flags a `\ref` with no name before it. `reference-name-mismatch` (C054) flags a name that belongs to another kind than the label, such as "Figure" before a table. `doubled-punctuation` (S060) flags two punctuation marks in a row. `sentence-capital` (S061) flags a sentence that starts with a lowercase letter. [`4774850`](https://github.com/EagleoutIce/satex-analyzer/commit/4774850)
+
 ### Site and docs
 
-- `feat` **Links to showcase entries.** Each entry on the front page has an anchor, such as `#shot-table`, and its title links to it. Opening the link scrolls to the entry and turns the card ring to it. [`e0eb35b`](https://github.com/EagleoutIce/satex-analyzer/commit/e0eb35b)
+- `feat` **Links to showcase entries.** Each entry on the front page has an anchor, such as `#shot-table`, and its title links to it. Opening the link scrolls to the entry and turns the card ring to it. [`2b7595c`](https://github.com/EagleoutIce/satex-analyzer/commit/2b7595c)
+
+### Build and infrastructure
+
+- `perf` **Benchmark results for 0.2.3.** The benchmark page shows the 0.2.3 release. [`bcf2cf4`](https://github.com/EagleoutIce/satex-analyzer/commit/bcf2cf4)
+
+### Analysis
+
+- `perf` **Faster analysis.** Fewer copies and lookups in hot paths: deferred writes, recent-write lookups, token counting, definition comparison, font lookup and widening. [`f969b5e`](https://github.com/EagleoutIce/satex-analyzer/commit/f969b5e) [`7a288d5`](https://github.com/EagleoutIce/satex-analyzer/commit/7a288d5) [`a364b0a`](https://github.com/EagleoutIce/satex-analyzer/commit/a364b0a) [`3450ec2`](https://github.com/EagleoutIce/satex-analyzer/commit/3450ec2) [`ac10a1e`](https://github.com/EagleoutIce/satex-analyzer/commit/ac10a1e)
 
 ## v0.2.3 (2026-11-13)
 
