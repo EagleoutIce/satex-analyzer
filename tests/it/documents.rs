@@ -23,6 +23,9 @@ const NOTECOLUMN_MA_STEPS: u64 = 40_597_274;
 const FOREST_OPTIONS_STEPS: u64 = 40_919_660;
 /// Target 20M; measured 22.9M on 2026-11-04 (six forest trees).
 const FOREST_NAMES_STEPS: u64 = 28_658_778;
+/// xint 2.0 (calx) computes its trig and log tables while loading: 57M steps,
+/// ten times xint 1.4, as pdflatex also takes about nine times as long.
+const XINT_CALX_STEPS: u64 = 80_000_000;
 
 /// Diagnostics that mean the run was cut short.
 const CUT_CODES: [&str; 3] = ["limit-reached", "budget-exhausted", "analysis-ended-early"];
@@ -376,7 +379,7 @@ fixtures! {
 /// deep, far inside TeX's limits: no nesting may be given up.
 #[test]
 fn xintexpr_loads_without_giving_up_nesting() {
-    check("xintexpr_deep_nesting", "main.tex", &[]);
+    check_within("xintexpr_deep_nesting", "main.tex", &[], &[], XINT_CALX_STEPS);
     if !installed() {
         return;
     }
