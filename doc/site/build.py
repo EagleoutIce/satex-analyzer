@@ -1212,7 +1212,8 @@ def examples(satex, work, project):
         (project / s["file"]).write_text(s["text"])
         return s["name"], rendered(project, s["file"], s["text"])
     spec = [s for s in json.loads((SITE / "showcase/shots.json").read_text())["shots"] if s.get("live")]
-    return f'<div class="tabs" role="tablist">{"".join(tabs)}{tab}</div>' + "\n".join([*panels, panel]), dict(map(live, spec))
+    windows = dict(parallel("[4/4] showcase windows", [(s["name"], s) for s in spec], lambda job: live(job[1]))) if spec else {}
+    return f'<div class="tabs" role="tablist">{"".join(tabs)}{tab}</div>' + "\n".join([*panels, panel]), windows
 
 
 # The browser's TeX (tex-worker.js): BusyTeX's pdfTeX and pdf.js, pinned by digest and fetched at build time.
