@@ -24,6 +24,7 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 ### Site and docs
 
 - `feat` **The showcase turns by itself.** The front page's card ring turns one whole card every 8 seconds and rests while you point at it, focus it or have just turned it. Scrolling the page no longer tilts it.
+- `docs` **Why interpret the code, said plainly.** The front page explains that a macro's expansion depends on its context (definitions, catcodes, arguments, built names), which only running the code knows.
 - `docs` **Open source, said up front.** The front page says that SaTeX is MIT-licensed and links the repository.
 - `docs` **flowR inspired, never required.** The README says SaTeX's design is inspired by flowR and that SaTeX neither uses nor requires it.
 

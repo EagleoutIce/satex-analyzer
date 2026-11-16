@@ -30,7 +30,7 @@
 
 <section class="band alt" id="run">
   <h2>Why interpret the code</h2>
-  <p class="sub">TeX decides what a line means while it runs. Catcodes change, names get built, definitions come and go. A tool that only reads the text has to guess. SaTeX runs the kernel, the class and every package as TeX would, on every path at once, and joins the paths soundly where it cannot decide.</p>
+  <p class="sub">In TeX, the same text can expand to something else every time. What a macro does depends on its context: the definitions in effect, the catcodes, the arguments it reads, the names built before it. A tool that only reads the text has to guess that context. SaTeX runs the kernel, the class and every package as TeX would, so each expansion happens in its real context, on every path at once, and joins the paths soundly where it cannot decide.</p>
   <div class="contrast" role="tablist" aria-label="examples of what a run knows">
     <button type="button" role="tab" aria-selected="true" data-case="0">A name built by <code>\csname</code></button>
     <button type="button" role="tab" aria-selected="false" data-case="1">An expl3 variant</button>
