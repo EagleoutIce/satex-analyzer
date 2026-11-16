@@ -2304,3 +2304,4 @@ pre.out-block:hover .out-meta { opacity: .85; }
 .cfg-tex { padding: .6rem 1rem; font-size: .85rem; overflow-x: hidden; box-sizing: border-box; width: 100%; } .cfg-tex p { margin: .4rem 0; }
 .cfg-tex-on { display: inline-flex; margin: .3rem 0 .5rem; } .cfg-tex-label { display: block; margin-bottom: .25rem; }
 .cfg-tex textarea { display: block; width: 100%; max-width: 100%; margin: 0; min-height: 7rem; box-sizing: border-box; }
+.claim .tw { position: relative; }

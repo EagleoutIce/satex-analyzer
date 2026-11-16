@@ -1774,15 +1774,27 @@ interface Stream {
       .map((n) => ({ text: n.textContent ?? '', code: n.nodeName === 'CODE', lint: n.nodeName === 'U', fix: (n as HTMLElement).dataset?.fix ?? null, href: n.nodeName === 'A' ? (n as Element).getAttribute('href') : null })));
     // TikZ is set as its logo is, with an italic k
     const tikz = (html: string) => html.replace(/Tik(?=Z|$)/g, 'Ti<i class="tk">k</i>');
-    const typed = (i: number, n: number) => {
-      let left = n;
+    // `fade(k)`: how far character k has faded in, 1 when it stands; the fading ones are drawn apart, each a
+    // little see-through and a hair to the right, so a word appears from left to right
+    const typed = (i: number, n: number, fade: (k: number) => number = () => 1) => {
+      let left = n, at = 0;
+      const soft = (shown: string, from: number) => {
+        let firm = 0;
+        while (firm < shown.length && fade(from + firm) >= 1) firm++;
+        const tail = [...shown.slice(firm)].map((c, j) => {
+          const a = Math.max(0, Math.min(1, fade(from + firm + j)));
+          return `<span class="tw" style="opacity:${a.toFixed(2)};left:${((1 - a) * 3).toFixed(1)}px">${esc(c)}</span>`;
+        }).join('');
+        return tikz(esc(shown.slice(0, firm))) + tail;
+      };
       // a `<u>` is a spot a linter would mark: with `data-fix` it holds the wrong text and the right one, the first turning into the second
       return parts[i].map(({ text, code, lint, fix, href }) => {
-        const shown = text.slice(0, Math.max(0, left));
+        const shown = text.slice(0, Math.max(0, left)), from = at;
         left -= text.length;
+        at += text.length;
         if (!shown) return '';
-        if (lint) return `<u class="claim-fix"><span>${esc(shown)}</span><span>${esc(shown === text ? fix ?? '' : '')}</span></u>`;
-        return code ? `<code>${tikz(esc(shown))}</code>` : href ? `<a href="${esc(href)}">${tikz(esc(shown))}</a>` : tikz(esc(shown));
+        if (lint) return `<u class="claim-fix"><span>${soft(shown, from)}</span><span>${esc(shown === text ? fix ?? '' : '')}</span></u>`;
+        return code ? `<code>${soft(shown, from)}</code>` : href ? `<a href="${esc(href)}">${soft(shown, from)}</a>` : soft(shown, from);
       }).join('');
     };
     const length = (i: number) => parts[i].reduce((sum, p) => sum + p.text.length, 0);
@@ -1802,14 +1814,17 @@ interface Stream {
         return (at += tempo + (Math.random() - .5) * 12 + (c === ' ' ? 40 : c === ',' ? 150 : 0));
       });
     };
+    // each character fades in over FADE ms from the moment it is typed
+    const FADE = 180;
     const run = (i: number, _from: number, then: () => void) => {
       const times = schedule(i), start = performance.now();
-      let drawn = -1;
+      let n = 0;
       const tick = (now: number) => {
-        let n = drawn < 0 ? 0 : drawn;
-        while (n < times.length && times[n] <= now - start) n++;
-        if (n !== drawn) { drawn = n; line.innerHTML = typed(i, n); }
-        if (n >= times.length) { frame = 0; return then(); }
+        const t = now - start;
+        while (n < times.length && times[n] <= t) n++;
+        const settling = n > 0 && t - times[n - 1] < FADE;
+        line.innerHTML = typed(i, n, (k) => (t - times[k]) / FADE);
+        if (n >= times.length && !settling) { line.innerHTML = typed(i, n); frame = 0; return then(); }
         frame = requestAnimationFrame(tick);
       };
       frame = requestAnimationFrame(tick);
