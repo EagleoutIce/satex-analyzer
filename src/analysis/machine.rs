@@ -10138,9 +10138,20 @@ will look undefined",
                         }
                     }
                 }
-                let text: Vec<String> =
-                    chain.iter().rev().take(60).map(|(s, n)| format!("\\{}×{n}", self.name(*s))).collect();
-                crate::util::progress::note!("satex:   open, innermost first: {}", text.join(" "));
+                // Both ends: a deep recursion hides where it was entered.
+                let show = |c: &[(Sym, usize)]| -> String {
+                    c.iter().rev().map(|(s, n)| format!("\\{}×{n}", self.name(*s))).collect::<Vec<_>>().join(" ")
+                };
+                let text = match chain.len() {
+                    n if n > 80 => format!("{} … {}", show(&chain[n - 60..]), show(&chain[..20])),
+                    _ => show(&chain),
+                };
+                crate::util::progress::note!("satex:   open, innermost first: {text}");
+                if let Some(m) = self.env.meaning(sym).as_macro() {
+                    let body = crate::engine::tex::detokenize(&m.replacement_text, &self.out.interner);
+                    let body: String = body.chars().take(300).collect();
+                    crate::util::progress::note!("satex:   its text: {body}");
+                }
             }
         }
         self.diagnose(
