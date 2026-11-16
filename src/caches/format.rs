@@ -597,18 +597,36 @@ impl StoreLock {
     }
 }
 
+/// The build locks this process holds.
+static HELD: std::sync::Mutex<std::collections::BTreeSet<PathBuf>> =
+    std::sync::Mutex::new(std::collections::BTreeSet::new());
+
+/// A held [`build_lock`]: released on drop or process death.
+pub(crate) struct BuildLock(#[allow(dead_code)] std::fs::File, PathBuf);
+
+impl Drop for BuildLock {
+    fn drop(&mut self) {
+        HELD.lock().unwrap_or_else(|e| e.into_inner()).remove(&self.1);
+    }
+}
+
 /// Held while this process builds `target`: another instance missing it too
 /// waits here, then reads what this one stored. `None` where the file
-/// system has no locks.
-pub(crate) fn build_lock(target: &Path) -> Option<std::fs::File> {
-    let file = std::fs::File::options()
-        .read(true)
-        .write(true)
-        .create(true)
-        .truncate(false)
-        .open(target.with_extension("building.lock"))
-        .ok()?;
-    file.lock().ok().map(|()| file)
+/// system has no locks, and where this process holds it already: a lock is
+/// per open file, so a second open (a later build run while the state of an
+/// earlier one still holds it) would wait on itself forever.
+pub(crate) fn build_lock(target: &Path) -> Option<BuildLock> {
+    let path = target.with_extension("building.lock");
+    if !HELD.lock().unwrap_or_else(|e| e.into_inner()).insert(path.clone()) {
+        return None;
+    }
+    let opened = std::fs::File::options().read(true).write(true).create(true).truncate(false).open(&path);
+    let Ok(file) = opened else {
+        HELD.lock().unwrap_or_else(|e| e.into_inner()).remove(&path);
+        return None;
+    };
+    let lock = BuildLock(file, path);
+    lock.0.lock().ok().map(|()| lock)
 }
 
 fn lock_for(target: &Path) -> PathBuf {
@@ -887,6 +905,22 @@ mod tests {
     use super::*;
     use crate::engine::tex::{ArgSpec, Catcode, MacroDef, ParameterText, Span, Tok, Token};
     use crate::engine::value::Value;
+
+    /// A build lock this process holds is never waited on: the second take
+    /// returns at once. chemfig's manual probe hung forever when its second
+    /// build run took the lock its first run's state still held.
+    #[test]
+    fn a_build_lock_this_process_holds_is_not_waited_on() {
+        let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join(format!("target/scratch/build-lock-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let target = dir.join("package-x.postcard");
+        let held = build_lock(&target).expect("the first take");
+        assert!(build_lock(&target).is_none(), "the second take waits on nothing");
+        drop(held);
+        assert!(build_lock(&target).is_some(), "a released lock is taken again");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     fn sample() -> Format {
         let mut interner = Interner::default();

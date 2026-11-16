@@ -532,7 +532,8 @@ def first_download():
 def probe_doc(probes, name):
     stem = name.removesuffix(".cls")
     head = f"\\documentclass{{{stem}}}" if name.endswith(".cls") else f"\\documentclass{{article}}\n\\usepackage{{{stem}}}"
-    doc = probes / f"{stem}.tex"
+    # Not `{stem}.tex`: a package that `\input`s its own name (chemfig.sty reads chemfig.tex) would read the probe.
+    doc = probes / f"probe-{stem}.tex"
     doc.write_text(head + "\n\\begin{document}\nText.\n\\end{document}\n")
     return doc
 

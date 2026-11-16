@@ -1955,7 +1955,7 @@ pub struct Machine<'a> {
     cacheable_load: Option<FileId>,
     /// The outermost cacheable load and the lock other processes building
     /// its cache wait on, until its file closes ([`crate::caches::format::build_lock`]).
-    building: Option<(FileId, Rc<std::fs::File>)>,
+    building: Option<(FileId, Rc<crate::caches::format::BuildLock>)>,
     /// A paragraph just ended and no space followed it yet: a `\penalty`
     /// of 10000 now keeps it with what comes next ([`crate::analysis::facts::Text::kept`]).
     pub(crate) par_kept: bool,

@@ -23,6 +23,7 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 
 ### Analysis
 
+- `fix` **No deadlock on a package that reads the document again.** A package cache left unstored in one build run kept its build lock, and the next run waited on its own lock forever (chemfig's `\input chemfig.tex` read a probe named like it). A lock this process holds is no longer waited on.
 - `fix` **Note columns end.** `\vsplit` keeps what a box holds through an hbox, a one-line paragraph and `\unvbox`, so the rest of a split note box is known to be empty and `\clearnotecolumns` stops.
 
 - `fix` **Endless loops are cut where they loop.** A call in a loop's body that meets the state it was in a round before hands the cut to the loop itself, so the run reads on after the loop. Captions no longer look like an endless loop at shipout: each `\write` a page ships counts as a change.
