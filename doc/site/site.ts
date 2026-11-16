@@ -1789,18 +1789,28 @@ interface Stream {
     const line = knows[0];
     knows.slice(1).forEach((k) => k.remove());
     line.classList.add('typing');
-    let shown = 0, paused = false, timer: ReturnType<typeof setTimeout> | 0 = 0, fit = () => {};
+    let shown = 0, paused = false, timer: ReturnType<typeof setTimeout> | 0 = 0, frame = 0, fit = () => {};
     dots.innerHTML = knows.map((k, i) => `<button type="button" role="tab" aria-selected="${!i}" aria-label="${parts[i].map((p) => p.text).join('')}"></button>`).join('');
-    // a typist's rhythm: quick within a word, a beat after a space or a comma
+    // a typist's rhythm, fixed ahead: quick within a word, a beat after a space or a comma. Characters
+    // appear on the display's frames, never between them, and only a changed count redraws the line.
     const text = (i: number) => parts[i]!.map((p) => p.text).join('');
-    const run = (i: number, n: number, then: () => void) => {
-      line.innerHTML = typed(i, n);
-      fit();
-      if (n >= length(i)) return then();
-      const c = text(i)[n - 1] ?? '';
-      timer = setTimeout(() => run(i, n + 1, then), 18 + Math.random() * 28 + (c === ' ' ? 45 : c === ',' ? 160 : 0));
+    const schedule = (i: number) => {
+      let at = 0;
+      return [...text(i)].map((c, k) => (at += 30 + ((k * 7) % 5) * 3 + (c === ' ' ? 40 : c === ',' ? 150 : 0)));
     };
-    const erase = (then: () => void) => { line.innerHTML = ''; fit(); then(); };
+    const run = (i: number, _from: number, then: () => void) => {
+      const times = schedule(i), start = performance.now();
+      let drawn = -1;
+      const tick = (now: number) => {
+        let n = drawn < 0 ? 0 : drawn;
+        while (n < times.length && times[n] <= now - start) n++;
+        if (n !== drawn) { drawn = n; line.innerHTML = typed(i, n); }
+        if (n >= times.length) { frame = 0; return then(); }
+        frame = requestAnimationFrame(tick);
+      };
+      frame = requestAnimationFrame(tick);
+    };
+    const erase = (then: () => void) => { line.innerHTML = ''; then(); };
     // a typed `\command` opens a sketch of the editor's completion: the examples' own commands, as their cards write them
     const own = [...document.querySelectorAll<HTMLElement>('.ex-data')].flatMap((s): Rec[] => { try { const d = JSON.parse(s.textContent!); return (Object.values(d.cs).flat() as Rec[]).filter((r) => r.path === d.name && r.effective && r.effective !== r.name); } catch { return []; } });
     const offered = [...new Map(own.map((r) => [r.name, r])).values()].slice(0, 3);
@@ -1890,6 +1900,7 @@ interface Stream {
     };
     const show = (i: number) => {
       clearTimeout(timer);
+      cancelAnimationFrame(frame);
       line.classList.remove('shows');
       [...dots.children].forEach((d, j) => d.setAttribute('aria-selected', String(j === i)));
       erase(() => { shown = i; run(i, 0, settle); });
@@ -1902,6 +1913,8 @@ interface Stream {
     const rot = line.parentElement!, hero = line.closest<HTMLElement>('.hero')!;
     const tall = (h: number) => Math.ceil(Math.max(h, parseFloat(getComputedStyle(line).lineHeight) || 0));
     fit = () => { rot.style.height = `${tall(line.offsetHeight)}px`; };
+    // the room follows the line's height as the browser lays it out, never by a read per character
+    new ResizeObserver(() => fit()).observe(line);
     const reserve = () => {
       const [was, html] = [shown, line.innerHTML];
       let most = 0;
