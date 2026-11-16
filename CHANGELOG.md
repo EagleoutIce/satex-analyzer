@@ -21,6 +21,12 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 - `feat` **Heading styles and page options.** The page layout widget restyles chapter to subsubsection headings (family, weight, small caps, size, color, alignment, numbering) through KOMA-Script or titlesec, saves them as named style sets to switch between, and sets the page color, columns and the binding.
 - `feat` **Edit in the PDF.** Each table column shows its width over the pages. Dragging its edge rewrites `p{…}` in the source, snapped, within `\linewidth`, as one undo step. With Type on, a click on a word puts a caret there and plain text goes to its place in the source.
 
+### Site and docs
+
+- `feat` **The showcase turns by itself.** The front page's card ring turns one whole card every 8 seconds and rests while you point at it, focus it or have just turned it. Scrolling the page no longer tilts it.
+- `docs` **Open source, said up front.** The front page says that SaTeX is MIT-licensed and links the repository.
+- `docs` **flowR inspired, never required.** The README says SaTeX's design is inspired by flowR and that SaTeX neither uses nor requires it.
+
 ### Analysis
 
 - `fix` **No deadlock on a package that reads the document again.** A package cache left unstored in one build run kept its build lock, and the next run waited on its own lock forever (chemfig's `\input chemfig.tex` read a probe named like it). A lock this process holds is no longer waited on.
