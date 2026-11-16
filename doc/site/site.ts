@@ -1794,9 +1794,13 @@ interface Stream {
     // a typist's rhythm, fixed ahead: quick within a word, a beat after a space or a comma. Characters
     // appear on the display's frames, never between them, and only a changed count redraws the line.
     const text = (i: number) => parts[i]!.map((p) => p.text).join('');
+    // a little life: each word a slightly other tempo, each key a few ms off it, never a stumble
     const schedule = (i: number) => {
-      let at = 0;
-      return [...text(i)].map((c, k) => (at += 30 + ((k * 7) % 5) * 3 + (c === ' ' ? 40 : c === ',' ? 150 : 0)));
+      let at = 0, tempo = 30;
+      return [...text(i)].map((c) => {
+        if (c === ' ') tempo = 26 + Math.random() * 9;
+        return (at += tempo + (Math.random() - .5) * 12 + (c === ' ' ? 40 : c === ',' ? 150 : 0));
+      });
     };
     const run = (i: number, _from: number, then: () => void) => {
       const times = schedule(i), start = performance.now();
