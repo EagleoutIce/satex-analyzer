@@ -1197,7 +1197,8 @@ impl Machine<'_> {
         }
         // One name per number made: a test that narrows it narrows this
         // number on its path, never another one with the same interval.
-        let steps = self.out.steps;
+        // Counted in TeX's steps, so a replayed call names alike.
+        let steps = self.out.tex_steps();
         let n = if self.digits_made.0 == steps { self.digits_made.1 + 1 } else { 0 };
         self.digits_made = (steps, n);
         let sym = self.intern(&format!("{TYPED_DIGITS}{}..{}#{steps}.{n}", num.lo, num.hi));

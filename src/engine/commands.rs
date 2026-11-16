@@ -177,6 +177,7 @@ impl Machine<'_> {
             (Some(w), Some(h)) => crate::engine::mode::Item::Box([w, h, crate::engine::mode::Dim::exact(0)]),
             _ => crate::engine::mode::Item::Unknown,
         };
+        self.note_content(&item);
         self.append_item(item);
     }
 
@@ -492,6 +493,28 @@ impl Machine<'_> {
     fn last_item(&mut self, item: LastItem) -> Option<Value> {
         use LastItem as L;
         let int = |n: i64| Some(Value::Int(n));
+        // What the lists, the input, the clock or the conditionals say: no
+        // kept effect holds it.
+        if !matches!(
+            item,
+            L::EtexVersion
+                | L::PdftexVersion
+                | L::XetexVersion
+                | L::LuatexVersion
+                | L::ShellEscape
+                | L::GlueStretch
+                | L::GlueShrink
+                | L::GlueStretchOrder
+                | L::GlueShrinkOrder
+                | L::GlueToMu
+                | L::MuToGlue
+                | L::FontCharWd
+                | L::FontCharHt
+                | L::FontCharDp
+                | L::FontCharIc
+        ) {
+            self.side_effects += 1;
+        }
         match item {
             // What the last node of the current list is: typesetting.
             // etex.ch: `\lastnodetype` of an empty list is -1.
@@ -2282,6 +2305,7 @@ impl Machine<'_> {
             // for n > 0 and in (n, 0] for n < 0. Which one is not known, so
             // it is digits typed with that interval.
             C::UniformDeviate => {
+                self.side_effects += 1;
                 return match self.scan_int() {
                     Some(n) if n > 0 => self.digits_in(crate::engine::value::Num::range(0, n - 1), span),
                     Some(n) if n < 0 => self.digits_in(crate::engine::value::Num::range(n + 1, 0), span),
@@ -2321,7 +2345,10 @@ impl Machine<'_> {
                 None
             }
             C::CreationDate => return self.creation_date(span),
-            C::NormalDeviate | C::PdftexBanner => None,
+            C::NormalDeviate | C::PdftexBanner => {
+                self.side_effects += 1;
+                None
+            }
             // The pdfTeX manual: stacks are numbered from 1, 0 being the
             // default color stack.
             C::ColorStackInit => {

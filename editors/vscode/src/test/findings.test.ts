@@ -62,6 +62,20 @@ test('hide: settled findings of an unfinished run show at once and only grow', (
     assert.deepEqual(shows, [['marker'], ['marker', 'ref']]);
 });
 
+/** Intuition: a document's first run has nothing to keep, so its early findings show at once in every mode.
+ * Bug pinned: `keep` and `mark` showed nothing until the first run ended, minutes on a thesis. */
+test('a first run shows its early findings in every mode', () => {
+    for (const mode of ['hide', 'keep', 'mark'] as Mode[]) {
+        const { shows, findings } = client(mode);
+        findings.settled('a', [stable]);
+        findings.status(run);
+        findings.publish('a', [stable, ref]);
+        findings.status({ text: '' });
+        assert.deepEqual(shows[0], ['marker'], mode);
+        assert.deepEqual(shows[shows.length - 1], ['marker', 'ref'], mode);
+    }
+});
+
 /** Intuition: `keep` never touches the view during a run, `mark` only says the findings may change. */
 test('keep and mark keep every finding', () => {
     const keep = client('keep');

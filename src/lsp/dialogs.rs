@@ -382,6 +382,23 @@ pub fn dialog(analysis: &Analysis, doc: &Text, path: &str, pos: Position) -> Opt
     Some(json!({ "kind": t.kind.name(), "range": lsp_range(doc, t.start, t.end), "state": state, "context": ctx }))
 }
 
+/// Each table of the file with the widths a view may drag (`satex/dialogApply`, kind `columns`):
+/// its lines, each column's width and the table's own (`tabularx`'s) as a text snapshot to
+/// rewrite, and `\linewidth` in pt when the run ended with one value of it.
+pub fn widths(analysis: &Analysis, doc: &Text, path: &str) -> Json {
+    let text = doc.body();
+    let line = |o: usize| text[..o].matches('\n').count() + 1;
+    let tables = targets(analysis, doc, path).into_iter().filter(|t| t.kind == Kind::Table).filter_map(|t| {
+        let (width, cols) = tabular::widths(&text[t.start..t.end])?;
+        let node = |(a, b): tabular::Span| snapshot::text(doc, t.start + a, t.start + b);
+        let cols: Vec<Json> =
+            cols.into_iter().map(|(c, at)| json!({ "align": c.align, "width": c.arg, "node": at.map(node) })).collect();
+        Some(json!({ "env": t.detail, "lines": [line(t.start), line(t.end)], "width": width.map(node), "cols": cols }))
+    });
+    let lw = super::plugins::register_value(analysis, "linewidth").filter(|w| w.lo == w.hi);
+    json!({ "tables": tables.collect::<Vec<_>>(), "linewidth": lw.map(|w| w.lo as f64 / 65536.0) })
+}
+
 /// The package a table's columns need that the run lacks: a letter (or `>`, `<`) neither its
 /// `\@testpach` tests nor a `\newcolumntype` made; the column's hint, else the installation's
 /// provider of `\@testpach`.

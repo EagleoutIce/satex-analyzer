@@ -176,10 +176,10 @@ impl Machine<'_> {
         out
     }
 
-    /// The lines (height, depth) the segment of `n` ending here breaks
-    /// into, and the last line's fitness class, where all is known.
+    /// The lines the segment of `n` ending here breaks into, and the last
+    /// line's fitness class, where all is known.
     /// `last`: at `\par` (§ 816), else at a forced break.
-    pub(crate) fn break_lines(&mut self, n: &Natural, last: bool) -> Option<(Vec<(Scaled, Scaled)>, u8)> {
+    pub(crate) fn break_lines(&mut self, n: &Natural, last: bool) -> Option<(Vec<Broken>, u8)> {
         let p = n.para;
         if p.lost || p.rough && p.lines.1 > 0 {
             return None;
@@ -599,6 +599,15 @@ pub(crate) fn badness(t: i64, s: i64) -> i64 {
     if r > 1290 { INF_BAD } else { (r * r * r + 0o400000) / 0o1000000 }
 }
 
+/// One line `line_break` made: its height, depth, and by how much its
+/// natural width less its shrink passes the line width (§ 664).
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct Broken {
+    pub(crate) height: Scaled,
+    pub(crate) depth: Scaled,
+    pub(crate) excess: Scaled,
+}
+
 #[derive(Clone, Copy)]
 struct Pass {
     width: Scaled,
@@ -624,7 +633,7 @@ struct Active {
 impl Pass {
     /// §§ 829-860, 863-875 with `\looseness`=0 and one line width
     /// (`easy_line`=0, so all active nodes are one class).
-    fn run(&self, items: &[Kp], threshold: i64, last_pass: bool) -> Option<(Vec<(Scaled, Scaled)>, u8)> {
+    fn run(&self, items: &[Kp], threshold: i64, last_pass: bool) -> Option<(Vec<Broken>, u8)> {
         let n = items.len();
         let mut pre = vec![[0i64; 6]; n + 1];
         for (i, k) in items.iter().enumerate() {
@@ -792,6 +801,13 @@ impl Pass {
                                 (h, d) = (h.max(*kh), d.max(*kd));
                             }
                         }
+                        // § 889 `hpack`: its natural width past its finite shrink (§ 664).
+                        let mut s = pre[to];
+                        for ((x, y), b) in s.iter_mut().zip(pre[from.min(to)]).zip(self.bg) {
+                            *x += b - y;
+                        }
+                        let ends = [brk, post].into_iter().flatten().map(|b| b.0).sum::<Scaled>();
+                        let excess = s[0] + ends - self.width - s[5];
                         post = match items.get(to) {
                             Some(&Kp::Disc(Some(_), _, p)) => p,
                             _ => None,
@@ -800,7 +816,7 @@ impl Pass {
                         if post.is_none() {
                             from = skip_discardable(items, from);
                         }
-                        (h, d)
+                        Broken { height: h, depth: d, excess }
                     })
                     .collect();
                 return Some((lines, r.fit));

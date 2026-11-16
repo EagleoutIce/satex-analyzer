@@ -4961,6 +4961,7 @@ impl Machine<'_> {
     /// text.
     fn read_line_into(&mut self, by: Sym, span: Span) {
         self.env.effective += 1;
+        self.side_effects += 1;
         let stream = self.scan_number();
         // tex.web § 1225: a missing `to` is inserted.
         self.scan_keyword("to");

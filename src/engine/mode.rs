@@ -7,7 +7,7 @@
 
 use std::rc::Rc;
 
-use crate::analysis::facts::Severity;
+use crate::analysis::facts::{Overfull, Severity, Wide};
 use crate::analysis::machine::{Machine, Step};
 use crate::engine::builtins::{BoxCmd, Cond, Material, ModeCmd, Primitive};
 use crate::engine::env::GroupKind;
@@ -357,6 +357,14 @@ pub struct Para {
     /// On an empty page: the `\topskip` its first box or line is topped up
     /// to (tex.web § 1001).
     top: Option<Dim>,
+    /// The recorded vertical list the lines go onto, `\parskip` on it
+    /// (tex.web § 1091); `None` where not followed.
+    #[serde(default)]
+    vlist: Option<u32>,
+    /// A box or rule wider than the lines was set in it: that finding
+    /// covers its overfull line.
+    #[serde(default)]
+    pub(crate) wide: bool,
 }
 
 impl Para {
@@ -377,6 +385,8 @@ impl Para {
             below: self.below.merge(other.below),
             fresh: self.fresh && other.fresh,
             items: if self.items == other.items { self.items } else { None },
+            vlist: if self.vlist == other.vlist { self.vlist } else { None },
+            wide: self.wide || other.wide,
             fit: if self.fit == other.fit { self.fit } else { crate::engine::linebreak::UNFIT },
             // One side not topped: the first box's own height or more.
             top: match (self.top, other.top) {
@@ -1268,6 +1278,13 @@ impl Machine<'_> {
             Some(_) => (Dim::exact(0), None, Dim::exact(0), None),
             None => (skip, first, outer.depth, outer.prev_depth),
         };
+        // The vertical list's record goes on below `\parskip` (§ 1091).
+        let mut vlist = outer.para.items;
+        match (below, parskip) {
+            (Last::Empty, _) => {}
+            (Last::Glue(..), Some(g)) => self.kp_push(&mut vlist, crate::engine::linebreak::Kp::glue(g)),
+            _ => vlist = None,
+        }
         // tex.web § 1091: the indent box is `\parindent` wide.  The list's
         // width, height and depth are those of the one line it may make.
         let indent = if indented { self.dimen_parameter("parindent") } else { Dim::exact(0) };
@@ -1307,6 +1324,7 @@ impl Machine<'_> {
                 items: Some(0),
                 fit: 2,
                 top,
+                vlist: vlist.filter(|_| top.is_none()),
                 ..Para::default()
             },
             prev_depth,
@@ -1404,6 +1422,16 @@ impl Machine<'_> {
     /// from its glue per order; `None` where its items are not followed.
     fn hpack_badness(&self, n: &Natural, w: Dim) -> Option<i64> {
         Some(self.pack_badness(&self.kp_list(n.para.items?), n.along.known()?, w.known()?))
+    }
+
+    /// tex.web § 664: how far list `n` packed to `w` is too wide, its finite
+    /// shrink used up; zero where infinite shrink takes any excess or the
+    /// list is empty.
+    fn hpack_excess(&self, n: &Natural, w: Dim) -> Option<Scaled> {
+        let items = self.kp_list(n.para.items?);
+        let [_, shrink] = Self::kp_glue(&items);
+        let x = n.along.known()? - w.known()? - shrink[0];
+        Some(if items.is_empty() || shrink[1..].iter().any(|&s| s != 0) { 0 } else { x })
     }
 
     /// §§ 658-667, 672-678: the badness of recorded list `items` of
@@ -1549,11 +1577,13 @@ impl Machine<'_> {
         para.shape = shape;
         let Some(skips) = skips else {
             para.lost = true;
-            return;
+            return self.note_lines(None, false);
         };
-        if let Some((lines, fit)) = self.break_lines(n, last) {
-            for (h, d) in lines {
-                n.stack_lines((1, 1), Dim::exact(h), Dim::exact(d), skips);
+        let broken = self.break_lines(n, last);
+        self.note_lines(broken.as_ref().map(|b| &b.0[..]), n.para.wide);
+        if let Some((lines, fit)) = broken {
+            for b in lines {
+                n.stack_lines((1, 1), Dim::exact(b.height), Dim::exact(b.depth), skips);
             }
             n.para.fit = fit;
             return;
@@ -1607,6 +1637,75 @@ impl Machine<'_> {
             && (stretch || low)
             && line_box.hi <= width.lo;
         self.push_line(n, fits, skips);
+    }
+
+    /// The overfull lines a segment broke into (tex.web § 889 packs each to
+    /// the line width), unless margin kerns or expanded fonts change them;
+    /// none where wide content set in it is reported instead (`covered`).
+    fn note_lines(&mut self, lines: Option<&[crate::engine::linebreak::Broken]>, covered: bool) {
+        let plain = ["pdfprotrudechars", "pdfadjustspacing", "protrudechars", "adjustspacing", "XeTeXprotrudechars"]
+            .iter()
+            .all(|p| self.int_parameter(p).is_some_and(|v| v <= 0));
+        let width = self.line_width().known().filter(|_| plain);
+        let over = lines.zip(width).and_then(|(lines, w)| {
+            let mut over = (0, 0, w);
+            for b in lines {
+                if self.reported(b.excess)? {
+                    (over.0, over.1) = (over.0 + 1, over.1.max(b.excess));
+                }
+            }
+            Some(over)
+        });
+        self.note_overfull(Wide::Line, over.filter(|o| o.0 > 0 && !covered), over.is_some());
+    }
+
+    /// A box or rule set in a paragraph: wider than its lines, it sticks
+    /// out whatever the line breaker does.
+    pub(crate) fn note_content(&mut self, item: &Item) {
+        if !self.mode.meets(Modes::HORIZONTAL) {
+            return;
+        }
+        let w = match *item {
+            Item::Box([w, ..]) => w.known(),
+            Item::Rule { width: Some(w), .. } => w,
+            _ => None,
+        };
+        let line = self.line_width().known().filter(|_| self.mode == Modes::HORIZONTAL);
+        let over = w.zip(line).and_then(|(w, line)| Some((self.reported(w - line)?, w - line, line)));
+        if let (Some((true, ..)), Some(n)) = (over, &mut self.natural) {
+            n.para.wide = true;
+        }
+        self.note_overfull(Wide::Content, over.filter(|o| o.0).map(|(_, e, l)| (1, e, l)), over.is_some());
+    }
+
+    /// tex.web §§ 664, 666: whether `hpack` reports a box `excess` too wide:
+    /// overfull at all, then past `\hfuzz` or with `\hbadness` below 100.
+    fn reported(&mut self, excess: Scaled) -> Option<bool> {
+        let fuzz = self.dimen_parameter("hfuzz").known()?;
+        Some(excess > 0 && (excess > fuzz || self.int_parameter("hbadness")? < 100))
+    }
+
+    /// One visit to the user's call that ended a line or box: `over` the
+    /// count, largest excess and target width where it is surely overfull,
+    /// `fits` where it surely is not. An exact run's visits all happen, so
+    /// one that fits says nothing of another; one not known undoes all.
+    pub(crate) fn note_overfull(&mut self, kind: Wide, over: Option<(u32, Scaled, Scaled)>, fits: bool) {
+        let Some(at) = self.file_call.map(|c| c.1).filter(|c| self.own_file(c.file)) else { return };
+        let exact = self.exact();
+        let o = self.out.facts.overfull.entry((at, kind)).or_insert(Overfull {
+            count: 0,
+            excess: 0,
+            target: 0,
+            unsure: false,
+        });
+        match over.filter(|_| exact) {
+            _ if o.unsure => {}
+            Some((c, e, t)) if o.count == 0 || o.target == t => {
+                (o.count, o.excess, o.target) = (o.count.max(c), o.excess.max(e), t);
+            }
+            None if fits && exact => {}
+            _ => o.unsure = true,
+        }
     }
 
     /// The current line's lines go below the paragraph's: one where `one`
@@ -1860,6 +1959,9 @@ impl Machine<'_> {
         if only && to == Modes::INTERNAL_VERTICAL {
             self.lone_line(&before, &n, &mut after);
         }
+        if only && to == Modes::INTERNAL_VERTICAL {
+            after.para.items = self.line_record(&before, &n);
+        }
         // Where the mode was in doubt, the vertical list may be as it was.
         self.natural = Some(if only { after } else { after.join(n) });
         // § 669: the main list's depth is its last line's.
@@ -1872,6 +1974,36 @@ impl Machine<'_> {
         if self.mode == Modes::VERTICAL && n.forced[0].is_some() {
             self.replay_forced(n.forced);
         }
+    }
+
+    /// tex.web §§ 889-890: the recorded vertical list after the paragraph
+    /// `before` set as `n`: a null paragraph adds nothing, one line its
+    /// interline glue and its box. More lines, or ins, mark and adjust
+    /// material that would follow the line (a whatsit may stand for one),
+    /// are not followed.
+    fn line_record(&mut self, before: &Natural, n: &Natural) -> Option<u32> {
+        use crate::engine::linebreak::Kp;
+        let mut items = before.para.vlist;
+        if before.tail[0] == Last::Empty {
+            return items;
+        }
+        let hlist = self.kp_list(before.para.items?);
+        let [width, reach] = self.line_shape();
+        let w = width.known().filter(|_| reach == width)?;
+        let (h, d) = (before.height.at_least_zero().known()?, before.depth.at_least_zero().known()?);
+        if before.prior || before.para.lines != (0, 0) || n.para.lost || n.para.lines != (1, 1) || n.forced[0].is_some()
+        {
+            return None;
+        }
+        if hlist.iter().any(|k| matches!(k, Kp::Whatsit | Kp::Mark(..))) {
+            return None;
+        }
+        if let Some(pd) = before.prev_depth {
+            let g = self.interline_spec(pd, Dim::exact(h))?;
+            self.kp_push(&mut items, Kp::glue(g));
+        }
+        self.kp_push(&mut items, Kp::Box { w, h, d, chr: None, lig: 0 });
+        items
     }
 
     /// tex.web § 890, etex_man § 3.12: whether the penalty between two lines
@@ -2272,6 +2404,12 @@ impl Machine<'_> {
             };
             self.set_badness(badness);
         }
+        if kind == BoxState::HBox && !natural_size {
+            let to = nest.to.size(n.along).known();
+            let over = to.zip(self.hpack_excess(&n, nest.to.size(n.along)));
+            let over = over.and_then(|(to, e)| Some((self.reported(e)?, e, to)));
+            self.note_overfull(Wide::Box, over.filter(|o| o.0).map(|(_, e, to)| (1, e, to)), over.is_some());
+        }
         let now = self.out.facts.text.at.len() as u32;
         let inside = nest.list.within(Modes::INTERNAL_VERTICAL.union(Modes::RESTRICTED_HORIZONTAL));
         if let Some((register, global, within)) = nest.target {
@@ -2341,13 +2479,20 @@ impl Machine<'_> {
             let own = self.gather_chars(nest.from, now);
             self.place_chars(own, inside);
             let dims = self.shifted(dims, nest.shift);
+            self.note_content(&Item::Box(dims));
             self.append_item(Item::Box(dims));
             // § 1076: `\vadjust` material in it follows it on the list.
             if nest.code == Some(group::ADJUSTED_HBOX) && n.para.lost && self.list_kind() != Some(true) {
                 self.append_item(Item::Unknown);
             }
             // § 655: marks, inserts and adjusts in it follow it, unrecorded.
-            if nest.code == Some(group::ADJUSTED_HBOX) {
+            // A recorded list without them (whatsits stand for ins and adjust nodes) moves nothing.
+            let moves = |k: &crate::engine::linebreak::Kp| {
+                matches!(k, crate::engine::linebreak::Kp::Whatsit | crate::engine::linebreak::Kp::Mark(..))
+            };
+            if nest.code == Some(group::ADJUSTED_HBOX)
+                && n.para.items.is_none_or(|id| self.kp_list(id).iter().any(moves))
+            {
                 self.record_item(None);
             }
             // § 1076: a box on the main vertical list builds the page.
@@ -2887,6 +3032,7 @@ impl Machine<'_> {
                     [width, height, depth],
                     span,
                 );
+                self.note_content(&item);
                 self.append_item(item);
             }
             Material::Glue => {
@@ -3677,7 +3823,10 @@ impl Machine<'_> {
                 let list = vl.and_then(|key| crate::engine::linebreak::vlist(self.box_slot(key)));
                 let (top, saving) = (self.glue_parameter("splittopskip"), self.int_parameter("savingvdiscards"));
                 let parts = match (&list, to, max, top, saving) {
-                    (Some((items, _)), Some(h), Some(m), Some(top), Some(_)) if real == Some(BoxState::VBox) => {
+                    // A vbox of one line or nothing splits below, keeping what it knows of the line.
+                    (Some((items, _)), Some(h), Some(m), Some(top), Some(_))
+                        if real == Some(BoxState::VBox) && line.is_none() =>
+                    {
                         crate::engine::linebreak::vsplit_list(items, h, m, top).map(|p| (p, h, m))
                     }
                     _ => None,
@@ -3687,10 +3836,18 @@ impl Machine<'_> {
                     self.set_list_slot("marks.split", value(&head));
                     self.set_list_slot("disc.split", value(&disc).filter(|_| saving > Some(0)).or(value(&vec![])));
                     self.box_changed(n, BoxState::Void);
+                    // What `\unvbox` of a part gives back (§ 1110): its first box's height and natural size.
+                    let first = |l: &[crate::engine::linebreak::Kp]| {
+                        let h = l.iter().find_map(|k| {
+                            if let crate::engine::linebreak::Kp::Box { h, .. } = k { Some(*h) } else { None }
+                        });
+                        Dim::exact(h.unwrap_or(0))
+                    };
                     if !rest.is_empty() {
                         self.box_changed(n, BoxState::VBox);
                         let dims = crate::engine::linebreak::vpack(&rest, crate::engine::value::MAX_DIMEN);
                         self.set_box_dims(n, dims.map(Dim::exact));
+                        self.set_box_natural(n, first(&rest), [dims[1], dims[2]].map(Dim::exact));
                         self.set_box_slot(n, "vl", crate::engine::linebreak::list_value(value(&rest)));
                     }
                     self.fetched.clear();
@@ -3699,6 +3856,8 @@ impl Machine<'_> {
                     self.box_end(context, BoxState::VBox, [w, h, d].map(Dim::exact));
                     self.carry_last(context, (Last::UNKNOWN, true, 0));
                     if let BoxContext::Set { register, .. } = context {
+                        let [_, x, d] = crate::engine::linebreak::vpack(&head, crate::engine::value::MAX_DIMEN);
+                        self.set_box_natural(register, first(&head), [x, d].map(Dim::exact));
                         self.set_box_slot(register, "vl", crate::engine::linebreak::list_value(value(&head)));
                     }
                     return;
@@ -3932,11 +4091,13 @@ impl Machine<'_> {
             })
             && dims[0].known().is_some()
             && dims[1..].iter().all(|d| d.known().is_some_and(|v| v >= 0));
-        match state {
-            BoxState::Void => {}
-            BoxState::Unknown => self.append_item(Item::Unknown),
-            _ => self.append_item(Item::Box(dims)),
-        }
+        let item = match state {
+            BoxState::Void => return,
+            BoxState::Unknown => Item::Unknown,
+            _ => Item::Box(dims),
+        };
+        self.note_content(&item);
+        self.append_item(item);
         if alone && let Some(n) = &mut self.natural {
             n.emptied();
             n.tail[0] = Last::Box;
@@ -4699,23 +4860,39 @@ impl Machine<'_> {
                 }
             }
             // A naturally packed list adds up to the box's height and
-            // depth, and begins with its recorded first box.
-            (BoxState::VBox, Some(false)) if first.is_some() => {
-                let had = self.natural.and_then(|n| n.first);
-                self.append_item(Item::Box([w, h, d]));
-                if let Some(n) = &mut self.natural {
-                    n.first = had.or(first);
-                }
-            }
+            // depth, and begins with its recorded first box. § 1110 puts no
+            // interline glue above it and leaves `\prevdepth` as it was;
+            // the record takes the list's recorded items.
             (BoxState::VBox, Some(false)) => {
-                self.append_item(Item::Box([w, Dim::ANY, Dim::ANY]));
+                let size = if first.is_some() { [w, h, d] } else { [w, Dim::ANY, Dim::ANY] };
+                let Some(before) = self.natural else { return self.append_item(Item::Box(size)) };
+                if let Some(n) = &mut self.natural {
+                    n.prev_depth = None;
+                }
+                self.append_item(Item::Box(size));
+                // Its marks' texts are the list's own: not followed.
+                let mut items = before.para.items;
+                match list {
+                    Some((list, _)) if !list.iter().any(|k| matches!(k, crate::engine::linebreak::Kp::Mark(..))) => {
+                        list.iter().for_each(|&k| self.kp_push(&mut items, k))
+                    }
+                    _ => items = None,
+                }
+                if let Some(n) = &mut self.natural {
+                    if first.is_some() {
+                        n.first = before.first.or(first);
+                    }
+                    n.prev_depth = before.prev_depth;
+                    n.tail = [Last::UNKNOWN; TAIL];
+                    n.para.items = items;
+                }
+                return;
             }
             _ => return self.append_item(Item::Unknown),
         }
         // What the list ends in is the box's.
         if let Some(n) = &mut self.natural {
             n.tail = [Last::UNKNOWN; TAIL];
-            n.para.items = n.para.items.filter(|_| state == BoxState::HBox);
         }
     }
 
@@ -6226,6 +6403,7 @@ impl Machine<'_> {
     /// `take` leaves the register void, without a save-stack entry
     /// (tex.web § 1079 `box(cur_val):=null`).
     pub(crate) fn fetch_box(&mut self, n: Option<i64>, take: bool) -> BoxState {
+        self.side_effects += 1;
         let Some(n) = n else {
             // A number satex could not pin down names any register, and
             // taking its box leaves that one void.
@@ -6249,6 +6427,7 @@ impl Machine<'_> {
 
     /// Box register `register` now holds text set in these character ranges.
     fn set_box_chars(&mut self, register: Option<i64>, ranges: Vec<(u32, u32)>, global: bool) {
+        self.side_effects += 1;
         self.note_box_use(register);
         let Some(n) = register else { return };
         let depth = self.env.depth();
@@ -6284,6 +6463,7 @@ impl Machine<'_> {
     /// A box register used or set: where paths parted or its number is not known, what was set
     /// so far may be held where this path cannot see it.
     fn note_box_use(&mut self, register: Option<i64>) {
+        self.side_effects += 1;
         if register.is_none() || !self.exact() {
             self.box_inexact = self.out.facts.text.at.len() as u32;
         }

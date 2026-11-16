@@ -47,7 +47,9 @@ export class Findings<D> {
     private hiding(): boolean { return this.analyzing && this.mode() === 'hide'; }
 
     private view(uri: string): D[] {
-        const all = this.published.get(uri) ?? [];
+        const all = this.published.get(uri);
+        // a first run: its early findings until its own come
+        if (all === undefined) { return this.early.get(uri) ?? []; }
         if (!this.analyzing || this.mode() === 'keep') { return all; }
         if (this.mode() === 'mark') { return all.map(this.mark); }
         return this.early.get(uri) ?? all.filter(d => (d as { data?: { settled?: boolean } }).data?.settled);
@@ -62,7 +64,7 @@ export class Findings<D> {
 
     settled(uri: string, findings: D[]): void {
         this.early.set(uri, findings);
-        if (this.hiding()) { this.show(uri, this.view(uri)); }
+        if (this.hiding() || !this.published.has(uri)) { this.show(uri, this.view(uri)); }
     }
 
     status(work: Heard): void {

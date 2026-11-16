@@ -490,7 +490,7 @@ impl std::hash::Hasher for NameHasher {
 
 /// The table of control sequence names: every [`Sym`] is an index into it,
 /// and [`Token`] carries the [`Sym`] rather than the text.
-#[derive(Default, Clone)]
+#[derive(PartialEq, Default, Clone)]
 pub struct Interner {
     map: std::collections::HashMap<Rc<str>, Sym, NameHash>,
     /// Shared with the package caches' hash mode, which reads it per load.
@@ -666,7 +666,7 @@ impl Catcode {
 /// The characters past 255 are shared between copies: a path through an
 /// undecided conditional copies the table and compares it at every join,
 /// and unicode-math gives thousands of them a category.
-#[derive(Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct CatcodeTable {
     #[serde(with = "crate::fixed::array")]
     ascii: [Catcode; 256],
@@ -780,6 +780,11 @@ impl CatcodeTable {
     #[inline]
     pub fn is_unknown(&self, c: char) -> bool {
         self.may(c) != 0
+    }
+
+    /// Whether every character's category is known: no `is_unknown` holds.
+    pub fn all_known(&self) -> bool {
+        self.reach.is_none() && self.unknown.is_empty()
     }
 
     /// The categories `c` may have, one bit each.
@@ -1307,6 +1312,36 @@ pub struct Mouth {
 /// How one read of a line went, as `satex lsp`'s incremental plugins ask:
 /// the column its comment began at and the columns (below 129) whose space
 /// it skipped in state N or S without a token (tex.web §§ 347, 354).
+/// All but the text, which [`Mouth::source`] gives: the place as what is left to read.
+impl std::fmt::Debug for Mouth {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        let Mouth {
+            src,
+            pos,
+            line,
+            col,
+            state,
+            force_eof,
+            line_end,
+            last_unknown,
+            undecided,
+            written,
+            digit,
+            reduced,
+            file,
+            directives,
+            lines,
+            reading,
+        } = self;
+        let all: (&dyn std::fmt::Debug, &dyn std::fmt::Debug, &dyn std::fmt::Debug) = (
+            &(src.len().saturating_sub(*pos), line, col, state, force_eof, line_end),
+            &(last_unknown, undecided, written, digit, reduced),
+            &(file, directives, lines, reading),
+        );
+        write!(f, "Mouth{all:?}")
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct LineRead {
     pub line: u32,

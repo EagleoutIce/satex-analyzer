@@ -6,6 +6,7 @@ use crate::engine::builtins::OccKind;
 use crate::engine::tex::{Catcode, CatcodeTable, Span, Tok};
 use crate::linter::fix::{Pos, Scan, Text};
 use crate::linter::{Category, Ref, Report, Rule, Severity, Source};
+use crate::plugins::augment::{Draft, Subject};
 
 pub static RULES: &[Rule] = &[
     Rule {
@@ -83,8 +84,8 @@ too close to the text.  A table of fewer rows than `lints.table-rules.rows`
 /// One table as its source has it.
 struct Table {
     begin: Span,
-    /// The column types, `?` for one the rule does not know.
-    columns: Vec<char>,
+    /// The column types as written, a package's with its `[…]` options.
+    columns: Vec<String>,
     vertical: bool,
     hline: bool,
     /// The rows that are cells only, each cell's text and where it starts.
@@ -199,7 +200,7 @@ fn push_row(table: &mut Table, row: Vec<(String, Pos)>, spans: bool) {
 }
 
 /// The column types of a specification and whether it has a vertical rule.
-fn columns(spec: &str, depth: usize) -> Option<(Vec<char>, bool)> {
+fn columns(spec: &str, depth: usize) -> Option<(Vec<String>, bool)> {
     let mut chars = spec.chars().peekable();
     let (mut out, mut vertical) = (Vec::new(), false);
     // `{…}` after the type letter, balanced.
@@ -231,27 +232,28 @@ fn columns(spec: &str, depth: usize) -> Option<(Vec<char>, bool)> {
             '@' | '!' | '>' | '<' => {
                 group(&mut chars)?;
             }
-            'l' | 'c' | 'r' | 'X' | 'S' => out.push(c),
-            'p' | 'm' | 'b' => {
-                group(&mut chars)?;
-                out.push('p');
-            }
-            'D' => {
-                for _ in 0..3 {
-                    group(&mut chars)?;
-                }
-                out.push('D');
-            }
             '*' if depth < 4 => {
                 let times: usize = group(&mut chars)?.trim().parse().ok()?;
                 let (inner, rule) = columns(&group(&mut chars)?, depth + 1)?;
                 vertical |= rule;
                 for _ in 0..times.min(64) {
-                    out.extend(&inner);
+                    out.extend(inner.iter().cloned());
                 }
             }
-            // A type `\newcolumntype` made, or one this rule does not know.
-            _ => out.push('?'),
+            // `l`, a package's type with its `[…]` options, or one `\newcolumntype` made.
+            // `p`, `m`, `b` take a width and dcolumn's `D` three arguments.
+            _ => {
+                let args = if c == 'D' { 3 } else { usize::from(matches!(c, 'p' | 'm' | 'b')) };
+                for _ in 0..args {
+                    group(&mut chars)?;
+                }
+                let mut kind = if matches!(c, 'm' | 'b') { 'p' } else { c }.to_string();
+                if chars.peek() == Some(&'[') {
+                    kind.extend(chars.by_ref().take_while(|c| *c != ']'));
+                    kind.push(']');
+                }
+                out.push(kind);
+            }
         }
     }
     Some((out, vertical))
@@ -292,10 +294,10 @@ fn number(cell: &str, unit_length: usize) -> Option<Number> {
 fn number_columns(
     table: &Table,
     conv: &crate::project::config::Tables,
-) -> Vec<(usize, char, Vec<Number>, Pos, String)> {
+) -> Vec<(usize, String, Vec<Number>, Pos, String)> {
     let number = |text: &str| number(text, conv.unit_length);
     let mut out = Vec::new();
-    for (j, &kind) in table.columns.iter().enumerate() {
+    for (j, kind) in table.columns.iter().enumerate() {
         let cells: Vec<&(String, Pos)> = table.rows.iter().filter_map(|row| row.get(j)).collect();
         let first = cells.iter().position(|(text, _)| number(text).is_some());
         let Some(first) = first else { continue };
@@ -304,7 +306,7 @@ fn number_columns(
         if let Some(numbers) = numbers.filter(|n| n.len() >= conv.numbers) {
             let header = cells[..first].iter().rev().find(|(text, _)| !text.is_empty());
             let header = header.map_or("Header", |(text, _)| text.as_str()).to_string();
-            out.push((j + 1, kind, numbers, cells[first].1, header));
+            out.push((j + 1, kind.clone(), numbers, cells[first].1, header));
         }
     }
     out
@@ -324,34 +326,24 @@ fn numbers_not_aligned(report: &mut Report) {
         for (column, kind, numbers, at, header) in
             number_columns(&table, &report.analysis().settings.conventions.tables)
         {
-            if !matches!(kind, 'l' | 'c' | 'r' | 'p' | 'X') {
+            if !matches!(kind.as_str(), "l" | "c" | "r" | "p" | "X") {
                 continue;
             }
             let same_decimals = all_equal(numbers.iter().map(|n| n.decimals.unwrap_or(0)));
             let same_digits = all_equal(numbers.iter().map(|n| n.digits));
-            if same_decimals && (kind == 'r' || same_digits) {
+            if same_decimals && (kind == "r" || same_digits) {
                 continue;
             }
-            let siunitx = format!(
-                "add `\\usepackage{{siunitx}}`, set column {column} as `S` and brace its header: `{{{header}}}`"
-            );
-            let (message, fix) = match (numbers.iter().any(|n| n.decimals.is_some()), kind) {
-                (true, 'r') => (
-                    format!("numeric column {column} is right-aligned, not on the decimal separator: use siunitx `S`"),
-                    siunitx,
-                ),
-                (true, _) => (
-                    format!(
-                        "numeric column {column} is set `{kind}`: align its decimal separators with siunitx `S`, or at least use `r`"
-                    ),
-                    siunitx,
-                ),
-                (false, _) => (
-                    format!("numeric column {column} is set `{kind}`: right-align it with `r`, or use siunitx `S`"),
-                    format!("set column {column} as `r` in the column specification"),
+            let decimals = numbers.iter().any(|n| n.decimals.is_some());
+            let (message, fix) = match kind == "r" {
+                true => (format!("numeric column {column} is right-aligned, not on the decimal separator"), None),
+                false => (
+                    format!("numeric column {column} is set `{kind}`: right-align it with `r`"),
+                    Some(format!("set column {column} as `r` in the column specification")),
                 ),
             };
-            report.add(span_at(&table, at), "tabular", message, Some(fix));
+            let subject = Subject::Alignment { kind: &kind, column, header: &header, decimals };
+            report.add_reviewed(span_at(&table, at), "tabular", Draft { subject, message, fix, keep: true });
         }
     }
 }
@@ -364,19 +356,14 @@ fn inconsistent_precision(report: &mut Report) {
             if low == high {
                 continue;
             }
-            // An `S` column prints each number as written unless told to round,
-            // so the fix is one option, not editing every cell.
-            let (message, fix) = match kind {
-                'S' => (
-                    format!("`S` column {column} prints its numbers as written, with {low} to {high} decimal places"),
-                    "let siunitx round them: `\\sisetup{round-mode = places, round-precision = 2}`, or `S[round-mode = places]` for this column".to_string(),
-                ),
-                _ => (
-                    format!("numeric column {column} mixes {low} to {high} decimal places: give every number one precision"),
-                    "round them by hand, or let siunitx `S` round with `round-mode = places`".to_string(),
-                ),
-            };
-            report.add(span_at(&table, at), "tabular", message, Some(fix));
+            let message = format!(
+                "numeric column {column} mixes {low} to {high} decimal places: give every number one precision"
+            );
+            // A type the rule does not know may round: only a package that knows it keeps the finding.
+            let keep = matches!(kind.as_str(), "l" | "c" | "r" | "p" | "X" | "D");
+            let subject = Subject::Precision { kind: &kind, column, low, high };
+            let fix = Some("round them by hand".to_string());
+            report.add_reviewed(span_at(&table, at), "tabular", Draft { subject, message, fix, keep });
         }
     }
 }
@@ -435,9 +422,14 @@ mod tests {
 
     #[test]
     fn a_specification_gives_its_columns() {
-        assert_eq!(columns("|l|c|r|", 0), Some((vec!['l', 'c', 'r'], true)));
-        assert_eq!(columns("@{}lp{3cm}S@{}", 0), Some((vec!['l', 'p', 'S'], false)));
-        assert_eq!(columns("*{3}{c}>{\\bfseries}l", 0), Some((vec!['c', 'c', 'c', 'l'], false)));
-        assert_eq!(columns("lY", 0), Some((vec!['l', '?'], false)));
+        let kinds = |spec| columns(spec, 0).map(|(kinds, rule)| (kinds.join(" "), rule));
+        assert_eq!(kinds("|l|c|r|"), Some(("l c r".into(), true)));
+        assert_eq!(kinds("@{}lp{3cm}S@{}"), Some(("l p S".into(), false)));
+        assert_eq!(
+            kinds("S[round-mode=places]S[table-format=1.2]r"),
+            Some(("S[round-mode=places] S[table-format=1.2] r".into(), false))
+        );
+        assert_eq!(kinds("*{3}{c}>{\\bfseries}l"), Some(("c c c l".into(), false)));
+        assert_eq!(kinds("lY"), Some(("l Y".into(), false)));
     }
 }

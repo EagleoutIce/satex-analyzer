@@ -261,3 +261,132 @@ fn a_rerun_after_a_package_with_look_ahead_resumes_where_the_document_begins() {
     assert_eq!(checkpoints.resumed.map(|(_, line)| line), Some(opens), "{} runs", analysis.build_runs);
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+const PARAGRAPHS: &str = r"\documentclass{article}
+\begin{document}
+\section{One}\label{one}
+\def\name{first}
+A first paragraph with a few words in it.
+
+A second paragraph that the edits change.\vspace{2cm}
+
+A third paragraph that reads \name\ and refers to \ref{one}.
+
+A fourth paragraph, the last one.
+\end{document}
+";
+
+/// After an edit, a run that resumes before it checks, at each later line the
+/// last run kept a checkpoint on, whether its state is the last run's again.
+/// Then the last run's rest is reused, with this run's facts up to there
+/// (`Checkpoints::converged`). A word in a paragraph changes no binding, mode
+/// or file written, so the states meet on the next line. A changed definition
+/// that later text reads, a changed label the `.aux` gets, or a page grown
+/// longer keeps them apart. An inserted line moves every later place, so the
+/// rest is run again. In every case the result is a full run's.
+#[test]
+fn a_run_after_an_edit_reuses_the_last_runs_rest_only_when_the_states_meet() {
+    if !installed() {
+        return;
+    }
+    let dir = crate::support::tmp_root().join("incremental-converge");
+    std::fs::create_dir_all(&dir).unwrap();
+    let main = dir.join("main.tex");
+    let cfg = crate::support::config();
+    let line_of = |text: &str, part: &str| 1 + text.lines().position(|l| l.contains(part)).unwrap() as u32;
+    // (text replaced, its replacement, whether the rest is reused)
+    let edits = [
+        ("that the edits change", "that one edit changed", true),
+        ("\\def\\name{first}", "\\def\\name{second}", false),
+        ("\\label{one}", "\\label{two}", false),
+        ("\\vspace{2cm}", "\\vspace{30cm}", false),
+        ("that the edits change.", "that the edits change.\nAn inserted line.", false),
+    ];
+    for (from, to, meets) in edits {
+        std::fs::write(&main, PARAGRAPHS).unwrap();
+        let mut checkpoints = Checkpoints::new(&cfg).every(64);
+        checkpoints.analyze(PARAGRAPHS, &main);
+        let text = PARAGRAPHS.replacen(from, to, 1);
+        std::fs::write(&main, &text).unwrap();
+        // Twice: the second run meets the first's spliced state.
+        for run in 1..=2 {
+            let text = text.replacen("paragraph, the last", &format!("paragraph {run}, the last"), 1);
+            std::fs::write(&main, &text).unwrap();
+            let incremental = checkpoints.analyze(&text, &main);
+            assert!(checkpoints.resumed.is_some(), "{from}: the run did not resume");
+            let full = Machine::analyze_once(&text, Some(&main), &cfg);
+            let differs = first_difference(&said(&incremental), &said(&full));
+            assert_eq!(differs, None, "after replacing {from} by {to}, run {run}");
+        }
+        let text = PARAGRAPHS.replacen(from, to, 1);
+        std::fs::write(&main, PARAGRAPHS).unwrap();
+        let mut checkpoints = Checkpoints::new(&cfg).every(64);
+        checkpoints.analyze(PARAGRAPHS, &main);
+        std::fs::write(&main, &text).unwrap();
+        let incremental = checkpoints.analyze(&text, &main);
+        let full = Machine::analyze_once(&text, Some(&main), &cfg);
+        assert_eq!(first_difference(&said(&incremental), &said(&full)), None, "after replacing {from} by {to}");
+        let at = checkpoints.converged.as_ref().map(|(_, line, _)| *line);
+        match meets {
+            true => assert!(at.is_none_or(|l| l > line_of(&text, to)), "{from}: met at {at:?}"),
+            false => assert_eq!(at, None, "{from}: the rest must run again"),
+        }
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A word typed in a paragraph leaves nothing a later line reads, so the run
+/// after it reuses the last run's rest from a later line on: `Text`'s offsets
+/// into the characters set move by the word's change in length. The line right
+/// after the paragraph may not meet yet: the `\par` call open there recorded
+/// the edited line's width. Typing on, each run meets the one before at the
+/// checkpoint it kept where it met its own predecessor.
+#[test]
+fn a_word_typed_in_a_paragraph_reuses_the_last_runs_rest() {
+    if !installed() {
+        return;
+    }
+    let dir = crate::support::tmp_root().join("incremental-word");
+    std::fs::create_dir_all(&dir).unwrap();
+    let main = dir.join("main.tex");
+    let cfg = crate::support::config();
+    std::fs::write(&main, PARAGRAPHS).unwrap();
+    let mut checkpoints = Checkpoints::new(&cfg).every(64);
+    checkpoints.analyze(PARAGRAPHS, &main);
+    // Each as long as the text it replaces: see the next test for one that is not.
+    for typed in ["one edit changed", "one edit changes", "one edit changed"] {
+        let text = PARAGRAPHS.replacen("that the edits change", &format!("that {typed}"), 1);
+        std::fs::write(&main, &text).unwrap();
+        let incremental = checkpoints.analyze(&text, &main);
+        let full = Machine::analyze_once(&text, Some(&main), &cfg);
+        assert_eq!(first_difference(&said(&incremental), &said(&full)), None, "typed {typed}");
+        let edited = 1 + text.lines().position(|l| l.contains(typed)).unwrap() as u32;
+        let at = checkpoints.converged.as_ref().map(|(_, line, _)| *line);
+        assert!(at.is_some_and(|l| l > edited), "typed {typed}: met at {at:?}");
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A word typed that is shorter or longer than the one it replaces moves every
+/// later character's offset, and the counts of tokens taken and assignments
+/// made. Whether or not the runs meet (here the page builder's item count
+/// differs to the page end, so they do not), the result is the full run's.
+#[test]
+fn a_longer_word_typed_in_a_paragraph_gives_the_full_runs_result() {
+    if !installed() {
+        return;
+    }
+    let dir = crate::support::tmp_root().join("incremental-longer");
+    std::fs::create_dir_all(&dir).unwrap();
+    let main = dir.join("main.tex");
+    let cfg = crate::support::config();
+    std::fs::write(&main, PARAGRAPHS).unwrap();
+    let mut checkpoints = Checkpoints::new(&cfg).every(64);
+    checkpoints.analyze(PARAGRAPHS, &main);
+    let text = PARAGRAPHS.replacen("that the edits change", "that an edit changed", 1);
+    std::fs::write(&main, &text).unwrap();
+    let incremental = checkpoints.analyze(&text, &main);
+    let full = Machine::analyze_once(&text, Some(&main), &cfg);
+    assert_eq!(first_difference(&said(&incremental), &said(&full)), None);
+    let _ = std::fs::remove_dir_all(&dir);
+}

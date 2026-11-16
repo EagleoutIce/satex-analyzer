@@ -1,6 +1,7 @@
 //! What surrounds the document: provider, platform, engine, output.
 //! These are plugins: defaults detected, overridden in `satex.yaml`.
 
+pub mod augment;
 pub mod bib;
 pub mod build;
 pub mod depp;

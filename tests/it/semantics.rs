@@ -2764,6 +2764,17 @@ fn a_script_outside_math_is_an_error() {
     assert!(diagnosed(&boxed, "script-outside-math").is_empty());
 }
 
+/// tex.web §§ 1046-1047: the missing `$` is found for a math-only primitive
+/// in the document's text and for `\par` in math, also from a macro body.
+/// Pins the shortcut that skips the check only for library text outside math.
+#[test]
+fn a_missing_dollar_is_found_in_text_and_in_math() {
+    let text = analyze(r#"a\mathchar"141 b"#);
+    assert_eq!(diagnosed(&text, "script-outside-math").len(), 1);
+    let math = analyze(r"\catcode`\$=3 \catcode`\{=1 \catcode`\}=2 \def\p{\par}$a\p b$");
+    assert_eq!(diagnosed(&math, "missing-dollar").len(), 1);
+}
+
 /// tex.web § 1128: an `&` read where no alignment is open is an error; in
 /// an alignment's cell it ends the cell.
 #[test]

@@ -392,6 +392,24 @@ impl Command {
         )
     }
 
+    /// A plain `lint` of the document: its early findings ([`crate::linter::early`]) print first.
+    pub fn lints_early(&self) -> bool {
+        matches!(
+            self,
+            Command::Lint {
+                filter: None,
+                all: false,
+                rules: false,
+                explain: None,
+                chktex: false,
+                style: false,
+                fix: false,
+                diff: false,
+                ..
+            }
+        )
+    }
+
     pub fn needs_analysis(&self) -> bool {
         self.needs_source() && !matches!(self, Command::Tokens)
     }

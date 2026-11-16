@@ -322,15 +322,17 @@ impl Num {
         members: usize,
         exact: impl Fn(&[i64]) -> Option<i64>,
     ) -> Option<(Vec<i64>, bool)> {
-        if sets.iter().map(|s| s.len()).product::<usize>() > 64 {
+        let count = sets.iter().map(|s| s.len()).product::<usize>();
+        if count > 64 {
             return None;
         }
-        let combos = sets.iter().fold(vec![Vec::new()], |acc, xs| {
-            acc.iter().flat_map(|c: &Vec<i64>| xs.iter().map(move |&x| [c.clone(), vec![x]].concat())).collect()
-        });
-        let mut out = Vec::new();
-        let mut err = false;
-        for c in combos {
+        let (mut out, mut err, mut c) = (Vec::new(), false, vec![0; sets.len()]);
+        // The combinations in order, the last set's member changing fastest.
+        for k in 0..count {
+            let mut rest = k;
+            for (x, xs) in c.iter_mut().zip(sets).rev() {
+                (*x, rest) = (xs[rest % xs.len()], rest / xs.len());
+            }
             match exact(&c) {
                 Some(v) => {
                     if !out.contains(&v) {

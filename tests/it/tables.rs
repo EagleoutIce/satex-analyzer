@@ -8,12 +8,22 @@ use satex::project::config::{Config, Load};
 
 /// `code: message` and the group of every table finding on a document with `body`.
 fn found(name: &str, body: &str) -> Vec<(String, Option<String>)> {
+    found_with(name, "", body)
+}
+
+/// [`found`] with `preamble` before `\begin{document}`.
+fn found_with(name: &str, preamble: &str, body: &str) -> Vec<(String, Option<String>)> {
+    found_by(name, preamble, body, crate::support::config())
+}
+
+/// [`found_with`] under `cfg`.
+fn found_by(name: &str, preamble: &str, body: &str, cfg: Config) -> Vec<(String, Option<String>)> {
     let directory = crate::support::tmp_root().join("satex-tables").join(format!("{name}-{}", std::process::id()));
     std::fs::create_dir_all(&directory).unwrap();
-    let document = format!("\\documentclass{{article}}\n\\begin{{document}}\n{body}\n\\end{{document}}\n");
+    let document = format!("\\documentclass{{article}}\n{preamble}\\begin{{document}}\n{body}\n\\end{{document}}\n");
     let main = directory.join("main.tex");
     std::fs::write(&main, &document).unwrap();
-    let cfg = Config { load: Load { classes: true, ..Default::default() }, ..crate::support::config() };
+    let cfg = Config { load: Load { classes: true, ..Default::default() }, ..cfg };
     let analysis = Machine::analyze(&document, Some(&main), &cfg);
     let codes = ["numbers-not-aligned", "inconsistent-precision", "unit-in-cells", "table-rules"];
     let out = satex::linter::lint(&analysis)
@@ -93,4 +103,44 @@ fn a_short_table_keeps_its_rules() {
     }
     let found = findings("short", "\\begin{tabular}{|l|l|}\n\\hline\na & b \\\\\nc & d \\\\\n\\hline\n\\end{tabular}");
     assert!(found.is_empty(), "{found:?}");
+}
+
+/// An `S` column rounds when siunitx's `round-mode` says so, globally or in
+/// the column's own options: only `none` prints numbers as written.  Pins a
+/// false "prints its numbers as written" on a thesis whose `\sisetup` rounds.
+#[test]
+fn an_s_column_that_rounds_is_quiet() {
+    if !installed() {
+        return;
+    }
+    let rows = "a & 0.057291666 & 1 \\\\\nb & 0.5 & 0.32791606 \\\\\nc & 1 & 0.6 \\\\\n";
+    let table = |spec: &str| format!("\\begin{{tabular}}{{{spec}}}\nName & A & B \\\\\n{rows}\\end{{tabular}}");
+    let precision =
+        |f: &Vec<(String, Option<String>)>| f.iter().filter(|(m, _)| m.starts_with("inconsistent-precision")).count();
+    let siunitx = "\\usepackage{siunitx}\n";
+    assert_eq!(precision(&found_with("s-none", siunitx, &table("lSS"))), 2);
+    let global = format!("{siunitx}\\sisetup{{round-mode=places,round-precision=2}}\n");
+    assert_eq!(precision(&found_with("s-global", &global, &table("lSS"))), 0);
+    assert_eq!(precision(&found_with("s-column", siunitx, &table("lS[round-mode=places]S"))), 1);
+}
+
+/// siunitx's knowledge lives in its augmentation: with `plugins.augment`
+/// empty, `S` is a type the rule does not know and may round, so it stays
+/// quiet, while an `l` column still mixes precisions.  Pins the switch.
+#[test]
+fn an_s_column_is_not_judged_without_the_siunitx_augmentation() {
+    if !installed() {
+        return;
+    }
+    let body = "\\begin{tabular}{lSl}\nName & A & B \\\\\na & 0.05 & 0.5 \\\\\nb & 0.5 & 0.125 \\\\\nc & 1 & 1 \\\\\n\\end{tabular}";
+    let mut cfg = crate::support::config();
+    let precision = |f: Vec<(String, Option<String>)>| -> Vec<String> {
+        f.into_iter().filter(|(m, _)| m.starts_with("inconsistent-precision")).map(|(m, _)| m).collect()
+    };
+    let on = precision(found_by("aug-on", "\\usepackage{siunitx}\n", body, cfg.clone()));
+    assert_eq!(on.len(), 2, "{on:?}");
+    cfg.plugins.augment.clear();
+    let off = precision(found_by("aug-off", "\\usepackage{siunitx}\n", body, cfg));
+    assert_eq!(off.len(), 1, "{off:?}");
+    assert!(off[0].contains("column 3"), "{off:?}");
 }

@@ -274,6 +274,29 @@ mod self_referential_macros {
         assert!(analysis.steps < 2_000, "{} steps", analysis.steps);
     }
 
+    /// LaTeX's `\@whilesw` with a body that never clears its switch, as
+    /// `\clearnotecolumns` runs inside an output routine. The body's `\b`
+    /// meets its state of a round before. Cutting `\b` would leave the loop
+    /// running, so the cut goes to `\iw`, the expansion that carries the
+    /// loop, and the run reads on to `\done`. (A body that closes a group each
+    /// round is not met as a repeat yet: see the plan.)
+    #[test]
+    fn a_loop_whose_body_repeats_is_cut_where_it_loops() {
+        let analysis = Machine::analyze(
+            "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\let\\ifs\\iftrue\n\
+             \\long\\def\\w#1\\fi#2{#1#2\\iw{#1#2}\\fi\\fi}\n\
+             \\long\\def\\iw#1\\fi{#1\\expandafter\\iw\\else\\g\\fi{#1}\\fi}\n\
+             \\long\\def\\g#1#2{}\\def\\b{\\count1=1 }\n\
+             \\w\\ifs\\fi{\\b}\\def\\done{}",
+            None,
+            &cfg(),
+        );
+        let widened = messages(&analysis, "recursion-widened");
+        assert!(widened.iter().any(|m| m.contains("\\iw: it")), "{widened:?}");
+        assert!(crate::support::defined(&analysis, "done"));
+        assert!(analysis.steps < 5_000, "{} steps", analysis.steps);
+    }
+
     /// With the cycle cut off (`cycle_after: 0`), the quark rule bounds the
     /// same fixed point, and it follows `recursion_depth`, not a hardcoded
     /// constant.
@@ -1310,4 +1333,77 @@ fn a_cut_before_a_pending_fi_in_the_output_routine_ends() {
         assert!(ended.recv_timeout(bound).is_ok(), "{pad} steps of padding: no end within {bound:?}");
     }
     let _ = std::fs::remove_dir_all(&root);
+}
+
+/// Runs `source` with kept call effects (`limits.call_memo_steps` 500) and
+/// without, the plain catcodes set first.
+fn memo_runs(source: &str) -> [satex::analysis::machine::Analysis; 2] {
+    let source = format!("{}{source}", crate::support::PRELUDE);
+    [500, 0].map(|memo| {
+        let mut cfg = cfg(1_000_000_000);
+        cfg.limits.call_memo_steps = memo;
+        Machine::analyze(&source, None, &cfg)
+    })
+}
+
+/// A long call met again on the same text, reading the same values, makes
+/// the assignments its first run left instead of running. The kept writes
+/// are every write the run left, also one that left the old value: the
+/// call after `\gdef\got{0}` must leave 300 again, not 0.
+#[test]
+fn a_repeated_call_applies_its_kept_effect() {
+    let [kept, ran] = memo_runs(
+        "\\countdef\\n=10
+\\def\\upto#1{{\\n=0 \\def\\step{\\advance\\n 1 \\ifnum\\n<#1 \\expandafter\\step\\fi}\\step\\xdef\\got{\\the\\n}}}
+\\upto{300}\\upto{300}\\upto{300}\\upto{300}\\upto{300}
+\\gdef\\got{0}\\upto{300}
+\\def\\three{300}\\ifx\\got\\three\\def\\Kept{}\\else\\def\\Lost{}\\fi
+",
+    );
+    for a in [&kept, &ran] {
+        assert!(crate::support::defined(a, "Kept") && !crate::support::maybe_defined(a, "Lost"));
+    }
+    // The first call is only noted, the second keeps, three replay. The
+    // last one read `\\got` (an `\\xdef` looks at what it replaces), so it runs.
+    assert_eq!(kept.call_memo[1], 3, "{:?} kept, replayed, saved", kept.call_memo);
+    // Replays of the loop save three of the six runs, at least a third of all steps.
+    assert!(kept.steps * 3 <= ran.steps * 2, "{} steps kept, {} run", kept.steps, ran.steps);
+}
+
+/// A kept effect holds only while every name its run read holds what it
+/// held: `\calc` reads `\base`, so after `\def\base{2}` it runs again and
+/// leaves `2300`, not the `1300` its first runs kept.
+#[test]
+fn a_kept_effect_misses_when_a_name_it_read_changed() {
+    let [kept, ran] = memo_runs(
+        "\\countdef\\n=10 \\def\\base{1}
+\\def\\calc{{\\n=0 \\def\\step{\\advance\\n 1 \\ifnum\\n<300 \\expandafter\\step\\fi}\\step\\xdef\\got{\\base\\the\\n}}}
+\\calc\\calc\\calc\\def\\base{2}\\calc
+\\def\\want{2300}\\ifx\\got\\want\\def\\Fresh{}\\else\\def\\Stale{}\\fi
+",
+    );
+    for a in [&kept, &ran] {
+        assert!(crate::support::defined(a, "Fresh") && !crate::support::maybe_defined(a, "Stale"));
+    }
+    assert_eq!(kept.call_memo[1], 1, "only the third call replays");
+}
+
+/// A replayed local assignment stays local: `\bump` sets the count register
+/// `\k` at its caller's level. Replayed inside a group, the group's end must
+/// restore `\k` to 5. Registers start as global bindings, so taking the
+/// binding's own `global` flag for the write's kind made it leak out.
+#[test]
+fn a_kept_local_assignment_stays_in_its_group() {
+    let [kept, ran] = memo_runs(
+        "\\countdef\\n=10 \\countdef\\k=11
+\\def\\bump{\\begingroup\\n=0 \\def\\step{\\advance\\n 1 \\ifnum\\n<300 \\expandafter\\step\\fi}\\step
+  \\expandafter\\endgroup\\expandafter\\k\\the\\n\\relax}
+\\bump\\bump \\k=5 \\begingroup\\bump\\endgroup
+\\ifnum\\k=5 \\def\\Local{}\\else\\def\\Leaked{}\\fi
+",
+    );
+    for a in [&kept, &ran] {
+        assert!(crate::support::defined(a, "Local") && !crate::support::maybe_defined(a, "Leaked"));
+    }
+    assert_eq!(kept.call_memo[1], 1, "the call in the group replays");
 }

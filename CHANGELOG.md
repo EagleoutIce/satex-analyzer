@@ -6,6 +6,33 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 
 ## Unreleased
 
+### Lints
+
+- `feat` **Early findings.** Rules that need only the text and the standard meaning of a few commands report on a sketch before the run starts: `comment-marker`, `user-pattern`, `clones`, two latexmkrc rules, and from `\label`, `\ref`, `\cite`, `\usepackage`, `\input` and `\includegraphics` also `duplicate-label`, `undefined-reference`, `undefined-citation`, `duplicate-package`, `unresolved-file` and `missing-graphic`. `satex lint` prints them on stderr at once, the editor shows them as provisional (on a first open as its diagnostics), and the run confirms or retracts each one (`lints.early`).
+- `feat` **Preflight checks for lines and boxes too wide.** `overfull-line`, `overfull-box` and `wider-than-line` report what pdflatex logs as `Overfull \hbox`, by the same amount, where satex knows every width. An `\includegraphics` whose `width=` passes `\linewidth` gets the fix `width=\linewidth`.
+- `fix` **`inconsistent-precision` reads siunitx's rounding.** An `S` column whose numbers siunitx rounds, through `\sisetup` or the column's own options, is no longer reported as printed as written.
+- `fix` **A name in a formula is not punctuation.** In `$use?$ edge` the `?` belongs to the name, so `math-punctuation` suggests setting the name as one, for example with a command of your own, instead of moving the `?`.
+- `feat` **`\vskip` and `\hskip` come with a fix.** `primitive-tex-command` now rewrites `\vskip<glue>` to `\vspace{<glue>}` and `\hskip<glue>` to `\hspace{<glue>}`.
+- `feat` **Package augmentations.** Package knowledge for lints moves into per-package modules, each switchable in `satex.yaml`. siunitx is the first.
+
+### Playground
+
+- `fix` **Tables with array or tabularx get their widget.** A table whose package calls `\@array` by another name now gets its "Edit table…" lens and dialog.
+- `feat` **Heading styles and page options.** The page layout widget restyles chapter to subsubsection headings (family, weight, small caps, size, color, alignment, numbering) through KOMA-Script or titlesec, saves them as named style sets to switch between, and sets the page color, columns and the binding.
+- `feat` **Edit in the PDF.** Each table column shows its width over the pages. Dragging its edge rewrites `p{…}` in the source, snapped, within `\linewidth`, as one undo step. With Type on, a click on a word puts a caret there and plain text goes to its place in the source.
+
+### Analysis
+
+- `fix` **Note columns end.** `\vsplit` keeps what a box holds through an hbox, a one-line paragraph and `\unvbox`, so the rest of a split note box is known to be empty and `\clearnotecolumns` stops.
+
+- `fix` **Endless loops are cut where they loop.** A call in a loop's body that meets the state it was in a round before hands the cut to the loop itself, so the run reads on after the loop. Captions no longer look like an endless loop at shipout: each `\write` a page ships counts as a change.
+
+- `fix` **Stable messages over unknown numbers.** A message that prints a number of unknown digits shows its range, not an internal serial, so the same document gives the same message on every run.
+
+- `perf` **Faster first runs.** A call that ended partway no longer collects everything it wrote. This took up to a quarter of the time on figure-heavy documents.
+- `perf` **Cheaper steps.** A command that does not branch no longer pays for a record of what changed, and file readers are shared instead of copied. Figure-heavy documents run about 7% faster.
+- `perf` **Kept call effects.** A long call that ran cleanly can keep its effect and replay it when the same arguments meet the same state. Calls of 200 steps or more are kept (`limits.call_memo_steps`, 0 turns it off). `limits.call_memo_verify: 1` checks each replay against a real run.
+
 ## v0.2.4 (2026-11-15)
 
 ### Lints

@@ -722,7 +722,7 @@ math_none! {
 // display math mode.`
 #[test]
 fn punctuation_on_the_wrong_side_of_a_formula_is_reported() {
-    let Some(doc) = on_disk("punctuation", &math_document("Inline $a+b.$ here.\n\\[ c+d \\]."), true) else {
+    let Some(doc) = on_disk("punctuation", &math_document("Inline $a+b.$ Here.\n\\[ c+d \\]."), true) else {
         return;
     };
     let found = findings(&doc.analysis, "math-punctuation");
@@ -738,6 +738,18 @@ fn punctuation_after_an_equation_environment_is_reported() {
     };
     let found = findings(&doc.analysis, "math-punctuation");
     assert!(found.iter().any(|m| m.contains("set after the display")), "{found:?}");
+}
+
+/// A `?` the sentence reads on after is part of the formula: `$use?$ edge`
+/// names an edge, and the hint is to set the name as one, not to move the `?`.
+#[test]
+fn a_mark_inside_a_name_is_not_sentence_punctuation() {
+    let Some(doc) = on_disk("name-mark", &math_document("It adds a $use?$ edge, and $x.$ then."), true) else {
+        return;
+    };
+    let found = findings(&doc.analysis, "math-punctuation");
+    assert_eq!(found.len(), 1, "{found:?}");
+    assert!(found[0].contains("`use?` is a name"), "{found:?}");
 }
 
 math_none! {
@@ -1943,4 +1955,20 @@ fn a_cref_that_starts_a_sentence_wants_cref_capitalized() {
                   \\section{A}\\label{sec:a}\nWe are done here. \\cref{sec:a} shows it.\n\\end{document}\n";
     let found = records("capital-cref", source, "sentence-capital");
     assert_eq!(found.iter().flat_map(replacements).collect::<Vec<_>>(), ["C"], "{found:?}");
+}
+
+/// `\vskip` and `\hskip` read glue that `\vspace` and `\hspace` take as their
+/// argument, so the hint comes with the edit: the glue, a `\relax` ending it
+/// and the primitive become one call.  Pins a hint the user had to apply by hand.
+#[test]
+fn a_skip_primitive_is_rewritten_to_the_latex_command() {
+    if !crate::support::installed() {
+        return;
+    }
+    let source = "\\documentclass{article}\n\\begin{document}\nA\n\n\\vskip\\baselineskip\nB\\hskip 1em plus 2pt\\relax C\n\\end{document}\n";
+    let Some(doc) = on_disk("skip-fix", source, true) else { return };
+    let found: Vec<_> =
+        satex::linter::lint(&doc.analysis).into_iter().filter(|r| r["code"] == "primitive-tex-command").collect();
+    let fixes: Vec<String> = found.iter().flat_map(replacements).collect();
+    assert_eq!(fixes, [r"\vspace{\baselineskip}", r"\hspace{1em plus 2pt}"], "{found:?}");
 }

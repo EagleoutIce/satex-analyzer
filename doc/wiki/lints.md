@@ -83,6 +83,8 @@ Every rule, with a link to its explanation below. The shape gives the severity: 
 | S009 | [`math-operator-name`](#math-operator-name) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-style">style</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> | an operator name is set in math italic instead of by its command | <a class="from" href="Chktex-Coverage" title="follows chktex warning 35">chktex 35</a> |
 | S010 | [`missing-italic-correction`](#missing-italic-correction) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-style">style</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> | a slanted letter runs into upright text with no `\/` between them | <a class="from" href="Chktex-Coverage" title="follows chktex warning 6">chktex 6</a> |
 | S011 | [`missing-nonbreaking-space`](#missing-nonbreaking-space) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-style">style</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> | an ordinary space in front of a reference lets the line break before the number | <a class="from" href="Chktex-Coverage" title="follows chktex warning 2">chktex 2</a> |
+| S063 | [`overfull-box`](#overfull-box) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-style">style</span> | — | — | an `\hbox to` holds more than its width | — |
+| S062 | [`overfull-line`](#overfull-line) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-style">style</span> | — | — | a line of the paragraph is wider than the text block | — |
 | S012 | [`parenthesis-spacing`](#parenthesis-spacing) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-style">style</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> | a parenthesis carries the space of the text inside it instead of the text around it | <a class="from" href="Chktex-Coverage" title="follows chktex warning 36, 37">chktex 36, 37</a> |
 | S013 | [`quote-direction`](#quote-direction) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-style">style</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> | a quotation mark points the wrong way, or a run of them mixes both directions | <a class="from" href="Chktex-Coverage" title="follows chktex warning 32, 33, 34">chktex 32, 33, 34</a> |
 | S061 | [`sentence-capital`](#sentence-capital) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-style">style</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> | a sentence starts with a lowercase letter | — |
@@ -92,6 +94,7 @@ Every rule, with a link to its explanation below. The shape gives the severity: 
 | S017 | [`stray-italic-correction`](#stray-italic-correction) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-style">style</span> | — | <span class="fix fix-safe" title="safe: the fix keeps the document's meaning, --fix applies it">S</span> <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> | a repeated italic correction, or one in front of a period or comma | <a class="from" href="Chktex-Coverage" title="follows chktex warning 5, 28">chktex 5, 28</a> |
 | S018 | [`unknown-suppress-code`](#unknown-suppress-code) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-style">style</span> | — | — | a satex-disable comment names a code no rule has | — |
 | S019 | [`user-pattern`](#user-pattern) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-style">style</span> | — | — | the source matches a pattern the project asked to be warned about | <a class="from" href="Chktex-Coverage" title="follows chktex warning 20, 44">chktex 20, 44</a> |
+| S064 | [`wider-than-line`](#wider-than-line) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-style">style</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> | a box set in a paragraph is wider than its lines | — |
 | S020 | [`wrong-dash`](#wrong-dash) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-style">style</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> | a run of hyphens sets a dash of the wrong length for what stands around it | <a class="from" href="Chktex-Coverage" title="follows chktex warning 8">chktex 8</a> |
 | S021 | [`wrong-quote-character`](#wrong-quote-character) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-style">style</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> | a character that is not a quotation mark stands in for one | <a class="from" href="Chktex-Coverage" title="follows chktex warning 18, 19">chktex 18, 19</a> |
 | S022 | [`zero-italic-correction`](#zero-italic-correction) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-style">style</span> | — | <span class="fix fix-safe" title="safe: the fix keeps the document's meaning, --fix applies it">S</span> | the italic correction is zero here, so `\/` changes nothing | <a class="from" href="Chktex-Coverage" title="follows chktex warning 4">chktex 4</a> |
@@ -140,6 +143,18 @@ Every rule, with a link to its explanation below. The shape gives the severity: 
 | A003 | [`unread-document`](#unread-document) | <span class="sev sev-error" title="default: error">◆</span> <span class="cat cat-precision">precision</span> | — | — | the analysis did not read all of the document | — |
 | A001 | [`analysis-imprecision`](#analysis-imprecision) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-precision">precision</span> | — | — | the analysis had to widen | — |
 | A002 | [`assertion-unknown`](#assertion-unknown) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-precision">precision</span> | — | — | an assertion could not be decided | — |
+
+## Early findings
+
+Each rule declares the facts it needs. Most need the whole run. A few need only the files' text, or the text and the standard meaning of a few names: which files `\input`, `\include` and `\subfile` read, and which environments, such as `verbatim`, read their bodies verbatim. The `keys` tier also reads what the text's commands name, by their standard meaning: `\label` defines a label, `\ref` and `\cref` refer to one, `\cite` cites a key of the databases `\bibliography` and `\addbibresource` name, `\usepackage` loads a package, and `\includegraphics` includes a file that graphics finds with one of its extensions. A later pass can still change these findings, so the editor does not keep them between passes, as it keeps `text` and `names` ones. These rules run first, on a sketch of the document, before the run starts. `lints.early` in `satex.yaml` lists the names, and the sketch reports this as the assumption `early-standard-names`.
+
+| needs | rules |
+| --- | --- |
+| text | [`build-command-placeholders`](#build-command-placeholders), [`build-engine-options`](#build-engine-options) |
+| names | [`user-pattern`](#user-pattern), [`clones`](#clones), [`comment-marker`](#comment-marker) |
+| keys | [`missing-graphic`](#missing-graphic), [`duplicate-label`](#duplicate-label), [`undefined-citation`](#undefined-citation), [`undefined-reference`](#undefined-reference), [`unresolved-file`](#unresolved-file), [`duplicate-package`](#duplicate-package) |
+
+An early finding is provisional. `satex lint` prints it on stderr at once, marked `early`. The editor shows it before the run ends, on `satex/settled` with `data.provisional`. A file opened for the first time also gets the early set as its diagnostics, each marked provisional, so any client shows them. The run's findings then replace the early ones. A finding the run makes too is confirmed and keeps its place and message. One the run does not make is retracted: `satex lint` names it on stderr, and the editor drops it. A `% TODO` in a file that only a skipped `\iffalse` branch inputs is such a case. `lints.early.enabled: false` turns early findings off.
 
 ## Errors caused in package code
 
@@ -199,7 +214,7 @@ A finding's `fix` says what to do. Where that is mechanical it carries the edits
 `S` marks a safe fix, `U` an unsafe one. A rule with both has findings of each kind: the fix is safe where it cannot change what the document means and unsafe where it might. Each finding names its own kind.
 
 <div class="fold">
-<h3 class="fold-head">67 rules with quick fixes</h3>
+<h3 class="fold-head">68 rules with quick fixes</h3>
 
 * C001 [`already-defined`](#already-defined) <span class="fix fix-safe" title="safe: the fix keeps the document's meaning, --fix applies it">S</span> <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> `\newcommand` redefines an existing name
 * C002 [`bibtex-command-under-biblatex`](#bibtex-command-under-biblatex) <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> a BibTeX command biblatex replaces stops the run
@@ -236,6 +251,7 @@ A finding's `fix` says what to do. Where that is mechanical it carries the edits
 * S015 [`space-before-command`](#space-before-command) <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> a space lets the line break between a word and the mark that belongs to it
 * S016 [`space-before-punctuation`](#space-before-punctuation) <span class="fix fix-safe" title="safe: the fix keeps the document's meaning, --fix applies it">S</span> a space stands between a word and the punctuation after it
 * S017 [`stray-italic-correction`](#stray-italic-correction) <span class="fix fix-safe" title="safe: the fix keeps the document's meaning, --fix applies it">S</span> <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> a repeated italic correction, or one in front of a period or comma
+* S064 [`wider-than-line`](#wider-than-line) <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> a box set in a paragraph is wider than its lines
 * S020 [`wrong-dash`](#wrong-dash) <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> a run of hyphens sets a dash of the wrong length for what stands around it
 * S021 [`wrong-quote-character`](#wrong-quote-character) <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> a character that is not a quotation mark stands in for one
 * S022 [`zero-italic-correction`](#zero-italic-correction) <span class="fix fix-safe" title="safe: the fix keeps the document's meaning, --fix applies it">S</span> the italic correction is zero here, so `\/` changes nothing
@@ -965,7 +981,7 @@ See [pdftex § -shell-escape](https://ctan.org/pkg/pdftex).
 </div>
 
 <div class="fold" id="category-style">
-<h3 class="fold-head"><b>style</b> (61 rules)</h3>
+<h3 class="fold-head"><b>style</b> (64 rules)</h3>
 
 ### accent-on-dotted-letter
 
@@ -1139,6 +1155,32 @@ Fix by writing `Figure~\ref{fig:one}`.
 
 See [chktex 2](https://www.nongnu.org/chktex/), [The TeXbook, chapter 14](https://ctan.org/pkg/texbook), [tex.web § 1043](https://github.com/TeX-Live/texlive-source/blob/dce038dd1bd98fac739254da4a2066c8347cdf6c/texk/web2c/tex.web#L20358).
 
+### overfull-box
+
+<p class="badges"><code class="num" title="rule number">S063</code> <span class="sev sev-warning" title="default: warning">default: warning</span> <span class="cat cat-style">style</span></p>
+
+**an `\hbox to` holds more than its width**
+
+`\hbox to ⟨width⟩{…}`, and the LaTeX boxes built on it such as `\makebox[⟨width⟩][s]{…}`, pack their material to a given width ([tex.web § 649](https://github.com/TeX-Live/texlive-source/blob/dce038dd1bd98fac739254da4a2066c8347cdf6c/texk/web2c/tex.web#L12910)). Material wider than that, after all its glue shrank, sticks out of the box, and TeX writes `Overfull \hbox (…pt too wide) detected at line …` to the log ([§ 666](https://github.com/TeX-Live/texlive-source/blob/dce038dd1bd98fac739254da4a2066c8347cdf6c/texk/web2c/tex.web#L13130)). The rule reports that line's box by the same amount, only where its material and width were known on every visit.
+
+Fix by widening the box, shortening its material, or giving it infinitely shrinkable glue (`\hss`) where sticking out is meant.
+
+See [tex.web § 664](https://github.com/TeX-Live/texlive-source/blob/dce038dd1bd98fac739254da4a2066c8347cdf6c/texk/web2c/tex.web#L13104), [tex.web § 666](https://github.com/TeX-Live/texlive-source/blob/dce038dd1bd98fac739254da4a2066c8347cdf6c/texk/web2c/tex.web#L13130).
+
+### overfull-line
+
+<p class="badges"><code class="num" title="rule number">S062</code> <span class="sev sev-warning" title="default: warning">default: warning</span> <span class="cat cat-style">style</span></p>
+
+**a line of the paragraph is wider than the text block**
+
+TeX breaks a paragraph into lines and packs each to the line width ([tex.web § 889](https://github.com/TeX-Live/texlive-source/blob/dce038dd1bd98fac739254da4a2066c8347cdf6c/texk/web2c/tex.web#L17420)). A line whose natural width, less all its glue can shrink, still passes the width sticks out into the right margin, and TeX writes `Overfull \hbox (…pt too wide) in paragraph` to the log ([§ 666](https://github.com/TeX-Live/texlive-source/blob/dce038dd1bd98fac739254da4a2066c8347cdf6c/texk/web2c/tex.web#L13130)).
+
+satex runs TeX's own line breaker ([§§ 813](https://github.com/TeX-Live/texlive-source/blob/dce038dd1bd98fac739254da4a2066c8347cdf6c/texk/web2c/tex.web#L15997)–[890](https://github.com/TeX-Live/texlive-source/blob/dce038dd1bd98fac739254da4a2066c8347cdf6c/texk/web2c/tex.web#L17438)) on the paragraph, so it reports exactly the lines TeX reports, at the user's line that ended the paragraph, by the same amount. It stays silent where any width, font or parameter is not known, where character protrusion or font expansion (microtype) is on, and where the paragraph may be set differently on another path.
+
+Fix the text, not the measure: allow a hyphenation point in the long word (`\-`, or `\hyphenation{…}`), let the paragraph space out (`\begin{sloppypar}` or `\emergencystretch`), or rephrase it. satex never rewrites the text itself.
+
+See [tex.web § 889](https://github.com/TeX-Live/texlive-source/blob/dce038dd1bd98fac739254da4a2066c8347cdf6c/texk/web2c/tex.web#L17420), [tex.web § 666](https://github.com/TeX-Live/texlive-source/blob/dce038dd1bd98fac739254da4a2066c8347cdf6c/texk/web2c/tex.web#L13130), [The TeXbook, chapter 14](https://ctan.org/pkg/texbook).
+
 ### parenthesis-spacing
 
 <p class="badges"><code class="num" title="rule number">S012</code> <span class="sev sev-warning" title="default: warning">default: warning</span> <span class="cat cat-style">style</span> <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> <a class="from" href="Chktex-Coverage" title="follows chktex warning 36, 37">chktex 36, 37</a></p>
@@ -1258,6 +1300,18 @@ satex reads both from `lints.user-pattern` in `satex.yaml`, and both are empty b
 Fix by writing what the project's own rule asks for, or by removing the pattern from `satex.yaml`.
 
 See [chktex 20](https://www.nongnu.org/chktex/), [chktex 44](https://www.nongnu.org/chktex/).
+
+### wider-than-line
+
+<p class="badges"><code class="num" title="rule number">S064</code> <span class="sev sev-warning" title="default: warning">default: warning</span> <span class="cat cat-style">style</span> <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span></p>
+
+**a box set in a paragraph is wider than its lines**
+
+A box or rule set in a paragraph, such as an `\includegraphics`, a `tabular` or a `tikzpicture`, that is wider than the line width (`\linewidth`) cannot fit on any line: it sticks out into the margin however the paragraph breaks ([tex.web § 889](https://github.com/TeX-Live/texlive-source/blob/dce038dd1bd98fac739254da4a2066c8347cdf6c/texk/web2c/tex.web#L17420)). The rule reports the call that set it, by how much it passes the line, where its width and the line width were known on every visit.
+
+An `\includegraphics` whose `width=` is the reason gets the fix `width=\linewidth`, where every other key leaves that its final width (no `height`, `scale`, `angle`, `bb` or a key satex does not know, no comment); it changes the picture's size, so it is unsafe. Otherwise scale the material down (`\resizebox`, a smaller font), or let it stick out on purpose (`\makebox[\linewidth]{…}`), which TeX does not report.
+
+See [tex.web § 889](https://github.com/TeX-Live/texlive-source/blob/dce038dd1bd98fac739254da4a2066c8347cdf6c/texk/web2c/tex.web#L17420), [graphics § 4.4](https://ctan.org/pkg/graphics).
 
 ### wrong-dash
 

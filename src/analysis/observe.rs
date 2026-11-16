@@ -493,7 +493,7 @@ pub fn warned(m: &mut Machine, text: &str, span: Span) {
 /// inside the group it opens (latex.ltx).
 pub fn current_environment(m: &mut Machine) -> Option<String> {
     let sym = m.out.interner.lookup("@currenvir")?;
-    let crate::engine::tex::Meaning::Macro(mac) = m.env.meaning(sym) else { return None };
+    let crate::engine::tex::Meaning::Macro(mac) = m.env.observed_meaning(sym) else { return None };
     Some(m.text_of(&mac.replacement_text))
 }
 
@@ -516,7 +516,7 @@ pub fn environment_opened(m: &mut Machine, outer: Option<String>, span: Span) {
         // `\@execute@begin@hook` closes the group `\begin` opened, so the
         // body is read one level out.
         m.out.document_depth = Some(m.env.group_level().saturating_sub(1) as u16);
-        m.out.preamble_cost = Some((m.out.files.len(), m.out.steps));
+        m.out.preamble_cost = Some((m.out.files.len(), m.out.tex_steps()));
         m.out.preamble = Some(Box::new((m.env.snapshot(), m.catcodes.clone())));
     } else {
         // `document` itself is not on the stack: `document_depth` already
@@ -1361,7 +1361,7 @@ pub fn version_record(m: &mut Machine, name: &str, meaning: &crate::engine::tex:
 }
 
 /// A number typeset, while letters may still follow it.
-#[derive(Default, Clone)]
+#[derive(Debug, Default, Clone)]
 struct Run {
     number: String,
     unit: String,
@@ -1375,7 +1375,7 @@ struct Run {
 }
 
 /// The number and unit tracker's state, held by the [`Machine`].
-#[derive(Default, Clone)]
+#[derive(Debug, Default, Clone)]
 pub struct Quantities {
     run: Option<Run>,
     /// `H2O` is a word, not a quantity.

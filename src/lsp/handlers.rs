@@ -3066,6 +3066,17 @@ pub fn settled_findings(analysis: &Analysis) -> Vec<Record> {
     of_document(crate::linter::lint_settled(analysis))
 }
 
+/// [`settled_findings`] before the run: the early ones, on a sketch of `text` at `path`
+/// ([`crate::linter::early`]), with the sketch their places are of.
+pub fn early_findings(
+    text: &str,
+    path: &std::path::Path,
+    cfg: &crate::project::config::Config,
+) -> (Analysis, Vec<Record>) {
+    let (sketch, records) = crate::linter::early::lint(text, path, cfg);
+    (sketch, of_document(records))
+}
+
 fn of_document(records: Vec<Record>) -> Vec<Record> {
     records
         .into_iter()

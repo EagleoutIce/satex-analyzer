@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use crate::analysis::facts::CsnameRole;
 use crate::analysis::machine::Analysis;
-use crate::engine::builtins::{OccKind, Primitive};
+use crate::engine::builtins::{Material, ModeCmd, OccKind, Primitive};
 use crate::engine::mode::Modes;
 use crate::engine::tex::{Catcode, Span, Sym, Tok, Token};
 use crate::linter::fix::{Applicability, Fix};
@@ -355,10 +355,22 @@ fn primitive_tex_command(report: &mut Report) {
             None if alternative.is_empty() => {
                 (format!("`{name}` is plain TeX, and LaTeX has no interface of its own for it"), None)
             }
-            None => (
-                format!("`{name}` is plain TeX, and LaTeX has its own interface for this"),
-                Some(Fix::new(format!("use {alternative}"), Applicability::Unsafe, None)),
-            ),
+            None => {
+                // A glue primitive whose alternative is one command takes the
+                // same glue as its argument: `\vskip x` is `\vspace{x}`.
+                let glue = matches!(
+                    primitive,
+                    Some(Primitive::Mode(ModeCmd::Vertical(Material::Glue) | ModeCmd::Horizontal(Material::Glue)))
+                );
+                let command = alternative.strip_prefix('`').and_then(|a| a.strip_suffix('`'));
+                let edits = command
+                    .filter(|c| glue && !c.contains(' '))
+                    .and_then(|c| report.edits().glue_call(expansion.span, c));
+                (
+                    format!("`{name}` is plain TeX, and LaTeX has its own interface for this"),
+                    Some(Fix::new(format!("use {alternative}"), Applicability::Unsafe, edits)),
+                )
+            }
         };
         // Nothing to act on: `\csname` here, say, whose role satex could not
         // tie to a concrete replacement.  A `latex_alternatives` entry named

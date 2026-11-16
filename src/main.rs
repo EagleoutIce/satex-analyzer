@@ -469,6 +469,18 @@ fn run_on(cli: &mut Cli, file: Option<PathBuf>, explaining: bool) -> Result<(), 
 
     satex::analysis::machine::HOT.store(cli.stats, std::sync::atomic::Ordering::Relaxed);
     let started = std::time::Instant::now();
+    let early = match (cli.command().lints_early() && cli.format.is_text(), cli.file.as_deref()) {
+        // what `lint` without `--all` shows: the document's own findings
+        (true, Some(file)) => {
+            let (_, mut records) = satex::linter::early::lint(&source, file, &cfg);
+            records.retain(|r| r["origin"] == "document");
+            records
+        }
+        _ => Vec::new(),
+    };
+    for record in &early {
+        anstream::eprintln!("{}", render::status(&format!("satex: {}", satex::linter::early::line(record))));
+    }
     let analysis = if cli.command().needs_analysis() {
         Machine::analyze(&source, cli.file.as_deref(), &cfg)
     } else {
@@ -481,7 +493,8 @@ fn run_on(cli: &mut Cli, file: Option<PathBuf>, explaining: bool) -> Result<(), 
     }
     if cli.stats {
         anstream::eprintln!("{}", render::status(&analysis.stats(started.elapsed())));
-        for line in analysis.hotspots(10) {
+        // `-vvvv` shows every line, for grouping by file.
+        for line in analysis.hotspots(if cli.verbose >= 4 { usize::MAX } else { 10 }) {
             anstream::eprintln!("{}", render::status(&line));
         }
     }
@@ -510,6 +523,10 @@ fn run_on(cli: &mut Cli, file: Option<PathBuf>, explaining: bool) -> Result<(), 
         || cli.command().fixes()
         || cli.command().reports_gaps();
     let text = cli.format.is_text();
+    let verdict = match &output {
+        Output::Lint(records) => satex::linter::early::verdict(&early, records, &analysis),
+        _ => None,
+    };
     let (body, hint) = match output {
         Output::Done => (String::new(), None),
         Output::Records(records) => (rendered(&records, cli, links), None),
@@ -523,6 +540,10 @@ fn run_on(cli: &mut Cli, file: Option<PathBuf>, explaining: bool) -> Result<(), 
     // JSON escapes what text would print raw.
     let safe = |t: &str| if text { render::terminal_safe(t) } else { t.to_string() };
     let _ = write!(out, "{}", safe(&body));
+    if let Some(verdict) = verdict {
+        let _ = out.flush();
+        anstream::eprintln!("{}", render::status(&format!("satex: {verdict}")));
+    }
     if let Some(hint) = hint.filter(|_| text) {
         let _ = writeln!(out, "{}", safe(&render::footer(&hint)));
     }

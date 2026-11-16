@@ -18,6 +18,8 @@ const NOTEBOOK_A4_STEPS: u64 = 53_952_069;
 const FLOAT_AFTER_TITLE_STEPS: u64 = 55_299_093;
 /// Target 20M; measured 32.5M on 2026-11-04 (rerun-checked), see plan.
 const NOTECOLUMN_MA_STEPS: u64 = 40_597_274;
+/// Target 20M; measured 22.7M on 2026-11-15 with no diagnostics; 1.25 times that.
+const NOTECOLUMN_SLNC_STEPS: u64 = 28_375_000;
 
 /// Target 20M; measured 32.7M on 2026-11-04 (seven forest trees, about 4.7M each).
 const FOREST_OPTIONS_STEPS: u64 = 40_919_660;
@@ -216,7 +218,6 @@ fixtures! {
     tikz_notebook_environment_from_input_file("notebook", "main.tex");
     expl3_hex_string_to_utf16_conversion_h4("expl3_hex_h4", "main.tex");
     expl3_hex_string_with_empty_target_encoding_h6("expl3_hex_h6", "main.tex");
-    notecolumn_loop_over_slnc_file("thesis_slnc", "mwe.tex", "mwe.slnc");
     /// A math label `$A_1$` sizes a node exactly; the frame around the
     /// bounding box then parses known numbers.
     tikz_frame_around_math_label("tikz_math_label", "main.tex");
@@ -973,6 +974,13 @@ fn thesis_class_with_notebook_figure_a4() {
     check_within("thesis_notebook_a4", "main.tex", &[], &[], NOTEBOOK_A4_STEPS);
 }
 
+/// A notecolumn thesis reads its `.slnc` file back line by line: the loop
+/// over the written notes ends, and the run stays within its budget.
+#[test]
+fn notecolumn_loop_over_slnc_file() {
+    check_within("thesis_slnc", "mwe.tex", &["mwe.slnc"], &[], NOTECOLUMN_SLNC_STEPS);
+}
+
 #[test]
 fn notecolumn_slnc_on_master_thesis_title_page() {
     check_within("notecolumn_slnc_ma", "mwe.tex", &["mwe.slnc"], &[], NOTECOLUMN_MA_STEPS);
@@ -984,4 +992,16 @@ fn notecolumn_slnc_on_master_thesis_title_page() {
 fn a_map_at_an_unknown_depth_keeps_its_items() {
     let Some(a) = check("expl3_map_unknown_depth", "main.tex", &[]) else { return };
     assert!(crate::support::defined(&a, "X"), "the map body ran on every path: {}", crate::support::presence(&a, "X"));
+}
+
+/// Intuition: `\clearnotecolumns` clears pages while a note of an earlier page is left
+/// unprocessed; the next page's output takes it, so the loop ships one more page and ends.
+/// pdflatex ships 4 pages here. Bug (a thesis, build run 2): a note of page 8 stayed unprocessed
+/// while `slncpage` was 14, the loop's `\clearpage` shipped nothing, and it ran to the line
+/// budget. Here the loop is left open: a false `unbalanced-conditional` (the `\@whilesw`
+/// of scrlayer-notecolumn.sty:1134 unfinished at the end of main.tex), count unknown.
+#[test]
+fn notecolumn_clear_loop_ships_the_stale_note_page() {
+    let Some(a) = check("notecolumn_stale_note", "main.tex", &[]) else { return };
+    assert_eq!(crate::support::body(&a, "Shipped"), "4");
 }

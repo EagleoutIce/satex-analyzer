@@ -318,6 +318,29 @@ lints:
     markers: [TODO, FIXME, XXX, HACK]  # words in a comment that get a finding
       #! affects: output
       #! example: `% TODO cite this` gets a finding
+  early:  # rules that need no run report on a sketch first, the run confirms or retracts
+    enabled: true  # show these findings before the run ends
+      #! affects: output
+    inputs: [input, include, subfile]  # commands the sketch follows into the file they name
+      #! affects: output
+    verbatim: [verbatim, verbatim*, Verbatim, lstlisting, minted, comment]  # environments the sketch reads verbatim
+      #! affects: output
+    inline-verbatim: [verb, lstinline, mintinline]  # commands the sketch reads verbatim to their delimiter
+      #! affects: output
+    labels: [label]  # commands the sketch reads as defining a label
+      #! affects: output
+    references: [ref, eqref, pageref, autoref, nameref, cref, Cref, vref]  # commands it reads as referring to labels
+      #! affects: output
+    citations: [cite, citep, citet, parencite, textcite, autocite, footcite, nocite]  # commands it reads as citing keys
+      #! affects: output
+    bibliographies: [bibliography, addbibresource]  # commands it reads as naming .bib databases
+      #! affects: output
+    packages: [usepackage, RequirePackage]  # commands it reads as loading packages
+      #! affects: output
+    graphics: [includegraphics]  # commands it reads as including a graphic file
+      #! affects: output
+    graphic-extensions: [pdf, png, jpg, jpeg, mps, eps]  # extensions it tries for a graphic named without one
+      #! affects: output
   build-cost:  # when the build is slow enough to suggest a format or \includeonly
     tokens: 2000000  # a part smaller than this reads in well under a second and is never suggested
       #! affects: output
@@ -608,6 +631,10 @@ plugins:
     #! affects: output, speed
     #! example: off: a hover says only what the run found
     #! plugin: docs
+  augment: [siunitx]  # the packages whose knowledge the lint rules ask. Leave one out to switch it off
+    #! affects: output
+    #! example: without siunitx: an `S` column with mixed decimals is no longer judged
+    #! plugin: augment
 
 magic:  # which comments are magic
   arara: true  # read % arara: lines as the build's steps
@@ -1013,6 +1040,24 @@ limits:
   call_learn_forks: 2  # how many undecided choices a call with a learned effect may meet before it ends with that effect
     #! affects: precision, speed
     #! example: 1 ends `\pgfmathparse{\the\wd0}` at its first undecided digit
+  call_memo_steps: 200  # a call that ran this many steps cleanly keeps its effect; the same call reading the same values applies it. 0 = never
+    #! affects: speed
+    #! example: `\pgfmathparse{sin(30)*2}` met again costs one step
+  call_memo_longest: 200000  # a run longer than this keeps no effect and stops being recorded, so its log costs nothing
+    #! affects: speed
+    #! example: a whole `tikzpicture` is not recorded, the point computations in it are
+  call_memo_probes: 8  # runs of a definition that may stay short or unclean before its calls are no longer recorded for call_memo_steps
+    #! affects: speed
+    #! example: 0 records every call, which costs on every call
+  call_memo_variants: 4  # kept effects per code and arguments, one per state they met
+    #! affects: speed
+    #! example: `\pgfmathparse{\x+1}` for four values of `\x`
+  call_memo_entries: 100000  # kept effects in all, past it none are added; also how many calls met once are remembered
+    #! affects: speed
+    #! example: bounds the memory a long tikz document spends on them
+  call_memo_verify: 0  # debug: a call a kept effect stands for runs for real instead, and where its run differs from the kept effect is printed
+    #! affects: speed
+    #! example: 1 prints `kept effect of \XC@info differs from its run` with the names that differ
   may_run_depth: 3  # how many macro levels deep satex follows code a join made unknown to find what it may assign
     #! affects: precision, speed
     #! example: `\def\a{\b}` reached in skipped code: what `\b` assigns is made unknown too
@@ -1088,6 +1133,7 @@ A plugin picks a default from the machine, the installation and the build files.
 - **Lua.** `\directlua`/`\latelua` are read as strings, not run. Literal `require`/`dofile` are dependencies, and unconditional `tex.print` of literals is read back in. Anything else is a `lua-output` gap. Catcode tables and `\luaescapestring` are interpreted, so `ltluatex`, `luacode` and expl3's Lua bridge run from source.
 - **l3build.** A `build.lua` runs in a sandboxed `texlua` (else its plain assignments are read). Its source dirs are searched, `.ins`/`.dtx` pairs read through docstrip, and `typesetexe`/`stdengine` pick the engine. `l3build:` in `satex.yaml` says which build files to look for (`files`), which `--config` files to read after it (`config`), and overrides the `module`, the test patterns (`tests`) and the check engines (`engines`). `checks: true` analyzes the regression tests as documents too. Empty values keep what the bundle says.
 - **depp.** Every file read maps to its TeX Live package by TDS path. With depp loaded or its file present, `missing-dependency` and `unused-dependency` compare against it. Rules: `depp.rules`, `depp.renames`, `depp.file`.
+- **Package augmentations.** What SaTeX knows about one package lives in one module, not in the lint rules. A rule asks the module, which can veto a finding or rewrite its message and fix. It reads the package's state from the run. siunitx is the first: an `S` column that rounds keeps `inconsistent-precision` quiet, and the fix names `\sisetup{round-mode = ...}`. `plugins.augment` lists the modules that are on.
 - **Preloaded format.** A `%&fmt` line, `-fmt=` or `preload:` names a dumped preamble. SaTeX interprets that preamble instead (up to `\endofdump`). `pretex:` is code read before the first line (latexmk's `-usepretex`).
 
 ### Format and package caches
@@ -1174,6 +1220,28 @@ A rule's own settings live under `lints.⟨code⟩`.
 `lints.user-pattern.regexes` (default `[]`): Regular expressions reported the same way, as chktex's `UserWarnRegex`.
 
 `lints.comment-marker.markers` (default `[TODO, FIXME, XXX, HACK]`): The markers in a comment worth a finding. This is satex's reading of chktex's warning 22, which prints every comment.
+
+`lints.early.enabled` (default `true`): Whether `satex lint` and the editor show these findings before the run ends.
+
+`lints.early.inputs` (default `[input, include, subfile]`): Commands, without the backslash, assumed to read the file their braced argument names.
+
+`lints.early.verbatim` (default `[verbatim, verbatim*, Verbatim, lstlisting, minted, comment]`): Environments assumed to read their bodies verbatim.
+
+`lints.early.inline_verbatim`: Commands assumed to read verbatim up to their delimiter, as `\verb` does.
+
+`lints.early.labels` (default `[label]`): Commands assumed to define the label their argument names.
+
+`lints.early.references` (default `[ref, eqref, pageref, autoref, nameref, cref, Cref, vref]`): Commands assumed to refer to the labels their argument lists.
+
+`lints.early.citations` (default `[cite, citep, citet, parencite, textcite, autocite, footcite, nocite]`): Commands assumed to cite the bibliography keys their argument lists.
+
+`lints.early.bibliographies` (default `[bibliography, addbibresource]`): Commands assumed to name the bibliography databases their argument lists.
+
+`lints.early.packages` (default `[usepackage, RequirePackage]`): Commands assumed to load the packages their argument lists, options in brackets before it.
+
+`lints.early.graphics` (default `[includegraphics]`): Commands assumed to include the graphic file their argument names, as graphicx's.
+
+`lints.early.graphic_extensions`: The extensions graphics tries for a name given without one, as `\Gin@extensions` lists them.
 
 `lints.clones.enabled` (default `true`): Whether the rule looks for clones at all.
 

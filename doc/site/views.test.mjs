@@ -7,6 +7,8 @@ globalThis.self = globalThis;
 load('./lengths.js');
 load('./snapshot.js');
 load('./views.js');
+load('./layers.js');
+load('./pdfedit.js');
 // Tips (tips.json): each stays true, its evidence still stands where it says.
 {
   const tips = JSON.parse(readFileSync(new URL('./tips.json', import.meta.url), 'utf8'));
@@ -794,6 +796,89 @@ assert.deepEqual(layers.groups(['grid', 'glue', 'geometry']), [['layout', 'Layou
   console.log('page model: ok');
 }
 
+// heading styles: a format read as fields over its tokens, a change rewriting only its field's tokens;
+// the edits land in the level's last call, else in new calls; hand-written text is kept or refused
+{
+  const P = self.satexViews.page, S = self.satexSnapshot;
+  const at = (line) => ({ line, character: 0 });
+  const h = {
+    switches: { family: [['serif', '\\rmfamily'], ['sans', '\\sffamily'], ['mono', '\\ttfamily']], series: [['normal', '\\mdseries'], ['bold', '\\bfseries']], shape: [['upright', '\\upshape'], ['italic', '\\itshape'], ['small caps', '\\scshape']] },
+    sizes: ['\\small', '\\normalsize', '\\large', '\\Large', '\\huge'], align: [['left', '\\filright', '\\raggedright'], ['center', '\\filcenter', '\\centering'], ['right', '\\filleft', '\\raggedleft']],
+  };
+  // read: the last of each field wins, \normalfont resets three, unknown tokens set nothing
+  assert.deepEqual(P.fmtRead('\\normalfont \\Large \\bfseries ', h), { family: 'serif', series: 'bold', shape: 'upright', size: '\\Large' });
+  assert.deepEqual(P.fmtRead('\\sffamily\\rmfamily\\color{red}\\centering\\size@x', h), { family: 'serif', color: 'red', align: 'center' });
+  assert.deepEqual(P.fmtRead('\\color[HTML]{FF0000}', h), { color: '[HTML]{FF0000}' });
+  // write: the field's own tokens go, \normalfont and unknown ones stay in place, the new token at the end
+  assert.equal(P.fmtWrite('\\normalfont\\Large\\bfseries', h, { size: '\\huge', family: 'sans' }), '\\normalfont\\bfseries\\sffamily\\huge');
+  assert.equal(P.fmtWrite('\\fontsize{20}{24}\\selectfont \\color{red}', h, { color: 'blue' }), '\\fontsize{20}{24}\\selectfont\\color{blue}');
+  assert.equal(P.fmtWrite('', h, { color: '' }), '\\normalcolor');
+  assert.equal(P.fmtWrite('\\normalfont \\Large \\bfseries ', h, { align: 'center' }), '\\normalfont\\Large\\bfseries\\filcenter', 'the run\'s spaces between commands dropped');
+  // text in a format (titlesec's label-less heads, `\\bfseries Part`): the new commands go before it, never after
+  assert.equal(P.fmtWrite('\\bfseries text', h, { size: '\\small' }), '\\bfseries\\small text');
+  assert.equal(P.fmtWrite('\\bfseries Part \\Large', h, { size: '\\small', color: 'red' }), '\\bfseries\\small\\color{red}Part');
+  assert.equal(P.fmtWrite('{\\bfseries}x', h, { family: 'sans' }), '{\\bfseries}\\sffamily x', 'a group is not text');
+  // a value without a command in the run is refused, not dropped
+  assert.equal(P.fmtWrite('\\bfseries', h, { family: 'fraktur' }), null);
+  // refused: a parameter, unbalanced braces
+  assert.equal(P.fmtWrite('#1\\bfseries', h, { series: 'normal' }), null);
+  assert.equal(P.fmtWrite('{\\bfseries', h, { series: 'normal' }), null);
+  // mutation: every token kept or rewritten, never another field's (each field changed alone)
+  const base = '\\normalfont\\Large\\bfseries\\color{red}\\filcenter\\hspace{1em}';
+  for (const [f, v] of [['family', 'mono'], ['series', 'normal'], ['shape', 'small caps'], ['size', '\\small'], ['color', 'blue'], ['align', 'right']]) {
+    const out = P.fmtWrite(base, h, { [f]: v }), was = P.fmtRead(base, h), now = P.fmtRead(out, h);
+    assert.deepEqual({ ...now, [f]: was[f] }, was, `${f}: only it changes`);
+    assert.equal(now[f], v);
+    assert.ok(out.includes('\\hspace{1em}'), 'the unknown token stays');
+  }
+  const call = (name, args, line) => ({ kind: 'call', name, star: false, range: { start: at(line), end: at(line + 1) }, text: 'x', line: false, drop: false, args: args.map((t) => ({ open: '{', inner: [0, 0], text: t })) });
+  const s = {
+    headings: { ...h, scheme: 'titlesec', insert: at(3), secnumdepth: { value: 3, call: null },
+      levels: [{ name: 'section', level: 1, font: '\\normalfont\\Large\\bfseries', call: null }, { name: 'subsection', level: 2, font: '\\itshape', call: call('titleformat', ['\\subsection', '\\itshape'], 2) },
+        { name: 'subsubsection', level: 3, font: 'x', call: call('titleformat', ['\\subsubsection', '#1'], 1) }] },
+    pagecolor: { call: null, colors: [{ name: 'yellow', css: '#ffff00' }] },
+  };
+  const shown = (n) => n.drop ? `-${n.name}` : `${n.name}${n.star ? '*' : ''}${n.args.map((a) => `{${a.text}}`).join('')}@${(n.at ?? n.range.start).line}`;
+  assert.deepEqual(P.styleNodes(s, {}), [], 'nothing changed, nothing sent');
+  assert.deepEqual(P.styleNodes(s, { levels: { section: { series: 'bold', size: '\\Large' } } }), [], 'the run\'s values: nothing sent');
+  // a new \titleformat* keeps the class's format, the existing call is edited in place, the hand-written one refused
+  const ch = { levels: { section: { family: 'sans' }, subsection: { shape: 'small caps' }, subsubsection: { family: 'sans' } }, depth: 1, pagecolor: 'yellow' };
+  assert.deepEqual(P.styleNodes(s, ch).map(shown), ['titleformat*{\\section}{\\normalfont\\Large\\bfseries\\sffamily}@3', 'titleformat{\\subsection}{\\scshape}@2', 'setcounter{secnumdepth}{1}@3', 'pagecolor{yellow}@3']);
+  // a style set: what the levels show, written back as the same edits; switching back to the run's sends nothing
+  const set = P.styleSet(s, ch);
+  assert.deepEqual([set.levels.section.family, set.levels.subsubsection, set.depth, set.pagecolor], ['sans', undefined, 1, 'yellow']);
+  assert.deepEqual(P.styleNodes(s, P.styleEdits(s, set).ch).map(shown), P.styleNodes(s, ch).map(shown));
+  assert.deepEqual(P.styleNodes(s, P.styleEdits(s, P.styleSet(s, {})).ch), [], 'the set as written sends nothing');
+  // a set from another document: what this one cannot take is listed, the rest applies
+  const foreign = { levels: { chapter: { family: 'sans' }, section: { family: 'fraktur', size: '\\small' } }, depth: 7, pagecolor: 'brand' };
+  const fe = P.styleEdits(s, foreign);
+  assert.deepEqual(fe.skipped, ['chapter', 'section family fraktur', 'numbering 7', 'page color brand']);
+  assert.deepEqual(P.styleNodes(s, fe.ch).map(shown), ['titleformat*{\\section}{\\normalfont\\bfseries\\small}@3']);
+  // a call-less level whose run font does not read as commands is not offered: no null text in a snapshot
+  const odd = { ...s, headings: { ...s.headings, levels: [{ name: 'section', level: 1, font: '#1\\bfseries', call: null }] } };
+  assert.deepEqual(P.styleNodes(odd, { levels: { section: { family: 'sans' } } }), []);
+  assert.deepEqual(P.styleSet(odd, {}).levels, {});
+  // KOMA: new \addtokomafont with only the change, alignment in the shared \raggedsection, page color dropped
+  const k = { headings: { ...h, scheme: 'koma', insert: at(3), align: [['left', '\\raggedright', '\\filright'], ['center', '\\centering', '\\filcenter']], secnumdepth: { value: 2, call: call('setcounter', ['secnumdepth', '\\subsectionnumdepth'], 1) },
+    ragged: { raggedsection: { text: '\\protect \\raggedright ', call: null } },
+    levels: [{ name: 'section', level: 1, font: '\\normalcolor\\sffamily\\bfseries', call: null, ragged: 'raggedsection' }, { name: 'subsection', level: 2, font: '\\sffamily', call: null, ragged: 'raggedsection' }] },
+    pagecolor: { call: call('pagecolor', ['yellow'], 2), colors: [] } };
+  assert.deepEqual(P.styleNodes(k, { levels: { section: { family: 'serif', align: 'center' } }, ragged: { raggedsection: 'center' }, depth: 1, pagecolor: '' }).map(shown),
+    ['addtokomafont{section}{\\rmfamily}@3', 'renewcommand*{\\raggedsection}{\\centering}@3', 'setcounter{secnumdepth}{1}@1', '-pagecolor']);
+  const ks = P.styleEdits(k, { levels: { section: { align: 'center' }, subsection: { align: 'left' } } });
+  assert.deepEqual([ks.ch.ragged, ks.skipped], [{ raggedsection: 'center' }, ['subsection align (\\raggedsection follows section)']], 'a shared alignment: the first level\'s, the other reported');
+  // typearea to geometry: one convention, the left margin from the paper's edge with the binding in it, geometry's inner past it
+  {
+    const cm = 72.27 / 2.54 * 65536, len = (sp) => `${+(sp / cm).toFixed(2)}cm`, same = (v) => [v, v];
+    const g = { run: { paperwidth: same(Math.round(21 * cm)), paperheight: same(Math.round(29.7 * cm)), textwidth: same(Math.round(15 * cm)), textheight: same(Math.round(25 * cm)),
+      oddsidemargin: same(Math.round(3 * cm) - 4736286), topmargin: same(0), headheight: same(0), headsep: same(0) }, twoside: false, papers: [], koma: null, binding: Math.round(cm),
+      geometry: { loaded: true, global: { kind: 'call', name: 'geometry', args: [{ open: '{', keys: [] }], range: null, text: '' } }, header: {} };
+    const g0 = P.pageOf(g), keys = P.pageNodes(g, g0, { ...structuredClone(g0), left: Math.round(4 * cm) }, len)[0].args[0].keys;
+    assert.deepEqual(keys.filter((k) => ['left', 'bindingoffset'].includes(k.key)).map((k) => `${k.key}=${k.value}`), ['left=3cm', 'bindingoffset=1cm'], 'left 4cm with 1cm binding');
+  }
+  console.log('heading styles: ok');
+}
+
 // the property editor's key lists (dialogs.js `keyval`): split at top-level commas, a value's braces
 {
   const K = self.satexDialogs.keyval;
@@ -990,3 +1075,98 @@ assert.deepEqual(layers.groups(['grid', 'glue', 'geometry']), [['layout', 'Layou
   assert.deepEqual([copy.copies, copy.calls, copy.when], [{ name: '\\greet', at: 'main.tex:4', by: '\\appto' }, [{ name: '\\oldgreet', note: 'holds \\greet of main.tex:4' }], '\\ifnum true at main.tex:10']);
 }
 assert.equal(typeof self.satexViews.RENDER.history, 'function', 'a history section has a renderer');
+
+// Editing in the PDF (pdfedit.ts): which SyncTeX boxes a column handle sits on, what a drag writes, where typing may go.
+{
+  const E = self.satexPdfEdit, BP = 72 / 72.27, cm = (n) => n * 72.27 / 2.54 * BP;
+  // a `p` cell is a vbox as wide as its column, on the cell's line; the table's own box stands on its `\end` line
+  const cell = (line, x, w, y = 100) => ({ page: 1, file: 'a.tex', line, kind: '[', x, y, w, h: 6, d: 2 });
+  const outer = { env: 'tabular', lines: [1, 5], width: null, cols: [{ align: 'l', width: '' }, { align: 'p', width: '3.26cm', node: {} }, { align: 'p', width: '2cm', node: {} }, { align: 'p', width: '\\dimexpr 0.2\\linewidth', node: {} }] };
+  // the nested table set over its own lines inside the second row's last cell
+  const inner = { env: 'tabular', lines: [3, 4], width: null, cols: [{ align: 'p', width: '1cm', node: {} }] };
+  const boxes = [
+    // two rows, the second cell set over two lines (a multiline cell has one box)
+    cell(2, 80, cm(3.26)), cell(2, 80 + cm(3.26) + 12, cm(2)), cell(2, 260, 40),
+    cell(3, 80, cm(3.26), 120), cell(3, 80 + cm(3.26) + 12, cm(2), 120), cell(3, 80 + cm(3.26) + 18, cm(1), 120), cell(3, 260, 40, 120),
+    { page: 1, file: 'a.tex', line: 4, kind: '(', x: 80 + cm(3.26) + 16, y: 120, w: cm(1) + 4, h: 6, d: 2 },
+    { page: 1, file: 'a.tex', line: 5, kind: '(', x: 60, y: 100, w: 300, h: 8, d: 30 },
+    // a paragraph's box above the table, recorded at its first line, is no column
+    { page: 1, file: 'a.tex', line: 1, kind: '[', x: 60, y: 80, w: 100, h: 6, d: 2 }, { page: 1, file: 'a.tex', line: 2, kind: '[', x: 60, y: 80, w: 100, h: 6, d: 2 },
+    // another file's box at the same line is not the table's
+    { ...cell(2, 80, cm(3.26)), file: 'b.tex' },
+  ];
+  const placed = E.place(boxes, 'a.tex', outer, [outer, inner]);
+  assert.deepEqual(placed.map((c) => [c.k, Math.round(c.x), c.n]), [[1, 80, 2], [2, Math.round(80 + cm(3.26) + 12), 2], [3, 260, 2]], 'each width column on its cells, the nested 1cm column not taken for the 2cm one');
+  assert.equal(E.place(boxes, 'a.tex', inner, [outer, inner])[0]?.k, 0, 'the inner table finds its own column on the shared line');
+  assert.equal(E.extent(boxes, 'a.tex', outer).w, 300, "the table's box on its \\end line");
+  assert.deepEqual(E.place([], 'a.tex', outer, [outer]), [], 'no boxes, no handles');
+  assert.deepEqual(E.place(boxes.filter((r) => r.line !== 5), 'a.tex', outer, [outer, inner]), [], "no table box, no handles (not every box)");
+  // a nested table on the outer row's own line: its cells are inside its box, not the outer's columns
+  const flat = { env: 'tabular', lines: [3, 3], width: null, cols: [{ align: 'p', width: '2cm', node: {} }] };
+  const fb = [...boxes, { page: 1, file: 'a.tex', line: 3, kind: '(', x: 80 + cm(3.26) + 12, y: 120, w: cm(2), h: 7, d: 3 }, cell(3, 80 + cm(3.26) + 14, cm(2) - 6, 120)];
+  assert.ok(E.place(fb, 'a.tex', outer, [outer, flat]).every((c) => Math.abs(c.w - (cm(2) - 6)) > 1), 'the nested cell is no outer column');
+  // the source rewritten before the next build: the column is still found, by its place among the others
+  const edited = { ...outer, cols: outer.cols.map((c, k) => k === 1 ? { ...c, width: '5cm' } : c) };
+  assert.deepEqual(E.place(boxes, 'a.tex', edited, [edited, inner]).map((c) => c.k), [1, 2, 3]);
+  // an X column: computed, found between its neighbours, never the whole table
+  const x = { env: 'tabularx', lines: [1, 3], width: {}, cols: [{ align: 'p', width: '1cm', node: {} }, { align: 'X', width: '' }] };
+  const xb = [cell(2, 50, cm(1)), cell(2, 50 + cm(1) + 12, 300), { ...cell(3, 40, 400), kind: '[' }];
+  assert.deepEqual(E.place(xb, 'a.tex', x, [x]).map((c) => [c.k, Math.round(c.w)]), [[0, Math.round(cm(1))], [1, 300]]);
+  // what a drag writes: the unit and form kept, snapped, Shift finer; an expression has no form to keep
+  assert.equal(E.resized('3.26cm', 100, 120, false), '3.9cm');
+  assert.equal(E.resized('3.26cm', 100, 120, true), '3.91cm');
+  assert.equal(E.resized('30mm', 100, 50, false), '15mm');
+  assert.equal(E.resized('2in', 100, 1, false), '0.05in', 'never below one step');
+  assert.equal(E.resized('.3\\linewidth', 100, 150, false), '.45\\linewidth', 'a share keeps its leading dot');
+  assert.equal(E.resized('\\linewidth', 100, 90, false), '0.9\\linewidth');
+  assert.equal(E.resized('0.5\\textwidth', 100, 200, false), '1\\textwidth');
+  for (const t of ['\\dimexpr 0.3\\linewidth-2\\tabcolsep', '3cm plus 1fil', '', '\\mylen', '2\\linewidth+1pt']) assert.equal(E.resized(t, 100, 120, false), null, t);
+  assert.equal(E.resized('3cm', 0, 120, false), null, 'nothing measured, nothing written');
+  // where typing may go: plain text only, not math, keys or environment names; the line's ends too
+  const line = 'Text $x+y$ and \\label{sec:a} \\begin{center} more, words';
+  assert.equal(E.editable(line, 0, 4, []), null);
+  assert.equal(E.editable(line, line.length, line.length, []), null, 'at the line end');
+  assert.equal(E.editable(line, 0, 0, []), null, 'at the line start');
+  assert.match(E.editable(line, 6, 7, []), /math/);
+  assert.match(E.editable(line, 22, 25, [[22, 27]]), /key/);
+  assert.match(E.editable(line, line.indexOf('center'), line.indexOf('center') + 6, []), /environment/);
+  assert.match(E.editable(line, 14, 20, []), /markup/);
+  assert.equal(E.editable('\\textbf{bold} x', 8, 12, []), null, "a style command's argument is text");
+  assert.equal(E.editable('a \\$5 and more', 10, 14, []), null, 'an escaped dollar is no math');
+  assert.ok(E.plain('Hello, world!') && !['a\\b', '{', '$', '&', '#', '^', '_', '~', '%', 'a\nb'].some(E.plain));
+  // math and names are read from the file's start, not the caret's line: earlier lines, \( \), \[ \], math environments
+  const doc = 'One $a\nb$ two \\(c\nd\\) three\n\\[ e \\] four\n\\begin{align*}\nf\n\\end{align*}\ngive % $ no math\nh \\begin{\ncenter} i';
+  const at = (w) => doc.indexOf(w);
+  for (const w of ['b$', 'd\\)', ' e ', 'f\n']) assert.match(E.editable(doc, at(w), at(w), []) ?? '', /math/, w);
+  for (const w of ['One', 'two', 'three', 'four', 'give', 'h ', ' i']) assert.equal(E.editable(doc, at(w), at(w), []), null, w);
+  assert.match(E.editable(doc, at('center'), at('center') + 2, []), /environment/, 'a name on the next line');
+  assert.match(E.editable(doc, at('two'), at('two') + 3, [[at('two'), at('two') + 3]]), /key/);
+  assert.match(E.editable(doc, -1, 0, []), /outside/);
+  // a write that fails is never retried in a loop; while one is under way the newest value waits and wins
+  {
+    const sent = [];
+    let ok = false;
+    const q = E.sender(async (v) => { sent.push(v); await null; return ok; });
+    q.put(1); q.put(2); q.put(3);
+    await q.flush();
+    assert.deepEqual(sent, [1, 3], 'a failed send stops; flush sends the newest once');
+    ok = true; sent.length = 0;
+    q.put(4); q.put(5); q.put(6);
+    await q.flush();
+    assert.deepEqual(sent, [4, 6], 'after a success the newest goes');
+  }
+  // a handle's key steps one snap step in the column's unit, never below one step
+  assert.equal(E.stepped('3.26cm', 1, false), '3.4cm');
+  assert.equal(E.stepped('3cm', -1, true), '2.99cm');
+  assert.equal(E.stepped('0.1cm', -1, false), '0.1cm');
+  assert.equal(E.stepped('.3\\linewidth', 1, false), '.31\\linewidth');
+  assert.equal(E.stepped('\\dimexpr 1cm', 1, false), null);
+  // the room of a table: the narrowest line box around it (a minipage's line), none without one
+  const tb = { page: 1, file: 'a.tex', line: 5, kind: '(', x: 60, y: 100, w: 300, h: 8, d: 30 };
+  assert.equal(E.room([tb, { ...tb, line: 6, w: 320, x: 50, h: 10, d: 32 }, { ...tb, line: 7, w: 400, x: 40, h: 12, d: 34 }], 'a.tex', outer), 320);
+  assert.equal(E.room([tb], 'a.tex', outer), null);
+  // the occurrences of a page's word in its line: whole words, punctuation left out, none after a backslash
+  assert.deepEqual(E.spans('the cat, the \\the end', 'the'), [[0, 3], [9, 12]]);
+  assert.deepEqual(E.spans('cat, catalog', 'cat,'), [[0, 3]]);
+  assert.deepEqual(E.spans('x', '—'), []);
+}

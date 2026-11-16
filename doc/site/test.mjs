@@ -934,6 +934,40 @@ async function browser() {
       check('links hold their place at every zoom', at1 === await js(onWord), at1);
       await js(`document.getElementById('pdf-zoom-out').click()`);
       });
+      await section('pdfedit', async () => {
+      // editing in the PDF: a column's edge dragged rewrites its width in the source as one undo step,
+      // and with Type on a click on a word and a key write plain text at its place; markup and math are refused
+      if (await js(`return document.getElementById('pdf-compile').disabled`)) return console.log('skip: no TeX to compile with');
+      await open('pdfedit', '\\documentclass{article}\n\\begin{document}\nSome plain words here, $xyz$ math.\n\n\\begin{tabular}{lp{3cm}}\na & first cell \\\\\n\\end{tabular}\n\\end{document}\n');
+      await js(`document.querySelector('.side-tabs [data-panel=play-pdf]').click(); document.getElementById('pdf-compile').click()`);
+      const handle = await until(`return !!document.querySelector('.pdf-col-grip')`, 180000);
+      check('a p column shows its width with a handle', handle && await js(`return document.querySelector('.pdf-col b').textContent`) === '3cm', await js(`return [...document.querySelectorAll('.pdf-col b')].map((b) => b.textContent).join()`));
+      if (!handle) return;
+      const text = `[...document.querySelectorAll('.cm-line')].map((l) => l.textContent).join('\\n')`, src = `return ${text}`, before = await js(src);
+      const [gx, gy] = await js(`const g = document.querySelector('.pdf-col-grip'); g.scrollIntoView({ block: 'center', inline: 'center' }); const r = g.getBoundingClientRect(); return [r.left + r.width / 2, r.top + r.height / 2]`);
+      const move = (type, x, buttons = 1) => send('Input.dispatchMouseEvent', { type, x, y: gy, button: 'left', buttons, clickCount: 1 });
+      await move('mouseMoved', gx, 0); await move('mousePressed', gx);
+      for (let i = 1; i <= 8; i++) { await move('mouseMoved', gx + i * 6); await sleep(80); }
+      await move('mouseReleased', gx + 48, 0);
+      const wider = await until(`const m = /p\\{([\\d.]+)cm\\}/.exec(${text}); return m && +m[1] > 3`, 10000);
+      await shot('pdf-column-drag');
+      await js(`document.querySelector('.cm-content').focus()`);
+      for (const type of ['keyDown', 'keyUp']) await send('Input.dispatchKeyEvent', { type, key: 'z', code: 'KeyZ', modifiers: 2, windowsVirtualKeyCode: 90 });
+      check('dragging a column edge rewrites its width, one undo takes it back', wider && await until(`return ${text} === ${JSON.stringify(before)}`, 5000), await js(src));
+      // typing: the page's own find marks the word, a click at its end puts the caret there
+      await js(`document.getElementById('pdf-type').click()`);
+      const word = async (w) => { await js(`const b = document.querySelector('.pdf-find'); b.hidden = false; const i = b.querySelector('input'); i.value = '${w}'; i.dispatchEvent(new Event('input'))`); await sleep(300);
+        return js(`const h = document.querySelector('.pdf-hit'); if (!h) return null; h.scrollIntoView({ block: 'center', inline: 'center' }); const r = h.getBoundingClientRect(); document.querySelector('.pdf-find').hidden = true; document.querySelectorAll('.pdf-hit').forEach((m) => m.remove()); return [r.right - 1, r.top + r.height / 2]`); };
+      const at = await word('plain');
+      if (!at) return console.log('skip: this build has no word boxes to type at');
+      await mouse(...at);
+      for (const ch of 'ly') await send('Input.insertText', { text: ch });
+      check('a key typed in the PDF goes to its word in the source', await until(`return /plainly words/.test(${text})`, 5000), await js(src));
+      await send('Input.insertText', { text: '\\' });
+      await sleep(300);
+      check('markup typed in the PDF is refused', !/plainly\\/.test(await js(src)) && /Plain text only/.test(await js(`return document.getElementById('play-toast').textContent`)));
+      await js(`document.getElementById('pdf-type').click()`);
+      });
       await section('settings', async () => {
       // a stored setting satex refuses never holds the start up: the page starts with the defaults
       await send('Page.navigate', { url: base + 'play/index.html' });

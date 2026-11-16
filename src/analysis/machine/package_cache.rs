@@ -1523,6 +1523,13 @@ impl Machine<'_> {
             dont_expand: _,
             unknown: _,
             call_runs: _,
+            memos: _,
+            memo_codes: _,
+            memo_seen: _,
+            memo_count: _,
+            memo_verify: _,
+            memo_said: _,
+            side_effects: _,
             call_recs: _,
             learn_forks: _,
             guard_seen: _,
@@ -1548,6 +1555,7 @@ impl Machine<'_> {
             expansion_sites: _,
             site_writes: _,
             shape_memo: _,
+            spare_frame: _,
             cond_sites: _,
             // In segment's lists and scalars.
             catcodes: _,
@@ -1652,6 +1660,7 @@ impl Machine<'_> {
             ended_run: _,
             undo: _,
             waiting: _,
+            loop_cut: _,
             apart: _,
             parted: _,
             abs: _,
@@ -1909,7 +1918,7 @@ impl Machine<'_> {
         self.recent_file_spans.retain(|s| toks.iter().all(|t| t.span != *s));
         self.pop_frame();
         if let Some(Frame::File { mouth, .. }) = self.input.last_mut() {
-            mouth.rewind(start);
+            Rc::make_mut(mouth).rewind(start);
         }
     }
 
@@ -1934,7 +1943,7 @@ impl Machine<'_> {
         if let Some((end, _)) = self.replay_from(load, Some(mark.line), 0)
             && let Some(Frame::File { mouth, .. }) = self.input.last_mut()
         {
-            mouth.seek(end);
+            Rc::make_mut(mouth).seek(end);
         }
     }
 
@@ -3164,7 +3173,7 @@ impl Machine<'_> {
         if matches!(self.input.last(), Some(Frame::File { mouth, .. }) if mouth.position().0 < mark.line)
             && let Some(Frame::File { mouth, .. }) = self.input.last_mut()
         {
-            mouth.note_partial_line();
+            Rc::make_mut(mouth).note_partial_line();
         }
         self.note_pending_lines();
         let Some(mut node) = self.encode_segment(mark) else {

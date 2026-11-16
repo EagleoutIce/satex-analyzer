@@ -86,7 +86,7 @@ pub struct ControlDep {
 
 /// One node of the [`DependencyGraph`]: a control sequence or key, tagged with
 /// a [`VertexTag`], at the [`Span`] it was seen.
-#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+#[derive(PartialEq, Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct Vertex {
     pub tag: VertexTag,
     pub name: Sym,
@@ -101,7 +101,7 @@ pub struct Vertex {
 /// The program's dependency graph: [`Vertex`]es for definitions, calls and
 /// uses, connected by [`EdgeKind`] edges. [`DependencyGraph::slice_until`] is what
 /// `satex slice` walks.
-#[derive(Clone, Default, serde::Serialize, serde::Deserialize)]
+#[derive(PartialEq, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct DependencyGraph {
     pub vertices: Vec<Vertex>,
     /// `limits.vertices` (0: none): past it a new site shares one overflow vertex, so
@@ -150,7 +150,7 @@ pub struct DependencyGraph {
     log: Option<GraphLog>,
 }
 
-#[derive(Clone, Default, serde::Serialize, serde::Deserialize)]
+#[derive(PartialEq, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct GraphLog {
     pub edges: Vec<(NodeId, NodeId, EdgeKind, Option<NodeId>)>,
     /// Reads linked to whatever defines a name, not to particular vertices:
@@ -189,7 +189,7 @@ impl DependencyGraph {
         name: Sym,
         span: Span,
         within: Option<NodeId>,
-        cds: Vec<ControlDep>,
+        cds: &[ControlDep],
     ) -> NodeId {
         self.push_named(tag, name, false, span, within, cds)
     }
@@ -201,7 +201,7 @@ impl DependencyGraph {
         name: Sym,
         span: Span,
         within: Option<NodeId>,
-        cds: Vec<ControlDep>,
+        cds: &[ControlDep],
     ) -> NodeId {
         self.push_named(tag, name, true, span, within, cds)
     }
@@ -213,7 +213,7 @@ impl DependencyGraph {
         key: bool,
         span: Span,
         within: Option<NodeId>,
-        cds: Vec<ControlDep>,
+        cds: &[ControlDep],
     ) -> NodeId {
         let id = self.push_site(tag, name, key, span, within, cds);
         self.touch(id);
@@ -277,7 +277,7 @@ impl DependencyGraph {
         key: bool,
         span: Span,
         within: Option<NodeId>,
-        cds: Vec<ControlDep>,
+        cds: &[ControlDep],
     ) -> NodeId {
         if let Some(&id) = self.sites.get(&(span, name, tag)) {
             let vertex = &mut self.vertices[id as usize];
@@ -303,10 +303,10 @@ impl DependencyGraph {
         }
         self.sites.insert((span, name, tag), id);
         self.out.push(Vec::new());
-        self.vertices.push(Vertex { tag, name, key, span, cds: cds.clone(), within });
+        self.vertices.push(Vertex { tag, name, key, span, cds: cds.to_vec(), within });
         // A control dependency is an edge like any other, so that slicing is
         // one walk in each direction rather than a walk plus a special case.
-        for cd in &cds {
+        for cd in cds {
             self.edge(id, cd.on, EdgeKind::CONTROL);
         }
         // What an expansion produced is part of what the call read from the
@@ -636,7 +636,7 @@ impl DependencyGraph {
 /// definitions rather than from the [`DependencyGraph`], so that macros that
 /// are never invoked are still covered. [`crate::analysis::machine::Analysis::calls`]
 /// holds the one for a run.
-#[derive(Clone, Default, serde::Serialize, serde::Deserialize)]
+#[derive(PartialEq, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct CallGraph {
     pub nodes: Vec<Sym>,
     index: LookupMap<Sym, usize>,

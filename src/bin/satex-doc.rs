@@ -783,6 +783,9 @@ fn expand(directive: &str) -> Result<String, String> {
     if directive == "fixes" {
         return fixes_list();
     }
+    if directive == "early" {
+        return early_table();
+    }
     if directive == "explanations" {
         return explanations();
     }
@@ -1301,6 +1304,19 @@ fn rules_table() -> Result<String, String> {
         let [kind, engine, fixes, origin] = badges(&rule, &chktex, false);
         let _ =
             writeln!(out, "| {number} | [`{code}`](#{code}) | {kind} | {engine} | {fixes} | {summary} | {origin} |");
+    }
+    Ok(out)
+}
+
+/// The rules that run early, by the facts they need ([`satex::linter::Needs`]).
+fn early_table() -> Result<String, String> {
+    let mut out = String::from("| needs | rules |\n| --- | --- |\n");
+    let rules = lint_json(&["--rules", "--format", "json"])?;
+    for needs in ["text", "names", "keys"] {
+        let codes: Vec<String> = (rules.iter().filter(|r| r["needs"] == needs))
+            .map(|r| format!("[`{0}`](#{0})", r["code"].as_str().unwrap_or("")))
+            .collect();
+        let _ = writeln!(out, "| {needs} | {} |", codes.join(", "));
     }
     Ok(out)
 }

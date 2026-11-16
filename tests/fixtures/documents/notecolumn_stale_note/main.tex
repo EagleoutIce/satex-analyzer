@@ -1,0 +1,15 @@
+\documentclass{scrbook}
+\usepackage{scrlayer-notecolumn}
+\newcount\shipped
+\makeatletter
+\g@addto@macro\@outputpage{\global\advance\shipped 1 }
+\makeatother
+\begin{document}
+One.\clearpage Two.\clearpage Three.
+\makeatletter
+\g@addto@macro\slnc@marginpar@unprocessed{\slnc@note{marginpar}{1}{0}{Stale}}
+\makeatother
+\clearnotecolumns
+\xdef\Shipped{\the\shipped}
+\gdef\SatexReachedEnd{}
+\end{document}

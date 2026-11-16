@@ -135,7 +135,7 @@ impl Machine<'_> {
     /// The innermost file being read.
     fn file_mouth(&mut self) -> Option<&mut Mouth> {
         self.input.iter_mut().rev().find_map(|f| match f {
-            Frame::File { mouth, .. } => Some(mouth),
+            Frame::File { mouth, .. } => Some(Rc::make_mut(mouth)),
             _ => None,
         })
     }
@@ -146,7 +146,7 @@ impl Machine<'_> {
         if mouth.directives.is_empty() {
             return;
         }
-        let (file, directives) = (mouth.file, std::mem::take(&mut mouth.directives));
+        let (file, directives) = (mouth.file, std::mem::take(&mut Rc::make_mut(mouth).directives));
         if self.own_file(file) {
             for d in directives {
                 self.diagnose(Severity::Info, SKIPPED, d.span, format!("\\satex@{}", d.text.trim()));

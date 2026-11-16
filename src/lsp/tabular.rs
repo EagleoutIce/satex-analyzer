@@ -132,10 +132,15 @@ fn skip_ws(s: &str, mut i: usize) -> usize {
     i
 }
 
-/// The table environments the run knows: `\begin{name}` runs into `\@array`, not through a saved copy.
+/// The table environments the run knows: `\begin{name}` runs into `\@array`'s code, not through a
+/// saved copy; array.sty's `\@tabarray` calls it by another name (`\let\@@array\@array`).
 pub(super) fn is_table(analysis: &crate::analysis::machine::Analysis, name: &str) -> bool {
-    let array = analysis.interner.lookup("@array");
-    array.is_some_and(|a| super::handlers::body_reach(analysis, name, 400, false).contains(&a))
+    let Some(array) = analysis.interner.lookup("@array") else { return false };
+    let code = analysis.env.meaning(array);
+    let reached = super::handlers::body_reach(analysis, name, 400, false);
+    // only a macro's code: an undefined `\@array` would equal every undefined name reached
+    let copy = |s: &crate::engine::tex::Sym| code.as_macro().is_some() && analysis.env.meaning(*s) == code;
+    reached.contains(&array) || reached.iter().any(copy)
 }
 
 /// The `\begin{name}` at or before `at` on its line (else after it), and
@@ -179,6 +184,17 @@ pub(super) fn extent(text: &str, at: usize, name: &str) -> Option<(usize, usize)
 
 /// The columns and separators of a spec (`|l|c@{}S[table-format=1.2]`).
 pub fn parse_spec(spec: &str) -> (Vec<Col>, Vec<String>) {
+    let (cols, seps) = spec_at(spec);
+    (cols.into_iter().map(|(c, _)| c).collect(), seps)
+}
+
+/// The bytes `from..to` of a text.
+pub type Span = (usize, usize);
+/// A column with the bytes of its argument.
+pub type Spanned = (Col, Option<Span>);
+
+/// As [`parse_spec`], each column with its argument's bytes in `spec`; a `*{n}{…}` repeats one.
+fn spec_at(spec: &str) -> (Vec<Spanned>, Vec<String>) {
     let (mut cols, mut seps) = (Vec::new(), vec![String::new()]);
     let mut pre = String::new();
     let mut i = 0;
@@ -204,35 +220,37 @@ pub fn parse_spec(spec: &str) -> (Vec<Col>, Vec<String>) {
             }
             '<' => {
                 let Some((a, e)) = arg(i + 1) else { break };
-                if let Some(col) = cols.last_mut() {
+                if let Some((col, _)) = cols.last_mut() {
                     Col::post_push(col, &a);
                 }
                 i = e;
             }
             '*' => {
                 let Some((n, e)) = arg(i + 1) else { break };
-                let Some((body, e)) = arg(e) else { break };
-                let (more, more_seps) = parse_spec(&body);
+                let Some((body, end)) = arg(e) else { break };
+                let (more, more_seps) = spec_at(&body);
                 for _ in 0..n.trim().parse::<usize>().unwrap_or(1) {
                     seps.last_mut().unwrap().push_str(&more_seps[0]);
-                    for (k, col) in more.iter().enumerate() {
-                        cols.push(col.clone());
+                    for (k, (col, at)) in more.iter().enumerate() {
+                        cols.push((col.clone(), at.map(|(a, b)| (e + 1 + a, e + 1 + b))));
                         seps.push(more_seps[k + 1].clone());
                     }
                 }
-                i = e;
+                i = end;
             }
             _ => {
                 i += c.len_utf8();
                 let mut col = Col { align: c.to_string(), pre: std::mem::take(&mut pre), ..Default::default() };
                 let (open, wants) = (s[i..].chars().next(), matches!(c, 'p' | 'm' | 'b' | 'w' | 'W'));
+                let mut at = None;
                 if ((wants && open == Some('{')) || (c == 'S' && open == Some('[')))
                     && let Some((a, e)) = arg(i)
                 {
                     col.arg = a;
+                    at = wants.then_some((i + 1, e - 1));
                     i = e;
                 }
-                cols.push(col);
+                cols.push((col, at));
                 seps.push(String::new());
             }
         }
@@ -306,9 +324,9 @@ fn cell_text(c: &Cell) -> String {
     }
 }
 
-/// The table at `text[start..end]` (from `\begin` to past `\end`).
-pub fn parse(text: &str) -> Option<Table> {
-    let s = text;
+/// A table's `\begin` (`text` from it): its name, the inner bytes of its braced arguments (the
+/// spec last, a width before it), its `[pos]`, and where its head ends.
+fn head(s: &str) -> Option<(String, Vec<Span>, Option<String>, usize)> {
     let name_end = group_end(s, "\\begin".len())?;
     let env = s["\\begin{".len()..name_end - 1].to_string();
     let (mut groups, mut pos, mut i) = (Vec::new(), None, name_end);
@@ -317,7 +335,7 @@ pub fn parse(text: &str) -> Option<Table> {
         match s[j..].chars().next() {
             Some('{') if groups.len() < 2 => {
                 let e = group_end(s, j)?;
-                groups.push(s[j + 1..e - 1].to_string());
+                groups.push((j + 1, e - 1));
                 i = e;
             }
             Some('[') if pos.is_none() => {
@@ -332,6 +350,23 @@ pub fn parse(text: &str) -> Option<Table> {
             break;
         }
     }
+    Some((env, groups, pos, i))
+}
+
+/// The widths a table writes (`text` from its `\begin`): its own (`tabularx`'s), and each column
+/// with the bytes of its argument (`p{3cm}`'s `3cm`), all in `text`.
+pub fn widths(text: &str) -> Option<(Option<Span>, Vec<Spanned>)> {
+    let (_, mut groups, _, _) = head(text)?;
+    let (a, b) = groups.pop()?;
+    let cols = spec_at(&text[a..b]).0.into_iter().map(|(c, at)| (c, at.map(|(x, y)| (a + x, a + y))));
+    Some((groups.pop(), cols.collect()))
+}
+
+/// The table at `text[start..end]` (from `\begin` to past `\end`).
+pub fn parse(text: &str) -> Option<Table> {
+    let s = text;
+    let (env, groups, pos, i) = head(s)?;
+    let mut groups: Vec<String> = groups.into_iter().map(|(a, b)| s[a..b].to_string()).collect();
     let spec = groups.pop()?;
     let width = groups.pop();
     let (cols, seps) = parse_spec(&spec);
@@ -762,5 +797,38 @@ mod tests {
         let (cols, seps) = parse_spec("*{2}{c|}>{\\bfseries}p{3cm}<{x}S[table-format=1.2]");
         assert_eq!(cols.len(), 4);
         assert_eq!(spec_text(&cols, &seps), "c|c|>{\\bfseries}p{3cm}<{x}S[table-format=1.2]");
+    }
+
+    /// The widths a column-width drag rewrites: each `p`/`m`/`b` argument's bytes, an
+    /// expression whole, a repeat's one shared argument, `tabularx`'s own width; an `X`, an `S`
+    /// option list and an inner table's spec have none. Pins the spans the PDF handles write.
+    #[test]
+    fn widths_are_the_bytes_a_drag_rewrites() {
+        fn at(t: &str) -> (Option<&str>, Vec<(String, Option<&str>)>) {
+            let (own, cols) = widths(t).unwrap();
+            let span = |s: Option<Span>| s.map(|(a, b)| &t[a..b]);
+            (span(own), cols.into_iter().map(|(c, s)| (c.align, span(s))).collect())
+        }
+        let nested =
+            "\\begin{tabular}{lp{3.26cm}|p{2cm}}\na & b & \\begin{tabular}{p{1cm}}x\\end{tabular}\\\\\n\\end{tabular}";
+        assert_eq!(at(nested).1, [("l".into(), None), ("p".into(), Some("3.26cm")), ("p".into(), Some("2cm"))]);
+        let expr = "\\begin{tabular} [t] {>{\\raggedright}p{\\dimexpr 0.3\\linewidth-2\\tabcolsep}m{1in}S[table-format=1.2]}\\end{tabular}";
+        assert_eq!(
+            at(expr).1,
+            [
+                ("p".into(), Some("\\dimexpr 0.3\\linewidth-2\\tabcolsep")),
+                ("m".into(), Some("1in")),
+                ("S".into(), None)
+            ]
+        );
+        let (own, cols) = at("\\begin{tabularx}{.9\\linewidth}{*{2}{b{1cm}}X}\\end{tabularx}");
+        assert_eq!(own, Some(".9\\linewidth"));
+        assert_eq!(cols, [("b".into(), Some("1cm")), ("b".into(), Some("1cm")), ("X".into(), None)]);
+        // the repeat's columns point at one argument
+        let t = "\\begin{tabular}{*{2}{p{1cm}}}\\end{tabular}";
+        let (_, cols) = widths(t).unwrap();
+        assert_eq!(cols[0].1, cols[1].1);
+        // a mutation: an unclosed spec has no widths past the break, and nothing panics
+        assert!(widths("\\begin{tabular}{p{1cm").is_none_or(|(_, c)| c.is_empty()));
     }
 }

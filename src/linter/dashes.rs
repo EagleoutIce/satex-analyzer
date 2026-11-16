@@ -1,11 +1,14 @@
 //! Hyphen, en-dash and em-dash, read off the characters the run set rather
 //! than off the source: a dash a macro produced is checked like any other.
 
+use crate::analysis::machine::Analysis;
+use crate::engine::tex::Span;
 use crate::fixed::HashSet;
 
 use crate::linter::fix::Applicability;
 use crate::linter::text::{Rewrite, View};
 use crate::linter::{Category, Ref, Report, Rule, Severity, Source};
+use crate::plugins::augment::{Draft, Subject};
 use crate::project::config::Engine;
 
 pub static RULES: &[Rule] = &[Rule {
@@ -80,13 +83,11 @@ fn dash(n: usize) -> &'static str {
 
 fn wrong_dash(report: &mut Report) {
     let analysis = report.analysis;
-    let settings = &analysis.settings.lints.wrong_dash;
     let unicode = matches!(analysis.plugins.engine, Engine::XeTeX | Engine::LuaTeX);
     let view = report.text();
     // Where a number with a unit stands, so a lone hyphen beside one can
     // be named for what it is.
-    let quantities: HashSet<crate::engine::tex::Span> = analysis.facts.quantities.iter().map(|q| q.span).collect();
-    let siunitx = crate::linter::shared::loaded(analysis, "siunitx");
+    let quantities: HashSet<Span> = analysis.facts.quantities.iter().map(|q| q.span).collect();
     let mut findings = Vec::new();
     let mut i = 0;
     while i < view.len() {
@@ -98,7 +99,7 @@ fn wrong_dash(report: &mut Report) {
         match view.char_at(i) {
             Some('-') => {
                 let end = view.run_of(i, '-');
-                findings.extend(run(view, settings, &quantities, siunitx, i, end));
+                findings.extend(run(analysis, view, &quantities, i, end));
                 i = end;
             }
             Some(c @ ('\u{2013}' | '\u{2014}')) if !unicode => {
@@ -131,7 +132,7 @@ fn numeric_around(view: &View, start: usize, end: usize) -> bool {
 }
 
 /// Whether the run really has a quantity on both sides.
-fn quantity_around(view: &View, quantities: &HashSet<crate::engine::tex::Span>, start: usize, end: usize) -> bool {
+fn quantity_around(view: &View, quantities: &HashSet<Span>, start: usize, end: usize) -> bool {
     let holds = |range: std::ops::Range<usize>| range.filter_map(|i| view.span(i)).any(|s| quantities.contains(&s));
     let left = view.before(start).is_some_and(|(i, _)| {
         let word = view.word_before(i + 1);
@@ -145,14 +146,8 @@ fn quantity_around(view: &View, quantities: &HashSet<crate::engine::tex::Span>, 
 }
 
 /// The finding a run of hyphens from `start` to `end` deserves, if any.
-fn run(
-    view: &View,
-    settings: &crate::project::config::WrongDash,
-    quantities: &HashSet<crate::engine::tex::Span>,
-    siunitx: bool,
-    start: usize,
-    end: usize,
-) -> Option<Rewrite> {
+fn run(analysis: &Analysis, view: &View, quantities: &HashSet<Span>, start: usize, end: usize) -> Option<Rewrite> {
+    let settings = &analysis.settings.lints.wrong_dash;
     let n = end - start;
     let left = start.checked_sub(1).and_then(|i| view.char_at(i));
     let right = view.char_at(end);
@@ -169,14 +164,12 @@ fn run(
     // `2ms - 3s` reads as a subtraction, and a minus sign is a math
     // character (tex.web § 1046), not an em-dash.
     if between == Between::Spaces && n == 1 && numeric_around(view, start, end) {
-        let both = quantity_around(view, quantities, start, end);
-        let more = match (both, siunitx) {
-            (true, true) => ", or write the whole range with siunitx's `\\qtyrange`",
-            (true, false) => ", and siunitx sets a range of quantities with `\\qtyrange`",
-            _ => "",
-        };
-        let message = format!("a hyphen between numbers is read as a minus sign, which is set in math mode{more}");
-        return Some(Rewrite::new(start..end, "minus", message, "\\(-\\)"));
+        let message = "a hyphen between numbers is read as a minus sign, which is set in math mode".to_string();
+        let mut draft = Draft { subject: Subject::QuantityRange, message, fix: None, keep: true };
+        if quantity_around(view, quantities, start, end) {
+            crate::plugins::augment::review(analysis, &mut draft);
+        }
+        return Some(Rewrite::new(start..end, "minus", draft.message, "\\(-\\)"));
     }
     // Digits joined by more than one run of hyphens, or with letters or
     // slashes in the same word, are an identifier (an ISBN, a DOI, an ISO

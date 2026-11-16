@@ -81,12 +81,7 @@ impl TypePlugin for Color {
         let rgb = value_at(cx.analysis, cx.doc, cx.path, cx.pos, &name);
         let slot = slot(cx, hit);
         let x = xcolor(cx.analysis);
-        let defined: Vec<Json> = defined_at(cx.analysis, cx.path, cx.pos)
-            .into_iter()
-            .filter_map(|c| {
-                Some(json!({ "name": c.name, "rgb": value(c)?, "css": hex(value(c)?), "group": group(cx.analysis, c) }))
-            })
-            .collect();
+        let defined = palette(cx.analysis, cx.path, cx.pos);
         let models: Vec<&str> =
             if x { vec!["HTML", "rgb", "RGB", "cmyk", "gray", "hsb"] } else { vec!["rgb", "cmyk", "gray"] };
         let writes = slot.map(|r| writes(cx, r));
@@ -211,6 +206,15 @@ fn defined_at<'a>(analysis: &'a Analysis, path: &str, pos: Pos) -> Vec<&'a Color
     (analysis.facts.colors.iter().rev())
         .filter(|c| Some(c.span.file) != file || (c.span.line, c.span.col) <= (pos.line, pos.col))
         .filter(|c| seen.insert(c.name.as_str()) && !analysis.settings.conventions.is_internal(&c.name))
+        .collect()
+}
+
+/// The colors defined at `pos` with a fixed value: name, rgb, `#rrggbb` and who defined them.
+pub(super) fn palette(analysis: &Analysis, path: &str, pos: Pos) -> Vec<Json> {
+    (defined_at(analysis, path, pos).into_iter())
+        .filter_map(|c| {
+            Some(json!({ "name": c.name, "rgb": value(c)?, "css": hex(value(c)?), "group": group(analysis, c) }))
+        })
         .collect()
 }
 

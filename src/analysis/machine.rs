@@ -7,7 +7,7 @@
 //! a macro re-entering itself past `Config::max_expansions` is widened
 //! instead of unfolded.
 
-use crate::fixed::{HashMap, HashSet};
+use crate::fixed::{HashMap, HashSet, LookupMap};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
@@ -130,7 +130,7 @@ impl Step {
 
 /// One entry of the execution trace: what [`Step`] happened, to which name,
 /// at which [`Span`]. Held by [`Analysis::trace`], the sequence `satex trace` prints.
-#[derive(Clone, serde::Serialize, serde::Deserialize)]
+#[derive(PartialEq, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Event {
     pub index: u32,
     pub depth: u16,
@@ -156,7 +156,7 @@ pub struct Event {
 
 /// A loaded file: its path and its [`LoadKind`] (input, package, class).
 /// [`Analysis::files`] is indexed by [`FileId`].
-#[derive(Clone, serde::Serialize, serde::Deserialize)]
+#[derive(PartialEq, Clone, serde::Serialize, serde::Deserialize)]
 pub struct FileInfo {
     pub path: String,
     pub kind: LoadKind,
@@ -167,7 +167,7 @@ pub struct FileInfo {
 }
 
 /// A limit (`limits.<key>` in the configuration) that cut the run.
-#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+#[derive(PartialEq, Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct LimitHit {
     #[serde(with = "crate::fixed::leaked")]
     pub key: crate::fixed::Str,
@@ -238,7 +238,7 @@ pub(crate) struct FontWatch {
 
 /// A font `\font` loaded: the TFM name it was given and the size it was
 /// loaded at (tex.web § 1257), which together locate its metrics.
-#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+#[derive(PartialEq, Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct FontUse {
     pub name: String,
     pub size: crate::engine::value::Scaled,
@@ -250,10 +250,10 @@ pub static HOT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::n
 /// Work per source line, keyed by file and line.
 #[derive(Clone, Default)]
 pub struct Hot {
-    pub steps: HashMap<(FileId, u32), u64>,
-    pub forks: HashMap<(FileId, u32), u64>,
-    pub joins: HashMap<(FileId, u32), u64>,
-    pub heads: HashMap<(FileId, u32), u64>,
+    pub steps: LookupMap<(FileId, u32), u64>,
+    pub forks: LookupMap<(FileId, u32), u64>,
+    pub joins: LookupMap<(FileId, u32), u64>,
+    pub heads: LookupMap<(FileId, u32), u64>,
     /// Untyped unknown text made, per place in satex's source that made it.
     pub untyped: HashMap<(&'static str, u32), u64>,
     /// Steps of the run's commands by how many paths were live (index 7: more).
@@ -264,7 +264,7 @@ pub struct Hot {
 
 impl Analysis {
     /// Counts one unit of work at `span` in a hotspot table, when `--stats` is on.
-    pub(crate) fn heat(&mut self, table: fn(&mut Hot) -> &mut HashMap<(FileId, u32), u64>, span: Span) {
+    pub(crate) fn heat(&mut self, table: fn(&mut Hot) -> &mut LookupMap<(FileId, u32), u64>, span: Span) {
         if let Some(hot) = &mut self.hot {
             *table(hot).entry((span.file, span.line)).or_default() += 1;
         }
@@ -408,6 +408,9 @@ pub struct Analysis {
     /// routine makes on a page satex does not know are `output_forks`.
     pub forks: u64,
     pub output_forks: u64,
+    /// Kept call effects: kept, replayed, steps the replays saved.
+    #[serde(default)]
+    pub call_memo: [u64; 3],
     /// Where the run spent itself, counted only under `--stats`.
     #[serde(skip)]
     pub hot: Option<Box<Hot>>,
@@ -494,6 +497,9 @@ type ListsState = (
 
 /// Slots of [`Machine::shape_memo`].
 const SHAPE_MEMO: usize = 1024;
+
+/// The most put-back tokens a spare frame keeps room for ([`Machine::push_returned`]).
+const SPARE_TOKENS: usize = 64;
 /// One slot of [`Machine::shape_memo`]: the list, the position in it, and
 /// the hash of what is pending there.
 type ShapeSlot = Option<(Rc<[Token]>, usize, u64)>;
@@ -516,6 +522,11 @@ pub struct Recursion {
 }
 
 impl Analysis {
+    /// The steps TeX takes: those run, and those kept call effects stood for.
+    pub fn tex_steps(&self) -> u64 {
+        self.steps + self.call_memo[2]
+    }
+
     /// Whether `file` is the main file or lies in its directory tree.
     pub fn project_file(&self, file: FileId) -> bool {
         if file == self.main_file {
@@ -541,6 +552,22 @@ impl Analysis {
     /// The path of `file`, as the run read it.
     pub fn file_path(&self, file: FileId) -> Option<&Path> {
         self.files.get(usize::from(file)).map(|f| Path::new(f.path.as_str()))
+    }
+}
+
+/// Whether the document loaded a package.
+pub fn loaded(analysis: &Analysis, name: &str) -> bool {
+    analysis.facts.loads.iter().any(|load| load.kind.is_package() && load.name == name)
+}
+
+/// The text a parameterless macro stands for at the end of the run.
+pub fn macro_text(analysis: &Analysis, name: &str) -> Option<String> {
+    let sym = analysis.interner.lookup(name)?;
+    match analysis.env.meaning(sym) {
+        crate::engine::tex::Meaning::Macro(m) if m.arity() == 0 => {
+            Some(crate::engine::tex::text_of(&m.replacement_text, &analysis.interner))
+        }
+        _ => None,
     }
 }
 
@@ -573,6 +600,33 @@ impl Analysis {
             ..Config::default()
         };
         Machine::new(&cfg, PathBuf::new()).out
+    }
+
+    /// A run that reads nothing: `files` registered, the main one first, beside the build files and
+    /// magic comments. What the early lint rules read ([`crate::linter::early`]).
+    /// A package of `loads` is looked up as a run would, and is `NotFound` when it is not there.
+    pub fn sketch(source: &str, files: &[PathBuf], cfg: &Config, mut loads: Vec<Load>) -> Analysis {
+        let main = files.first().map(PathBuf::as_path);
+        let mut m = Machine::new(cfg, Machine::base_of(main));
+        for path in files {
+            let kind = match crate::project::config::Profile::of_name(Some(path), "") {
+                Some(crate::project::config::Profile::Package) => LoadKind::Package,
+                Some(crate::project::config::Profile::Class) => LoadKind::Class,
+                _ => LoadKind::Input,
+            };
+            m.register_file(path.display().to_string(), kind);
+        }
+        if cfg.plugins.magic {
+            m.out.plugins.read_magic(source, &cfg.magic);
+        }
+        let base = m.base.clone();
+        for load in loads.iter_mut().filter(|l| l.kind.is_package()) {
+            load.path = m.resolver.resolve(&load.name, load.kind, &base).map(|p| p.display().to_string());
+            load.status = if load.path.is_some() { LoadStatus::Read } else { LoadStatus::NotFound };
+        }
+        m.out.facts.loads = loads;
+        m.out.distribution = m.resolver.distribution().clone();
+        m.out
     }
 
     /// Is a definition made at `span` in scope at `line:col` of `file`? Both
@@ -653,6 +707,12 @@ impl Analysis {
                 c(self.held_tokens_left),
                 c(self.loop_heads)
             ),
+            format!(
+                "{} kept call effects  {} replayed  {} steps saved",
+                c(self.call_memo[0] as usize),
+                c(self.call_memo[1] as usize),
+                compact_count(self.call_memo[2])
+            ),
         ]
         .join("  |  ")
     }
@@ -732,12 +792,12 @@ fn set_primitive_aliases(env: &mut Env, interner: &mut Interner, engine: crate::
 /// progress.
 pub(crate) type LoopId = (Span, Sym, u64);
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub(crate) enum Frame {
     /// A file being read. `depth` is the group nesting the file started
     /// at, so a group it leaves open can be reported and given up.
     File {
-        mouth: Mouth,
+        mouth: Rc<Mouth>,
         package: Option<Sym>,
         depth: usize,
         /// The conditional nesting the file started at, so that one it leaves
@@ -768,7 +828,7 @@ pub(crate) enum Frame {
     /// A `\scantokens` pseudo file.  Its characters are tokenized as they
     /// are read, so a catcode change inside it governs the rest of it
     /// (etex.ch `pseudo_input`). `eof` is the `\everyeof` read at its end.
-    Pseudo { mouth: Box<Mouth>, at: Span, eof: Rc<[Token]>, pos: usize },
+    Pseudo { mouth: Rc<Mouth>, at: Span, eof: Rc<[Token]>, pos: usize },
     /// Tokens a lookahead read and gave back, newest last.  It lives on the
     /// input stack so that a file opened after the lookahead is still read
     /// before them, which is where TeX inserts it.
@@ -781,8 +841,9 @@ pub(crate) enum Frame {
 /// The input stack (tex.web § 300), its frames shared with the path
 /// snapshots that saw them: a snapshot is taken before every command, and
 /// copies pointers. A frame is copied only when a command reads on in it
-/// while a snapshot still holds it.
-#[derive(Clone, Default)]
+/// while a snapshot still holds it. A file's reader is shared once more, so
+/// that copy is small.
+#[derive(Debug, Clone, Default)]
 pub(crate) struct Input(Vec<Rc<Frame>>);
 
 /// Notes the lines `mouth` read to their end: of the user's files, as
@@ -851,6 +912,10 @@ impl Input {
         self.0.push(Rc::new(frame));
     }
 
+    pub(crate) fn push_shared(&mut self, frame: Rc<Frame>) {
+        self.0.push(frame);
+    }
+
     /// The top frame, still shared with the states that hold it: a frame
     /// popped is mostly looked at, not changed.
     pub(crate) fn pop(&mut self) -> Option<Rc<Frame>> {
@@ -888,7 +953,7 @@ impl std::ops::IndexMut<usize> for Input {
 /// The `\global`, `\long`, `\outer` and `\protected` prefixes waiting to
 /// apply to the next definition or assignment. [`Machine::define`] consumes
 /// and resets them.
-#[derive(Default, Clone, Copy)]
+#[derive(Debug, Default, Clone, Copy)]
 pub struct Prefixes {
     pub global: bool,
     pub long: bool,
@@ -974,7 +1039,7 @@ pub(crate) enum Unit {
 }
 
 /// The name a `\csname` has built so far ([`Machine::scan_csname_chars`]).
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub(crate) struct NameAccum {
     /// The names the joined paths built, each the text before its first
     /// unknown part (once it has one) and the text after its last. The
@@ -1091,7 +1156,7 @@ impl NameAccum {
 /// for, typed digits to the numbers they still are.
 pub(crate) type Took = Vec<(Sym, Narrowed)>;
 
-#[derive(Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub(crate) enum Narrowed {
     Texts(Rc<[Meaning]>),
     Number(crate::engine::value::Num),
@@ -1122,7 +1187,7 @@ pub(crate) type Gapped = (String, String, TextClass, Option<Sym>);
 /// What an expanding scan has made so far. It goes with the path, so the
 /// arms of a choice inside the scan join where they meet again. Older
 /// tokens are frozen in shared chunks, so saving a path costs little.
-#[derive(Clone, Default)]
+#[derive(Debug, Clone, Default)]
 pub(crate) struct Accum {
     chunks: Vec<Rc<[Token]>>,
     tail: Vec<Token>,
@@ -1517,7 +1582,7 @@ pub(crate) struct Scratch {
     /// was read, by its frame's level on the stack and its `\if…`
     /// ([`Machine::skip_unsure`]). Two live frames on one key (paths, a
     /// test nesting itself) that differ: [`UNSURE`].
-    pub(crate) cond_gaps: HashMap<(usize, Span), (u64, u64)>,
+    pub(crate) cond_gaps: LookupMap<(usize, Span), (u64, u64)>,
     /// Per definition fact run by a path besides the first, the text each
     /// path last gave it, by [`Machine::path_id`].
     pub(crate) site_texts: HashMap<usize, SiteRuns>,
@@ -1721,6 +1786,9 @@ pub struct Machine<'a> {
     undo: Vec<Undo>,
     /// Paths waiting in the innermost drive, for progress reports.
     waiting: usize,
+    /// The expansion that carries a loop whose body met a state it was in
+    /// before: cut at its next call.
+    loop_cut: Option<Sym>,
     /// Dev mode: the waiting paths it was taken at, and why they stay apart.
     apart: Option<(usize, Rc<str>)>,
     /// A path ended while others went on: what the run does from then on
@@ -1851,8 +1919,21 @@ pub struct Machine<'a> {
     arm_assumed: bool,
     /// Recorded runs per call ([`calls`]).
     call_runs: HashMap<calls::CallKey, calls::CallRuns>,
+    /// Kept effects of calls, by code and arguments ([`calls`]).
+    memos: HashMap<u64, Vec<Rc<calls::Memo>>>,
+    memo_codes: HashMap<usize, calls::MemoCode>,
+    /// Keys of calls met once ([`calls`]).
+    memo_seen: HashSet<u64>,
+    memo_count: usize,
+    /// A hit that `limits.call_memo_verify` runs for real, compared at its end.
+    memo_verify: Option<(Rc<calls::Memo>, Sym)>,
+    /// Occurrences recorded calls said again, each already said ([`calls`]).
+    memo_said: Vec<(OccKind, String, Span)>,
+    /// Changes outside the slots no kept effect replays: boxes' text,
+    /// outputs, streams, reads of the clock, the generator, the input line.
+    pub(crate) side_effects: u64,
     /// Calls being recorded, innermost last.
-    call_recs: Rc<Vec<calls::CallRec>>,
+    call_recs: Rc<Vec<Rc<calls::CallRec>>>,
     /// Undecided choices this path made: a call's own are those since its record.
     learn_forks: u64,
     guard_seen: GuardSeen,
@@ -1912,6 +1993,8 @@ pub struct Machine<'a> {
     /// Hashes of input lists' pending heads, by list and position: a deep
     /// input below a call is hashed once, not at every call.
     shape_memo: std::cell::RefCell<Vec<ShapeSlot>>,
+    /// A put-back frame read out, kept to hold the next put-back.
+    spare_frame: Option<Rc<Frame>>,
     /// Each evaluated conditional's fact, by its `\if…`.
     cond_sites: crate::fixed::LookupMap<Span, usize>,
     /// Tokens taken from a file so far: the measure of progress through the
@@ -2158,7 +2241,7 @@ pub struct Machine<'a> {
 /// A join point (`analysis.join_paths_at`): a command, or the end of an
 /// output routine (tex.web § 1026), which the command that fired it may
 /// reach again (a `\clearpage` loop).
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) enum JoinAt {
     Command,
     Output,
@@ -2168,7 +2251,7 @@ pub(crate) enum JoinAt {
 /// conditional changes, so each arm starts where the test was. What the run
 /// records (facts, graph, hooks, loaded files) is shared: analysis reports
 /// the union of the paths.
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 struct PathState {
     input: Input,
     catcodes: CatcodeTable,
@@ -2234,7 +2317,7 @@ struct PathState {
     /// command's run's to drop or contain ([`Machine::explore`]).
     dropping: (Option<String>, bool, bool, bool),
     cut_taint: Option<usize>,
-    call_recs: Rc<Vec<calls::CallRec>>,
+    call_recs: Rc<Vec<Rc<calls::CallRec>>>,
     /// Undecided choices this path made: a call's own are those since its record.
     learn_forks: u64,
     guard_seen: GuardSeen,
@@ -2379,7 +2462,7 @@ const CUT_EXEMPT: [&str; 10] = [
 ];
 
 /// [`LineGuard`]'s line and fork charges, held over a cacheable load.
-type HeldCharges = (HashMap<GuardKey, (u64, u8)>, HashMap<(GuardKey, Span), u32>);
+type HeldCharges = (LookupMap<GuardKey, (u64, u8)>, LookupMap<(GuardKey, Span), u32>);
 
 /// The termination guard: the steps spent while the run reads each source
 /// line, and how often that line overran `limits.line_steps`.
@@ -2389,10 +2472,10 @@ struct LineGuard {
     body: Option<GuardKey>,
     /// The step the last check charged up to.
     step: u64,
-    lines: HashMap<GuardKey, (u64, u8)>,
+    lines: LookupMap<GuardKey, (u64, u8)>,
     /// The undecided choices made at each site while the run read each
     /// source line, over all paths ([`Machine::hot_site`]).
-    forks: HashMap<(GuardKey, Span), u32>,
+    forks: LookupMap<(GuardKey, Span), u32>,
     /// `lines` and `forks` before the cacheable load under way: a replay
     /// charges none of its lines, so a read forgets them too
     /// ([`Machine::end_cacheable_load`]).
@@ -2409,7 +2492,7 @@ struct LineGuard {
 /// data line; a finite file still gives finitely many keys.
 type GuardKey = (FileId, u32, i64, usize);
 
-#[derive(Clone, Copy, Default)]
+#[derive(Debug, Clone, Copy, Default)]
 struct GuardSeen {
     line: GuardKey,
     level: u8,
@@ -2600,6 +2683,7 @@ impl<'a> Machine<'a> {
                 peak_output_paths: 0,
                 forks: 0,
                 output_forks: 0,
+                call_memo: [0; 3],
                 hot: HOT.load(std::sync::atomic::Ordering::Relaxed).then(Default::default),
                 joined_slots: 0,
                 memory_reported: 0,
@@ -2671,6 +2755,7 @@ impl<'a> Machine<'a> {
             ended_run: false,
             undo: Vec::new(),
             waiting: 0,
+            loop_cut: None,
             apart: None,
             parted: false,
             abs: None,
@@ -2719,6 +2804,13 @@ impl<'a> Machine<'a> {
             dont_expand,
             unknown,
             call_runs: HashMap::default(),
+            memos: HashMap::default(),
+            memo_codes: HashMap::default(),
+            memo_seen: HashSet::default(),
+            memo_count: 0,
+            memo_verify: None,
+            memo_said: Vec::new(),
+            side_effects: 0,
             call_recs: Rc::default(),
             learn_forks: 0,
             guard_seen: GuardSeen::default(),
@@ -2736,6 +2828,7 @@ impl<'a> Machine<'a> {
             expansion_sites: Default::default(),
             site_writes: Default::default(),
             shape_memo: std::cell::RefCell::new(vec![None; SHAPE_MEMO]),
+            spare_frame: None,
             cond_sites: Default::default(),
             source_progress: 0,
             pages: 0,
@@ -3005,7 +3098,15 @@ impl<'a> Machine<'a> {
             if analysis.exhausted {
                 let Some(mut earlier) = complete.take() else { break analysis };
                 // Not a green: the file table may differ, so said at no place.
-                earlier.limits.append(&mut analysis.limits);
+                // A hit's place names a file of this run's table: map it by path.
+                for mut hit in std::mem::take(&mut analysis.limits) {
+                    let path = analysis.files.get(hit.at.file as usize).map(|f| &f.path);
+                    hit.at = match earlier.files.iter().position(|f| Some(&f.path) == path) {
+                        Some(id) => Span { file: id as FileId, ..hit.at },
+                        None => Span::default(),
+                    };
+                    earlier.limits.push(hit);
+                }
                 earlier.exhausted = true;
                 earlier.facts.diagnostics.push(crate::analysis::facts::Diagnostic {
                     severity: Severity::Imprecision,
@@ -3307,7 +3408,7 @@ impl<'a> Machine<'a> {
         m.out.timings.start(Phase::Document);
         m.out.timings.enter_file(id);
         m.input.push(Frame::File {
-            mouth: Mouth::file(code, id),
+            mouth: Rc::new(Mouth::file(code, id)),
             package: None,
             depth: 0,
             conds: 0,
@@ -3885,7 +3986,7 @@ impl<'a> Machine<'a> {
         self.catcodes.at_letter(true);
         let id = self.register_file(source.display().to_string(), LoadKind::Input);
         self.input.push(Frame::File {
-            mouth: Mouth::file(&text, id),
+            mouth: Rc::new(Mouth::file(&text, id)),
             package: None,
             depth: 0,
             conds: 0,
@@ -4073,7 +4174,7 @@ will look undefined",
         }
         let id = self.register_file("<load.expect>".to_string(), LoadKind::Input);
         self.input.push(Frame::File {
-            mouth: Mouth::file(&text, id),
+            mouth: Rc::new(Mouth::file(&text, id)),
             package: None,
             depth: 0,
             conds: 0,
@@ -4104,7 +4205,7 @@ will look undefined",
         self.input.push(Frame::Boundary);
         let base = self.input.len();
         self.input.push(Frame::File {
-            mouth: Mouth::file(&text, id),
+            mouth: Rc::new(Mouth::file(&text, id)),
             package: None,
             depth: 0,
             conds: 0,
@@ -4182,6 +4283,7 @@ will look undefined",
         self.expansion_sites.clear();
         self.out.facts.spaces.clear();
         self.out.facts.kept_spaces.clear();
+        self.out.facts.overfull.clear();
         self.out.facts.text = crate::analysis::facts::Text::default();
         self.out.font_states.truncate(1);
         self.font_watch = FontWatch::default();
@@ -4191,7 +4293,10 @@ will look undefined",
         // visit counts, summaries, counters and the typed-name table (kept,
         // a built run forked 50x more than a cached one on the same document).
         self.call_runs.clear();
+        (self.memos, self.memo_codes, self.memo_seen, self.memo_count) = Default::default();
+        self.memo_said.clear();
         self.call_recs = Rc::default();
+        self.env.memo_floor(None);
         self.scratch = Scratch::default();
         self.carried = Carried::default();
         self.unknown_chars.clear();
@@ -4257,6 +4362,7 @@ will look undefined",
     /// `\immediate\openout`: the file is there, empty, from here on. With
     /// the stream unpinned, what it gets is unknown.
     pub(crate) fn open_output(&mut self, name: &str, known: bool) {
+        self.side_effects += 1;
         let name = Self::output_name(name);
         for k in ["w", "h"] {
             let sym = self.engine_sym(&format!("produced.{name}.{k}"));
@@ -4273,6 +4379,7 @@ will look undefined",
     /// `repstopdf` given its input). Under `-shell-restricted` only the
     /// programs of TeX Live's `shell_escape_commands` run.
     pub(crate) fn run_shell(&mut self, command: &str) {
+        self.side_effects += 1;
         use crate::project::config::ShellEscape;
         const RESTRICTED: &str = "bibtex bibtex8 extractbb gregorio kpsewhich l3sys-query latexminted makeindex \
             memoize-extract.pl memoize-extract.py repstopdf r-mpost texosquery-jre8";
@@ -4343,6 +4450,7 @@ will look undefined",
     /// A `\write` of `text` to `stream`: a `deferred` one waits for the
     /// next shipout. An unpinned stream may be any file.
     pub(crate) fn write_output(&mut self, stream: Option<i64>, text: &str) {
+        self.side_effects += 1;
         // Any stream: each file open may get a line of unknown text.
         let Some(stream) = stream else {
             let open: Vec<String> = self.stream_files.values().map(|n| Self::output_name(n)).collect();
@@ -4390,6 +4498,9 @@ will look undefined",
     fn run_whatsit(&mut self, what: &Whatsit, maybe: bool) {
         match what {
             Whatsit::Write { stream, text, span } => {
+                // The written file grows: state no slot holds. Two writes of
+                // one text in a row are not a loop that met its state again.
+                self.env.effective += 1;
                 let text = crate::analysis::observe::shipped(self, text);
                 self.write_text(*stream, text, false, *span);
             }
@@ -4426,6 +4537,7 @@ will look undefined",
     }
 
     pub fn set_stream(&mut self, stream: Option<i64>, lines: Option<Vec<String>>) {
+        self.side_effects += 1;
         let Some(stream) = stream else { return self.forget_streams() };
         match lines {
             Some(lines) => {
@@ -4439,6 +4551,7 @@ will look undefined",
 
     /// What stream `stream` reads is not known; the others stay as known.
     pub fn unknown_stream(&mut self, stream: Option<i64>) {
+        self.side_effects += 1;
         let Some(stream) = stream else { return self.forget_streams() };
         let streams = Rc::make_mut(&mut self.streams);
         // Widened, an absent stream is unknown: a closed one says so.
@@ -4452,6 +4565,7 @@ will look undefined",
     }
 
     pub fn close_in(&mut self, stream: Option<i64>) {
+        self.side_effects += 1;
         let Some(stream) = stream else { return self.forget_streams() };
         self.mark_closed(stream);
     }
@@ -4459,6 +4573,7 @@ will look undefined",
     /// A stream is closed. Dropping it says so, except after a widening, where the
     /// table has to say it outright, keeping it unchanged when no widening happened.
     fn mark_closed(&mut self, stream: i64) {
+        self.side_effects += 1;
         let widened = self.streams.contains_key(&ANY_STREAM);
         let streams = Rc::make_mut(&mut self.streams);
         match widened {
@@ -4749,7 +4864,7 @@ will look undefined",
                 }
                 Some(Frame::Pseudo { mouth, at, eof, pos }) => {
                     let mut load = false;
-                    let next = match mouth.next_with(catcodes, &mut out.interner, *end_line) {
+                    let next = match Rc::make_mut(mouth).next_with(catcodes, &mut out.interner, *end_line) {
                         Some(t) => Some(Token::new(t.tok, *at)),
                         None => {
                             load = *pos == 0 && eof.is_empty();
@@ -4781,8 +4896,10 @@ will look undefined",
                         return None;
                     }
                 }
-                Some(Frame::File { mouth, eof_seen, .. }) => {
-                    let before = mouth.clone();
+                Some(Frame::File { mouth: rc, eof_seen, .. }) => {
+                    // Kept for a reread only where a category may be undecided.
+                    let mut before = (!catcodes.all_known()).then(|| rc.clone());
+                    let mouth = Rc::make_mut(rc);
                     let next = mouth.next_with(catcodes, &mut out.interner, *end_line);
                     note_lines(out, own_files, mouth);
                     if let Some(t) = next {
@@ -4791,20 +4908,26 @@ will look undefined",
                         if let Some(c) = mouth.undecided.take() {
                             let cats = catcodes.cats(c);
                             let plain = (1 << Catcode::Letter as u8) | (1 << Catcode::Other as u8);
-                            if cats.count_ones() <= SPLIT_CATS && cats & !plain != 0 {
-                                let after = std::mem::replace(mouth, before);
+                            if cats.count_ones() <= SPLIT_CATS
+                                && cats & !plain != 0
+                                && let Some(before) = before.take()
+                            {
+                                let after = std::mem::replace(mouth, Rc::unwrap_or_clone(before));
                                 if self.split_catcode(c, cats, t.span) {
                                     continue;
                                 }
                                 if let Some(Frame::File { mouth, .. }) = self.input.last_mut() {
-                                    *mouth = after;
+                                    *mouth = Rc::new(after);
                                 }
                             }
                         }
+                        // Unshared again, so the reads below change it in place.
+                        drop(before);
                         if self.scanner == Scanner::Skipping {
                             self.skip_directives();
                         }
                         let Some(Frame::File { mouth, .. }) = self.input.last_mut() else { return Some(t) };
+                        let mouth = Rc::make_mut(mouth);
                         let here = mouth.here();
                         // The character an unknown-text token stood for, so
                         // that executing it later can be bounded by what
@@ -4974,6 +5097,9 @@ will look undefined",
             Frame::Boundary => {}
             Frame::Returned(tokens) => {
                 self.held_tokens = self.held_tokens.saturating_sub(tokens.len());
+                if Rc::strong_count(&frame) == 1 && tokens.capacity() <= SPARE_TOKENS {
+                    self.spare_frame = Some(frame);
+                }
             }
             &Frame::Tokens { expanding, held, upper, .. } => {
                 self.held_tokens = self.held_tokens.saturating_sub(held);
@@ -5003,9 +5129,10 @@ will look undefined",
             }
             Frame::Pseudo { .. } => self.bump_expanding(self.pseudo_file, -1),
             Frame::File { .. } => {
-                let Frame::File { mut mouth, package, depth, conds, ends_at, .. } = Rc::unwrap_or_clone(frame) else {
+                let Frame::File { mouth, package, depth, conds, ends_at, .. } = Rc::unwrap_or_clone(frame) else {
                     unreachable!("matched a file")
                 };
+                let mut mouth = Rc::unwrap_or_clone(mouth);
                 self.pass_directives_on(&mut mouth);
                 self.source_progress = self.source_progress.max(ends_at.unwrap_or_default());
                 self.out.timings.leave_file();
@@ -5130,10 +5257,28 @@ will look undefined",
         }
         self.end_used_up_lists();
         self.held_tokens += 1;
-        match self.input.last_mut() {
-            Some(Frame::Returned(tokens)) => tokens.push(token),
-            _ => self.input.push(Frame::Returned(vec![token])),
+        self.push_returned(std::slice::from_ref(&token));
+    }
+
+    /// Puts `tokens` back in reverse, into the top frame if it holds
+    /// put-back tokens, else into a new one, reusing the last such frame
+    /// read out: a lookahead's put-back is one token most of the time.
+    fn push_returned(&mut self, tokens: &[Token]) {
+        // Only a frame that takes them is unshared.
+        if matches!(self.input.last(), Some(Frame::Returned(_)))
+            && let Some(Frame::Returned(top)) = self.input.last_mut()
+        {
+            return top.extend(tokens.iter().rev().copied());
         }
+        let mut frame = self.spare_frame.take().filter(|f| Rc::strong_count(f) == 1);
+        match frame.as_mut().and_then(Rc::get_mut) {
+            Some(Frame::Returned(list)) => {
+                list.clear();
+                list.extend(tokens.iter().rev().copied());
+            }
+            _ => frame = Some(Rc::new(Frame::Returned(tokens.iter().rev().copied().collect()))),
+        }
+        self.input.push_shared(frame.expect("set above"));
     }
 
     /// Records where a put-back token came from, one entry per position. Text a
@@ -5164,10 +5309,7 @@ will look undefined",
         }
         self.end_used_up_lists();
         self.held_tokens += tokens.len();
-        match self.input.last_mut() {
-            Some(Frame::Returned(returned)) => returned.extend(tokens.iter().rev().copied()),
-            _ => self.input.push(Frame::Returned(tokens.iter().rev().copied().collect())),
-        }
+        self.push_returned(tokens);
     }
 
     /// The position of the file the next read takes from, when no token list
@@ -5286,7 +5428,7 @@ will look undefined",
         if self.take_pending_eof() {
             mouth.inherit_eof(true);
         }
-        self.input.push(Frame::Pseudo { mouth, at, eof, pos: 0 });
+        self.input.push(Frame::Pseudo { mouth: Rc::from(mouth), at, eof, pos: 0 });
     }
 
     pub(crate) fn bump_expanding(&mut self, sym: Sym, delta: i32) {
@@ -5501,7 +5643,7 @@ will look undefined",
             self.out.graph.note_extent(span, line);
         }
         let within = self.within.last().map(|(_, node)| *node);
-        let node = self.out.graph.push(VertexTag::VariableDefinition, via, span, within, self.cds.to_vec());
+        let node = self.out.graph.push(VertexTag::VariableDefinition, via, span, within, &self.cds);
         if via != name {
             let defs = self.env.link_defs(via);
             self.link_reads(node, via, &defs);
@@ -5509,7 +5651,7 @@ will look undefined",
         // Assigning a register reads nothing of the value it held. A package
         // cache counts it as a read only when the name means something else.
         let tracking = self.env.track_reads(false);
-        let mut binding = self.env.get(name).cloned().unwrap_or_else(|| Binding::builtin(Meaning::Unknown));
+        let mut binding = self.env.kept(name).cloned().unwrap_or_else(|| Binding::builtin(Meaning::Unknown));
         self.env.track_reads(tracking);
         self.env.note_read(name, crate::engine::env::ReadKind::Kept);
         if derived {
@@ -5539,7 +5681,7 @@ will look undefined",
     /// [`Machine::assign`] records one.
     pub fn note_assignment(&mut self, name: Sym, global: bool, span: Span) {
         let within = self.within.last().map(|(_, node)| *node);
-        let node = self.out.graph.push(VertexTag::VariableDefinition, name, span, within, self.cds.to_vec());
+        let node = self.out.graph.push(VertexTag::VariableDefinition, name, span, within, &self.cds);
         let defs = self.env.link_defs(name);
         self.link_reads(node, name, &defs);
         if let Some(call) = self.out.graph.reader {
@@ -5555,7 +5697,7 @@ will look undefined",
     /// `\catcode` is a local assignment, so the old value goes on the save
     /// stack and the enclosing group restores it.
     pub fn set_catcode(&mut self, character: char, catcode: Catcode) {
-        self.leak_call_recs();
+        self.leak_catcode_recs();
         self.region_catcode(character);
         let was = self.catcodes.get(character) == Catcode::Letter;
         if character.is_ascii_punctuation() && was != (catcode == Catcode::Letter) {
@@ -5938,6 +6080,8 @@ will look undefined",
     }
 
     pub fn diagnose(&mut self, mut severity: Severity, code: &'static str, span: Span, message: String) {
+        // Said again, a finding only counts up: a kept effect does not replay that.
+        self.env.memo_odd();
         // What TeX would say about text a cut left after its `\unknown` is
         // not known: that text may have been taken as arguments.
         if severity == Severity::Warning && self.after_cut() {
@@ -6112,22 +6256,23 @@ will look undefined",
         // A call that records the same key twice made one occurrence, but
         // every literal a call hands the PDF writer is content of its own:
         // `q … q … Q … Q` from one `\tcolorbox` must stay balanced.
-        let seen = self
-            .out
-            .facts
-            .occurrences
-            .iter()
-            .rev()
-            .take(32)
-            .filter(|_| kind != OccKind::Pdf)
-            .find(|o| o.span == span && o.kind == kind && o.key == key && o.call == self.file_call)
-            .map(|o| o.node);
+        let seen = self.said_before(kind, &key, span);
         if seen.is_some() {
+            // A kept effect says it again where it is replayed ([`calls`]).
+            if self.call_recs.iter().any(|r| r.memo_mark().is_some()) {
+                self.memo_said.push((kind, key, span));
+            }
             return seen;
         }
         let context = self.occurrence_context();
         let node = self.occurrence_in(kind, key, detail, span, &context);
         Some(node)
+    }
+
+    /// The occurrence a call recording `kind` and `key` at `span` again makes no new one for.
+    pub(crate) fn said_before(&self, kind: OccKind, key: &str, span: Span) -> Option<NodeId> {
+        let mut recent = self.out.facts.occurrences.iter().rev().take(32).filter(|_| kind != OccKind::Pdf);
+        recent.find(|o| o.span == span && o.kind == kind && o.key == key && o.call == self.file_call).map(|o| o.node)
     }
 
     /// What an occurrence recorded now would be attributed to. Kept for one
@@ -6160,7 +6305,7 @@ will look undefined",
             OccKind::Label | OccKind::BibItem => VertexTag::VariableDefinition,
             _ => VertexTag::Use,
         };
-        let node = self.out.graph.push_key(tag, name, span, context.within, context.cds.clone());
+        let node = self.out.graph.push_key(tag, name, span, context.within, &context.cds);
         if kind == OccKind::Section {
             self.section = Some(Rc::from(key.as_str()));
         }
@@ -6229,7 +6374,7 @@ will look undefined",
     /// that need something to hang a control dependency on.
     pub fn force_reference(&mut self, sym: Sym, span: Span) -> NodeId {
         let within = self.within.last().map(|(_, n)| *n);
-        self.out.graph.push(VertexTag::Use, sym, span, within, self.cds.to_vec())
+        self.out.graph.push(VertexTag::Use, sym, span, within, &self.cds)
     }
 
     fn take_prefixes(&mut self) -> Prefixes {
@@ -6434,12 +6579,12 @@ will look undefined",
             _ => None,
         };
         let within = self.within.last().map(|(_, n)| *n);
-        let node = self.out.graph.push(VertexTag::VariableDefinition, name, span, within, self.cds.to_vec());
+        let node = self.out.graph.push(VertexTag::VariableDefinition, name, span, within, &self.cds);
 
         let switch = self.switch_of(&meaning, &spelled);
         let mac = meaning.as_macro().cloned();
         if let Some(m) = &mac {
-            let body = self.out.graph.push(VertexTag::MacroDefinition, name, span, within, self.cds.to_vec());
+            let body = self.out.graph.push(VertexTag::MacroDefinition, name, span, within, &self.cds);
             self.out.graph.edge(node, body, EdgeKind::DEFINED_BY);
             let replacement = m.replacement_text.clone();
             self.record_calls(name, &replacement);
@@ -6843,7 +6988,7 @@ will look undefined",
         self.catcodes.set('@', Catcode::Letter);
         self.line_defined = Some(Vec::new());
         self.input.push(Frame::File {
-            mouth: Mouth::new(text, file),
+            mouth: Rc::new(Mouth::new(text, file)),
             package: None,
             depth: 0,
             conds: 0,
@@ -6878,7 +7023,7 @@ will look undefined",
         let file = self.register_file("\u{2}probe".into(), LoadKind::Input);
         self.probe = Some(Box::new(crate::analysis::probe::Watch::new(file, sym)));
         self.input.push(Frame::File {
-            mouth: Mouth::new(text, file),
+            mouth: Rc::new(Mouth::new(text, file)),
             package: None,
             depth: 0,
             conds: 0,
@@ -7288,7 +7433,7 @@ will look undefined",
             if matches!(self.input.get(i), Some(Frame::File { mouth, .. }) if !mouth.lines.is_empty())
                 && let Some(Frame::File { mouth, .. }) = self.input.get_mut(i)
             {
-                note_lines(&mut self.out, &self.own_files, mouth);
+                note_lines(&mut self.out, &self.own_files, Rc::make_mut(mouth));
             }
         }
     }
@@ -7314,7 +7459,7 @@ will look undefined",
     /// The innermost input level reading `file`.
     pub(crate) fn reading(&self, file: FileId) -> Option<&Mouth> {
         self.input.iter().rev().find_map(|frame| match frame {
-            Frame::File { mouth, .. } if mouth.here().file == file => Some(mouth),
+            Frame::File { mouth, .. } if mouth.here().file == file => Some(&**mouth),
             _ => None,
         })
     }
@@ -7486,7 +7631,7 @@ will look undefined",
             self.dropping = Some(match certain {
                 true => text.to_string(),
                 false => {
-                    format!("{} (the analysis approximated on the way: may not be TeX's)", text.replace('\u{2}', "?"))
+                    format!("{} (the analysis approximated on the way: may not be TeX's)", shown_unknowns(text))
                 }
             });
         }
@@ -8362,7 +8507,7 @@ will look undefined",
         if mouth.file != at.file {
             return false;
         }
-        let Some((line, col)) = mouth.skip_line() else { return false };
+        let Some((line, col)) = Rc::make_mut(mouth).skip_line() else { return false };
         let file = self.out.short_name(at.file).to_string();
         self.diagnose(
             Severity::Warning,
@@ -8378,6 +8523,12 @@ will look undefined",
         (at.file, at.line, stream, line)
     }
 
+    /// LaTeX's own test: `\\@nodocument` is `\\relax` once the body began.
+    pub(crate) fn in_preamble(&mut self) -> bool {
+        let name = self.intern("@nodocument");
+        matches!(self.env.observed_meaning(name), Meaning::Macro(_))
+    }
+
     /// The termination guard. It runs on every check, whatever path, scan or
     /// replay the step is in. The steps since the last check are charged to
     /// the source line being read (and the line `\read` took last), summed
@@ -8386,12 +8537,6 @@ will look undefined",
     /// the rest of the line is skipped. A third time, or with no line left to
     /// skip, the run stops. A path parked on the line before a cut gets the
     /// cut when it runs again. Returns whether the run stopped.
-    /// LaTeX's own test: `\\@nodocument` is `\\relax` once the body began.
-    fn in_preamble(&mut self) -> bool {
-        let name = self.intern("@nodocument");
-        matches!(self.env.meaning(name), Meaning::Macro(_))
-    }
-
     fn guard_line(&mut self) -> bool {
         let spent = self.out.steps.saturating_sub(self.guard.step);
         self.guard.step = self.out.steps;
@@ -8473,6 +8618,8 @@ will look undefined",
     /// widens instead (an undecided conditional skips its arms and applies
     /// what they may do). Returns whether the limit is passed.
     pub(crate) fn hot_site(&mut self, site: Span) -> bool {
+        // An undecided choice is decided by counts of the line, not by names read.
+        self.env.memo_odd();
         let limit = self.limits.site_forks;
         // A choice inside a value scan may fork more, since its arms join where
         // the scan ends. A walker over unknown text forks per token, so even
@@ -9434,6 +9581,10 @@ will look undefined",
         if self.mode.is_empty() {
             return false;
         }
+        // Library text outside math: neither arm inserts.
+        if !self.mode.within(Modes::ANY_MATH) && !self.own_file(token.span.file) {
+            return false;
+        }
         let math = match (token.tok, token.cs().map(|sym| self.env.meaning(sym))) {
             (Tok::Chr(_, Catcode::Sup | Catcode::Sub), _) => true,
             (
@@ -9507,7 +9658,9 @@ will look undefined",
         // Text a join or a gap left: what the path does next is not known exactly.
         // What it may do is done: the names its text holds, or the macros a
         // join left it one of (D11); a name of no known shape is reported.
-        if matches!(self.env.meaning(sym), Meaning::Unknown) {
+        let meaning = self.env.meaning(sym);
+        let unknown = matches!(meaning, Meaning::Unknown);
+        if unknown {
             self.approximated = true;
             let may = self.env.slot(sym).and_then(|b| b.may.clone());
             if let Some((_, _, named)) = self.typed_shape(Token::new(Tok::Cs(sym), span))
@@ -9537,7 +9690,8 @@ will look undefined",
         if self.insert_dollar(Token::new(Tok::Cs(sym), span)) {
             return;
         }
-        match self.env.meaning(sym) {
+        // What ran for an unknown meaning may have given it one.
+        match if unknown { self.env.meaning(sym) } else { meaning } {
             Meaning::Primitive(p) => {
                 self.record(Step::Execute, sym, span);
                 let node = self.reference(sym, span);
@@ -10033,13 +10187,7 @@ will look undefined",
         {
             self.at_join = Some(JoinAt::Command);
         }
-        let node = self.out.graph.push(
-            VertexTag::MacroCall,
-            sym,
-            span,
-            self.within.last().map(|(_, n)| *n),
-            self.cds.to_vec(),
-        );
+        let node = self.out.graph.push(VertexTag::MacroCall, sym, span, self.within.last().map(|(_, n)| *n), &self.cds);
         let defs = self.env.link_defs(sym);
         let definition = defs.first().copied();
         self.link_reads(node, sym, &defs);
@@ -10195,6 +10343,9 @@ will look undefined",
         let visits = self.note_expansion(sym, span, resolved, Some(node), recorded);
         self.note_repeated_load(sym, &arguments);
         let call_key = self.call_key(definition.unwrap_or(node), span, &arguments);
+        if self.replay_memo(sym, &m, &arguments) {
+            return;
+        }
         if self.summarize_call(call_key, &arguments) {
             return;
         }
@@ -10211,8 +10362,9 @@ will look undefined",
         let effective = self.env.effective;
         let rewritten = self.rewrites_last_round((span, sym), shape, nest);
         let (other, assigned) = (effective - self.env.slot_changes, self.env.assignments);
-        let (shrinking, unread, deeper, cycled) = match self.expansion_sites.get_mut(&(span, sym)) {
+        let (shrinking, unread, deeper, cycled, since) = match self.expansion_sites.get_mut(&(span, sym)) {
             Some(site) => {
+                let since = site.assigned;
                 self.undo.push(Undo::Site((span, sym), *site));
                 let outside = nest.0 >= site.nest.0 && nest.1 >= site.nest.1;
                 // Deeper on the input stack, with the last round's input still
@@ -10241,10 +10393,20 @@ will look undefined",
                 site.cycled = if same { site.cycled + 1 } else { 0 };
                 (site.shape, site.levels, site.nest, site.effective) = (shape, levels, nest, effective);
                 (site.other, site.assigned) = (other, assigned);
-                (size < std::mem::replace(&mut site.size, size), site.unread, site.deeper, site.cycled)
+                (size < std::mem::replace(&mut site.size, size), site.unread, site.deeper, site.cycled, since)
             }
-            None => (true, 1, 0, 0),
+            None => (true, 1, 0, 0, u64::MAX),
         };
+        if self.loop_cut.take_if(|s| *s == sym).is_some() {
+            self.cut_call(
+                sym,
+                span,
+                "cycle_after",
+                false,
+                "it carries a loop that meets a state it was in before".into(),
+            );
+            return;
+        }
         // A state seen before repeats forever (tex.web § 366). The path ends if
         // another one waits; otherwise it is summarized and the run continues.
         if self.limits.cycle_after > 0 && cycled >= u32::from(self.limits.cycle_after) {
@@ -10255,11 +10417,30 @@ will look undefined",
                 span,
                 format!("\\{} meets the state it was in before: possible endless loop", self.name(sym)),
             );
-            match alone {
-                true => self.cut_call(sym, span, "cycle_after", false, "it meets the state it was in before".into()),
-                false => self.end_path(),
+            // A call in a loop's body (`\null` in `\@whilesw`) repeats with
+            // the loop, and cutting it leaves the loop running. The loop is
+            // the outermost expansion opened since this call's last round. A
+            // carrier that is not called again leaves the cut to the next
+            // round here.
+            let carrier = self.input.iter().find_map(|f| match f {
+                Frame::Tokens { expanding: Some(s), upper: false, at, .. } if at.2 > since => Some(*s),
+                _ => None,
+            });
+            match (alone, carrier) {
+                (true, Some(carrier)) if carrier != sym && cycled == u32::from(self.limits.cycle_after) => {
+                    self.loop_cut = Some(carrier)
+                }
+                (true, _) => {
+                    return self.cut_call(
+                        sym,
+                        span,
+                        "cycle_after",
+                        false,
+                        "it meets the state it was in before".into(),
+                    );
+                }
+                (false, _) => return self.end_path(),
             }
-            return;
         }
         // Same arguments and input, only deeper in conditionals or groups each
         // time: every round repeats the last, so none ends it.
@@ -10361,7 +10542,7 @@ will look undefined",
                     continue;
                 }
                 let named = argument.iter().find_map(Token::cs).unwrap_or(sym);
-                let value = self.out.graph.push(VertexTag::Value, named, first.span, Some(node), self.cds.to_vec());
+                let value = self.out.graph.push(VertexTag::Value, named, first.span, Some(node), &self.cds);
                 self.out.graph.edge(node, value, EdgeKind::ARGUMENT);
                 // An argument depends on whatever its tokens name.
                 for token in argument.iter() {
@@ -12697,10 +12878,10 @@ will look undefined",
     }
 
     /// What skipped text sees of `t` (tex.web § 494): only control
-    /// sequences, by [`Env::skip_meaning`].
+    /// sequences, by [`Env::skip_prim`].
     pub(crate) fn cond_prim(&self, t: Token) -> Option<Primitive> {
         let Tok::Cs(sym) = t.tok else { return None };
-        self.env.skip_meaning(sym).prim()
+        self.env.skip_prim(sym)
     }
 
     /// Skipping holds and expands nothing, so it reads only what the input
@@ -12746,7 +12927,7 @@ will look undefined",
             // A skip crossing into another file past an approximation ends here, as if
             // `\fi` were inserted (tex.web § 336); a marker forks the path
             // skipping on. Without one it is a deliberate skip (comment.sty).
-            if self.skip_unsure(at, level) && self.last_file.is_some_and(|f| f != at.file) {
+            if self.last_file.is_some_and(|f| f != at.file) && self.skip_unsure(at, level) {
                 self.unread(t);
                 // A library conditional skipping on into the document's text
                 // is no run of it (`analysis.assume_compiles`): it ends here.
@@ -12855,6 +13036,7 @@ will look undefined",
     }
 
     fn restore_path(&mut self, state: PathState) {
+        self.loop_cut = None;
         // How often a name is being expanded is the number of its levels on
         // the input stack, so it follows the input instead of being copied.
         for (frames, delta) in [(std::mem::take(&mut self.input), -1), (state.input.clone(), 1)] {
@@ -12902,6 +13084,8 @@ will look undefined",
         (self.dropping, self.dropping_possible, self.dropping_breaks, self.dropping_nested) = state.dropping;
         self.cut_taint = state.cut_taint;
         self.call_recs = state.call_recs;
+        let floor = self.call_recs.iter().rev().find_map(|r| r.memo_mark());
+        self.env.memo_floor(floor);
         self.learn_forks = state.learn_forks;
         self.guard_seen = state.guard_seen;
         self.job_ended = state.job_ended;
@@ -13503,7 +13687,7 @@ will look undefined",
         if self.take_pending_eof() {
             mouth.inherit_eof(false);
         }
-        self.input.push(Frame::File { mouth, package, depth, conds, eof_seen: false, ends_at });
+        self.input.push(Frame::File { mouth: Rc::new(mouth), package, depth, conds, eof_seen: false, ends_at });
     }
 
     /// A `\documentclass`, `\usepackage` or `\RequirePackage` whose file the
@@ -13757,8 +13941,7 @@ will look undefined",
     fn reading_mouth(&mut self) -> Option<&mut Mouth> {
         let at = self.reading_frame()?;
         match &mut self.input[at] {
-            Frame::File { mouth, .. } => Some(mouth),
-            Frame::Pseudo { mouth, .. } => Some(&mut **mouth),
+            Frame::File { mouth, .. } | Frame::Pseudo { mouth, .. } => Some(Rc::make_mut(mouth)),
             _ => None,
         }
     }
@@ -13881,6 +14064,27 @@ const SHARED_ARGUMENT: usize = 4096;
 pub fn substitute_parts(m: &MacroDef, args: &[Vec<Token>], limit: usize) -> Option<Vec<(Rc<[Token]>, usize)>> {
     if args.is_empty() || !m.replacement_text.iter().any(|t| matches!(t.tok, Tok::Param(_))) {
         return Some(vec![(m.replacement_text.clone(), m.replacement_text.len())]);
+    }
+    fn text<'t>(t: &'t Token, args: &'t [Vec<Token>]) -> &'t [Token] {
+        match t.tok {
+            Tok::Param(n) => args.get(n as usize - 1).map_or(std::slice::from_ref(t), Vec::as_slice),
+            _ => std::slice::from_ref(t),
+        }
+    }
+    // No argument shared: one list, its length known up front, built in place.
+    if args.iter().all(|a| a.len() < SHARED_ARGUMENT) {
+        let len: usize = m.replacement_text.iter().map(|t| text(t, args).len()).sum();
+        if len > limit {
+            return None;
+        }
+        let mut list: Rc<[Token]> = std::iter::repeat_n(m.replacement_text[0], len).collect();
+        let mut rest = &mut Rc::get_mut(&mut list).expect("new")[..];
+        for t in m.replacement_text.iter() {
+            let (now, after) = std::mem::take(&mut rest).split_at_mut(text(t, args).len());
+            now.copy_from_slice(text(t, args));
+            rest = after;
+        }
+        return Some(vec![(list, len)]);
     }
     let mut shared: Vec<Option<Rc<[Token]>>> = vec![None; args.len()];
     let mut parts = Vec::new();
@@ -14284,7 +14488,7 @@ enum OneOfScan {
 struct SourceMark {
     at: usize,
     level: usize,
-    mouth: Mouth,
+    mouth: Rc<Mouth>,
     eof_seen: bool,
     progress: u64,
     lines: u64,
@@ -14392,6 +14596,30 @@ fn gap_fits(gap: &str, class: TextClass, num: Option<crate::engine::value::Num>)
         && (magnitude == "0" || !magnitude.starts_with('0'));
     spelled && gap.parse::<i64>().is_ok_and(|v| num.lo <= v && v <= num.hi)
 }
+/// Text with satex's unknown markers as a reader sees them: `?` for the
+/// marker, and no serial that tells one number of unknown digits from
+/// another (`#steps.n`), which says nothing to a reader and differs
+/// between runs that took different routes to the same text.
+fn shown_unknowns(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(at) = rest.find(crate::engine::scan::TYPED_DIGITS) {
+        let (before, from) = rest.split_at(at);
+        out.push_str(before);
+        let name = &from[crate::engine::scan::TYPED_DIGITS.len()..];
+        let (range, tail) =
+            name.split_at(name.find(|c: char| !(c.is_ascii_digit() || c == '.' || c == '-')).unwrap_or(name.len()));
+        out.push_str("?unknown digits:");
+        out.push_str(range);
+        let serial = tail
+            .strip_prefix('#')
+            .map_or(0, |t| 1 + t.find(|c: char| !(c.is_ascii_digit() || c == '.')).unwrap_or(t.len()));
+        rest = &tail[serial..];
+    }
+    out.push_str(rest);
+    out.replace('\u{2}', "?")
+}
+
 /// After a name built around one number's unknown digits: that number's
 /// token, so the names one number spells are one name.
 pub(crate) const NAME_NUMBER: char = '\u{5}';

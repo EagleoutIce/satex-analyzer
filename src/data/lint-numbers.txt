@@ -130,3 +130,6 @@ S059 bare-reference
 S060 doubled-punctuation
 C054 reference-name-mismatch
 S061 sentence-capital
+S062 overfull-line
+S063 overfull-box
+S064 wider-than-line

@@ -275,6 +275,16 @@ pub mod fixed {
             self.1
         }
 
+        /// Whether every element is `eq` to `other`'s. Chunks both still share are skipped.
+        pub fn alike(&self, other: &Self, eq: impl Fn(&T, &T) -> bool) -> bool {
+            self.1 == other.1
+                && self
+                    .0
+                    .iter()
+                    .zip(&other.0)
+                    .all(|(a, b)| std::rc::Rc::ptr_eq(a, b) || a.iter().zip(b.iter()).all(|(x, y)| eq(x, y)))
+        }
+
         pub fn is_empty(&self) -> bool {
             self.1 == 0
         }

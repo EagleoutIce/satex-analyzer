@@ -24,6 +24,7 @@ pub(super) mod listing;
 mod overlay;
 mod page;
 mod savebox;
+mod styles;
 mod table;
 mod theorem;
 mod tikz;

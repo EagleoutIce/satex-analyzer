@@ -27,6 +27,7 @@ declare global {
       arg(open: string, t: string): SnapArg;
       call(name: string, args: SnapArg[], at: unknown, package_?: { name: string; options: string } | null): SnapNode;
       drop<N extends object>(node: N): N & { drop: true }; same(a: unknown, b: unknown): boolean;
+      span(range: unknown, text: string, body: string): SnapNode;
       fill(form: { nodes: SnapNode[]; fills: [string, number, number | null, string | null][] }, vals: Record<string, string>): SnapNode[];
       write(ctx: SnapCtx, nodes: SnapNode[], say: (m: string) => void, kept?: unknown): Promise<void>;
     };
@@ -59,6 +60,8 @@ declare global {
   const call = (name: string, args: SnapArg[], at: unknown, package_: { name: string; options: string } | null = null): SnapNode => ({ kind: 'call', name, star: false, args, range: null, text: '', at, line: true, drop: false, package: package_ });
   /** `node` to be removed. */
   const drop = <N extends object>(node: N) => ({ ...node, drop: true as const });
+  /** The source text `text` at `range` to become `body`: a text node (`snapshot::text`). */
+  const span = (range: unknown, text: string, body: string): SnapNode => ({ kind: 'text', name: '', star: false, args: [], range, text, body_at: [0, text.length], body } as SnapNode);
   /** Whether two snapshots differ in what the printer writes. */
   const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
   /** A form's `nodes` with each field's value where `fills` puts it (`[field, node, arg, key]`): no arg, the
@@ -77,5 +80,5 @@ declare global {
   /** `nodes` printed by the server (`ctx.print`) and written (`kept`: what a manager shows again); else `say` gets its notes. */
   const write = (ctx: SnapCtx, nodes: SnapNode[], say: (m: string) => void, kept?: unknown) => ctx.print(nodes).catch((e: Error): { edits?: unknown; notes?: string[] } => ({ notes: [String(e?.message ?? e)] }))
     .then((r) => { if ((r?.edits as unknown[] | undefined)?.length) ctx.apply(r!.edits, kept); else say((r?.notes ?? []).join('; ') || 'no changes'); });
-  self.satexSnapshot = { list, get, set, setKeys, text, keys, arg, call, drop, same, fill, write };
+  self.satexSnapshot = { list, get, set, setKeys, text, keys, arg, call, drop, span, same, fill, write };
 })();

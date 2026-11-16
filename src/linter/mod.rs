@@ -11,10 +11,12 @@ pub mod clones;
 pub mod colors;
 pub mod correctness;
 pub mod dashes;
+pub mod early;
 pub mod expl3;
 pub mod fix;
 pub mod italics;
 pub mod languages;
+pub mod layout;
 pub mod lists;
 pub mod mathtext;
 pub mod numbering;
@@ -68,6 +70,7 @@ pub fn all() -> impl Iterator<Item = &'static Rule> {
         .chain(colors::RULES)
         .chain(languages::RULES)
         .chain(tables::RULES)
+        .chain(layout::RULES)
         .chain(lists::RULES)
         .chain(xref::RULES)
         .chain(clones::RULES)
@@ -380,6 +383,13 @@ impl<'a> Report<'a> {
         self.add_as(self.rule.severity, span, name, message, fix);
     }
 
+    /// Adds `draft` once the package augmentations ([`crate::plugins::augment`]) keep it.
+    pub fn add_reviewed(&mut self, span: Span, name: &str, mut draft: crate::plugins::augment::Draft) {
+        if crate::plugins::augment::review(self.analysis, &mut draft) {
+            self.add(span, name, draft.message, draft.fix);
+        }
+    }
+
     /// The same finding at a lower severity: a defect that the run never
     /// reaches cannot break the build.
     pub fn add_as(&mut self, severity: Severity, span: Span, name: &str, message: String, fix: Option<String>) {
@@ -571,18 +581,64 @@ pub fn lint(analysis: &Analysis) -> Vec<Record> {
     crate::analysis::probe::within_run(analysis.started, || lint_run(analysis, false, |_| true))
 }
 
-/// The rules that read only the files' text and which of it is verbatim. Neither a later pass nor
-/// more precision changes that, under the assumption that no build file decides what is verbatim.
-const OF_THE_TEXT: [&str; 3] = ["clones", "comment-marker", "user-pattern"];
+/// The facts a [`Rule`] reads, cheapest first. A rule below `Run` runs early, on a sketch of the
+/// document ([`early`]), and its findings stand whatever later passes or more precision find out.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
+pub enum Needs {
+    /// The files' characters and the build files beside them.
+    Text,
+    /// The text, and the standard meaning of the few names `lints.early` lists: which files the
+    /// document inputs and which bodies are verbatim.
+    Names,
+    /// Also what the text's labels, citations, loads and graphics name, by the same standard
+    /// meanings. A later pass of the run can still change these: they are early, not settled.
+    Keys,
+    /// The whole run.
+    Run,
+}
+
+impl Needs {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Needs::Text => "text",
+            Needs::Names => "names",
+            Needs::Keys => "keys",
+            Needs::Run => "run",
+        }
+    }
+}
+
+/// The rules that need less than the run, under the assumption that no build file decides what is
+/// verbatim or which files are read. Every other rule needs the run.
+const NEEDS: [(&str, Needs); 11] = [
+    ("build-command-placeholders", Needs::Text),
+    ("build-engine-options", Needs::Text),
+    ("comment-marker", Needs::Names),
+    ("user-pattern", Needs::Names),
+    ("clones", Needs::Names),
+    ("duplicate-label", Needs::Keys),
+    ("undefined-reference", Needs::Keys),
+    ("undefined-citation", Needs::Keys),
+    ("missing-graphic", Needs::Keys),
+    ("unresolved-file", Needs::Keys),
+    ("duplicate-package", Needs::Keys),
+];
+
+impl Rule {
+    /// The facts the rule reads: [`NEEDS`].
+    pub fn needs(&self) -> Needs {
+        NEEDS.iter().find(|(code, _)| *code == self.code).map_or(Needs::Run, |(_, needs)| *needs)
+    }
+}
 
 /// Whether a finding of `code` stands whatever the rest of the run finds out.
 pub fn settled(code: &str) -> bool {
-    OF_THE_TEXT.contains(&code)
+    NEEDS.iter().any(|(c, needs)| *c == code && *needs <= Needs::Names)
 }
 
 /// [`lint_document`] of the rules [`settled`] holds for: they may read an unfinished build.
 pub fn lint_settled(analysis: &Analysis) -> Vec<Record> {
-    crate::analysis::probe::within_run(analysis.started, || lint_run(analysis, true, |r| settled(r.code)))
+    crate::analysis::probe::within_run(analysis.started, || lint_run(analysis, true, |r| r.needs() <= Needs::Names))
 }
 
 /// [`lint`]'s findings in the document's own files (`origin` `document`), the others never built.
@@ -590,7 +646,7 @@ pub fn lint_document(analysis: &Analysis) -> Vec<Record> {
     crate::analysis::probe::within_run(analysis.started, || lint_run(analysis, true, |_| true))
 }
 
-fn lint_run(analysis: &Analysis, document: bool, wanted: impl Fn(&Rule) -> bool) -> Vec<Record> {
+pub(crate) fn lint_run(analysis: &Analysis, document: bool, wanted: impl Fn(&Rule) -> bool) -> Vec<Record> {
     let mut out = Vec::new();
     let sources = fix::Sources::default();
     crate::util::progress::bar("lint: the text as set", 0, 2, (0, 0), (0, 0), None, &[]);
@@ -755,6 +811,7 @@ pub fn rules() -> Vec<Record> {
             record.insert("reference".into(), json!(cites(rule)));
             record.insert("fixes".into(), json!(rule.fixes.iter().map(|a| a.as_str()).collect::<Vec<_>>()));
             record.insert("engines".into(), json!(rule.engines.iter().map(|e| e.as_str()).collect::<Vec<_>>()));
+            record.insert("needs".into(), json!(rule.needs().as_str()));
             record
         })
         .collect()
@@ -854,6 +911,15 @@ pub fn explanation(code: &str) -> Option<&'static Rule> {
 
 #[cfg(test)]
 mod tests {
+
+    /// Intuition: [`super::NEEDS`] is the early tier, so a typo there would silently put a rule
+    /// back into the run's tier. Every code it names is a rule's.
+    #[test]
+    fn early_tier_names_rules() {
+        for (code, _) in super::NEEDS {
+            assert!(super::explanation(code).is_some(), "NEEDS names `{code}`, which is no rule");
+        }
+    }
 
     /// `numbers.txt` counts up from 001 per category letter with no gap, names each code
     /// once, lists every rule, and marks each line no rule has as retired:

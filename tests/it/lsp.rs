@@ -175,6 +175,17 @@ impl Server {
         }
     }
 
+    /// The next diagnostics a run published: an early set comes first on a file's first open
+    /// and is passed over ([`provisional`]).
+    fn published(&mut self) -> Value {
+        loop {
+            let msg = self.notification("textDocument/publishDiagnostics");
+            if !provisional(&msg) {
+                return msg;
+            }
+        }
+    }
+
     /// Shuts the server down and returns what it said on stderr.
     fn shutdown(mut self) -> String {
         let id = self.request("shutdown", Value::Null);
@@ -191,6 +202,12 @@ impl Server {
         let _ = self.child.kill();
         panic!("satex lsp did not exit after `exit`");
     }
+}
+
+/// Whether a `publishDiagnostics` is the early set of a first open: every finding provisional.
+fn provisional(msg: &Value) -> bool {
+    let all = msg["params"]["diagnostics"].as_array().cloned().unwrap_or_default();
+    !all.is_empty() && all.iter().all(|d| d["data"]["provisional"] == true)
 }
 
 fn fixture_uri(path: &std::path::Path) -> String {
@@ -221,7 +238,7 @@ fn stdio_session_drives_the_feature_set() {
 
     // `didOpen` always analyzes and publishes, even with nothing to report,
     // so a fixed diagnostic is cleared instead of lingering (see `analyze`).
-    let published = server.notification("textDocument/publishDiagnostics");
+    let published = server.published();
     assert_eq!(published["params"]["uri"], json!(uri));
 
     // Hover over `\greet` on line 2 (`\greet{world}`, 0-based line 1).
@@ -349,7 +366,7 @@ fn open_unsaved(tag: &str, text: &str) -> (Server, String, Value, std::path::Pat
         "textDocument/didOpen",
         json!({ "textDocument": { "uri": uri, "languageId": "tex", "version": 1, "text": text } }),
     );
-    let published = server.notification("textDocument/publishDiagnostics");
+    let published = server.published();
     (server, uri, published, dir)
 }
 
@@ -438,7 +455,7 @@ fn a_kept_hover_follows_the_document_s_own_definition() {
             "contentChanges": [{ "text": format!("{catcodes}\n\\def\\foo{{y}}\n\\foo\n") }],
         }),
     );
-    server.notification("textDocument/publishDiagnostics");
+    server.published();
     let after = hover(&mut server, 2);
     assert!(after.contains("main.tex:2"), "{after}");
     server.shutdown();
@@ -501,7 +518,7 @@ fn a_folder_opened_through_a_symlink_keeps_its_name() {
         "textDocument/didOpen",
         json!({ "textDocument": { "uri": uri, "languageId": "tex", "version": 1, "text": sub } }),
     );
-    let published = server.notification("textDocument/publishDiagnostics");
+    let published = server.published();
     let named = fixture_uri(&link);
     assert!(published["params"]["uri"].as_str().is_some_and(|u| u.starts_with(&named)), "{published:?}");
 
@@ -562,7 +579,7 @@ mod goto_definition_on_loads {
             "textDocument/didOpen",
             json!({ "textDocument": { "uri": uri, "languageId": "tex", "version": 1, "text": main_text } }),
         );
-        server.notification("textDocument/publishDiagnostics");
+        server.published();
 
         // `chapter` in `\input{chapter}`, line 1 (0-based), no extension.
         let def = definition_at(&mut server, &uri, 1, 9);
@@ -605,7 +622,7 @@ mod goto_definition_on_loads {
             "textDocument/didOpen",
             json!({ "textDocument": { "uri": uri, "languageId": "tex", "version": 1, "text": main_text } }),
         );
-        server.notification("textDocument/publishDiagnostics");
+        server.published();
 
         let def = definition_at(&mut server, &uri, 3, 2);
         assert_eq!(first_uri(&def), Some(fixture_uri(&deep).as_str()), "{def:?}");
@@ -662,7 +679,7 @@ mod goto_definition_on_loads {
             "textDocument/didOpen",
             json!({ "textDocument": { "uri": uri, "languageId": "tex", "version": 1, "text": main_text } }),
         );
-        server.notification("textDocument/publishDiagnostics");
+        server.published();
 
         // `mypkg` in `\usepackage[draft]{mypkg}`, line 1 (0-based).
         let def = definition_at(&mut server, &uri, 1, 21);
@@ -869,7 +886,7 @@ fn open_file(server: &mut Server, dir: &std::path::Path, name: &str) -> (String,
         "textDocument/didOpen",
         json!({ "textDocument": { "uri": uri, "languageId": "tex", "version": 1, "text": text } }),
     );
-    let published = server.notification("textDocument/publishDiagnostics");
+    let published = server.published();
     (uri, published)
 }
 
@@ -1181,7 +1198,7 @@ mod roots {
             "textDocument/didChange",
             json!({ "textDocument": { "uri": uri, "version": 2 }, "contentChanges": [{ "text": "\\greet{you}\n" }] }),
         );
-        server.notification("textDocument/publishDiagnostics");
+        server.published();
         assert_eq!(greet_defined_in(&mut server, &uri), b_uri);
         server.shutdown();
         let _ = std::fs::remove_dir_all(&dir);
@@ -1267,7 +1284,7 @@ mod roots {
         change(&mut server, 6, &main);
         quiet(&mut server, 6);
         change(&mut server, 7, "% edited\n");
-        server.notification("textDocument/publishDiagnostics");
+        server.published();
         server.shutdown();
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -1398,7 +1415,7 @@ fn a_call_hover_follows_the_edit() {
         "textDocument/didChange",
         json!({ "textDocument": { "uri": uri, "version": 2 }, "contentChanges": [{ "text": labelled }] }),
     );
-    server.notification("textDocument/publishDiagnostics");
+    server.published();
     let id = server.request(
         "textDocument/hover",
         json!({ "textDocument": { "uri": uri }, "position": { "line": 3, "character": 6 } }),
@@ -1972,13 +1989,13 @@ fn typeset_after_edit(tag: &str, edit: Option<&str>, until: &str) -> Vec<Value> 
         "textDocument/didOpen",
         json!({ "textDocument": { "uri": uri, "languageId": "tex", "version": 1, "text": text } }),
     );
-    server.notification("textDocument/publishDiagnostics");
+    server.published();
     if let Some(text) = edit {
         server.notify(
             "textDocument/didChange",
             json!({ "textDocument": { "uri": uri, "version": 2 }, "contentChanges": [{ "text": text }] }),
         );
-        server.notification("textDocument/publishDiagnostics");
+        server.published();
     }
     let mut rows = Vec::new();
     for _ in 0..20 {
@@ -2324,7 +2341,7 @@ fn yes_to_the_style_prompt_turns_the_rule_off() {
     let message = prompt["params"]["message"].as_str().unwrap_or_default();
     assert!(message.contains("hskip") && message.contains("primitive-tex-command"), "{message}");
     server.write(&json!({ "jsonrpc": "2.0", "id": prompt["id"], "result": { "title": "Yes, turn it off" } }));
-    let published = server.notification("textDocument/publishDiagnostics");
+    let published = server.published();
     let rules: Vec<&str> = published["params"]["diagnostics"]
         .as_array()
         .unwrap()
@@ -2413,7 +2430,7 @@ fn kept_hovers_stay_with_their_project() {
             "textDocument/didOpen",
             json!({ "textDocument": { "uri": uri, "languageId": "tex", "version": 1, "text": text } }),
         );
-        server.notification("textDocument/publishDiagnostics");
+        server.published();
         let id = server.request(
             "textDocument/hover",
             json!({ "textDocument": { "uri": uri }, "position": { "line": 1, "character": 2 } }),
@@ -2585,7 +2602,7 @@ fn document_colors_cover_named_and_defined_colors() {
         "textDocument/didOpen",
         json!({ "textDocument": { "uri": uri, "languageId": "tex", "version": 1, "text": text } }),
     );
-    server.notification("textDocument/publishDiagnostics");
+    server.published();
     let id = server.request("textDocument/documentColor", json!({ "textDocument": { "uri": uri } }));
     let found = server.response(id)["result"].clone();
     let at = |line: u64, name: &str| {
@@ -2623,7 +2640,7 @@ fn document_colors_skip_words_only_tested() {
         "textDocument/didOpen",
         json!({ "textDocument": { "uri": uri, "languageId": "tex", "version": 1, "text": text } }),
     );
-    server.notification("textDocument/publishDiagnostics");
+    server.published();
     let id = server.request("textDocument/documentColor", json!({ "textDocument": { "uri": uri } }));
     let found = server.response(id)["result"].clone();
     let words: Vec<&str> = found
@@ -2961,7 +2978,7 @@ fn completion_answers_while_a_run_goes_on() {
         assert!(labels(&items).contains(wanted), "{wanted}: {:?}", labels(&items));
     }
     if !ran {
-        server.notification("textDocument/publishDiagnostics");
+        server.published();
     }
     // an edit, then the run it starts once the debounce is over
     let edited = text.replace("\\begin{document}", "\\usepackage{array}\n\\begin{document}");
@@ -3148,7 +3165,7 @@ fn completion_candidates_survive_mutations_of_their_site() {
             "textDocument/didChange",
             json!({ "textDocument": { "uri": uri, "version": version }, "contentChanges": [{ "text": text }] }),
         );
-        server.notification("textDocument/publishDiagnostics");
+        server.published();
         let items = complete(&mut server, &uri, line, character);
         let mut found: Vec<String> = labels(&items).into_iter().map(str::to_string).collect();
         found.sort();
@@ -3178,7 +3195,7 @@ fn diagnostics_name_the_version_they_are_of() {
             "textDocument/didChange",
             json!({ "textDocument": { "uri": uri, "version": version }, "contentChanges": [{ "text": text }] }),
         );
-        server.notification("textDocument/publishDiagnostics")
+        server.published()
     };
     let broken = text.replace("x\n", "\\usetikzlib\n");
     let two = change(&mut server, 2, &broken);
@@ -3499,6 +3516,119 @@ fn page_snapshots_print_per_class_family() {
     assert!(print(&mut server, &uri, json!([stale])).is_null());
     server.shutdown();
     std::fs::remove_dir_all(dir).ok();
+}
+
+/// Page options and heading styles: what the run ends with per level (KOMA's fonts, titlesec's
+/// or the class's `\@startsection` format), the preamble's call a change edits, `secnumdepth`,
+/// `\pagecolor` with the defined colors, columns; classes with their own headings refused; the
+/// printer loads titlesec and xcolor for what it writes.
+#[test]
+fn page_styles_read_the_run_and_print() {
+    let page = |server: &mut Server, uri: &str| {
+        let views = at(server, uri, "satex/view", 0, 2);
+        views.as_array().unwrap().iter().find(|v| v["plugin"] == "page").expect("a page view")["sections"][0].clone()
+    };
+    let print = |server: &mut Server, uri: &str, nodes: Value| {
+        let id = server.request(
+            "satex/dialogApply",
+            json!({ "textDocument": { "uri": uri }, "kind": "snapshot", "nodes": nodes }),
+        );
+        server.response(id)["result"].clone()
+    };
+    let write =
+        |text: &str, uri: &str, out: &Value| applied(text, uri, &json!({ "changes": { uri: out["edits"] } }), &[]);
+    let level =
+        |s: &Value, n: &str| s["headings"]["levels"].as_array().unwrap().iter().find(|l| l["name"] == n).cloned();
+    let body = "\\begin{document}\n\\section{One}\nText\n\\end{document}\n";
+    // KOMA: the font is disposition then the element, the last \addtokomafont is edited
+    let text = format!(
+        "\\documentclass{{scrreprt}}\n\\usepackage{{xcolor}}\n\\addtokomafont{{section}}{{\\rmfamily}}\n{body}"
+    );
+    let (mut server, uri, dir) = open_set("styles-koma", &text, &[]);
+    let s = page(&mut server, &uri);
+    let h = &s["headings"];
+    assert_eq!(h["scheme"], "koma", "{h}");
+    let sec = level(&s, "section").expect("section");
+    assert!(
+        sec["font"].as_str().is_some_and(|f| f.contains("\\bfseries") && f.trim_end().ends_with("\\rmfamily")),
+        "{sec}"
+    );
+    assert_eq!(sec["call"]["args"][1]["text"], "\\rmfamily", "{sec}");
+    assert_eq!((sec["level"].clone(), level(&s, "chapter").unwrap()["level"].clone()), (json!(1), json!(0)), "{h}");
+    assert_eq!(level(&s, "chapter").unwrap()["call"], Value::Null);
+    assert!(h["ragged"]["raggedsection"]["text"].is_string(), "{h}");
+    // the element's own font follows the disposition: `\\size@chapter` is `\\huge` here, a section's is not
+    let ch = level(&s, "chapter").unwrap();
+    assert!(ch["font"].as_str().is_some_and(|f| f.contains("\\huge")), "{ch}");
+    assert!(!sec["font"].as_str().unwrap().contains("\\huge"), "{sec}");
+    assert_eq!(h["secnumdepth"]["value"], 2, "scrreprt numbers down to subsections: {h}");
+    assert!(h["switches"]["family"].as_array().is_some_and(|f| f.len() == 3), "{h}");
+    assert!(s["pagecolor"]["colors"].as_array().unwrap().iter().any(|c| c["name"] == "red"), "xcolor's colors");
+    assert_eq!(s["columns"]["two"], false);
+    // an edited call and new ones: the printer writes them where they belong
+    let mut call = sec["call"].clone();
+    call["args"][1]["text"] = json!("\\rmfamily\\color{red}");
+    let new = |s: &Value, name: &str, args: Value| json!({ "kind": "call", "name": name, "args": args, "at": s["headings"]["insert"], "line": true });
+    let nodes = json!([call, new(&s, "pagecolor", json!([{ "open": "{", "text": "yellow" }]))]);
+    let written = write(&text, &uri, &print(&mut server, &uri, nodes));
+    assert!(
+        written.contains("\\addtokomafont{section}{\\rmfamily\\color{red}}\n\\pagecolor{yellow}\n\\begin{document}"),
+        "{written}"
+    );
+    server.shutdown();
+    std::fs::remove_dir_all(dir).ok();
+    // article: the class's format, titlesec and xcolor loaded for a new \titleformat*
+    let text = format!("\\documentclass{{article}}\n{body}");
+    let (mut server, uri, dir) = open_set("styles-article", &text, &[]);
+    let s = page(&mut server, &uri);
+    assert_eq!(s["headings"]["scheme"], "titlesec", "{s}");
+    assert!(level(&s, "chapter").is_none());
+    let sec = level(&s, "section").expect("section");
+    assert_eq!(
+        (sec["font"].as_str().map(|f| f.split_whitespace().collect::<String>()), sec["level"].clone()),
+        (Some("\\normalfont\\Large\\bfseries".into()), json!(1)),
+        "{sec}"
+    );
+    assert_eq!(s["pagecolor"]["defined"], false);
+    let mut n = new(
+        &s,
+        "titleformat",
+        json!([{ "open": "{", "text": "\\section" }, { "open": "{", "text": "\\normalfont\\Large\\bfseries\\color{blue}" }]),
+    );
+    n["star"] = json!(true);
+    let out = print(&mut server, &uri, json!([n]));
+    let written = write(&text, &uri, &out);
+    assert!(
+        written.contains("\\titleformat*{\\section}{\\normalfont\\Large\\bfseries\\color{blue}}\n\\begin{document}"),
+        "{written}"
+    );
+    assert!(written.contains("\\usepackage{titlesec}") && written.contains("color}"), "{written}");
+    server.shutdown();
+    std::fs::remove_dir_all(dir).ok();
+    // titlesec loaded: its stored format; book's chapter head stays the class's
+    let text =
+        format!("\\documentclass{{book}}\n\\usepackage{{titlesec}}\n\\titleformat*{{\\section}}{{\\itshape}}\n{body}");
+    let (mut server, uri, dir) = open_set("styles-titlesec", &text, &[]);
+    let s = page(&mut server, &uri);
+    let sec = level(&s, "section").expect("section");
+    assert_eq!(
+        (sec["font"].as_str().map(str::trim), sec["call"]["args"][1]["text"].clone()),
+        (Some("\\itshape"), json!("\\itshape")),
+        "{sec}"
+    );
+    let ch = level(&s, "chapter").expect("chapter");
+    assert!(ch["font"].is_string() || ch["refuse"].is_string(), "{ch}");
+    server.shutdown();
+    std::fs::remove_dir_all(dir).ok();
+    // memoir (also with titlesec loaded) and beamer: refused
+    for (class, more) in [("memoir", ""), ("memoir", "\\usepackage{titlesec}\n"), ("beamer", "")] {
+        let text = format!("\\documentclass{{{class}}}\n{more}{body}");
+        let (mut server, uri, dir) = open_set(&format!("styles-{class}{}", more.len()), &text, &[]);
+        let s = page(&mut server, &uri);
+        assert!(s["headings"]["refuse"].is_string(), "{class}: {}", s["headings"]);
+        server.shutdown();
+        std::fs::remove_dir_all(dir).ok();
+    }
 }
 
 /// Colors with xcolor: items with their hex, hover in every model, an expression mixed, a picker
@@ -4186,7 +4316,9 @@ fn lenses_asked_before_the_run_come_with_its_refresh() {
         let msg = server.read();
         match msg["method"].as_str() {
             Some("workspace/codeLens/refresh") => break msg,
-            Some("textDocument/publishDiagnostics") => panic!("the run is in, the lenses asked before it stay empty"),
+            Some("textDocument/publishDiagnostics") if !provisional(&msg) => {
+                panic!("the run is in, the lenses asked before it stay empty")
+            }
             _ => {}
         }
     };
@@ -5081,7 +5213,7 @@ fn edit_inc(tag: &str, new: &str) -> (Value, Vec<String>, Value) {
         json!({ "textDocument": { "uri": uri, "version": 2 }, "contentChanges": [{ "text": new }] }),
     );
     let after = loop {
-        let p = server.notification("textDocument/publishDiagnostics");
+        let p = server.published();
         if p["params"]["version"] == 2 {
             break p["params"]["diagnostics"].clone();
         }
@@ -5146,7 +5278,7 @@ fn incremental_typing_an_undefined_name_waits_for_the_pause() {
     );
     let mut published = Vec::new();
     while published.is_empty() {
-        let p = server.notification("textDocument/publishDiagnostics");
+        let p = server.published();
         if p["params"]["version"] == 2 {
             published.push(p["params"]["diagnostics"].clone());
         }
@@ -5155,7 +5287,7 @@ fn incremental_typing_an_undefined_name_waits_for_the_pause() {
     let lines = server.response(id)["result"].clone();
     assert!(lines.as_array().unwrap().iter().any(|l| l == "reused typing 1"), "{lines}");
     while published.len() < 2 {
-        let p = server.notification("textDocument/publishDiagnostics");
+        let p = server.published();
         if p["params"]["version"] == 2 {
             published.push(p["params"]["diagnostics"].clone());
         }
@@ -5192,7 +5324,7 @@ fn a_root_named_relative_resumes_after_a_body_edit() {
         "textDocument/didChange",
         json!({ "textDocument": { "uri": uri, "version": 2 }, "contentChanges": [{ "text": edited }] }),
     );
-    server.notification("textDocument/publishDiagnostics");
+    server.published();
     let said = server.shutdown();
     // the edit's run: `resuming at` precedes its `resume …, run …` line
     let runs: Vec<&str> = said.lines().filter(|l| l.starts_with("satex: resum")).collect();
@@ -5218,7 +5350,7 @@ fn hover_shows_the_redefinition_chain() {
         "textDocument/didOpen",
         json!({ "textDocument": { "uri": uri, "languageId": "tex", "version": 1, "text": source } }),
     );
-    server.notification("textDocument/publishDiagnostics");
+    server.published();
     let id = server.request(
         "textDocument/hover",
         json!({ "textDocument": { "uri": uri }, "position": { "line": 3, "character": 1 } }),
@@ -5257,7 +5389,7 @@ fn a_run_stops_for_a_newer_text_and_publishes_only_its_findings() {
         "textDocument/didChange",
         json!({ "textDocument": { "uri": uri, "version": 2 }, "contentChanges": [{ "text": body("\\undefinedsecond") }] }),
     );
-    let published = server.notification("textDocument/publishDiagnostics");
+    let published = server.published();
     let said = published["params"].to_string();
     assert_eq!(published["params"]["version"], 2, "{said}");
     assert!(said.contains("undefinedsecond") && !said.contains("undefinedfirst"), "{said}");
@@ -5465,8 +5597,9 @@ fn every_plugin_has_integration_support() {
     assert_eq!(works_in(&["view"]).iter().find(|(k, _)| *k == "intellij").unwrap().1, "partial");
 }
 
-/// Each `textDocument/publishDiagnostics` of `uri` until the one of `version` and a quiet while
-/// after it, as `(rule, message, source)` per finding.
+/// Each `textDocument/publishDiagnostics` of a run of `uri` until the one of `version` and a quiet
+/// while after it, as `(rule, message, source)` per finding. The early set a first open publishes
+/// ([`Server::published`]) is no run's: it is passed over.
 fn publishes(server: &mut Server, uri: &str, version: i64) -> Vec<Vec<(String, String, String)>> {
     const QUIET: Duration = Duration::from_secs(2);
     let mut sequence = Vec::new();
@@ -5477,7 +5610,7 @@ fn publishes(server: &mut Server, uri: &str, version: i64) -> Vec<Vec<(String, S
             Err(mpsc::RecvTimeoutError::Timeout) if reached => return sequence,
             other => panic!("the server ended or went silent: {other:?}"),
         };
-        if msg["method"] != "textDocument/publishDiagnostics" || msg["params"]["uri"] != uri {
+        if msg["method"] != "textDocument/publishDiagnostics" || msg["params"]["uri"] != uri || provisional(&msg) {
             continue;
         }
         reached |= msg["params"]["version"] == version;
@@ -5566,6 +5699,74 @@ fn settled_findings_come_early_and_the_end_comes_after_the_findings() {
     assert_eq!(of("TODO").expect("the marker")["data"]["settled"], true, "{published}");
     assert!(of("{never}").expect("the reference")["data"].get("settled").is_none(), "{published}");
     let _ = server.notification("satex/status");
+    server.shutdown();
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+/// Intuition: the rules that need no run report on a sketch before the run starts, on the settled
+/// channel and marked provisional. `publishDiagnostics` then brings the run's findings, the same
+/// marker among them without the mark, so the editor swaps once and nothing moves.
+/// Bug pinned: an editor saw nothing until the whole run ended, minutes on a thesis.
+#[test]
+fn early_findings_come_before_the_run_s() {
+    let text = "\\documentclass{article}\n\\begin{document}\n% TODO early\n\\newcommand\\unused{x}\n\\end{document}\n";
+    let (mut server, uri, _, dir) =
+        open_loaded("early", "\\documentclass{article}\n\\begin{document}\n\\end{document}\n");
+    server.notify(
+        "textDocument/didChange",
+        json!({ "textDocument": { "uri": uri, "version": 2 }, "contentChanges": [{ "text": text }] }),
+    );
+    let mut first: Option<Value> = None;
+    let published = loop {
+        let msg = server.read();
+        if msg["method"] == "satex/settled" && msg["params"]["uri"] == uri.as_str() && first.is_none() {
+            first = Some(msg["params"]["diagnostics"].clone());
+        } else if msg["method"] == "textDocument/publishDiagnostics" && msg["params"]["version"] == 2 {
+            break msg["params"]["diagnostics"].clone();
+        }
+    };
+    let first = first.expect("early findings before the run's");
+    let marker =
+        |all: &Value| all.as_array().unwrap().iter().find(|d| d["message"].to_string().contains("TODO")).cloned();
+    let early = marker(&first).unwrap_or_else(|| panic!("{first}"));
+    assert_eq!(early["data"]["provisional"], true, "{early}");
+    assert!(!first.to_string().contains("unused"), "a rule that needs the run came early: {first}");
+    let last = marker(&published).unwrap_or_else(|| panic!("{published}"));
+    assert!(last["data"].get("provisional").is_none(), "{last}");
+    assert_eq!((&early["range"], &early["message"]), (&last["range"], &last["message"]));
+    server.shutdown();
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+/// Intuition: a file opened for the first time has nothing to show while its run goes, so its
+/// early findings come as its diagnostics at once, each marked provisional, and the run's
+/// replace them. A generic client sees them without knowing `satex/settled`.
+/// Bug pinned: the editor showed nothing for minutes on a thesis's first open.
+#[test]
+fn a_first_open_publishes_the_early_findings_first() {
+    let dir = crate::support::tmp_root().join(format!("satex-lsp-first-early-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let text = "\\documentclass{article}\n\\begin{document}\n% TODO first\n\\ref{never}\n\\end{document}\n";
+    std::fs::write(dir.join("main.tex"), text).unwrap();
+    let mut server = serve(&dir, true);
+    let uri = fixture_uri(&dir.join("main.tex"));
+    server.notify(
+        "textDocument/didOpen",
+        json!({ "textDocument": { "uri": uri, "languageId": "tex", "version": 1, "text": text } }),
+    );
+    let mut sets = Vec::new();
+    while sets.len() < 2 {
+        let msg = server.notification("textDocument/publishDiagnostics");
+        if msg["params"]["uri"] == uri.as_str() {
+            sets.push(msg["params"]["diagnostics"].as_array().cloned().unwrap_or_default());
+        }
+    }
+    let marker = |set: &[Value]| set.iter().find(|d| d["message"].to_string().contains("TODO")).cloned();
+    let early = marker(&sets[0]).unwrap_or_else(|| panic!("{sets:?}"));
+    assert!(sets[0].iter().all(|d| d["data"]["provisional"] == true), "{sets:?}");
+    let last = marker(&sets[1]).unwrap_or_else(|| panic!("{sets:?}"));
+    assert!(last["data"].get("provisional").is_none(), "{last}");
+    assert_eq!((&early["range"], &early["message"]), (&last["range"], &last["message"]));
     server.shutdown();
     let _ = std::fs::remove_dir_all(dir);
 }
@@ -5738,4 +5939,74 @@ fn definition_reaches_a_package_command_and_its_key() {
     );
     server.shutdown();
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The PDF's column handles (`doc/site/pdfedit.ts`): `columns` names each table's widths as text
+/// snapshots, with array.sty loaded (its `\@tabarray` calls `\@array` as `\@@array`), a `tabularx`
+/// too; a table nested in a cell is not one of the outer's columns. A dragged width and a text typed in the PDF
+/// print through the snapshot printer as edits of those bytes alone. A node whose text moved is refused.
+#[test]
+fn pdf_widths_and_typing_print_through_snapshots() {
+    let text = "\\documentclass{article}\n\\usepackage{tabularx}\n\\begin{document}\nSome words here.\n\\begin{tabular}{lp{3.26cm}|p{\\dimexpr 2cm+1pt}}\na & \\begin{tabular}{p{1cm}}x\\end{tabular} & y \\\\\n\\end{tabular}\n\\begin{tabularx}{.9\\linewidth}{lX}\nc & d \\\\\n\\end{tabularx}\n\\end{document}\n";
+    let (mut server, uri, dir) = open_set("pdf-widths", text, &[]);
+    let _ = at(&mut server, &uri, "textDocument/hover", 3, 1);
+    let id = server.request("satex/dialogApply", json!({ "textDocument": { "uri": uri }, "kind": "columns" }));
+    let got = server.response(id)["result"].clone();
+    let tables = got["tables"].as_array().cloned().unwrap_or_default();
+    let shape: Vec<(Value, Vec<Value>)> = tables
+        .iter()
+        .map(|t| {
+            (t["lines"].clone(), t["cols"].as_array().unwrap().iter().map(|c| c["node"]["text"].clone()).collect())
+        })
+        .collect();
+    assert_eq!(
+        shape,
+        [
+            (json!([5, 7]), vec![Value::Null, json!("3.26cm"), json!("\\dimexpr 2cm+1pt")]),
+            (json!([8, 10]), vec![Value::Null, Value::Null]),
+        ],
+        "{got}"
+    );
+    assert_eq!(tables[1]["width"]["text"], ".9\\linewidth");
+    assert!(got["linewidth"].as_f64().is_some_and(|w| w > 300.0), "{got}");
+    let print = |server: &mut Server, nodes: Value| {
+        let id = server.request(
+            "satex/dialogApply",
+            json!({ "textDocument": { "uri": uri }, "kind": "snapshot", "nodes": nodes }),
+        );
+        server.response(id)
+    };
+    let mut wide = tables[0]["cols"][1]["node"].clone();
+    wide["body"] = json!("4cm");
+    let out = print(&mut server, json!([wide]));
+    let written = applied(text, &uri, &json!({ "changes": { uri.clone(): out["result"]["edits"] } }), &[]);
+    assert_eq!(written, text.replace("p{3.26cm}", "p{4cm}"), "{out}");
+    // typing at a caret: a text node of nothing becoming the typed text, at the end of a line too
+    let range = json!({ "start": { "line": 3, "character": 16 }, "end": { "line": 3, "character": 16 } });
+    let typed = json!([{ "kind": "text", "range": range, "text": "", "body_at": [0, 0], "body": " More" }]);
+    let out = print(&mut server, typed);
+    let written = applied(text, &uri, &json!({ "changes": { uri.clone(): out["result"]["edits"] } }), &[]);
+    assert_eq!(written, text.replace("here.\n", "here. More\n"), "{out}");
+    // a node whose bytes no longer hold its text is refused, not written elsewhere
+    let mut stale = tables[0]["cols"][1]["node"].clone();
+    stale["text"] = json!("3.25cm");
+    stale["body"] = json!("5cm");
+    let refused = print(&mut server, json!([stale]));
+    assert!(refused["error"].is_object(), "{refused}");
+    server.shutdown();
+    std::fs::remove_dir_all(dir).ok();
+}
+
+/// A table is an environment that runs `\@array`'s code: with `\@array` undefined, an environment
+/// that only reaches an undefined name is no table (both undefined once compared equal).
+#[test]
+fn an_undefined_array_makes_no_environment_a_table() {
+    let text = "\\documentclass{article}\n\\makeatletter\\let\\@array\\@undefined\n\\newenvironment{foo}{\\@nothing}{}\\makeatother\n\\begin{document}\n\\begin{foo}x\\end{foo}\n\\end{document}\n";
+    let (mut server, uri, dir) = open_set("pdf-undefined-array", text, &[]);
+    let _ = at(&mut server, &uri, "textDocument/hover", 4, 1);
+    let id = server.request("satex/dialogApply", json!({ "textDocument": { "uri": uri }, "kind": "columns" }));
+    let got = server.response(id)["result"].clone();
+    assert_eq!(got["tables"], json!([]), "{got}");
+    server.shutdown();
+    std::fs::remove_dir_all(dir).ok();
 }

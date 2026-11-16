@@ -28,6 +28,7 @@ declare global {
     ligs: ['ligs', 'layout'],
     geometry: ['text block', 'layout'],
     figures: ['bounding boxes', 'layout'],
+    widths: ['column widths', 'layout'],
     grid: ['grid', 'layout'],
     findings: ['findings', 'analysis'],
     maybe: ['maybe', 'analysis'],

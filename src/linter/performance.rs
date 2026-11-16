@@ -451,15 +451,15 @@ fn preamble_cost(report: &mut Report) {
     let analysis = report.analysis;
     let direct =
         analysis.facts.loads.iter().filter(|l| l.kind.is_package() && l.span.file == analysis.main_file).count();
-    let (files, steps) = analysis.preamble_cost.unwrap_or((analysis.files.len(), analysis.steps));
+    let (files, steps) = analysis.preamble_cost.unwrap_or((analysis.files.len(), analysis.tex_steps()));
     // Only a preamble that is most of the build, and no small one, is worth a format.
-    if !analysis.settings.lints.build_cost.costly(steps, analysis.steps) {
+    if !analysis.settings.lints.build_cost.costly(steps, analysis.tex_steps()) {
         return;
     }
     let span = report.index().document_start().unwrap_or_default();
     let message = format!(
         "{direct} packages requested directly, {files} files read, {}% of the tokens the build takes",
-        steps * 100 / analysis.steps.max(1)
+        steps * 100 / analysis.tex_steps().max(1)
     );
     // A format the build already starts from leaves nothing to suggest.
     if analysis.plugins.preload.is_some() {
@@ -488,7 +488,7 @@ fn preamble_cost(report: &mut Report) {
 fn includeonly_available<'a>(report: &mut Report<'a>) {
     let analysis = report.analysis;
     let preamble = analysis.preamble_cost.map_or(0, |(_, steps)| steps);
-    let body = analysis.steps.saturating_sub(preamble);
+    let body = analysis.tex_steps().saturating_sub(preamble);
     // `\includeonly` switches `\if@partsw` on (ltfiles.dtx).
     let only = analysis.interner.lookup("if@partsw").is_none_or(|sym| {
         analysis.env.meaning(sym).prim()

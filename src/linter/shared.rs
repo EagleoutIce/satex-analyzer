@@ -55,21 +55,7 @@ pub fn gap_between(analysis: &Analysis, from: usize, to: usize) -> Option<String
     Some(format!("the analysis gap at {}:{}:{} ({})", analysis.short_name(at.file), at.line, at.col, d.code))
 }
 
-/// Whether the document loaded a package.
-pub fn loaded(analysis: &Analysis, name: &str) -> bool {
-    analysis.facts.loads.iter().any(|load| load.kind.is_package() && load.name == name)
-}
-
-/// The text a parameterless macro stands for at the end of the run.
-pub fn macro_text(analysis: &Analysis, name: &str) -> Option<String> {
-    let sym = analysis.interner.lookup(name)?;
-    match analysis.env.meaning(sym) {
-        crate::engine::tex::Meaning::Macro(m) if m.arity() == 0 => {
-            Some(crate::engine::tex::text_of(&m.replacement_text, &analysis.interner))
-        }
-        _ => None,
-    }
-}
+pub use crate::analysis::machine::{loaded, macro_text};
 
 pub fn first_loads(analysis: &Analysis) -> HashMap<&str, (Vec<String>, Span)> {
     let mut seen: HashMap<&str, (Vec<String>, Span)> = HashMap::default();

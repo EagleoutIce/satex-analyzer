@@ -121,6 +121,22 @@ pub struct Limits {
     /// How many undecided choices a run of a definition that was taught
     /// may meet before it ends with the learned effect.
     pub call_learn_forks: u32,
+    /// A main-loop call that ran this many steps cleanly keeps its effect:
+    /// a later call of the same code on the same arguments, while every
+    /// name the run read holds what it held, applies it. 0 never.
+    pub call_memo_steps: u32,
+    /// A run longer than this keeps no effect, and stops being recorded.
+    pub call_memo_longest: u64,
+    /// Runs of one definition that may stay below `call_memo_steps` or
+    /// unclean before its calls are no longer recorded.
+    pub call_memo_probes: u16,
+    /// Kept effects per code and arguments, one per state met.
+    pub call_memo_variants: u16,
+    /// Kept effects in all; past it no more are kept.
+    pub call_memo_entries: u32,
+    /// Debug: a hit runs the call for real and reports where its writes
+    /// differ from the kept ones. 0 off.
+    pub call_memo_verify: u8,
     /// How deep code a join made unknown is followed into the macros it
     /// calls to find what it may assign. Past it the run reports a gap.
     pub may_run_depth: u8,
@@ -239,6 +255,12 @@ impl Limits {
             "rest_splits" => self.rest_splits.into(),
             "call_learn_after" => self.call_learn_after.into(),
             "call_learn_forks" => self.call_learn_forks.into(),
+            "call_memo_steps" => self.call_memo_steps.into(),
+            "call_memo_longest" => self.call_memo_longest,
+            "call_memo_probes" => self.call_memo_probes.into(),
+            "call_memo_variants" => self.call_memo_variants.into(),
+            "call_memo_entries" => self.call_memo_entries.into(),
+            "call_memo_verify" => self.call_memo_verify.into(),
             "may_run_depth" => self.may_run_depth.into(),
             "cycle_after" => self.cycle_after.into(),
             "degrade_at_percent" => self.degrade_at_percent.into(),
@@ -320,6 +342,12 @@ impl Default for Limits {
             rest_splits: 8,
             call_learn_after: 2,
             call_learn_forks: 2,
+            call_memo_steps: 200,
+            call_memo_longest: 200_000,
+            call_memo_probes: 8,
+            call_memo_variants: 4,
+            call_memo_entries: 100_000,
+            call_memo_verify: 0,
             may_run_depth: 3,
             cycle_after: 2,
             meaning_set: 8,
@@ -375,11 +403,15 @@ pub struct PluginSwitches {
     /// Reading the packages' own manuals for what their commands do, in the
     /// background, for hovers.
     pub docs: bool,
+    /// The packages whose knowledge the lint rules consult
+    /// ([`crate::plugins::augment`]): all by default.
+    pub augment: Vec<String>,
 }
 
 impl Default for PluginSwitches {
     fn default() -> PluginSwitches {
-        PluginSwitches { magic: true, tools: true, preload: true, discovery: true, packages: false, docs: true }
+        let augment = crate::plugins::augment::MODULES.iter().map(|m| m.package.to_string()).collect();
+        Self { magic: true, tools: true, preload: true, discovery: true, packages: false, docs: true, augment }
     }
 }
 
@@ -2223,6 +2255,56 @@ pub struct Lints {
     pub quiet_arguments: QuietArguments,
     /// When an editor asks whether a frequent finding is the project's style.
     pub style_prompt: StylePrompt,
+    pub early: Early,
+}
+
+/// `lints.early:` in `satex.yaml`: the rules that need no run report first, on a sketch of the
+/// document, and the run then confirms or retracts each finding. The sketch reads the names below
+/// with their standard meaning (assumption `early-standard-names`).
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(default, deny_unknown_fields, rename_all = "kebab-case")]
+pub struct Early {
+    /// Whether `satex lint` and the editor show these findings before the run ends.
+    pub enabled: bool,
+    /// Commands, without the backslash, assumed to read the file their braced argument names.
+    pub inputs: Vec<String>,
+    /// Environments assumed to read their bodies verbatim.
+    pub verbatim: Vec<String>,
+    /// Commands assumed to read verbatim up to their delimiter, as `\verb` does.
+    pub inline_verbatim: Vec<String>,
+    /// Commands assumed to define the label their argument names.
+    pub labels: Vec<String>,
+    /// Commands assumed to refer to the labels their argument lists.
+    pub references: Vec<String>,
+    /// Commands assumed to cite the bibliography keys their argument lists.
+    pub citations: Vec<String>,
+    /// Commands assumed to name the bibliography databases their argument lists.
+    pub bibliographies: Vec<String>,
+    /// Commands assumed to load the packages their argument lists, options in brackets before it.
+    pub packages: Vec<String>,
+    /// Commands assumed to include the graphic file their argument names, as graphicx's.
+    pub graphics: Vec<String>,
+    /// The extensions graphics tries for a name given without one, as `\Gin@extensions` lists them.
+    pub graphic_extensions: Vec<String>,
+}
+
+impl Default for Early {
+    fn default() -> Early {
+        let names = |n: &[&str]| n.iter().map(|s| (*s).to_string()).collect();
+        Early {
+            enabled: true,
+            inputs: names(&["input", "include", "subfile"]),
+            verbatim: names(&["verbatim", "verbatim*", "Verbatim", "lstlisting", "minted", "comment"]),
+            inline_verbatim: names(&["verb", "lstinline", "mintinline"]),
+            labels: names(&["label"]),
+            references: names(&["ref", "eqref", "pageref", "autoref", "nameref", "cref", "Cref", "vref"]),
+            citations: names(&["cite", "citep", "citet", "parencite", "textcite", "autocite", "footcite", "nocite"]),
+            bibliographies: names(&["bibliography", "addbibresource"]),
+            packages: names(&["usepackage", "RequirePackage"]),
+            graphics: names(&["includegraphics"]),
+            graphic_extensions: names(&["pdf", "png", "jpg", "jpeg", "mps", "eps"]),
+        }
+    }
 }
 
 /// `lints.quiet-arguments:` in `satex.yaml`: commands whose arguments the

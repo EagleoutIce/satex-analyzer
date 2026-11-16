@@ -909,6 +909,7 @@ impl Engine {
             crate::project::overlay::set(&doc.path, doc.text.clone());
         }
         self.cancelled = false;
+        self.send_early(&path, &text);
         let (analysis, fresh) = self.run_for(&path, &text);
         // A newer text came while it ran: it stopped, and says nothing. The newer text's run follows.
         if self.cancelled {
@@ -1098,6 +1099,26 @@ impl Engine {
                 let _ = outbox.send(Notification::new(SETTLED_NOTIFICATION.into(), params));
             }
         })
+    }
+
+    /// The early findings of `text` at `path` ([`crate::linter::early`]), sent as settled ones
+    /// before its run. A file with nothing published yet gets them as its diagnostics too, each
+    /// marked provisional: the run's own replace them.
+    fn send_early(&mut self, path: &Path, text: &str) {
+        if !self.cfg.lints.early.enabled {
+            return;
+        }
+        let (sketch, records) = handlers::early_findings(text, path, self.cfg);
+        let records = unsilenced(&self.silenced, records);
+        let open: Vec<&Path> = self.docs.values().map(|d| d.path.as_path()).collect();
+        for params in publish(&mut HashMap::default(), &sketch, &records, path, &open) {
+            if !params.diagnostics.is_empty() && !self.published.contains_key(&params.uri) {
+                let _ = self.outbox.send(Notification::new("textDocument/publishDiagnostics".into(), params.clone()));
+                // what a budget-stopped run keeps ([`keep_unfinished`]): it cannot retract them
+                self.published.insert(params.uri.clone(), (std::rc::Weak::new(), params.clone()));
+            }
+            let _ = self.outbox.send(Notification::new(SETTLED_NOTIFICATION.into(), params));
+        }
     }
 
     /// The engine rests. After a stopped run a newer one follows, so the findings stay held back.
@@ -1870,6 +1891,7 @@ fn answer(docs: &HashMap<Uri, Doc>, hovers: &Hovers, blank: Option<&Analysis>, m
                 Ask::Actions(_, range) => Ok(Json::Array(dialogs::actions(analysis, text, &path, uri.as_str(), range))),
                 Ask::Open(_, pos) => Ok(dialogs::dialog(analysis, text, &path, pos).unwrap_or(Json::Null)),
                 Ask::Apply(_, p) if p["kind"] == "snapshot" => snapshot::apply(analysis, text, &p),
+                Ask::Apply(_, p) if p["kind"] == "columns" => Ok(dialogs::widths(analysis, text, &path)),
                 Ask::Apply(_, p) => {
                     let range = serde_json::from_value(p["range"].clone()).map_err(|e| e.to_string())?;
                     let kind = p["kind"].as_str().unwrap_or_default();

@@ -43,7 +43,7 @@ impl Binding {
 }
 
 /// Save-stack entry (catcodes too: `\catcode` is local like other assignments).
-#[derive(Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 enum Entry {
     Meaning {
         sym: u32,
@@ -92,7 +92,7 @@ impl GroupKind {
 /// The save stack.  A path through an undecided conditional copies it, so
 /// what lies below the last copy is frozen in shared chunks: a copy costs
 /// what was pushed since, not the whole stack.
-#[derive(Clone, Default, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
 struct Journal {
     /// The first `n` entries of a chunk, and below them its parent's.
     frozen: Option<(std::rc::Rc<Chunk>, usize)>,
@@ -100,7 +100,7 @@ struct Journal {
     top: Vec<Entry>,
 }
 
-#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
 struct Chunk {
     entries: Vec<Entry>,
     parent: Option<(std::rc::Rc<Chunk>, usize)>,
@@ -153,7 +153,7 @@ impl Journal {
 }
 
 /// Open group: journal start, opener kind, saved `\aftergroup` tokens.
-#[derive(Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 struct Mark {
     journal: usize,
     kind: GroupKind,
@@ -195,9 +195,10 @@ pub struct Env {
     /// Per open fork, the fewest groups the running path stood in since.
     lows: Vec<usize>,
     /// Per open fork, innermost last: where its trail begins, and the current
-    /// bindings of the slots changed since.
+    /// bindings of the slots changed since. Most forks see one path only, so
+    /// the map is built from the trail when a path first asks for it.
     floors: Vec<usize>,
-    changed: Vec<Changed>,
+    changed: Vec<Option<Changed>>,
     forks: usize,
     /// Forks that several paths continued from. A package load's record of
     /// what it wrote does not follow them.
@@ -242,6 +243,40 @@ pub struct Env {
     read_log: std::cell::RefCell<Vec<u32>>,
     /// Whether the log passed [`READ_LOG`] and stopped, so it is incomplete.
     log_full: std::cell::Cell<bool>,
+    /// While a call's effect may be kept ([`MemoLog`]).
+    /// Path switches (rewinds, resumes): a run another path's steps
+    /// interleaved keeps no effect.
+    #[serde(skip)]
+    pub switches: u64,
+    #[serde(skip)]
+    memo_on: std::cell::Cell<bool>,
+    #[serde(skip)]
+    memo: std::cell::RefCell<MemoLog>,
+}
+
+/// What running calls whose effect may be kept did to the slots: every
+/// name read (raw slot reads too), what a slot held before its first write
+/// since `floor`, the names written `\global`, and how often a slot changed
+/// in a way no assignment replays (`odd`).
+#[derive(Clone, Default)]
+struct MemoLog {
+    reads: Vec<u32>,
+    pre: Vec<(u32, Option<Binding>)>,
+    at: crate::fixed::HashMap<u32, usize>,
+    floor: usize,
+    globals: Vec<u32>,
+    locals: Vec<u32>,
+    odd: u64,
+    full: bool,
+}
+
+/// Where a record's part of the [`MemoLog`] begins.
+#[derive(Debug, Clone, Copy)]
+pub struct MemoMark {
+    reads: usize,
+    pre: usize,
+    globals: usize,
+    locals: usize,
 }
 
 /// How many reads the log holds. A call that reads more cannot be summarized.
@@ -468,6 +503,13 @@ impl Env {
 
     /// The whole binding: its meaning and its value.
     #[inline]
+    /// The binding an assignment keeps all but the value of: a read of its
+    /// meaning, not of what it holds.
+    pub fn kept(&self, sym: Sym) -> Option<&Binding> {
+        self.log_meaning_read(sym);
+        self.peek(sym.0)
+    }
+
     pub fn get(&self, sym: Sym) -> Option<&Binding> {
         self.log_read(sym);
         if self.tracking.get() {
@@ -489,12 +531,19 @@ impl Env {
     }
 
     pub fn slot(&self, sym: Sym) -> Option<&Binding> {
-        self.slots.get(sym.0 as usize).and_then(|s| s.as_ref())
+        self.memo_read(sym.0, true);
+        self.peek(sym.0)
+    }
+
+    /// The slot `sym` holds, not logged as a read.
+    pub fn peek(&self, sym: u32) -> Option<&Binding> {
+        self.slots.get(sym as usize).and_then(|s| s.as_ref())
     }
 
     /// Every name that currently has a binding. Used to sweep a family of
     /// names, such as all registers when a register number is unknown.
     pub fn bound(&self) -> Vec<Sym> {
+        self.memo_odd();
         self.slots.iter().enumerate().filter(|(_, s)| s.is_some()).map(|(i, _)| Sym(i as u32)).collect()
     }
 
@@ -687,6 +736,7 @@ impl Env {
     /// Returns whether it was recording before.
     #[inline]
     fn log_read(&self, sym: Sym) {
+        self.memo_read(sym.0, true);
         if self.logging.get() {
             let mut log = self.read_log.borrow_mut();
             if log.len() >= READ_LOG {
@@ -705,6 +755,157 @@ impl Env {
         self.log_full.set(false);
         if !on {
             self.read_log.borrow_mut().clear();
+        }
+    }
+
+    /// Logs a read of `sym`'s meaning, or of all of it (`value`).
+    #[inline]
+    fn memo_read(&self, sym: u32, value: bool) {
+        if self.memo_on.get() {
+            let mut memo = self.memo.borrow_mut();
+            if memo.reads.len() >= READ_LOG {
+                memo.full = true;
+                memo.reads.clear();
+            } else if !memo.full {
+                memo.reads.push(sym | u32::from(value) << 31);
+            }
+        }
+    }
+
+    /// Whether reads go to the read log of running records.
+    pub fn logging(&self) -> bool {
+        self.logging.get()
+    }
+
+    /// A kept call effect is applied: the logs take the reads its run made,
+    /// each log what that run gave it, so records around it see the same.
+    pub fn replay_reads(&self, memo: &[(u32, bool)], logged: &[Sym]) {
+        for &(sym, value) in memo {
+            self.memo_read(sym, value);
+            if self.tracking.get() {
+                self.note_read(Sym(sym), ReadKind::Meaning);
+                if value {
+                    self.note_read(Sym(sym), ReadKind::Value);
+                }
+            }
+        }
+        if self.logging.get() {
+            logged.iter().for_each(|&sym| self.log_name(sym));
+        }
+    }
+
+    fn log_name(&self, sym: Sym) {
+        let mut log = self.read_log.borrow_mut();
+        if log.len() >= READ_LOG {
+            log.clear();
+            self.logging.set(false);
+            self.log_full.set(true);
+        } else {
+            log.push(sym.0);
+        }
+    }
+
+    /// A change no assignment replays: a running record keeps no effect.
+    pub fn memo_odd(&self) {
+        if self.memo_on.get() {
+            self.memo.borrow_mut().odd += 1;
+        }
+    }
+
+    /// Whether the log ran over: no open record keeps its effect.
+    pub fn memo_full(&self) -> bool {
+        self.memo.borrow().full
+    }
+
+    pub fn memo_odds(&self) -> u64 {
+        self.memo.borrow().odd
+    }
+
+    /// A record whose effect may be kept begins: the log runs, and what
+    /// slots hold before their next write is logged again.
+    pub fn memo_open(&mut self) -> MemoMark {
+        self.memo_on.set(true);
+        let memo = self.memo.get_mut();
+        memo.floor = memo.pre.len();
+        MemoMark {
+            reads: memo.reads.len(),
+            pre: memo.pre.len(),
+            globals: memo.globals.len(),
+            locals: memo.locals.len(),
+        }
+    }
+
+    /// The innermost open record begins at `floor` again; `None` stops the log.
+    pub fn memo_floor(&mut self, floor: Option<MemoMark>) {
+        match floor {
+            Some(m) => self.memo.get_mut().floor = m.pre,
+            None => {
+                self.memo_on.set(false);
+                let odd = self.memo.get_mut().odd;
+                *self.memo.get_mut() = MemoLog { odd, ..MemoLog::default() };
+            }
+        }
+    }
+
+    /// Since `from`: the names read, each once (`None` when the log ran
+    /// over), what each written slot held before, and the names written
+    /// globally and locally.
+    #[allow(clippy::type_complexity)]
+    pub fn memo_since(
+        &self,
+        from: MemoMark,
+    ) -> Option<(Vec<(u32, bool)>, crate::fixed::HashMap<u32, Option<Binding>>, [Vec<u32>; 2])> {
+        let memo = self.memo.borrow();
+        if memo.full {
+            return None;
+        }
+        // Each name once: read whole if any read took more than its meaning.
+        let mut logged = memo.reads.get(from.reads..)?.to_vec();
+        logged.sort_unstable_by_key(|r| (r & !(1 << 31), std::cmp::Reverse(r >> 31)));
+        let mut reads: Vec<(u32, bool)> = Vec::new();
+        for r in logged {
+            let sym = r & !(1 << 31);
+            if reads.last().is_none_or(|l| l.0 != sym) {
+                reads.push((sym, r >> 31 == 1));
+            }
+        }
+        let mut pre = crate::fixed::HashMap::default();
+        for (sym, b) in memo.pre.get(from.pre..).unwrap_or_default() {
+            pre.entry(*sym).or_insert_with(|| b.clone());
+        }
+        let names = |v: &[u32]| {
+            let mut v = v.to_vec();
+            v.sort_unstable();
+            v.dedup();
+            v
+        };
+        let globals = names(memo.globals.get(from.globals..).unwrap_or_default());
+        Some((reads, pre, [globals, names(memo.locals.get(from.locals..).unwrap_or_default())]))
+    }
+
+    /// The group level a slot's binding was made at (0: global).
+    pub fn level_of(&self, sym: u32) -> u32 {
+        self.level.get(sym as usize).copied().unwrap_or(0)
+    }
+
+    /// `\aftergroup` tokens the innermost group holds.
+    pub fn after_len(&self) -> usize {
+        self.marks.last().map_or(0, |m| m.after.len())
+    }
+
+    /// A read of `sym`'s meaning only, for the logs.
+    #[inline]
+    fn log_meaning_read(&self, sym: Sym) {
+        self.memo_read(sym.0, false);
+        if self.logging.get() {
+            let mut log = self.read_log.borrow_mut();
+            if log.len() >= READ_LOG {
+                log.clear();
+                self.logging.set(false);
+                self.log_full.set(true);
+            } else {
+                log.push(sym.0);
+            }
         }
     }
 
@@ -731,43 +932,51 @@ impl Env {
 
     #[inline]
     pub fn meaning(&self, sym: Sym) -> Meaning {
-        self.log_read(sym);
+        self.log_meaning_read(sym);
         if self.tracking.get() {
             self.note_read(sym, ReadKind::Meaning);
         }
-        match self.slot(sym) {
+        match self.peek(sym.0) {
             Some(b) => b.meaning.clone(),
             None => Meaning::Undefined,
         }
     }
 
+    /// The meaning, read by the analysis watching the run, not by TeX code:
+    /// kept call effects depend on it, records of the code around it do not.
+    pub fn observed_meaning(&self, sym: Sym) -> Meaning {
+        self.memo_read(sym.0, false);
+        if self.tracking.get() {
+            self.note_read(sym, ReadKind::Meaning);
+        }
+        self.peek(sym.0).map_or(Meaning::Undefined, |b| b.meaning.clone())
+    }
+
     /// The meaning, for a reader that only distinguishes macros from other
     /// meanings. A macro's text does not count as read.
     pub fn shape(&self, sym: Sym) -> Meaning {
-        self.log_read(sym);
+        self.log_meaning_read(sym);
         if self.tracking.get() {
             self.note_read(sym, ReadKind::Shape);
         }
-        self.slot(sym).map_or(Meaning::Undefined, |b| b.meaning.clone())
+        self.peek(sym.0).map_or(Meaning::Undefined, |b| b.meaning.clone())
     }
 
     /// Whether `sym` means an `\outer` macro. tex.web § 336 checks this for
     /// every token read — engine bookkeeping, not a read of the meaning, so
     /// nothing is recorded or cloned.
     pub fn is_outer(&self, sym: Sym) -> bool {
-        self.slot(sym).is_some_and(|b| matches!(&b.meaning, Meaning::Macro(m) if m.outer))
+        self.memo_read(sym.0, false);
+        self.peek(sym.0).is_some_and(|b| matches!(&b.meaning, Meaning::Macro(m) if m.outer))
     }
 
-    /// The meaning, as text being skipped sees it: only whether it is a
+    /// The primitive, as text being skipped sees it: only whether it is a
     /// conditional, `\else`, `\or` or `\fi` counts as read.
-    pub fn skip_meaning(&self, sym: Sym) -> Meaning {
+    pub fn skip_prim(&self, sym: Sym) -> Option<crate::engine::builtins::Primitive> {
         if self.tracking.get() {
             self.note_read(sym, ReadKind::Skip);
         }
-        match self.slot(sym) {
-            Some(b) => b.meaning.clone(),
-            None => Meaning::Undefined,
-        }
+        self.slot(sym).and_then(|b| b.meaning.prim())
     }
 
     /// The name's definition sites, to link a dependency-graph edge to.
@@ -837,6 +1046,29 @@ impl Env {
         self.marks.iter().filter(|m| !m.many).count()
     }
 
+    /// Whether `other` binds every name alike in the same groups, which saved
+    /// alike since both had made `since` (assignments, saves): before, the runs were the same.
+    pub fn alike(&self, other: &Env, since: (u64, usize)) -> bool {
+        self.marks.len() == other.marks.len()
+            && self.journal_len() == other.journal_len()
+            && self.slots.alike(&other.slots, same_slot)
+            && self.saves(since.1) == other.saves(since.1)
+    }
+
+    /// The groups and the saves made since the first `from`, as text with every token's place.
+    fn saves(&self, from: usize) -> String {
+        let chain: Vec<_> = std::iter::successors(self.journal.frozen.as_ref(), |(c, _)| c.parent.as_ref()).collect();
+        let entries = chain.iter().rev().flat_map(|(c, n)| &c.entries[..*n]).chain(&self.journal.top);
+        format!("{:?}{:?}", self.marks, entries.skip(from).collect::<Vec<_>>())
+    }
+
+    /// [`Env::saves`] and the bindings written since `since`: what a later
+    /// reader of this state may meet that the runs did not share.
+    pub fn trace(&self, since: (u64, usize)) -> String {
+        let written: Vec<_> = self.stamp.after(since.0).map(|i| &self.slots[i]).collect();
+        self.saves(since.1) + &format!("{written:?}")
+    }
+
     /// Whether some open group stands for any number of groups.
     pub fn many_groups(&self) -> bool {
         self.marks.iter().any(|m| m.many)
@@ -853,6 +1085,7 @@ impl Env {
     /// there are none: the entry goes, and its saves move to the group below.
     pub fn unfold(&mut self, more: bool, catcodes: &mut CatcodeTable, typed: &Typed) {
         let Some(mark) = self.marks.last().cloned() else { return };
+        self.memo_odd();
         self.effective += 1;
         let mut journal = self.journal.clone();
         let mut saved = Vec::new();
@@ -904,6 +1137,7 @@ impl Env {
         if !self.marks[from..].iter().all(alike) {
             return false;
         }
+        self.memo_odd();
         self.effective += 1;
         let mut journal = self.journal.clone();
         let mut saved = Vec::new();
@@ -928,6 +1162,11 @@ impl Env {
         if let Some(mark) = Rc::make_mut(&mut self.marks).last_mut() {
             mark.many = true;
         }
+    }
+
+    /// The newest group id given out, and the innermost open group's.
+    pub fn group_ids(&self) -> (u64, Option<u64>) {
+        (self.group_ids, self.marks.last().map(|m| m.id))
     }
 
     /// A fresh group id, for a group made by a widening.
@@ -960,12 +1199,18 @@ impl Env {
             self.drop_moot(sym.0);
         }
         if global {
+            if self.memo_on.get() {
+                self.memo.get_mut().globals.push(sym.0);
+            }
             self.note_write(sym.0, writes);
             binding.global = true;
             self.level[i] = 0;
             self.slots[i] = Some(binding);
             self.changed(i);
             return;
+        }
+        if self.memo_on.get() {
+            self.memo.get_mut().locals.push(sym.0);
         }
         let current = self.marks.len() as u32;
         if current > 0 && self.level[i] != current {
@@ -1009,6 +1254,7 @@ impl Env {
     /// `value`. Not an assignment, so the save stack is not involved. `keep`
     /// says which arms of [`Env::arms`] may hold it.
     pub fn refine_value(&mut self, sym: Sym, value: Value, keep: &[bool]) {
+        self.memo_odd();
         self.effective += 1;
         let i = sym.0 as usize;
         let Some(Some(binding)) = self.slots.get(i) else { return };
@@ -1027,7 +1273,8 @@ impl Env {
         if self.tracking.get() {
             self.note_read(sym, ReadKind::Kept);
         }
-        let mut binding = match self.slot(sym) {
+        self.memo_read(sym.0, false);
+        let mut binding = match self.peek(sym.0) {
             Some(b) => b.clone(),
             None => Binding::builtin(Meaning::Unknown),
         };
@@ -1107,6 +1354,7 @@ impl Env {
         });
         if n {
             let mut restored = Vec::new();
+            self.memo_odd();
             self.effective += 1;
             let mark = Rc::make_mut(&mut self.marks).pop().expect("checked");
             self.lower();
@@ -1318,14 +1566,19 @@ impl Env {
     /// rewind are left out.
     pub fn recent_since(&self, from: usize) -> Vec<Sym> {
         let from = if from > self.recent.len() { 0 } else { from };
-        let mut syms: Vec<(u32, u64)> =
-            self.recent[from..].iter().copied().zip(self.recent_at[from..].iter().copied()).collect();
-        syms.sort_unstable();
-        syms.dedup_by_key(|(sym, _)| *sym);
-        syms.into_iter()
+        // Loops write the same few names over and over: keep each name's
+        // first write in one pass, then sort only the distinct names.
+        let mut first: std::collections::HashMap<u32, u64, crate::engine::tex::NameHash> = Default::default();
+        for (&sym, &at) in self.recent[from..].iter().zip(&self.recent_at[from..]) {
+            first.entry(sym).or_insert(at);
+        }
+        let mut syms: Vec<Sym> = first
+            .into_iter()
             .filter(|&(sym, at)| self.stamp.get(sym as usize).is_none_or(|&s| s >= at))
             .map(|(sym, _)| Sym(sym))
-            .collect()
+            .collect();
+        syms.sort_unstable();
+        syms
     }
 
     /// The assignment that last wrote `sym` on this path (0: none).
@@ -1381,6 +1634,7 @@ impl Env {
 
     /// Slot `i` was changed where it stands, at its own level.
     fn wrote_in_place(&mut self, i: usize) {
+        self.memo_odd();
         self.assignments += 1;
         self.effective += 1;
         self.slot_changes += 1;
@@ -1411,6 +1665,15 @@ impl Env {
     #[inline]
     fn log(&mut self, i: usize) {
         self.unpair(i);
+        if self.memo_on.get() {
+            let memo = self.memo.get_mut();
+            if memo.pre.len() >= READ_LOG {
+                memo.full = true;
+            } else if memo.at.get(&(i as u32)).is_none_or(|&k| k < memo.floor) {
+                memo.at.insert(i as u32, memo.pre.len());
+                memo.pre.push((i as u32, self.slots.get(i).cloned().flatten()));
+            }
+        }
         if self.tracking.get() {
             let mut reads = self.reads.borrow_mut();
             reads.touched.insert(i as u32);
@@ -1428,11 +1691,11 @@ impl Env {
     /// Slot `i` was written: every open fork sees it changed.
     #[inline]
     fn changed(&mut self, i: usize) {
-        if self.changed.is_empty() {
+        if self.changed.iter().all(Option::is_none) {
             return;
         }
         let entry = (self.slots[i].clone(), self.level[i]);
-        for map in &mut self.changed {
+        for map in self.changed.iter_mut().flatten() {
             map.insert_mut(i as u32, entry.clone());
         }
     }
@@ -1441,7 +1704,7 @@ impl Env {
     pub fn fork(&mut self) -> Fork {
         self.forks += 1;
         self.floors.push(self.trail.len());
-        self.changed.push(Changed::new());
+        self.changed.push(None);
         self.lows.push(self.marks.len());
         Fork {
             trail: self.trail.len(),
@@ -1507,15 +1770,20 @@ impl Env {
     }
 
     /// What the running path changed since `fork`.
-    pub fn path(&self, fork: &Fork) -> PathEnv {
+    pub fn path(&mut self, fork: &Fork) -> PathEnv {
         debug_assert_eq!(self.floors.get(fork.level), Some(&fork.trail), "the fork is open");
-        let slots = self.changed.get(fork.level).cloned().unwrap_or_default();
+        let (trail, slots, level) = (&self.trail[fork.trail..], &self.slots, &self.level);
+        let slots = self.changed.get_mut(fork.level).map_or_else(Changed::new, |map| {
+            let entry = |sym: u32| (sym, (slots[sym as usize].clone(), level[sym as usize]));
+            map.get_or_insert_with(|| trail.iter().map(|e| entry(e.0)).collect()).clone()
+        });
         let low = self.lows.get(fork.level).copied().unwrap_or(fork.marks.len());
         PathEnv { slots, journal: self.journal.clone(), marks: self.marks.clone(), low, corr: self.corr.clone() }
     }
 
     /// Back to the bindings `fork` saw.
     pub fn rewind(&mut self, fork: &Fork) {
+        self.switches += 1;
         self.effective += 1;
 
         let mut popped = Vec::new();
@@ -1536,7 +1804,7 @@ impl Env {
             *low = fork.marks.len();
         }
         if let Some(own) = self.changed.get_mut(fork.level) {
-            *own = Changed::new();
+            *own = None;
         }
         popped.sort_unstable();
         popped.dedup();
@@ -1544,6 +1812,7 @@ impl Env {
             let i = sym as usize;
             let entry = (self.slots[i].clone(), self.level[i]);
             for (floor, map) in self.floors.iter().zip(&mut self.changed).take(fork.level) {
+                let Some(map) = map else { continue };
                 if self.trailed[i] != NONE && self.trailed[i] as usize >= *floor {
                     map.insert_mut(sym, entry.clone());
                 } else {
@@ -1558,6 +1827,7 @@ impl Env {
 
     /// Continue `path` from `fork`.
     pub fn resume(&mut self, fork: &Fork, path: &PathEnv) {
+        self.switches += 1;
         self.effective += 1;
         self.rewind(fork);
         RESUMES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -1565,7 +1835,10 @@ impl Env {
 
         // Share the path's map as the fork's own map. Rebuilding it per resume
         // would give every head and parked path its own copy.
-        let own = (self.changed.len() == fork.level + 1).then(|| self.changed.pop()).flatten();
+        let own = self.changed.len() == fork.level + 1;
+        if own {
+            self.changed.pop();
+        }
         self.corr = None;
         for (sym, (slot, saved)) in path.slots.iter() {
             let i = *sym as usize;
@@ -1580,8 +1853,8 @@ impl Env {
             self.stamp.set(i, self.assignments);
             self.changed(i);
         }
-        if own.is_some() {
-            self.changed.push(path.slots.clone());
+        if own {
+            self.changed.push(Some(path.slots.clone()));
         }
         self.journal = path.journal.clone();
         self.marks = path.marks.clone();
@@ -1596,6 +1869,7 @@ impl Env {
     /// path did not, that path gets what `fork` saw. The bindings stay as the
     /// running path has them. False when the running path changed nothing since `fork`.
     pub fn rebase(&mut self, fork: &Fork, paths: &mut [&mut PathEnv]) -> bool {
+        self.switches += 1;
         self.effective += 1;
         let live = self.path(fork);
         if live.slots.is_empty() {
@@ -1634,6 +1908,7 @@ impl Env {
 
     /// The slot `sym` now holds.
     pub fn slot_at(&self, sym: u32) -> Option<Binding> {
+        self.memo_read(sym, true);
         self.slots.get(sym as usize).cloned().flatten()
     }
 
@@ -1641,6 +1916,7 @@ impl Env {
     /// what the loop reached there, which is more than this path knows. Not an
     /// assignment, so the save stack is not involved.
     pub fn assume(&mut self, sym: u32, slot: Option<Binding>) {
+        self.memo_odd();
         self.effective += 1;
         let i = sym as usize;
         self.grow(Sym(sym));
@@ -1653,6 +1929,7 @@ impl Env {
     /// this path. Not an assignment, so the save stack is not involved.
     /// `keep` as for [`Env::refine_value`].
     pub fn refine(&mut self, sym: Sym, meaning: Meaning, keep: &[bool]) {
+        self.memo_odd();
         self.effective += 1;
         let i = sym.0 as usize;
         let Some(Some(binding)) = self.slots.get(i) else { return };
@@ -1675,6 +1952,7 @@ impl Env {
     /// [`Env::refine_to`], but `members` stays a set even with one member: the
     /// texts a one-of token still stands for.
     pub fn refine_may(&mut self, sym: Sym, members: &[Meaning], keep: &[bool]) {
+        self.memo_odd();
         self.effective += 1;
         let i = sym.0 as usize;
         let Some(Some(binding)) = self.slots.get(i) else { return };
@@ -1694,6 +1972,7 @@ impl Env {
     /// Gives `sym` a meaning determined by its name, the same on every path
     /// and never undone by a rewind.
     pub fn constant(&mut self, sym: Sym, binding: Binding) {
+        self.memo_odd();
         self.effective += 1;
         self.grow(sym);
         let i = sym.0 as usize;
@@ -2211,6 +2490,18 @@ fn identical(a: &Option<Binding>, b: &Option<Binding>) -> bool {
             (Some(x), Some(y)) => x.defs == y.defs && x.global == y.global && x.may == y.may,
             _ => true,
         }
+}
+
+/// [`same_slot`] of `a` and `b`, or with `value` false what a read of the
+/// meaning sees.
+pub fn same_part(a: Option<&Binding>, b: Option<&Binding>, value: bool) -> bool {
+    match (a, b) {
+        (None, None) => true,
+        (Some(x), Some(y)) => {
+            same_meaning(x, y) && x.certain == y.certain && (!value || same_value(&x.value, &y.value))
+        }
+        _ => false,
+    }
 }
 
 pub fn same_slot(a: &Option<Binding>, b: &Option<Binding>) -> bool {

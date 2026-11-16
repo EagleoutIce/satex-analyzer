@@ -9,7 +9,7 @@ use super::super::snapshot::{self, Arg, Node, Package};
 use super::{Cx, Group, Hit, TypePlugin, call_at, span};
 use crate::analysis::machine::Analysis;
 use crate::analysis::roles::Ty;
-use crate::engine::builtins::{Cond, OccKind, Primitive};
+use crate::engine::builtins::OccKind;
 use crate::engine::tex::Meaning;
 use crate::engine::value::{UNIT, UNITS};
 use crate::linter::shared::{loaded, macro_text};
@@ -185,7 +185,7 @@ fn sections<'a>(analysis: &'a Analysis, path: &str) -> impl Iterator<Item = &'a 
 
 /// The call at `at` as a snapshot node, its first argument a key list (`options`: the first
 /// `[…]`, an unwritten one when there is none).
-fn keyed(doc: &Text, at: usize, options: bool) -> Option<Json> {
+pub(super) fn keyed(doc: &Text, at: usize, options: bool) -> Option<Json> {
     serde_json::to_value(snapshot::read(doc, at, &[0], options)?).ok()
 }
 
@@ -216,11 +216,7 @@ fn view(cx: &Cx, parts: &Parts) -> Json {
         .iter()
         .filter_map(|n| Some((n.to_string(), super::register_value(a, n).map(|v| json!([v.lo, v.hi]))?)))
         .collect();
-    let twoside = match a.interner.lookup("if@twoside").map(|s| a.env.meaning(s)) {
-        Some(Meaning::Primitive(Primitive::If(Cond::True))) => Some(true),
-        Some(Meaning::Primitive(Primitive::If(Cond::False))) => Some(false),
-        _ => None,
-    };
+    let twoside = super::styles::flag(a, "if@twoside");
     let units: Vec<Json> = UNITS
         .iter()
         .filter(|(u, ..)| *u != "mu")
@@ -278,11 +274,15 @@ fn view(cx: &Cx, parts: &Parts) -> Json {
         "koma": koma,
         "part": { "here": here, "marks": marks, "end": end },
         "header": header(cx, parts),
+        "columns": { "two": super::styles::flag(a, "if@twocolumn"), "class": parts.class.as_ref().and_then(|c| keyed(doc, c.0, true)) },
+        "binding": super::register_value(a, "Gm@bindingoffset").map(|v| v.lo),
+        "pagecolor": super::styles::pagecolor(cx, parts.begin),
+        "headings": super::styles::headings(cx, family(a), parts.begin, span(doc, before_document, before_document).start),
     }]})
 }
 
 /// The value of a count register `\name` when the run ended.
-fn count(a: &Analysis, name: &str) -> Option<i64> {
+pub(super) fn count(a: &Analysis, name: &str) -> Option<i64> {
     let v = super::register_value(a, name)?;
     (v.lo == v.hi).then_some(v.lo)
 }

@@ -30,6 +30,7 @@ interface PageState extends Partial<Record<PKey, number>> {
   mode: string; paper: string; pw: number; ph: number; left: number; right: number; top: number; bottom: number;
   headheight: number; headsep: number; footskip: number; mpwidth: number; mpsep: number; bcor: number;
   div: number | null; ran: { div: number | null; bcor: number } | null; scope: string; from: string; to: string; header: Rec; open: string[];
+  columns: number | null; styles: Rec;
 }
 /** A parsed picture body: its statements and the text after the last. */
 interface Parsed { items: Item[]; tail: string }
@@ -2282,7 +2283,7 @@ const satexViews = (() => {
     paper: ['paper', 'papername', 'paperwidth', 'paperheight', 'papersize', 'landscape', 'portrait'],
     margins: ['margin', 'hmargin', 'vmargin', 'left', 'right', 'inner', 'outer', 'lmargin', 'rmargin', 'top', 'bottom', 'tmargin', 'bmargin',
       'textwidth', 'textheight', 'width', 'height', 'hscale', 'vscale', 'scale', 'body', 'total', 'text', 'hmarginratio', 'vmarginratio', 'marginratio', 'ratio',
-      'hcentering', 'vcentering', 'centering', 'lines', 'includehead', 'includefoot', 'includeheadfoot', 'includemp', 'includeall', 'ignorehead', 'ignorefoot', 'ignoreheadfoot', 'ignoremp', 'ignoreall'],
+      'hcentering', 'vcentering', 'centering', 'bindingoffset', 'lines', 'includehead', 'includefoot', 'includeheadfoot', 'includemp', 'includeall', 'ignorehead', 'ignorefoot', 'ignoreheadfoot', 'ignoremp', 'ignoreall'],
     head: ['headheight', 'head', 'headsep', 'footskip', 'foot', 'nohead', 'nofoot', 'noheadfoot'],
     marginpar: ['marginparwidth', 'marginpar', 'marginparsep', 'nomarginpar'],
   };
@@ -2300,13 +2301,14 @@ const satexViews = (() => {
     const fits = (s.papers ?? []).filter((p: Rec) => Math.abs(p.w - pw) < 65536 && Math.abs(p.h - ph) < 65536);
     const written = [s.geometry?.global, s.koma].flatMap((n: SnapNode | undefined) => (n && self.satexSnapshot.list(n)) ?? []);
     const paper = (fits.find((p: Rec) => written.some((k) => k.key === p.name || k.value === p.name)) ?? fits[0])?.name ?? '';
-    const bcor = s.koma?.bcor ?? 0;
+    const bcor = s.koma?.bcor ?? s.binding ?? 0;
     return {
       mode: s.koma ? 'koma' : 'geometry', paper, pw, ph, left, right: pw - left - tw, top, bottom: ph - top - th,
       headheight: mid('headheight'), headsep: mid('headsep'), footskip: mid('footskip'), mpwidth: mid('marginparwidth'), mpsep: mid('marginparsep'),
       div: s.koma ? s.koma.div ?? Math.round(3 / (1 - tw / (pw - bcor))) : null, bcor, ran: null,
       scope: 'all', from: s.part?.here ? 'here' : '0', to: 'end', header: headerOf(s.header, s.twoside),
       open: Object.entries(s.run ?? {}).filter(([, v]) => (v as number[])[0] !== (v as number[])[1]).map(([k]) => k),
+      columns: s.columns?.two == null ? null : s.columns.two ? 2 : 1, styles: {},
     };
   }
   /** The body's margins `st` sets: typearea's from DIV and BCOR (inner 1, outer 2 stripes; one-sided both alike), else its own. */
@@ -2321,7 +2323,8 @@ const satexViews = (() => {
     const b = pageBox(st, twoside);
     return {
       paper: st.paper ? [[st.paper, '']] : [['paperwidth', len(st.pw)], ['paperheight', len(st.ph)]],
-      margins: [[twoside ? 'inner' : 'left', len(b.left)], [twoside ? 'outer' : 'right', len(b.right)], ['top', len(b.top)], ['bottom', len(b.bottom)]],
+      // geometry measures the inner margin past `bindingoffset`
+      margins: [[twoside ? 'inner' : 'left', len(b.left - st.bcor)], [twoside ? 'outer' : 'right', len(b.right)], ['top', len(b.top)], ['bottom', len(b.bottom)], ...(st.bcor > 1 ? [['bindingoffset', len(st.bcor)]] : [])],
       head: [['headheight', len(st.headheight)], ['headsep', len(st.headsep)], ['footskip', len(st.footskip)]],
       marginpar: [['marginparwidth', len(st.mpwidth)], ['marginparsep', len(st.mpsep)]],
     };
@@ -2352,7 +2355,136 @@ const satexViews = (() => {
       }
       if (groups.length) out.push(regroup(s, structuredClone(s.geometry.global), groups, keys));
     }
-    return out.concat(headerNodes(s.header, st.header, s.twoside));
+    // columns are class options: in the class's snapshot, typearea's when that is it
+    if (st.columns && st.columns !== st0.columns && s.columns?.class) {
+      const c = out.find((n) => S.same(n.range, s.columns.class.range)) ?? structuredClone(s.columns.class);
+      const two = st.columns === 2, had = S.list(c)!.some((k) => k.key === 'twocolumn');
+      S.setKeys(c, ['onecolumn', 'twocolumn'], two ? [['twocolumn', '']] : had ? [] : [['onecolumn', '']]);
+      if (!out.includes(c)) out.push(c);
+    }
+    return out.concat(headerNodes(s.header, st.header, s.twoside), styleNodes(s, st.styles));
+  }
+
+  // heading styles (src/lsp/plugins/styles.rs): a format text read as fields over its tokens; a
+  // change rewrites only its field's tokens, the rest stays as written
+  const FIELDS = ['family', 'series', 'shape', 'size', 'color', 'align'];
+  /** The tokens of a format: `\color[m]{x}` whole, a command with its spaces, a group, other text; null when it does not split so (`#`, unbalanced). */
+  function fmtTokens(t: string): string[] | null {
+    const toks = t.match(/\\color\s*(?:\[[^\]]*\])?\s*\{[^{}]*\}|\\[A-Za-z@]+\s*|\\.|\{(?:[^{}]|\{[^{}]*\})*\}|[^\\{}#]+/g) ?? [];
+    return toks.join('') === t ? toks : null;
+  }
+  /** What a token sets: `[field, value]` pairs from the run's switches, sizes and alignments (`h`). */
+  function fmtSets(tok: string, h: Rec): [string, string][] {
+    const t = tok.trim(), c = /^\\color\s*(\[[^\]]*\])?\s*\{([^{}]*)\}$/.exec(t);
+    if (c) return [['color', c[1] ? `${c[1]}{${c[2]}}` : c[2]!.trim()]];
+    if (t === '\\normalcolor') return [['color', '']];
+    if (t === '\\normalfont') return [['family', 'serif'], ['series', 'normal'], ['shape', 'upright']];
+    for (const [f, vals] of Object.entries(h.switches ?? {}) as [string, string[][]][]) for (const [v, cmd] of vals) if (cmd === t) return [[f, v!]];
+    if ((h.sizes ?? []).includes(t)) return [['size', t]];
+    const a = (h.align ?? []).find((r: string[]) => r.slice(1).includes(t));
+    return a ? [['align', a[0]]] : [];
+  }
+  /** The fields a format sets, the last of each winning. */
+  const fmtRead = (t: string, h: Rec): Rec => Object.fromEntries((fmtTokens(t) ?? []).flatMap((k) => fmtSets(k, h)));
+  /** The token that sets `field` to `v`. */
+  function fmtToken(field: string, v: string, h: Rec): string {
+    if (field === 'color') return v ? `\\color${v.startsWith('[') ? v : `{${v}}`}` : '\\normalcolor';
+    if (field === 'size') return v;
+    if (field === 'align') return h.align.find((r: string[]) => r[0] === v)?.[1] ?? '';
+    return (h.switches?.[field] ?? []).find((r: string[]) => r[0] === v)?.[1] ?? '';
+  }
+  /** Format `t` with fields `ch` set: their single-field tokens dropped, the new ones after the last command before
+   * any text; null when `t` is not this dialog's to rewrite or a value has no command in the run. */
+  function fmtWrite(t: string, h: Rec, ch: Rec): string | null {
+    const toks = fmtTokens(t), add = FIELDS.filter((f) => f in ch).map((f) => fmtToken(f, ch[f], h));
+    if (!toks || add.includes('')) return null;
+    const kept = toks.filter((k) => { const f = fmtSets(k, h); return !(f.length === 1 && f[0]![0] in ch); });
+    // a control word's spaces go before another command
+    const tidy = kept.map((k, i) => /^\\[A-Za-z@]+\s+$/.test(k) && (kept[i + 1] ?? '\\').startsWith('\\') ? k.trimEnd() : k);
+    const at = tidy.findIndex((k) => /^[^\\{]/.test(k) && k.trim()), cut = at < 0 ? tidy.length : at;
+    const head = tidy.slice(0, cut).join('').trimEnd() + add.join(''), tail = tidy.slice(cut).join('').trim();
+    // a control word before text needs its space
+    return tail ? head + (/\\[A-Za-z@]+$/.test(head) ? ' ' : '') + tail : head;
+  }
+  /** A call's format: its second `{…}`. */
+  const fmtArg = (c: SnapNode) => c.args.filter((a) => a.open === '{')[1];
+  /** Whether level `l` is offered: not refused, its call's format readable. */
+  const styleable = (l: Rec) => !l.refuse && fmtTokens(l.font ?? '') != null && (!l.call || (fmtArg(l.call) && fmtTokens(fmtArg(l.call)!.text)));
+  /** The fields level `l` shows: the run's, KOMA's shared alignment, then the edits `ch`. */
+  function styleOf(h: Rec, l: Rec, ch: Rec): Rec {
+    const out = { ...fmtRead(l.font ?? '', h), ...ch.levels?.[l.name] };
+    if (l.ragged) out.align = ch.ragged?.[l.ragged] ?? fmtRead(h.ragged?.[l.ragged]?.text ?? '', h).align;
+    return out;
+  }
+  /** A call's snapshot with its format (`i`th `{…}`) set to `text`, a new one at `at` when there is none. */
+  function withText(c: SnapNode | null, text: string, make: () => SnapNode, i = 1): SnapNode {
+    const n = c ? structuredClone(c) : make();
+    n.args.filter((a) => a.open === '{')[i]!.text = text;
+    return n;
+  }
+  /** The snapshots that write style edits `ch` (`{levels, ragged, depth, pagecolor}`): each changed field in the level's last call, new calls before `\begin{document}`. */
+  function styleNodes(s: Rec, ch: Rec): SnapNode[] {
+    const S = self.satexSnapshot, h = s.headings ?? {}, at = h.insert, out: SnapNode[] = [];
+    const star = (n: SnapNode) => Object.assign(n, { star: true });
+    for (const l of (h.refuse ? [] : h.levels ?? []).filter(styleable)) {
+      const run = styleOf(h, l, {}), want = { ...ch.levels?.[l.name] };
+      if (l.ragged) delete want.align;
+      const diff = Object.fromEntries(Object.entries(want).filter(([f, v]) => FIELDS.includes(f) && run[f] !== v));
+      if (!Object.keys(diff).length) continue;
+      const text = fmtWrite(l.call ? fmtArg(l.call)!.text : h.scheme === 'koma' ? '' : l.font, h, diff);
+      if (text != null) out.push(withText(l.call, text, () => h.scheme === 'koma' ? S.call('addtokomafont', [S.arg('{', l.name), S.arg('{', '')], at)
+        : star(S.call('titleformat', [S.arg('{', `\\${l.name}`), S.arg('{', '')], at))));
+    }
+    for (const [name, v] of Object.entries(ch.ragged ?? {}) as [string, string][]) {
+      const r = h.ragged?.[name];
+      if (!r || fmtRead(r.text ?? '', h).align === v) continue;
+      const was = r.call ? fmtArg(r.call)?.text : '';
+      const text = was != null && fmtWrite(was, h, { align: v });
+      if (text) out.push(withText(r.call, text, () => star(S.call('renewcommand', [S.arg('{', `\\${name}`), S.arg('{', '')], at))));
+    }
+    const d = h.secnumdepth;
+    if (ch.depth != null && d && ch.depth !== d.value) out.push(withText(d.call, String(ch.depth), () => S.call('setcounter', [S.arg('{', 'secnumdepth'), S.arg('{', '')], at)));
+    const p = s.pagecolor, was = p?.call ? S.text(p.call, '{') ?? '' : '';
+    if (p && ch.pagecolor != null && ch.pagecolor !== was) {
+      if (!ch.pagecolor) { if (p.call) out.push(S.drop(p.call)); } else out.push(withText(p.call, ch.pagecolor, () => S.call('pagecolor', [S.arg('{', '')], at), 0));
+    }
+    return out;
+  }
+  /** A named style set: each offered level's fields, the numbering depth and the page color as they show with edits `ch`. */
+  function styleSet(s: Rec, ch: Rec): Rec {
+    const h = s.headings ?? {}, levels: Rec = {};
+    for (const l of (h.refuse ? [] : h.levels ?? []).filter(styleable)) levels[l.name] = styleOf(h, l, ch);
+    const p = s.pagecolor;
+    return { levels, depth: ch.depth ?? h.secnumdepth?.value ?? null, pagecolor: ch.pagecolor ?? (p?.call ? self.satexSnapshot.text(p.call, '{') : '') };
+  }
+  /** Whether this document can write `field` = `v`: a command the run defines, a color it defines (or a model's spec). */
+  function styleValid(s: Rec, field: string, v: string): boolean {
+    const h = s.headings ?? {}, named = (n: string) => (s.pagecolor?.colors ?? []).some((c: Rec) => c.name === n);
+    if (field === 'color') return v === '' || v.startsWith('[') || named(v);
+    if (field === 'size') return (h.sizes ?? []).includes(v);
+    if (field === 'align') return (h.align ?? []).some((r: string[]) => r[0] === v);
+    return (h.switches?.[field] ?? []).some((r: string[]) => r[0] === v);
+  }
+  /** The edits that make the document show style set `set` (saved maybe from another document), and what it cannot
+   * take here: levels it lacks, values the run does not define, a page color not defined, a depth past its levels,
+   * a second alignment for KOMA's shared `\raggedsection`. */
+  function styleEdits(s: Rec, set: Rec): { ch: Rec; skipped: string[] } {
+    const h = s.headings ?? {}, ch: Rec = { levels: {}, ragged: {} }, skipped: string[] = [], by: Rec = {};
+    const levels = (h.refuse ? [] : h.levels ?? []).filter(styleable) as Rec[];
+    for (const [name, f] of Object.entries(set.levels ?? {}) as [string, Rec][]) {
+      const l = levels.find((x) => x.name === name);
+      if (!l) { skipped.push(name); continue; }
+      ch.levels[name] = {};
+      for (const [k, v] of Object.entries(f).filter(([k]) => FIELDS.includes(k)) as [string, string][]) {
+        if (!styleValid(s, k, v)) { skipped.push(`${name} ${k} ${v}`); continue; }
+        if (k !== 'align' || !l.ragged) { ch.levels[name][k] = v; continue; }
+        if (!(l.ragged in ch.ragged)) { ch.ragged[l.ragged] = v; by[l.ragged] = name; } else if (ch.ragged[l.ragged] !== v) skipped.push(`${name} align (\\${l.ragged} follows ${by[l.ragged]})`);
+      }
+    }
+    const nums = levels.map((l) => l.level).filter((n) => n != null);
+    if (set.depth != null) { if (nums.length && set.depth >= Math.min(...nums) - 1 && set.depth <= Math.max(...nums)) ch.depth = set.depth; else skipped.push(`numbering ${set.depth}`); }
+    if (set.pagecolor != null) { if (set.pagecolor === '' || styleValid(s, 'color', set.pagecolor) && !set.pagecolor.startsWith('[')) ch.pagecolor = set.pagecolor; else skipped.push(`page color ${set.pagecolor}`); }
+    return { ch, skipped };
   }
 
   // header and footer: fancyhdr's `\fancyhead[LE,RO]{…}` fields or scrlayer-scrpage's `\ihead{…}`
@@ -2422,7 +2554,7 @@ const satexViews = (() => {
     const svg = svgEl('svg', { class: 'tv-canvas tv-sheet', role: 'img', 'aria-label': 'the page to scale' });
     const side = el('div', 'tv-page-side'), status = el('span', 'tv-muted');
     const tabs = el('div', 'tv-tabs');
-    for (const [k, label] of [['margins', 'Margins'], ['header', 'Header and footer']]) {
+    for (const [k, label] of [['margins', 'Margins'], ['options', 'Page'], ['header', 'Header and footer'], ['headings', 'Headings']]) {
       const b = el('button', 'tv-tab', esc(label)); b.type = 'button'; b.dataset.tab = k;
       b.onclick = () => { tab = k; draw(); };
       tabs.append(b);
@@ -2486,7 +2618,9 @@ const satexViews = (() => {
         if (st.scope !== 'part') out.push(group('Paper', prow, field('Width', 'pw', 'paperwidth', custom('pw')), field('Height', 'ph', 'paperheight', custom('ph'))));
         out.push(group('Margins', field(two ? 'Inner' : 'Left', 'left', 'oddsidemargin'), field(two ? 'Outer' : 'Right', 'right', 'textwidth'),
           field('Top', 'top', 'topmargin'), field('Bottom', 'bottom', 'textheight'),
-          field('Text width', 'tw', 'textwidth', (sp: number) => { st.right = st.pw - st.left - sp; }), field('Text height', 'th', 'textheight', (sp: number) => { st.bottom = st.ph - st.top - sp; })));
+          field('Text width', 'tw', 'textwidth', (sp: number) => { st.right = st.pw - st.left - sp; }), field('Text height', 'th', 'textheight', (sp: number) => { st.bottom = st.ph - st.top - sp; }),
+          // the binding takes its share of the inner margin's place: the text narrows
+          ...(st.scope === 'part' ? [] : [field('Binding', 'bcor', 'Gm@bindingoffset', (sp: number) => { st.left += sp - st.bcor; st.bcor = sp; })])));
       }
       out.push(group('Header and footer', field('Head height', 'headheight', 'headheight'), field('Head sep', 'headsep', 'headsep'), field('Foot skip', 'footskip', 'footskip')),
         group('Margin notes', field('Width', 'mpwidth', 'marginparwidth'), field('Sep', 'mpsep', 'marginparsep')));
@@ -2548,6 +2682,115 @@ const satexViews = (() => {
       } else out.push(el('div', 'tv-text', ctx.markdown('Rules under the header and over the footer: KOMA\'s `headsepline` and `footsepline` options.')));
       return out;
     }
+    /** Buttons of which one is on: `opts` as `[value, label]`. */
+    const seg = (label: string, opts: string[][], on: unknown, pick: (v: string) => void, off = false) => {
+      const row = el('div', 'tv-field'), bs = el('div', 'tv-tabs');
+      bs.role = 'group'; bs.ariaLabel = label;
+      for (const [v, t] of opts) {
+        const b = el('button', 'tv-tab', esc(t!)); b.type = 'button'; b.disabled = off;
+        b.setAttribute('aria-pressed', String(v === on)); b.classList.toggle('on', v === on);
+        b.onclick = () => { pick(v!); touch(); draw(); };
+        bs.append(b);
+      }
+      row.append(el('span', '', esc(label)), bs);
+      return row;
+    };
+    /** A select of `opts` (`[value, label]`), `none` first when given. */
+    const pick = (label: string, opts: string[][], on: unknown, set: (v: string) => void, none?: string) => {
+      const row = el('label', 'tv-field');
+      const sel = el('select', 'tv-input', (none != null ? [['', none], ...opts] : opts).map(([v, t]) => `<option value="${esc(v!)}"${v === (on ?? '') ? ' selected' : ''}>${esc(t!)}</option>`).join(''));
+      sel.ariaLabel = label;
+      sel.onchange = () => { set(sel.value); touch(); draw(); };
+      row.append(el('span', '', esc(label)), sel);
+      return row;
+    };
+    const colors = (s.pagecolor?.colors ?? []) as Rec[], css = (name: string) => colors.find((c) => c.name === name)?.css;
+    const colorOpts = colors.map((c) => [c.name, c.name]);
+    /** `opts` with the value as written when they lack it, so a select never shows another. */
+    const withNow = (opts: string[][], now: string | undefined) => now && !opts.some(([v]) => v === now) ? [...opts, [now, `${now} (as written)`]] : opts;
+    const ch = () => st.styles;
+    function options() {
+      const out: HTMLElement[] = [];
+      const cols = seg('Columns', [['1', 'One'], ['2', 'Two']], String(st.columns ?? ''), (v) => { st.columns = +v; }, !s.columns?.class || st.columns == null);
+      out.push(group('Columns', cols, el('div', 'tv-text', ctx.markdown(s.columns?.class ? 'A class option: `twocolumn` or none.' : 'The class is loaded elsewhere: not written here.'))));
+      const p = s.pagecolor, now = styleSet(s, ch()).pagecolor;
+      if (colors.length) {
+        const sw = el('span', 'tv-swatch'); sw.style.background = css(now) ?? 'transparent';
+        const row = pick('Color', withNow(colorOpts, now), now, (v) => { ch().pagecolor = v; }, 'none (white paper)');
+        row.append(sw);
+        out.push(group('Page color', row, el('div', 'tv-text', ctx.markdown('`\\pagecolor` in the preamble: every page. The colors defined there.'))));
+      } else {
+        const b = el('button', 'tv-button tv-start', 'Load xcolor'); b.type = 'button';
+        b.onclick = () => self.satexSnapshot.write(ctx, [self.satexSnapshot.call('usepackage', [self.satexSnapshot.arg('{', 'xcolor')], s.headings?.insert)], (m) => { status.textContent = m; });
+        out.push(group('Page color', el('div', 'tv-text', ctx.markdown(`No color package is loaded${p?.defined ? '' : ': `\\pagecolor` is not defined'}. xcolor defines the colors to choose from.`)), b));
+      }
+      return out;
+    }
+    // named style sets: kept in this browser, switched by writing their edits
+    const KEY = 'satex-style-sets';
+    const sets = (): Rec => { try { return JSON.parse(localStorage.getItem(KEY) ?? '{}') ?? {}; } catch { return {}; } };
+    const keep = (v: Rec) => { try { localStorage.setItem(KEY, JSON.stringify(v)); return true; } catch { return false; } };
+    let chosen = '';
+    function headings() {
+      const h = s.headings ?? {}, out: HTMLElement[] = [];
+      if (h.refuse) return [el('div', 'tv-text', ctx.markdown(h.refuse))];
+      const all = sets(), names = Object.keys(all).sort();
+      const name = Object.assign(el('input', 'tv-input'), { placeholder: 'name', value: chosen, spellcheck: false, ariaLabel: 'style set name' });
+      const save = el('button', 'tv-button', 'Save'); save.type = 'button';
+      save.onclick = () => { const n = name.value.trim(); if (!n) return name.focus(); chosen = n; status.textContent = keep({ ...sets(), [n]: styleSet(s, ch()) }) ? `saved “${n}”` : 'this browser keeps no data here'; draw(); };
+      const forget = el('button', 'tv-button', 'Forget'); forget.type = 'button'; forget.disabled = !Object.hasOwn(all, chosen);
+      forget.onclick = () => { const v = sets(); delete v[chosen]; keep(v); chosen = ''; draw(); };
+      const row = el('div', 'tv-row tv-sets'); row.append(name, save, forget);
+      const use = pick('Switch to', names.map((n) => [n, n]), Object.hasOwn(all, chosen) ? chosen : '', (v) => {
+        chosen = v;
+        if (!Object.hasOwn(all, v)) { st.styles = {}; return; }
+        const { ch: next, skipped } = styleEdits(s, all[v]);
+        st.styles = next;
+        if (skipped.length) setTimeout(() => { status.textContent = `not in this document: ${skipped.join(', ')}`; });
+      }, 'as written');
+      out.push(group('Style sets', use, row, el('div', 'tv-text', ctx.markdown('A set keeps every level\'s font, the numbering and the page color. Switching fills them in, Apply writes them.'))));
+      const label = (n: string) => n[0]!.toUpperCase() + n.slice(1);
+      for (const l of h.levels ?? []) {
+        if (!styleable(l)) { out.push(group(label(l.name), el('div', 'tv-text', ctx.markdown(l.refuse ?? 'Its call is written by hand: kept as it is.')))); continue; }
+        const f = styleOf(h, l, ch()), set = (field: string) => (v: string) => {
+          if (field === 'align' && l.ragged) (ch().ragged ??= {})[l.ragged] = v;
+          else ((ch().levels ??= {})[l.name] ??= {})[field] = v;
+        };
+        const rows: HTMLElement[] = Object.entries(h.switches ?? {}).filter(([, v]) => (v as unknown[]).length).map(([k, v]) => seg(label(k), (v as string[][]).map(([x]) => [x!, label(x!)]), f[k], set(k)));
+        rows.push(pick('Size', (h.sizes ?? []).map((z: string) => [z, z.slice(1)]), f.size, set('size'), f.size ? undefined : 'as the class sets it'));
+        if (colorOpts.length || f.color) rows.push(pick('Color', withNow(colorOpts, f.color), f.color, set('color'), 'text color'));
+        rows.push(seg('Align', h.align.map((r: string[]) => [r[0], label(r[0]!)]), f.align, set('align')));
+        const shared = l.ragged && (h.levels as Rec[]).filter((m) => m.ragged === l.ragged).length > 1;
+        out.push(group(label(l.name), ...rows, ...(shared ? [el('div', 'tv-text', ctx.markdown(`Alignment: \`\\${l.ragged}\`, shared by the levels below.`))] : [])));
+      }
+      const numbered = (h.levels as Rec[]).filter((l) => l.level != null);
+      if (h.secnumdepth?.value != null && numbered.length) {
+        const depth = ch().depth ?? h.secnumdepth.value, low = Math.min(...numbered.map((l) => l.level));
+        out.push(group('Numbering', pick('Numbered', [[String(low - 1), 'none of these'], ...numbered.map((l) => [String(l.level), `down to ${l.name}`])], String(Math.max(low - 1, Math.min(depth, Math.max(...numbered.map((l) => l.level))))), (v) => { ch().depth = +v; })));
+      }
+      return out;
+    }
+    /** The headings as the style edits show them, drawn with the browser's fonts: a sketch, the PDF has the real result. */
+    function preview() {
+      const h = s.headings ?? {}, box = el('div', 'tv-style-preview');
+      box.role = 'figure'; box.ariaLabel = 'preview of the headings';
+      box.style.background = css(styleSet(s, ch()).pagecolor) ?? '';
+      const depth = ch().depth ?? h.secnumdepth?.value ?? 9, nums: number[] = [];
+      for (const l of (h.levels ?? []).filter(styleable) as Rec[]) {
+        const f = styleOf(h, l, ch()), i = (h.sizes ?? []).indexOf(f.size), at = (h.levels as Rec[]).indexOf(l);
+        nums[at] = 1; nums.length = at + 1;
+        const line = el('div', 'tv-style-line', `${l.level != null && l.level <= depth ? `<span>${nums.join('.')}</span> ` : ''}${esc(l.name[0].toUpperCase() + l.name.slice(1))} title`);
+        Object.assign(line.style, {
+          fontFamily: { serif: 'Georgia, serif', sans: 'system-ui, sans-serif', mono: 'ui-monospace, monospace' }[f.family as string] ?? 'Georgia, serif',
+          fontWeight: f.series === 'bold' ? '700' : '400', fontStyle: f.shape === 'italic' || f.shape === 'slanted' ? 'italic' : 'normal',
+          fontVariant: f.shape === 'small caps' ? 'small-caps' : 'normal', fontSize: `${i < 0 ? 1.2 : 1.2 ** (i - 4)}em`, color: css(f.color) ?? '',
+          textAlign: { left: 'left', center: 'center', right: 'right' }[f.align as string] ?? 'left',
+        });
+        box.append(line);
+      }
+      box.append(el('p', 'tv-style-body', 'Body text follows the heading. A sketch in the browser\'s fonts: the PDF shows the result.'));
+      return box;
+    }
     /** The page (both, two-sided) to scale, in pt, each margin labelled. */
     function sheet() {
       const b = pageBox(st, two), pt = (sp: number) => sp / 65536, W = pt(st.pw), Hh = pt(st.ph), gap = W / 12, fs = W / (two ? 20 : 28);
@@ -2559,6 +2802,9 @@ const satexViews = (() => {
         const left = even ? b.right : b.left, x = x0 + pt(left), y = pt(b.top);
         const rect = (cls: string, rx: number, ry: number, w: number, h: number, title: string) => { const r = svgEl('rect', { class: cls, x: rx, y: ry, width: Math.max(0, w), height: Math.max(0, h) }); r.append(Object.assign(svgEl('title'), { textContent: title })); out.push(r); };
         rect('tv-page-paper', x0, 0, W, Hh, `paper ${len(st.pw)} × ${len(st.ph)}`);
+        const tint = css(styleSet(s, st.styles).pagecolor);
+        if (tint) Object.assign((out.at(-1) as SVGElement).style, { fill: tint, fillOpacity: '.4' });
+        if (st.bcor > 1) rect('tv-page-bind', even ? x0 + W - pt(st.bcor) : x0, 0, pt(st.bcor), Hh, `binding ${len(st.bcor)}`);
         rect('tv-page-head', x, y - pt(st.headsep + st.headheight), pt(tw), pt(st.headheight), `header: \\headheight ${len(st.headheight)}, \\headsep ${len(st.headsep)}`);
         rect('tv-page-body', x, y, pt(tw), pt(th), `text: \\textwidth ${len(tw)}, \\textheight ${len(th)}`);
         const base = y + pt(th + st.footskip), fh = Math.min(pt(st.headheight), pt(st.footskip));
@@ -2623,7 +2869,14 @@ const satexViews = (() => {
     }
     function draw() {
       for (const b of tabs.children) b.classList.toggle('on', b.dataset.tab === tab);
-      side.replaceChildren(...(tab === 'margins' ? margins() : header()));
+      // the panel is drawn anew: the focused control (by its place among the controls) and the scroll stay
+      const controls = () => [...side.querySelectorAll('button, select, input')] as HTMLElement[];
+      const focused = controls().indexOf(document.activeElement as HTMLElement), top = side.scrollTop;
+      side.replaceChildren(...(tab === 'margins' ? margins() : tab === 'options' ? options() : tab === 'headings' ? headings() : header()));
+      main.classList.toggle('tv-page-styles', tab === 'headings');
+      if (tab === 'headings') main.replaceChildren(preview(), side); else if (main.firstChild !== svg) main.replaceChildren(svg, side);
+      side.scrollTop = top;
+      if (focused >= 0) controls()[focused]?.focus({ preventScroll: true });
       paint();
     }
     // the server prints the snapshots; its notes (a package loaded) stay in the status
@@ -2754,11 +3007,17 @@ button.tv-spec-value { cursor: pointer; } button.tv-spec-value:hover, button.tv-
 .tv-tree-edge { stroke: currentColor; stroke-width: .02; } .tv-node.dirty rect { stroke: var(--tv-accent); }
 .tv-forest-side, .tv-forest-tree { display: grid; gap: .4rem; } .tv-forest-side .tv-row > span, .tv-forest-tree .tv-row > span { min-width: 4.5rem; align-self: center; }
 .tv-page { min-width: min(46rem, 100%); } .tv-page-main { display: grid; grid-template-columns: minmax(14rem, 1.2fr) minmax(15rem, 1fr); gap: .9rem; align-items: start; }
-.tv-sheet { max-height: 62vh; } .tv-page-side { display: grid; gap: .6rem; max-height: 62vh; overflow: auto; padding-right: .2rem; } .tv-page-side .tv-field { grid-template-columns: 6.5rem 1fr; }
+.tv-sheet { max-height: 62vh; } .tv-page-side { display: grid; gap: .6rem; max-height: 62vh; overflow: auto; padding-right: .2rem; } .tv-page-side .tv-field { grid-template-columns: 6.5rem minmax(0, 1fr); }
 .tv-page-grip { stroke: transparent; } .tv-page-grip:hover { stroke: color-mix(in srgb, var(--tv-accent) 35%, transparent); } .tv-grip-x { cursor: ew-resize; } .tv-grip-y { cursor: ns-resize; }
 .tv-page-paper { fill: var(--tv-bg); stroke: var(--tv-muted); stroke-width: .6; } .tv-page-body { fill: color-mix(in srgb, var(--tv-accent) 16%, transparent); stroke: var(--tv-accent); stroke-width: .8; }
 .tv-page-head, .tv-page-foot { fill: color-mix(in srgb, var(--tv-accent) 10%, transparent); stroke: var(--tv-accent); stroke-width: .8; stroke-dasharray: 3 2; } .tv-start { justify-self: start; }
 .tv-sheet text.tv-page-field { fill: var(--tv-fg); font-style: italic; } .tv-page-mp { fill: none; stroke: var(--tv-muted); stroke-width: .5; stroke-dasharray: 2 2; }
+.tv-page-bind { fill: color-mix(in srgb, var(--tv-muted) 22%, transparent); stroke: none; } .tv-swatch { display: inline-block; width: 1.4rem; height: 1.4rem; border-radius: 4px; border: 1px solid var(--tv-border); margin-left: .4rem; vertical-align: middle; }
+.tv-page-main > * { min-width: 0; } .tv-page-side .tv-field > .tv-tabs { display: flex; flex-wrap: wrap; row-gap: .25rem; min-width: 0; }
+.tv-page-side .tv-field:has(> .tv-swatch) { grid-template-columns: 6.5rem minmax(0, 1fr) auto; } .tv-sets { flex-wrap: wrap; } .tv-sets input { flex: 1 1 6rem; font-size: .88rem; }
+.tv-page-styles { grid-template-columns: minmax(0, 1fr) minmax(0, 1.25fr); }
+.tv-style-preview { position: sticky; top: 0; border: 1px solid var(--tv-border); border-radius: 8px; padding: 1rem 1.2rem; background: #fff; color: #222; display: grid; gap: .6rem; align-content: start; max-height: 62vh; overflow: auto; }
+.tv-style-line { line-height: 1.2; } .tv-style-line span { margin-right: .4em; } .tv-style-body { margin: 0; font-family: Georgia, serif; font-size: .9rem; color: #444; }
 .tv-sheet text.tv-page-label { fill: var(--tv-muted); font-family: ui-sans-serif, system-ui, sans-serif; } .tv-sheet text.tv-page-big { fill: var(--tv-fg); font-weight: 600; }
 @media (max-width: 640px) { .tv-page-main { grid-template-columns: 1fr; } }
 .tv-hint { margin-right: auto; align-self: center; } .tv-foot { justify-content: flex-end; align-items: center; } .tv-foot .tv-muted { margin-right: auto; }.tv-history { display: grid; gap: .5rem; } .tv-hist-nav { font-size: .85rem; } .tv-hist-event { border-left: 3px solid var(--tv-border); padding: .2rem 0 .2rem .6rem; display: grid; gap: .2rem; }
@@ -2826,6 +3085,6 @@ button.tv-spec-value { cursor: pointer; } button.tv-spec-value:hover, button.tv-
       return (last = bag.pop());
     };
   }
-  return { tipBag, history: { historyEvent }, render, RENDER, hue, passes, masterDetail, usesView, fold, SPEC, mix, colorBand, oklch, drawing: { expandStyles, STYLE_DEF, parse, emit, mermaidIn, mermaidOut, mermaidLoss, layout, importMermaid, tipsOf, toMatrix, cellPlaces, toLayer, picOptions, relocate, relPos, nearestAnchor, anchorAt, tipMarker, shapeSample, shapeList, cycle, STYLE }, forest: forestFns, page: { pageOf, pageBox, pageNodes, headerOf, headerCalls, headerNodes }, dev: { traceCsv, stateHtml }, templates: { fill, filled, chosen } };
+  return { tipBag, history: { historyEvent }, render, RENDER, hue, passes, masterDetail, usesView, fold, SPEC, mix, colorBand, oklch, drawing: { expandStyles, STYLE_DEF, parse, emit, mermaidIn, mermaidOut, mermaidLoss, layout, importMermaid, tipsOf, toMatrix, cellPlaces, toLayer, picOptions, relocate, relPos, nearestAnchor, anchorAt, tipMarker, shapeSample, shapeList, cycle, STYLE }, forest: forestFns, page: { pageOf, pageBox, pageNodes, headerOf, headerCalls, headerNodes, fmtRead, fmtWrite, styleNodes, styleSet, styleEdits }, dev: { traceCsv, stateHtml }, templates: { fill, filled, chosen } };
 })();
 self.satexViews = satexViews;

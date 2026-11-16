@@ -1126,6 +1126,7 @@ pub fn stats_json(analysis: &crate::analysis::machine::Analysis, elapsed: std::t
         "definitions": facts.defs.len(),
         "expansions": facts.expansions.len(),
         "forks": analysis.forks,
+        "call_memo": { "kept": analysis.call_memo[0], "replayed": analysis.call_memo[1], "steps_saved": analysis.call_memo[2] },
         "peak_paths": analysis.peak_paths,
         "joined_slots": analysis.joined_slots,
         "loop_heads": analysis.loop_heads,
@@ -1598,6 +1599,9 @@ pub fn lsp_with(records: &[Record], uri: impl Fn(&str) -> String) -> String {
         });
         if crate::linter::settled(&code) {
             diagnostic["data"]["settled"] = true.into();
+        }
+        if record.get("provisional").is_some() {
+            diagnostic["data"]["provisional"] = true.into();
         }
         if crate::linter::number(&code).is_some() {
             diagnostic["codeDescription"] = serde_json::json!({ "href": crate::linter::url(&code) });

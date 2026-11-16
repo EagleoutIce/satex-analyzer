@@ -536,6 +536,8 @@ fn enter(
 
 /// Runs a `\directlua` chunk.
 pub(super) fn chunk(m: &mut Machine, code: &str, span: Span) -> Option<Vec<Token>> {
+    // Lua's own state: no kept effect holds it.
+    m.side_effects += 1;
     enter(m, span, Some(code.to_string()), None, |lua| {
         lua.load(code).set_name("=[\\directlua]").set_mode(ChunkMode::Text).exec()
     })
@@ -544,6 +546,8 @@ pub(super) fn chunk(m: &mut Machine, code: &str, span: Span) -> Option<Vec<Token
 /// Calls the function at `id` in `lua.get_functions_table()`, as a
 /// command `token.set_lua` made does, with `id` as its argument.
 pub(super) fn function(m: &mut Machine, id: u32, span: Span) -> Option<Vec<Token>> {
+    // Lua's own state: no kept effect holds it.
+    m.side_effects += 1;
     // What the function may assign when it stops: its own lines.
     let origin = state(m).and_then(|lua| {
         let functions: Table = lua.named_registry_value(FUNCTIONS).ok()?;

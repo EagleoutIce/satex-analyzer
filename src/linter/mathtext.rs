@@ -898,25 +898,38 @@ fn between_numbers(view: &View, at: usize) -> Option<String> {
 
 fn math_punctuation(report: &mut Report) {
     let view = report.text();
+    let after = report.analysis().settings.conventions.math.after;
     let mut findings = Vec::new();
     for region in regions(view) {
         let last = region.end - 1;
         match region.mode {
             Modes::MATH => {
                 // A `!` in math is a factorial (`$n!$`), not punctuation.
-                let inside = view.char_at(last).filter(|c| *c != '!' && PUNCTUATION.contains(*c));
-                findings.extend(inside.map(|c| (last, c, false)));
+                let Some(c) = view.char_at(last).filter(|c| *c != '!' && PUNCTUATION.contains(*c)) else { continue };
+                // A `.` or `?` the sentence reads on after, in lowercase,
+                // ends no sentence: it belongs to the formula, as in an
+                // edge named `$use?$`.  Letters before it spell a name.
+                let goes_on =
+                    following(view, region.end, after).is_some_and(|(i, next)| next.is_lowercase() && !view.math(i));
+                if matches!(c, '.' | '?') && goes_on {
+                    let word = view.word_before(last);
+                    if word.chars().count() > 1 {
+                        findings.push((last, c, false, Some(format!("{word}{c}"))));
+                    }
+                    continue;
+                }
+                findings.push((last, c, false, None));
             }
             Modes::DISPLAY_MATH => {
-                let outside = following(view, region.end, report.analysis().settings.conventions.math.after)
-                    .filter(|(i, c)| PUNCTUATION.contains(*c) && !view.math(*i));
-                findings.extend(outside.map(|(i, c)| (i, c, true)));
+                let outside =
+                    following(view, region.end, after).filter(|(i, c)| PUNCTUATION.contains(*c) && !view.math(*i));
+                findings.extend(outside.map(|(i, c)| (i, c, true, None)));
             }
             _ => {}
         }
     }
     let sources = report.edits().sources;
-    for (at, c, display) in findings {
+    for (at, c, display, name) in findings {
         let Some(span) = view.span(at) else { continue };
         // Inside, the mark has to be the author's, written before the
         // closing `$` or `\)`: siunitx's `group-separator={,}` is not.
@@ -927,6 +940,15 @@ fn math_punctuation(report: &mut Report) {
             Some(after.starts_with('$') || after.starts_with("\\)"))
         };
         if !display && written() != Some(true) {
+            continue;
+        }
+        if let Some(name) = name {
+            report.add(
+                span,
+                "name",
+                format!("`{name}` is a name, yet math sets its letters as a product of variables and `{c}` as a mark"),
+                Some(format!("set it as one name: `\\mathit{{{name}}}`, or a command of your own such as `\\newcommand\\edge[1]{{\\mathit{{#1}}}}`")),
+            );
             continue;
         }
         let (is, belongs) = match display {

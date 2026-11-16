@@ -444,10 +444,15 @@ impl Machine<'_> {
             if !ended && paths.top {
                 crate::util::progress::pause();
             }
-            if !ended && paths.top && self.checkpoint_due() {
+            if !ended && paths.top {
+                self.probe_convergence();
+            }
+            let spliced = self.spliced();
+            if !ended && paths.top && (spliced || self.checkpoint_due()) {
                 let (outer, paths) = (outer.clone(), paths.clone());
                 self.take_checkpoint(Drive { outer, outer_unit, nested, paths, keep_errors, mark, commands });
             }
+            self.halted |= spliced;
             self.charge(&mut mark);
             if !nested {
                 self.undo.clear();

@@ -2581,6 +2581,31 @@ fn taking_glue_off_a_vertical_list_restores_its_size() {
     assert_eq!(got, ["13.60416pt,0.0pt", "3.0pt,2.0pt", "3.0pt,2.0pt", "6.0pt,0.0pt", "3.0pt,2.0pt"]);
 }
 
+/// A kept call effect replays a run as the code around it saw it: its
+/// reads reach the logs of the enclosing records as the run gave them,
+/// no more. Pins a replay of xcolor's `\XC@info` (in beamer's frame
+/// colours) that logged every name its run read, also the ones the run
+/// read without logging them, among them unknown ones. An enclosing site
+/// record then looked like a run over unknown operands, its call was
+/// summarized by its writes, and the frame body never ran.
+#[test]
+fn a_replayed_call_logs_only_the_reads_its_run_logged() {
+    if !installed() {
+        return;
+    }
+    let mut cfg = crate::support::config();
+    cfg.limits.call_memo_steps = 200;
+    let source = r"\documentclass{beamer}
+\begin{document}
+\begin{frame}{T}
+\xdef\a{1}
+\end{frame}
+\end{document}";
+    let analysis = Machine::analyze(source, None, &cfg);
+    assert!(analysis.call_memo[1] > 0, "no kept effect was replayed");
+    assert_eq!(body(&analysis, "a"), "1");
+}
+
 /// A PDF file of `objects` (numbered from 1, the first the catalog) with
 /// its cross-reference table.
 fn pdf_file(objects: &[&str]) -> Vec<u8> {
@@ -3580,7 +3605,9 @@ fn a_build_that_fell_back_to_an_earlier_run_says_so() {
     );
     std::fs::write(&path, &source).unwrap();
     // The budget lets the first run end, as it did alone, and stops the second.
+    // The spin must cost what it says: kept call effects would replay its calls.
     let mut cfg = crate::support::config();
+    cfg.limits.call_memo_steps = 0;
     cfg.limits.build_runs = 1;
     let first = Machine::analyze(&source, Some(&path), &cfg);
     cfg.limits.build_runs = 5;
@@ -4906,4 +4933,31 @@ fn a_number_compared_with_itself_is_equal() {
     );
     let errors: Vec<String> = codes(&analysis).into_iter().filter(|c| c.contains("error")).collect();
     assert!(errors.is_empty(), "{errors:?}");
+}
+
+/// tex.web §§ 977, 1091, 1110: `\vsplit` splits the list a vbox recorded,
+/// so what is left after it is known. The record follows an hbox on the
+/// vertical list (it moves no ins or mark), a one-line paragraph below
+/// its interline glue, and `\unvbox`, which adds no interline glue and
+/// keeps `\prevdepth`. Pins scrlayer-notecolumn's `\clearnotecolumns`
+/// loop: the rest of a split note box was unknown, so the loop never ended.
+/// Values as `pdflatex` prints them.
+#[test]
+fn split_rest_of_recorded_lines_and_unvboxed_lists_is_known() {
+    if !installed() {
+        return;
+    }
+    let analysis = analyze(
+        r"\documentclass{article}
+\begin{document}
+\splittopskip=10pt \splitmaxdepth=4pt
+\setbox1\vbox{\kern 700pt\hbox{\strut A}}\setbox0\vsplit1 to 500pt \xdef\Ra{\ifvoid1 v\else n\fi}
+\setbox1\vbox{\hsize3cm\kern 700pt\strut A\par}\setbox0\vsplit1 to 500pt \xdef\Rb{\ifvoid1 v\else n,\the\ht1\fi}
+\setbox1\vbox{\kern 1pt}\setbox1\vbox{\hsize3cm\unvbox1\kern 700pt\strut A\par}\setbox0\vsplit1 to 500pt \xdef\Rc{\ifvoid1 v\else n,\the\ht1\fi}
+\setbox1\vbox{\hsize3cm\kern 700pt\strut A\par}\setbox0\vsplit1 to 500pt \setbox1\vbox{\pdfcolorstack0 current\relax\unvbox1}\xdef\Rd{\the\ht1}
+\setbox1\vbox{\hbox{\vrule height5pt depth3pt}}\setbox2\vbox{\unvbox1\hbox{\vrule height5pt depth3pt}}\xdef\Re{\the\ht2,\the\dp2}
+\end{document}",
+    );
+    let got: Vec<String> = ["Ra", "Rb", "Rc", "Rd", "Re"].iter().map(|k| body(&analysis, k)).collect();
+    assert_eq!(got, ["v", "n,10.0pt", "n,10.0pt", "10.0pt", "13.0pt,3.0pt"]);
 }

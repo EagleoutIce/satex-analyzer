@@ -596,6 +596,22 @@ impl<'a> Edits<'a> {
         Some(vec![Edit { path, start, end: end?, replacement: replacement.to_string() }])
     }
 
+    /// `\vskip⟨glue⟩` at `span` as `\vspace{⟨glue⟩}`: the primitive and the
+    /// glue it reads (with a `\relax` that ends it) become a call of `command`.
+    pub fn glue_call(&self, span: Span, command: &str) -> Option<Vec<Edit>> {
+        let (path, text, _, cs) = self.command(span)?;
+        let rest = &text.body()[text.offset(cs.end)?..];
+        let length = glue(rest)?;
+        let operand = rest[..length].trim();
+        let after = rest[length..].trim_start_matches([' ', '\t']);
+        let end = match after.strip_prefix("\\relax").filter(|r| !r.starts_with(|c: char| c.is_alphabetic())) {
+            Some(r) => rest.len() - r.len(),
+            None => length,
+        };
+        let end = text.pos(text.offset(cs.end)? + end);
+        Some(vec![Edit { path, start: cs.start, end, replacement: format!("{command}{{{operand}}}") }])
+    }
+
     /// The call `\cs{arg}` at `span` replaced by what `with` makes of its
     /// argument's text, deleted with its line when that is empty.
     pub fn replace_call(&self, span: Span, with: impl Fn(&str) -> String) -> Option<Vec<Edit>> {
@@ -605,6 +621,54 @@ impl<'a> Edits<'a> {
         Some(vec![match replacement.is_empty() {
             true => removal(&text, &path, cs.start, group.end),
             false => Edit { path, start: cs.start, end: group.end, replacement },
+        }])
+    }
+
+    /// The call `\cs[…]` at `span` with the value of its key `key` written
+    /// `value`; `None` where its options hold a key not in `allowed`, a
+    /// comment or an escaped character.
+    pub fn replace_key(&self, span: Span, cs: &str, key: &str, value: &str, allowed: &[&str]) -> Option<Vec<Edit>> {
+        let (path, text, mut scan, lexeme) = self.command(span)?;
+        if scan.name(&lexeme)? != cs {
+            return None;
+        }
+        scan.star();
+        let opt = scan.optional()?;
+        let (base, body) = (text.offset(opt.inner_start)?, text.slice(opt.inner_start, opt.inner_end)?);
+        // `\,` or `\{` would hide a comma or brace from the split below.
+        let escaped = body.split('\\').skip(1).any(|rest| !rest.starts_with(|c: char| c.is_alphabetic()));
+        if body.contains('%') || escaped {
+            return None;
+        }
+        let (mut depth, mut from, mut found) = (0, 0, None);
+        for (i, c) in body.char_indices().chain([(body.len(), ',')]) {
+            match c {
+                '{' => depth += 1,
+                '}' => depth -= 1,
+                ',' if depth == 0 => {
+                    let entry = &body[from..i];
+                    let (name, _) = entry.split_once('=').unwrap_or((entry, ""));
+                    match name.trim() {
+                        "" => {}
+                        n if !allowed.contains(&n) => return None,
+                        n if n == key => {
+                            let eq = from + entry.find('=')? + 1;
+                            let lead = body[eq..i].len() - body[eq..i].trim_start().len();
+                            found = Some((eq + lead, from + entry.trim_end().len()));
+                        }
+                        _ => {}
+                    }
+                    from = i + 1;
+                }
+                _ => {}
+            }
+        }
+        let (start, end) = found?;
+        Some(vec![Edit {
+            path,
+            start: text.pos(base + start),
+            end: text.pos(base + end),
+            replacement: value.to_string(),
         }])
     }
 
@@ -911,4 +975,77 @@ fn removal(text: &Text, path: &str, start: Pos, end: Pos) -> Edit {
         end,
         replacement: String::new(),
     })
+}
+
+/// The bytes of `text` TeX reads as glue (tex.web § 461): a signed register,
+/// or a factor and a unit or register, then `plus` and `minus` parts.  `None`
+/// where the source is anything a plain reading could misjudge.
+fn glue(text: &str) -> Option<usize> {
+    const UNITS: [&str; 12] = ["pt", "pc", "in", "bp", "cm", "mm", "dd", "cc", "sp", "em", "ex", "px"];
+    let spaces = |at: usize| at + text[at..].len() - text[at..].trim_start_matches([' ', '\t']).len();
+    let keyword = |at: usize, word: &str| {
+        let at = spaces(at);
+        text.get(at..at + word.len()).filter(|w| w.eq_ignore_ascii_case(word)).map(|_| at + word.len())
+    };
+    let register = |at: usize| {
+        let rest = text[at..].strip_prefix('\\')?;
+        let letters = rest.len() - rest.trim_start_matches(|c: char| c.is_ascii_alphabetic()).len();
+        // A control symbol or `@`-name is no plain register.
+        (letters > 0 && !rest[letters..].starts_with('@')).then_some(at + 1 + letters)
+    };
+    let dimen = |mut at: usize, fil: bool| -> Option<usize> {
+        loop {
+            at = spaces(at);
+            match text[at..].chars().next()? {
+                '+' | '-' => at += 1,
+                _ => break,
+            }
+        }
+        if let Some(end) = register(at) {
+            return Some(end);
+        }
+        let digits = text[at..].len()
+            - text[at..].trim_start_matches(|c: char| c.is_ascii_digit() || c == '.' || c == ',').len();
+        if digits == 0 || !text[at..at + digits].contains(|c: char| c.is_ascii_digit()) {
+            return None;
+        }
+        at = spaces(at + digits);
+        if let Some(end) = register(at) {
+            return Some(end);
+        }
+        if fil && let Some(mut end) = keyword(at, "fil") {
+            while text[end..].starts_with(['l', 'L']) {
+                end += 1;
+            }
+            return Some(end);
+        }
+        let at = keyword(at, "true").unwrap_or(at);
+        UNITS.iter().find_map(|unit| keyword(at, unit))
+    };
+    let mut end = dimen(0, false)?;
+    for part in ["plus", "minus"] {
+        if let Some(at) = keyword(end, part) {
+            end = dimen(at, true)?;
+        }
+    }
+    // A unit or keyword that runs on into a word was not one.
+    text[end..].chars().next().is_none_or(|c| !c.is_ascii_alphabetic()).then_some(end)
+}
+
+#[cfg(test)]
+mod glue_tests {
+    use super::glue;
+
+    /// The glue `\vskip` reads, from the source text after it.
+    #[test]
+    fn glue_is_read_as_tex_reads_it() {
+        assert_eq!(glue("\\baselineskip\n"), Some("\\baselineskip".len()));
+        assert_eq!(glue(" 1.5em plus 2pt minus 1fill text"), Some(" 1.5em plus 2pt minus 1fill".len()));
+        assert_eq!(glue("-0.5\\baselineskip}"), Some("-0.5\\baselineskip".len()));
+        assert_eq!(glue(" 3 true cm\\relax"), Some(" 3 true cm".len()));
+        // Unclear: an `@` register, no unit, or a unit running into a word.
+        assert_eq!(glue("\\z@skip"), None);
+        assert_eq!(glue(" 3 apples"), None);
+        assert_eq!(glue(" 3ptx"), None);
+    }
 }

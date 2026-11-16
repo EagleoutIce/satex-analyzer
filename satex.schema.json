@@ -2496,6 +2496,66 @@
           ],
           "x-example": "1 ends `\\pgfmathparse{\\the\\wd0}` at its first undecided digit"
         },
+        "call_memo_entries": {
+          "default": 100000,
+          "description": "kept effects in all, past it none are added; also how many calls met once are remembered",
+          "minimum": 0,
+          "type": "integer",
+          "x-affects": [
+            "speed"
+          ],
+          "x-example": "bounds the memory a long tikz document spends on them"
+        },
+        "call_memo_longest": {
+          "default": 200000,
+          "description": "a run longer than this keeps no effect and stops being recorded, so its log costs nothing",
+          "minimum": 0,
+          "type": "integer",
+          "x-affects": [
+            "speed"
+          ],
+          "x-example": "a whole `tikzpicture` is not recorded, the point computations in it are"
+        },
+        "call_memo_probes": {
+          "default": 8,
+          "description": "runs of a definition that may stay short or unclean before its calls are no longer recorded for call_memo_steps",
+          "minimum": 0,
+          "type": "integer",
+          "x-affects": [
+            "speed"
+          ],
+          "x-example": "0 records every call, which costs on every call"
+        },
+        "call_memo_steps": {
+          "default": 200,
+          "description": "a call that ran this many steps cleanly keeps its effect; the same call reading the same values applies it. 0 = never",
+          "minimum": 0,
+          "type": "integer",
+          "x-affects": [
+            "speed"
+          ],
+          "x-example": "`\\pgfmathparse{sin(30)*2}` met again costs one step"
+        },
+        "call_memo_variants": {
+          "default": 4,
+          "description": "kept effects per code and arguments, one per state they met",
+          "minimum": 0,
+          "type": "integer",
+          "x-affects": [
+            "speed"
+          ],
+          "x-example": "`\\pgfmathparse{\\x+1}` for four values of `\\x`"
+        },
+        "call_memo_verify": {
+          "default": 0,
+          "description": "debug: a call a kept effect stands for runs for real instead, and where its run differs from the kept effect is printed",
+          "minimum": 0,
+          "type": "integer",
+          "x-affects": [
+            "speed"
+          ],
+          "x-example": "1 prints `kept effect of \\XC@info differs from its run` with the names that differ"
+        },
         "call_rec_depth": {
           "default": 64,
           "description": "how many nested calls are recorded to be learned from or summarized",
@@ -3198,6 +3258,180 @@
                 "output"
               ],
               "x-example": "`% TODO cite this` gets a finding"
+            }
+          },
+          "type": "object"
+        },
+        "early": {
+          "description": "rules that need no run report on a sketch first, the run confirms or retracts",
+          "properties": {
+            "bibliographies": {
+              "default": [
+                "bibliography",
+                "addbibresource"
+              ],
+              "description": "commands it reads as naming .bib databases",
+              "items": {
+                "type": "string"
+              },
+              "type": "array",
+              "x-affects": [
+                "output"
+              ]
+            },
+            "citations": {
+              "default": [
+                "cite",
+                "citep",
+                "citet",
+                "parencite",
+                "textcite",
+                "autocite",
+                "footcite",
+                "nocite"
+              ],
+              "description": "commands it reads as citing keys",
+              "items": {
+                "type": "string"
+              },
+              "type": "array",
+              "x-affects": [
+                "output"
+              ]
+            },
+            "enabled": {
+              "default": true,
+              "description": "show these findings before the run ends",
+              "type": "boolean",
+              "x-affects": [
+                "output"
+              ]
+            },
+            "graphic-extensions": {
+              "default": [
+                "pdf",
+                "png",
+                "jpg",
+                "jpeg",
+                "mps",
+                "eps"
+              ],
+              "description": "extensions it tries for a graphic named without one",
+              "items": {
+                "type": "string"
+              },
+              "type": "array",
+              "x-affects": [
+                "output"
+              ]
+            },
+            "graphics": {
+              "default": [
+                "includegraphics"
+              ],
+              "description": "commands it reads as including a graphic file",
+              "items": {
+                "type": "string"
+              },
+              "type": "array",
+              "x-affects": [
+                "output"
+              ]
+            },
+            "inline-verbatim": {
+              "default": [
+                "verb",
+                "lstinline",
+                "mintinline"
+              ],
+              "description": "commands the sketch reads verbatim to their delimiter",
+              "items": {
+                "type": "string"
+              },
+              "type": "array",
+              "x-affects": [
+                "output"
+              ]
+            },
+            "inputs": {
+              "default": [
+                "input",
+                "include",
+                "subfile"
+              ],
+              "description": "commands the sketch follows into the file they name",
+              "items": {
+                "type": "string"
+              },
+              "type": "array",
+              "x-affects": [
+                "output"
+              ]
+            },
+            "labels": {
+              "default": [
+                "label"
+              ],
+              "description": "commands the sketch reads as defining a label",
+              "items": {
+                "type": "string"
+              },
+              "type": "array",
+              "x-affects": [
+                "output"
+              ]
+            },
+            "packages": {
+              "default": [
+                "usepackage",
+                "RequirePackage"
+              ],
+              "description": "commands it reads as loading packages",
+              "items": {
+                "type": "string"
+              },
+              "type": "array",
+              "x-affects": [
+                "output"
+              ]
+            },
+            "references": {
+              "default": [
+                "ref",
+                "eqref",
+                "pageref",
+                "autoref",
+                "nameref",
+                "cref",
+                "Cref",
+                "vref"
+              ],
+              "description": "commands it reads as referring to labels",
+              "items": {
+                "type": "string"
+              },
+              "type": "array",
+              "x-affects": [
+                "output"
+              ]
+            },
+            "verbatim": {
+              "default": [
+                "verbatim",
+                "verbatim*",
+                "Verbatim",
+                "lstlisting",
+                "minted",
+                "comment"
+              ],
+              "description": "environments the sketch reads verbatim",
+              "items": {
+                "type": "string"
+              },
+              "type": "array",
+              "x-affects": [
+                "output"
+              ]
             }
           },
           "type": "object"
@@ -3975,6 +4209,21 @@
     },
     "plugins": {
       "properties": {
+        "augment": {
+          "default": [
+            "siunitx"
+          ],
+          "description": "the packages whose knowledge the lint rules ask. Leave one out to switch it off",
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "x-affects": [
+            "output"
+          ],
+          "x-example": "without siunitx: an `S` column with mixed decimals is no longer judged",
+          "x-plugin": "augment"
+        },
         "discovery": {
           "default": true,
           "description": "walk the project for other files, skipping what .gitignore excludes",
