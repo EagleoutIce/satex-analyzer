@@ -51,8 +51,9 @@ lock2=$(git rev-parse --path-format=absolute --git-common-dir)/../target/scratch
 slot=()
 [ -n "${SATEX_SLOT:-}" ] || [ ! -x "$lock2" ] || slot=("$lock2")
 in_slot() { CAP_SECONDS=${SHARD_SECONDS:-1800} "${slot[@]}" "$@"; }
-# One build, in a slot: the integration binary and the unit tests.
-mapfile -t bins < <(CAP=0 BUILD_ONLY=1 in_slot scripts/t.sh)
+# One build, in a slot: the integration binary, and the unit tests only where they run (fast):
+# compiling the library a second time as a test crate doubles an edit's rebuild.
+mapfile -t bins < <(CAP=0 BUILD_ONLY=$([ "$tier" = fast ] && echo 1 || echo it) in_slot scripts/t.sh)
 it=$(printf '%s\n' "${bins[@]}" | grep '/it-' || true); lib=$(printf '%s\n' "${bins[@]}" | grep -v '/it-' || true)
 [ -n "$it" ] || { echo "no test binary built" >&2; exit 1; }
 export RUST_MIN_STACK=${RUST_MIN_STACK:-$(sed -n 's/^RUST_MIN_STACK *= *"\([0-9]*\)"/\1/p' .cargo/config.toml)}
@@ -118,8 +119,12 @@ shard() {
         rc=0
         mapfile -t todo < <(comm -23 <(sort "$list") <(sed -n 's/^test \(.*\) \.\.\. \(ok\|FAILED\|ignored\).*/\1/p' "$log" | sort))
         [ "${#todo[@]}" -gt 0 ] || return 0
-        in_slot env RUSTC_BOOTSTRAP=1 "$it" --exact --test-threads "$t" -Z unstable-options --report-time "${pass[@]}" "${todo[@]}" >>"$log" 2>&1 || rc=$?
-        # 137: SIGKILL, the OOM killer. Any other end (a failure, a timeout) is final.
+        # exec: the recorded pid is the test binary's, which FAIL_FAST stops.
+        (in_slot() { CAP_SECONDS=${SHARD_SECONDS:-1800} exec "${slot[@]}" "$@"; }
+         in_slot env RUSTC_BOOTSTRAP=1 "$it" --exact --test-threads "$t" -Z unstable-options --report-time "${pass[@]}" "${todo[@]}") >>"$log" 2>&1 &
+        echo $! >"${list%.list}.pid"
+        wait $! || rc=$?
+        # 137: SIGKILL, the OOM killer. Any other end (a failure, a timeout, FAIL_FAST's stop) is final.
         [ "$rc" = 137 ] || return 0
         echo "shard $(basename "$list" .list): killed (OOM?), rerunning its unfinished tests" >&2
     done
@@ -133,12 +138,32 @@ phase() {
     mkdir -p "$d"
     join -a1 -1 1 -2 2 -o 0,2.1 -e 1 <(sort <<<"$tests") <(sort -k2,2 tests/times.txt 2>/dev/null) | sort -k2 -rn |
         awk -v n="$shards" -v d="$d" '{ b = 1; for (i = 2; i <= n; i++) if (s[i] < s[b]) b = i; s[b] += $2; print $1 > (d "/" b ".list") }'
-    for list in "$d"/*.list; do shard "$list" & done
+    local pids=() watcher
+    for list in "$d"/*.list; do shard "$list" & pids+=($!); done
     if [ "$tier" = fast ] && [ -n "$lib" ] && [ "${#filters[@]}" = 0 ] && [ -z "$libstarted" ]; then
-        libstarted=1; in_slot "$lib" --test-threads "$threads" >"$out/lib.out" 2>&1 &
+        libstarted=1; in_slot "$lib" --test-threads "$threads" >"$out/lib.out" 2>&1 & pids+=($!)
     fi
-    wait
+    watch_failures "$d" & watcher=$!
+    wait "${pids[@]}" || true
+    kill "$watcher" 2>/dev/null; wait "$watcher" 2>/dev/null || true
     ! grep -qs '^test .* \.\.\. FAILED' "$d"/*.log
+}
+# Names each failure on stderr as it happens, not only when the phase ends.
+# FAIL_FAST stops the phase's shards at the first one; that test is then rerun
+# alone, so its message is not lost with the stopped process.
+watch_failures() {
+    local d=$1 new
+    : >"$d/named"
+    while sleep 1; do
+        new=$(cat "$d"/*.log 2>/dev/null | sed -n 's/^test \(.*\) \.\.\. FAILED.*/\1/p' | sort -u | comm -23 - "$d/named")
+        [ -n "$new" ] || continue
+        echo "$new" | sed "s/^/[$(($(date +%s) - start)) s] FAILED /" >&2
+        sort -u "$d/named" - <<<"$new" >"$d/named.new"; mv "$d/named.new" "$d/named"
+        if [ -n "${FAIL_FAST:-}" ] && [ ! -e "$d/stopped" ]; then
+            head -1 <<<"$new" >"$d/stopped"
+            for p in "$d"/*.pid; do kill "$(cat "$p")" 2>/dev/null || true; done
+        fi
+    done
 }
 start=$(date +%s)
 lastfile=target/scratch/last-failed.txt
@@ -157,6 +182,14 @@ elif [ "$tier" = changed ] || [ -n "${FAIL_FAST:-}" ]; then
 else
     phase 2 <<<"$rest" || ok=0
 fi
+# The test FAIL_FAST stopped at, alone: its message died with its shard.
+for f in "$out"/*/stopped; do
+    [ -e "$f" ] || continue
+    t=$(cat "$f")
+    ! grep -qsx -- "---- $t stdout ----" "$out"/*/*.log || continue
+    echo "FAIL_FAST: stopped at $t, rerunning it alone for its message" >&2
+    in_slot env RUSTC_BOOTSTRAP=1 "$it" --exact -Z unstable-options --report-time "${pass[@]}" "$t" >"${f%stopped}rerun.log" 2>&1 || true
+done
 # Merged result: one line per test, like libtest's, then the verdict.
 cat "$out"/*/*.log | grep -E '^test .* \.\.\. (ok|FAILED|ignored)' | sort -u >"$out/results"
 failed=$(sed -n 's/^test \(.*\) \.\.\. FAILED.*/\1/p' "$out/results")

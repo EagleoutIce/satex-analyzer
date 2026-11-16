@@ -68,6 +68,10 @@ A shard killed by the OOM killer reruns its unfinished tests, then one at a time
 Per edit run `changed`, before a commit `fast`, and for everything `scripts/regress.sh` (the full suite, `cargo test --profile fast --test it` alone also works).
 Every tier run records its failures in `target/scratch/last-failed.txt`, and the next run starts with those tests.
 `FAIL_FAST=1` (always with `changed`) runs the rest in a cheap and then a dear batch and stops after the first batch that fails.
+Each failure is named on stderr the moment a shard reports it, with the seconds since the start.
+With `FAIL_FAST=1` the first failure also stops the running batch, and that test is rerun alone so its message is printed.
+Only `fast` builds the unit tests. The other tiers do not run them, and compiling the library a second time as a test crate doubles the rebuild after an edit.
+After an interpreter change the first test that needs the kernel rebuilds it, which takes about a minute. The tests that do not need it run meanwhile.
 Add a rule to `tests/changed-map.txt` when a `src/` directory has a smaller set of modules that covers it.
 
 Integration tests live in `tests/it/<area>.rs`, one module per area, collected by `tests/it/main.rs` into a single `it` binary.

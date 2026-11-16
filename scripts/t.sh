@@ -3,7 +3,7 @@
 #   scripts/t.sh [libtest args: filter, --skip x, --exact, ...]
 # Env: PROFILE (fast), THREADS (12), JOBS (12), BUILD_LOCK ($CARGO_TARGET_DIR/.build.lock),
 #      CARGO_TARGET_DIR, CAP=0 to skip the systemd-run memory/CPU cap,
-#      BUILD_ONLY=1 to only build and print the test binaries,
+#      BUILD_ONLY=1 to only build and print the test binaries (BUILD_ONLY=it: the integration one only),
 #      TIMES=1 to print every test's seconds (libtest --report-time).
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -19,7 +19,8 @@ lock=${BUILD_LOCK:-${CARGO_TARGET_DIR:-target}/.build.lock}
 mkdir -p "$(dirname "$lock")"
 # Only the build holds the lock: it is gone when this pipeline ends.
 # BUILD_ONLY=1 builds the unit tests too and prints both binaries' paths.
-bins=$(flock "$lock" "${cap[@]}" cargo test --profile "${PROFILE:-fast}" --test it ${BUILD_ONLY:+--lib} --no-run --message-format=json |
+lib=(); [ "${BUILD_ONLY:-}" != 1 ] || lib=(--lib)
+bins=$(flock "$lock" "${cap[@]}" cargo test --profile "${PROFILE:-fast}" --test it "${lib[@]}" --no-run --message-format=json |
     sed -n '/"kind":\["\(lib\|test\)"\]/s/.*"executable":"\([^"]*\)".*/\1/p')
 bin=$(grep '/it-' <<<"$bins" | tail -1)
 [ -n "$bin" ] || { echo "no test binary built" >&2; exit 1; }
