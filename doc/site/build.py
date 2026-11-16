@@ -1782,7 +1782,10 @@ def main():
     lean_env, refs, lean, lean_pages, _ = sem.build(ROOT, repo, commit, decls, sem_ids)
     lean_table = {f"semantics/lean/Satex/{s}.lean": f"lean/{s.lower()}.html" for s in sem.LEAN}
     stamp = os.environ.get("SOURCE_DATE_EPOCH")
-    built = (datetime.datetime.fromtimestamp(int(stamp), datetime.UTC) if stamp else datetime.datetime.now(datetime.UTC)).date().isoformat()
+    when = datetime.datetime.fromtimestamp(int(stamp), datetime.UTC) if stamp else datetime.datetime.now(datetime.UTC)
+    built = when.date().isoformat()
+    # the version's hover says when this site was built, to the minute: a pre-release says which one it is
+    release_title = f"{release_title}; built {when:%Y-%m-%d %H:%M} UTC"
 
     def fill(text, values):
         return re.sub(r"\{\{(\w+)\}\}", lambda m: values.get(m.group(1), m.group(0)), text)

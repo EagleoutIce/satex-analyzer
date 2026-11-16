@@ -25,6 +25,7 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 ### Site and docs
 
 - `fix` **Smooth typing on the front page.** The claim is typed on the display's frames at an even beat, a pause only after a space or a comma, and its height follows without a layout per character.
+- `feat` **When a site was built.** Hovering the version in the header, on every page and in the playground, says when the site was built, to the minute, also for a pre-release.
 - `feat` **The showcase turns by itself.** The front page's card ring turns one whole card every 8 seconds and rests while you point at it, focus it or have just turned it. Scrolling the page no longer tilts it.
 - `docs` **Why interpret the code, said plainly.** The front page explains that a macro's expansion depends on its context (definitions, catcodes, arguments, built names), which only running the code knows.
 - `docs` **Open source, said up front.** The front page says that SaTeX is MIT-licensed and links the repository.
