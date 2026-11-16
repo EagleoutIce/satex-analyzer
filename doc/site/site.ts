@@ -1963,8 +1963,9 @@ interface Stream {
   }
 
   // The showcase's cards on a ring: the card in front is the largest, the others turn away to both sides
-  // and fade behind. Scrolling the page turns the ring a little; the arrows, the arrow keys, a drag or a
-  // click on a side card bring a card to the front. Without motion or on a phone: the plain row below.
+  // and fade behind. It turns on by itself, one whole card at a time and slowly, while nobody points at,
+  // focuses or drags it; the arrows, the arrow keys, a drag or a click on a side card bring a card to the
+  // front and hold the turning for a while. Without motion or on a phone: the plain row below.
   function ring(row: HTMLElement) {
     if (matchMedia('(prefers-reduced-motion: reduce)').matches || !matchMedia('(min-width: 48rem)').matches) return false;
     const cards = [...row.querySelectorAll<HTMLElement>(':scope > .shot')], n = cards.length;
@@ -1973,7 +1974,7 @@ interface Stream {
     wrap.classList.add('ring');
     // the front card's scale; it grows from its top edge (style.css), so the ring is that much taller
     const step = 360 / n, FRONT = 1.16;
-    let at = 0, goal = 0, spin = 0, raf = 0, front = -1;
+    let at = 0, goal = 0, raf = 0, front = -1;
     const norm = (d: number) => ((d % 360) + 540) % 360 - 180;
     const draw = () => {
       raf = 0;
@@ -1984,7 +1985,7 @@ interface Stream {
       let best = 0, bestCos = -2;
       cards.forEach((c, i) => {
         // each card a step out is a fifth smaller: the front one stands out
-        const a = norm(i * step - at - spin), r = a * Math.PI / 180, cos = Math.cos(r);
+        const a = norm(i * step - at), r = a * Math.PI / 180, cos = Math.cos(r);
         const x = Math.sin(r) * radius, z = (cos - 1) * radius * .55;
         c.style.transform = `translate3d(calc(-50% + ${x.toFixed(1)}px), 0, ${z.toFixed(1)}px) rotateY(${(-a * .22).toFixed(2)}deg) scale(${(FRONT * .8 ** Math.min(3, Math.abs(a) / step)).toFixed(3)})`;
         c.style.opacity = Math.max(0, Math.min(1, (cos + .1) / .8)).toFixed(3);
@@ -2002,11 +2003,15 @@ interface Stream {
     };
     const kick = () => { if (!raf) raf = requestAnimationFrame(draw); };
     const turn = (by: number) => { goal = Math.round((goal + by * step) / step) * step; kick(); };
+    // a person's turn holds the automatic one for a while
+    const EVERY = 8000, HOLD = 20000;
+    let held = 0, hover = false, seen = false;
+    const hold = () => { held = performance.now() + HOLD; };
     prev.disabled = next.disabled = false;
-    prev.onclick = () => turn(-1);
-    next.onclick = () => turn(1);
-    row.addEventListener('keydown', (e) => { if ((e.key === 'ArrowLeft' || e.key === 'ArrowRight') && e.target === row) { e.preventDefault(); turn(e.key === 'ArrowLeft' ? -1 : 1); } });
-    const face = (i: number) => { goal += norm(i * step - goal); kick(); };
+    prev.onclick = () => { hold(); turn(-1); };
+    next.onclick = () => { hold(); turn(1); };
+    row.addEventListener('keydown', (e) => { if ((e.key === 'ArrowLeft' || e.key === 'ArrowRight') && e.target === row) { e.preventDefault(); hold(); turn(e.key === 'ArrowLeft' ? -1 : 1); } });
+    const face = (i: number) => { hold(); goal += norm(i * step - goal); kick(); };
     // a side card turns to the front first; the front card's links work as usual
     cards.forEach((c, i) => c.addEventListener('click', (e) => {
       if (i === front) return;
@@ -2019,7 +2024,7 @@ interface Stream {
     linked();
     // a drag turns the ring with the pointer, then settles on the nearest card
     let drag: { x: number; from: number; moved: boolean } | null = null;
-    row.addEventListener('pointerdown', (e: PointerEvent) => { if (e.button === 0) drag = { x: e.clientX, from: goal, moved: false }; });
+    row.addEventListener('pointerdown', (e: PointerEvent) => { if (e.button === 0) { hold(); drag = { x: e.clientX, from: goal, moved: false }; } });
     addEventListener('pointermove', (e) => {
       if (!drag) return;
       const dx = e.clientX - drag.x;
@@ -2027,19 +2032,19 @@ interface Stream {
       if (drag.moved) { goal = drag.from - dx / wrap.clientWidth * step * 2.2; at = goal; kick(); }
     });
     addEventListener('pointerup', () => { if (drag?.moved) { turn(0); row.addEventListener('click', (e: Event) => { e.preventDefault(); e.stopPropagation(); }, { capture: true, once: true }); } drag = null; });
-    // the page's scroll turns it a little, as if the ring sat on the page
-    const scrolled = () => {
-      const r = wrap.getBoundingClientRect(), mid = (r.top + r.height / 2) / innerHeight - .5;
-      // a hint of the turn, never a whole card: the page scrolls on as usual
-      spin = Math.max(-1, Math.min(1, mid)) * step * .45;
-      kick();
-    };
-    addEventListener('scroll', scrolled, { passive: true });
+    // the automatic turn: only while the ring is on screen, the tab shown, and nobody points at or focuses it
+    wrap.addEventListener('pointerenter', () => { hover = true; });
+    wrap.addEventListener('pointerleave', () => { hover = false; });
+    new IntersectionObserver(([e]) => { seen = e.isIntersecting; }, { threshold: .5 }).observe(wrap);
+    setInterval(() => {
+      if (!seen || hover || drag || document.hidden || wrap.contains(document.activeElement) || performance.now() < held) return;
+      turn(1);
+    }, EVERY);
     // images load late: a card that grows makes the ring taller, so no caption is cut off
     const grown = new ResizeObserver(kick);
     grown.observe(wrap);
     cards.forEach((c) => grown.observe(c));
-    scrolled();
+    kick();
     return true;
   }
 
