@@ -633,6 +633,23 @@ fn lock_for(target: &Path) -> PathBuf {
     target.with_extension("lock")
 }
 
+/// Whether `dir` holds `limits.cache_size` already (0: no bound).
+pub(crate) fn full(cfg: &crate::project::config::Config, dir: &Path) -> bool {
+    let bound = cfg.limits.cache_size.as_u64();
+    bound > 0 && dir_size(dir) >= bound
+}
+
+/// What the files in `dir` and below it weigh.
+pub(crate) fn dir_size(dir: &Path) -> u64 {
+    walkdir::WalkDir::new(dir)
+        .into_iter()
+        .flatten()
+        .filter_map(|e| e.metadata().ok())
+        .filter(|m| m.is_file())
+        .map(|m| m.len())
+        .sum()
+}
+
 /// Mark a cache as just used, for [`prune_caches`]' least-recently-used order.
 pub(crate) fn touch(path: &Path) {
     if let Ok(file) = std::fs::File::options().append(true).open(path) {

@@ -55,7 +55,7 @@ plugins: 48 in 11 kinds
   build system        5  latexmk, make, tectonic, arara, l3build
   tools               7  biber, bibtex, makeindex, xindy, makeglossaries, dvips, ps2pdf
   magic comments      3  % !TeX, % !BIB, % arara:
-… 16 more lines omitted
+… 17 more lines omitted
 ```
 
 <details>
@@ -78,7 +78,7 @@ Commands:
   dependencies  The program dependence graph (data dependencies plus control dependencies) as DOT or JSON
   trace         The execution trace, step by step
   cache         The interpreted LaTeX2e kernel and the package caches.  Without a further command, prints their status
-  compile       Build the document with latexmk, or the engine where latexmk is missing, and explain each error and warning the log reports by what the analysis found there.  Never opens a viewer.  The build runs the project's own code, its latexmkrc and what it lets TeX run, so build only projects you trust
+  compile       Build the document with its build system (arara directives, a Tectonic.toml, latexmk, or the engine) and explain each error and warning the log reports by what the analysis found there.  The build runs the project's own code and build files, so build only projects you trust
   install       Install the packages the document loads that this machine does not have.  Asks first, never elevates, and is never run by `lint --fix`
   tokens        The token stream the mouth produces
   completions   Print the shell completion script: bash, zsh, fish, elvish or powershell.  Values complete from the running binary.  `install [bash|zsh|fish]` registers it in that shell's startup file. Without a shell, it does so in every shell installed or in use
@@ -95,7 +95,7 @@ Options:
 
 Input:
   -f, --file <FILE>
-          The document to read. Without it, satex reads each root document in the current directory, or stdin if that is not a terminal
+          The document to read, `-` for stdin. Without it, satex reads what is piped in, else each root document in the current directory
 
       --config <FILE>
           An extra config file, merged on top of every discovered satex.yaml (built-in defaults, the global config, the ones from the filesystem root down to the document's directory)
@@ -118,8 +118,8 @@ Input:
       --inject <TEXT>
           Text read at `--at` as if it stood there in the file, such as `\mymacro{x}`: every command then sees what it does in the state the document has there. The file on disk is not changed
 
-      --at <LINE[:COL]>
-          Where `--inject` puts its text, `[FILE:]LINE[:COL]`. The main file without FILE, the start of the line without COL
+      --at <[FILE:]LINE[:COL]>
+          Where `--inject` puts its text. The main file without FILE, the start of the line without COL
 
 Limits:
       --max-steps <N>
@@ -136,7 +136,7 @@ Output:
           Report progress: files read (-v), every 100k tokens (-vv), every expansion (-vvv)
 
       --format <FORMAT>
-          Output format: text, json, csv, markdown, dot, github, sarif or lsp
+          Output format. A command given one it cannot print names the ones it can
 
           Possible values:
           - text:     Aligned table for a terminal, with color and links
@@ -566,11 +566,11 @@ The kernel and the packages are interpreted once and cached. `satex cache build`
 
 ```text
 $ satex cache
-cache
-  source /usr/local/texlive/YYYY/texmf-dist/tex/latex/base/latex.ltx
-  holds 197803 definitions
-  state cached
-… 3 more lines omitted
+cache ~/.cache/satex
+  kernel     /usr/local/texlive/YYYY/texmf-dist/tex/latex/base/latex.ltx · 197.8k definitions · cached
+  pruned     1 caches, 29.1 MiB: no build can use them, or past limits.cache_size
+  packages   258 stored, 377.8 MiB
+… 2 more lines omitted
 ```
 
 </details>
@@ -682,7 +682,7 @@ Every command prints text by default. You can use `--format json`, `csv` or `mar
 
 ## Configuration
 
-SaTeX merges its built-in defaults, your global `~/.config/satex/satex.yaml`, every `satex.yaml` from the filesystem root down to the document, `--config FILE`, and `--set PATH=VALUE`, each overriding the one before. `satex --version` lists what was used. Plugins detect the installation, engine, output and build system (latexmk, make, l3build, …). TeX, e-TeX, pdfTeX and LaTeX2e are modeled in full. XeTeX, LuaTeX and ConTeXt are experimental. See the [configuration wiki page](doc/wiki/configuration.md).
+SaTeX merges its built-in defaults, your global `~/.config/satex/satex.yaml`, every `satex.yaml` from the filesystem root down to the document, `--config FILE`, and `--set PATH=VALUE`, each overriding the one before. `satex --version` lists what was used. Plugins detect the installation, engine, output and build system (latexmk, make, l3build, …). TeX, e-TeX, pdfTeX and LaTeX2e are modeled in full. XeTeX, LuaTeX and ConTeXt are experimental. See the [configuration wiki page](doc/wiki/configuration.md). The [command line page](doc/wiki/cli.md) gives the rules every command shares: input, config, output and exit codes.
 
 ## How it works
 

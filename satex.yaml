@@ -229,7 +229,7 @@ conventions:  # how TeX is usually written, where the text alone does not say
     #! affects: output
     #! example: alternatives: {hskip: '`\hspace`'}
   completion:  # what completion offers and in which order
-    shown: 300  # commands one answer lists. The editor asks again as more is typed
+    shown: 300  # items one answer lists: commands, and packages, files, labels or citations found by what was typed. The editor asks again as more is typed
       #! affects: output, speed
       #! example: `shown: 50`
     signatures: 4  # items, best first, whose signature a probe reads where the listing has none
@@ -507,6 +507,16 @@ cache:
     auto: true  # every run stores the packages it reads, so the next run starts faster
       #! affects: speed, memory
       #! example: off: only `satex cache build` fills the cache
+    most_loaded: 200  # installed packages the background builder prepares, those most loaded first
+      #! affects: speed
+      #! example: lower: the background builder stops sooner and stores less
+  # background: ask         # prepare kernels and packages in a background process: ask, yes or no.
+                            # Only the user's own config sets it. Unset: ask once
+    #! affects: speed
+    #! option: ask: ask once, on the first run in a terminal or in the editor
+    #! option: yes: prepare caches in a low-priority background process
+    #! option: no: never
+    #! example: `background: yes` starts `satex cache build --background` when caches are missing
 # preload: preamble.tex     # a preamble the build dumps as its own format, as mylatexformat does.
 #! plugin: preload
                             # A %& line or -fmt= in the build files names it otherwise
@@ -672,6 +682,13 @@ lua:  # \directlua code, run by satex's own Lua 5.3 with no io, os or debug libr
     #! affects: precision
     #! example: `modules: 2`: a third nested require gives an unknown module
     #! plugin: lua_run
+
+compile:  # what satex compile runs and shows
+  system: auto  # the build system: auto (arara directives, then Tectonic.toml, then latexmk, then the engine), latexmk, arara, tectonic, make, l3build or engine
+    #! affects: output
+    #! example: `system: arara`: the `% arara:` directives of the main file build it
+  # viewer: none  # a PDF viewer `satex compile --view` opens: none or auto (the system's opener) or a program; only your own config sets it
+    #! affects: output
 
 lsp:  # how satex lsp serves an editor
   host: 127.0.0.1  # the address --port listens on

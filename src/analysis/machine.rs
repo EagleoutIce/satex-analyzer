@@ -70,6 +70,7 @@ mod package_cache;
 use package_cache::Delta;
 pub use package_cache::prune as prune_caches;
 pub use package_cache::served as cache_served;
+pub use package_cache::{TreeSize, tree_sizes};
 
 /// One kind of thing the interpreter did, recorded as an [`Event`] in the
 /// trace.
@@ -165,6 +166,25 @@ pub struct FileInfo {
     /// name (else two same-named files read as one that cannot balance).
     pub short: String,
 }
+
+/// A build between two of its runs: the runs done, the build's files as the
+/// next run reads them, and what the build knows of their history.
+#[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
+pub struct BuildPending {
+    pub run: u32,
+    pub files: Vec<(PathBuf, String)>,
+    pub widened: Vec<PathBuf>,
+    pub written: Vec<(PathBuf, Vec<String>)>,
+}
+
+thread_local! {
+    /// For tests: the build takes its time as used up after this run (0: the clock decides).
+    #[doc(hidden)]
+    pub static BUILD_CUT: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+}
+
+/// A build to go on with: its last run's analysis, and where it stood.
+pub type Unfinished = (Box<Analysis>, BuildPending);
 
 /// A limit (`limits.<key>` in the configuration) that cut the run.
 #[derive(PartialEq, Clone, Debug, serde::Serialize, serde::Deserialize)]
@@ -313,7 +333,7 @@ impl Analysis {
     }
 }
 
-fn compact_count(n: u64) -> String {
+pub(crate) fn compact_count(n: u64) -> String {
     crate::util::progress::compact(n)
 }
 
@@ -430,6 +450,10 @@ pub struct Analysis {
     /// How many runs of the build it took to reach the fixpoint
     /// ([`Machine::analyze_build`]).
     pub build_runs: u32,
+    /// Set when `limits.seconds` left no time for the build's next run:
+    /// what that run starts from ([`crate::caches::document`] keeps it).
+    #[serde(skip)]
+    pub build_pending: Option<Box<BuildPending>>,
     /// The packages among them that were classes.
     pub class_caches: std::collections::BTreeSet<String>,
     /// Files served at least in part from a package cache replay rather
@@ -660,18 +684,37 @@ impl Analysis {
         self.exhausted || self.limits.iter().any(|l| matches!(l.key, "seconds" | "memory"))
     }
 
+    /// Kernels and package caches this run built: one-time work the next run reuses.
+    pub fn caches_built(&self) -> usize {
+        let packages =
+            self.package_caches.iter().filter(|(name, _, state)| name != "document" && state.ends_with("stored"));
+        packages.count() + usize::from(self.format.as_ref().is_some_and(|f| f.rebuilt.is_some()))
+    }
+
     pub fn limit_notes(&self) -> Vec<String> {
+        let built = self.caches_built();
+        let document = |state: &str| self.package_caches.iter().any(|(name, _, s)| name == "document" && s == state);
         self.limits
             .iter()
             .map(|hit| {
+                let at = match (hit.at.line, built) {
+                    (0, _) if hit.key == "seconds" && self.build_pending.is_some() => {
+                        let run = self.build_pending.as_ref().map_or(0, |p| p.run);
+                        let next = if document("stored") { ": the next run of satex goes on from here" } else { "" };
+                        format!("after run {run} of the build, with no time left for run {}{next}", run + 1)
+                    }
+                    (0, n) if n > 0 => format!("while building {n} package caches, one-time work the next run reuses"),
+                    (0, _) => "before the document began".to_string(),
+                    (line, _) => format!("first at {}:{line}", self.short_name(hit.at.file)),
+                };
+                let kept = if document("cached") {
+                    ". This is the stored result of that run: --set cache.document=false runs again"
+                } else {
+                    ""
+                };
                 format!(
-                    "limits.{} = {} was reached {}× (first at {}:{}). Raise it with --set limits.{}=<larger>",
-                    hit.key,
-                    hit.value,
-                    hit.count,
-                    self.short_name(hit.at.file),
-                    hit.at.line,
-                    hit.key
+                    "limits.{} = {} was reached {}× ({at}). Raise it with --set limits.{}=<larger>{kept}",
+                    hit.key, hit.value, hit.count, hit.key
                 )
             })
             .collect()
@@ -1699,6 +1742,9 @@ pub struct Machine<'a> {
     section: Option<Rc<str>>,
     /// `\openin` streams: the lines each one still has to give.
     streams: Streams,
+    /// How often the streams were read or written: a package recording
+    /// that never moved it leaves its cache's stream key open.
+    pub(super) streams_used: std::cell::Cell<u64>,
     /// What this run has written to its `\openout` files.
     pub(crate) outputs: Outputs,
     pending: Pending,
@@ -1932,6 +1978,9 @@ pub struct Machine<'a> {
     /// Changes outside the slots no kept effect replays: boxes' text,
     /// outputs, streams, reads of the clock, the generator, the input line.
     pub(crate) side_effects: u64,
+    /// Lines written to output files (not the terminal or log): a call that
+    /// wrote one is no summary of its name writes.
+    pub(crate) file_writes: u64,
     /// Calls being recorded, innermost last.
     call_recs: Rc<Vec<Rc<calls::CallRec>>>,
     /// Undecided choices this path made: a call's own are those since its record.
@@ -2107,6 +2156,9 @@ pub struct Machine<'a> {
     /// Set while the main loop reads the token it will act on: a package
     /// file that ends there ends at rest.
     reading_command: bool,
+    /// Set while the main loop expands the macro it read: only such a call
+    /// keeps or replays its effect ([`calls`]), not one an `\\expandafter` or a scan expands.
+    head_call: bool,
     /// The token count when the run last read from a file, which tells a
     /// loop that makes no progress from a long one that does.
     /// The trace reached `limits.trace` and its truncation was reported.
@@ -2692,6 +2744,7 @@ impl<'a> Machine<'a> {
                 written: Vec::new(),
                 written_runs: Vec::new(),
                 build_runs: 1,
+                build_pending: None,
                 class_caches: Default::default(),
                 cached_files: Default::default(),
                 preamble: None,
@@ -2777,6 +2830,7 @@ impl<'a> Machine<'a> {
             verbatim_environments: crate::fixed::HashSet::default(),
             section: None,
             streams: Rc::default(),
+            streams_used: Default::default(),
             outputs: Rc::default(),
             pending: Rc::default(),
             docstrip_dir: None,
@@ -2811,6 +2865,7 @@ impl<'a> Machine<'a> {
             memo_verify: None,
             memo_said: Vec::new(),
             side_effects: 0,
+            file_writes: 0,
             call_recs: Rc::default(),
             learn_forks: 0,
             guard_seen: GuardSeen::default(),
@@ -2873,6 +2928,7 @@ impl<'a> Machine<'a> {
             suspended: Vec::new(),
             popping_in_read: false,
             reading_command: false,
+            head_call: false,
             name_token: None,
             own_files: Vec::new(),
             file_ids: HashMap::default(),
@@ -2966,12 +3022,12 @@ impl<'a> Machine<'a> {
         use crate::caches::document::{Lookup, lookup};
         match lookup(source, path, cfg) {
             Lookup::Served(analysis) => *analysis,
-            Lookup::Record(recording) => {
-                let mut analysis = Machine::analyze_expecting(source, path, cfg);
+            Lookup::Record(recording, pending) => {
+                let mut analysis = Machine::analyze_expecting(source, path, cfg, pending);
                 recording.store(&mut analysis);
                 analysis
             }
-            Lookup::Off => Machine::analyze_expecting(source, path, cfg),
+            Lookup::Off => Machine::analyze_expecting(source, path, cfg, None),
         }
     }
 
@@ -2979,8 +3035,15 @@ impl<'a> Machine<'a> {
     /// names it never defines, once more after what the packages on disk
     /// say it expects loaded (`load.expect_detect`), kept when that run
     /// defines more of them.
-    fn analyze_expecting(source: &str, path: Option<&Path>, cfg: &'a Config) -> Analysis {
-        let first = Machine::analyze_build(source, path, cfg);
+    fn analyze_expecting(source: &str, path: Option<&Path>, cfg: &'a Config, pending: Option<Unfinished>) -> Analysis {
+        let first = match (path.filter(|_| cfg.limits.build_runs > 1), pending) {
+            (Some(path), Some(pending)) => {
+                let mut checkpoints = checkpoint::Checkpoints::new(cfg);
+                checkpoints.pending = Some(pending);
+                Machine::build(&mut checkpoints, source, path, cfg, false)
+            }
+            _ => Machine::analyze_build(source, path, cfg),
+        };
         let own = matches!(
             crate::project::config::Profile::of_name(path, source),
             Some(crate::project::config::Profile::Package | crate::project::config::Profile::Class)
@@ -3080,6 +3143,18 @@ impl<'a> Machine<'a> {
         // The last run that was not stopped by a budget.
         let mut complete: Option<Analysis> = None;
         let mut history = Vec::new();
+        // A build an earlier process left between two runs goes on from there.
+        if let Some((earlier, pending)) = checkpoints.pending.take() {
+            run = (pending.run + 1).min(runs);
+            for (at, text) in pending.files {
+                crate::project::overlay::set(&at, text);
+                placed.push(at);
+            }
+            widened = pending.widened.into_iter().collect();
+            written = pending.written.into_iter().map(|(at, texts)| (at, texts.into_iter().collect())).collect();
+            history = earlier.written_runs.clone();
+            complete = Some(*earlier);
+        }
         let mut analysis = loop {
             let before = elapsed(checkpoints);
             crate::util::progress::set_run(run, runs);
@@ -3123,15 +3198,6 @@ impl<'a> Machine<'a> {
                 break earlier;
             }
             let took = elapsed(checkpoints) - before;
-            if cfg.limits.seconds > 0 && elapsed(checkpoints) + took > budget {
-                analysis.limits.push(LimitHit {
-                    key: "seconds",
-                    value: cfg.limits.seconds,
-                    at: Span::default(),
-                    count: 1,
-                });
-                break analysis;
-            }
             // What this run read that a build file defines: the keys it
             // referenced (`\ref` tests `\r@⟨key⟩`) and the macros it expanded
             // (`\@abspage@last` at each shipout) or defined (a note column's
@@ -3240,6 +3306,28 @@ impl<'a> Machine<'a> {
             for (at, text, _) in changed {
                 crate::project::overlay::set(&at, text);
                 placed.push(at);
+            }
+            // No time for a run as long as the last: the build stops between
+            // two runs, and a later process goes on from its files.
+            if cfg.limits.seconds > 0 && (elapsed(checkpoints) + took > budget || BUILD_CUT.get() == run) {
+                analysis.limits.push(LimitHit {
+                    key: "seconds",
+                    value: cfg.limits.seconds,
+                    at: Span::default(),
+                    count: 1,
+                });
+                placed.sort();
+                placed.dedup();
+                let mut written: Vec<_> =
+                    written.iter().map(|(at, texts)| (at.clone(), texts.iter().cloned().collect::<Vec<_>>())).collect();
+                written.iter_mut().for_each(|(_, texts)| texts.sort());
+                written.sort();
+                let mut widened: Vec<_> = widened.iter().cloned().collect();
+                widened.sort();
+                let files =
+                    placed.iter().filter_map(|at| Some((at.clone(), crate::project::overlay::text(at)?))).collect();
+                analysis.build_pending = Some(Box::new(BuildPending { run, files, widened, written }));
+                break analysis;
             }
             if let Some(hear) = &checkpoints.between_runs {
                 hear(&analysis);
@@ -3901,7 +3989,7 @@ impl<'a> Machine<'a> {
                     &source,
                     self.out.plugins.engine.as_str(),
                     self.preload_key(),
-                    self.cfg.limits.cache_size.as_u64(),
+                    self.cfg.eviction_bound(),
                     &roots,
                 )
             };
@@ -3915,7 +4003,9 @@ impl<'a> Machine<'a> {
                     self.preload_key(),
                     &roots,
                 );
-                _across = crate::caches::format::build_lock(&target);
+                // The background builder takes none: no run waits on it.
+                _across =
+                    (!self.cfg.cache.index.background).then(|| crate::caches::format::build_lock(&target)).flatten();
                 cached = load();
             }
             match cached {
@@ -4110,7 +4200,7 @@ will look undefined",
                 &source,
                 self.out.plugins.engine.as_str(),
                 preload_key,
-                self.cfg.limits.cache_size.as_u64(),
+                self.cfg.eviction_bound(),
                 &roots,
             );
             if let (Err(e), true) = (stored, self.cfg.verbose >= 1) {
@@ -4454,6 +4544,7 @@ will look undefined",
         // Any stream: each file open may get a line of unknown text.
         let Some(stream) = stream else {
             let open: Vec<String> = self.stream_files.values().map(|n| Self::output_name(n)).collect();
+            self.file_writes += u64::from(!open.is_empty());
             let outputs = Rc::make_mut(&mut self.outputs);
             for name in &open {
                 if let Some(slot) = outputs.get_mut(name) {
@@ -4465,6 +4556,7 @@ will look undefined",
         let Some(name) = self.stream_files.get(&stream).map(|n| Self::output_name(n)) else { return };
         let open = self.engine_int(&format!("write_open.{stream}"));
         if let Some(slot) = Rc::make_mut(&mut self.outputs).get_mut(&name) {
+            self.file_writes += 1;
             match (open, slot.as_mut()) {
                 (Some(0), _) => {}
                 (Some(1), Some(file)) => each_text(file, |t| {
@@ -4536,7 +4628,14 @@ will look undefined",
         [Self::output_name(name), name.to_string()].into_iter().find_map(|n| self.outputs.get(&n).cloned())
     }
 
+    /// Counts a read or write of the `\read` streams: a package cache
+    /// recorded without one serves every stream state ([`Machine::streams_used`]).
+    fn use_streams(&self) {
+        self.streams_used.set(self.streams_used.get() + 1);
+    }
+
     pub fn set_stream(&mut self, stream: Option<i64>, lines: Option<Vec<String>>) {
+        self.use_streams();
         self.side_effects += 1;
         let Some(stream) = stream else { return self.forget_streams() };
         match lines {
@@ -4551,6 +4650,7 @@ will look undefined",
 
     /// What stream `stream` reads is not known; the others stay as known.
     pub fn unknown_stream(&mut self, stream: Option<i64>) {
+        self.use_streams();
         self.side_effects += 1;
         let Some(stream) = stream else { return self.forget_streams() };
         let streams = Rc::make_mut(&mut self.streams);
@@ -4565,6 +4665,7 @@ will look undefined",
     }
 
     pub fn close_in(&mut self, stream: Option<i64>) {
+        self.use_streams();
         self.side_effects += 1;
         let Some(stream) = stream else { return self.forget_streams() };
         self.mark_closed(stream);
@@ -4573,6 +4674,7 @@ will look undefined",
     /// A stream is closed. Dropping it says so, except after a widening, where the
     /// table has to say it outright, keeping it unchanged when no widening happened.
     fn mark_closed(&mut self, stream: i64) {
+        self.use_streams();
         self.side_effects += 1;
         let widened = self.streams.contains_key(&ANY_STREAM);
         let streams = Rc::make_mut(&mut self.streams);
@@ -4589,6 +4691,7 @@ will look undefined",
     /// `\openin` or `\closein` through a number satex could not pin down: it may have
     /// reached any stream, so no stream's state is known from here on (tex.web § 1275).
     pub fn forget_streams(&mut self) {
+        self.use_streams();
         let streams = Rc::make_mut(&mut self.streams);
         streams.clear();
         streams.insert(ANY_STREAM, Rc::new(Vec::new()));
@@ -4600,6 +4703,7 @@ will look undefined",
     /// `\ifeof` false.
     /// `None` once a number satex could not pin down opened or closed one.
     pub fn stream_at_end(&self, stream: i64) -> Option<bool> {
+        self.use_streams();
         // What the table holds was learned after the last widening.
         if let Some(texts) = self.streams.get(&stream) {
             // Before unknown lines only, the stream may be at its end.
@@ -4635,6 +4739,7 @@ will look undefined",
     /// for each place (a text and a line of it), exact on it. Past the
     /// paths a choice may part into, it is unknown.
     pub(crate) fn pin_stream(&mut self, stream: Option<i64>, by: Sym, span: Option<Span>) {
+        self.use_streams();
         let span = span.unwrap_or(self.region.span);
         let Some(texts) = stream.and_then(|n| self.streams.get(&n)).cloned() else { return };
         let mut places: Vec<At> = Vec::new();
@@ -4661,6 +4766,7 @@ will look undefined",
     }
 
     pub fn take_stream_line(&mut self, stream: i64) -> Option<String> {
+        self.use_streams();
         // The lines stay shared. Only the position moves, so a snapshot of
         // the streams costs nothing however long the file is.
         let texts = Rc::make_mut(&mut self.streams).get_mut(&stream)?;
@@ -5533,7 +5639,9 @@ will look undefined",
             self.end_graf();
         }
         let before = self.letters_depth.map(|_| self.letters());
+        let level = self.env.group_level();
         let popped = self.env.pop_group(&mut self.catcodes);
+        let plain = kind == GroupKind::SemiSimple && nest.is_none() && popped.as_ref().is_some_and(Vec::is_empty);
         self.restore_box_chars();
         if let Some(before) = before {
             let now = self.letters();
@@ -5553,6 +5661,9 @@ will look undefined",
         }
         if closer == GroupKind::SemiSimple {
             crate::analysis::observe::environment_closed(self, inner, span);
+        }
+        if !self.call_recs.is_empty() {
+            self.note_group_closed(level, token, plain);
         }
         self.sync_end_line();
     }
@@ -7885,6 +7996,7 @@ will look undefined",
                 }
                 self.command_level = command
                     && matches!(self.env.meaning(sym).prim(), Some(Primitive::If(_) | Primitive::SkipCrossing { .. }));
+                self.head_call = command;
                 self.do_control_sequence(sym, token.span);
                 self.command_level = false;
             }
@@ -7895,6 +8007,7 @@ will look undefined",
                 if command {
                     self.split_meaning(sym, token.span);
                 }
+                self.head_call = command;
                 self.do_control_sequence(sym, token.span);
             }
             _ => self.do_character(token),
@@ -9641,6 +9754,7 @@ will look undefined",
     }
 
     fn do_control_sequence(&mut self, sym: Sym, span: Span) {
+        let head = std::mem::take(&mut self.head_call);
         let written = self.written_here(sym, span);
         if self.own_file(span.file) && written {
             self.project_site = Some(span);
@@ -9709,7 +9823,10 @@ will look undefined",
                 // A primitive reads everything it takes while it runs.
                 self.finish_shape();
             }
-            Meaning::Macro(m) => self.expand_macro(sym, m, span),
+            Meaning::Macro(m) => {
+                self.head_call = head;
+                self.expand_macro(sym, m, span)
+            }
             Meaning::Undefined if self.may_be_defined(sym) => self.widen_mode(true),
             Meaning::Undefined => {
                 // An expl3 name carries its own arity in its signature, so a
@@ -10190,6 +10307,7 @@ will look undefined",
     }
 
     fn expand_macro(&mut self, sym: Sym, m: Rc<MacroDef>, span: Span) {
+        let head = std::mem::take(&mut self.head_call);
         if self.out.timings.is_enabled() {
             self.out.timings.count_call(sym);
         }
@@ -10356,8 +10474,8 @@ will look undefined",
         let resolved = MeaningKind::Macro(definition.unwrap_or(node));
         let visits = self.note_expansion(sym, span, resolved, Some(node), recorded);
         self.note_repeated_load(sym, &arguments);
-        let call_key = self.call_key(definition.unwrap_or(node), span, &arguments);
-        if self.replay_memo(sym, &m, &arguments) {
+        let call_key = self.call_key(definition.unwrap_or(node), &m, span, &arguments);
+        if head && self.replay_memo(sym, &m, &arguments) {
             return;
         }
         if self.summarize_call(call_key, &arguments) {
@@ -10533,7 +10651,7 @@ will look undefined",
         }
         crate::push_shared(&mut self.within, (sym, node));
         let before = self.input.len();
-        self.record_call(call_key, &m, unknown_operands, &arguments);
+        self.record_call(call_key, &m, unknown_operands, &arguments, head);
         self.push_parts(body, sym);
         if self.input.len() == before {
             Rc::make_mut(&mut self.within).pop();
@@ -11361,6 +11479,7 @@ will look undefined",
     /// neither is bounded. A pass that begins with less ends by
     /// construction.
     pub(crate) fn pass_bound(&self, input: &Input, streams: &Streams) -> Option<u64> {
+        self.use_streams();
         let lines = (!streams.contains_key(&ANY_STREAM)).then(|| {
             let left = |a: &At| if a.lo == CLOSED { 0 } else { a.lines.len().saturating_sub(a.lo) };
             streams.values().map(|t| t.iter().map(left).max().unwrap_or(0)).sum::<usize>()
@@ -14752,10 +14871,10 @@ impl Machine<'_> {
     pub(crate) fn typed_syms(&mut self) -> Rc<[Sym]> {
         self.mint();
         // A path resumed from before the bindings were made lost them:
-        // make them again.
+        // make them again. Satex's own check, not a read of the run.
         if let Some(syms) = &self.typed_syms
-            && self.env.slot(syms[0]).is_some()
-            && self.env.slot(syms[syms.len() - 1]).is_some()
+            && self.env.peek(syms[0].0).is_some()
+            && self.env.peek(syms[syms.len() - 1].0).is_some()
         {
             return syms.clone();
         }

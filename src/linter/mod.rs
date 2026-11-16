@@ -610,15 +610,13 @@ impl Needs {
 
 /// The rules that need less than the run, under the assumption that no build file decides what is
 /// verbatim or which files are read. Every other rule needs the run.
-const NEEDS: [(&str, Needs); 11] = [
+// No labels or citations: `label=` keys and macros make them, the text scan misses those.
+const NEEDS: [(&str, Needs); 8] = [
     ("build-command-placeholders", Needs::Text),
     ("build-engine-options", Needs::Text),
     ("comment-marker", Needs::Names),
     ("user-pattern", Needs::Names),
     ("clones", Needs::Names),
-    ("duplicate-label", Needs::Keys),
-    ("undefined-reference", Needs::Keys),
-    ("undefined-citation", Needs::Keys),
     ("missing-graphic", Needs::Keys),
     ("unresolved-file", Needs::Keys),
     ("duplicate-package", Needs::Keys),
@@ -748,6 +746,15 @@ pub(crate) fn lint_run(analysis: &Analysis, document: bool, wanted: impl Fn(&Rul
     let main = std::path::Path::new(analysis.file_name(analysis.main_file));
     let frozen = Frozen::new(&analysis.settings.project, &crate::project::paths::dir_of(main));
     out.retain(|r| r.get("path").and_then(|v| v.as_str()).is_none_or(|p| !frozen.holds(std::path::Path::new(p))));
+    // Stopped before the body: its undefined/unused findings are meaningless.
+    if analysis.exhausted
+        && analysis.document_depth.is_none()
+        && analysis.plugins.kernel == crate::plugins::Kernel::Latex
+    {
+        out.retain(|r| {
+            matches!(r.get("code").and_then(|v| v.as_str()), Some("limit-reached" | "analysis-ended-early"))
+        });
+    }
     suppress::apply(analysis, out)
 }
 

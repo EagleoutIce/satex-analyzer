@@ -35,7 +35,9 @@ mod directive;
 mod graphic;
 mod handlers;
 pub mod knowledge;
+mod labels;
 pub(crate) mod plugins;
+mod search;
 mod snapshot;
 pub use plugins::{INTEGRATIONS, plugin_features, works_in};
 mod tabular;
@@ -137,6 +139,11 @@ pub fn serve(cfg: Config, root: PathBuf, main: Option<PathBuf>) -> Result<(), St
         let _ = status.send(Notification::new("satex/status".into(), now));
     })));
 
+    // First start: the background build question, as the terminal asks it.
+    let setup = cfg.clone();
+    if let Some(ask) = setup_prompt(&setup) {
+        let _ = connection.sender.send(Message::Request(ask));
+    }
     let debounce = Duration::from_millis(cfg.lsp.debounce_ms.max(1));
     let hovers = Hovers::default();
     let engine_hovers = hovers.clone();
@@ -158,7 +165,7 @@ pub fn serve(cfg: Config, root: PathBuf, main: Option<PathBuf>) -> Result<(), St
         })
         .map_err(|e| e.to_string())?;
 
-    let result = main_loop(&connection, &engine_tx, &outbox_rx, &hovers, &refreshes(&params));
+    let result = main_loop(&connection, &engine_tx, &outbox_rx, &hovers, &refreshes(&params), &setup);
     crate::analysis::probe::stop_all();
     let _ = engine_tx.send(EngineMsg::Shutdown);
     let _ = engine.join();
@@ -220,6 +227,7 @@ fn main_loop(
     outbox: &Receiver<Notification>,
     hovers: &Hovers,
     refreshes: &[&str],
+    setup: &Config,
 ) -> Result<(), String> {
     // The open documents' text, to find the name under a hover here.
     let mut texts: HashMap<Uri, String> = HashMap::default();
@@ -255,6 +263,9 @@ fn main_loop(
                             }
                             to_engine(engine_tx, m);
                         }
+                    }
+                    Ok(Message::Response(answer)) if answer.id == SETUP_ID.to_string().into() => {
+                        setup_answered(setup, answer_title(&answer));
                     }
                     Ok(Message::Response(answer)) => {
                         if let Some(candidate) = prompts.remove(&answer.id) {
@@ -305,6 +316,54 @@ fn main_loop(
                 Err(_) => {}
             }
         }
+    }
+}
+
+/// The id of the background build question.
+const SETUP_ID: &str = "satex-setup";
+
+/// The background build question as `window/showMessageRequest`, when
+/// `cache.background` is `ask`; with `yes` the builder starts instead.
+fn setup_prompt(cfg: &Config) -> Option<Request> {
+    use crate::cli::cache::background;
+    use crate::project::config::Background;
+    if background::opted_out(|name| std::env::var_os(name)) {
+        return None;
+    }
+    let dir = crate::caches::format::enabled_cache_dir(cfg)?;
+    match cfg.cache.background {
+        Background::Ask => {
+            let actions = ["Yes", "No"].map(|title| serde_json::json!({ "title": title }));
+            let params = serde_json::json!({ "type": 3, "message": background::question(cfg, &dir, crate::project::config::global_config_file().as_deref()), "actions": actions });
+            Some(Request::new(SETUP_ID.to_string().into(), "window/showMessageRequest".into(), params))
+        }
+        Background::Yes => {
+            setup_answered(cfg, Some("Yes"));
+            None
+        }
+        Background::No => None,
+    }
+}
+
+/// Records the answer to [`setup_prompt`] and starts the builder on yes.
+/// A dismissed question records nothing and is asked next time.
+fn setup_answered(cfg: &Config, title: Option<&str>) {
+    use crate::project::config::Background;
+    let choice = match title {
+        Some("Yes") => Background::Yes,
+        Some("No") => Background::No,
+        _ => return,
+    };
+    if cfg.cache.background == Background::Ask
+        && let Some(file) = crate::project::config::global_config_file()
+        && let Err(why) = crate::cli::cache::background::record(&file, choice)
+    {
+        eprintln!("satex: {why}");
+    }
+    if choice == Background::Yes
+        && let (Some(dir), Ok(exe)) = (crate::caches::format::enabled_cache_dir(cfg), std::env::current_exe())
+    {
+        let _ = crate::cli::cache::background::start(cfg, &dir, &exe);
     }
 }
 

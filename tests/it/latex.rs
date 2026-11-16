@@ -4903,12 +4903,44 @@ fn a_longtable_walks_its_row_without_a_runaway() {
     assert!(bad.is_empty(), "{bad:?}");
 }
 
+/// tex.web § 799: a finished `\halign` row is tabskip glue, then a cell box
+/// and glue per column it reached (a `\span`ned cell counts each column), so
+/// `\unskip` and `\lastbox` walk it back cell by cell, as longtable's
+/// `\LT@get@widths` counts its columns. The bug: a row was only "some item",
+/// so the box `\lastbox` took from the list and `\unhbox` gave back had an
+/// unknown tail past the first item, and the walk forked into paths with
+/// more or fewer cells (`extra-alignment-tab` later). Six columns are 13
+/// items, past the tail window satex keeps.
+#[test]
+fn a_row_box_unpacked_walks_back_cell_by_cell() {
+    let rows = [("a", "#&#&#&#&#&#", "a&b&c&d&e&f", "6"), ("b", "#&#&#", "a\\span b&c", "3"), ("c", "#&#&#", "a", "1")];
+    let mut src = String::from(
+        "\\catcode`\\&=4 \\countdef\\n=10 \\def\\walk{\\unskip\\setbox3\\lastbox\\ifhbox3 \\global\\advance\\n1 \\expandafter\\walk\\fi}",
+    );
+    for (name, preamble, row, _) in rows {
+        src.push_str(&format!(
+            "\\setbox0\\vbox{{\\halign{{{preamble}\\cr {row}\\cr}}\\global\\setbox1\\lastbox}}\\setbox2\\hbox{{\\unhbox1 \\global\\n=0 \\walk}}\\xdef\\N{name}{{\\the\\n}}"
+        ));
+    }
+    // A cell's mark follows its row (§ 796): `\lastbox` finds no box, never a row.
+    src.push_str(
+        "\\setbox0\\vbox{\\halign{#\\cr\\mark{m}a\\cr}\\global\\setbox1\\lastbox}\\xdef\\M{\\ifhbox1 row\\fi}",
+    );
+    let analysis = crate::support::analyze_plain(&src);
+    for (name, preamble, row, want) in rows {
+        assert_eq!(body(&analysis, &format!("N{name}")), want, "{preamble}: {row}");
+    }
+    assert!(maybe_defined(&analysis, "M") && body(&analysis, "M") != "row", "{}", body(&analysis, "M"));
+}
+
 /// A longtable with `\endfirsthead` and `\endhead` under `array` replays
 /// the saved row (`\LT@save@row`, one `\LT@entry` per column) at each
 /// chunk end. TeX's row has exactly the columns, so `\LT@entry`'s `&`
 /// never comes extra. The bug: satex met `extra-alignment-tab` at
 /// longtable.sty's `\LT@entry`, and a thesis's later `tikzpicture` lost
-/// its group. Open root: the row walk's paths with fewer or more cells.
+/// its group: the row walk forked into paths with fewer or more cells, as
+/// the row box it took apart had an unknown tail (see
+/// `a_row_box_unpacked_walks_back_cell_by_cell`).
 #[test]
 fn a_longtable_with_heads_has_no_extra_tab() {
     if !installed() {

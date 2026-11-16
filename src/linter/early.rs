@@ -282,13 +282,13 @@ pub fn verdict(early: &[Record], last: &[Record], run: &Analysis) -> Option<Stri
     let confirmed = early.iter().filter(|r| made.contains(&key(r))).count();
     let gone = retracted(early, last, run);
     let open = early.len() - confirmed - gone.len();
-    let mut out = format!("of {} early findings the run confirmed {confirmed}", early.len());
+    let mut out = format!("early findings: {confirmed} confirmed");
     if open > 0 {
-        out += &format!(", left {open} unconfirmed (it did not read their part)");
+        out += &format!(", {open} unchecked (the run did not read their part)");
     }
     if !gone.is_empty() {
         let places: Vec<String> = gone.iter().map(|r| line(r).replacen("early ", "", 1)).collect();
-        out += &format!(", retracted {}: {}", gone.len(), places.join(", "));
+        out += &format!(", {} withdrawn: {}", gone.len(), places.join(", "));
     }
     Some(out)
 }

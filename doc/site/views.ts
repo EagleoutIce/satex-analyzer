@@ -3074,6 +3074,11 @@ button.tv-spec-value { cursor: pointer; } button.tv-spec-value:hover, button.tv-
       (cats ? `<div class="ds-sec"><b>catcodes ahead</b><span>${cats}</span></div>` : '');
   };
   /** The next tip each call: the list in random order, none again until all were shown, never the same twice in a row. */
+  /** Package loads, as the playground tracks them: `asked` the bundles fetched or fetching, `flying` the downloads under way,
+   * `landedAt` each landed one's count. A run began when `saw` had landed: it lacked one not in yet, or one in only since. */
+  const unlanded = (ids: string[], asked: Map<string, unknown>, flying: Set<string>[]) => ids.filter((id) => !asked.has(id) || flying.some((f) => f.has(id)));
+  const lacked = (ids: string[], asked: Map<string, unknown>, flying: Set<string>[], landedAt: Map<string, number>, saw: number) =>
+    ids.filter((id) => unlanded([id], asked, flying).length || (landedAt.get(id) ?? 0) > saw);
   function tipBag(tips: string[], random = Math.random) {
     let bag: string[] = [], last: string | null | undefined = null;
     return () => {
@@ -3085,6 +3090,6 @@ button.tv-spec-value { cursor: pointer; } button.tv-spec-value:hover, button.tv-
       return (last = bag.pop());
     };
   }
-  return { tipBag, history: { historyEvent }, render, RENDER, hue, passes, masterDetail, usesView, fold, SPEC, mix, colorBand, oklch, drawing: { expandStyles, STYLE_DEF, parse, emit, mermaidIn, mermaidOut, mermaidLoss, layout, importMermaid, tipsOf, toMatrix, cellPlaces, toLayer, picOptions, relocate, relPos, nearestAnchor, anchorAt, tipMarker, shapeSample, shapeList, cycle, STYLE }, forest: forestFns, page: { pageOf, pageBox, pageNodes, headerOf, headerCalls, headerNodes, fmtRead, fmtWrite, styleNodes, styleSet, styleEdits }, dev: { traceCsv, stateHtml }, templates: { fill, filled, chosen } };
+  return { loads: { unlanded, lacked }, tipBag, history: { historyEvent }, render, RENDER, hue, passes, masterDetail, usesView, fold, SPEC, mix, colorBand, oklch, drawing: { expandStyles, STYLE_DEF, parse, emit, mermaidIn, mermaidOut, mermaidLoss, layout, importMermaid, tipsOf, toMatrix, cellPlaces, toLayer, picOptions, relocate, relPos, nearestAnchor, anchorAt, tipMarker, shapeSample, shapeList, cycle, STYLE }, forest: forestFns, page: { pageOf, pageBox, pageNodes, headerOf, headerCalls, headerNodes, fmtRead, fmtWrite, styleNodes, styleSet, styleEdits }, dev: { traceCsv, stateHtml }, templates: { fill, filled, chosen } };
 })();
 self.satexViews = satexViews;

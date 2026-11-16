@@ -139,6 +139,21 @@ pub(crate) fn discover_expensive(dir: &Path, threshold: u64) -> Vec<(String, u64
     found
 }
 
+/// The engines whose kernel caches `dir` holds (`format-<engine>-…`).
+fn engines_used(dir: &Path) -> Vec<Engine> {
+    let Ok(entries) = std::fs::read_dir(dir) else { return Vec::new() };
+    let mut used: Vec<Engine> = entries
+        .flatten()
+        .filter_map(|e| {
+            let name = e.file_name().to_string_lossy().into_owned();
+            Engine::from_program(name.strip_prefix("format-")?.split('-').next()?)
+        })
+        .collect();
+    used.sort_by_key(|e| e.as_str());
+    used.dedup();
+    used
+}
+
 /// Analyze one package in its canonical preamble, on the calling thread.
 fn prepare_one(run: &Config, base: &Path, directory: &Path, package: &str) -> Prepared {
     let started = Instant::now();
@@ -221,29 +236,35 @@ pub fn prepare(
     // nothing to discover yet: then the packages installed packages load
     // most, read off the installation.
     let discovered: Vec<String>;
+    let background = cfg.cache.index.background;
     let packages: &[String] = match preamble {
         Some(_) => &[],
         None if packages.is_empty() && cfg.cache.index.packages.is_empty() => {
             let trees = crate::caches::distribution::discover(&cfg.distribution_request());
-            let found = discover_expensive(&directory, EXPENSIVE_BYTES);
-            let measured = if found.is_empty() {
-                // Nothing measured yet: what the packages on disk load most.
-                let common = crate::caches::exports::Exports::of(
+            // The background builder takes every package runs here loaded;
+            // `cache build` only the expensive ones.
+            let threshold = if background { 1 } else { EXPENSIVE_BYTES };
+            let found: Vec<_> =
+                discover_expensive(&directory, threshold).into_iter().filter(|(n, _)| !n.contains('.')).collect();
+            let most = if background { cfg.cache.index.most_loaded } else { COMMON };
+            let installed = || {
+                crate::caches::exports::Exports::of(
                     &trees.distribution.roots,
                     Some(&directory),
                     &cfg.conventions.definers,
                 )
-                .most_loaded(COMMON);
-                progress(&format!(
-                    "nothing configured and nothing measured yet: the {} packages installed packages load most: {}",
-                    common.len(),
-                    common.join(", ")
-                ));
-                common
+                .most_loaded(most)
+            };
+            let measured: Vec<String> = if found.is_empty() || background {
+                // Nothing measured yet, or the background builder, which
+                // goes on to what the packages on disk load most.
+                let common = installed();
+                progress(&format!("the {} packages installed packages load most: {}", common.len(), common.join(", ")));
+                found.iter().map(|(name, _)| name.clone()).chain(common).collect()
             } else {
                 progress(&format!(
                     "discovered from what ran here already, at least {} each: {}",
-                    bytesize::ByteSize(EXPENSIVE_BYTES),
+                    bytesize::ByteSize(threshold),
                     found
                         .iter()
                         .map(|(name, bytes)| format!("{name} ({})", bytesize::ByteSize(*bytes)))
@@ -256,13 +277,22 @@ pub fn prepare(
             let common: Vec<String> =
                 cfg.cache.index.common.iter().filter(|n| trees.get(&format!("{n}.sty")).is_some()).cloned().collect();
             progress(&format!("cache.index.common, installed: {}", common.join(", ")));
-            discovered = common.iter().cloned().chain(measured.into_iter().filter(|n| !common.contains(n))).collect();
+            let mut seen: crate::fixed::HashSet<String> = Default::default();
+            discovered = common.into_iter().chain(measured).filter(|n| seen.insert(n.clone())).collect();
             &discovered[..]
         }
         None if packages.is_empty() => &cfg.cache.index.packages[..],
         None => packages,
     };
     let engines: Vec<Option<Engine>> = match (engines, &cfg.cache.index.engines[..]) {
+        // The background builder: every engine whose kernel is cached here.
+        ([], []) if background => {
+            let mut used: Vec<Option<Engine>> = engines_used(&directory).into_iter().map(Some).collect();
+            if used.is_empty() {
+                used.push(cfg.engine);
+            }
+            used
+        }
         ([], []) => vec![cfg.engine],
         ([], configured) => configured.iter().copied().map(Some).collect(),
         (given, _) => given.iter().copied().map(Some).collect(),
@@ -303,6 +333,23 @@ pub fn prepare(
         .collect();
     let mut prepared = Vec::new();
     let mut done = 0;
+    // What the background builder did not reach: stopped or full.
+    let skipped = |run: &Config, package: &str| Prepared {
+        engine: run.engine.map_or("", |e| e.as_str()),
+        package: package.to_string(),
+        outcome: "skipped",
+        reason: None,
+        state: String::new(),
+        seconds: 0.0,
+        bytes: 0,
+    };
+    if background && super::background::should_stop(cfg, &directory) {
+        return Ok(runs
+            .iter()
+            .flat_map(|run| std::iter::once("kernel").chain(packages.iter().map(String::as_str)).map(move |p| (run, p)))
+            .map(|(run, p)| skipped(run, p))
+            .collect());
+    }
     // The kernels first, one thread per engine: they share nothing. Each
     // replaces its cache, since a run that interprets `latex.ltx` leaves a
     // state that differs from one that installs its cache, so packages read
@@ -316,8 +363,9 @@ pub fn prepare(
             std::thread::Builder::new()
                 .stack_size(KERNEL_STACK)
                 .spawn_scoped(scope, move || {
+                    // The background builder builds a kernel only when missing or stale.
                     let mut rebuild = run.clone();
-                    rebuild.cache.rebuild = true;
+                    rebuild.cache.rebuild = !background;
                     let started = Instant::now();
                     let kernel = Machine::analyze("", Some(&base.join("kernel.tex")), &rebuild);
                     if !packages.is_empty() {
@@ -346,7 +394,8 @@ pub fn prepare(
     }
     // Every package of every engine from one pool of workers.
     let items: Vec<(&Config, &String)> = runs.iter().flat_map(|run| packages.iter().map(move |p| (run, p))).collect();
-    let workers = workers(cfg).min(items.len()).max(1);
+    // One background worker: it should cost the machine little.
+    let workers = if background { 1 } else { workers(cfg).min(items.len()).max(1) };
     let next = std::sync::atomic::AtomicUsize::new(0);
     let (send, receive) = std::sync::mpsc::channel::<Prepared>();
     let (base, directory, items) = (&base, &directory, &items);
@@ -357,7 +406,8 @@ pub fn prepare(
             std::thread::Builder::new()
                 .stack_size(KERNEL_STACK)
                 .spawn_scoped(scope, move || {
-                    while let Some((run, package)) = items.get(next.fetch_add(1, std::sync::atomic::Ordering::Relaxed))
+                    while !(background && super::background::should_stop(cfg, directory))
+                        && let Some((run, package)) = items.get(next.fetch_add(1, std::sync::atomic::Ordering::Relaxed))
                     {
                         let _ = send.send(prepare_one(run, base, directory, package));
                     }
@@ -381,6 +431,8 @@ pub fn prepare(
             prepared.push(entry);
         }
     });
+    let reached = next.load(std::sync::atomic::Ordering::Relaxed).min(items.len());
+    prepared.extend(items[reached..].iter().map(|(run, package)| skipped(run, package)));
     Ok(prepared)
 }
 

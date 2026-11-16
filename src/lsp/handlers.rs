@@ -682,7 +682,7 @@ pub(super) fn command_hover(analysis: &Analysis, name: &str, active: Option<Reco
                 && !b.is_empty()
                 && text("signature").is_some_and(|s| !s.is_empty())
         }) {
-            // A body with arguments, as TeX prints it: its first lines only.
+            // the body as TeX prints it, first lines only
             let pretty = &analysis.settings.type_plugins.pretty;
             let (shown, more) = first_lines(body, pretty.width, pretty.lines);
             let cut = if more > 0 { format!("\n… {more} more characters") } else { String::new() };
@@ -1587,7 +1587,7 @@ fn completion_at(analysis: &Analysis, doc: &Text, path: &str, position: Position
     }
     // What the text at the cursor is ([`super::type_at`]): the names of that type.
     let at = super::type_at::type_at(analysis, doc, path, pos);
-    let items = typed_items(analysis, doc, path, &at, after, pos);
+    let (items, searched) = typed_items(analysis, doc, path, &at, after, pos);
     match at.place.as_ref() {
         Some(place) if !cs_re().is_match(before) => {
             let arg = place.arg();
@@ -1624,7 +1624,7 @@ fn completion_at(analysis: &Analysis, doc: &Text, path: &str, position: Position
                     it.text_edit = Some(lsp_types::CompletionTextEdit::Edit(TextEdit { range, new_text }));
                 }
             }
-            CompletionResponse::Array(items)
+            CompletionResponse::List(lsp_types::CompletionList { is_incomplete: searched, items })
         }
         // a name of a known kind outside an argument (`\draw (`, `2.5c`): no `\` typed
         _ if !items.is_empty() => CompletionResponse::Array(items),
@@ -1754,7 +1754,8 @@ fn item(label: String, kind: CompletionItemKind, detail: Option<String>, rank: u
 }
 
 /// The names that fit each type [`super::type_at::type_at`] found at the cursor, the most precise
-/// type's first.
+/// type's first, and whether they were found by what they are as well ([`super::search`]): the
+/// editor then asks again as more is typed.
 fn typed_items(
     analysis: &Analysis,
     doc: &Text,
@@ -1762,10 +1763,12 @@ fn typed_items(
     at: &super::type_at::At,
     after: &str,
     pos: Pos,
-) -> Vec<CompletionItem> {
+) -> (Vec<CompletionItem>, bool) {
     use crate::analysis::roles::{KeyKind, Ty};
     use crate::engine::builtins::OccKind;
     let mut out: Vec<CompletionItem> = Vec::new();
+    let mut searched = false;
+    let shown = analysis.settings.conventions.completion.shown;
     // a name being defined is not one of those defined
     for hit in at.hits.iter().filter(|h| !h.defines) {
         let typed = hit.typed.as_deref().unwrap_or(&at.item.typed);
@@ -1780,7 +1783,7 @@ fn typed_items(
                     && !query::options(analysis, a.cmd).is_empty()
             });
             if (keyed && valued) || hit.value {
-                return items;
+                return (items, false);
             }
             out.extend(items.into_iter().filter(|i| !out.iter().any(|o| o.label == i.label)).collect::<Vec<_>>());
             continue;
@@ -1788,11 +1791,27 @@ fn typed_items(
         let items = match (hit.ty, &arg) {
             (Ty::Key(KeyKind::Label), _) => {
                 let labels = analysis.facts.occurrences.iter().filter(|o| o.kind == OccKind::Label);
-                let labels: BTreeSet<&str> = labels.filter_map(|o| o.key.strip_prefix(hit.prefix.as_str())).collect();
-                let labels = labels.into_iter().filter(|k| !k.is_empty() && k.starts_with(typed));
-                labels.map(|k| item(k.to_string(), CompletionItemKind::REFERENCE, None, 0)).collect()
+                let labels: std::collections::BTreeMap<&str, _> =
+                    labels.filter_map(|o| Some((o.key.strip_prefix(hit.prefix.as_str())?, o))).collect();
+                let known = super::labels::Labels::of(analysis);
+                let labels = labels.into_iter().filter(|(k, _)| !k.is_empty()).map(|(k, o)| {
+                    let about = known.about(o);
+                    CompletionItem {
+                        label_details: about
+                            .map(|a| lsp_types::CompletionItemLabelDetails { detail: None, description: Some(a) }),
+                        ..item(k.to_string(), CompletionItemKind::REFERENCE, None, 0)
+                    }
+                });
+                searched = true;
+                super::search::found(labels.collect(), typed, shown, described)
             }
-            (Ty::Key(KeyKind::Cite), _) => cite_items(analysis),
+            (Ty::Key(KeyKind::Cite), _) => {
+                searched = true;
+                // found by key, title, every author and the year
+                super::search::found(cite_items(analysis, typed), typed, shown, |it| {
+                    it.filter_text.clone().unwrap_or_default()
+                })
+            }
             (Ty::Key(KeyKind::Environment), Some(arg)) => environment_items(analysis, doc, arg, after, pos),
             (Ty::File(kind), _) if hit.file && !(hit.prefix.is_empty() && hit.suffix.is_empty()) => {
                 let ext = match kind {
@@ -1803,7 +1822,10 @@ fn typed_items(
                 };
                 library_items(analysis, &hit.prefix, &hit.suffix, ext.map(|e| format!(".{e}")).as_deref(), typed)
             }
-            (ty @ Ty::File(_), _) => files(analysis, file_exts(analysis, ty).into_iter(), typed.trim()),
+            (ty @ Ty::File(_), _) => {
+                searched = true;
+                files(analysis, file_exts(analysis, ty).into_iter(), typed.trim())
+            }
             _ if !hit.prefix.is_empty() => {
                 let what = format!("named `{}…`", hit.prefix);
                 (defined_with(analysis, &hit.prefix, typed).into_iter())
@@ -1814,7 +1836,13 @@ fn typed_items(
         };
         out.extend(items.into_iter().filter(|i| !out.iter().any(|o| o.label == i.label)).collect::<Vec<_>>());
     }
-    out
+    (out, searched)
+}
+
+/// What an item is, as its list shows it beside the name.
+fn described(it: &CompletionItem) -> String {
+    let about = it.label_details.as_ref().and_then(|l| l.description.as_deref());
+    [it.detail.as_deref(), about].into_iter().flatten().collect::<Vec<_>>().join(" ")
 }
 
 /// `\usepackage[…]{name}`: the options of the package named after the cursor, after `key=` the
@@ -1882,7 +1910,7 @@ pub(super) fn bracket_keys(analysis: &Analysis, doc: &Text, arg: &Arg) -> Vec<Co
 
 /// The databases' entries, found by key, title, author or year; then keys a `\bibitem` or
 /// another citation gave.
-fn cite_items(analysis: &Analysis) -> Vec<CompletionItem> {
+fn cite_items(analysis: &Analysis, typed: &str) -> Vec<CompletionItem> {
     use crate::engine::builtins::OccKind;
     let entries = bib_entries(analysis);
     let mut out: Vec<CompletionItem> = entries
@@ -1898,6 +1926,11 @@ fn cite_items(analysis: &Analysis) -> Vec<CompletionItem> {
             };
             CompletionItem {
                 filter_text: Some(format!("{} {} {} {}", e.key, e.title, e.author, e.year)),
+                // who, when and what, on the list's line
+                label_details: Some(lsp_types::CompletionItemLabelDetails {
+                    detail: None,
+                    description: Some(format!("{detail} {}", super::labels::clean(&e.title)).trim().to_string()),
+                }),
                 documentation: (!e.title.is_empty())
                     .then(|| lsp_types::Documentation::String(format!("{}\n{} {}", e.title, e.author, e.year))),
                 ..item(e.key.clone(), CompletionItemKind::REFERENCE, Some(detail), 0)
@@ -1906,8 +1939,13 @@ fn cite_items(analysis: &Analysis) -> Vec<CompletionItem> {
         .collect();
     let known: BTreeSet<&str> = entries.iter().map(|e| e.key.as_str()).collect();
     let occ = analysis.facts.occurrences.iter().filter(|o| matches!(o.kind, OccKind::BibItem | OccKind::Cite));
-    let other: BTreeSet<&str> = occ.map(|o| o.key.as_str()).filter(|k| !k.is_empty() && !known.contains(k)).collect();
-    out.extend(other.into_iter().map(|k| item(k.to_string(), CompletionItemKind::REFERENCE, None, 1)));
+    let mut other: std::collections::BTreeMap<&str, usize> = Default::default();
+    for k in occ.map(|o| o.key.as_str()).filter(|k| !k.is_empty() && !known.contains(k)) {
+        *other.entry(k).or_default() += 1;
+    }
+    // the key being typed is no other citation's
+    let other = other.into_iter().filter(|(k, n)| !(*k == typed && *n == 1));
+    out.extend(other.map(|(k, _)| item(k.to_string(), CompletionItemKind::REFERENCE, None, 1)));
     out
 }
 
@@ -2388,61 +2426,131 @@ fn option_files(analysis: &Analysis, package: &str, key: &str) -> Option<Exts> {
     (!exts.is_empty()).then(|| (exts.into_iter().collect(), tree))
 }
 
-/// The files of each `(extensions, tree)` kind whose name starts with
-/// `typed`: the project's first, then the installation's.
+/// An installed file a completion offers, with what it is, built once per index ([`installed`]).
+struct Installed {
+    name: String,
+    path: PathBuf,
+    /// Its catalogue line ([`crate::plugins::docs::catalogue_of`]).
+    about: Option<String>,
+    entry: super::search::Entry,
+    /// Its first lines' identification and the engines they need, read when first shown.
+    head: OnceLock<(Option<String>, Vec<crate::project::config::Engine>)>,
+}
+
+/// The installation's files ending in `ext`, without it, with their
+/// catalogue lines: built once per index of `roots`, so a keystroke only
+/// scores them.
+fn installed(roots: &[PathBuf], ext: &str) -> std::sync::Arc<Vec<Installed>> {
+    type Built = (Vec<PathBuf>, String, usize, std::sync::Arc<Vec<Installed>>);
+    static BUILT: std::sync::Mutex<Vec<Built>> = std::sync::Mutex::new(Vec::new());
+    let id = crate::caches::distribution::index_id(roots);
+    let mut built = BUILT.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some((.., files)) = built.iter().find(|(r, e, i, _)| r == roots && e == ext && *i == id) {
+        return files.clone();
+    }
+    let catalogues: Vec<_> = roots.iter().map(|r| crate::plugins::docs::catalogue_of(r)).collect();
+    let files: Vec<Installed> = crate::caches::distribution::files_with(roots, ext)
+        .into_iter()
+        .filter_map(|(n, path)| {
+            let name = n.strip_suffix(ext)?.to_string();
+            let at = roots.iter().position(|r| path.starts_with(r));
+            let about = at.and_then(|at| Some(catalogues[at].as_ref()?.line(&path)?.to_string()));
+            let entry = super::search::Entry::new(&name, about.as_deref().unwrap_or_default());
+            Some(Installed { name, path, about, entry, head: OnceLock::new() })
+        })
+        .collect();
+    let files = std::sync::Arc::new(files);
+    built.retain(|(r, e, ..)| !(r == roots && e == ext));
+    built.push((roots.to_vec(), ext.to_string(), id, files.clone()));
+    files
+}
+
+/// The files of each `(extensions, tree)` kind that `typed` finds by name
+/// or, for an installed package, by what its catalogue says it is
+/// ([`super::search`]): the best matches first, the project's before the
+/// installation's among equals.
 fn files(analysis: &Analysis, kinds: impl Iterator<Item = Exts>, typed: &str) -> Vec<CompletionItem> {
+    use std::sync::Arc;
+    let roots = &analysis.distribution.roots;
+    let shown = analysis.settings.conventions.completion.shown;
+    let query = super::search::Query::new(typed);
     let mut out = Vec::new();
     for (exts, tree) in kinds {
         let exts: Vec<&str> = exts.iter().map(String::as_str).collect();
-        let mut names: Vec<(String, usize, Option<PathBuf>)> =
-            project_files(analysis, &exts).into_iter().map(|n| (n, 0, None)).collect();
-        let roots = &analysis.distribution.roots;
+        // a project file, or an installed one by its index in its table
+        let mut found: Vec<((super::search::Tier, u32), usize, String, Option<(Arc<Vec<Installed>>, usize)>)> =
+            project_files(analysis, &exts)
+                .into_iter()
+                .filter_map(|n| Some((super::search::Entry::new(&n, "").score(&query)?, 0, n, None)))
+                .collect();
         for (ext, dir) in exts.iter().filter_map(|e| Some((e, tree?))) {
             let ext = format!(".{ext}");
             match dir {
-                "tex" => names.extend(
-                    crate::caches::distribution::files_with(roots, &ext)
+                "tex" => {
+                    let files = installed(roots, &ext);
+                    let scored: Vec<_> = (files.iter().enumerate())
+                        .filter_map(|(k, f)| {
+                            Some((f.entry.score(&query)?, 1, f.name.clone(), Some((files.clone(), k))))
+                        })
+                        .collect();
+                    found.extend(scored);
+                }
+                _ => found.extend(
+                    crate::caches::distribution::names_with(roots, dir, &ext)
                         .into_iter()
-                        .filter_map(|(n, p)| Some((n.strip_suffix(&ext)?.to_string(), 1, Some(p)))),
-                ),
-                _ => names.extend(
-                    crate::caches::distribution::names_with(roots, dir, &ext).into_iter().map(|n| (n, 1, None)),
+                        .filter_map(|n| Some((super::search::Entry::new(&n, "").score(&query)?, 1, n, None))),
                 ),
             }
         }
+        found.sort_by(|a, b| (a.0, a.1, &a.2).cmp(&(b.0, b.1, &b.2)));
+        // a name both the project and the installation have: the project's
+        let mut seen = BTreeSet::new();
+        found.retain(|f| seen.insert(f.2.clone()));
+        found.truncate(shown);
         let listed: Vec<String> = exts.iter().filter(|e| !e.is_empty()).map(|e| format!(".{e}")).collect();
         let detail = |n: &str| match n.rsplit_once('.').filter(|(_, e)| !e.contains('/')) {
             Some((stem, ext)) => loader(analysis, ext, stem),
             None => Some(listed.join(", ")),
         };
-        let names: Vec<_> = names.into_iter().filter(|(n, ..)| n.starts_with(typed)).collect();
         // Reading each file's identification is for a list one can read.
-        let identify = names.len() <= analysis.settings.conventions.completion.identified;
-        out.extend(names.into_iter().map(|(n, rank, path)| {
+        let identify = found.len() <= analysis.settings.conventions.completion.identified;
+        out.extend(found.into_iter().map(|((tier, cost), rank, n, file)| {
             let mut detail = detail(&n);
             let mut it = item(n.clone(), CompletionItemKind::FILE, None, rank);
-            if let Some(path) = path {
-                let (stem, ext) = (n.as_str(), path.extension().and_then(|e| e.to_str()).unwrap_or_default());
-                let tree = roots.iter().find(|r| path.starts_with(r)).filter(|r| local(analysis, r));
+            let mut last = false;
+            if let Some((files, k)) = file {
+                let f = &files[k];
+                let ext = f.path.extension().and_then(|e| e.to_str()).unwrap_or_default();
+                let tree = roots.iter().find(|r| f.path.starts_with(r)).filter(|r| local(analysis, r));
                 let tree = tree.and_then(|r| r.file_name()).map(|t| format!("local: {}", t.to_string_lossy()));
-                let head = identify.then(|| head(&path)).flatten().unwrap_or_default();
-                let needs = needs(&head);
+                let (version, needs) = match identify {
+                    true => f.head.get_or_init(|| {
+                        let head = head(&f.path).unwrap_or_default();
+                        (provided(&head), needs(&head))
+                    }),
+                    false => &(None, Vec::new()),
+                };
                 // A package this run's engine cannot load says so, and comes last.
                 let other = (!needs.is_empty() && !needs.contains(&analysis.plugins.engine)).then(|| {
-                    it.sort_text = Some(format!("{}~", it.sort_text.as_deref().unwrap_or_default()));
+                    last = true;
                     let names: Vec<&str> = needs
                         .iter()
                         .map(|e| if *e == crate::project::config::Engine::LuaTeX { "LuaTeX" } else { "XeTeX" })
                         .collect();
                     format!("needs {}", names.join(" or "))
                 });
-                let parts: Vec<String> = [detail.take(), provided(&head), tree, other].into_iter().flatten().collect();
+                let parts: Vec<String> = [detail.take(), version.clone(), tree, other].into_iter().flatten().collect();
                 detail = Some(parts.join(" · "));
                 // what the package is (catalogue, README, its identification), its version, its manual
                 if matches!(ext, "sty" | "cls") {
-                    let about = identify.then(|| crate::plugins::docs::about(&analysis.settings.docs, &path)).flatten();
-                    let version = provided(&head).map(|v| format!("`{v}`"));
-                    let value = [about, version, Some(format!("[documentation](https://texdoc.org/pkg/{stem})"))]
+                    let about = f.about.clone().or_else(|| {
+                        identify.then(|| crate::plugins::docs::about(&analysis.settings.docs, &f.path)).flatten()
+                    });
+                    it.label_details = about
+                        .as_ref()
+                        .map(|a| lsp_types::CompletionItemLabelDetails { detail: None, description: Some(a.clone()) });
+                    let version = version.as_ref().map(|v| format!("`{v}`"));
+                    let value = [about, version, Some(format!("[documentation](https://texdoc.org/pkg/{n})"))]
                         .into_iter()
                         .flatten()
                         .collect::<Vec<_>>()
@@ -2454,11 +2562,16 @@ fn files(analysis: &Analysis, kinds: impl Iterator<Item = Exts>, typed: &str) ->
                 }
             }
             it.detail = detail;
+            let about = it.label_details.as_ref().and_then(|l| l.description.as_deref()).unwrap_or_default();
+            // the editor keeps what was found here: its filter starts with what was typed
+            it.filter_text = Some(format!("{typed} {n} {about}"));
+            it.sort_text = Some(format!("{}{rank}{}{cost:06}{n}", tier as u8, u8::from(last)));
             it
         }));
     }
-    out.sort_by(|a, b| (&a.label, &a.sort_text).cmp(&(&b.label, &b.sort_text)));
-    out.dedup_by(|a, b| a.label == b.label);
+    out.sort_by(|a, b| a.sort_text.cmp(&b.sort_text));
+    let mut seen = BTreeSet::new();
+    out.retain(|i| seen.insert(i.label.clone()));
     out
 }
 
@@ -3183,21 +3296,7 @@ pub(super) fn rgba(colors: &crate::engine::value::Colors) -> Option<lsp_types::C
     Some(lsp_types::Color { red: r, green: g, blue: b, alpha: 1.0 })
 }
 
-#[cfg(test)]
-mod signature_tests {
-    use super::argument_of;
-
-    #[test]
-    fn the_argument_the_cursor_is_in() {
-        assert_eq!(argument_of("\\greet{wor", 11), Some(("greet".into(), 0)));
-        assert_eq!(argument_of("x \\frac{a}{b", 13), Some(("frac".into(), 1)));
-        assert_eq!(argument_of("\\cmd[o]{a{b}c}{", 16), Some(("cmd".into(), 2)));
-        assert_eq!(argument_of("plain {text", 11), None);
-    }
-}
-
-/// The first `most` lines of `text` broken at `width` characters, at a space
-/// where one is near, and how many characters are left out.
+/// The first `most` lines of `text` wrapped at `width`, and the characters left out.
 fn first_lines(text: &str, width: usize, most: usize) -> (String, usize) {
     let chars: Vec<char> = text.chars().collect();
     let (mut lines, mut at) = (Vec::new(), 0);
@@ -3212,4 +3311,17 @@ fn first_lines(text: &str, width: usize, most: usize) -> (String, usize) {
         at = end;
     }
     (lines.join("\n"), chars.len() - at)
+}
+
+#[cfg(test)]
+mod signature_tests {
+    use super::argument_of;
+
+    #[test]
+    fn the_argument_the_cursor_is_in() {
+        assert_eq!(argument_of("\\greet{wor", 11), Some(("greet".into(), 0)));
+        assert_eq!(argument_of("x \\frac{a}{b", 13), Some(("frac".into(), 1)));
+        assert_eq!(argument_of("\\cmd[o]{a{b}c}{", 16), Some(("cmd".into(), 2)));
+        assert_eq!(argument_of("plain {text", 11), None);
+    }
 }

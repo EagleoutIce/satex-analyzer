@@ -1,5 +1,37 @@
 # Command line
 
+## Rules every command shares
+
+Every `satex` command follows the same rules for its input, its configuration and its output. A command differs only where its job does: `lint` shows early findings, `satex cache` reads no document.
+
+### Input
+
+- `-f FILE` names the document. `-f -` reads it from stdin.
+- Without `-f`, a document piped in is read. An empty stdin (`</dev/null`, as cron, CI and editors start a program) counts as nothing piped.
+- With nothing piped, each root document in the current directory is analyzed in turn. Files no root reads are named on stderr.
+- `explain` and `scope` with no root, or several, analyze the smallest LaTeX document instead and say so on stderr.
+- A stdin that stays open and silent for two seconds gets one note on stderr. satex never waits unexplained.
+- `satex cache` and its subcommands never read stdin or a project's document. `-f` still names one for `satex cache`.
+- `query --request -` reads the request from stdin.
+
+### Configuration
+
+Every command reads the same layers: built-in defaults, the global config, each `satex.yaml` from the filesystem root down to the document's directory (the current one without `-f`), `--config FILE`, then `--set PATH=VALUE`. `--no-config` drops every file. `--profile` picks the defaults. `satex --version` lists the files in effect. A file that does not read is named once, by its full path. `satex gui` hands its config flags to every run it starts. `satex completions` reads no config, since nothing it prints depends on one.
+
+### Output
+
+- Results go to stdout. Progress, notes, early findings and the one-line package cache summary go to stderr.
+- `--format` names what a command prints. A command given a format it cannot print stops with an error that names the ones it can. `satex cache` and its subcommands print text or json. `completions`, `lsp` and `gui` print text only.
+- Progress shows only in text format, on a terminal.
+- Every command that analyzes a document says on stderr how many package caches it reused or built.
+- The first-start question about background caches comes only when stdin, stdout and stderr are terminals. `satex cache`, `lsp`, `gui` and `completions` never ask. `install`, `query` and `trace -i` read the terminal themselves, so they do not ask either.
+
+### Exit codes
+
+- `0`: the command ran. Findings, and a failed `compile`, still exit 0.
+- `1`: the command could not run. The message on stderr starts with `satex:`.
+- `2`: the command line did not parse.
+
 ## Shell completion
 
 `satex completions install` sets completion up for the current shell (bash, zsh or fish). It adds one line to the shell's startup file, and running it again changes nothing.
@@ -43,7 +75,7 @@ It differs from the web playground in four ways:
 
 - The project's files are the files in `DIR`. Hidden and git-ignored files are left out. Edits are saved to the files as you type.
 - The TeX packages are those installed on your computer, found by kpathsea. Nothing is downloaded.
-- The language server is the native `satex`, not the WebAssembly build. It is faster and reads the project's `satex.yaml`.
+- The language server is the native `satex`, not the WebAssembly build. It is faster and reads the project's `satex.yaml`. The config flags given to `satex gui` (`--set`, `--config`, …) reach it too.
 - Compile builds the PDF with your TeX, in a copy of the project under the cache directory. The web playground's Compile runs pdfTeX in the browser, with TeX Live files fetched on demand.
 
 `satex gui` prints the address and opens it in the default browser. `--no-open` only prints it. `--port N` picks the port, 8800 by default, or the next free one above it.

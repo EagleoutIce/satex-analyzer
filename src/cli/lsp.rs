@@ -30,5 +30,9 @@ pub fn run(
         crate::lsp::lines(cfg, root, file.map(Path::to_path_buf));
         return Ok(());
     }
-    crate::lsp::serve(cfg, root, file.map(Path::to_path_buf))
+    // stdin closed before `initialize`: say so, not the channel's own words
+    crate::lsp::serve(cfg, root, file.map(Path::to_path_buf)).map_err(|e| match e.as_str() {
+        "disconnected channel" => "the language client closed the connection before `initialize`".to_string(),
+        _ => e,
+    })
 }

@@ -1,9 +1,9 @@
 //! The playground's Compile button, on this machine's TeX: `POST
-//! /__satex/compile` takes `{main, files, at?}`, writes the files into a
+//! /__satex/compile` takes `{main, files, at?, pages?}`, writes the files into a
 //! fresh directory beside the site and runs the native `satex compile` on
 //! the main file, or on `satex slice --at` of it, with the page's settings
 //! (`sets`: `KEY=VALUE`, each a `--set`). The answer names the
-//! pages (PNG, by `pdftocairo`), the words on them (`pdftotext -bbox`), its
+//! pages (PNG, by `pdftocairo`, none with `pages: false`), the words on them (`pdftotext -bbox`), its
 //! objects with the link annotations (`qpdf --json`, parsed by the page), the
 //! log, the explained messages and every command run. A file is text or `{"b64": ...}` (an
 //! image). The same request again answers from the kept build, and with
@@ -242,10 +242,17 @@ fn build(root: &Path, body: &[u8], base: Option<&Path>, runs: &mut Vec<Value>) -
     let stem = Path::new(main).with_extension("");
     let pdf = work.join(stem.with_extension("pdf"));
     if pdf.is_file() {
-        run(
-            runs,
-            Command::new("pdftocairo").args(["-png", "-r", "144"]).arg(&pdf).arg(work.join("page")).current_dir(&work),
-        )?;
+        // A page with pdf.js draws the pages itself, as they come into view (`pages: false`)
+        if request["pages"].as_bool() != Some(false) {
+            run(
+                runs,
+                Command::new("pdftocairo")
+                    .args(["-png", "-r", "144"])
+                    .arg(&pdf)
+                    .arg(work.join("page"))
+                    .current_dir(&work),
+            )?;
+        }
         run(runs, Command::new("pdftotext").arg("-bbox").arg(&pdf).arg(work.join("words.html")).current_dir(&work))?;
         // without qpdf the pages only lack their links. It exits 3 on mere warnings
         let _ = run(

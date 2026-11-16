@@ -454,3 +454,21 @@ fn timings_name_the_costly_line_and_macro() {
     let calls = analysis.timings.top_calls(1);
     assert_eq!(calls.first().map(|(sym, count)| (analysis.interner.name(*sym), *count)), Some(("x", 21)));
 }
+
+/// A run a budget stops before a LaTeX document's body began has not read what
+/// the document defines, often not even the kernel: findings like "`\newcommand`
+/// is never defined" would be false. Only why it stopped is shown.
+#[test]
+fn a_run_stopped_before_the_body_reports_only_the_stop() {
+    let mut cfg = crate::support::config();
+    cfg.limits.steps = 20_000;
+    let analysis = Machine::analyze(
+        "\\documentclass{article}\n\\newcommand\\x{y}\n\\begin{document}\n\\x\n\\end{document}\n",
+        None,
+        &cfg,
+    );
+    assert!(analysis.exhausted, "the budget stops it");
+    let codes: Vec<String> =
+        satex::linter::lint(&analysis).iter().filter_map(|r| r["code"].as_str().map(str::to_string)).collect();
+    assert!(codes.iter().all(|c| c == "limit-reached" || c == "analysis-ended-early"), "{codes:?}");
+}

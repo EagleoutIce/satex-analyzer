@@ -64,3 +64,37 @@ fn a_plain_tex_file_builds_with_pdftex() {
     assert!(rows.iter().any(|r| r["message"].as_str().is_some_and(|m| m.contains("no legal \\end found"))), "{rows:?}");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// Directives in the main file pick arara, as `arara` itself would read them:
+/// `satex compile` runs it, not latexmk. A project that names a build system
+/// satex does not know gets an error naming the ones it knows.
+#[test]
+fn arara_directives_pick_arara_and_unknown_systems_are_named() {
+    if !crate::support::installed()
+        || satex::project::paths::which("arara").is_err()
+        || satex::project::paths::which("pdflatex").is_err()
+    {
+        return;
+    }
+    let dir = crate::support::scratch_dir(crate::support::tmp_root().join("satex-compile-arara"));
+    std::fs::write(
+        dir.join("doc.tex"),
+        "% arara: pdflatex\n\\documentclass{article}\n\\begin{document}\nHi.\n\\end{document}\n",
+    )
+    .unwrap();
+    let run = |extra: &[&str]| {
+        crate::support::satex()
+            .args(["compile", "-f", "doc.tex", "--set", "limits.seconds=0"])
+            .args(extra)
+            .current_dir(&dir)
+            .output()
+            .unwrap()
+    };
+    let out = run(&[]);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("$ arara"), "{stderr}");
+    assert!(dir.join("doc.pdf").is_file(), "{stderr}");
+    let out = run(&["--system", "nonsense"]);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(!out.status.success() && stderr.contains("latexmk, arara, tectonic"), "{stderr}");
+}

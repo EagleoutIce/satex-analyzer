@@ -21,7 +21,7 @@ interface PdfDoc {
   numPages: number; getPage(n: number): Promise<PdfPage>; getDestination(name: string): Promise<any[] | null>; getPageIndex(ref: unknown): Promise<number>;
   getPageLabels(): Promise<string[] | null>;
 }
-interface PdfLib { GlobalWorkerOptions: { workerSrc: string }; getDocument(o: Rec): { promise: Promise<PdfDoc>; destroy(): void } }
+interface PdfLib { GlobalWorkerOptions: { workerSrc: string }; getDocument(o: Rec): { promise: Promise<PdfDoc>; destroy(): void }; PDFWorker: new () => unknown }
 declare global { interface Window { satexTex: typeof satexTex } }
 const satexTex = (() => {
   const DPI = 144, BP_PER_INCH = 72;
@@ -134,28 +134,40 @@ const satexTex = (() => {
     }
     return out;
   }
-  /** The PDF's pages as images, words, links and labels. */
-  async function read(tex: TexSetup, bytes: Uint8Array, tell: (m: string) => void) {
-    const lib = await pdfLib(tex), task = lib.getDocument({ data: bytes.slice(), isEvalSupported: false }), doc = await task.promise;
-    const pages: string[] = [], blobs: Record<string, string> = {}, wordList: unknown[] = [], linkList: unknown[] = [];
+  /** pdf.js's worker for the pane's PDFs, started once: one per document cost each build its start. */
+  let shared: unknown = null;
+  /** A built PDF opened for the pane: page sizes and labels at once, each page drawn when asked. `src` is its URL. */
+  async function open(tex: TexSetup, src: string) {
+    const lib = await pdfLib(tex), task = lib.getDocument({ url: src, isEvalSupported: false, worker: shared ??= new lib.PDFWorker() }), doc = await task.promise;
+    const sizes: number[][] = [];
     for (let n = 1; n <= doc.numPages; n++) {
-      tell(`rendering page ${n} of ${doc.numPages}`);
-      const page = await doc.getPage(n), name = `page-${n}.png`;
-      blobs[name] = URL.createObjectURL(await draw(page));
-      pages.push(name);
-      wordList.push(...await wordsOf(page, n));
-      linkList.push(...await linksOf(doc, page, n));
-      page.cleanup();
+      const v = (await doc.getPage(n)).getViewport({ scale: DPI / BP_PER_INCH });
+      sizes.push([Math.ceil(v.width), Math.ceil(v.height)]);
     }
     const labels = await doc.getPageLabels().catch(() => null);
-    task.destroy();
-    return { pages, blobs, wordList, linkList, pagelabels: (labels ?? []).map((label, index) => ({ index, label: { '/P': label } })) };
+    return {
+      sizes, pagelabels: (labels ?? []).map((label, index) => ({ index, label: { '/P': label } })),
+      /** Page `n` as a PNG URL at `DPI`. */
+      draw: async (n: number) => { const page = await doc.getPage(n), blob = await draw(page); page.cleanup(); return URL.createObjectURL(blob); },
+      /** The words and links of every page, as `pdftotext -bbox` and the server's links give them. */
+      async text() {
+        const wordList: unknown[] = [], linkList: unknown[] = [];
+        for (let n = 1; n <= doc.numPages; n++) {
+          const page = await doc.getPage(n);
+          wordList.push(...await wordsOf(page, n));
+          linkList.push(...await linksOf(doc, page, n));
+        }
+        return { wordList, linkList };
+      },
+      close: () => task.destroy(),
+    };
   }
 
   /** The worker, kept between builds: it holds the engine and what it has fetched. */
-  let worker: Worker | null = null;
+  let worker: Worker | null = null, warm = false;
   const MIB = 1048576;
   function ask(message: Rec, tell: (m: string) => void) {
+    if (!worker) tell('starting the TeX worker');
     const w = (worker ??= new Worker(message.tex.worker));
     return new Promise<TexRun>((done, fail) => {
       w.onerror = (e) => fail(new Error(e.message || 'the TeX worker stopped'));
@@ -164,7 +176,7 @@ const satexTex = (() => {
         else if (data.fetching) tell(`fetching ${data.fetching}`);
         else if (data.phase) tell(data.phase);
         else if (data.error) fail(new Error(data.error));
-        else done(data);
+        else { warm = true; done(data); }
       };
       w.postMessage(message);
     });
@@ -173,18 +185,18 @@ const satexTex = (() => {
   /** Builds `main` of `files`, asking the sources `from`: `{answer, gz}`, the pane's answer and the SyncTeX data for its worker to parse. */
   async function build(tex: TexSetup, files: Record<string, unknown>, main: string, engine: string | undefined, tell: (m: string) => void, from: unknown) {
     const run = await ask({ tex, files, main, from }, tell);
+    tell('reading the log');
     const by: Record<string, Uint8Array> = Object.fromEntries(run.outputs.map((o) => [o.name, o.bytes]));
     const decoded: Record<string, string> = {};
     for (const n of Object.keys(by)) if (/\.(log|blg|ilg)$/.test(n)) decoded[n] = text(by[n]!);
     const log = decoded[`${run.job}.log`] ?? '';
     const dir = main.includes('/') ? main.slice(0, main.lastIndexOf('/') + 1) : '';
     const records = parseLog(log, new Set(Object.keys(files).map((n) => n.startsWith(dir) ? n.slice(dir.length) : n)), main.slice(dir.length)).map((r) => ({ ...r, path: dir + r.path }));
-    const shown = by[`${run.job}.pdf`] ? await read(tex, by[`${run.job}.pdf`]!, tell) : { pages: [], blobs: {}, wordList: [], linkList: [], pagelabels: [] };
-    const blobs: Record<string, string> = { ...shown.blobs };
+    const blobs: Record<string, string> = {};
     for (const [name, bytes] of Object.entries(by)) blobs[name] = URL.createObjectURL(new Blob([bytes as BlobPart], { type: name.endsWith('.pdf') ? 'application/pdf' : /\.(log|aux|toc|lof|lot|out|bbl|blg|ilg|ind|idx)$/.test(name) ? 'text/plain' : 'application/octet-stream' }));
     const answer = {
       browser: true, pdf: by[`${run.job}.pdf`] ? `${run.job}.pdf` : null, dpi: DPI, records, logs: decoded, stderr: '',
-      pages: shown.pages, wordList: shown.wordList, linkList: shown.linkList, pagelabels: shown.pagelabels, blobs,
+      blobs,
       commands: run.commands, from: Object.entries(run.from).map(([h, n]) => [hostName(h), n]), asked: run.asked.map(hostName), dead: run.dead.map(hostName), outputs: run.outputs.map((o) => ({ name: o.name, size: o.bytes.length })),
       note: advice(log, { ...run, nopdf: !by[`${run.job}.pdf`] }, engine),
     };
@@ -195,6 +207,7 @@ const satexTex = (() => {
   function stop() {
     worker?.terminate();
     worker = null;
+    warm = false;
   }
   /** A PDF's first page as an image URL, for the image dialog. */
   async function firstPage(tex: TexSetup, bytes: Uint8Array) {
@@ -203,6 +216,8 @@ const satexTex = (() => {
     task.destroy();
     return URL.createObjectURL(blob);
   }
-  return { build, stop, firstPage, parseLog, advice, hostName };
+  /** Whether the engine runs already: a build then skips its download and start. */
+  const ready = () => warm;
+  return { build, stop, open, firstPage, parseLog, advice, hostName, ready };
 })();
 self.satexTex = satexTex;

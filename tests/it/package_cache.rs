@@ -694,6 +694,44 @@ fn the_same_package_after_a_different_preamble_is_served_and_reports_what_readin
     same_facts(&cold, &warm);
 }
 
+/// A `\read` stream the document left open is no state a package that never
+/// touches a stream depends on: its cache serves the run, and reports as a
+/// read would. Before, the open stream keyed every later package apart
+/// (datatool-base held three identical 20 MB variants).
+#[test]
+fn a_stream_the_package_never_reads_does_not_key_its_cache() {
+    let dir = project("open-stream");
+    run(&dir, DOCUMENT);
+    let other = preamble("\\openin15=doc.tex");
+    let warm = run(&dir, &other);
+    assert_eq!(served(&warm, "outer"), Some(true), "{:?}", warm.package_caches);
+    same_facts(&run_cold(&dir, &other), &warm);
+}
+
+/// The other side: a package that tests a stream recorded with every stream
+/// closed is never replayed where one is open, it reads it again.
+#[test]
+fn a_package_that_tests_a_stream_is_keyed_by_it() {
+    let dir = project("tested-stream");
+    std::fs::write(
+        dir.join("eof.sty"),
+        "\\ProvidesPackage{eof}\n\\ifeof15 \\def\\atend{}\\else\\def\\notatend{}\\fi\n",
+    )
+    .expect("eof.sty");
+    let document = |pre: &str| {
+        format!("\\documentclass{{article}}\n{pre}\\usepackage{{eof}}\n\\begin{{document}}\\end{{document}}\n")
+    };
+    let cold = run(&dir, &document(""));
+    assert!(defined(&cold, "atend"));
+    let warm = run(&dir, &document("\\openin15=doc.tex\n"));
+    assert_eq!(served(&warm, "eof"), Some(false), "{:?}", warm.package_caches);
+    assert!(defined(&warm, "notatend") && undefined(&warm, "atend"));
+    // Both states now have a variant, each replays its own.
+    let again = run(&dir, &document(""));
+    assert_eq!(served(&again, "eof"), Some(true), "{:?}", again.package_caches);
+    assert!(defined(&again, "atend") && undefined(&again, "notatend"));
+}
+
 #[test]
 fn a_replay_keeps_the_primitive_copies_made_before_the_load() {
     // Recorded where `\mydraft` is no copy of `\pdfdraftmode`: replayed

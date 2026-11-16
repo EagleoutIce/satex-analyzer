@@ -148,6 +148,12 @@ pub fn files_with(roots: &[PathBuf], ext: &str) -> Vec<(String, PathBuf)> {
     files
 }
 
+/// Which index `roots` have now: changes when they are indexed again, so a
+/// table built from [`files_with`] knows when to build again.
+pub fn index_id(roots: &[PathBuf]) -> usize {
+    Arc::as_ptr(&index_for(roots, None).0) as usize
+}
+
 /// Where an installation would resolve from, without indexing its files:
 /// the roots [`discover`] would pick, cheap enough for `satex --version` to
 /// call on every run.

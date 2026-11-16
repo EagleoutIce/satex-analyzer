@@ -152,7 +152,7 @@ Each rule declares the facts it needs. Most need the whole run. A few need only 
 | --- | --- |
 | text | [`build-command-placeholders`](#build-command-placeholders), [`build-engine-options`](#build-engine-options) |
 | names | [`user-pattern`](#user-pattern), [`clones`](#clones), [`comment-marker`](#comment-marker) |
-| keys | [`missing-graphic`](#missing-graphic), [`duplicate-label`](#duplicate-label), [`undefined-citation`](#undefined-citation), [`undefined-reference`](#undefined-reference), [`unresolved-file`](#unresolved-file), [`duplicate-package`](#duplicate-package) |
+| keys | [`missing-graphic`](#missing-graphic), [`unresolved-file`](#unresolved-file), [`duplicate-package`](#duplicate-package) |
 
 An early finding is provisional. `satex lint` prints it on stderr at once, marked `early`. The editor shows it before the run ends, on `satex/settled` with `data.provisional`. A file opened for the first time also gets the early set as its diagnostics, each marked provisional, so any client shows them. The run's findings then replace the early ones. A finding the run makes too is confirmed and keeps its place and message. One the run does not make is retracted: `satex lint` names it on stderr, and the editor drops it. A `% TODO` in a file that only a skipped `\iffalse` branch inputs is such a case. `lints.early.enabled: false` turns early findings off.
 

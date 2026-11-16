@@ -1388,6 +1388,68 @@ fn a_kept_effect_misses_when_a_name_it_read_changed() {
     assert_eq!(kept.call_memo[1], 1, "only the third call replays");
 }
 
+/// A name the run set in a group of its own and read after that group
+/// ended holds what it held before the run: `\calc` reads `\x` so, and
+/// after `\def\x{2}` it runs again and leaves `2300`.
+#[test]
+fn a_name_read_after_its_group_undid_the_write_is_read_from_before() {
+    let [kept, ran] = memo_runs(
+        "\\countdef\\n=10 \\def\\x{1}
+\\def\\calc{{\\begingroup\\def\\x{0}\\endgroup\\n=0 \\def\\step{\\advance\\n 1 \\ifnum\\n<300 \\expandafter\\step\\fi}\\step\\xdef\\got{\\x\\the\\n}}}
+\\calc\\calc\\calc\\def\\x{2}\\calc
+\\def\\want{2300}\\ifx\\got\\want\\def\\Fresh{}\\else\\def\\Stale{}\\fi
+",
+    );
+    for a in [&kept, &ran] {
+        assert!(crate::support::defined(a, "Fresh") && !crate::support::maybe_defined(a, "Stale"));
+    }
+    assert_eq!(kept.call_memo[1], 1, "only the third call replays");
+}
+
+/// pgfmath's pattern: `\outer` opens a group, `\inner` computes in it and
+/// ends it with `\endgroup`, handing its result out. Such a run keeps its
+/// effect up to that `\endgroup` and the text it had left: a replay makes
+/// the global writes, closes the group (`\tmp` is gone again) and reads the
+/// rest (`\def\res{300}`).
+#[test]
+fn a_call_that_ends_its_callers_group_replays_the_end() {
+    let [kept, ran] = memo_runs(
+        "\\countdef\\n=10
+\\def\\inner{\\n=0 \\def\\step{\\advance\\n 1 \\ifnum\\n<300 \\expandafter\\step\\fi}\\step\\gdef\\seen{y}\\expandafter\\endgroup\\expandafter\\def\\expandafter\\res\\expandafter{\\the\\n}}
+\\def\\outer{\\begingroup\\def\\tmp{x}\\inner}
+\\outer\\outer\\outer\\outer
+\\def\\want{300}\\ifx\\res\\want\\def\\Right{}\\fi
+\\ifx\\tmp\\undefined\\else\\def\\Leak{}\\fi
+",
+    );
+    for a in [&kept, &ran] {
+        assert!(crate::support::defined(a, "Right") && crate::support::defined(a, "seen"));
+        assert!(!crate::support::maybe_defined(a, "Leak"));
+    }
+    assert_eq!(kept.call_memo[1], 2, "{:?} kept, replayed, saved", kept.call_memo);
+}
+
+/// Only a call the main loop expands keeps or replays an effect. Under
+/// `\expandafter\mark\bump` TeX expands `\bump` first but runs `\mark`
+/// before `\bump`'s text, so `\mark` still sees `\done` as `\relax`. A
+/// replay there would set `\done` before `\mark` runs.
+#[test]
+fn a_call_an_expandafter_expands_replays_no_effect() {
+    let [kept, ran] = memo_runs(
+        "\\countdef\\n=10
+\\def\\bump{{\\n=0 \\def\\step{\\advance\\n 1 \\ifnum\\n<300 \\expandafter\\step\\fi}\\step}\\gdef\\done{y}}
+\\def\\mark{\\xdef\\order{\\ifx\\done\\relax n\\else y\\fi}}
+\\let\\done\\relax\\bump\\let\\done\\relax\\bump\\let\\done\\relax\\bump
+\\let\\done\\relax\\expandafter\\mark\\bump
+\\def\\nn{n}\\ifx\\order\\nn\\def\\Right{}\\else\\def\\Wrong{}\\fi
+",
+    );
+    for a in [&kept, &ran] {
+        assert!(crate::support::defined(a, "Right") && !crate::support::maybe_defined(a, "Wrong"));
+    }
+    assert_eq!(kept.call_memo[1], 1, "only the third call replays");
+}
+
 /// A replayed local assignment stays local: `\bump` sets the count register
 /// `\k` at its caller's level. Replayed inside a group, the group's end must
 /// restore `\k` to 5. Registers start as global bindings, so taking the
@@ -1406,4 +1468,23 @@ fn a_kept_local_assignment_stays_in_its_group() {
         assert!(crate::support::defined(a, "Local") && !crate::support::maybe_defined(a, "Leaked"));
     }
     assert_eq!(kept.call_memo[1], 1, "the call in the group replays");
+}
+
+/// A macro redefined at one place before each call (`\use:x`'s scratch
+/// macro) runs other code each time. Its call site has one place but many
+/// bodies, so a summary of its first runs must not stand for a run of
+/// another body: here the last call sets `\out` to 5, not to the unknown
+/// number of the first two (a summary keyed by place alone lost a shipout's
+/// group level this way, and with it the page's `.aux` line).
+#[test]
+fn a_summary_holds_only_for_the_body_it_ran() {
+    let analysis = crate::support::analyze_plain(
+        "\\count1=\\pdfuniformdeviate 9 \
+         \\def\\set#1{\\edef\\tmp{\\def\\noexpand\\out{#1}\\advance\\count2\\count1 }\\tmp}\
+         \\set{\\the\\count1}\\set{\\the\\count1}\\set{\\the\\count1}\\set{5}\\edef\\shown{\\out}",
+    );
+    let def = analysis.facts.defs.iter().rev().find(|d| analysis.interner.name(d.name) == "shown").expect("shown");
+    let shown =
+        satex::engine::tex::detokenize(&def.mac.as_ref().expect("a macro").replacement_text, &analysis.interner);
+    assert_eq!(shown, "5");
 }

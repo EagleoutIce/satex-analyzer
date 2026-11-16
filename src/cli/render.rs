@@ -172,7 +172,7 @@ const DEFAULT_WIDTH: usize = 120;
 const MIN_COLUMN: usize = 8;
 const GUTTER: usize = 2;
 
-fn terminal_width() -> usize {
+pub fn terminal_width() -> usize {
     terminal_size::terminal_size()
         .map(|(terminal_size::Width(columns), _)| columns as usize)
         .or_else(|| std::env::var("COLUMNS").ok()?.parse().ok())
@@ -1802,10 +1802,10 @@ pub fn status(line: &str) -> String {
     } else if let Some(rest) = body.strip_prefix("limits.") {
         let Some((key, rest)) = rest.split_once(" = ") else { return line.to_string() };
         let (value, rest) = rest.split_once(" was reached ").unwrap_or((rest, ""));
-        let (count, rest) = rest.split_once(" (first at ").unwrap_or((rest, ""));
+        let (count, rest) = rest.split_once(" (").unwrap_or((rest, ""));
         let (at, advice) = rest.split_once("). ").unwrap_or((rest, ""));
         format!(
-            "limits.{} = {} was reached {} (first at {}). {}",
+            "limits.{} = {} was reached {} ({}). {}",
             paint(WARNING, key),
             paint(BOLD, value),
             paint(BOLD, count),

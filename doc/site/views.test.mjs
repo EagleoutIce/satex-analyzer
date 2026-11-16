@@ -9,6 +9,21 @@ load('./snapshot.js');
 load('./views.js');
 load('./layers.js');
 load('./pdfedit.js');
+// Package loads: findings of a run that lacked a bundle are never shown. It lacked one never fetched, one still
+// downloading (in the background too), or one landed only after it began; once a run saw them all, it is shown.
+// Pins the cold-load bug: the first analysis showed `example-image-a` missing while mwe's bundle downloaded.
+{
+  const { unlanded, lacked } = self.satexViews.loads;
+  const asked = new Map([['pdftex/mwe', 1], ['pdftex/tikz', 1], ['pdftex/amsmath', 1]]), inFlight = new Set(['pdftex/tikz']), background = new Set(), landedAt = new Map([['pdftex/amsmath', 1], ['pdftex/mwe', 2]]);
+  const ids = ['pdftex/mwe', 'pdftex/tikz', 'pdftex/amsmath', 'pdftex/listings'];
+  assert.deepEqual(unlanded(ids, asked, [inFlight, background]), ['pdftex/tikz', 'pdftex/listings'], 'downloading or never asked for');
+  assert.deepEqual(lacked(ids, asked, [inFlight, background], landedAt, 1), ['pdftex/mwe', 'pdftex/tikz', 'pdftex/listings'], 'mwe landed after the run began');
+  inFlight.delete('pdftex/tikz'); background.add('pdftex/tikz');
+  assert.deepEqual(lacked(['pdftex/tikz'], asked, [inFlight, background], landedAt, 9), ['pdftex/tikz'], 'a background download counts too');
+  background.delete('pdftex/tikz'); landedAt.set('pdftex/tikz', 3);
+  // the check that runs once all landed sees them: it is shown, no endless rerun
+  assert.deepEqual(lacked(ids.slice(0, 3), asked, [inFlight, background], landedAt, 3), []);
+}
 // Tips (tips.json): each stays true, its evidence still stands where it says.
 {
   const tips = JSON.parse(readFileSync(new URL('./tips.json', import.meta.url), 'utf8'));

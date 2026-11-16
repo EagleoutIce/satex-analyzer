@@ -52,6 +52,8 @@ pub struct Gui {
     log: Option<PathBuf>,
     /// The document the terminal's status line last named.
     said: Mutex<String>,
+    /// `--config`, `--set` and the other config flags `satex gui` was given.
+    flags: Vec<String>,
 }
 
 /// A language server for one page: the flags and directory of its next
@@ -79,9 +81,19 @@ fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
 }
 
 /// `satex gui`: serves `dir` until stopped, printing the address first.
-pub fn run(dir: &Path, port: u16, site: Option<&Path>, open: bool, dev: bool, verbose: bool) -> Result<(), String> {
+/// How `satex gui` runs: open a browser, serve `doc/site`, print the
+/// servers' messages, and the config flags every satex it starts gets.
+pub struct Options {
+    pub open: bool,
+    pub dev: bool,
+    pub verbose: bool,
+    pub flags: Vec<String>,
+}
+
+pub fn run(dir: &Path, port: u16, site: Option<&Path>, options: Options) -> Result<(), String> {
     let listener = http::bind(port)?;
-    let gui = Gui::new(dir, site, dev, listener.local_addr().map_err(|e| e.to_string())?.port(), verbose)?;
+    let (open, port) = (options.open, listener.local_addr().map_err(|e| e.to_string())?.port());
+    let gui = Gui::new(dir, site, options, port)?;
     let url = format!("http://127.0.0.1:{}/play/?token={}", gui.port, gui.token);
     let root = gui.root.as_deref().map(|r| format!(", root {r}")).unwrap_or_default();
     // stdout may close (a closed terminal, `| head`): the server keeps serving
@@ -99,7 +111,8 @@ pub fn run(dir: &Path, port: u16, site: Option<&Path>, open: bool, dev: bool, ve
 
 impl Gui {
     /// `verbose`: the language servers' messages go to the terminal, else to a log file.
-    pub fn new(dir: &Path, site: Option<&Path>, dev: bool, port: u16, verbose: bool) -> Result<Arc<Gui>, String> {
+    pub fn new(dir: &Path, site: Option<&Path>, options: Options, port: u16) -> Result<Arc<Gui>, String> {
+        let Options { dev, verbose, flags, .. } = options;
         let given = dir.canonicalize().map_err(|e| format!("{}: {e}", dir.display()))?;
         // a file names the root document, its folder the project
         let (dir, root) = match given.is_file() {
@@ -131,6 +144,7 @@ impl Gui {
             sessions: Mutex::default(),
             log,
             said: Mutex::default(),
+            flags,
         }))
     }
 
@@ -252,6 +266,7 @@ impl Gui {
         if out.is_none() {
             let (args, cwd) = lock(&s.spec).clone();
             let started = Command::new(std::env::current_exe()?)
+                .args(&self.flags)
                 .args(&args)
                 .args(["lsp", "--lines"])
                 .current_dir(&cwd)
@@ -313,7 +328,7 @@ impl Gui {
     fn command(&self, ask: &Value) -> Value {
         let started = std::time::Instant::now();
         let mut command = Command::new(std::env::current_exe().unwrap_or_else(|_| "satex".into()));
-        command.args(strings(&ask["args"])).current_dir(self.cwd(&ask["cwd"]));
+        command.args(&self.flags).args(strings(&ask["args"])).current_dir(self.cwd(&ask["cwd"]));
         let Ok(out) = compile::output_unless(&mut command, || false) else {
             return json!({ "lines": [["err", "satex did not start"]], "status": "aborted", "ms": 0 });
         };

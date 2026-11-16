@@ -23,7 +23,7 @@ struct Logged {
     message: String,
 }
 
-pub fn run(context: &Context) -> Result<Output, String> {
+pub fn run(context: &Context, system: Option<&str>, view: bool) -> Result<Output, String> {
     let analysis = context.analysis;
     let main = PathBuf::from(analysis.file_name(analysis.main_file));
     let main = main.canonicalize().unwrap_or(main);
@@ -42,10 +42,31 @@ pub fn run(context: &Context) -> Result<Output, String> {
     };
     // Knuth's `tex` writes DVI only: pdfTeX runs the same plain format and writes PDF.
     let program = if program == "tex" { "pdftex" } else { program };
-    let status = match crate::project::paths::which("latexmk").ok().filter(|_| latex) {
+    let installed = |p: &str| crate::project::paths::which(p).is_ok();
+    let arara = analysis.plugins.magic.iter().any(|m| m.key == "arara");
+    let chosen = match system.unwrap_or(&analysis.settings.compile.system) {
+        "auto" if arara && installed("arara") => "arara",
+        "auto" if dir.join("Tectonic.toml").is_file() && installed("tectonic") => "tectonic",
+        "auto" if latex && installed("latexmk") => "latexmk",
+        "auto" => "engine",
+        "engine" => "engine",
+        s @ ("latexmk" | "arara" | "tectonic" | "make" | "l3build") if installed(s) => s,
+        s @ ("latexmk" | "arara" | "tectonic" | "make" | "l3build") => return Err(format!("{s} is not installed")),
+        other => {
+            return Err(format!("unknown build system `{other}`: latexmk, arara, tectonic, make, l3build or engine"));
+        }
+    };
+    let status = match chosen {
+        // each reads its own configuration and reruns as the document needs
+        "arara" => build("arara", &["--verbose"], file, &dir)?,
+        "tectonic" => {
+            build("tectonic", &["-X", "compile", "--synctex", "--keep-logs", "--keep-intermediates"], file, &dir)?
+        }
+        "make" => build("make", &[], "", &dir)?,
+        "l3build" => build("l3build", &["doc"], "", &dir)?,
         // latexmk reruns as often as the document needs and reads the
         // latexmkrc; the engine is ours only where that names none.
-        Some(_) => {
+        "latexmk" => {
             // `-f`: past an error, so the references the later runs resolve are not reported.
             let mut args = vec!["-interaction=nonstopmode", "-file-line-error", "-synctex=1", "-f", "-pv-", "-pvc-"];
             if !["pdf_mode", "pdflatex", "lualatex", "xelatex", "latex"].iter().any(|k| project.setting(k).is_some()) {
@@ -59,7 +80,7 @@ pub fn run(context: &Context) -> Result<Output, String> {
         }
         // The engine alone: again while the log asks for a rerun, as
         // LaTeX's cross-references need.
-        None => {
+        _ => {
             let output = out_dir.as_ref().map(|d| format!("-output-directory={}", d.display()));
             let mut args = vec!["-interaction=nonstopmode", "-file-line-error"];
             args.push("-synctex=1");
@@ -75,6 +96,9 @@ pub fn run(context: &Context) -> Result<Output, String> {
             status
         }
     };
+    if view {
+        open_viewer(&analysis.settings.compile.viewer, &log_path.with_extension("pdf"));
+    }
     let log = std::fs::read(&log_path).map_err(|e| format!("{}: {e}", log_path.display()))?;
     let logged = parse_log(&String::from_utf8_lossy(&log), &dir);
     let findings = crate::linter::lint(analysis);
@@ -92,6 +116,26 @@ pub fn run(context: &Context) -> Result<Output, String> {
     Ok(Output::Lint(records))
 }
 
+/// Opens `pdf` in `viewer` (`auto`/`none`: the system's opener), detached.
+fn open_viewer(viewer: &str, pdf: &Path) {
+    let program = match viewer {
+        "auto" | "none" | "" if cfg!(target_os = "macos") => "open",
+        "auto" | "none" | "" if cfg!(windows) => "explorer",
+        "auto" | "none" | "" => "xdg-open",
+        other => other,
+    };
+    eprintln!("$ {program} {}", pdf.display());
+    let spawned = Command::new(program)
+        .arg(pdf)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn();
+    if let Err(e) = spawned {
+        eprintln!("satex: cannot open the PDF with {program}: {e}");
+    }
+}
+
 /// The errors (`file:line: message`, as `-file-line-error` writes them) and
 /// the LaTeX, class and package warnings of a log, each with the file TeX
 /// was reading: the innermost `(file` the log opened and has not closed.
@@ -102,7 +146,7 @@ fn build(program: &str, args: &[&str], file: &str, dir: &Path) -> Result<std::pr
     eprintln!("$ {program} {} {file}", args.join(" "));
     Command::new(program)
         .args(args)
-        .arg(file)
+        .args((!file.is_empty()).then_some(file))
         .current_dir(dir)
         // Unwrapped log lines keep paths and messages whole. BibTeX
         // refuses 20000 and more ("3 is a bad bad").

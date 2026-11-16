@@ -74,7 +74,7 @@ width were known on every visit.
 
 An `\\includegraphics` whose `width=` is the reason gets the fix
 `width=\\linewidth`, where every other key leaves that its final width (no
-`height`, `scale`, `angle`, `bb` or a key satex does not know, no comment); it changes the picture's size, so it is unsafe. Otherwise
+`height`, `scale`, `angle`, `bb` or a key satex does not know, no comment). It changes the picture's size, so it is unsafe. Otherwise
 scale the material down (`\\resizebox`, a smaller font), or let it stick
 out on purpose (`\\makebox[\\linewidth]{…}`), which TeX does not report.",
         references: &[Ref { source: Source::TeXWeb, at: "889" }, Ref { source: Source::Graphics, at: "4.4" }],

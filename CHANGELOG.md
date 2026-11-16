@@ -6,8 +6,21 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 
 ## Unreleased
 
+### Compile
+
+- `feat` **`satex compile` picks the build system.** `% arara:` directives run arara, a `Tectonic.toml` runs Tectonic, else latexmk or the engine. `--system` or `compile.system` names one (latexmk, arara, tectonic, make, l3build, engine). `--view` opens the PDF in `compile.viewer` or the system's viewer.
+
+### Caches
+
+- `perf` **Package caches are reused across more documents and replay faster.** A package that never reads a `\read` stream is no longer cached once per stream state the document left open (datatool-base kept three identical 20 MB variants). The names a cache is keyed by are compared by spelling, not by the order the run met them, so a replay that met them in another order no longer makes the next package miss. Duplicate dependency edges are stored once: scrbook's cache shrinks from 40 to 25 MB and datatool-base's from 55 to 24 MB, and a warm glossary document replays its packages 20 % faster. `satex cache show` breaks each variant's bytes down by section and names the parts it leaves open.
+- `feat` **One line on the caches.** `satex lint` says how many package caches it reused and built, instead of a line per package (`-v` still lists them, now with the whole load's time). A time limit reached while caches are built says so.
+- `feat` **`satex cache show`.** Lists a package's cache files with their variants, segments and sizes, and what sets each variant apart.
+- `feat` **Caches prepared in the background.** On the first run in a terminal, or once in the editor, satex asks whether it may analyze the kernels and installed packages in the background. On yes a low-priority process builds them, most used first, within `limits.cache_size`, and no run waits on it. `satex cache` shows its state, `satex cache stop` stops it (`cache.background`, `SATEX_NO_SETUP`).
+
 ### Lints
 
+- `fix` **No findings from a run stopped before the body.** A run a budget stopped before `\begin{document}` shows only why it stopped, no undefined commands it never got to read.
+- `fix` **Early findings, compact and right.** They come as one aligned block that says they are provisional. Labels and citations no longer appear early: `label=` keys and macros make keys a text scan misses.
 - `feat` **Early findings.** Rules that need only the text and the standard meaning of a few commands report on a sketch before the run starts: `comment-marker`, `user-pattern`, `clones`, two latexmkrc rules, and from `\label`, `\ref`, `\cite`, `\usepackage`, `\input` and `\includegraphics` also `duplicate-label`, `undefined-reference`, `undefined-citation`, `duplicate-package`, `unresolved-file` and `missing-graphic`. `satex lint` prints them on stderr at once, the editor shows them as provisional (on a first open as its diagnostics), and the run confirms or retracts each one (`lints.early`).
 - `feat` **Preflight checks for lines and boxes too wide.** `overfull-line`, `overfull-box` and `wider-than-line` report what pdflatex logs as `Overfull \hbox`, by the same amount, where satex knows every width. An `\includegraphics` whose `width=` passes `\linewidth` gets the fix `width=\linewidth`.
 - `fix` **`inconsistent-precision` reads siunitx's rounding.** An `S` column whose numbers siunitx rounds, through `\sisetup` or the column's own options, is no longer reported as printed as written.
@@ -17,10 +30,26 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 
 ### Playground
 
+- `feat` **Completion finds by what a name is.** In `\usepackage{…}`, `\documentclass{…}`, `\cite{…}` and `\ref{…}` each item shows what it is: a package's line from the TeX Live catalogue, a citation's author, year and title, what a label points at (`figure 1: caption`, `§2: heading`, `equation 3`). Typing a word of that finds it, typos forgiven: `\usepackage{network}` offers tikz-network and neuralnetwork. A name starting with what was typed comes first. Editors get the same through the language server.
+- `fix` **A first compile says what it waits for.** The PDF pane names each phase with its size: starting the TeX worker, downloading the engine, compiling it, unpacking the TeX tree, each pdfTeX pass, BibTeX, files fetched. One line says the first compile downloads and starts the engine and later ones skip this. The offline copy pauses while a compile runs.
+- `fix` **A tidy layers menu.** Its rows wrap instead of scrolling sideways. A layer with filters is one split button. On a phone the menu spans the screen.
+- `fix` **Settings open folded.** Groups and plugin categories show their names and counts until clicked. Every plugin sits in a category. A long sub-group such as `conventions.math_symbols` is one line with its first values. Search finds values too. No tips, a one-line intro and a compact search beside the tabs.
+- `fix` **Caches show only real details.** A row folds open only when it has details. A document cache has its own description.
+- `fix` **No false findings while packages load.** A check that ran before a package bundle it needed was in (a package of the document, one it loads, an image of mwe) is no longer shown. The findings panel says what it waits for, and the check runs again once the bundle is in.
+- `perf` **A quick PDF preview.** The PDF pane draws only the pages in or near view, from the PDF itself, and keeps the last build's pages in place (dimmed if stale) until each is redrawn, so scroll and zoom stay put and nothing blinks. In the browser a rebuild with unchanged references is one pdfTeX pass. A one-word edit shows in about 0.15 s on a one-page document and 0.25 s on twenty pages (was 0.3 and 1.1 s). Automatic compile offers 0.2 s.
 - `feat` **Short hovers.** A hover shows a body as TeX prints it, at most its first four lines, the rest counted. Pretty printing is off by default (`type_plugins.pretty.enabled`).
 - `fix` **Tables with array or tabularx get their widget.** A table whose package calls `\@array` by another name now gets its "Edit table…" lens and dialog.
 - `feat` **Heading styles and page options.** The page layout widget restyles chapter to subsubsection headings (family, weight, small caps, size, color, alignment, numbering) through KOMA-Script or titlesec, saves them as named style sets to switch between, and sets the page color, columns and the binding.
 - `feat` **Edit in the PDF.** Each table column shows its width over the pages. Dragging its edge rewrites `p{…}` in the source, snapped, within `\linewidth`, as one undo step. With Type on, a click on a word puts a caret there and plain text goes to its place in the source.
+
+### CLI
+
+- `fix` **One rule for the input.** An empty stdin (`</dev/null`) no longer counts as a document: every command then reads the folder's root documents, as from a terminal. `-f -` reads stdin. A stdin left open says on stderr that satex waits for it.
+- `fix` **`satex cache` never reads stdin.** It no longer hangs on an open pipe, and its subcommands no longer say "no document named".
+- `feat` **The package cache line for every analysis.** `query`, `explain` and the other commands say how many package caches they reused or built, as `lint` does.
+- `fix` **`--format` checked everywhere.** `cache` subcommands take text or json, `completions`, `lsp` and `gui` text only. Any other stops with an error.
+- `fix` **`satex gui` keeps the config flags.** `--set`, `--config` and the others reach the language servers and runs it starts.
+- `fix` **Config warnings once.** A broken `satex.yaml` is named once, by its full path.
 
 ### Site and docs
 

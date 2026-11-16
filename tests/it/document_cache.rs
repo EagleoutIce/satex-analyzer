@@ -50,6 +50,39 @@ fn differs(a: &Analysis, b: &Analysis) -> Option<&'static str> {
     facts(a).into_iter().zip(facts(b)).find(|(x, y)| x != y).map(|(x, _)| x.0)
 }
 
+/// [`differs`] for two runs that were not served from one another: the maps
+/// of facts filled per site hold the same entries, in the order each run met
+/// them (a run that resumes at a checkpoint meets them in another order).
+fn differs_unordered(a: &Analysis, b: &Analysis) -> Option<&'static str> {
+    fn sorted<K: std::fmt::Debug, V: std::fmt::Debug>(map: impl IntoIterator<Item = (K, V)>) -> Vec<String> {
+        let mut entries: Vec<String> = map.into_iter().map(|e| format!("{e:?}")).collect();
+        entries.sort();
+        entries
+    }
+    let split = |x: &Analysis| {
+        let mut x = x.clone();
+        let facts = &mut x.facts;
+        let maps = (
+            sorted(std::mem::take(&mut facts.shapes)),
+            sorted(std::mem::take(&mut facts.csnames)),
+            sorted(std::mem::take(&mut facts.spaces)),
+        );
+        (maps, x)
+    };
+    let ((maps_a, a), (maps_b, b)) = (split(a), split(b));
+    if maps_a != maps_b {
+        return Some("the maps of facts");
+    }
+    // The graph's and the calls' tables too: the same bytes, in the order each run filled them.
+    let multiset = |(name, mut bytes): (&'static str, Vec<u8>)| {
+        if matches!(name, "graph" | "calls") {
+            bytes.sort_unstable();
+        }
+        (name, bytes)
+    };
+    facts(&a).into_iter().map(multiset).zip(facts(&b).into_iter().map(multiset)).find(|(x, y)| x != y).map(|(x, _)| x.0)
+}
+
 /// Every site example, run twice: the second is served and agrees byte for byte.
 #[test]
 fn every_example_is_served_unchanged() {
@@ -120,5 +153,98 @@ fn a_changed_input_is_read_again() {
     assert!(!served(&changed) && defined(&changed, "four"));
     let off = Config { cache: Cache { document: false, ..cfg.cache.clone() }, ..cfg.clone() };
     assert!(!served(&analyze(&doc, source, &off)));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A build that `limits.seconds` cut between two runs is kept with the files
+/// its next run reads. The next process goes on with that run instead of run
+/// 1, ends with the facts of a build nothing cut, and the one after is served.
+/// Before, such a build was never stored: every process began again.
+#[test]
+fn a_build_cut_between_runs_goes_on_in_the_next_process() {
+    if !installed() {
+        return;
+    }
+    let dir = project("pending");
+    let mut cfg = config(&dir);
+    // The cut needs a limit to report. An hour never ends a test's run.
+    cfg.limits.seconds = 3600;
+    let doc = dir.join("doc.tex");
+    let source = "\\documentclass{article}\\begin{document}\\tableofcontents\\section{A}\\label{a}\
+        See \\ref{a} and \\pageref{z}.\\newpage\\section{B}\\label{z}\\end{document}\n";
+    // The reference: the whole build in one process, on warm package caches.
+    let whole = Config { cache: Cache { document: false, ..cfg.cache.clone() }, ..cfg.clone() };
+    analyze(&doc, source, &whole);
+    let whole = analyze(&doc, source, &whole);
+    assert!(whole.build_runs > 1, "the build needs a second run: {}", whole.build_runs);
+    satex::analysis::machine::BUILD_CUT.set(1);
+    let cut = analyze(&doc, source, &cfg);
+    satex::analysis::machine::BUILD_CUT.set(0);
+    assert!(cut.stopped() && cut.build_pending.is_some() && cut.build_runs == 1, "{:?}", cut.limits);
+    assert!(cut.limit_notes().iter().any(|n| n.contains("goes on from here")), "{:?}", cut.limit_notes());
+    let next = analyze(&doc, source, &cfg);
+    assert!(!served(&next) && !next.stopped(), "{:?} {:?}", next.package_caches, next.limits);
+    assert_eq!(next.build_runs, whole.build_runs);
+    assert_eq!(differs_unordered(&whole, &next), None, "the build in two processes differs from the build in one");
+    let last = analyze(&doc, source, &cfg);
+    assert!(served(&last), "{:?}", last.package_caches);
+    assert_eq!(differs(&next, &last), None);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A run a budget stopped is stored once it built no cache: the next run
+/// would stop at the same place, so it is served, and the limit's note says
+/// so. The run that built the class's cache is not stored, since the next
+/// one gets further in the same time. Before, a stopped run ran again each time.
+#[test]
+fn a_stopped_run_is_served_once_no_cache_is_left_to_build() {
+    if !installed() {
+        return;
+    }
+    let dir = project("stopped");
+    let mut cfg = config(&dir);
+    let doc = dir.join("doc.tex");
+    let source = "\\documentclass{article}\\begin{document}\\section{A}one two three\\end{document}\n";
+    // The budget ends the run just before the document does.
+    let whole = Config { cache: Cache { dir: Some(dir.join("other")), ..cfg.cache.clone() }, ..cfg.clone() };
+    crate::support::seed_kernel(&whole);
+    cfg.limits.steps = analyze(&doc, source, &whole).steps - 1;
+    let cold = analyze(&doc, source, &cfg);
+    assert!(cold.stopped() && cold.caches_built() > 0, "{:?} {:?}", cold.limits, cold.package_caches);
+    let warm = analyze(&doc, source, &cfg);
+    assert!(warm.stopped() && !served(&warm) && warm.caches_built() == 0, "{:?}", warm.package_caches);
+    let again = analyze(&doc, source, &cfg);
+    assert!(again.stopped() && served(&again), "{:?}", again.package_caches);
+    assert_eq!(differs(&warm, &again), None, "served facts differ");
+    assert!(again.limit_notes().iter().any(|n| n.contains("stored result")), "{:?}", again.limit_notes());
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// One cache file per document: runs of its edited text, and a run under
+/// another setting, replace the entry, and the listing names the document.
+/// Before, each text and setting left its own file behind for good.
+#[test]
+fn an_edited_document_keeps_one_entry() {
+    if !installed() {
+        return;
+    }
+    let dir = project("one-entry");
+    let cfg = config(&dir);
+    let doc = dir.join("doc.tex");
+    let text = |word: &str| format!("\\documentclass{{article}}\\begin{{document}}{word}\\end{{document}}\n");
+    for word in ["one", "two", "three"] {
+        assert!(!served(&analyze(&doc, &text(word), &cfg)));
+    }
+    let other = Config { record_arguments: !cfg.record_arguments, ..cfg.clone() };
+    assert!(!served(&analyze(&doc, &text("three"), &other)));
+    assert!(served(&analyze(&doc, &text("three"), &other)));
+    let stored = satex::caches::document::stored(&dir.join("cache"));
+    let documents: Vec<_> = stored.iter().map(|(document, ..)| document.clone()).collect();
+    assert_eq!(documents, [Some(std::path::absolute(&doc).expect("a path"))]);
+    let name = stored[0].1.file_name().expect("a file").to_string_lossy().into_owned();
+    assert!(name.starts_with("document-doc.tex-"), "{name}");
+    // A second document gets its own.
+    analyze(&dir.join("more.tex"), &text("four"), &cfg);
+    assert_eq!(satex::caches::document::stored(&dir.join("cache")).len(), 2);
     let _ = std::fs::remove_dir_all(&dir);
 }

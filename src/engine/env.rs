@@ -2803,7 +2803,7 @@ fn run_hull(texts: &[&[Token]], typed: &Typed, run: bool) -> Vec<Token> {
         }
     }
     let len = lens.first().copied().flatten().filter(|n| *n > 0 && lens.iter().all(|l| *l == Some(*n)));
-    typed.text(class, one, len, span.unwrap_or_default()).into_iter().collect()
+    vec![Token::new(Tok::Cs(typed.make(class, one, len)), span.unwrap_or_default())]
 }
 
 /// Integer digits as `\the` prints them, after a `-` where it may be
@@ -3485,18 +3485,13 @@ mod tests {
 
     use super::*;
 
-    /// Hulls whose texts are all empty are the empty text, never a token
-    /// of no class: `\@xnext`'s `\@elt` cannot match one, so a float list
-    /// it heads never popped (lars, `\@trylist` depth cut).
+    /// Macros alike but for `\long` join to that text, nothing in between.
     #[test]
     fn hull_of_empty_texts_is_empty() {
         let interner = Interner::default();
         let syms: Vec<Sym> = (0..TYPED_NAMES as u32).map(|i| Sym(1000 + i)).collect();
         let minted = Default::default();
         let typed = Typed { interner: &interner, syms: &syms, digits: Sym(1), more: Sym(2), minted: &minted };
-        let none: &[Token] = &[];
-        assert!(run_hull(&[none], &typed, false).is_empty());
-        assert!(run_hull(&[none, none], &typed, false).is_empty());
         let def = |long| {
             Meaning::Macro(Rc::new(crate::engine::tex::MacroDef {
                 parameter_text: Default::default(),

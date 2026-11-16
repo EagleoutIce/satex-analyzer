@@ -8,7 +8,7 @@ interface Mod {
   FS: Rec; HEAPU8: Uint8Array; callMain(args: string[]): number; kpse_remote_register(name: string, format: number, bytes: Uint8Array): void;
   kpse_remote_clear(): void; _flush_streams?(): void; PATH: Rec; ENV: Rec;
 }
-interface Instance { m: Mod; out: { lines: string[] }; keep: Cache | null | undefined; header: Uint8Array; asked?: string }
+interface Instance { m: Mod; out: { lines: string[] }; keep: Cache | null | undefined; header: Uint8Array; asked?: string; last?: { main: string; inputs: string[] } }
 interface Command { command: string; status: number; ms: number }
 const TEXMF = '/texlive/texmf-dist', PROJECT = '/home/web_user/project_dir';
 const FMT = `${TEXMF}/texmf-var/web2c/pdftex/pdflatex.fmt`;
@@ -89,9 +89,11 @@ async function start(tex: Rec): Promise<Instance> {
     }
   };
   const [wasmBytes, coreBytes] = await Promise.all([part(tex.wasm), part(tex.core)]);
-  post({ phase: 'starting the TeX engine' });
+  post({ phase: 'compiling the TeX engine' });
+  const wasm = await WebAssembly.compile(wasmBytes);
+  post({ phase: `unpacking ${tex.files.length} files of the TeX tree` });
   // a host that already decoded the tree sends it plain
-  const wasm = await WebAssembly.compile(wasmBytes), core = coreBytes[0] === 0x1f && coreBytes[1] === 0x8b ? await gunzip(coreBytes) : coreBytes;
+  const core = coreBytes[0] === 0x1f && coreBytes[1] === 0x8b ? await gunzip(coreBytes) : coreBytes;
   const out = { lines: [] as string[] };
   const Module: Rec = {
     thisProgram: '/bin/busytex', noInitialRun: true,
@@ -135,6 +137,7 @@ function run({ m, out, header }: Instance, args: string[], commands: Command[]) 
   m.HEAPU8.fill(0);
   m.HEAPU8.set(header);
   commands.push({ command: args.join(' '), status, ms: Math.round(performance.now() - began) });
+  return status;
 }
 
 /** Builds `main` of `files`: pdfTeX until its references rest, BibTeX and makeindex where the run asks for them. */
@@ -146,8 +149,16 @@ async function build(instance: Instance, files: Record<string, Uint8Array>, main
   instance.asked = asked;
   got = new Map(); failed = new Set(); dead = new Set();
   stems = new Set(Object.keys(files).map((n) => n.split('/').pop()!.replace(/\.[^.]*$/, '')));
-  if (FS.analyzePath(PROJECT).object?.mount?.mountpoint === PROJECT) FS.unmount(PROJECT);
-  FS.mount(FS.filesystems.MEMFS, {}, PROJECT);
+  // The last clean build of this main file left its .aux and the like: they seed this one, as latexmk's directory would.
+  // Any other build starts from an empty directory.
+  const seeded = instance.last?.main === main;
+  if (seeded) {
+    for (const name of instance.last!.inputs) if (!(name in files)) try { FS.unlink(PATH.join(PROJECT, name)); } catch {}
+  } else {
+    if (FS.analyzePath(PROJECT).object?.mount?.mountpoint === PROJECT) FS.unmount(PROJECT);
+    FS.mount(FS.filesystems.MEMFS, {}, PROJECT);
+  }
+  instance.last = undefined;
   for (const [name, data] of Object.entries(files)) {
     const path = PATH.join(PROJECT, name);
     FS.mkdirTree(PATH.dirname(path));
@@ -156,21 +167,33 @@ async function build(instance: Instance, files: Record<string, Uint8Array>, main
   const dir = PATH.join(PROJECT, PATH.dirname(main)), file = PATH.basename(main), job = file.replace(/\.tex$/, '');
   FS.chdir(dir);
   const read = (name: string, binary = false) => FS.analyzePath(PATH.join(dir, name)).exists ? FS.readFile(PATH.join(dir, name), { encoding: binary ? 'binary' : 'utf8' }) : binary ? null : '';
+  // what this build shows is what its own runs write: no PDF of the last one survives a run that writes none
+  for (const n of [`${job}.pdf`, `${job}.synctex.gz`, `${job}.log`]) if (FS.analyzePath(PATH.join(dir, n)).exists) FS.unlink(PATH.join(dir, n));
+  /** The files the runs read back (OWN, without the logs): equal before and after a pass, the references rest. */
+  const own = (at = dir): string[] => (FS.readdir(at) as string[]).filter((n) => n !== '.' && n !== '..').sort().flatMap((n) => {
+    const full = PATH.join(at, n);
+    if (FS.isDir(FS.stat(full).mode)) return own(full);
+    return OWN.test(n) && !/\.(blg|ilg|synctex(\.gz)?)$/.test(n) ? [`${full}\n${FS.readFile(full, { encoding: 'utf8' })}`] : [];
+  });
   const commands: Command[] = [];
-  const tex = () => run(instance, ['pdflatex', '-synctex=1', '--no-shell-escape', '-interaction=nonstopmode', '-file-line-error', '--fmt', FMT, file], commands);
-  let aux = null, biblatex = false;
+  let status = 0;
+  // a fresh build's first pass is never its last: it writes no PDF (-draftmode)
+  const tex = (draft: boolean) => status = run(instance, ['pdflatex', ...draft ? ['-draftmode'] : ['-synctex=1'], '--no-shell-escape', '-interaction=nonstopmode', '-file-line-error', '--fmt', FMT, file], commands);
+  let was = seeded ? own().join('\0') : null, biblatex = false;
   for (let pass = 1; pass <= PASSES; pass++) {
-    post({ phase: `pdfTeX, pass ${pass}` });
-    tex();
+    post({ phase: `pdfTeX, pass ${pass}${pass === 1 && !seeded ? ' (writes the .aux, no PDF)' : ''}` });
+    tex(pass === 1 && !seeded);
     if (pass === 1) {
       if (/\\bibdata\{/.test(read(`${job}.aux`))) { post({ phase: 'BibTeX' }); run(instance, ['bibtex8', '--8bit', `${job}.aux`], commands); }
       biblatex = !!read(`${job}.bcf`);
       if (read(`${job}.idx`).trim()) { post({ phase: 'makeindex' }); run(instance, ['makeindex', `${job}.idx`], commands); }
     }
-    const now = read(`${job}.aux`), log = read(`${job}.log`);
-    if (now === aux && !/Rerun to get|Label\(s\) may have changed/.test(log)) break;
-    aux = now;
+    const now = own().join('\0'), log = read(`${job}.log`);
+    if (now === was && !/Rerun to get|Label\(s\) may have changed/.test(log)) break;
+    was = now;
   }
+  // only a clean last run seeds the next build: an error may have left a broken .aux
+  if (!status && read(`${job}.pdf`, true)) instance.last = { main, inputs: Object.keys(files) };
   const outputs: { name: string; bytes: Uint8Array }[] = [], inputs = new Set(Object.keys(files).map((n) => PATH.join(PROJECT, n)));
   const walk = (at: string) => {
     for (const name of FS.readdir(at)) {

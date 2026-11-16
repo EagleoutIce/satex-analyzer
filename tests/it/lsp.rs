@@ -83,11 +83,14 @@ impl Server {
     /// texmf.kpsewhich=false` (a test of `\usepackage`/`\documentclass`
     /// goto-definition needs the real kernel and a real search).
     fn start_with(cache: &std::path::Path, cwd: &std::path::Path, args: &[&str]) -> Server {
-        let mut child = crate::support::satex()
-            .args(["lsp"])
-            .args(args)
-            .current_dir(cwd)
-            .env("SATEX_CACHE", cache)
+        let mut command = crate::support::satex();
+        command.args(["lsp"]).args(args).current_dir(cwd).env("SATEX_CACHE", cache);
+        Server::spawn(command)
+    }
+
+    /// `satex lsp` as `command` says, on pipes.
+    fn spawn(mut command: std::process::Command) -> Server {
+        let mut child = command
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -1533,8 +1536,8 @@ fn hover_shows_the_biblatex_style() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// A file argument completes the files of its extension that start with
-/// what is typed: the project's databases, the installation's styles.
+/// A file argument completes the files of its extension, those that start
+/// with what is typed first: the project's databases, the installation's styles.
 #[test]
 fn file_arguments_complete_their_files_by_extension() {
     let text = "\\documentclass{article}\n\\begin{document}\nx\n\\bibliographystyle{pl}\n\\bibliography{re}\n\\end{document}\n";
@@ -1544,20 +1547,27 @@ fn file_arguments_complete_their_files_by_extension() {
     }
     let bibs = complete(&mut server, &uri, 4, 16);
     assert!(["refs", "rest"].iter().all(|n| labels(&bibs).contains(n)), "{:?}", labels(&bibs));
-    assert!(labels(&bibs).iter().all(|l| l.starts_with("re")), "{:?}", labels(&bibs));
+    assert!(prefix_first(&bibs, "re"), "{:?}", labels(&bibs));
     let styles = complete(&mut server, &uri, 3, 21);
     assert!(labels(&styles).contains(&"plain"), "{:?}", labels(&styles));
-    assert!(labels(&styles).iter().all(|l| l.starts_with("pl")), "{:?}", labels(&styles));
+    assert!(prefix_first(&styles, "pl"), "{:?}", labels(&styles));
     server.shutdown();
     let blx =
         "\\documentclass{article}\n\\usepackage[style=authoryear]{biblatex}\n\\begin{document}\nx\n\\end{document}\n";
     let (mut server, uri, _, dir2) = open_loaded("bbxfiles", blx);
     let bbx = complete(&mut server, &uri, 1, 20);
     assert!(["authoryear", "authortitle"].iter().all(|n| labels(&bbx).contains(n)), "{:?}", labels(&bbx));
-    assert!(labels(&bbx).iter().all(|l| l.starts_with("au")), "{:?}", labels(&bbx));
+    assert!(prefix_first(&bbx, "au"), "{:?}", labels(&bbx));
     server.shutdown();
     let _ = std::fs::remove_dir_all(&dir);
     let _ = std::fs::remove_dir_all(&dir2);
+}
+
+/// Whether the items whose label starts with `typed` all come before the others (found by a part or a typo).
+fn prefix_first(items: &[Value], typed: &str) -> bool {
+    let starts = |i: &Value| i["label"].as_str().is_some_and(|l| l.starts_with(typed));
+    let first_other = items.iter().position(|i| !starts(i)).unwrap_or(items.len());
+    first_other > 0 && items[first_other..].iter().all(|i| !starts(i))
 }
 
 /// An installed package completes with its date and version, as its
@@ -1583,7 +1593,10 @@ fn packages_complete_with_their_version_and_documentation() {
     assert!(amsmath["documentation"].to_string().contains("texdoc.org/pkg/amsmath"), "{amsmath}");
     assert!(!amsmath["detail"].to_string().contains("needs"), "{amsmath}");
     // fontspec says it "requires either XeTeX or LuaTeX": under pdfTeX it says so, and comes last
+    // among the names that start with what was typed
     let items = complete(&mut server, &uri, 2, "\\usepackage{fonts".len() as u32);
+    let items: Vec<Value> =
+        items.into_iter().filter(|i| i["label"].as_str().is_some_and(|l| l.starts_with("fonts"))).collect();
     let needs = |i: &Value| i["detail"].as_str().is_some_and(|d| d.contains("needs XeTeX or LuaTeX"));
     if let Some(at) = items.iter().position(|i| i["label"] == "fontspec") {
         assert!(needs(&items[at]), "{}", items[at]);
@@ -6031,4 +6044,186 @@ fn an_undefined_array_makes_no_environment_a_table() {
     assert_eq!(got["tables"], json!([]), "{got}");
     server.shutdown();
     std::fs::remove_dir_all(dir).ok();
+}
+
+/// The editor gets the first-start question once, as a
+/// `window/showMessageRequest` any client shows, and the answer lands in
+/// the user's global config, so neither the editor nor the terminal asks
+/// again. No starts nothing.
+#[test]
+fn the_editor_asks_the_setup_question_and_records_no() {
+    let dir = crate::support::scratch_dir(
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join(format!("target/scratch/lsp-setup-{}", std::process::id())),
+    );
+    let config = dir.join("config");
+    let mut command = crate::support::satex();
+    command
+        .args(["lsp", "--no-packages", "--no-classes", "--set", "load.format=false"])
+        .current_dir(&dir)
+        .env_remove("SATEX_NO_SETUP")
+        .env_remove("CI")
+        .env("HOME", &dir)
+        .env("XDG_CONFIG_HOME", &config)
+        .env("APPDATA", &config)
+        .env("SATEX_CACHE", dir.join("cache"));
+    let mut server = Server::spawn(command);
+    let id = server.request("initialize", json!({ "processId": null, "rootUri": null, "capabilities": {} }));
+    server.response(id);
+    server.notify("initialized", json!({}));
+    let prompt = server.notification("window/showMessageRequest");
+    assert_eq!(prompt["id"], json!("satex-setup"), "{prompt}");
+    assert!(prompt["params"]["message"].as_str().unwrap_or_default().contains("in the background"), "{prompt}");
+    server.write(&json!({ "jsonrpc": "2.0", "id": prompt["id"], "result": { "title": "No" } }));
+    // A request answered after the answer was taken.
+    let id = server.request("workspace/symbol", json!({ "query": "" }));
+    server.response(id);
+    let written = std::fs::read_to_string(config.join("satex/satex.yaml")).unwrap_or_default();
+    assert!(written.contains("cache:\n  background: no\n"), "{written}");
+    assert!(!dir.join("cache/background.log").exists(), "no builder");
+    server.shutdown();
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Yes in the editor: the answer lands in the global config and the
+/// builder starts, detached from the server, and prepares the caches; the
+/// server goes on answering meanwhile.
+#[test]
+fn yes_in_the_editor_records_yes_and_starts_the_builder() {
+    let dir = crate::support::scratch_dir(
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join(format!("target/scratch/lsp-setup-yes-{}", std::process::id())),
+    );
+    crate::cache_background::tree(&dir);
+    let config = dir.join("config");
+    std::fs::create_dir_all(config.join("satex")).unwrap();
+    std::fs::write(config.join("satex/satex.yaml"), crate::cache_background::global(&dir, "ask")).unwrap();
+    let cache = dir.join("cache");
+    let mut command = crate::support::satex();
+    command
+        .args(["lsp", "--no-packages", "--no-classes", "--set", "load.format=false"])
+        .current_dir(&dir)
+        .env_remove("SATEX_NO_SETUP")
+        .env_remove("CI")
+        .env("HOME", &dir)
+        .env("XDG_CONFIG_HOME", &config)
+        .env("APPDATA", &config)
+        .env("SATEX_CACHE", &cache);
+    let mut server = Server::spawn(command);
+    let id = server.request("initialize", json!({ "processId": null, "rootUri": null, "capabilities": {} }));
+    server.response(id);
+    server.notify("initialized", json!({}));
+    let prompt = server.notification("window/showMessageRequest");
+    server.write(&json!({ "jsonrpc": "2.0", "id": prompt["id"], "result": { "title": "Yes" } }));
+    let id = server.request("workspace/symbol", json!({ "query": "" }));
+    server.response(id);
+    let written = std::fs::read_to_string(config.join("satex/satex.yaml")).unwrap_or_default();
+    assert!(written.contains("background: yes"), "{written}");
+    assert_eq!(crate::cache_background::settle(&cache), "done");
+    server.shutdown();
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The description TeX Live's catalogue (`tlpkg/texlive.tlpdb`) gives the run file `file` kpsewhich finds, if installed:
+/// the block that lists that very path.
+fn catalogued(file: &str) -> Option<String> {
+    let kpsewhich = satex::project::paths::which("kpsewhich").ok()?;
+    let ask = |args: &[&str]| std::process::Command::new(&kpsewhich).args(args).output().ok();
+    let dist = std::path::PathBuf::from(String::from_utf8_lossy(&ask(&["-var-value", "TEXMFDIST"])?.stdout).trim());
+    let found = std::path::PathBuf::from(String::from_utf8_lossy(&ask(&[file])?.stdout).trim());
+    let rel = found.strip_prefix(dist.parent()?).ok()?.to_string_lossy().into_owned();
+    let tlpdb = std::fs::read_to_string(dist.parent()?.join("tlpkg/texlive.tlpdb")).ok()?;
+    tlpdb.split("\n\n").find_map(|block| {
+        let desc = block.lines().find_map(|l| l.strip_prefix("shortdesc "))?;
+        let lists = block.lines().any(|l| l.starts_with(' ') && l.split_whitespace().next() == Some(rel.as_str()));
+        lists.then(|| desc.trim().to_string())
+    })
+}
+
+/// A package is found by a word of what it is, not only by its name: the
+/// catalogue's line for amsmath names a word amsmath's name lacks, and
+/// typing that word, or a typo of it, offers amsmath with the line beside
+/// it. A name starting with what was typed still comes before every match
+/// by description, and the editor asks again as more is typed.
+#[test]
+fn packages_are_found_by_their_description() {
+    let Some(about) = catalogued("amsmath.sty") else { return };
+    // the longest word of the description that the name does not contain
+    let word = about
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|w| !"amsmath".contains(&w.to_lowercase()))
+        .max_by_key(|w| w.len())
+        .unwrap()
+        .to_lowercase();
+    assert!(word.len() >= 7, "{about}");
+    let typo = format!("{}{}{}", &word[..2], &word[3..4], &word[2..3]) + &word[4..];
+    let text = format!(
+        "\\documentclass{{article}}\n\\usepackage{{{word}}}\n\\usepackage{{{typo}}}\n\\usepackage{{amsm}}\n\\begin{{document}}\nx\n\\end{{document}}\n"
+    );
+    let (mut server, uri, _, dir) = open_loaded("pkgsearch", &text);
+    for (line, typed) in [(1, &word), (2, &typo)] {
+        let id = server.request(
+            "textDocument/completion",
+            json!({ "textDocument": { "uri": uri }, "position": { "line": line, "character": "\\usepackage{".len() + typed.len() } }),
+        );
+        let result = server.response(id)["result"].clone();
+        assert_eq!(result["isIncomplete"], true, "{typed}");
+        let items = completion_items(&result);
+        let found =
+            items.iter().find(|i| i["label"] == "amsmath").unwrap_or_else(|| panic!("{typed}: {:?}", labels(&items)));
+        assert_eq!(found["labelDetails"]["description"], about.as_str());
+        // the editor keeps it: its filter text starts with what was typed
+        assert!(found["filterText"].as_str().is_some_and(|f| f.starts_with(typed.as_str())), "{found}");
+    }
+    let items = complete(&mut server, &uri, 3, "\\usepackage{amsm".len() as u32);
+    assert!(prefix_first(&items, "amsm"), "{:?}", labels(&items));
+    server.shutdown();
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A label shows what it points at, read from what the run wrote: a
+/// figure's kind, number and caption, a section's number and heading, an
+/// equation's number. A word of the caption, or a typo of it, finds the
+/// label although its key has none of it.
+#[test]
+fn labels_show_and_are_found_by_what_they_point_at() {
+    let text = "\\documentclass{article}\n\\begin{document}\n\\section{Introduction}\\label{sec:a}\n\\begin{figure}\\centering x\\caption{Delivery routes}\\label{fig:b}\\end{figure}\n\\begin{equation}x\\label{eq:c}\\end{equation}\n\\ref{}\n\\ref{delivery}\n\\ref{delivrey}\n\\end{document}\n";
+    let (mut server, uri, _, dir) = open_loaded("labelsabout", text);
+    let items = complete(&mut server, &uri, 5, 5);
+    let about = |items: &[Value], key: &str| {
+        let it = items.iter().find(|i| i["label"] == key).unwrap_or_else(|| panic!("{key}: {:?}", labels(items)));
+        it["labelDetails"]["description"].as_str().unwrap_or_default().to_string()
+    };
+    assert_eq!(about(&items, "sec:a"), "§1: Introduction");
+    assert_eq!(about(&items, "fig:b"), "figure 1: Delivery routes");
+    assert_eq!(about(&items, "eq:c"), "equation 1");
+    for line in [6, 7] {
+        let items = complete(&mut server, &uri, line, "\\ref{delivery".len() as u32);
+        assert_eq!(labels(&items), ["fig:b"], "line {line}");
+    }
+    server.shutdown();
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A citation is found by an author's name, typo and all, and shows its
+/// title; the entry whose key starts with what was typed comes first.
+#[test]
+fn citations_are_found_by_author_and_show_their_title() {
+    let text = "\\documentclass{article}\n\\begin{document}\n\\cite{knuht}\n\\cite{lamp}\n\\bibliography{refs}\n\\end{document}\n";
+    let (mut server, uri, _, dir) = open_loaded("citesearch", text);
+    std::fs::write(
+        dir.join("refs.bib"),
+        "@article{lp84, author = {Donald E. Knuth}, title = {Literate {P}rogramming}, year = 1984}\n\
+         @book{lamport94, author = {Leslie Lamport}, title = {LaTeX}, year = 1994}\n\
+         @book{other, author = {Ann Lampe}, title = {Lamps}, year = 2000}\n",
+    )
+    .unwrap();
+    let items = complete(&mut server, &uri, 2, "\\cite{knuht".len() as u32);
+    assert_eq!(labels(&items), ["lp84"]);
+    assert_eq!(items[0]["labelDetails"]["description"], "Knuth (1984) Literate Programming");
+    let items = complete(&mut server, &uri, 3, "\\cite{lamp".len() as u32);
+    assert_eq!(labels(&items).first(), Some(&"lamport94"), "{:?}", labels(&items));
+    assert!(labels(&items).contains(&"other"), "{:?}", labels(&items));
+    server.shutdown();
+    let _ = std::fs::remove_dir_all(&dir);
 }

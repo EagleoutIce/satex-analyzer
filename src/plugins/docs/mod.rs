@@ -153,34 +153,51 @@ pub fn mine(plugins: &[&dyn DocPlugin], config: &DocsConfig, dirs: &Dirs) -> Has
 /// installation's catalogue (`tlpkg/texlive.tlpdb`'s `shortdesc`), the
 /// first sentence of its README, the text of its `\ProvidesPackage`.
 pub fn about(config: &DocsConfig, file: &Path) -> Option<String> {
-    let base = file.file_name()?.to_string_lossy().into_owned();
-    let catalogue = file.ancestors().find_map(|d| catalogue(&d.join("tlpkg/texlive.tlpdb")));
-    catalogue
-        .and_then(|c| c.get(&base).cloned())
+    catalogue_of(file)
+        .and_then(|c| c.line(file).map(str::to_string))
         .or_else(|| readme(Dirs::of(config, file)?.doc.as_deref()?))
         .or_else(|| provided(&std::fs::read_to_string(file).ok()?))
 }
 
-type Catalogue = Arc<HashMap<String, String>>;
+/// A TeX Live database's `shortdesc` of each run file's package, by the
+/// file's path below the directory that holds `tlpkg`.
+pub struct Catalogue {
+    base: PathBuf,
+    lines: HashMap<String, String>,
+}
 
-/// Each run file's package description in a TeX Live database, read once.
-fn catalogue(path: &Path) -> Option<Catalogue> {
-    static READ: Mutex<Option<HashMap<PathBuf, Option<Catalogue>>>> = Mutex::new(None);
+impl Catalogue {
+    /// The description of the package `file` belongs to: the one that lists that very
+    /// file, so a development pre-release listing the same name does not answer.
+    pub fn line(&self, file: &Path) -> Option<&str> {
+        let rel = file.strip_prefix(&self.base).ok()?;
+        let rel = rel.components().map(|c| c.as_os_str().to_string_lossy()).collect::<Vec<_>>().join("/");
+        self.lines.get(&rel).map(String::as_str)
+    }
+}
+
+/// The catalogue of the installation `path` belongs to.
+pub fn catalogue_of(path: &Path) -> Option<Arc<Catalogue>> {
+    path.ancestors().find_map(|d| catalogue(d))
+}
+
+/// The catalogue in `base`'s `tlpkg/texlive.tlpdb`, read once.
+fn catalogue(base: &Path) -> Option<Arc<Catalogue>> {
+    static READ: Mutex<Option<HashMap<PathBuf, Option<Arc<Catalogue>>>>> = Mutex::new(None);
     let mut read = READ.lock().ok()?;
     let read = read.get_or_insert_with(HashMap::new);
-    read.entry(path.to_path_buf())
+    read.entry(base.to_path_buf())
         .or_insert_with(|| {
-            let text = std::fs::read_to_string(path).ok()?;
-            let mut out = HashMap::new();
+            let text = std::fs::read_to_string(base.join("tlpkg/texlive.tlpdb")).ok()?;
+            let mut lines = HashMap::new();
             for block in text.split("\n\n") {
                 let Some(desc) = block.lines().find_map(|l| l.strip_prefix("shortdesc ")) else { continue };
                 for file in block.lines().filter(|l| l.starts_with(' ')) {
-                    let name =
-                        file.split_whitespace().next().unwrap_or_default().rsplit('/').next().unwrap_or_default();
-                    out.entry(name.to_string()).or_insert_with(|| desc.trim().to_string());
+                    let rel = file.split_whitespace().next().unwrap_or_default();
+                    lines.entry(rel.to_string()).or_insert_with(|| desc.trim().to_string());
                 }
             }
-            Some(Arc::new(out))
+            Some(Arc::new(Catalogue { base: base.to_path_buf(), lines }))
         })
         .clone()
 }

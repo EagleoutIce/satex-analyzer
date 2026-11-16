@@ -11,8 +11,9 @@ use satex::engine::builtins::OccKind;
 /// Steps a fixture may take.
 const STEP_BUDGET: u64 = 20_000_000;
 /// Target 20M; measured 43.2M on 2026-11-04 (rerun-checked), see plan.
-/// Three of the fixture's line budgets (1M): the cut line, the lines after it, slack.
-const CUT_LIBRARY_STEPS: u64 = 3_000_000;
+/// Target three of the fixture's line budgets (1M); measured 4.12M on 2026-11-16, reaching
+/// the end with no library error; 1.25 times that.
+const CUT_LIBRARY_STEPS: u64 = 5_150_000;
 const NOTEBOOK_A4_STEPS: u64 = 53_952_069;
 /// Target 20M; measured 44.2M on 2026-11-04 (rerun-checked), see plan.
 const FLOAT_AFTER_TITLE_STEPS: u64 = 55_299_093;

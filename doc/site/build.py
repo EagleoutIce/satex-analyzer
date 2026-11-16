@@ -752,6 +752,9 @@ def bundle(satex, work):
         d, _, f = p.removeprefix("/texmf.bundle/").rpartition("/")
         listing.setdefault(d, []).append(f)
     tables[0]["/texmf.bundle/ls-R"] = "".join(f"./{d}:\n" + "".join(f"{f}\n" for f in fs) + "\n" for d, fs in sorted(listing.items())).encode()
+    # The catalogue's line for each bundled package (`shortdesc`): completion shows it and finds packages by it.
+    dist = Path(run("kpsewhich", "-var-value", "TEXMFDIST").strip()).resolve()
+    tables[0]["/texmf.bundle/tlpkg/texlive.tlpdb"] = catalogue(dist, {p.removeprefix("/texmf.bundle/") for p in held if p.endswith((".sty", ".cls"))})
     if (tree / "release-texlive.txt").is_file():
         tables[0]["/texmf.bundle/release-texlive.txt"] = (tree / "release-texlive.txt").read_bytes()
     tables[0]["/work/satex.yaml"] = config.replace(str(tree), "/texmf.bundle").encode()
@@ -989,6 +992,20 @@ def manuals(satex, work, tables, packages, offered, records):
                     files[target] = json.dumps(list(rows.values()), ensure_ascii=False).encode()
                     documented.add(Path(native).stem)
     return documented
+
+
+def catalogue(dist, held):
+    """The blocks of the database of the TeX Live whose tree is `dist` that list a file of `held` (paths in that
+    tree), each cut to its description and those files, as the bundle's tree holds them: what `satex`'s completion
+    reads (src/plugins/docs `Catalogue`)."""
+    tlpdb, tree = dist.parent / "tlpkg/texlive.tlpdb", dist.name + "/"
+    out = []
+    for block in (tlpdb.read_text(errors="replace").split("\n\n") if tlpdb.is_file() else []):
+        desc = next((l for l in block.splitlines() if l.startswith("shortdesc ")), None)
+        files = [f for l in block.splitlines() if l.startswith(" ") and (f := l.split()[0].removeprefix(tree)) in held]
+        if desc and files:
+            out.append("\n".join([desc, *(" " + f for f in files)]))
+    return "\n\n".join(out).encode()
 
 
 def package_names():

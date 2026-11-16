@@ -120,9 +120,34 @@ fn node_id(node: &Node) -> u64 {
 const DEGRADED: &str = "the run lowered its precision to finish";
 const REWRITTEN: &str = "not stored: another instance rewrote it first";
 
-/// Where a recording may be appended: the tree whose root is `root`, if the
-/// node its chain hangs from is still the one that was read. The file may
-/// have changed since this run read it — another process storing the same
+/// A root part no segment of a tree depended on: the tree serves any value of it.
+/// Hashes are never 0 in practice (FNV of the part's bytes).
+const ANY: u64 = 0;
+/// The root part of the `\read` streams. Most packages never touch a stream,
+/// yet one left open by the document keys every package loaded after it.
+const STREAMS: &str = "open read streams";
+
+/// Whether a tree keyed `stored` serves a load whose state is `root`: every
+/// part equal, or left open.
+fn fits(stored: &[(String, u64)], root: &[(String, u64)]) -> bool {
+    stored.len() == root.len() && stored.iter().zip(root).all(|(s, r)| s.0 == r.0 && (s.1 == r.1 || s.1 == ANY))
+}
+
+/// The tree a load in state `root` reads or appends to: among those that fit,
+/// the one exactly keyed first, and with a chain to continue, the one that
+/// still holds its node.
+fn tree_for(file: &CacheFile, root: &[(String, u64)], parent: Option<u32>, parent_id: Option<u64>) -> Option<usize> {
+    let holds = |t: &Tree| parent.is_none_or(|k| t.nodes.get(k as usize).map(node_id) == parent_id);
+    let fitting = |exact: bool| {
+        file.trees.iter().position(|t| (if exact { t.root == root } else { fits(&t.root, root) }) && holds(t))
+    };
+    fitting(true).or_else(|| fitting(false))
+}
+
+/// Where a recording may be appended, and the node its chain then hangs
+/// from. `open` names the root parts the chain never depended on: stored
+/// under [`ANY`] there, any value of them finds it. The file may have
+/// changed since this run read it — another process storing the same
 /// package inserts its tree at the front, shifting every later index, and
 /// `MAX_TREES` drops the oldest — so the kept index can't be trusted.
 /// `None` means the recording belongs nowhere now: written on a stale
@@ -131,27 +156,46 @@ const REWRITTEN: &str = "not stored: another instance rewrote it first";
 fn append_target(
     file: &mut CacheFile,
     root: &[(String, u64)],
+    open: &[&str],
     parent: Option<u32>,
     parent_id: Option<u64>,
-) -> Option<usize> {
-    match file.trees.iter().position(|t| t.root == root) {
+) -> Option<(usize, Option<u32>)> {
+    let keyed: Vec<(String, u64)> =
+        root.iter().map(|(n, v)| (n.clone(), if open.contains(&n.as_str()) { ANY } else { *v })).collect();
+    let (nodes, root) = match tree_for(file, root, parent, parent_id) {
+        // A chain from the root starts in the tree keyed as it depended, else its own.
+        None | Some(_) if parent.is_none() => match file.trees.iter().position(|t| t.root == keyed) {
+            Some(t) => return Some((t, None)),
+            None => (Vec::new(), keyed),
+        },
+        None => return None,
+        // The tree leaves open only what the chain did not read: it goes on there.
+        Some(t) if file.trees[t].root.iter().zip(&keyed).all(|(s, k)| s.1 != ANY || k.1 == ANY) => {
+            return Some((t, parent));
+        }
+        // The chain read a part its tree leaves open: a tree keyed by it, the
+        // nodes it hangs from copied (they serve any value of the part).
         Some(t) => {
-            let same = match parent {
-                None => true,
-                Some(k) => file.trees[t].nodes.get(k as usize).map(node_id) == parent_id,
-            };
-            same.then_some(t)
-        }
-        None => {
-            // A chain that hangs from a node cannot be moved to an empty tree.
-            if parent.is_some() {
-                return None;
+            let tree = &file.trees[t];
+            let mut path = Vec::new();
+            let mut at = parent;
+            while let Some(k) = at {
+                let node = tree.nodes[k as usize].clone();
+                at = node.parent;
+                path.push(node);
             }
-            file.trees.insert(0, Tree { root: root.to_vec(), nodes: Vec::new() });
-            file.trees.truncate(MAX_TREES);
-            Some(0)
+            path.reverse();
+            for (i, node) in path.iter_mut().enumerate() {
+                node.parent = i.checked_sub(1).map(|p| p as u32);
+            }
+            let root = tree.root.iter().zip(&keyed).map(|(s, k)| (k.0.clone(), if s.1 == ANY { k.1 } else { s.1 }));
+            (path, root.collect())
         }
-    }
+    };
+    let parent = nodes.len().checked_sub(1).map(|p| p as u32);
+    file.trees.insert(0, Tree { root, nodes });
+    file.trees.truncate(MAX_TREES);
+    Some((0, parent))
 }
 
 /// What a test hands [`BEFORE_STORE`]: the cache file is its to rewrite.
@@ -211,7 +255,7 @@ pub(super) fn note_load_end(carried: &Carried, guarded_lines: usize) {
 }
 
 /// A vertex the segment refers to: one in its table or before the load (found by name).
-#[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Debug)]
+#[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Hash, Debug)]
 enum VRef {
     Table(u32),
     Before(Sym),
@@ -626,6 +670,26 @@ fn decode_part<T: serde::de::DeserializeOwned>(bytes: &[u8], syms: &[Sym], files
     codec::with(Mode::Decode { syms: syms.to_vec(), files: files.to_vec() }, || postcard::from_bytes(bytes)).0.ok()
 }
 
+/// Drops edges a replay would add again to no effect: a later copy of a raw
+/// edge, and of a read with no definition maker between (a maker moves
+/// [`crate::analysis::graph::DependencyGraph::maker`] and the definition
+/// counts a read's inferred charge depends on). A ref resolves the same
+/// throughout a replay's edge loop, so a copy adds nothing the first did not.
+/// Makers count, all stay. scrbook logs 2.6M edges, 1.0M of them kept.
+fn dedup_edges(edges: &mut Vec<(VRef, VRef, u16, Option<VRef>)>) {
+    let mut makers = 0u64;
+    let mut seen: HashMap<(VRef, VRef, u16, Option<VRef>), u64> = HashMap::default();
+    edges.retain(|e| {
+        let kind = EdgeKind(e.2);
+        if kind == EdgeKind::default() {
+            makers += 1;
+            return true;
+        }
+        let epoch = if kind.intersects(EdgeKind::READS) { makers } else { 0 };
+        seen.insert(*e, epoch) != Some(epoch)
+    });
+}
+
 /// One decoded chunk of a bulk list.
 enum Chunk {
     Vertices(Vec<CachedVertex>),
@@ -942,6 +1006,8 @@ pub(super) struct Recorder {
     kind: LoadKind,
     /// The line the first segment resumes on after a nested load.
     resume: Option<u32>,
+    /// [`Machine::streams_used`] when the recording began.
+    streams_from: u64,
 }
 
 /// A load whose recording a nested cacheable load interrupted: it resumes
@@ -959,6 +1025,8 @@ pub(super) struct Suspended {
     rest: Rest,
     parent: Option<u32>,
     parent_id: Option<u64>,
+    /// Load start, kept across nested loads for the `cached …` time.
+    started: std::time::Instant,
 }
 
 /// What a cache holds: a class by its file name (`article.cls`), so a listing
@@ -971,6 +1039,45 @@ fn family(name: &str) -> String {
     let safe: String =
         name.chars().map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '.' { c } else { '_' }).collect();
     format!("package-{safe}-v{ENCODING_VERSION}-")
+}
+
+/// One variant of a package cache, for `satex cache show`.
+pub struct TreeSize {
+    pub root: Vec<(String, u64)>,
+    pub segments: usize,
+    pub steps: u64,
+    pub reads: usize,
+    pub effect: usize,
+    /// Of the effect: the rest, then the vertices, edges, definitions and expansions.
+    pub sections: [usize; 5],
+}
+
+/// The variants a cache file holds; `None` if it does not decode.
+pub fn tree_sizes(bytes: &[u8]) -> Option<Vec<TreeSize>> {
+    let file: CacheFile = postcard::from_bytes(bytes).ok()?;
+    Some(
+        file.trees
+            .iter()
+            .map(|t| TreeSize {
+                root: t.root.clone(),
+                segments: t.nodes.len(),
+                steps: t.nodes.iter().map(|n| n.steps).sum(),
+                reads: t.nodes.iter().map(|n| n.reads.len()).sum(),
+                effect: t.nodes.iter().map(|n| n.effect.len()).sum(),
+                sections: t.nodes.iter().filter_map(|n| postcard::from_bytes::<Sections>(&n.effect).ok()).fold(
+                    [0; 5],
+                    |mut sum, s| {
+                        let lists = [&s.vertices, &s.edges, &s.definitions, &s.expansions];
+                        sum[0] += s.rest.len();
+                        for (i, list) in lists.iter().enumerate() {
+                            sum[i + 1] += list.iter().map(|b| b.len()).sum::<usize>();
+                        }
+                        sum
+                    },
+                ),
+            })
+            .collect(),
+    )
 }
 
 /// Delete the caches no build can use and bound the rest: see
@@ -1321,7 +1428,7 @@ impl Machine<'_> {
             let mut streams: Vec<_> = self.streams.iter().collect();
             streams.sort_by_key(|(n, _)| **n);
             hash.put(&streams);
-            parts.push(("open read streams".into(), std::mem::replace(&mut hash, Fnv::new()).0));
+            parts.push((STREAMS.into(), std::mem::replace(&mut hash, Fnv::new()).0));
             // by name past the job's own (`\jobname.aux`): a package loaded once the aux is open
             // replays in any document
             let job = format!("{}.", self.job_name());
@@ -1336,12 +1443,16 @@ impl Machine<'_> {
             hash.put(&super::plain_pending(&self.pending));
             hash.put(&self.docstrip_dir.as_ref().map(|d| roots.canonical(d)));
             parts.push(("deferred writes and docstrip".into(), std::mem::replace(&mut hash, Fnv::new()).0));
+            // By name: symbol numbers follow the interning order, which a
+            // replay changes (pdfescape missed every warm run on it).
+            let name = |sym: &Sym| self.out.interner.name(*sym);
             let mut pinned: Vec<Sym> = self.pinned.iter().copied().collect();
-            pinned.sort();
+            pinned.sort_by_key(name);
             hash.put(&pinned);
             parts.push(("pinned names".into(), std::mem::replace(&mut hash, Fnv::new()).0));
-            let open: Vec<(Sym, u16)> =
+            let mut open: Vec<(Sym, u16)> =
                 self.expanding.iter().enumerate().filter(|(_, n)| **n > 0).map(|(i, n)| (Sym(i as u32), *n)).collect();
+            open.sort_by_key(|(sym, _)| name(sym));
             hash.put(&open);
             parts.push(("open expansions".into(), std::mem::replace(&mut hash, Fnv::new()).0));
             // Enclosing expansions the package's vertices hang from.
@@ -1354,7 +1465,8 @@ impl Machine<'_> {
                 .filter(|(_, s)| s.progress == self.site_progress())
                 .map(|((span, sym), s)| (span_out(*span, site), *sym, s.repeats))
                 .collect();
-            recent.sort_by_key(|(span, sym, _)| (span.file, span.line, span.col, sym.0));
+            let file = |f: FileId| self.out.files.get(f as usize).map(|f| f.path.to_string());
+            recent.sort_by_cached_key(|(span, sym, _)| (file(span.file), span.line, span.col, name(sym).to_string()));
             hash.put(&recent);
             parts.push(("recent call sites".into(), std::mem::replace(&mut hash, Fnv::new()).0));
             // Decided conditionals the load stands in (latex.ltx reads from `\IfFileExists` arm).
@@ -1505,6 +1617,8 @@ impl Machine<'_> {
         let Machine {
             // Their own roles: [`Carried`] in the effect, [`Scratch`] forgotten at the end.
             carried: _,
+            // A count of uses: the store reads it, a replay keeps the run's.
+            streams_used: _,
             scratch: _,
             // Same throughout a load.
             cfg: _,
@@ -1530,6 +1644,7 @@ impl Machine<'_> {
             memo_verify: _,
             memo_said: _,
             side_effects: _,
+            file_writes: _,
             call_recs: _,
             learn_forks: _,
             guard_seen: _,
@@ -1713,6 +1828,7 @@ impl Machine<'_> {
             copies: _,
             popping_in_read: _,
             reading_command: _,
+            head_call: _,
             trace_full: _,
             started: _,
             step_depth: _,
@@ -1835,13 +1951,16 @@ impl Machine<'_> {
         key.put(&self.cfg.clock.to_string());
         let frame = self.live_below(self.input.len());
         let load = Suspended {
+            started: std::time::Instant::now(),
             file: id,
             frame,
             name: name.to_string(),
             kind,
             cache: {
                 let cache = cache_file(&dir, &held(name, kind), key.0);
+                // The background builder takes none: no run waits on it.
                 if outermost
+                    && !self.cfg.cache.index.background
                     && !cache.exists()
                     && let Some(lock) = crate::caches::format::build_lock(&cache)
                 {
@@ -1867,11 +1986,24 @@ impl Machine<'_> {
     fn suspend_recording(&mut self) {
         let Some(rec) = self.package_capture.as_ref() else { return };
         let (file, frame, name, kind) = (rec.file, rec.frame, rec.name.clone(), rec.kind);
-        let (cache, site, root, rest) = (rec.cache.clone(), rec.site, rec.root.clone(), rec.rest.clone());
+        let (cache, site, root, rest, started) =
+            (rec.cache.clone(), rec.site, rec.root.clone(), rec.rest.clone(), rec.started);
         let stored = self.finish_recording(true);
         self.end_cacheable_load();
         if let Some((parent, parent_id)) = stored {
-            self.suspended.push(Suspended { file, frame, name, kind, cache, site, root, rest, parent, parent_id });
+            self.suspended.push(Suspended {
+                file,
+                frame,
+                name,
+                kind,
+                cache,
+                site,
+                root,
+                rest,
+                parent,
+                parent_id,
+                started,
+            });
         }
     }
 
@@ -1951,8 +2083,19 @@ impl Machine<'_> {
     /// (first those that resume on `resume`), then record the rest. Where
     /// the file stands now, if anything was installed.
     fn replay_from(&mut self, load: Suspended, resume: Option<u32>, lines: u64) -> Option<(LineMark, bool)> {
-        let Suspended { file: id, frame, name, kind, cache, site: span, root, rest, parent, parent_id: start_id } =
-            load;
+        let Suspended {
+            file: id,
+            frame,
+            name,
+            kind,
+            cache,
+            site: span,
+            root,
+            rest,
+            parent,
+            parent_id: start_id,
+            started: began,
+        } = load;
         let name = name.as_str();
         let started = std::time::Instant::now();
         let before = self.before_state();
@@ -1970,14 +2113,14 @@ impl Machine<'_> {
         match bytes.as_deref().map(|bytes| decode(&cache, bytes)) {
             None | Some(Err(None)) => {}
             Some(Err(Some(why))) => reason = Some(why),
-            Some(Ok(file)) => match file.trees.iter().position(|t| t.root == root) {
+            Some(Ok(file)) => match tree_for(&file, &root, parent, start_id) {
                 None if file.trees.is_empty() || resume.is_some() => {}
                 None => {
                     let differs = file.trees[0]
                         .root
                         .iter()
                         .zip(&root)
-                        .find(|(a, b)| a != b)
+                        .find(|(a, b)| a != b && a.1 != ANY)
                         .map_or("its root", |(a, _)| a.0.as_str());
                     let path = &self.out.files[id as usize].path;
                     reason = Some(match differs {
@@ -1985,8 +2128,6 @@ impl Machine<'_> {
                         _ => format!("root differs: {differs}"),
                     });
                 }
-                // The node a suspended chain hangs from is gone: read on.
-                Some(t) if parent.is_some_and(|k| file.trees[t].nodes.get(k as usize).map(node_id) != start_id) => {}
                 Some(t) => {
                     let tree = &file.trees[t];
                     let mut children: HashMap<Option<u32>, Vec<u32>> = HashMap::default();
@@ -2097,7 +2238,7 @@ impl Machine<'_> {
             marks,
             last_line: end.map_or(from as u32, |(mark, _)| mark.line),
             label: format!("{} {name}", if kind == LoadKind::Class { "class" } else { "package" }),
-            started: std::time::Instant::now(),
+            started: began,
             chain: Vec::new(),
             lists: None,
             lookups,
@@ -2112,6 +2253,7 @@ impl Machine<'_> {
             served,
             kind,
             resume: resume.filter(|_| at == parent),
+            streams_from: self.streams_used.get(),
         };
         recorder.log.origins = origins;
         self.package_capture = Some(Box::new(recorder));
@@ -3234,14 +3376,15 @@ impl Machine<'_> {
         rewrite_before_store(&rec.cache);
         let bytes = std::fs::read(&rec.cache).unwrap_or_default();
         let mut file = decode(&rec.cache, &bytes).unwrap_or(CacheFile { version: ENCODING_VERSION, trees: Vec::new() });
-        let target = append_target(&mut file, &rec.root, rec.parent, rec.parent_id);
-        note_append(&rec.name, rec.parent, target, rec.chain.len());
-        let Some(tree) = target else {
+        // Streams the chain never read or wrote: any stream state replays it.
+        let open: &[&str] = if self.streams_used.get() == rec.streams_from { &[STREAMS] } else { &[] };
+        let target = append_target(&mut file, &rec.root, open, rec.parent, rec.parent_id);
+        note_append(&rec.name, rec.parent, target.map(|t| t.0), rec.chain.len());
+        let Some((tree, mut parent)) = target else {
             self.out.package_caches.push((rec.name.clone(), rec.cache.display().to_string(), REWRITTEN.into()));
             return None;
         };
         let nodes = &mut file.trees[tree].nodes;
-        let mut parent = rec.parent;
         for mut node in rec.chain {
             node.parent = parent;
             parent = Some(nodes.len() as u32);
@@ -3260,6 +3403,16 @@ impl Machine<'_> {
         });
         drop(file);
         drop(bytes);
+        // The background builder stores nothing past `limits.cache_size`.
+        if written.is_some() && self.cfg.cache.index.background && crate::caches::format::full(&self.cfg, dir) {
+            let _ = std::fs::remove_file(&temporary);
+            self.out.package_caches.push((
+                rec.name.clone(),
+                rec.cache.display().to_string(),
+                "not stored: the cache directory holds limits.cache_size".into(),
+            ));
+            return None;
+        }
         let stored = written.is_some() && std::fs::rename(&temporary, &rec.cache).is_ok();
         if !stored {
             let _ = std::fs::remove_file(&temporary);
@@ -3267,16 +3420,18 @@ impl Machine<'_> {
         }
         // A load that waits for a nested one is stored in parts: said once, when it ends.
         if !suspend {
-            crate::util::progress::done(&format!("cached {}", rec.label), rec.started.elapsed());
+            if self.cfg.verbose >= 1 {
+                crate::util::progress::done(&format!("cached {}", rec.label), rec.started.elapsed());
+            }
         }
-        crate::caches::format::save_hashes(dir, self.cfg.limits.cache_size.as_u64());
+        crate::caches::format::save_hashes(dir, self.cfg.eviction_bound());
         crate::caches::format::prune_family(
             dir,
             &family(&held(&rec.name, rec.kind)),
             crate::caches::format::cache_key(),
-            self.cfg.limits.cache_size.as_u64(),
+            self.cfg.eviction_bound(),
         );
-        prune(dir, self.cfg.limits.cache_size.as_u64());
+        prune(dir, self.cfg.eviction_bound());
         let cache_text = rec.cache.display().to_string();
         let state = match rec.served {
             0 => "stored".to_string(),
@@ -3377,6 +3532,7 @@ impl Machine<'_> {
         for (_, lfrom, name, lreader, lkind) in links {
             edges.push((vref(*lfrom), VRef::Before(*name), lkind.0, lreader.map(vref)));
         }
+        dedup_edges(&mut edges);
         let extents: Vec<(Span, u32)> =
             glog.extents[m.extents..].iter().map(|(s, l)| (span_out(*s, site), *l)).collect();
         let calls = self.out.calls.recorded()[m.calls..].to_vec();
@@ -3966,11 +4122,11 @@ mod tests {
             CacheFile { version: ENCODING_VERSION, trees: vec![tree("other", vec![]), tree("mine", vec![node(1)])] };
         let id = Some(node_id(&node(1)));
         // The index the run kept is 1 and still is: the append goes there.
-        assert_eq!(append_target(&mut file, &root_of("mine"), Some(0), id), Some(1));
+        assert_eq!(append_target(&mut file, &root_of("mine"), &[], Some(0), id).map(|t| t.0), Some(1));
         // A run that replayed nothing may always start a chain of its own.
-        assert_eq!(append_target(&mut file, &root_of("mine"), None, None), Some(1));
+        assert_eq!(append_target(&mut file, &root_of("mine"), &[], None, None).map(|t| t.0), Some(1));
         // A root nothing holds gets a tree of its own, at the front.
-        assert_eq!(append_target(&mut file, &root_of("new"), None, None), Some(0));
+        assert_eq!(append_target(&mut file, &root_of("new"), &[], None, None).map(|t| t.0), Some(0));
         assert_eq!(file.trees[0].root, root_of("new"));
     }
 
@@ -3983,12 +4139,16 @@ mod tests {
             version: ENCODING_VERSION,
             trees: vec![tree("theirs", vec![node(9)]), tree("mine", vec![node(1)])],
         };
-        assert_eq!(append_target(&mut file, &root_of("mine"), Some(0), id), Some(1), "found by root, not by index");
+        assert_eq!(
+            append_target(&mut file, &root_of("mine"), &[], Some(0), id).map(|t| t.0),
+            Some(1),
+            "found by root, not by index"
+        );
         assert_eq!(file.trees[0].nodes.len(), 1, "the other tree was not written into");
         // And when the node at that index is no longer the node that was
         // replayed, there is nowhere sound to put the chain.
         let mut file = CacheFile { version: ENCODING_VERSION, trees: vec![tree("mine", vec![node(7)])] };
-        assert_eq!(append_target(&mut file, &root_of("mine"), Some(0), id), None);
+        assert_eq!(append_target(&mut file, &root_of("mine"), &[], Some(0), id).map(|t| t.0), None);
     }
 
     #[test]
@@ -3997,9 +4157,83 @@ mod tests {
         // MAX_TREES pushed `mine` off the end while this run was reading.
         let trees = (0..MAX_TREES).map(|i| tree(&format!("other{i}"), vec![node(9)])).collect();
         let mut file = CacheFile { version: ENCODING_VERSION, trees };
-        assert_eq!(append_target(&mut file, &root_of("mine"), Some(0), id), None);
+        assert_eq!(append_target(&mut file, &root_of("mine"), &[], Some(0), id).map(|t| t.0), None);
         assert_eq!(file.trees.len(), MAX_TREES, "nothing was inserted");
         assert!(file.trees.iter().all(|t| t.nodes.len() == 1), "no tree was written into");
+    }
+
+    fn streams_root(streams: u64) -> Vec<(String, u64)> {
+        vec![("engine".to_string(), 1), (STREAMS.to_string(), streams)]
+    }
+
+    /// A chain that never touched a `\read` stream is stored with that part
+    /// open, so a run with other streams open finds it (datatool-base kept
+    /// three identical 20 MB trees, one per stream state of the documents).
+    #[test]
+    fn a_chain_that_read_no_stream_serves_every_stream_state() {
+        let mut file = CacheFile { version: ENCODING_VERSION, trees: Vec::new() };
+        assert_eq!(append_target(&mut file, &streams_root(5), &[STREAMS], None, None), Some((0, None)));
+        file.trees[0].nodes.push(node(1));
+        assert_eq!(file.trees[0].root, streams_root(ANY));
+        assert_eq!(tree_for(&file, &streams_root(7), None, None), Some(0), "other streams fit");
+        assert_eq!(tree_for(&file, &[("engine".to_string(), 2), (STREAMS.to_string(), 7)], None, None), None);
+        // A second run with other streams that again read none appends to the same tree.
+        assert_eq!(append_target(&mut file, &streams_root(7), &[STREAMS], None, None), Some((0, None)));
+        assert_eq!(file.trees.len(), 1);
+    }
+
+    /// The soundness side: a chain that read a stream never lands in a tree
+    /// that leaves the streams open. Continuing one, it gets a tree keyed by
+    /// its streams, with the nodes it hangs from copied (they read none).
+    #[test]
+    fn a_chain_that_read_a_stream_is_keyed_by_the_streams() {
+        let mut first = node(1);
+        let mut second = node(2);
+        second.parent = Some(0);
+        first.parent = None;
+        let mut file = CacheFile {
+            version: ENCODING_VERSION,
+            trees: vec![Tree { root: streams_root(ANY), nodes: vec![first, second] }],
+        };
+        let id = Some(node_id(&file.trees[0].nodes[1]));
+        assert_eq!(append_target(&mut file, &streams_root(5), &[], Some(1), id), Some((0, Some(1))));
+        assert_eq!(file.trees.len(), 2, "the open tree stays for other stream states");
+        assert_eq!(file.trees[0].root, streams_root(5));
+        assert_eq!(file.trees[0].nodes.iter().map(|n| n.parent).collect::<Vec<_>>(), vec![None, Some(0)]);
+        // The new tree is found first for its streams, the open one for others.
+        assert_eq!(tree_for(&file, &streams_root(5), None, None), Some(0));
+        assert_eq!(tree_for(&file, &streams_root(6), None, None), Some(1));
+        // From the root, a chain that read a stream starts its own exact tree.
+        let mut file = CacheFile { version: ENCODING_VERSION, trees: vec![tree("x", vec![])] };
+        file.trees[0].root = streams_root(ANY);
+        assert_eq!(append_target(&mut file, &streams_root(5), &[], None, None), Some((0, None)));
+        assert_eq!(file.trees[0].root, streams_root(5));
+        assert_eq!(file.trees[1].root, streams_root(ANY));
+    }
+
+    /// scrbook logs every edge each time it is drawn: 2.6M, 10 times more
+    /// than distinct. A copy a replay adds to no effect is dropped; a read
+    /// after a definition maker stays (its inferred charge may differ), and
+    /// every maker stays (each counts a definition).
+    #[test]
+    fn an_edge_drawn_again_to_no_effect_is_stored_once() {
+        let (a, b) = (VRef::Table(0), VRef::Table(1));
+        let raw = EdgeKind::CONTROL.0;
+        let read = EdgeKind::READS.0;
+        let maker = EdgeKind::default().0;
+        let mut edges = vec![
+            (a, b, raw, None),
+            (a, b, read, None),
+            (a, b, raw, None),
+            (a, b, read, None),
+            (b, a, maker, None),
+            (b, a, maker, None),
+            (a, b, read, None),
+            (a, b, raw, None),
+        ];
+        dedup_edges(&mut edges);
+        let kinds: Vec<u16> = edges.iter().map(|e| e.2).collect();
+        assert_eq!(kinds, vec![raw, read, maker, maker, read]);
     }
 
     /// The hook and the kernel cache are process-wide: these run one at a time.

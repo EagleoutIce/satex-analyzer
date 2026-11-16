@@ -156,6 +156,20 @@
     },
     "cache": {
       "properties": {
+        "background": {
+          "default": "ask",
+          "description": "prepare kernels and packages in a background process: ask, yes or no. Only the user's own config sets it. Unset: ask once",
+          "enumDescriptions": [
+            "ask once, on the first run in a terminal or in the editor",
+            "prepare caches in a low-priority background process",
+            "never"
+          ],
+          "type": "string",
+          "x-affects": [
+            "speed"
+          ],
+          "x-example": "`background: yes` starts `satex cache build --background` when caches are missing"
+        },
         "dir": {
           "description": "where caches are kept. Unset: $SATEX_CACHE, else the platform's cache folder",
           "x-affects": [
@@ -254,6 +268,16 @@
               ],
               "x-example": "`engines: [pdftex, luatex]`"
             },
+            "most_loaded": {
+              "default": 200,
+              "description": "installed packages the background builder prepares, those most loaded first",
+              "minimum": 0,
+              "type": "integer",
+              "x-affects": [
+                "speed"
+              ],
+              "x-example": "lower: the background builder stops sooner and stores less"
+            },
             "packages": {
               "default": [],
               "description": "the packages satex cache build prepares. Empty: the ones runs found slow",
@@ -307,6 +331,29 @@
         "precision"
       ],
       "x-example": "`clock: 2026-09-29`\n`\\today` is September 29, 2026"
+    },
+    "compile": {
+      "description": "what satex compile runs and shows",
+      "properties": {
+        "system": {
+          "default": "auto",
+          "description": "the build system: auto (arara directives, then Tectonic.toml, then latexmk, then the engine), latexmk, arara, tectonic, make, l3build or engine",
+          "type": "string",
+          "x-affects": [
+            "output"
+          ],
+          "x-example": "`system: arara`: the `% arara:` directives of the main file build it"
+        },
+        "viewer": {
+          "default": "none",
+          "description": "a PDF viewer `satex compile --view` opens: none or auto (the system's opener) or a program; only your own config sets it",
+          "type": "string",
+          "x-affects": [
+            "output"
+          ]
+        }
+      },
+      "type": "object"
     },
     "conventions": {
       "description": "how TeX is usually written, where the text alone does not say",
@@ -501,7 +548,7 @@
             },
             "shown": {
               "default": 300,
-              "description": "commands one answer lists. The editor asks again as more is typed",
+              "description": "items one answer lists: commands, and packages, files, labels or citations found by what was typed. The editor asks again as more is typed",
               "minimum": 0,
               "type": "integer",
               "x-affects": [

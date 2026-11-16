@@ -66,6 +66,12 @@ fn inapplicable_formats_error_clearly() {
         &["lint", "-f", SAMPLE, "--format", "dot"],
         &["lint", "-f", SAMPLE, "--explain", "unguarded-recursion", "--format", "csv"],
         &["slice", "-f", SAMPLE, "\\ifdraft", "--format", "dot"],
+        // the cache actions print text or json, as `satex cache` does
+        &["cache", "show", "--format", "csv"],
+        &["cache", "prune", "--format", "markdown"],
+        // a script, a protocol: no records to format
+        &["completions", "bash", "--format", "json"],
+        &["lsp", "--format", "json"],
     ];
     for args in cases {
         let output = run(args);

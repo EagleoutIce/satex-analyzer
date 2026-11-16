@@ -21,8 +21,8 @@ struct Cli {
     #[arg(short = 'V', long, global = true)]
     version: bool,
 
-    /// The document to read. Without it, satex reads each root document
-    /// in the current directory, or stdin if that is not a terminal.
+    /// The document to read, `-` for stdin. Without it, satex reads what is
+    /// piped in, else each root document in the current directory.
     #[arg(short, long, global = true, value_name = "FILE", help_heading = "Input")]
     file: Option<PathBuf>,
 
@@ -65,9 +65,9 @@ struct Cli {
     #[arg(long, global = true, value_name = "TEXT", requires = "at", help_heading = "Input")]
     inject: Option<String>,
 
-    /// Where `--inject` puts its text, `[FILE:]LINE[:COL]`. The main file
-    /// without FILE, the start of the line without COL.
-    #[arg(long, global = true, value_name = "LINE[:COL]", requires = "inject", help_heading = "Input")]
+    /// Where `--inject` puts its text. The main file without FILE, the
+    /// start of the line without COL.
+    #[arg(long, global = true, value_name = "[FILE:]LINE[:COL]", requires = "inject", help_heading = "Input")]
     at: Option<String>,
 
     /// Stop the interpreter after this many expansion steps.
@@ -88,7 +88,7 @@ struct Cli {
     #[arg(short, long, global = true, action = clap::ArgAction::Count, help_heading = "Output")]
     verbose: u8,
 
-    /// Output format: text, json, csv, markdown, dot, github, sarif or lsp.
+    /// Output format. A command given one it cannot print names the ones it can.
     #[arg(long, global = true, value_enum, default_value = "text", help_heading = "Output")]
     format: Format,
 
@@ -335,13 +335,20 @@ fn run() -> Result<(), String> {
     #[cfg(not(target_os = "emscripten"))]
     clap_complete::CompleteEnv::with_factory(<Cli as clap::CommandFactory>::command).complete();
     let mut cli = Cli::parse();
+    if let Some(command) = &cli.command
+        && !cli.version
+    {
+        command.check_format(cli.format)?;
+    }
     if let Some(Command::Completions { shell, target }) = &cli.command {
         return completions(shell, target.as_deref());
     }
     #[cfg(not(target_os = "emscripten"))]
     if let Some(Command::Gui { dir, port, site, no_open, dev }) = &cli.command {
         let dir = dir.clone().unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
-        return satex::cli::gui::run(&dir, *port, site.as_deref(), !no_open, *dev, cli.verbose > 0);
+        let options =
+            satex::cli::gui::Options { open: !no_open, dev: *dev, verbose: cli.verbose > 0, flags: config_flags(&cli) };
+        return satex::cli::gui::run(&dir, *port, site.as_deref(), options);
     }
     anstream::ColorChoice::from(cli.color).write_global();
     // Progress is for a person reading text, not for a program reading output.
@@ -373,14 +380,26 @@ fn run() -> Result<(), String> {
         }
         return Ok(());
     }
-    cli.command().check_format(cli.format)?;
     // `explain` and `scope` without a document run the smallest LaTeX
     // document, so the kernel and class still define `\section` and the like.
     let explaining = matches!(cli.command, Some(Command::Explain { .. } | Command::Scope { .. }));
-    if cli.file.is_none() && cli.command().needs_source() && satex::util::progress::terminal(io::stdin()) {
+    // `satex cache` reports the kernel and caches, never a project's documents or stdin
+    let caching = matches!(cli.command, Some(Command::Cache { .. }));
+    // `-f -` names stdin
+    let named_stdin = cli.file.as_deref() == Some(Path::new("-"));
+    if named_stdin {
+        cli.file = None;
+    }
+    let reads_input = cli.file.is_none() && !caching && cli.command().needs_source();
+    // A document piped in, read once. Empty stdin (`</dev/null`) is nothing piped.
+    let piped = match reads_input && (named_stdin || !satex::util::progress::terminal(io::stdin())) {
+        true => Some(read_stdin()?).filter(|text| named_stdin || !text.trim().is_empty()),
+        false => None,
+    };
+    if reads_input && piped.is_none() {
         let roots = input_for(&std::env::current_dir().unwrap_or_default(), explaining)?;
         if roots.len() < 2 {
-            return run_on(&mut cli, roots.into_iter().next(), explaining);
+            return run_on(&mut cli, roots.into_iter().next(), explaining, None);
         }
         // One machine-readable document per run: several roots would
         // concatenate them.
@@ -392,7 +411,7 @@ fn run() -> Result<(), String> {
         let mut failed = Vec::new();
         for root in roots {
             anstream::eprintln!("{}", render::status(&format!("satex: root {}", root.display())));
-            if let Err(why) = run_on(&mut cli, Some(root.clone()), explaining) {
+            if let Err(why) = run_on(&mut cli, Some(root.clone()), explaining, None) {
                 anstream::eprintln!("satex: {}: {why}", root.display());
                 failed.push(root.display().to_string());
             }
@@ -402,22 +421,23 @@ fn run() -> Result<(), String> {
             false => Err(format!("the run failed on {}", failed.join(", "))),
         };
     }
-    run_on(&mut cli, None, explaining)
+    // `satex cache` without a document: the smallest LaTeX document, for the kernel
+    let smallest = explaining || (caching && cli.file.is_none());
+    run_on(&mut cli, None, smallest, piped)
 }
 
-/// One run of the command on `file`, or on what `cli` names.
-fn run_on(cli: &mut Cli, file: Option<PathBuf>, explaining: bool) -> Result<(), String> {
+/// One run of the command on `file`, on what `cli` names, or on the `piped` text.
+fn run_on(cli: &mut Cli, file: Option<PathBuf>, explaining: bool, piped: Option<String>) -> Result<(), String> {
     cli.file = file.or(cli.file.take());
-    let mut source = if cli.file.is_none() && explaining && satex::util::progress::terminal(io::stdin()) {
-        // Interactive, nothing named, nothing piped in: reading stdin would
-        // just hang waiting for input that is never coming.
-        EMPTY_DOCUMENT.to_string()
-    } else if cli.command().needs_source() {
-        read_source(cli.file.as_deref())?
-    } else {
-        String::new()
+    let mut source = match (piped, cli.file.as_deref()) {
+        (Some(text), _) => text,
+        _ if !cli.command().needs_source() => String::new(),
+        (None, Some(path)) => {
+            satex::project::overlay::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?
+        }
+        (None, None) => EMPTY_DOCUMENT.to_string(),
     };
-    if cli.file.is_none() && explaining && source.trim().is_empty() {
+    if cli.file.is_none() && explaining && cli.command().needs_source() && source.trim().is_empty() {
         note_minimal_document("nothing was piped in");
         source = EMPTY_DOCUMENT.to_string();
     }
@@ -438,11 +458,18 @@ fn run_on(cli: &mut Cli, file: Option<PathBuf>, explaining: bool) -> Result<(), 
     if let Some(Command::Lsp { port, host, lines, .. }) = &cli.command {
         return satex::cli::lsp::run(&cfg, cli.file.as_deref(), *port, host.as_deref(), *lines);
     }
-    if let Some(Command::Cache { action: Some(action) }) = &cli.command {
+    // First start: may satex prepare caches in the background? Never for
+    // `satex cache …`, which does or reports that itself.
+    if !matches!(cli.command, Some(Command::Cache { .. })) {
+        satex::cli::cache::background::at_start(&cfg, !cli.command().reads_terminal());
+    }
+    if let Some(Command::Cache { action: Some(action) }) = &cli.command
+        && !matches!(action, CacheAction::Status)
+    {
         let mut out = anstream::stdout().lock();
         let json = cli.format == Format::Json;
         return match action {
-            CacheAction::Build { packages, refresh, engines, preamble } => {
+            CacheAction::Build { packages, refresh, engines, preamble, background } => {
                 let engines = engines
                     .iter()
                     .map(|name| {
@@ -450,6 +477,14 @@ fn run_on(cli: &mut Cli, file: Option<PathBuf>, explaining: bool) -> Result<(), 
                             .ok_or_else(|| format!("unknown engine `{name}`"))
                     })
                     .collect::<Result<Vec<_>, _>>()?;
+                if *background {
+                    return satex::cli::cache::background::run(
+                        &cfg,
+                        &engines,
+                        std::env::var_os(satex::cli::cache::background::STARTED_BY_RUN).is_none(),
+                        &mut out,
+                    );
+                }
                 satex::cli::cache::build::run(&cfg, *refresh, packages, &engines, preamble.as_deref(), json, &mut out)
             }
             CacheAction::Export { archive, only, without } => {
@@ -460,6 +495,9 @@ fn run_on(cli: &mut Cli, file: Option<PathBuf>, explaining: bool) -> Result<(), 
             }
             CacheAction::Clear => satex::cli::cache::clear(&cfg, json, &mut out),
             CacheAction::Prune => satex::cli::cache::prune(&cfg, json, &mut out),
+            CacheAction::Stop => satex::cli::cache::stop(&cfg, json, &mut out),
+            CacheAction::Show { packages } => satex::cli::cache::show(&cfg, packages, json, &mut out),
+            CacheAction::Status => unreachable!("handled with a context"),
         };
     }
     if let Some(Command::Query { request: Some(request), .. }) = &cli.command {
@@ -478,8 +516,11 @@ fn run_on(cli: &mut Cli, file: Option<PathBuf>, explaining: bool) -> Result<(), 
         }
         _ => Vec::new(),
     };
-    for record in &early {
-        anstream::eprintln!("{}", render::status(&format!("satex: {}", satex::linter::early::line(record))));
+    if !early.is_empty() {
+        // as the run's findings look, under one line saying they are early
+        let links = cli.link_policy(satex::util::progress::terminal(io::stderr()));
+        anstream::eprintln!("{}", render::status("satex: early findings, to be confirmed by the analysis"));
+        anstream::eprint!("{}", render::lint(&early, links, true));
     }
     let analysis = if cli.command().needs_analysis() {
         Machine::analyze(&source, cli.file.as_deref(), &cfg)
@@ -499,6 +540,29 @@ fn run_on(cli: &mut Cli, file: Option<PathBuf>, explaining: bool) -> Result<(), 
         }
     }
     log_gaps(&analysis, &cfg);
+    // one line on the package caches, not one per package (`-v` lists them)
+    // the document's own cache is no package cache
+    let packages = || analysis.package_caches.iter().filter(|(name, ..)| name != "document");
+    let built = packages().filter(|(.., state)| state.ends_with("stored")).count();
+    let reused = packages().filter(|(.., state)| satex::analysis::machine::cache_served(state)).count();
+    // every command that analyzes a document says it, `satex cache` lists the caches itself
+    let analyzed = cli.command().needs_analysis() && !matches!(cli.command, Some(Command::Cache { .. }));
+    if built + reused > 0 && cli.format.is_text() && analyzed {
+        let fresh =
+            if built > 0 { format!(", {built} built (one-time, the next run reuses them)") } else { String::new() };
+        anstream::eprintln!("{}", render::status(&format!("satex: package caches: {reused} reused{fresh}")));
+    } else if analyzed
+        && cli.format.is_text()
+        && analysis
+            .package_caches
+            .iter()
+            .any(|(name, .., state)| name == "document" && satex::analysis::machine::cache_served(state))
+    {
+        anstream::eprintln!(
+            "{}",
+            render::status("satex: package caches: none needed, the document is unchanged since its stored run")
+        );
+    }
     for note in analysis.limit_notes() {
         anstream::eprintln!("{}", render::status(&format!("satex: {note}")));
     }
@@ -996,15 +1060,48 @@ fn inject(cli: &Cli, source: &mut String, text: &str, at: &str) -> Result<Inject
     }
 }
 
-fn read_source(path: Option<&Path>) -> Result<String, String> {
-    match path {
-        Some(path) => satex::project::overlay::read_to_string(path).map_err(|e| format!("{}: {e}", path.display())),
-        None => {
-            let mut buf = String::new();
-            io::stdin().read_to_string(&mut buf).map_err(|e| e.to_string())?;
-            Ok(buf)
+/// How long stdin may stay silent before satex says it is waiting for it.
+const STDIN_NOTE_AFTER: std::time::Duration = std::time::Duration::from_secs(2);
+
+/// All of stdin. A stdin that stays open and silent gets one note, so a run
+/// started from a pipe that never closes does not wait unexplained.
+fn read_stdin() -> Result<String, String> {
+    let done = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let waiting = done.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(STDIN_NOTE_AFTER);
+        if !waiting.load(std::sync::atomic::Ordering::Relaxed) {
+            eprintln!(
+                "satex: reading the document from stdin. Name a file with -f, or close stdin for the root documents here"
+            );
+        }
+    });
+    let mut buf = String::new();
+    let read = io::stdin().read_to_string(&mut buf).map_err(|e| format!("stdin: {e}"));
+    done.store(true, std::sync::atomic::Ordering::Relaxed);
+    read.map(|_| buf)
+}
+
+/// The config and limit flags as given, for the runs `satex gui` starts.
+fn config_flags(cli: &Cli) -> Vec<String> {
+    let mut flags = Vec::new();
+    let mut add = |flag: &str, value: Option<String>| flags.extend([flag.to_string()].into_iter().chain(value));
+    if let Some(path) = &cli.config {
+        add("--config", Some(std::path::absolute(path).unwrap_or_else(|_| path.clone()).display().to_string()));
+    }
+    for (on, flag) in
+        [(cli.no_config, "--no-config"), (cli.no_packages, "--no-packages"), (cli.no_classes, "--no-classes")]
+    {
+        if on {
+            add(flag, None);
         }
     }
+    cli.profile.iter().for_each(|p| add("--profile", Some(p.clone())));
+    cli.set.iter().for_each(|s| add("--set", Some(s.clone())));
+    cli.max_steps.iter().for_each(|n| add("--max-steps", Some(n.to_string())));
+    cli.max_memory.iter().for_each(|m| add("--max-memory", Some(m.as_u64().to_string())));
+    cli.threads.iter().for_each(|n| add("--threads", Some(n.to_string())));
+    flags
 }
 
 fn base_dir(path: Option<&Path>) -> PathBuf {
@@ -1030,6 +1127,19 @@ fn range(text: &str) -> Result<(u64, u64), String> {
 
 #[cfg(test)]
 mod tests {
+    use clap::Parser;
+
+    /// `satex gui` hands its config flags to every satex it starts, so
+    /// `--set` and `--config` apply there as on any other command. Bug
+    /// pinned: the page's language servers ignored them.
+    #[test]
+    fn gui_forwards_config_flags() {
+        let cli = super::Cli::parse_from(["satex", "--set", "a.b=1", "--no-packages", "--max-steps", "9", "gui"]);
+        assert_eq!(super::config_flags(&cli), ["--no-packages", "--set", "a.b=1", "--max-steps", "9"]);
+        let plain = super::Cli::parse_from(["satex", "gui"]);
+        assert!(super::config_flags(&plain).is_empty());
+    }
+
     /// `--help` is short sentences: no `;` or `—` joins two clauses.
     #[test]
     fn help_joins_no_clauses() {

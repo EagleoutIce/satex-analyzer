@@ -97,7 +97,7 @@ fn a_file_the_run_leaves_unread_keeps_its_early_finding_unconfirmed() {
     let (early, last, analysis) = both(&project, &cfg);
     assert!(early::retracted(&early, &last, &analysis).is_empty(), "{:?}", messages(&last));
     let verdict = early::verdict(&early, &last, &analysis).unwrap();
-    assert!(verdict.contains("of 2 early findings the run confirmed 1, left 1 unconfirmed"), "{verdict}");
+    assert!(verdict.contains("early findings: 1 confirmed, 1 unchecked"), "{verdict}");
 }
 
 /// Intuition: a run a budget stopped read part of the document only, so it cannot tell a wrong
@@ -113,7 +113,7 @@ fn a_stopped_run_retracts_nothing() {
     let (early, last, analysis) = both(&project, &cfg);
     assert!(analysis.stopped(), "the budget stops the run");
     assert!(early::retracted(&early, &last, &analysis).is_empty(), "{:?}", messages(&last));
-    assert!(early::verdict(&early, &last, &analysis).unwrap().contains("unconfirmed"));
+    assert!(early::verdict(&early, &last, &analysis).unwrap().contains("unchecked"));
 }
 
 /// Intuition: `satex lint` prints the early findings on stderr before the run's output, and says
@@ -124,7 +124,7 @@ fn the_cli_prints_early_findings_and_the_verdict() {
     if !crate::support::installed() {
         return;
     }
-    let body = "% TODO: kept\n\\newcommand\\mk[1]{\\label{l:#1}}\\section{A}\\mk{a}\nSee \\ref{l:a}.\n";
+    let body = "% TODO: kept\n\\section{A}\n\\iffalse\\includegraphics{nofile}\\fi\n";
     let project = project("cli", &[("doc.tex", &document(body))]);
     let out = crate::support::satex()
         .args(["lint", "--set", "limits.seconds=0", "-f"])
@@ -133,15 +133,12 @@ fn the_cli_prints_early_findings_and_the_verdict() {
         .output()
         .unwrap();
     let (stdout, stderr) = (String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
-    let early = stderr.find("early doc.tex:3:3").unwrap_or_else(|| panic!("{stderr}"));
-    let verdict = stderr
-        .find("of 2 early findings the run confirmed 1, retracted 1: doc.tex:5")
-        .unwrap_or_else(|| panic!("{stderr}"));
-    assert!(early < verdict, "{stderr}");
-    assert!(
-        stdout.contains("kept") && !stdout.contains("anywhere in the document") && !stdout.contains("early"),
-        "{stdout}"
-    );
+    let early = stderr.find("early findings, to be confirmed").unwrap_or_else(|| panic!("{stderr}"));
+    let row = stderr.find("doc.tex:3").unwrap_or_else(|| panic!("{stderr}"));
+    let verdict =
+        stderr.find("early findings: 1 confirmed, 1 withdrawn: doc.tex:5").unwrap_or_else(|| panic!("{stderr}"));
+    assert!(early < row && row < verdict, "{stderr}");
+    assert!(stdout.contains("kept") && !stdout.contains("nofile") && !stdout.contains("early"), "{stdout}");
 }
 
 /// The early findings of `codes` and the run's, for a document with the kernel and packages.
@@ -173,18 +170,12 @@ fn both_all(project: &Project, cfg: &Config) -> (Vec<Record>, Vec<Record>) {
     (early, satex::linter::lint_document(&analysis))
 }
 
-const KEYS: [&str; 6] = [
-    "duplicate-label",
-    "undefined-reference",
-    "undefined-citation",
-    "missing-graphic",
-    "unresolved-file",
-    "duplicate-package",
-];
+const KEYS: [&str; 3] = ["missing-graphic", "unresolved-file", "duplicate-package"];
 
-/// Intuition: `\label`, `\ref`, `\cite`, `\usepackage`, `\input` and `\includegraphics` mean what
-/// the kernel and graphicx make them, so the keys they name in the text are the run's keys, and
-/// each rule of the `keys` tier finds early what it finds at the end.
+/// Intuition: `\usepackage`, `\input` and `\includegraphics` mean what the kernel and graphicx
+/// make them, so the files they name in the text are the run's, and each rule of the `keys`
+/// tier finds early what it finds at the end. Labels and citations stay with the run: their
+/// keys come from too many places (`label=` options of listings and floats) to guess.
 /// Bug pinned: a guessed key differed from the run's (a list of keys, a trailing space), so an
 /// editor's early finding moved or vanished when the run ended.
 #[test]
@@ -198,14 +189,13 @@ fn keys_findings_are_the_run_s() {
     assert_eq!(early, last);
 }
 
-/// Intuition: a label a macro builds from its argument has a key only the run knows, so the
-/// sketch reports its reference as undefined, and a graphic that only a skipped branch includes
-/// is missing only to the sketch. The run retracts both.
+/// Intuition: a graphic that only a skipped branch includes is missing only to the sketch.
+/// The run retracts it.
 /// Bug pinned: a provisional guess the run disagrees with stayed in the output.
 #[test]
 fn keys_guesses_the_run_disagrees_with_are_retracted() {
-    let body = "\\newcommand\\mk[1]{\\label{l:#1}}\\section{A}\\mk{a}\nSee \\ref{l:a}.\n\\iffalse\\includegraphics{nofile}\\fi\n";
+    let body = "\\section{A}\n\\iffalse\\includegraphics{nofile}\\fi\n";
     let Some((early, last)) = of_codes("keys-retract", body, &[], &KEYS) else { return };
-    assert!(early.iter().any(|m| m.contains("l:a")) && early.iter().any(|m| m.contains("nofile")), "{early:#?}");
-    assert!(!last.iter().any(|m| m.contains("l:a") || m.contains("nofile")), "{last:#?}");
+    assert!(early.iter().any(|m| m.contains("nofile")), "{early:#?}");
+    assert!(!last.iter().any(|m| m.contains("nofile")), "{last:#?}");
 }

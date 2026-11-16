@@ -88,8 +88,7 @@ pub enum Command {
     },
     /// Context-sensitive lints for the input file. `--all` includes libraries.
     Lint {
-        /// Restrict the findings to a filter expression, for example
-        /// `tag=switch and package~^my`.
+        /// Filter expression, for example `tag=switch and package~^my`.
         #[arg(long, value_name = "EXPR", help_heading = "Selection")]
         filter: Option<String>,
         /// Include the packages and the kernel, not just the input file.
@@ -219,11 +218,11 @@ pub enum Command {
         /// Only these steps of the run.
         #[arg(long, value_name = "FROM:TO")]
         steps: Option<String>,
-        /// Start at this position, `[FILE:]LINE[:COL]`. The main file without FILE.
-        #[arg(long, value_name = "LINE[:COL]")]
+        /// Start at this position. The main file without FILE.
+        #[arg(long, value_name = "[FILE:]LINE[:COL]")]
         from: Option<String>,
-        /// End at this position, `[FILE:]LINE[:COL]`.
-        #[arg(long, value_name = "LINE[:COL]")]
+        /// End at this position. The main file without FILE.
+        #[arg(long, value_name = "[FILE:]LINE[:COL]")]
         to: Option<String>,
         /// Step through the trace one event at a time, showing each macro's
         /// definition, arguments and the tokens it inserts.  Enter steps,
@@ -246,12 +245,21 @@ pub enum Command {
         #[command(subcommand)]
         action: Option<CacheAction>,
     },
-    /// Build the document with latexmk, or the engine where latexmk is
-    /// missing, and explain each error and warning the log reports by what
-    /// the analysis found there.  Never opens a viewer.  The build runs the
-    /// project's own code, its latexmkrc and what it lets TeX run, so build
-    /// only projects you trust.
-    Compile,
+    /// Build the document with its build system (arara directives, a
+    /// Tectonic.toml, latexmk, or the engine) and explain each error and
+    /// warning the log reports by what the analysis found there.  The build
+    /// runs the project's own code and build files, so build only projects
+    /// you trust.
+    Compile {
+        /// The build system instead of `compile.system`: latexmk, arara,
+        /// tectonic, make, l3build or engine.
+        #[arg(long)]
+        system: Option<String>,
+        /// Open the PDF in `compile.viewer` (the system's opener when that is
+        /// `auto` or `none`) after the build.
+        #[arg(long)]
+        view: bool,
+    },
     /// Install the packages the document loads that this machine does not
     /// have.  Asks first, never elevates, and is never run by `lint --fix`.
     Install {
@@ -349,6 +357,10 @@ pub enum CacheAction {
         /// of building any packages.
         #[arg(long, value_name = "PATH")]
         preamble: Option<std::path::PathBuf>,
+        /// Be the background builder (`cache.background`): the kernels and
+        /// the installed packages, one at a time, holding no build lock.
+        #[arg(long, conflicts_with_all = ["packages", "refresh", "preamble"])]
+        background: bool,
     },
     /// Write the valid caches of the cache directory into one archive.
     Export {
@@ -374,6 +386,18 @@ pub enum CacheAction {
     Clear,
     /// Apply the size and staleness pruning now.
     Prune,
+    /// Stop the background builder after its current package, and keep it
+    /// from starting again until `satex cache build --background`.
+    Stop,
+    /// The kernel and package caches: what is there and what is in use (as `satex cache`).
+    Status,
+    /// What the cache files of the named packages hold: one line per
+    /// variant (what keys it), its segments, and the bytes they take.
+    /// Then the documents an analysis is stored of, with size and age.
+    Show {
+        /// Packages or classes (`scrbook.cls`) to show, or `document`; none lists every cache.
+        packages: Vec<String>,
+    },
 }
 
 impl Command {
@@ -385,11 +409,10 @@ impl Command {
                 | Command::Lint { rules: true, .. }
                 | Command::Lint { explain: Some(_), .. }
                 | Command::Lint { chktex: true, .. }
-                | Command::Cache { action: Some(_) }
                 | Command::Lsp { .. }
                 | Command::Gui { .. }
                 | Command::Completions { .. }
-        )
+        ) && !matches!(self, Command::Cache { action: Some(a) } if !matches!(a, CacheAction::Status))
     }
 
     /// A plain `lint` of the document: its early findings ([`crate::linter::early`]) print first.
@@ -428,6 +451,19 @@ impl Command {
             || matches!(self, Command::Trace { interactive: true, .. })
     }
 
+    /// Whether the command reads the terminal itself (`install`'s
+    /// confirmation, the interactive trace, a query request from stdin, the
+    /// playground), so the setup question must not take its input.
+    pub fn reads_terminal(&self) -> bool {
+        matches!(
+            self,
+            Command::Install { .. }
+                | Command::Query { .. }
+                | Command::Trace { interactive: true, .. }
+                | Command::Gui { .. }
+        )
+    }
+
     /// `lint --fix` or `--diff`: the output is a diff or the findings left
     /// after fixing, which say themselves what the analysis could not follow.
     pub fn fixes(&self) -> bool {
@@ -455,13 +491,15 @@ impl Command {
             | Command::Lint { chktex: true, .. }
             | Command::Lint { style: true, .. } => (generic, "text, json, csv or markdown"),
             Command::Lint { explain: Some(_), .. } => (matches!(format, Format::Text | Format::Json), "text or json"),
-            Command::Lint { .. } | Command::Compile => (
+            Command::Lint { .. } | Command::Compile { .. } => (
                 generic || matches!(format, Format::Github | Format::Sarif | Format::Lsp | Format::Texlog),
                 "text, json, csv, markdown, github, sarif, lsp or texlog",
             ),
-            Command::Summary { .. } | Command::Cache { action: None } | Command::Install { .. } => {
+            Command::Summary { .. } | Command::Cache { .. } | Command::Install { .. } => {
                 (matches!(format, Format::Text | Format::Json), "text or json")
             }
+            // a script, a protocol, a server: no records to format
+            Command::Completions { .. } | Command::Lsp { .. } | Command::Gui { .. } => (format == Format::Text, "text"),
             Command::Dependencies => (matches!(format, Format::Text | Format::Json | Format::Dot), "text, json or dot"),
             Command::Trace { .. } => (generic || format == Format::Compact, "text, json, csv, markdown or compact"),
             _ => (generic, "text, json, csv or markdown"),
@@ -528,13 +566,13 @@ impl Command {
             }
             Command::Controls { names, all } => inspect::controls(context, names, *all),
             Command::Dependencies => graph::run(context, out),
-            Command::Cache { action: None } => cache::status(context, out),
+            Command::Cache { action: None | Some(CacheAction::Status) } => cache::status(context, out),
             // `main.rs` special-cases every `Cache { action: Some(_) }` and
             // `Lsp` before a `Context` exists, the same way it does
             // `Query { request: Some(_) }`.
             Command::Cache { action: Some(_) } => Ok(Output::Done),
             Command::Lsp { .. } | Command::Gui { .. } | Command::Completions { .. } => Ok(Output::Done),
-            Command::Compile => compile::run(context),
+            Command::Compile { system, view } => compile::run(context, system.as_deref(), *view),
             Command::Install { packages, yes, dry_run, usermode } => {
                 let options = install::Options { yes: *yes, dry_run: *dry_run, usermode: *usermode };
                 install::run(context, packages, options, out)

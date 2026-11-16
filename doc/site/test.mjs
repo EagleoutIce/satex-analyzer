@@ -915,7 +915,8 @@ async function browser() {
       if (await js(`return document.getElementById('pdf-compile').disabled`)) return console.log('skip: no TeX to compile with');
       await open('links', '\\documentclass{article}\n\\usepackage{hyperref}\n\\begin{document}\n\\section{Intro}\\label{a}\nSee \\ref{b} and \\url{https://example.org}.\n\\newpage\n\\section{Two}\\label{b}\nBack to \\ref{a}.\n\\end{document}\n');
       await js(`document.querySelector('.side-tabs [data-panel=play-pdf]').click(); document.getElementById('pdf-compile').click()`);
-      const built = await until(`return document.querySelectorAll('.pdf-page').length === 2 && document.querySelectorAll('.pdf-page img').length === [...document.querySelectorAll('.pdf-page img')].filter((i) => i.naturalWidth).length`, 180000);
+      // a browser build places its links after the pages in view are drawn
+      const built = await until(`return document.querySelectorAll('.pdf-page').length === 2 && document.querySelectorAll('.pdf-link').length === 3 && document.querySelectorAll('.pdf-page img').length === [...document.querySelectorAll('.pdf-page img')].filter((i) => i.naturalWidth).length`, 180000);
       const links = await js(`return [...document.querySelectorAll('.pdf-link')].map((a) => [a.closest('.pdf-page').dataset.page, a.getAttribute('href'), a.target, a.title])`);
       check('the PDF has its links: two internal, one URL in a new tab', built && links.length === 3 && links.some(([p, h, t]) => p === '1' && h === 'https://example.org' && t === '_blank')
         && links.filter(([, h, , t]) => h === '#' && /^to page \d$/.test(t)).length === 2, JSON.stringify(links));
@@ -933,6 +934,36 @@ async function browser() {
       await sleep(300);
       check('links hold their place at every zoom', at1 === await js(onWord), at1);
       await js(`document.getElementById('pdf-zoom-out').click()`);
+      });
+      await section('pdflazy', async () => {
+      // The pane draws only the pages in or near view, from the PDF itself, and a new build keeps the old pages
+      // in place (marked stale) until each is redrawn: before, every build rasterized every page up front and
+      // replaced the pane, so a 20-page document took seconds per edit, and the view blinked and jumped.
+      // A browser build of an unchanged structure is one pdfTeX pass: the last clean build's .aux seeds it.
+      if (await js(`return document.getElementById('pdf-compile').disabled`)) return console.log('skip: no TeX to compile with');
+      const pages = 12, body = (w) => Array.from({ length: pages }, (_, i) => `${w} ${i + 1}.\\newpage`).join('\n');
+      await open('lazy', `\\documentclass{article}\n\\begin{document}\n${body('Page')}\n\\end{document}\n`);
+      await js(`document.querySelector('.side-tabs [data-panel=play-pdf]').click(); document.getElementById('pdf-compile').click()`);
+      const ready = await until(`return document.querySelectorAll('.pdf-page').length === ${pages} && !!document.querySelector('.pdf-page[data-shown]') && !document.getElementById('play-pdf').classList.contains('pdf-running')`, 180000);
+      const drawn = () => js(`return [...document.querySelectorAll('.pdf-page[data-shown]')].map((e) => +e.dataset.page)`);
+      check('only the pages in or near view are drawn', ready && (await drawn()).length < pages, JSON.stringify(await drawn()));
+      if (!ready) return;
+      const scrollTo = (k) => js(`const p = document.querySelector('.pdf-pages'), el = p.querySelector('.pdf-page[data-page="${k}"]'); p.scrollTop += el.getBoundingClientRect().top - p.getBoundingClientRect().top; return p.scrollTop`);
+      const top = await scrollTo(6);
+      check('a page scrolled to is drawn', await until(`return !!document.querySelector('.pdf-page[data-page="6"][data-shown]')`, 10000));
+      const gen = await js(`return document.querySelector('.pdf-page[data-page="6"]').dataset.shown`);
+      await js(`location.hash = 'open=main.tex:8'`);
+      await sleep(300);
+      await send('Input.insertText', { text: 'Word ' });
+      await js(`document.getElementById('pdf-compile').click()`);
+      // until its new drawing is decoded the page in view keeps the old one: it never shows blank
+      const redrawn = await until(`const e = document.querySelector('.pdf-page[data-page="6"]'); return !!e.querySelector('img').naturalWidth && e.dataset.shown && e.dataset.shown !== '${gen}' && !document.getElementById('play-pdf').classList.contains('pdf-running')`, 60000);
+      check('a rebuild redraws the page in view and keeps the scroll', redrawn && Math.abs(await js(`return document.querySelector('.pdf-pages').scrollTop`) - top) < 2);
+      check('a page far from view keeps its place, marked stale', await js(`const e = document.querySelector('.pdf-page[data-page="${pages}"]'); return e.classList.contains('pdf-stale') && !!e.querySelector('img').naturalWidth`));
+      if (await js(`return document.querySelector('.pdf-text[data-view=commands]').textContent.includes('Run in this browser')`)) {
+        const runs = await js(`return [...document.querySelectorAll('.pdf-text[data-view=commands] .pdf-cmds li')].filter((l) => /pdflatex/.test(l.textContent)).length`);
+        check('a seeded browser build is one pdfTeX pass', runs === 1, String(runs));
+      }
       });
       await section('pdfedit', async () => {
       // editing in the PDF: a column's edge dragged rewrites its width in the source as one undo step,
@@ -958,6 +989,7 @@ async function browser() {
       await js(`document.getElementById('pdf-type').click()`);
       const word = async (w) => { await js(`const b = document.querySelector('.pdf-find'); b.hidden = false; const i = b.querySelector('input'); i.value = '${w}'; i.dispatchEvent(new Event('input'))`); await sleep(300);
         return js(`const h = document.querySelector('.pdf-hit'); if (!h) return null; h.scrollIntoView({ block: 'center', inline: 'center' }); const r = h.getBoundingClientRect(); document.querySelector('.pdf-find').hidden = true; document.querySelectorAll('.pdf-hit').forEach((m) => m.remove()); return [r.right - 1, r.top + r.height / 2]`); };
+      await until(`return !!document.querySelector('.pdf-pages[data-words]')`, 10000);
       const at = await word('plain');
       if (!at) return console.log('skip: this build has no word boxes to type at');
       await mouse(...at);

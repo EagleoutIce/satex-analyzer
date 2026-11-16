@@ -470,6 +470,10 @@ pub struct Natural {
     /// they take items away (§ 1105).  `\sw@slant` in the LaTeX kernel
     /// reaches three deep.
     pub tail: [Last; TAIL],
+    /// What lies under the tail window, where known: that many items of an
+    /// alignment row (tex.web § 799), glue at even places from the list's
+    /// start and cell boxes at odd ones, and nothing below them.
+    pub below: Option<u16>,
     /// How many items the list holds at least: items leave only from its
     /// end (tex.web §§ 1080, 1105), so it is not empty while this is not
     /// zero. Followed on internal vertical lists.
@@ -666,6 +670,11 @@ impl Natural {
     /// An item went onto the list.
     fn pushed(&mut self, item: Last) {
         self.undo = None;
+        self.below = match (self.tail[TAIL - 1], self.below) {
+            (Last::Empty, below) => below,
+            (out, Some(k)) if out.kind() == Some(k % 2 == 1) => Some(k.saturating_add(1)),
+            _ => None,
+        };
         for k in (1..TAIL).rev() {
             self.tail[k] = self.tail[k - 1];
         }
@@ -679,14 +688,21 @@ impl Natural {
         self.held = self.held.saturating_add(1);
     }
 
-    /// An item came off the list. What it uncovers past the window is not
-    /// followed.
+    /// An item came off the list. What it uncovers past the window comes
+    /// from [`Natural::below`], else is not followed.
     fn popped(&mut self) {
         self.undo = None;
+        let next = match (self.tail[TAIL - 1], self.below) {
+            (Last::Empty, _) => Last::Empty,
+            (Last::Unknown(_), _) | (_, None) => Last::UNKNOWN,
+            (_, Some(0)) => Last::Empty,
+            (_, Some(k)) => Last::row_item(k - 1),
+        };
+        self.below = self.below.filter(|_| !matches!(next, Last::Unknown(_))).map(|k| k.saturating_sub(1));
         for k in 1..TAIL {
             self.tail[k - 1] = self.tail[k];
         }
-        self.tail[TAIL - 1] = Last::UNKNOWN;
+        self.tail[TAIL - 1] = next;
         self.ligature = None;
         self.held = self.held.saturating_sub(1);
     }
@@ -695,11 +711,26 @@ impl Natural {
     fn emptied(&mut self) {
         self.tail = [Last::Empty; TAIL];
         self.held = 0;
+        self.below = None;
+    }
+
+    /// An alignment row of `cols` columns came onto the empty list: tabskip
+    /// glue first and last, a cell box between each two (tex.web § 799).
+    fn unpacked_row(&mut self, cols: u16) {
+        self.emptied();
+        self.below = Some(0);
+        for k in 0..=2 * u32::from(cols) {
+            self.pushed(Last::row_item(k as u16));
+        }
+        self.held = u8::try_from(2 * u32::from(cols) + 1).unwrap_or(u8::MAX);
     }
 
     /// An item that may or may not have been appended: the tail is the one
     /// or the other.
     fn perhaps(&mut self, item: Last) {
+        if self.tail[TAIL - 1] != Last::Empty {
+            self.below = None;
+        }
         let mut next = self.tail;
         next[0] = item.merge(self.tail[0]);
         for ((i, prev), cur) in self.tail[0..TAIL - 1].iter().enumerate().zip(self.tail[1..].iter()) {
@@ -788,7 +819,7 @@ impl Natural {
     fn rigid(&self) -> bool {
         let k = usize::from(self.solid);
         k < TAIL
-            && self.tail[..k].iter().all(|l| matches!(l, Last::Other | Last::Box | Last::Node(RULE)))
+            && self.tail[..k].iter().all(|l| matches!(l, Last::Other | Last::Box | Last::HBox(_) | Last::Node(RULE)))
             && self.tail[k] == Last::Empty
             && self.pending.is_none()
             && self.para.breakpoints == 0
@@ -823,6 +854,7 @@ impl Natural {
             prior: self.prior || other.prior,
             capped: self.capped || other.capped,
             tail: std::array::from_fn(|k| self.tail[k].merge(other.tail[k])),
+            below: if self.below == other.below { self.below } else { None },
             held: self.held.min(other.held),
             pending: self.pending,
             space_factor: if self.space_factor == other.space_factor { self.space_factor } else { None },
@@ -914,6 +946,9 @@ pub enum Last {
     /// box of a paragraph (tex.web § 1091), or one appended to an empty
     /// list.
     Box,
+    /// An hbox of unknown size; with a count, an alignment row of that many
+    /// columns (tex.web § 799), unset while its alignment is open.
+    HBox(Option<u16>),
     /// A node only `\lastnodetype` tells apart, by its type (etex.ch):
     /// 4 an insertion, 6 an adjust, 8 a discretionary, 9 a whatsit (tex.web
     /// § 1341), 10 a math node, 15 a noad.
@@ -945,6 +980,7 @@ impl Last {
         match (self, other) {
             _ if self == other => self,
             (Last::Other | Last::Char(_), Last::Other | Last::Char(_)) => Last::Char(None),
+            (Last::HBox(_), Last::HBox(_)) => Last::HBox(None),
             (Last::Glue(w, p, a), Last::Glue(v, q, b)) => {
                 Last::Glue(w.join(v), p.zip(q).filter(|_| a == b).map(|(p, q)| p.join(&q)), a)
             }
@@ -974,7 +1010,23 @@ impl Last {
             Last::Kern(k) => Reads { kern: Some(Dim::exact(k)), ..zero },
             Last::Penalty(p) => Reads { penalty: Some(crate::engine::value::Num::exact(p)), ..zero },
             Last::Unknown(reads) => reads,
-            Last::Other | Last::Char(_) | Last::Empty | Last::Box | Last::Node(_) => zero,
+            Last::Other | Last::Char(_) | Last::Empty | Last::Box | Last::HBox(_) | Last::Node(_) => zero,
+        }
+    }
+
+    /// The item at place `k` from the start of an alignment row: tabskip
+    /// glue at even places, a cell box at odd ones (tex.web § 799).
+    fn row_item(k: u16) -> Last {
+        if k % 2 == 1 { Last::HBox(None) } else { Last::Glue(Dim::ANY, None, false) }
+    }
+
+    /// Whether it may stand in an alignment row: `Some(true)` a cell box,
+    /// `Some(false)` glue.
+    fn kind(self) -> Option<bool> {
+        match self {
+            Last::HBox(None) => Some(true),
+            Last::Glue(_, _, false) => Some(false),
+            _ => None,
         }
     }
 }
@@ -1006,9 +1058,9 @@ pub(crate) const BOXED: u8 = 2;
 pub(crate) const BREAKS: u8 = 4;
 
 /// What a box register records beside its state, each reset when it changes.
-const BOX_SLOTS: [&str; 19] = [
+const BOX_SLOTS: [&str; 20] = [
     "wd", "ht", "dp", "first", "solid", "last", "one", "lw", "lh", "ld", "lmk", "ln", "lead", "calm", "held", "nh",
-    "nd", "node", "vl",
+    "nd", "node", "vl", "row",
 ];
 
 /// Which item `\unskip`, `\unkern` or `\unpenalty` takes away.
@@ -1298,6 +1350,7 @@ impl Machine<'_> {
             prior: !indented,
             capped: outer.capped,
             tail: [if indented { Last::Box } else { Last::Empty }; TAIL],
+            below: None,
             held: u8::from(indented),
             pending: None,
             space_factor: Some(1000),
@@ -2937,6 +2990,11 @@ impl Machine<'_> {
                     crate::engine::linebreak::vlist(self.box_slot(key))
                 });
                 let held = self.natural.map(|m| m.held.saturating_add(self.box_held(n)));
+                let row =
+                    n.map(|k| self.intern(&format!("\u{4}box.row.{k}"))).and_then(|key| self.env.value(key).as_int());
+                let row = row
+                    .and_then(|k| u16::try_from(k).ok())
+                    .filter(|_| self.natural.is_some_and(|n| n.tail[0] == Last::Empty));
                 let state = self.fetch_box(n, take);
                 // A vbox's forced breaks come along onto a vertical list.
                 if state != BoxState::Void && !calm && self.list_kind() != Some(true) {
@@ -3008,6 +3066,10 @@ impl Machine<'_> {
                     // § 1110: the box's items, not the one item it stood for.
                     if let (Some(n), Some(held)) = (&mut self.natural, held) {
                         n.held = held;
+                    }
+                    // An alignment row onto an empty list: its items are the list.
+                    if let (Some(cols), BoxState::HBox, true, Some(n)) = (row, state, horizontal, &mut self.natural) {
+                        n.unpacked_row(cols);
                     }
                 }
             }
@@ -3268,7 +3330,7 @@ impl Machine<'_> {
         // A `&&` before the `\cr` makes nothing periodic.
         local(self, "period", Value::Int(period.filter(|p| *p < columns.len()).map_or(-1, |p| p as i64)));
         local(self, "m", Value::Int(columns.len() as i64));
-        for what in ["col", "incell", "omit", "vdone", "cdepth", "spans"] {
+        for what in ["col", "incell", "omit", "vdone", "cdepth", "spans", "moved"] {
             local(self, what, Value::Int(0));
         }
         local(self, "start", Value::Unknown);
@@ -3482,6 +3544,7 @@ impl Machine<'_> {
             return;
         }
         self.tpl_set("col", Value::Int(0));
+        self.tpl_set("moved", Value::Int(0));
         self.template_cell_start(0, t, true);
     }
 
@@ -3609,9 +3672,15 @@ impl Machine<'_> {
                 align.exact = sum.map(Dim::exact);
                 align.widest = Some(Dim::ANY);
                 let skips = self.interline();
+                // § 799: a row of the columns its cells reached, unless a
+                // cell's marks or insertions follow it (§ 796).
+                let row = match (self.tpl_int("moved"), u16::try_from(self.tpl_int("col") + 1)) {
+                    (0, Ok(cols)) => Last::HBox(Some(cols)),
+                    _ => Last::Other,
+                };
                 if let Some(n) = &mut nest.natural {
                     n.boxed(false, [None, Some(h), Some(d)], skips);
-                    n.pushed(Last::Other);
+                    n.pushed(row);
                     n.para.items = None;
                     if lost {
                         n.widen(false);
@@ -3768,6 +3837,17 @@ impl Machine<'_> {
                         return self.box_end(context, BoxState::HBox, dims);
                     }
                     _ => {
+                        // An hbox known as such, not an unset row in its own
+                        // alignment's `\noalign` (§ 1080 takes no unset node).
+                        let open =
+                            self.env.nests().rev().flatten().next().is_some_and(|n| n.code == Some(group::NO_ALIGN));
+                        let taken = self.natural.filter(|_| !open).and_then(|mut n| match n.tail[0] {
+                            Last::HBox(row) => {
+                                n.popped();
+                                Some((n.tail, n.below, row))
+                            }
+                            _ => None,
+                        });
                         // A horizontal list loses a box of some size; the
                         // vertical list a paragraph is in keeps its width.
                         match (self.list_kind(), &mut self.natural) {
@@ -3785,6 +3865,17 @@ impl Machine<'_> {
                             // At most one item went (§ 1080).
                             (Some(false), Some(n)) => *n = Natural { held: n.held.saturating_sub(1), ..Natural::any() },
                             _ => self.natural = None,
+                        }
+                        // The box went: what was under it is the tail.
+                        if let (Some((tail, below, row)), Some(n)) = (taken, &mut self.natural) {
+                            (n.tail, n.below) = (tail, below);
+                            self.box_end(context, BoxState::HBox, [Dim::ANY; 3]);
+                            // A row's items, for `\unhbox` (§ 799).
+                            if let (Some(cols), BoxContext::Set { register, .. }) = (row, context) {
+                                self.set_box_slot(register, "row", Value::Int(cols.into()));
+                                self.set_box_slot(register, "held", Value::Int(2 * i64::from(cols) + 1));
+                            }
+                            return;
                         }
                         BoxState::Unknown
                     }
@@ -4465,6 +4556,13 @@ impl Machine<'_> {
     /// An item goes onto the current list: its natural size grows by it
     /// (tex.web §§ 651-656 `hpack`, 669-670 `vpack`).
     pub(crate) fn append_item(&mut self, item: Item) {
+        // § 796: a cell's marks and insertions move out after its row.
+        if matches!(item, Item::Mark(_) | Item::Node(4 | 6) | Item::Unknown)
+            && self.env.in_alignment()
+            && self.tpl_int("incell") == 1
+        {
+            self.tpl_set("moved", Value::Int(1));
+        }
         match item {
             Item::Rule { .. } | Item::Box(_) | Item::Unknown => self.spaces_followed(),
             Item::Glue(..) => self.open_spaces.extend(self.taken_space.take()),
@@ -4675,7 +4773,7 @@ impl Machine<'_> {
                 if let Some(p) = p.filter(|p| *p <= -10000 && self.mode == Modes::INTERNAL_VERTICAL) {
                     n.force(
                         i32::try_from(p).unwrap_or(i32::MIN),
-                        matches!(n.tail[0], Last::Box | Last::Other | Last::Node(RULE)),
+                        matches!(n.tail[0], Last::Box | Last::Other | Last::HBox(_) | Last::Node(RULE)),
                     );
                 }
                 match p {
@@ -6153,6 +6251,10 @@ impl Machine<'_> {
                 | P::CatcodeAssign
                 | P::CharCode(_)
                 | P::Message { .. }
+                // streams: `\read` is an assignment (tex.web §§ 1225, 1275)
+                | P::OpenIn
+                | P::CloseIn
+                | P::Read
                 | P::Relax
                 | P::LastItem(_)
                 | P::FontParam(_)
@@ -6646,7 +6748,7 @@ impl Machine<'_> {
             Last::Glue(_, Some(g), mu) => g.value(mu),
             Last::Kern(k) => Value::Dimen(k),
             Last::Penalty(p) => Value::Int(p),
-            Last::Other | Last::Char(_) | Last::Box | Last::Node(_) => Value::Toks(Rc::from([])),
+            Last::Other | Last::Char(_) | Last::Box | Last::HBox(_) | Last::Node(_) => Value::Toks(Rc::from([])),
             // Not known: what an earlier box in the register ended with
             // no longer holds.
             Last::Glue(_, None, _) | Last::Empty | Last::Unknown(_) => Value::Unknown,

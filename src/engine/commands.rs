@@ -492,6 +492,10 @@ impl Machine<'_> {
 
     fn last_item(&mut self, item: LastItem) -> Option<Value> {
         use LastItem as L;
+        // Where a call stands, not what it was given: no summary of its runs holds elsewhere.
+        if matches!(item, L::InputLineNo | L::GroupLevel | L::GroupType) {
+            self.leak_call_summaries();
+        }
         let int = |n: i64| Some(Value::Int(n));
         // What the lists, the input, the clock or the conditionals say: no
         // kept effect holds it.
@@ -545,7 +549,12 @@ impl Machine<'_> {
                     crate::engine::mode::Last::Penalty(_) => int(13),
                     // -1 an empty list, 1 an hlist.
                     crate::engine::mode::Last::Empty => int(-1),
-                    crate::engine::mode::Last::Box => int(1),
+                    crate::engine::mode::Last::Box | crate::engine::mode::Last::HBox(None) => int(1),
+                    // A row: unset (14) while its alignment is open.
+                    crate::engine::mode::Last::HBox(Some(_)) => Some(Value::Num {
+                        quantity: crate::engine::value::Quantity::Int,
+                        num: crate::engine::value::Num::range(1, 14),
+                    }),
                     crate::engine::mode::Last::Node(t) => int(t.into()),
                     // A box, rule, insertion, mark, adjust, discretionary or
                     // math node, and in math a noad (etex.ch: 15).

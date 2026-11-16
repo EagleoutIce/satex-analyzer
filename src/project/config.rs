@@ -458,12 +458,68 @@ pub fn record_style_choice(dir: &Path, code: &str, choice: StyleChoice) -> Resul
     Ok(path)
 }
 
-/// `text` with `item` in the flow list of `key` (or `key+`), under the
-/// nested mappings `path` (outermost first, maybe empty). A missing
-/// mapping or list is added, the list as `key+`, so it extends what other
-/// layers set. `None` when the key is there but not as a one-line `[…]`
-/// list, or a mapping on the path is written inline.
-fn with_listed(text: &str, path: &[&str], key: &str, item: &str) -> Option<String> {
+/// Records `value` for the scalar `key` under the nested mappings `path`
+/// in the config file at `file`, made if missing, comments kept.
+/// The file is replaced whole (a temporary renamed over it), so a killed
+/// run never leaves half of it; writers take turns on a lock beside it; a
+/// symlinked file stays a link (its target is replaced), and its
+/// permissions and line endings stay.
+pub fn record_scalar(file: &Path, path: &[&str], key: &str, value: &str) -> Result<(), String> {
+    let file = &std::fs::canonicalize(file).unwrap_or_else(|_| file.to_path_buf());
+    fn at(p: &Path) -> impl Fn(std::io::Error) -> String + '_ {
+        move |e| format!("{}: {e}", p.display())
+    }
+    let (Some(dir), Some(name)) = (file.parent(), file.file_name().map(|n| n.to_string_lossy().into_owned())) else {
+        return Err(format!("{}: no file", file.display()));
+    };
+    std::fs::create_dir_all(dir).map_err(at(dir))?;
+    let lock = dir.join(format!(".{name}.lock"));
+    let held = std::fs::File::options().create(true).write(true).truncate(false).open(&lock).map_err(at(&lock))?;
+    held.lock().map_err(at(&lock))?;
+    let text = std::fs::read_to_string(file).unwrap_or_default();
+    let crlf = text.contains("\r\n");
+    let mut text = with_scalar(&text.replace("\r\n", "\n"), path, key, value)
+        .ok_or_else(|| format!("{}: cannot set `{key}` there", file.display()))?;
+    if crlf {
+        text = text.replace('\n', "\r\n");
+    }
+    let temporary = dir.join(format!(".{name}.tmp"));
+    std::fs::write(&temporary, text).map_err(at(&temporary))?;
+    if let Ok(meta) = std::fs::metadata(file) {
+        let _ = std::fs::set_permissions(&temporary, meta.permissions());
+    }
+    std::fs::rename(&temporary, file).map_err(|e| {
+        let _ = std::fs::remove_file(&temporary);
+        at(file)(e)
+    })
+}
+
+/// `name: {k: v, …}` at `indent` as a block: the header and a line per
+/// key. `None` unless it is a one-line flow mapping of scalars.
+fn unfold(line: &str, name: &str, indent: &str) -> Option<Vec<String>> {
+    use serde_yaml_ng::Value;
+    let value = line.strip_prefix(indent)?.strip_prefix(name)?.strip_prefix(':')?.trim();
+    let close = value.rfind('}')?;
+    let comment = value[close + 1..].trim();
+    let map: serde_yaml_ng::Mapping = serde_yaml_ng::from_str(&value[..=close]).ok()?;
+    let scalar = |v: &Value| -> Option<String> {
+        matches!(v, Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_))
+            .then(|| serde_yaml_ng::to_string(v).ok().map(|t| t.trim_end().to_string()))?
+            .filter(|t| !t.contains('\n'))
+    };
+    let header = if comment.is_empty() { format!("{indent}{name}:") } else { format!("{indent}{name}:  {comment}") };
+    let mut lines = vec![header];
+    for (k, v) in &map {
+        lines.push(format!("{indent}  {}: {}", scalar(k)?, scalar(v)?));
+    }
+    Some(lines)
+}
+
+/// The lines of `text`, and the block of the nested mappings `path` in them:
+/// its first line, its end and its indent. A missing mapping is added, one
+/// written inline is unfolded into a block ([`unfold`]). `None` when it
+/// cannot be.
+fn block(text: &str, path: &[&str]) -> Option<(Vec<String>, usize, usize, String)> {
     let mut lines: Vec<String> = text.lines().map(str::to_string).collect();
     let (mut from, mut end, mut indent) = (0, lines.len(), String::new());
     // `name:` at `indent`, its value empty or a comment.
@@ -475,16 +531,23 @@ fn with_listed(text: &str, path: &[&str], key: &str, item: &str) -> Option<Strin
     };
     let deeper = |l: &str, indent: &str| l.trim().is_empty() || l.starts_with(&format!("{indent} "));
     for name in path {
-        match (from..end).find(|&i| lines[i].strip_prefix(&indent).is_some_and(|r| r.starts_with(&format!("{name}:"))))
+        let found =
+            (from..end).find(|&i| lines[i].strip_prefix(&indent).is_some_and(|r| r.starts_with(&format!("{name}:"))));
+        if let Some(at) = found
+            && header(&lines[at], name, &indent) != Some(true)
         {
-            Some(at) if header(&lines[at], name, &indent) == Some(true) => {
+            let block = unfold(&lines[at], name, &indent)?;
+            end += block.len() - 1;
+            lines.splice(at..=at, block);
+        }
+        match found {
+            Some(at) => {
                 let sub_end = (at + 1..end).find(|&i| !deeper(&lines[i], &indent)).unwrap_or(end);
                 let child =
                     lines[at + 1..sub_end].iter().find(|l| !l.trim().is_empty() && !l.trim_start().starts_with('#'));
                 let child = child.map_or(format!("{indent}  "), |l| l[..l.len() - l.trim_start().len()].to_string());
                 (from, end, indent) = (at + 1, sub_end, child);
             }
-            Some(_) => return None,
             None => {
                 lines.insert(end, format!("{indent}{name}:"));
                 (from, end, indent) = (end + 1, end + 1, format!("{indent}  "));
@@ -494,6 +557,28 @@ fn with_listed(text: &str, path: &[&str], key: &str, item: &str) -> Option<Strin
     while end > from && lines[end - 1].trim().is_empty() {
         end -= 1;
     }
+    Some((lines, from, end, indent))
+}
+
+/// `text` with `key: value` under the nested mappings `path`, replacing
+/// the key's line if there is one.
+fn with_scalar(text: &str, path: &[&str], key: &str, value: &str) -> Option<String> {
+    let (mut lines, from, end, indent) = block(text, path)?;
+    let line = format!("{indent}{key}: {value}");
+    match (from..end).find(|&i| lines[i].strip_prefix(&indent).is_some_and(|r| r.starts_with(&format!("{key}:")))) {
+        Some(i) => lines[i] = line,
+        None => lines.insert(end, line),
+    }
+    Some(lines.join("\n") + "\n")
+}
+
+/// `text` with `item` in the flow list of `key` (or `key+`), under the
+/// nested mappings `path` (outermost first, maybe empty). A missing
+/// mapping or list is added, the list as `key+`, so it extends what other
+/// layers set. `None` when the key is there but not as a one-line `[…]`
+/// list, or a mapping on the path is written inline.
+fn with_listed(text: &str, path: &[&str], key: &str, item: &str) -> Option<String> {
+    let (mut lines, from, end, indent) = block(text, path)?;
     let found = (from..end).find(|&i| {
         let rest = lines[i].strip_prefix(&indent).unwrap_or_default();
         !rest.starts_with(' ') && (rest.starts_with(&format!("{key}:")) || rest.starts_with(&format!("{key}+:")))
@@ -511,6 +596,25 @@ fn with_listed(text: &str, path: &[&str], key: &str, item: &str) -> Option<Strin
         None => lines.insert(end, format!("{indent}{key}+: [{item}]")),
     }
     Some(lines.join("\n") + "\n")
+}
+
+/// `compile:` in `satex.yaml`: what `satex compile` runs and shows.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct CompileConfig {
+    /// The build system: `auto` (arara directives, then Tectonic.toml, then
+    /// latexmk, then the engine), or one of `latexmk`, `arara`, `tectonic`,
+    /// `make`, `l3build`, `engine`.
+    pub system: String,
+    /// A PDF viewer to open after a build: `none`, `auto` (the system's
+    /// default opener), or a program. Only the user's own config sets it.
+    pub viewer: String,
+}
+
+impl Default for CompileConfig {
+    fn default() -> CompileConfig {
+        CompileConfig { system: "auto".into(), viewer: "none".into() }
+    }
 }
 
 /// `lsp:` in `satex.yaml`: how `satex lsp` listens and re-analyzes.
@@ -999,6 +1103,13 @@ pub struct CacheIndex {
     /// is off.
     #[serde(skip)]
     pub building: bool,
+    /// Set in the background builder: it takes no build lock, so a
+    /// foreground run never waits on it.
+    #[serde(skip)]
+    pub background: bool,
+    /// How many of the packages installed packages load most the
+    /// background builder prepares after the ones runs here already loaded.
+    pub most_loaded: usize,
 }
 
 impl Default for CacheIndex {
@@ -1029,11 +1140,20 @@ impl Default for CacheIndex {
             auto: true,
             refresh: false,
             building: false,
+            background: false,
+            most_loaded: 200,
         }
     }
 }
 
 impl Config {
+    /// The size pruning trims the cache directory to after a store:
+    /// `limits.cache_size`, but none for the background builder, which must
+    /// never evict a cache documents use to fit one of its own.
+    pub fn eviction_bound(&self) -> u64 {
+        if self.cache.index.background { 0 } else { self.limits.cache_size.as_u64() }
+    }
+
     /// `analysis.assume_compiles`.
     pub fn compiles(&self) -> bool {
         self.analysis.assume_compiles
@@ -1216,7 +1336,7 @@ area! {
 
 area! {
     Completion {
-        /// Commands one answer lists.
+        /// Items one answer lists: commands, and the packages, files, labels or citations found.
         shown: usize = 300,
         /// Items, best first, whose signature the probe reads where the listing gives none.
         signatures: usize = 4,
@@ -1593,11 +1713,36 @@ pub struct Cache {
     /// Keep each document's whole analysis: a rerun of a document whose
     /// text, settings and every file it read are unchanged executes nothing.
     pub document: bool,
+    /// Whether satex prepares the kernels and installed packages in a
+    /// low-priority background process (`satex cache build --background`).
+    /// `ask` asks once, at the first interactive start or in the editor, and
+    /// records the answer in the global config. `SATEX_NO_SETUP` never asks.
+    pub background: Background,
+}
+
+named_enum! {
+    /// `cache.background`: prepare caches in the background.
+    #[derive(Clone, Copy, PartialEq, Eq, Debug, Deserialize, Serialize, Default)]
+    #[serde(rename_all = "lowercase")]
+    pub enum Background {
+        #[default]
+        Ask => "ask",
+        Yes => "yes",
+        No => "no",
+    }
 }
 
 impl Default for Cache {
     fn default() -> Cache {
-        Cache { enabled: true, dir: None, rebuild: false, index: CacheIndex::default(), tail: 256, document: true }
+        Cache {
+            enabled: true,
+            dir: None,
+            rebuild: false,
+            index: CacheIndex::default(),
+            tail: 256,
+            document: true,
+            background: Background::Ask,
+        }
     }
 }
 
@@ -1905,6 +2050,9 @@ pub struct Config {
     /// How `satex lsp` listens and re-analyzes.
     #[serde(default)]
     pub lsp: LspConfig,
+    /// What `satex compile` runs and shows.
+    #[serde(default)]
+    pub compile: CompileConfig,
     /// Where package documentation is looked for and which conventions are read.
     #[serde(default)]
     pub docs: DocsConfig,
@@ -1972,6 +2120,7 @@ impl Default for Config {
             bib: Default::default(),
             lua: Default::default(),
             lsp: LspConfig::default(),
+            compile: CompileConfig::default(),
             docs: DocsConfig::default(),
             slice: SliceConfig::default(),
             playground: PlaygroundConfig::default(),
@@ -2974,7 +3123,7 @@ impl Config {
 /// project `satex.yaml` (`dirs::config_dir`: `$XDG_CONFIG_HOME` or
 /// `~/.config` on Linux, `~/Library/Application Support` on macOS,
 /// `%APPDATA%` on Windows).
-fn global_config_file() -> Option<PathBuf> {
+pub(crate) fn global_config_file() -> Option<PathBuf> {
     crate::project::paths::config_dir().map(|dir| dir.join("satex").join(FILE_NAME))
 }
 
@@ -3004,8 +3153,10 @@ fn warn(notice: String) {
     }
 }
 
-/// What only the user's own configuration sets, never a project's.
-const USER_KEYS: [(&str, &str); 2] = [("cache", "dir"), ("plugins", "packages")];
+/// What only the user's own configuration sets, never a project's: also
+/// whether satex starts a background process.
+const USER_KEYS: [(&str, &str); 4] =
+    [("cache", "dir"), ("cache", "background"), ("plugins", "packages"), ("compile", "viewer")];
 
 /// Merges `path` onto `base` with `merge_value`, and records it in
 /// `files` — but only when the result still fits `Config`; a file that does
@@ -3015,10 +3166,12 @@ fn merge_file(base: &mut serde_yaml_ng::Value, path: &Path, files: &mut Vec<Path
     if !path.is_file() {
         return;
     }
+    // one spelling, so a file reached as `satex.yaml` and `./satex.yaml` warns once
+    let shown = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
     // A layer that does not read is left out, but never silently.
     let mut incoming = match read_config_value(path) {
         Ok(incoming) => incoming,
-        Err(e) => return warn(format!("satex: {}: ignored: {e}", path.display())),
+        Err(e) => return warn(format!("satex: {}: ignored: {e}", shown.display())),
     };
     // A project, maybe someone else's, does not say where satex writes its
     // caches or whether a lint reaches the network: only the user's own
@@ -3031,7 +3184,10 @@ fn merge_file(base: &mut serde_yaml_ng::Value, path: &Path, files: &mut Vec<Path
                 && let Some(value) = map.remove(key)
                 && Some(&value) != current.as_ref()
             {
-                warn(format!("satex: {}: {section}.{key} ignored: only the user's own config sets it", path.display()));
+                warn(format!(
+                    "satex: {}: {section}.{key} ignored: only the user's own config sets it",
+                    shown.display()
+                ));
             }
         }
     }
@@ -3060,8 +3216,8 @@ fn merge_file(base: &mut serde_yaml_ng::Value, path: &Path, files: &mut Vec<Path
                     .then(|| (without, [at, vec![name.clone()]].concat().join(".")))
             })
         });
-        let Some((without, key)) = dropped else { return warn(format!("satex: {}: ignored: {e}", path.display())) };
-        warn(format!("satex: {}: warning: unknown key `{key}` ignored, the rest of the file applies", path.display()));
+        let Some((without, key)) = dropped else { return warn(format!("satex: {}: ignored: {e}", shown.display())) };
+        warn(format!("satex: {}: warning: unknown key `{key}` ignored, the rest of the file applies", shown.display()));
         incoming = without;
     }
 }
@@ -3345,6 +3501,85 @@ pub fn schema(documented: &str) -> serde_json::Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The setup answer is written into a hand-kept file: comments and other
+    /// keys stay, an existing `cache:` block gets the key (or its line
+    /// replaced, so a second answer never leaves two), and a missing one is
+    /// added. A `cache:` written inline is left alone (`None`), since
+    /// rewriting a flow mapping could lose what it holds.
+    #[test]
+    fn a_scalar_is_set_in_place() {
+        assert_eq!(with_scalar("", &["cache"], "background", "yes").unwrap(), "cache:\n  background: yes\n");
+        let text = "# mine\ncache:\n    dir: /c  # here\nlint_off: [x]\n";
+        let set = with_scalar(text, &["cache"], "background", "no").unwrap();
+        assert_eq!(set, "# mine\ncache:\n    dir: /c  # here\n    background: no\nlint_off: [x]\n");
+        let again = with_scalar(&set, &["cache"], "background", "yes").unwrap();
+        assert_eq!(again.matches("background").count(), 1, "{again}");
+        assert!(again.contains("    background: yes\n"));
+        // An inline mapping of scalars is unfolded, its comment kept; one
+        // with nested values cannot be, and is left alone.
+        let unfolded =
+            with_scalar("cache: {dir: /c, document: false}  # mine\nx: 1\n", &["cache"], "background", "yes");
+        assert_eq!(
+            unfolded.as_deref(),
+            Some("cache:  # mine\n  dir: /c\n  document: false\n  background: yes\nx: 1\n")
+        );
+        assert_eq!(with_scalar("cache: {index: {class: book}}\n", &["cache"], "background", "yes"), None);
+    }
+
+    /// The answer replaces the file whole, so a kill mid-write never leaves
+    /// half a config; a CRLF file stays CRLF, its permissions stay, and a
+    /// symlinked config stays a link to the file that changed.
+    #[test]
+    fn a_recorded_scalar_keeps_line_endings_permissions_and_links() {
+        let dir =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join(format!("target/scratch/config-record-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let real = dir.join("real.yaml");
+        std::fs::write(&real, "# mine\r\nlint_off: [x]\r\n").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&real, std::fs::Permissions::from_mode(0o600)).unwrap();
+            std::os::unix::fs::symlink(&real, dir.join(FILE_NAME)).unwrap();
+        }
+        #[cfg(not(unix))]
+        std::fs::copy(&real, dir.join(FILE_NAME)).unwrap();
+        let link = dir.join(FILE_NAME);
+        record_scalar(&link, &["cache"], "background", "yes").unwrap();
+        let text = std::fs::read_to_string(&link).unwrap();
+        assert_eq!(text, "# mine\r\nlint_off: [x]\r\ncache:\r\n  background: yes\r\n");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert!(std::fs::symlink_metadata(&link).unwrap().file_type().is_symlink(), "still a link");
+            assert_eq!(std::fs::metadata(&real).unwrap().permissions().mode() & 0o777, 0o600);
+        }
+        assert!(!dir.join(format!(".{}.tmp", "real.yaml")).exists(), "no temporary left");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Whether satex starts a background process is the user's choice, never
+    /// a project's (maybe someone else's): a project `satex.yaml` setting
+    /// `cache.background` is ignored, the user's own config is not.
+    #[test]
+    fn only_the_user_config_sets_cache_background() {
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join(format!("target/scratch/config-user-keys-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join(FILE_NAME);
+        std::fs::write(&file, "cache:\n  background: yes\n").unwrap();
+        let mut value = serde_yaml_ng::to_value(Config::default()).unwrap();
+        merge_file(&mut value, &file, &mut Vec::new(), true);
+        let project: Config = serde_yaml_ng::from_value(value).unwrap();
+        assert_eq!(project.cache.background, Background::Ask);
+        let mut value = serde_yaml_ng::to_value(Config::default()).unwrap();
+        merge_file(&mut value, &file, &mut Vec::new(), false);
+        let user: Config = serde_yaml_ng::from_value(value).unwrap();
+        assert_eq!(user.cache.background, Background::Yes);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     /// The repo's own `satex.yaml` lists every `limits:` value as documentation,
     /// but the number a run actually gets when none is set is

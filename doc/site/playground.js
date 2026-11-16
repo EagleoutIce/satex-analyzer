@@ -35,18 +35,13 @@
   const tipNext = self.satexViews.tipBag(manifest.tips ?? []);
   /** How long one tip stays. */
   const TIP_MS = 20000;
-  /** A tip line: on a loading banner the next one every `TIP_MS` while it is on the page, in a dialog (`more`) only its "Another tip" button changes it. No live region: nobody asked to hear them. */
-  function tipHost(more = false) {
+  /** A tip line for a wait: the next one every `TIP_MS` while it is on the page. No live region: nobody asked to hear them. */
+  function tipHost() {
     const host = Object.assign(document.createElement('p'), { className: 'sx-tip' }), text = Object.assign(document.createElement('span'), { className: 'sx-tip-text' });
     host.innerHTML = '<b>Tip</b> ';
     host.append(text);
     const show = () => { text.innerHTML = tipHtml(tipNext()); text.classList.remove('sx-tip-in'); void text.offsetWidth; text.classList.add('sx-tip-in'); };
     show();
-    if (more) {
-      host.classList.add('sx-tip-more');
-      host.append(Object.assign(document.createElement('button'), { type: 'button', className: 'ghost small sx-tip-btn', ariaLabel: 'Another tip', title: 'Another tip', textContent: 'Another tip', onclick: show }));
-      return host;
-    }
     const timer = setInterval(() => { if (!host.isConnected) clearInterval(timer); else if (host.offsetParent !== null) show(); }, TIP_MS);
     return host;
   }
@@ -753,6 +748,7 @@
     // the shown file (through its root) runs before every other one
     lsp('satex/analyze', { first: uri(), ...(filesChanged ? { files: true } : {}) }, true);
     filesChanged = false;
+    ranWith = landings;
     markStale();
   }
   function drainAnalysis() {
@@ -767,15 +763,16 @@
   function checking() { phase(`Analyzing ${state.file}…`); checkStart = performance.now(); }
 
   /** Completion order: how well the item matches first (the exact name, a prefix of the label, a part
-   * of it, a part of what it is found by such as a citation's title, the typed characters in order:
+   * of it, a part of what it is found by such as a citation's title, the label's characters in order:
    * `m/f` finds `mode/fast`); then the project's own commands, documented ones, internals (`@`, `_`, `:`)
-   * last; then the server's order and shorter names. */
+   * last; then the server's order (its own ranking, typos forgiven) and shorter names. A long text's
+   * characters in order are no match: any word has them. */
   const tier = (i) => /\(document\)$/.test(i.detail ?? '') ? 0 : /[@_:]/.test(i.label) ? 2 : 1;
   const subsequence = (text, typed) => { let k = 0; for (const c of text) if (c === typed[k]) k++; return k === typed.length; };
   const closeness = (i, typed) => {
     const label = i.label.toLowerCase(), found = (i.filterText ?? '').toLowerCase();
     return label === typed ? -1 : label.startsWith(typed) ? 0 : label.includes(typed) ? 1 : found.includes(typed) ? 2
-      : subsequence(label, typed) || subsequence(found, typed) ? 3 : null;
+      : subsequence(label, typed) ? 3 : null;
   };
   const rank = (items, typed) => items
     .map((i) => [i, tier(i), closeness(i, typed.toLowerCase())]).filter((x) => x[2] !== null)
@@ -904,7 +901,8 @@
       return {
         from, to: edit ? Math.max(at(ctx.state.doc, edit.range.end), ctx.pos) : ctx.pos, filter: false,
         options: rank(items, typed).slice(0, 200).map((i) => ({
-          label: i.label, detail: i.documentation ? i.detail : undefined, usage: colorOf(i) || i.documentation ? null : i.labelDetails?.detail ? `${i.labelDetails.detail}${i.labelDetails.description ? ` (${i.labelDetails.description})` : ''}` : i.detail,
+          // what the item is (a package's description, a citation's title, what a label points at), else its detail
+          label: i.label, detail: (!i.labelDetails?.detail && i.labelDetails?.description) || (i.documentation ? i.detail : undefined), usage: colorOf(i) || i.documentation ? null : i.labelDetails?.detail ? `${i.labelDetails.detail}${i.labelDetails.description ? ` (${i.labelDetails.description})` : ''}` : i.detail,
           hex: colorOf(i), preview: i.data?.preview, color: colorOf(i), type: KIND[i.kind] ?? 'text',
           // the side panel: a command's card, the one hover and Explain show; else the server's documentation
           info: before === '\\' ? () => itemInfo(i) : i.documentation ? () => Object.assign(document.createElement('div'), { className: 'hover cm-item-card', innerHTML: card(i.documentation.value ?? i.documentation) }) : i.data?.key ? () => itemInfo(i, true) : undefined,
@@ -1715,7 +1713,8 @@
     const others = Object.entries(diagnostics).filter(([u]) => u !== uri()).flatMap(([u, rs]) => rs.map((d) => ({ ...d, file: u.split('/').pop(), target: u })));
     listed = [...ds, ...others];
     if (retryCompletion && !running) { retryCompletion = false; asked.clear(); editor.complete?.(); }
-    count.textContent = String(listed.length);
+    // no count while a load the next run needs is under way: 0 would read as none
+    count.textContent = loadingFor && !listed.length ? '…' : String(listed.length);
     shownFor(list, uri(), diagnosticVersions[uri()]);
     shownFor(count, uri(), diagnosticVersions[uri()]);
     pills(ds);
@@ -1725,8 +1724,8 @@
     $('fix-all').innerHTML = editableFile() ? fixAllButton('all') : '';
     // the unsafe switch only where there is something to fix
     document.querySelector('.fix-bar').hidden = !$('fix-all').innerHTML;
-    lspStatus.textContent = state.file in state.ro ? 'read-only file' : provisional ? `provisional: ${provisional} still downloading; the check runs again once ${provisional.includes(', ') ? 'they are' : 'it is'} in` : listed.length ? '' : 'none';
-    list.classList.toggle('provisional', !!provisional);
+    lspStatus.textContent = state.file in state.ro ? 'read-only file' : loadingFor ? `loading ${loadingFor}: the findings show once ${loadingFor.includes(', ') ? 'they are' : 'it is'} in` : listed.length ? '' : 'none';
+    list.classList.toggle('loading', !!loadingFor);
     markStale();
     if (pdfOverlayOn?.findings) pdfOverlay();
     typesetFindings();
@@ -2011,8 +2010,8 @@
     const r = await definitionAt(editor.text(), editor.position());
     const locs = (Array.isArray(r) ? r : r ? [r] : []).map((l) => /** @type {[URL, any]} */ ([new URL(l.uri ?? l.targetUri), (l.range ?? l.targetSelectionRange).start]));
     if (!locs.length) {
-      // the run is provisional while packages download: their commands are not defined yet, so the answer comes with the next run
-      if (provisional) { toast('Packages are still loading: the definition opens once the check ran again', null); afterRun = () => { toast.off(); definition(x, y); }; return; }
+      // while packages download their commands are not defined yet: the answer comes with the next run
+      if (loadingFor) { toast('Packages are still loading: the definition opens once the check ran again', null); afterRun = () => { toast.off(); definition(x, y); }; return; }
       return toast('No definition found');
     }
     const open = ([url, start]) => url.protocol === 'file:' ? openPlace(decodeURIComponent(url.pathname), start) : window.open(url.href, '_blank', 'noopener');
@@ -2633,7 +2632,6 @@
   const pluginOf = (k) => k.plugin ?? k.key.match(/^type_plugins\.[^.]+/)?.[0] ?? PLUGINS.find((p) => k.key === `plugins.${p.name}` || k.key.split('.')[0] === p.name)?.name ?? null;
   /** The settings a tile's plugin owns: those under its switch's parent. */
   const tileBase = (p) => p.key.replace(/\.enabled$/, '');
-  const cfgMoreOpen = new Set();
   /** The plugin group the plugins tab shows, else its group buttons. */
   let cfgPluginGroup = null;
   let cfgTab = 'core', cfgYaml = false;
@@ -2673,39 +2671,27 @@
     const words = q.split(/\s+/).filter(Boolean);
     return words.every((w) => w === '@changed' ? k.key in configSet || `${k.key}+` in configSet
       : w.startsWith('@group:') ? groupOf_(k) === w.slice(7) : w.startsWith('@affects:') ? k.affects.includes(w.slice(9))
-        : k.key.toLowerCase().includes(w) || k.about.toLowerCase().includes(w));
+        : k.key.toLowerCase().includes(w) || k.about.toLowerCase().includes(w) || JSON.stringify(k.key in configSet ? configSet[k.key] : k.def ?? '').toLowerCase().includes(w));
   }
-  /** The plugins tab: the type plugins' tiles with a switch and the other settings of each, then the other
-   *  plugins with settings as groups, then the others in one compact list, one line each. */
-  function configPlugins(hits, q, section, closed, row, keys) {
+  /** The plugins tab: every plugin in a group, the groups first; a group (or a search) opens its plugins as settings lists.
+   * The analysis's own plugins (src/plugins) form a group beside the type plugins' categories. */
+  function configPlugins(hits, q, section, row, keys) {
     const tiled = new Set(TILES.flatMap((c) => c.plugins.map(tileBase)));
-    const switches = {
-      control: (p) => {
-        const k = keys.find((x) => x.key === p.key);
-        return k ? `<label class="ts-toggle" title="${escape(p.key)}">${configInput(k, p.key in configSet ? configSet[p.key] : k.def)}</label>` : '';
-      },
-      more: (p) => {
-        const ks = hits.filter((k) => k.key !== p.key && pluginOf(k) === tileBase(p));
-        return ks.length ? `<details class="pt-more" data-more="${escape(tileBase(p))}"${q || cfgMoreOpen.has(tileBase(p)) ? ' open' : ''}><summary>${plural(ks.length, 'more setting')}</summary><ul>${ks.map(row).join('')}</ul></details>` : '';
-      },
-    };
-    const shown = TILES.map((c) => ({ ...c, plugins: c.plugins.filter((p) => !q || hits.some((k) => pluginOf(k) === tileBase(p)) || configMatch({ key: p.name, about: p.about, affects: [] }, q)) }))
-      .filter((c) => c.plugins.length);
-    // first the groups as buttons; a group (or a search) opens its plugins as settings lists, one per plugin, as the core tab
+    const own = PLUGINS.filter((p) => !tiled.has(p.name)).map((p) => ({ ...p, key: p.name }));
+    const all = [...TILES, ...(own.length ? [{ name: 'analysis', about: 'how the analysis reads packages, builds, bibliographies and output', plugins: own }] : [])];
+    const named = (p) => configMatch({ key: p.name, about: p.about, affects: [] }, q);
+    const shown = all.map((c) => ({ ...c, plugins: c.plugins.filter((p) => !q || hits.some((k) => pluginOf(k) === tileBase(p)) || named(p)) })).filter((c) => c.plugins.length);
     const group = q ? null : shown.find((c) => c.name === cfgPluginGroup);
-    const tiles = !shown.length ? '' : !q && !group
-      ? `<li class="cfg-group"><ul class="pt-groups cfg-pt-groups">${shown.map((c) => `<li><button type="button" data-pgroup="${escape(c.name)}">${self.satexTileIcon(c.name)}<b>${escape(c.name)}</b><span class="pt-count">${c.plugins.length}</span><small>${inline(c.about)}</small></button></li>`).join('')}</ul></li>`
-      : (group ? `<li class="cfg-group"><button type="button" class="ghost small" data-pgroup="">← every group</button> <b>${escape(group.name)}</b> <span class="muted">${inline(group.about)}</span></li>` : '') +
-        (group ? [group] : shown).flatMap((c) => c.plugins).map((p) => {
-          const ks = keys.filter((k) => pluginOf(k) === tileBase(p) && (!q || hits.includes(k) || configMatch({ key: p.name, about: p.about, affects: [] }, q)));
-          return ks.length ? section(tileBase(p), p.name, p.about, ks, true) : '';
-        }).join('');
-    const own = PLUGINS.filter((p) => !tiled.has(p.name)).map((p) => [p, hits.filter((k) => pluginOf(k) === p.name)]);
-    const set = own.filter(([, ks]) => ks.length).map(([p, ks]) => section(p.name, p.name, p.about, ks, !!q || !closed.has(p.name)));
-    const plain = own.filter(([p, ks]) => !ks.length && !q && p.about)
-      .map(([p]) => `<li class="cfg-plain" title="${escape(p.about.replaceAll('`', ''))}"><b>${escape(p.name)}</b><span>${inline(p.about)}</span></li>`);
     const request = '<li class="cfg-group cfg-request"><button type="button" class="ghost small" data-request-plugin>Request a plugin…</button></li>';
-    return [tiles, ...set, ...(plain.length ? [`<li class="cfg-group"><p class="cfg-plain-head">Without settings, always on</p><ul>${plain.join('')}</ul></li>`] : []), request];
+    if (!shown.length) return [request];
+    if (!q && !group) return [`<li class="cfg-group"><ul class="pt-groups cfg-pt-groups">${shown.map((c) => `<li><button type="button" data-pgroup="${escape(c.name)}">${self.satexTileIcon(c.name)}<b>${escape(c.name)}</b><span class="pt-count">${c.plugins.length}</span><small>${inline(c.about)}</small></button></li>`).join('')}</ul></li>`, request];
+    const head = group ? `<li class="cfg-group cfg-pt-head"><button type="button" class="ghost small" data-pgroup="">← every group</button> <b>${escape(group.name)}</b> <span class="muted">${inline(group.about)}</span></li>` : '';
+    // a plugin without settings is a plain line: always on
+    const plugin = (p) => {
+      const ks = keys.filter((k) => pluginOf(k) === tileBase(p) && (!q || hits.includes(k) || named(p)));
+      return ks.length ? section(tileBase(p), p.name, p.about, ks, !!q || cfgOpen.has(tileBase(p))) : `<li class="cfg-plain" title="${escape(p.about.replaceAll('`', ''))}"><b>${escape(p.name)}</b><span>${inline(p.about)}</span><span class="muted">always on</span></li>`;
+    };
+    return [head, ...(group ? [group] : shown).flatMap((c) => c.plugins).map(plugin), request];
   }
   /** A setting's value an example line spells: `- field: v` items of a list, or `name: v` with the key's own name. */
   function exampleValue(k, line) {
@@ -2855,25 +2841,31 @@
       return `<li class="cfg-row${cfgOpened.has(k.key) ? ' cfg-open' : ''}${wide ? ' cfg-wide' : ''}${changed ? ' cfg-changed' : ''}${rejected ? ' cfg-bad' : ''}" data-key="${escape(k.key)}"><div class="cfg-what"${rejected ? ` data-why="not applied: ${escape(configRejected.why)}"` : ''}><span class="cfg-name"><code>${k.key.includes('.') ? `<span class="cfg-prefix">${escape(k.key.slice(0, k.key.lastIndexOf('.') + 1))}</span>` : ''}${escape(k.key.slice(k.key.lastIndexOf('.') + 1))}</code>${badges}<button type="button" class="cfg-perm" data-perm="${escape(k.key)}" title="copy a link that opens this setting" aria-label="copy a link to ${escape(k.key)}">#</button></span><span class="muted cfg-about">${cfgAbout(k.about)}</span>` +
         `${added ? `<span class="muted">adds ${added.map((x) => `<code>${escape(x)}</code>`).join(', ')}</span>` : ''}${links.length ? `<span class="cfg-links muted">${links.join(' · ')}</span>` : ''}${example}</div>` +
         (wide ? `<div class="cfg-value">${configList(k, value)}</div>` : `<label class="${k.type === 'boolean' ? 'ts-toggle ' : ''}cfg-value">${configInput(k, value)}</label>`) +
-        `<button type="button" class="ghost small" data-reset="${escape(k.key)}"${changed || k.extra ? '' : ' hidden'} title="${k.extra ? 'remove this override' : `back to the default: ${escape(yamlValue(k.def ?? ''))}`}">${k.extra ? 'Remove' : 'Reset'}</button></li>`;
+        `<button type="button" class="ghost small" data-reset="${escape(k.key)}"${changed || k.extra ? '' : ' hidden'} title="${k.extra ? 'remove this override' : `back to the default: ${escape(yamlValue(k.def ?? ''))}`}" aria-label="${k.extra ? 'remove' : 'reset'} ${escape(k.key)}">${k.extra ? '×' : '↺'}</button></li>`;
     };
     const changedIn = (ks) => ks.filter((k) => k.key in configSet || `${k.key}+` in configSet).length;
     const hits = tabKeys.filter((k) => configMatch(k, q));
-    // rows of a group, those of a sub-group (profiles.package, cache.index) under a small sticky header of its own
+    // rows of a group; a sub-group (profiles.package, a map such as conventions.math_symbols) folds under one line
+    // with its count and first values, shut when long, open on a search
     const rows = (g, ks) => {
       const subs = new Map([[null, []]]);
       for (const k of ks) { const s = subOf(k); if (!subs.has(s)) subs.set(s, []); subs.get(s).push(k); }
-      return [...subs].filter(([, rs]) => rs.length || g === 'profiles').map(([s, rs]) => s == null ? rs.map(row).join('')
-        : `<li class="cfg-sub" data-sub="${escape(`${g}.${s}`)}"><div class="cfg-subhead"><b><span class="cfg-prefix">${escape(g)}.</span>${escape(s)}</b>` +
-          `${g === 'profiles' ? `<input type="text" class="cfg-addkey" list="cfg-dl-top" data-addto="${escape(s)}" placeholder="add a key to this profile…" aria-label="add a key to profile ${escape(s)}" spellcheck="false">` : ''}</div><ul>${rs.map(row).join('')}</ul></li>`).join('');
+      return [...subs].filter(([, rs]) => rs.length || g === 'profiles').map(([s, rs]) => {
+        if (s == null) return rs.map(row).join('');
+        const id = `${g}.${s}`, vals = rs.map((k) => configSet[k.key] ?? k.def), short = vals.length && vals.every((v) => typeof v === 'string' && [...v].length <= 3);
+        const open = !!q || (cfgSubOpen.get(id) ?? rs.length <= CFG_SUB_OPEN);
+        return `<li class="cfg-sub" data-sub="${escape(id)}"><details${open ? ' open' : ''} data-subgroup="${escape(id)}"><summary class="cfg-subhead"><b><span class="cfg-prefix">${escape(g)}.</span>${escape(s)}</b>` +
+          `<span class="muted cfg-sub-sum">${plural(rs.length, 'key')}${short ? `: ${escape(vals.slice(0, 12).join(' '))}${vals.length > 12 ? ' …' : ''}` : ''}${changedIn(rs) ? `, ${changedIn(rs)} changed` : ''}</span></summary>` +
+          `${g === 'profiles' ? `<input type="text" class="cfg-addkey" list="cfg-dl-top" data-addto="${escape(s)}" placeholder="add a key to this profile…" aria-label="add a key to profile ${escape(s)}" spellcheck="false">` : ''}<ul>${rs.map(row).join('')}</ul></details></li>`;
+      }).join('');
     };
     const section = (id, head, about, ks, open) => `<li class="cfg-group"><details${open ? ' open' : ''} data-group="${escape(id)}"><summary><b>${escape(head)}</b>` +
-      `${about ? ` <span class="muted">${escape(about)}</span>` : ''} <span class="muted">${plural(ks.length, 'key')}${changedIn(ks) ? `, ${changedIn(ks)} changed` : ''}</span></summary><ul>${rows(id, ks)}</ul></details></li>`;
+      `${about ? ` <span class="muted">${inline(about)}</span>` : ''} <span class="muted">${plural(ks.length, 'key')}${changedIn(ks) ? `, ${changedIn(ks)} changed` : ''}</span></summary><ul>${rows(id, ks)}</ul></details></li>`;
     const lists = ['packages', 'classes', 'both'].map((n) => `<datalist id="cfg-dl-${n}">${NAMES[n].map((x) => `<option value="${escape(x)}">`).join('')}</datalist>`).join('') +
       `<datalist id="cfg-dl-top">${tabKeys.filter((k) => !k.key.startsWith('profiles.') && !k.extra).map((k) => `<option value="${escape(k.key)}">`).join('')}</datalist>`;
     $('cfg-list').innerHTML = (cfgTab === 'plugins'
-      ? configPlugins(hits, q, section, cfgClosed, row, keys)
-      : groups.map((g) => [g, hits.filter((k) => groupOf_(k) === g)]).filter(([, ks]) => ks.length).map(([g, ks]) => section(g, g, '', ks, !!q || changedIn(ks) > 0 || !cfgClosed.has(g)))).join('')
+      ? configPlugins(hits, q, section, row, keys)
+      : groups.map((g) => [g, hits.filter((k) => groupOf_(k) === g)]).filter(([, ks]) => ks.length).map(([g, ks]) => section(g, g, '', ks, !!q || cfgOpen.has(g)))).join('')
       || '<li class="muted">No setting matches.</li>';
     $('cfg-list').insertAdjacentHTML('beforeend', lists);
     if (cfgFocus) { const el = $('cfg-list').querySelector(`[data-cfg="${CSS.escape(cfgFocus)}"] .cfg-chip-in`); cfgFocus = null; el?.focus(); }
@@ -2900,9 +2892,12 @@
   const configApply = (set) => { configKeep(set); configShow(); clearTimeout(configTimer); configTimer = setTimeout(() => restart(), 600); };
   $('cfg-open').onclick = () => { $('play-config').showModal(); configShow(); $('cfg-search').focus(); };
   $('cfg-search').oninput = configShow;
-  const cfgClosed = new Set();
-  $('cfg-list').addEventListener('toggle', (e) => { const g = e.target.dataset?.group; if (g) { if (e.target.open) cfgClosed.delete(g); else cfgClosed.add(g); } }, true);
-  $('cfg-list').addEventListener('toggle', (e) => { const m = e.target.dataset?.more; if (m) { if (e.target.open) cfgMoreOpen.add(m); else cfgMoreOpen.delete(m); } }, true);
+  /** The groups opened: each starts shut, its name and counts only. */
+  const cfgOpen = new Set();
+  /** Sub-groups toggled by hand; one of up to `CFG_SUB_OPEN` keys starts open. */
+  const cfgSubOpen = new Map(), CFG_SUB_OPEN = 4;
+  $('cfg-list').addEventListener('toggle', (e) => { const g = e.target.dataset?.subgroup; if (g && !$('cfg-search').value.trim()) cfgSubOpen.set(g, e.target.open); }, true);
+  $('cfg-list').addEventListener('toggle', (e) => { const g = e.target.dataset?.group; if (g && !$('cfg-search').value.trim()) { if (e.target.open) cfgOpen.add(g); else cfgOpen.delete(g); } }, true);
   // a tile's demo opens its example (the hash) behind the closed dialog
   $('cfg-list').addEventListener('click', (e) => { const d = e.target.closest('.pt-demo'); if (d) { e.preventDefault(); $('play-config').close(); location.hash = new URL(d.href).hash; } });
   $('cfg-tabs').addEventListener('click', (e) => { const t = e.target.closest('[data-tab]'); if (!t) return; cfgYaml = t.dataset.tab === 'yaml'; if (!cfgYaml) cfgTab = t.dataset.tab; configShow(); });
@@ -3110,7 +3105,8 @@
     cfgYaml = false;
     cfgTab = pluginOf(k) ? 'plugins' : 'core';
     if (!$('cfg-list').querySelector(`[data-key="${CSS.escape(key)}"]`) || !configMatch(k, $('cfg-search').value.trim().toLowerCase())) $('cfg-search').value = '';
-    cfgClosed.delete(pluginOf(k) ?? groupOf_(k));
+    cfgOpen.add(pluginOf(k) ?? groupOf_(k));
+    if (pluginOf(k)) cfgPluginGroup = TILES.find((c) => c.plugins.some((p) => tileBase(p) === pluginOf(k)))?.name ?? 'analysis';
     await configShow();
     const row = $('cfg-list').querySelector(`[data-key="${CSS.escape(key)}"]`);
     row?.closest('details')?.setAttribute('open', '');
@@ -3763,7 +3759,13 @@
     delete status.dataset.done;
     cmd.textContent = `satex ${words(args.value).filter((x) => x !== 'satex').join(' ')}`;
     try {
+      // a run before the project's packages are in would say they are missing
+      const need = unlanded(wanted_(named(projectTexts()), state.kernel, true));
+      if (need.length) await land(need);
       const data = await runCommand({ type: 'run', args: a, edits: edits(), cwd: state.dir });
+      const lacking = unlanded(missing(data.lines.map(([, t]) => plain(t)), true));
+      // a run that lacked a package is never shown: it runs again once that is in
+      if (lacking.length && await land(lacking)) return start();
       let stats = '', summary = '';
       const raw = data.lines.map(([kind, text]) => {
         if (kind === 'out') { if (/\d+ errors?, \d+ warnings?/.test(plain(text))) summary = plain(text).trim(); return ansi(text); }
@@ -3791,7 +3793,6 @@
       outBox.hidden = (plainLint() || explainedHere) && !failed;
       if (!outBox.hidden) foldConsole(false, false);
       status.dataset.done = data.status;
-      if (missing([printed]).length) fetchMissing([printed]);
     } catch (e) {
       status.textContent = `the run failed: ${e.message}`;
       status.dataset.done = 'error';
@@ -4054,6 +4055,8 @@
     boot.started = true;
     bootSettled();
     lsp('initialized', {}, true);
+    // the first run starts with the opens
+    ranWith = landings;
     // The server publishes findings of open files only: a few of the project's inputs too, for the tree's counts.
     // Another document is analyzed only once opened: a folder of documents would run them all first.
     for (const n of state.files.filter((n) => !rootable(n)).slice(0, OPEN_AT_START)) open(n, false);
@@ -4420,6 +4423,9 @@
   const named = (texts) => [...new Set(texts.flatMap((t) => [...String(t).matchAll(NAMED)].flatMap((m) => m[1].split(',').map((x) => x.trim()).filter(Boolean))))];
   const missing = (texts, all = false) => wanted_([...new Set(texts.flatMap((t) => [...String(t).matchAll(MISSING)].map((m) => m[1] ?? m[2])))], state.kernel, all);
   const loadedList = [], inFlight = new Set();
+  /** Each bundle's landing, counted: a run sees those up to `ranWith`, the count when it was asked for. */
+  const landedAt = new Map();
+  var landings = 0, ranWith = 0; // var: an analysis may start before this line
   let loadedBytes = 0;
   /** `quiet`: in the background, after the open document's first run; the status line stays the analysis'. */
   let quietLoads = 0;
@@ -4465,6 +4471,7 @@
       ids.forEach((id) => flying.delete(id)); quietLoads -= +quiet;
       if (!act.phase && status.textContent.startsWith(FETCH_REST)) status.textContent = restLine();
     }
+    ids.forEach((id) => landedAt.set(id, ++landings));
     if (!quiet) {
       loads.clear();
       idle();
@@ -4579,7 +4586,8 @@
   /* PDF: Compile builds the project with the TeX of the machine serving the playground (`satex gui`,
    * src/cli/gui/compile.rs). On a static host pdfTeX runs in the browser instead (tex.js).
    * The request and the SyncTeX parse run in a worker of their own,
-   * so the analysis stays responsive. Pages come as images; SyncTeX links them to the source both ways. */
+   * so the analysis stays responsive. pdf.js draws the pages in view from the PDF (the server's page images
+   * where the site has no pdf.js); SyncTeX links them to the source both ways. */
   const COMPILE = `${location.origin}/__satex/compile`;
   /** The compile worker's code: posts the build, fetches and parses its SyncTeX data and the words of its pages. */
   function compileWorkerMain() {
@@ -4697,10 +4705,12 @@
   };
   const pdfWhere = (up) => up ? "this machine's TeX" : 'pdfTeX in this browser';
   /** Whether the server answers, asked cheaply (its compile endpoint's status page) and not for the sake of a build. */
-  let serverUp = false;
+  let serverUp = false, pdfProbing = false;
   async function probeServer() {
     let j = null;
+    pdfProbing = true;
     try { const r = await fetch(COMPILE, { cache: 'no-store', signal: AbortSignal.timeout(2500) }); j = r.ok && await r.json(); } catch {}
+    pdfProbing = false;
     const up = !!j?.compile;
     if (up) {
       pdfWarming = j.warming;
@@ -4786,9 +4796,14 @@
     if (supersedes) pdfStop();
     if (pdfBusy) { if (!cached) { pdfQueued = [slice, false, alone, true]; $('play-pdf').classList.add('pdf-running'); pdfStatus.textContent = pdfWarming ? 'compiling once the compile server has finished its setup…' : 'compiling next, once the build under way ends…'; flare([pdfStatus], true); } return; }
     if (!cached) { $('play-pdf').classList.add('pdf-running'); pdfStatus.textContent = 'compiling…'; }
-    const onServer = (await pdfServer) || (await probeServer());
+    // the clock runs from the click: the probe below is part of the wait
+    const start = performance.now();
+    if (!cached && pdfProbing) pdfWait('compiling: looking for satex gui on this machine');
+    // with the browser's TeX at hand a build does not wait for a probe: focus and network events probe
+    const onServer = (await pdfServer) || serverUp || (TEX ? false : await probeServer());
     if (!onServer && (cached || !TEX)) {
       $('play-pdf').classList.remove('pdf-running');
+      pdfWait(null);
       if (!cached) { pdfStatus.innerHTML = `<span class="x-err">${NO_TEX}</span>`; toast('Compiling needs satex gui, which this page cannot reach.'); }
       return;
     }
@@ -4797,13 +4812,17 @@
     const root = alone === null ? state.root ?? state.file : `slice-of-${(state.root ?? state.file).split('/').pop()}`, p = editor.position();
     const at = `${state.file === root ? '' : `${state.file}:`}${p.line + 1}:${p.character + 1}`;
     pdfWorker ??= new Worker(URL.createObjectURL(new Blob([`(${compileWorkerMain})()`], { type: 'text/javascript' })));
-    const start = performance.now(), what = slice ? `slice at ${at}` : root;
+    const what = slice ? `slice at ${at}` : root;
     pdfRound.start = cached ? 0 : start;
-    let step = '';
+    // the browser's first build fetches and starts its engine: said once, beside the phases
+    const first = !onServer && !self.satexTex.ready();
+    let step = onServer ? '' : first ? 'starting the TeX worker' : 'pdfTeX';
+    const note = first ? 'The first compile downloads and starts the TeX engine. The browser keeps it: later compiles skip this.' : '';
     const tick = cached ? 0 : setInterval(() => {
-      const why = `${pdfWarming ? "waiting for the compile server's setup, then compiling" : 'compiling'} ${what}: ${secs(performance.now() - start)}${step && ` · ${step}`}${pdfQueued ? ' · one more queued' : ''}`;
-      pdfStatus.textContent = why;
-      pdfWait(why, performance.now() - start > TIP_AFTER_MS);
+      const t = secs(performance.now() - start), why = `${pdfWarming ? "waiting for the compile server's setup, then compiling" : 'compiling'} ${what}: ${t}${step && ` · ${step}`}${pdfQueued ? ' · one more queued' : ''}`;
+      // the bar's status is short, the pane says it all
+      pdfStatus.textContent = `compiling: ${t}`;
+      pdfWait(why, performance.now() - start > TIP_AFTER_MS, note);
     }, 100);
     pdfTick = tick;
     pdfBusy = true;
@@ -4824,13 +4843,21 @@
       if (data.none || cached && pdf?.slice) pdfStatus.textContent = pdfSummary;
       else {
         pdfSummary = data.error ? '' : `${what} in ${data.cached ? 'cache' : secs(performance.now() - start)}`;
-        for (const url of Object.values(pdf?.blobs ?? {})) URL.revokeObjectURL(/** @type {string} */ (url));
-        pdf = { ...data, slice, root, dir };
-        pdfShow();
-        pdfOwner();
-        pdfLoaded(!data.error && !(data.records ?? []).some((r) => r.severity === 'error'));
-        // a failed request may be the server gone: say so plainly
-        if (data.error && !TEX) probeServer().then((up) => { if (!up) { pdfStatus.innerHTML = `needs ${GUI}`; toast('Compiling needs satex gui'); } });
+        const gen = ++pdfGen, built = { ...data, slice, root, dir };
+        pdfOpen(built).then((view) => {
+          // a newer build came first: this one is never shown
+          if (gen !== pdfGen) { view?.close(); for (const url of Object.values(built.blobs ?? {})) URL.revokeObjectURL(/** @type {string} */ (url)); return; }
+          for (const url of Object.values(pdf?.blobs ?? {})) URL.revokeObjectURL(/** @type {string} */ (url));
+          const same = pdf && pdf.root === root && pdf.dir === dir;
+          pdfViewer?.close();
+          pdfViewer = view;
+          pdf = view ? { ...built, pagelabels: built.pagelabels ?? view.pagelabels } : built;
+          pdfShow(same);
+          pdfOwner();
+          pdfLoaded(!data.error && !(data.records ?? []).some((r) => r.severity === 'error'));
+          // a failed request may be the server gone: say so plainly
+          if (data.error && !TEX) probeServer().then((up) => { if (!up) { pdfStatus.innerHTML = `needs ${GUI}`; toast('Compiling needs satex gui'); } });
+        });
       }
       if (next) compile(...next);
     };
@@ -4839,15 +4866,17 @@
       const files = alone === null ? pdfFiles((d) => d) : { [root]: alone };
       self.satexTex.build(TEX, files, root, manifest.kernels[state.kernel].engine ?? manifest.kernels[state.kernel].id, (said) => { step = said; }, texSources())
         .catch((e) => ({ answer: { browser: true, error: `The browser's TeX stopped: ${e?.message ?? e}`, note: `${GUI} builds with your own TeX and packages.` }, gz: null }))
-        .then(({ answer, gz }) => parser.postMessage({ answer, gz }));
+        .then(({ answer, gz }) => { step = answer.pdf ? 'opening the PDF, reading SyncTeX' : 'reading the log'; pdfOpen(answer); parser.postMessage({ answer, gz }); });
       return;
     }
-    pdfWorker.postMessage({ url: COMPILE, timeout: COMPILE_MS, request: { main: root, files: alone === null ? pdfFiles() : { [root]: alone }, sets: pdfSets(), ...(slice ? { at } : {}), ...(cached ? { cached } : {}), ...(supersedes ? { supersedes } : {}) } });
+    // with pdf.js at hand the pane draws the pages itself: the server renders none
+    pdfWorker.postMessage({ url: COMPILE, timeout: COMPILE_MS, request: { main: root, files: alone === null ? pdfFiles() : { [root]: alone }, sets: pdfSets(), ...(TEX ? { pages: false } : {}), ...(slice ? { at } : {}), ...(cached ? { cached } : {}), ...(supersedes ? { supersedes } : {}) } });
   }
   /** The build under way (its root and project) and its status timer. */
   var pdfRunning = null, pdfTick = 0;
   /** Drops the build under way: its worker goes, the server stops it once the next request says it supersedes it. */
   function pdfStop() {
+    pdfGen++;
     pdfWorker?.terminate();
     pdfWorker = null;
     self.satexTex?.stop();
@@ -4858,9 +4887,9 @@
     pdfQueued = null;
   }
   /** Why the PDF pane waits, in full, with a spinner: in the bar naming whose PDF it is, else a bar of its own. */
-  function pdfWait(text, tip = false) {
+  function pdfWait(text, tip = false, note = '') {
     let el = pdfBody.querySelector('.pdf-wait');
-    if (text === null) { pdfBody.querySelector('.pdf-owner .sx-tip')?.remove(); (el?.closest('.pdf-wait-bar') ?? el)?.remove(); return; }
+    if (text === null) { pdfBody.querySelector('.pdf-owner :is(.sx-tip, .pdf-why)')?.remove(); (el?.closest('.pdf-wait-bar') ?? el)?.remove(); return; }
     if (!el) {
       el = document.createElement('span');
       el.className = 'pdf-wait';
@@ -4869,7 +4898,9 @@
       if (owner) owner.append(el); else { const bar = document.createElement('p'); bar.className = 'pdf-owner pdf-wait-bar'; bar.append(el); pdfBody.prepend(bar); }
     }
     el.textContent = text;
-    if (tip && !el.parentElement.querySelector('.sx-tip')) el.after(tipHost());
+    // why this wait is long, where it is known; else a tip
+    if (note && !el.parentElement.querySelector('.pdf-why')) el.after(Object.assign(document.createElement('span'), { className: 'pdf-why muted', textContent: note }));
+    else if (!note && tip && !el.parentElement.querySelector('.sx-tip')) el.after(tipHost());
   }
   /** A build this short shows no tip: it would only flash. */
   const TIP_AFTER_MS = 1500;
@@ -4890,7 +4921,7 @@
   /** Auto-compile: a build once the edits rest for the chosen delay, remembered per viewer. var: an edit may come first. */
   var pdfAuto = { on: false, delay: 1000, timer: 0 };
   try { const kept = JSON.parse(localStorage.getItem('satex-pdf-auto') ?? '{}'); pdfAuto.on = !!kept.on; pdfAuto.delay = +kept.delay || 1000; } catch {}
-  const DELAYS = [[0, 'off'], [500, '0.5 s'], [1000, '1 s'], [2000, '2 s'], [5000, '5 s']];
+  const DELAYS = [[0, 'off'], [200, '0.2 s'], [500, '0.5 s'], [1000, '1 s'], [2000, '2 s'], [5000, '5 s']];
   $('pdf-auto-list').insertAdjacentHTML('beforeend', DELAYS.map(([ms, name]) => `<label><input type="radio" name="pdf-delay" value="${ms}"> ${name}</label>`).join(''));
   const pdfAutoKeep = () => {
     $('pdf-auto-list').querySelectorAll('input').forEach((i) => { i.checked = +i.value === (pdfAuto.on ? pdfAuto.delay : 0); });
@@ -4940,11 +4971,59 @@
   const pdfPlace = (l, t, w, h) => `left:${l * 100}%;top:${t * 100}%;width:${w * 100}%;height:${h * 100}%`;
   /** The places left by following links, the latest last: Back returns to them. */
   const pdfBack = [], pdfBackButton = $('pdf-back');
-  function pdfShow() {
+  /** The shown build's PDF opened in pdf.js (tex.ts `open`), its number, the pages wanted drawn (in or near view). */
+  var pdfViewer = null, pdfGen = 0, pdfIO = null, pdfDrawing = false, pdfTexted = 0;
+  const pdfWant = new Set();
+  /** The build's PDF opened, where pdf.js is at hand; without it (or a PDF) the pane shows the server's page images. */
+  let pdfOpening = null;
+  const pdfOpen = (d) => {
+    const src = d.pdf && TEX ? d.blobs?.[d.pdf] ?? `${COMPILE}/${d.base}${d.pdf}` : null;
+    if (!src) return Promise.resolve(null);
+    // a browser build's PDF opens while its SyncTeX data is read
+    if (pdfOpening?.src !== src) pdfOpening = { src, view: self.satexTex.open(TEX, src).catch(() => null) };
+    return pdfOpening.view;
+  };
+  /** A blank page of `w`×`h` pixels: the place of a page not drawn yet. */
+  const pdfBlank = ([w, h]) => `data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='${w}' height='${h}'/%3E`;
+  /** Draws the wanted page nearest the middle of the view, one at a time, newest build only; then the text of a browser build. */
+  async function pdfDrawNext() {
+    const view = pdfViewer, gen = pdfGen, pages = pdfBody.querySelector('.pdf-pages');
+    if (pdfDrawing || !view || !pages) return;
+    const r = pages.getBoundingClientRect(), mid = (r.top + r.bottom) / 2, away = (el) => { const b = el.getBoundingClientRect(); return Math.abs((b.top + b.bottom) / 2 - mid); };
+    const el = [...pdfWant].filter((e) => e.isConnected && e.dataset.shown !== String(gen)).sort((a, b) => away(a) - away(b))[0];
+    if (!el) {
+      // words and links of a browser build come from pdf.js, after the pages in view
+      if (pdf?.browser && pdfTexted !== gen) { pdfTexted = gen; view.text().then((t) => { if (gen === pdfGen) { Object.assign(pdf, t); pdfLinksDraw(); pdfOverlay(); pages.dataset.words = ''; } }).catch(() => {}); }
+      return;
+    }
+    pdfDrawing = true;
+    try {
+      const n = +el.dataset.page, url = await view.draw(n), old = el.querySelector('img'), [width, height] = view.sizes[n - 1];
+      const img = Object.assign(new Image(), { src: url, alt: old.alt, draggable: false, width, height });
+      img.__url = url;
+      // decoded before the swap: no blank frame
+      await img.decode().catch(() => {});
+      if (gen !== pdfGen || !el.isConnected) { URL.revokeObjectURL(url); return; }
+      old.replaceWith(img);
+      if (old.__url) URL.revokeObjectURL(old.__url);
+      el.dataset.shown = String(gen);
+      el.classList.remove('pdf-stale');
+      pdfLoaded_();
+    } catch {} finally { pdfDrawing = false; pdfDrawNext(); }
+  }
+  /** The links of the pages, again: a browser build learns them after its pages show. */
+  function pdfLinksDraw() {
+    for (const el of pdfBody.querySelectorAll('.pdf-page')) {
+      el.querySelectorAll('.pdf-link').forEach((a) => a.remove());
+      el.querySelector('img')?.insertAdjacentHTML('afterend', pdfLinks(+el.dataset.page));
+    }
+  }
+  /** `keep`: a new build of the shown project. Its pages start as the last build's (marked stale) and are redrawn as they come into view. */
+  function pdfShow(keep = false) {
     pdfLine = '';
     pdfBack.length = 0;
     pdfBackButton.hidden = true;
-    const records = (pdf.records ?? []).sort(pdfOrder), file = (n) => pdf.blobs?.[n] ?? `${COMPILE}/${pdf.base}${n}`, pages = pdf.pages ?? [];
+    const records = (pdf.records ?? []).sort(pdfOrder), file = (n) => pdf.blobs?.[n] ?? `${COMPILE}/${pdf.base}${n}`, pages = pdfViewer?.sizes ?? pdf.pages ?? [];
     const errors = records.filter((r) => r.severity === 'error').length, all = pdfRuns();
     const runs = all.filter(pdfBuilds), shows = all.filter((r) => !pdfBuilds(r));
     // the title line: what the build gave, its views, its files as one zip
@@ -4967,8 +5046,13 @@
     const was = (pdfCaret || pdfDrag) && pdfBody.querySelector('.pdf-pages');
     // a restore still pending keeps its place: it is where the viewer looked
     if (!pdfKeep && was) pdfKeep = [was.scrollLeft, was.scrollTop];
+    // the pages shown so far, kept in place until redrawn: no blank flash, the same scroll
+    const before = pdfBody.querySelector('.pdf-pages'), scroll = before && [before.scrollLeft, before.scrollTop];
+    const old = new Map(keep && pdfViewer ? [...pdfBody.querySelectorAll('.pdf-page')].map((el) => [el.dataset.page, el.querySelector('img')]) : []);
+    pdfIO?.disconnect();
+    pdfWant.clear();
     pdfBody.innerHTML = (pdf.error ? `<p class="pdf-head x-err">${escape(pdf.error)}</p>` : '') + (pdf.note ? `<p class="pdf-head pdf-note">${pdf.note}</p>` : '')
-      + `<div class="pdf-pages" data-view="pages">${pdf.slice ? '<div class="pdf-sep" role="separator"><b class="pdf-badge">slice</b><span>not the full build</span></div>' : ''}${pdfFrames(pages).map((g, frame) => { frame += 1; const html = g.map((i) => `<div class="pdf-page" data-page="${i + 1}"><img src="${file(pages[i])}" alt="page ${i + 1}" draggable="false">${pdfLinks(i + 1)}</div>`).join(''); return g.length < 2 ? html : `<div class="pdf-frame" data-step="${g.length - 1}"><div class="pdf-frame-bar" role="group" aria-label="overlay steps"><span><b>frame ${frame}</b> · step <b class="pdf-step">${g.length}/${g.length}</b></span><button type="button" class="small ghost icon" data-step="-1" title="Previous step" aria-label="previous step">&#x2039;</button><button type="button" class="small ghost icon" data-step="1" title="Next step" aria-label="next step">&#x203A;</button></div>${html}</div>`; }).join('') || '<p class="muted">No pages.</p>'}</div>`
+      + `<div class="pdf-pages" data-view="pages">${pdf.slice ? '<div class="pdf-sep" role="separator"><b class="pdf-badge">slice</b><span>not the full build</span></div>' : ''}${pdfFrames(pages).map((g, frame) => { frame += 1; const html = g.map((i) => `<div class="pdf-page${pdfViewer ? ' pdf-stale' : ''}" data-page="${i + 1}"><img src="${pdfViewer ? pdfBlank(pages[i]) : file(pages[i])}"${pdfViewer ? ` width="${pages[i][0]}" height="${pages[i][1]}"` : ''} alt="page ${i + 1}" draggable="false">${pdfLinks(i + 1)}</div>`).join(''); return g.length < 2 ? html : `<div class="pdf-frame" data-step="${g.length - 1}"><div class="pdf-frame-bar" role="group" aria-label="overlay steps"><span><b>frame ${frame}</b> · step <b class="pdf-step">${g.length}/${g.length}</b></span><button type="button" class="small ghost icon" data-step="-1" title="Previous step" aria-label="previous step">&#x2039;</button><button type="button" class="small ghost icon" data-step="1" title="Next step" aria-label="next step">&#x203A;</button></div>${html}</div>`; }).join('') || '<p class="muted">No pages.</p>'}</div>`
       + `<div class="pdf-text" data-view="messages">${records.length ? `<ul class="diagnostics pdf-records">${records.map(pdfRecord).join('')}</ul>` : '<p class="muted">The log has no error or warning.</p>'}</div>`
       + `<div class="pdf-text pdf-log" data-view="log">${(pdf.logs ? Object.entries(pdf.logs).map(([n, t]) => log(escape(n), t)).join('') : log('TeX log', pdf.log)) + log('Console: what satex compile and latexmk printed', pdf.stderr) || '<p class="muted">The build wrote no log.</p>'}</div>`
       + `<div class="pdf-text" data-view="files"><p class="muted">What the build wrote beside the sources. Each opens in a new tab, ↓ saves it.${pdf.base ? ` <a href="${escape(zip.href)}" download="${escape(zip.download)}">All of them with the sources as compiled, as one zip</a>.` : ''}</p><ul class="pdf-cmds">${(pdf.outputs ?? []).map((o) => `<li><a href="${file(o.name)}" target="_blank" rel="noopener">${escape(o.name)}</a> <a href="${file(o.name)}" download="${escape(o.name.split('/').pop())}" title="save ${escape(o.name)}" aria-label="save ${escape(o.name)}">↓</a> <span class="muted">${size(o.size)}</span></li>`).join('')}</ul></div>`
@@ -4977,14 +5061,30 @@
       + (shows.length ? `<details class="pdf-shows"><summary class="muted">How the playground shows the build (${shows.length})</summary><ol class="pdf-cmds">${shows.map(pdfCommand).join('')}</ol></details>` : '') + '</div>';
     pdfViewShow();
     pdfBody.querySelectorAll('.pdf-frame').forEach((f) => pdfStep(f, +f.dataset.step));
-    pdfBody.querySelectorAll('.pdf-page img').forEach((img) => img.addEventListener('load', pdfLoaded_, { once: true }));
+    const pagesNow = pdfBody.querySelector('.pdf-pages');
+    // the words are there (find, typing): a browser build learns them after its first pages
+    if (pdf.wordList) pagesNow.dataset.words = '';
+    if (!pdfViewer) { pdfBody.querySelectorAll('.pdf-page img').forEach((img) => img.addEventListener('load', pdfLoaded_, { once: true })); return; }
+    for (const el of pdfBody.querySelectorAll('.pdf-page')) {
+      const img = el.querySelector('img'), was = old.get(el.dataset.page);
+      if (was && `${was.naturalWidth}x${was.naturalHeight}` === `${img.getAttribute('width')}x${img.getAttribute('height')}`) { img.replaceWith(was); old.delete(el.dataset.page); }
+      else img.addEventListener('load', pdfSettle, { once: true });
+    }
+    for (const img of old.values()) if (img?.__url) URL.revokeObjectURL(img.__url);
+    if (scroll && keep) [pagesNow.scrollLeft, pagesNow.scrollTop] = scroll;
+    pdfIO = new IntersectionObserver((seen) => { for (const e of seen) if (e.isIntersecting) pdfWant.add(e.target); else pdfWant.delete(e.target); pdfDrawNext(); }, { root: pagesNow, rootMargin: '100% 0px' });
+    pagesNow.querySelectorAll('.pdf-page').forEach((el) => pdfIO.observe(el));
+    pdfSettle();
   }
   /** A page image loaded: the fit, the cursor's place and the layers follow, once for the pages that load together
    * (each would redraw every page's layers: a book of hundreds of pages held the page for minutes). */
   let pdfLoadTimer = 0;
   function pdfLoaded_() {
-    clearTimeout(pdfLoadTimer);
     if (pdfRound.start) { pdfRound.ms = performance.now() - pdfRound.start; pdfRound.start = 0; pdfLiveShow(); }
+    pdfSettle();
+  }
+  function pdfSettle() {
+    clearTimeout(pdfLoadTimer);
     pdfLoadTimer = setTimeout(() => { if (pdfZoom.fit === 'page') pdfZoomTo(0, 'page'); if (pdfKeep) { const p = pdfBody.querySelector('.pdf-pages'); [p.scrollLeft, p.scrollTop] = pdfKeep; pdfKeep = null; } else if (pdfFollowOn && !pdfTyping && !pdfDrag) pdfFollow(true); pdfOverlay(); }, 50);
   }
   /** The commands of the build: the server's, the engine runs `satex compile` names on its console (`$ …`) after it. */
@@ -6157,7 +6257,7 @@
   /** The cache entries the worker keeps (worker.js), each with what it stands for; dropping one
    * restarts the language server, so the next check analyses that part again. */
   const cacheBox = $('play-cache'), cacheList = $('cache-list');
-  const CACHE_KINDS = { format: ['kernel', 'kernel'], package: ['package', 'package'], index: ['file index', 'index'], probe: ['installation facts', 'facts'], 'content-hashes': ['file hashes', 'hashes'], 'previews.json': ['previews.json', 'previews'] };
+  const CACHE_KINDS = { format: ['kernel', 'kernel'], package: ['package', 'package'], index: ['file index', 'index'], probe: ['installation facts', 'facts'], 'content-hashes': ['file hashes', 'hashes'], 'previews.json': ['previews.json', 'previews'], document: ['document', 'document'] };
   const cacheFilter = $('cache-filter');
   let cacheEntries = [];
   /** [kind, css class, name, needs] of an entry; the manifest tells a class from a package. */
@@ -6165,7 +6265,7 @@
     const file = path.split('/').pop(), [kind, ...rest] = file.replace(/\.postcard$/, '').split('-');
     const name = kind === 'content' ? 'content-hashes' : kind;
     const what = rest.filter((p) => !/^(v\d+|s?[0-9a-f]{8,})$/.test(p) && p !== 'hashes').join(' ');
-    let [label, cls] = CACHE_KINDS[name] ?? [name, 'hashes'], needs = [];
+    let [label, cls] = CACHE_KINDS[name] ?? [name, name], needs = [];
     // a package cache names what it holds before `-v<version>`: a class by its file name
     const held = name === 'package' && /^package-(.+?)-v\d+-/.exec(file)?.[1];
     if (held) {
@@ -6192,11 +6292,11 @@
       if (th.dataset.sort === cacheOrder.key) th.setAttribute('aria-sort', cacheOrder.down ? 'descending' : 'ascending'); else th.removeAttribute('aria-sort');
     }
     const hits = (verb, hit) => hit.length ? ` <span class="muted cache-hit">${verb} ${hit.slice(0, 3).map((n) => `<code>${escape(n.replace(/\.cls$/, ''))}</code>`).join(', ')}${hit.length > 3 ? ` +${hit.length - 3}` : ''}</span>` : '';
-    cacheList.innerHTML = rows.map(({ e, l: [kind, cls, what, needs], u, hit, via }, i) =>
+    cacheList.innerHTML = rows.map(({ e, l: [kind, cls, what, needs], u, hit, via }, i, _, more = details(cls, what, needs)) =>
       `<tr><td title="${escape(e.path)}">${cacheBadge(cls, kind)}</td>` +
-      `<td><button type="button" class="cache-name" aria-expanded="${via.length > 0}" aria-controls="cache-sub-${i}">${escape(what || kind)}</button>${(cls === 'package' || cls === 'class') && manualPackages().has(what) ? ' <span class="manual" title="the package\'s manual is mined for descriptions">docs</span>' : ''}${exported(cls, what)}${hits('defines', hit)}${hits('loads', via)}${CACHE_NOTES[cls] ? ` <span class="muted cache-hit">${CACHE_NOTES[cls]}</span>` : ''}</td><td class="used">${u[1] || '<span class="use-no" title="not used by the open document">—</span>'}</td><td class="loads">${needs.length ? `<span class="cache-fold" title="it loads ${needs.length}">${needs.length}</span>` : ''}</td>` +
+      `<td>${more ? `<button type="button" class="cache-name" aria-expanded="${via.length > 0}" aria-controls="cache-sub-${i}">${escape(what || kind)}</button>` : `<span class="cache-name">${escape(what || kind)}</span>`}${(cls === 'package' || cls === 'class') && manualPackages().has(what) ? ' <span class="manual" title="the package\'s manual is mined for descriptions">docs</span>' : ''}${exported(cls, what)}${hits('defines', hit)}${hits('loads', via)}${CACHE_NOTES[cls] ? ` <span class="muted cache-hit">${CACHE_NOTES[cls]}</span>` : ''}</td><td class="used">${u[1] || '<span class="use-no" title="not used by the open document">—</span>'}</td><td class="loads">${needs.length ? `<span class="cache-fold" title="it loads ${needs.length}">${needs.length}</span>` : ''}</td>` +
       `<td class="num">${size(e.size)}</td><td><button type="button" class="small ghost" data-path="${escape(e.path)}" aria-label="drop ${escape(what || kind)}">Drop</button></td></tr>` +
-      `<tr class="cache-sub" id="cache-sub-${i}"${via.length ? '' : ' hidden'}><td></td><td colspan="5">${details(cls, what, needs)}</td></tr>`).join('') ||
+      (more ? `<tr class="cache-sub" id="cache-sub-${i}"${via.length ? '' : ' hidden'}><td></td><td colspan="5">${more}</td></tr>` : '')).join('') ||
       `<tr><td colspan="6" class="muted">${cacheEntries.length ? 'No match.' : 'Nothing cached yet.'}</td></tr>`;
     // the packages and classes listed, and how many of them have their manual mined
     const pkgs = new Set(rows.filter(({ l }) => l[1] === 'package' || l[1] === 'class').map(({ l }) => l[2])), manual = manualPackages();
@@ -6272,6 +6372,7 @@
     previews: 'Sprites of TikZ arrow tips, patterns and colors that TeX drew, shown in completion previews.',
     hashes: 'Content hashes SaTeX uses to tell whether a cached package or file changed.',
     facts: 'What the installation is like (TeX Live version, engines), probed once.',
+    document: 'A whole run of one document and its settings, served again while its text, settings and the files it read stay the same.',
   };
   const DEFINED = ['public command', 'internal macro', 'environment', 'option', 'register', 'counter', 'length', 'switch', 'public alias', 'internal alias'];
   /** The names a row's class or package (or the kernel) defined in the run that match `q`: containing
@@ -6327,7 +6428,7 @@
   $('cache-close').onclick = () => cacheBox.close();
   cacheBox.onclick = (e) => { if (e.target === cacheBox) cacheBox.close(); }; // a click on the backdrop
   cacheList.onclick = (e) => {
-    const fold = e.target.closest('.cache-name');
+    const fold = e.target.closest('button.cache-name');
     if (fold) {
       const open = fold.getAttribute('aria-expanded') !== 'true';
       fold.setAttribute('aria-expanded', String(open));
@@ -6488,13 +6589,17 @@
     const records = (await lsp('workspace/executeCommand', { command: 'satex/query', arguments: [request] }).catch(() => null))?.[0]?.records ?? [];
     const kernel = manifest.kernels[state.kernel].id;
     const held = records.filter((r) => r.kind === 'absent').map((r) => r.file).filter((f) => HOLDER.has(`${kernel}/${f}`));
-    return wanted_(held).filter((id) => !inFlight.has(id));
+    return wanted_(held, state.kernel, true);
   }
-  /** Fetches `ids` (absent files' bundles), then the check starts over. A probe of a file no bundle has stays as it is. */
-  async function fetchAbsent(ids) {
-    if (!ids.length || !await fetchPackages(ids)) return false;
-    await recheck();
-    return true;
+  /** Of `ids`, those not in yet: never asked for, or still downloading, in the background too. */
+  const unlanded = (ids) => self.satexViews.loads.unlanded(ids, fetchedPackages, [inFlight, background]);
+  /** Fetches what of `ids` nobody asked for yet and waits for the rest; true once all are in. */
+  async function land(ids) {
+    const fresh = ids.filter((id) => !fetchedPackages.has(id));
+    if (fresh.length && !await fetchPackages(fresh)) return false;
+    const flying = ids.filter((id) => inFlight.has(id) || background.has(id));
+    if (flying.length) await awaitPackages(flying);
+    return !unlanded(ids).length;
   }
   /** A load landed: the worker wrote its files into the running server too, so the check runs again on them,
    * no restart (that would drop the server's checkpoints and the run's .aux). The probes it made of them
@@ -6511,16 +6616,6 @@
     show();
     await Promise.allSettled(ids.map((id) => Promise.resolve(fetchedPackages.get(id)).finally(() => { landed++; show(); })));
     idle();
-  }
-  /** After findings or a run name missing packages: fetch them, start over. */
-  async function fetchMissing(texts) {
-    const ids = missing(texts), flying = missing(texts, true).filter((id) => background.has(id));
-    if (!ids.length && !flying.length) return false;
-    if (ids.length && !await fetchPackages(ids)) return false;
-    // one the background load fetches now: waited for, not fetched twice
-    if (flying.length) await awaitPackages(flying);
-    await recheck();
-    return true;
   }
   // Closed, the selector shows the engine's name; its sizes only while the list is open.
   kernelBox.innerHTML = manifest.kernels.map((k, i) => `<option value="${i}" title="${escape(k.note ? `${k.note} Download ${size(k.size)}.` : `download ${size(k.size)}`)}" data-name="${k.label}" data-more="${k.badge ? `${k.badge} · ` : ''}${size(k.size)}"></option>`).join('') +
@@ -6750,12 +6845,10 @@
       issue(plugin ? `[${plugin}] ` : '[plugin request] ', `${versionLine()}${plugin ? `\nPlugin: ${plugin}\nAt: ${where}` : ''}\n\n${f.what.value.trim()}${snip}\n`);
       dlg.close();
     };
-    dlg.querySelector('.fb-actions').before(tipHost(true));
     dlg.showModal();
     dlg.querySelector('textarea').focus();
   }
   const cursorLine = () => { const text = editor?.text() ?? '', [c] = editor?.cursor() ?? [0]; return text.slice(0, c).split('\n').length - 1; };
-  $('play-config').querySelector('.cache-note').after(tipHost(true));
   $('view-feedback').onclick = () => feedback(viewPlugin, cursorLine());
   $('lib-feedback').onclick = () => feedback('library');
   $('cfg-feedback').onclick = () => feedback('settings');
@@ -6962,34 +7055,38 @@
   let heldFindings = null;
   /** Per file, the latest set of findings published: an older one still asking about absent files is dropped. */
   const published = new Map();
-  /** The packages still downloading when the findings shown were made: they may change once those are in. */
-  var provisional = ''; // var: a render may run before this line
-  async function publish(p, ended = false) {
+  /** The packages the next findings wait for: a run that may have lacked one is not shown. */
+  var loadingFor = ''; // var: a render may run before this line
+  async function publish(p, ended = false, final = false) {
     // of a text the server no longer has: its analysis of the newer one follows, else is asked for
     if (outdated(p)) { if (p.uri === uri() && timer === null) analyze(); return; }
     if (running > 0 && p.uri === uri() && !ended) { heldFindings = p; return; }
     heldFindings = null;
     // The rule's number is the LSP code: the page keys rules by name.
     for (const d of p.diagnostics) [d.number, d.code] = [d.code, d.data?.rule ?? d.code];
-    // Findings that come from a missing package wait for it: shown once its bundle is in.
+    // A run that lacked a file a bundle holds is never shown: a package said missing, one the project names
+    // still downloading, a file probed absent (`\IfFileExists`, listings' languages, mwe's images). Once in, it runs again.
     const unresolved = p.diagnostics.filter((d) => d.code === 'unresolved-file').map((d) => d.message);
-    const waiting = missing(unresolved);
-    if ((waiting.length || inFlight.size) && p.uri === uri()) {
-      const names = [...new Set([...waiting, ...inFlight])].map((id) => PACKAGES.get(id).label).join(', ');
-      busy('Loading', `Loading ${plural(names.split(', ').length, 'package')}…`);
-      status.title = names;
-      if (waiting.length) fetchMissing(unresolved).then((ok) => { if (!ok && !outdated(p)) { show(p.uri, p.diagnostics, p.version); typeset(p.uri, p.version); } });
-      // loads another step started (a start since superseded): once in, the check runs again on them
-      else Promise.allSettled([...inFlight].map((id) => fetchedPackages.get(id))).then(() => { if (!outdated(p) && p.uri === uri()) recheck(); });
+    const seq = (published.get(p.uri) ?? 0) + 1, saw = ranWith;
+    published.set(p.uri, seq);
+    const current = p.uri === uri();
+    // the root's run reads for every file it publishes
+    const absent = final ? [] : await absentBundles();
+    if (seq !== published.get(p.uri) || outdated(p)) return;
+    const lacking = final ? [] : self.satexViews.loads.lacked([...new Set([...missing(unresolved, true), ...absent, ...wanted_(named(projectTexts()), state.kernel, true), ...inFlight])],
+      fetchedPackages, [inFlight, background], landedAt, saw);
+    if (lacking.length) {
+      // another file's findings come again with the open one's run
+      if (!current) return;
+      loadingFor = lacking.map((id) => PACKAGES.get(id)?.label ?? id).join(', ');
+      busy('Loading', `Loading ${plural(lacking.length, 'package')}…`);
+      status.title = loadingFor;
+      render();
+      // a failed download leaves this run's findings as they are: final
+      land(lacking).then((ok) => ok ? recheck() : seq === published.get(p.uri) && publish(p, true, true));
       return;
     }
-    // A run that missed files a bundle holds is redone once they are in: its findings
-    // (a listings language "not found") are shown as provisional meanwhile, never as final.
-    const seq = (published.get(p.uri) ?? 0) + 1;
-    published.set(p.uri, seq);
-    const absent = p.uri === uri() ? await absentBundles() : [];
-    if (seq !== published.get(p.uri) || outdated(p)) return;
-    if (p.uri === uri()) provisional = [...new Set([...absent, ...inFlight])].map((id) => PACKAGES.get(id)?.label ?? id).join(', ');
+    if (current) loadingFor = '';
     // what was answered from the last run meanwhile is asked again of this one
     explanations.clear(); scopeAsked.clear(); explained = ''; explainSoon();
     // a word the last run could not resolve (a package still downloading) is asked again of this one
@@ -7004,14 +7101,11 @@
       const then = afterRun;
       afterRun = null;
       then?.();
-      // a failed download leaves the findings as they are: final
-      if (absent.length) fetchAbsent(absent).then((ok) => { if (!ok && seq === published.get(p.uri)) { provisional = ''; render(); } });
     }
     if (p.uri === uri()) prefetchCommands();
     loadCaches(); // the status bar's count, and the table if open
     if (p.uri === uri(state.root ?? state.file)) written(p.uri);
     if (p.uri === uri()) lsp('satex/caches', { textDocument: { uri: p.uri } }).then((r) => cacheReport((r ?? []).map((l) => ['err', l]))).catch(() => {});
-    fetchMissing(unresolved);
   }
   /** The server aborted (a panic, out of memory): it starts again on the same texts, with a note. One that
    * keeps aborting stops, saying why, with a way to try again. */
@@ -7115,8 +7209,8 @@
     let failed = false;
     const one = async () => {
       while (!s.stop && next.length) {
-        // the analysis comes first
-        while (!s.stop && (act.phase || running > 0)) await new Promise((r) => setTimeout(r, 1000));
+        // the analysis and a compile come first
+        while (!s.stop && (act.phase || running > 0 || pdfBusy)) await new Promise((r) => setTimeout(r, 1000));
         if (s.stop) break;
         const [path, size] = next.shift();
         try {

@@ -113,7 +113,8 @@ pub fn test_cache() -> PathBuf {
 /// The `satex` binary, on the suite's cache.
 pub fn satex() -> std::process::Command {
     let mut command = std::process::Command::new(env!("CARGO_BIN_EXE_satex"));
-    command.env("SATEX_CACHE", test_cache());
+    // Never the first-start question: a test's stdin may be a terminal.
+    command.env("SATEX_CACHE", test_cache()).env("SATEX_NO_SETUP", "1");
     command
 }
 

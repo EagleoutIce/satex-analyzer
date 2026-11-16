@@ -246,7 +246,7 @@ conventions:  # how TeX is usually written, where the text alone does not say
     #! affects: output
     #! example: alternatives: {hskip: '`\hspace`'}
   completion:  # what completion offers and in which order
-    shown: 300  # commands one answer lists. The editor asks again as more is typed
+    shown: 300  # items one answer lists: commands, and packages, files, labels or citations found by what was typed. The editor asks again as more is typed
       #! affects: output, speed
       #! example: `shown: 50`
     signatures: 4  # items, best first, whose signature a probe reads where the listing has none
@@ -524,6 +524,16 @@ cache:
     auto: true  # every run stores the packages it reads, so the next run starts faster
       #! affects: speed, memory
       #! example: off: only `satex cache build` fills the cache
+    most_loaded: 200  # installed packages the background builder prepares, those most loaded first
+      #! affects: speed
+      #! example: lower: the background builder stops sooner and stores less
+  # background: ask         # prepare kernels and packages in a background process: ask, yes or no.
+                            # Only the user's own config sets it. Unset: ask once
+    #! affects: speed
+    #! option: ask: ask once, on the first run in a terminal or in the editor
+    #! option: yes: prepare caches in a low-priority background process
+    #! option: no: never
+    #! example: `background: yes` starts `satex cache build --background` when caches are missing
 # preload: preamble.tex     # a preamble the build dumps as its own format, as mylatexformat does.
 #! plugin: preload
                             # A %& line or -fmt= in the build files names it otherwise
@@ -689,6 +699,13 @@ lua:  # \directlua code, run by satex's own Lua 5.3 with no io, os or debug libr
     #! affects: precision
     #! example: `modules: 2`: a third nested require gives an unknown module
     #! plugin: lua_run
+
+compile:  # what satex compile runs and shows
+  system: auto  # the build system: auto (arara directives, then Tectonic.toml, then latexmk, then the engine), latexmk, arara, tectonic, make, l3build or engine
+    #! affects: output
+    #! example: `system: arara`: the `% arara:` directives of the main file build it
+  # viewer: none  # a PDF viewer `satex compile --view` opens: none or auto (the system's opener) or a program; only your own config sets it
+    #! affects: output
 
 lsp:  # how satex lsp serves an editor
   host: 127.0.0.1  # the address --port listens on
@@ -1150,6 +1167,7 @@ A package is cached per **read set**: the meanings, registers, hooks, options an
 - **Steps** stay what reading would take: `--stats-json` gives `served_steps`, the part replayed, beside `steps`.
 - **Size**: a text a segment grew or edited is stored as the change to the text it began with. A replay checks that text by digest first. A site defined again in one segment keeps one fact.
 - **`satex cache build`** prepares the kernel and `cache.index.packages` (or named packages) for `cache.index.engines`, in parallel on `limits.threads`. It reports progress per package and only rebuilds stale ones (`--refresh` forces).
+- **Background builder** (`cache.background: ask|yes|no`, default `ask`). The first run on a terminal asks once whether satex may prepare the kernels and the installed packages in the background. The editor asks the same once. The answer goes into the global config. On yes, a detached process at the lowest priority runs `satex cache build --background`: the kernel of each engine cached here, then `cache.index.common`, then the packages runs here loaded, then the `cache.index.most_loaded` (200) packages installed packages load most. There is one builder per cache directory. It holds no build lock, so a run never waits on it. It ends `full` when the cache directory reaches `limits.cache_size`, and it never evicts another cache to make room. Once it is done, full or failed, it does not start again until a new satex build. Without `nice` in `/usr/bin` or `/bin` it runs at normal priority, and `satex cache` says so. Only a terminal run whose input and output are both terminals asks, and never `install`, `query`, `gui` or an interactive trace. `satex cache` shows its state, `satex cache stop` stops it until `satex cache build --background` resumes it. `SATEX_NO_SETUP` or `CI` set never asks nor starts it.
 - **Pruning** keeps this build's kernel and four recent ones, then trims by `limits.cache_size` (2 GiB) least-recently used. `satex cache prune` does only that.
 
 A **document cache** keeps a run's whole analysis, one file per document and settings (`cache.document`, on by default).
@@ -1166,6 +1184,8 @@ cache:
     engines: [pdftex, luatex]   # empty: the engine in effect
     class: article              # the class the packages load after
     auto: true                  # every run stores what it reads
+    most_loaded: 200            # installed packages the background builder adds
+  background: ask               # ask | yes | no: prepare caches in the background
 ```
 
 ## Profiles
