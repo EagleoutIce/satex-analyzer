@@ -120,3 +120,24 @@ fn a_document_s_unused_definition_is_reported_regardless() {
     };
     assert!(!findings.iter().any(aux), "{findings:?}");
 }
+
+/// A project's satex.yaml may not set what only the user's own config sets
+/// (`plugins.packages` reaches the network). One that writes the value in
+/// effect, as a fully written reference config does, changes nothing and
+/// must not warn on every run; one that tries to change it is told.
+#[test]
+fn a_project_repeating_a_user_setting_is_not_warned() {
+    let dir = crate::support::scratch_dir(crate::support::tmp_root().join("user-keys"));
+    std::fs::write(dir.join("main.tex"), "\\relax\n").unwrap();
+    let warned = |yaml: &str| {
+        std::fs::write(dir.join("satex.yaml"), yaml).unwrap();
+        let out = crate::support::satex()
+            .args(["lint", "-f", "main.tex", "--set", "kernel=plain"])
+            .current_dir(&dir)
+            .output()
+            .unwrap();
+        String::from_utf8_lossy(&out.stderr).contains("plugins.packages ignored")
+    };
+    assert!(!warned("plugins:\n  packages: false\n"));
+    assert!(warned("plugins:\n  packages: true\n"));
+}

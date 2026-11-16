@@ -3023,10 +3023,13 @@ fn merge_file(base: &mut serde_yaml_ng::Value, path: &Path, files: &mut Vec<Path
     // A project, maybe someone else's, does not say where satex writes its
     // caches or whether a lint reaches the network: only the user's own
     // config, `--config`, `--set` and `SATEX_CACHE` do.
+    // One that repeats the value in effect changes nothing and says nothing.
     if project {
         for (section, key) in USER_KEYS {
+            let current = base.get(section).and_then(|s| s.get(key)).cloned();
             if let Some(serde_yaml_ng::Value::Mapping(map)) = incoming.get_mut(section)
-                && map.remove(key).is_some()
+                && let Some(value) = map.remove(key)
+                && Some(&value) != current.as_ref()
             {
                 warn(format!("satex: {}: {section}.{key} ignored: only the user's own config sets it", path.display()));
             }
