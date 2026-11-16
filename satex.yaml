@@ -788,13 +788,13 @@ type_plugins:  # editor features by type, grouped by category: widget, hover, co
       #! example: `enabled: false`: no tree lens, action or dialog
   pretty:  # a definition's replacement text, as a hover shows it
     #! category: hover
-    enabled: true  # one statement per line, groups and conditionals indented, long key lists one key per line
+    enabled: false  # one statement per line, groups and conditionals indented, long key lists one key per line. Off, a hover shows the body as TeX prints it
       #! affects: output
-      #! example: `enabled: false`: the body as one line
+      #! example: `enabled: true`: the body pretty printed
     width: 60  # the characters a line holds before a statement or group breaks over lines
       #! affects: output
       #! range: 20..400
-    lines: 40  # the lines a hover shows of a body before it stops
+    lines: 4  # the lines a hover shows of a body before it stops, pretty printed or not
       #! affects: output
       #! range: 1..1000
   units:  # dimensions: `12pt`, `\textwidth`, a value range

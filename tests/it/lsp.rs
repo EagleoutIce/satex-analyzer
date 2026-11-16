@@ -4678,6 +4678,28 @@ fn a_primitive_never_expands_to_itself() {
     }
 }
 
+/// A hover shows a body as TeX prints it, never more than its first four
+/// lines: a long definition must not fill the screen. The rest is counted.
+#[test]
+fn a_hover_shows_at_most_four_lines_of_a_body() {
+    let long = ["lorem ipsum dolor"; 40].join(" ");
+    let catcodes = "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 ";
+    let text = format!("{catcodes}\\def\\longbody#1{{#1 {long}}}\n\\longbody{{a}}\n");
+    let (mut server, uri, _, dir) = open_unsaved("hover-long-body", &text);
+    let id = server.request(
+        "textDocument/hover",
+        json!({ "textDocument": { "uri": uri }, "position": { "line": 1, "character": 2 } }),
+    );
+    let hover = server.response(id)["result"]["contents"]["value"].as_str().unwrap_or_default().to_string();
+    let block = hover.split("```tex\n").nth(1).and_then(|b| b.split("\n```").next()).unwrap_or_default();
+    let lines: Vec<&str> = block.lines().collect();
+    assert!(lines.len() <= 5, "{hover}");
+    assert!(lines.last().is_some_and(|l| l.contains("more characters")), "{hover}");
+    assert!(lines[0].starts_with("#1 lorem"), "the body as TeX prints it: {hover}");
+    server.shutdown();
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// Applies the WorkspaceEdit `edit` (with `${name}` templates filled from `vars`) to `text`,
 /// the file `uri`: what the view renderer does.
 fn applied(text: &str, uri: &str, edit: &Value, vars: &[(&str, &str)]) -> String {

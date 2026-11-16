@@ -17,6 +17,7 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 
 ### Playground
 
+- `feat` **Short hovers.** A hover shows a body as TeX prints it, at most its first four lines, the rest counted. Pretty printing is off by default (`type_plugins.pretty.enabled`).
 - `fix` **Tables with array or tabularx get their widget.** A table whose package calls `\@array` by another name now gets its "Edit table…" lens and dialog.
 - `feat` **Heading styles and page options.** The page layout widget restyles chapter to subsubsection headings (family, weight, small caps, size, color, alignment, numbering) through KOMA-Script or titlesec, saves them as named style sets to switch between, and sets the page color, columns and the binding.
 - `feat` **Edit in the PDF.** Each table column shows its width over the pages. Dragging its edge rewrites `p{…}` in the source, snapped, within `\linewidth`, as one undo step. With Type on, a click on a word puts a caret there and plain text goes to its place in the source.

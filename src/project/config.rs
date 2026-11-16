@@ -641,7 +641,7 @@ pub struct PrettyPlugin {
 
 impl Default for PrettyPlugin {
     fn default() -> Self {
-        Self { enabled: true, width: 60, lines: 40 }
+        Self { enabled: false, width: 60, lines: 4 }
     }
 }
 

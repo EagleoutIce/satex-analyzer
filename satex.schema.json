@@ -5014,17 +5014,17 @@
           "description": "a definition's replacement text, as a hover shows it",
           "properties": {
             "enabled": {
-              "default": true,
-              "description": "one statement per line, groups and conditionals indented, long key lists one key per line",
+              "default": false,
+              "description": "one statement per line, groups and conditionals indented, long key lists one key per line. Off, a hover shows the body as TeX prints it",
               "type": "boolean",
               "x-affects": [
                 "output"
               ],
-              "x-example": "`enabled: false`: the body as one line"
+              "x-example": "`enabled: true`: the body pretty printed"
             },
             "lines": {
-              "default": 40,
-              "description": "the lines a hover shows of a body before it stops",
+              "default": 4,
+              "description": "the lines a hover shows of a body before it stops, pretty printed or not",
               "maximum": 1000,
               "minimum": 1,
               "type": "integer",

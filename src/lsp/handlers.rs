@@ -666,7 +666,9 @@ pub(super) fn command_hover(analysis: &Analysis, name: &str, active: Option<Reco
             if !doc.example.is_empty() {
                 markdown.push_str(&format!("```tex\n{}\n```\n\n", doc.example.join("\n")));
             }
-        } else if let Some(pretty) = text("pretty").filter(|_| text("tag") != Some("primitive")) {
+        } else if let Some(pretty) =
+            text("pretty").filter(|_| text("tag") != Some("primitive") && analysis.settings.type_plugins.pretty.enabled)
+        {
             // a long body, one statement per line (`type_plugins.pretty`)
             let most = analysis.settings.type_plugins.pretty.lines;
             let lines: Vec<&str> = pretty.lines().collect();
@@ -674,6 +676,17 @@ pub(super) fn command_hover(analysis: &Analysis, name: &str, active: Option<Reco
                 if lines.len() > most { format!("\n… {} more lines", lines.len() - most) } else { String::new() };
             markdown
                 .push_str(&format!("Expands to\n```tex\n{}{cut}\n```\n\n", lines[..lines.len().min(most)].join("\n")));
+        } else if let Some(body) = text("body").filter(|b| {
+            text("tag") != Some("primitive")
+                && *b != format!("\\{name}")
+                && !b.is_empty()
+                && text("signature").is_some_and(|s| !s.is_empty())
+        }) {
+            // A body with arguments, as TeX prints it: its first lines only.
+            let pretty = &analysis.settings.type_plugins.pretty;
+            let (shown, more) = first_lines(body, pretty.width, pretty.lines);
+            let cut = if more > 0 { format!("\n… {more} more characters") } else { String::new() };
+            markdown.push_str(&format!("Expands to\n```tex\n{shown}{cut}\n```\n\n"));
         } else if let Some(body) = text("body").filter(|b| {
             // a primitive, or a name standing for itself, expands to nothing worth a line
             text("signature").is_none_or(str::is_empty)
@@ -3181,4 +3194,22 @@ mod signature_tests {
         assert_eq!(argument_of("\\cmd[o]{a{b}c}{", 16), Some(("cmd".into(), 2)));
         assert_eq!(argument_of("plain {text", 11), None);
     }
+}
+
+/// The first `most` lines of `text` broken at `width` characters, at a space
+/// where one is near, and how many characters are left out.
+fn first_lines(text: &str, width: usize, most: usize) -> (String, usize) {
+    let chars: Vec<char> = text.chars().collect();
+    let (mut lines, mut at) = (Vec::new(), 0);
+    while at < chars.len() && lines.len() < most {
+        let mut end = (at + width.max(1)).min(chars.len());
+        if end < chars.len()
+            && let Some(space) = chars[at..end].iter().rposition(|c| *c == ' ').filter(|s| *s > width / 2)
+        {
+            end = at + space + 1;
+        }
+        lines.push(chars[at..end].iter().collect::<String>().trim_end().to_string());
+        at = end;
+    }
+    (lines.join("\n"), chars.len() - at)
 }
