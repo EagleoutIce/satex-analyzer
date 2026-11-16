@@ -31,6 +31,7 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 
 ### Analysis
 
+- `fix` **Float lists pop again after a join.** A join of an undefined name with an empty macro made typed text that can only be empty, and `\@next` could not take the first float off a list headed by it: `\@tryfcolumn` recursed 512 deep. Such text is now no token at all, and a delimiter meeting typed text that may only be empty matches where it is empty (tex.web § 392).
 - `fix` **No deadlock on a package that reads the document again.** A package cache left unstored in one build run kept its build lock, and the next run waited on its own lock forever (chemfig's `\input chemfig.tex` read a probe named like it). A lock this process holds is no longer waited on.
 - `fix` **Note columns end.** `\vsplit` keeps what a box holds through an hbox, a one-line paragraph and `\unvbox`, so the rest of a split note box is known to be empty and `\clearnotecolumns` stops.
 

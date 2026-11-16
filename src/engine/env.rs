@@ -2803,7 +2803,7 @@ fn run_hull(texts: &[&[Token]], typed: &Typed, run: bool) -> Vec<Token> {
         }
     }
     let len = lens.first().copied().flatten().filter(|n| *n > 0 && lens.iter().all(|l| *l == Some(*n)));
-    vec![Token::new(Tok::Cs(typed.make(class, one, len)), span.unwrap_or_default())]
+    typed.text(class, one, len, span.unwrap_or_default()).into_iter().collect()
 }
 
 /// Integer digits as `\the` prints them, after a `-` where it may be
@@ -3182,6 +3182,13 @@ impl Typed<'_> {
         self.classify(t).or_else(|| self.one_of_class(t))
     }
 
+    /// The token for typed text, none for text of no class that may be
+    /// empty: that is only the empty text. A token for it would be one
+    /// `\@elt` delimiter never matches (a float list it heads never pops).
+    pub fn text(&self, class: TextClass, one: bool, len: Option<u32>, span: Span) -> Option<Token> {
+        (class != TextClass::EMPTY || one).then(|| Token::new(Tok::Cs(self.make(class, one, len)), span))
+    }
+
     pub fn make(&self, class: TextClass, one: bool, len: Option<u32>) -> Sym {
         if let Some(i) = len.and_then(|len| bounded_index(class, one, len, 0)) {
             return self.syms[i];
@@ -3203,7 +3210,7 @@ pub fn unknown_runs(text: &[Token], typed: &Typed) -> std::rc::Rc<[Token]> {
     let mut run: Option<(TextClass, bool, Option<u32>, Span)> = None;
     let flush = |run: &mut Option<(TextClass, bool, Option<u32>, Span)>, out: &mut Vec<Token>| {
         if let Some((class, one, len, span)) = run.take() {
-            out.push(Token::new(Tok::Cs(typed.make(class, one, len)), span));
+            out.extend(typed.text(class, one, len, span));
         }
     };
     for t in text {
@@ -3405,7 +3412,7 @@ fn typed_join(set: &[Meaning], typed: &Typed, widen: bool) -> Option<Meaning> {
     }
     let span = first.get(head).or(first.last()).map_or(Span::default(), |t| t.span);
     let mut text = first[..head].to_vec();
-    text.push(Token::new(Tok::Cs(typed.make(class, one, len.filter(|_| !widen))), span));
+    text.extend(typed.text(class, one, len.filter(|_| !widen), span));
     text.extend_from_slice(&first[first.len() - tail..]);
     let def = def?;
     Some(Meaning::Macro(std::rc::Rc::new(crate::engine::tex::MacroDef {
@@ -3477,6 +3484,33 @@ mod tests {
     }
 
     use super::*;
+
+    /// Hulls whose texts are all empty are the empty text, never a token
+    /// of no class: `\@xnext`'s `\@elt` cannot match one, so a float list
+    /// it heads never popped (lars, `\@trylist` depth cut).
+    #[test]
+    fn hull_of_empty_texts_is_empty() {
+        let interner = Interner::default();
+        let syms: Vec<Sym> = (0..TYPED_NAMES as u32).map(|i| Sym(1000 + i)).collect();
+        let minted = Default::default();
+        let typed = Typed { interner: &interner, syms: &syms, digits: Sym(1), more: Sym(2), minted: &minted };
+        let none: &[Token] = &[];
+        assert!(run_hull(&[none], &typed, false).is_empty());
+        assert!(run_hull(&[none, none], &typed, false).is_empty());
+        let def = |long| {
+            Meaning::Macro(Rc::new(crate::engine::tex::MacroDef {
+                parameter_text: Default::default(),
+                arg_spec: None,
+                replacement_text: Rc::from(vec![Token::new(Tok::Cs(Sym(7)), Span::default())]),
+                long,
+                outer: false,
+                protected: false,
+            }))
+        };
+        // Texts alike but for `\long`: the middle between them is empty.
+        let Some(Meaning::Macro(d)) = typed_join(&[def(false), def(true)], &typed, false) else { panic!("a macro") };
+        assert_eq!(d.replacement_text.iter().map(|t| t.tok).collect::<Vec<_>>(), [Tok::Cs(Sym(7))]);
+    }
 
     /// A widened macro of digits stays a parameterless macro of unknown
     /// digits: its class survives, `\ifx` still sees a macro.

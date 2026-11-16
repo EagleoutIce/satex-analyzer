@@ -10194,7 +10194,10 @@ will look undefined",
             self.out.timings.count_call(sym);
         }
         if self.join_hooks.contains(&sym)
-            || self.join_commands.iter().any(|&c| self.env.meaning(c).as_macro().is_some_and(|d| Rc::ptr_eq(d, &m)))
+            // The analysis's own look, not TeX's: no read is logged.
+            || self.join_commands.iter().any(|&c| {
+                self.env.peek(c.0).and_then(|b| b.meaning.as_macro()).is_some_and(|d| Rc::ptr_eq(d, &m))
+            })
         {
             self.at_join = Some(JoinAt::Command);
         }
@@ -12357,6 +12360,20 @@ will look undefined",
                         self.unread(t);
                         i += 1;
                         continue;
+                    }
+                    // Typed text that may be empty but cannot hold the
+                    // literal matches only where it is empty (tex.web § 392):
+                    // a path where it is, and one where TeX says "doesn't
+                    // match". Text of no class is only the empty text.
+                    if let Some(t) = t
+                        && t.tok != *expected
+                        && let Some((class, false, cs)) = self.typed_shape(t)
+                    {
+                        let only_empty = class == TextClass::EMPTY && cs.is_empty();
+                        if only_empty || self.branch(self.unknown, 2, t.span) != Some(1) {
+                            continue;
+                        }
+                        self.arm_assumed = true;
                     }
                     // After unknown text the literal may be inside it: what
                     // was read is given back, and the parameters go on.

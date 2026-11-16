@@ -4155,6 +4155,31 @@ fn a_here_float_then_clearpage_closes_each_output_once() {
     assert_eq!(body(&a, "P"), "2");
 }
 
+/// A float list headed by typed text of no class that may be empty, the
+/// empty text (as a widened float queue of lars held it twice):
+/// `\@xnext`'s `\@elt` reads past it and `\@tryfcolumn` pops each box.
+/// Before, the call did not match, the list ran as code (`\@elt` =
+/// `\@xtryfc` calling `\@next` again) and recursed to the depth cut.
+#[test]
+fn a_float_list_headed_by_empty_typed_text_pops_its_boxes() {
+    if !installed() {
+        return;
+    }
+    use satex::engine::tex::TextClass;
+    let hole =
+        satex::engine::env::named_text(TextClass::EMPTY, false, std::iter::empty::<&str>()).replace('\u{2}', "^^02");
+    let a = analyze(&format!(
+        r"\documentclass{{article}}\begin{{document}}\makeatletter
+\begingroup\catcode2=12 \expandafter\gdef\expandafter\H\expandafter{{\csname {hole}\endcsname}}\endgroup
+\expandafter\expandafter\expandafter\gdef\expandafter\expandafter\expandafter\L\expandafter\expandafter\expandafter{{\expandafter\H\H\@elt\bx@G\@elt\bx@L}}
+\setbox0\vbox{{\@tryfcolumn\L}}\xdef\Made{{\if@fcolmade y\else n\fi}}\makeatother\end{{document}}"
+    ));
+    let c = codes(&a);
+    assert!(!c.iter().any(|c| c == "recursion-widened"), "{c:?}");
+    // Both boxes are void: no float column of height 0 is made.
+    assert_eq!(body(&a, "Made"), "n");
+}
+
 /// One-letter keys referenced before and after their labels, at the
 /// default build: the kernel's `\reserved@a` declares no key `a`.
 #[test]
