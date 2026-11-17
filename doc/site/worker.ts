@@ -512,8 +512,9 @@ if (typeof cjs === 'object' && cjs.exports) {
   /** One turn of the event loop: the messages that came meanwhile are counted before the next is handled,
    * so a question of an older text is dropped, not answered behind the newer text's run. */
   const turn = () => new Promise<void>((done) => { const c = new MessageChannel(); c.port1.onmessage = () => done(); c.port2.postMessage(0); });
-  /** Whether a newer text came after this message: counted here, or on the page's shared counter. */
-  const outdated = (data: Rec) => data.texts !== texts || (cancelFlag != null && data.sent != null && Atomics.load(cancelFlag, 0) > data.sent);
+  /** Whether a newer text came after this message. Only texts count: the page's shared counter also
+   * moves to cancel a run for a widget's request, and a widget's own question must still be answered. */
+  const outdated = (data: Rec) => data.texts !== texts;
   const handle = async (data: Rec): Promise<void> => {
     try {
       if (data.type === 'init') {
