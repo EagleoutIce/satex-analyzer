@@ -8,6 +8,7 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 
 ### Compile
 
+- `perf` **`satex compile --system satex`: satex's own incremental build.** The preamble is dumped once as a format (mylatexformat) and reused until it or a file it reads changes. The engine reruns only while the .aux and its kin move, BibTeX, Biber and makeindex only when their input changed. The playground's Compile uses it on `satex gui` (no analysis on the PDF path, the last build seeds the next) and the browser's pdfTeX reads the preamble format too: a body edit of the thesis example goes from 0.57 to 0.19 s in the browser.
 - `feat` **`satex compile` picks the build system.** `% arara:` directives run arara, a `Tectonic.toml` runs Tectonic, else latexmk or the engine. `--system` or `compile.system` names one (latexmk, arara, tectonic, make, l3build, engine). `--view` opens the PDF in `compile.viewer` or the system's viewer.
 
 ### Caches
@@ -32,6 +33,8 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 
 ### Playground
 
+- `feat` **Definition history as a timeline.** Each definition is a dot on one line, the one in force filled, an undone one dashed; other paths fork off beside it. A macro named in a body opens its own history in place, so the separate list of calls is gone.
+- `fix` **Tidier menus and layers.** Go to definition, Find references and the definition history share one Navigate group in the context menu. A layer's filter arrow always opens and says when there is nothing to filter yet. The Typeset view starts with `maybe` off. A compile shows its tip only after 5 s.
 - `fix` **Ready means ready.** Common packages fetched ahead, so another example opens at once, no longer hold the status line at "Fetching 9 packages". It says Ready and counts them beside it. Only packages the document uses keep it from ready.
 - `feat` **Completion finds by what a name is.** In `\usepackage{…}`, `\documentclass{…}`, `\cite{…}` and `\ref{…}` each item shows what it is: a package's line from the TeX Live catalogue, a citation's author, year and title, what a label points at (`figure 1: caption`, `§2: heading`, `equation 3`). Typing a word of that finds it, typos forgiven: `\usepackage{network}` offers tikz-network and neuralnetwork. A name starting with what was typed comes first. Editors get the same through the language server.
 - `fix` **A first compile says what it waits for.** The PDF pane names each phase with its size: starting the TeX worker, downloading the engine, compiling it, unpacking the TeX tree, each pdfTeX pass, BibTeX, files fetched. One line says the first compile downloads and starts the engine and later ones skip this. The offline copy pauses while a compile runs.

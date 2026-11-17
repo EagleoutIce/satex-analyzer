@@ -1940,6 +1940,15 @@ const satexViews = (() => {
     const tick = (t: string) => esc(t).replace(/`([^`]*)`/g, '<code>$1</code>');
     // a name with a history here opens it, others are plain
     const cs = (n: string) => (of(n) && n !== trail.at(-1) ? `<button type="button" class="tv-hist-cs" data-cs="${esc(n)}" title="its definition history">${esc(n)}</button>` : `<code>${esc(n)}</code>`);
+    // a body's names open their own history in place: no separate list of calls
+    const linked = (text: string, calls: Rec[]) => {
+      const note = new Map(calls.map((k: Rec) => [k.name, k.note]));
+      return text.split(/(\\[A-Za-z@:_]+)/).map((t, i) => {
+        if (i % 2 === 0 || !of(t) || t === trail.at(-1)) return esc(t);
+        const n = note.get(t);
+        return `<button type="button" class="tv-hist-cs tv-hist-inline" data-cs="${esc(t)}" title="${esc(`${t}: its definition history${n ? `, ${n}` : ''}`)}">${esc(t)}</button>`;
+      }).join('');
+    };
     const event = (e: Rec) => {
       const v = historyEvent(e), text = pretty && e.pretty ? e.pretty : e.body;
       const row = el('div', 'tv-hist-event');
@@ -1948,8 +1957,7 @@ const satexViews = (() => {
         (v.when ? `<div class="tv-hist-when">when ${tick(v.when)}</div>` : '') +
         (v.change ? `<div class="tv-hist-change">${tick(v.change)}</div>` : '') +
         (v.copies ? `<div class="tv-hist-copy">copies ${cs(v.copies.name)} as ${esc(v.copies.by)} made it at ${place(v.copies.at)}</div>` : '') +
-        (text != null ? (text === '' ? '<div class="tv-muted">empty</div>' : `<pre class="tv-hist-body"><code>${esc(text)}</code></pre>`) : '') +
-        (v.calls.length ? `<div class="tv-hist-calls"><span class="tv-muted">calls</span> ${v.calls.map((k: Rec) => cs(k.name) + (k.note ? ` <span class="tv-muted">(${esc(k.note)})</span>` : '')).join(' ')}</div>` : '');
+        (text != null ? (text === '' ? '<div class="tv-muted">empty</div>' : `<pre class="tv-hist-body"><code>${linked(text, v.calls)}</code></pre>`) : '');
       return row;
     };
     const draw = () => {
@@ -1969,13 +1977,17 @@ const satexViews = (() => {
         b.onclick = () => { ctx.close?.(); ctx.trace!(name); };
         tools.append(b);
       }
-      const parts = [nav, tools, el('div', 'tv-h', 'Newest first')];
-      parts.push(...h.entries.map(event));
-      if (!h.entries.length) parts.push(el('div', 'tv-text', `<p>The run recorded no definition of ${esc(name)} on the path that ends here.</p>`));
-      if (h.earlier) parts.push(el('div', 'tv-text', `<p>${h.earlier} earlier events not shown.</p>`));
-      if (h.other?.length || h.undefined_elsewhere) parts.push(el('div', 'tv-h', 'On other paths'));
-      parts.push(...(h.other ?? []).map(event));
-      if (h.undefined_elsewhere) parts.push(el('div', 'tv-text', `<p>${esc(name)} is undefined on some paths.</p>`));
+      // a timeline, newest on top: this path's events on one line, other paths' forked off beside it
+      const lane = el('div', 'tv-hist-lane'), parts = [nav, tools, el('div', 'tv-h', 'Newest first'), lane];
+      lane.append(...h.entries.map(event));
+      if (!h.entries.length) lane.append(el('div', 'tv-text', `<p>The run recorded no definition of ${esc(name)} on the path that ends here.</p>`));
+      if (h.earlier) lane.append(el('div', 'tv-text tv-muted', `<p>${h.earlier} earlier events not shown.</p>`));
+      if (h.other?.length || h.undefined_elsewhere) {
+        const fork = el('div', 'tv-hist-lane tv-hist-fork');
+        fork.append(el('div', 'tv-h', 'On other paths'), ...(h.other ?? []).map(event));
+        if (h.undefined_elsewhere) fork.append(el('div', 'tv-text', `<p>${esc(name)} is undefined on some paths.</p>`));
+        parts.push(fork);
+      }
       box.replaceChildren(...parts);
     };
     box.onclick = (e: MouseEvent) => {
@@ -3020,8 +3032,14 @@ button.tv-spec-value { cursor: pointer; } button.tv-spec-value:hover, button.tv-
 .tv-style-line { line-height: 1.2; } .tv-style-line span { margin-right: .4em; } .tv-style-body { margin: 0; font-family: Georgia, serif; font-size: .9rem; color: #444; }
 .tv-sheet text.tv-page-label { fill: var(--tv-muted); font-family: ui-sans-serif, system-ui, sans-serif; } .tv-sheet text.tv-page-big { fill: var(--tv-fg); font-weight: 600; }
 @media (max-width: 640px) { .tv-page-main { grid-template-columns: 1fr; } }
-.tv-hint { margin-right: auto; align-self: center; } .tv-foot { justify-content: flex-end; align-items: center; } .tv-foot .tv-muted { margin-right: auto; }.tv-history { display: grid; gap: .5rem; } .tv-hist-nav { font-size: .85rem; } .tv-hist-event { border-left: 3px solid var(--tv-border); padding: .2rem 0 .2rem .6rem; display: grid; gap: .2rem; }
-.tv-hist-event[data-state="in force"], .tv-hist-event[data-state="in force on another path"] { border-left-color: var(--tv-accent); }
+.tv-hint { margin-right: auto; align-self: center; } .tv-foot { justify-content: flex-end; align-items: center; } .tv-foot .tv-muted { margin-right: auto; }.tv-history { display: grid; gap: .5rem; } .tv-hist-nav { font-size: .85rem; } .tv-hist-lane { position: relative; display: grid; gap: .7rem; padding-left: 1.1rem; }
+.tv-hist-lane::before { content: ""; position: absolute; left: .32rem; top: .4rem; bottom: .4rem; width: 2px; background: var(--tv-border); border-radius: 1px; }
+.tv-hist-fork { margin-left: 1.1rem; } .tv-hist-fork::after { content: ""; position: absolute; left: -.8rem; top: -.7rem; width: 1.1rem; height: 1rem; border: 2px solid var(--tv-border); border-top: 0; border-right: 0; border-bottom-left-radius: .6rem; }
+.tv-hist-event { position: relative; display: grid; gap: .2rem; }
+.tv-hist-event::before { content: ""; position: absolute; left: -1.03rem; top: .35rem; width: .55rem; height: .55rem; border-radius: 50%; border: 2px solid var(--tv-muted); background: var(--tv-bg, Canvas); box-sizing: border-box; }
+.tv-hist-event[data-state="in force"]::before, .tv-hist-event[data-state="in force on another path"]::before { border-color: var(--tv-accent); background: var(--tv-accent); }
+.tv-hist-event[data-state="undone"]::before { border-style: dashed; }
+.tv-hist-inline { padding: 0 .1rem; border-color: transparent; background: color-mix(in srgb, var(--tv-accent) 10%, transparent); }
 .tv-hist-state { font-size: .72rem; text-transform: uppercase; letter-spacing: .04em; color: var(--tv-muted); } .tv-hist-when, .tv-hist-change, .tv-hist-copy, .tv-hist-calls { font-size: .82rem; } .tv-hist-change code { white-space: pre; }
 .tv-hist-body { margin: 0; padding: .4rem .5rem; background: var(--tv-sunk); border-radius: 6px; overflow-x: auto; max-height: 18rem; font-size: .8rem; }
 .tv-hist-cs { font: inherit; font-family: ui-monospace, monospace; font-size: .85em; padding: 0 .25rem; border: 1px solid var(--tv-border); border-radius: 4px; background: var(--tv-sunk); color: var(--tv-accent); cursor: pointer; }

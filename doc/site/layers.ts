@@ -41,7 +41,7 @@ declare global {
   function html(about: Record<string, string>, on: On, { prefix, facets = new Set<string>() }: { prefix: string; facets?: Set<string> }) {
     const label = (k: string) => `<label class="layer" title="${esc(about[k])}"><input type="checkbox" role="switch" id="${prefix}-${k}" data-layer="${k}"${on[k] ? ' checked' : ''}><i class="layer-swatch sw-${k}" aria-hidden="true"></i><span>${esc(LAYERS[k][0])}</span><b class="count layer-n"></b></label>`;
     // a layer with filters is one split button: the switch, then its fold's arrow
-    const chip = (k: string) => facets.has(k) ? `<span class="layer-split">${label(k)}<button type="button" class="layer-sub-toggle" data-fold="${k}" disabled aria-expanded="false" title="Filter ${esc(LAYERS[k][0])}" aria-label="filter ${esc(LAYERS[k][0])}"></button></span>` : label(k);
+    const chip = (k: string) => facets.has(k) ? `<span class="layer-split">${label(k)}<button type="button" class="layer-sub-toggle" data-fold="${k}" aria-expanded="false" title="Filter ${esc(LAYERS[k][0])}" aria-label="filter ${esc(LAYERS[k][0])}"></button></span>` : label(k);
     return groups(Object.keys(about)).map(([g, label, ids]) => `<div class="layer-group" role="group" aria-label="${label}" data-group="${g}"><span class="layer-label">${label}</span><span class="layer-seg">${ids.map(chip).join('')}</span>` +
       ids.filter((k) => facets.has(k)).map((k) => `<div class="layer-sub" data-sub="${k}" hidden><div class="layer-sub-list"></div></div>`).join('') + '</div>').join('');
   }

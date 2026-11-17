@@ -2210,7 +2210,7 @@ header .hd-feedback:hover:not(:disabled) { background: var(--sunk); color: var(-
 .layer-swatch { flex: none; width: .8rem; height: .55rem; border-radius: 2px; opacity: .45; filter: grayscale(.6); transition: opacity var(--quick), filter var(--quick); }
 .layer:has(:checked) .layer-swatch { opacity: 1; filter: none; }
 .layer-n { font-size: .64rem; font-weight: 600; color: var(--muted); } .layer-n:empty { display: none; }
-.layer-sub-toggle { width: 1.75rem; padding: 0 .1rem 0 0; justify-content: center; }
+.layer-sub-toggle { width: 2.1rem; padding: 0 .15rem 0 0; justify-content: center; }
 .layer-sub-toggle::before { content: ""; width: .28rem; height: .28rem; border: solid currentColor; border-width: 0 1.5px 1.5px 0; rotate: 45deg; translate: 0 -.08rem; transition: rotate .2s var(--ease); }
 .layer-sub-toggle[aria-expanded="true"]::before { rotate: 225deg; translate: 0 .08rem; }
 .layer-sub-toggle:disabled { cursor: default; color: color-mix(in srgb, var(--muted) 45%, transparent); }

@@ -1379,7 +1379,7 @@
   };
   const tsLegacy = {};
   try { for (const k of Object.keys(TS_LAYERS)) { const v = localStorage.getItem(`satex-typeset-${k}`); if (v != null) tsLegacy[k] = v === '1'; } } catch {}
-  const tsOn = self.satexLayers.state('typeset', Object.fromEntries(Object.keys(TS_LAYERS).map((k) => [k, k === 'maybe'])), self.satexStore, tsLegacy);
+  const tsOn = self.satexLayers.state('typeset', Object.fromEntries(Object.keys(TS_LAYERS).map((k) => [k, false])), self.satexStore, tsLegacy);
   $('typeset-layers').innerHTML = self.satexLayers.html(TS_LAYERS, tsOn, { prefix: 'typeset' });
   // the preamble's findings sit on the document's begin mark only while the marks show
   const tsApply = (k) => { typesetBody.classList.toggle(`show-${k}`, tsOn[k]); if (k === 'envs') typesetFindings(); };
@@ -2172,10 +2172,16 @@
     const editable = !(state.file in state.ro);
     const rows = editable ? await typedTools(p) : [];
     const run = ([label, hint, i]) => [label, hint, () => runTool(i)];
+    // where a name is defined, used and was defined before: one group
+    const history = (r) => /^Definition history/.test(r[0]);
     const items = [
-      ...rows.filter((r) => r[3]).map(run),
-      ...(w?.[3] ? [['Go to definition', 'Ctrl+click', () => definition(x, y)]] : []),
-      ...(w && editable ? [['Find references', '', references]] : []), ...(renamable ? [['Rename symbol', 'F2', renameBox]] : []),
+      ...rows.filter((r) => r[3] && !history(r)).map(run),
+      ...group('Navigate', [
+        ...(w?.[3] ? [['Go to definition', 'Ctrl+click', () => definition(x, y)]] : []),
+        ...(w && editable ? [['Find references', '', references]] : []),
+        ...rows.filter((r) => r[3] && history(r)).map(run),
+      ]),
+      ...(renamable ? [['Rename symbol', 'F2', renameBox]] : []),
       ...group('Explain', [
         ...(w?.[3] ? [['Explain', '', focusExplain], ['Show expansions', '', () => expansions(w)], ['Trace expansion', '', () => traceCall(`\\${w[2]}`, { file: state.file, line: p.line + 1, col: w[0] + 1 })]] : []),
         ...found.map((d) => [`Explain rule ${d.code}`, '', () => unfold(diagnostics[uri()].indexOf(d), false)]),
@@ -4948,7 +4954,7 @@
     else if (!note && tip && !el.parentElement.querySelector('.sx-tip')) el.after(tipHost());
   }
   /** A build this short shows no tip: it would only flash. */
-  const TIP_AFTER_MS = 1500;
+  const TIP_AFTER_MS = 5000;
   /** How long a build may take before the page gives up on it: the server's own limit is shorter. */
   const COMPILE_MS = 600000;
   /** The PDF is of one project and root: after a switch it dims, says whose it is, and takes no clicks, until a build of this one replaces it. */
@@ -5599,8 +5605,9 @@
         `<datalist id="pdf-grid-fonts">${['5pt', '7pt', '8pt', '9pt', '10pt', '10.95pt', '12pt', '14.4pt', '17.28pt', '20.74pt', '24.88pt'].map((v) => `<option value="${v}">`).join('')}</datalist>` +
         `<label>label every <input type="number" data-grid="every" value="${escape(pdfGrid.every)}" min="1" max="50"> steps</label>` +
         `<datalist id="pdf-grid-units">${['1cm', '5mm', '1mm', '10pt', '12pt', '1in', '.5in', '36bp', '1pc'].map((v) => `<option value="${v}">`).join('')}</datalist></div>` : pdfFacetGroups(layer).filter(([, , rows]) => rows.length).map(([g, title, rows]) => `<div class="pdf-sub-group"><span class="muted">${escape(title)}</span>${rows.map(([key, label, n]) => `<label><input type="checkbox" data-facet="${escape(`${layer}|${g}|${key}`)}"${pdfShown(layer, g, key) ? ' checked' : ''}>${escape(label)} <b class="count">${n}</b></label>`).join('')}</div>`).join('') + internal;
-      $('pdf-layer-list').querySelector(`[data-fold="${layer}"]`).disabled = !html;
-      if (list.dataset.html !== html) { list.innerHTML = html; list.dataset.html = html; }
+      // the arrow always opens: with nothing to filter yet it says so, it never sits dead
+      const shown = html || '<div class="pdf-sub-group muted">Nothing to filter yet: compile, then this lists what the layer found.</div>';
+      if (list.dataset.html !== shown) { list.innerHTML = shown; list.dataset.html = shown; }
     }
   }
   // kept per viewer; an older version kept them apart, definitions and references as two
