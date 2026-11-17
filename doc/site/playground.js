@@ -914,7 +914,7 @@
           hex: colorOf(i), preview: i.data?.preview, color: colorOf(i), type: KIND[i.kind] ?? 'text',
           // the side panel: a command's card, the one hover and Explain show; else the server's documentation
           info: before === '\\' ? () => itemInfo(i) : i.documentation ? () => Object.assign(document.createElement('div'), { className: 'hover cm-item-card', innerHTML: card(i.documentation.value ?? i.documentation) }) : i.data?.key ? () => itemInfo(i, true) : undefined,
-          apply: again(i, i.insertTextFormat === 2 ? ac.snippet((i.insertText ?? i.textEdit?.newText ?? i.label).replace(/\$\{?(\d+)\}?/g, '#{$1}')) : i.textEdit?.newText ?? i.insertText ?? i.label),
+          apply: again(i, i.insertTextFormat === 2 ? ac.snippet((i.insertText ?? i.textEdit?.newText ?? i.label).replace(/\$\{(\d+)(:[^}]*)?\}|\$(\d+)/g, (_, n, text, bare) => `#{${n ?? bare}${text ?? ''}}`)) : i.textEdit?.newText ?? i.insertText ?? i.label),
         })),
       };
     }
