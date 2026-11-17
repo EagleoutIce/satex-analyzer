@@ -5997,8 +5997,8 @@ fn definition_reaches_a_package_command_and_its_key() {
 
 /// The PDF's column handles (`doc/site/pdfedit.ts`): `columns` names each table's widths as text
 /// snapshots, with array.sty loaded (its `\@tabarray` calls `\@array` as `\@@array`), a `tabularx`
-/// too; a table nested in a cell is not one of the outer's columns. A dragged width and a text typed in the PDF
-/// print through the snapshot printer as edits of those bytes alone. A node whose text moved is refused.
+/// too; a table nested in a cell is not one of the outer's columns. A dragged width, a column letter retyped and a
+/// text typed in the PDF print through the snapshot printer as edits of those bytes alone. A node whose text moved is refused.
 #[test]
 fn pdf_widths_and_typing_print_through_snapshots() {
     let text = "\\documentclass{article}\n\\usepackage{tabularx}\n\\begin{document}\nSome words here.\n\\begin{tabular}{lp{3.26cm}|p{\\dimexpr 2cm+1pt}}\na & \\begin{tabular}{p{1cm}}x\\end{tabular} & y \\\\\n\\end{tabular}\n\\begin{tabularx}{.9\\linewidth}{lX}\nc & d \\\\\n\\end{tabularx}\n\\end{document}\n";
@@ -6022,6 +6022,9 @@ fn pdf_widths_and_typing_print_through_snapshots() {
         "{got}"
     );
     assert_eq!(tables[1]["width"]["text"], ".9\\linewidth");
+    // each column's letter with its width: what the PDF's alignment buttons rewrite
+    let specs: Vec<Value> = tables[0]["cols"].as_array().unwrap().iter().map(|c| c["spec"]["text"].clone()).collect();
+    assert_eq!(specs, [json!("l"), json!("p{3.26cm}"), json!("p{\\dimexpr 2cm+1pt}")], "{got}");
     assert!(got["linewidth"].as_f64().is_some_and(|w| w > 300.0), "{got}");
     let print = |server: &mut Server, nodes: Value| {
         let id = server.request(
@@ -6035,6 +6038,11 @@ fn pdf_widths_and_typing_print_through_snapshots() {
     let out = print(&mut server, json!([wide]));
     let written = applied(text, &uri, &json!({ "changes": { uri.clone(): out["result"]["edits"] } }), &[]);
     assert_eq!(written, text.replace("p{3.26cm}", "p{4cm}"), "{out}");
+    let mut centered = tables[0]["cols"][0]["spec"].clone();
+    centered["body"] = json!("c");
+    let out = print(&mut server, json!([centered]));
+    let written = applied(text, &uri, &json!({ "changes": { uri.clone(): out["result"]["edits"] } }), &[]);
+    assert_eq!(written, text.replace("{lp{3.26cm}", "{cp{3.26cm}"), "{out}");
     // typing at a caret: a text node of nothing becoming the typed text, at the end of a line too
     let range = json!({ "start": { "line": 3, "character": 16 }, "end": { "line": 3, "character": 16 } });
     let typed = json!([{ "kind": "text", "range": range, "text": "", "body_at": [0, 0], "body": " More" }]);
@@ -6047,6 +6055,28 @@ fn pdf_widths_and_typing_print_through_snapshots() {
     stale["body"] = json!("5cm");
     let refused = print(&mut server, json!([stale]));
     assert!(refused["error"].is_object(), "{refused}");
+    server.shutdown();
+    std::fs::remove_dir_all(dir).ok();
+}
+
+/// A table typed into the editor, never saved, has its columns: the environments are checked against the
+/// open buffer, not the file on disk. Pins the playground, whose files on disk keep the text they opened with,
+/// so the PDF's column layer found no table in an edited document.
+#[test]
+fn an_unsaved_table_has_columns() {
+    let (mut server, uri, dir) =
+        open_set("pdf-unsaved-table", "\\documentclass{article}\n\\begin{document}\nx\n\\end{document}\n", &[]);
+    let text = "\\documentclass{article}\n\\begin{document}\n\\begin{tabular}{lr}\na & b \\\\\n\\end{tabular}\n\\end{document}\n";
+    server.notify(
+        "textDocument/didChange",
+        json!({ "textDocument": { "uri": uri, "version": 2 }, "contentChanges": [{ "text": text }] }),
+    );
+    server.published();
+    let id = server.request("satex/dialogApply", json!({ "textDocument": { "uri": uri }, "kind": "columns" }));
+    let got = server.response(id)["result"].clone();
+    let aligns: Vec<Value> =
+        got["tables"][0]["cols"].as_array().into_iter().flatten().map(|c| c["align"].clone()).collect();
+    assert_eq!(aligns, [json!("l"), json!("r")], "{got}");
     server.shutdown();
     std::fs::remove_dir_all(dir).ok();
 }

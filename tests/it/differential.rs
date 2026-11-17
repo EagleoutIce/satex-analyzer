@@ -1497,6 +1497,29 @@ fn title_text_knows_where_it_was_read() {
     assert!(paragraph(&rows, "Plain")["origins"].is_null(), "{rows:?}");
 }
 
+/// Text a user macro's replacement text sets (`\\greet`'s `Hello`) names that macro and its definition's
+/// line, so typing into the output can edit the definition. The argument (`world`) names none. Pins the
+/// origins that only gave a place: the editor could not tell a body from an argument.
+#[test]
+fn macro_text_knows_its_definition() {
+    if !crate::support::installed() {
+        return;
+    }
+    let source = "\\documentclass{article}\n\\newcommand{\\greet}[1]{Hello, #1!}\n\\title{Alpha}\n\\begin{document}\n\\maketitle\n\\greet{world}\n\\end{document}\n";
+    let rows = typeset_doc("macro-origins", source, &[]);
+    let origin_of = |text: &str| {
+        let row = paragraph(&rows, text);
+        let at = row["detail"].as_str().and_then(|d| d.find(text)).expect("in detail") as u64;
+        row["origins"].as_array().into_iter().flatten().rfind(|o| o["at"].as_u64() <= Some(at)).cloned()
+    };
+    let def_line = source.lines().position(|l| l.contains("newcommand")).unwrap() as u64 + 1;
+    let hello = origin_of("Hello").expect("an origin");
+    assert_eq!((hello["def"].as_str(), hello["def_line"].as_u64()), (Some("\\greet"), Some(def_line)), "{hello}");
+    assert!(origin_of("world").is_none_or(|o| o["def"].is_null()), "{rows:?}");
+    // \title's argument is the user's text, stored by the class: no definition of the user's
+    assert!(origin_of("Alpha").is_none_or(|o| o["def"].is_null()), "{rows:?}");
+}
+
 /// A paragraph names every environment of the user's it is set in, outermost first, with the lines
 /// it begins and ends on: a view marks where each begins and ends.
 #[test]

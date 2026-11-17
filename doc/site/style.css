@@ -1601,15 +1601,32 @@ p.ts.ts-foot::before { content: ""; position: absolute; top: 0; left: 0; width: 
 .pdf .pdf-fig b { position: absolute; left: 0; bottom: 0; font: 600 .55rem/1.2 ui-monospace, Menlo, monospace; color: #fff; background: #c2410c; padding: 0 .2rem; }
 .pdf .pdf-col { z-index: 2; border-inline: 1px solid #0e7490; background: #0e74900a; pointer-events: none !important; }
 .pdf .pdf-col b { position: absolute; left: 0; top: 0; transform: translateY(-100%); font: 600 .55rem/1.3 ui-monospace, Menlo, monospace; color: #fff; background: #0e7490; padding: 0 .25rem; border-radius: 3px 3px 0 0; white-space: nowrap; pointer-events: auto; }
+.pdf .pdf-col-al { font: inherit; color: inherit; background: transparent; border: 0; border-left: 1px solid #ffffff55; margin-left: .2rem; padding: 0 .2rem; cursor: pointer; }
+.pdf .pdf-col-al[aria-pressed="true"] { background: #ffffff40; } .pdf .pdf-col-al:hover { background: #ffffff66; }
 .pdf .pdf-col-fixed { border-inline-style: dashed; } .pdf .pdf-col-fixed b { background: #475569; }
 .pdf .pdf-col-grip { position: absolute; right: -12px; top: 0; bottom: 0; width: 24px; min-height: 24px; cursor: col-resize; touch-action: none; pointer-events: auto; background: linear-gradient(90deg, transparent 11px, #0e7490 11px 13px, transparent 13px); opacity: .55; }
 .pdf .pdf-col-grip:focus-visible { opacity: 1; outline: 2px solid var(--accent); outline-offset: -2px; }
 .pdf .pdf-col-grip:hover, .pdf .pdf-col-drag .pdf-col-grip { opacity: 1; } .pdf .pdf-col-drag, .ov-stale .pdf-ov.pdf-col-drag { opacity: 1; background: #0e74901f; }
 .pdf-type-in { position: absolute; left: 0; top: 0; width: 1px; height: 1px; opacity: 0; pointer-events: none; resize: none; border: 0; padding: 0; }
 .pdf-typing .pdf-page img { cursor: text; }
-.pdf .pdf-caret { position: absolute; z-index: 3; width: 1.5px; margin-left: -.75px; background: var(--accent, #2563eb); animation: pdf-blink 1s steps(1) infinite; pointer-events: none; }
-.pdf .pdf-caret b { position: absolute; left: 3px; bottom: 100%; font: 600 .6rem/1.3 ui-monospace, Menlo, monospace; color: #fff; background: var(--accent, #2563eb); padding: 0 .25rem; border-radius: 3px; white-space: pre; animation: none; }
-@keyframes pdf-blink { 50% { opacity: 0; } } @media (prefers-reduced-motion: reduce) { .pdf .pdf-caret { animation: none; } }
+#typeset-body { position: relative; }
+/* Type mode: where typing goes, a faint tint per origin (text written in place has none) */
+:root { --orig-macro: #7c3aed24; --orig-arg: #0891b224; --orig-moved: #d9770624; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --orig-macro: #a78bfa33; --orig-arg: #22d3ee2e; --orig-moved: #fbbf242e; } }
+:root[data-theme="dark"] { --orig-macro: #a78bfa33; --orig-arg: #22d3ee2e; --orig-moved: #fbbf242e; }
+.ts-orig, .pdf .pdf-orig { position: absolute; pointer-events: none; border-radius: 2px; }
+.pdf .pdf-orig { pointer-events: auto; z-index: 1; }
+.ts-orig-macro, .pdf .pdf-orig-macro, .orig-legend .o-macro { background: var(--orig-macro); }
+.ts-orig-arg, .pdf .pdf-orig-arg, .orig-legend .o-arg { background: var(--orig-arg); }
+.ts-orig-moved, .pdf .pdf-orig-moved, .orig-legend .o-moved { background: var(--orig-moved); }
+.orig-legend { display: none; gap: .25rem; font-size: .7rem; color: var(--muted); }
+.orig-legend i { font-style: normal; padding: 0 .3rem; border-radius: 3px; }
+.ts-typing .orig-legend, .pdf-typing .orig-legend { display: inline-flex; }
+
+.ts-typing .ts-text { cursor: text; }
+.pdf .pdf-caret, #typeset-body .pdf-caret { position: absolute; z-index: 3; width: 1.5px; margin-left: -.75px; background: var(--accent, #2563eb); animation: pdf-blink 1s steps(1) infinite; pointer-events: none; }
+.pdf .pdf-caret b, #typeset-body .pdf-caret b { position: absolute; left: 3px; bottom: 100%; font: 600 .6rem/1.3 ui-monospace, Menlo, monospace; color: #fff; background: var(--accent, #2563eb); padding: 0 .25rem; border-radius: 3px; white-space: pre; animation: none; }
+@keyframes pdf-blink { 50% { opacity: 0; } } @media (prefers-reduced-motion: reduce) { .pdf .pdf-caret, #typeset-body .pdf-caret { animation: none; } }
 .pdf-live { font-size: .72rem; padding: 0 .3rem; border-radius: 4px; background: var(--sunk); }
 .pdf .pdf-block { z-index: 1; outline: 1px dashed #0e7490; pointer-events: none !important; }
 .pdf .pdf-block b { position: absolute; right: 0; top: 0; transform: translateY(-100%); font: 600 .55rem/1.2 ui-monospace, Menlo, monospace; color: #0e7490; }

@@ -193,6 +193,9 @@ conventions:  # how TeX is usually written, where the text alone does not say
     after: 24  # characters past a display its sentence's punctuation is looked for
       #! affects: output
       #! example: `after: 8`
+    inline: auto  # the inline math delimiters typing into the PDF or Typeset view writes: $, \(, or auto (the document's most used)
+      #! affects: output
+      #! example: `inline: \(` types `\(x\)`, `inline: $` types `$x$`
   csname:  # commands that do a \csname's job, the first one defined is advised
     use: [csuse, '@nameuse']  # using a control sequence by name
       #! affects: output

@@ -406,8 +406,11 @@ pub fn widths(analysis: &Analysis, doc: &Text, path: &str) -> Json {
     let tables = targets(analysis, doc, path).into_iter().filter(|t| t.kind == Kind::Table).filter_map(|t| {
         let (width, cols) = tabular::widths(&text[t.start..t.end])?;
         let node = |(a, b): tabular::Span| snapshot::text(doc, t.start + a, t.start + b);
-        let cols: Vec<Json> =
-            cols.into_iter().map(|(c, at)| json!({ "align": c.align, "width": c.arg, "node": at.map(node) })).collect();
+        // `spec`: the letter with its width, what a change of alignment rewrites
+        let cols: Vec<Json> = cols
+            .into_iter()
+            .map(|(c, at, spec)| json!({ "align": c.align, "width": c.arg, "node": at.map(node), "spec": node(spec) }))
+            .collect();
         Some(json!({ "env": t.detail, "lines": [line(t.start), line(t.end)], "width": width.map(node), "cols": cols }))
     });
     let lw = super::plugins::register_value(analysis, "linewidth").filter(|w| w.lo == w.hi);

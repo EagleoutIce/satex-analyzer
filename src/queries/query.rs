@@ -608,6 +608,15 @@ fn typeset(analysis: &Analysis) -> Vec<Record> {
     // the same for where each character was read, and which files the user wrote (no `.aux`)
     let mut last_origin: Option<Span> = None;
     let mut documents: HashMap<FileId, bool> = HashMap::default();
+    // each replacement-text token of a definition in the user's files: the macro and its line
+    let bodies: HashMap<Span, (Sym, u32)> = analysis
+        .facts
+        .defs
+        .iter()
+        .filter(|d| analysis.project_file(d.span.file))
+        .filter_map(|d| d.mac.as_ref().map(|m| (d, m)))
+        .flat_map(|(d, m)| m.replacement_text.iter().map(move |t| (t.span, (d.name, d.span.line))))
+        .collect();
     // a paragraph's end at a character lost unused, carried to the next one kept
     let mut ended: Option<u32> = None;
     // where the paragraph being set began: its `\parskip` is the one in force there
@@ -963,7 +972,12 @@ fn typeset(analysis: &Analysis) -> Vec<Record> {
                     };
                     if !follows {
                         line.push(KEY);
-                        let at = own.map(|o| format!("{}\u{1}{}:{}", analysis.file_name(o.file), o.line, o.col));
+                        let at = own.map(|o| {
+                            let def = bodies.get(&o).map_or(String::new(), |&(name, line)| {
+                                format!("\u{1}{}\u{1}{line}", analysis.interner.cs(name))
+                            });
+                            format!("{}\u{1}{}:{}{def}", analysis.file_name(o.file), o.line, o.col)
+                        });
                         keys.push_back((ORIGIN, at.unwrap_or_default().into()));
                     }
                     last_origin = own;
@@ -1314,7 +1328,10 @@ fn attach_picture(analysis: &Analysis, record: &mut Record, pictures: &[(Span, S
 fn written_by(analysis: &Analysis) -> impl FnMut(&str, Span) -> bool + '_ {
     let mut texts: HashMap<FileId, Option<String>> = HashMap::default();
     move |name: &str, at: Span| {
-        let text = texts.entry(at.file).or_insert_with(|| std::fs::read_to_string(analysis.file_name(at.file)).ok());
+        // an open buffer's text, else the file's: the editor's newest begins its environments
+        let text = texts.entry(at.file).or_insert_with(|| {
+            crate::project::overlay::read_to_string(std::path::Path::new(analysis.file_name(at.file))).ok()
+        });
         // a text read from no file (an unsaved buffer) cannot tell: kept
         let Some(text) = text.as_deref() else { return true };
         let line = text.lines().nth((at.line as usize).saturating_sub(1)).unwrap_or_default();
@@ -1515,7 +1532,8 @@ const LINE: &str = "line";
 const SITE: &str = "site";
 
 /// The kind of a [`KEY`] before a character read elsewhere in the user's files than where it was
-/// set: file, `\u{1}`, line and column; empty where the characters are read where they are set again.
+/// set: file, `\u{1}`, line and column, then `\u{1}`, macro and `\u{1}`, its definition's line when read
+/// from a definition's replacement text; empty where the characters are read where they are set again.
 const ORIGIN: &str = "origin";
 
 /// The marks waiting for their [`KEY`] in a paragraph's text: kind and value.
@@ -1775,12 +1793,18 @@ fn paragraph(analysis: &Analysis, at: Span, marked: &str, causes: Vec<Cause>, ke
                 sites.push(site);
             } else if kind == ORIGIN {
                 let mut origin = json!({ "at": offset });
-                if let Some((file, at)) = key.split_once('\u{1}') {
+                let mut parts = key.split('\u{1}');
+                if let (Some(file), Some(at)) = (parts.next(), parts.next()) {
                     let (line, col) = at.split_once(':').unwrap_or_default();
                     origin["line"] = json!(line.parse::<u32>().unwrap_or(0));
                     origin["col"] = json!(col.parse::<u32>().unwrap_or(0));
                     if file != analysis.file_name(at_file) {
                         origin["path"] = json!(file);
+                    }
+                    // read from a macro's replacement text: that macro and the line it is defined on
+                    if let (Some(name), Some(line)) = (parts.next(), parts.next()) {
+                        origin["def"] = json!(name);
+                        origin["def_line"] = json!(line.parse::<u32>().unwrap_or(0));
                     }
                 }
                 origins.push(origin);

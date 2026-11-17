@@ -1170,6 +1170,36 @@ assert.equal(typeof self.satexViews.RENDER.history, 'function', 'a history secti
     await q.flush();
     assert.deepEqual(sent, [4, 6], 'after a success the newest goes');
   }
+  // typing in the output writes what the output then shows: specials escaped in text, `$` opens math with its closer
+  // (the convention's, else the document's most used), in math characters as typed, a closer typed where it stands
+  // steps over it. Pins plain-only typing, which refused `_` and could not start a formula.
+  {
+    const type = (text, at, keys, inline) => { let t = text; for (const c of keys) { const [a, b, body, step] = E.typed(t, at, c, inline); t = t.slice(0, a) + body + t.slice(b); at = a + step; } return [t, at]; };
+    // the caret ends before the text's `b`, or inside the pair just opened
+    const ends = (want, at = want.lastIndexOf('b')) => [want, at];
+    assert.deepEqual(type('ab', 1, '_%&#{}~^\\'), ends('a\\_\\%\\&\\#\\{\\}\\textasciitilde{}\\textasciicircum{}\\textbackslash{}b'));
+    assert.deepEqual(type('ab', 1, '$x_1$ y'), ends('a$x_1$ yb'), 'math typed raw, the closer stepped over');
+    assert.deepEqual(type('ab', 1, '$x$', '\\('), ends('a\\(x\\)b'), 'the convention names the delimiters');
+    const opened = '\\(p\\) a\\(\\)b';
+    assert.deepEqual(type('\\(p\\) ab', '\\(p\\) a'.length, '$'), ends(opened, opened.lastIndexOf('\\)')), 'auto: the document uses \\(');
+    assert.deepEqual(type('ab', 1, '${x'), ends('a${x}$b', 'a${x'.length), 'a brace in math gets its closer');
+    // Backspace takes an escape or an empty pair whole, Delete the escape ahead
+    assert.deepEqual(E.erased('a\\_b', 3, true), [1, 3]);
+    assert.deepEqual(E.erased('a\\textbackslash{}b', 17, true), [1, 17]);
+    assert.deepEqual(E.erased('a$$b', 2, true), [1, 3]);
+    assert.deepEqual(E.erased('a\\%b', 1, false), [1, 3]);
+    assert.deepEqual(E.erased('abc', 2, true), [1, 2]);
+  }
+  // every column of a table on the page: an `l` or `r` column has no box, so it shares the room its placed neighbours
+  // leave (approximate). Pins the layer that showed only width columns.
+  {
+    const own = { page: 1, file: 'b.tex', line: 9, kind: '(', x: 100, y: 200, w: 300, h: 10, d: 20 };
+    const t = { env: 'tabular', lines: [5, 9], width: null, cols: [{ align: 'l', width: '' }, { align: 'p', width: '2cm', node: {} }, { align: 'r', width: '' }, { align: 'c', width: '' }] };
+    const p = { page: 1, file: 'b.tex', line: 6, kind: '[', x: 150, y: 200, w: cm(2), h: 6, d: 2 };
+    const got = E.columns([own, p], 'b.tex', t, [t]).map((c) => [c.k, +c.x.toFixed(1), +c.w.toFixed(1), !!c.approx]);
+    const after = 150 + cm(2), rest = (400 - after) / 2;
+    assert.deepEqual(got, [[0, 100, 50, true], [1, 150, +cm(2).toFixed(1), false], [2, +after.toFixed(1), +rest.toFixed(1), true], [3, +(after + rest).toFixed(1), +rest.toFixed(1), true]]);
+  }
   // a handle's key steps one snap step in the column's unit, never below one step
   assert.equal(E.stepped('3.26cm', 1, false), '3.4cm');
   assert.equal(E.stepped('3cm', -1, true), '2.99cm');

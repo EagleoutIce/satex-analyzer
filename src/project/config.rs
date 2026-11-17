@@ -1331,6 +1331,9 @@ area! {
         near: usize = 400,
         /// How far past a display the sentence's punctuation is looked for.
         after: usize = 24,
+        /// The delimiters typing into the output writes for inline math: `$`, `\(`, or `auto`,
+        /// the one the document uses most.
+        inline: String = "auto".into(),
     }
 }
 

@@ -824,6 +824,15 @@
               ],
               "x-example": "`after: 8`"
             },
+            "inline": {
+              "default": "auto",
+              "description": "the inline math delimiters typing into the PDF or Typeset view writes: $, \\(, or auto (the document's most used)",
+              "type": "string",
+              "x-affects": [
+                "output"
+              ],
+              "x-example": "`inline: \\(` types `\\(x\\)`, `inline: $` types `$x$`"
+            },
             "lexemes": {
               "default": 400000,
               "description": "source tokens a file is read for when looking for math delimiters",

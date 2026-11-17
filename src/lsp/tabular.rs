@@ -185,13 +185,13 @@ pub(super) fn extent(text: &str, at: usize, name: &str) -> Option<(usize, usize)
 /// The columns and separators of a spec (`|l|c@{}S[table-format=1.2]`).
 pub fn parse_spec(spec: &str) -> (Vec<Col>, Vec<String>) {
     let (cols, seps) = spec_at(spec);
-    (cols.into_iter().map(|(c, _)| c).collect(), seps)
+    (cols.into_iter().map(|(c, _, _)| c).collect(), seps)
 }
 
 /// The bytes `from..to` of a text.
 pub type Span = (usize, usize);
-/// A column with the bytes of its argument.
-pub type Spanned = (Col, Option<Span>);
+/// A column with the bytes of its argument and of its letter with that argument.
+pub type Spanned = (Col, Option<Span>, Span);
 
 /// As [`parse_spec`], each column with its argument's bytes in `spec`; a `*{n}{…}` repeats one.
 fn spec_at(spec: &str) -> (Vec<Spanned>, Vec<String>) {
@@ -220,7 +220,7 @@ fn spec_at(spec: &str) -> (Vec<Spanned>, Vec<String>) {
             }
             '<' => {
                 let Some((a, e)) = arg(i + 1) else { break };
-                if let Some((col, _)) = cols.last_mut() {
+                if let Some((col, _, _)) = cols.last_mut() {
                     Col::post_push(col, &a);
                 }
                 i = e;
@@ -231,14 +231,15 @@ fn spec_at(spec: &str) -> (Vec<Spanned>, Vec<String>) {
                 let (more, more_seps) = spec_at(&body);
                 for _ in 0..n.trim().parse::<usize>().unwrap_or(1) {
                     seps.last_mut().unwrap().push_str(&more_seps[0]);
-                    for (k, (col, at)) in more.iter().enumerate() {
-                        cols.push((col.clone(), at.map(|(a, b)| (e + 1 + a, e + 1 + b))));
+                    for (k, (col, at, (x, y))) in more.iter().enumerate() {
+                        cols.push((col.clone(), at.map(|(a, b)| (e + 1 + a, e + 1 + b)), (e + 1 + x, e + 1 + y)));
                         seps.push(more_seps[k + 1].clone());
                     }
                 }
                 i = end;
             }
             _ => {
+                let start = i;
                 i += c.len_utf8();
                 let mut col = Col { align: c.to_string(), pre: std::mem::take(&mut pre), ..Default::default() };
                 let (open, wants) = (s[i..].chars().next(), matches!(c, 'p' | 'm' | 'b' | 'w' | 'W'));
@@ -250,7 +251,7 @@ fn spec_at(spec: &str) -> (Vec<Spanned>, Vec<String>) {
                     at = wants.then_some((i + 1, e - 1));
                     i = e;
                 }
-                cols.push((col, at));
+                cols.push((col, at, (start, i)));
                 seps.push(String::new());
             }
         }
@@ -358,7 +359,8 @@ fn head(s: &str) -> Option<(String, Vec<Span>, Option<String>, usize)> {
 pub fn widths(text: &str) -> Option<(Option<Span>, Vec<Spanned>)> {
     let (_, mut groups, _, _) = head(text)?;
     let (a, b) = groups.pop()?;
-    let cols = spec_at(&text[a..b]).0.into_iter().map(|(c, at)| (c, at.map(|(x, y)| (a + x, a + y))));
+    let cols =
+        spec_at(&text[a..b]).0.into_iter().map(|(c, at, (x, y))| (c, at.map(|(p, q)| (a + p, a + q)), (a + x, a + y)));
     Some((groups.pop(), cols.collect()))
 }
 
@@ -807,7 +809,7 @@ mod tests {
         fn at(t: &str) -> (Option<&str>, Vec<(String, Option<&str>)>) {
             let (own, cols) = widths(t).unwrap();
             let span = |s: Option<Span>| s.map(|(a, b)| &t[a..b]);
-            (span(own), cols.into_iter().map(|(c, s)| (c.align, span(s))).collect())
+            (span(own), cols.into_iter().map(|(c, s, _)| (c.align, span(s))).collect())
         }
         let nested =
             "\\begin{tabular}{lp{3.26cm}|p{2cm}}\na & b & \\begin{tabular}{p{1cm}}x\\end{tabular}\\\\\n\\end{tabular}";
@@ -830,5 +832,20 @@ mod tests {
         assert_eq!(cols[0].1, cols[1].1);
         // a mutation: an unclosed spec has no widths past the break, and nothing panics
         assert!(widths("\\begin{tabular}{p{1cm").is_none_or(|(_, c)| c.is_empty()));
+    }
+
+    /// Each column's letter with its width, what an alignment change in the PDF rewrites: no `>{…}`,
+    /// `<{…}` or rule around it, a repeat's columns the one spec inside. Pins the spans the PDF's column
+    /// layer writes `l`/`c`/`r` or `p`/`m`/`b` into.
+    #[test]
+    fn column_specs_are_the_bytes_an_alignment_change_rewrites() {
+        let specs = |t: &str| -> Vec<String> {
+            widths(t).unwrap().1.into_iter().map(|(_, _, (a, b))| t[a..b].to_string()).collect()
+        };
+        assert_eq!(
+            specs("\\begin{tabular}{|l|>{\\bfseries}c<{x}|p{2cm}@{}r}\\end{tabular}"),
+            ["l", "c", "p{2cm}", "r"]
+        );
+        assert_eq!(specs("\\begin{tabular}{*{2}{m{1cm}}l}\\end{tabular}"), ["m{1cm}", "m{1cm}", "l"]);
     }
 }

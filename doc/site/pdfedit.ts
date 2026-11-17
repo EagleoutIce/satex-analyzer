@@ -4,7 +4,7 @@ export {};
 /** A SyncTeX record as playground.js parses it, in bp from the page's top left. */
 type Box = { page: number; file: string; line: number; kind: string; x: number; y: number; w: number; h: number; d: number };
 /** A table of `satex/dialogApply` kind `columns` (src/lsp/dialogs.rs). */
-type Table = { env: string; lines: [number, number]; width: unknown; cols: { align: string; width: string; node: SnapNode | null }[] };
+type Table = { env: string; lines: [number, number]; width: unknown; cols: { align: string; width: string; node: SnapNode | null; spec?: SnapNode }[] };
 /** A column found on a page: its index, where its cells' boxes stand, how wide they are, in bp. */
 type Placed = { k: number; page: number; x: number; w: number; t: number; d: number; n: number };
 /** A width as written that a drag may rewrite: a length (`3cm`) or a share of a width (`.3\linewidth`). */
@@ -22,6 +22,9 @@ declare global {
       editable(text: string, from: number, to: number, keys: [number, number][]): string | null;
       spans(line: string, word: string): [number, number][];
       sender<V>(send: (v: V) => Promise<boolean>): { put(v: V): void; flush(): Promise<void> };
+      typed(text: string, at: number, c: string, inline?: string): [number, number, string, number];
+      erased(text: string, at: number, back: boolean): [number, number];
+      columns(boxes: Box[], file: string, table: Table, tables: Table[]): (Placed & { approx?: boolean })[];
     };
   }
 }
@@ -64,6 +67,24 @@ declare global {
       if (g) found[k] = { ...g, k };
     });
     return found.filter((g): g is Placed => !!g);
+  }
+  /** Every column of `table` on the pages: placed ones as `place` finds them, the others (`l`, `c`, `r`, whose cells
+   * SyncTeX records no box for) approximate, `approx`: the room between their placed neighbours (else the table's
+   * edges) shared evenly. A lie where cells differ in width, good enough to point at and to retype a column's letter. */
+  function columns(boxes: Box[], file: string, table: Table, tables: Table[]): (Placed & { approx?: boolean })[] {
+    const box = extent(boxes, file, table);
+    if (!box) return [];
+    const got = new Map(place(boxes, file, table, tables).map((g) => [g.k, g]));
+    const out: (Placed & { approx?: boolean })[] = [];
+    for (let k = 0; k < table.cols.length;) {
+      if (got.has(k)) { out.push(got.get(k)!); k++; continue; }
+      let e = k;
+      while (e < table.cols.length && !got.has(e)) e++;
+      const lo = got.get(k - 1), hi = got.get(e), l = lo ? lo.x + lo.w : box.x, r = hi ? hi.x : box.x + box.w, w = (r - l) / (e - k);
+      for (let j = k; j < e; j++) out.push({ k: j, page: box.page, x: l + (j - k) * w, w, t: box.y - box.h, d: box.y + box.d, n: 0, approx: true });
+      k = e;
+    }
+    return out;
   }
   /** The box of the whole table: the widest SyncTeX records on its `\end` line. */
   const extent = (boxes: Box[], file: string, table: Table) => boxes.filter((r) => r.file === file && r.line === table.lines[1] && '[('.includes(r.kind) && r.w > 0 && r.h + r.d > 0).sort((p, q) => q.w - p.w)[0] ?? null;
@@ -143,6 +164,38 @@ declare global {
     const re = new RegExp(`(?<![\\p{L}\\p{N}\\\\])${bare.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![\\p{L}\\p{N}])`, 'gu');
     return [...line.matchAll(re)].map((m) => [m.index, m.index + bare.length]);
   }
+  /** A character typed as text, written the LaTeX way so the output shows it: `_` as `\_`, `\` as `\textbackslash{}`. */
+  const ESCAPED: Record<string, string> = { '\\': '\\textbackslash{}', '~': '\\textasciitilde{}', '^': '\\textasciicircum{}' };
+  const escaped = (c: string) => /[\\&%#_{}~^]/.test(c) ? ESCAPED[c] ?? `\\${c}` : c;
+  /** The inline math delimiters `text` uses most: `\(` where it has more `\(` than `$`, else `$`. */
+  const inlineOf = (text: string) => (text.match(/\\\(/g)?.length ?? 0) > (text.match(/(?<![\\$])\$(?!\$)/g)?.length ?? 0) ? '\\(' : '$';
+  /** What typing `c` at `at` of `text` writes so the source stays compilable: `[from, to, body, caret]`, the text
+   * `from..to` replaced by `body` and the caret `caret` past `from`. In text a special character is escaped and `$`
+   * opens math with its closer (`inline`: `$`, `\(` or `auto`, the document's most used). In math a character goes
+   * in as typed, `{` with its `}`, and a closer typed where it stands steps over it. */
+  function typed(text: string, at: number, c: string, inline = 'auto'): [number, number, string, number] {
+    const math = /math/.test(editable(text, at, at, []) ?? '');
+    if (!math) {
+      if (c !== '$') { const body = escaped(c); return [at, at, body, body.length]; }
+      const open = inline === '$' || inline === '\\(' ? inline : inlineOf(text);
+      return open === '$' ? [at, at, '$$', 1] : [at, at, '\\(\\)', 2];
+    }
+    for (const close of c === '$' ? ['$', '\\)'] : c === '}' ? ['}'] : []) if (text.startsWith(close, at)) return [at, at, '', close.length];
+    return c === '{' ? [at, at, '{}', 1] : [at, at, c, c.length];
+  }
+  /** What Backspace (`back`) or Delete takes at `at`: `[from, to]`, an escape or an empty pair (`$$`, `{}`, `\(\)`) whole. */
+  function erased(text: string, at: number, back: boolean): [number, number] {
+    for (const pair of ['$$', '{}', '\\(\\)']) {
+      const h = pair.length / 2;
+      if (text.slice(at - h, at + h) === pair) return [at - h, at + h];
+    }
+    if (back) {
+      const m = /\\(?:textbackslash|textasciitilde|textasciicircum)\{\}$|\\[&%#_{}$]$/.exec(text.slice(Math.max(0, at - 20), at));
+      return m ? [at - m[0].length, at] : [at - 1, at];
+    }
+    const m = /^\\(?:textbackslash|textasciitilde|textasciicircum)\{\}|^\\[&%#_{}$]/.exec(text.slice(at, at + 20));
+    return [at, at + (m ? m[0].length : 1)];
+  }
   /** Sends the newest value put, one at a time: a value put while one is under way waits and the latest wins.
    * A send that fails stops there (no retry loop): the next `put` or `flush` sends again. */
   function sender<V>(send: (v: V) => Promise<boolean>) {
@@ -156,5 +209,5 @@ declare global {
     };
     return { put(v: V) { next = { v }; run(); }, async flush() { while (busy) await busy; await run(); } };
   }
-  self.satexPdfEdit = { place, extent, room, form, resized, stepped, plain, editable, spans, sender };
+  self.satexPdfEdit = { place, extent, room, form, resized, stepped, plain, editable, spans, sender, typed, erased, columns };
 })();

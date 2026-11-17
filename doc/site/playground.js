@@ -1665,12 +1665,16 @@
     if (!rows || target !== uri()) return;
     typesetRows = rows;
     shownFor(typesetBody, target, of);
-    if (pdfOverlayOn?.findings || pdfOverlayOn?.glue) pdfOverlay();
+    if (pdfOverlayOn?.findings || pdfOverlayOn?.glue || pdfTyping) pdfOverlay();
     const lines = state.texts[state.file]?.split('\n') ?? [];
     const html = cards.typesetView(rows, { file: state.file, closed: tsClosed, plural, lineOf: (n) => lines[n - 1] });
     typesetBody.innerHTML = html || '<p class="muted">The document sets no paragraph.</p>';
     typesetFindings();
     typesetFollow();
+    if (pdfCaret?.view === 'ts') pdfCaretDraw();
+    tsOriginsDraw();
+    // the tables' columns as now written, for the PDF's column layer
+    if (pdf?.boxes) pdfColsAsk();
   }
   cards.typesetWire(typesetBody);
   typesetBody.addEventListener('click', (e) => {
@@ -1683,6 +1687,7 @@
       if (name) openPlace(name, d.range.start, d.range.end); else editor.focus({ start: d.range.start, end: d.range.end });
       return;
     }
+    if (tsTyping && e.target.closest('p.ts[data-line] .ts-text')) return tsCaretAt(e);
     const p = e.target.closest('.ts, .ts-envmark');
     if (!p) return;
     const at = { line: +p.dataset.line - 1, character: Math.max(+(p.dataset.col ?? 1) - 1, 0) };
@@ -1691,6 +1696,85 @@
       openPlace(name ?? p.dataset.path, at);
     } else editor.focus({ start: at, end: at });
   });
+  /** Typing in the Typeset view, as in the PDF: on, a click on a word puts the caret at its place in the source. */
+  var tsTyping = true;
+  $('ts-type').onclick = () => {
+    tsTyping = !tsTyping;
+    $('ts-type').setAttribute('aria-pressed', String(tsTyping));
+    $('play-typeset').classList.toggle('ts-typing', tsTyping);
+    if (!tsTyping && pdfCaret?.view === 'ts') pdfCaretOff();
+    tsOriginsDraw();
+  };
+  /** The text node and offset at index `at` of `box`'s text. */
+  const tsNodeAt = (box, at) => {
+    const walk = document.createTreeWalker(box, NodeFilter.SHOW_TEXT);
+    for (let n = walk.nextNode(), seen = 0; n; seen += n.length, n = walk.nextNode()) if (at <= seen + n.length) return [n, at - seen];
+    return null;
+  };
+  const tsWords = (text) => [...text.matchAll(/[\p{L}\p{N}]+/gu)];
+  /** The paragraph `p` of the view as the run set it: its row of `typesetRows`. */
+  const tsRowOf = (p) => (typesetRows ?? []).find((r) => String(r.line) === p.dataset.line && String(r.col) === p.dataset.col && String(r.path ?? '') === p.dataset.path);
+  /** The caret at a click in the Typeset view: the word under it, its characters' sites and origins from the run. */
+  function tsCaretAt(e) {
+    const p = e.target.closest('p.ts[data-line]'), box = p?.querySelector('.ts-text'), row = p && tsRowOf(p);
+    const pos = document.caretPositionFromPoint?.(e.clientX, e.clientY) ?? (() => { const r = document.caretRangeFromPoint?.(e.clientX, e.clientY); return r && { offsetNode: r.startContainer, offset: r.startOffset }; })();
+    if (!row || !pos || !box.contains(pos.offsetNode) || pos.offsetNode.nodeType !== Node.TEXT_NODE) return toast('Click on a word to type there');
+    const range = document.createRange();
+    range.setStart(box, 0);
+    range.setEnd(pos.offsetNode, pos.offset);
+    const idx = range.toString().length, all = box.textContent, w = tsWords(all).find((m) => m.index <= idx && idx <= m.index + m[0].length);
+    if (!w) return toast('Click on a word to type there');
+    // the same word's occurrences before it in the view and in the run's row: the j-th is the one clicked
+    const whole = (t) => tsWords(t).filter((m) => m[0] === w[0]).map((m) => m.index);
+    const j = whole(all).indexOf(w.index), chars = rowChars(row), seen = whole(chars.map((ch) => ch.c).join(''));
+    const at = seen[Math.min(j, seen.length - 1)];
+    if (at == null) return toast(`“${w[0]}” has no source place in the run`);
+    const ch = chars[at], file = Object.keys(state.texts).find((n) => ch.path.endsWith(n));
+    if (!file) return toast(`Not typed here: “${w[0]}” is set from ${ch.path.split('/').pop() || 'code'} outside your files`);
+    // on a line, the occurrences before it read there
+    const nth = (n) => seen.filter((a) => a < at && chars[a].line === n && !chars[a].from).length;
+    const read = () => readOf(ch.from, chars[at + w[0].length - 1].from);
+    caretPut({ view: 'ts', p: { path: p.dataset.path, line: p.dataset.line, col: p.dataset.col }, idx: w.index }, file, ch.line, w[0], idx - w.index, nth, read, !!ch.from);
+  }
+  /** In Type mode, the text not written where it is set, tinted by where typing would go (ORIGIN_TIPS). */
+  function tsOriginsDraw() {
+    typesetBody.querySelectorAll('.ts-orig').forEach((x) => x.remove());
+    if (!tsTyping) return;
+    const base = typesetBody.getBoundingClientRect(), html = [];
+    for (const p of typesetBody.querySelectorAll('p.ts[data-line]')) {
+      const row = tsRowOf(p), box = p.querySelector('.ts-text');
+      if (!row?.origins || !box) continue;
+      const chars = rowOrigins(row), runs = originRuns(chars), at = box.textContent.indexOf(chars.map((ch) => ch.c).join(''));
+      // the view's text and the run's characters line up only where the view adds nothing between them
+      if (!runs.length || at < 0) continue;
+      for (const [kind, a, b] of runs) {
+        const from = tsNodeAt(box, at + a), to = tsNodeAt(box, at + b + 1);
+        if (!from || !to) continue;
+        const r = document.createRange();
+        r.setStart(...from); r.setEnd(...to);
+        for (const q of r.getClientRects()) html.push(`<span class="ts-orig ts-orig-${kind}" style="left:${q.left - base.left + typesetBody.scrollLeft}px;top:${q.top - base.top + typesetBody.scrollTop}px;width:${q.width}px;height:${q.height}px"></span>`);
+      }
+    }
+    typesetBody.insertAdjacentHTML('beforeend', html.join(''));
+  }
+  /** The caret over the Typeset view: in its word as the last run set it, the word as now written beside it while the view lags. */
+  function tsCaretDraw() {
+    const c = pdfCaret, q = (v) => CSS.escape(v);
+    document.querySelectorAll('.pdf-caret').forEach((x) => x.remove());
+    const p = typesetBody.querySelector(`p.ts[data-path="${q(c.p.path)}"][data-line="${q(c.p.line)}"][data-col="${q(c.p.col)}"]`), box = p?.querySelector('.ts-text');
+    if (!box || state.file !== c.file) return;
+    const text = editor.text(), lo = Math.max(0, c.at - 64);
+    const m = [...text.slice(lo, c.at + 64).matchAll(/[\p{L}\p{N}]+/gu)].find((m) => lo + m.index <= c.at && c.at <= lo + m.index + m[0].length);
+    // the word around the caret, found again in the paragraph: the nearest one so spelled
+    const near = m && tsWords(box.textContent).filter((x) => x[0] === m[0]).sort((a, b) => Math.abs(a.index - c.idx) - Math.abs(b.index - c.idx))[0];
+    if (near) c.idx = near.index;
+    const into = m ? c.at - lo - m.index : 0, spot = tsNodeAt(box, c.idx + (near ? into : 0));
+    if (!spot) return;
+    const r = document.createRange();
+    r.setStart(...spot);
+    const rect = r.getClientRects()[0] ?? spot[0].parentElement.getBoundingClientRect(), base = typesetBody.getBoundingClientRect();
+    typesetBody.insertAdjacentHTML('beforeend', `<span class="pdf-caret${near ? '' : ' pdf-caret-stale'}" style="left:${rect.left - base.left + typesetBody.scrollLeft}px;top:${rect.top - base.top + typesetBody.scrollTop}px;height:${rect.height}px">${!near && m ? `<b>${escape(m[0])}</b>` : ''}</span>`);
+  }
 
   async function show(target, ds, of = null) {
     const actions = await lsp('textDocument/codeAction', { textDocument: { uri: target },
@@ -5288,6 +5372,8 @@
   pdfBody.addEventListener('mousedown', (e) => { if (e.detail > 1 && e.target.closest('.pdf-pages')) e.preventDefault(); });
   pdfBody.addEventListener('click', (e) => {
     if (e.target.closest('.pdf-owner button')) { compile(); return; }
+    const al = e.target.closest('.pdf-col-al');
+    if (al) { e.preventDefault(); pdfColAlign(al); return; }
     if ($('play-pdf').classList.contains('pdf-other')) { e.preventDefault(); return; }
     const chip = e.target.closest('.pdf-key');
     if (chip) { e.preventDefault(); pdfToTarget(pdfKeys[+chip.dataset.k]); return; }
@@ -5700,30 +5786,54 @@
     let best = null, near = 4;
     for (const r of bare ? typesetRows ?? [] : []) {
       if (!r.sites || !r.origins) continue;
-      const chars = [], marked = [...(r.marked ?? r.detail ?? '')];
-      let k = 0, o = -1, i = 0, note = false, math = false;
-      for (let j = 0; j < marked.length; j++) {
-        const c = marked[j];
-        if (c === '\uE000') { note = true; math = marked[j + 1] === '\u0006'; continue; }
-        if (c === '\uE001') { note = math = false; continue; }
-        if (math) continue;
-        while (k + 1 < r.sites.length && r.sites[k + 1].at <= i) k++;
-        while (o + 1 < r.origins.length && r.origins[o + 1].at <= i) o++;
-        const s = r.sites[k], g = r.origins[o];
-        if (!note && s && s.at <= i && String(s.path ?? r.path ?? '').endsWith(file)) {
-          chars.push([c, s.line, g?.line ? { path: g.path ?? r.path, line: g.line, col: g.col + i - g.at } : null]);
-        }
-        i++;
-      }
-      const text = chars.map((c) => c[0]).join('');
+      const chars = rowChars(r).filter((ch) => ch.path.endsWith(file)), text = chars.map((ch) => ch.c).join('');
       for (let at = text.indexOf(bare); at >= 0; at = text.indexOf(bare, at + 1)) {
-        const first = chars[at], last = chars[at + bare.length - 1], d = Math.abs(first[1] - line);
-        const name = first[2] && last[2] && Object.keys(state.texts).find((n) => String(first[2].path).endsWith(n));
-        if (name && d < near) { near = d; best = { file: name, line: first[2].line, col: first[2].col, end: [last[2].line, last[2].col] }; }
+        const first = chars[at], d = Math.abs(first.line - line), got = readOf(first.from, chars[at + bare.length - 1].from);
+        if (got && d < near) { near = d; best = got; }
       }
     }
     return best;
   }
+  /** Where the characters `first..last` of a row were read (rowChars' `from`), as readAt answers: null outside the open files. */
+  function readOf(first, last) {
+    const file = first && last && Object.keys(state.texts).find((n) => String(first.path).endsWith(n));
+    return file ? { file, line: first.line, col: first.col, end: [last.line, last.col], def: first.def, defLine: first.defLine } : null;
+  }
+  /** Row `r`'s characters with a source site, math left out: each with its site's path and line and, where the run read
+   * it elsewhere in the user's files (`origins`), that place and the macro whose definition holds it. */
+  function rowChars(r) {
+    const chars = [], marked = [...(r.marked ?? r.detail ?? '')], sites = r.sites ?? [], origins = r.origins ?? [];
+    let k = 0, o = -1, i = 0, note = false, math = false;
+    for (let j = 0; j < marked.length; j++) {
+      const c = marked[j];
+      if (c === '') { note = true; math = marked[j + 1] === '\u0006'; continue; }
+      if (c === '') { note = math = false; continue; }
+      if (math) continue;
+      while (k + 1 < sites.length && sites[k + 1].at <= i) k++;
+      while (o + 1 < origins.length && origins[o + 1].at <= i) o++;
+      const s = sites[k], g = origins[o];
+      if (!note && s && s.at <= i) chars.push({ c, path: String(s.path ?? r.path ?? ''), line: s.line, col: s.col + (s.same ? 0 : i - s.at), from: g?.line ? { path: g.path ?? r.path, line: g.line, col: g.col + i - g.at, def: g.def, defLine: g.def_line } : null });
+      i++;
+    }
+    return chars;
+  }
+  /** What a typing caret on each of row `r`'s characters edits (rowChars' with `kind`): `macro` a definition's text,
+   * `moved` text read elsewhere in the user's files (`\title`'s argument), `arg` an argument of a macro whose text
+   * stands beside it (approximate: set at the macro's site, not read in place), `text` text written where it is set. */
+  function rowOrigins(r) {
+    const chars = rowChars(r), calls = new Set(chars.filter((ch) => ch.from?.def).map((ch) => `${ch.line}:${ch.col}`));
+    // a cell is set at its row's end, read in place: no move
+    const cell = (a, b) => (pdfCols?.tables ?? []).some((t) => t.lines[0] <= Math.min(a, b) && Math.max(a, b) <= t.lines[1]);
+    for (const ch of chars) ch.kind = ch.from?.def ? 'macro' : ch.from && !cell(ch.line, ch.from.line) ? 'moved' : calls.has(`${ch.line}:${ch.col}`) ? 'arg' : 'text';
+    return chars;
+  }
+  /** The runs of row `r` not written in place, as [kind, first, last] indices of rowOrigins' characters, spaces trimmed. */
+  const originRuns = (chars) => {
+    const runs = [];
+    chars.forEach((ch, i) => { if (ch.kind === 'text' || !ch.c.trim()) return; const last = runs.at(-1); if (last && last[0] === ch.kind && last[2] >= i - 2 && chars.slice(last[2] + 1, i).every((x) => x.kind === ch.kind)) last[2] = i; else runs.push([ch.kind, i, i]); });
+    return runs;
+  };
+  const ORIGIN_TIPS = { macro: "a macro's definition: typing there changes every use", arg: "a macro's argument: typing there edits this use", moved: 'read elsewhere in your files: typing goes there' };
   /** The characters of row `r` whose source site (the run's `sites`: where the user's file was read when it was set)
    * `wanted` takes: their text, and the first and last one's offset in `detail`. */
   function siteHits(r, file, wanted) {
@@ -5887,14 +5997,31 @@
         if (best) box(best.page, 'pdf-fig', best.x, best.y - best.h, best.x + best.w, best.y + best.d, `bounding box of ${o.key}, ends at line ${o.line} of ${occFile(o)}`, `<b>${escape(o.key)}</b>`);
       }
     }
-    if (pdfOverlayOn.widths && pdfCols?.file === state.file) {
+    if (pdfCols?.file === state.file) {
       for (const [i, t] of pdfCols.tables.entries()) {
-        for (const c of self.satexPdfEdit.place(pdf.boxes ?? [], state.file, t, pdfCols.tables)) {
+        // the layer shows every table, a hover the one under the pointer
+        if (!pdfOverlayOn.widths && i !== pdfHoverTable) continue;
+        for (const c of PE.columns(pdf.boxes ?? [], state.file, t, pdfCols.tables)) {
           const col = t.cols[c.k], can = !!col.node && !!self.satexPdfEdit.form(col.width), d = pdfDrag?.t === i && pdfDrag.k === c.k ? pdfDrag : null;
           // the width as now written, before the next build places it
           const len = can && self.satexLayers.length(col.width), w = d?.w ?? (len ? len.pt * 72 / 72.27 : c.w), shown = d?.text ?? (can ? col.width : `${+(c.w * 2.54 / 72).toFixed(2)}cm`);
           const why = can ? `column ${c.k + 1} of ${t.env}: ${col.width}. Drag the edge to rewrite it (Shift: finer)` : `column ${c.k + 1} of ${t.env}, ${lengths(c.w * 72.27 / 72)}: ${col.align === 'X' ? 'tabularx computes it from the table width' : `written as ${col.width}, edit it in the source`}`;
-          box(c.page, `pdf-col${can ? '' : ' pdf-col-fixed'}${d ? ' pdf-col-drag' : ''}`, c.x, c.t - 1, c.x + w, c.d + 1, why, `<b>${escape(shown)}</b>${can ? `<i class="pdf-col-grip" data-t="${i}" data-k="${c.k}" data-w="${c.w}" role="slider" tabindex="0" aria-label="width of column ${c.k + 1}" aria-valuenow="${+(w * 2.54 / 72).toFixed(2)}" aria-valuetext="${escape(shown)}"></i>` : ''}`);
+          // the column's letter and the ones it may become: l c r, or p m b for a column with a width
+          const kin = col.spec && ['lcr', 'pmb'].find((s) => s.includes(col.align)), al = kin ? [...kin].map((a) => `<button type="button" class="pdf-col-al" data-t="${i}" data-k="${c.k}" data-a="${a}" aria-pressed="${a === col.align}" title="column ${c.k + 1}: ${ALIGNS[a]}">${a}</button>`).join('') : '';
+          const head = `${escape(col.width ? `${col.align}{${shown}}` : `${col.align} ${c.approx ? '≈' : ''}${+(c.w * 2.54 / 72).toFixed(2)}cm`)}${al}`;
+          box(c.page, `pdf-col${can ? '' : ' pdf-col-fixed'}${d ? ' pdf-col-drag' : ''}`, c.x, c.t - 1, c.x + w, c.d + 1, c.approx ? `${why} (place approximate)` : why, `<b>${head}</b>${can ? `<i class="pdf-col-grip" data-t="${i}" data-k="${c.k}" data-w="${c.w}" role="slider" tabindex="0" aria-label="width of column ${c.k + 1}" aria-valuenow="${+(w * 2.54 / 72).toFixed(2)}" aria-valuetext="${escape(shown)}"></i>` : ''}`);
+        }
+      }
+    }
+    // in Type mode, the words not written where they are set, tinted by where typing would go
+    if (pdfTyping) {
+      for (const r of typesetRows ?? []) {
+        if (!r.origins) continue;
+        const chars = rowOrigins(r);
+        for (const [kind, a, b] of originRuns(chars)) {
+          const file = Object.keys(state.texts).find((n) => chars[a].path.endsWith(n)), text = chars.slice(a, b + 1).map((ch) => ch.c).join('');
+          const where = file && pdfWordsOf(pdfRects(file, chars[a].line, true), text);
+          for (const q of where || []) box(q.page, `pdf-orig pdf-orig-${kind}`, q.l - 0.5, q.t - 0.5, q.r + 0.5, q.d + 1, `${text}: ${ORIGIN_TIPS[kind]}${chars[a].from?.def ? ` (${chars[a].from.def}, line ${chars[a].from.defLine})` : ''}`);
         }
       }
     }
@@ -5966,7 +6093,7 @@
   /* Editing in the PDF (pdfedit.ts): a column's width dragged at its edge, plain text typed at a caret. Both write
    * through the snapshot printer (src/lsp/snapshot.rs) onto the text they were printed for; a drag is one undo step. */
   /** The open file's tables with the widths a drag rewrites (src/lsp/dialogs.rs `columns`), `\linewidth` in pt. */
-  var pdfCols = null, pdfDrag = null, pdfTyping = false, pdfCaret = null, pdfKeep = null; // var: a run may end before these lines ran
+  var pdfCols = null, pdfDrag = null, pdfTyping = true, pdfCaret = null, pdfKeep = null; // var: a run may end before these lines ran
   /** The last build's round trip, from Compile to its first page shown: live typing needs it short. */
   var pdfRound = { start: 0, ms: Infinity };
   const LIVE_MS = 300;
@@ -6071,6 +6198,35 @@
     pdfDragSet(PE.stepped(d.col, dir, e.shiftKey));
     pdfDragEnd();
   });
+  /** What each column letter does, for the column layer's buttons. */
+  const ALIGNS = { l: 'left', c: 'centered', r: 'right', p: 'top (paragraph)', m: 'middle (paragraph)', b: 'bottom (paragraph)' };
+  /** The table under the pointer, its column layer shown while the widths layer is off. */
+  var pdfHoverTable = -1;
+  let pdfHoverFrame = 0;
+  pdfBody.addEventListener('pointermove', (e) => {
+    if (pdfHoverFrame || pdfDrag) return;
+    pdfHoverFrame = requestAnimationFrame(() => {
+      pdfHoverFrame = 0;
+      // over a column's own label the table stays
+      if (e.target.closest?.('.pdf-col')) return;
+      const img = e.target.closest?.('.pdf-page')?.querySelector('img'), page = +(img?.parentElement.dataset.page ?? 0);
+      let hit = -1;
+      // the columns as written, asked once a table may be under the pointer
+      if (img && pdfCols?.file !== state.file) pdfColsAsk();
+      if (img?.naturalWidth && pdfCols?.file === state.file && pdf?.boxes) {
+        const [w, h] = pageSize(img), r = img.getBoundingClientRect(), x = (e.clientX - r.left) / r.width * w, y = (e.clientY - r.top) / r.height * h;
+        // the label row above the table counts as the table
+        hit = pdfCols.tables.findIndex((t) => { const b = PE.extent(pdf.boxes, state.file, t); return b && b.page === page && x >= b.x && x <= b.x + b.w && y >= b.y - b.h - 14 && y <= b.y + b.d; });
+      }
+      if (hit !== pdfHoverTable) { pdfHoverTable = hit; pdfOverlay(); }
+    });
+  });
+  /** A column's letter rewritten from the layer: `l`, `c`, `r`, or `p`, `m`, `b` keeping its width. */
+  async function pdfColAlign(b) {
+    const t = pdfCols?.tables[+b.dataset.t], col = t?.cols[+b.dataset.k];
+    if (!col?.spec || col.align === b.dataset.a) return;
+    if (await pdfWrite(uri(), col.spec, `${b.dataset.a}${col.width ? `{${col.width}}` : ''}`, { userEvent: 'input.type' })) { pdfColsAsk(); pdfRebuild(true); }
+  }
   /** Typing in the PDF: on, a click on a word puts the caret there; off, a click opens its source. */
   const pdfTypeButton = $('pdf-type'), pdfTypeIn = Object.assign(document.createElement('textarea'), { className: 'pdf-type-in', ariaLabel: 'typed into the PDF', spellcheck: false });
   $('play-pdf').append(pdfTypeIn);
@@ -6080,6 +6236,7 @@
     $('play-pdf').classList.toggle('pdf-typing', pdfTyping);
     if (!pdfTyping) pdfCaretOff();
     pdfLiveShow();
+    pdfOverlay();
   };
   /** What typing does with this build's speed, beside the Type button. */
   function pdfLiveShow() {
@@ -6089,7 +6246,8 @@
     el.textContent = pdfLive() ? 'live' : 'on pause';
     el.title = pdfLive() ? `The pages follow each key: a build takes ${ms}` : `The pages follow once typing rests (or Enter): a build takes ${ms}, live needs ${LIVE_MS} ms or less`;
   }
-  const pdfCaretOff = () => { pdfCaret = null; pdfBody.querySelectorAll('.pdf-caret').forEach((c) => c.remove()); };
+  pdfLiveShow();
+  const pdfCaretOff = () => { pdfCaret = null; document.querySelectorAll('.pdf-caret').forEach((c) => c.remove()); };
   pdfTypeIn.addEventListener('blur', pdfCaretOff);
   /** Line starts of the open text, once per version. */
   let pdfStarts = { v: -1, starts: [0] };
@@ -6111,27 +6269,48 @@
   async function pdfCaretAt(page, x, y) {
     const word = pdfWordUnder(page, x, y), hit = word && pdfSource(page, x, y, word);
     if (!hit) return toast('Click on a word to type there');
-    if (hit.file !== state.file) await openPlace(hit.file, { line: hit.line - 1, character: 0 });
-    if (hit.file !== state.file) return toast(`${hit.file} cannot be opened here`);
+    // the same words before it on the page set from line n
+    const nth = (n) => pdfWordsOn(page).filter((w) => pdfSame(w[5], word[5]) && (w[4] < word[2] || Math.abs(w[4] - word[4]) < 1 && w[1] < word[1]) && pdfSource(page, w[1] + 1, w[4] - 1, w)?.line === n).length;
+    // the character under the click: its share of the word's width
+    const lead = word[5].search(/[\p{L}\p{N}]/u), k = Math.round((x - word[1]) / Math.max(1, word[3] - word[1]) * word[5].length) - Math.max(0, lead);
+    caretPut({ view: 'pdf', page, word }, hit.file, hit.line, word[5], k, nth, () => readAt(hit.file, hit.line, word[5]));
+  }
+  /** Puts the caret (`c`: its view's own fields) on `word`, set while about line `line` of `file` was read: where the
+   * line or a neighbour spells it as plain text (the `nth(n)`-th there), else where the run read it (`read()`, readAt's
+   * answer), a macro's definition after a note. `k`: the clicked character's index in the word. `read` first if `first`. */
+  async function caretPut(c, file, line, word, k, nth, read, first = false) {
+    if (file !== state.file) await openPlace(file, { line: line - 1, character: 0 });
+    if (file !== state.file) return toast(`${file} cannot be opened here`);
+    const bare = word.replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, '');
+    let text = editor.text(), from = 0, span = null, written = false;
+    const lineAt = (n) => { const st = pdfLineStarts(text), a = st[n - 1] ?? -1, e = st[n] ?? text.length + 1; return a < 0 ? null : [a, text.slice(a, e - 1)]; };
     // SyncTeX names a line of the paragraph the row was set from: that line first, then its neighbours
-    const text = editor.text(), starts = pdfLineStarts(text), lineAt = (n) => { const a = starts[n - 1] ?? -1, e = starts[n] ?? text.length + 1; return a < 0 ? null : [a, text.slice(a, e - 1)]; };
-    let from = 0, span = null, written = false;
-    for (const n of [hit.line, hit.line + 1, hit.line - 1]) {
+    for (const n of first ? [] : [line, line + 1, line - 1]) {
       const got = lineAt(n);
       if (!got) continue;
-      const [a, line] = got, all = PE.spans(line, word[5]);
+      const [a, l] = got, all = PE.spans(l, word);
       written ||= all.length > 0;
-      // the line's occurrences the page can show (not math, keys, names), and which of them the click is on: the
-      // same words before it on the page set from that line
-      const spans = all.filter(([p, q]) => !pdfWhy(text, a + p, a + q));
-      const before = spans.length > 1 ? pdfWordsOn(page).filter((w) => pdfSame(w[5], word[5]) && (w[4] < word[2] || Math.abs(w[4] - word[4]) < 1 && w[1] < word[1]) && pdfSource(page, w[1] + 1, w[4] - 1, w)?.line === n).length : 0;
+      // the line's occurrences the output can show (not math, keys, names)
+      const spans = all.filter(([p, q]) => !pdfWhy(text, a + p, a + q)), before = spans.length > 1 ? nth(n) : 0;
       span = spans[before] ?? (spans.length === 1 ? spans[0] : null);
       if (span) { from = a; break; }
     }
-    if (!span) return toast(written ? `Not typed here: “${word[5]}” is not plain text in the source. Edit it in the editor` : `“${word[5]}” is not written near line ${hit.line}: a command sets it, type there in the editor`);
-    // the character under the click: its share of the word's width
-    const lead = word[5].search(/[\p{L}\p{N}]/u), k = Math.round((x - word[1]) / Math.max(1, word[3] - word[1]) * word[5].length) - Math.max(0, lead);
-    pdfCaret = { file: hit.file, target: uri(), at: from + span[0] + Math.min(Math.max(k, 0), span[1] - span[0]), page, word, v: version };
+    if (!span) {
+      const got = bare && read();
+      if (!got) return toast(written ? `Not typed here: “${word}” is not plain text in the source. Edit it in the editor`
+        : `Not typed here: “${bare || word}” comes from code satex cannot place in your files (a package, or unknown). Edit it in the editor`);
+      if (got.file !== state.file) await openPlace(got.file, { line: got.line - 1, character: got.col - 1 });
+      if (got.file !== state.file) return toast(`${got.file} cannot be opened here`);
+      text = editor.text();
+      const a = (lineAt(got.line)?.[0] ?? -1) + got.col - 1;
+      if (a < 0 || text.slice(a, a + bare.length) !== bare || pdfWhy(text, a, a + bare.length)) return toast(`Not typed here: “${bare}” is not plain text where it was read. Edit it in the editor`);
+      if (got.def && !confirm(`“${bare}” comes from ${got.def}'s definition at line ${got.defLine}: editing it changes every use of ${got.def}. Type there?`)) return;
+      [from, span] = [a, [0, bare.length]];
+    }
+    // the input moves to the view typed in (a hidden panel takes no focus); moving it ends the old caret
+    const home = c.view === 'ts' ? $('play-typeset') : $('play-pdf');
+    if (pdfTypeIn.parentElement !== home) home.append(pdfTypeIn);
+    pdfCaret = { ...c, file: state.file, target: uri(), at: from + span[0] + Math.min(Math.max(k, 0), span[1] - span[0]), v: version };
     pdfTypeIn.focus({ preventScroll: true });
     pdfCaretDraw();
   }
@@ -6144,6 +6323,7 @@
   /** The caret over the pages: in its word as the last build set it, the word as now written beside it while the pages lag. */
   function pdfCaretDraw() {
     pdfBody.querySelectorAll('.pdf-caret').forEach((c) => c.remove());
+    if (pdfCaret?.view === 'ts') return tsCaretDraw();
     const c = pdfCaret, img = c && pdfImg(c.page);
     if (!img?.naturalWidth || state.file !== c.file) return;
     const text = editor.text(), [pw, ph] = pageSize(img), lo = Math.max(0, c.at - 64);
@@ -6160,18 +6340,26 @@
   let pdfTypeChain = Promise.resolve();
   const pdfQueue = (f) => { pdfTypeChain = pdfTypeChain.then(f).catch((e) => console.warn('pdf typing', e)); };
   /** The characters `rel..rel+len` around the caret become `typed`, where the text there is plain and stays so. */
-  const pdfEdit = (rel, len, typed) => pdfQueue(async () => {
+  /** An edit at the caret: `plan(text, at)` gives `[from, to, body, caret]` (PE.typed's, PE.erased's). It goes where the
+   * text is plain or math; what it deletes is plain, an escape or an empty pair, never a lone markup character. */
+  const pdfEdit = (plan) => pdfQueue(async () => {
     const c = pdfCaretNow();
     if (!c) return;
-    const text = editor.text(), a = c.at + rel, b = a + len, why = pdfWhy(text, a, b);
-    if (why) return toast(`Not typed here: ${why}. Edit it in the editor`);
-    const node = self.satexSnapshot.span({ start: pdfPos(text, a), end: pdfPos(text, b) }, text.slice(a, b), typed);
-    if (!(await pdfWrite(c.target, node, typed, { userEvent: 'input.type' }))) { if (pdfCaret === c) pdfCaretNow(); return; }
-    Object.assign(c, { at: a + typed.length, v: version });
+    const text = editor.text(), [a, b, body, step] = plan(text, c.at), gone = text.slice(a, b);
+    const why = gone.length === 1 && !PE.plain(gone) ? 'the text there holds markup' : pdfWhy(text, a, PE.plain(gone) ? b : a);
+    if (why && !/math/.test(why)) return toast(`Not typed here: ${why}. Edit it in the editor`);
+    if (a !== b || body) {
+      const node = self.satexSnapshot.span({ start: pdfPos(text, a), end: pdfPos(text, b) }, gone, body);
+      if (!(await pdfWrite(c.target, node, body, { userEvent: 'input.type' }))) { if (pdfCaret === c) pdfCaretNow(); return; }
+    }
+    Object.assign(c, { at: a + step, v: version });
     pdfCaretDraw();
-    pdfRebuild(pdfLive());
+    // the Typeset view follows the check each edit starts
+    if (c.view === 'pdf' && (a !== b || body)) pdfRebuild(pdfLive());
   });
-  /** A key at the caret: Backspace and Delete take a plain character, arrows move over plain text, Enter builds, Escape ends. */
+  /** The inline math delimiters typing writes: `conventions.math.inline` (`$`, `\(`, `auto`). */
+  const pdfInline = () => configSet['conventions.math.inline'] ?? 'auto';
+  /** A key at the caret: Backspace and Delete take a character (an escape, an empty pair whole), arrows move over plain text, Enter builds, Escape ends. */
   pdfTypeIn.addEventListener('keydown', (e) => {
     if (!pdfCaret || e.isComposing) return;
     const step = { ArrowLeft: -1, ArrowRight: 1 }[e.key];
@@ -6183,20 +6371,21 @@
         const c = pdfCaretNow(), text = editor.text();
         if (!c) return;
         const [a, b] = step < 0 ? [c.at - 1, c.at] : [c.at, c.at + 1];
-        // the caret stays where typing may go: not into math, a key, a name or markup
-        if (pdfWhy(text, a, b) || pdfWhy(text, c.at + step, c.at + step)) return;
+        // the caret stays where typing may go: text or math, not a key, a name or markup
+        const why = pdfWhy(text, a, b) ?? pdfWhy(text, c.at + step, c.at + step);
+        if (why && !/math/.test(why)) return;
         c.at += step;
         pdfCaretDraw();
       });
-    } else if (e.key === 'Backspace' || e.key === 'Delete') { e.preventDefault(); pdfEdit(e.key === 'Backspace' ? -1 : 0, 1, ''); }
+    } else if (e.key === 'Backspace' || e.key === 'Delete') { e.preventDefault(); pdfEdit((text, at) => [...PE.erased(text, at, e.key === 'Backspace'), '', 0]); }
   });
   /** Typed text: once a composition (an input method) ends, never its steps. */
   const pdfTaken = () => {
     const typed = pdfTypeIn.value;
     pdfTypeIn.value = '';
     if (!pdfCaret || !typed) return;
-    if (!PE.plain(typed)) return toast('Plain text only here (no \\ { } $ & # ^ _ ~ %): type markup in the editor');
-    pdfEdit(0, 0, typed);
+    // one character at a time: each one's escape or closer depends on where the one before left the caret
+    for (const ch of typed) pdfEdit((text, at) => PE.typed(text, at, ch, pdfInline()));
   };
   pdfTypeIn.addEventListener('input', (e) => { if (!e.isComposing) pdfTaken(); });
   pdfTypeIn.addEventListener('compositionend', pdfTaken);
