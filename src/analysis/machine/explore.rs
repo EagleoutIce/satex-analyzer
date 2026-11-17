@@ -1103,8 +1103,12 @@ impl Machine<'_> {
                     });
                 // If a level below the entry's top was read further, every
                 // level above it ended first (tex.web § 325), including the
-                // entry's call, however deep this call runs.
-                m > 0 && !sibling && !read
+                // entry's call, however deep this call runs. If such a call runs in
+                // more groups than the entry, it is a tail call inside code the
+                // entry's call left open, not a pass: a tail-recursive pass closes
+                // its groups before it calls again.
+                let tail = m < l.levels.len() && depth.2 > l.depth.2;
+                m > 0 && !sibling && !read && !tail
             }
         };
         // Met again after an enclosing loop passed a page: this is a call from
