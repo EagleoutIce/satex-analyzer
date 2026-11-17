@@ -116,8 +116,9 @@ fn a_stopped_run_retracts_nothing() {
     assert!(early::verdict(&early, &last, &analysis).unwrap().contains("unchecked"));
 }
 
-/// Intuition: `satex lint` prints the early findings on stderr before the run's output, and says
-/// at the end which the run retracted. stdout stays the run's alone.
+/// Intuition: `satex lint` prints the early findings on stderr before the run's output, and with
+/// `-v` says at the end which the run retracted. stdout stays the run's alone and ends with
+/// whether the run reached the end.
 /// Bug pinned: early findings went to stdout, so scripts read them twice.
 #[test]
 fn the_cli_prints_early_findings_and_the_verdict() {
@@ -127,7 +128,7 @@ fn the_cli_prints_early_findings_and_the_verdict() {
     let body = "% TODO: kept\n\\section{A}\n\\iffalse\\includegraphics{nofile}\\fi\n";
     let project = project("cli", &[("doc.tex", &document(body))]);
     let out = crate::support::satex()
-        .args(["lint", "--set", "limits.seconds=0", "-f"])
+        .args(["lint", "-v", "--set", "limits.seconds=0", "-f"])
         .arg(project.0.join("doc.tex"))
         .env("SATEX_CACHE", crate::support::test_cache())
         .output()
@@ -139,6 +140,7 @@ fn the_cli_prints_early_findings_and_the_verdict() {
         stderr.find("early findings: 1 confirmed, 1 withdrawn: doc.tex:5").unwrap_or_else(|| panic!("{stderr}"));
     assert!(early < row && row < verdict, "{stderr}");
     assert!(stdout.contains("kept") && !stdout.contains("nofile") && !stdout.contains("early"), "{stdout}");
+    assert!(stdout.ends_with("complete: the run reached the end\n"), "{stdout}");
 }
 
 /// The early findings of `codes` and the run's, for a document with the kernel and packages.

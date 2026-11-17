@@ -3339,7 +3339,7 @@ impl Machine<'_> {
     /// the stored chain ends at, for a `suspend`ed recording to resume from.
     pub(super) fn finish_recording(&mut self, suspend: bool) -> Option<(Option<u32>, Option<u64>)> {
         let rec = self.package_capture.take()?;
-        crate::util::progress::clear();
+        // The bar stays until the outer work draws its own: clearing it here blanked the line.
         self.env.end_tracking();
         self.out.interner.record_touches(false);
         self.out.graph.record_touches(false);

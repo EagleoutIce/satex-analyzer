@@ -4128,7 +4128,6 @@ impl<'a> Machine<'a> {
         // The kernel build has a clock of its own; the document's starts after it.
         self.started = std::time::Instant::now();
         self.format_progress = None;
-        crate::util::progress::clear();
 
         let truncated = self.halted;
         let reached =

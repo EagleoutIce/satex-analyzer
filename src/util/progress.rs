@@ -1,22 +1,26 @@
 //! Progress bars for long work: building a kernel, caching a package,
 //! analyzing a document. Each thread that works has its own line, redrawn
-//! in place on stderr (~10 Hz). Messages print above the bars, which stay
-//! visible. Silent unless stderr is a terminal, so tests, pipes and the LSP
-//! see nothing.
+//! in place on stderr (~10 Hz), under an optional headline. Messages print
+//! above them, which stay visible. One writer draws all of it, and only rows
+//! that changed. Silent unless stderr is a terminal, so tests, pipes and the
+//! LSP see nothing.
 
 use anstyle::{AnsiColor, Style};
 use std::io::{IsTerminal, Write};
 use std::sync::Mutex;
 use std::thread::ThreadId;
 
-/// The bars and how many lines of them are on the screen.
+/// The bars, the headline above them and the rows on the screen.
 struct Bars {
     lines: Vec<(ThreadId, Vec<String>)>,
-    drawn: usize,
+    /// A line for the whole run above the bars ([`headline`]).
+    head: Option<String>,
+    /// The rows as last drawn, cut to the width.
+    shown: Vec<String>,
     last_draw_ms: u64,
 }
 
-static BARS: Mutex<Bars> = Mutex::new(Bars { lines: Vec::new(), drawn: 0, last_draw_ms: 0 });
+static BARS: Mutex<Bars> = Mutex::new(Bars { lines: Vec::new(), head: None, shown: Vec::new(), last_draw_ms: 0 });
 const THROTTLE_MS: u64 = 100;
 /// Longest label shown, so a bar never wraps on an 80-column terminal.
 const LABEL: usize = 48;
@@ -45,46 +49,59 @@ pub fn terminal(stream: impl IsTerminal) -> bool {
 }
 
 impl Bars {
-    /// Move to the first bar line and clear from there to the end of the screen.
-    fn erase(&mut self, out: &mut impl Write) {
-        if self.drawn > 1 {
-            let _ = write!(out, "\x1b[{}A", self.drawn - 1);
-        }
-        if self.drawn > 0 {
-            let _ = write!(out, "\r\x1b[J");
-        }
-        self.drawn = 0;
+    /// The rows to show: the headline, then every bar, each cut to `width`.
+    fn rows(&self, width: usize) -> Vec<String> {
+        let bars = self.lines.iter().flat_map(|(_, lines)| lines);
+        self.head.iter().chain(bars).map(|line| fit(line, width.saturating_sub(1))).collect()
     }
 
-    /// Draw every bar, leaving the cursor at the end of the last one. The
-    /// frame is built in one buffer and overwrites the old lines in place
-    /// (clearing only their rest), inside a synchronized update, so the
-    /// terminal never shows a half-drawn or empty frame. A line is cut to the
-    /// terminal's width: one that wrapped would leave the next frame one row short.
-    fn draw(&mut self, out: &mut impl Write) {
+    /// Prints `above` (lines that stay) and then the rows over the old ones,
+    /// leaving the cursor at the end of the last row. Nothing is written when
+    /// there is nothing above and the rows are those shown, so an unchanged
+    /// frame never repaints. Each row overwrites its old one in place and
+    /// clears only its rest, inside a synchronized update with the cursor
+    /// hidden: the terminal never shows a half-drawn or empty frame. A row is
+    /// cut to the terminal's width: one that wrapped would leave the next
+    /// frame one row short.
+    fn draw(&mut self, out: &mut impl Write, above: &str) {
         let width = terminal_size::terminal_size_of(std::io::stderr()).map_or(80, |(w, _)| w.0 as usize);
-        let all: Vec<&String> = self.lines.iter().flat_map(|(_, lines)| lines).collect();
-        let mut frame = String::from("\x1b[?2026h");
-        if self.drawn > 1 {
-            frame.push_str(&format!("\x1b[{}A", self.drawn - 1));
+        let rows = self.rows(width);
+        if above.is_empty() && rows == self.shown {
+            return;
         }
-        // Wrapping off while the bars are drawn (DECAWM): where the width
-        // was misreported, a long line is clipped at the margin instead of
-        // wrapping onto a row the next frame does not reach.
-        frame.push_str("\r\x1b[?7l");
-        for (i, line) in all.iter().enumerate() {
-            if i > 0 {
-                frame.push('\n');
-            }
-            frame.push_str(&fit(line, width.saturating_sub(1)));
-            frame.push_str("\x1b[K");
-        }
-        // Rows the last frame had and this one has not.
-        frame.push_str("\x1b[J\x1b[?7h\x1b[?2026l");
-        let _ = out.write_all(frame.as_bytes());
-        self.drawn = all.len();
+        let _ = out.write_all(frame(self.shown.len(), above, &rows).as_bytes());
         let _ = out.flush();
+        self.shown = rows;
     }
+}
+
+/// The bytes that turn `shown` rows into `rows`, with `above` printed first.
+fn frame(shown: usize, above: &str, rows: &[String]) -> String {
+    let mut frame = String::from("\x1b[?2026h\x1b[?25l");
+    if shown > 1 {
+        frame.push_str(&format!("\x1b[{}A", shown - 1));
+    }
+    if shown > 0 {
+        frame.push('\r');
+    }
+    for line in above.lines() {
+        frame.push_str(line);
+        frame.push_str("\x1b[K\n");
+    }
+    // Wrapping off while the rows are drawn (DECAWM): where the width was
+    // misreported, a long row is clipped at the margin instead of wrapping
+    // onto a row the next frame does not reach.
+    frame.push_str("\x1b[?7l");
+    for (i, row) in rows.iter().enumerate() {
+        if i > 0 {
+            frame.push('\n');
+        }
+        frame.push_str(row);
+        frame.push_str("\x1b[K");
+    }
+    // Rows the last frame had and this one has not.
+    frame.push_str("\x1b[J\x1b[?7h\x1b[?25h\x1b[?2026l");
+    frame
 }
 
 /// `line` cut to `width` visible columns. Escape sequences (colors, OSC 8
@@ -252,7 +269,7 @@ pub fn bar(
     let now = now_ms();
     if now.saturating_sub(bars.last_draw_ms) >= THROTTLE_MS {
         bars.last_draw_ms = now;
-        bars.draw(&mut std::io::stderr().lock());
+        bars.draw(&mut std::io::stderr().lock(), "");
     }
 }
 
@@ -410,10 +427,50 @@ pub fn message(args: std::fmt::Arguments) {
         return;
     }
     let mut bars = lock();
-    let mut out = std::io::stderr().lock();
-    bars.erase(&mut out);
-    let _ = writeln!(out, "{args}");
-    bars.draw(&mut out);
+    bars.draw(&mut std::io::stderr().lock(), &format!("{args}\n"));
+}
+
+/// `line` above the bars until [`finish`]; `None` takes it away.
+pub fn headline(line: Option<String>) {
+    if !active() {
+        return;
+    }
+    let mut bars = lock();
+    bars.head = line;
+    bars.draw(&mut std::io::stderr().lock(), "");
+}
+
+/// Findings made while the run goes on: `line` above the bars, and `listing`
+/// printed above them each time `l` is pressed. `None` where no key can be
+/// read, so the caller prints the listing itself. The keys are read until the
+/// guard drops.
+pub fn findings(line: &str, listing: &str) -> Option<super::keys::Keys> {
+    if !active() {
+        return None;
+    }
+    let paint = |text: &str| {
+        let mut out = Vec::new();
+        let _ = write!(anstream::AutoStream::new(&mut out, anstream::stderr().current_choice()), "{text}");
+        String::from_utf8_lossy(&out).into_owned()
+    };
+    let listing = paint(listing.trim_end());
+    let keys = super::keys::listen(move |key| {
+        if key.eq_ignore_ascii_case(&b'l') {
+            message(format_args!("{listing}"));
+        }
+    })?;
+    headline(Some(paint(line)));
+    Some(keys)
+}
+
+/// The run is over: the headline and every bar go.
+pub fn finish() {
+    if !active() {
+        return;
+    }
+    let mut bars = lock();
+    (bars.head, bars.lines) = (None, Vec::new());
+    bars.draw(&mut std::io::stderr().lock(), "");
 }
 
 /// A long step starting, above the bars: `satex:` dimmed, `what` bold
@@ -460,7 +517,7 @@ pub fn clear() {
     let me = std::thread::current().id();
     let mut bars = lock();
     bars.lines.retain(|(id, _)| *id != me);
-    bars.draw(&mut std::io::stderr().lock());
+    bars.draw(&mut std::io::stderr().lock(), "");
 }
 
 /// `n` in thousands (`k`), millions (`M`) or billions (`B`), one decimal: `1.2B`.
@@ -476,6 +533,41 @@ pub fn compact(n: u64) -> String {
 
 #[cfg(test)]
 mod tests {
+    fn bars(rows: &[&str]) -> super::Bars {
+        let lines = vec![(std::thread::current().id(), rows.iter().map(|r| r.to_string()).collect())];
+        super::Bars { lines, head: None, shown: Vec::new(), last_draw_ms: 0 }
+    }
+
+    /// A frame the screen already shows is not written again. Repainting unchanged rows
+    /// at 10 Hz made the bars flicker on terminals without synchronized updates.
+    #[test]
+    fn an_unchanged_frame_writes_nothing() {
+        let (mut bars, mut out) = (bars(&["satex: a", "  b"]), Vec::new());
+        bars.draw(&mut out, "");
+        assert!(!out.is_empty());
+        out.clear();
+        bars.draw(&mut out, "");
+        assert!(out.is_empty());
+    }
+
+    /// A message and the rows below it are one update that overwrites the old rows in place.
+    /// The old writer erased the rows (`ESC [J`) and drew them anew in two writes, which
+    /// showed a blank frame in between.
+    #[test]
+    fn a_message_overwrites_the_rows_in_one_update() {
+        let (mut bars, mut out) = (bars(&["satex: a", "  b"]), Vec::new());
+        bars.draw(&mut out, "");
+        out.clear();
+        bars.head = Some("satex: 2 early findings so far".into());
+        bars.draw(&mut out, "note\n");
+        let text = String::from_utf8(out).unwrap();
+        assert_eq!(text.matches("\x1b[?2026h").count(), 1);
+        let (before, rows) = text.split_once("note").unwrap();
+        assert!(!before.contains("\x1b[J"), "erased before writing: {text:?}");
+        assert_eq!(rows.matches("\x1b[J").count(), 1, "only the rows past the frame go: {text:?}");
+        assert!(rows.find("early findings") < rows.find("satex: a"), "the headline stands first: {text:?}");
+    }
+
     #[test]
     fn a_line_is_cut_to_the_width_without_counting_escapes() {
         let line = "\x1b[1mabc\x1b[0m \x1b]8;;file:///x\x1b\\defgh\x1b]8;;\x1b\\";

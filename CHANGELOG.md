@@ -57,6 +57,9 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 
 ### CLI
 
+- `fix` **The progress bars no longer flicker.** A package cache or the kernel finishing blanked the bar until the next frame, and unchanged frames were repainted ten times a second. Now one writer redraws only rows that changed, in place, with the cursor hidden.
+- `feat` **Early findings in one line.** On a terminal, `satex lint` counts the early findings above the bars and prints them when `l` is pressed. Pipes and `--format json` are unchanged. Which the run confirmed is said with `-v` only.
+- `feat` **A clearer end of `satex lint`.** The summary lists only counts that are not zero, in their colors, has one line for fixes, and says whether the run reached the end or which limit stopped it and where.
 - `fix` **One rule for the input.** An empty stdin (`</dev/null`) no longer counts as a document: every command then reads the folder's root documents, as from a terminal. `-f -` reads stdin. A stdin left open says on stderr that satex waits for it.
 - `fix` **`satex cache` never reads stdin.** It no longer hangs on an open pipe, and its subcommands no longer say "no document named".
 - `feat` **The package cache line for every analysis.** `query`, `explain` and the other commands say how many package caches they reused or built, as `lint` does.

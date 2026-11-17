@@ -516,11 +516,19 @@ fn run_on(cli: &mut Cli, file: Option<PathBuf>, explaining: bool, piped: Option<
         }
         _ => Vec::new(),
     };
-    if !early.is_empty() {
-        // as the run's findings look, under one line saying they are early
-        let links = cli.link_policy(satex::util::progress::terminal(io::stderr()));
-        anstream::eprintln!("{}", render::status("satex: early findings, to be confirmed by the analysis"));
-        anstream::eprint!("{}", render::lint(&early, links, true));
+    let links = cli.link_policy(satex::util::progress::terminal(io::stderr()));
+    // as the run's findings look, under one line saying they are early
+    let listing = || {
+        let head = render::status("satex: early findings, to be confirmed by the analysis");
+        format!("{head}\n{}", render::lint(&early, links, true))
+    };
+    // on a terminal one line counts them and `l` lists them
+    let keys = match early.is_empty() {
+        true => None,
+        false => satex::util::progress::findings(&render::early_line(&early), &listing()),
+    };
+    if !early.is_empty() && keys.is_none() {
+        anstream::eprint!("{}", listing());
     }
     // a build explained by rules only waits for no analysis: one that reads nothing
     let sketched = matches!(cli.command, Some(Command::Compile { .. })) && !cfg.compile.explain;
@@ -533,6 +541,8 @@ fn run_on(cli: &mut Cli, file: Option<PathBuf>, explaining: bool, piped: Option<
     } else {
         Analysis::empty()
     };
+    drop(keys);
+    satex::util::progress::finish();
     if cli.stats || cfg.verbose >= 1 {
         for line in analysis.cache_report() {
             anstream::eprintln!("{}", render::status(&format!("satex: {line}")));
@@ -593,9 +603,14 @@ fn run_on(cli: &mut Cli, file: Option<PathBuf>, explaining: bool, piped: Option<
         || cli.command().fixes()
         || cli.command().reports_gaps();
     let text = cli.format.is_text();
+    // the early findings' fate is detail: their line and `l` cover them
     let verdict = match &output {
-        Output::Lint(records) => satex::linter::early::verdict(&early, records, &analysis),
+        Output::Lint(records) if cfg.verbose >= 1 => satex::linter::early::verdict(&early, records, &analysis),
         _ => None,
+    };
+    let end = match &output {
+        Output::Lint(_) if text => render::lint_end(&analysis),
+        _ => String::new(),
     };
     let (body, hint) = match output {
         Output::Done => (String::new(), None),
@@ -609,7 +624,7 @@ fn run_on(cli: &mut Cli, file: Option<PathBuf>, explaining: bool, piped: Option<
     };
     // JSON escapes what text would print raw.
     let safe = |t: &str| if text { render::terminal_safe(t) } else { t.to_string() };
-    let _ = write!(out, "{}", safe(&body));
+    let _ = write!(out, "{}{}", safe(&body), safe(&end));
     if let Some(verdict) = verdict {
         let _ = out.flush();
         anstream::eprintln!("{}", render::status(&format!("satex: {verdict}")));

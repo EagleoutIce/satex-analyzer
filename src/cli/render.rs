@@ -759,6 +759,26 @@ fn precision_line(records: &[&Record]) -> String {
     )
 }
 
+/// The counts in `parts` that are not zero, each in its color: `1 error, 2 warnings`.
+fn tally(parts: &[(usize, &str, Style)]) -> String {
+    let parts: Vec<String> = parts
+        .iter()
+        .filter(|(n, ..)| *n > 0)
+        .map(|(n, word, style)| format!("{style}{}{style:#}", plural(*n, word)))
+        .collect();
+    parts.join(&label(", "))
+}
+
+/// `satex: 3 early findings so far (1 error, 2 warnings), press l to list them`: the line that
+/// stands for `records` while the run goes on.
+pub fn early_line(records: &[Record]) -> String {
+    let count = |level: &str| records.iter().filter(|r| r.get("severity").map(plain).as_deref() == Some(level)).count();
+    let counts = tally(&[(count("error"), "error", ERROR), (count("warning"), "warning", WARNING)]);
+    let counts = if counts.is_empty() { String::new() } else { format!(" ({counts})") };
+    let found = plural(records.len(), "early finding");
+    format!("{} {found} so far{counts}, {}", label("satex:"), label("press l to list them"))
+}
+
 /// `satex lint`'s text output: findings grouped by category, with build-cost
 /// observations and unresolved cases kept apart rather than mixed into one
 /// flat, truncated table.
@@ -806,31 +826,58 @@ pub fn lint(records: &[Record], links: Links, group: bool) -> String {
         let _ = writeln!(out, "{}", precision_line(&precision));
         out.push('\n');
     }
-    let _ = writeln!(
-        out,
-        "{}",
-        label(&format!(
-            "{}, {}, {}, {}, {}",
-            plural(errors, "error"),
-            plural(warnings, "warning"),
-            plural(suggestions, "suggestion"),
-            plural(performance.len(), "performance note"),
-            plural(precision.len(), "precision note"),
-        ))
-    );
+    let counts = tally(&[
+        (errors, "error", ERROR),
+        (warnings, "warning", WARNING),
+        (suggestions, "suggestion", INFO),
+        (performance.len(), "performance note", Style::new()),
+        (precision.len(), "precision note", IMPRECISION),
+    ]);
+    let _ = match counts.is_empty() {
+        true => writeln!(out, "{GOOD}no findings{GOOD:#}"),
+        false => writeln!(out, "{counts}"),
+    };
     let fixable = |applicability: &str| {
         records.iter().filter(|r| r.get("applicability").and_then(Json::as_str) == Some(applicability)).count()
     };
-    let (safe, unsafe_) = (fixable("safe"), fixable("unsafe"));
-    if safe + unsafe_ > 0 {
-        let hint = match (safe, unsafe_) {
-            (0, _) => format!("{unsafe_} fixable with `satex lint --fix --unsafe-fixes`"),
-            (_, 0) => format!("{safe} fixable with `satex lint --fix`"),
-            _ => format!("{safe} fixable with `satex lint --fix`, {unsafe_} more with `--unsafe-fixes`"),
-        };
-        let _ = writeln!(out, "{}", label(&hint));
+    let command = |c: &str| subject(&format!("`{c}`"));
+    let fixes = match (fixable("safe"), fixable("unsafe")) {
+        (0, 0) => String::new(),
+        (0, n) => format!("{n} with {}", command("satex lint --fix --unsafe-fixes")),
+        (n, 0) => format!("{n} with {}", command("satex lint --fix")),
+        (n, m) => format!("{n} with {}, {m} more with {}", command("satex lint --fix"), command("--unsafe-fixes")),
+    };
+    if !fixes.is_empty() {
+        let _ = writeln!(out, "{} {fixes}", label("fixable:"));
     }
     out
+}
+
+/// Whether `lint`'s findings are all there is: `complete` when the run reached the end, else
+/// which limit stopped it and where, or what it approximated or left unread.
+pub fn lint_end(analysis: &crate::analysis::machine::Analysis) -> String {
+    let place = |hit: &crate::analysis::machine::LimitHit| match hit.at.line {
+        0 => String::new(),
+        line => format!(" at {}:{line}", analysis.short_name(hit.at.file)),
+    };
+    let stop = analysis.limits.iter().find(|h| matches!(h.key, "seconds" | "memory"));
+    let unread = analysis.facts.diagnostics.iter().filter(|d| d.code == "file-not-read").count();
+    let cut: Vec<String> = analysis
+        .limits
+        .iter()
+        .filter(|h| !matches!(h.key, "seconds" | "memory"))
+        .map(|h| format!("limits.{} = {}{}", h.key, h.value, place(h)))
+        .collect();
+    let (style, verdict) = match (stop, analysis.exhausted, unread, cut.is_empty()) {
+        (Some(hit), ..) => {
+            (WARNING, format!("incomplete: limits.{} = {} stopped the run{}", hit.key, hit.value, place(hit)))
+        }
+        (None, true, ..) => (WARNING, "incomplete: the run's budget ran out".to_string()),
+        (None, false, n, _) if n > 0 => (WARNING, format!("incomplete: {} not read", plural(n, "file"))),
+        (None, false, _, false) => (IMPRECISION, format!("complete, approximated where {} cut it", cut.join(", "))),
+        _ => (GOOD, "complete: the run reached the end".to_string()),
+    };
+    format!("{style}{verdict}{style:#}\n")
 }
 
 fn position(record: &Record) -> String {
@@ -1968,7 +2015,11 @@ mod tests {
         // still shows up somewhere in the output.
         assert!(!out.contains('…'));
         assert!(out.contains(&long_message[long_message.len() - 10..]));
-        assert!(out.contains("1 error, 1 warning, 1 suggestion, 1 performance note, 1 precision note"));
+        assert!(
+            anstream::adapter::strip_str(&out)
+                .to_string()
+                .contains("1 error, 1 warning, 1 suggestion, 1 performance note, 1 precision note")
+        );
     }
 
     #[test]
