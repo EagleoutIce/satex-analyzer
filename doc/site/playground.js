@@ -7568,7 +7568,8 @@
   function notified(m, ended = false) {
     if (m.method === 'satex/styleCandidates') for (const c of m.params.candidates ?? []) askStyle(c);
     else if (m.method === 'textDocument/publishDiagnostics' && m.params.uri.startsWith(`file://${state.dir}/`)) publish(m.params, ended);
-    else if (m.method === 'satex/typesetRows' && !outdated(m.params)) { tsEarly = `${m.params.uri}@${m.params.version}`; typesetShow(m.params.uri, m.params.version, m.params.rows); }
+    // `preview`: the edited paragraph's rows, run first; the run's own rows follow
+    else if (m.method === 'satex/typesetRows' && !outdated(m.params)) { if (!m.params.preview) tsEarly = `${m.params.uri}@${m.params.version}`; typesetShow(m.params.uri, m.params.version, m.params.rows); }
   }
   async function onWorkerMessage({ data }) {
     if (running > 0 || pending.size) maxGap = Math.max(maxGap, Math.round(performance.now() - lastHeard));

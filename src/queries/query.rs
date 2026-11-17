@@ -4577,7 +4577,39 @@ fn scope_rows_from(analysis: &Analysis, prior: Option<(&Analysis, &ScopeRows)>) 
     });
     let kept: HashMap<&str, &ScopeRow> =
         prior.map(|(_, rows)| rows.rest.iter().map(|r| (r.name.as_str(), r)).collect()).unwrap_or_default();
-    let defs = analysis.facts.defs.iter().map(|_| std::sync::OnceLock::new()).collect();
+    // a definition's row, from the prior run's where a file outside the project made the same
+    // definition at the same place: an edit changes the project's files only
+    fn path(a: &Analysis, f: FileId) -> &str {
+        a.files.get(usize::from(f)).map_or("", |f| f.path.as_str())
+    }
+    let built: HashMap<(&str, &str, u32, u32), (&crate::analysis::facts::Definition, &ScopeRow)> = prior
+        .map(|(p, rows)| {
+            (p.facts.defs.iter().zip(&rows.defs))
+                .filter_map(|(d, row)| {
+                    Some((
+                        (p.interner.name(d.name), path(p, d.span.file), d.span.line, d.span.col),
+                        (d, row.get()?.as_ref()?),
+                    ))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    let defs = (analysis.facts.defs.iter())
+        .map(|d| {
+            let cell = std::sync::OnceLock::new();
+            let key = (analysis.interner.name(d.name), path(analysis, d.span.file), d.span.line, d.span.col);
+            if d.name.0 < same
+                && !analysis.project_file(d.span.file)
+                && let Some((p, row)) = built.get(&key)
+                && p.mac == d.mac
+                && p.package.map(|s| s.0) == d.package.map(|s| s.0)
+                && d.package.is_none_or(|s| s.0 < same)
+            {
+                let _ = cell.set(Some((*row).clone()));
+            }
+            cell
+        })
+        .collect();
     // the names a definition shows; one with only passing definitions shows the format's meaning
     let top = file_depths(analysis);
     let recorded: BTreeSet<Sym> = (analysis.facts.defs.iter())

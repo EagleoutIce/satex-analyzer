@@ -3147,6 +3147,28 @@ pub fn typeset(analysis: &Analysis) -> Vec<Json> {
         .collect()
 }
 
+/// [`typeset`] of `old` with the rows of `path`'s lines `lo..=hi` taken from `new`, a run up
+/// to that paragraph's end. A paragraph not shipped yet has no place on a page: it keeps the
+/// place of the row it replaces.
+pub fn typeset_preview(old: &[Json], new: &Analysis, path: &str, lo: u32, hi: u32) -> Vec<Json> {
+    let within = |r: &Json| {
+        r.get("path").and_then(Json::as_str) == Some(path)
+            && r.get("line").and_then(Json::as_u64).is_some_and(|l| (u64::from(lo)..=u64::from(hi)).contains(&l))
+    };
+    let mut fresh: Vec<Json> = typeset(new).into_iter().filter(|r| within(r)).collect();
+    let Some(at) = old.iter().position(within) else { return old.to_vec() };
+    let gone: Vec<&Json> = old.iter().filter(|r| within(r)).collect();
+    for (row, was) in fresh.iter_mut().zip(&gone) {
+        if let (Some(row), Some(placed)) = (row.as_object_mut(), was.get("placed")) {
+            row.entry("placed").or_insert_with(|| placed.clone());
+        }
+    }
+    let mut out: Vec<Json> = old[..at].to_vec();
+    out.append(&mut fresh);
+    out.extend(old[at..].iter().filter(|r| !within(r)).cloned());
+    out
+}
+
 /// `textDocument/documentSymbol`: sections, labels and environments from
 /// [`query::Query::Occurrences`], and this file's own macro/environment
 /// definitions — a flat list (`SymbolInformation`), which needs no nesting

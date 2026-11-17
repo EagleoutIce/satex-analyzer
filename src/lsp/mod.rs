@@ -873,6 +873,8 @@ struct Engine {
     cancelled: bool,
     /// The document whose typeset rows go out as soon as its run ends, before its lints (`satex/analyze` `typeset`).
     typeset_early: Option<Uri>,
+    /// The rows last sent as `satex/typesetRows`, of this document: what a paragraph preview patches.
+    rows_sent: Option<(Uri, Rc<Vec<serde_json::Value>>)>,
     /// A run of no document: what a completion answers from before a
     /// document's first run ends, the installation's classes and packages.
     blank: Option<Rc<Analysis>>,
@@ -935,6 +937,7 @@ impl Engine {
             taken: 0,
             cancelled: false,
             typeset_early: None,
+            rows_sent: None,
             blank: None,
             published: HashMap::default(),
             edited: HashMap::default(),
@@ -972,7 +975,20 @@ impl Engine {
         }
         self.cancelled = false;
         self.send_early(&path, &text);
+        // An edit inside a paragraph: its rows go out first, from a run to the paragraph's end.
+        if self.typeset_early.as_ref() == Some(uri)
+            && let Some((_, rows)) = self.rows_sent.as_ref().filter(|(u, _)| u == uri)
+        {
+            let (rows, uri, version, out) =
+                (rows.clone(), uri.clone(), version_of(&versions, uri), self.outbox.clone());
+            crate::analysis::machine::preview_with(Some(Box::new(move |run, path, lo, hi| {
+                let rows = handlers::typeset_preview(&rows, &run, path, lo, hi);
+                let params = serde_json::json!({"uri": uri, "version": version, "rows": rows, "preview": true});
+                notify_to(&out, Notification::new("satex/typesetRows".into(), params));
+            })));
+        }
         let (analysis, fresh) = self.run_for(&path, &text);
+        crate::analysis::machine::preview_with(None);
         // A newer text came while it ran: it stopped, and says nothing. The newer text's run follows.
         if self.cancelled {
             crate::util::progress::note!("satex: a run stopped for a newer text");
@@ -996,8 +1012,9 @@ impl Engine {
         // The rows `satex/typeset` answers from this run, out before the rules run.
         let kept = !(analysis.stopped() && doc.analysis.as_ref().is_some_and(|a| !a.stopped()));
         if fresh && kept && self.typeset_early.as_ref() == Some(uri) {
-            let rows = handlers::typeset(&analysis);
-            let params = serde_json::json!({"uri": uri, "version": version_of(&versions, uri), "rows": rows});
+            let rows = Rc::new(handlers::typeset(&analysis));
+            let params = serde_json::json!({"uri": uri, "version": version_of(&versions, uri), "rows": *rows});
+            self.rows_sent = Some((uri.clone(), rows));
             self.notify_now(Notification::new("satex/typesetRows".into(), params));
         }
         if fresh {
@@ -1205,10 +1222,7 @@ impl Engine {
 
     /// `note` to the client now: the browser's server hands it over mid-message, the others through the outbox.
     fn notify_now(&self, note: Notification) {
-        #[cfg(target_os = "emscripten")]
-        wasm::notify(&note);
-        #[cfg(not(target_os = "emscripten"))]
-        let _ = self.outbox.send(note);
+        notify_to(&self.outbox, note);
     }
 
     fn send_diagnostics(&self, published: Vec<PublishDiagnosticsParams>) {
@@ -2023,6 +2037,17 @@ fn engine_loop(rx: Receiver<EngineMsg>, mut engine: Engine, debounce: Duration) 
 }
 
 /// The version of the open document at `uri` among `versions`.
+/// [`Engine::notify_now`] through `outbox`.
+fn notify_to(outbox: &Sender<Notification>, note: Notification) {
+    #[cfg(target_os = "emscripten")]
+    {
+        let _ = outbox;
+        wasm::notify(&note);
+    }
+    #[cfg(not(target_os = "emscripten"))]
+    let _ = outbox.send(note);
+}
+
 fn version_of(versions: &[(PathBuf, i32)], uri: &Uri) -> Option<i32> {
     let path = handlers::uri_to_path(uri)?;
     versions.iter().find(|(p, _)| crate::project::paths::same_file(p, &path)).map(|(_, v)| *v)

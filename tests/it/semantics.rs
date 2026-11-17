@@ -334,6 +334,24 @@ fn dependency_graph_links_a_call_to_its_definition() {
     assert!(edges.iter().any(|(_, kind)| kind.intersects(EdgeKind::READS)));
 }
 
+/// After an edit the language server carries the last run's scope rows over (`carry_scope`),
+/// those of definitions the class made outside the project's files among them. Pins: those
+/// rows were built anew after every edit (5 s per edit on the site's thesis example, which
+/// the playground asks after each run); carried, they must equal a fresh run's.
+#[test]
+fn scope_carried_over_an_edit_equals_a_fresh_runs() {
+    let text = |word: &str| {
+        format!(
+            "\\documentclass{{article}}\n\\newcommand{{\\greet}}{{{word}}}\n\\begin{{document}}\n\\greet\n\\end{{document}}\n"
+        )
+    };
+    let before = analyze_kernel(&text("hi"));
+    let _ = query::scope(&before, None, true);
+    let after = analyze_kernel(&text("ho"));
+    query::carry_scope(&before, &after);
+    assert_eq!(query::scope(&after, None, true), query::scope(&analyze_kernel(&text("ho")), None, true));
+}
+
 #[test]
 fn scope_respects_position() {
     let analysis = analyze_kernel("\\newcommand{\\early}{1}\n\\newcommand{\\late}{2}\n");

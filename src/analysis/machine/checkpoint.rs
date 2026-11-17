@@ -37,6 +37,35 @@ struct Checkpoint<'a> {
 pub(super) struct Taker<'a> {
     on: Option<Box<Taking<'a>>>,
     resume: Option<Box<Drive>>,
+    /// A paragraph preview's end: the file, its last line, and whether the run has read the file yet.
+    stop: Option<(crate::engine::tex::FileId, u32, bool)>,
+}
+
+/// What a paragraph preview hands on: the run up to the edited paragraph's end, the
+/// paragraph's file and its first and last line.
+pub type Preview = Box<dyn FnOnce(Analysis, &str, u32, u32)>;
+
+thread_local! {
+    static PREVIEW: std::cell::RefCell<Option<Preview>> = const { std::cell::RefCell::new(None) };
+}
+
+/// Asks the next resumed run of an edit inside a paragraph to run that paragraph first,
+/// from the same checkpoint, and hand it to `then`: the paragraph is broken into lines
+/// from the state at its start and its own text, so its rows are those of the full run.
+/// `None` withdraws the request.
+pub fn preview_with(then: Option<Preview>) {
+    PREVIEW.set(then);
+}
+
+/// Lines `lo..=hi` of the paragraph `text` holds at `line`: up to the blank lines around it.
+/// `None` on a blank line.
+fn paragraph_at(text: &str, line: u32) -> Option<(u32, u32)> {
+    let lines: Vec<&str> = text.split('\n').collect();
+    let blank = |i: usize| lines.get(i).is_none_or(|l| l.trim().is_empty());
+    let at = (line as usize).checked_sub(1).filter(|&i| !blank(i))?;
+    let lo = (0..at).rev().find(|&i| blank(i)).map_or(0, |i| i + 1);
+    let hi = (at..lines.len()).find(|&i| blank(i)).unwrap_or(lines.len());
+    Some((lo as u32 + 1, hi as u32))
 }
 
 struct Taking<'a> {
@@ -137,6 +166,17 @@ impl Machine<'_> {
             && self.scan_starts.is_empty()
             && self.cacheable_load.is_none()
             && self.recording_package().is_none()
+    }
+
+    /// Whether a paragraph preview is done: past its last line, back in vertical mode, or out of its file.
+    pub(super) fn preview_done(&mut self) -> bool {
+        let Some((file, hi, seen)) = self.checkpoints.stop else { return false };
+        let open = self.input.iter().any(|f| matches!(f, Frame::File { mouth, .. } if mouth.file == file));
+        let past = reading_file(&self.input).is_some_and(|(mouth, _)| {
+            mouth.file == file && mouth.position().0 > hi && self.mode == crate::engine::mode::Modes::VERTICAL
+        });
+        self.checkpoints.stop = Some((file, hi, seen || open));
+        (seen && !open) || past
     }
 
     /// Saves the run's state and `drive` as a checkpoint.
@@ -819,6 +859,9 @@ impl<'a> Checkpoints<'a> {
         };
         m.started = *self.build_started.get_or_insert(m.started);
         let edit = changed.map(|line| (PathBuf::from(&m.out.files[usize::from(id)].path), line)).or(edit);
+        if let (Some(then), Some((path, line))) = (PREVIEW.take(), &edit) {
+            self.preview(&m, id, source, path, *line, then);
+        }
         let next = m.out.steps + self.every;
         let edited = edit.as_ref().map(|(path, _)| path.clone());
         let taking = Taking {
@@ -869,6 +912,50 @@ impl<'a> Checkpoints<'a> {
             );
         }
         analysis
+    }
+
+    /// Runs a copy of the resumed `m` to the end of the paragraph edited at `path`'s `line`, if that
+    /// line is in one of a file the run reads, and hands the result to `then`.
+    fn preview(
+        &self,
+        m: &Machine<'a>,
+        id: crate::engine::tex::FileId,
+        source: &str,
+        path: &Path,
+        line: u32,
+        then: Preview,
+    ) {
+        let Some(file) = m.out.files.iter().position(|f| Path::new(&f.path) == path) else { return };
+        let text = match file == usize::from(id) {
+            true => source.to_string(),
+            false => match crate::project::overlay::read_bytes(path) {
+                Ok(bytes) => crate::engine::source::decode_counted(&bytes).0,
+                Err(_) => return,
+            },
+        };
+        let Some((lo, hi)) = paragraph_at(&text, line) else { return };
+        let clock = std::time::Instant::now();
+        let mut p = m.clone();
+        p.checkpoints.resume = m.checkpoints.resume.clone();
+        p.checkpoints.stop = Some((file as crate::engine::tex::FileId, hi, false));
+        let (cloned, from) = (clock.elapsed(), p.out.steps);
+        p.run_guarded();
+        let (ran, steps) = (clock.elapsed(), p.out.steps - from);
+        let at = p.checkpoints.stop.is_some_and(|(.., seen)| seen);
+        if at && !p.out.exhausted {
+            let analysis = p.conclude(id, source);
+            let concluded = clock.elapsed();
+            then(analysis, &m.out.files[file].path.clone(), lo, hi);
+            if self.cfg.verbose >= 2 {
+                crate::util::progress::note!(
+                    "satex: paragraph {lo}-{hi} first: clone {:.3}s, run {:.3}s for {steps} steps, conclude {:.3}s, rows {:.3}s",
+                    cloned.as_secs_f64(),
+                    (ran - cloned).as_secs_f64(),
+                    (concluded - ran).as_secs_f64(),
+                    (clock.elapsed() - concluded).as_secs_f64()
+                );
+            }
+        }
     }
 
     /// The machine of the last checkpoint that is still valid, set up to read

@@ -507,8 +507,13 @@ if (typeof cjs === 'object' && cjs.exports) {
     if (m.method === 'satex/analyze') shown = m.params?.first ?? shown;
     data.texts = texts;
     if (['init', 'bundle', 'bundles'].includes(data.type)) handle(data);
-    else serial = serial.then(() => handle(data));
+    else serial = serial.then(turn).then(() => handle(data));
   };
+  /** One turn of the event loop: the messages that came meanwhile are counted before the next is handled,
+   * so a question of an older text is dropped, not answered behind the newer text's run. */
+  const turn = () => new Promise<void>((done) => { const c = new MessageChannel(); c.port1.onmessage = () => done(); c.port2.postMessage(0); });
+  /** Whether a newer text came after this message: counted here, or on the page's shared counter. */
+  const outdated = (data: Rec) => data.texts !== texts || (cancelFlag != null && data.sent != null && Atomics.load(cancelFlag, 0) > data.sent);
   const handle = async (data: Rec): Promise<void> => {
     try {
       if (data.type === 'init') {
@@ -548,7 +553,7 @@ if (typeof cjs === 'object' && cjs.exports) {
       } else if (data.type === 'uncache') {
         await engine!.uncache(data.paths);
         self.postMessage({ type: 'caches', entries: engine!.caches() });
-      } else if (data.type === 'lsp' && data.texts !== texts && readOnly(data.message)) {
+      } else if (data.type === 'lsp' && outdated(data) && readOnly(data.message)) {
         self.postMessage({ type: 'lsp', out: [{ jsonrpc: '2.0', id: data.message.id, result: null }] });
       } else if (data.type === 'lsp') {
         // the page's shared counter of texts sent: a run of fewer stops once a newer one came

@@ -390,3 +390,59 @@ fn a_longer_word_typed_in_a_paragraph_gives_the_full_runs_result() {
     assert_eq!(first_difference(&said(&incremental), &said(&full)), None);
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// The typeset rows of `path`'s lines `lo..=hi`, without the page order: a paragraph the page
+/// builder still holds has none yet.
+fn rows_in(analysis: &Analysis, path: &str, lo: u32, hi: u32) -> Vec<satex::queries::query::Record> {
+    use satex::queries::query::{Filter, Query, run};
+    (run(analysis, Query::Typeset, &Filter::Always).into_iter())
+        .filter(|r| r.get("path").and_then(|p| p.as_str()) == Some(path))
+        .filter(|r| {
+            r.get("line").and_then(|l| l.as_u64()).is_some_and(|l| (u64::from(lo)..=u64::from(hi)).contains(&l))
+        })
+        .map(|mut r| {
+            r.remove("placed");
+            r
+        })
+        .collect()
+}
+
+/// An edit inside a paragraph runs that paragraph first, from the checkpoint the full run
+/// resumes from, up to the paragraph's end (`preview_with`): TeX breaks a paragraph into lines
+/// from the state at its start and its own text, so its rows are the full run's. Pins: the
+/// playground waited for the whole run (and the page builder holds the paragraph until the
+/// page ships, so the runs never meet earlier); a longer word and a word in the last
+/// paragraph are covered too.
+#[test]
+fn a_paragraph_run_first_typesets_the_edited_paragraph_as_the_full_run() {
+    if !installed() {
+        return;
+    }
+    let dir = crate::support::tmp_root().join("incremental-preview");
+    std::fs::create_dir_all(&dir).unwrap();
+    let main = dir.join("main.tex");
+    let cfg = crate::support::config();
+    std::fs::write(&main, PARAGRAPHS).unwrap();
+    let mut checkpoints = Checkpoints::new(&cfg).every(64);
+    checkpoints.analyze(PARAGRAPHS, &main);
+    let edits =
+        [("the edits change", "an edit changed"), ("the last one", "the very last one"), ("a few words", "few words")];
+    let mut text = PARAGRAPHS.to_string();
+    for (was, now) in edits {
+        text = text.replacen(was, now, 1);
+        std::fs::write(&main, &text).unwrap();
+        let got = std::rc::Rc::new(std::cell::RefCell::new(None));
+        let sink = got.clone();
+        satex::analysis::machine::preview_with(Some(Box::new(move |run, path, lo, hi| {
+            *sink.borrow_mut() = Some((rows_in(&run, path, lo, hi), path.to_string(), lo, hi));
+        })));
+        checkpoints.analyze(&text, &main);
+        let (rows, path, lo, hi) = got.take().unwrap_or_else(|| panic!("no paragraph run for {now}"));
+        let edited = 1 + text.lines().position(|l| l.contains(now)).unwrap() as u32;
+        assert!(lo <= edited && edited <= hi, "{now}: lines {lo}-{hi}");
+        assert!(!rows.is_empty(), "{now}: no rows");
+        let full = Machine::analyze_once(&text, Some(&main), &cfg);
+        assert_eq!(rows, rows_in(&full, &path, lo, hi), "{now}");
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}

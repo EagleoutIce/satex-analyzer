@@ -63,7 +63,7 @@ mod calls;
 mod checkpoint;
 pub mod directive;
 pub(crate) use checkpoint::setup_key;
-pub use checkpoint::{BetweenRuns, Checkpoints};
+pub use checkpoint::{BetweenRuns, Checkpoints, Preview, preview_with};
 pub(crate) mod explore;
 mod inspect;
 mod package_cache;

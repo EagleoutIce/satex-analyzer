@@ -453,7 +453,7 @@ impl Machine<'_> {
                 let (outer, paths) = (outer.clone(), paths.clone());
                 self.take_checkpoint(Drive { outer, outer_unit, nested, paths, keep_errors, mark, commands });
             }
-            self.halted |= spliced;
+            self.halted |= spliced || (!ended && paths.top && self.preview_done());
             self.charge(&mut mark);
             if !nested {
                 self.undo.clear();
