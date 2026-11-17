@@ -939,6 +939,14 @@ docs:  # where a package's documentation is looked for and which conventions of 
     #! affects: output
     #! example: `\begin{declcs}{intcalcNum} \M{x}\end{declcs}` documents `\intcalcNum` (oberdiek's packages)
     #! plugin: docs
+  named_environments: {docCommand: command, docEnvironment: environment, docKey: key}  # the environments that document one name and its usage in two groups, with what they document (command, environment or key)
+    #! affects: output
+    #! example: `\begin{docCommand}{tcbsettowidthofnode}{\marg{register}\marg{node}}` documents `\tcbsettowidthofnode` (tcolorbox's documentation library)
+    #! plugin: docs
+  usage_blocks: [desc]  # the environments whose body is a verbatim usage line, the prose after them
+    #! affects: output
+    #! example: `\begin{desc}|\titleformat{<command>}|\end{desc}` documents `\titleformat` (titlesec, enumitem)
+    #! plugin: docs
   labels: [item, section, subsection, subsubsection]  # the headings and list items whose label is one command they document, without the backslash
     #! affects: output
     #! example: `\subsection{\cs{pdfpagewidth}}` in the pdfTeX manual documents `\pdfpagewidth`
@@ -1187,10 +1195,11 @@ A package is cached per **read set**: the meanings, registers, hooks, options an
 - **Background builder** (`cache.background: ask|yes|no`, default `ask`). The first run on a terminal asks once whether satex may prepare the kernels and the installed packages in the background. The editor asks the same once. The answer goes into the global config. On yes, a detached process at the lowest priority runs `satex cache build --background`: the kernel of each engine cached here, then `cache.index.common`, then the packages runs here loaded, then the `cache.index.most_loaded` (200) packages installed packages load most. There is one builder per cache directory. It holds no build lock, so a run never waits on it. It ends `full` when the cache directory reaches `limits.cache_size`, and it never evicts another cache to make room. Once it is done, full or failed, it does not start again until a new satex build. Without `nice` in `/usr/bin` or `/bin` it runs at normal priority, and `satex cache` says so. Only a terminal run whose input and output are both terminals asks, and never `install`, `query`, `gui` or an interactive trace. `satex cache` shows its state, `satex cache stop` stops it until `satex cache build --background` resumes it. `SATEX_NO_SETUP` or `CI` set never asks nor starts it.
 - **Pruning** keeps this build's kernel and four recent ones, then trims by `limits.cache_size` (2 GiB) least-recently used. `satex cache prune` does only that.
 
-A **document cache** keeps a run's whole analysis, one file per document and settings (`cache.document`, on by default).
+A **document cache** keeps a run's whole analysis, one file per document (`cache.document`, on by default). A run of the edited text, or under other settings, replaces it. `satex cache show document` lists the documents with size and age.
 
 - **Served** when the document's text, the settings, the installation's trees (their `ls-R` stamps) and every file the run read or looked for are unchanged. Files the run wrote itself (`.aux`, `.toc`) are its output, not its input. A served run executes nothing: `served_steps` equals `steps`, and `satex summary` shows `cached` for `document`.
-- **Exact**: the stored run is served as the bytes it was stored as, so a later run's facts are the first run's, byte for byte. A run a time or memory limit stopped is not stored.
+- **Exact**: the stored run is served as the bytes it was stored as, so a later run's facts are the first run's, byte for byte. A run a budget stopped is stored once it built no cache. The next run would stop at the same place, so it is served, and the limit's note says so (`--set cache.document=false` runs again).
+- **A build goes on**: when `limits.seconds` leaves no time for the build's next run, the build is kept with the files that run reads (`.aux`, `.toc`). The next `satex` process goes on with that run and has the whole time for it.
 - **Not used** with `--trace`, under `--stats`, or while another run's files stand in for the disk (`lint --fix`, the language server's unsaved buffers). `-v` says why a stored one was not served.
 - Under `clock: now` a served run keeps the date of the run that stored it, and `clock-assumed` says so.
 

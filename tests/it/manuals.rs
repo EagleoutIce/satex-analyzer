@@ -203,3 +203,58 @@ fn engine_manuals_document_primitives() {
         assert!(e.get(name).is_some_and(|e| e.text.is_some()), "{name}: {:?}", e.get(name));
     }
 }
+
+/// tcolorbox documents with `\begin{docCommand}{name}{args}` and its siblings
+/// (also pgfplots-addons, many tcolorbox libraries): the installed manual gives
+/// a command, an environment and a key with their prose.
+#[test]
+fn tcolorbox_manual_documents_commands_environments_keys() {
+    let Some(e) = mined("tcolorbox.sty") else { return };
+    let c = &e["tcbsettowidthofnode"];
+    assert_eq!(c.usage.as_deref(), Some("\\tcbsettowidthofnode{⟨register⟩}{⟨node⟩}"), "{c:?}");
+    assert!(c.text.is_some(), "{c:?}");
+    assert!(e.get("tcbexternal").is_some_and(|x| x.text.is_some()), "{:?}", e.get("tcbexternal"));
+}
+
+/// Packages whose manuals use other common markup are documented too: no
+/// per-package rules, only the markup families the miner knows.
+#[test]
+fn common_packages_get_docs() {
+    for (file, name) in
+        [("enumitem.sty", "setlist"), ("xstring.sty", "IfSubStrBefore"), ("titlesec.sty", "titleformat")]
+    {
+        if Dirs::of(&DocsConfig::default(), &installed(file)).is_some() {
+            let e = mined(file).unwrap_or_else(|| panic!("{file}: documentation installed, nothing mined"));
+            assert!(
+                e.get(name).is_some_and(|x| x.text.is_some() || x.usage.is_some()),
+                "{file} {name}: {} entries",
+                e.len()
+            );
+        }
+    }
+}
+
+/// `\usepackage{tikz,makeidx}` documents each listed package like two
+/// single `\usepackage` lines: the docs query holds the same entries.
+#[test]
+fn comma_lists_document_every_package() {
+    use satex::analysis::machine::Machine;
+    use satex::project::config::{Config, Load};
+    let names = |preamble: &str| {
+        let source = format!("\\documentclass{{article}}\n{preamble}\\begin{{document}}\\end{{document}}\n");
+        let cfg = Config { load: Load { classes: true, ..Default::default() }, ..crate::support::config() };
+        let analysis = Machine::analyze(&source, None, &cfg);
+        let mut names: Vec<String> = satex::queries::query::docs(&analysis)
+            .iter()
+            .filter_map(|r| r["name"].as_str().map(String::from))
+            .collect();
+        names.sort();
+        names
+    };
+    let list = names("\\usepackage{tikz,makeidx}\n");
+    if list.is_empty() {
+        return;
+    }
+    assert_eq!(list, names("\\usepackage{tikz}\n\\usepackage{makeidx}\n"));
+    assert!(list.iter().any(|n| n == "tikzpicture") && list.iter().any(|n| n == "printindex"), "{}", list.len());
+}

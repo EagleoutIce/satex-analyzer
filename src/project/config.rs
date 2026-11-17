@@ -901,6 +901,10 @@ pub struct DocsConfig {
     pub l3doc_environments: Vec<String>,
     /// The environments that declare a command by its name without the backslash, its arguments inside, `\begin{declcs}{x} \M{a}\end{declcs}`.
     pub declare_environments: Vec<String>,
+    /// The environments that document one name and its usage in two groups, `\begin{docCommand}{x}{\marg{a}}` (tcolorbox's documentation library), with what they document: `command`, `environment` or `key`.
+    pub named_environments: BTreeMap<String, String>,
+    /// The environments whose body is a verbatim usage line, `|\titleformat{<command>}|` or `|label=<commands>|` (enumitem, titlesec), the prose after them.
+    pub usage_blocks: Vec<String>,
     /// The headings and list items (without their backslash) whose label is one command they document, `\subsection{\cs{x}}`.
     pub labels: Vec<String>,
     /// The manuals of the engine's primitives, first first: folders of the TeX installation's root.
@@ -924,6 +928,10 @@ impl Default for DocsConfig {
             ltxdoc_environments: list(&["macro"]),
             l3doc_environments: list(&["function", "variable"]),
             declare_environments: list(&["declcs"]),
+            named_environments: [("docCommand", "command"), ("docEnvironment", "environment"), ("docKey", "key")]
+                .map(|(a, b)| (a.to_string(), b.to_string()))
+                .into(),
+            usage_blocks: list(&["desc"]),
             labels: list(&["item", "section", "subsection", "subsubsection"]),
             engine_manuals: list(&["doc/pdftex/manual", "doc/etex/base", "doc/plain/texbytopic"]),
             inline: false,

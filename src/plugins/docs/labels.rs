@@ -49,7 +49,14 @@ impl DocPlugin for Labels {
 
 /// The command a label is and nothing else, without its backslash: `\cs{x}`, `\verb|\x|`, `|\x|`.
 fn command(head: &str) -> Option<String> {
-    let shown = render(head, true);
+    // a heading in typewriter type spells the backslash out (xstring: `\ttfamily\textbackslash IfSubStr`)
+    let plain = head.replace("\\textbackslash ", "\\").replace("\\textbackslash", "\\");
+    let plain = ["family", "series", "shape"].iter().fold(plain, |h, end| {
+        let at = h.find(&format!("{end}\\")).map(|i| i + end.len());
+        let font = at.and_then(|at| h[..at].rfind('\\').map(|s| (s, at)));
+        font.map_or(h.clone(), |(s, at)| format!("{}{}", &h[..s], &h[at..]))
+    });
+    let shown = if plain.trim().starts_with('\\') && plain != head { plain } else { render(head, true) };
     let name = shown.trim().strip_prefix('\\')?;
     let word = !name.is_empty() && name.chars().all(|c| c.is_ascii_alphabetic() || c == '@');
     let symbol = name.chars().count() == 1 && !name.starts_with(char::is_alphanumeric);
@@ -93,5 +100,14 @@ mod tests {
         assert_eq!(text("-").as_deref(), Some("Discretionary hyphen."));
         // a heading of words names no command
         assert_eq!(out.len(), 3, "{out:?}");
+    }
+
+    /// xstring's manual heads a command with `\ttfamily\textbackslash name`:
+    /// the font switch and the spelled-out backslash still name the command.
+    #[test]
+    fn headings_in_typewriter_type_name_their_command() {
+        assert_eq!(command("\\ttfamily\\textbackslash IfSubStrBefore").as_deref(), Some("IfSubStrBefore"));
+        assert_eq!(command("\\bfseries\\ttfamily\\textbackslash x").as_deref(), Some("x"));
+        assert_eq!(command("\\ttfamily Introduction"), None);
     }
 }

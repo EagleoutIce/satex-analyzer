@@ -2298,6 +2298,29 @@
           "x-example": "`\\begin{macro}{\\x}` documents `\\x`",
           "x-plugin": "docs"
         },
+        "named_environments": {
+          "description": "the environments that document one name and its usage in two groups, with what they document (command, environment or key)",
+          "properties": {
+            "docCommand": {
+              "default": "command",
+              "type": "string"
+            },
+            "docEnvironment": {
+              "default": "environment",
+              "type": "string"
+            },
+            "docKey": {
+              "default": "key",
+              "type": "string"
+            }
+          },
+          "type": "object",
+          "x-affects": [
+            "output"
+          ],
+          "x-example": "`\\begin{docCommand}{tcbsettowidthofnode}{\\marg{register}\\marg{node}}` documents `\\tcbsettowidthofnode` (tcolorbox's documentation library)",
+          "x-plugin": "docs"
+        },
         "reads": {
           "default": [
             "\\DocInput",
@@ -2324,6 +2347,21 @@
             "output"
           ],
           "x-example": "`source_root: src` looks in `texmf/src/latex/pkg`",
+          "x-plugin": "docs"
+        },
+        "usage_blocks": {
+          "default": [
+            "desc"
+          ],
+          "description": "the environments whose body is a verbatim usage line, the prose after them",
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "x-affects": [
+            "output"
+          ],
+          "x-example": "`\\begin{desc}|\\titleformat{<command>}|\\end{desc}` documents `\\titleformat` (titlesec, enumitem)",
           "x-plugin": "docs"
         },
         "usage_environments": {

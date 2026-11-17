@@ -54,6 +54,36 @@ impl DocPlugin for Ltxdoc {
                 }
             }
         }
+        // tcolorbox's `\begin{docCommand}[opts]{name}{\marg{a}}`: the name and its usage in two groups, the prose after.
+        for (env, kind) in &config.named_environments {
+            for (at, _, list, after) in anchors(&doc, env) {
+                let after = after.trim_start_matches(|c: char| c.is_whitespace() || c == '%');
+                let (args, prose) = group(after, '{', '}').unwrap_or(("", after));
+                let args = render(args, true);
+                // a key's third group is its default and initial value
+                let prose = if kind == "key" { group(prose, '{', '}').map_or(prose, |(_, p)| p) } else { prose };
+                for name in names(list) {
+                    let usage = match kind.as_str() {
+                        "environment" => format!("\\begin{{{name}}}{args}"),
+                        "key" => format!("{name}{args}"),
+                        _ => format!("\\{name}{args}"),
+                    };
+                    out.push(entry(name.clone(), Some(usage), description(prose, Some(&name)), Audience::User, at));
+                }
+            }
+        }
+        // enumitem's and titlesec's `\begin{desc}` with a verbatim usage line, `|\titleformat{<command>}|`, the prose after.
+        for env in &config.usage_blocks {
+            let (open, end) = (format!("\\begin{{{env}}}"), format!("\\end{{{env}}}"));
+            for (at, _) in doc.match_indices(&open).filter(|(at, _)| !quoted(&doc, *at)) {
+                let Some((body, prose)) = doc[at + open.len()..].split_once(&end) else { continue };
+                for line in body.lines().filter_map(|l| l.trim().strip_prefix('|')?.strip_suffix('|')) {
+                    let Some(name) = verbatim_name(line) else { continue };
+                    let usage = line.replace('<', "⟨").replace('>', "⟩");
+                    out.push(entry(name.clone(), Some(usage), description(prose, Some(&name)), Audience::User, at));
+                }
+            }
+        }
         // oberdiek's `\begin{declcs}{x} \M{a}\end{declcs}`: the name without its backslash, its arguments, then prose
         for env in &config.declare_environments {
             let end = format!("\\end{{{env}}}");
@@ -98,6 +128,19 @@ impl DocPlugin for Ltxdoc {
             }
         }
     }
+}
+
+/// The name a verbatim usage line documents: the command after its backslash
+/// (`\titleformat{<x>}`), or the key before its `=` (`label=<commands>`).
+fn verbatim_name(line: &str) -> Option<String> {
+    let word = |c: &char| c.is_alphanumeric() || "@*-".contains(*c);
+    let (head, key) = match line.strip_prefix('\\') {
+        Some(cs) => (cs, false),
+        None => (line.split('=').next().unwrap_or(line), true),
+    };
+    let name: String = head.chars().take_while(word).collect();
+    let name = name.trim().trim_end_matches('*').to_string();
+    (!name.is_empty() && (!key || name.len() == head.trim().trim_end_matches('*').len())).then_some(name)
 }
 
 /// pgf's `\begin{key}{/tikz/xshift=\meta{dimension} (default 0pt)}`: the
@@ -194,5 +237,39 @@ mod tests {
         assert_eq!(text("see").as_deref(), Some("The command `\\see` cross references."));
         assert_eq!(text("emph").as_deref(), Some("This declaration sets emphasis."));
         assert_eq!(text("DTMcentury").as_deref(), Some("This converts ⟨year⟩ to the century."));
+    }
+
+    /// tcolorbox's documentation library names a command, environment or key
+    /// in one group and its arguments in the next, a `%` may end the line
+    /// between: all three are documented with the prose after them.
+    #[test]
+    fn named_environments_take_name_usage_and_prose() {
+        let tex = "\\begin{docCommand}[doc new=2014-05-05]{tcbsettowidthofnode}{\\marg{register}\\marg{node}}\nSets a register to the width.\n\\end{docCommand}\n\\begin{docEnvironment}%\n  {tcbexternal}{\\oarg{options}}\nExternalizes a box.\n\\end{docEnvironment}\n\\begin{docKey}[foo]{footitle}{=\\meta{text}}{no default}\nSets the title.\n\\end{docKey}\n";
+        let mut out = Vec::new();
+        Ltxdoc.mine(&DocsConfig::default(), Path::new("x.doc.tex"), tex, &mut out);
+        let get = |n: &str| out.iter().find(|e| e.name == n).cloned().expect(n);
+        let w = get("tcbsettowidthofnode");
+        assert_eq!(w.usage.as_deref(), Some("\\tcbsettowidthofnode{⟨register⟩}{⟨node⟩}"));
+        assert_eq!(w.text.as_deref(), Some("Sets a register to the width."));
+        assert_eq!(get("tcbexternal").usage.as_deref(), Some("\\begin{tcbexternal}[⟨options⟩]"));
+        assert_eq!(get("tcbexternal").text.as_deref(), Some("Externalizes a box."));
+        assert_eq!(get("footitle").usage.as_deref(), Some("footitle=⟨text⟩"));
+        assert_eq!(get("footitle").text.as_deref(), Some("Sets the title."));
+    }
+
+    /// enumitem and titlesec show a usage in a verbatim line of a `desc`
+    /// environment: a command or a key, the prose after the environment.
+    #[test]
+    fn verbatim_usage_blocks_document_commands_and_keys() {
+        let tex = "\\begin{desc}\n|\\titleformat{<command>}[<shape>]{<format>}|\n\\end{desc}\n\nRedefines a sectioning command.\n\n\\begin{desc}\n|label=<commands>|\n\\end{desc}\n\nSets the label.\n\n\\begin{desc}\n|Some prose, see.|\n\\end{desc}\n";
+        let mut out = Vec::new();
+        Ltxdoc.mine(&DocsConfig::default(), Path::new("x.tex"), tex, &mut out);
+        let get = |n: &str| out.iter().find(|e| e.name == n).cloned().expect(n);
+        assert_eq!(get("titleformat").usage.as_deref(), Some("\\titleformat{⟨command⟩}[⟨shape⟩]{⟨format⟩}"));
+        assert_eq!(get("titleformat").text.as_deref(), Some("Redefines a sectioning command."));
+        assert_eq!(get("label").usage.as_deref(), Some("label=⟨commands⟩"));
+        assert_eq!(get("label").text.as_deref(), Some("Sets the label."));
+        // prose in a verbatim line names nothing
+        assert_eq!(out.len(), 2, "{out:?}");
     }
 }

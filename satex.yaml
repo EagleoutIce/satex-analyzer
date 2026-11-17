@@ -922,6 +922,14 @@ docs:  # where a package's documentation is looked for and which conventions of 
     #! affects: output
     #! example: `\begin{declcs}{intcalcNum} \M{x}\end{declcs}` documents `\intcalcNum` (oberdiek's packages)
     #! plugin: docs
+  named_environments: {docCommand: command, docEnvironment: environment, docKey: key}  # the environments that document one name and its usage in two groups, with what they document (command, environment or key)
+    #! affects: output
+    #! example: `\begin{docCommand}{tcbsettowidthofnode}{\marg{register}\marg{node}}` documents `\tcbsettowidthofnode` (tcolorbox's documentation library)
+    #! plugin: docs
+  usage_blocks: [desc]  # the environments whose body is a verbatim usage line, the prose after them
+    #! affects: output
+    #! example: `\begin{desc}|\titleformat{<command>}|\end{desc}` documents `\titleformat` (titlesec, enumitem)
+    #! plugin: docs
   labels: [item, section, subsection, subsubsection]  # the headings and list items whose label is one command they document, without the backslash
     #! affects: output
     #! example: `\subsection{\cs{pdfpagewidth}}` in the pdfTeX manual documents `\pdfpagewidth`
