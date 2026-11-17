@@ -2282,9 +2282,11 @@ impl Machine<'_> {
     /// go level by level: equal levels are kept, and two token lists become
     /// one token standing for either beginning ([`Machine::one_of`]) followed
     /// by their common end. Otherwise keep the shared bottom levels and merge
-    /// everything above them into one such text. `None` when a file or a
-    /// boundary differs, or when code differs between two paths that are not
-    /// two passes of one loop (`pass`): they are at different points.
+    /// everything above them into one such text, except the unread end of a
+    /// lowest list both read on in, which stays that list ([`keep_list`]).
+    /// `None` when a file or a boundary differs, or when code differs between
+    /// two paths that are not two passes of one loop (`pass`): they are at
+    /// different points.
     fn widen_input(&mut self, a: &Input, b: &Input, span: Span, widen: bool, pass: bool) -> Option<Input> {
         let (a, b) = (live_frames(a), live_frames(b));
         // Paths at different digits of one number are at different stages of
@@ -2319,7 +2321,10 @@ impl Machine<'_> {
         let (p, q) = (pending(&a[shared..])?, pending(&b[shared..])?);
         let mut input: Vec<Frame> = a[..shared].iter().map(|f| (*f).clone()).collect();
         let at = stamp(&a[shared..].iter().chain(&b[shared..]).copied().collect::<Vec<_>>(), now);
-        input.push(tokens(self.widen_text(&p, &q, span, widen, pass)?, at));
+        let mut text = self.widen_text(&p, &q, span, widen, pass)?;
+        let kept = a.get(shared).zip(b.get(shared)).and_then(|(x, y)| keep_list(x, y, &mut text));
+        input.extend(kept);
+        input.push(tokens(text, at));
         Some(input.into_iter().collect())
     }
 
@@ -3735,4 +3740,21 @@ fn unclosed_of(text: &[Token], prims: &[Option<Primitive>]) -> (bool, bool) {
         low = low.min(depth);
     }
     (!strays.is_empty() || low < 0, open > 0 || depth > low)
+}
+
+/// When two joined paths both read on in one token list `x`, `y`, its unread
+/// end stays that list, so the list keeps its identity and a later call read
+/// from it is no loop pass ([`Machine::loop_head`]). `text` is the joined
+/// text of the levels from `x` up, and keeps only what lies before that end.
+fn keep_list(x: &Frame, y: &Frame, text: &mut Vec<Token>) -> Option<Frame> {
+    let (Frame::Tokens { toks: t, pos: i, .. }, Frame::Tokens { toks: u, pos: j, .. }) = (x, y) else { return None };
+    if !Rc::ptr_eq(t, u) {
+        return None;
+    }
+    let rest = &t[*i.max(j)..];
+    if text.len() <= rest.len() || !text.ends_with(rest) {
+        return None;
+    }
+    text.truncate(text.len() - rest.len());
+    Some(if i >= j { x.clone() } else { y.clone() })
 }
