@@ -173,6 +173,21 @@ fn an_undecidable_conditional_analyzes_both_arms() {
     assert!(!definition(&analysis, "one").expect("one").certain);
 }
 
+/// A name `\csname` builds around unknown digits is one control sequence
+/// (tex.web § 372), read as one undelimited argument. Bug: it was taken for
+/// unknown text of any length, so `#2` became unknown text and the `\relax`
+/// stayed behind; pgf's `\pgfutil@ifundefined` on a point of unknown width
+/// then took the "defined" arm (pgfmoduleshapes 616: missing `\endcsname`).
+#[test]
+fn a_name_around_unknown_digits_is_one_argument() {
+    let analysis = analyze(
+        r"\def\t#1#2{\ifx#1#2\else\def\wrong{}\fi}\dimen0=\pdfelapsedtime sp
+          \expandafter\t\csname b\the\dimen0,1\endcsname\relax
+          \expandafter\t\csname b\the\pdfelapsedtime\endcsname\relax",
+    );
+    assert!(definition(&analysis, "wrong").is_none(), "#2 was not the \\relax after the name");
+}
+
 #[test]
 fn csname_builds_a_control_sequence() {
     let analysis = analyze(r"\expandafter\def\csname myname\endcsname{body}");

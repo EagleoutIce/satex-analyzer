@@ -9111,6 +9111,15 @@ will look undefined",
         }
     }
 
+    /// Whether `sym` has one known meaning, and one that does not expand.
+    fn one_unexpandable(&self, sym: Sym) -> bool {
+        self.env.slot(sym).is_some_and(|b| {
+            b.may.is_none()
+                && !matches!(b.meaning, Meaning::Unknown | Meaning::Undefined)
+                && !self.expandable_meaning(&b.meaning)
+        })
+    }
+
     pub fn expandable(&self, sym: Sym) -> bool {
         self.expandable_meaning(&self.env.meaning(sym))
     }
@@ -12704,12 +12713,16 @@ will look undefined",
                         }]
                     } else {
                         // A bare token of unknown text (not `{…}`, which is
-                        // one argument whatever it holds).
+                        // one argument whatever it holds). A name built around
+                        // a gap is one control sequence (tex.web § 372) where it
+                        // means one thing that does not expand; else it may stand
+                        // for an expansion not made (`\expandafter` over it).
                         self.skip_spaces();
-                        let bare = self
-                            .peek()
-                            .and_then(|t| t.cs())
-                            .is_some_and(|sym| sym == self.unknown || self.is_unknown_name(sym));
+                        let bare = self.peek().and_then(|t| t.cs()).is_some_and(|sym| {
+                            sym == self.unknown
+                                || self.is_unknown_name(sym)
+                                    && (self.unknown_text_name(sym) || !self.one_unexpandable(sym))
+                        });
                         let arg = self.read_undelimited();
                         if bare && let [t] = arg[..] {
                             fuzzy = Some(t.span);
