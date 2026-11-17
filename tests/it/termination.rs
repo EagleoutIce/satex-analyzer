@@ -1491,6 +1491,31 @@ fn a_call_that_ends_its_callers_group_replays_the_end() {
     assert_eq!(kept.call_memo[1], 2, "{:?} kept, replayed, saved", kept.call_memo);
 }
 
+/// babel's `\csname extras<lang>\endcsname\relax` around cleveref's
+/// `\cref@stack@add`: `\extras` ends in a call that opens a group, loops,
+/// then `\expandafter\endgroup\ifnum…\fi`. The false `\ifnum` uses up
+/// every list of the call, so the put-back `\endgroup` went into the empty
+/// frame `\csname` had left below the call. The run seemed to end before
+/// its `\endgroup` with a group open, so it never kept its effect.
+#[test]
+fn a_put_back_token_of_a_call_stays_its_own() {
+    let [kept, ran] = memo_runs(
+        "\\countdef\\n=10
+\\def\\add{\\begingroup\\n=0 \\def\\step{\\advance\\n 1 \\ifnum\\n<300 \\expandafter\\step\\fi}\\step
+  \\expandafter\\endgroup\\ifnum\\n<0 \\gdef\\Never{}\\fi}
+\\def\\extras{\\gdef\\seen{y}\\add}
+\\def\\switch#1{\\csname extras\\endcsname\\relax\\xdef\\last{#1}}
+\\switch1\\switch2\\switch3\\switch4
+\\ifnum\\currentgrouplevel=0 \\def\\Closed{}\\else\\def\\Open{}\\fi
+",
+    );
+    for a in [&kept, &ran] {
+        assert!(crate::support::defined(a, "Closed") && crate::support::defined(a, "seen"));
+        assert!(!crate::support::maybe_defined(a, "Open") && !crate::support::maybe_defined(a, "Never"));
+    }
+    assert!(kept.call_memo[1] >= 2, "{:?} kept, replayed, saved", kept.call_memo);
+}
+
 /// Only a call the main loop expands keeps or replays an effect. Under
 /// `\expandafter\mark\bump` TeX expands `\bump` first but runs `\mark`
 /// before `\bump`'s text, so `\mark` still sees `\done` as `\relax`. A

@@ -25,3 +25,5 @@ termination::convergence::tikz_nodes_of_unknown_width
 tagging::an_fp_eval_of_an_unknown_integer_stays_on_few_paths
 # Open (2026-11-17, owner p1): one node of tikz_nodes, Root A (digit-split wait in partner). p1c: forks within budget, 14 paths remain (arms of xcolor's clamps meet only at the line's end).
 termination::convergence::colorlet_of_an_unknown_pgfmath_result
+# owner: grp (put-back frame shared with the caller; fix target/scratch/grp/fix-b-pop-empty-returned.patch turns bend red)
+termination::a_put_back_token_of_a_call_stays_its_own
