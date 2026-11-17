@@ -10,5 +10,5 @@ termination::convergence::tikz_nodes_of_unknown_width
 tagging::pdfua_without_a_pdf_title_is_reported_and_fixed
 # Open (2026-11-17): unbounded typed digits stay one token in part_digits; l3fp char tests fork per arm. Splitting breaks pgfmath canaries (target/scratch/fp-work.patch, owner: next l3fp round).
 tagging::an_fp_eval_of_an_unknown_integer_stays_on_few_paths
-# Open (2026-11-17, owner p1): one node of tikz_nodes, Root A (digit-split wait in partner).
+# Open (2026-11-17, owner p1): one node of tikz_nodes, Root A (digit-split wait in partner). p1c: forks within budget, 14 paths remain (arms of xcolor's clamps meet only at the line's end).
 termination::convergence::colorlet_of_an_unknown_pgfmath_result

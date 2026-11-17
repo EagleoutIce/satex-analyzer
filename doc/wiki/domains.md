@@ -38,7 +38,7 @@ The bounded set is `OneOf` for every kind (below). Code that does not inspect th
 - **Tests.** `\ifnum` and `\ifdim` decide by the interval, `\ifpdfabsnum` by the interval of the absolute values.
 - **Not zero.** An interval around 0 may exclude 0 (`Num::nz`, a reduced product with the sign). A failed test against 0 sets it, and a join or widening keeps it only where both sides exclude 0. So `[-6,-1]` joined with `[1,6]` is never 0 for `\ifnum ...=0`, and a number told apart from 0 has no one-digit arm `0`.
 - **Digits then typed digits** (`9` then digits in 331..350) read as one number in an interval: appending the digits of `d` grows with `d`, so the ends give 9331..9350. supp-pdf's register loop compares such a number.
-- **A register of an interval number** (`\newcount` while `\count10` is an interval) keeps the interval for `\meaning`, which prints it as typed digits.
+- **A register of an interval number** (`\newcount` while `\count10` is an interval) keeps the interval for `\meaning`, which prints it as typed digits. `\meaning` of a macro holding typed digits gives them back as they are, like `\string`: they are category 12 ([tex.web § 465](https://github.com/TeX-Live/texlive-source/blob/dce038dd1bd98fac739254da4a2066c8347cdf6c/texk/web2c/tex.web#L9172)). So a spec sanitized with `\meaning` (xcolor's `\XC@edef`) keeps its bound.
 - **Typed digits then a one-of** (`\strip@pt`'s fraction): a scan splits the one-of per text where each is read in full or ends the digits. Other unknown text after them may be more digits, so the number reads on and is unknown.
 - **Token lists** past the set keep their frame: pgfmath's operand stacks with different tops join to one stack whose top is typed digits, so a delimited pop still finds its braces.
 

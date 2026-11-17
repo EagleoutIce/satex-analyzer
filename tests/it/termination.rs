@@ -922,7 +922,11 @@ mod convergence {
     /// line, on few paths and within one node's share of (2)'s forks. Bug
     /// (2026-11-17, owner p1): 1.3k forks and 8 paths to the line's end, as
     /// the digit-split wait in `partner` counts the parked arms but not the
-    /// running one, so four arms at one place wait for a fifth.
+    /// running one, so four arms at one place wait for a fifth. Since p1c
+    /// (`\meaning` keeps typed digits): 700 forks, but 14 paths still
+    /// meet only at the line's end, as the percentage is any dimension
+    /// (pgfmath's result types as -16384..16383) and xcolor's clamps
+    /// (xcolor.sty 479) part each component in three.
     #[test]
     fn colorlet_of_an_unknown_pgfmath_result() {
         const NODES: u64 = 30;
@@ -933,6 +937,24 @@ mod convergence {
         let Some(a) = latex("tikz-colorlet", &document("\\usepackage{tikz}", body), |_| {}) else { return };
         converged(&a, TIKZ_NODES_FORKS / NODES);
         assert!(a.peak_paths <= FEW_PATHS, "{} paths", a.peak_paths);
+    }
+
+    /// (2b) A mix percentage of typed digits (5..9). xcolor sanitizes the
+    /// spec with `\meaning` (`\XC@edef`), which must give the typed digits
+    /// back as they are: they are category 12 (tex.web § 465). Bug
+    /// (2026-11-17, p1c): `\meaning` printed them as typed text of no
+    /// bound, the percentage became any dimension and every component's
+    /// digits split by length (88 forks, 7 paths).
+    #[test]
+    fn mixing_a_color_by_typed_digits_keeps_their_bound() {
+        const FORKS: u64 = 8;
+        // `\strip@pt` forks once on whether the fraction is 0.
+        const PATHS: usize = 2;
+        let body = r"\makeatletter\edef\r{\the\numexpr\pdfuniformdeviate 5+5\relax}
+\extractcolorspecs{blue!\r!red}\m\c";
+        let Some(a) = latex("typed-mix", &document("\\usepackage{xcolor}", body), |_| {}) else { return };
+        converged(&a, FORKS);
+        assert!(a.peak_paths <= PATHS, "{} paths", a.peak_paths);
     }
 
     /// An environment whose name is one of two: `\end` looks its hooks up

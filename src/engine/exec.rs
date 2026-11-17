@@ -1388,7 +1388,9 @@ impl Machine<'_> {
                     out.push(self.one_of(texts, t.span));
                     continue;
                 }
-                out.push(self.printed(t, false, t.span));
+                // Typed digits are category 12 and print as they are (tex.web § 465).
+                let typed = t.cs().is_some_and(|sym| self.name(sym).starts_with(crate::engine::scan::TYPED_DIGITS));
+                out.push(if typed { t } else { self.printed(t, false, t.span) });
             } else {
                 run.push(t);
             }
