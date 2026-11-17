@@ -81,7 +81,7 @@ what the graphic shows. The image dialog has a field for it.",
 PDF/UA requires a document title in the XMP metadata (`dc:title`), shown by
 the viewer in place of the file name.  pdfmanagement writes it from the
 document property `hyperref/pdftitle`.  With tagging on, latex-lab's title
-code fills that property from `\\title{…}`; without it, only
+code fills that property from `\\title{…}`. Without it, only
 `\\hypersetup{pdftitle={…}}` does.  The run ended with the property empty.
 
 Fix with `\\title{…}` under tagging, or `\\hypersetup{pdftitle={…}}`.  Where

@@ -781,7 +781,7 @@ Fix by adding the package to the dependency file, or by rerunning depp.
 
 **PDF/UA is claimed, but the PDF gets no title**
 
-PDF/UA requires a document title in the XMP metadata (`dc:title`), shown by the viewer in place of the file name. pdfmanagement writes it from the document property `hyperref/pdftitle`. With tagging on, latex-lab's title code fills that property from `\title{…}`; without it, only `\hypersetup{pdftitle={…}}` does. The run ended with the property empty.
+PDF/UA requires a document title in the XMP metadata (`dc:title`), shown by the viewer in place of the file name. pdfmanagement writes it from the document property `hyperref/pdftitle`. With tagging on, latex-lab's title code fills that property from `\title{…}`. Without it, only `\hypersetup{pdftitle={…}}` does. The run ended with the property empty.
 
 Fix with `\title{…}` under tagging, or `\hypersetup{pdftitle={…}}`. Where `\title` is there but latex-lab's title code did not take it, the fix writes `\title[pdftitle={…}]{…}` from the title as the run rendered it.
 

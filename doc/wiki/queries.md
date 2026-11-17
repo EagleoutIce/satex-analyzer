@@ -155,7 +155,7 @@ id   kind     file
 2    input    texsys.cfg                                
 3    input    texsys.aux                                
 4    input    expl3.ltx                                 
-… 307 more lines omitted
+… 295 more lines omitted
 ```
 
 ## gaps
