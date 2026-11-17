@@ -1325,3 +1325,21 @@ fn no_double_dash_starts_in_a_printed_number() {
     assert_eq!(body(&args("--"), "two"), "");
     assert_ne!(body(&args("-"), "two"), "");
 }
+
+/// `\the` of a name of unknown meaning prints some text, never nothing:
+/// expl3's `\int_const:Nn` of an unknown number is a `\mathchardef` on one
+/// arm and a count register on the other, and `\pdf_object_write:nnn` read
+/// it back as an empty object number ("missing number" at every tagged
+/// document's `\end{document}`, l3backend-pdftex.def `useobjnum`).
+#[test]
+fn the_of_a_constant_of_unknown_value_prints_digits() {
+    let analysis = analyze(
+        r"\chardef\y=\pdfuniformdeviate 100 \edef\s{[\the\y]}
+          \ifnum\pdfuniformdeviate 2=0 \global\mathchardef\z=5 \else \global\countdef\z=300 \z=7 \fi
+          \edef\t{[\the\z]}\count1=\the\z\relax",
+    );
+    for name in ["s", "t"] {
+        assert_ne!(crate::support::last_body(&analysis, name), "[]", "{name}");
+    }
+    assert!(with_code(&analysis, "missing-number").is_empty(), "{:?}", with_code(&analysis, "missing-number"));
+}

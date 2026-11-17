@@ -80,6 +80,7 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 
 ### Analysis
 
+- `fix` **`\the` of a constant of unknown value prints digits.** A `\chardef` to an unknown number, or a name whose meaning is one of several numbers, printed nothing under `\the`. Every `\DocumentMetadata` document read back empty PDF object ids from it and faulted at `\end{document}`; its run now reaches the end, and a PDF/UA document's title is known.
 - `fix` **An unknown fraction may round up.** The digits after a decimal point that satex does not know are a range again, not assumed below one: `.9` and five more digits can round to 1pt.
 - `perf` **Paths that agree cost nothing to compare.** Each path's changed names live in a shared tree, so joins and comparisons skip every part two paths have in common. Results stay the same.
 - `fix` **`\meaning` keeps a number's bounds.** A number of known range written out by `\meaning` stays that range, as `\string` already kept it. xcolor's mix of a color by such a number took 88 path splits, now 4.

@@ -111,18 +111,22 @@ fn an_incompatible_package_is_reported_from_the_status_list() {
     assert!(msgs[0].contains("`listings.sty` is currently incompatible"), "{msgs:?}");
 }
 
-/// PDF/UA needs `dc:title`, which only `hyperref/pdftitle` makes: `\title` alone does not.
-/// The fix writes the rendered title as latex-lab's `\title[pdftitle=…]`. Red while the run's
-/// end under tagging is joined (the fault at `\end{document}`, ~/satex-learnings.md
-/// 2026-11-16): the title is then unknown, and the rule rightly stays silent.
+/// PDF/UA needs `dc:title`. Under tagging latex-lab's title code copies `\title` into
+/// `hyperref/pdftitle` at the last page, so `\title{Hello}` alone gives the PDF its title
+/// (pdflatex's XMP holds `Hello`): no finding. Without `\title` the PDF has none: one. Red
+/// while every tagged run faulted at `\end{document}` (`\the` of an `\int_const:Nn` of an
+/// unknown object number printed nothing, `useobjnum` read no number), joining the end.
 #[test]
-fn pdfua_without_a_pdf_title_is_reported_and_fixed() {
+fn pdfua_without_any_title_is_reported() {
     if !crate::support::installed() {
         return;
     }
-    let a = analyze(&metadata("lang=en,pdfstandard=ua-2,tagging=on", "\\usepackage{graphicx}\n\\title{Hello}\n", BODY));
+    let titled =
+        analyze(&metadata("lang=en,pdfstandard=ua-2,tagging=on", "\\usepackage{graphicx}\n\\title{Hello}\n", BODY));
+    assert_eq!(tagging::of(&titled).expect("tagging facts").title, Val::Text("Hello".into()));
+    assert_eq!(found(&titled, "pdfua-without-title"), Vec::<String>::new());
+    let a = analyze(&metadata("lang=en,pdfstandard=ua-2,tagging=on", "\\usepackage{graphicx}\n", BODY));
     assert_eq!(found(&a, "pdfua-without-title").len(), 1);
-    assert_eq!(fixes(&a, "pdfua-without-title"), ["[pdftitle={Hello}]"]);
     // no formula: no MathML to miss
     assert_eq!(found(&a, "tagged-math-without-mathml"), Vec::<String>::new());
 }

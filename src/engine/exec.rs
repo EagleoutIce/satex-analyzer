@@ -1245,6 +1245,23 @@ impl Machine<'_> {
                 return Vec::new();
             }
         };
+        // A name of unknown meaning (a join's, `\chardef` to an unknown
+        // number) prints some text, never nothing: the digits of the number
+        // it holds while every meaning it may have is a number, any text
+        // otherwise.
+        if matches!(self.env.meaning(sym), Meaning::Unknown) {
+            let binding = self.env.slot(sym);
+            let may = binding.and_then(|b| b.may.clone());
+            let held = binding.and_then(|b| b.value.num()).filter(|(q, _)| *q == value::Quantity::Int);
+            let number = |m: &Meaning| self.internal_level(m) == Some(RegKind::Count);
+            let numbers = may.as_deref().map(|ms| ms.iter().all(number));
+            let any = Num::range(value::WORD_MIN, value::WORD_MAX);
+            return match (held, numbers) {
+                (Some((_, num)), None | Some(true)) => self.digits_in(num, span),
+                (_, Some(true)) => self.digits_in(any, span),
+                _ => vec![self.unknown_text(Unk::Any, span)],
+            };
+        }
         let level = self.read_level(sym);
         // Only the interval this quantity leaves may type its digits.
         self.abs = None;
@@ -4121,20 +4138,25 @@ impl Machine<'_> {
         index
     }
 
-    /// The number a `\countdef` and relatives accept. tex.web § 433
-    /// `scan_eight_bit_int`, § 434 `scan_char_num` and § 1224's
-    /// `scan_fifteen_bit_int` report a bad number and go on with zero.
+    /// The largest number a `\countdef` and relatives accept, and its name.
     /// A unicode engine takes a character code past 255.
-    fn register_def_number(&mut self, kind: RegKind, index: i64, span: Span) -> i64 {
+    fn register_def_bound(&self, kind: RegKind) -> (i64, &'static str) {
         let unicode = self.out.plugins.engine.has_unicode_math() || self.out.plugins.engine.has_luatex();
-        let (most, what) = match kind {
+        match kind {
             // xetex.web, luatex: `biggest_usv` = 0x10FFFF.
             RegKind::Char if unicode => (0x10FFFF, "character code"),
             RegKind::Char => (255, "character code"),
             RegKind::MathChar => (0x7fff, "mathchar"),
             RegKind::UMathChar => (crate::engine::value::WORD_MAX, "Umathchar"),
             _ => (self.max_register(), "register code"),
-        };
+        }
+    }
+
+    /// The number a `\countdef` and relatives accept. tex.web § 433
+    /// `scan_eight_bit_int`, § 434 `scan_char_num` and § 1224's
+    /// `scan_fifteen_bit_int` report a bad number and go on with zero.
+    fn register_def_number(&mut self, kind: RegKind, index: i64, span: Span) -> i64 {
+        let (most, what) = self.register_def_bound(kind);
         if (0..=most).contains(&index) {
             return index;
         }
@@ -4167,11 +4189,16 @@ impl Machine<'_> {
         // A `\chardef` of an unknown number is a name of unknown meaning.
         let Some(index) = self.scan_number() else {
             let range = self.abs.take();
-            let meaning = match kind {
-                RegKind::Char | RegKind::MathChar | RegKind::UMathChar => Meaning::Unknown,
-                kind => Meaning::Register(kind, crate::engine::tex::UNNUMBERED),
-            };
+            let constant = matches!(kind, RegKind::Char | RegKind::MathChar | RegKind::UMathChar);
+            let meaning =
+                if constant { Meaning::Unknown } else { Meaning::Register(kind, crate::engine::tex::UNNUMBERED) };
             self.define(name, meaning, by, DefMode::Declare, span);
+            // A constant holds its number, which `\the` prints (tex.web § 1224 allows 0..=most).
+            if constant {
+                let most = Num::range(0, self.register_def_bound(kind).0);
+                let num = range.and_then(|n| n.meet(&most)).unwrap_or(most);
+                self.env.set_value_in_place(name, Value::Num { quantity: crate::engine::value::Quantity::Int, num });
+            }
             // The register holds what the registers it may be hold; `define` saved the binding.
             if !matches!(kind, RegKind::Char | RegKind::MathChar | RegKind::UMathChar)
                 && let Some(num) = range
