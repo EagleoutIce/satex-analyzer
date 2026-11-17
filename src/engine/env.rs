@@ -8,11 +8,8 @@ use crate::engine::mode::Nest;
 use crate::engine::tex::{Catcode, CatcodeTable, Interner, Meaning, Span, Sym, TextClass, Tok, Token};
 use crate::engine::value::Value;
 
-/// The slots a path changed since a fork, as they stand now: a persistent
-/// map, so a snapshot is a pointer copy and shares its nodes with the live
-/// one. `rpds` is maintained, has an `Rc` variant, and its `_mut` methods
-/// change a node in place while nothing shares it.
-type Changed = rpds::HashTrieMap<u32, (Option<Binding>, u32)>;
+mod changed;
+use changed::Changed;
 /// No trail entry.
 const NONE: u32 = u32::MAX;
 
@@ -390,22 +387,16 @@ impl PathEnv {
     /// compared with its binding at the fork (`base`, when known). If it was
     /// changed back to the same binding, it does not differ.
     pub fn differing_over(&self, other: &PathEnv, base: impl Fn(u32) -> Option<Option<Binding>>) -> Vec<Sym> {
-        let differs = |k: &u32, b: &Option<Binding>| base(*k).is_none_or(|old| !same_slot(&old, b));
-        let mut out: Vec<Sym> = (self.slots.iter())
-            .filter(|(k, (mine, _))| match other.slots.get(k) {
-                Some((theirs, _)) => !same_slot(mine, theirs),
-                None => differs(k, mine),
+        let differs = |k: u32, b: &Option<Binding>| base(k).is_none_or(|old| !same_slot(&old, b));
+        // A subtree both maps share binds its names alike on both paths.
+        (self.slots.pairs(&other.slots, |s| Changed::settled(s, u32::MAX)).into_iter())
+            .filter(|&(k, mine, theirs)| match (mine, theirs) {
+                (Some((m, _)), Some((t, _))) => !same_slot(m, t),
+                (Some((b, _)), None) | (None, Some((b, _))) => differs(k, b),
+                (None, None) => false,
             })
-            .map(|(k, _)| Sym(*k))
-            .collect();
-        out.extend(
-            other
-                .slots
-                .iter()
-                .filter(|(k, (theirs, _))| !self.slots.contains_key(k) && differs(k, theirs))
-                .map(|(k, _)| Sym(*k)),
-        );
-        out
+            .map(|(k, ..)| Sym(k))
+            .collect()
     }
 
     /// Whether this path and `other` bind `sym` alike: neither changed it, or
@@ -2003,9 +1994,12 @@ impl Env {
         after: &[Option<Vec<Token>>],
     ) -> (PathEnv, Vec<Sym>, bool) {
         self.rewind(fork);
-        let mut touched: Vec<u32> = a.slots.keys().chain(b.slots.keys()).copied().collect();
+        // A subtree both paths share whose names each join to themselves at
+        // their level leaves `a`'s map as it is: no name there is touched.
+        let depth = a.marks.len() as u32;
+        let mut touched: Vec<u32> =
+            a.slots.pairs(&b.slots, |s| Changed::settled(s, depth)).into_iter().map(|(k, ..)| k).collect();
         touched.sort_unstable();
-        touched.dedup();
         let mut grown = Vec::new();
         // Start from `a`'s map, shared where the join keeps `a`'s binding.
         let mut slots = a.slots.clone();
@@ -2513,7 +2507,7 @@ pub fn same_slot(a: &Option<Binding>, b: &Option<Binding>) -> bool {
 }
 
 fn same_meaning(x: &Binding, y: &Binding) -> bool {
-    x.meaning == y.meaning
+    one_meaning(&x.meaning, &y.meaning)
         && match (&x.may, &y.may) {
             (None, None) => true,
             (Some(p), Some(q)) => p.len() == q.len() && p.iter().all(|m| q.contains(m)),
@@ -2521,8 +2515,16 @@ fn same_meaning(x: &Binding, y: &Binding) -> bool {
         }
 }
 
+/// `a == b`, without reading a shared definition: meanings compare
+/// reflexively, and paths mostly hold the definition they copied.
+fn one_meaning(a: &Meaning, b: &Meaning) -> bool {
+    matches!((a, b), (Meaning::Macro(p), Meaning::Macro(q)) if Rc::ptr_eq(p, q)) || a == b
+}
+
 fn same_value(a: &Value, b: &Value) -> bool {
-    a == b || matches!((a, b), (Value::Unknown, Value::Unknown))
+    matches!((a, b), (Value::Toks(p), Value::Toks(q)) if Rc::ptr_eq(p, q))
+        || a == b
+        || matches!((a, b), (Value::Unknown, Value::Unknown))
 }
 
 /// Why a slot is widened, which decides how much of its texts' structure
