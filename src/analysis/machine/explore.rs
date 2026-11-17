@@ -1552,6 +1552,9 @@ impl Machine<'_> {
                 Some((kind(&a.state.conds) && kind(&b.state.conds)).then_some((from, frame))?)
             }
         };
+        if let Some((from, to, ..)) = &groups {
+            self.env.merge_recent(from + 1, to[0].max(to[1]));
+        }
         let widen = |c: &Config, side: usize| {
             let mut env = c.env.clone();
             if let Some((from, to, kind, waiting, id)) = &groups {
@@ -1851,7 +1854,7 @@ impl Machine<'_> {
     /// the lowest dropped list was pushed ([`Machine::close_since`]). If no
     /// list was dropped, those above `depth.1` conditionals and `depth.2` groups.
     pub(super) fn unwind(&mut self, depth: (usize, usize, usize), span: Span) {
-        self.leak_call_recs();
+        self.soften_call_recs();
         let mut at = None;
         // Count what the dropped text would close itself. Closing that much is
         // exactly what running it would do, so it is no assumption.
@@ -3072,6 +3075,8 @@ impl Machine<'_> {
             x.parted_by = None;
         }
         x.material |= y.material;
+        Self::join_call_recs(&mut x.call_recs, &y.call_recs);
+        x.learn_forks = x.learn_forks.max(y.learn_forks);
         x.approximated |= y.approximated;
         x.blind |= y.blind;
         x.ran_off = x.ran_off.or(y.ran_off);

@@ -7770,7 +7770,7 @@ will look undefined",
     /// Called before a cut pushes its `\unknown` over the token lists it kept.
     /// Those lists stay tainted until the file below them is read again.
     pub(crate) fn taint_after_cut(&mut self) {
-        self.leak_call_recs();
+        self.soften_call_recs();
         let file = self
             .input
             .iter()

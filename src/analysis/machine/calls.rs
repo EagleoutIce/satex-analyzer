@@ -36,6 +36,9 @@ pub(crate) struct CallRec {
     /// what a summary of its name writes cannot replay.
     side: u64,
     leaky: bool,
+    /// A loop summary cut code inside the run, below its own text: the run
+    /// over-approximates, so it may teach the definition, but no site summary.
+    soft: bool,
     /// Whether its arguments hold unknown text.
     unknown: bool,
     args: Rc<[Vec<Token>]>,
@@ -180,6 +183,12 @@ struct Run {
     closes: bool,
     /// Whether it ended in `\\ignorespaces`.
     peeks: bool,
+    /// List bits a soft run may have added (the unknown text after a cut is
+    /// typeset): a learned effect adds them and forgets the list's size.
+    typeset: Option<u8>,
+    /// It forked or a summary cut code inside it: an approximation may have
+    /// written more names, so a lesson takes the union and widens what disagrees.
+    loose: bool,
 }
 
 /// The position of an input frame: a token list and offset (the `Rc` is held
@@ -246,6 +255,8 @@ enum Written {
     Register,
     Flag,
     Same,
+    /// Runs that approximated disagree: anything of its kind.
+    Any,
 }
 
 /// The key under which a definition's learned runs are stored.
@@ -360,6 +371,7 @@ impl Machine<'_> {
                 material: self.material,
                 side: self.file_writes,
                 leaky: false,
+                soft: false,
                 unknown,
                 args: args.into(),
                 below: self.input.last().map(frame_mark),
@@ -513,19 +525,7 @@ impl Machine<'_> {
                 refused = true;
                 break;
             }
-            let mut acc = of(&runs[0]);
-            for r in &runs[1..] {
-                let next = of(r);
-                let joined = crate::engine::env::join_slot(acc.clone(), next, self.env.sets);
-                acc = crate::engine::env::widen_slot(
-                    &acc,
-                    joined,
-                    self.env.sets,
-                    &typed,
-                    crate::engine::env::Reach::Havoc,
-                );
-            }
-            if let Some(mut b) = acc {
+            if let Some(mut b) = self.join_runs(runs.iter().map(of), &typed) {
                 b.certain = false;
                 writes.push((sym, b));
             }
@@ -583,15 +583,17 @@ impl Machine<'_> {
             // The run is complete only if nothing below the call's text was
             // read or put back. A lookahead past its end leaves it unfinished.
             let intact = self.input.len() == rec.base && self.input.last().map(frame_mark) == rec.below;
-            let whole = main
+            let ended = main
                 && intact
                 && !rec.leaky
                 && self.env.recent_len() >= rec.recent
                 && self.conds.len() == rec.conds
                 && self.mode == rec.mode
-                && self.natural == rec.natural
-                && self.material == rec.material
                 && self.file_writes == rec.side;
+            let listed = self.natural == rec.natural && self.material == rec.material;
+            let whole = ended && listed;
+            // After a cut the unknown rest is typeset: a lesson keeps that it may have been.
+            let typeset = (rec.soft && !listed).then_some(self.material & !rec.material);
             let closes = self.env.group_level() + 1 == rec.groups;
             let balanced = self.env.group_level() == rec.groups;
             if let Some(start) = &rec.memo {
@@ -608,11 +610,11 @@ impl Machine<'_> {
                 }
                 self.env.memo_floor(floor);
             }
-            self.learn_run(&rec, whole && (balanced || closes), closes, peeks);
+            self.learn_run(&rec, ended && (listed || rec.soft) && (balanced || closes), closes, peeks, typeset);
             if !rec.site {
                 continue;
             }
-            let clean = whole && balanced && !peeks;
+            let clean = whole && balanced && !peeks && !rec.soft;
             let entry = self.call_runs.entry(rec.key).or_default();
             entry.active = entry.active.saturating_sub(1);
             if !clean {
@@ -643,7 +645,16 @@ impl Machine<'_> {
                 continue;
             }
             let read_values = self.read_values(&reads, &writes);
-            let run = Run { writes, reads, read_values, args: rec.args.clone(), closes: false, peeks: false };
+            let run = Run {
+                writes,
+                reads,
+                read_values,
+                args: rec.args.clone(),
+                closes: false,
+                peeks: false,
+                typeset: None,
+                loose: false,
+            };
             self.call_runs.get_mut(&rec.key).expect("entry").runs.push(run);
         }
         if self.call_recs.is_empty() {
@@ -654,7 +665,7 @@ impl Machine<'_> {
     /// A run of `rec`'s definition ended. Records it as a lesson about the
     /// definition unless it forked. A run that did more than a learned effect
     /// can express, or runs that disagree, stop learning for the definition.
-    fn learn_run(&mut self, rec: &CallRec, whole: bool, closes: bool, peeks: bool) {
+    fn learn_run(&mut self, rec: &CallRec, whole: bool, closes: bool, peeks: bool, typeset: Option<u8>) {
         let key = learned_key(&rec.code);
         if !self.learns() {
             return;
@@ -662,19 +673,22 @@ impl Machine<'_> {
         let k = usize::from(self.limits.call_learn_after);
         let entry = self.call_runs.entry(key).or_default();
         entry.code.get_or_insert_with(|| rec.code.clone());
-        if entry.leaky || entry.runs.len() >= k || self.learn_forks > rec.forks_at {
+        let forked = self.learn_forks > rec.forks_at;
+        if entry.leaky || entry.runs.len() >= k {
             return;
         }
         let same_args = |a: &[Vec<Token>], b: &[Vec<Token>]| {
             a.len() == b.len() && a.iter().zip(b).all(|(x, y)| x.iter().map(|t| t.tok).eq(y.iter().map(|t| t.tok)))
         };
-        if whole && entry.runs.iter().any(|r| same_args(&r.args, &rec.args)) {
+        if whole && !forked && entry.runs.iter().any(|r| same_args(&r.args, &rec.args)) {
             return;
         }
         // A partial run teaches nothing: decided before its writes are collected,
         // which costs as much as the run wrote.
         let writes: Vec<_> = match whole {
-            true => self.env.recent_since(rec.recent).into_iter().map(|sym| (sym, self.env.slot_at(sym.0))).collect(),
+            true => (self.env.recent_within(rec.recent, self.env.depth() as u32).into_iter())
+                .map(|sym| (sym, self.env.slot_at(sym.0)))
+                .collect(),
             false => Vec::new(),
         };
         // It wrote a name from its arguments, so the next call writes another name.
@@ -692,14 +706,16 @@ impl Machine<'_> {
             args: rec.args.clone(),
             closes,
             peeks,
+            typeset,
+            loose: forked || rec.soft,
         });
         if entry.runs.len() == k {
             let runs = std::mem::take(&mut entry.runs);
             let names = |r: &Run| r.writes.iter().map(|w| w.0).collect::<Vec<_>>();
-            let alike = runs
-                .windows(2)
-                .all(|w| names(&w[0]) == names(&w[1]) && (w[0].closes, w[0].peeks) == (w[1].closes, w[1].peeks))
-                && self.typed_effect(&runs);
+            let loose = runs.iter().any(|r| r.loose);
+            let alike = runs.windows(2).all(|w| {
+                (loose || names(&w[0]) == names(&w[1])) && (w[0].closes, w[0].peeks) == (w[1].closes, w[1].peeks)
+            }) && self.typed_effect(&runs);
             let entry = self.call_runs.get_mut(&key).expect("entry");
             entry.leaky = !alike;
             if alike {
@@ -758,6 +774,12 @@ impl Machine<'_> {
         self.close_since((rec.conds, self.env.group_id_at(keep), u64::MAX), false);
         (self.mode, self.natural, self.material) = (rec.mode, rec.natural, rec.material);
         let peeks = runs[0].peeks;
+        // The callers' runs now hold that approximation: lessons only.
+        if let Some(bits) = runs.iter().filter_map(|r| r.typeset).reduce(|a, b| a | b) {
+            self.material |= bits;
+            self.natural = None;
+            self.soften_call_recs();
+        }
         self.apply_learned(&runs, span);
         let entry = self.call_runs.get_mut(&key).expect("checked");
         entry.runs = runs;
@@ -799,26 +821,52 @@ impl Machine<'_> {
         } else if all(&|b| flag(&b.meaning)) {
             Some(Written::Flag)
         } else {
-            None
+            // Only where an approximation already made it vague: precise
+            // texts that differ were chosen from data, as a third run may do.
+            let vague = runs.iter().any(|r| of(r, sym).is_some_and(|b| !b.certain || self.imprecise(b)));
+            (vague && runs.iter().any(|r| r.loose)).then_some(Written::Any)
         }
+    }
+
+    /// The names any of `runs` wrote, each once.
+    fn learned_names(runs: &[Run]) -> Vec<Sym> {
+        let mut syms: Vec<Sym> = runs.iter().flat_map(|r| r.writes.iter().map(|w| w.0)).collect();
+        syms.sort_unstable();
+        syms.dedup();
+        syms
     }
 
     /// Runs can be learned only if every name they wrote has a type to widen
     /// to (or is the same in all runs), and at least one holds a number.
     fn typed_effect(&self, runs: &[Run]) -> bool {
-        let types: Option<Vec<_>> = runs[0].writes.iter().map(|w| self.written_type(runs, w.0)).collect();
+        let types: Option<Vec<_>> = Self::learned_names(runs).into_iter().map(|s| self.written_type(runs, s)).collect();
         types.is_some_and(|t| t.iter().any(|t| matches!(t, Written::Number | Written::Register)))
     }
 
     /// Sets each name the runs wrote to its type: number text becomes an
     /// unknown printed number, a register any value, a flag either meaning.
     /// Names that every run left the same keep that value.
+    /// The join of what runs left in a name, widened past the set limits.
+    fn join_runs(
+        &self,
+        mut slots: impl Iterator<Item = Option<Binding>>,
+        typed: &crate::engine::env::Typed,
+    ) -> Option<Binding> {
+        let mut acc = slots.next()?;
+        for next in slots {
+            let joined = crate::engine::env::join_slot(acc.clone(), next, self.env.sets);
+            acc = crate::engine::env::widen_slot(&acc, joined, self.env.sets, typed, crate::engine::env::Reach::Havoc);
+        }
+        acc
+    }
+
     fn apply_learned(&mut self, runs: &[Run], span: Span) {
         use crate::engine::builtins::{Cond, Primitive as P};
         let typed_syms = self.typed_syms();
-        for w in &runs[0].writes {
-            let Some(first) = w.1.clone() else { continue };
-            let kind = self.written_type(runs, w.0);
+        for sym in Self::learned_names(runs) {
+            let first = runs.iter().flat_map(|r| &r.writes).find(|w| w.0 == sym && w.1.is_some());
+            let Some(first) = first.and_then(|w| w.1.clone()) else { continue };
+            let kind = self.written_type(runs, sym);
             let mut b = match kind {
                 Some(Written::Number) => {
                     let text = self.printed_dimen(None, span);
@@ -832,15 +880,24 @@ impl Machine<'_> {
                     let Some(b) = crate::engine::env::join_slot(Some(t), Some(f), self.env.sets) else { continue };
                     b
                 }
+                // A run that did not write the name left it as it is now.
+                Some(Written::Any) => {
+                    let typed = crate::engine::env::typed!(self, typed_syms);
+                    let now = self.env.slot_at(sym.0);
+                    let of =
+                        |r: &Run| r.writes.iter().find(|w| w.0 == sym).map_or_else(|| now.clone(), |w| w.1.clone());
+                    let Some(b) = self.join_runs(runs.iter().map(of), &typed) else { continue };
+                    b
+                }
                 _ => first,
             };
             b.certain = false;
             let global = b.global;
             self.mint();
-            self.env.set(w.0, b, global);
+            self.env.set(sym, b, global);
             if matches!(kind, Some(Written::Register)) {
                 let typed = crate::engine::env::typed!(self, typed_syms);
-                self.env.widen(&[w.0], None, &typed);
+                self.env.widen(&[sym], None, &typed);
             }
         }
         self.mint();
@@ -884,6 +941,55 @@ impl Machine<'_> {
 
     /// Marks all running call recordings as unusable: they read text that is not
     /// theirs, or changed state a summary cannot replay.
+    /// Paths join: a record keeps a lesson or a kept effect only as far as
+    /// it does on both, and one the other path lacks is unusable.
+    pub(super) fn join_call_recs(x: &mut Rc<Vec<Rc<CallRec>>>, y: &Rc<Vec<Rc<CallRec>>>) {
+        if Rc::ptr_eq(x, y) {
+            return;
+        }
+        let same = |a: &CallRec, b: &CallRec| a.key == b.key && a.base == b.base;
+        let differ = |(i, a): (usize, &Rc<CallRec>)| {
+            y.get(i).is_none_or(|b| {
+                !Rc::ptr_eq(a, b)
+                    && (!same(a, b) || b.leaky && !a.leaky || b.soft && !a.soft || b.memo.is_none() && a.memo.is_some())
+            })
+        };
+        if !x.iter().enumerate().any(differ) {
+            return;
+        }
+        for (i, rec) in Rc::make_mut(x).iter_mut().enumerate() {
+            let rec = Rc::make_mut(rec);
+            match y.get(i).filter(|b| same(rec, b)) {
+                Some(b) => {
+                    rec.leaky |= b.leaky;
+                    rec.soft |= b.soft;
+                    if b.memo.is_none() {
+                        rec.memo = None;
+                    }
+                }
+                None => {
+                    rec.leaky = true;
+                    rec.memo = None;
+                }
+            }
+        }
+    }
+
+    /// A loop summary cut code: records whose text the cut dropped are
+    /// unusable. Records still running over-approximate their run, so they
+    /// stay lessons for their definitions ([`CallRec::soft`]).
+    pub(crate) fn soften_call_recs(&mut self) {
+        let len = self.input.len();
+        if self.call_recs.iter().any(|rec| !rec.leaky && (!rec.soft || rec.base >= len) || rec.memo.is_some()) {
+            for rec in Rc::make_mut(&mut self.call_recs) {
+                let rec = Rc::make_mut(rec);
+                rec.soft = true;
+                rec.leaky |= rec.base >= len;
+                rec.memo = None;
+            }
+        }
+    }
+
     pub(crate) fn leak_call_recs(&mut self) {
         if self.call_recs.iter().any(|rec| !rec.leaky || rec.memo.is_some()) {
             for rec in Rc::make_mut(&mut self.call_recs) {

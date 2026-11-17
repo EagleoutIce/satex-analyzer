@@ -206,6 +206,10 @@ pub struct Env {
     /// Per `recent` entry, [`Env::assignments`] when it was made; 0 when
     /// unknown.
     recent_at: Vec<u64>,
+    /// Per `recent` entry, the group depth a local write was made at (0 for
+    /// a global one): it is undone once fewer groups are open.
+    #[serde(default)]
+    recent_depth: Vec<u32>,
     /// [`Env::assignments`] when the log was last cleared or set.
     recent_from: u64,
     /// Per slot, [`Env::assignments`] at the write its binding came from.
@@ -1100,6 +1104,23 @@ impl Env {
         crate::push_shared(&mut self.marks, one);
     }
 
+    /// Groups `top..=to` (1-based depths) became one at `top` without ending
+    /// (a widened stack): a write logged in them is undone only when that
+    /// one ends, and one above moves down with its group. Applied to every
+    /// path's writes, which only keeps more of them.
+    pub fn merge_recent(&mut self, top: usize, to: usize) {
+        let (top, to) = (top as u32, to as u32);
+        if to > top {
+            for d in &mut self.recent_depth {
+                *d = match *d {
+                    d if d <= top => d,
+                    d if d <= to => top,
+                    d => d - (to - top),
+                };
+            }
+        }
+    }
+
     /// The slots in `saved`, written deeper than the groups now open, count as
     /// written in the innermost group, so a group opened later saves them.
     fn clamp_levels(&mut self, saved: &[Entry]) {
@@ -1120,6 +1141,7 @@ impl Env {
     /// of them, if all are plain and alike. Returns whether it did.
     pub fn many_since(&mut self, from: usize) -> bool {
         let Some(first) = self.marks.get(from).cloned() else { return true };
+        let open = self.marks.len();
         let alike = |m: &Mark| {
             m.kind == first.kind
                 && m.nest.is_none()
@@ -1140,6 +1162,7 @@ impl Env {
         marks.truncate(from + 1);
         self.lower();
         self.clamp_levels(&saved);
+        self.merge_recent(from + 1, open);
         true
     }
 
@@ -1185,6 +1208,7 @@ impl Env {
         }
         self.recent.push(sym.0);
         self.recent_at.push(self.assignments);
+        self.recent_depth.push(if global { 0 } else { self.marks.len() as u32 });
         let stamp = self.stamp.set(i, self.assignments);
         if (global || self.marks.is_empty()) && writes & ReadKind::Meaning.bit() != 0 && self.paths == 0 {
             self.drop_moot(sym.0);
@@ -1525,12 +1549,14 @@ impl Env {
     pub fn set_recent(&mut self, recent: Vec<Sym>) {
         self.recent = recent.into_iter().map(|s| s.0).collect();
         self.recent_at = vec![0; self.recent.len()];
+        self.recent_depth = vec![0; self.recent.len()];
         self.recent_from = self.assignments;
     }
 
     pub fn clear_recent(&mut self) {
         self.recent.clear();
         self.recent_at.clear();
+        self.recent_depth.clear();
         self.recent_from = self.assignments;
     }
 
@@ -1556,12 +1582,23 @@ impl Env {
     /// if the list was cleared since). Writes undone by a group end or a
     /// rewind are left out.
     pub fn recent_since(&self, from: usize) -> Vec<Sym> {
+        self.recent_within(from, u32::MAX)
+    }
+
+    /// Like [`Env::recent_since`], but only writes that outlive the groups
+    /// above `depth`: global ones and local ones made at most `depth` groups
+    /// deep. A local write deeper was undone when its group ended (tex.web
+    /// § 283), whatever stamp a resume gave the name since.
+    pub fn recent_within(&self, from: usize, depth: u32) -> Vec<Sym> {
         let from = if from > self.recent.len() { 0 } else { from };
         // Loops write the same few names over and over: keep each name's
         // first write in one pass, then sort only the distinct names.
         let mut first: std::collections::HashMap<u32, u64, crate::engine::tex::NameHash> = Default::default();
-        for (&sym, &at) in self.recent[from..].iter().zip(&self.recent_at[from..]) {
-            first.entry(sym).or_insert(at);
+        let depths = self.recent_depth.get(from..).unwrap_or_default().iter().chain(std::iter::repeat(&0));
+        for ((&sym, &at), &d) in self.recent[from..].iter().zip(&self.recent_at[from..]).zip(depths) {
+            if d <= depth {
+                first.entry(sym).or_insert(at);
+            }
         }
         let mut syms: Vec<Sym> = first
             .into_iter()
@@ -1631,6 +1668,7 @@ impl Env {
         self.slot_changes += 1;
         self.recent.push(i as u32);
         self.recent_at.push(self.assignments);
+        self.recent_depth.push(self.level[i]);
         self.stamp.set(i, self.assignments);
     }
 
