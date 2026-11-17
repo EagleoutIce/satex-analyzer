@@ -204,6 +204,30 @@ const TYPESET_CASES: &[(&str, &str)] = &[
             r"\setbox0=\hbox{$f^2x$}\xdef\r{\the\wd0,\the\ht0,\the\dp0}"
         ),
     ),
+    // tex.web §§ 1145, 1199-1205: a display in a paragraph: the line before it, the glue
+    // around it and its box; `\prevgraf` counts it as three lines. The short skips equal
+    // the normal ones, so the size does not hang on `\predisplaysize`.
+    (
+        "display-in-paragraph",
+        concat!(
+            r"\font\mi=cmmi10 \font\ms=cmmi7 \font\sy=cmsy10 \font\ss=cmsy7 \font\ex=cmex10 \font\rs=cmr7 \textfont0=\f \scriptfont0=\rs ",
+            r"\textfont2=\sy \scriptfont2=\ss \scriptscriptfont2=\ss \textfont3=\ex \scriptfont3=\ex \scriptscriptfont3=\ex ",
+            r"\textfont1=\mi \scriptfont1=\ms \catcode`\$=3 \catcode`\^=7 \hsize=100pt \parfillskip=0pt plus 1fil \baselineskip=12pt ",
+            r"\abovedisplayskip=10pt \abovedisplayshortskip=10pt \belowdisplayskip=4pt \belowdisplayshortskip=4pt ",
+            r"\setbox0=\vbox{a$$x^2$$\par\xdef\p{\the\prevgraf}}\xdef\r{\the\wd0,\the\ht0,\the\dp0,\p}"
+        ),
+    ),
+    // § 1204: a number that fits goes beside the formula, in the same box.
+    (
+        "display-eqno",
+        concat!(
+            r"\font\mi=cmmi10 \font\ms=cmmi7 \font\sy=cmsy10 \font\ss=cmsy7 \font\ex=cmex10 \font\rs=cmr7 \textfont0=\f \scriptfont0=\rs ",
+            r"\textfont2=\sy \scriptfont2=\ss \scriptscriptfont2=\ss \textfont3=\ex \scriptfont3=\ex \scriptscriptfont3=\ex ",
+            r"\textfont1=\mi \scriptfont1=\ms \catcode`\$=3 \catcode`\^=7 \hsize=100pt \parfillskip=0pt plus 1fil \baselineskip=12pt ",
+            r"\abovedisplayskip=10pt \abovedisplayshortskip=10pt \belowdisplayskip=4pt \belowdisplayshortskip=4pt ",
+            r"\setbox0=\vbox{a$$x\eqno\hbox{(1)}$$b\par}\xdef\r{\the\wd0,\the\ht0,\the\dp0}"
+        ),
+    ),
     ("hbox-ligature", r"\setbox0=\hbox{ff}\xdef\r{\the\wd0}"),
     ("hbox-kern-pair", r"\setbox0=\hbox{Vo}\xdef\r{\the\wd0}"),
     ("hbox-nested", r"\setbox0=\hbox{\hbox{a}\hbox{b}}\xdef\r{\the\wd0,\the\ht0,\the\dp0}"),
@@ -289,6 +313,18 @@ const TYPESET_APPROXIMATE: &[(&str, &str)] = &[
     // tex.web § 1119: a `\discretionary`'s third list goes on the enclosing
     // one, which satex does not follow.
     ("hbox-discretionary", r"\setbox0=\hbox{a\discretionary{-}{}{}b}\xdef\r{\the\wd0}"),
+    // tex.web § 1146: `\predisplaysize` is not followed, so the display's skips are the normal
+    // or the short ones.
+    (
+        "display-short-skips",
+        concat!(
+            r"\font\mi=cmmi10 \font\ms=cmmi7 \font\sy=cmsy10 \font\ss=cmsy7 \font\ex=cmex10 \font\rs=cmr7 \textfont0=\f \scriptfont0=\rs ",
+            r"\textfont2=\sy \scriptfont2=\ss \scriptscriptfont2=\ss \textfont3=\ex \scriptfont3=\ex \scriptscriptfont3=\ex ",
+            r"\textfont1=\mi \scriptfont1=\ms \catcode`\$=3 \catcode`\^=7 \hsize=100pt \parfillskip=0pt plus 1fil \baselineskip=12pt ",
+            r"\abovedisplayskip=10pt \abovedisplayshortskip=10pt \belowdisplayskip=4pt \belowdisplayshortskip=4pt ",
+            r"\setbox0=\vbox{a$$x$$\par}\xdef\r{\the\wd0,\the\ht0,\the\dp0}"
+        ),
+    ),
     // tex.web § 1123 `\accent`.
     ("hbox-accent", r"\setbox0=\hbox{\accent23 a}\xdef\r{\the\wd0}"),
 ];
@@ -540,6 +576,17 @@ fn a_here_figure_after_a_paragraph_stays_on_its_page() {
 fn a_here_figure_after_a_display_stays_on_its_page() {
     let figure = "\\begin{figure}[ht]\n\\centering\n\\rule{0.4\\linewidth}{0.3pt}\n\\caption{A figure.}\n\\end{figure}";
     assert_eq!(float_pages("display-figure", &format!("Some text.\n\\[ x \\]\n{figure}")), ["page 1"]);
+}
+
+/// The sample paper's formula: a display-style operator with limits, `\\left`/`\\right` and an
+/// accent. pdflatex sets it all on page 1. Red: these display-style sizes are not modelled, so
+/// the formula's height is any and the figure's fit test is undecided (owner: next display-math
+/// round, see learnings 2026-11-17 p4b).
+#[test]
+fn a_here_figure_after_a_display_with_limits_stays_on_its_page() {
+    let figure = "\\begin{figure}[ht]\n\\centering\n\\rule{0.4\\linewidth}{0.3pt}\n\\caption{A figure.}\n\\end{figure}";
+    let display = "\\[ \\sum_{i=1}^{N} \\left\\| x_i - \\hat{x}_i \\right\\|^2 \\]";
+    assert_eq!(float_pages("limits-figure", &format!("Some text.\n{display}\n{figure}")), ["page 1"]);
 }
 
 /// A page only some paths ship may not exist: its row reads `maybe`, and the page after it

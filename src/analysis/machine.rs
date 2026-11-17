@@ -8993,9 +8993,12 @@ will look undefined",
                 crate::engine::builtins::Material::Unpackage { .. },
             ))) => true,
             // A style node, and a choice of lists the style picks, which
-            // `mode_command` follows (tex.web §§ 731, 1171-1174).
+            // `mode_command` follows (tex.web §§ 731, 1171-1174); an equation
+            // number, a formula of its own (§ 1142).
             Meaning::Primitive(P::Mode(
-                crate::engine::builtins::ModeCmd::MathStyle(_) | crate::engine::builtins::ModeCmd::MathChoice,
+                crate::engine::builtins::ModeCmd::MathStyle(_)
+                | crate::engine::builtins::ModeCmd::MathChoice
+                | crate::engine::builtins::ModeCmd::EqNo,
             )) => true,
             // A box is an ordinary atom, whose size `append_item` adds, also
             // raised or lowered (tex.web § 1076).
@@ -9884,7 +9887,7 @@ will look undefined",
                     if let Some(c) = code {
                         self.note_math(c, span);
                     }
-                    if self.mode == crate::engine::mode::Modes::MATH {
+                    if self.mode.within(crate::engine::mode::Modes::ANY_MATH) {
                         self.math_code_char(code);
                     }
                 } else if !matches!(

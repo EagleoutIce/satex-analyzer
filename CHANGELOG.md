@@ -74,6 +74,7 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 
 ### Analysis
 
+- `fix` **A display keeps the page's length.** The paragraph before `$$`, `\[` or `equation` is broken into lines, and the display adds its skips, its formula and its number. A here-float after a display is placed on its page again, where the page length was any before.
 - `perf` **Tagged titles in seconds.** With tagging on, `\maketitle` and tables no longer fork into tagpdf's debug code: a register numbered by an unknown allocation now holds what the registers it may be hold. A tagged title took 281 s, now 6 s.
 - `fix` **Tagged documents with graphics reach their body.** A register allocated while the allocation counter is an interval keeps that interval in `\meaning`, and digits followed by such digits form an interval. supp-pdf's register loop decides again: `\DocumentMetadata` with graphicx no longer stalls at `\begin{document}`.
 - `feat` **Manuals for TikZ, pgf, primitives and more packages.** Hovers, Explain and the playground show what pgf's manual says of its commands and keys, what the pdfTeX manual and TeX by Topic say of a primitive, and docs of packages whose manual lies under another format folder (intcalc, kvdefinekeys), is announced as `\DescribeMacro\x` (makeidx), heads a section or list item (`\subsection{\cs{x}}`, `\item[\cs{x}]`), or stands in the package's header (url).

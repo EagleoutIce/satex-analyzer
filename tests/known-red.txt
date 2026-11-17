@@ -10,13 +10,13 @@ documents::pictures_around_a_tcolorbox_keep_their_anchors_local
 termination::convergence::tikz_nodes_of_unknown_width
 # Open (2026-11-17): call summaries are keyed by the body they ran; the sample paper's 3 pages relied on a summary standing for other code. Root: float flush precision at \end{document} (owner: STALL presence-readers round).
 differential::the_sample_paper_breaks_its_pages_where_pdflatex_does
+# Open (2026-11-17): display-style operators with limits, \left/\right delimiters and math accents are not modelled, so such a display's height is any and an [ht] float's fit test is undecided; the sample paper's remaining root (owner: next display-math round, see learnings 2026-11-17 p4b).
+differential::a_here_figure_after_a_display_with_limits_stays_on_its_page
 # Open (2026-11-17): l3fp over a typed unknown position forks per digit; a tagged \includegraphics of an existing file stalls in latex-lab-graphic's BBox code (owner: next tagging round).
 tagging::an_fp_sum_over_an_unknown_position_stays_on_few_paths
 # Open (2026-11-17): went red with the interval-register fix: the tagged graphic of BODY now reaches the l3fp BBox root above and the end is not reached, so the title is unknown (owner: next tagging round, root C).
 tagging::pdfua_without_a_pdf_title_is_reported_and_fixed
 # Open (2026-11-17): unbounded typed digits stay one token in part_digits; l3fp char tests fork per arm. Splitting breaks pgfmath canaries (target/scratch/fp-work.patch, owner: next l3fp round).
 tagging::an_fp_eval_of_an_unknown_integer_stays_on_few_paths
-# Open (2026-11-17): a display loses the paragraph's size (math_shift_token keeps no list for it), so \pagetotal is unknown and an [ht] float's fit test is undecided; the paper's root (owner: display-math round, see learnings 2026-11-17 p4).
-differential::a_here_figure_after_a_display_stays_on_its_page
 # Open (2026-11-17, owner p1): one node of tikz_nodes, Root A (digit-split wait in partner).
 termination::convergence::colorlet_of_an_unknown_pgfmath_result

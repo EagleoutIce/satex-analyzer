@@ -1644,7 +1644,7 @@ impl Machine<'_> {
                 if let Some(c) = code {
                     self.note_math(c, span);
                 }
-                if self.mode == crate::engine::mode::Modes::MATH {
+                if self.mode.within(crate::engine::mode::Modes::ANY_MATH) {
                     self.math_code_char(code);
                 }
             }

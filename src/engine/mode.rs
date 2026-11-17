@@ -542,6 +542,14 @@ pub struct Natural {
     /// In inline math: the style the list is set in, twice its size (0 text,
     /// 1 script, 2 scriptscript) plus one where cramped (tex.web § 688).
     pub style: u8,
+    /// In math: the style is display style (tex.web § 688): the steps whose
+    /// size differs from text style lose the size where they are not modelled.
+    #[serde(default)]
+    pub display: bool,
+    /// In display math: the `\eqno` (`false`) or `\leqno` box's width, height and depth (tex.web
+    /// § 1194).
+    #[serde(default)]
+    pub eqno: Option<(bool, [Dim; 3])>,
     /// In inline math: the script just set, which a script of the other
     /// kind after it joins (tex.web § 759).
     pub scripted: Option<Scripted>,
@@ -874,6 +882,14 @@ impl Natural {
             numerator: if self.numerator == other.numerator { self.numerator } else { None },
             atoms: if self.atoms == other.atoms { self.atoms } else { Atoms { len: u8::MAX, ..self.atoms } },
             style: self.style.max(other.style),
+            display: self.display || other.display,
+            // A path without a number joins as one of no size (§ 1199 hpacks the box from zero).
+            eqno: match (self.eqno, other.eqno) {
+                (a, b) if a == b => a,
+                (Some((l, a)), Some((r, b))) if l == r => Some((l, std::array::from_fn(|k| a[k].join(b[k])))),
+                (Some((l, a)), None) | (None, Some((l, a))) => Some((l, a.map(|x| x.join(Dim::exact(0))))),
+                _ => Some((false, [Dim::ANY; 3])),
+            },
             scripted: if self.scripted == other.scripted { self.scripted } else { None },
             math_breaks: self.math_breaks.max(other.math_breaks),
             solid: self.solid.max(other.solid),
@@ -885,7 +901,7 @@ impl Natural {
         };
         // A character not yet counted differs between the paths: its own
         // size is not known, so the lengths it would add widen.
-        if self.pending != other.pending || self.style != other.style {
+        if self.pending != other.pending || self.style != other.style || self.display != other.display {
             joined.pending = None;
             joined.along = Dim::ANY;
             joined.height = joined.height.max(Dim::ANY);
@@ -1157,8 +1173,12 @@ impl Forced {
 /// tex.web § 463 `default_rule`: 0.4pt.
 const DEFAULT_RULE: Scaled = 26214;
 
-/// The `part` of the math group `\eqno` begins (tex.web § 1142).
+/// The `part` of the math group `\eqno` begins (tex.web § 1142), and of the one `\leqno` begins.
 const EQNO: u8 = 1;
+const LEQNO: u8 = 4;
+
+/// The `part` of the math group `$$` begins (tex.web § 1145).
+const DISPLAY: u8 = 5;
 
 /// The `part` of a box group that makes the box of leaders.
 const LEADERS: u8 = 2;
@@ -1369,6 +1389,8 @@ impl Machine<'_> {
             numerator: None,
             atoms: Atoms::default(),
             style: 0,
+            display: false,
+            eqno: None,
             scripted: None,
             math_breaks: 0,
             para: Para {
@@ -2285,6 +2307,7 @@ impl Machine<'_> {
             (n.scripted, n.fraction, n.numerator, n.atoms) = (None, false, None, Atoms::default());
             if let Some(sup) = script {
                 (n.style, n.script, n.math_box) = (Self::script_style(n.style, sup), None, None);
+                n.display = false;
                 (n.along, n.height, n.depth) = (Dim::exact(0), Dim::exact(0), Dim::exact(0));
             }
         }
@@ -2348,7 +2371,7 @@ impl Machine<'_> {
                 let outer = nest.natural.unwrap_or_else(Natural::any);
                 (n.math_class, n.math_bin, n.math_prev) = (outer.math_class, outer.math_bin, None);
                 // A style or fraction inside stays in the group's list (§ 1186).
-                (n.scripted, n.fraction, n.style) = (None, outer.fraction, outer.style);
+                (n.scripted, n.fraction, n.style, n.display) = (None, outer.fraction, outer.style, outer.display);
                 // tex.web §§ 1153, 1186: the group's noad is the tail again.
                 n.pushed(Last::Node(NOAD));
                 // § 749: an operator whose list is one character is centred
@@ -2584,7 +2607,16 @@ impl Machine<'_> {
                 }
             }
         } else if nest.code == Some(group::MATH_SHIFT) {
-            self.close_math(natural);
+            match nest.part {
+                DISPLAY => {}
+                EQNO | LEQNO => {
+                    let size = self.formula_box(natural);
+                    if let Some(n) = &mut self.natural {
+                        n.eqno = Some((nest.part == LEQNO, size));
+                    }
+                }
+                _ => self.close_math(natural),
+            }
         } else if nest.code == Some(group::DISC) {
             // tex.web §§ 651, 1119-1120: `hpack` skips the break texts, and
             // the text without a break follows the node as part of the list.
@@ -2682,15 +2714,20 @@ impl Machine<'_> {
             // tex.web § 1194: the `$` that ends an `\eqno` ends the display
             // too, and needs its second `$`.
             // § 1197 reads it with expansion, before `unsave`.
-            let eqno = self.env.nest().is_some_and(|n| n.part == EQNO);
+            let eqno = self.env.nest().is_some_and(|n| matches!(n.part, EQNO | LEQNO));
             if (display || eqno)
                 && let Some(next) = self.next_x_token()
                 && self.category_of(next) != Some(Catcode::Math)
             {
                 self.unread(next);
             }
-            self.close_group(GroupKind::Math { display }, token);
-            if eqno && let Some(GroupKind::Math { display: true }) = self.env.group_kind() {
+            if !display {
+                self.close_group(GroupKind::Math { display: false }, token);
+            }
+            if (display || eqno)
+                && let Some(GroupKind::Math { display: true }) = self.env.group_kind()
+            {
+                self.finish_display();
                 self.close_group(GroupKind::Math { display: true }, token);
             }
             // tex.web § 1199: a display may be packed to fit the line;
@@ -2720,11 +2757,19 @@ impl Machine<'_> {
         // tex.web § 1138: `$$` is display math only in unrestricted
         // horizontal mode.
         let display = self.mode.meets(Modes::HORIZONTAL) && self.take_math_shift();
-        // Inline math keeps the list around it, for its size to be added.
-        let outer = if display || self.list_kind() != Some(true) { None } else { self.natural };
+        // Inline math keeps the list around it, for its size to be added; a display the
+        // paragraph's lines before it.
+        let outer = if self.list_kind() != Some(true) {
+            None
+        } else if display {
+            self.natural.map(|n| self.display_begins(n))
+        } else {
+            self.natural
+        };
         self.natural = None;
         self.open_group(GroupKind::Math { display }, span);
-        self.env.set_nest(Nest { natural: outer, from: 0, ..self.nest_here(Some(group::MATH_SHIFT), true, 0) });
+        let part = if display { DISPLAY } else { 0 };
+        self.env.set_nest(Nest { natural: outer, from: 0, ..self.nest_here(Some(group::MATH_SHIFT), true, part) });
         let inner = if display { Modes::DISPLAY_MATH } else { Modes::MATH };
         self.mode = inner;
         self.list = inner;
@@ -2733,13 +2778,15 @@ impl Machine<'_> {
         self.env.set_value(fam, Value::Int(-1), false);
         // The math list's size, while it holds only plain characters. It
         // starts empty (tex.web § 1139 `push_math`).
-        self.natural = outer.map(|_| Natural { tail: [Last::Empty; TAIL], ..Natural::default() });
+        self.natural = outer.map(|_| Natural { tail: [Last::Empty; TAIL], display, ..Natural::default() });
         if display {
-            // tex.web § 1145: the display's size and place come from the
-            // paragraph before it, which satex does not break into lines.
-            for name in ["predisplaysize", "displaywidth", "displayindent"] {
+            // tex.web §§ 1146-1149: the last line's width is not followed; the line's width and
+            // indent are those of every line where they are alike.
+            let [z, reach] = self.line_shape();
+            let s = if z.is_any() || reach.is_any() { Dim::ANY } else { reach.reduced_by(z) };
+            for (name, v) in [("predisplaysize", Dim::ANY), ("displaywidth", z), ("displayindent", s)] {
                 let sym = self.intern(name);
-                self.env.set_value(sym, Value::Unknown, false);
+                self.env.set_value(sym, v.value(), false);
             }
         }
         self.insert_every(if display { "everydisplay" } else { "everymath" }, span);
@@ -2870,10 +2917,15 @@ impl Machine<'_> {
                 if self.mode.meets(Modes::ANY_MATH) {
                     // In inline math the style here picks the list (tex.web
                     // § 731): the text, script or scriptscript one.
-                    let chosen = match (self.mode, self.natural) {
-                        (Modes::MATH, Some(n)) if n.script.is_none() && n.math_pending.is_none() => 2 + (n.style >> 1),
-                        _ => 0,
-                    };
+                    let chosen =
+                        match (self.mode, self.natural) {
+                            (m, Some(n))
+                                if m.within(Modes::ANY_MATH) && n.script.is_none() && n.math_pending.is_none() =>
+                            {
+                                if n.display { 1 } else { 2 + (n.style >> 1) }
+                            }
+                            _ => 0,
+                        };
                     self.open_choice(1 | chosen << 4, span);
                 }
             }
@@ -2886,12 +2938,15 @@ impl Machine<'_> {
                 }
                 match self.natural {
                     Some(mut n)
-                        if self.mode == Modes::MATH && code > 0 && n.script.is_none() && n.math_pending.is_none() =>
+                        if self.mode.within(Modes::ANY_MATH)
+                            && code >= 2
+                            && n.script.is_none()
+                            && n.math_pending.is_none() =>
                     {
                         let italic = self.prev_italic(n.math_prev);
                         n.along = n.along.extended_by(italic);
                         (n.math_prev, n.math_box, n.scripted) = (None, None, None);
-                        n.style = code - 2;
+                        (n.style, n.display) = (code - 2, false);
                         n.pushed(Last::Node(NOAD));
                         self.natural = Some(n);
                     }
@@ -2906,11 +2961,10 @@ impl Machine<'_> {
                     let left = self.name(self.env.identity(by)) == "leqno";
                     crate::analysis::observe::align(self, crate::analysis::facts::Align::EqNo(left));
                     self.open_group(GroupKind::Math { display: false }, span);
-                    self.env.set_nest(Nest {
-                        natural: None,
-                        from: 0,
-                        ..self.nest_here(Some(group::MATH_SHIFT), true, EQNO)
-                    });
+                    let part = if left { LEQNO } else { EQNO };
+                    self.env.set_nest(Nest { from: 0, ..self.nest_here(Some(group::MATH_SHIFT), true, part) });
+                    // its own formula, in text style (tex.web § 1194)
+                    self.natural = self.natural.map(|_| Natural { tail: [Last::Empty; TAIL], ..Natural::default() });
                     self.record_item(None);
                     self.mode = Modes::MATH;
                     self.list = Modes::MATH;
@@ -4635,7 +4689,7 @@ impl Machine<'_> {
         self.end_word();
         let Some(mut n) = self.natural else { return };
         // A whatsit in inline math has no size (tex.web § 730).
-        if matches!(item, Item::Zero | Item::Mark(_) | Item::Node(_)) && self.mode == Modes::MATH {
+        if matches!(item, Item::Zero | Item::Mark(_) | Item::Node(_)) && self.mode.within(Modes::ANY_MATH) {
             // It is the math list's tail all the same (tex.web § 1105 sees it).
             match item {
                 Item::Node(t) => n.pushed(Last::Node(t)),
@@ -4647,7 +4701,7 @@ impl Machine<'_> {
         n.scripted = None;
         // A penalty in inline math is no atom and has no size (tex.web § 730);
         // below 10000 it is a breakpoint of the formula.
-        if let (Item::Penalty(p), Modes::MATH, None) = (&item, self.mode, &n.script) {
+        if let (Item::Penalty(p), true, None) = (&item, self.mode.within(Modes::ANY_MATH), &n.script) {
             n.math_breaks = match p {
                 Some(10000..) => n.math_breaks,
                 Some(0..) => n.math_breaks.saturating_add(1),
@@ -4660,7 +4714,7 @@ impl Machine<'_> {
         // A box in inline math is an ordinary atom (tex.web §§ 1076, 736):
         // the character before it takes its italic correction (§ 755), and
         // two ordinary atoms have no space between them (§ 764).
-        if let (Item::Box([w, h, d]), Modes::MATH) = (&item, self.mode) {
+        if let (Item::Box([w, h, d]), true) = (&item, self.mode.within(Modes::ANY_MATH)) {
             n.math_box = (h.lo == h.hi && d.lo == d.hi).then_some((h.lo, d.lo));
             self.next_atom(&mut n);
             n.along = n.along.extended_by(*w);
@@ -4671,7 +4725,7 @@ impl Machine<'_> {
         // Glue or a kern in inline math is no atom: the spacing between
         // atoms passes over it (tex.web § 761), and the character before it
         // takes its italic correction (§§ 752, 755).
-        if let (Item::Glue(..) | Item::Kern(_), Modes::MATH) = (&item, self.mode)
+        if let (Item::Glue(..) | Item::Kern(_), true) = (&item, self.mode.within(Modes::ANY_MATH))
             && n.script.is_none()
         {
             n.math_box = None;
@@ -5098,7 +5152,8 @@ impl Machine<'_> {
                 | ModeCmd::StartPar { .. }
                 | ModeCmd::QuitVMode
                 | ModeCmd::MathStyle(_)
-                | ModeCmd::MathChoice,
+                | ModeCmd::MathChoice
+                | ModeCmd::EqNo,
             )
             | Primitive::Typeset(Typeset::Number | Typeset::Dimen | Typeset::Glue)
             | Primitive::Accent => return,
@@ -5159,7 +5214,7 @@ impl Machine<'_> {
         if self.natural.is_none() {
             return;
         }
-        if self.mode == Modes::MATH {
+        if self.mode.within(Modes::ANY_MATH) {
             return self.math_char(c);
         }
         if self.list_kind() != Some(true) {
@@ -5359,6 +5414,151 @@ impl Machine<'_> {
 
     /// tex.web §§ 1194-1196: inline math ends. A list of plain characters
     /// adds its size and two `\mathsurround` kerns; anything else widens.
+    /// The box a formula's list packs into at its natural size (tex.web §§ 1194, 1199): its
+    /// last character's italic correction added; any size where the list is not followed.
+    fn formula_box(&mut self, math: Option<Natural>) -> [Dim; 3] {
+        let Some(mut m) = math.filter(|m| m.script.is_none()) else { return [Dim::ANY; 3] };
+        Self::end_atoms(&mut m);
+        let italic = self.prev_italic(m.math_prev);
+        [m.along.extended_by(italic), m.height.at_least_zero(), m.depth.at_least_zero()]
+    }
+
+    /// tex.web § 1145: at `$$` the paragraph so far is broken into lines, as at `\par` but for
+    /// `\displaywidowpenalty`; after the display a new list starts empty (§ 1200).
+    fn display_begins(&mut self, mut n: Natural) -> Natural {
+        let before = n;
+        if n.tail[0] != Last::Empty {
+            self.set_line(&mut n, true);
+            let lined = self.line_shape()[1];
+            n.wide = if n.prior { n.wide.join(lined) } else { n.wide.max(lined) };
+            // A list that may hold nothing may make no line.
+            if n.prior {
+                n.para = Para { along: n.para.along.join(before.para.along), ..n.para };
+                n.para.depth = n.para.depth.join(before.para.depth);
+                n.first = join_first(n.first, before.first);
+                n.prev_depth = join_prev(n.prev_depth, before.prev_depth);
+                n.para.lines.0 = before.para.lines.0;
+            }
+        }
+        self.set_prevgraf(Value::Unknown);
+        let para = Para {
+            breakpoints: 0,
+            glued: false,
+            awkward: false,
+            fresh: false,
+            rough: false,
+            items: Some(0),
+            fit: 2,
+            vlist: None,
+            ..n.para
+        };
+        Natural {
+            wide: n.wide,
+            first: n.first,
+            capped: n.capped,
+            tail: [Last::Empty; TAIL],
+            space_factor: Some(1000),
+            forced: n.forced,
+            para,
+            prev_depth: n.prev_depth,
+            ..Natural::default()
+        }
+    }
+
+    /// tex.web §§ 1199-1205: the display goes onto the paragraph's vertical list: the penalty
+    /// before it, the glue above it, its box and the number's, the penalty and glue below.
+    /// `\predisplaysize` is not followed, so each skip is the normal or the short one; a number
+    /// that may not fit beside the formula may go on a line of its own.
+    fn close_display(&mut self, mut n: Natural, math: Option<Natural>) -> Natural {
+        let eqno = math.and_then(|m| m.eqno);
+        let [w, h, d] = self.formula_box(math);
+        let skips = self.interline();
+        let [above, short_above, below, short_below] =
+            ["abovedisplayskip", "abovedisplayshortskip", "belowdisplayskip", "belowdisplayshortskip"]
+                .map(|g| self.glue_natural(g));
+        let penalties = ["predisplaypenalty", "postdisplaypenalty"].map(|p| self.int_parameter(p));
+        if penalties.iter().any(|p| p.is_none_or(|p| p <= -10000)) {
+            self.material |= BREAKS;
+        }
+        let (z, s) = (self.dimen_parameter("displaywidth"), self.dimen_parameter("displayindent"));
+        // § 1199: `e`, the number's width, and `q`, with a quad of space.
+        let quad = self.size_font(0);
+        let quad = self.family_font(quad, 2).and_then(|f| self.font_dimen(f, 6)?.as_dimen());
+        // Each way the display may go, as the items it appends: a box, or glue (`None`).
+        let mut ways: Vec<Vec<Option<[Dim; 2]>>> = Vec::new();
+        let (g1, g2) = (above.join(short_above), below.join(short_below));
+        match eqno {
+            None => ways.push(vec![None, Some([h, d]), None]),
+            Some((left, [ew, eh, ed])) => {
+                let beside = [h.max(eh), d.max(ed)];
+                ways.push(vec![None, Some(beside), None]);
+                // §§ 1201-1202: it is set beside unless the formula is too wide for it.
+                let fits = quad.is_some_and(|q| ew.lo > 0 && w.hi.saturating_add(ew.hi).saturating_add(q) <= z.lo);
+                if !fits {
+                    ways.push(if left {
+                        vec![Some([eh, ed]), Some([h, d]), None]
+                    } else {
+                        vec![None, Some([h, d]), Some([eh, ed])]
+                    });
+                }
+            }
+        }
+        let left = matches!(eqno, Some((true, _)));
+        let (g1, g2) = if left { (above, below) } else { (g1, g2) };
+        let hull = |m: &mut Self, name: &str| m.glue_parameter(name).map(|g| GlueHull::exact(&g));
+        let hull = match (hull(self, "belowdisplayskip"), hull(self, "belowdisplayshortskip")) {
+            (Some(a), _) if left => Some(a),
+            (Some(a), Some(b)) => Some(a.join(&b)),
+            _ => None,
+        };
+        let Some(skips) = skips.filter(|_| n.first.is_some() || n.para.top.is_none()) else {
+            // A display first on an empty page loses its glue there (§ 1000): not followed.
+            n.para.lost = true;
+            return n;
+        };
+        n.first.get_or_insert(Dim::exact(0));
+        let mut joined: Option<Natural> = None;
+        for way in ways {
+            let mut m = n;
+            let last = way.len() - 1;
+            for (k, item) in way.into_iter().enumerate() {
+                match item {
+                    Some([h, d]) => m.stack_lines((0, 0), h, d, skips),
+                    None => {
+                        let g = if k == 0 { g1 } else { g2 };
+                        m.para.along = m.para.along.extended_by(m.para.depth).extended_by(g);
+                        m.para.depth = Dim::exact(0);
+                    }
+                }
+                // § 1205: the list ends with the glue below, or with the penalty after a number.
+                if k == last {
+                    m.para.below = match (item, penalties[1]) {
+                        (None, _) => Last::Glue(g2, hull, false),
+                        (Some(_), Some(p)) => Last::Penalty(p),
+                        _ => Last::UNKNOWN,
+                    };
+                }
+            }
+            joined = Some(joined.map_or(m, |j| j.join(m)));
+        }
+        let mut n = joined.unwrap_or(n);
+        // § 1200: `\prevgraf` counts the display as three lines.
+        n.para.lines = (n.para.lines.0.saturating_add(3), n.para.lines.1.saturating_add(3));
+        // Every box of it ends by the line's end (§§ 1202-1205).
+        n.wide = Dim::range(n.wide.lo, n.wide.hi.max(s.extended_by(z).hi));
+        n
+    }
+
+    /// tex.web §§ 1199-1200: the display's parameters are read before `unsave`, so its
+    /// vertical part goes onto the paragraph its group keeps while the group is open.
+    fn finish_display(&mut self) {
+        let Some(mut nest) = self.env.nest().filter(|n| n.part == DISPLAY) else { return };
+        if let Some(p) = nest.natural {
+            nest.natural = Some(self.close_display(p, self.natural));
+            self.env.set_nest(nest);
+        }
+    }
+
     fn close_math(&mut self, math: Option<Natural>) {
         if self.natural.is_none() || self.list_kind() != Some(true) {
             self.natural = None;
@@ -5540,7 +5740,7 @@ impl Machine<'_> {
 
     /// Whether the list being built is inline math whose atoms are followed.
     pub(crate) fn math_followed(&self) -> bool {
-        self.mode == Modes::MATH && self.natural.is_some_and(|n| n.script.is_none())
+        self.mode.within(Modes::ANY_MATH) && self.natural.is_some_and(|n| n.script.is_none())
     }
 
     /// The pending atom follows the character before it: that character's
@@ -5629,6 +5829,10 @@ impl Machine<'_> {
                 .flatten()
                 .map(|size| (size, rule, base))
         });
+        // § 744: a fraction in display style takes `num1`, `denom1`, `delim1`: not modelled.
+        if self.natural.is_some_and(|n| n.display) {
+            self.natural = None;
+        }
         let Some(n) = &mut self.natural else { return };
         if let Some((size, rule, base)) = numerator {
             // The denominator starts afresh in its style; the group's start comes back at its end.
@@ -5782,6 +5986,11 @@ impl Machine<'_> {
         }
         let space = self.begin_atom(&mut n, t);
         n.along = n.along.extended_by(space).extended_by(Dim::exact(b.width));
+        // § 749: in display style an operator takes its larger variant and its limits.
+        if t == 1 && n.display {
+            self.natural = None;
+            return;
+        }
         if t == 1 {
             // tex.web § 749: an operator character in text style is boxed
             // with its italic correction and centred on the axis.
@@ -5948,10 +6157,11 @@ impl Machine<'_> {
         };
         let (sy, ex) = (self.family_font(here, 2), self.family_font(here, 3));
         let mut param = |k| sy.and_then(|f| self.font_dimen(f, k)).and_then(|v| v.as_dimen());
-        // The shift up is `sup2`, `sup3` where cramped; the shift down
+        // The shift up is `sup1` in display style, `sup2`, `sup3` where cramped; the shift down
         // `sub1`, `sub2` beside a superscript (§§ 757-759).
         let both = flip.is_some();
-        let (up, down) = (param(14 + usize::from(n.style & 1)), param(16 + usize::from(both)));
+        let k = if n.display && n.style & 1 == 0 { 13 } else { 14 + usize::from(n.style & 1) };
+        let (up, down) = (param(k), param(16 + usize::from(both)));
         let (Some(x_height), Some(up), Some(down)) = (param(5), up, down) else {
             self.natural = None;
             return;
@@ -6282,7 +6492,7 @@ impl Machine<'_> {
         // tex.web § 1105 in inline math: an item of that kind last in the
         // math list goes, which loses the list's size here; any other tail
         // stays.
-        if self.mode == Modes::MATH {
+        if self.mode.within(Modes::ANY_MATH) {
             let goes = matches!(
                 (removed, n.tail[0]),
                 (_, Last::Unknown(_))
