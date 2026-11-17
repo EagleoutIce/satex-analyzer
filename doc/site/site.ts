@@ -923,15 +923,22 @@ interface Stream {
   }).join('');
   /** A chip per undecided conditional the paragraph's text depends on: its test and a switch showing both arms,
    * the true one or the false one (`typesetWire` flips every choice of that conditional). */
+  /** What a path split stands for, where LaTeX's own names say it: the label and citation stores an
+   * earlier run's .aux fills (`\r@key`, `\b@key`), so a rerun decides them. Else a plain `maybe`. */
+  const splitKind = (name: string): [string, string, string] | null => {
+    const m = /^`?\\([rb])@(.+?)`?$/.exec(name ?? '');
+    return m ? (m[1] === 'r' ? ['reference', m[2], 'the reference'] : ['citation', m[2], 'the citation']) : null;
+  };
   const switches = (r: Rec) => (r.causes ?? []).filter((c: Rec) => c.on != null).map((c: Rec) => {
-    const name = c.test || c.parted || c.mark;
+    const name = c.test || c.parted || c.mark, kind = splitKind(name);
     // a conditional's test is true or false; other parted paths (a macro of several meanings) are named by the text each sets
     const label = (i: number) => c.test || !c.arms ? ['true', 'false'][i] : c.arms[i] ? `“${c.arms[i]}”` : 'nothing';
     const arm: Record<string, string> = { both: 'show the text of every path', true: c.test || !c.arms ? `show the text when ${name} is true` : `show the paths where ${name} sets ${c.arms[0] ? `“${c.arms[0]}”` : 'nothing'}`,
       false: c.test || !c.arms ? `show the text when ${name} is false` : `show the paths where ${name} sets ${c.arms[1] ? `“${c.arms[1]}”` : 'nothing'}` };
     // one case at a time: either arm, or every path
     const now = armsPicked.get(c.on) ?? 'both';
-    return `<span class="ts-switch" data-on="${esc(c.on)}" title="${esc(maybeTip(c))}. Pick a case to see its text"><span class="ts-switch-q">maybe</span><code>${esc(name)}</code>` +
+    const tip = kind ? `${kind[2]} ${kind[1]}: the .aux of an earlier run sets it, so the first run prints ?? and a rerun its text` : maybeTip(c);
+    return `<span class="ts-switch${kind ? ` ts-ref ts-switch-${kind[0]}` : ''}" data-on="${esc(c.on)}" title="${esc(tip)}. Pick a case to see its text"><span class="ts-switch-q">${kind ? kind[0] : 'maybe'}</span><code>${esc(kind ? kind[1] : name)}</code>` +
       `<span class="ts-pick" role="group" aria-label="the case of ${esc(name)}">` +
       ['both', 'true', 'false'].map((a, i) => `<button type="button" data-arm="${a}" aria-pressed="${a === now}" title="${esc(arm[a])}">${esc(i ? label(i - 1) : 'all')}</button>`).join('') + '</span></span>';
   }).join('');
@@ -959,7 +966,7 @@ interface Stream {
       `${k != null ? ` data-k="${k}"` : ''} data-path="${esc(r.path ?? '')}" data-line="${r.line}"${last > r.line ? ` data-last="${last}"` : ''} data-col="${r.col}" data-plain="${esc(r.detail ?? '')}"${r.lines?.length ? ` data-lines="${esc(JSON.stringify(r.lines))}"` : ''}` +
       ` style="--depth: ${d}${typeof r.skip === 'number' && !r.heading ? `; --skip: ${Math.max(r.skip, 0)}pt` : ''}">` +
       `<span class="ts-at"${last > r.line ? ` title="lines ${r.line}–${last}"` : ''}>${r.line ?? ''}</span><span class="ts-rails" aria-hidden="true"></span>` +
-      `<span class="ts-text">${switches(r)}${(r.causes ?? []).filter((c: Rec) => c.on != null).reduce((h: string, c: Rec) => h.replaceAll(`<span class="ts-choice" data-on="${esc(c.on)}">`, `<span class="ts-choice" data-on="${esc(c.on)}" title="${esc(maybeTip(c))}">`),
+      `<span class="ts-text">${switches(r)}${(r.causes ?? []).filter((c: Rec) => c.on != null).reduce((h: string, c: Rec) => h.replaceAll(`<span class="ts-choice" data-on="${esc(c.on)}">`, `<span class="ts-choice${splitKind(c.test || c.parted || c.mark) ? ' ts-ref' : ''}" data-on="${esc(c.on)}" title="${esc(maybeTip(c))}">`),
         notation(withKeys(r.marked ?? r.detail ?? '', r.keys, r.fonts, r.align, r.ligatures, r.lines), r.sketches, r.sketch))}</span></p>`;
   };
   /** A page `\shipout` sent out, as a labelled line where the next one begins; a page the run did not
