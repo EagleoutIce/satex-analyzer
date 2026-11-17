@@ -194,7 +194,7 @@ impl Catalogue {
 
 /// The catalogue of the installation `path` belongs to.
 pub fn catalogue_of(path: &Path) -> Option<Arc<Catalogue>> {
-    path.ancestors().find_map(|d| catalogue(d))
+    path.ancestors().find_map(catalogue)
 }
 
 /// The catalogue in `base`'s `tlpkg/texlive.tlpdb`, read once.

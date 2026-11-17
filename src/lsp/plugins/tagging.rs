@@ -159,7 +159,7 @@ fn offered_standards(cx: &Cx) -> Vec<String> {
 fn title(cx: &Cx, t: Option<&Tagging>) -> Option<Json> {
     let t = t?;
     let text = cx.doc.body();
-    let rendered = cx.analysis.metadata.iter().find(|m| &*m.field == "title").map(|m| m.text.clone());
+    let rendered = cx.analysis.metadata.iter().find(|m| m.field == "title").map(|m| m.text.clone());
     let lab = crate::analysis::machine::loaded(cx.analysis, "latex-lab-testphase-title");
     let target = match lab {
         true => page::calls(text, "title", 0, text.len()).into_iter().next().map(|c| (c.0, "pdftitle")),
@@ -173,7 +173,7 @@ fn title(cx: &Cx, t: Option<&Tagging>) -> Option<Json> {
         Some(n) => {
             let field = json!({ "name": "pdftitle", "label": "PDF title", "value": value.clone().unwrap_or_default(),
                                 "placeholder": rendered.clone().unwrap_or_default(), "check": ["tex"] });
-            forms.push(json!({ "title": "Save", "fields": [field], "print": snapshot::form(&[n.clone()], &[("pdftitle", 0, Some(0), Some("pdftitle"))]),
+            forms.push(json!({ "title": "Save", "fields": [field], "print": snapshot::form(std::slice::from_ref(n), &[("pdftitle", 0, Some(0), Some("pdftitle"))]),
                                "note": format!("Writes pdftitle into \\{}.", n.name) }));
             None
         }
@@ -212,24 +212,20 @@ fn figure(cx: &Cx, (at, end, file): (usize, usize, String)) -> Json {
         written.filter(|w| !w.is_empty()).unwrap_or_else(|| file.rsplit('/').next().unwrap_or(&file).to_string());
     let mut forms = Vec::new();
     let mut actions = Vec::new();
-    match node.filter(|_| plain) {
-        Some(n) => {
-            let field = json!({ "name": "alt", "label": "alternative text", "value": alt.clone().unwrap_or_default(),
-                                "placeholder": "what the figure shows", "long": true, "check": ["tex"] });
-            forms.push(json!({ "title": "Save", "fields": [field], "print": snapshot::form(&[n.clone()], &[("alt", 0, Some(0), Some("alt"))]),
-                               "note": "Screen readers read this out in place of the figure." }));
-            if !decorative {
-                let mut d = n.clone();
-                if let Some(list) = d.args.iter_mut().find_map(|a| a.keys.as_mut()) {
-                    list.retain(|k| k.key != "alt");
-                    list.push(Key { key: "artifact".into(), value: None });
-                }
-                let edits = snapshot::edits(cx.analysis, cx.doc, &[d]);
-                actions
-                    .push(json!({ "title": "Mark as decoration (artifact)", "edit": super::edit_of(cx.path, edits) }));
+    if let Some(n) = node.filter(|_| plain) {
+        let field = json!({ "name": "alt", "label": "alternative text", "value": alt.clone().unwrap_or_default(),
+                            "placeholder": "what the figure shows", "long": true, "check": ["tex"] });
+        forms.push(json!({ "title": "Save", "fields": [field], "print": snapshot::form(std::slice::from_ref(&n), &[("alt", 0, Some(0), Some("alt"))]),
+                           "note": "Screen readers read this out in place of the figure." }));
+        if !decorative {
+            let mut d = n.clone();
+            if let Some(list) = d.args.iter_mut().find_map(|a| a.keys.as_mut()) {
+                list.retain(|k| k.key != "alt");
+                list.push(Key { key: "artifact".into(), value: None });
             }
+            let edits = snapshot::edits(cx.analysis, cx.doc, &[d]);
+            actions.push(json!({ "title": "Mark as decoration (artifact)", "edit": super::edit_of(cx.path, edits) }));
         }
-        None => {}
     }
     let why = (!plain).then_some("The options come from a macro: edit them in the source.");
     let missing = alt.as_deref().is_none_or(|a| a.trim().is_empty()) && !decorative && !has("actualtext");

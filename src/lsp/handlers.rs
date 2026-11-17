@@ -2470,12 +2470,14 @@ fn installed(roots: &[PathBuf], ext: &str) -> std::sync::Arc<Vec<Installed>> {
     files
 }
 
+/// A file completion candidate: its score, its order, its name, and its installed table and index.
+type FileHit = ((super::search::Tier, u32), usize, String, Option<(std::sync::Arc<Vec<Installed>>, usize)>);
+
 /// The files of each `(extensions, tree)` kind that `typed` finds by name
 /// or, for an installed package, by what its catalogue says it is
 /// ([`super::search`]): the best matches first, the project's before the
 /// installation's among equals.
 fn files(analysis: &Analysis, kinds: impl Iterator<Item = Exts>, typed: &str) -> Vec<CompletionItem> {
-    use std::sync::Arc;
     let roots = &analysis.distribution.roots;
     let shown = analysis.settings.conventions.completion.shown;
     let query = super::search::Query::new(typed);
@@ -2483,11 +2485,10 @@ fn files(analysis: &Analysis, kinds: impl Iterator<Item = Exts>, typed: &str) ->
     for (exts, tree) in kinds {
         let exts: Vec<&str> = exts.iter().map(String::as_str).collect();
         // a project file, or an installed one by its index in its table
-        let mut found: Vec<((super::search::Tier, u32), usize, String, Option<(Arc<Vec<Installed>>, usize)>)> =
-            project_files(analysis, &exts)
-                .into_iter()
-                .filter_map(|n| Some((super::search::Entry::new(&n, "").score(&query)?, 0, n, None)))
-                .collect();
+        let mut found: Vec<FileHit> = project_files(analysis, &exts)
+            .into_iter()
+            .filter_map(|n| Some((super::search::Entry::new(&n, "").score(&query)?, 0, n, None)))
+            .collect();
         for (ext, dir) in exts.iter().filter_map(|e| Some((e, tree?))) {
             let ext = format!(".{ext}");
             match dir {

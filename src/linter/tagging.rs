@@ -292,7 +292,7 @@ fn pdfua_without_title(report: &mut Report) {
     }
     let Some(at) = metadata_call(report) else { return };
     // `\title` in latex-lab's title code takes `[pdftitle=…]`: the fix writes the title there
-    let title = a.metadata.iter().find(|m| &*m.field == "title");
+    let title = a.metadata.iter().find(|m| m.field == "title");
     let call = title.and_then(|_| title_call(report));
     let edits = match (call, title) {
         (Some(span), Some(m)) if crate::analysis::machine::loaded(a, "latex-lab-testphase-title") => {

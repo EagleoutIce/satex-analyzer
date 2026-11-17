@@ -3423,10 +3423,8 @@ impl Machine<'_> {
             return None;
         }
         // A load that waits for a nested one is stored in parts: said once, when it ends.
-        if !suspend {
-            if self.cfg.verbose >= 1 {
-                crate::util::progress::done(&format!("cached {}", rec.label), rec.started.elapsed());
-            }
+        if !suspend && self.cfg.verbose >= 1 {
+            crate::util::progress::done(&format!("cached {}", rec.label), rec.started.elapsed());
         }
         crate::caches::format::save_hashes(dir, self.cfg.eviction_bound());
         crate::caches::format::prune_family(

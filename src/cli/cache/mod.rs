@@ -201,7 +201,7 @@ pub fn show(cfg: &Config, packages: &[String], json: bool, out: &mut impl Write)
                 .then(|| (package.to_string(), e.path(), e.metadata().map_or(0, |m| m.len())))
         })
         .collect();
-    files.sort_by(|a, b| b.2.cmp(&a.2));
+    files.sort_by_key(|f| std::cmp::Reverse(f.2));
     let mut rows = Vec::new();
     for (package, path, bytes) in &files {
         let trees = std::fs::read(path).ok().and_then(|b| crate::analysis::machine::tree_sizes(&b)).unwrap_or_default();
