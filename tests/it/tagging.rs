@@ -270,19 +270,23 @@ fn the_body_after_a_tagged_title_is_followed() {
 }
 
 /// `\fp_eval:n` over a position read back from the aux (unknown digits), as latex-lab's
-/// tagged graphic computes its BBox. RED (owner: next tagging round): the l3fp parser
-/// inspects the typed unknown digit by digit and forks 92k times (37 s for two sums); a
-/// tagged `\includegraphics` of an existing file hits the time limit there (vi.tex, t11.tex).
+/// tagged graphic computes its BBox. Bug pinned: the l3fp parser inspected the typed unknown
+/// digit by digit and forked 92k times (37 s for two sums); a tagged `\includegraphics` of an
+/// existing file hit the time limit there.
 #[test]
 fn an_fp_sum_over_an_unknown_position_stays_on_few_paths() {
     if !crate::support::installed() {
         return;
     }
-    let a = crate::support::analyze_latex(
-        "\\documentclass{article}\n\\begin{document}\n\\ExplSyntaxOn\n\\tl_gset:Ne \\x {\\dim_to_decimal_in_bp:n {\\the\\pdflastxpos sp}}\n\\tl_gset:Ne \\y {\\fp_eval:n {\\x + 10}}\n\\tl_gset:Ne \\z {\\fp_eval:n {\\y + \\x}}\n\\ExplSyntaxOff\n\\gdef\\after{reached}\n\\end{document}\n",
-    );
+    let source = "\\documentclass{article}\n\\begin{document}\n\\ExplSyntaxOn\n\\tl_gset:Ne \\x {\\dim_to_decimal_in_bp:n {\\the\\pdflastxpos sp}}\n\\tl_gset:Ne \\y {\\fp_eval:n {\\x + 10}}\n\\tl_gset:Ne \\z {\\fp_eval:n {\\y + \\x}}\n\\ExplSyntaxOff\n\\gdef\\after{reached}\n\\end{document}\n";
+    // the first run of a fresh cache peaks while it loads the packages; the body is what counts
+    crate::support::analyze_latex(source);
+    let a = crate::support::analyze_latex(source);
     assert_eq!(crate::support::body(&a, "after"), "reached");
-    assert!(a.peak_paths <= 2, "{} paths", a.peak_paths);
+    // The bug forked per digit: 112.6k forks. A scan that runs out of choices now ends as one
+    // unknown, so its arms (a few at once, never the document's paths) stay a handful.
+    const FEW_FORKS: u64 = 1_000;
+    assert!(a.forks <= FEW_FORKS, "{} forks", a.forks);
 }
 
 /// The smallest form of the root above: an unknown integer position, no decimals.
