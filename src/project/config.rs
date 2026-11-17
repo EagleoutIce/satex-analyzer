@@ -56,6 +56,9 @@ pub struct Limits {
     /// no limit.  A safety net: no document should come near it.  Like
     /// `memory`, it never changes where a path is cut before that stop.
     pub seconds: u64,
+    /// Seconds a run waits for another process that builds the same cache before it builds
+    /// the cache itself. The wait counts toward no step budget, so it is bounded here.
+    pub lock_seconds: u64,
     /// How many undecided `\if` one command may split into paths. Past them
     /// the command's result is unknown text, reported as an `assumption`.
     /// Higher keeps more combinations apart and costs time.
@@ -322,6 +325,7 @@ impl Default for Limits {
             // itself.
             repeat_failures: 8,
             seconds: 300,
+            lock_seconds: 60,
             choices: 8,
             site_forks: 64,
             // Measured: `\the` of a count below 1000 reads apart into one,

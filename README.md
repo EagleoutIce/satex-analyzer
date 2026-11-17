@@ -55,7 +55,7 @@ plugins: 48 in 11 kinds
   build system        5  latexmk, make, tectonic, arara, l3build
   tools               7  biber, bibtex, makeindex, xindy, makeglossaries, dvips, ps2pdf
   magic comments      3  % !TeX, % !BIB, % arara:
-… 18 more lines omitted
+… 17 more lines omitted
 ```
 
 <details>
@@ -575,8 +575,8 @@ The kernel and the packages are interpreted once and cached. `satex cache build`
 $ satex cache
 cache ~/.cache/satex
   kernel     /usr/local/texlive/YYYY/texmf-dist/tex/latex/base/latex.ltx · 197.8k definitions · cached
-  pruned     1 caches, 29.1 MiB: no build can use them, or past limits.cache_size
-  packages   258 stored, 377.8 MiB
+  pruned     1 caches, 29.0 MiB: no build can use them, or past limits.cache_size
+  packages   193 stored, 291.7 MiB
 … 2 more lines omitted
 ```
 

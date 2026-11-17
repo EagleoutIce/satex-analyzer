@@ -1021,6 +1021,8 @@ limits:
   seconds: 300  # most seconds one run may take, a safety net. 0 for no limit
     #! affects: speed
     #! example: `seconds: 30` for an editor that should never wait long
+  lock_seconds: 60  # how long a run waits for another one building the same cache before it builds it itself
+    #! affects: speed
   repeat_failures: 8  # how often satex may meet the same thing it cannot follow at one place before skipping that expansion
     #! affects: precision, speed
     #! example: a loop over an unsupported primitive stops after 8 rounds

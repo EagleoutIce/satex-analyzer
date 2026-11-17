@@ -1391,7 +1391,7 @@ See [chktex 20](https://www.nongnu.org/chktex/), [chktex 44](https://www.nongnu.
 
 A box or rule set in a paragraph, such as an `\includegraphics`, a `tabular` or a `tikzpicture`, that is wider than the line width (`\linewidth`) cannot fit on any line: it sticks out into the margin however the paragraph breaks ([tex.web § 889](https://github.com/TeX-Live/texlive-source/blob/dce038dd1bd98fac739254da4a2066c8347cdf6c/texk/web2c/tex.web#L17420)). The rule reports the call that set it, by how much it passes the line, where its width and the line width were known on every visit.
 
-An `\includegraphics` whose `width=` is the reason gets the fix `width=\linewidth`, where every other key leaves that its final width (no `height`, `scale`, `angle`, `bb` or a key satex does not know, no comment); it changes the picture's size, so it is unsafe. Otherwise scale the material down (`\resizebox`, a smaller font), or let it stick out on purpose (`\makebox[\linewidth]{…}`), which TeX does not report.
+An `\includegraphics` whose `width=` is the reason gets the fix `width=\linewidth`, where every other key leaves that its final width (no `height`, `scale`, `angle`, `bb` or a key satex does not know, no comment). It changes the picture's size, so it is unsafe. Otherwise scale the material down (`\resizebox`, a smaller font), or let it stick out on purpose (`\makebox[\linewidth]{…}`), which TeX does not report.
 
 See [tex.web § 889](https://github.com/TeX-Live/texlive-source/blob/dce038dd1bd98fac739254da4a2066c8347cdf6c/texk/web2c/tex.web#L17420), [graphics § 4.4](https://ctan.org/pkg/graphics).
 

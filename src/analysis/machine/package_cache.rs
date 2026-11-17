@@ -1962,7 +1962,10 @@ impl Machine<'_> {
                 if outermost
                     && !self.cfg.cache.index.background
                     && !cache.exists()
-                    && let Some(lock) = crate::caches::format::build_lock(&cache)
+                    && let Some(lock) = crate::caches::format::build_lock(
+                        &cache,
+                        std::time::Duration::from_secs(self.cfg.limits.lock_seconds),
+                    )
                 {
                     self.building = Some((id, std::rc::Rc::new(lock)));
                 }

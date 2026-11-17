@@ -4008,8 +4008,14 @@ impl<'a> Machine<'a> {
                     &roots,
                 );
                 // The background builder takes none: no run waits on it.
-                _across =
-                    (!self.cfg.cache.index.background).then(|| crate::caches::format::build_lock(&target)).flatten();
+                _across = (!self.cfg.cache.index.background)
+                    .then(|| {
+                        crate::caches::format::build_lock(
+                            &target,
+                            std::time::Duration::from_secs(self.cfg.limits.lock_seconds),
+                        )
+                    })
+                    .flatten();
                 cached = load();
             }
             match cached {

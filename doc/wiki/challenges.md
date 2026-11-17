@@ -643,7 +643,7 @@ Why:
 ```sh
 $ satex query typeset -f 07-termination.tex --set limits.seconds=60
 6:6  paragraph  {.…|}
-7:15  page  page 1
+7:15  page  page 1 maybe
 assumption  page-one-arm
 assumption  clock-assumed
 ```
@@ -930,10 +930,10 @@ Why:
 ```sh
 $ satex query typeset -f 11-fixpoint.tex --set limits.seconds=60
 4:2  paragraph  The label was on page ⟨?⟩.
-5:38  page  page 1 → 2
+5:38  page  page 1 → 2 maybe
 6:11  paragraph  Here.
-7:15  page  page 2 → 3
-7:15  page  page 3
+7:15  page  page 1–2 → next maybe
+7:15  page  page 1–3 maybe
 assumption  page-one-arm
 assumption  clock-assumed
 ```

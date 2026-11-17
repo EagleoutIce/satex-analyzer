@@ -615,7 +615,10 @@ impl Drop for BuildLock {
 /// system has no locks, and where this process holds it already: a lock is
 /// per open file, so a second open (a later build run while the state of an
 /// earlier one still holds it) would wait on itself forever.
-pub(crate) fn build_lock(target: &Path) -> Option<BuildLock> {
+///
+/// The wait is bounded by `wait`: a run whose builder hangs or is stopped builds the cache
+/// itself then, as without locks. No step budget sees a wait, so an unbounded one could hang.
+pub(crate) fn build_lock(target: &Path, wait: std::time::Duration) -> Option<BuildLock> {
     let path = target.with_extension("building.lock");
     if !HELD.lock().unwrap_or_else(|e| e.into_inner()).insert(path.clone()) {
         return None;
@@ -626,7 +629,16 @@ pub(crate) fn build_lock(target: &Path) -> Option<BuildLock> {
         return None;
     };
     let lock = BuildLock(file, path);
-    lock.0.lock().ok().map(|()| lock)
+    let until = std::time::Instant::now() + wait;
+    loop {
+        match lock.0.try_lock() {
+            Ok(()) => return Some(lock),
+            Err(std::fs::TryLockError::WouldBlock) if std::time::Instant::now() < until => {
+                std::thread::sleep(std::time::Duration::from_millis(100))
+            }
+            Err(_) => return None,
+        }
+    }
 }
 
 fn lock_for(target: &Path) -> PathBuf {
@@ -923,6 +935,31 @@ mod tests {
     use crate::engine::tex::{ArgSpec, Catcode, MacroDef, ParameterText, Span, Tok, Token};
     use crate::engine::value::Value;
 
+    /// A build lock another holder keeps is waited on only for the bound, then the run builds
+    /// alone. A blocking wait counted toward no budget: a stopped builder hung every later run.
+    #[test]
+    fn a_build_lock_held_elsewhere_is_waited_on_for_the_bound_only() {
+        let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join(format!("target/scratch/build-lock-held-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let target = dir.join("k.cache");
+        // another open file description stands for another process
+        let other = std::fs::File::options()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(target.with_extension("building.lock"))
+            .unwrap();
+        other.lock().unwrap();
+        let wait = std::time::Duration::from_millis(300);
+        let start = std::time::Instant::now();
+        assert!(build_lock(&target, wait).is_none(), "the lock stays with its holder");
+        assert!(start.elapsed() >= wait && start.elapsed() < wait * 10, "{:?}", start.elapsed());
+        drop(other);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     /// A build lock this process holds is never waited on: the second take
     /// returns at once. chemfig's manual probe hung forever when its second
     /// build run took the lock its first run's state still held.
@@ -932,10 +969,10 @@ mod tests {
             .join(format!("target/scratch/build-lock-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let target = dir.join("package-x.postcard");
-        let held = build_lock(&target).expect("the first take");
-        assert!(build_lock(&target).is_none(), "the second take waits on nothing");
+        let held = build_lock(&target, std::time::Duration::ZERO).expect("the first take");
+        assert!(build_lock(&target, std::time::Duration::ZERO).is_none(), "the second take waits on nothing");
         drop(held);
-        assert!(build_lock(&target).is_some(), "a released lock is taken again");
+        assert!(build_lock(&target, std::time::Duration::ZERO).is_some(), "a released lock is taken again");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

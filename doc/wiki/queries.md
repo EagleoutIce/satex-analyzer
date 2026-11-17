@@ -97,7 +97,7 @@ variable-definition  \pkgcls@targetdate                                         
 use                  @                                                             paper.tex  @ paper.tex:1:1
 use                  11pt                                                          paper.tex  @ paper.tex:1:1
 macro-call           \value                                                        paper.tex  @ paper.tex:0:0
-… 531 more lines omitted
+… 529 more lines omitted
 ```
 
 ## diagnostics
@@ -108,11 +108,9 @@ Everything SaTeX noticed while interpreting the document: widened conditionals, 
 $ satex query diagnostics -f samples/paper.tex
 severity    code                count  message                         file            
 assumption  forced-page-breaks  1      the page may fill here, and p…  paper.tex       @ paper.tex:56:13
-assumption  page-one-arm        1      an undecided choice while a p…  latex.ltx       @ latex.ltx:21194:8
-assumption  page-one-arm        1      an undecided choice while a p…  latex.ltx       @ latex.ltx:9338:7
 assumption  page-one-arm        1      an undecided choice while a p…  latex.ltx       @ latex.ltx:20715:3
 assumption  page-one-arm        1      an undecided choice while a p…  latex.ltx       @ latex.ltx:20717:7
-… 1 more line omitted
+assumption  clock-assumed       1      the document is assumed to be…  expl3-code.tex  @ expl3-code.tex:8203:38
 ```
 
 ## distribution
@@ -157,7 +155,7 @@ id   kind     file
 2    input    texsys.cfg                                
 3    input    texsys.aux                                
 4    input    expl3.ltx                                 
-… 295 more lines omitted
+… 307 more lines omitted
 ```
 
 ## gaps
@@ -328,13 +326,13 @@ Definitions and assignments a macro makes as a side effect of being called, rath
 
 ```text
 $ satex query side-effects -f samples/paper.tex --filter 'file=paper.tex'
-tag                  name                       detail                       file       
-macro-call           \documentclass             while expanding at 731:7     paper.tex  @ paper.tex:1:1
-variable-definition  \ifdraft                   while expanding at 3:1       paper.tex  @ paper.tex:3:7
-variable-definition  \drafttrue                 while expanding at 3:1       paper.tex  @ paper.tex:3:7
-variable-definition  \draftfalse                while expanding at 3:1       paper.tex  @ paper.tex:3:7
-macro-call           \usepackage                while expanding at 1:1       paper.tex  @ paper.tex:4:1
-… 114 more lines omitted
+tag                  name                       detail                      file       
+macro-call           \documentclass             while expanding at 731:7    paper.tex  @ paper.tex:1:1
+variable-definition  \ifdraft                   while expanding at 3:1      paper.tex  @ paper.tex:3:7
+variable-definition  \drafttrue                 while expanding at 3:1      paper.tex  @ paper.tex:3:7
+variable-definition  \draftfalse                while expanding at 3:1      paper.tex  @ paper.tex:3:7
+macro-call           \usepackage                while expanding at 1:1      paper.tex  @ paper.tex:4:1
+… 112 more lines omitted
 ```
 
 ## trace

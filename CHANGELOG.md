@@ -74,6 +74,7 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 
 ### Analysis
 
+- `fix` **No endless wait on a cache another run builds.** A run that finds another one building the same cache waits at most `limits.lock_seconds` (60 s), then builds it itself. A stopped builder hung every later run before.
 - `fix` **A display keeps the page's length.** The paragraph before `$$`, `\[` or `equation` is broken into lines, and the display adds its skips, its formula and its number. A here-float after a display is placed on its page again, where the page length was any before.
 - `perf` **Tagged titles in seconds.** With tagging on, `\maketitle` and tables no longer fork into tagpdf's debug code: a register numbered by an unknown allocation now holds what the registers it may be hold. A tagged title took 281 s, now 6 s.
 - `fix` **Tagged documents with graphics reach their body.** A register allocated while the allocation counter is an interval keeps that interval in `\meaning`, and digits followed by such digits form an interval. supp-pdf's register loop decides again: `\DocumentMetadata` with graphicx no longer stalls at `\begin{document}`.

@@ -335,14 +335,31 @@
     "compile": {
       "description": "what satex compile runs and shows",
       "properties": {
+        "explain": {
+          "default": true,
+          "description": "explain the build's messages by a full analysis; false explains by rule and waits for none",
+          "type": "boolean",
+          "x-affects": [
+            "speed"
+          ]
+        },
+        "passes": {
+          "default": 4,
+          "description": "engine passes at most of the satex build, until the build files rest",
+          "minimum": 0,
+          "type": "integer",
+          "x-affects": [
+            "output"
+          ]
+        },
         "system": {
           "default": "auto",
-          "description": "the build system: auto (arara directives, then Tectonic.toml, then latexmk, then the engine), latexmk, arara, tectonic, make, l3build or engine",
+          "description": "the build system: auto (arara directives, then Tectonic.toml, then latexmk, then the engine), latexmk, arara, tectonic, make, l3build, engine or satex (its own incremental build: a preamble format, reruns only while the build files move)",
           "type": "string",
           "x-affects": [
             "output"
           ],
-          "x-example": "`system: arara`: the `% arara:` directives of the main file build it"
+          "x-example": "`system: arara`: the `% arara:` directives of the main file build it\n`system: satex`: a body edit is one pdfTeX pass from the dumped preamble"
         },
         "viewer": {
           "default": "none",
@@ -2908,6 +2925,15 @@
             "speed"
           ],
           "x-example": "a line whose `\\foreach` runs forever is cut, and the next line is read"
+        },
+        "lock_seconds": {
+          "default": 60,
+          "description": "how long a run waits for another one building the same cache before it builds it itself",
+          "minimum": 0,
+          "type": "integer",
+          "x-affects": [
+            "speed"
+          ]
         },
         "loop_entries": {
           "default": 256,
