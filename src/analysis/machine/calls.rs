@@ -26,6 +26,8 @@ pub(crate) struct CallRec {
     base: usize,
     recent: usize,
     reads: usize,
+    /// [`crate::engine::env::Env::assignments`] at the start.
+    assigned: u64,
     groups: usize,
     conds: usize,
     mode: crate::engine::mode::Modes,
@@ -189,6 +191,10 @@ struct Run {
     /// It forked or a summary cut code inside it: an approximation may have
     /// written more names, so a lesson takes the union and widens what disagrees.
     loose: bool,
+    /// Names it wrote before it read them: outputs, whose value at the call
+    /// did not matter to the run (scratch like `\toks0`), unlike state it
+    /// read as it met it. Kept for loose runs only.
+    outputs: Vec<Sym>,
 }
 
 /// The position of an input frame: a token list and offset (the `Rc` is held
@@ -364,6 +370,7 @@ impl Machine<'_> {
                 base: self.input.len(),
                 recent: self.env.recent_len(),
                 reads: self.env.read_log_len(),
+                assigned: self.env.assignments,
                 groups: self.env.group_level(),
                 conds: self.conds.len(),
                 mode: self.mode,
@@ -654,6 +661,7 @@ impl Machine<'_> {
                 peeks: false,
                 typeset: None,
                 loose: false,
+                outputs: Vec::new(),
             };
             self.call_runs.get_mut(&rec.key).expect("entry").runs.push(run);
         }
@@ -693,12 +701,18 @@ impl Machine<'_> {
         };
         // It wrote a name from its arguments, so the next call writes another name.
         let handed = writes.iter().any(|w| rec.args.iter().flatten().any(|t| t.cs() == Some(w.0)));
-        let entry = self.call_runs.get_mut(&key).expect("entry");
         if !whole || handed || writes.is_empty() {
+            let entry = self.call_runs.get_mut(&key).expect("entry");
             entry.leaky = true;
             entry.runs.clear();
             return;
         }
+        // Names it read as it met them are state; the rest it wrote first.
+        let loose = forked || rec.soft;
+        let syms: Vec<Sym> = writes.iter().filter(|_| loose).map(|w| w.0).collect();
+        let met = self.env.read_before(rec.reads, rec.assigned, &syms).unwrap_or_else(|| syms.clone());
+        let outputs = syms.into_iter().filter(|s| met.binary_search(s).is_err()).collect();
+        let entry = self.call_runs.get_mut(&key).expect("entry");
         entry.runs.push(Run {
             writes,
             reads: Vec::new(),
@@ -707,7 +721,8 @@ impl Machine<'_> {
             closes,
             peeks,
             typeset,
-            loose: forked || rec.soft,
+            loose,
+            outputs,
         });
         if entry.runs.len() == k {
             let runs = std::mem::take(&mut entry.runs);
@@ -821,10 +836,12 @@ impl Machine<'_> {
         } else if all(&|b| flag(&b.meaning)) {
             Some(Written::Flag)
         } else {
-            // Only where an approximation already made it vague: precise
-            // texts that differ were chosen from data, as a third run may do.
+            // Only where an approximation already made it vague, or for an
+            // output every run that wrote it wrote first: precise state texts
+            // that differ were chosen from data, as a third run may do.
             let vague = runs.iter().any(|r| of(r, sym).is_some_and(|b| !b.certain || self.imprecise(b)));
-            (vague && runs.iter().any(|r| r.loose)).then_some(Written::Any)
+            let output = runs.iter().all(|r| of(r, sym).is_none() || r.outputs.contains(&sym));
+            ((vague || output) && runs.iter().any(|r| r.loose)).then_some(Written::Any)
         }
     }
 

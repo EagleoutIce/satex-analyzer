@@ -82,6 +82,7 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 
 ### Analysis
 
+- `perf` **Calls learn past their scratch names.** A name a call writes before it reads it holds no input of the call, so its value at the call does not keep a learned effect from applying. Four pgfmath divides took 803 path splits, now 439.
 - `fix` **Learned call effects keep every path's flags.** Merging two paths no longer drops one path's record that a call must not be summarized, local writes a group's end undoes no longer count as a call's effects, and calls that split into paths learn from all of them.
 - `fix` **A name around unknown digits is one argument.** A name like `pgf@sh@ns@<number>pt,1` bound to `\relax` reads as one token where a macro takes its arguments, not as text of any length. TikZ's bend to a point of unknown width no longer raises a false missing `\endcsname`.
 - `fix` **`\meaning` keeps a number's bounds.** A number of known range written out by `\meaning` stays that range, as `\string` already kept it. xcolor's mix of a color by such a number took 88 path splits, now 4.

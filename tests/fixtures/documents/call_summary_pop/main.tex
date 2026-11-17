@@ -1,0 +1,12 @@
+\documentclass{article}
+% \pop drops the top of a token-list stack; \fill puts unknown text on top.
+\def\popp#1#2\stop#3{\def#3{#1}\toks2={#2}}
+\def\pop#1{\ifx\u\relax\fi\expandafter\popp\the\toks2 \stop#1}
+\def\x{\pop\a}
+\def\fill{\edef\u{\romannumeral\pdfelapsedtime }\toks2=\expandafter{\expandafter{\u}{}}}
+\begin{document}
+\fill\x \fill\x \fill\x
+\edef\u{\romannumeral\pdfelapsedtime }\toks2=\expandafter{\expandafter{\u}{K}{}}\x\x
+\def\want{K}\ifx\a\want\gdef\ok{}\fi
+\gdef\SatexReachedEnd{}
+\end{document}

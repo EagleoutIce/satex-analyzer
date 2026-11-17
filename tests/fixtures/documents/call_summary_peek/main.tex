@@ -1,0 +1,12 @@
+\documentclass{article}
+% \peek reads the top of a token-list stack and leaves it.
+\def\peekk#1#2\stop#3{\def#3{#1}}
+\def\peek#1{\ifx\u\relax\fi\expandafter\peekk\the\toks2 \stop#1}
+\def\x{\peek\a}
+\def\fill{\edef\u{\romannumeral\pdfelapsedtime }\toks2=\expandafter{\expandafter{\u}{}}}
+\begin{document}
+\fill\x \fill\x
+\toks2={{K}{}}\x
+\def\want{K}\ifx\a\want\gdef\ok{}\fi
+\gdef\SatexReachedEnd{}
+\end{document}

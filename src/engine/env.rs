@@ -239,9 +239,10 @@ pub struct Env {
     /// set, which is what the package's effect may depend on.
     tracking: std::cell::Cell<bool>,
     reads: std::cell::RefCell<Reads>,
-    /// While calls are recorded: every name read, in order.
+    /// While calls are recorded: every name read, in order, with the stamp
+    /// of the binding it read.
     logging: std::cell::Cell<bool>,
-    read_log: std::cell::RefCell<Vec<u32>>,
+    read_log: std::cell::RefCell<Vec<(u32, u64)>>,
     /// Whether the log passed [`READ_LOG`] and stopped, so it is incomplete.
     log_full: std::cell::Cell<bool>,
     /// While a call's effect may be kept ([`MemoLog`]).
@@ -733,14 +734,7 @@ impl Env {
     fn log_read(&self, sym: Sym) {
         self.memo_read(sym.0, true);
         if self.logging.get() {
-            let mut log = self.read_log.borrow_mut();
-            if log.len() >= READ_LOG {
-                log.clear();
-                self.logging.set(false);
-                self.log_full.set(true);
-            } else {
-                log.push(sym.0);
-            }
+            self.log_name(sym);
         }
     }
 
@@ -789,6 +783,7 @@ impl Env {
         }
     }
 
+    /// Logs a read of `sym` with the assignment its binding came from.
     fn log_name(&self, sym: Sym) {
         let mut log = self.read_log.borrow_mut();
         if log.len() >= READ_LOG {
@@ -796,7 +791,7 @@ impl Env {
             self.logging.set(false);
             self.log_full.set(true);
         } else {
-            log.push(sym.0);
+            log.push((sym.0, self.stamp_of(sym)));
         }
     }
 
@@ -893,14 +888,7 @@ impl Env {
     fn log_meaning_read(&self, sym: Sym) {
         self.memo_read(sym.0, false);
         if self.logging.get() {
-            let mut log = self.read_log.borrow_mut();
-            if log.len() >= READ_LOG {
-                log.clear();
-                self.logging.set(false);
-                self.log_full.set(true);
-            } else {
-                log.push(sym.0);
-            }
+            self.log_name(sym);
         }
     }
 
@@ -915,10 +903,27 @@ impl Env {
             return None;
         }
         let log = self.read_log.borrow();
-        let mut syms: Vec<u32> = log.get(from..)?.to_vec();
+        let mut syms: Vec<u32> = log.get(from..)?.iter().map(|r| r.0).collect();
         syms.sort_unstable();
         syms.dedup();
         Some(syms.into_iter().map(Sym).collect())
+    }
+
+    /// Of `syms` (sorted), those read since the log was `from` long while
+    /// they held a binding from assignment `at` or before: the run read them
+    /// as it met them. `None` when the log does not reach back that far.
+    pub fn read_before(&self, from: usize, at: u64, syms: &[Sym]) -> Option<Vec<Sym>> {
+        if syms.is_empty() || self.log_full.get() {
+            return syms.is_empty().then(Vec::new);
+        }
+        let log = self.read_log.borrow();
+        let mut met: Vec<Sym> = (log.get(from..)?.iter())
+            .filter(|&&(sym, stamp)| stamp <= at && syms.binary_search(&Sym(sym)).is_ok())
+            .map(|&(sym, _)| Sym(sym))
+            .collect();
+        met.sort_unstable();
+        met.dedup();
+        Some(met)
     }
 
     pub fn track_reads(&self, on: bool) -> bool {

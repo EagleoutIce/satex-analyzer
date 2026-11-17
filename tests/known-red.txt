@@ -4,7 +4,7 @@ documents::rounding_a_path_at_an_unknown_dimension_ends_bounded
 # owner: Root L (W2), 19 paths
 documents::rounding_a_path_at_an_interval_dimension_ends_bounded
 documents::tcolorbox_of_unknown_height_keeps_its_anchors_local
-# owner: Root L (W2), 3869 forks against 543
+# owner: Root L (W2), 3869 forks against 543; also false extra-else/extra-fi at pgfmath trig 385 / pgfcorepathprocessing 263 at HEAD 5394edaf
 documents::tikz_loop_of_unknown_height_nodes_converges
 # owner: Root D (W1)
 documents::draw_arrow_to_a_node_of_unknown_width_joins_its_digit_arms
@@ -12,7 +12,7 @@ documents::draw_arrow_to_a_node_of_unknown_width_joins_its_digit_arms
 documents::graph_arrow_to_a_node_of_unknown_width_joins_its_digit_arms
 # owner: Root L (W2), 227 forks
 documents::one_pgfmath_divide_of_two_intervals_stays_on_few_forks
-# owner: Root L (W2), 898 forks
+# owner: Root L (tail calls), 439 forks against 80 (scr: scratch outputs widen)
 documents::four_pgfmath_divides_of_two_intervals_stay_on_few_forks
 # owner: Root D (W1), 40 forks
 documents::one_pgfmath_reciprocal_of_an_interval_stays_on_few_forks
@@ -23,5 +23,9 @@ documents::a_breakable_blanker_box_around_a_rule_of_unknown_height_ends
 tagging::an_fp_eval_of_an_unknown_integer_stays_on_few_paths
 # Open (2026-11-17, owner p1): one node of tikz_nodes, Root A (digit-split wait in partner). p1c: forks within budget, 14 paths remain (arms of xcolor's clamps meet only at the line's end).
 termination::convergence::colorlet_of_an_unknown_pgfmath_result
-# owner: grp (put-back frame shared with the caller; fix target/scratch/grp/fix-b-pop-empty-returned.patch turns bend red)
+# owner: stack (call summary keeps a pop's rest that its runs agreed on; refusing read-then-written names, target/scratch/stack/exp, turns pgfmath_parses_a_signed red and typed +30%: the parser then meets its loop-widened stacks)
+documents::call_summary_pops_a_deeper_stack
+# owner: stack (call summary compares only count registers with what its runs read; target/scratch/stack/exp/reads-otherwise-*.diff greens it but budgets::pgfmath_parse_of_typed_numbers takes 5.5M steps, measured 1.33M)
+documents::call_summary_peeks_at_a_known_top
+# Open (2026-11-17, owner tail/stack): grp fix B greens it but breaks bend together with scr (pgfmath stack summaries); lands with the stack soundness fix.
 termination::a_put_back_token_of_a_call_stays_its_own

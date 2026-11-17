@@ -903,6 +903,21 @@ fn four_pgfmath_divides_of_two_intervals_stay_on_few_forks() {
     assert!(a.forks <= 4 * DIVIDE_FORKS, "{} forks", a.forks);
 }
 
+/// Forks the four divides may take once lessons widen scratch outputs: 803 when
+/// only vague names widened, 439 since names written before read count as
+/// outputs (2026-11-17). The few-forks bound above stays red (owner: tail calls).
+const DIVIDES_LEARNED_FORKS: u64 = 500;
+
+/// The four divides again. Each forked run writes `\toks0` and `\pgfmath@temp`
+/// before reading them, so their precise texts are scratch, not state the
+/// next call depends on. Bug pinned: the lesson refused those differing
+/// precise texts, so calls 3 and 4 walked their digits again.
+#[test]
+fn pgfmath_divides_learn_past_their_scratch_names() {
+    let Some(a) = check("pgfmath_divide_of_intervals", "div2h.tex", &[]) else { return };
+    assert!(a.forks <= DIVIDES_LEARNED_FORKS, "{} forks", a.forks);
+}
+
 /// One `\pgfmathreciprocal@` of a random dimension. Bug pinned: the reciprocal's
 /// digit scan forks per arm (40 forks). RED (owner: Root D (W1)).
 #[test]
@@ -1101,4 +1116,25 @@ fn a_map_at_an_unknown_depth_keeps_its_items() {
 fn notecolumn_clear_loop_ships_the_stale_note_page() {
     let Some(a) = check("notecolumn_stale_note", "main.tex", &[]) else { return };
     assert_eq!(crate::support::body(&a, "Shipped"), "4");
+}
+
+/// `\pop` drops the top of a token-list stack. Its first two runs pop
+/// one-element stacks of unknown text and leave the same empty rest; a
+/// third call on a deeper stack must not take that rest, so `\a` is `K`
+/// and `\ok` is defined. Bug: the call summary kept the write the runs
+/// agreed on and the stack lost `{K}` (calls.rs `updates`). Red: see tests/known-red.txt.
+#[test]
+fn call_summary_pops_a_deeper_stack() {
+    let Some(a) = check("call_summary_pop", "main.tex", &[]) else { return };
+    assert!(defined(&a, "ok"), "the second pop gives K");
+}
+
+/// `\peek` reads the top of a stack it leaves alone. Two runs saw unknown
+/// text there, the third call sees `K`, so `\ok` is defined. Bug: only
+/// count registers were compared with what the runs read, so the summary
+/// gave the joined unknown text (calls.rs `reads_otherwise`). Red: see tests/known-red.txt.
+#[test]
+fn call_summary_peeks_at_a_known_top() {
+    let Some(a) = check("call_summary_peek", "main.tex", &[]) else { return };
+    assert!(defined(&a, "ok"), "the peek gives K");
 }
