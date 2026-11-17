@@ -2371,33 +2371,47 @@ impl PathEnv {
         groups(&self.marks)
     }
 
-    /// The groups from `from` up as one that stands for any number of
-    /// them (none open there: one pushed, of `kind` with `after` waiting):
-    /// a widened stack. Their saves are its saves. Only groups opened
-    /// since the fork, so the fork's own levels stay as they are.
-    pub fn many_from(&mut self, from: usize, kind: GroupKind, after: &[Token], id: u64) {
+    /// The groups `from..to` as one that stands for any number of them
+    /// (none open there: one inserted, of `kind` with `after` waiting): a
+    /// widened stack. Their saves are its saves, the groups above keep
+    /// theirs. Only groups opened since the fork, so the fork's own levels
+    /// stay as they are.
+    pub fn many_from(&mut self, from: usize, to: usize, kind: GroupKind, after: &[Token], id: u64) {
+        let journal = self.journal.len();
         let marks = Rc::make_mut(&mut self.marks);
-        match marks.get_mut(from) {
-            Some(mark) => mark.many = true,
-            None => marks.push(Mark {
-                journal: self.journal.len(),
-                kind,
-                after: after.to_vec(),
-                opened: Span::default(),
-                nest: None,
-                id,
-                many: true,
-            }),
+        match from < to {
+            true => {
+                marks[from].many = true;
+                marks.drain(from + 1..to);
+            }
+            false => {
+                let journal = marks.get(from).map_or(journal, |m| m.journal);
+                let mark =
+                    Mark { journal, kind, after: after.to_vec(), opened: Span::default(), nest: None, id, many: true };
+                marks.insert(from, mark);
+            }
         }
-        marks.truncate(from + 1);
-        // A slot written deeper now counts as written in the widened group:
-        // a group opened later saves it again.
-        let top = (from + 1) as u32;
-        let deeper: Vec<(u32, Option<Binding>)> =
-            self.slots.iter().filter(|(_, (_, l))| *l > top).map(|(s, (b, _))| (*s, b.clone())).collect();
-        for (sym, binding) in deeper {
-            self.slots.insert_mut(sym, (binding, top));
+        // A slot written in the merged groups now counts as written in the
+        // widened one (a group opened later saves it again); one written above
+        // moves with its group.
+        let (top, to) = ((from + 1) as u32, to as u32);
+        let level = |l: u32| match l {
+            l if l < top => l,
+            l if l <= to => top,
+            l => l + top - to,
+        };
+        let moved: Vec<(u32, Option<Binding>, u32)> = (self.slots.iter())
+            .filter(|(_, (_, l))| level(*l) != *l)
+            .map(|(s, (b, l))| (*s, b.clone(), level(*l)))
+            .collect();
+        for (sym, binding, l) in moved {
+            self.slots.insert_mut(sym, (binding, l));
         }
+    }
+
+    /// Each open group's id and where it was opened, outermost first.
+    pub fn group_marks(&self) -> Vec<(u64, Span)> {
+        self.marks.iter().map(|m| (m.id, m.opened)).collect()
     }
 
     /// Whether the groups from `from` up saved nothing of the nest: no box

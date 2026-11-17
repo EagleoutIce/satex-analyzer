@@ -614,6 +614,7 @@ A join that is not widened keeps its arms paired (`Corr`, [`src/engine/env.rs`](
 A group or conditional frame may stand for any number of copies (`many`). A loop that opens a group per pass would otherwise never meet itself: `[G]` and `[G, G]` widen to `[G, G*]`.
 
 - Only plain groups opened since the paths parted, with the same `\aftergroup` tokens, are widened.
+- The many frame goes where the stacks differ, not on top. Innermost groups both paths opened at the same place (a macro's own group, met by sibling paths in different depths) stay above it: `[A, B]` and `[A, A, B]` widen to `[A, A*, B]`, so `B`'s `\endgroup` still restores what was set in `B`.
 - `\currentgrouplevel` and `\currentiflevel` read an interval while a `many` frame is open.
 - A closer meeting a `many` frame parts two paths: a copy closes (saved names widened), or none is left and the closer acts below.
 

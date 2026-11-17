@@ -2460,6 +2460,9 @@ struct Site {
     shape: u64,
     levels: usize,
     nest: (usize, usize),
+    /// The innermost group open at the last expansion here. A round nested
+    /// deeper in groups runs inside it; a sibling path's call does not.
+    group: u64,
     /// How many scans the last expansion here was nested in: one met by
     /// a scan the last one began (`\def\a{\number\a}`) is a level deeper
     /// in TeX's own recursion (tex.web § 366 `expand`), never the state
@@ -2495,6 +2498,7 @@ impl Site {
             shape: 0,
             levels: usize::MAX,
             nest: (0, 0),
+            group: 0,
             scans: 0,
             deeper: 0,
             effective: u64::MAX,
@@ -10597,7 +10601,10 @@ will look undefined",
                 // `\numexpr` each time), which ends with the scans. The count is
                 // kept, so a recursion that dips between rounds still counts.
                 let unwinding = self.step_depth < site.scans;
-                let grew = outside && !unwinding && (stacked || site.shape == shape && nest != site.nest);
+                // Deeper in groups only counts inside the last round's innermost
+                // group: a sibling path met the site in groups of its own.
+                let inside = self.env.group_id_at(site.nest.1) == site.group;
+                let grew = outside && inside && !unwinding && (stacked || site.shape == shape && nest != site.nest);
                 site.deeper = if grew {
                     site.deeper + 1
                 } else if unwinding {
@@ -10612,6 +10619,7 @@ will look undefined",
                 site.scans = self.step_depth;
                 site.cycled = if same { site.cycled + 1 } else { 0 };
                 (site.shape, site.levels, site.nest, site.effective) = (shape, levels, nest, effective);
+                site.group = self.env.group_id();
                 (site.other, site.assigned) = (other, assigned);
                 (size < std::mem::replace(&mut site.size, size), site.unread, site.deeper, site.cycled, since)
             }

@@ -336,11 +336,14 @@ fn pictures_around_a_tcolorbox_keep_their_anchors_local() {
 /// such siblings as passes (the second root of the unknown-height tcolorbox:
 /// node anchor code met by sibling paths was summarized there and its anchors
 /// leaked). Pins that the siblings converge without losing the code after
-/// the conditional or the macro's group.
+/// the conditional or the macro's group: their stacks widen below the
+/// macro's own group, and the call site does not count a sibling's call as
+/// a round nested deeper (which cut `\clamp`).
 #[test]
 fn sibling_paths_meeting_one_conditional_keep_the_code_after_it() {
     let Some(analysis) = check("sibling_paths_meet_one_head", "main.tex", &[]) else { return };
     assert!(undefined(&analysis, "southwest"), "\\southwest leaked out of its group");
+    assert_eq!(count(&analysis, "recursion-widened"), 0, "a sibling's call was cut as a deeper round");
 }
 
 fixtures! {

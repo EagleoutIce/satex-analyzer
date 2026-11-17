@@ -1520,15 +1520,27 @@ impl Machine<'_> {
         let groups = match x.groups == y.groups {
             true => None,
             false => {
-                let (from, kind) = many_from(&x.groups, &y.groups)?;
                 let (ga, gb) = (a.env.groups(), b.env.groups());
+                let (ma, mb) = (a.env.group_marks(), b.env.group_marks());
+                // Groups both paths share lie below the difference. Above them,
+                // innermost groups opened by the same code on both (a macro's own
+                // group, met by sibling paths) stay above it.
+                let shared = ma.iter().zip(&mb).take_while(|(p, q)| p.0 == q.0).count();
+                let (na, nb) = (ga.len() - shared, gb.len() - shared);
+                let same = |k: usize| {
+                    let (i, j) = (ga.len() - 1 - k, gb.len() - 1 - k);
+                    ma[i].1 == mb[j].1 && ga[i] == gb[j]
+                };
+                let top = (0..na.min(nb)).take_while(|&k| same(k)).count();
+                let (la, lb) = (ga.len() - top, gb.len() - top);
+                let (from, kind) = many_from(&x.groups[..la], &y.groups[..lb])?;
                 let after = ga.get(from).or(gb.get(from)).map(|g| g.2.clone()).unwrap_or_default();
                 let fits = from >= fork.depth()
-                    && ga[from..].iter().chain(&gb[from..]).all(|g| g.2 == after)
+                    && ga[from..la].iter().chain(&gb[from..lb]).all(|g| g.2 == after)
                     && a.env.plain_from(from)
                     && b.env.plain_from(from);
-                let waiting = if ga.len() > from { a.env.after_at(from) } else { b.env.after_at(from) };
-                Some(fits.then(|| (from, kind, waiting, self.env.next_group_id()))?)
+                let waiting = if la > from { a.env.after_at(from) } else { b.env.after_at(from) };
+                Some(fits.then(|| (from, [la, lb], kind, waiting, self.env.next_group_id()))?)
             }
         };
         let conds = match x.conds == y.conds {
@@ -1540,10 +1552,10 @@ impl Machine<'_> {
                 Some((kind(&a.state.conds) && kind(&b.state.conds)).then_some((from, frame))?)
             }
         };
-        let widen = |c: &Config| {
+        let widen = |c: &Config, side: usize| {
             let mut env = c.env.clone();
-            if let Some((from, kind, waiting, id)) = &groups {
-                env.many_from(*from, *kind, waiting, *id);
+            if let Some((from, to, kind, waiting, id)) = &groups {
+                env.many_from(*from, to[side], *kind, waiting, *id);
             }
             let mut state = c.state.clone();
             if let Some((from, frame)) = &conds {
@@ -1559,7 +1571,7 @@ impl Machine<'_> {
             }
             Config::new(state, env, c.ended)
         };
-        Some((widen(a), widen(b)))
+        Some((widen(a, 0), widen(b, 1)))
     }
 
     /// Summarizes a loop met `widen_after` times. What it wrote becomes
