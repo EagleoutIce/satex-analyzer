@@ -2966,7 +2966,7 @@ fn an_item_starting_with_a_dash_ligature_starts_its_paragraph() {
 /// tex.web §§ 731, 763, 1171-1174: in inline math `\textstyle`,
 /// `\scriptstyle` and `\scriptscriptstyle` set the atoms after them in
 /// that style, and `\mathchoice` takes the list the style picks in its
-/// place (amsmath's `\text` is one). `\displaystyle` is not followed.
+/// place (amsmath's `\text` is one), and so does `\displaystyle`.
 /// Sizes as `pdflatex` prints.
 #[test]
 fn math_styles_and_choices_keep_the_size_known() {
@@ -2996,9 +2996,8 @@ fn math_styles_and_choices_keep_the_size_known() {
     for (i, (f, want)) in cases.iter().enumerate() {
         assert_eq!(body(&analysis, &format!("S{}", (b'a' + i as u8) as char)), *want, "{f}");
     }
-    // pdflatex: 9.57755pt; a display style in inline math is not followed.
-    let d = body(&analysis, "D");
-    assert!(d.contains("unknown"), "{d}");
+    // `\displaystyle` is text size; its own steps (limits, `sup1`) are followed or lose.
+    assert_eq!(body(&analysis, "D"), "9.57755pt");
 }
 
 /// tex.web § 1151: a script given by name, a `\mathchardef` constant or

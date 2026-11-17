@@ -75,6 +75,7 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 
 ### Analysis
 
+- `fix` **Big operators, `\left`…`\right` and math accents have their size.** Operators take their display variant and limits, delimiters their variant or extensible recipe for the list's height, accents their widest fitting variant, in text and display style. A script after an operator, `\limits` or a group no longer gets a wrong size. The sample paper breaks its pages where pdflatex does.
 - `fix` **A tcolorbox of unknown height keeps its anchors.** A later call that runs in more groups than a loop's entry is a new call, not another pass of the loop, so tcolorbox's drawing code is no longer cut as a loop. Nested boxes and pictures around a box keep their anchors local.
 - `perf` **An expanded argument that runs out of choices ends as one unknown.** Where one `\edef` or `\expanded` argument may split no further, its own text ends there as unknown text instead of every path running on. l3fp over a position read back from the aux took 112.6k path splits and 37 s, now 104 and 0.6 s.
 - `fix` **No endless wait on a cache another run builds.** A run that finds another one building the same cache waits at most `limits.lock_seconds` (60 s), then builds it itself. A stopped builder hung every later run before.

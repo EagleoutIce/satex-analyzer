@@ -31,6 +31,7 @@ pub struct Metrics {
     italics: Vec<i64>,
     lig_kern: Vec<[u8; 4]>,
     kerns: Vec<i64>,
+    exten: Vec<[u8; 4]>,
     params: Vec<i64>,
 }
 
@@ -49,8 +50,11 @@ pub enum LigKern {
 /// tex.web § 545: `stop_flag` and `kern_flag`.
 const STOP_FLAG: u8 = 128;
 const KERN_FLAG: u8 = 128;
-/// tex.web § 544: the tag of a character with a ligature/kerning program.
+/// tex.web § 544: the tags of a character with a ligature/kerning program, a successor, an
+/// extensible recipe.
 const LIG_TAG: u8 = 1;
+const LIST_TAG: u8 = 2;
+const EXT_TAG: u8 = 3;
 
 /// One character's box, scaled to a size.
 #[derive(Clone, Copy, Default)]
@@ -91,9 +95,11 @@ impl Metrics {
         let lig_kern_base = italic_base + 4 * ni;
         let kern_base = lig_kern_base + 4 * nl;
         let param_base = italic_base + 4 * (ni + nl + nk + ne);
-        let lig_kern = (0..nl)
-            .map(|k| bytes.get(lig_kern_base + 4 * k..lig_kern_base + 4 * k + 4)?.try_into().ok())
-            .collect::<Option<Vec<[u8; 4]>>>()?;
+        let quads = |start: usize, count: usize| {
+            (0..count).map(|k| bytes.get(start + 4 * k..start + 4 * k + 4)?.try_into().ok()).collect::<Option<Vec<_>>>()
+        };
+        let lig_kern = quads(lig_kern_base, nl)?;
+        let exten = quads(kern_base + 4 * nk, ne)?;
         Some(Metrics {
             design_size,
             first_char: bc,
@@ -104,6 +110,7 @@ impl Metrics {
             italics: words(italic_base, ni)?,
             lig_kern,
             kerns: words(kern_base, nk)?,
+            exten,
             params: words(param_base, np)?,
         })
     }
@@ -141,6 +148,19 @@ impl Metrics {
     /// one with none, -1 for one the font does not have.
     pub fn tag_code(&self, c: u32) -> i64 {
         self.info(c).map_or(-1, |info| [0, 1, 2, 4][usize::from(info[2] & 3)])
+    }
+
+    /// tex.web § 544: the next larger character after `c` (`list_tag`).
+    pub fn successor(&self, c: u32) -> Option<u32> {
+        let info = self.info(c)?;
+        (info[2] & 3 == LIST_TAG).then_some(u32::from(info[3]))
+    }
+
+    /// tex.web §§ 544, 546: `c`'s extensible recipe (`ext_tag`): top, middle, bottom and
+    /// repeated character, 0 for a piece it has not.
+    pub fn extensible(&self, c: u32) -> Option<[u8; 4]> {
+        let info = self.info(c)?;
+        (info[2] & 3 == EXT_TAG).then(|| self.exten.get(usize::from(info[3])).copied()).flatten()
     }
 
     /// The instruction of `left`'s ligature/kerning program for `right`

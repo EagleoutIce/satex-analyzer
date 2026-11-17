@@ -178,6 +178,29 @@ fn satex_predicts_what_the_engine_does() {
 /// `\r`.
 const PRELUDE: &str = "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\catcode`\\^=7 \\font\\f=cmr10 \\f ";
 
+/// The Computer Modern math fonts in families 0-3, text and script size.
+macro_rules! math_fonts {
+    () => {
+        concat!(
+            r"\font\mi=cmmi10 \font\ms=cmmi7 \font\sy=cmsy10 \font\ss=cmsy7 \font\ex=cmex10 \font\rs=cmr7 \textfont0=\f \scriptfont0=\rs ",
+            r"\textfont2=\sy \scriptfont2=\ss \scriptscriptfont2=\ss \textfont3=\ex \scriptfont3=\ex \scriptscriptfont3=\ex ",
+        )
+    };
+}
+
+/// [`math_fonts`] with plain TeX's math codes and delimiter parameters for the letters,
+/// digits and delimiters a case uses.
+macro_rules! math_setup {
+    () => {
+        concat!(
+            math_fonts!(),
+            r"\textfont1=\mi \scriptfont1=\ms \catcode`\$=3 \catcode`\_=8 \scriptspace=0.5pt \delimiterfactor=901 ",
+            r#"\delimitershortfall=5pt \nulldelimiterspace=1.2pt \mathcode`x="7178 \mathcode`y="7179 \mathcode`i="7169 "#,
+            r#"\mathcode`1="7031 \mathcode`2="7032 \mathcode`-="2200 \mathcode`=="303D \delcode`(="028300 \delcode`)="029301 "#,
+        )
+    };
+}
+
 const TYPESET_CASES: &[(&str, &str)] = &[
     // tex.web § 649 `hpack`: the natural size of the list.
     ("hbox-empty", r"\setbox0=\hbox{}\xdef\r{\the\wd0,\the\ht0,\the\dp0}"),
@@ -189,8 +212,7 @@ const TYPESET_CASES: &[(&str, &str)] = &[
     (
         "math-subscript",
         concat!(
-            r"\font\mi=cmmi10 \font\ms=cmmi7 \font\sy=cmsy10 \font\ss=cmsy7 \font\ex=cmex10 \font\rs=cmr7 \textfont0=\f \scriptfont0=\rs ",
-            r"\textfont2=\sy \scriptfont2=\ss \scriptscriptfont2=\ss \textfont3=\ex \scriptfont3=\ex \scriptscriptfont3=\ex ",
+            math_fonts!(),
             r"\textfont1=\mi \scriptfont1=\ms \catcode`\$=3 \catcode`\_=8 \scriptspace=0.5pt ",
             r"\setbox0=\hbox{$A_1$}\xdef\r{\the\wd0,\the\ht0,\the\dp0}"
         ),
@@ -198,8 +220,7 @@ const TYPESET_CASES: &[(&str, &str)] = &[
     (
         "math-superscript",
         concat!(
-            r"\font\mi=cmmi10 \font\ms=cmmi7 \font\sy=cmsy10 \font\ss=cmsy7 \font\ex=cmex10 \font\rs=cmr7 \textfont0=\f \scriptfont0=\rs ",
-            r"\textfont2=\sy \scriptfont2=\ss \scriptscriptfont2=\ss \textfont3=\ex \scriptfont3=\ex \scriptscriptfont3=\ex ",
+            math_fonts!(),
             r"\textfont1=\mi \scriptfont1=\ms \catcode`\$=3 \scriptspace=0.5pt ",
             r"\setbox0=\hbox{$f^2x$}\xdef\r{\the\wd0,\the\ht0,\the\dp0}"
         ),
@@ -210,8 +231,7 @@ const TYPESET_CASES: &[(&str, &str)] = &[
     (
         "display-in-paragraph",
         concat!(
-            r"\font\mi=cmmi10 \font\ms=cmmi7 \font\sy=cmsy10 \font\ss=cmsy7 \font\ex=cmex10 \font\rs=cmr7 \textfont0=\f \scriptfont0=\rs ",
-            r"\textfont2=\sy \scriptfont2=\ss \scriptscriptfont2=\ss \textfont3=\ex \scriptfont3=\ex \scriptscriptfont3=\ex ",
+            math_fonts!(),
             r"\textfont1=\mi \scriptfont1=\ms \catcode`\$=3 \catcode`\^=7 \hsize=100pt \parfillskip=0pt plus 1fil \baselineskip=12pt ",
             r"\abovedisplayskip=10pt \abovedisplayshortskip=10pt \belowdisplayskip=4pt \belowdisplayshortskip=4pt ",
             r"\setbox0=\vbox{a$$x^2$$\par\xdef\p{\the\prevgraf}}\xdef\r{\the\wd0,\the\ht0,\the\dp0,\p}"
@@ -221,11 +241,74 @@ const TYPESET_CASES: &[(&str, &str)] = &[
     (
         "display-eqno",
         concat!(
-            r"\font\mi=cmmi10 \font\ms=cmmi7 \font\sy=cmsy10 \font\ss=cmsy7 \font\ex=cmex10 \font\rs=cmr7 \textfont0=\f \scriptfont0=\rs ",
-            r"\textfont2=\sy \scriptfont2=\ss \scriptscriptfont2=\ss \textfont3=\ex \scriptfont3=\ex \scriptscriptfont3=\ex ",
+            math_fonts!(),
             r"\textfont1=\mi \scriptfont1=\ms \catcode`\$=3 \catcode`\^=7 \hsize=100pt \parfillskip=0pt plus 1fil \baselineskip=12pt ",
             r"\abovedisplayskip=10pt \abovedisplayshortskip=10pt \belowdisplayskip=4pt \belowdisplayshortskip=4pt ",
             r"\setbox0=\vbox{a$$x\eqno\hbox{(1)}$$b\par}\xdef\r{\the\wd0,\the\ht0,\the\dp0}"
+        ),
+    ),
+    // tex.web §§ 749, 756: an operator in text style is a box on the axis; a subscript takes its
+    // italic correction away, a superscript sits by the box's drops.
+    (
+        "math-op-scripts",
+        concat!(math_setup!(), r#"\setbox0=\hbox{$\mathchar"1352_1^2x$}\xdef\r{\the\wd0,\the\ht0,\the\dp0}"#),
+    ),
+    // § 750: `\limits` stacks the scripts above and below, `big_op_spacing1`-`5` apart.
+    (
+        "math-op-limits",
+        concat!(math_setup!(), r#"\setbox0=\hbox{$\mathchar"1350\limits_1$}\xdef\r{\the\wd0,\the\ht0,\the\dp0}"#),
+    ),
+    // § 749: in display style the operator's successor, with limits.
+    (
+        "math-op-display",
+        concat!(
+            math_setup!(),
+            r#"\setbox0=\hbox{$\displaystyle\mathchar"1350_{x=1}^2x$}\xdef\r{\the\wd0,\the\ht0,\the\dp0}"#
+        ),
+    ),
+    // §§ 760-762: delimiters sized to the list, a script on the inner atom by its drops.
+    (
+        "math-left-right",
+        concat!(math_setup!(), r#"\setbox0=\hbox{$y\left(x^2\right)^2$}\xdef\r{\the\wd0,\the\ht0,\the\dp0}"#),
+    ),
+    // §§ 713-714: past the successors an extensible delimiter, built to the list's reach.
+    (
+        "math-left-right-extensible",
+        concat!(
+            math_setup!(),
+            r#"\setbox0=\hbox{$\left(\hbox{\vrule height 30pt depth 30pt}\right.$}\xdef\r{\the\wd0,\the\ht0,\the\dp0}"#
+        ),
+    ),
+    // § 738: an accent on a character, its scripts below the accent.
+    (
+        "math-accent-char",
+        concat!(math_setup!(), r#"\setbox0=\hbox{$\mathaccent"705E x_i^2$}\xdef\r{\the\wd0,\the\ht0,\the\dp0}"#),
+    ),
+    // § 738: an accent on a list is a box, which a script sits on by its drops; a wide one
+    // takes the largest successor no wider.
+    (
+        "math-accent-list",
+        concat!(
+            math_setup!(),
+            r#"\setbox0=\hbox{$\mathaccent"705E{xy}^2\mathaccent"7362{xxxxxx}$}\xdef\r{\the\wd0,\the\ht0,\the\dp0}"#
+        ),
+    ),
+    // § 1186: a group's list is a box a script sits on by its drops; one character alone is
+    // the nucleus itself.
+    (
+        "math-group-scripts",
+        concat!(
+            math_setup!(),
+            r#"\mathcode`g="7167 \setbox0=\hbox{${g}_1{gx}_1^2$}\xdef\r{\the\wd0,\the\ht0,\the\dp0}"#
+        ),
+    ),
+    // The sample paper's formula, displayed.
+    (
+        "display-limits-delimiters-accent",
+        concat!(
+            math_setup!(),
+            r"\parfillskip=0pt plus 1fil \baselineskip=12pt \abovedisplayskip=10pt \abovedisplayshortskip=10pt \belowdisplayskip=4pt \belowdisplayshortskip=4pt ",
+            r#"\setbox0=\vbox{\hsize=100pt a$$\mathchar"1350_{i=1}^{2}\left\delimiter"26B30D x_i-\mathaccent"705E{x}_i\right\delimiter"26B30D^2$$\par}\xdef\r{\the\wd0,\the\ht0,\the\dp0}"#
         ),
     ),
     ("hbox-ligature", r"\setbox0=\hbox{ff}\xdef\r{\the\wd0}"),
@@ -318,8 +401,7 @@ const TYPESET_APPROXIMATE: &[(&str, &str)] = &[
     (
         "display-short-skips",
         concat!(
-            r"\font\mi=cmmi10 \font\ms=cmmi7 \font\sy=cmsy10 \font\ss=cmsy7 \font\ex=cmex10 \font\rs=cmr7 \textfont0=\f \scriptfont0=\rs ",
-            r"\textfont2=\sy \scriptfont2=\ss \scriptscriptfont2=\ss \textfont3=\ex \scriptfont3=\ex \scriptscriptfont3=\ex ",
+            math_fonts!(),
             r"\textfont1=\mi \scriptfont1=\ms \catcode`\$=3 \catcode`\^=7 \hsize=100pt \parfillskip=0pt plus 1fil \baselineskip=12pt ",
             r"\abovedisplayskip=10pt \abovedisplayshortskip=10pt \belowdisplayskip=4pt \belowdisplayshortskip=4pt ",
             r"\setbox0=\vbox{a$$x$$\par}\xdef\r{\the\wd0,\the\ht0,\the\dp0}"
@@ -579,9 +661,8 @@ fn a_here_figure_after_a_display_stays_on_its_page() {
 }
 
 /// The sample paper's formula: a display-style operator with limits, `\\left`/`\\right` and an
-/// accent. pdflatex sets it all on page 1. Red: these display-style sizes are not modelled, so
-/// the formula's height is any and the figure's fit test is undecided (owner: next display-math
-/// round, see learnings 2026-11-17 p4b).
+/// accent. pdflatex sets it all on page 1. These sizes were not modelled: the formula's height
+/// was any and the figure's fit test undecided.
 #[test]
 fn a_here_figure_after_a_display_with_limits_stays_on_its_page() {
     let figure = "\\begin{figure}[ht]\n\\centering\n\\rule{0.4\\linewidth}{0.3pt}\n\\caption{A figure.}\n\\end{figure}";

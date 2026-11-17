@@ -527,9 +527,18 @@ pub struct Natural {
     /// In inline math: a `^` (`true`) or `_` came after that character,
     /// whose script is the next character (tex.web § 1176).
     pub script: Option<bool>,
-    /// In inline math: the last atom is a box of this height and depth,
-    /// the nucleus a script after it sits on (tex.web § 756).
-    pub math_box: Option<(Scaled, Scaled)>,
+    /// In inline math: the last atom is a box, the nucleus a script after it sits on (tex.web
+    /// § 756).
+    pub math_box: Option<Nucleus>,
+    /// In math: the code of the `\mathaccent` whose nucleus comes next (tex.web § 1165);
+    /// [`UNKNOWN_CODE`] where paths differ.
+    #[serde(default)]
+    pub accent: Option<u32>,
+    /// In math: the `\left` delimiter of the list and the list's math size, which sizes both
+    /// delimiters whatever styles the list sets (tex.web §§ 726, 762); [`UNKNOWN_CODE`] where
+    /// paths differ.
+    #[serde(default)]
+    pub left: Option<(u32, u8)>,
     /// In inline math: the list may hold a fraction (tex.web § 1181
     /// `incompleat_noad`).
     pub fraction: bool,
@@ -602,8 +611,44 @@ pub struct Scripted {
     before: [Dim; 3],
     after: Dim,
     prev: Option<Option<(i64, u32, u32)>>,
-    boxed: Option<(Scaled, Scaled)>,
+    boxed: Option<Nucleus>,
 }
+
+/// A box nucleus (tex.web § 756): its height and depth in the list. An operator's (§ 749) also
+/// keeps its italic correction, its width and the list's size before it, for limits (§ 750).
+#[derive(Clone, Copy, PartialEq, Eq, Debug, serde::Serialize, serde::Deserialize)]
+pub struct Nucleus {
+    height: Scaled,
+    depth: Scaled,
+    op: Option<Op>,
+}
+
+/// An operator nucleus ([`Nucleus`]).
+#[derive(Clone, Copy, PartialEq, Eq, Debug, serde::Serialize, serde::Deserialize)]
+pub struct Op {
+    italic: Scaled,
+    width: Scaled,
+    limits: bool,
+    before: [Dim; 3],
+}
+
+impl Nucleus {
+    /// `make_scripts` hpacks the nucleus from zero (tex.web § 756).
+    fn plain(height: Scaled, depth: Scaled) -> Nucleus {
+        Nucleus { height: height.max(0), depth: depth.max(0), op: None }
+    }
+}
+
+/// tex.web § 100 `half`.
+fn half(x: Scaled) -> Scaled {
+    if x % 2 != 0 { (x + 1).div_euclid(2) } else { x / 2 }
+}
+
+/// The family of an accented character ([`Natural::math_prev`]): no text with the next (§ 752).
+const ACCENTED: i64 = -1;
+
+/// A math code paths joined with different values: the construct waiting on it loses its size.
+const UNKNOWN_CODE: u32 = u32::MAX;
 
 impl Natural {
     /// A forced break `\vadjust` material carries ([`Natural::forced`]).
@@ -878,6 +923,8 @@ impl Natural {
             math_bin: if self.math_bin == other.math_bin { self.math_bin } else { Some(Scaled::MIN) },
             script: if self.script == other.script { self.script } else { None },
             math_box: if self.math_box == other.math_box { self.math_box } else { None },
+            accent: if self.accent == other.accent { self.accent } else { Some(UNKNOWN_CODE) },
+            left: if self.left == other.left { self.left } else { Some((UNKNOWN_CODE, 0)) },
             fraction: self.fraction || other.fraction,
             numerator: if self.numerator == other.numerator { self.numerator } else { None },
             atoms: if self.atoms == other.atoms { self.atoms } else { Atoms { len: u8::MAX, ..self.atoms } },
@@ -1385,6 +1432,8 @@ impl Machine<'_> {
             math_bin: None,
             script: None,
             math_box: None,
+            accent: None,
+            left: None,
             fraction: false,
             numerator: None,
             atoms: Atoms::default(),
@@ -2297,6 +2346,10 @@ impl Machine<'_> {
         {
             n.math_box = None;
             part = self.next_atom(&mut n);
+            // An accent's nucleus (§ 1165) is a list of its own, set cramped (§ 738).
+            if n.accent.is_some() {
+                part = ACCENT_GROUP;
+            }
             self.natural = Some(n);
         }
         self.env.set_nest(self.nest_here(code, false, part));
@@ -2308,8 +2361,16 @@ impl Machine<'_> {
             if let Some(sup) = script {
                 (n.style, n.script, n.math_box) = (Self::script_style(n.style, sup), None, None);
                 n.display = false;
-                (n.along, n.height, n.depth) = (Dim::exact(0), Dim::exact(0), Dim::exact(0));
             }
+            if part == ACCENT_GROUP {
+                (n.style, n.accent, n.left) = (n.style | 1, None, None);
+            }
+            if script.is_some() || part == ACCENT_GROUP {
+                n.along = Dim::exact(0);
+            }
+            // The group's list starts empty; its box's height and depth the outer list takes at
+            // its end.
+            (n.height, n.depth, n.tail) = (Dim::exact(0), Dim::exact(0), [Last::Empty; TAIL]);
         }
         self.mode = self.mode.map(|m| if m.meets(Modes::ANY_MATH) { Modes::MATH } else { m });
     }
@@ -2352,6 +2413,9 @@ impl Machine<'_> {
             if nest.code == Some(group::MATH) && nest.part == SCRIPT_GROUP {
                 let outer = nest.natural.unwrap_or_else(Natural::any);
                 self.close_script_group(outer);
+            } else if nest.code == Some(group::MATH) && nest.part == ACCENT_GROUP {
+                self.natural =
+                    self.natural.zip(nest.natural).and_then(|(inner, outer)| self.close_accent_group(inner, outer));
             } else if nest.code == Some(group::MATH)
                 && let Some(mut n) = self.natural.or(nest.natural.map(|o| Natural {
                     // A size lost in the group widens; the noad is followed.
@@ -2365,11 +2429,27 @@ impl Machine<'_> {
                 if n.fraction {
                     self.close_fraction(&mut n, nest.natural);
                 }
-                let italic = self.prev_italic(n.math_prev);
-                Self::end_atoms(&mut n);
-                n.along = n.along.extended_by(italic);
                 let outer = nest.natural.unwrap_or_else(Natural::any);
-                (n.math_class, n.math_bin, n.math_prev) = (outer.math_class, outer.math_bin, None);
+                // § 1186: an ordinary character alone is the nucleus itself; any other list a box,
+                // whose height and depth a script sits by. One accent alone takes the group's
+                // place, which a box does not follow.
+                let single = n.tail[0] == Last::Node(NOAD)
+                    && n.tail[1] == Last::Empty
+                    && matches!(n.math_prev, Some(Some(_)))
+                    && n.atoms.codes().is_some_and(|c| c.len() == 1 && c[0] >> 12 == 0);
+                let nucleus = (n.atoms.codes().is_some() && nest.part == 0 && !single)
+                    .then(|| n.height.known().zip(n.depth.known()))
+                    .flatten()
+                    .map(|(h, d)| Nucleus::plain(h, d));
+                let prev = if single && nest.part == 0 { n.math_prev } else { None };
+                if prev.is_none() {
+                    let italic = self.prev_italic(n.math_prev);
+                    Self::end_atoms(&mut n);
+                    n.along = n.along.extended_by(italic);
+                }
+                (n.height, n.depth) = (outer.height.max(n.height), outer.depth.max(n.depth));
+                (n.math_class, n.math_bin, n.math_prev) = (outer.math_class, outer.math_bin, prev);
+                (n.math_box, n.tail) = (nucleus, outer.tail);
                 // A style or fraction inside stays in the group's list (§ 1186).
                 (n.scripted, n.fraction, n.style, n.display) = (None, outer.fraction, outer.style, outer.display);
                 // tex.web §§ 1153, 1186: the group's noad is the tail again.
@@ -2938,15 +3018,15 @@ impl Machine<'_> {
                 }
                 match self.natural {
                     Some(mut n)
-                        if self.mode.within(Modes::ANY_MATH)
-                            && code >= 2
-                            && n.script.is_none()
-                            && n.math_pending.is_none() =>
+                        if self.mode.within(Modes::ANY_MATH) && n.script.is_none() && n.math_pending.is_none() =>
                     {
                         let italic = self.prev_italic(n.math_prev);
                         n.along = n.along.extended_by(italic);
                         (n.math_prev, n.math_box, n.scripted) = (None, None, None);
-                        (n.style, n.display) = (code - 2, false);
+                        // `\displaystyle` is text size (§ 703); `display` marks its own steps.
+                        (n.style, n.display) = if code >= 2 { (code - 2, false) } else { (code, true) };
+                        // a fraction does not replay the list in its own style
+                        n.atoms.len = u8::MAX;
                         n.pushed(Last::Node(NOAD));
                         self.natural = Some(n);
                     }
@@ -2988,20 +3068,57 @@ impl Machine<'_> {
                     (false, true) => 5,
                     _ => 0,
                 };
-                if let Some(small) = self.scan_delimiter().filter(|&s| s > 0)
-                    && self.mode.within(Modes::ANY_MATH)
+                let code = self.scan_delimiter();
+                let math = self.mode.within(Modes::ANY_MATH);
+                if let Some(small) = code.map(|c| c >> 12 & 0xfff).filter(|&s| s > 0)
+                    && math
                 {
                     self.note_math(class << 12 | small, span);
                 }
+                let code = code.and_then(|c| u32::try_from(c).ok()).unwrap_or(UNKNOWN_CODE);
                 match kind {
-                    Some(GroupKind::MathLeft) if closes => self.close_group(GroupKind::MathLeft, token),
-                    _ if closes => return,
+                    Some(GroupKind::MathLeft) if closes => {
+                        let outer = self.env.nest().and_then(|n| n.natural);
+                        let list = match (self.natural, outer, opens) {
+                            (Some(inner), Some(outer), false) => self.left_right(inner, outer, code),
+                            _ => None,
+                        };
+                        self.close_group(GroupKind::MathLeft, token);
+                        self.natural = list;
+                    }
+                    _ if closes => {
+                        if math {
+                            self.natural = None;
+                        }
+                        return;
+                    }
                     _ => {}
                 }
-                if opens && self.mode.within(Modes::ANY_MATH) {
+                if opens && math {
+                    // § 1191: the list up to `\right` becomes one inner atom; it starts after an
+                    // opening one, its left delimiter's (§ 762).
+                    let inner = self.natural.filter(|n| n.script.is_none() && n.math_pending.is_none()).map(|mut n| {
+                        let italic = self.prev_italic(n.math_prev);
+                        let space = self.begin_atom(&mut n, 7);
+                        n.along = n.along.extended_by(italic).extended_by(space);
+                        (n.math_prev, n.math_box, n.scripted) = (None, None, None);
+                        n.pushed(Last::Node(NOAD));
+                        n
+                    });
+                    self.natural = inner;
                     self.open_group(GroupKind::MathLeft, span);
                     self.env.set_nest(self.nest_here(Some(group::MATH_LEFT), false, 0));
                     self.mode = Modes::MATH;
+                    self.natural = inner.filter(|_| !closes).map(|n| Natural {
+                        along: Dim::exact(0),
+                        height: Dim::exact(0),
+                        depth: Dim::exact(0),
+                        math_class: Some(4),
+                        math_breaks: 0,
+                        left: Some((code, n.style >> 1)),
+                        accent: None,
+                        ..Self::list_start(n)
+                    });
                 }
             }
         }
@@ -4715,7 +4832,7 @@ impl Machine<'_> {
         // the character before it takes its italic correction (§ 755), and
         // two ordinary atoms have no space between them (§ 764).
         if let (Item::Box([w, h, d]), true) = (&item, self.mode.within(Modes::ANY_MATH)) {
-            n.math_box = (h.lo == h.hi && d.lo == d.hi).then_some((h.lo, d.lo));
+            n.math_box = (h.lo == h.hi && d.lo == d.hi).then_some(Nucleus::plain(h.lo, d.lo));
             self.next_atom(&mut n);
             n.along = n.along.extended_by(*w);
             (n.height, n.depth) = (n.height.max(*h), n.depth.max(*d));
@@ -5136,7 +5253,8 @@ impl Machine<'_> {
         // `\pdfrefximage` adds its box once its number is read, and so do
         // `\mathchar` and `\delimiter` their atom in inline math.
         if p == Primitive::Command(Syntax::Number)
-            && (self.name(self.env.identity(by)) == "pdfrefximage" || self.math_char_command(by).is_some())
+            && (matches!(self.name(self.env.identity(by)), "pdfrefximage" | "mathaccent")
+                || self.math_char_command(by).is_some())
         {
             return;
         }
@@ -5153,7 +5271,8 @@ impl Machine<'_> {
                 | ModeCmd::QuitVMode
                 | ModeCmd::MathStyle(_)
                 | ModeCmd::MathChoice
-                | ModeCmd::EqNo,
+                | ModeCmd::EqNo
+                | ModeCmd::LeftRight { .. },
             )
             | Primitive::Typeset(Typeset::Number | Typeset::Dimen | Typeset::Glue)
             | Primitive::Accent => return,
@@ -5417,7 +5536,7 @@ impl Machine<'_> {
     /// The box a formula's list packs into at its natural size (tex.web §§ 1194, 1199): its
     /// last character's italic correction added; any size where the list is not followed.
     fn formula_box(&mut self, math: Option<Natural>) -> [Dim; 3] {
-        let Some(mut m) = math.filter(|m| m.script.is_none()) else { return [Dim::ANY; 3] };
+        let Some(mut m) = math.filter(|m| m.script.is_none() && m.accent.is_none()) else { return [Dim::ANY; 3] };
         Self::end_atoms(&mut m);
         let italic = self.prev_italic(m.math_prev);
         [m.along.extended_by(italic), m.height.at_least_zero(), m.depth.at_least_zero()]
@@ -5564,7 +5683,7 @@ impl Machine<'_> {
             self.natural = None;
             return;
         }
-        match math.filter(|m| m.script.is_none()) {
+        match math.filter(|m| m.script.is_none() && m.accent.is_none()) {
             Some(mut m) => {
                 Self::end_atoms(&mut m);
                 let surround = self.dimen_parameter("mathsurround");
@@ -5851,9 +5970,10 @@ impl Machine<'_> {
         (n.fraction, n.numerator) = (true, None);
     }
 
-    /// `n` back at the start of its group's list, which came after `base`.
+    /// `n` back at the start of its group's list, which came after `base`: as wide, of no
+    /// height or depth yet.
     fn restart(n: Natural, base: Natural) -> Natural {
-        Natural { along: base.along, height: base.height, depth: base.depth, ..Self::list_start(n) }
+        Natural { along: base.along, height: Dim::exact(0), depth: Dim::exact(0), ..Self::list_start(n) }
     }
 
     /// `base` with no atom before the next.
@@ -5912,8 +6032,7 @@ impl Machine<'_> {
         let style = n.numerator.map_or(n.style, |(.., s)| s);
         *n = Natural { style, ..Self::restart(*n, base) };
         n.along = base.along.extended_by(Dim::exact(w));
-        n.height = base.height.max(Dim::exact(h));
-        n.depth = base.depth.max(Dim::exact(d));
+        (n.height, n.depth) = (Dim::exact(h), Dim::exact(d));
     }
 
     fn fraction_box(&mut self, n: &Natural, outer: Option<Natural>) -> Option<[Scaled; 3]> {
@@ -5927,7 +6046,6 @@ impl Machine<'_> {
         let (axis, drt) = (param(sy, 22)?, param(ex, 8)?);
         let thickness = if rule { drt } else { 0 };
         let (mut up, mut down) = (param(sy, if rule { 9 } else { 10 })?, param(sy, 12)?);
-        let half = |v: Scaled| if v % 2 != 0 { (v + 1).div_euclid(2) } else { v / 2 };
         if rule {
             let (clr, delta) = (thickness, half(thickness));
             up += (clr - ((up - x[2]) - (axis + delta))).max(0);
@@ -5954,7 +6072,20 @@ impl Machine<'_> {
         (n.math_box, n.scripted) = (None, None);
         // tex.web § 1151: a noad is the list's new tail.
         n.pushed(Last::Node(NOAD));
-        let t = n.math_pending.take().unwrap_or(if class == 7 { 0 } else { class as u8 });
+        // An accent's nucleus is the character alone, an ordinary atom (§§ 1151, 1165).
+        let accent = n.accent.take();
+        if accent.is_some() {
+            if n.math_pending.is_some() {
+                self.natural = None;
+                return;
+            }
+            n.atoms.len = u8::MAX;
+        }
+        let t = if accent.is_some() {
+            0
+        } else {
+            n.math_pending.take().unwrap_or(if class == 7 { 0 } else { class as u8 })
+        };
         let by = self.size_font(n.style >> 1);
         let font = self.family_font(by, fam);
         let known = font.and_then(|f| Some((f, self.font_metrics(f)?, self.font_size(f)?)));
@@ -5968,7 +6099,7 @@ impl Machine<'_> {
         let ord = n.math_class == Some(0);
         match n.math_prev {
             Some(Some((f, pf, left))) => {
-                let text = f == fam && ord && t <= 6;
+                let text = f == fam && ord && t <= 6 && accent.is_none();
                 n.along = n.along.extended_by(self.math_italic(pf, left, text));
                 if text {
                     match m.lig_kern(left, ch, z) {
@@ -5985,35 +6116,284 @@ impl Machine<'_> {
             None => {}
         }
         let space = self.begin_atom(&mut n, t);
-        n.along = n.along.extended_by(space).extended_by(Dim::exact(b.width));
-        // § 749: in display style an operator takes its larger variant and its limits.
-        if t == 1 && n.display {
-            self.natural = None;
-            return;
-        }
+        n.along = n.along.extended_by(space);
         if t == 1 {
-            // tex.web § 749: an operator character in text style is boxed
-            // with its italic correction and centred on the axis.
-            let axis = self.family_font(by, 2).and_then(|f| self.font_dimen(f, 22)?.as_dimen());
-            let Some(axis) = axis else {
-                self.natural = None;
-                return;
-            };
-            let half = |x: Scaled| if x % 2 != 0 { (x + 1).div_euclid(2) } else { x / 2 };
-            let shift = half(b.height - b.depth) - axis;
-            n.along = n.along.extended_by(Dim::exact(b.italic));
-            n.height = n.height.max(Dim::exact(b.height - shift));
-            n.depth = n.depth.max(Dim::exact(b.depth + shift));
-            n.math_prev = None;
             n.atoms.push(t, fam, ch);
-            self.natural = Some(n);
+            self.natural = self.math_op(n, &m, z, ch, by);
             return;
         }
+        n.along = n.along.extended_by(Dim::exact(b.width));
         n.height = n.height.max(Dim::exact(b.height));
         n.depth = n.depth.max(Dim::exact(b.depth));
         n.math_prev = Some(Some((fam, font, ch)));
         n.atoms.push(t, fam, ch);
+        if let Some(a) = accent {
+            let italic = self.math_italic(font, ch, false).known();
+            let Some(top) = italic.and_then(|i| self.accent_top(n.style, a, b.width + i, b.height.max(0))) else {
+                self.natural = None;
+                return;
+            };
+            n.height = n.height.max(Dim::exact(top));
+            n.math_prev = Some(Some((ACCENTED, font, ch)));
+        }
         self.natural = Some(n);
+    }
+
+    /// `\mathaccent` (tex.web § 1165): its character, from `\fam` for class 7, waits for
+    /// its nucleus.
+    pub(crate) fn math_accent(&mut self, code: Option<i64>) {
+        let Some(mut n) = self.natural else { return };
+        let fam = self.intern("fam");
+        let fam = match (code, self.env.value(fam)) {
+            (Some(c), Value::Int(f)) if c >> 12 == 7 && (0..16).contains(&f) => Some(f),
+            (Some(c), Value::Int(_)) => Some(c >> 8 & 0xf),
+            (Some(c), _) if c >> 12 != 7 => Some(c >> 8 & 0xf),
+            _ => None,
+        };
+        match (code.filter(|c| (0..0x8000).contains(c)), fam) {
+            (Some(c), Some(f)) if n.script.is_none() && n.accent.is_none() && n.math_pending.is_none() => {
+                n.accent = Some((f as u32) << 8 | (c & 0xff) as u32);
+                self.natural = Some(n);
+            }
+            _ => self.natural = None,
+        }
+    }
+
+    /// tex.web § 738 `make_math_accent` over a nucleus `w` wide and `h` high in `style`: the
+    /// accent's largest successor no wider, set on it less the smaller of `h` and the accent
+    /// font's x-height. The box's height is at least this. A character nucleus keeps its
+    /// scripts below the accent (the swap), which this does not depend on; the character
+    /// takes its italic correction before the next atom, as no text (§ 752).
+    fn accent_top(&mut self, style: u8, accent: u32, w: Scaled, h: Scaled) -> Option<Scaled> {
+        const CHAIN: usize = 256;
+        let by = self.size_font(style >> 1);
+        let f = self.family_font(by, i64::from(accent >> 8 & 0xf))?;
+        let (m, at) = (self.font_metrics(f)?, self.font_size(f)?);
+        let mut c = Some(accent & 0xff).filter(|&c| m.has_char(c))?;
+        for _ in 0..CHAIN {
+            match m.successor(c).filter(|&y| m.has_char(y)) {
+                Some(y) if m.char_box(y, at)?.width <= w => c = y,
+                _ => break,
+            }
+        }
+        let x_height = self.font_dimen(f, 5)?.as_dimen()?;
+        let b = m.char_box(c, at)?;
+        Some(b.height + b.depth - h.min(x_height) + h)
+    }
+
+    /// The end of an accent's `{…}` nucleus (tex.web § 1186): one character alone is that
+    /// character; any other list is a box, which a script sits on.
+    fn close_accent_group(&mut self, mut inner: Natural, mut outer: Natural) -> Option<Natural> {
+        let accent = outer.accent.take()?;
+        let single = inner.tail[0] == Last::Node(NOAD)
+            && inner.tail[1] == Last::Empty
+            && matches!(inner.math_prev, Some(Some(_)))
+            && inner.atoms.codes().is_some_and(|c| c.len() == 1 && c[0] >> 12 == 0);
+        if inner.script.is_some() || inner.fraction {
+            return None;
+        }
+        let italic = self.prev_italic(inner.math_prev);
+        Self::end_atoms(&mut inner);
+        let w = inner.along.extended_by(italic).known()?;
+        let (h, d) = (inner.height.known()?, inner.depth.known()?);
+        let top = self.accent_top(outer.style, accent, w, h)?.max(h);
+        outer.along = outer.along.extended_by(if single { inner.along } else { Dim::exact(w) });
+        outer.depth = outer.depth.max(Dim::exact(d));
+        outer.height = outer.height.max(Dim::exact(top));
+        outer.math_prev = match inner.math_prev {
+            Some(Some((_, font, ch))) if single => Some(Some((ACCENTED, font, ch))),
+            _ => None,
+        };
+        outer.math_box = (!single).then_some(Nucleus::plain(top, d));
+        outer.atoms.len = u8::MAX;
+        Some(outer)
+    }
+
+    /// tex.web §§ 760-762 `make_left_right` at `\right`: the delimiters sized to the list
+    /// `inner` holds, around it, as one inner atom of the list `outer`.
+    fn left_right(&mut self, mut inner: Natural, outer: Natural, right: u32) -> Option<Natural> {
+        let (left, size) = inner.left.filter(|_| inner.script.is_none() && inner.math_pending.is_none())?;
+        let italic = self.prev_italic(inner.math_prev);
+        let space = self.begin_atom(&mut inner, 5);
+        let axis = self.axis_height(size)?;
+        let factor = self.int_parameter("delimiterfactor")?;
+        let shortfall = self.dimen_parameter("delimitershortfall").known()?;
+        // § 762: the delimiters reach as far from the axis as the list, `\delimiterfactor`
+        // per mille of it, or that less twice `\delimitershortfall`.
+        let reach = |h: Scaled, d: Scaled| {
+            let delta1 = (h - axis).max(d + axis);
+            (delta1 / 500 * factor).max(2 * delta1 - shortfall)
+        };
+        let (h, d) = (inner.height, inner.depth);
+        let v = [reach(h.lo, d.lo), reach(h.hi, d.hi)];
+        let [l, r] = [left, right].map(|c| self.var_delimiter(c, size, v));
+        let (l, r) = (l?, r?);
+        let mut n = outer;
+        n.along =
+            n.along.extended_by(l[0]).extended_by(inner.along).extended_by(italic).extended_by(space).extended_by(r[0]);
+        let height = h.max(l[1]).max(r[1]);
+        let depth = d.max(l[2]).max(r[2]);
+        (n.height, n.depth) = (n.height.max(height), n.depth.max(depth));
+        n.math_box = height.known().zip(depth.known()).map(|(h, d)| Nucleus::plain(h, d));
+        Some(n)
+    }
+
+    /// tex.web § 703 `axis_height` of math size `size`.
+    fn axis_height(&mut self, size: u8) -> Option<Scaled> {
+        let by = self.size_font(size);
+        self.family_font(by, 2).and_then(|f| self.font_dimen(f, 22)?.as_dimen())
+    }
+
+    /// tex.web §§ 706-714 `var_delimiter`: delimiter `code`'s box in math size `size`, centred
+    /// on the axis: its width, height and depth in the list. The box is the first variant at
+    /// least `v` high and deep, its small one then its large one, each from the size's font
+    /// down to the text font along its successors; else an extensible one built to `v`, else
+    /// the largest. `v` an interval: every box a length of it takes, hulled.
+    fn var_delimiter(&mut self, code: u32, size: u8, v: [Scaled; 2]) -> Option<[Dim; 3]> {
+        const CHAIN: usize = 256;
+        if code == UNKNOWN_CODE || v[1] > crate::engine::value::MAX_DIMEN {
+            return None;
+        }
+        // the variants, each larger than all before, up to the first extensible one
+        let (mut tried, mut ext) = (Vec::new(), None);
+        'search: for (z, x) in [(code >> 20 & 0xf, code >> 12 & 0xff), (code >> 8 & 0xf, code & 0xff)] {
+            if z == 0 && x == 0 {
+                continue;
+            }
+            for s in (0..=size).rev() {
+                let by = self.size_font(s);
+                let g = self.family_font(by, i64::from(z))?;
+                if g == 0 {
+                    continue;
+                }
+                let (m, at) = (self.font_metrics(g)?, self.font_size(g)?);
+                let mut y = Some(x);
+                for _ in 0..CHAIN {
+                    let Some(c) = y.filter(|&c| m.has_char(c)) else { break };
+                    if let Some(recipe) = m.extensible(c) {
+                        ext = Some((m.clone(), at, recipe));
+                        break 'search;
+                    }
+                    let b = m.char_box(c, at)?;
+                    let u = b.height + b.depth;
+                    if u > tried.last().map_or(0, |t: &(Scaled, _)| t.0) {
+                        tried.push((u, b));
+                        if u >= v[1] {
+                            break 'search;
+                        }
+                    }
+                    y = m.successor(c);
+                }
+            }
+        }
+        let axis = self.axis_height(size)?;
+        let centred = |w: Scaled, h: Scaled, d: Scaled| {
+            let shift = half(h - d) - axis;
+            [w, h - shift, d + shift]
+        };
+        let mut boxes = Vec::new();
+        for (i, &(u, b)) in tried.iter().enumerate() {
+            let below = if i == 0 { Scaled::MIN } else { tried[i - 1].0 };
+            if u >= v[0] && below < v[1] {
+                boxes.push(centred(b.width + b.italic, b.height, b.depth));
+            }
+        }
+        let largest = tried.last().map_or(Scaled::MIN, |t| t.0);
+        if v[1] > largest {
+            match &ext {
+                Some((m, at, recipe)) => {
+                    for v in [v[0].max(largest.saturating_add(1)), v[1]] {
+                        let [w, h, d] = Self::extensible(m, *at, *recipe, v)?;
+                        boxes.push(centred(w, h, d));
+                    }
+                }
+                None => match tried.last() {
+                    Some(&(_, b)) => boxes.push(centred(b.width + b.italic, b.height, b.depth)),
+                    None => {
+                        let null = self.dimen_parameter("nulldelimiterspace").known()?;
+                        boxes.push(centred(null, 0, 0));
+                    }
+                },
+            }
+        }
+        let hull = |k: usize| {
+            let lo = boxes.iter().map(|b| b[k]).min()?;
+            Some(Dim::range(lo, boxes.iter().map(|b| b[k]).max()?))
+        };
+        Some([hull(0)?, hull(1)?, hull(2)?])
+    }
+
+    /// tex.web §§ 713-714: the extensible delimiter of `c` built to at least `v`: its pieces
+    /// bottom to top, the repeated one as often on each side of a middle one. Its width, and the
+    /// height of the top piece with the rest below.
+    fn extensible(m: &crate::engine::tfm::Metrics, at: Scaled, recipe: [u8; 4], v: Scaled) -> Option<[Scaled; 3]> {
+        let [top, mid, bot, rep] = recipe.map(u32::from);
+        let piece = |c: u32| m.char_box(c, at);
+        let r = piece(rep)?;
+        let width = r.width + r.italic;
+        let u = r.height + r.depth;
+        let mut w = 0;
+        for p in [bot, mid, top].into_iter().filter(|&p| p != 0) {
+            let b = piece(p)?;
+            w += b.height + b.depth;
+        }
+        // § 714: each repetition adds `u`, twice with a middle piece
+        let step = if mid != 0 { 2 * u } else { u };
+        let n = if u > 0 && w < v { (v - w + step - 1) / step } else { 0 };
+        w += n * step;
+        let last = if top != 0 {
+            top
+        } else if mid != 0 && n == 0 {
+            mid
+        } else if n > 0 {
+            rep
+        } else if bot != 0 {
+            bot
+        } else {
+            return Some([width, 0, w]);
+        };
+        let height = piece(last)?.height;
+        Some([width, height, w - height])
+    }
+
+    /// tex.web § 749 `make_op`: an operator character, in display style its successor, boxed
+    /// with its italic correction and centred on the axis. In display style it takes limits
+    /// (§ 750), which its scripts build.
+    fn math_op(
+        &mut self,
+        mut n: Natural,
+        m: &crate::engine::tfm::Metrics,
+        z: Scaled,
+        ch: u32,
+        by: Sym,
+    ) -> Option<Natural> {
+        let ch = m.successor(ch).filter(|&c| n.display && m.has_char(c)).unwrap_or(ch);
+        let b = m.char_box(ch, z)?;
+        let axis = self.family_font(by, 2).and_then(|f| self.font_dimen(f, 22)?.as_dimen())?;
+        // `clean_box` hpacks the character and its italic kern from zero (§ 720).
+        let (w, h, d) = (b.width + b.italic, b.height.max(0), b.depth.max(0));
+        let shift = half(h - d) - axis;
+        let before = [n.along, n.height, n.depth];
+        n.along = n.along.extended_by(Dim::exact(w));
+        n.height = n.height.max(Dim::exact(h - shift));
+        n.depth = n.depth.max(Dim::exact(d + shift));
+        n.math_prev = None;
+        let op = Op { italic: b.italic, width: w, limits: n.display, before };
+        n.math_box = Some(Nucleus { height: (h - shift).max(0), depth: (d + shift).max(0), op: Some(op) });
+        Some(n)
+    }
+
+    /// tex.web § 1159: `\limits`, `\nolimits` or `\displaylimits` (`None`) on the operator
+    /// just set; on anything else an error, whose size satex does not follow.
+    pub(crate) fn math_limits(&mut self, limits: Option<bool>) {
+        let Some(mut n) = self.natural else { return };
+        match n.math_box.as_mut().and_then(|b| b.op.as_mut()) {
+            Some(op) if n.script.is_none() && n.scripted.is_none() => {
+                op.limits = limits.unwrap_or(n.display);
+                self.natural = Some(n);
+            }
+            _ => self.natural = None,
+        }
     }
 
     /// tex.web §§ 1151-1155: the class, family and position of a math
@@ -6047,12 +6427,17 @@ impl Machine<'_> {
                 self.natural = Some(n);
             }
             // § 1176: no noad to take it: a new one, its nucleus empty, an
-            // empty box for the script's shifts (§ 756).
+            // empty box for the script's shifts (§ 756). A noad whose nucleus is not followed
+            // loses the size.
             Some(mut n)
-                if n.math_prev.is_none() && n.math_box.is_none() && n.scripted.is_none() && n.script.is_none() =>
+                if n.math_prev.is_none()
+                    && n.math_box.is_none()
+                    && n.scripted.is_none()
+                    && n.script.is_none()
+                    && n.tail[0] != Last::Node(NOAD) =>
             {
                 self.next_atom(&mut n);
-                n.math_box = Some((0, 0));
+                n.math_box = Some(Nucleus::plain(0, 0));
                 n.script = Some(sup);
                 self.natural = Some(n);
             }
@@ -6143,8 +6528,14 @@ impl Machine<'_> {
         };
         let (here, below) = (n.style >> 1, ((n.style >> 1) + 1).min(2));
         let (here, below) = (self.size_font(here), self.size_font(below));
+        let op = n.math_box.and_then(|b| b.op).filter(|_| char_nucleus.is_none());
+        if let Some(op) = op.filter(|o| o.limits) {
+            let present = [flip.is_some() || !sup, flip.is_some() || sup];
+            let nucleus = n.math_box.expect("an operator nucleus");
+            return self.place_limits(n, nucleus, op, size, present, record);
+        }
         let drops = match n.math_box {
-            Some((bh, bd)) if char_nucleus.is_none() => {
+            Some(Nucleus { height: bh, depth: bd, .. }) if char_nucleus.is_none() => {
                 let ss = self.family_font(below, 2);
                 let mut sparam = |k| ss.and_then(|f| self.font_dimen(f, k)).and_then(|v| v.as_dimen());
                 let (Some(sup_drop), Some(sub_drop)) = (sparam(18), sparam(19)) else {
@@ -6167,7 +6558,11 @@ impl Machine<'_> {
             return;
         };
         let (sup_box, sub_box) = (size[1], size[0]);
-        let delta = char_nucleus.map_or(Dim::exact(0), |(nucleus, left)| self.math_italic(nucleus, left, false));
+        let delta = match (char_nucleus, op) {
+            (Some((nucleus, left)), _) => self.math_italic(nucleus, left, false),
+            (_, Some(op)) => Dim::exact(op.italic),
+            _ => Dim::exact(0),
+        };
         let ss = self.dimen_parameter("scriptspace");
         let mut shift_up = drops.0.max(up).max(sup_box[2] + x_height.abs() / 4);
         let mut shift_down = drops.1.max(down);
@@ -6195,14 +6590,59 @@ impl Machine<'_> {
             (_, true) => (height + shift_up, depth - shift_up),
             _ => (height - shift_down, depth + shift_down),
         };
-        if sup && !both {
-            n.along = n.along.extended_by(delta);
+        // A character's italic correction is a kern only before a superscript alone (§ 755);
+        // an operator's box loses it before a subscript (§ 749).
+        match op {
+            None if sup && !both => n.along = n.along.extended_by(delta),
+            Some(op) if !sup || both => n.along = n.along.reduced_by(Dim::exact(op.italic)),
+            _ => {}
         }
         n.along = n.along.extended_by(cols).extended_by(ss);
         n.height = n.height.max(Dim::exact(h));
         n.depth = n.depth.max(Dim::exact(d));
         (n.math_prev, n.script, n.math_box) = (None, None, None);
         n.scripted = (!both).then_some(Scripted { after: n.along, ..record });
+        self.natural = Some(n);
+    }
+
+    /// tex.web §§ 750-751: an operator's limits, the superscript above it and the subscript
+    /// below, each `clean_box`ed and centred in a column as wide as the widest, kept apart by
+    /// `big_op_spacing1` … `big_op_spacing5` (family 3's parameters 9-13). The column replaces
+    /// the operator in the list.
+    fn place_limits(
+        &mut self,
+        mut n: Natural,
+        y: Nucleus,
+        op: Op,
+        size: [[Scaled; 3]; 2],
+        present: [bool; 2],
+        record: Scripted,
+    ) {
+        let ex = self.size_font(n.style >> 1);
+        let ex = self.family_font(ex, 3);
+        let spacing: Option<Vec<Scaled>> =
+            (9..=13).map(|k| ex.and_then(|f| self.font_dimen(f, k)?.as_dimen())).collect();
+        let Some(&[s1, s2, s3, s4, s5]) = spacing.as_deref() else {
+            self.natural = None;
+            return;
+        };
+        let ([zw, zh, zd], [xw, xh, xd]) = (size[0], size[1]);
+        let mut width = op.width;
+        let (mut height, mut depth) = (y.height, y.depth);
+        if present[1] {
+            width = width.max(xw);
+            height += s5 + xh + xd + (s3 - xd).max(s1);
+        }
+        if present[0] {
+            width = width.max(zw);
+            depth += s5 + zh + zd + (s4 - zh).max(s2);
+        }
+        let [along, h, d] = op.before;
+        let after = along.extended_by(Dim::exact(width));
+        (n.along, n.height, n.depth) = (after, h.max(Dim::exact(height)), d.max(Dim::exact(depth)));
+        (n.math_prev, n.script, n.math_box) = (None, None, None);
+        let both = present[0] && present[1];
+        n.scripted = (!both).then_some(Scripted { after, ..record });
         self.natural = Some(n);
     }
 
@@ -7135,6 +7575,8 @@ fn box_value(state: BoxState) -> Value {
 
 /// [`Nest::part`] of a math group that is a script.
 const SCRIPT_GROUP: u8 = 0xff;
+/// The `part` of a math group that is an accent's nucleus.
+const ACCENT_GROUP: u8 = 0xfe;
 
 /// The kerns the font may put on one side of `c`, `before` it or after,
 /// from any character or the boundary; 0 for a neighbour that is none.

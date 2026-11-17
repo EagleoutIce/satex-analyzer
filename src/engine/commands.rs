@@ -1626,8 +1626,14 @@ impl Machine<'_> {
             // `\displaylimits` is what an operator has unless told
             Syntax::Limits => {
                 let name = self.name(self.env.identity(by));
-                if self.mode.meets(crate::engine::mode::Modes::ANY_MATH) && name != "displaylimits" {
-                    crate::analysis::observe::align(self, crate::analysis::facts::Align::Limits(name == "limits"));
+                let limits = (name != "displaylimits").then_some(name == "limits");
+                if self.mode.meets(crate::engine::mode::Modes::ANY_MATH)
+                    && let Some(limits) = limits
+                {
+                    crate::analysis::observe::align(self, crate::analysis::facts::Align::Limits(limits));
+                }
+                if self.mode.within(crate::engine::mode::Modes::ANY_MATH) {
+                    self.math_limits(limits);
                 }
             }
             Syntax::MathComp(t) => {
@@ -1646,6 +1652,12 @@ impl Machine<'_> {
                 }
                 if self.mode.within(crate::engine::mode::Modes::ANY_MATH) {
                     self.math_code_char(code);
+                }
+            }
+            Syntax::Number if self.name(self.env.identity(by)) == "mathaccent" => {
+                let code = self.scan_int();
+                if self.mode.within(crate::engine::mode::Modes::ANY_MATH) {
+                    self.math_accent(code);
                 }
             }
             Syntax::Number => {
@@ -2020,7 +2032,7 @@ impl Machine<'_> {
     }
 
     /// tex.web § 1160 (`scan_delimiter`): a character, or `\delimiter` and
-    /// its 27-bit code. Its small variant (family and slot), where known.
+    /// its 27-bit code. Its 24-bit delimiter code (small and large variant), where known.
     pub(crate) fn scan_delimiter(&mut self) -> Option<i64> {
         loop {
             let token = self.next_non_blank_x_token()?;
@@ -2028,10 +2040,10 @@ impl Machine<'_> {
             return match (meaning, token.tok) {
                 (Some(Meaning::Primitive(Primitive::Relax)), _) => continue,
                 (Some(Meaning::Primitive(Primitive::Command(Syntax::Number))), _) => {
-                    self.scan_int().map(|v| (v >> 12) & 0xfff)
+                    self.scan_int().map(|v| v & 0xff_ffff)
                 }
                 (_, Tok::Chr(c, Catcode::Letter | Catcode::Other)) => {
-                    self.char_code_known(crate::engine::builtins::CodeTable::Delimiter, c).map(|d| (d >> 12) & 0xfff)
+                    self.char_code_known(crate::engine::builtins::CodeTable::Delimiter, c).filter(|&d| d >= 0)
                 }
                 _ => None,
             };

@@ -7997,7 +7997,7 @@ will look undefined",
             // A script is one character here: expansion, spaces and
             // `\relax` may come before it (tex.web §§ 404, 1151). A math
             // character given by name is that character (§ 1151).
-            let script = self.natural.is_some_and(|n| n.script.is_some())
+            let script = self.natural.is_some_and(|n| n.script.is_some() || n.accent.is_some())
                 && match token.tok {
                     // an implicit `{` opens a script group as `{` does (§ 1153)
                     Tok::Cs(sym) if self.category_of(token) != Some(Catcode::Begin) => {
@@ -8963,7 +8963,7 @@ will look undefined",
             // adds, and so are `\mathchar` and `\delimiter` in inline math.
             Meaning::Register(crate::engine::tex::RegKind::MathChar, _) => true,
             Meaning::Primitive(P::Command(crate::engine::builtins::Syntax::Number))
-                if self.math_char_command(sym).is_some() =>
+                if self.math_char_command(sym).is_some() || self.name(self.env.identity(sym)) == "mathaccent" =>
             {
                 true
             }
@@ -9034,7 +9034,8 @@ will look undefined",
             Meaning::Primitive(P::Mode(
                 crate::engine::builtins::ModeCmd::MathStyle(_)
                 | crate::engine::builtins::ModeCmd::MathChoice
-                | crate::engine::builtins::ModeCmd::EqNo,
+                | crate::engine::builtins::ModeCmd::EqNo
+                | crate::engine::builtins::ModeCmd::LeftRight { .. },
             )) => true,
             // A box is an ordinary atom, whose size `append_item` adds, also
             // raised or lowered (tex.web § 1076).
