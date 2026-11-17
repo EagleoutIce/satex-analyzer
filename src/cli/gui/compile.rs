@@ -246,7 +246,7 @@ fn build(root: &Path, body: &[u8], base: Option<&Path>, runs: &mut Vec<Value>) -
     }
     let stem = Path::new(main).with_extension("");
     let pdf = work.join(stem.with_extension("pdf"));
-    if pdf.is_file() {
+    let labels = if pdf.is_file() {
         // A page with pdf.js draws the pages itself, as they come into view (`pages: false`)
         if request["pages"].as_bool() != Some(false) {
             run(
@@ -258,25 +258,40 @@ fn build(root: &Path, body: &[u8], base: Option<&Path>, runs: &mut Vec<Value>) -
                     .current_dir(&work),
             )?;
         }
-        run(runs, Command::new("pdftotext").arg("-bbox").arg(&pdf).arg(work.join("words.html")).current_dir(&work))?;
-        // without qpdf the pages only lack their links. It exits 3 on mere warnings
-        let _ = run(
-            runs,
-            Command::new("qpdf")
-                .args(["--json=2", "--json-key=pages", "--json-key=qpdf"])
-                .arg(&pdf)
-                .arg(work.join("links.json"))
-                .current_dir(&work),
-        );
-    }
-    // The PDF's own page labels (beamer gives the overlay steps of a frame one range, so one label)
-    let labels: Value = Command::new("qpdf")
-        .args(["--json=2", "--json-key=pagelabels"])
-        .arg(&pdf)
-        .output()
-        .ok()
-        .and_then(|o| serde_json::from_slice::<Value>(&o.stdout).ok())
-        .map_or(json!([]), |v| v["pagelabels"].clone());
+        // the words, the links and the page labels are three reads of one PDF: run them side by side
+        let (words, links, labels) = std::thread::scope(|scope| {
+            let words = scope.spawn(|| {
+                let mut r = Vec::new();
+                let out = run(
+                    &mut r,
+                    Command::new("pdftotext").arg("-bbox").arg(&pdf).arg(work.join("words.html")).current_dir(&work),
+                );
+                (r, out)
+            });
+            // without qpdf the pages only lack their links. It exits 3 on mere warnings
+            let links = scope.spawn(|| {
+                let mut r = Vec::new();
+                let _ = run(
+                    &mut r,
+                    Command::new("qpdf")
+                        .args(["--json=2", "--json-key=pages", "--json-key=qpdf"])
+                        .arg(&pdf)
+                        .arg(work.join("links.json"))
+                        .current_dir(&work),
+                );
+                r
+            });
+            let labels = scope.spawn(|| pagelabels(&pdf));
+            (words.join(), links.join(), labels.join())
+        });
+        let (mut r, out) = words.map_err(|_| "pdftotext panicked".to_string())?;
+        runs.append(&mut r);
+        out?;
+        runs.extend(links.unwrap_or_default());
+        labels.unwrap_or_else(|_| json!([]))
+    } else {
+        pagelabels(&pdf)
+    };
     let mut pages: Vec<String> = std::fs::read_dir(&work)
         .map_err(|e| e.to_string())?
         .filter_map(|e| e.ok()?.file_name().into_string().ok())
@@ -553,4 +568,15 @@ fn prune(root: &Path) {
     for old in builds.iter().rev().skip(KEEP - 1) {
         let _ = std::fs::remove_dir_all(old);
     }
+}
+
+/// The PDF's own page labels (beamer gives the overlay steps of a frame one range, so one label).
+fn pagelabels(pdf: &Path) -> Value {
+    Command::new("qpdf")
+        .args(["--json=2", "--json-key=pagelabels"])
+        .arg(pdf)
+        .output()
+        .ok()
+        .and_then(|o| serde_json::from_slice::<Value>(&o.stdout).ok())
+        .map_or(json!([]), |v| v["pagelabels"].clone())
 }
