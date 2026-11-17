@@ -575,9 +575,9 @@ The kernel and the packages are interpreted once and cached. `satex cache build`
 $ satex cache
 cache ~/.cache/satex
   kernel     /usr/local/texlive/YYYY/texmf-dist/tex/latex/base/latex.ltx · 197.8k definitions · cached
-  pruned     1 caches, 29.0 MiB: no build can use them, or past limits.cache_size
-  packages   193 stored, 291.7 MiB
-… 2 more lines omitted
+  packages   335 stored, 545.4 MiB
+  prepare    `satex cache build` builds 66 packages: microtype, cleveref, zref-clever, savetrees, tabularray, xurl, … +60
+… 1 more line omitted
 ```
 
 </details>
