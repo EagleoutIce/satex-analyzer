@@ -1,0 +1,9 @@
+\documentclass{article}
+\usepackage{tikz}
+\makeatletter
+\newdimen\Interval \Interval=\pdfuniformdeviate 65536000 sp\relax
+\newdimen\J \J=\pdfuniformdeviate 65536000 sp\relax
+\begin{document}
+\pgfmathdivide@{\the\Interval}{\the\J}\relax\relax
+\gdef\SatexReachedEnd{}
+\end{document}

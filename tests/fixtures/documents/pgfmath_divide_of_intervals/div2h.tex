@@ -1,0 +1,12 @@
+\documentclass{article}
+\usepackage{tikz}
+\makeatletter
+\newdimen\Interval \Interval=\pdfuniformdeviate 65536000 sp\relax
+\newdimen\J \J=\pdfuniformdeviate 65536000 sp\relax
+\begin{document}
+\setbox0\hbox{\pgfmathdivide@{\the\Interval}{\the\J}
+\pgfmathdivide@{\the\J}{\the\Interval}
+\pgfmathdivide@{\the\Interval}{\the\J}
+\pgfmathdivide@{\the\J}{\the\Interval}}
+\gdef\SatexReachedEnd{}
+\end{document}

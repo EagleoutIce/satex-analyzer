@@ -1,12 +1,28 @@
 # Failing tests with an open root (see ~/satex-plan.md): CI runs and reports them, a new failure fails it.
-documents::rounding_an_unknown_dimension_ends_bounded
+# owner: Root L (W2), 7 paths
+documents::rounding_a_path_at_an_unknown_dimension_ends_bounded
+# owner: Root L (W2), 19 paths
+documents::rounding_a_path_at_an_interval_dimension_ends_bounded
 documents::tcolorbox_of_unknown_height_keeps_its_anchors_local
 documents::tikz_bend_to_a_point_of_unknown_width_closes_the_picture
+# owner: Root L (W2), 3869 forks against 543
 documents::tikz_loop_of_unknown_height_nodes_converges
-documents::arrow_to_a_node_of_unknown_width_joins_its_digit_arms
+# owner: Root D (W1)
+documents::draw_arrow_to_a_node_of_unknown_width_joins_its_digit_arms
+# owner: Root D (W1)
+documents::graph_arrow_to_a_node_of_unknown_width_joins_its_digit_arms
+# owner: Root L (W2), 227 forks
+documents::one_pgfmath_divide_of_two_intervals_stays_on_few_forks
+# owner: Root L (W2), 898 forks
+documents::four_pgfmath_divides_of_two_intervals_stay_on_few_forks
+# owner: Root D (W1), 40 forks
+documents::one_pgfmath_reciprocal_of_an_interval_stays_on_few_forks
+# owner: Root T (W4), out of steps
+documents::a_breakable_blanker_box_around_a_rule_of_unknown_height_ends
 # Open (2026-11-12): the cut and runaway changes of 0ad3030 are reverted (they hung CI); these need them, root open. cut_widened_fp_read_back_reaches_the_end is green again (2026-11-15).
 termination::convergence::tikz_nodes_of_unknown_width
 # Open (2026-11-17): unbounded typed digits stay one token in part_digits; l3fp char tests fork per arm. Splitting breaks pgfmath canaries (target/scratch/fp-work.patch, owner: next l3fp round).
+# owner: next l3fp round; warm: 8775 forks, run ends early
 tagging::an_fp_eval_of_an_unknown_integer_stays_on_few_paths
 # Open (2026-11-17, owner p1): one node of tikz_nodes, Root A (digit-split wait in partner). p1c: forks within budget, 14 paths remain (arms of xcolor's clamps meet only at the line's end).
 termination::convergence::colorlet_of_an_unknown_pgfmath_result

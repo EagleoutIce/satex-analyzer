@@ -1,0 +1,12 @@
+\documentclass{article}
+\usepackage{tcolorbox}
+\tcbuselibrary{skins,breakable}
+\newtcolorbox{sbx}{blanker,breakable}
+\newdimen\uh \uh=\pdfelapsedtime sp
+\begin{document}
+\begin{sbx}\rule{1pt}{\uh}\end{sbx}
+\makeatletter
+\ifnum\currentgrouplevel=0 \ifx\southwest\undefined\gdef\AfterBoxGroupsClosed{}\fi\fi
+\makeatother
+\gdef\SatexReachedEnd{}
+\end{document}

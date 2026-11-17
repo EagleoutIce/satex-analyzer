@@ -702,13 +702,20 @@ fixtures! {
     tikz_halign_node_with_rounded_corners("tikz_halign_node_rounded", "main.tex");
 }
 
+/// Forks the twenty-node loop may take: the upper bound once the learned summaries
+/// replace the digit arms (Root L, W2). Measured on main (2026-11-17): 3869 forks, so
+/// the test is red until then (owner: Root L (W2)).
+const TIKZ_LOOP_FORKS: u64 = 543;
+
 /// Twenty nodes of unknown height in a `\foreach`: calls met again with
-/// unknown operands are summarized, at most once each.
+/// unknown operands are summarized, at most once each. Bug pinned: pgfmath's
+/// calls were never learned as summaries, so every pass forked its digit arms
+/// again. The fork count is the budget, not seconds: wall clock flips with
+/// the machine's load.
 #[test]
 fn tikz_loop_of_unknown_height_nodes_converges() {
-    let start = std::time::Instant::now();
     let Some(a) = check("call_summary_tikz_loop", "main.tex", &[]) else { return };
-    assert!(start.elapsed().as_secs() < 5, "{:?}", start.elapsed());
+    assert!(a.forks <= TIKZ_LOOP_FORKS, "{} forks", a.forks);
     assert!(count(&a, "call-summarized") <= 20, "{}", count(&a, "call-summarized"));
 }
 
@@ -792,19 +799,43 @@ fixtures! {
 /// sign and over one in an interval. Each costs at most a million steps
 /// over the same preamble, keeps at most 3 paths, and a bounded operand
 /// gives a bounded result (`\the` of a dimension in an interval keeps it
-/// through text, tex.web §§ 103, 448).
-#[test]
-fn rounding_an_unknown_dimension_ends_bounded() {
+/// through text, tex.web §§ 103, 448). One test per document, so the
+/// failing one is named.
+fn rounding_ends_bounded(main: &str) {
     let Some(control) = check("round_unknown_dimension", "control.tex", &[]) else { return };
-    for main in ["math_unknown.tex", "math_interval.tex", "round_unknown.tex", "round_interval.tex"] {
-        let a = check("round_unknown_dimension", main, &[]).expect("analysis");
-        assert!(a.peak_paths <= 3, "{main}: {} paths", a.peak_paths);
-        assert!(a.steps <= control.steps + 1_000_000, "{main}: {} steps over {}", a.steps, control.steps);
-        assert!(a.limits.is_empty(), "{main}: limits hit");
-        for name in ["NegativeRound", "NegativeFloor", "NegativeInt", "HugeRound"] {
-            assert!(undefined(&a, name), "{main}: \\{name} is defined: the result is not bounded");
-        }
+    let Some(a) = check("round_unknown_dimension", main, &[]) else { return };
+    assert!(a.peak_paths <= 3, "{main}: {} paths", a.peak_paths);
+    assert!(a.steps <= control.steps + 1_000_000, "{main}: {} steps over {}", a.steps, control.steps);
+    assert!(a.limits.is_empty(), "{main}: limits hit");
+    for name in ["NegativeRound", "NegativeFloor", "NegativeInt", "HugeRound"] {
+        assert!(undefined(&a, name), "{main}: \\{name} is defined: the result is not bounded");
     }
+}
+
+/// `round`, `floor`, `int` over a dimension of unknown value (math form).
+#[test]
+fn rounding_math_of_an_unknown_dimension_ends_bounded() {
+    rounding_ends_bounded("math_unknown.tex");
+}
+
+/// The same over a dimension in an interval (math form).
+#[test]
+fn rounding_math_of_an_interval_dimension_ends_bounded() {
+    rounding_ends_bounded("math_interval.tex");
+}
+
+/// `\pgfprocessround` over an unknown dimension. Bug pinned: 7 paths survive
+/// `round_unknown`'s corner scan (Root L, W2).
+#[test]
+fn rounding_a_path_at_an_unknown_dimension_ends_bounded() {
+    rounding_ends_bounded("round_unknown.tex");
+}
+
+/// `\pgfprocessround` over a dimension in an interval. Bug pinned: forks
+/// past the budget in the rounding's division (Root L, W2).
+#[test]
+fn rounding_a_path_at_an_interval_dimension_ends_bounded() {
+    rounding_ends_bounded("round_interval.tex");
 }
 
 /// `\pgfprocessround` over corners at unknown points raises nothing. Bug: a
@@ -829,13 +860,63 @@ const ARROW_FORKS: u64 = 2_000;
 /// as the split made, though the others had ended or joined on the way, so
 /// paths piled up till the statement's end: a false `\else` outside a
 /// conditional (pgfcorepathusage 168), and the graph form ran out of steps.
+/// One test per form: the two have different roots.
+fn arrow_joins_its_digit_arms(main: &str) {
+    let Some(a) = check("arrow_to_unknown_width_node", main, &[]) else { return };
+    assert_eq!(count(&a, "caused-library-error"), 0, "{main}: a false error");
+    assert!(a.forks <= ARROW_FORKS, "{main}: {} forks", a.forks);
+}
+
+/// `\draw` form: the arithmetic runs under Root T's false `\else` (owner Root D, W1).
 #[test]
-fn arrow_to_a_node_of_unknown_width_joins_its_digit_arms() {
-    for main in ["draw.tex", "graph.tex"] {
-        let Some(a) = check("arrow_to_unknown_width_node", main, &[]) else { return };
-        assert_eq!(count(&a, "caused-library-error"), 0, "{main}: a false error");
-        assert!(a.forks <= ARROW_FORKS, "{main}: {} forks", a.forks);
-    }
+fn draw_arrow_to_a_node_of_unknown_width_joins_its_digit_arms() {
+    arrow_joins_its_digit_arms("draw.tex");
+}
+
+/// `\graph` form: the parser reads digit rests that keep forking (owner Root D, W1).
+#[test]
+fn graph_arrow_to_a_node_of_unknown_width_joins_its_digit_arms() {
+    arrow_joins_its_digit_arms("graph.tex");
+}
+
+/// Forks one `\pgfmathdivide@` of two intervals may take. Its digit arms split on the
+/// quotient's digits: 227 forks today (Root L, W2). A single division is a handful of arms.
+const DIVIDE_FORKS: u64 = 20;
+
+/// Forks one `\pgfmathreciprocal@` of an interval may take (40 today, Root D, W1).
+const RECIPROCAL_FORKS: u64 = 10;
+
+/// One `\pgfmathdivide@` of two random dimensions in a box. Bug pinned: the long
+/// division walks the dividend's unknown digits and forks per arm (227 forks); the
+/// result should be one typed number. RED (owner: Root L (W2)).
+#[test]
+fn one_pgfmath_divide_of_two_intervals_stays_on_few_forks() {
+    let Some(a) = check("pgfmath_divide_of_intervals", "div1.tex", &[]) else { return };
+    assert!(a.forks <= DIVIDE_FORKS, "{} forks", a.forks);
+}
+
+/// Four divides in a box, the operands swapped each time: the later ones meet the
+/// earlier ones' results, and must not multiply the arms. RED (owner: Root L (W2)).
+#[test]
+fn four_pgfmath_divides_of_two_intervals_stay_on_few_forks() {
+    let Some(a) = check("pgfmath_divide_of_intervals", "div2h.tex", &[]) else { return };
+    assert!(a.forks <= 4 * DIVIDE_FORKS, "{} forks", a.forks);
+}
+
+/// One `\pgfmathreciprocal@` of a random dimension. Bug pinned: the reciprocal's
+/// digit scan forks per arm (40 forks). RED (owner: Root D (W1)).
+#[test]
+fn one_pgfmath_reciprocal_of_an_interval_stays_on_few_forks() {
+    let Some(a) = check("pgfmath_divide_of_intervals", "rec1.tex", &[]) else { return };
+    assert!(a.forks <= RECIPROCAL_FORKS, "{} forks", a.forks);
+}
+
+/// A breakable `blanker` tcolorbox around one rule of unknown height: the smallest
+/// form of the hang (the underlay is not needed). Bug pinned: the run ends out of
+/// steps instead of closing the box's groups. RED (owner: Root T (W4)).
+#[test]
+fn a_breakable_blanker_box_around_a_rule_of_unknown_height_ends() {
+    check("tcolorbox_unknown_height_hang", "main.tex", &[]);
 }
 
 /// Capabilities: typesetting feedback, global state, termination.
