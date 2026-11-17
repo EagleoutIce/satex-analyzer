@@ -18,8 +18,6 @@ documents::four_pgfmath_divides_of_two_intervals_stay_on_few_forks
 documents::one_pgfmath_reciprocal_of_an_interval_stays_on_few_forks
 # owner: Root T (W4), out of steps
 documents::a_breakable_blanker_box_around_a_rule_of_unknown_height_ends
-# Open (2026-11-12): the cut and runaway changes of 0ad3030 are reverted (they hung CI); these need them, root open. cut_widened_fp_read_back_reaches_the_end is green again (2026-11-15).
-termination::convergence::tikz_nodes_of_unknown_width
 # Open (2026-11-17): unbounded typed digits stay one token in part_digits; l3fp char tests fork per arm. Splitting breaks pgfmath canaries (target/scratch/fp-work.patch, owner: next l3fp round).
 # owner: next l3fp round; warm: 8775 forks, run ends early
 tagging::an_fp_eval_of_an_unknown_integer_stays_on_few_paths
