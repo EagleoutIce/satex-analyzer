@@ -516,7 +516,7 @@
    ],
    "pad": 8,
    "keepMouse": true,
-   "text": "\\documentclass{article}\n\\usepackage{graphicx}\n\\begin{document}\n\\begin{figure}[ht]\\centering\\includegraphics[width=.8\\linewidth]{example-image-a}\\caption{Alpha results}\\label{fig:a}\\end{figure}\n\\begin{figure}[ht]\\centering\\includegraphics[width=.7\\linewidth]{example-image-b}\\caption{Beta results}\\label{fig:b}\\end{figure}\nRuns took 10-12 s, see figure 1.\n\\end{document}\n",
+   "text": "\\documentclass{article}\n\\usepackage{graphicx}\n\\begin{document}\n\\begin{figure}[ht]\\centering\\includegraphics[width=.8\\linewidth]{example-image-a}\\caption{Alpha results}\\label{fig:a}\\end{figure}\n\\begin{figure}[ht]\\centering\\includegraphics[width=.7\\linewidth]{example-image-b}\\caption{Beta results}\\label{fig:b}\\end{figure}\n\\begin{figure}[ht]\\centering\\includegraphics[width=.6\\linewidth]{example-image-c}\\caption{Gamma results}\\label{fig:c}\\end{figure}\nRuns took 10-12 s, see figure 1.\n\\end{document}\n",
    "stack": true,
    "beforeCrop": "#play-findings"
   },
