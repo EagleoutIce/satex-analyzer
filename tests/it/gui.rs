@@ -202,3 +202,34 @@ fn gui_runs_the_shown_document_first_and_no_other_unasked() {
     }
     assert_eq!(analyze("a.tex"), ["a.tex", "c.tex", "b.tex"]);
 }
+
+/// The Typeset view does not wait for the lints: `satex/analyze` with `typeset` sends the shown document's rows as
+/// `satex/typesetRows` before its findings, of the text's version, equal to what `satex/typeset` answers after the run.
+/// Pins the early rows (2026-11-17): they must be the run's own, not a guess, and come before publishDiagnostics.
+#[test]
+fn gui_sends_the_typeset_rows_before_the_findings() {
+    let text = "\\documentclass{article}\\begin{document}\nSome words\\undefinedname{} here.\n\\end{document}\n";
+    let gui = Gui::start("rows", &[("main.tex", text)]);
+    let uri = format!("file://{}", gui.dir.join("main.tex").to_string_lossy());
+    let flags = ["--no-packages", "--no-classes", "--set", "load.format=false", "--set", "texmf.kpsewhich=false"];
+    let args = [&flags[..], &["-f", "main.tex"][..]].concat();
+    let reset = serde_json::json!({ "args": args, "cwd": gui.dir });
+    gui.page("POST", "/__satex/lsp/reset?s=t", &reset.to_string());
+    gui.lsp(serde_json::json!({ "jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {} }));
+    let open = serde_json::json!({ "jsonrpc": "2.0", "method": "textDocument/didOpen",
+        "params": { "textDocument": { "uri": uri, "languageId": "latex", "version": 7, "text": text } } });
+    gui.lsp(open);
+    let out = gui.lsp(
+        serde_json::json!({ "jsonrpc": "2.0", "method": "satex/analyze", "params": { "first": uri, "typeset": uri } }),
+    );
+    let at = |method: &str| out.iter().position(|m| m["method"] == method && m["params"]["uri"] == uri.as_str());
+    let (rows, published) =
+        (at("satex/typesetRows").expect("early rows"), at("textDocument/publishDiagnostics").unwrap());
+    assert!(rows < published, "{out:?}");
+    assert_eq!(out[rows]["params"]["version"], 7);
+    let asked = gui.lsp(serde_json::json!({ "jsonrpc": "2.0", "id": 2, "method": "satex/typeset",
+        "params": { "textDocument": { "uri": uri } } }));
+    let answer = asked.iter().find(|m| m["id"] == 2).unwrap();
+    assert_eq!(out[rows]["params"]["rows"], answer["result"]);
+    assert!(answer["result"].to_string().contains("Some words"), "{answer:?}");
+}

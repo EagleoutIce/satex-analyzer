@@ -20,7 +20,15 @@ thread_local! { static LOCAL: RefCell<Option<Local>> = const { RefCell::new(None
 unsafe extern "C" {
     fn emscripten_exit_with_live_runtime() -> !;
     fn satex_status(json: *const c_char);
+    fn satex_note(json: *const c_char);
     fn satex_cancelled() -> i32;
+}
+
+/// `note` to the page now, while the message still runs.
+pub(super) fn notify(note: &lsp_server::Notification) {
+    if let Some(json) = serde_json::to_string(note).ok().and_then(|j| CString::new(j).ok()) {
+        unsafe { satex_note(json.as_ptr()) }
+    }
 }
 
 /// Whether the page asked to stop the run under way (src/lsp/wasm-status.js).

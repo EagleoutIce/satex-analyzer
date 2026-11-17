@@ -34,6 +34,7 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 
 ### Playground
 
+- `perf` **The Typeset view follows typing.** A word typed in a paragraph shows at once, marked pending, until the run's row replaces it. The run sends its rows as soon as it ends, before its findings, and the view redraws only the paragraphs that changed.
 - `fix` **Completion fills placeholders.** A completion with a named field (`\greet{arg}`) selects `arg` for typing instead of writing `:arg}` into the text.
 - `fix` **No offline copy unless asked.** The playground no longer fetches every package in the background on its own. Settings, Playground, "Keep a copy for offline use" turns it on. A document still fetches what it uses.
 - `fix` **References and citations are their own kind in Typeset.** A `\ref` or `\cite` an earlier run's .aux decides reads `reference x` or `citation key`, with its first-run and rerun text, and stays visible with `maybe` off.

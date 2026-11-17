@@ -550,6 +550,8 @@
   let running = 0;
   /** Per file, the version of the last text sent to the server, and whether the editor's text is newer still. */
   const sentVersions = new Map();
+  /** The last texts sent, by `uri@version`: the Typeset view diffs the editor against the one its rows are of. */
+  const sentTexts = new Map();
   let typedSincePush = false;
   /** Findings of a text older than the server's: the editor no longer has it. */
   const outdated = (p) => p.version != null && (sentVersions.get(p.uri) ?? -Infinity) > p.version;
@@ -571,6 +573,8 @@
     // the version of each text the server has: findings of an older one are dropped
     if (method === 'textDocument/didOpen' || method === 'textDocument/didChange') {
       sentVersions.set(params.textDocument.uri, params.textDocument.version);
+      const text = params.textDocument.text ?? params.contentChanges?.[0]?.text;
+      if (text != null) { sentTexts.set(`${params.textDocument.uri}@${params.textDocument.version}`, text); if (sentTexts.size > 16) sentTexts.delete(sentTexts.keys().next().value); }
       if (textsSent) Atomics.add(textsSent, 0, 1);
     }
     order.push(runs);
@@ -644,6 +648,7 @@
     dirty = true;
     timer = setTimeout(sync, /\\[A-Za-z@]*$|\{[^{}\s]*$/.test(before) ? Math.max(1500, play.delay) : play.delay);
     markStale();
+    tsTyped();
     pdfEdited();
     keepDrafts();
   }
@@ -750,7 +755,7 @@
     if (running > 0) { analysisQueued = true; markStale(); return; }
     checking();
     // the shown file (through its root) runs before every other one
-    lsp('satex/analyze', { first: uri(), ...(filesChanged ? { files: true } : {}) }, true);
+    lsp('satex/analyze', { first: uri(), typeset: uri(), ...(filesChanged ? { files: true } : {}) }, true);
     filesChanged = false;
     ranWith = landings;
     markStale();
@@ -1659,22 +1664,118 @@
     if (target !== uri()) return;
     // a step of its own in the status card, when nothing else is going on
     const alone = !act.phase;
+    // the run sent its rows as soon as it ended (`satex/typesetRows`)
+    if (tsEarly === `${target}@${of}` && tsShown === tsEarly) return;
     if (alone) busy('Typesetting', 'Typesetting the text…');
     const rows = await lsp('satex/typeset', { textDocument: { uri: target } }).catch(() => null);
     if (alone && act.phase === 'Typesetting') idle();
+    typesetShow(target, of, rows);
+  }
+  /** The rows a run sent before its findings, of the text with version `of`. */
+  var tsEarly = null, tsShown = null;
+  /** `rows` of `target`'s run of version `of` in the Typeset view. */
+  function typesetShow(target, of, rows) {
     if (!rows || target !== uri()) return;
     typesetRows = rows;
+    tsShown = `${target}@${of}`;
     shownFor(typesetBody, target, of);
     if (pdfOverlayOn?.findings || pdfOverlayOn?.glue || pdfTyping) pdfOverlay();
     const lines = state.texts[state.file]?.split('\n') ?? [];
     const html = cards.typesetView(rows, { file: state.file, closed: tsClosed, plural, lineOf: (n) => lines[n - 1] });
-    typesetBody.innerHTML = html || '<p class="muted">The document sets no paragraph.</p>';
+    tsUnpend();
+    tsMorph(typesetBody, html || '<p class="muted">The document sets no paragraph.</p>');
+    tsText = [state.file, sentTexts.get(`${target}@${of}`) ?? null];
+    tsTyped();
     typesetFindings();
     typesetFollow();
     if (pdfCaret?.view === 'ts') pdfCaretDraw();
     tsOriginsDraw();
     // the tables' columns as now written, for the PDF's column layer
     if (pdf?.boxes) pdfColsAsk();
+  }
+  /** `body` shown as `html`, redrawing only the blocks that changed: equal ones before and after a change stay, and a
+   * single changed block with the same tag is matched child by child. Each element keeps the HTML it was drawn from. */
+  function tsMorph(body, html) {
+    const t = document.createElement('template');
+    t.innerHTML = html;
+    morph(body, t.content);
+    function morph(into, from) {
+      const next = [...from.children], src = next.map((el) => el.outerHTML);
+      // drawn over the view (origins, a caret, excerpts): their draws put them back
+      for (const el of [...into.children]) if (el.tsSrc == null) el.remove();
+      const old = [...into.children];
+      let a = 0, b = 0;
+      while (a < old.length && a < next.length && old[a].tsSrc === src[a]) a++;
+      while (b < old.length - a && b < next.length - a && old[old.length - 1 - b].tsSrc === src[next.length - 1 - b]) b++;
+      const tag = (h) => h.slice(0, h.indexOf('>') + 1), nested = (el) => el.children.length && [...el.childNodes].every((n) => n.nodeType === Node.ELEMENT_NODE);
+      // only elements inside: text between them would not be matched
+      if (old.length - a - b === 1 && next.length - a - b === 1 && tag(old[a].tsSrc) === tag(src[a]) && nested(next[a]) && nested(old[a])) {
+        old[a].tsSrc = src[a];
+        return morph(old[a], next[a]);
+      }
+      old.slice(a, old.length - b).forEach((el) => el.remove());
+      next.forEach((el, i) => { el.tsSrc = src[i]; });
+      const before = old[old.length - b] ?? null;
+      for (const el of next.slice(a, next.length - b)) into.insertBefore(el, before);
+    }
+  }
+  /** The file and text the shown rows are of: what typing is diffed against. */
+  var tsText = [null, null]; // var: an edit may come first
+  /** A paragraph showing typed text before its run: [the shown element, its computed copy]. */
+  var tsPend = null;
+  function tsUnpend() {
+    if (tsPend?.[0].isConnected) { tsPend[1].tsSrc = tsPend[0].tsSrc; tsPend[0].replaceWith(tsPend[1]); }
+    tsPend = null;
+  }
+  /** Typing in plain paragraph text shows at once in the Typeset view, marked pending until the run's row replaces it.
+   * Only a change within one line's words, whose old characters the run set from those source columns, read in place,
+   * at a single place of one paragraph; anything else waits for the run. */
+  function tsTyped() {
+    tsUnpend();
+    if (!typesetRows) return;
+    const [file, was] = tsText, now = editor?.text();
+    if (was == null || now == null || file !== state.file || was === now) return;
+    let a = 0, b = 0;
+    while (a < was.length && a < now.length && was[a] === now[a]) a++;
+    while (b < was.length - a && b < now.length - a && was[was.length - 1 - b] === now[now.length - 1 - b]) b++;
+    // whole words on both sides
+    const w = /[\p{L}\p{N}]/u;
+    while (a > 0 && w.test(was[a - 1])) a--;
+    while (b > 0 && w.test(was[was.length - b])) b--;
+    const old = was.slice(a, was.length - b), typed = now.slice(a, now.length - b);
+    if (!old.trim() || !typed.trim() || /[^\p{L}\p{N} .,;:!?'()-]/u.test(old + typed)) return;
+    const line = was.slice(0, a).split('\n').length, col = a - was.lastIndexOf('\n', a - 1); // both 1-based, as the run's sites
+    // the run's characters of these columns, once in the whole view
+    const hits = [];
+    typesetRows.forEach((r, k) => {
+      if (r.kind !== 'paragraph' || !String(r.path ?? '').endsWith(`/${file}`)) return;
+      const chars = rowChars(r);
+      // a site may name the character TeX looked ahead to (a ligature or kern test): one column off
+      chars.forEach((ch, i) => {
+        if (ch.line !== line || Math.abs(ch.col - col) > 1 || ch.from || !ch.path.endsWith(`/${file}`)) return;
+        const run = chars.slice(i, i + old.length);
+        if (run.length === old.length && run.every((x, j) => x.c === old[j] && x.line === line && !x.from)) hits.push([k, chars.slice(0, i).map((x) => x.c).join(''), chars.map((x) => x.c).join('')]);
+      });
+    });
+    if (hits.length !== 1) return;
+    const [k, before, all] = hits[0], p = typesetBody.querySelector(`p.ts[data-k="${k}"]`), box = p?.querySelector('.ts-text');
+    if (!box || p.querySelector('.ts-switch')) return;
+    // the same occurrence of the old text in the view as in the row, where the view shows the row's text as it is
+    const count = (t) => t.split(old).length - 1, j = count(before), text = box.textContent;
+    if (count(text) !== count(all)) return;
+    let at = -1;
+    for (let n = 0; n <= j; n++) at = text.indexOf(old, at + 1);
+    const from = tsNodeAt(box, at), to = tsNodeAt(box, at + old.length);
+    if (at < 0 || !from || !to) return;
+    tsPend = [p, p.cloneNode(true)];
+    const r = document.createRange();
+    r.setStart(...from); r.setEnd(...to);
+    r.deleteContents();
+    const mark = document.createElement('span');
+    mark.className = 'ts-pending';
+    mark.title = 'as typed: the analysis has not set it yet';
+    mark.textContent = typed;
+    r.insertNode(mark);
   }
   cards.typesetWire(typesetBody);
   typesetBody.addEventListener('click', (e) => {
@@ -7374,6 +7475,7 @@
   function notified(m, ended = false) {
     if (m.method === 'satex/styleCandidates') for (const c of m.params.candidates ?? []) askStyle(c);
     else if (m.method === 'textDocument/publishDiagnostics' && m.params.uri.startsWith(`file://${state.dir}/`)) publish(m.params, ended);
+    else if (m.method === 'satex/typesetRows' && !outdated(m.params)) { tsEarly = `${m.params.uri}@${m.params.version}`; typesetShow(m.params.uri, m.params.version, m.params.rows); }
   }
   async function onWorkerMessage({ data }) {
     if (running > 0 || pending.size) maxGap = Math.max(maxGap, Math.round(performance.now() - lastHeard));

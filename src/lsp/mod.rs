@@ -871,6 +871,8 @@ struct Engine {
     taken: u64,
     /// The last run stopped for a newer text.
     cancelled: bool,
+    /// The document whose typeset rows go out as soon as its run ends, before its lints (`satex/analyze` `typeset`).
+    typeset_early: Option<Uri>,
     /// A run of no document: what a completion answers from before a
     /// document's first run ends, the installation's classes and packages.
     blank: Option<Rc<Analysis>>,
@@ -932,6 +934,7 @@ impl Engine {
             deferred: Default::default(),
             taken: 0,
             cancelled: false,
+            typeset_early: None,
             blank: None,
             published: HashMap::default(),
             edited: HashMap::default(),
@@ -990,6 +993,13 @@ impl Engine {
             carry_probes(old, &analysis);
         }
         let prior = changed.then(|| doc.analysis.clone()).flatten();
+        // The rows `satex/typeset` answers from this run, out before the rules run.
+        let kept = !(analysis.stopped() && doc.analysis.as_ref().is_some_and(|a| !a.stopped()));
+        if fresh && kept && self.typeset_early.as_ref() == Some(uri) {
+            let rows = handlers::typeset(&analysis);
+            let params = serde_json::json!({"uri": uri, "version": version_of(&versions, uri), "rows": rows});
+            self.notify_now(Notification::new("satex/typesetRows".into(), params));
+        }
         if fresh {
             // What a completion reads of the new run is built first, while the last run (or the
             // installation) answers: the format's names carried over from the last run. Its
@@ -1191,6 +1201,14 @@ impl Engine {
         } else {
             crate::util::progress::idle();
         }
+    }
+
+    /// `note` to the client now: the browser's server hands it over mid-message, the others through the outbox.
+    fn notify_now(&self, note: Notification) {
+        #[cfg(target_os = "emscripten")]
+        wasm::notify(&note);
+        #[cfg(not(target_os = "emscripten"))]
+        let _ = self.outbox.send(note);
     }
 
     fn send_diagnostics(&self, published: Vec<PublishDiagnosticsParams>) {

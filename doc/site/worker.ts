@@ -28,7 +28,7 @@ interface Engine {
   read(path: string): Promise<{ path: string; data: Uint8Array | null }> | { path: string; data: Uint8Array | null };
   caches(): { path: string; size: number }[]; uncache(paths: string[]): Promise<unknown>;
 }
-function SatexEngine(createSatex: (o: Rec) => Promise<Mod>, progress: (label: string, loaded: number, total: number) => void = () => {}, store: Store | null = null, status: (s: any) => void = () => {}): Engine {
+function SatexEngine(createSatex: (o: Rec) => Promise<Mod>, progress: (label: string, loaded: number, total: number) => void = () => {}, store: Store | null = null, status: (s: any) => void = () => {}, note: (m: any) => void = () => {}): Engine {
   const STALL_MS = 30000, RETRIES = 4, BACKOFF_MS = 1000, PARALLEL = 4;
   const files = new Map<string, Uint8Array>();
   /** Each file's mtime, kept from boot to boot: a fresh instance's stamps (an index's, a
@@ -152,9 +152,10 @@ function SatexEngine(createSatex: (o: Rec) => Promise<Mod>, progress: (label: st
   const stamp = (st: Rec) => `${+st.mtime}|${st.size}`;
 
   /** A fresh instance over the bundle, `edits` laid over it, in `cwd`. */
-  async function boot(lines: [string, string][], edits: Record<string, any> = {}, cwd = '/work', onStatus?: (json: string) => void): Promise<Mod> {
+  async function boot(lines: [string, string][], edits: Record<string, any> = {}, cwd = '/work', onStatus?: (json: string) => void, onNote?: (json: string) => void): Promise<Mod> {
     const module = await createSatex({
       onStatus,
+      onNote,
       cancelled: () => stale(),
       instantiateWasm(imports: WebAssembly.Imports, done: (i: WebAssembly.Instance, m: WebAssembly.Module) => void) {
         WebAssembly.instantiate(wasm!, imports).then((instance) => done(instance, wasm!));
@@ -207,7 +208,9 @@ function SatexEngine(createSatex: (o: Rec) => Promise<Mod>, progress: (label: st
       // What the engine is doing while a message runs (src/lsp/wasm.rs).
       const onStatus = (json: string) => status(JSON.parse(json));
       serverLines = [];
-      server = await boot(serverLines, {}, serverCwd, onStatus);
+      // a notification sent while the message still runs (src/lsp/wasm.rs `notify`)
+      const onNote = (json: string) => note(JSON.parse(json));
+      server = await boot(serverLines, {}, serverCwd, onStatus, onNote);
       server.callMain([...serverArgs, 'lsp']); // returns with the runtime alive, see src/lsp/wasm.rs
     }
     const running = server, text = running.stringToNewUTF8(JSON.stringify(message));
@@ -524,7 +527,7 @@ if (typeof cjs === 'object' && cjs.exports) {
           if (label === phase && now - last < 100 && loaded < total) return;
           [last, phase] = [now, label];
           self.postMessage({ type: 'progress', label, loaded, total });
-        }, typeof indexedDB === 'object' ? idb() : null, (s) => self.postMessage({ type: 'status', ...s }));
+        }, typeof indexedDB === 'object' ? idb() : null, (s) => self.postMessage({ type: 'status', ...s }), (m) => self.postMessage({ type: 'note', out: [m] }));
         self.postMessage({ type: 'ready', ...(await engine!.init(data.base, data.manifest, given)) });
       } else if (data.type === 'bundle') {
         self.postMessage({ type: 'bundle', id: data.entry.id, ...(await engine!.bundle(data.base, data.entry, data.given)) });
