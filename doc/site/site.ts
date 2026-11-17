@@ -645,18 +645,24 @@ interface Stream {
     if (alts?.length) return alts.map((a: Rec) => `<div>${chainOf(a.chain)}</div>`).join('');
     return r.chain?.length ? chainOf(r.chain) : '';
   }
-  /** A record's body: pretty-printed when the server sent that form (`type_plugins.pretty`), a button
-   * showing the raw line; the choice holds for the cards after it. */
-  const RAW = 'satex-body-raw';
+  /** A record's body, at most four lines as TeX prints it (`type_plugins.pretty.lines`), as the hover's.
+   * A longer one gets a button showing all of it. The pretty-printed form, when the server sent one, is a toggle;
+   * the choice holds for the cards after it. */
+  const RAW = 'satex-body-raw', BODY_LINES = 4;
   function bodyOf(r: Rec) {
     if (r.body === '') return '<span class="muted">empty</span>';
-    const pre = (t: string, cls = '') => `<pre class="x-body${cls}"><code>${tex(t, true)}</code></pre>`;
-    if (!r.pretty) return pre(r.body);
-    const raw = (() => { try { return localStorage.getItem(RAW) === '1'; } catch { return false; } })();
+    const pre = (t: string, cls = '') => `<pre class="x-body x-clamp${cls}"><code>${tex(t, true)}</code></pre>`;
+    // a rough test: a body of more lines, or of more characters than four short lines hold
+    const long = [r.body, r.pretty ?? ''].some((t: string) => t.split('\n').length > BODY_LINES || t.length > BODY_LINES * 60);
+    const all = long ? '<button type="button" class="x-all" aria-expanded="false">all of it</button>' : '';
+    if (!r.pretty) return `<div class="x-bodies" data-shown="raw">${pre(r.body)}${all}</div>`;
+    const raw = (() => { try { return localStorage.getItem(RAW) !== '0'; } catch { return true; } })();
     return `<div class="x-bodies" data-shown="${raw ? 'raw' : 'pretty'}"><button type="button" class="x-pretty" aria-pressed="${!raw}" title="pretty print: one statement per line, groups and conditionals indented">pretty</button>` +
-      pre(r.pretty, ' x-body-pretty') + pre(r.body, ' x-body-raw') + '</div>';
+      pre(r.pretty, ' x-body-pretty') + pre(r.body, ' x-body-raw') + all + '</div>';
   }
   document.addEventListener('click', (e) => {
+    const a = (e.target as Element).closest?.('.x-all');
+    if (a) { const open = a.closest('.x-bodies')!.classList.toggle('x-open'); a.setAttribute('aria-expanded', String(open)); a.textContent = open ? 'first lines' : 'all of it'; return; }
     const b = (e.target as Element).closest?.('.x-pretty');
     if (!b) return;
     const box = b.closest<HTMLElement>('.x-bodies')!, raw = box.dataset.shown === 'pretty';

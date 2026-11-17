@@ -363,7 +363,7 @@ impl<'a> Edits<'a> {
     }
 
     /// The source at a span, and the control sequence that starts there.
-    fn command(&self, span: Span) -> Option<(String, Rc<Text>, Scan, Lexeme)> {
+    pub(crate) fn command(&self, span: Span) -> Option<(String, Rc<Text>, Scan, Lexeme)> {
         let (path, text) = self.text(span.file)?;
         let mut scan = Scan::at(&text, Pos::of(span), self.cats(span.file))?;
         let cs = scan.advance()?;

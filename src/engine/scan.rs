@@ -759,6 +759,10 @@ impl Machine<'_> {
         let mut next = first.or_else(|| self.next_x_token());
         // The last digit, while it is known: it decides the parity.
         let mut last = None;
+        // The value as an interval while each part is a known digit or typed digits whose
+        // interval is known: `9` then digits in 331..350 is 9331..9350. Appending the digits of
+        // `d` is increasing in `d`, so the ends of the interval make the ends of the value.
+        let mut hull = Some((0i64, 0i64));
         let result = loop {
             let Some(token) = next else { break None };
             if self.split_scanned(token) {
@@ -775,6 +779,19 @@ impl Machine<'_> {
             unsigned.get_or_insert_with(|| self.digits_first(token));
             let maybe = !digits && self.is_unknown(token);
             if digits || maybe {
+                let typed = token.cs().filter(|_| radix == 10).and_then(|sym| self.typed_digits_of(sym));
+                // a slice of a number's places is as wide as the places it holds, leading zeros too
+                let width = |d: i64| match token.cs().and_then(|c| self.typed_slice(c)) {
+                    Some((_, _, i, j)) => j - i,
+                    None => d.to_string().len() as u32,
+                };
+                hull = match (hull, typed) {
+                    (Some((lo, hi)), Some(n)) if n.lo >= 0 => {
+                        let append = |v: i64, d: i64| v.checked_mul(10i64.checked_pow(width(d))?)?.checked_add(d);
+                        append(lo, n.lo).zip(append(hi, n.hi)).filter(|&(_, h)| h <= MAX_INT)
+                    }
+                    _ => None,
+                };
                 any |= !maybe && !token.cs().is_some_and(|sym| self.is_more_digits(sym));
                 unknown = true;
                 last = None;
@@ -800,6 +817,9 @@ impl Machine<'_> {
             };
             any = true;
             last = Some(d);
+            hull = hull
+                .and_then(|(lo, hi)| Some((lo.checked_mul(radix)? + d, hi.checked_mul(radix)? + d)))
+                .filter(|&(_, h)| h <= MAX_INT);
             value = (value * radix + d).min(MAX_INT);
             next = self.next_x_token();
         };
@@ -807,6 +827,9 @@ impl Machine<'_> {
         self.abs_odd = last.map(|d| d % 2 != 0);
         if unknown {
             self.unsigned_number(unsigned == Some(true));
+            if let Some((lo, hi)) = hull.filter(|_| any) {
+                (self.abs, self.abs_whole) = (Some(Num::range(lo, hi)), true);
+            }
             return (None, result.unwrap_or(false));
         }
         match result {

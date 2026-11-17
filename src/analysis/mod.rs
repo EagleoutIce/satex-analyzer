@@ -5,3 +5,4 @@ pub mod machine;
 pub mod observe;
 pub mod probe;
 pub mod roles;
+pub mod tagging;

@@ -86,6 +86,7 @@ mod style_prompt;
 mod successors;
 mod support;
 mod tables;
+mod tagging;
 mod termination;
 mod tex_compliance;
 mod tex_semantics;

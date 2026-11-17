@@ -55,10 +55,15 @@ pub fn word_at(line: &str, col: u32) -> Option<(String, bool)> {
     word_span(line, col).map(|(name, is_command, _)| (name, is_command))
 }
 
-/// The same, with the 1-based column the match starts at.
+/// The same, with the 1-based column the match starts at. A cursor between
+/// two words (`\item|\begin`) is on the one it starts: on the `\` of a command
+/// is on that command.
 pub fn word_span(line: &str, col: u32) -> Option<(String, bool, u32)> {
     let target = crate::engine::source::byte_of_col(line, col);
-    word_re().find_iter(line).find(|m| m.start() <= target && target <= m.end()).map(|m| {
+    let mut near = word_re().find_iter(line).filter(|m| m.start() <= target && target <= m.end());
+    let first = near.next();
+    let m = if first.is_some_and(|m| m.end() == target) { near.next().or(first) } else { first };
+    m.map(|m| {
         let text = m.as_str();
         (
             crate::engine::tex::bare_name(text).to_string(),

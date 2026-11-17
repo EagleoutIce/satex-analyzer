@@ -3,7 +3,9 @@
 
 use std::path::Path;
 
-use super::markup::{Places, anchors, description, group, names, placeholders, quoted, render, usage, variants};
+use super::markup::{
+    Places, anchors, argument, description, group, names, placeholders, quoted, render, usage, variants,
+};
 use super::{Audience, DocPlugin, Entry};
 use crate::project::config::DocsConfig;
 
@@ -34,35 +36,44 @@ impl DocPlugin for Ltxdoc {
         // `\begin{command}{\x\marg{a}}`: the name, then its usage.
         for env in &config.usage_environments {
             for (at, _, head, after) in anchors(&doc, env) {
+                let head = head.trim_start();
                 let (name, args) = match group(head, '{', '}') {
-                    // pgf's `\begin{key}{/tikz/yshift=\meta{dimension}}`: the key, then its value
-                    Some((key, value)) if key.starts_with('/') => {
-                        let (key, rest) = key.split_once('=').map_or((key, ""), |(k, v)| (k, v));
-                        let usage = format!(
-                            "{}{}",
-                            key.trim(),
-                            if rest.is_empty() { String::new() } else { format!("={}", render(rest, true)) }
-                        );
-                        (key.trim().to_string(), format!("{usage}{}", render(value, true)))
-                    }
+                    _ if head.starts_with('/') => key(head),
                     Some((env, args)) => {
                         (env.trim().to_string(), format!("\\begin{{{}}}{}", env.trim(), render(args, true)))
                     }
                     None => {
-                        let cs = head.trim_start().trim_start_matches('\\');
+                        let cs = head.trim_start_matches('\\');
                         let len = cs.chars().take_while(|c| c.is_alphanumeric() || "@*".contains(*c)).count();
                         (cs[..len].to_string(), format!("\\{}{}", &cs[..len], render(&cs[len..], true)))
                     }
                 };
                 // Without a usage and a backslash it is doc.sty's implementation `environment`, no user's manual.
-                if !name.is_empty() && (args.contains('⟨') || head.trim_start().starts_with('\\')) {
+                if !name.is_empty() && (args.contains('⟨') || head.starts_with(['\\', '/'])) {
                     out.push(entry(name, Some(args), description(after, None), Audience::User, at));
+                }
+            }
+        }
+        // oberdiek's `\begin{declcs}{x} \M{a}\end{declcs}`: the name without its backslash, its arguments, then prose
+        for env in &config.declare_environments {
+            let end = format!("\\end{{{env}}}");
+            for (at, _, list, after) in anchors(&doc, env) {
+                let Some((args, prose)) = after.split_once(&end) else { continue };
+                let args = ["} {", "} [", "] {", "] ["]
+                    .iter()
+                    .fold(render(args, true), |a, gap| a.replace(gap, &gap.replace(' ', "")));
+                for name in names(list) {
+                    let usage = format!("\\{name}{}{args}", if args.starts_with(['{', '[']) { "" } else { " " });
+                    let text = description(prose, Some(&name));
+                    out.push(entry(name, Some(usage.trim_end().to_string()), text, Audience::User, at));
                 }
             }
         }
         for anchor in config.describe.iter().map(|c| format!("\\{c}")) {
             for (at, _) in doc.match_indices(&anchor).filter(|(at, _)| !quoted(&doc, *at)) {
-                let Some((list, after)) = group(&doc[at + anchor.len()..], '{', '}') else { continue };
+                let Some((list, after)) = argument(&doc[at + anchor.len()..]) else { continue };
+                // an anchor in an environment's option (`\begin{definition}[\DescribeMacro\x]`)
+                let after = after.strip_prefix(']').unwrap_or(after);
                 let own = doc[..at].rfind('\n').map_or(0, |i| i + 1);
                 let around = std::iter::once(&doc[own..at]).chain(after.split('\n').take(config.usage_lines));
                 let around: Vec<String> = around.map(|l| render(l, true)).collect();
@@ -87,6 +98,21 @@ impl DocPlugin for Ltxdoc {
             }
         }
     }
+}
+
+/// pgf's `\begin{key}{/tikz/xshift=\meta{dimension} (default 0pt)}`: the
+/// key's path, then its usage without the trailing `(default …)` note.
+fn key(head: &str) -> (String, String) {
+    // the name ends at its value or at its note: `/tikz/help lines (initially {line width=…})`
+    let end = [head.find('='), head.find(" (")].into_iter().flatten().min().unwrap_or(head.len());
+    let key = head[..end].trim().to_string();
+    let value = head[end..].strip_prefix('=').unwrap_or("");
+    let value = match value.rfind(" (") {
+        Some(at) if value.trim_end().ends_with(')') => &value[..at],
+        _ => value,
+    };
+    let usage = if value.trim().is_empty() { key.clone() } else { format!("{key}={}", render(value.trim(), true)) };
+    (key, usage)
 }
 
 #[cfg(test)]
@@ -131,5 +157,42 @@ mod tests {
         let mut out = Vec::new();
         Ltxdoc.mine(&DocsConfig::default(), Path::new("x.dtx"), after, &mut out);
         assert_eq!(out[0].text.as_deref(), Some("Sets the value."));
+    }
+
+    /// oberdiek's manuals declare a command by its bare name, its arguments
+    /// inside the environment, and describe it in the prose after.
+    #[test]
+    fn declared_commands_take_their_usage_and_prose() {
+        let dtx = "% \\begin{declcs}{intcalcMin} \\M{x} \\M{y}\n% \\end{declcs}\n% Macro \\cs{intcalcMin} returns the smaller of both. More.\n";
+        let mut out = Vec::new();
+        Ltxdoc.mine(&DocsConfig::default(), Path::new("intcalc.dtx"), dtx, &mut out);
+        let min = out.iter().find(|e| e.name == "intcalcMin").expect("declared");
+        assert_eq!(min.usage.as_deref(), Some("\\intcalcMin{⟨x⟩}{⟨y⟩}"));
+        assert_eq!(min.text.as_deref(), Some("Macro `\\intcalcMin` returns the smaller of both."));
+    }
+
+    /// A pgf key's name ends at its value or at its note, whichever comes first.
+    #[test]
+    fn pgf_keys_lose_their_notes() {
+        assert_eq!(key("/tikz/xshift=\\meta{dimension}"), ("/tikz/xshift".into(), "/tikz/xshift=⟨dimension⟩".into()));
+        assert_eq!(key("/tikz/cs/y=\\meta{dimension} (initially 0pt)").1, "/tikz/cs/y=⟨dimension⟩");
+        assert_eq!(
+            key("/tikz/help lines (initially {line width=0.2pt})"),
+            ("/tikz/help lines".into(), "/tikz/help lines".into())
+        );
+    }
+
+    /// An unbraced anchor takes one command (`\DescribeMacro\see`, makeidx);
+    /// stacked unbraced anchors share the prose below; an anchor in an
+    /// environment's option (datetime2) is described after that environment.
+    #[test]
+    fn unbraced_anchors_find_their_prose() {
+        let dtx = "% \\DescribeMacro\\see\n%    The command |\\see| cross references.\n%\n% \\DescribeMacro\\emph\n% \\DescribeMacro\\emforce\n%\n% This declaration sets emphasis.\n%\n%\\begin{definition}[\\DescribeMacro\\DTMcentury]\n%\\cs{DTMcentury}\\marg{year}\n%\\end{definition}\n%This converts \\meta{year} to the century.\n";
+        let mut out = Vec::new();
+        Ltxdoc.mine(&DocsConfig::default(), Path::new("x.dtx"), dtx, &mut out);
+        let text = |n: &str| out.iter().find(|e| e.name == n).and_then(|e| e.text.clone());
+        assert_eq!(text("see").as_deref(), Some("The command `\\see` cross references."));
+        assert_eq!(text("emph").as_deref(), Some("This declaration sets emphasis."));
+        assert_eq!(text("DTMcentury").as_deref(), Some("This converts ⟨year⟩ to the century."));
     }
 }

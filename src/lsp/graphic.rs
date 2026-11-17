@@ -47,6 +47,9 @@ pub struct Image {
     /// The crop or size as written when the dialog cannot read it (`trim=\fboxsep 0 0 0`).
     #[serde(default)]
     pub unread: Vec<String>,
+    /// `alt`: the text a tagged PDF gives screen readers in place of the figure (latex-lab).
+    #[serde(default)]
+    pub alt: Option<String>,
 }
 
 const SIZE: [&str; 4] = ["width", "height", "totalheight", "scale"];
@@ -135,6 +138,7 @@ fn read(img: &mut Image) {
                 Err(_) => img.unread.push(key.clone()),
             },
             "keepaspectratio" => img.keepaspectratio = v.is_empty() || v == "true",
+            "alt" => img.alt = Some(v.clone()),
             "decodearray" => match v.split_whitespace().map(str::parse).collect::<Result<Vec<f64>, _>>() {
                 Ok(d) if !d.is_empty() && d.len() % 2 == 0 => img.decode = Some(d),
                 _ => img.unread.push(key.clone()),
@@ -180,6 +184,7 @@ pub fn options(img: &Image) -> Vec<(String, String)> {
             "scale" if img.unread.iter().any(|u| u == "scale") => return None,
             "scale" => img.scale.filter(|s| *s != 1.0).map(num),
             "keepaspectratio" => flag(img.keepaspectratio && img.width.is_some() && img.height.is_some()),
+            "alt" => img.alt.clone().filter(|a| !a.trim().is_empty()),
             "decodearray" if img.unread.iter().any(|u| u == "decodearray") => return None,
             "decodearray" => img
                 .decode
@@ -206,7 +211,8 @@ pub fn options(img: &Image) -> Vec<(String, String)> {
             Some(None) => done.push(k.clone()),
         }
     }
-    let order = ["trim", "viewport", "clip", "angle", "width", "height", "scale", "keepaspectratio", "decodearray"];
+    let order =
+        ["trim", "viewport", "clip", "angle", "width", "height", "scale", "keepaspectratio", "decodearray", "alt"];
     for key in order {
         if done.iter().any(|d| d == key) {
             continue;
@@ -311,5 +317,21 @@ mod tests {
         let (img, _) = parse("\\includegraphics[trim=\\fboxsep{} 0 0 0,clip]{a}", None).unwrap();
         assert_eq!(img.unread, ["trim"]);
         assert_eq!(emit(&img), "\\includegraphics[trim=\\fboxsep{} 0 0 0, clip]{a}");
+    }
+
+    /// The alternative text a tagged PDF reads out is the dialog's to edit: read from `alt`,
+    /// changed in place, added after the size keys, and dropped when emptied. Before, the
+    /// dialog kept `alt` as an opaque key it could not write.
+    #[test]
+    fn alternative_text_reads_writes_and_drops() {
+        let mut img = round("\\includegraphics[alt={A duck, swimming}, width=3cm]{a}", None);
+        assert_eq!(img.alt.as_deref(), Some("A duck, swimming"));
+        img.alt = Some("Two ducks".into());
+        assert_eq!(emit(&img), "\\includegraphics[alt=Two ducks, width=3cm]{a}");
+        img.alt = Some(String::new());
+        assert_eq!(emit(&img), "\\includegraphics[width=3cm]{a}");
+        let mut fresh = parse("\\includegraphics[width=1cm]{a}", None).unwrap().0;
+        fresh.alt = Some("A plot".into());
+        assert_eq!(emit(&fresh), "\\includegraphics[width=1cm, alt=A plot]{a}");
     }
 }

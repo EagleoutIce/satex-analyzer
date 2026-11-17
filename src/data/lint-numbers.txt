@@ -133,3 +133,10 @@ S061 sentence-capital
 S062 overfull-line
 S063 overfull-box
 S064 wider-than-line
+C055 metadata-after-class
+C056 tagging-incompatible-package
+C057 graphic-without-alt
+C058 pdfua-without-title
+C059 tagging-without-language
+C060 tagging-unsupported-engine
+S065 tagged-math-without-mathml

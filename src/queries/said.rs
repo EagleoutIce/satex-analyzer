@@ -70,9 +70,11 @@ fn said_in(analysis: &Analysis, name: &str, at: Option<(&str, usize)>, wait: boo
     });
     let satex = super::query::describe_meaning(analysis, name, &meaning).map(str::to_string);
     out.text = satex.map(|t| (t, Source::Satex));
-    // A primitive's manual (or the macro the format puts in its place) explains code, not the command.
-    let docs = analysis.settings.plugins.docs
-        && !crate::engine::builtins::primitive_names(analysis.plugins.engine).contains_key(name);
+    // A package's manual explains code built on a primitive, and the macro the format puts in a
+    // primitive's place is no primitive: the engine's manuals document only the primitive itself.
+    let primitive = crate::engine::builtins::primitive_names(analysis.plugins.engine).contains_key(name);
+    let docs = analysis.settings.plugins.docs && !primitive;
+    let engine = analysis.settings.plugins.docs && primitive && meaning.as_macro().is_none();
     let index = crate::plugins::docs::index(&analysis.settings.docs);
     let look = |file: &Path| if wait { index.lookup_now(file, name) } else { index.lookup(file, name) };
     let run = crate::util::progress::built(&analysis.said, || Run::of(analysis));
@@ -101,6 +103,20 @@ fn said_in(analysis: &Analysis, name: &str, at: Option<(&str, usize)>, wait: boo
         out.manual.as_ref().is_some_and(|m| m.text.is_some())
     };
     let mut done = !docs;
+    for manual in engine.then_some(&analysis.settings.docs.engine_manuals).into_iter().flatten() {
+        let Some(dir) = analysis.distribution.roots.iter().map(|r| r.join(manual)).find(|d| d.is_dir()) else {
+            continue;
+        };
+        out.tried.push(format!("the manual in {manual}"));
+        let dirs = crate::plugins::docs::Dirs { source: None, doc: Some(dir) };
+        // the installation's manual speaks before satex's own line on a primitive
+        if let Some(e) = index.lookup_in(dirs, name, wait && !index.listened())
+            && found(e, &mut out)
+        {
+            out.text = out.manual.as_ref().and_then(|m| Some((m.text.clone()?, Source::Manual)));
+            break;
+        }
+    }
     for (path, package) in &sites {
         if done {
             break;
@@ -172,9 +188,18 @@ fn said_in(analysis: &Analysis, name: &str, at: Option<(&str, usize)>, wait: boo
             Some((file(d.span.file)?, d.span.line as usize))
         });
         out.tried.push("the comment above its definition".into());
-        let comment = at.and_then(|(p, l)| crate::knowledge::doccomment::above(&run.text(&p)?, l));
+        let comment = at.as_ref().and_then(|(p, l)| crate::knowledge::doccomment::above(&run.text(p)?, *l));
         if let Some(c) = comment.filter(|c| !c.text.is_empty()) {
             out.text = Some((c.text, Source::Comment));
+        // a package's own header, not a project file's
+        } else if let Some((usage, text)) =
+            at.filter(|(p, _)| analysis.distribution.roots.iter().any(|r| p.starts_with(r))).and_then(|(p, _)| {
+                out.tried.push("the header of its package".into());
+                crate::knowledge::doccomment::header(&run.text(&p)?, name)
+            })
+        {
+            out.usage = out.usage.take().or(Some(usage));
+            out.text = Some((text, Source::Comment));
         }
     }
     out

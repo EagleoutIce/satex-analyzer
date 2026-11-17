@@ -151,3 +151,55 @@ fn site_card_of_draw_names_tikz_and_its_manual() {
     assert_eq!(draw["does_from"], "the pgfmanual manual", "{draw}");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// pgf runs from `tex/latex/pgf` and `tex/generic/pgf`, its manual stands
+/// in `doc/generic/pgf`: a package's documentation may sit under another
+/// format folder. Its `command` and `key` entries document commands and
+/// keys by their pgfkeys path, a key's `(initially …)` note left out.
+#[test]
+fn pgf_manual_documents_commands_and_keys() {
+    let Some(e) = mined("tikz.sty") else { return };
+    let moveto = &e["pgfpathmoveto"];
+    assert_eq!(moveto.usage.as_deref(), Some("\\pgfpathmoveto{⟨coordinate⟩}"), "{moveto:?}");
+    assert!(moveto.text.is_some(), "{moveto:?}");
+    let xshift = &e["/tikz/xshift"];
+    assert!(xshift.usage.as_deref().is_some_and(|u| u.starts_with("/tikz/xshift=⟨")), "{xshift:?}");
+    assert!(xshift.text.is_some(), "{xshift:?}");
+    assert!(e.keys().all(|k| !k.contains(" (")), "a note in a name");
+    // the code files of the same package share its manual
+    assert!(mined("pgfcore.sty").is_some_and(|c| c.contains_key("pgfpathmoveto")));
+}
+
+/// intcalc runs from `tex/generic`, its `.dtx` stands in `source/latex`;
+/// makeidx's source announces `\DescribeMacro\printindex` without braces.
+#[test]
+fn sources_under_another_format_and_unbraced_anchors() {
+    if let Some(e) = mined("intcalc.sty") {
+        assert!(e.get("intcalcNum").is_some_and(|n| n.text.is_some()), "{:?}", e.get("intcalcNum"));
+    }
+    if let Some(e) = mined("makeidx.sty") {
+        let p = &e["printindex"];
+        assert!(p.text.as_deref().is_some_and(|t| t.starts_with("This command can be used")), "{p:?}");
+    }
+}
+
+/// A primitive's manual is the engine's: the pdfTeX manual heads each of
+/// its primitives with it, TeX by Topic's glossary labels an item with it.
+#[test]
+fn engine_manuals_document_primitives() {
+    let config = DocsConfig::default();
+    let dist = std::process::Command::new("kpsewhich").args(["-var-value", "TEXMFDIST"]).output().expect("kpsewhich");
+    let root = PathBuf::from(String::from_utf8_lossy(&dist.stdout).trim());
+    let dirs: Vec<PathBuf> = config.engine_manuals.iter().map(|m| root.join(m)).filter(|d| d.is_dir()).collect();
+    // TeX Live's docker image installs no manuals
+    if dirs.len() < config.engine_manuals.len() {
+        return;
+    }
+    let mut e = std::collections::HashMap::new();
+    for dir in dirs {
+        e.extend(mine(PLUGINS, &config, &Dirs { source: None, doc: Some(dir) }));
+    }
+    for name in ["pdfpagewidth", "vskip"] {
+        assert!(e.get(name).is_some_and(|e| e.text.is_some()), "{name}: {:?}", e.get(name));
+    }
+}

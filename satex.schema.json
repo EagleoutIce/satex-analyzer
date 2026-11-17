@@ -2152,6 +2152,21 @@
     "docs": {
       "description": "where a package's documentation is looked for and which conventions of it are read",
       "properties": {
+        "declare_environments": {
+          "default": [
+            "declcs"
+          ],
+          "description": "the environments that declare a command by its name without the backslash, its arguments inside",
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "x-affects": [
+            "output"
+          ],
+          "x-example": "`\\begin{declcs}{intcalcNum} \\M{x}\\end{declcs}` documents `\\intcalcNum` (oberdiek's packages)",
+          "x-plugin": "docs"
+        },
         "depth": {
           "default": 3,
           "description": "how deep those reads are followed",
@@ -2189,6 +2204,23 @@
             "output"
           ],
           "x-example": "`doc_root: manuals`",
+          "x-plugin": "docs"
+        },
+        "engine_manuals": {
+          "default": [
+            "doc/pdftex/manual",
+            "doc/etex/base",
+            "doc/plain/texbytopic"
+          ],
+          "description": "the folders of the TeX installation that document its primitives, first first",
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "x-affects": [
+            "output"
+          ],
+          "x-example": "`[doc/plain/texbytopic]`: TeX by Topic's glossary only",
           "x-plugin": "docs"
         },
         "extensions": {
@@ -2231,6 +2263,24 @@
             "output"
           ],
           "x-example": "`\\begin{function}{\\tl_set:Nn}` documents `\\tl_set:Nn`",
+          "x-plugin": "docs"
+        },
+        "labels": {
+          "default": [
+            "item",
+            "section",
+            "subsection",
+            "subsubsection"
+          ],
+          "description": "the headings and list items whose label is one command they document, without the backslash",
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "x-affects": [
+            "output"
+          ],
+          "x-example": "`\\subsection{\\cs{pdfpagewidth}}` in the pdfTeX manual documents `\\pdfpagewidth`",
           "x-plugin": "docs"
         },
         "ltxdoc_environments": {
@@ -2280,7 +2330,8 @@
           "default": [
             "command",
             "environment",
-            "key"
+            "key",
+            "stylekey"
           ],
           "description": "the environments whose argument is a command or environment followed by its usage",
           "items": {
@@ -5119,6 +5170,22 @@
                 "output"
               ],
               "x-example": "`enabled: false`: no table lens, dialog or rewrites"
+            }
+          },
+          "type": "object",
+          "x-category": "widget"
+        },
+        "tagging": {
+          "description": "PDF tagging: \\DocumentMetadata",
+          "properties": {
+            "enabled": {
+              "default": true,
+              "description": "\"Accessibility…\": tagging, PDF standard, language and title, figures' alternative text, tables' header rows",
+              "type": "boolean",
+              "x-affects": [
+                "output"
+              ],
+              "x-example": "`enabled: false`: no accessibility lens or manager"
             }
           },
           "type": "object",

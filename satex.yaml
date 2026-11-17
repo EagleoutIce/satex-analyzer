@@ -798,6 +798,11 @@ type_plugins:  # editor features by type, grouped by category: widget, hover, co
     enabled: true  # "Page layout…": margins, paper, header and footer to scale, for the document or a part
       #! affects: output
       #! example: `enabled: false`: no page layout lens, link or dialog
+  tagging:  # PDF tagging: \DocumentMetadata
+    #! category: widget
+    enabled: true  # "Accessibility…": tagging, PDF standard, language and title, figures' alternative text, tables' header rows
+      #! affects: output
+      #! example: `enabled: false`: no accessibility lens or manager
   forest:  # a forest environment the run met, a blank line of the document body
     #! category: widget
     enabled: true  # "Edit tree…": add, delete, rename and drag nodes, node and `for tree` options, indented outlines in
@@ -905,13 +910,25 @@ docs:  # where a package's documentation is looked for and which conventions of 
     #! affects: output
     #! example: `\begin{macro}{\x}` documents `\x`
     #! plugin: docs
-  usage_environments: [command, environment, key]  # the environments whose argument is a command or environment followed by its usage
+  usage_environments: [command, environment, key, stylekey]  # the environments whose argument is a command or environment followed by its usage
     #! affects: output
     #! example: `\begin{command}{\logo\marg{text}}` documents `\logo`
     #! plugin: docs
   l3doc_environments: [function, variable]  # the l3doc environments that document a function or variable
     #! affects: output
     #! example: `\begin{function}{\tl_set:Nn}` documents `\tl_set:Nn`
+    #! plugin: docs
+  declare_environments: [declcs]  # the environments that declare a command by its name without the backslash, its arguments inside
+    #! affects: output
+    #! example: `\begin{declcs}{intcalcNum} \M{x}\end{declcs}` documents `\intcalcNum` (oberdiek's packages)
+    #! plugin: docs
+  labels: [item, section, subsection, subsubsection]  # the headings and list items whose label is one command they document, without the backslash
+    #! affects: output
+    #! example: `\subsection{\cs{pdfpagewidth}}` in the pdfTeX manual documents `\pdfpagewidth`
+    #! plugin: docs
+  engine_manuals: [doc/pdftex/manual, doc/etex/base, doc/plain/texbytopic]  # the folders of the TeX installation that document its primitives, first first
+    #! affects: output
+    #! example: `[doc/plain/texbytopic]`: TeX by Topic's glossary only
     #! plugin: docs
   inline: false  # also read the package's own .sty comments for what its commands do. Not supported yet: it changes nothing
     #! affects: output

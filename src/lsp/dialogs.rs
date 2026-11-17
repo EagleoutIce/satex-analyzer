@@ -350,6 +350,18 @@ fn page(img: &graphic::Image) -> i64 {
 }
 
 /// The dialog of the table or figure at `pos`: `{kind, range, state, context}`.
+/// The figures of the file: each call's byte extent and the file the run read for it.
+pub(super) fn figures(analysis: &Analysis, doc: &Text, path: &str) -> Vec<(usize, usize, String)> {
+    let figure = |t: Target| (t.kind == Kind::Image).then(|| (t.start, t.end, t.detail.unwrap_or_default()));
+    targets(analysis, doc, path).into_iter().filter_map(figure).collect()
+}
+
+/// The tables of the file: where each `\begin` stands and its environment.
+pub(super) fn tables(analysis: &Analysis, doc: &Text, path: &str) -> Vec<(usize, String)> {
+    let table = |t: Target| (t.kind == Kind::Table).then(|| (t.start, t.detail.unwrap_or_default()));
+    targets(analysis, doc, path).into_iter().filter_map(table).collect()
+}
+
 pub fn dialog(analysis: &Analysis, doc: &Text, path: &str, pos: Position) -> Option<Json> {
     let t = target_at(analysis, doc, path, pos)?;
     let text = &doc.body()[t.start..t.end];
@@ -372,6 +384,9 @@ pub fn dialog(analysis: &Analysis, doc: &Text, path: &str, pos: Position) -> Opt
         // the graphics driver the run loaded, and whether it reads `decodearray` (it sets `\Gin@decode`)
         ctx["driver"] = json!(crate::linter::shared::macro_text(analysis, "Gin@driver"));
         ctx["decode"] = json!(crate::linter::shared::macro_text(analysis, "Gin@decode").is_some());
+        // graphicx's `alt` key, where the run defines it (latex-lab, recent graphicx), and whether tagging reads it
+        ctx["alt"] = json!(analysis.defined("KV@Gin@alt"));
+        ctx["tagging"] = json!(crate::analysis::tagging::of(analysis).is_some_and(|t| t.active()));
     }
     if t.kind == Kind::Float {
         let env = t.detail.as_deref().unwrap_or_default();

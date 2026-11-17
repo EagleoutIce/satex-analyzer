@@ -235,8 +235,12 @@ button:disabled { opacity: .55; cursor: progress; }
 .xcard dt { color: var(--muted); font-size: .8rem; line-height: 1.9; }
 .xcard dd { margin: 0; min-width: 0; line-height: 1.7; }
 .xcard pre.x-body { margin: 0; padding: .3rem .55rem; font-size: 12.5px; white-space: pre-wrap; overflow-wrap: anywhere; }
-.xcard .x-bodies { position: relative; } .xcard .x-bodies pre.x-body { padding-right: 3.4rem; } .xcard .x-bodies[data-shown="pretty"] .x-body-raw, .xcard .x-bodies[data-shown="raw"] .x-body-pretty { display: none; }
+.xcard .x-bodies { position: relative; } .xcard .x-bodies:has(.x-pretty) pre.x-body { padding-right: 3.4rem; } .xcard .x-bodies[data-shown="pretty"] .x-body-raw, .xcard .x-bodies[data-shown="raw"] .x-body-pretty { display: none; }
 .xcard .x-body-pretty { white-space: pre; overflow-x: auto; max-height: 22rem; }
+/* at most four lines, as the hover: the rest behind "all of it" */
+.xcard pre.x-clamp { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 4; line-clamp: 4; overflow: hidden; max-height: none; }
+.xcard .x-open pre.x-clamp { display: block; -webkit-line-clamp: unset; line-clamp: none; overflow-x: auto; max-height: 22rem; overflow-y: auto; }
+.xcard .x-all { font: inherit; font-size: .68rem; padding: 0; border: 0; background: none; color: var(--accent); cursor: pointer; }
 .xcard .x-pretty { position: absolute; top: .15rem; right: .2rem; z-index: 1; font: inherit; font-size: .68rem; padding: 0 .35rem; border-radius: 4px; border: 1px solid var(--border); background: var(--panel); color: var(--muted); cursor: pointer; }
 .xcard .x-pretty[aria-pressed="true"] { color: var(--accent); border-color: var(--accent); }
 .x-err { color: var(--error); }
@@ -2315,4 +2319,5 @@ pre.out-block:hover .out-meta { opacity: .85; }
 .cfg-tex { padding: .6rem 1rem; font-size: .85rem; overflow-x: hidden; box-sizing: border-box; width: 100%; } .cfg-tex p { margin: .4rem 0; }
 .cfg-tex-on { display: inline-flex; margin: .3rem 0 .5rem; } .cfg-tex-label { display: block; margin-bottom: .25rem; }
 .cfg-tex textarea { display: block; width: 100%; max-width: 100%; margin: 0; min-height: 7rem; box-sizing: border-box; }
+.cfg-play-list { list-style: none; padding: 0; margin: 0 0 1rem; } .cfg-play-list .cfg-row { grid-template-columns: minmax(0, 1fr) auto; } #cfg-tex h4 { margin: .6rem 0 .2rem; font-size: .9rem; }
 .claim .tw { position: relative; }

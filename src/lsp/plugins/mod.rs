@@ -26,6 +26,7 @@ mod page;
 mod savebox;
 mod styles;
 mod table;
+mod tagging;
 mod theorem;
 mod tikz;
 mod units;
@@ -152,6 +153,7 @@ pub(super) static PLUGINS: &[&dyn TypePlugin] = &[
     &overlay::Overlay,
     &frame::Frame,
     &page::Page,
+    &tagging::Tagged,
     &incremental::CommentEdit,
     &incremental::WhitespaceEdit,
     &incremental::Typing,

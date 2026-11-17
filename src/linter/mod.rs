@@ -31,6 +31,7 @@ pub mod spacing;
 pub mod style;
 pub mod suppress;
 pub mod tables;
+pub mod tagging;
 pub mod text;
 pub mod typography;
 pub mod units;
@@ -52,6 +53,7 @@ pub fn all() -> impl Iterator<Item = &'static Rule> {
         .chain(bibdb::RULES)
         .chain(pdf::RULES)
         .chain(packages::RULES)
+        .chain(tagging::RULES)
         .chain(style::RULES)
         .chain(dashes::RULES)
         .chain(quotes::RULES)
@@ -242,6 +244,10 @@ pub enum Source {
     Xcolor,
     Cleveref,
     Booktabs,
+    LatexLab,
+    TaggingProject,
+    /// ISO 14289, read through the PDF Association's Matterhorn Protocol checkpoints.
+    PdfUa,
 }
 
 impl Source {
@@ -282,6 +288,9 @@ impl Source {
             Source::Xcolor => ("xcolor", "https://ctan.org/pkg/xcolor"),
             Source::Cleveref => ("cleveref", "https://ctan.org/pkg/cleveref"),
             Source::Booktabs => ("booktabs", "https://ctan.org/pkg/booktabs"),
+            Source::LatexLab => ("latex-lab", "https://ctan.org/pkg/latex-lab"),
+            Source::TaggingProject => ("LaTeX tagging project", "https://latex3.github.io/tagging-project/"),
+            Source::PdfUa => ("Matterhorn Protocol", "https://pdfa.org/resource/the-matterhorn-protocol/"),
         }
     }
 

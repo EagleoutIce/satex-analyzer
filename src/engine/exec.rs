@@ -1172,7 +1172,11 @@ impl Machine<'_> {
                     {
                         let text = self.meaning_text(sym);
                         let mut tokens = self.text_tokens(&text, at);
-                        tokens.push(self.unknown_digits_token(at));
+                        let number = self.register_number_sym(sym);
+                        match self.env.slot(number).and_then(|b| b.value.num()) {
+                            Some((_, num)) => tokens.extend(self.digits_in(num, at)),
+                            None => tokens.push(self.unknown_digits_token(at)),
+                        }
                         return self.unread_all(&tokens);
                     }
                     (TextOf::Meaning, Tok::Cs(_) | Tok::Chr(_, Catcode::Active)) => {
@@ -4033,6 +4037,13 @@ impl Machine<'_> {
         }
     }
 
+    /// Where the number of an unnumbered register `name` is kept, as the interval its
+    /// `\countdef` scanned: a name of its own, so the register's contents stay in `name`.
+    pub(crate) fn register_number_sym(&mut self, name: Sym) -> Sym {
+        let text = format!("\u{2}register number:{}", self.name(name));
+        self.intern(&text)
+    }
+
     /// The number `\newcount` and relatives hand out: one past the last, kept
     /// per kind in `\count10` to `\count17` (The TeXbook, appendix B,
     /// `\alloc@`). An unknown counter leaves the register unnumbered.
@@ -4110,11 +4121,17 @@ impl Machine<'_> {
         // whose counter is unknown hands out ([`Machine::allocation_number`]).
         // A `\chardef` of an unknown number is a name of unknown meaning.
         let Some(index) = self.scan_number() else {
+            let range = self.abs.take();
             let meaning = match kind {
                 RegKind::Char | RegKind::MathChar | RegKind::UMathChar => Meaning::Unknown,
                 kind => Meaning::Register(kind, crate::engine::tex::UNNUMBERED),
             };
             self.define(name, meaning, by, DefMode::Declare, span);
+            // the interval the number lies in, for `\meaning` (tex.web § 1224 prints it)
+            let at = self.register_number_sym(name);
+            let value =
+                range.map_or(Value::Unknown, |num| Value::Num { quantity: crate::engine::value::Quantity::Int, num });
+            self.env.set_value(at, value, self.prefixes.global);
             return;
         };
         let index = self.register_def_number(kind, index, span);

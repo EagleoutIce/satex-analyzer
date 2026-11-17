@@ -25,7 +25,7 @@ interface DlgHost {
 /** The image dialog's state: the `\\includegraphics` options as numbers and texts. */
 interface ImgState {
   file: string; natural: number[] | null; trim: number[] | null; angle: number | null; width: string | null; height: string | null; scale: number | null;
-  keepaspectratio?: boolean; clip?: boolean; size_first?: boolean; decode: number[] | null; viewport?: boolean; unread?: string[];
+  keepaspectratio?: boolean; clip?: boolean; size_first?: boolean; decode: number[] | null; viewport?: boolean; unread?: string[]; alt?: string | null;
 }
 /** The undo model of a widget. */
 interface History {
@@ -101,6 +101,7 @@ dialog.pop.pop-peek::backdrop { opacity: 0; }
 .sd-row label { display: inline-flex; gap: .25rem; align-items: center; }
 .sd-num { width: 4.2rem; }
 .sd-len { width: 9rem; }
+.sd-alt { width: 100%; box-sizing: border-box; resize: vertical; font: inherit; padding: .3rem .4rem; border: 1px solid var(--c-border); border-radius: 6px; background: var(--c-sunk); color: var(--c-fg); }
 .sd-injects { display: grid; grid-template-columns: 1fr 1fr; gap: .15rem; margin-top: .2rem; } .sd-grid th.sd-colh .sd-injects .sd-tex-in { margin-top: 0; } .sd-injects .sd-tex-in { font-size: .8em; }
 .sd-inj { display: inline-block; margin-right: .4rem; padding: 0 .25rem; border-radius: 3px; font-size: .75em; line-height: 1.4; vertical-align: .1em; color: var(--c-muted); background: var(--c-sunk); box-shadow: inset 0 0 0 1px var(--c-border); }
 .sd-inj.sd-inj-post { margin: 0 0 0 .4rem; }
@@ -1540,6 +1541,7 @@ tr:hover > .sd-rh .sd-del, .sd-colh:hover .sd-del, .sd-del:focus-visible { opaci
     const order = h('select', { id: `sd-order-${fid}`, onchange: (e: Event) => { s().size_first = (e.target as HTMLSelectElement).value === 'upright'; sync(); } },
       h('option', { value: 'rotated' }, 'the rotated figure (angle, then width)'), h('option', { value: 'upright' }, 'the upright figure (width, then angle)'));
     const unread = h('p', { class: 'sd-note' });
+    const alt = h('textarea', { class: 'sd-alt', rows: 2, 'aria-label': 'alternative text', placeholder: 'What the figure shows', oninput: (e: Event) => { s().alt = (e.target as HTMLTextAreaElement).value; f.refresh(); } });
     const pad = h('input', { type: 'number', step: '1', value: '0', class: 'sd-num', 'aria-label': 'padding in bp', title: 'Space to keep around the content, in bp. A negative value cuts into it.' });
     // crop to content: the box of the pixels that differ from the background, read from the rendered figure
     const fit = h('button', { type: 'button', title: 'Trim the empty margins of the rendered figure', onclick: () => {
@@ -1626,6 +1628,9 @@ tr:hover > .sd-rh .sd-del, .sd-colh:hover .sd-del, .sd-del:focus-visible { opaci
       tintSeg,
       h('div', { class: 'sd-form sd-tint' }, h('label', {}, 'colour'), tintColor, h('label', {}, 'strength'), h('div', { class: 'sd-row', style: 'margin:0;flex-wrap:nowrap' }, strength, strengthOut)),
       tintWhy,
+      // graphicx's `alt` key, where the run defines it: what a tagged PDF reads out in place of the figure
+      ...(ctx.alt ? [h('h4', {}, 'Alternative text ', h('span', { class: 'sd-unit' }, 'alt')), alt,
+        h('p', { class: 'sd-muted' }, ctx.tagging ? 'Tagging is on: screen readers read this out in place of the figure. Without it, the file name is read.' : 'Used once the document turns tagging on (\\DocumentMetadata{tagging=on}).')] : []),
       note, unread,
     );
     // the figure: a raster as it is, a PDF's first page as the host renders it
@@ -1659,6 +1664,7 @@ tr:hover > .sd-rh .sd-del, .sd-colh:hover .sd-del, .sd-del:focus-visible { opaci
       keep.checked = !!st.keepaspectratio;
       clip.checked = !!st.clip;
       order.value = st.size_first ? 'upright' : 'rotated';
+      if (document.activeElement !== alt) (alt as HTMLTextAreaElement).value = st.alt ?? '';
       unread.textContent = st.unread?.length ? `Kept as written, not shown here: ${st.unread.join(', ')}.` : '';
       // tint: the preset the array is, the reason it cannot apply, the preview's filter
       const [mode, rgb] = DECODE.of(st.decode), blocked = tintBlocked();

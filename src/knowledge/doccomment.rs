@@ -49,6 +49,40 @@ pub fn above(source: &str, line: usize) -> Option<DocComment> {
     Some(doc)
 }
 
+/// What the comment block heading `source` (a package's hand-written
+/// header, url.sty's) says of `\name`: a line `% \name{ }   text` whose
+/// usage column a gap of two spaces or a colon ends, with the lines below
+/// indented to its text. The usage, then the text.
+pub fn header(source: &str, name: &str) -> Option<(String, String)> {
+    let block: Vec<&str> = source.lines().map_while(|l| l.trim_start().strip_prefix('%')).collect();
+    let cs = format!("\\{name}");
+    for (i, raw) in block.iter().enumerate() {
+        let line = raw.trim_start_matches('%');
+        let Some(rest) = line.trim_start().strip_prefix(&cs) else { continue };
+        // `\url{ }`, not `\urldef`
+        if rest.starts_with(|c: char| c.is_alphabetic() || c == '@') {
+            continue;
+        }
+        let gap = rest.find("  ").map(|g| (g, rest[g..].len() - rest[g..].trim_start().len()));
+        let colon = rest.find(": ").map(|c| (c, 2));
+        let Some((at, skip)) = [gap, colon].into_iter().flatten().min() else { continue };
+        let column = line.len() - rest.len() + at + skip;
+        let mut text = rest[at + skip..].trim().to_string();
+        for more in &block[i + 1..] {
+            let more = more.trim_start_matches('%');
+            let indent = more.len() - more.trim_start().len();
+            if more.trim().is_empty() || indent < column {
+                break;
+            }
+            text.push(' ');
+            text.push_str(more.trim());
+        }
+        let usage = format!("{cs}{}", rest[..at].trim_end().trim_end_matches(':'));
+        return (!text.is_empty()).then_some((usage, text));
+    }
+    None
+}
+
 /// The comment after code on `line`: `\def\x#1% the year`.
 fn trailing_comment(line: &str) -> Option<&str> {
     let mut escaped = false;
@@ -199,6 +233,20 @@ fn param(line: &str) -> Option<(u8, String)> {
 
 #[cfg(test)]
 mod tests {
+
+    /// url.sty documents its commands in its header's usage table: a name,
+    /// its usage, and text in a column that continues on the lines below.
+    #[test]
+    fn a_header_table_documents_its_commands() {
+        let sty = "% url.sty\n%\n% Usage:    Conditions:\n% \\url{ }   If the argument contains any \"%\",\n%           it can't be used in another command.\n% \\urldef\\xyz\\url{ }\n% \\DeclareUrlCommand\\abc{settings}: makes \\abc{ } like \\url{ }\n\n\\def\\url{}\n% \\Url  not the header\n";
+        let url = header(sty, "url").expect("url");
+        assert_eq!(url.0, "\\url{ }");
+        assert_eq!(url.1, "If the argument contains any \"%\", it can't be used in another command.");
+        assert_eq!(header(sty, "DeclareUrlCommand").map(|h| h.0), Some("\\DeclareUrlCommand\\abc{settings}".into()));
+        // a line without text, and a comment below the header, document nothing
+        assert_eq!(header(sty, "urldef"), None);
+        assert_eq!(header(sty, "Url"), None);
+    }
     use super::*;
 
     #[test]

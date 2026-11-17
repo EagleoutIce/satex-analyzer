@@ -25,6 +25,7 @@ widget       bibliography     citation key
 widget       index            index entry                                 
 widget       theorem          environment name                            
 widget       page             environment the run met                     
+widget       tagging          environment the run met                     
 hover        units            dimen, glue, dimen register, skip register  
 hover        overlay          overlay specification                       
 completion   keys             options, option key, pgf key, declared key  
@@ -252,6 +253,7 @@ A plugin works *fully* in an integration that renders all its features, *partial
 | `overlay` | hover, complete | full | full | full | full | full |
 | `frame` | actions, view, lens | full | full | full | partial | partial |
 | `page` | lens, hover, view | full | full | full | partial | partial |
+| `tagging` | lens, manage | full | full | full | partial | partial |
 | `comment_edit` | reuse | - | - | - | - | - |
 | `whitespace_edit` | reuse | - | - | - | - | - |
 | `typing` | reuse | - | - | - | - | - |

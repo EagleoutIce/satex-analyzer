@@ -628,6 +628,10 @@
   let editor; // { text(), set(text), diagnostics(list), apply(edits), cursor(), select(c), word() }
   let version = 0, synced = 0, saved = 0, analyzedVersion = 0, timer = null, checkStart = 0, retryCompletion = false;
   let typedAt = 0;
+  /** The Playground tab's settings, per viewer: analysis delay (ms), editor font (px), wrap, line numbers, editor theme. */
+  const PLAY = 'satex-playground', PLAY_DEF = { delay: 400, font: 14, wrap: false, numbers: true, theme: 'site' };
+  const play = { ...PLAY_DEF };
+  try { Object.assign(play, JSON.parse(localStorage.getItem(PLAY) ?? '{}')); } catch {}
   function changed() {
     version++;
     typedSincePush = true;
@@ -638,7 +642,7 @@
     // would block completion for seconds, and its findings would be about unfinished text.
     const line = editor.text().split('\n')[editor.position().line] ?? '', before = line.slice(0, editor.position().character);
     dirty = true;
-    timer = setTimeout(sync, /\\[A-Za-z@]*$|\{[^{}\s]*$/.test(before) ? 1500 : 400);
+    timer = setTimeout(sync, /\\[A-Za-z@]*$|\{[^{}\s]*$/.test(before) ? Math.max(1500, play.delay) : play.delay);
     markStale();
     pdfEdited();
     keepDrafts();
@@ -847,10 +851,14 @@
   /** The last hover of each command, by file: shown at once while a run goes on. */
   const keptHovers = new Map();
   /** The command (or key) at offset `col` of `line`: [from, to, name, isCommand]. */
+  /** Between two words (`\item|\begin`) the cursor is on the one it starts, as the server's `word_span`. */
   function wordAt(line, col) {
-    for (const m of line.matchAll(/\\([A-Za-z@]+|.)|[A-Za-z0-9_:.+*-]+/g))
-      if (m.index <= col && col <= m.index + m[0].length) return [m.index, m.index + m[0].length, m[1] ?? m[0], m[0][0] === '\\'];
-    return null;
+    let hit = null;
+    for (const m of line.matchAll(/\\([A-Za-z@]+|.)|[A-Za-z0-9_:.+*-]+/g)) {
+      if (m.index > col) break;
+      if (col <= m.index + m[0].length) { hit = [m.index, m.index + m[0].length, m[1] ?? m[0], m[0][0] === '\\']; if (hit[1] > col) break; }
+    }
+    return hit;
   }
 
   async function codemirror(parent, text) {
@@ -1149,7 +1157,9 @@
         },
       },
     });
-    const theme = new st.Compartment(), lock = new st.Compartment(), lang = new st.Compartment(), setup = new st.Compartment();
+    const theme = new st.Compartment(), lock = new st.Compartment(), lang = new st.Compartment(), setup = new st.Compartment(), prefs = new st.Compartment();
+    // the Playground tab's font, wrap and line numbers
+    const prefsOf = () => [EditorView.theme({ '&.cm-editor': { fontSize: `${play.font}px` }, ...(play.numbers ? {} : { '.cm-lineNumbers': { display: 'none !important' } }) }), play.wrap ? EditorView.lineWrapping : []];
     const ev = new EditorView({
       parent, doc: text,
       extensions: [setup.of(basicSetup), closing, lang.of(/\.bib$/.test(state.file) ? tex.bib : tex.language), language.syntaxHighlighting(tex.highlighter), heatGutter, lint.lintGutter({ tooltipFilter: () => [] }), widgetGutter, lint.linter(null, { tooltipFilter: () => [] }), ac.autocompletion({ override: [complete], activateOnTypingDelay: 40, addToOptions: [{ position: 80, render: (c) => {
@@ -1168,11 +1178,11 @@
         return span;
       } }] }),
         linkField, markField, flashField, swatchField, lensField, linkedField, heatField, mirror, st.Prec.high(closeEnvironment), view.keymap.of([{ key: 'F2', run: () => { renameBox(); return true; } }, { key: 'Shift-F10', run: () => { const c = editor.coords() ?? { left: 40, bottom: 80 }; menuAt(c.left, c.bottom); return true; } }]),
-        EditorView.updateListener.of((u) => { if (u.docChanged) { resolves.clear(); changed(); } else if (u.selectionSet) explainSoon(); if (u.docChanged || u.selectionSet) linkAround(u.view); }), theme.of([]), lock.of([])],
+        EditorView.updateListener.of((u) => { if (u.docChanged) { resolves.clear(); changed(); } else if (u.selectionSet) explainSoon(); if (u.docChanged || u.selectionSet) linkAround(u.view); }), theme.of([]), lock.of([]), prefs.of(prefsOf())],
     });
     ev.dom.satexView = ev; // doc/site/showcase.mjs reads the text and the places through it
-    // the site's light/dark choice (site.js) picks the editor's theme
-    const scheme = () => ev.dispatch({ effects: theme.reconfigure(self.siteDark?.() ? oneDark : []) });
+    // the site's light/dark choice (site.js) picks the editor's theme, unless the Playground tab fixes one
+    const scheme = () => ev.dispatch({ effects: theme.reconfigure((play.theme === 'site' ? self.siteDark?.() : play.theme === 'dark') ? oneDark : []) });
     new MutationObserver(scheme).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
     matchMedia('(prefers-color-scheme: dark)').addEventListener('change', scheme);
     scheme();
@@ -1263,6 +1273,7 @@
     const span = (r) => [at(doc(), r.start), Math.max(at(doc(), r.end), at(doc(), r.start))];
     let holdTimer = 0;
     return {
+      prefs: () => { ev.dispatch({ effects: prefs.reconfigure(prefsOf()) }); scheme(); },
       text: () => doc().toString(),
       // another file's text starts at its top: the last file's scroll position may lie past its end
       // another file: its text without the last one's undo history (an undo never brings another file's text back)
@@ -1337,6 +1348,7 @@
     area.addEventListener('input', changed);
     const pos = () => { const before = area.value.slice(0, area.selectionStart).split('\n'); return { line: before.length - 1, character: before.at(-1).length }; };
     return {
+      prefs: () => { area.style.fontSize = `${play.font}px`; area.wrap = play.wrap ? 'soft' : 'off'; },
       text: () => area.value, set: (t, readOnly = false) => { area.value = t; area.readOnly = readOnly; changed(); }, diagnostics: () => {},
       apply: (edits) => { area.value = edited(area.value, edits); changed(); },
       cursor: () => [area.selectionStart, area.selectionEnd], select: ([a, h] = [0, 0]) => area.setSelectionRange(Math.min(a, h), Math.max(a, h)),
@@ -2782,7 +2794,38 @@
   };
   /** A key's sub-group: a profile's own name, or the second part of a key of three or more. */
   const subOf = (k) => { const p = k.key.split('.'); return p.length >= 3 || (p[0] === 'profiles' && p.length === 2) ? p[1] : null; };
-  /** The Compile tab: this viewer's package sources, kept in the browser. An address without `{name}` is not kept. */
+  /** The Playground tab's rows: `[key, label, about, choices]`, a choice `[value, name]`; no choices is a switch. */
+  const PLAY_ROWS = () => [
+    ['delay', 'Check after typing rests', 'How long the analysis waits after the last key. A command or argument still being typed waits at least 1.5 s.', [[150, '0.15 s'], [400, '0.4 s'], [1000, '1 s'], [2000, '2 s']]],
+    ['auto', 'Compile after edits rest', 'A PDF build once the edits rest this long. The same choice as in the Compile menu.', DELAYS.map(([ms, n]) => [ms, n])],
+    ['font', 'Editor font size', '', [12, 13, 14, 15, 16, 18, 20].map((n) => [n, `${n} px`])],
+    ['wrap', 'Wrap long lines', 'A line longer than the editor goes on below instead of scrolling sideways.'],
+    ['numbers', 'Line numbers', ''],
+    ['theme', 'Editor colors', 'Follow the site, or keep the editor light or dark.', [['site', 'as the site'], ['light', 'light'], ['dark', 'dark']]],
+  ];
+  const playValue = (k) => k === 'auto' ? (pdfAuto.on ? pdfAuto.delay : 0) : play[k];
+  function playSettings() {
+    $('cfg-play-list').innerHTML = PLAY_ROWS().map(([k, label, about, choices]) => {
+      const v = playValue(k), changed = k === 'auto' ? v !== 0 : v !== PLAY_DEF[k];
+      const input = choices ? `<select data-play="${k}" aria-label="${escape(label)}">${choices.map(([c, n]) => `<option value="${escape(String(c))}"${String(c) === String(v) ? ' selected' : ''}>${escape(n)}</option>`).join('')}</select>`
+        : `<input type="checkbox" role="switch" data-play="${k}"${v ? ' checked' : ''} aria-label="${escape(label)}">`;
+      return `<li class="cfg-row${changed ? ' cfg-changed' : ''}"><div class="cfg-what"><span class="cfg-name">${escape(label)}</span>${about ? `<span class="muted cfg-about">${escape(about)}</span>` : ''}</div><label class="${choices ? '' : 'ts-toggle '}cfg-value">${input}</label></li>`;
+    }).join('');
+  }
+  $('cfg-play-list').addEventListener('change', (e) => {
+    const k = e.target.dataset.play;
+    if (!k) return;
+    const v = e.target.type === 'checkbox' ? e.target.checked : /^\d+$/.test(e.target.value) ? +e.target.value : e.target.value;
+    if (k === 'auto') { pdfAuto.on = v > 0; pdfAuto.delay = v || pdfAuto.delay; pdfAutoKeep(); pdfEdited(); }
+    else {
+      play[k] = v;
+      const own = Object.fromEntries(Object.entries(play).filter(([x, y]) => y !== PLAY_DEF[x]));
+      try { if (Object.keys(own).length) localStorage.setItem(PLAY, JSON.stringify(own)); else localStorage.removeItem(PLAY); } catch {}
+      editor?.prefs?.();
+    }
+    playSettings();
+  });
+  /** The Playground tab's TeX files: this viewer's package sources, kept in the browser. An address without `{name}` is not kept. */
   function texSettings() {
     const kept = texKept(), on = $('cfg-tex-on'), hosts = $('cfg-tex-hosts');
     on.checked = !kept.off;
@@ -2801,14 +2844,14 @@
   $('cfg-tex-on').onchange = texSave;
   $('cfg-tex-hosts').oninput = texSave;
   $('cfg-tex-reset').onclick = () => { self.satexStore.set('tex-sources', null); $('cfg-tex-hosts').value = texList().join('\n'); texSave(); };
-  if (!TEX_ON) $('cfg-tabs').querySelector('[data-tab=compile]').hidden = true;
+  if (!TEX_ON) $('cfg-tex').hidden = true;
   async function configShow() {
     const all = withOverrides(await configLoad()), q = $('cfg-search').value.trim().toLowerCase();
     for (const t of $('cfg-tabs').querySelectorAll('[data-tab]')) t.setAttribute('aria-pressed', String(t.dataset.tab === (cfgYaml ? 'yaml' : cfgTab)));
     $('cfg-yaml').hidden = $('cfg-yaml-ed').hidden = true;
     $('cfg-list').hidden = cfgYaml;
-    $('cfg-tex').hidden = cfgYaml || cfgTab !== 'compile';
-    if (!$('cfg-tex').hidden) { $('cfg-list').hidden = $('cfg-filters').hidden = true; $('cfg-search').closest('label').hidden = true; texSettings(); return; }
+    $('cfg-play').hidden = cfgYaml || cfgTab !== 'playground';
+    if (!$('cfg-play').hidden) { $('cfg-list').hidden = $('cfg-filters').hidden = true; $('cfg-search').closest('label').hidden = true; playSettings(); if (TEX_ON) texSettings(); return; }
     $('cfg-search').closest('label').hidden = false;
     if (cfgYaml) {
       const v = await yamlEditor(), box = v ? $('cfg-yaml-ed') : $('cfg-yaml'), text = configYamlOf({ ...yamlDefaults(all), ...configSet });
@@ -3829,7 +3872,7 @@
   }
   /** Forgets every kept view state and reloads; the drafts, the settings and the theme stay. */
   function resetView() {
-    const stay = new Set([DRAFTS, 'satex-config', 'satex-theme', 'satex-download-ok', 'satex-offline']);
+    const stay = new Set([DRAFTS, 'satex-config', 'satex-theme', PLAY, 'satex-download-ok', 'satex-offline']);
     self.satexStore.clear();
     try { for (const k of Object.keys(localStorage)) if (k.startsWith('satex-') && !stay.has(k)) localStorage.removeItem(k); } catch {}
     removeEventListener('pagehide', keepView);
@@ -6283,7 +6326,13 @@
     const q = cacheFilter.value.trim().toLowerCase();
     // a row matches by its kind and name, or by a command it defined in the run (`\textcolor`)
     // a package another one loads matches inside it too (pgf in tikz), its row unfolded
-    const rows = cacheEntries.map((e) => { const l = cacheLabel(e.path); return { e, l, u: usedOf(l[1], l[2]), hit: [], via: [] }; })
+    // one row per kind and name: a document's runs under other settings, a package's other builds join it
+    const merged = new Map();
+    for (const e of cacheEntries) {
+      const l = cacheLabel(e.path), k = `${l[1]}|${l[2]}`, m = merged.get(k);
+      if (m) { m.e.size += e.size; m.e.files.push(e); } else merged.set(k, { e: { ...e, files: [e] }, l });
+    }
+    const rows = [...merged.values()].map(({ e, l }) => ({ e, l, u: usedOf(l[1], l[2]), hit: [], via: [] }))
       .filter((r) => !q || (!q.startsWith('\\') && `${r.l[0]} ${r.l[2]}`.toLowerCase().includes(q)) || (r.hit = namesLike(r.l[1], r.l[2], q)).length
         || (!q.startsWith('\\') && (r.via = r.l[3].filter((n) => n.toLowerCase().includes(q))).length));
     const by = { size: (r) => r.e.size, name: (r) => (r.l[2] || r.l[0]).toLowerCase(), kind: (r) => r.l[0] }[cacheOrder.key];
@@ -6292,10 +6341,10 @@
       if (th.dataset.sort === cacheOrder.key) th.setAttribute('aria-sort', cacheOrder.down ? 'descending' : 'ascending'); else th.removeAttribute('aria-sort');
     }
     const hits = (verb, hit) => hit.length ? ` <span class="muted cache-hit">${verb} ${hit.slice(0, 3).map((n) => `<code>${escape(n.replace(/\.cls$/, ''))}</code>`).join(', ')}${hit.length > 3 ? ` +${hit.length - 3}` : ''}</span>` : '';
-    cacheList.innerHTML = rows.map(({ e, l: [kind, cls, what, needs], u, hit, via }, i, _, more = details(cls, what, needs)) =>
+    cacheList.innerHTML = rows.map(({ e, l: [kind, cls, what, needs], u, hit, via }, i, _, more = details(cls, what, needs, e.files)) =>
       `<tr><td title="${escape(e.path)}">${cacheBadge(cls, kind)}</td>` +
-      `<td>${more ? `<button type="button" class="cache-name" aria-expanded="${via.length > 0}" aria-controls="cache-sub-${i}">${escape(what || kind)}</button>` : `<span class="cache-name">${escape(what || kind)}</span>`}${(cls === 'package' || cls === 'class') && manualPackages().has(what) ? ' <span class="manual" title="the package\'s manual is mined for descriptions">docs</span>' : ''}${exported(cls, what)}${hits('defines', hit)}${hits('loads', via)}${CACHE_NOTES[cls] ? ` <span class="muted cache-hit">${CACHE_NOTES[cls]}</span>` : ''}</td><td class="used">${u[1] || '<span class="use-no" title="not used by the open document">—</span>'}</td><td class="loads">${needs.length ? `<span class="cache-fold" title="it loads ${needs.length}">${needs.length}</span>` : ''}</td>` +
-      `<td class="num">${size(e.size)}</td><td><button type="button" class="small ghost" data-path="${escape(e.path)}" aria-label="drop ${escape(what || kind)}">Drop</button></td></tr>` +
+      `<td>${more ? `<button type="button" class="cache-name" aria-expanded="${via.length > 0}" aria-controls="cache-sub-${i}">${escape(what || kind)}</button>` : `<span class="cache-name">${escape(what || kind)}</span>`}${(cls === 'package' || cls === 'class') && manualPackages().has(what) ? ' <span class="manual" title="the package\'s manual is mined for descriptions">docs</span>' : ''}${exported(cls, what)}${hits('defines', hit)}${hits('loads', via)}</td><td class="used">${u[1] || '<span class="use-no" title="not used by the open document">—</span>'}</td><td class="loads">${needs.length ? `<span class="cache-fold" title="it loads ${needs.length}">${needs.length}</span>` : ''}</td>` +
+      `<td class="num">${size(e.size)}</td><td><button type="button" class="small ghost" data-path="${escape(e.files.map((f) => f.path).join('\n'))}" aria-label="drop ${escape(what || kind)}">Drop</button></td></tr>` +
       (more ? `<tr class="cache-sub" id="cache-sub-${i}"${via.length ? '' : ' hidden'}><td></td><td colspan="5">${more}</td></tr>` : '')).join('') ||
       `<tr><td colspan="6" class="muted">${cacheEntries.length ? 'No match.' : 'Nothing cached yet.'}</td></tr>`;
     // the packages and classes listed, and how many of them have their manual mined
@@ -6372,7 +6421,7 @@
     previews: 'Sprites of TikZ arrow tips, patterns and colors that TeX drew, shown in completion previews.',
     hashes: 'Content hashes SaTeX uses to tell whether a cached package or file changed.',
     facts: 'What the installation is like (TeX Live version, engines), probed once.',
-    document: 'A whole run of one document and its settings, served again while its text, settings and the files it read stay the same.',
+    document: 'Whole runs of the documents, one per text and settings, each served again while its text, settings and the files it read stay the same.',
   };
   const DEFINED = ['public command', 'internal macro', 'environment', 'option', 'register', 'counter', 'length', 'switch', 'public alias', 'internal alias'];
   /** The names a row's class or package (or the kernel) defined in the run that match `q`: containing
@@ -6390,9 +6439,10 @@
     return names.length ? ` ${cards.chipList(names, cards.csChip, 4)}` : '';
   };
   const plural = (n, w) => `${num(n)} ${w}${n === 1 ? '' : /(s|ch)$/.test(w) ? 'es' : 's'}`;
-  /** One row's details: what it defines and loads, and where its documentation is. */
-  function details(cls, what, needs) {
+  /** One row's details: what it is, what it defines and loads, where its documentation is, and its files. */
+  function details(cls, what, needs, files = []) {
     const parts = [];
+    if (CACHE_NOTES[cls]) parts.push(`<span class="muted">${CACHE_NOTES[cls]}</span>`);
     if (cls === 'index' && indexed) {
       parts.push(`${indexed.indexed} files indexed${indexed.message ? ` · ${escape(indexed.message)}` : ''}`);
       parts.push('<span class="muted">The index lets <code>\\input</code> and <code>\\usepackage</code> find files the way kpsewhich does. The number beside a directory is how many files of it the index knows.</span>');
@@ -6408,6 +6458,7 @@
     const docs = cls === 'kernel' ? 'https://texdoc.org/serve/source2e/0' : (cls === 'package' || cls === 'class') ? `https://texdoc.org/pkg/${encodeURIComponent(what)}` : null;
     if (cls === 'package' || cls === 'class') parts.push(manualPackages().has(what) ? '<span class="manual" title="the package\'s manual is mined: its commands are described on hover and in the library">manual information available</span>' : '<span class="muted">no manual information mined</span>');
     if (docs) parts.push(`<a href="${docs}" target="_blank" rel="noopener">documentation ↗</a>`);
+    if (files.length) parts.push(`<span class="muted">${files.length > 1 ? `${plural(files.length, 'file')}: ` : 'file '}${files.map((f) => `<code title="${escape(f.path)}">${escape(f.path.split('/').pop())}</code> ${size(f.size)}`).join(', ')}</span>`);
     return parts.map((p) => `<div>${p}</div>`).join('');
   }
   // a worker restarted meanwhile fails the question: the next run asks again
@@ -6436,7 +6487,7 @@
       return;
     }
     const b = e.target.closest('button[data-path]');
-    if (b) uncache([b.dataset.path]);
+    if (b) uncache(b.dataset.path.split('\n'));
   };
   $('cache-clear').onclick = async () => uncache((await ask({ type: 'caches' })).entries.map((e) => e.path));
 
@@ -7287,6 +7338,7 @@
     } catch (e) {
       console.warn('CodeMirror did not load, the editor is a textarea', e);
       editor = textarea($('play-source'));
+      editor.prefs();
     }
     button.textContent = 'Run';
     button.disabled = false;

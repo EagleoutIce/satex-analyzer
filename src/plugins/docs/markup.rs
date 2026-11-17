@@ -65,6 +65,16 @@ pub fn group(s: &str, open: char, close: char) -> Option<(&str, &str)> {
     None
 }
 
+/// A macro's argument as TeX reads it: a braced group, or one control
+/// sequence unbraced (`\DescribeMacro\see`); then the text after it.
+pub fn argument(s: &str) -> Option<(&str, &str)> {
+    let t = s.trim_start();
+    let Some(cs) = t.strip_prefix('\\') else { return group(s, '{', '}') };
+    let len = cs.chars().take_while(|c| c.is_alphabetic() || *c == '@').map(char::len_utf8).sum::<usize>();
+    let len = if len == 0 { cs.chars().next()?.len_utf8() } else { len };
+    Some(t.split_at(len + 1))
+}
+
 /// The names of `\a, \b`, without backslashes.
 pub fn names(list: &str) -> Vec<String> {
     list.split(',').map(|n| n.trim().trim_start_matches('\\').to_string()).filter(|n| !n.is_empty()).collect()
@@ -129,10 +139,11 @@ fn command<'a>(rest: &'a str, code: bool, out: &mut String) -> &'a str {
             out.push_str(&meta(a));
             rest
         }
-        "marg" | "Arg" | "oarg" | "parg" | "sarg" => {
+        // oberdiek's `declcs`: `\M{x}`, `\O{x}`
+        "marg" | "Arg" | "oarg" | "parg" | "sarg" | "M" | "O" => {
             let (a, rest) = arg(rest);
             let (open, close) = match name {
-                "oarg" => ('[', ']'),
+                "oarg" | "O" => ('[', ']'),
                 "parg" => ('(', ')'),
                 // beamer's guide: an overlay specification
                 "sarg" => ('<', '>'),
@@ -252,7 +263,8 @@ pub fn sentence(text: &str) -> Option<String> {
 /// `\DescribeMacro{\x}`): its first sentence, past stacked anchors and,
 /// for `usage_of`, the usage lines of that name.
 pub fn description(after: &str, usage_of: Option<&str>) -> Option<String> {
-    const META: [&str; 6] = ["\\changes", "\\begin{macro}", "\\Special", "\\Describe", "\\label", "\\index"];
+    // `\end{definition}` closes the environment an anchor stood in (datetime2's `\begin{definition}[\DescribeMacro\x]`)
+    const META: [&str; 7] = ["\\changes", "\\begin{macro}", "\\Special", "\\Describe", "\\label", "\\index", "\\end{"];
     const LEAD: usize = 6;
     let meta = |line: &str| META.iter().any(|m| line.starts_with(m));
     // Past the lead: metadata with all its arguments, however many lines
@@ -272,6 +284,12 @@ pub fn description(after: &str, usage_of: Option<&str>) -> Option<String> {
             let mut args = Vec::new();
             while let Some((a, t)) = group(tail, '{', '}').or_else(|| group(tail, '[', ']')) {
                 args.push(a);
+                tail = t;
+            }
+            // `\DescribeMacro\emforce`: its argument unbraced
+            if args.is_empty()
+                && let Some((_, t)) = argument(tail).filter(|_| tail.starts_with('\\'))
+            {
                 tail = t;
             }
             if line.starts_with("\\begin{macro}") {

@@ -663,6 +663,7 @@ pub struct TypePlugins {
     pub overlay: Switch,
     pub frame: Switch,
     pub page: Switch,
+    pub tagging: Switch,
     pub comment_edit: Switch,
     pub whitespace_edit: Switch,
     pub typing: TypingPlugin,
@@ -898,6 +899,12 @@ pub struct DocsConfig {
     pub usage_environments: Vec<String>,
     /// The `l3doc` environments that document a function or variable.
     pub l3doc_environments: Vec<String>,
+    /// The environments that declare a command by its name without the backslash, its arguments inside, `\begin{declcs}{x} \M{a}\end{declcs}`.
+    pub declare_environments: Vec<String>,
+    /// The headings and list items (without their backslash) whose label is one command they document, `\subsection{\cs{x}}`.
+    pub labels: Vec<String>,
+    /// The manuals of the engine's primitives, first first: folders of the TeX installation's root.
+    pub engine_manuals: Vec<String>,
     /// Also read the package's own `.sty` comments. Not supported yet: it changes nothing.
     pub inline: bool,
 }
@@ -913,9 +920,12 @@ impl Default for DocsConfig {
             depth: 3,
             usage_lines: 12,
             describe: list(&["DescribeMacro", "DescribeEnv", "cmditem"]),
-            usage_environments: list(&["command", "environment", "key"]),
+            usage_environments: list(&["command", "environment", "key", "stylekey"]),
             ltxdoc_environments: list(&["macro"]),
             l3doc_environments: list(&["function", "variable"]),
+            declare_environments: list(&["declcs"]),
+            labels: list(&["item", "section", "subsection", "subsubsection"]),
+            engine_manuals: list(&["doc/pdftex/manual", "doc/etex/base", "doc/plain/texbytopic"]),
             inline: false,
         }
     }

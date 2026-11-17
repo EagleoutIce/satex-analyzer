@@ -284,11 +284,13 @@ pub enum Query {
     Previews,
     /// The editor's type plugins, their types and features ([`crate::lsp::plugins`]).
     TypePlugins,
+    /// PDF tagging as `\DocumentMetadata` set it up ([`crate::analysis::tagging`]).
+    Tagging,
 }
 
 impl Query {
     /// Sorted by name: `--list`, the wiki and the playground show this order.
-    pub const ALL: [(&'static str, Query); 22] = [
+    pub const ALL: [(&'static str, Query); 23] = [
         ("calls", Query::Calls),
         ("catcodes", Query::Catcodes),
         ("definitions", Query::Definitions),
@@ -308,6 +310,7 @@ impl Query {
         ("project", Query::Project),
         ("recursion", Query::Recursion),
         ("side-effects", Query::SideEffects),
+        ("tagging", Query::Tagging),
         ("trace", Query::Trace),
         ("type-plugins", Query::TypePlugins),
         ("typeset", Query::Typeset),
@@ -346,6 +349,7 @@ impl Query {
             Query::Typeset => "the text the document typesets, one row per paragraph",
             Query::Previews => "arrow tips and patterns the run declared, drawn by TeX",
             Query::TypePlugins => "the editor's type plugins: the types each triggers on and its features",
+            Query::Tagging => "PDF tagging: whether it is on, the standard, language, title and each package's status",
         }
     }
 }
@@ -2007,6 +2011,7 @@ pub fn run(analysis: &Analysis, query: Query, filter: &Filter) -> Vec<Record> {
         // for: `cmd::query` calls `options` directly.
         Query::Options => Vec::new(),
         Query::Typeset => typeset(analysis),
+        Query::Tagging => tagging(analysis),
         Query::Previews => crate::queries::preview::sheet(analysis)
             .into_iter()
             .map(|(name, svg)| Record::from_iter([("name".to_string(), json!(name)), ("svg".to_string(), json!(svg))]))
@@ -2417,6 +2422,25 @@ fn distribution(analysis: &Analysis) -> Vec<Record> {
         record.insert("count".into(), json!(count));
         out.push(record);
     }
+    out
+}
+
+/// One row per fact of [`crate::analysis::tagging`], then one per loaded file the status list
+/// names: nothing when the run never called `\DocumentMetadata`.
+fn tagging(analysis: &Analysis) -> Vec<Record> {
+    let Some(t) = crate::analysis::tagging::of(analysis) else { return Vec::new() };
+    let row = |kind: &str, name: Json, detail: Json| {
+        Record::from_iter([("kind".into(), json!(kind)), ("name".into(), name), ("detail".into(), detail)])
+    };
+    let val = |v: &crate::analysis::tagging::Val| json!(v);
+    let mut out = vec![
+        row("tagging", val(&t.tagging), json!(analysis.plugins.engine.as_str())),
+        row("standard", json!(t.standards), Json::Null),
+        row("lang", val(&t.lang), json!({ "set": t.lang_set })),
+        row("title", val(&t.title), Json::Null),
+        row("pdfversion", val(&t.pdfversion), Json::Null),
+    ];
+    out.extend(t.statuses.iter().map(|s| row("status", json!(s.file), json!(s.meaning()))));
     out
 }
 
@@ -6302,7 +6326,7 @@ fn excerpt(text: &str) -> String {
     }
 }
 
-/// What the documentation of each package and class the run read says
+/// What the documentation of each package the run read a file of says
 /// about its commands ([`crate::plugins::docs`]): a record per entry, `dir`
 /// the documentation directory mined for `package_file`. The playground's build keeps them as
 /// `.satex-docs` files there, for a bundle without the sources.
@@ -6312,7 +6336,8 @@ pub fn docs(analysis: &Analysis) -> Vec<Record> {
     let mut out = Vec::new();
     for file in &analysis.files {
         let path = Path::new(&file.path);
-        if !path.extension().is_some_and(|e| e == "sty" || e == "cls") {
+        // a package's every file, pgf's `.code.tex` too, but no project file
+        if !analysis.distribution.roots.iter().any(|r| path.starts_with(r)) {
             continue;
         }
         let Some(dirs) = Dirs::of(&analysis.settings.docs, path).filter(|d| seen.insert(d.clone())) else { continue };

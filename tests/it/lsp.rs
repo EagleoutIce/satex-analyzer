@@ -4713,6 +4713,25 @@ fn a_hover_shows_at_most_four_lines_of_a_body() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// A cursor on the `\` of a command is on that command, also right after
+/// another one (`\aa|\bb`): the hover is of `\bb`. It was of `\aa`,
+/// whose match ends where the cursor stands, so the card left the command.
+#[test]
+fn a_cursor_on_the_backslash_is_on_its_command() {
+    let catcodes = "\\catcode`\\{=1 \\catcode`\\}=2 ";
+    let text = format!("{catcodes}\\def\\aa{{first}}\\def\\bb{{second}}\n\\aa\\bb\n");
+    let (mut server, uri, _, dir) = open_unsaved("hover-backslash", &text);
+    let at = "\\aa".len();
+    let id = server.request(
+        "textDocument/hover",
+        json!({ "textDocument": { "uri": uri }, "position": { "line": 1, "character": at } }),
+    );
+    let hover = server.response(id)["result"]["contents"]["value"].as_str().unwrap_or_default().to_string();
+    assert!(hover.contains("bb") && !hover.contains("\\aa"), "{hover}");
+    server.shutdown();
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// Applies the WorkspaceEdit `edit` (with `${name}` templates filled from `vars`) to `text`,
 /// the file `uri`: what the view renderer does.
 fn applied(text: &str, uri: &str, edit: &Value, vars: &[(&str, &str)]) -> String {

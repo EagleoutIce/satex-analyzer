@@ -24,6 +24,7 @@ Every rule, with a link to its explanation below. The shape gives the severity: 
 | C007 | [`caused-library-error`](#caused-library-error) | <span class="sev sev-error" title="default: error">◆</span> <span class="cat cat-correctness">correctness</span> | — | — | the document makes package code raise a TeX error | — |
 | C046 | [`invalid-directive`](#invalid-directive) | <span class="sev sev-error" title="default: error">◆</span> <span class="cat cat-correctness">correctness</span> | — | — | a `%\satex@` directive cannot be read | — |
 | C008 | [`math-still-open`](#math-still-open) | <span class="sev sev-error" title="default: error">◆</span> <span class="cat cat-correctness">correctness</span> | — | — | the run is still in math mode where the text ends | <a class="from" href="Chktex-Coverage" title="follows chktex warning 16">chktex 16</a> |
+| C055 | [`metadata-after-class`](#metadata-after-class) | <span class="sev sev-error" title="default: error">◆</span> <span class="cat cat-correctness">correctness</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> | `\DocumentMetadata` comes after `\documentclass` | — |
 | C047 | [`missing-end`](#missing-end) | <span class="sev sev-error" title="default: error">◆</span> <span class="cat cat-correctness">correctness</span> | — | <span class="fix fix-safe" title="safe: the fix keeps the document's meaning, --fix applies it">S</span> | the document ends without `\bye` or `\end{document}` | — |
 | C009 | [`missing-graphic`](#missing-graphic) | <span class="sev sev-error" title="default: error">◆</span> <span class="cat cat-correctness">correctness</span> | — | — | an included image is not there for this output target | — |
 | C010 | [`new-redefines`](#new-redefines) | <span class="sev sev-error" title="default: error">◆</span> <span class="cat cat-correctness">correctness</span> | — | — | a `\new…` declaration silently redefines an existing command | — |
@@ -48,10 +49,15 @@ Every rule, with a link to its explanation below. The shape gives the severity: 
 | C026 | [`expl-syntax-left-on`](#expl-syntax-left-on) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | — | — | `\ExplSyntaxOn` is never turned off | — |
 | C027 | [`expl3-constant-set`](#expl3-constant-set) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | — | — | an expl3 constant is set after it was declared | — |
 | C028 | [`expl3-signature-mismatch`](#expl3-signature-mismatch) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | — | — | an expl3 function takes other arguments than its name says | — |
+| C057 | [`graphic-without-alt`](#graphic-without-alt) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | — | — | tagging is on, and a graphic has no alternative text | — |
 | C029 | [`ignored-verbatim-tail`](#ignored-verbatim-tail) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> | text stands on the line that closes a verbatim body and never reaches the page | <a class="from" href="Chktex-Coverage" title="follows chktex warning 31">chktex 31</a> |
 | C030 | [`math-script-braces`](#math-script-braces) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | — | <span class="fix fix-safe" title="safe: the fix keeps the document's meaning, --fix applies it">S</span> | `^` and `_` take one token, so what follows needs braces | <a class="from" href="Chktex-Coverage" title="follows chktex warning 3, 25">chktex 3, 25</a> |
 | C031 | [`missing-dependency`](#missing-dependency) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | — | <span class="fix fix-safe" title="safe: the fix keeps the document's meaning, --fix applies it">S</span> | a TeX Live package the run reads from is not in the dependency file | — |
+| C058 | [`pdfua-without-title`](#pdfua-without-title) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | — | <span class="fix fix-safe" title="safe: the fix keeps the document's meaning, --fix applies it">S</span> | PDF/UA is claimed, but the PDF gets no title | — |
 | C054 | [`reference-name-mismatch`](#reference-name-mismatch) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> | the name before a `\ref` is another kind than the label's | — |
+| C056 | [`tagging-incompatible-package`](#tagging-incompatible-package) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | — | — | tagging is on, but a package or class loaded is incompatible with it | — |
+| C060 | [`tagging-unsupported-engine`](#tagging-unsupported-engine) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | <span class="eng" title="only under xetex, tex">xetex, tex</span> | — | tagging is on under an engine the tagging code does not support | — |
+| C059 | [`tagging-without-language`](#tagging-without-language) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | — | <span class="fix fix-safe" title="safe: the fix keeps the document's meaning, --fix applies it">S</span> | tagging is on, but `\DocumentMetadata` names no language | — |
 | C032 | [`unbalanced-brackets`](#unbalanced-brackets) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | — | — | a file sets more of one bracket than of its partner | <a class="from" href="Chktex-Coverage" title="follows chktex warning 17">chktex 17</a> |
 | C033 | [`unbalanced-color-stack`](#unbalanced-color-stack) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | <span class="eng" title="only under pdftex, luatex">pdftex, luatex</span> | — | a `\pdfcolorstack` push is never popped, or a pop has nothing to pop | — |
 | C034 | [`unbalanced-pdf-content`](#unbalanced-pdf-content) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | <span class="eng" title="only under pdftex, luatex, xetex">pdftex, luatex, xetex</span> | — | a PDF literal opens marked content or a graphics state that is never closed | — |
@@ -127,6 +133,7 @@ Every rule, with a link to its explanation below. The shape gives the severity: 
 | S042 | [`quote-punctuation`](#quote-punctuation) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-style">style</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> | punctuation stands inside the closing quotation mark | <a class="from" href="Chktex-Coverage" title="follows chktex warning 38">chktex 38</a> |
 | S043 | [`stray-space`](#stray-space) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-style">style</span> | — | <span class="fix fix-safe" title="safe: the fix keeps the document's meaning, --fix applies it">S</span> | a macro body picked up a space from an unescaped line end | — |
 | S044 | [`table-rules`](#table-rules) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-style">style</span> | — | — | a table is ruled with vertical rules or `\hline` | — |
+| S065 | [`tagged-math-without-mathml`](#tagged-math-without-mathml) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-style">style</span> | <span class="eng" title="only under pdftex">pdftex</span> | — | PDF/UA-2 under pdfLaTeX: formulas get no MathML | — |
 | S055 | [`uncited-bibliography-entry`](#uncited-bibliography-entry) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-style">style</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> | a database entry is never cited | — |
 | S045 | [`unit-in-cells`](#unit-in-cells) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-style">style</span> | — | — | every number of a table column carries the same unit | — |
 | S046 | [`unreferenced-numbered-display`](#unreferenced-numbered-display) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-style">style</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> | a display that stepped a counter is never referenced, so its number is spent for nothing | — |
@@ -214,10 +221,11 @@ A finding's `fix` says what to do. Where that is mechanical it carries the edits
 `S` marks a safe fix, `U` an unsafe one. A rule with both has findings of each kind: the fix is safe where it cannot change what the document means and unsafe where it might. Each finding names its own kind.
 
 <div class="fold">
-<h3 class="fold-head">68 rules with quick fixes</h3>
+<h3 class="fold-head">71 rules with quick fixes</h3>
 
 * C001 [`already-defined`](#already-defined) <span class="fix fix-safe" title="safe: the fix keeps the document's meaning, --fix applies it">S</span> <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> `\newcommand` redefines an existing name
 * C002 [`bibtex-command-under-biblatex`](#bibtex-command-under-biblatex) <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> a BibTeX command biblatex replaces stops the run
+* C055 [`metadata-after-class`](#metadata-after-class) <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> `\DocumentMetadata` comes after `\documentclass`
 * C047 [`missing-end`](#missing-end) <span class="fix fix-safe" title="safe: the fix keeps the document's meaning, --fix applies it">S</span> the document ends without `\bye` or `\end{document}`
 * C011 [`not-defined`](#not-defined) <span class="fix fix-safe" title="safe: the fix keeps the document's meaning, --fix applies it">S</span> `\renewcommand` targets a name that does not exist
 * C012 [`option-clash`](#option-clash) <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> a package is loaded twice with different options
@@ -230,7 +238,9 @@ A finding's `fix` says what to do. Where that is mechanical it carries the edits
 * C029 [`ignored-verbatim-tail`](#ignored-verbatim-tail) <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> text stands on the line that closes a verbatim body and never reaches the page
 * C030 [`math-script-braces`](#math-script-braces) <span class="fix fix-safe" title="safe: the fix keeps the document's meaning, --fix applies it">S</span> `^` and `_` take one token, so what follows needs braces
 * C031 [`missing-dependency`](#missing-dependency) <span class="fix fix-safe" title="safe: the fix keeps the document's meaning, --fix applies it">S</span> a TeX Live package the run reads from is not in the dependency file
+* C058 [`pdfua-without-title`](#pdfua-without-title) <span class="fix fix-safe" title="safe: the fix keeps the document's meaning, --fix applies it">S</span> PDF/UA is claimed, but the PDF gets no title
 * C054 [`reference-name-mismatch`](#reference-name-mismatch) <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> the name before a `\ref` is another kind than the label's
+* C059 [`tagging-without-language`](#tagging-without-language) <span class="fix fix-safe" title="safe: the fix keeps the document's meaning, --fix applies it">S</span> tagging is on, but `\DocumentMetadata` names no language
 * C035 [`undefined-citation`](#undefined-citation) <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> a citation names a key no bibliography entry declares
 * C048 [`undefined-cref-format`](#undefined-cref-format) <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> cleveref has no name for a label's type, so `\cref` prints `??`
 * C042 [`unintended-escape`](#unintended-escape) <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> a command is followed by an escaped punctuation mark, which is another command
@@ -292,7 +302,7 @@ A finding's `fix` says what to do. Where that is mechanical it carries the edits
 One group per category, each with its first rules. A group's button shows the rest.
 
 <div class="fold" id="category-correctness">
-<h3 class="fold-head"><b>correctness</b> (54 rules)</h3>
+<h3 class="fold-head"><b>correctness</b> (60 rules)</h3>
 
 ### already-defined
 
@@ -411,6 +421,18 @@ The rule reports what the interpreter already saw: the `missing-dollar` diagnost
 Fix by closing the formula.
 
 See [chktex 16](https://www.nongnu.org/chktex/), [tex.web § 1047](https://github.com/TeX-Live/texlive-source/blob/dce038dd1bd98fac739254da4a2066c8347cdf6c/texk/web2c/tex.web#L20410).
+
+### metadata-after-class
+
+<p class="badges"><code class="num" title="rule number">C055</code> <span class="sev sev-error" title="default: error">default: error</span> <span class="cat cat-correctness">correctness</span> <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span></p>
+
+**`\DocumentMetadata` comes after `\documentclass`**
+
+`\DocumentMetadata` sets up the PDF management and tagging code before anything else is loaded, so it has to be the first command of the document. After `\documentclass` it raises an error, and none of its keys take effect: no tagging, no PDF standard, no language. A second call after a first one before the class is fine: it only sets more keys.
+
+Fix by moving the call above `\documentclass`.
+
+See [latex-lab § documentmetadata-support](https://ctan.org/pkg/latex-lab).
 
 ### missing-end
 
@@ -703,6 +725,18 @@ Fix by renaming the function to the signature it has, or its parameter text.
 
 See [interface3 § Naming conventions](https://ctan.org/pkg/l3kernel).
 
+### graphic-without-alt
+
+<p class="badges"><code class="num" title="rule number">C057</code> <span class="sev sev-warning" title="default: warning">default: warning</span> <span class="cat cat-correctness">correctness</span></p>
+
+**tagging is on, and a graphic has no alternative text**
+
+With tagging on, every `\includegraphics` becomes a `Figure` structure element, which needs alternative text (PDF/UA, ISO 14289-1 [§§ 7](https://github.com/TeX-Live/texlive-source/blob/dce038dd1bd98fac739254da4a2066c8347cdf6c/texk/web2c/tex.web#L290), [3](https://github.com/TeX-Live/texlive-source/blob/dce038dd1bd98fac739254da4a2066c8347cdf6c/texk/web2c/tex.web#L195)). Without `alt=`, latex-lab warns and uses the file name instead, which a screen reader then reads out. A purely decorative graphic is marked `artifact` instead, and `actualtext=` stands for a graphic that shows text.
+
+The rule reads the keys of the call as written. A call whose options come from a macro is left alone. There is no automatic fix: only the author knows what the graphic shows. The image dialog has a field for it.
+
+See [latex-lab § latex-lab-graphic](https://ctan.org/pkg/latex-lab), [Matterhorn Protocol § 13](https://pdfa.org/resource/the-matterhorn-protocol/).
+
 ### ignored-verbatim-tail
 
 <p class="badges"><code class="num" title="rule number">C029</code> <span class="sev sev-warning" title="default: warning">default: warning</span> <span class="cat cat-correctness">correctness</span> <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> <a class="from" href="Chktex-Coverage" title="follows chktex warning 31">chktex 31</a></p>
@@ -741,6 +775,18 @@ depp names the TeX Live package of every file a run reads by where it sits in th
 
 Fix by adding the package to the dependency file, or by rerunning depp.
 
+### pdfua-without-title
+
+<p class="badges"><code class="num" title="rule number">C058</code> <span class="sev sev-warning" title="default: warning">default: warning</span> <span class="cat cat-correctness">correctness</span> <span class="fix fix-safe" title="safe: the fix keeps the document's meaning, --fix applies it">S</span></p>
+
+**PDF/UA is claimed, but the PDF gets no title**
+
+PDF/UA requires a document title in the XMP metadata (`dc:title`), shown by the viewer in place of the file name. pdfmanagement writes it from the document property `hyperref/pdftitle` only: `\title{…}` alone does not set it. The run ended with that property empty.
+
+Fix with `\hypersetup{pdftitle={…}}`, or, where latex-lab's title code is loaded, with `\title[pdftitle={…}]{…}`: the fix writes the latter from the title as the run rendered it.
+
+See [Matterhorn Protocol § 06](https://pdfa.org/resource/the-matterhorn-protocol/), [latex-lab § latex-lab-title](https://ctan.org/pkg/latex-lab).
+
 ### reference-name-mismatch
 
 <p class="badges"><code class="num" title="rule number">C054</code> <span class="sev sev-warning" title="default: warning">default: warning</span> <span class="cat cat-correctness">correctness</span> <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span></p>
@@ -752,6 +798,42 @@ Fix by adding the package to the dependency file, or by rerunning depp.
 Fix by writing the label's own name, or `\Cref`.
 
 See [cleveref § 2](https://ctan.org/pkg/cleveref).
+
+### tagging-incompatible-package
+
+<p class="badges"><code class="num" title="rule number">C056</code> <span class="sev sev-warning" title="default: warning">default: warning</span> <span class="cat cat-correctness">correctness</span></p>
+
+**tagging is on, but a package or class loaded is incompatible with it**
+
+The LaTeX tagging project keeps a status for each package and class, and TeX Live ships it as `latex-tagging-status.ltx` (what `\DocumentMetadata{check-tagging-status}` reports from). satex runs that file and looks up every file the run loaded. A file marked *currently incompatible* or *no support* breaks the structure tree or the tagged content in ways the run does not report: the PDF may fail validation, or read wrongly in a screen reader.
+
+Fix by replacing the package (the status page names alternatives), or by switching tagging off until it is supported.
+
+See [LaTeX tagging project § tagging-status](https://latex3.github.io/tagging-project/).
+
+### tagging-unsupported-engine
+
+<p class="badges"><code class="num" title="rule number">C060</code> <span class="sev sev-warning" title="default: warning">default: warning</span> <span class="cat cat-correctness">correctness</span> <span class="eng" title="only under xetex, tex">xetex, tex</span></p>
+
+**tagging is on under an engine the tagging code does not support**
+
+The tagging code supports pdfLaTeX and LuaLaTeX. Under XeLaTeX (and other DVI-based routes) tagpdf cannot mark interword spaces as real space characters, so text extracted from the PDF runs together, and the structure code is not tested there.
+
+Fix by compiling with LuaLaTeX, which the tagging project recommends, or pdfLaTeX.
+
+See [LaTeX tagging project § usage-instructions](https://latex3.github.io/tagging-project/).
+
+### tagging-without-language
+
+<p class="badges"><code class="num" title="rule number">C059</code> <span class="sev sev-warning" title="default: warning">default: warning</span> <span class="cat cat-correctness">correctness</span> <span class="fix fix-safe" title="safe: the fix keeps the document's meaning, --fix applies it">S</span></p>
+
+**tagging is on, but `\DocumentMetadata` names no language**
+
+A tagged PDF names its natural language in the catalog's `/Lang`, which screen readers use to pick a voice (PDF/UA, ISO 14289-1 [§§ 7](https://github.com/TeX-Live/texlive-source/blob/dce038dd1bd98fac739254da4a2066c8347cdf6c/texk/web2c/tex.web#L290), [2](https://github.com/TeX-Live/texlive-source/blob/dce038dd1bd98fac739254da4a2066c8347cdf6c/texk/web2c/tex.web#L131)). `\DocumentMetadata{lang=…}` sets it. Without the key, LaTeX guesses at `\begin{document}` from babel's main language, or `en` without babel, and warns (`lang-missing`). The guess is wrong for a document in another language that does not load babel.
+
+The fix writes the language LaTeX guessed, which changes nothing in the PDF and silences the warning: check that it is the right one.
+
+See [Matterhorn Protocol § 11](https://pdfa.org/resource/the-matterhorn-protocol/), [latex-lab § documentmetadata-support](https://ctan.org/pkg/latex-lab).
 
 ### unbalanced-brackets
 
@@ -981,7 +1063,7 @@ See [pdftex § -shell-escape](https://ctan.org/pkg/pdftex).
 </div>
 
 <div class="fold" id="category-style">
-<h3 class="fold-head"><b>style</b> (64 rules)</h3>
+<h3 class="fold-head"><b>style</b> (65 rules)</h3>
 
 ### accent-on-dotted-letter
 
@@ -1724,6 +1806,18 @@ See [tex.web § 347](https://github.com/TeX-Live/texlive-source/blob/dce038dd1bd
 [booktabs](https://ctan.org/pkg/booktabs) gives a table three rules of different weights, `\toprule`, `\midrule` and `\bottomrule`, with space around them, and asks for no vertical rules at all ([§ 2](https://github.com/TeX-Live/texlive-source/blob/dce038dd1bd98fac739254da4a2066c8347cdf6c/texk/web2c/tex.web#L131) of its manual): the columns are separated by their space, and `\hline` sets every rule alike and too close to the text. A table of fewer rows than `lints.table-rules.rows` (3) is left alone.
 
 See [booktabs § 2](https://ctan.org/pkg/booktabs).
+
+### tagged-math-without-mathml
+
+<p class="badges"><code class="num" title="rule number">S065</code> <span class="sev sev-info" title="default: info">default: info</span> <span class="cat cat-style">style</span> <span class="eng" title="only under pdftex">pdftex</span></p>
+
+**PDF/UA-2 under pdfLaTeX: formulas get no MathML**
+
+Under LuaLaTeX the tagging code turns each formula into MathML (luamml). pdfLaTeX cannot: it only attaches MathML it reads from `<jobname>-mathml.html`, and the run looked for that file and found none. The formulas are then tagged with their LaTeX source as alternative text, which PDF/UA-2 accepts less well than MathML.
+
+Fix by compiling with LuaLaTeX, or by making the MathML file once with a LuaLaTeX run (or `\tagpdfsetup{math/mathml/write-dummy}` and filling it in).
+
+See [latex-lab § latex-lab-math](https://ctan.org/pkg/latex-lab).
 
 ### uncited-bibliography-entry
 

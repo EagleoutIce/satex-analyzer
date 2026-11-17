@@ -984,7 +984,8 @@ def manuals(satex, work, tables, packages, offered, records):
         by_file.setdefault(str(Path(r.pop("package_file")).resolve()), {}).setdefault(r.pop("dir"), {})[r["name"]] = r
     documented = set()
     for files in [*tables, *(f for _, _, f, _ in packages)]:
-        for held in [p for p in files if p.startswith("/texmf.bundle/") and p.endswith((".sty", ".cls"))]:
+        # any file of a package, pgf's `.code.tex` too: the first of each documentation directory carries its records
+        for held in [p for p in files if p.startswith("/texmf.bundle/")]:
             native = str(dist / held.removeprefix("/texmf.bundle/"))
             for d, rows in by_file.get(native, {}).items():
                 if Path(d).resolve().is_relative_to(dist):

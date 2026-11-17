@@ -55,7 +55,7 @@ plugins: 48 in 11 kinds
   build system        5  latexmk, make, tectonic, arara, l3build
   tools               7  biber, bibtex, makeindex, xindy, makeglossaries, dvips, ps2pdf
   magic comments      3  % !TeX, % !BIB, % arara:
-… 17 more lines omitted
+… 18 more lines omitted
 ```
 
 <details>
@@ -229,6 +229,7 @@ error     correctness  C006    build-shell-escape-missing        the document ru
 error     correctness  C007    caused-library-error              the document makes package code raise a TeX error      
 error     correctness  C046    invalid-directive                 a `%\satex@` directive cannot be read                  
 error     correctness  C008    math-still-open                   the run is still in math mode where the text ends      
+error     correctness  C055    metadata-after-class              `\DocumentMetadata` comes after `\documentclass`       
 error     correctness  C047    missing-end                       the document ends without `\bye` or `\end{document}`   
 error     correctness  C009    missing-graphic                   an included image is not there for this output target  
 error     correctness  C010    new-redefines                     a `\new…` declaration silently redefines an existing…  
@@ -253,10 +254,15 @@ warning   correctness  C025    environment-mismatch              `\end` names an
 warning   correctness  C026    expl-syntax-left-on               `\ExplSyntaxOn` is never turned off                    
 warning   correctness  C027    expl3-constant-set                an expl3 constant is set after it was declared         
 warning   correctness  C028    expl3-signature-mismatch          an expl3 function takes other arguments than its nam…  
+warning   correctness  C057    graphic-without-alt               tagging is on, and a graphic has no alternative text   
 warning   correctness  C029    ignored-verbatim-tail             text stands on the line that closes a verbatim body …  
 warning   correctness  C030    math-script-braces                `^` and `_` take one token, so what follows needs br…  
 warning   correctness  C031    missing-dependency                a TeX Live package the run reads from is not in the …  
+warning   correctness  C058    pdfua-without-title               PDF/UA is claimed, but the PDF gets no title           
 warning   correctness  C054    reference-name-mismatch           the name before a `\ref` is another kind than the la…  
+warning   correctness  C056    tagging-incompatible-package      tagging is on, but a package or class loaded is inco…  
+warning   correctness  C060    tagging-unsupported-engine        tagging is on under an engine the tagging code does …  
+warning   correctness  C059    tagging-without-language          tagging is on, but `\DocumentMetadata` names no lang…  
 warning   correctness  C032    unbalanced-brackets               a file sets more of one bracket than of its partner    
 warning   correctness  C033    unbalanced-color-stack            a `\pdfcolorstack` push is never popped, or a pop ha…  
 warning   correctness  C034    unbalanced-pdf-content            a PDF literal opens marked content or a graphics sta…  
@@ -332,6 +338,7 @@ info      style        S041    quote-ligature                    three quotation
 info      style        S042    quote-punctuation                 punctuation stands inside the closing quotation mark   
 info      style        S043    stray-space                       a macro body picked up a space from an unescaped lin…  
 info      style        S044    table-rules                       a table is ruled with vertical rules or `\hline`       
+info      style        S065    tagged-math-without-mathml        PDF/UA-2 under pdfLaTeX: formulas get no MathML        
 info      style        S055    uncited-bibliography-entry        a database entry is never cited                        
 info      style        S045    unit-in-cells                     every number of a table column carries the same unit   
 info      style        S046    unreferenced-numbered-display     a display that stepped a counter is never referenced…  
@@ -619,6 +626,7 @@ produces
 project           
 recursion         
 side-effects      
+tagging           
 trace             
 type-plugins      
 typeset           

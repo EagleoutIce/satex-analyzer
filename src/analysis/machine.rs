@@ -481,6 +481,9 @@ pub struct Analysis {
     /// What [`crate::analysis::roles`] reads of the sources: read once.
     #[serde(skip)]
     pub role_sources: std::sync::OnceLock<crate::analysis::roles::Sources>,
+    /// What [`crate::analysis::tagging::of`] reads of the run: read once.
+    #[serde(skip)]
+    pub tagging: std::sync::OnceLock<Option<Box<crate::analysis::tagging::Tagging>>>,
     /// The roles a probe call found for commands the run never called, by name:
     /// cache for [`crate::analysis::probe::argument_roles`].
     #[serde(skip)]
@@ -2753,6 +2756,7 @@ impl<'a> Machine<'a> {
                 context_probes: Default::default(),
                 takes: Default::default(),
                 role_sources: Default::default(),
+                tagging: Default::default(),
                 probed_roles: Default::default(),
                 bib: Default::default(),
                 scope_rows: Default::default(),

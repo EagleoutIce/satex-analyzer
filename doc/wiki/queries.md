@@ -25,6 +25,7 @@
 - [project](#project): document class, engine and build settings detected or assumed
 - [recursion](#recursion): macros that call themselves, directly or through others
 - [side-effects](#side-effects): definitions and assignments a macro makes when called
+- [tagging](#tagging): PDF tagging: whether it is on, the standard, language, title and each package's status
 - [trace](#trace): every step: macro expansions, primitives run, changes made
 - [type-plugins](#type-plugins): the editor's type plugins: the types each triggers on and its features
 - [typeset](#typeset): the text the document typesets, one row per paragraph
@@ -156,7 +157,7 @@ id   kind     file
 2    input    texsys.cfg                                
 3    input    texsys.aux                                
 4    input    expl3.ltx                                 
-… 307 more lines omitted
+… 295 more lines omitted
 ```
 
 ## gaps
@@ -377,6 +378,10 @@ index  step    name         detail                        file
 
 A `value` names its type in the [`Ty` lattice](Domains#argument-types-the-ty-lattice) (`number`, `dimen`, `glue`, `muglue`, `quantity`, `text`, `any`) and what the domain knows: `exact`, an `interval` `[lo, hi]`, a `set`, or `unknown`. Typed unknown text appears as its own names (`unknown digits:0..1439`). `limits.trace_state` caps each list. In the playground, *dev mode* in the settings turns this on: the trace shows the domains of the selected step, the editor menu offers *Inspect state here*, and the trace exports as JSON or CSV.
 
+## tagging
+
+PDF tagging as `\DocumentMetadata` set it up, read from the run with the kernel's own `\GetDocumentProperties`: whether tagging is on and under which engine, the PDF standards claimed (`UA-2`, `A-4F`), the language (and, under `set`, the one the preamble wrote, before LaTeX guesses one), the title the XMP gets, and the PDF version. Then each loaded package and class with its status in TeX Live's `latex-tagging-status.ltx`, which satex runs as TeX. Nothing without `\DocumentMetadata`. The tagging lints read the same facts.
+
 ## type-plugins
 
 The editor's type plugins this run would offer: each plugin, its category, the types it triggers on and its features. See [type plugins](Type-plugins) for what each does.
@@ -389,7 +394,7 @@ widget       environment      environment name
 widget       table            environment the run met                     
 widget       image            graphic file                                
 widget       float            environment the run met                     
-… 19 more lines omitted
+… 20 more lines omitted
 ```
 
 ## typeset

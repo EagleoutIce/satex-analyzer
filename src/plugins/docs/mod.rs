@@ -6,6 +6,7 @@
 //! waits. A package's entries are mined once per process.
 
 mod l3doc;
+mod labels;
 mod ltxdoc;
 pub(crate) mod markup;
 pub mod mined;
@@ -66,19 +67,34 @@ pub trait DocPlugin: Sync {
 }
 
 /// The doc conventions, in order: a new one is one more line.
-pub const PLUGINS: &[&dyn DocPlugin] = &[&ltxdoc::Ltxdoc, &l3doc::L3doc, &texdoc::Texdoc, &mined::Mined];
+pub const PLUGINS: &[&dyn DocPlugin] =
+    &[&ltxdoc::Ltxdoc, &l3doc::L3doc, &labels::Labels, &texdoc::Texdoc, &mined::Mined];
 
 impl Dirs {
     /// The documented sources of the package `file` belongs to: for
     /// `⟨root⟩/tex/⟨path⟩/f.sty`, the deepest `⟨root⟩/source/⟨path…⟩` and
-    /// `⟨root⟩/doc/⟨path…⟩` that exist (TDS).
+    /// `⟨root⟩/doc/⟨path…⟩` that exist (TDS). Its format folder may differ
+    /// there: pgf runs from `tex/latex/pgf`, its manual is in `doc/generic/pgf`.
+    /// Another format's folder counts only when no third has one by that
+    /// name: `doc/latex/base` and `doc/etex/base` are no plain TeX's.
     pub fn of(config: &DocsConfig, file: &Path) -> Option<Dirs> {
         let parts: Vec<_> = file.parent()?.components().collect();
         let at = parts.iter().rposition(|c| c.as_os_str() == "tex")?;
         let root: PathBuf = parts[..at].iter().collect();
         let rest = &parts[at + 1..];
+        let (format, package) = rest.split_first()?;
         let find = |top: &str| {
-            (2..=rest.len()).rev().map(|n| rest[..n].iter().fold(root.join(top), |p, c| p.join(c))).find(|d| d.is_dir())
+            let top = root.join(top);
+            let under = |f: &Path, n: usize| package[..n].iter().fold(f.to_path_buf(), |p, c| p.join(c));
+            let own = (1..=package.len()).rev().map(|n| under(&top.join(format), n)).find(|d| d.is_dir());
+            own.or_else(|| {
+                let formats: Vec<PathBuf> =
+                    std::fs::read_dir(&top).into_iter().flatten().flatten().map(|e| e.path()).collect();
+                (1..=package.len()).rev().find_map(|n| {
+                    let mut found = formats.iter().map(|f| under(f, n)).filter(|d| d.is_dir());
+                    found.next().filter(|_| found.next().is_none())
+                })
+            })
         };
         let dirs = Dirs { source: find(&config.source_root), doc: find(&config.doc_root) };
         (dirs.source.is_some() || dirs.doc.is_some()).then_some(dirs)
@@ -259,27 +275,34 @@ impl Index {
     }
 
     pub fn request(self: &Arc<Self>, file: &Path) {
-        self.start(file, false);
+        if let Some(dirs) = self.dirs(file) {
+            self.start(dirs, false);
+        }
     }
 
     /// What the package of `file` documents about `name`, if mined by now;
     /// else nothing, and mining starts.
     pub fn lookup(self: &Arc<Self>, file: &Path, name: &str) -> Option<Entry> {
-        self.start(file, true)?.get(name).cloned()
+        self.lookup_in(self.dirs(file)?, name, false)
     }
 
     /// [`Index::lookup`], mining the package here when no one has yet.
     pub fn lookup_now(self: &Arc<Self>, file: &Path, name: &str) -> Option<Entry> {
-        let dirs = {
+        self.lookup_in(self.dirs(file)?, name, true)
+    }
+
+    /// What the manuals in `dirs` document about `name`; `wait` mines them here when no one has yet.
+    pub fn lookup_in(self: &Arc<Self>, dirs: Dirs, name: &str, wait: bool) -> Option<Entry> {
+        if !wait {
+            return self.start(dirs, true)?.get(name).cloned();
+        }
+        {
             let mut state = self.state.lock().ok()?;
-            let parent = file.parent()?.to_path_buf();
-            let dirs = state.dirs.entry(parent).or_insert_with(|| Dirs::of(&self.config, file)).clone()?;
             match state.slots.get(&dirs) {
                 Some(slot) => return slot.as_ref()?.get(name).cloned(),
                 None => state.slots.insert(dirs.clone(), None),
             };
-            dirs
-        };
+        }
         self.fill(dirs).get(name).cloned()
     }
 
@@ -299,13 +322,11 @@ impl Index {
         state.slots.values().flatten().any(|e| e.contains_key(name))
     }
 
-    /// The entries of `file`'s package when mined; else queues it. Where no
-    /// thread starts (the browser) a lookup (`inline`) mines it at once.
-    fn start(self: &Arc<Self>, file: &Path, inline: bool) -> Option<Entries> {
-        let dirs = {
+    /// The entries of `dirs` when mined; else queues them. Where no
+    /// thread starts (the browser) a lookup (`inline`) mines them at once.
+    fn start(self: &Arc<Self>, dirs: Dirs, inline: bool) -> Option<Entries> {
+        {
             let mut state = self.state.lock().ok()?;
-            let parent = file.parent()?.to_path_buf();
-            let dirs = state.dirs.entry(parent).or_insert_with(|| Dirs::of(&self.config, file)).clone()?;
             if let Some(slot) = state.slots.get(&dirs) {
                 return slot.clone();
             }
@@ -315,8 +336,7 @@ impl Index {
                 return None;
             }
             state.working = true;
-            dirs
-        };
+        }
         let me = self.clone();
         if std::thread::Builder::new().name("satex-docs".into()).spawn(move || me.work()).is_ok() {
             return None;
