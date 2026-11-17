@@ -210,7 +210,7 @@ style (9)
 
   ● S040 primitive-tex-command (1)
     paper.tex:22:1  `\csname` is plain TeX. Here it uses a control sequence by name
-… 49 more lines omitted
+… 50 more lines omitted
 ```
 
 <details>
@@ -562,7 +562,7 @@ performance (1)
     paper.tex:26:1  5 packages requested directly, 275 files read, 82% of the tokens the build takes
       26 │ \begin{document}
          │ ^^^^^^
-… 5 more lines omitted
+… 6 more lines omitted
 ```
 
 `--timings` breaks the time down per phase and file, `--stats` sums up counts and wall time. Both measure the run itself and change between runs.
@@ -575,8 +575,8 @@ The kernel and the packages are interpreted once and cached. `satex cache build`
 $ satex cache
 cache ~/.cache/satex
   kernel     /usr/local/texlive/YYYY/texmf-dist/tex/latex/base/latex.ltx · 197.8k definitions · cached
-  packages   335 stored, 545.4 MiB
-  prepare    `satex cache build` builds 66 packages: microtype, cleveref, zref-clever, savetrees, tabularray, xurl, … +60
+  packages   302 stored, 731.5 MiB
+  prepare    `satex cache build` builds 86 packages: microtype, cleveref, zref-clever, savetrees, tabularray, xurl, … +80
 … 1 more line omitted
 ```
 

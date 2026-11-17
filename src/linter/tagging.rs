@@ -80,12 +80,13 @@ what the graphic shows. The image dialog has a field for it.",
         explanation: "\
 PDF/UA requires a document title in the XMP metadata (`dc:title`), shown by
 the viewer in place of the file name.  pdfmanagement writes it from the
-document property `hyperref/pdftitle` only: `\\title{…}` alone does not set
-it.  The run ended with that property empty.
+document property `hyperref/pdftitle`.  With tagging on, latex-lab's title
+code fills that property from `\\title{…}`; without it, only
+`\\hypersetup{pdftitle={…}}` does.  The run ended with the property empty.
 
-Fix with `\\hypersetup{pdftitle={…}}`, or, where latex-lab's title code is
-loaded, with `\\title[pdftitle={…}]{…}`: the fix writes the latter from the
-title as the run rendered it.",
+Fix with `\\title{…}` under tagging, or `\\hypersetup{pdftitle={…}}`.  Where
+`\\title` is there but latex-lab's title code did not take it, the fix writes
+`\\title[pdftitle={…}]{…}` from the title as the run rendered it.",
         references: &[Ref { source: Source::PdfUa, at: "06" }, Ref { source: Source::LatexLab, at: "latex-lab-title" }],
         fixes: &[Applicability::Safe],
         engines: &[],
@@ -299,10 +300,14 @@ fn pdfua_without_title(report: &mut Report) {
         }
         _ => None,
     };
-    let message = format!("{ua} needs a document title, and the PDF gets none: `\\title` alone does not set it");
-    let description = match edits {
-        Some(_) => "write the title as `\\title[pdftitle={…}]`",
-        None => "set it with `\\hypersetup{pdftitle={…}}`",
+    let message = match title {
+        Some(_) => format!("{ua} needs a document title, and the PDF gets none: the `\\title` did not reach it"),
+        None => format!("{ua} needs a document title, and the PDF gets none: the document has no `\\title`"),
+    };
+    let description = match (edits.is_some(), title.is_some()) {
+        (true, _) => "write the title as `\\title[pdftitle={…}]`",
+        (false, false) if t.active() => "add `\\title{…}`, which tagging writes to the PDF",
+        (false, _) => "set it with `\\hypersetup{pdftitle={…}}`",
     };
     let applicability = if edits.is_some() { Applicability::Safe } else { Applicability::Unsafe };
     report.add_fix(at, "DocumentMetadata", message, Fix::new(description, applicability, edits));
