@@ -515,6 +515,42 @@ fn the_sample_paper_breaks_its_pages_where_pdflatex_does() {
     assert_eq!(seq, expected, "{rows:?}");
 }
 
+/// The page rows of a document, with page breaks the point: no assumed float placement.
+fn float_pages(tag: &str, body: &str) -> Vec<String> {
+    let rows = typeset_doc(
+        tag,
+        &format!("\\documentclass{{article}}\n\\begin{{document}}\n{body}\n\\end{{document}}\n"),
+        &["analysis.assume_page_one_arm=false"],
+    );
+    rows.iter().filter(|r| r["kind"] == "page").filter_map(|r| r["detail"].as_str().map(String::from)).collect()
+}
+
+/// The sample paper's figure, small: one paragraph and an `[ht]` figure of a rule fit on page 1,
+/// so `\\@addtocurcol` places it here and `\\end{document}` ships no float page after it.
+#[test]
+fn a_here_figure_after_a_paragraph_stays_on_its_page() {
+    let figure = "\\begin{figure}[ht]\n\\centering\n\\rule{0.4\\linewidth}{0.3pt}\n\\caption{A figure.}\n\\end{figure}";
+    assert_eq!(float_pages("here-figure", &format!("Some text.\n{figure}")), ["page 1"]);
+}
+
+/// The same after a display: pdflatex sets it all on page 1. Red: satex drops the paragraph's
+/// size at a display (`math_shift_token` keeps no list for it), so `\\pagetotal` is unknown and
+/// the fit test in `\\@addtocurcol` is undecided (the sample paper's extra pages).
+#[test]
+fn a_here_figure_after_a_display_stays_on_its_page() {
+    let figure = "\\begin{figure}[ht]\n\\centering\n\\rule{0.4\\linewidth}{0.3pt}\n\\caption{A figure.}\n\\end{figure}";
+    assert_eq!(float_pages("display-figure", &format!("Some text.\n\\[ x \\]\n{figure}")), ["page 1"]);
+}
+
+/// A page only some paths ship may not exist: its row reads `maybe`, and the page after it
+/// counts from one less. They read as sure pages before, a page count no run makes.
+#[test]
+fn a_page_only_some_paths_ship_reads_maybe() {
+    let rows = typeset_rows("maybe-page", "", "A\n\\ifodd\\pdfuniformdeviate 2 \\clearpage\\fi\nB");
+    let pages: Vec<&str> = rows.iter().filter(|r| r["kind"] == "page").filter_map(|r| r["detail"].as_str()).collect();
+    assert_eq!(pages, ["page 1 → 2 maybe", "page 1–2"], "{rows:?}");
+}
+
 /// Rules of unknown height may fill any number of pages: the page count after them has an
 /// open upper bound, and the assumption that pages break only where forced is named.
 #[test]

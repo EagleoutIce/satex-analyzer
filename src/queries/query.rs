@@ -618,34 +618,46 @@ fn typeset(analysis: &Analysis) -> Vec<Record> {
     let filled = |k: usize, sure: bool| text.fills.iter().filter(|f| f.2 as usize <= k && (f.1 || !sure)).count();
     // a page whose length had no bound before page group `g` ends: any number of pages may have filled
     let open = |g: usize| text.open_pages.iter().any(|&o| (o as usize) < g);
+    // a page only some paths ship may be missing: each one before lowers the least number
+    let unsure = |pages: &[(u32, Span, bool)]| pages.iter().filter(|p| !p.2).count();
     let shipped = |k: usize, at: Span, last: bool| {
-        let (lo, n) = (k + 1 + filled(k, true), k + 1 + filled(k, false));
+        let (lo, n) = (k + 1 + filled(k, true) - unsure(&text.pages[..k]), k + 1 + filled(k, false));
         let page = match (open(k + 1), lo == n) {
             (true, _) => format!("page {lo}–?"),
             (false, true) => format!("page {n}"),
             (false, false) => format!("page {lo}–{n}"),
         };
+        let sure = text.pages[k].2;
         let mut record = place(analysis, at);
         record.insert("kind".into(), json!("page"));
         record.insert("page".into(), json!(n));
         record.insert("last".into(), json!(last));
+        record.insert("maybe".into(), json!(!sure));
+        // this page, or every page after it, only some paths ship
+        let rest = &text.pages[k + 1..];
+        let maybe = if !sure || !rest.is_empty() && unsure(rest) == rest.len() { " maybe" } else { "" };
         let next = if lo == n && !open(k + 1) { format!("{page} → {}", n + 1) } else { format!("{page} → next") };
-        record.insert("detail".into(), json!(if last { page } else { next }));
+        let detail =
+            if last { format!("{page}{}", if sure { "" } else { " maybe" }) } else { format!("{next}{maybe}") };
+        record.insert("detail".into(), json!(detail));
         record
     };
     // a page the run did not break, though it filled there: pdfTeX breaks it at or before here
     let mut fills = text.fills.iter().enumerate().peekable();
     let fill = |k: usize, sure: bool, at: Span| {
-        let n = k + 1 + text.fills[k].2 as usize;
+        let shipped = text.fills[k].2 as usize;
+        let n = k + 1 + shipped;
+        let lo = n - unsure(&text.pages[..shipped.min(text.pages.len())]);
         let mut record = place(analysis, at);
         record.insert("kind".into(), json!("page"));
         record.insert("page".into(), json!(n));
         record.insert("last".into(), json!(false));
         record.insert("filled".into(), json!(if sure { "surely" } else { "maybe" }));
         let by = if sure { "by here" } else { "maybe by here" };
-        let detail = match open(text.fills[k].2 as usize) {
-            true => format!("page {n}–? → next {by}"),
-            false => format!("page {n} → {} {by}", n + 1),
+        let detail = match (open(shipped), lo == n) {
+            (true, _) => format!("page {lo}–? → next {by}"),
+            (false, true) => format!("page {n} → {} {by}", n + 1),
+            (false, false) => format!("page {lo}–{n} → next {by}"),
         };
         record.insert("detail".into(), json!(detail));
         record
@@ -659,7 +671,7 @@ fn typeset(analysis: &Analysis) -> Vec<Record> {
             fills.next_if(|(_, f)| f.0 as usize <= i && page.is_none_or(|p| f.2 as usize <= p))
         {
             out.push(fill(k, sure, site));
-        } else if let Some((k, &(_, at))) = pages.next_if(|(_, p)| p.0 as usize <= i) {
+        } else if let Some((k, &(_, at, _))) = pages.next_if(|(_, p)| p.0 as usize <= i) {
             out.push(shipped(k, at, i == usize::MAX && k + 1 == total));
         } else {
             break;

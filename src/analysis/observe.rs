@@ -1489,9 +1489,11 @@ pub fn page(m: &mut Machine, span: Span) {
         return;
     }
     let site = m.call_site(span);
+    // a page only some paths ship may not exist
+    let sure = m.exact();
     let text = &mut m.out.facts.text;
     if text.pages.len() < m.cfg.limits.facts {
-        text.pages.push((text.at.len() as u32, site));
+        text.pages.push((text.at.len() as u32, site, sure));
     }
 }
 

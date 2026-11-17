@@ -98,8 +98,8 @@ fn pages(a: &Analysis, path: &str, lines: (u32, u32)) -> Vec<Range<u32>> {
     let all = &a.facts.text.pages;
     let within = |s: &crate::engine::tex::Span| (lines.0, 1) <= (s.line, s.col) && (s.line, s.col) <= (lines.1 + 1, 1);
     (all.iter().enumerate())
-        .filter(|(_, (_, s))| s.file == file && within(s))
-        .map(|(k, (end, _))| k.checked_sub(1).map_or(0, |p| all[p].0)..*end)
+        .filter(|(_, (_, s, _))| s.file == file && within(s))
+        .map(|(k, (end, ..))| k.checked_sub(1).map_or(0, |p| all[p].0)..*end)
         .collect()
 }
 

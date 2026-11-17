@@ -499,6 +499,7 @@ use crate::analysis::facts::{Align, Just, Rule};
 use crate::engine::tex::Span;
 offset_first!(
     (u32, Span),
+    (u32, Span, bool),
     (u32, Align),
     (u32, u16),
     (u32, crate::engine::value::Scaled),

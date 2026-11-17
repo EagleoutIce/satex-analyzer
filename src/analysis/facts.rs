@@ -465,8 +465,9 @@ pub struct Text {
     /// from `\leftskip` and `\rightskip` as the run had them there.
     pub just: Vec<(u32, Just)>,
     /// Where `\shipout` sent a page out: the number of characters set
-    /// before it, ascending, and the place in the user's files read then.
-    pub pages: Vec<(u32, Span)>,
+    /// before it, ascending, the place in the user's files read then, and
+    /// whether every path ships it (`false`: only some may).
+    pub pages: Vec<(u32, Span, bool)>,
     /// Where the page passed another `\vsize` while pages break only where forced
     /// (`analysis.assume_forced_page_breaks`): pdfTeX breaks a page before it, surely when the
     /// shortest the page can be has passed it (`true`), else when the page may have; then the

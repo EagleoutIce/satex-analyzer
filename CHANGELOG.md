@@ -58,6 +58,7 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 - `fix` **`--format` checked everywhere.** `cache` subcommands take text or json, `completions`, `lsp` and `gui` text only. Any other stops with an error.
 - `fix` **`satex gui` keeps the config flags.** `--set`, `--config` and the others reach the language servers and runs it starts.
 - `fix` **Config warnings once.** A broken `satex.yaml` is named once, by its full path.
+- `fix` **Pages only some paths ship read `maybe`.** `query typeset` marks such a page row `maybe` and counts the pages after it from one less. They read as sure pages before.
 
 ### Site and docs
 
