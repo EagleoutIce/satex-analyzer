@@ -939,6 +939,24 @@ mod convergence {
         assert!(a.peak_paths <= FEW_PATHS, "{} paths", a.peak_paths);
     }
 
+    /// (2a') The number of (2a) keeps its bound through pgfmath: parse,
+    /// operand stack and print of `1+\pdfuniformdeviate 5`, then `*2+3`,
+    /// stay within their intervals, so no test past them parts on a wider
+    /// range. Pins that (2a)'s paths come from xcolor's digit handling, not
+    /// from a pgfmath result of any value (2026-11-17, p1d: it was thought
+    /// to type as -16384..16383).
+    #[test]
+    fn pgfmath_keeps_the_bound_of_a_random_operand() {
+        // `\w` is in 1..5 plus a fraction, `\pgfmathresult` in 5..13 plus one.
+        let body = r"\pgfmathsetmacro{\w}{1+\pdfuniformdeviate 5}
+\ifdim\w pt<1pt \gdef\Wide{}\fi \ifdim\w pt>6pt \gdef\Wide{}\fi
+\pgfmathparse{\w*2+3}
+\ifdim\pgfmathresult pt<5pt \gdef\Wide{}\fi \ifdim\pgfmathresult pt>14pt \gdef\Wide{}\fi";
+        let Some(a) = latex("pgfmath-bound", &document("\\usepackage{tikz}", body), |_| {}) else { return };
+        converged(&a, TIKZ_NODES_FORKS / 30);
+        assert!(crate::support::undefined(&a, "Wide"), "a result left its interval");
+    }
+
     /// (2b) A mix percentage of typed digits (5..9). xcolor sanitizes the
     /// spec with `\meaning` (`\XC@edef`), which must give the typed digits
     /// back as they are: they are category 12 (tex.web § 465). Bug

@@ -933,7 +933,7 @@ impl Machine<'_> {
         // The integer part's interval where its digits are typed, and
         // whether the digits after the point are unknown.
         let range: Option<crate::engine::value::Num>;
-        let mut fraction_unknown = false;
+        let mut fractions = (0, 0);
         let integer = match shortcut {
             // A count of unknown value left its interval, signed.
             Some(integer) => {
@@ -986,11 +986,10 @@ impl Machine<'_> {
                         return (value.map(|v| self.attach_sign(v, negative)), 0);
                     }
                     None if matches!(token.tok, Tok::Chr('.' | ',', Catcode::Other)) => {
-                        let digits = self.scan_fraction();
-                        fraction = digits.unwrap_or(0);
-                        fraction_unknown = digits.is_none();
+                        fractions = self.scan_fraction();
+                        fraction = fractions.0;
                         range = Some(crate::engine::value::Num::exact(0));
-                        digits.map(|_| 0)
+                        (fractions.0 == fractions.1).then_some(0)
                     }
                     None => {
                         let (mut integer, backed_up) = self.scan_int_from(token);
@@ -1000,10 +999,9 @@ impl Machine<'_> {
                         };
                         if backed_up && let Some(point) = self.next_token() {
                             if matches!(point.tok, Tok::Chr('.' | ',', Catcode::Other)) {
-                                let digits = self.scan_fraction();
-                                fraction = digits.unwrap_or(0);
-                                fraction_unknown = digits.is_none();
-                                integer = integer.filter(|_| digits.is_some());
+                                fractions = self.scan_fraction();
+                                fraction = fractions.0;
+                                integer = integer.filter(|_| fractions.0 == fractions.1);
                             } else {
                                 self.unread(point);
                             }
@@ -1018,7 +1016,6 @@ impl Machine<'_> {
             other => (other, negative),
         };
         self.abs = None;
-        let fractions = if fraction_unknown { (0, UNIT - 1) } else { (fraction, fraction) };
         let range = range.filter(|_| integer.is_none()).map(|r| (r, fractions));
         let (value, order) = self.scan_units(mu, inf, integer, fraction, range);
         if negative {
@@ -1029,19 +1026,46 @@ impl Machine<'_> {
     }
 
     /// tex.web § 452: the digits after a decimal point, as a fraction in
-    /// units of 2^-16; `None` when unknown digits are among them.
-    fn scan_fraction(&mut self) -> Option<i64> {
-        let mut digits = Vec::new();
-        let mut known = true;
+    /// units of 2^-16, the least and the most it may be. Typed digits of a
+    /// fixed width spell their interval's ends there. Other unknown text
+    /// ends the least at the digits before it; the most takes 9s for it,
+    /// as many as it may hold, and for all digits after it.
+    fn scan_fraction(&mut self) -> (i64, i64) {
+        let (mut lo, mut hi) = (Vec::new(), Vec::new());
+        // Whether the least has ended; whether unknown text came before,
+        // so that the digits after it may stand at other places.
+        let (mut lo_end, mut shifted, mut nines) = (false, false, false);
         while let Some(token) = self.next_x_token() {
             if self.is_unknown(token) {
-                known = false;
+                let typed = token.cs().and_then(|sym| Some((self.typed_digits_of(sym)?, self.digit_width(sym)?)));
+                match typed.filter(|(num, _)| num.lo >= 0 && !lo_end && !shifted) {
+                    Some((num, width)) => {
+                        let pad = |n: i64| -> Vec<i64> {
+                            format!("{n:0>w$}", w = width as usize).bytes().map(|b| i64::from(b - b'0')).collect()
+                        };
+                        lo.extend(pad(num.lo));
+                        hi.extend(pad(num.hi));
+                    }
+                    None => {
+                        lo_end = true;
+                        nines |= shifted;
+                        shifted = true;
+                        match crate::engine::env::text_len(&self.out.interner, &token) {
+                            Some(len) if !nines => hi.extend(std::iter::repeat_n(9, len as usize)),
+                            _ => nines = true,
+                        }
+                    }
+                }
                 continue;
             }
             match self.digit(token, DECIMAL) {
                 Some(d) => {
-                    if digits.len() < MAX_FRACTION_DIGITS {
-                        digits.push(d);
+                    nines |= shifted;
+                    if !lo_end {
+                        lo.push(d);
+                    }
+                    if !nines {
+                        hi.push(d);
                     }
                 }
                 None => {
@@ -1052,7 +1076,24 @@ impl Machine<'_> {
                 }
             }
         }
-        known.then(|| round_decimals(&digits))
+        // TeX keeps 17 digits.
+        if nines {
+            hi.resize(hi.len().max(MAX_FRACTION_DIGITS), 9);
+        }
+        lo.truncate(MAX_FRACTION_DIGITS);
+        hi.truncate(MAX_FRACTION_DIGITS);
+        (round_decimals(&lo), round_decimals(&hi))
+    }
+
+    /// How many places typed digits `sym` spell when that is one number:
+    /// a slice its places, a whole number its digits where both ends of
+    /// its interval have as many.
+    fn digit_width(&self, sym: Sym) -> Option<u32> {
+        if let Some((_, k, i, j)) = self.typed_slice(sym) {
+            return (k != OPEN && j != OPEN).then_some(j - i);
+        }
+        let num = self.typed_digits_of(sym)?;
+        (digit_count(num.lo) == digit_count(num.hi)).then(|| digit_count(num.lo))
     }
 
     /// Whether the number `token` begins is surely a digit first, so no

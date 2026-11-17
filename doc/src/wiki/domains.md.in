@@ -228,6 +228,7 @@ typed digits     d, with an interval [lo, hi]
 - At the end of a ⟨number⟩ scan, paths that differ only in numbers join to typed digits over the hull.
 - A number starting with a known digit has no sign: it lies in 0 to 2³¹-1 (tex.web § 445). A known last digit decides `\ifodd`.
 - `\the` of a dimension, glue or muglue prints typed digits of its integer part, a point, at most five digits and its unit (`printed_dimen`). Without an interval the integer part is any of ±16383 (§ 103). A value that may be negative may print `-0.5pt`: its integer part rounds `lo` away from zero, and a read's `-` arm includes the magnitude 0. Scanned back, it is an interval (§§ 448-458), so bounds survive `\pgf@sys@tonumber` and pgfmath's `round`, `floor`, `int`.
+- **Fractions** a dimension scan reads hold their bound: typed digits of one width spell their interval's ends at their places, so `.` then digits in 8..9 is 0.8pt to 0.9pt and the digits after. Past other unknown text the least ends with the digits before it, the most takes 9s, as many as the text may hold and for all digits after it (17 kept, § 452). So `.99999` and one digit more may round to `1pt`.
 - `\the` of an unknown glue prints its width, then a one-of token for the parts that may be nonzero: nothing, ` plus ⟨d⟩⟨unit⟩`, ` minus ⟨d⟩⟨unit⟩` or both (tex.web § 178). A glue scan's `plus` and `minus` keywords split it per text, so `\vskip\the\skip@` never leaves part of it as typeset text.
 
 ### One-of tokens
