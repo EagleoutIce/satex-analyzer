@@ -2073,11 +2073,16 @@ impl Machine<'_> {
         self.source_progress - self.lines_read
     }
 
-    /// The largest number of arms a digit split made among the names two paths
-    /// hold differently, 0 if none ([`partner`]). If their macros hold
-    /// different digits of a split number (a lookahead `\def`d from it), the
-    /// paths are at different stages of reading it and stay apart until the
-    /// statement ends (`usize::MAX`).
+    /// How many paths must wait at the place before two arms of a digit split
+    /// join, 0 if the paths hold no split number differently ([`partner`]):
+    /// the largest number of arms a split made among the names they hold
+    /// differently. Arms that differ only in satex's own slots (register
+    /// values) count the running arm too, so they join once all arms stand
+    /// there. Arms that differ in a macro or meaning (code or digits still to
+    /// read, pgfmath parser states) wait for one more and join later. If
+    /// their macros hold different digits of a split number (a lookahead
+    /// `\def`d from it), the paths are at different stages of reading it and
+    /// stay apart until the statement ends (`usize::MAX`).
     fn digits_apart(&self, a: &Config, b: &Config) -> usize {
         if self.scratch.split_digits.is_empty() {
             return 0;
@@ -2092,8 +2097,9 @@ impl Machine<'_> {
         if differing.iter().any(|&sym| texts(a, sym) != texts(b, sym)) {
             return usize::MAX;
         }
-        let arms = differing.into_iter().filter_map(|sym| self.scratch.split_digits.get(&sym));
-        arms.copied().max().unwrap_or(0)
+        let most = differing.iter().filter_map(|sym| self.scratch.split_digits.get(sym)).copied().max().unwrap_or(0);
+        let slot = |sym: &Sym| self.name(*sym).starts_with(|c: char| c < ' ');
+        if most > 0 && differing.iter().all(slot) { most - 1 } else { most }
     }
 
     /// Joins the running path with a parked one at the same place ([`partner`]).
