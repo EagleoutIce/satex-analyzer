@@ -9,7 +9,7 @@
 // Needs Chromium ($CHROME or Playwright's), ImageMagick (`magick`), `avifenc`, `pngquant` and `ffmpeg`.
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { execFileSync, spawn } from 'node:child_process';
-import { homedir } from 'node:os';
+import { cpus, homedir, loadavg } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -19,6 +19,9 @@ const out = process.argv[3] ?? join(here, 'img');
 const { width: WIDTH, video: VIDEO = 1000, budget: BUDGET = 90000, shots } = JSON.parse(readFileSync(join(here, 'shots.json'), 'utf8'));
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 let failed = false;
+// waits and budgets stretch with the machine's load per core (at least 1) and with the pass: the last retry gets twice as long
+const load = () => Math.max(1, loadavg()[0] / cpus().length);
+let scale = 1;
 
 function chromium() {
   if (process.env.CHROME) return process.env.CHROME;
@@ -45,7 +48,7 @@ const js = async (expr) => {
   return r.result?.result?.value;
 };
 let deadline = Infinity;
-const until = async (expr, ms = 60000) => { for (const end = Math.min(Date.now() + ms, deadline); Date.now() < end; await sleep(200)) if (await js(expr).catch(() => false)) return true; return false; };
+const until = async (expr, ms = 60000) => { for (const end = Math.min(Date.now() + ms * scale, deadline); Date.now() < end; await sleep(200)) if (await js(expr).catch(() => false)) return true; return false; };
 const QUIET = `document.getElementById('lsp-status').textContent !== 'checking…' && !document.getElementById('play-status').classList.contains('busy')`;
 /** In the page: `__at(needle, k)` is the editor position k characters into needle, `__xy` its screen point. */
 const HELPERS = `const v = () => document.querySelector('.cm-editor').satexView;
@@ -114,13 +117,13 @@ async function step(s, shot) {
   if (s.type != null) { await type(s.type); if (s.wait) await sleep(s.wait); return; }
   // an eval with an until repeats until it holds: a widget asked for before the server answers opens nothing
   let ok = !s.until;
-  for (const end = Math.min(Date.now() + (s.ms ?? 120000), deadline); !ok && Date.now() < end || !s.until && s.eval && !ok;) {
+  for (const end = Math.min(Date.now() + (s.ms ?? 120000) * scale, deadline); !ok && Date.now() < end || !s.until && s.eval && !ok;) {
     if (s.eval) await js(s.eval).catch((e) => process.env.DEBUG && console.log('eval failed', e.message.slice(0, 300)));
     ok = !s.until || await until(`return !!(${s.until})`, s.eval ? 8000 : s.ms ?? 120000);
   }
   if (!s.until && s.eval) await js(s.eval);
   if (s.wait) await sleep(s.wait);
-  if (!ok) throw new Error(`no ${s.until}`);
+  if (!ok) throw Object.assign(new Error(`no ${s.until}`), { wait: true });
   const target = s.hover ?? s.click;
   if (target) {
     const p = await point(target);
@@ -223,38 +226,49 @@ try {
   session = (await raw('Target.attachToTarget', { targetId: page.targetId, flatten: true }, null)).result.sessionId;
   await raw('Runtime.enable');
   mkdirSync(out, { recursive: true });
-  for (const scheme of (process.env.SCHEMES ?? 'light,dark').split(',')) {
+  const schemes = (process.env.SCHEMES ?? 'light,dark').split(',');
+  const failures = [];
+  const only = shots.filter((s) => !s.live).filter((s) => !process.env.ONLY || process.env.ONLY.split(',').includes(s.name));
+  /** One entry in one theme; a failure is kept for the retry pass. */
+  async function take(s, scheme, pass) {
+    scale = load() * pass;
     await raw('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-color-scheme', value: scheme }, { name: 'prefers-reduced-motion', value: 'reduce' }] });
-    for (const s of shots.filter((s) => !s.live).filter((s) => !process.env.ONLY || process.env.ONLY.split(',').includes(s.name))) {
-      const [w, h] = s.viewport ?? [1080, 700];
-      await raw('Emulation.setDeviceMetricsOverride', { width: w, height: h, deviceScaleFactor: 2, mobile: false });
-      try {
-        // a first visit may miss the widget while the page still fetches what it shows, or wait past its
-        // budget under load: one more try, from a fresh page with a fresh budget
-        for (let attempt = 0; ; attempt++) {
-          try {
-            deadline = Infinity;
-            await open(s.file);
-            // the steps share one budget: a failing wait fails fast, never one timeout per step
-            deadline = Date.now() + (s.budget ?? BUDGET);
-            if (process.env.PROBE0) console.log('PROBE0', JSON.stringify(await js(process.env.PROBE0)));
-            if (s.text) await write(s.text);
-            for (const st of s.steps) {
-              await step({ ms: 45000, ...st }, s);
-              if (st.snap) await still({ ...s, crop: s.beforeCrop ?? s.crop, video: undefined, keepMouse: true, keepFocus: true }, `${s.name}-${st.snap}-${scheme}`);
-            }
-            break;
-          } catch (e) { if (attempt) throw e; console.log('retry', s.name, e.message.slice(0, 200)); }
-        }
-        deadline = Infinity;
-        const clip = await still(s, `${s.name}-${scheme}`, [w, h]);
-        console.log(`ok   ${s.name} ${scheme} ${Math.round(clip.width)}x${Math.round(clip.height)}${s.video ? ' + video' : ''}`);
-      } catch (e) {
-        failed = true;
-        if (process.env.PROBE) console.log('PROBE', JSON.stringify(await js(process.env.PROBE).catch((e) => String(e))));
-        if (process.env.RAW) writeFileSync(join(process.env.RAW, `${s.name}-${scheme}-fail.png`), Buffer.from((await raw('Page.captureScreenshot', { format: 'png' })).result.data, 'base64'));
-        console.log(`FAIL ${s.name} ${scheme}: ${e.message.slice(0, 300)}`); }
+    const [w, h] = s.viewport ?? [1080, 700];
+    await raw('Emulation.setDeviceMetricsOverride', { width: w, height: h, deviceScaleFactor: 2, mobile: false });
+    try {
+      // a first visit may miss the widget while the page still fetches what it shows: one more try, from a fresh page with a fresh budget
+      for (let attempt = 0; ; attempt++) {
+        try {
+          deadline = Infinity;
+          await open(s.file);
+          // the steps share one budget: a failing wait fails fast, never one timeout per step
+          deadline = Date.now() + (s.budget ?? BUDGET) * scale;
+          if (process.env.PROBE0) console.log('PROBE0', JSON.stringify(await js(process.env.PROBE0)));
+          if (s.text) await write(s.text);
+          for (const st of s.steps) {
+            await step({ ms: 45000, ...st }, s);
+            if (st.snap) await still({ ...s, crop: s.beforeCrop ?? s.crop, video: undefined, keepMouse: true, keepFocus: true }, `${s.name}-${st.snap}-${scheme}`);
+          }
+          break;
+        } catch (e) { if (attempt) throw e; console.log('retry', s.name, e.message.slice(0, 200)); }
+      }
+      deadline = Infinity;
+      const clip = await still(s, `${s.name}-${scheme}`, [w, h]);
+      console.log(`ok   ${s.name} ${scheme} ${Math.round(clip.width)}x${Math.round(clip.height)}${s.video ? ' + video' : ''}${pass > 1 ? ' (second pass: the first was too slow under load)' : ''}`);
+    } catch (e) {
+      deadline = Infinity;
+      if (process.env.PROBE) console.log('PROBE', JSON.stringify(await js(process.env.PROBE).catch((e) => String(e))));
+      if (process.env.RAW) writeFileSync(join(process.env.RAW, `${s.name}-${scheme}-fail.png`), Buffer.from((await raw('Page.captureScreenshot', { format: 'png' })).result.data, 'base64'));
+      failures.push([s, scheme, e]);
     }
+  }
+  for (const scheme of schemes) for (const s of only) await take(s, scheme, 1);
+  // what failed gets a last go with twice the time: a wait that holds now was load, one that fails again never held
+  for (const [s, scheme] of failures.splice(0)) await take(s, scheme, 2);
+  for (const [s, scheme, e] of failures) {
+    failed = true;
+    const t = Math.round((s.budget ?? BUDGET) * scale / 1000);
+    console.log(`FAIL ${s.name} ${scheme}: ${e.wait ? `${e.message.slice(0, 250)}: never held, not in ${t} s at load ${load().toFixed(1)}/core` : e.message.slice(0, 300)}`);
   }
 } finally {
   proc.stdio[3].end();

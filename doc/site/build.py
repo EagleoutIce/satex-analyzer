@@ -2058,6 +2058,14 @@ def recapture(out):
     due = {n: k for n, k in due.items() if next(s for s in spec["shots"] if s["name"] == n).get("server") is None}
     # a capture that failed on these inputs waits for them to change: no retry on every build
     due = {n: k for n, k in due.items() if keys.get(n) not in (k, f"failed {k}") or keys[n] == k and not all((img / f"{n}-{c}.png").exists() for c in ("light", "dark"))}
+    # `cargo playground --dev` reuses an old build: an example changed since is not in it, so its shot would wait for what never comes
+    built = (out / "play/index.html").read_text()
+    by_name = {s["name"]: s for s in spec["shots"]}
+    size = lambda n: len(source(by_name[n]).read_bytes())
+    stale = [n for n in due if (m := re.search(rf'"/work/{re.escape(by_name[n]["file"])}", (\d+)', built)) and int(m[1]) != size(n)]
+    due = {n: k for n, k in due.items() if n not in stale}
+    if stale:
+        print(f"showcase: kept {', '.join(stale)}: the built site in {out} has an older example, rebuild it (no --dev, or delete the output) and build again", file=sys.stderr)
     if needs_server:
         print(f"showcase: kept {', '.join(needs_server)}: they compile through the local playground server, which a build does not run; retake with ONLY={','.join(needs_server)} node doc/site/showcase/capture.mjs http://127.0.0.1:8000/ while cargo playground serves", file=sys.stderr)
     if not due:
