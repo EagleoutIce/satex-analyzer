@@ -1,0 +1,18 @@
+% Paths that split before a macro (here: by how many groups they opened)
+% meet a conditional inside it at the same place. They are siblings, not
+% passes of a loop. With six paths, the fourth sibling forced a summary
+% (limits.widen_after = 3), and the summary must not skip the code after the
+% conditional, nor leak the definition made in the macro's own group.
+\documentclass{article}
+\newdimen\uw \uw=\pdfelapsedtime sp
+\newcount\un \un=\pdfelapsedtime
+\def\clamp#1{\ifdim#1<\uw #1=\uw\fi}
+\def\body{\begingroup\clamp{\dimen0}\def\southwest{}\endgroup\gdef\after{}}
+\def\apart{\ifcase\un\or\g\or\g\g\or\g\g\g\or\g\g\g\g\or\g\g\g\g\g\fi}
+\let\g\begingroup
+\def\run{\apart\global\let\after\undefined\body
+  \ifx\after\undefined\else\gdef\AfterOnEveryPath{}\fi
+  \ifx\southwest\undefined\gdef\AfterSouthwestLocal{}\fi}
+\run
+\gdef\SatexReachedEnd{}
+\end{document}

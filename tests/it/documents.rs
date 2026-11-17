@@ -331,6 +331,18 @@ fn pictures_around_a_tcolorbox_keep_their_anchors_local() {
     box_anchors_stay_local("before_after.tex");
 }
 
+/// Several paths, split before a macro by how many groups they opened, meet
+/// one undecided `\ifdim` inside it at the same place. Loop detection counts
+/// such siblings as passes (the second root of the unknown-height tcolorbox:
+/// node anchor code met by sibling paths was summarized there and its anchors
+/// leaked). Pins that the siblings converge without losing the code after
+/// the conditional or the macro's group.
+#[test]
+fn sibling_paths_meeting_one_conditional_keep_the_code_after_it() {
+    let Some(analysis) = check("sibling_paths_meet_one_head", "main.tex", &[]) else { return };
+    assert!(undefined(&analysis, "southwest"), "\\southwest leaked out of its group");
+}
+
 fixtures! {
     tikz_bent_path_on_background_layer("tikz_bend_pingus", "mwe.tex");
     tikz_bend_to_a_point_of_unknown_width_closes_the_picture("tikz_bend_unknown_width", "main.tex");

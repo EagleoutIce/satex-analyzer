@@ -1,6 +1,8 @@
 # Failing tests with an open root (see ~/satex-plan.md): CI runs and reports them, a new failure fails it.
 documents::rounding_an_unknown_dimension_ends_bounded
 documents::tcolorbox_of_unknown_height_keeps_its_anchors_local
+# Open (2026-11-17, owner: next Root B round, learnings p2d): sibling paths meeting one conditional count as loop passes; the forced summary leaks a group-local name. MWE of the tcolorbox root above.
+documents::sibling_paths_meeting_one_conditional_keep_the_code_after_it
 documents::tikz_bend_to_a_point_of_unknown_width_closes_the_picture
 documents::tikz_loop_of_unknown_height_nodes_converges
 documents::arrow_to_a_node_of_unknown_width_joins_its_digit_arms
