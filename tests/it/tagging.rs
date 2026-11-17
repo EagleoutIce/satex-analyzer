@@ -219,3 +219,74 @@ fn an_allocated_register_of_an_interval_number_decides_supp_pdfs_loop() {
     assert!(y.contains("301..311"), "{y}");
     assert_eq!(crate::support::body(&a, "z"), "big");
 }
+
+/// A register allocated while the counter is an interval is one of the registers in that
+/// interval, so it holds what they hold: zero when none was written, and a candidate's own
+/// value when one was. tagpdf's
+/// `\l__tag_loglevel_int` is such a register. Before, it read as any number, so every
+/// `\int_compare:nNnT {\l__tag_loglevel_int} > {2}` forked into tagpdf's debug code (the
+/// `mc-used` intarray), and a tagged `\maketitle` or tabular ran 8 paths to the end (300 s).
+#[test]
+fn a_register_of_an_interval_number_holds_what_its_candidates_hold() {
+    if !crate::support::installed() {
+        return;
+    }
+    let a = crate::support::analyze_latex(
+        "\\documentclass{article}\n\\ifnum\\pdfuniformdeviate 2=0 \\global\\count10=300 \\else \\global\\count10=310 \\fi\n\\newcount\\foo\n\\edef\\y{\\ifnum\\foo>2 big\\else small\\fi}\n\\newcount\\baz\n\\baz=4\n\\edef\\z{\\the\\baz}\n\\global\\count306=7\n\\newcount\\qux\n\\edef\\v{\\ifnum\\qux>2 big\\else small\\fi}\n\\begin{document}\n\\end{document}\n",
+    );
+    assert_eq!(crate::support::body(&a, "y"), "small");
+    assert_eq!(crate::support::body(&a, "z"), "4");
+    // a candidate that holds 7 makes the test undecided
+    assert_ne!(crate::support::body(&a, "v"), "small");
+}
+
+/// The body after a tagged `\maketitle` is followed on one path. The title's tabular and
+/// struct code read tagpdf's log level, a register allocated while `\count10` was an
+/// interval; while that read as any number, the title forked into tagpdf's debug code and
+/// up to 40 paths ran on (300 s, body unread). Now the run ends on few paths and reaches
+/// the definition after the title.
+#[test]
+fn the_body_after_a_tagged_title_is_followed() {
+    if !crate::support::installed() {
+        return;
+    }
+    let a =
+        analyze(&metadata("lang=en-US,tagging=on", "\\title{Ducks}\n", "\\maketitle\n\\gdef\\after{reached}\nText."));
+    assert_eq!(crate::support::body(&a, "after"), "reached");
+    // the title adds no paths to what the preamble already had
+    let untitled = analyze(&metadata("lang=en-US,tagging=on", "\\title{Ducks}\n", "\\gdef\\after{reached}\nText."));
+    assert!(a.peak_paths <= untitled.peak_paths, "{} paths, {} without the title", a.peak_paths, untitled.peak_paths);
+    assert!(found(&a, "missing-end").is_empty());
+}
+
+/// `\fp_eval:n` over a position read back from the aux (unknown digits), as latex-lab's
+/// tagged graphic computes its BBox. RED (owner: next tagging round): the l3fp parser
+/// inspects the typed unknown digit by digit and forks 92k times (37 s for two sums); a
+/// tagged `\includegraphics` of an existing file hits the time limit there (vi.tex, t11.tex).
+#[test]
+fn an_fp_sum_over_an_unknown_position_stays_on_few_paths() {
+    if !crate::support::installed() {
+        return;
+    }
+    let a = crate::support::analyze_latex(
+        "\\documentclass{article}\n\\begin{document}\n\\ExplSyntaxOn\n\\tl_gset:Ne \\x {\\dim_to_decimal_in_bp:n {\\the\\pdflastxpos sp}}\n\\tl_gset:Ne \\y {\\fp_eval:n {\\x + 10}}\n\\tl_gset:Ne \\z {\\fp_eval:n {\\y + \\x}}\n\\ExplSyntaxOff\n\\gdef\\after{reached}\n\\end{document}\n",
+    );
+    assert_eq!(crate::support::body(&a, "after"), "reached");
+    assert!(a.peak_paths <= 2, "{} paths", a.peak_paths);
+}
+
+/// The smallest form of the root above: an unknown integer position, no decimals.
+/// RED (owner: next l3fp round): `part_digits` keeps unbounded typed digits as one
+/// token, so each char test in l3fp is undecided again per arm (67.7k forks, 18 s).
+/// Splitting them fixes this but breaks the pgfmath canaries (fp-work.patch).
+#[test]
+fn an_fp_eval_of_an_unknown_integer_stays_on_few_paths() {
+    if !crate::support::installed() {
+        return;
+    }
+    let a = crate::support::analyze_latex(
+        "\\documentclass{article}\n\\begin{document}\n\\ExplSyntaxOn\\tl_gset:Ne\\x{\\int_use:N\\pdflastxpos}\\tl_gset:Ne\\y{\\fp_eval:n{\\x}}\\ExplSyntaxOff\n\\gdef\\after{reached}\n\\end{document}\n",
+    );
+    assert_eq!(crate::support::body(&a, "after"), "reached");
+    assert!(a.peak_paths <= 2, "{} paths", a.peak_paths);
+}

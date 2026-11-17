@@ -3890,6 +3890,37 @@ impl Machine<'_> {
         value
     }
 
+    /// What a register numbered by an interval (`\newcount` while the counter is one) holds:
+    /// it is one of the registers in that interval, so the join of what they hold. Unseen ones
+    /// hold zero unless an unpinned write may have reached them (tex.web § 232).
+    fn interval_register_value(&mut self, kind: RegKind, num: Num) -> Value {
+        let sets = self.env.sets;
+        let any = self.any_register_sym(kind);
+        let mut joined = zero_of(kind);
+        let reached = match self.env.get(any).map(|b| b.value.num()) {
+            None => false,
+            Some(Some((_, r))) => r.lo <= num.hi && num.lo <= r.hi,
+            Some(None) => true,
+        };
+        if reached {
+            let written = self.written_sym(any);
+            joined = match self.env.slot(written) {
+                Some(b) => joined.join(&b.value.clone(), sets),
+                None => return Value::Unknown,
+            };
+        }
+        let zero = self.register_sym(kind, 0);
+        let name = self.name(zero).to_string();
+        let prefix = name[..name.len() - 1].to_string();
+        for sym in self.bound_shaped(&prefix, "") {
+            let at = self.name(sym).strip_prefix(&prefix).and_then(|n| n.parse::<i64>().ok());
+            if sym != any && at.is_some_and(|n| num.lo <= n && n <= num.hi) {
+                joined = joined.join(&self.env.value(sym), sets);
+            }
+        }
+        joined
+    }
+
     /// The registers a scanned index may name, if its interval is narrow
     /// enough to list. `None` means every register of the kind.
     fn index_targets(&mut self, kind: RegKind, index: Option<&Num>) -> Option<Vec<Sym>> {
@@ -4127,6 +4158,13 @@ impl Machine<'_> {
                 kind => Meaning::Register(kind, crate::engine::tex::UNNUMBERED),
             };
             self.define(name, meaning, by, DefMode::Declare, span);
+            // The register holds what the registers it may be hold; `define` saved the binding.
+            if !matches!(kind, RegKind::Char | RegKind::MathChar | RegKind::UMathChar)
+                && let Some(num) = range
+            {
+                let value = self.interval_register_value(kind, num);
+                self.env.set_value_in_place(name, value);
+            }
             // the interval the number lies in, for `\meaning` (tex.web § 1224 prints it)
             let at = self.register_number_sym(name);
             let value =
