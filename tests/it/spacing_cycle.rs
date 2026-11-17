@@ -17,6 +17,7 @@ It came from NASA\\@. Then we went on.
 \\LaTeX{} is nice, and so is \\TeX{} here.
 A note (see below) and more text (see above) too.
 A word\\footnote{A note.} after, and a tie~here.
+\\fbox{\\TeX{} file} in a box.
 \\end{document}
 ";
 
@@ -31,6 +32,8 @@ const MISTAKES: &[(&str, &str, &str)] = &[
     ("parenthesis-spacing", "text (see above)", "text(see above)"),
     ("space-before-command", "word\\footnote", "word \\footnote"),
     ("double-space", "tie~here", "tie~ here"),
+    // a box's own horizontal list: TikZ node text and `\\fbox` are such boxes
+    ("command-terminated-space", "\\TeX{} file", "\\TeX file"),
 ];
 
 fn analyze(path: &std::path::Path, cfg: &Config) -> Analysis {

@@ -311,8 +311,15 @@ fn command_terminated_space(report: &mut Report) {
         if !view.char_at(i).is_some_and(char::is_alphanumeric) || !view.is_prose_text(i) {
             continue;
         }
-        // Anything set in a box of its own stands apart from the word.
-        if i == 0 || view.char_at(i - 1) == Some(' ') || view.modes(i - 1) != Modes::HORIZONTAL {
+        // Anything set in a box of its own stands apart from the word: both sides in one
+        // horizontal list (a paragraph, or an `\hbox` such as a TikZ node's text) or no finding.
+        let one_list = |m: Modes| m == Modes::HORIZONTAL || m == Modes::RESTRICTED_HORIZONTAL;
+        if i == 0
+            || view.char_at(i - 1) == Some(' ')
+            || !one_list(view.modes(i - 1))
+            || view.modes(i) != view.modes(i - 1)
+            || !view.beside(i)
+        {
             continue;
         }
         let name = analysis.interner.cs(expansion.name);

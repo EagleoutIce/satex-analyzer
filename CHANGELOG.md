@@ -20,6 +20,7 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 
 ### Lints
 
+- `fix` **A swallowed space inside a box.** `\TeX file` in a TikZ node or an `\fbox` sets `TEXfile` there too, and `command-terminated-space` now says so. Each spacing fix is checked to give back the exact text it asks for, and `scripts/spacing-sweep.py` runs the same check over real documents.
 - `feat` **PDF tagging lints.** With `\DocumentMetadata{tagging=on}`: `tagging-incompatible-package` (from TeX Live's own tagging-status list, run as TeX), `graphic-without-alt`, `pdfua-without-title` (fix: `\title[pdftitle=…]`), `tagging-without-language` (fix: writes the language LaTeX guessed), `metadata-after-class`, `tagging-unsupported-engine` and `tagged-math-without-mathml`. `satex query tagging` lists what the run set up.
 - `feat` **Accessibility manager.** "Accessibility…" on `\DocumentMetadata` edits tagging, the PDF standard, the language and the PDF title, each figure's alternative text and each table's header rows. The image dialog gets an alternative text field (`type_plugins.tagging`).
 - `fix` **No findings from a run stopped before the body.** A run a budget stopped before `\begin{document}` shows only why it stopped, no undefined commands it never got to read.
