@@ -35,6 +35,9 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 ### Playground
 
 - `perf` **The Typeset view follows typing.** A word typed in a paragraph shows at once, marked pending, until the run's row replaces it. The run sends its rows as soon as it ends, before its findings, and the view redraws only the paragraphs that changed.
+- `fix` **Typing in the PDF and Typeset views keeps its caret.** The caret stays after each typed character, also when the view is set again. A word inside a macro's text has one tint, not a box in a box. The PDF no longer stops drawing its pages after a build that gave the same PDF again.
+- `perf` **Typing in the PDF shows at once.** A typed character appears where it was typed and its line moves aside before the build. The build starts at the key, from the text as typed, and draws the page typed on first: about 0.4 s from key to new page on a short document, 0.5 to 0.6 s on 100 pages, on the satex compile system. Auto-compile's delay applies in Type mode too.
+- `feat` **Typing into a definition says so below the page.** Instead of a dialog, a note under the PDF or Typeset view says the definition changes every use, with Undo and "Type in the argument instead". Type and its legend (macro, argument, elsewhere) form one control, and the tints are easier to see.
 - `fix` **Completion fills placeholders.** A completion with a named field (`\greet{arg}`) selects `arg` for typing instead of writing `:arg}` into the text.
 - `fix` **No offline copy unless asked.** The playground no longer fetches every package in the background on its own. Settings, Playground, "Keep a copy for offline use" turns it on. A document still fetches what it uses.
 - `fix` **References and citations are their own kind in Typeset.** A `\ref` or `\cite` an earlier run's .aux decides reads `reference x` or `citation key`, with its first-run and rerun text, and stays visible with `maybe` off.
@@ -58,9 +61,6 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 
 ### CLI
 
-- `fix` **The progress bars no longer flicker.** A package cache or the kernel finishing blanked the bar until the next frame, and unchanged frames were repainted ten times a second. Now one writer redraws only rows that changed, in place, with the cursor hidden.
-- `feat` **Early findings in one line.** On a terminal, `satex lint` counts the early findings above the bars and prints them when `l` is pressed. Pipes and `--format json` are unchanged. Which the run confirmed is said with `-v` only.
-- `feat` **A clearer end of `satex lint`.** The summary lists only counts that are not zero, in their colors, has one line for fixes, and says whether the run reached the end or which limit stopped it and where.
 - `fix` **One rule for the input.** An empty stdin (`</dev/null`) no longer counts as a document: every command then reads the folder's root documents, as from a terminal. `-f -` reads stdin. A stdin left open says on stderr that satex waits for it.
 - `fix` **`satex cache` never reads stdin.** It no longer hangs on an open pipe, and its subcommands no longer say "no document named".
 - `feat` **The package cache line for every analysis.** `query`, `explain` and the other commands say how many package caches they reused or built, as `lint` does.
@@ -81,10 +81,6 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 
 ### Analysis
 
-- `fix` **Paths that differ in open groups keep each macro's own group.** Paths that split before a macro and meet inside it no longer count as a recursion nesting deeper each time, and merging them keeps the macro's own group apart, so a definition made in it stays local.
-- `fix` **`\the` of a constant of unknown value prints digits.** A `\chardef` to an unknown number, or a name whose meaning is one of several numbers, printed nothing under `\the`. Every `\DocumentMetadata` document read back empty PDF object ids from it and faulted at `\end{document}`; its run now reaches the end, and a PDF/UA document's title is known.
-- `fix` **An unknown fraction may round up.** The digits after a decimal point that satex does not know are a range again, not assumed below one: `.9` and five more digits can round to 1pt.
-- `perf` **Paths that agree cost nothing to compare.** Each path's changed names live in a shared tree, so joins and comparisons skip every part two paths have in common. Results stay the same.
 - `fix` **`\meaning` keeps a number's bounds.** A number of known range written out by `\meaning` stays that range, as `\string` already kept it. xcolor's mix of a color by such a number took 88 path splits, now 4.
 - `fix` **Big operators, `\left`…`\right` and math accents have their size.** Operators take their display variant and limits, delimiters their variant or extensible recipe for the list's height, accents their widest fitting variant, in text and display style. A script after an operator, `\limits` or a group no longer gets a wrong size. The sample paper breaks its pages where pdflatex does.
 - `fix` **A tcolorbox of unknown height keeps its anchors.** A later call that runs in more groups than a loop's entry is a new call, not another pass of the loop, so tcolorbox's drawing code is no longer cut as a loop. Nested boxes and pictures around a box keep their anchors local.

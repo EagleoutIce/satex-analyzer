@@ -1612,22 +1612,35 @@ p.ts.ts-foot::before { content: ""; position: absolute; top: 0; left: 0; width: 
 .pdf-typing .pdf-page img { cursor: text; }
 #typeset-body { position: relative; }
 /* Type mode: where typing goes, a faint tint per origin (text written in place has none) */
-:root { --orig-macro: #7c3aed24; --orig-arg: #0891b224; --orig-moved: #d9770624; }
-@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --orig-macro: #a78bfa33; --orig-arg: #22d3ee2e; --orig-moved: #fbbf242e; } }
-:root[data-theme="dark"] { --orig-macro: #a78bfa33; --orig-arg: #22d3ee2e; --orig-moved: #fbbf242e; }
+:root { --orig-macro: #7c3aed30; --orig-arg: #0891b230; --orig-moved: #d9770630; --orig-macro-line: #7c3aed; --orig-arg-line: #0891b2; --orig-moved-line: #d97706; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --orig-macro: #a78bfa40; --orig-arg: #22d3ee38; --orig-moved: #fbbf2438; --orig-macro-line: #a78bfa; --orig-arg-line: #22d3ee; --orig-moved-line: #fbbf24; } }
+:root[data-theme="dark"] { --orig-macro: #a78bfa40; --orig-arg: #22d3ee38; --orig-moved: #fbbf2438; --orig-macro-line: #a78bfa; --orig-arg-line: #22d3ee; --orig-moved-line: #fbbf24; }
 .ts-orig, .pdf .pdf-orig { position: absolute; pointer-events: none; border-radius: 2px; }
 .pdf .pdf-orig { pointer-events: auto; z-index: 1; }
-.ts-orig-macro, .pdf .pdf-orig-macro, .orig-legend .o-macro { background: var(--orig-macro); }
-.ts-orig-arg, .pdf .pdf-orig-arg, .orig-legend .o-arg { background: var(--orig-arg); }
-.ts-orig-moved, .pdf .pdf-orig-moved, .orig-legend .o-moved { background: var(--orig-moved); }
-.orig-legend { display: none; gap: .25rem; font-size: .7rem; color: var(--muted); }
-.orig-legend i { font-style: normal; padding: 0 .3rem; border-radius: 3px; }
+/* a tint and an underline in its color: seen on light text and on dark */
+.ts-orig-macro, .pdf .pdf-orig-macro, .orig-legend .o-macro { background: var(--orig-macro); box-shadow: inset 0 -2px var(--orig-macro-line); }
+.ts-orig-arg, .pdf .pdf-orig-arg, .orig-legend .o-arg { background: var(--orig-arg); box-shadow: inset 0 -2px var(--orig-arg-line); }
+.ts-orig-moved, .pdf .pdf-orig-moved, .orig-legend .o-moved { background: var(--orig-moved); box-shadow: inset 0 -2px var(--orig-moved-line); }
+#typeset-body .ts-orig { z-index: 0; }
+/* Type, its legend and its speed: one control, as tall as a layer chip */
+.type-group { display: inline-flex; align-items: stretch; border: 1px solid var(--border); border-radius: 999px; overflow: hidden; font-size: .72rem; }
+.type-group > button { border: 0; border-radius: 0; }
+.type-group .orig-legend { display: none; align-items: center; gap: .2rem; padding: 0 .4rem; border-left: 1px solid var(--border); color: var(--muted); }
+.type-group .orig-legend i { font-style: normal; padding: 0 .3rem; border-radius: 3px; line-height: 1.5; }
 .ts-typing .orig-legend, .pdf-typing .orig-legend { display: inline-flex; }
+.type-group .pdf-live { align-self: center; margin-right: .3rem; }
 
 .ts-typing .ts-text { cursor: text; }
 .pdf .pdf-caret, #typeset-body .pdf-caret { position: absolute; z-index: 3; width: 1.5px; margin-left: -.75px; background: var(--accent, #2563eb); animation: pdf-blink 1s steps(1) infinite; pointer-events: none; }
 .pdf .pdf-caret b, #typeset-body .pdf-caret b { position: absolute; left: 3px; bottom: 100%; font: 600 .6rem/1.3 ui-monospace, Menlo, monospace; color: #fff; background: var(--accent, #2563eb); padding: 0 .25rem; border-radius: 3px; white-space: pre; animation: none; }
 @keyframes pdf-blink { 50% { opacity: 0; } } @media (prefers-reduced-motion: reduce) { .pdf .pdf-caret, #typeset-body .pdf-caret { animation: none; } }
+/* typed text shown at once over the page, until the build sets it */
+.pdf .pdf-echo { position: absolute; z-index: 2; background: #fff; color: #000; pointer-events: none; white-space: pre; }
+.pdf .pdf-echo i { position: absolute; top: 0; bottom: 0; font-style: normal; display: flex; align-items: flex-end; padding-bottom: .02em; }
+.pdf .pdf-echo span { transform-origin: left; display: inline-block; }
+/* typing goes into a definition: said below the view, with a way back */
+.type-note { position: sticky; bottom: 0; z-index: 4; display: flex; flex-wrap: wrap; align-items: center; gap: .4rem; margin: 0; padding: .35rem .6rem; font-size: .8rem; background: color-mix(in srgb, var(--orig-macro) 100%, var(--bg, #fff)); border-top: 1px solid var(--line, #8884); }
+.type-note span { flex: 1 1 16rem; }
 .pdf-live { font-size: .72rem; padding: 0 .3rem; border-radius: 4px; background: var(--sunk); }
 .pdf .pdf-block { z-index: 1; outline: 1px dashed #0e7490; pointer-events: none !important; }
 .pdf .pdf-block b { position: absolute; right: 0; top: 0; transform: translateY(-100%); font: 600 .55rem/1.2 ui-monospace, Menlo, monospace; color: #0e7490; }
@@ -1849,9 +1862,9 @@ p.ts.ts-foot::before { content: ""; position: absolute; top: 0; left: 0; width: 
 .pdf-bar #pdf-follow[aria-pressed=false] { color: var(--muted); border-style: dashed; }
 .pdf-bar #pdf-follow { gap: .3rem; }
 :root { --pdf-night: invert(.88) hue-rotate(180deg); }
-#play-pdf.pdf-night :is(.pdf-page img, iframe, embed) { filter: var(--pdf-night); }
-:root[data-theme=dark] #play-pdf:not(.pdf-day) :is(.pdf-page img, iframe, embed) { filter: var(--pdf-night); }
-@media (prefers-color-scheme: dark) { :root:not([data-theme=light]) #play-pdf:not(.pdf-day) :is(.pdf-page img, iframe, embed) { filter: var(--pdf-night); } }
+#play-pdf.pdf-night :is(.pdf-page img, .pdf-echo, iframe, embed) { filter: var(--pdf-night); }
+:root[data-theme=dark] #play-pdf:not(.pdf-day) :is(.pdf-page img, .pdf-echo, iframe, embed) { filter: var(--pdf-night); }
+@media (prefers-color-scheme: dark) { :root:not([data-theme=light]) #play-pdf:not(.pdf-day) :is(.pdf-page img, .pdf-echo, iframe, embed) { filter: var(--pdf-night); } }
 .act-run { list-style: none; } .act-run summary { display: flex; justify-content: space-between; gap: .6rem; cursor: pointer; }
 .act-run .act-steps { margin: .1rem 0 .2rem .9rem; padding: 0; }
 .md-table { border-collapse: collapse; font-size: .82rem; margin: .3rem 0; }

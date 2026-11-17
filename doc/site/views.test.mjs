@@ -1215,3 +1215,43 @@ assert.equal(typeof self.satexViews.RENDER.history, 'function', 'a history secti
   assert.deepEqual(E.spans('cat, catalog', 'cat,'), [[0, 3]]);
   assert.deepEqual(E.spans('x', '—'), []);
 }
+// Typing in a typeset view: the caret stays after each typed character. The view finds its word with wordAt in the
+// text as now written; pins the bug where the caret jumped back to the word's start after each key ("lol" -> "lool").
+{
+  const E = self.satexPdfEdit;
+  let text = '\\greet{lol}', at = text.indexOf('lol') + 1, typed = 'l';
+  for (const c of 'ooo') {
+    const [a, b, body, step] = E.typed(text, at, c);
+    text = text.slice(0, a) + body + text.slice(b);
+    at = a + step;
+    typed += c;
+    const [start, word] = E.wordAt(text, at);
+    assert.equal(word.slice(0, at - start), typed, 'caret after the typed character');
+  }
+  assert.equal(text, '\\greet{looool}');
+  assert.deepEqual(E.wordAt('a bc', 4), [2, 'bc'], 'the caret at a word end is in it');
+  assert.equal(E.wordAt('a  b', 2), null, 'between words none');
+}
+// "Type in the argument instead": the first argument of a use of the macro, on its line or a neighbour, never the
+// definition's `\greet}`.
+{
+  const E = self.satexPdfEdit, text = '\\newcommand{\\greet}[1]{Hello, #1!}\n\\greet{world}\n\\greeting{x}\n';
+  assert.equal(E.argAt(text, '\\greet', 2), text.indexOf('world'));
+  assert.equal(E.argAt(text, '\\greet', 1), text.indexOf('world'), 'the next line');
+  assert.equal(E.argAt(text, '\\greet', 3), text.indexOf('world'), 'not \\greeting');
+  assert.equal(E.argAt(text, '\\nope', 2), null);
+}
+// The typed word drawn at once over the page: it takes its measured width at the page's scale, the words after it move.
+{
+  const E = self.satexPdfEdit, width = (s) => s.length;
+  // two units per character as set: one more character, two units more
+  assert.deepEqual(E.relaid([[0, 12, 'Hello,'], [14, 26, 'world!']], 0, 'Hellmo,', width), [[0, 14, 'Hellmo,'], [16, 28, 'world!']]);
+  assert.deepEqual(E.relaid([[0, 10, 'ab'], [12, 20, 'cd']], 1, 'cdd', width), [[0, 10, 'ab'], [12, 24, 'cdd']]);
+}
+// One origin tint per spot: an argument's word inside its macro's run keeps its tint, the run is cut around it
+// (pins the double box "Helmlo [World]"); rows apart and other pages stay whole.
+{
+  const E = self.satexPdfEdit, box = (l, r, kind, page = 1, t = 0) => ({ page, l, r, t, d: t + 10, kind });
+  const got = E.apart([box(0, 100, 'macro'), box(40, 70, 'arg'), box(0, 100, 'moved', 1, 20), box(0, 100, 'moved', 2)]);
+  assert.deepEqual(got.map((b) => [b.kind, b.page, b.t, b.l, b.r]).sort(), [['arg', 1, 0, 40, 70], ['macro', 1, 0, 0, 40], ['macro', 1, 0, 70, 100], ['moved', 1, 20, 0, 100], ['moved', 2, 0, 0, 100]]);
+}

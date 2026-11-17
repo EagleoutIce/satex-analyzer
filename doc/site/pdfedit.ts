@@ -8,6 +8,8 @@ type Table = { env: string; lines: [number, number]; width: unknown; cols: { ali
 /** A column found on a page: its index, where its cells' boxes stand, how wide they are, in bp. */
 type Placed = { k: number; page: number; x: number; w: number; t: number; d: number; n: number };
 /** A width as written that a drag may rewrite: a length (`3cm`) or a share of a width (`.3\linewidth`). */
+/** A box on a page, in bp: left, top, right, bottom. */
+type Flat = { page: number; l: number; t: number; r: number; d: number };
 type Form = { kind: 'len'; num: number; unit: string } | { kind: 'share'; num: number; name: string; lead: boolean };
 declare global {
   interface Window {
@@ -25,6 +27,10 @@ declare global {
       typed(text: string, at: number, c: string, inline?: string): [number, number, string, number];
       erased(text: string, at: number, back: boolean): [number, number];
       columns(boxes: Box[], file: string, table: Table, tables: Table[]): (Placed & { approx?: boolean })[];
+      wordAt(text: string, at: number): [number, string] | null;
+      argAt(text: string, name: string, line: number): number | null;
+      apart<B extends Flat>(boxes: B[]): B[];
+      relaid(row: [number, number, string][], k: number, now: string, width: (s: string) => number): [number, number, string][];
     };
   }
 }
@@ -209,5 +215,46 @@ declare global {
     };
     return { put(v: V) { next = { v }; run(); }, async flush() { while (busy) await busy; await run(); } };
   }
-  self.satexPdfEdit = { place, extent, room, form, resized, stepped, plain, editable, spans, sender, typed, erased, columns };
+  /** The word around offset `at` of `text` (letters and digits, the caret at its edge counts): its start and itself. */
+  function wordAt(text: string, at: number): [number, string] | null {
+    let a = at, b = at;
+    while (a > 0 && /[\p{L}\p{N}]/u.test(text[a - 1]!)) a--;
+    while (b < text.length && /[\p{L}\p{N}]/u.test(text[b]!)) b++;
+    return a < b ? [a, text.slice(a, b)] : null;
+  }
+  /** Where the first argument of a use of macro `name` (`\greet`) starts, on line `line` (1-based) or a neighbour. */
+  function argAt(text: string, name: string, line: number): number | null {
+    const starts = [0];
+    for (let i = text.indexOf('\n'); i >= 0; i = text.indexOf('\n', i + 1)) starts.push(i + 1);
+    const re = new RegExp(`${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![a-zA-Z@])\\s*\\{`, 'g');
+    for (const n of [line, line + 1, line - 1]) {
+      const a = starts[n - 1];
+      if (a === undefined) continue;
+      const m = re.exec(text.slice(a, starts[n] ?? text.length));
+      re.lastIndex = 0;
+      if (m) return a + m.index + m[0].length;
+    }
+    return null;
+  }
+  /** A row's words (`[left, right, text]`) after word `k` became `now`: it takes `width(now)` scaled as the old
+   * word was set, the words after it move by the difference, the gaps stay. */
+  function relaid(row: [number, number, string][], k: number, now: string, width: (s: string) => number): [number, number, string][] {
+    const [l, r, was] = row[k]!, scale = width(was) > 0 ? (r - l) / width(was) : 0, d = width(now) * scale - (r - l);
+    return row.map(([a, b, t], i) => i < k ? [a, b, t] : i === k ? [a, b + d, now] : [a + d, b + d, t]);
+  }
+  /** Boxes cut so that none overlaps another on its row: where two do, the narrower keeps the place and the wider
+   * keeps what lies left and right of it. One highlight per spot: an argument's word inside its macro's text. */
+  function apart<B extends Flat>(boxes: B[]): B[] {
+    const byWidth = [...boxes].sort((a, b) => (a.r - a.l) - (b.r - b.l)), kept: B[] = [];
+    for (const b of byWidth) {
+      let parts = [b];
+      for (const k of kept) {
+        if (k.page !== b.page || k.d <= b.t || k.t >= b.d) continue;
+        parts = parts.flatMap((p) => k.r <= p.l || k.l >= p.r ? [p] : [{ ...p, r: k.l }, { ...p, l: k.r }].filter((q) => q.r - q.l > 0.5));
+      }
+      kept.push(...parts);
+    }
+    return kept;
+  }
+  self.satexPdfEdit = { place, extent, room, form, resized, stepped, plain, editable, spans, sender, typed, erased, columns, wordAt, argAt, relaid, apart };
 })();
