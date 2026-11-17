@@ -701,9 +701,14 @@ lua:  # \directlua code, run by satex's own Lua 5.3 with no io, os or debug libr
     #! plugin: lua_run
 
 compile:  # what satex compile runs and shows
-  system: auto  # the build system: auto (arara directives, then Tectonic.toml, then latexmk, then the engine), latexmk, arara, tectonic, make, l3build or engine
+  system: auto  # the build system: auto (arara directives, then Tectonic.toml, then latexmk, then the engine), latexmk, arara, tectonic, make, l3build, engine or satex (its own incremental build: a preamble format, reruns only while the build files move)
     #! affects: output
     #! example: `system: arara`: the `% arara:` directives of the main file build it
+    #! example: `system: satex`: a body edit is one pdfTeX pass from the dumped preamble
+  explain: true  # explain the build's messages by a full analysis; false explains by rule and waits for none
+    #! affects: speed
+  passes: 4  # engine passes at most of the satex build, until the build files rest
+    #! affects: output
   # viewer: none  # a PDF viewer `satex compile --view` opens: none or auto (the system's opener) or a program; only your own config sets it
     #! affects: output
 

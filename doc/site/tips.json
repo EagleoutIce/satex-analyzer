@@ -23,7 +23,7 @@
 ["`satex trace` shows the execution step by step.", "src/cli/mod.rs", "The execution trace, step by step"],
 ["`satex tokens` shows the token stream TeX's mouth produces.", "src/cli/mod.rs", "The token stream the mouth produces"],
 ["`satex summary` shows what the document and every file it loads contribute.", "src/cli/mod.rs", "What the document and every file it loads contribute"],
-["`satex compile` runs latexmk, or the engine without it, and explains each error.", "src/cli/mod.rs", "Build the document with latexmk"],
+["`satex compile` builds with the project's own build system, or its own fast one, and explains each error.", "src/cli/mod.rs", "Build the document with its build system"],
 ["`satex install` installs the packages a document loads that are missing here. It asks first.", "src/cli/mod.rs", "Asks first"],
 ["`satex completions install` adds shell completion, for bash, zsh or fish.", "doc/wiki/cli.md", "## Shell completion"],
 ["`satex cache build` prepares the kernel and packages ahead of time.", "doc/wiki/configuration.md", "`satex cache build`"],

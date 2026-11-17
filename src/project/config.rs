@@ -604,8 +604,13 @@ fn with_listed(text: &str, path: &[&str], key: &str, item: &str) -> Option<Strin
 pub struct CompileConfig {
     /// The build system: `auto` (arara directives, then Tectonic.toml, then
     /// latexmk, then the engine), or one of `latexmk`, `arara`, `tectonic`,
-    /// `make`, `l3build`, `engine`.
+    /// `make`, `l3build`, `engine`, `satex` (satex's own incremental build).
     pub system: String,
+    /// Whether the build's messages are explained by a full analysis. Off,
+    /// the build waits for none and explains by the message's rule only.
+    pub explain: bool,
+    /// Engine passes at most of the `satex` build, until the build files rest.
+    pub passes: u32,
     /// A PDF viewer to open after a build: `none`, `auto` (the system's
     /// default opener), or a program. Only the user's own config sets it.
     pub viewer: String,
@@ -613,7 +618,7 @@ pub struct CompileConfig {
 
 impl Default for CompileConfig {
     fn default() -> CompileConfig {
-        CompileConfig { system: "auto".into(), viewer: "none".into() }
+        CompileConfig { system: "auto".into(), viewer: "none".into(), explain: true, passes: 4 }
     }
 }
 

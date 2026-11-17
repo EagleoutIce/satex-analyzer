@@ -44,16 +44,24 @@ pub fn run(context: &Context, system: Option<&str>, view: bool) -> Result<Output
     let program = if program == "tex" { "pdftex" } else { program };
     let installed = |p: &str| crate::project::paths::which(p).is_ok();
     let arara = analysis.plugins.magic.iter().any(|m| m.key == "arara");
-    let chosen = match system.unwrap_or(&analysis.settings.compile.system) {
+    let asked = system.unwrap_or(&analysis.settings.compile.system);
+    // satex's own build yields to a build the project configures itself
+    let configured = arara || project.files.iter().any(|f| f.tool == "latexmk" || f.tool == "tectonic");
+    let asked = if asked == "satex" && configured { "auto" } else { asked };
+    let mut preamble = String::new();
+    let chosen = match asked {
         "auto" if arara && installed("arara") => "arara",
         "auto" if dir.join("Tectonic.toml").is_file() && installed("tectonic") => "tectonic",
         "auto" if latex && installed("latexmk") => "latexmk",
         "auto" => "engine",
         "engine" => "engine",
+        "satex" => "satex",
         s @ ("latexmk" | "arara" | "tectonic" | "make" | "l3build") if installed(s) => s,
         s @ ("latexmk" | "arara" | "tectonic" | "make" | "l3build") => return Err(format!("{s} is not installed")),
         other => {
-            return Err(format!("unknown build system `{other}`: latexmk, arara, tectonic, make, l3build or engine"));
+            return Err(format!(
+                "unknown build system `{other}`: latexmk, arara, tectonic, make, l3build, engine or satex"
+            ));
         }
     };
     let status = match chosen {
@@ -78,6 +86,13 @@ pub fn run(context: &Context, system: Option<&str>, view: bool) -> Result<Output
             }
             build("latexmk", &args, file, &dir)?
         }
+        "satex" => {
+            let at = out_dir.clone().unwrap_or_else(|| dir.clone());
+            let passes = analysis.settings.compile.passes;
+            let (status, dumped) = own(program, latex, context.source, file, &job, &dir, &at, passes)?;
+            preamble = dumped;
+            status
+        }
         // The engine alone: again while the log asks for a rerun, as
         // LaTeX's cross-references need.
         _ => {
@@ -100,8 +115,10 @@ pub fn run(context: &Context, system: Option<&str>, view: bool) -> Result<Output
         open_viewer(&analysis.settings.compile.viewer, &log_path.with_extension("pdf"));
     }
     let log = std::fs::read(&log_path).map_err(|e| format!("{}: {e}", log_path.display()))?;
-    let logged = parse_log(&String::from_utf8_lossy(&log), &dir);
-    let findings = crate::linter::lint(analysis);
+    // a preamble read from a format said its messages while the format was dumped
+    let mut logged = parse_log(&preamble, &dir);
+    logged.extend(parse_log(&String::from_utf8_lossy(&log), &dir));
+    let findings = if analysis.settings.compile.explain { crate::linter::lint(analysis) } else { Vec::new() };
     let mut records: Vec<Record> = logged.iter().map(|l| explain(l, &findings, &main)).collect();
     if !status.success() && !logged.iter().any(|l| l.error) {
         records.push(record(
@@ -114,6 +131,154 @@ pub fn run(context: &Context, system: Option<&str>, view: bool) -> Result<Output
         ));
     }
     Ok(Output::Lint(records))
+}
+
+/// The build files a run reads back: equal before and after a pass, the references rest.
+const OWN: [&str; 16] =
+    ["aux", "toc", "lof", "lot", "out", "bbl", "ind", "nav", "snm", "vrb", "gls", "acr", "nls", "loa", "lol", "thm"];
+/// Whether a file of this extension is a build file a run reads back.
+pub fn rests(ext: &str) -> bool {
+    OWN.contains(&ext)
+}
+/// Where satex's build keeps its formats and the stamps of its tools' inputs.
+pub const KEEP: &str = ".satex-build";
+
+/// satex's own build in `at`: the engine until the build files rest (at most `passes`), BibTeX,
+/// Biber and makeindex where their inputs changed, a LaTeX preamble read from a format dumped once
+/// per preamble. A fresh build's first pass writes no PDF. Gives the status and the dump's log.
+#[allow(clippy::too_many_arguments)]
+fn own(
+    program: &str,
+    latex: bool,
+    source: &str,
+    file: &str,
+    job: &str,
+    dir: &Path,
+    at: &Path,
+    passes: u32,
+) -> Result<(std::process::ExitStatus, String), String> {
+    let keep = at.join(KEEP);
+    std::fs::create_dir_all(&keep).map_err(|e| format!("{}: {e}", keep.display()))?;
+    let mut args = vec!["-interaction=nonstopmode".to_string(), "-file-line-error".into(), "-synctex=1".into()];
+    if at != dir {
+        args.push(format!("-output-directory={}", at.display()));
+    }
+    let fmt = if latex && program == "pdflatex" { format(source, file, job, dir, &keep) } else { None };
+    if let Some((fmt, _)) = &fmt {
+        args.push(format!("-fmt={}", fmt.display()));
+    }
+    let read = |ext: &str| std::fs::read(at.join(format!("{job}.{ext}"))).unwrap_or_default();
+    let rested = || -> Vec<u8> { OWN.iter().flat_map(|e| [read(e), b"\0".to_vec()].concat()).collect() };
+    let mut was = rested();
+    // LaTeX writes an .aux: a first pass without one is never the last
+    let fresh = latex && read("aux").is_empty();
+    let mut status = None;
+    for pass in 0..passes.max(1) {
+        let draft = fresh && pass == 0;
+        let mut pass_args: Vec<&str> = args.iter().map(String::as_str).collect();
+        if draft {
+            pass_args.retain(|a| *a != "-synctex=1");
+            pass_args.push("-draftmode");
+        }
+        status = Some(build(program, &pass_args, file, dir)?);
+        tools(job, dir, at, &keep)?;
+        let now = rested();
+        let log = String::from_utf8_lossy(&read("log")).into_owned();
+        if !draft && now == was && !log.contains("Rerun to get") && !log.contains("Label(s) may have changed") {
+            break;
+        }
+        was = now;
+    }
+    let dumped = fmt.map(|(_, log)| log).unwrap_or_default();
+    Ok((status.ok_or("no pass ran")?, dumped))
+}
+
+/// BibTeX, Biber and makeindex, each where its input changed since it last ran or its output is missing.
+fn tools(job: &str, dir: &Path, at: &Path, keep: &Path) -> Result<(), String> {
+    let text = |ext: &str| std::fs::read_to_string(at.join(format!("{job}.{ext}"))).unwrap_or_default();
+    let bib = |names: &mut dyn Iterator<Item = &str>| -> String {
+        names.map(|n| std::fs::read_to_string(dir.join(n.trim()).with_extension("bib")).unwrap_or_default()).collect()
+    };
+    let aux = text("aux");
+    // what BibTeX reads of the .aux, and the databases it names
+    let cites: String =
+        aux.lines().filter(|l| ["\\citation", "\\bibdata", "\\bibstyle"].iter().any(|p| l.starts_with(p))).collect();
+    let data = aux.lines().filter_map(|l| l.strip_prefix("\\bibdata{")?.strip_suffix('}'));
+    let cites = cites.clone() + &bib(&mut data.flat_map(|d| d.split(',')));
+    let bcf = text("bcf");
+    let sources =
+        bcf.split("<bcf:datasource").skip(1).filter_map(|d| d.split_once('>')?.1.split_once('<').map(|(n, _)| n));
+    let bcf = bcf.clone() + &bib(&mut sources.map(|n| n.trim_end_matches(".bib")));
+    let idx = text("idx");
+    let runs = [
+        ("bibtex", aux.contains("\\bibdata{") && bcf.is_empty(), cites, "bbl"),
+        ("biber", !bcf.is_empty(), bcf, "bbl"),
+        ("makeindex", !idx.trim().is_empty(), idx, "ind"),
+    ];
+    for (tool, wanted, input, output) in runs {
+        let stamp = keep.join(format!("{job}.{tool}"));
+        let hash = format!("{:016x}", hash(input.as_bytes()));
+        let missing = !at.join(format!("{job}.{output}")).is_file();
+        if wanted && (missing || std::fs::read_to_string(&stamp).ok().as_deref() != Some(&hash)) {
+            build(tool, &[], job, at)?;
+            std::fs::write(&stamp, hash).map_err(|e| format!("{}: {e}", stamp.display()))?;
+        }
+    }
+    Ok(())
+}
+
+fn hash(bytes: &[u8]) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    bytes.hash(&mut hasher);
+    hasher.finish()
+}
+
+/// The format of `file`'s preamble (mylatexformat), dumped again only when the preamble or a file
+/// it read changed, with the dump's log. None where the dump fails or reports an error: then the
+/// runs read the preamble themselves and report it.
+fn format(source: &str, file: &str, job: &str, dir: &Path, keep: &Path) -> Option<(PathBuf, String)> {
+    let preamble = &source[..source.find("\\begin{document}")?];
+    // a `%&format` line picks a format of its own
+    if source.starts_with("%&") {
+        return None;
+    }
+    let fmt = keep.join(job);
+    let (key, log) = (keep.join(format!("{job}.key")), keep.join(format!("{job}.log")));
+    let main = dir.join(file).canonicalize().ok();
+    // every file the dump read but the main one, by content: one changed, the format is stale
+    let stamp = |path: &str| format!("{path}\t{:016x}\n", hash(&std::fs::read(path).unwrap_or_default()));
+    let head = format!("{:016x}\n", hash(preamble.as_bytes()));
+    let stored = std::fs::read_to_string(&key).unwrap_or_default();
+    let fresh = stored.strip_prefix(&head).is_some_and(|rest| {
+        rest.lines().all(|l| l == "unusable" || stamp(l.split('\t').next().unwrap_or_default()) == format!("{l}\n"))
+    });
+    if !fresh {
+        let ini = ["-ini", "-interaction=nonstopmode", "-file-line-error", "-recorder"];
+        let out = format!("-output-directory={}", keep.display());
+        let status = build(
+            "pdftex",
+            &[&ini[..], &[&out, &format!("-jobname={job}"), "&pdflatex", "mylatexformat.ltx"]].concat(),
+            file,
+            dir,
+        );
+        let said = std::fs::read_to_string(&log).unwrap_or_default();
+        let fls = std::fs::read_to_string(keep.join(format!("{job}.fls"))).unwrap_or_default();
+        let mut inputs: Vec<&str> = fls.lines().filter_map(|l| l.strip_prefix("INPUT ")).collect();
+        inputs.sort_unstable();
+        inputs.dedup();
+        inputs.retain(|p| dir.join(p).canonicalize().ok() != main);
+        let usable = status.is_ok_and(|s| s.success()) && !parse_log(&said, dir).iter().any(|l| l.error);
+        let mut text = head.clone();
+        text.extend(inputs.iter().map(|p| stamp(&dir.join(p).display().to_string())));
+        if !usable {
+            text.push_str("unusable\n");
+        }
+        let _ = std::fs::write(&key, text);
+    }
+    let stored = std::fs::read_to_string(&key).unwrap_or_default();
+    let usable = !stored.lines().any(|l| l == "unusable") && fmt.with_extension("fmt").is_file();
+    usable.then(|| (fmt, std::fs::read_to_string(&log).unwrap_or_default()))
 }
 
 /// Opens `pdf` in `viewer` (`auto`/`none`: the system's opener), detached.

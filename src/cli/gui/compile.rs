@@ -210,7 +210,12 @@ fn build(root: &Path, body: &[u8], base: Option<&Path>, runs: &mut Vec<Value>) -
     let satex = std::env::current_exe().map_err(|e| e.to_string())?.with_file_name("satex");
     // The page's settings: `--set KEY=VALUE` pairs only.
     let sets: Vec<&str> = request["sets"].as_array().into_iter().flatten().filter_map(Value::as_str).collect();
-    let flags: Vec<&str> = sets.iter().flat_map(|s| ["--set", s]).collect();
+    // satex's own build, explained by rules: the page's analysis explains the rest
+    let flags: Vec<&str> =
+        ["compile.system=satex", "compile.explain=false"].iter().chain(&sets).flat_map(|s| ["--set", s]).collect();
+    // the last build of this lineage seeds this one, as latexmk's directory would
+    let lineage = request_key(&json!({ "main": main, "at": request["at"], "sets": sets }));
+    seed(root, &dir, &lineage);
     // A slice is a project of its own: the main file cut down, the local files it needs.
     let work = match request["at"].as_str() {
         Some(at) => {
@@ -322,6 +327,34 @@ fn build(root: &Path, body: &[u8], base: Option<&Path>, runs: &mut Vec<Value>) -
     Ok(answer)
 }
 
+/// Copies the build files and satex's build state of the newest build of `lineage` into `dir`.
+fn seed(root: &Path, dir: &Path, lineage: &str) {
+    let mut builds: Vec<PathBuf> =
+        std::fs::read_dir(root).into_iter().flatten().filter_map(|e| Some(e.ok()?.path())).collect();
+    builds.sort();
+    let last = builds
+        .into_iter()
+        .rev()
+        .find(|b| b != dir && std::fs::read_to_string(b.join(LINEAGE)).is_ok_and(|l| l == lineage));
+    let _ = std::fs::write(dir.join(LINEAGE), lineage);
+    let Some(last) = last else { return };
+    for from in walkdir(&last) {
+        let Ok(name) = from.strip_prefix(&last) else { continue };
+        let ext = name.extension().and_then(|e| e.to_str()).unwrap_or_default();
+        let state = name.components().any(|c| c.as_os_str() == crate::cli::compile::KEEP);
+        if !(state || crate::cli::compile::rests(ext)) || dir.join(name).exists() {
+            continue;
+        }
+        let to = dir.join(name);
+        let _ = std::fs::create_dir_all(to.parent().unwrap_or(dir));
+        // a format is only read: linked, not copied
+        let _ = std::fs::hard_link(&from, &to).or_else(|_| std::fs::copy(&from, &to).map(drop));
+    }
+}
+
+/// The file naming a build's lineage.
+const LINEAGE: &str = "lineage.txt";
+
 /// What a request determines: its main file, slice point and files.
 fn request_key(request: &Value) -> String {
     use std::hash::{Hash, Hasher};
@@ -429,7 +462,9 @@ fn safe(name: &str) -> bool {
 
 /// The page's own files beside a build: its page images, words, links and answer.
 fn ours(name: &str) -> bool {
-    name.starts_with("page-") && name.ends_with(".png") || ["words.html", "links.json", "answer.json"].contains(&name)
+    name.starts_with("page-") && name.ends_with(".png")
+        || ["words.html", "links.json", "answer.json", LINEAGE].contains(&name)
+        || name.starts_with(crate::cli::compile::KEEP)
 }
 
 /// The build in `dir` as a zip (stored, not compressed: the PDF and

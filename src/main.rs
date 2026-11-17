@@ -522,7 +522,13 @@ fn run_on(cli: &mut Cli, file: Option<PathBuf>, explaining: bool, piped: Option<
         anstream::eprintln!("{}", render::status("satex: early findings, to be confirmed by the analysis"));
         anstream::eprint!("{}", render::lint(&early, links, true));
     }
-    let analysis = if cli.command().needs_analysis() {
+    // a build explained by rules only waits for no analysis: one that reads nothing
+    let sketched = matches!(cli.command, Some(Command::Compile { .. })) && !cfg.compile.explain;
+    let analysis = if sketched {
+        let mut sketch = Analysis::sketch(&source, &cli.file.iter().cloned().collect::<Vec<_>>(), &cfg, Vec::new());
+        sketch.plugins.read_kernel(&cfg, &source);
+        sketch
+    } else if cli.command().needs_analysis() {
         Machine::analyze(&source, cli.file.as_deref(), &cfg)
     } else {
         Analysis::empty()

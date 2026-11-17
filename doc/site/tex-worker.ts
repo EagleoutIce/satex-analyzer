@@ -8,10 +8,14 @@ interface Mod {
   FS: Rec; HEAPU8: Uint8Array; callMain(args: string[]): number; kpse_remote_register(name: string, format: number, bytes: Uint8Array): void;
   kpse_remote_clear(): void; _flush_streams?(): void; PATH: Rec; ENV: Rec;
 }
-interface Instance { m: Mod; out: { lines: string[] }; keep: Cache | null | undefined; header: Uint8Array; asked?: string; last?: { main: string; inputs: string[] } }
+/** A preamble dumped as a format (mylatexformat): what it was dumped from, its file (none: unusable), the dump's log. */
+interface Dumped { key: string; fmt: string | null; log: string }
+interface Instance { m: Mod; out: { lines: string[] }; keep: Cache | null | undefined; header: Uint8Array; asked?: string; last?: { main: string; inputs: string[] }; dumped?: Dumped }
 interface Command { command: string; status: number; ms: number }
 const TEXMF = '/texlive/texmf-dist', PROJECT = '/home/web_user/project_dir';
 const FMT = `${TEXMF}/texmf-var/web2c/pdftex/pdflatex.fmt`;
+/** Where the preamble formats go: beside the project, which a build for another main file mounts anew. */
+const DUMPS = '/home/web_user/formats';
 /** The engine's memory up to here holds its static state: restored between runs. BusyTeX's own value. */
 const HEADER = 2 ** 26;
 /** What a run writes and reads back of its own: asked of no server. */
@@ -177,8 +181,9 @@ async function build(instance: Instance, files: Record<string, Uint8Array>, main
   });
   const commands: Command[] = [];
   let status = 0;
+  const fmt = preamble(instance, files, main, dir, file, job, commands);
   // a fresh build's first pass is never its last: it writes no PDF (-draftmode)
-  const tex = (draft: boolean) => status = run(instance, ['pdflatex', ...draft ? ['-draftmode'] : ['-synctex=1'], '--no-shell-escape', '-interaction=nonstopmode', '-file-line-error', '--fmt', FMT, file], commands);
+  const tex = (draft: boolean) => status = run(instance, ['pdflatex', ...draft ? ['-draftmode'] : ['-synctex=1'], '--no-shell-escape', '-interaction=nonstopmode', '-file-line-error', '--fmt', fmt?.fmt ?? FMT, file], commands);
   let was = seeded ? own().join('\0') : null, biblatex = false;
   for (let pass = 1; pass <= PASSES; pass++) {
     post({ phase: `pdfTeX, pass ${pass}${pass === 1 && !seeded ? ' (writes the .aux, no PDF)' : ''}` });
@@ -192,6 +197,8 @@ async function build(instance: Instance, files: Record<string, Uint8Array>, main
     if (now === was && !/Rerun to get|Label\(s\) may have changed/.test(log)) break;
     was = now;
   }
+  // the preamble's messages were said while its format was dumped: they head the log
+  if (fmt) FS.writeFile(PATH.join(dir, `${job}.log`), fmt.log + read(`${job}.log`));
   // only a clean last run seeds the next build: an error may have left a broken .aux
   if (!status && read(`${job}.pdf`, true)) instance.last = { main, inputs: Object.keys(files) };
   const outputs: { name: string; bytes: Uint8Array }[] = [], inputs = new Set(Object.keys(files).map((n) => PATH.join(PROJECT, n)));
@@ -209,6 +216,27 @@ async function build(instance: Instance, files: Record<string, Uint8Array>, main
   const from: Record<string, number> = {};
   for (const { host } of got.values()) from[host] = (from[host] ?? 0) + 1;
   return { job, outputs, commands, biblatex, from, asked: [...new Set(sources.map(hostOf))], dead: [...dead], failed: [...failed] };
+}
+
+/** The format of `main`'s preamble, dumped again when the preamble or another file of the project changed.
+ * None where the dump fails or reports an error: the runs then read the preamble themselves and report it. */
+function preamble(instance: Instance, files: Record<string, Uint8Array>, main: string, dir: string, file: string, job: string, commands: Command[]) {
+  const source = new TextDecoder().decode(files[main]), at = source.indexOf('\\begin{document}');
+  if (at < 0 || source.startsWith('%&')) return null;
+  const others = Object.keys(files).filter((n) => n !== main).sort().map((n) => `${n}\0${new TextDecoder('latin1').decode(files[n])}`);
+  const key = [main, source.slice(0, at), ...others].join('\0');
+  if (instance.dumped?.key !== key) {
+    const { FS, PATH } = instance.m;
+    FS.mkdirTree(DUMPS);
+    const log = PATH.join(DUMPS, `${job}.log`);
+    post({ phase: 'dumping the preamble as a format' });
+    const status = run(instance, ['pdftex', '-ini', '--no-shell-escape', '-interaction=nonstopmode', '-file-line-error', `-output-directory=${DUMPS}`, `-jobname=${job}`, `&${FMT.replace(/\.fmt$/, '')}`, 'mylatexformat.ltx', file], commands);
+    const said = FS.analyzePath(log).exists ? FS.readFile(log, { encoding: 'utf8' }) as string : '';
+    const fmt = PATH.join(DUMPS, `${job}.fmt`), usable = !status && FS.analyzePath(fmt).exists && !/^(! |\S+:\d+: )/m.test(said);
+    instance.dumped = { key, fmt: usable ? fmt : null, log: said };
+    FS.chdir(dir);
+  }
+  return instance.dumped.fmt ? instance.dumped as { fmt: string; log: string } : null;
 }
 
 let booting: Promise<Instance> | null = null;
