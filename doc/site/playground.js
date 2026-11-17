@@ -629,7 +629,7 @@
   let version = 0, synced = 0, saved = 0, analyzedVersion = 0, timer = null, checkStart = 0, retryCompletion = false;
   let typedAt = 0;
   /** The Playground tab's settings, per viewer: analysis delay (ms), editor font (px), wrap, line numbers, editor theme. */
-  const PLAY = 'satex-playground', PLAY_DEF = { delay: 400, font: 14, wrap: false, numbers: true, theme: 'site' };
+  const PLAY = 'satex-playground', PLAY_DEF = { delay: 400, font: 14, wrap: false, numbers: true, theme: 'site', offline: false };
   const play = { ...PLAY_DEF };
   try { Object.assign(play, JSON.parse(localStorage.getItem(PLAY) ?? '{}')); } catch {}
   function changed() {
@@ -2892,6 +2892,7 @@
     ['wrap', 'Wrap long lines', 'A line longer than the editor goes on below instead of scrolling sideways.'],
     ['numbers', 'Line numbers', ''],
     ['theme', 'Editor colors', 'Follow the site, or keep the editor light or dark.', [['site', 'as the site'], ['light', 'light'], ['dark', 'dark']]],
+    ['offline', 'Keep a copy for offline use', `Fetches every package${offlineState.total ? ` (${mib(offlineState.total)} MiB)` : ''} into this browser while it is idle, so the playground works without a connection. Off: only what a document uses is fetched.`],
   ];
   const playValue = (k) => k === 'auto' ? (pdfAuto.on ? pdfAuto.delay : 0) : play[k];
   function playSettings() {
@@ -2912,6 +2913,7 @@
       const own = Object.fromEntries(Object.entries(play).filter(([x, y]) => y !== PLAY_DEF[x]));
       try { if (Object.keys(own).length) localStorage.setItem(PLAY, JSON.stringify(own)); else localStorage.removeItem(PLAY); } catch {}
       editor?.prefs?.();
+      if (k === 'offline') { if (v) offlineRun(); else offlineState.stop = true; }
     }
     playSettings();
   });
@@ -7441,10 +7443,8 @@
       const todo = list.more.filter(([p]) => !have.has(new URL(p, base).href));
       Object.assign(offlineState, { todo, total: todo.reduce((n, [, s]) => n + s, 0), got: 0 });
     } catch (e) { console.warn('offline mode unavailable', e); return; }
-    if (!offlineState.todo.length) { offlineShow(''); return; }
-    let off = false;
-    try { off = localStorage.getItem('satex-offline') === 'off'; } catch {}
-    if (navigator.connection?.saveData || off) { offlineShow('', `Keep offline (${mib(offlineState.total)} MiB)`, 'fetch every package now, so the playground works without its server'); return; }
+    // fetching everything is the viewer's choice (Settings, Playground), never a default: a document fetches what it uses
+    if (!offlineState.todo.length || !play.offline || navigator.connection?.saveData) { offlineShow(''); return; }
     await new Promise((r) => (self.requestIdleCallback ? requestIdleCallback(r, { timeout: 2000 }) : setTimeout(r, 2000)));
     offlineRun();
   }
@@ -7452,8 +7452,7 @@
     const s = offlineState, next = [...s.todo];
     if (s.running) return;
     Object.assign(s, { running: true, stop: false, got: s.todo.length === next.length ? s.got : 0 });
-    try { localStorage.removeItem('satex-offline'); } catch {}
-    const line = () => offlineShow(`making it available offline: ${mib(Math.min(s.got, s.total))} of ${mib(s.total)} MiB`, 'Stop', 'the packages are fetched in the background and kept in this browser');
+    const line = () => offlineShow(`offline copy ${mib(Math.min(s.got, s.total))}/${mib(s.total)} MiB`, 'Stop', 'Settings, Playground: every package is fetched while the page is idle and kept in this browser');
     line();
     let failed = false;
     const one = async () => {
@@ -7479,10 +7478,10 @@
     s.running = false;
     s.todo = next;
     if (!next.length) offlineShow('');
-    else s.got = s.total - next.reduce((n, [, z]) => n + z, 0), offlineShow(failed ? 'offline copy paused: no connection' : `offline copy stopped at ${mib(s.got)} of ${mib(s.total)} MiB`, 'Resume', 'fetch the rest of the packages');
+    else s.got = s.total - next.reduce((n, [, z]) => n + z, 0), offlineShow(failed ? 'offline copy paused: no connection' : play.offline ? `offline copy stopped at ${mib(s.got)}/${mib(s.total)} MiB` : '', 'Resume', 'fetch the rest of the packages');
   }
   offlineBtn.onclick = () => {
-    if (offlineState.running) { offlineState.stop = true; try { localStorage.setItem('satex-offline', 'off'); } catch {} } else offlineRun();
+    if (offlineState.running) offlineState.stop = true; else offlineRun();
   };
   addEventListener('online', () => { if (!offlineState.running && offlineState.todo.length && offlineBtn.textContent === 'Resume' && offlineText.textContent.includes('no connection')) offlineRun(); });
 

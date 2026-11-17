@@ -34,6 +34,7 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 
 ### Playground
 
+- `fix` **No offline copy unless asked.** The playground no longer fetches every package in the background on its own. Settings, Playground, "Keep a copy for offline use" turns it on. A document still fetches what it uses.
 - `fix` **References and citations are their own kind in Typeset.** A `\ref` or `\cite` an earlier run's .aux decides reads `reference x` or `citation key`, with its first-run and rerun text, and stays visible with `maybe` off.
 - `feat` **Type in the Typeset view, into macro definitions, math and tables.** Typing is on by default in the PDF and Typeset tabs: a click on a word puts a caret at its place in the source, and a faint tint shows where text comes from (a macro's definition, its argument, text read elsewhere). Text a macro of yours sets (`Hello` from `\greet`) goes into that macro's definition, after a note that every use changes. `_`, `%`, `&` and the other specials are written escaped, so the output shows what was typed. `$` opens math with its closer (`conventions.math.inline`: `$`, `\(`, or the document's most used). Hovering a table in the PDF shows each column's letter and width, with buttons that rewrite its alignment.
 - `feat` **Definition history as a timeline.** Each definition is a dot on one line, the one in force filled, an undone one dashed; other paths fork off beside it. A macro named in a body opens its own history in place, so the separate list of calls is gone.
