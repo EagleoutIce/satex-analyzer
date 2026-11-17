@@ -1591,8 +1591,28 @@ carried! {
     pub(crate) absorbed: Option<Span>,
 }
 
-/// The text each path last gave a definition site, by path id.
-type SiteRuns = Vec<(u64, Option<Rc<MacroDef>>)>;
+/// The text each path last gave a definition site, by path id, with each
+/// text's key, and the distinct texts last joined with their result.
+#[derive(Clone, Default)]
+pub(crate) struct SiteRuns {
+    runs: Vec<(u64, Option<Rc<MacroDef>>, u64)>,
+    joined: Vec<Rc<MacroDef>>,
+    every: bool,
+    result: Option<SiteJoin>,
+}
+
+/// A site's joined text, with the one-of name it holds and that name's members.
+type SiteJoin = (Option<Rc<MacroDef>>, Option<(Sym, Vec<Meaning>)>);
+
+/// A hash of a text's tokens, so [`Machine::site_text`] compares in full
+/// only texts whose keys are alike.
+fn site_key(d: &MacroDef) -> u64 {
+    use std::hash::{BuildHasher, Hash, Hasher};
+    let mut h = crate::engine::tex::NameHash.build_hasher();
+    d.parameter_text.items.len().hash(&mut h);
+    d.replacement_text.iter().for_each(|t| t.tok.hash(&mut h));
+    h.finish()
+}
 
 /// Per-load state every cacheable load forgets at its end, read or
 /// replayed alike ([`Machine::end_cacheable_load`]).
@@ -6945,7 +6965,9 @@ will look undefined",
                 if existing.is_none() {
                     // Path 0, the first, is the one a site without a record had.
                     if self.path_id != 0 {
-                        self.scratch.site_texts.insert(self.out.facts.defs.len(), vec![(self.path_id, mac.clone())]);
+                        let key = mac.as_deref().map_or(0, site_key);
+                        let runs = SiteRuns { runs: vec![(self.path_id, mac.clone(), key)], ..SiteRuns::default() };
+                        self.scratch.site_texts.insert(self.out.facts.defs.len(), runs);
                     }
                     self.definition_sites.insert((span, name, fact.package), self.out.facts.defs.len());
                     self.out.facts.defs.push(fact);
@@ -6965,13 +6987,16 @@ will look undefined",
                 // The first path alone: its last text.
                 false => mac,
                 true => {
-                    let runs = self.scratch.site_texts.entry(i).or_insert_with(|| vec![(0, had)]);
-                    match runs.iter_mut().find(|r| r.0 == id) {
-                        Some(run) => run.1 = mac,
-                        None => runs.push((id, mac)),
+                    let key = mac.as_deref().map_or(0, site_key);
+                    let site = self.scratch.site_texts.entry(i).or_insert_with(|| SiteRuns {
+                        runs: vec![(0, had.clone(), had.as_deref().map_or(0, site_key))],
+                        ..SiteRuns::default()
+                    });
+                    match site.runs.iter_mut().find(|r| r.0 == id) {
+                        Some(run) => (run.1, run.2) = (mac, key),
+                        None => site.runs.push((id, mac, key)),
                     }
-                    let texts: Vec<Option<Rc<MacroDef>>> = runs.iter().map(|r| r.1.clone()).collect();
-                    self.site_text(texts, span)
+                    self.site_text(i, span)
                 }
             };
             let previous = &mut self.out.facts.defs[i];
@@ -6988,45 +7013,67 @@ will look undefined",
     /// The texts paths gave one definition site, as one: the text they
     /// share, else a one-of token of them, past `limits.meaning_set` or for
     /// differing parameters unknown text. Made with no effect on the run.
-    fn site_text(&mut self, texts: Vec<Option<Rc<MacroDef>>>, span: Span) -> Option<Rc<MacroDef>> {
+    fn site_text(&mut self, i: usize, span: Span) -> Option<Rc<MacroDef>> {
         let same = |a: &MacroDef, b: &MacroDef| {
             a.parameter_text == b.parameter_text && explore::same_text(&a.replacement_text, &b.replacement_text)
         };
-        // Many paths hold few distinct texts: compare in full only texts whose tokens hash alike.
-        let key = |d: &MacroDef| {
-            use std::hash::{BuildHasher, Hash, Hasher};
-            let mut h = crate::engine::tex::NameHash.build_hasher();
-            d.parameter_text.items.len().hash(&mut h);
-            d.replacement_text.iter().for_each(|t| t.tok.hash(&mut h));
-            h.finish()
-        };
+        let site = self.scratch.site_texts.get_mut(&i).expect("recorded");
+        // Many paths hold few distinct texts: compare in full only texts whose keys are alike.
         let mut defs: Vec<Rc<MacroDef>> = Vec::new();
         let mut seen: crate::fixed::LookupMap<u64, Vec<usize>> = Default::default();
-        for d in texts.iter().flatten() {
-            let alike = seen.entry(key(d)).or_default();
+        for (_, d, key) in &site.runs {
+            let Some(d) = d else { continue };
+            let alike = seen.entry(*key).or_default();
             if !alike.iter().any(|&i| Rc::ptr_eq(&defs[i], d) || same(&defs[i], d)) {
                 alike.push(defs.len());
                 defs.push(d.clone());
             }
         }
-        let every = texts.iter().all(Option::is_some);
+        let every = site.runs.iter().all(|r| r.1.is_some());
+        // The same distinct texts as last time, spans and all, join to the same text.
+        let identical = |a: &MacroDef, b: &MacroDef| {
+            same(a, b)
+                && (a.arg_spec == b.arg_spec && (a.long, a.outer, a.protected) == (b.long, b.outer, b.protected))
+                && a.replacement_text.iter().zip(b.replacement_text.iter()).all(|(x, y)| x.span == y.span)
+        };
+        let again = site.every == every
+            && site.joined.len() == defs.len()
+            && site.joined.iter().zip(&defs).all(|(a, b)| Rc::ptr_eq(a, b) || identical(a, b));
+        let (mac, one_of) = match (again, &site.result) {
+            (true, Some(result)) => result.clone(),
+            _ => {
+                let result = self.join_site_texts(&defs, every, span);
+                let site = self.scratch.site_texts.get_mut(&i).expect("recorded");
+                (site.joined, site.every, site.result) = (defs, every, Some(result.clone()));
+                result
+            }
+        };
+        if let Some((sym, may)) = one_of
+            && self.env.slot(sym).is_none()
+        {
+            self.env.constant(sym, Binding { may: Some(may.into()), ..Binding::builtin(Meaning::Unknown) });
+        }
+        mac
+    }
+
+    /// [`Self::site_text`]'s join of the distinct texts, with the one-of
+    /// token it names and that token's members, to bind where unbound.
+    fn join_site_texts(&mut self, defs: &[Rc<MacroDef>], every: bool, span: Span) -> SiteJoin {
         let last = match defs.len() {
-            0 => return None,
-            1 if every => return defs.pop(),
+            0 => return (None, None),
+            1 if every => return (defs.last().cloned(), None),
             _ => defs.last().cloned().expect("not empty"),
         };
         let alike = every && defs.iter().all(|d| d.parameter_text == last.parameter_text);
-        let sym = match alike && defs.len() <= usize::from(self.limits.meaning_set) {
+        let (sym, made) = match alike && defs.len() <= usize::from(self.limits.meaning_set) {
             true => {
                 let (sym, may) = self.one_of_sym(defs.iter().map(|d| d.replacement_text.clone()).collect());
-                if self.env.slot(sym).is_none() {
-                    self.env.constant(sym, Binding { may: Some(may.into()), ..Binding::builtin(Meaning::Unknown) });
-                }
-                sym
+                (sym, Some((sym, may)))
             }
-            false => self.unknown,
+            false => (self.unknown, None),
         };
-        Some(Rc::new(MacroDef { replacement_text: Rc::from([Token::new(Tok::Cs(sym), span)]), ..(*last).clone() }))
+        let mac = MacroDef { replacement_text: Rc::from([Token::new(Tok::Cs(sym), span)]), ..(*last).clone() };
+        (Some(Rc::new(mac)), made)
     }
 
     /// `\ref{k}` depends on `\label{k}`, wherever it is.
