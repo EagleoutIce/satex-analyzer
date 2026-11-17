@@ -328,6 +328,7 @@ impl Machine<'_> {
             || i >= usize::from(self.limits.choices)
             || (!scripted && self.runs >= RUNS)
             || self.cutting()
+            || self.scan_stop.is_some()
         {
             return None;
         }
@@ -559,6 +560,12 @@ impl Machine<'_> {
                         }
                     }
                     if !ended && !self.halted {
+                        // A scan that ended in unknown text stands for all its paths.
+                        if self.scans.last().is_some_and(|a| a.hole)
+                            && matches!(self.unit, Unit::Expand | Unit::Body { .. })
+                        {
+                            (paths.parked, paths.arrived, paths.done) = Default::default();
+                        }
                         let fork = paths.fork.as_ref().expect("checked above");
                         let env = self.env.path(fork);
                         paths.done.push(Config::new(self.save_path(), env, ended));

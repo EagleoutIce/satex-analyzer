@@ -2546,7 +2546,19 @@ impl Machine<'_> {
     /// path is dropped.
     fn widen_conditional(&mut self, by: Sym, span: Span, base: usize) {
         // Refused because its site was cut: the expansion goes as a whole.
-        if self.cutting() {
+        if self.cutting() || self.scan_stop.is_some() {
+            return;
+        }
+        // In a scan of text the scan ends as a whole in unknown text: its arms
+        // would run code past the `\fi` on text no arm made.
+        if let Some(j) = self.scans.iter().rposition(|a| a.text) {
+            let message = format!(
+                "\\{} could not be decided past the choices one command may make. The expansion it is in is taken as unknown text",
+                self.name(by)
+            );
+            self.diagnose(Severity::Assumption, "undecided-condition", span, message);
+            self.record_with(Step::Branch, by, span, || Some("widened"));
+            self.scan_stop = Some(j);
             return;
         }
         let message = format!(

@@ -1795,6 +1795,7 @@ impl Machine<'_> {
             guard: _,
             scan_starts: _,
             scan_cut: _,
+            scan_stop: _,
             cached_lines: _,
             progress_next: _,
             lines_seen: _,

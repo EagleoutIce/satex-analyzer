@@ -74,6 +74,7 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 
 ### Analysis
 
+- `perf` **An expanded argument that runs out of choices ends as one unknown.** Where one `\edef` or `\expanded` argument may split no further, its own text ends there as unknown text instead of every path running on. l3fp over a position read back from the aux took 112.6k path splits and 37 s, now 104 and 0.6 s.
 - `fix` **No endless wait on a cache another run builds.** A run that finds another one building the same cache waits at most `limits.lock_seconds` (60 s), then builds it itself. A stopped builder hung every later run before.
 - `fix` **A display keeps the page's length.** The paragraph before `$$`, `\[` or `equation` is broken into lines, and the display adds its skips, its formula and its number. A here-float after a display is placed on its page again, where the page length was any before.
 - `perf` **Tagged titles in seconds.** With tagging on, `\maketitle` and tables no longer fork into tagpdf's debug code: a register numbered by an unknown allocation now holds what the registers it may be hold. A tagged title took 281 s, now 6 s.

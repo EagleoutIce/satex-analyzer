@@ -1239,6 +1239,8 @@ pub(crate) struct Accum {
     tail: Vec<Token>,
     /// Braces open inside the body.
     depth: usize,
+    /// Those of them its own text opened, not text its expansions made.
+    own: usize,
     /// The scan reached its end.
     done: bool,
     /// Set for a name scan, which holds text instead of tokens.
@@ -1249,6 +1251,12 @@ pub(crate) struct Accum {
     base: usize,
     /// The conditionals open where the scan began.
     conds: usize,
+    /// A scan of text ([`Unit::Expand`], [`Unit::Body`]), which may end as
+    /// a whole in unknown text ([`Machine::end_text_scan`]).
+    pub(crate) text: bool,
+    /// It ended in unknown text ([`Machine::end_text_scan`]), which stands
+    /// for what every path of it makes.
+    pub(crate) hole: bool,
     /// Where it holds the expansion of a name a join left paired, and the
     /// name ([`Machine::settle_paired`]).
     pub(crate) paired: Vec<(usize, Sym, Tok)>,
@@ -1271,9 +1279,14 @@ impl Accum {
 
     /// What it made past `len` tokens, as one `unknown` token.
     pub(crate) fn widen_from(&mut self, len: usize, unknown: Token) {
+        self.truncate(len);
+        self.tail.push(unknown);
+    }
+
+    /// What it made before `len` tokens.
+    fn truncate(&mut self, len: usize) {
         let mut text = self.to_vec();
         text.truncate(len);
-        text.push(unknown);
         self.paired.retain(|&(at, ..)| at < len);
         (self.chunks, self.tail) = (vec![Rc::from(text)], Vec::new());
     }
@@ -1296,6 +1309,7 @@ impl Accum {
     pub(crate) fn with(&self, toks: Vec<Token>) -> Accum {
         let (depth, done, number, base) = (self.depth, self.done, self.number, self.base);
         Accum {
+            own: self.own,
             conds: self.conds,
             chunks: Vec::new(),
             tail: toks,
@@ -1305,6 +1319,8 @@ impl Accum {
             number,
             base,
             paired: Vec::new(),
+            text: self.text,
+            hole: self.hole,
         }
     }
 
@@ -1906,6 +1922,10 @@ pub struct Machine<'a> {
     /// A cut dropped the text a scan in flight began in: every reader but
     /// the main loop finds the input ended until it reads the file again.
     scan_cut: bool,
+    /// A choice inside the text scan at this index of [`Machine::scans`]
+    /// was refused: every reader finds the input ended until that scan's
+    /// step ends ([`Machine::end_text_scan`]).
+    pub(crate) scan_stop: Option<usize>,
     /// What the conditional being widened skipped, to do what its arms
     /// may do ([`Machine::may_run`]).
     pub(crate) skip_log: Option<Vec<Token>>,
@@ -2958,6 +2978,7 @@ impl<'a> Machine<'a> {
             guard: LineGuard::default(),
             scan_starts: Vec::new(),
             scan_cut: false,
+            scan_stop: None,
             skip_log: None,
             clock: None,
             clock_read_at: None,
@@ -4908,7 +4929,7 @@ will look undefined",
     }
 
     fn take_token(&mut self, across_files: bool) -> Option<Token> {
-        if self.over_budget() {
+        if self.over_budget() || self.scan_stop.is_some_and(|j| self.scans.len() > j) {
             return None;
         }
         self.out.steps += 1;
@@ -6201,6 +6222,10 @@ will look undefined",
     }
 
     pub fn diagnose(&mut self, mut severity: Severity, code: &'static str, span: Span, message: String) {
+        // Text a refused choice gave up ([`Machine::scan_stop`]) is not read.
+        if self.scan_stop.is_some() {
+            return;
+        }
         // Said again, a finding only counts up: a kept effect does not replay that.
         self.env.memo_odd();
         // What TeX would say about text a cut left after its `\unknown` is
@@ -7734,7 +7759,12 @@ will look undefined",
     /// affect the paths without the error. If no path continues without an
     /// error, the dropped ones continue with TeX's recovery ([`Machine::settle`]).
     pub(crate) fn certain_error(&mut self, text: &str, exact: bool, span: Span) {
-        if !self.halted && !self.reading_format() && self.dropping.is_none() && self.may_refute(span) {
+        if !self.halted
+            && self.scan_stop.is_none()
+            && !self.reading_format()
+            && self.dropping.is_none()
+            && self.may_refute(span)
+        {
             let certain = exact
                 || (self.scratch.approximations == self.scratch.approximations_at_command
                     && !self.approximated
@@ -9182,8 +9212,12 @@ will look undefined",
     /// Run `acc`'s scan as paths ([`Machine::scan_as_paths`]).
     pub(crate) fn scan_paths(&mut self, unit: Unit, acc: Accum) -> Accum {
         let depth = self.scans.len();
-        self.scans.push(Accum { base: self.text_levels(), conds: self.conds.len(), ..acc });
+        let text = matches!(unit, Unit::Expand | Unit::Body { .. });
+        self.scans.push(Accum { base: self.text_levels(), conds: self.conds.len(), text, ..acc });
         self.drive(unit, |m| m.scans.get(depth).is_none_or(|a| a.done));
+        if self.scan_stop.is_some_and(|j| j >= depth) {
+            self.scan_stop = None;
+        }
         let acc = self.scans.get(depth).cloned().unwrap_or_default();
         self.scans.truncate(depth);
         acc
@@ -9237,12 +9271,15 @@ will look undefined",
             }
             return done;
         }
-        let (mut out, mut depth) = (std::mem::take(&mut acc.tail), acc.depth);
+        let (mut out, mut depth, mut own) = (std::mem::take(&mut acc.tail), acc.depth, acc.own);
         let frozen = acc.len();
+        let before = frozen + out.len();
+        let base = acc.base;
         let done = 'step: {
             if frozen + out.len() >= self.cfg.limits.expansion_tokens {
                 break 'step true;
             }
+            let mine = self.text_levels() <= base;
             let Some(token) = self.read(false) else { break 'step true };
             let Unit::Body { opened_in, gaps } = unit else {
                 break 'step !self.expand_into(token, &mut out);
@@ -9253,9 +9290,9 @@ will look undefined",
                 break 'step true;
             }
             match token.tok {
-                Tok::Chr(_, Catcode::Begin) => depth += 1,
+                Tok::Chr(_, Catcode::Begin) => (depth, own) = (depth + 1, own + usize::from(mine)),
                 Tok::Chr(_, Catcode::End) if depth == 0 => break 'step true,
-                Tok::Chr(_, Catcode::End) => depth -= 1,
+                Tok::Chr(_, Catcode::End) => (depth, own) = (depth - 1, own.saturating_sub(usize::from(mine))),
                 _ => break 'step !self.expand_into(token, &mut out),
             }
             out.push(token);
@@ -9263,10 +9300,48 @@ will look undefined",
         };
         let acc = self.scans.last_mut().expect("the scan is in flight");
         acc.tail = out;
-        acc.depth = depth;
+        (acc.depth, acc.own) = (depth, own);
         acc.done |= done;
         acc.freeze();
+        if self.scan_stop == Some(self.scans.len() - 1) {
+            self.end_text_scan(before);
+            return true;
+        }
         done
+    }
+
+    /// Ends the text scan on top of `scans` whose step met a choice past the
+    /// choices it may make ([`Machine::scan_stop`]): what the step made goes,
+    /// and the rest of the scan is one unknown token ([`Machine::read_unknown`]).
+    /// Sound: an expanding scan assigns nothing, so the token stands for all
+    /// the arms could have made.
+    fn end_text_scan(&mut self, before: usize) {
+        self.scan_stop = None;
+        // What the given-up text refuted or ended is not known.
+        if !self.out.exhausted {
+            (self.infeasible, self.halted, self.ended_run) = (false, false, false);
+        }
+        let span = self.position_span();
+        let acc = self.scans.last_mut().expect("the scan is in flight");
+        acc.truncate(before);
+        acc.hole = true;
+        // Its expansions' text goes with what they opened: braces, conditionals.
+        (acc.done, acc.depth) = (false, acc.own);
+        let (base, conds) = (acc.base, acc.conds);
+        while self.text_levels() > base && matches!(self.input.last(), Some(Frame::Tokens { .. } | Frame::Returned(_)))
+        {
+            self.pop_frame();
+        }
+        while self.conds.len() > conds {
+            self.pop_conditional();
+        }
+        self.read_unknown(span);
+        // Code on the path read past the scan's own text: what the scan
+        // opened is closed, as its text was balanced.
+        let acc = self.scans.last_mut().expect("the scan is in flight");
+        let open = std::mem::take(&mut acc.depth);
+        acc.tail.extend((0..open).map(|_| Token::new(Tok::Chr('}', Catcode::End), span)));
+        acc.freeze();
     }
 
     /// Text a cut gave up, standing for one unknown token. In a scan of

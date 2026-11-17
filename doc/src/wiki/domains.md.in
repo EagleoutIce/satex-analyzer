@@ -472,6 +472,7 @@ Arms of an undecided conditional that reach its `\fi` go on as one path (`fi_mar
 | Limit | Past it |
 | --- | --- |
 | `limits.choices` per command | the conditional is widened: both arms skipped, one unknown token in their place (`undecided-condition`) |
+| `limits.choices` inside an expanding scan of text (`\edef`, `\expanded`) | the scan ends as a whole: its pending expansions go, what it opened is closed, and the rest of its text is one unknown token for all its paths (`undecided-condition`). An expanding scan assigns nothing, so the token covers every arm. Skipping only the conditional would let the code after `\fi` (l3fp's parser) run on text no arm made |
 | `limits.alike` waiting paths at one place | paths whose input differs only in text join |
 | `limits.paths` | the two furthest back are cut to their shared input levels and joined |
 | fork backstop at a hot site | no new arm, except for paths a look-ahead parted that cannot be joined (other input): they get their arms, since following one would be unsound. Under a cut one is followed and the cut summarizes the region |
