@@ -1780,18 +1780,17 @@ interface Stream {
       .map((n) => ({ text: n.textContent ?? '', code: n.nodeName === 'CODE', lint: n.nodeName === 'U', fix: (n as HTMLElement).dataset?.fix ?? null, href: n.nodeName === 'A' ? (n as Element).getAttribute('href') : null })));
     // TikZ is set as its logo is, with an italic k
     const tikz = (html: string) => html.replace(/Tik(?=Z|$)/g, 'Ti<i class="tk">k</i>');
-    // `fade(k)`: how far character k has faded in, 1 when it stands; the fading ones are drawn apart, each a
-    // little see-through and a hair to the right, so a word appears from left to right
-    const typed = (i: number, n: number, fade: (k: number) => number = () => 1) => {
+    // `delay(k)`: when character k starts to fade in, in ms. Every character is laid out from the start, so
+    // nothing reflows; each fades in on its own timer, and the soft edge sweeps left to right at one speed.
+    const typed = (i: number, n: number, delay?: (k: number) => number) => {
       let left = n, at = 0;
       const soft = (shown: string, from: number) => {
-        let firm = 0;
-        while (firm < shown.length && fade(from + firm) >= 1) firm++;
-        const tail = [...shown.slice(firm)].map((c, j) => {
-          const a = Math.max(0, Math.min(1, fade(from + firm + j)));
-          return `<span class="tw" style="opacity:${a.toFixed(2)};left:${((1 - a) * 3).toFixed(1)}px">${esc(c)}</span>`;
+        if (!delay) return tikz(esc(shown));
+        return [...shown].map((c, j) => {
+          const k = from + j, all = text(i);
+          const ch = c === 'k' && all.slice(k - 2, k) === 'Ti' && all[k + 1] === 'Z' ? '<i class="tk">k</i>' : esc(c);
+          return `<span class="tw" style="animation-delay:${Math.round(delay(k))}ms">${ch}</span>`;
         }).join('');
-        return tikz(esc(shown.slice(0, firm))) + tail;
       };
       // a `<u>` is a spot a linter would mark: with `data-fix` it holds the wrong text and the right one, the first turning into the second
       return parts[i].map(({ text, code, lint, fix, href }) => {
@@ -1809,29 +1808,21 @@ interface Stream {
     line.classList.add('typing');
     let shown = 0, paused = false, timer: ReturnType<typeof setTimeout> | 0 = 0, frame = 0, fit = () => {};
     dots.innerHTML = knows.map((k, i) => `<button type="button" role="tab" aria-selected="${!i}" aria-label="${parts[i].map((p) => p.text).join('')}"></button>`).join('');
-    // a typist's rhythm, fixed ahead: quick within a word, a beat after a space or a comma. Characters
-    // appear on the display's frames, never between them, and only a changed count redraws the line.
     const text = (i: number) => parts[i]!.map((p) => p.text).join('');
-    // a little life: each word a slightly other tempo, each key a few ms off it, never a stumble
-    const schedule = (i: number) => {
-      let at = 0, tempo = 30;
-      return [...text(i)].map((c) => {
-        if (c === ' ') tempo = 26 + Math.random() * 9;
-        return (at += tempo + (Math.random() - .5) * 12 + (c === ' ' ? 40 : c === ',' ? 150 : 0));
-      });
-    };
-    // each character fades in over FADE ms from the moment it is typed
-    const FADE = 180;
+    // one steady pace, so the edge never stutters; FADE (style.css .tw) spans a few letters
+    const STEP = 28, FADE = 260;
+    // the line as it stands mid-sweep: a negative delay starts a letter's fade part way, so a redraw never replays it
+    let sweeping = () => '';
     const run = (i: number, _from: number, then: () => void) => {
-      const times = schedule(i), start = performance.now();
-      let n = 0;
+      const n = length(i), start = performance.now();
+      sweeping = () => typed(i, n, (k) => k * STEP - (performance.now() - start));
+      line.innerHTML = sweeping();
       const tick = (now: number) => {
-        const t = now - start;
-        while (n < times.length && times[n] <= t) n++;
-        const settling = n > 0 && t - times[n - 1] < FADE;
-        line.innerHTML = typed(i, n, (k) => (t - times[k]) / FADE);
-        if (n >= times.length && !settling) { line.innerHTML = typed(i, n); frame = 0; return then(); }
-        frame = requestAnimationFrame(tick);
+        if (now - start < (n - 1) * STEP + FADE) { frame = requestAnimationFrame(tick); return; }
+        line.innerHTML = typed(i, n);
+        sweeping = () => '';
+        frame = 0;
+        then();
       };
       frame = requestAnimationFrame(tick);
     };
@@ -1944,7 +1935,7 @@ interface Stream {
       const [was, html] = [shown, line.innerHTML];
       let most = 0;
       for (let i = 0; i < knows.length; i++) { shown = i; line.innerHTML = typed(i, length(i)); effect(); most = Math.max(most, line.offsetHeight); }
-      [shown, line.innerHTML] = [was, html];
+      [shown, line.innerHTML] = [was, frame ? sweeping() || html : html];
       if (!hero) return fit();
       hero.classList.remove('glued');
       hero.style.height = '';
@@ -1961,7 +1952,8 @@ interface Stream {
     let resized = 0;
     addEventListener('resize', () => { clearTimeout(resized); resized = setTimeout(reserve, 150); }, { passive: true });
     if (matchMedia('(prefers-reduced-motion: reduce)').matches) { line.innerHTML = typed(0, length(0)); effect(); line.classList.add('shows'); fit(); }
-    else { line.innerHTML = ''; run(0, 0, settle); }
+    // the claim rises in after .8s (style.css `rise`): the first line types as it appears, not unseen before
+    else { line.innerHTML = ''; timer = setTimeout(() => run(0, 0, settle), 800); }
   }
   for (const [tabs, key] of [['.contrast', 'case'], ['.install-tabs', 'way']]) {
     const row = document.querySelector(tabs);

@@ -32,6 +32,7 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 
 ### Playground
 
+- `fix` **Ready means ready.** Common packages fetched ahead, so another example opens at once, no longer hold the status line at "Fetching 9 packages". It says Ready and counts them beside it. Only packages the document uses keep it from ready.
 - `feat` **Completion finds by what a name is.** In `\usepackage{…}`, `\documentclass{…}`, `\cite{…}` and `\ref{…}` each item shows what it is: a package's line from the TeX Live catalogue, a citation's author, year and title, what a label points at (`figure 1: caption`, `§2: heading`, `equation 3`). Typing a word of that finds it, typos forgiven: `\usepackage{network}` offers tikz-network and neuralnetwork. A name starting with what was typed comes first. Editors get the same through the language server.
 - `fix` **A first compile says what it waits for.** The PDF pane names each phase with its size: starting the TeX worker, downloading the engine, compiling it, unpacking the TeX tree, each pdfTeX pass, BibTeX, files fetched. One line says the first compile downloads and starts the engine and later ones skip this. The offline copy pauses while a compile runs.
 - `fix` **A tidy layers menu.** Its rows wrap instead of scrolling sideways. A layer with filters is one split button. On a phone the menu spans the screen.
@@ -57,6 +58,7 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 
 ### Site and docs
 
+- `fix` **Smooth typing on the landing page.** Each sentence fades in from left to right at one steady pace, laid out once so nothing reflows, and the first starts as it rises into view.
 - `fix` **Smooth typing on the front page.** The claim is typed on the display's frames at an even beat, a pause only after a space or a comma, and its height follows without a layout per character.
 - `feat` **When a site was built.** Hovering the version in the header, on every page and in the playground, says when the site was built, to the minute, also for a pre-release.
 - `feat` **The showcase turns by itself.** The front page's card ring turns one whole card every 8 seconds and rests while you point at it, focus it or have just turned it. Scrolling the page no longer tilts it.

@@ -4474,11 +4474,13 @@
   let quietLoads = 0;
   const background = new Set();
   /** packages.txt's first section, after the open document's first run: a batch at a time while the page is idle, so a switch waits for one batch at most. */
-  /** The status line at rest: never ready while a package still downloads, even one fetched in the background. */
+  /** The status line at rest: a package the document names still downloading keeps it from ready; the common
+   * packages fetched ahead, so another example opens at once, only say so beside it. */
   const READY = 'Ready. Findings update as you type.', FETCH_REST = 'Fetching ';
   const restLine = () => {
-    const n = new Set([...inFlight, ...background]).size;
-    return n ? `${FETCH_REST}${plural(n, 'package')} in the background…` : READY;
+    const n = inFlight.size, ahead = [...background].filter((id) => !inFlight.has(id)).length;
+    if (n) return `${FETCH_REST}${plural(n, 'package')} the document uses…`;
+    return ahead ? `${READY} ${FETCH_REST.toLowerCase()}${plural(ahead, 'common package')} ahead…` : READY;
   };
   async function preload() {
     const todo = wanted_(manifest.preload ?? []);
@@ -4487,7 +4489,7 @@
       const batch = [];
       for (let bytes = 0; todo.length && bytes < 2 ** 21;) { const id = todo.shift(); if (!fetchedPackages.has(id)) { batch.push(id); bytes += PACKAGES.get(id).size; } }
       const load = batch.length && fetchPackages(batch, true);
-      if (load && !act.phase && (status.textContent === READY || status.textContent.startsWith(FETCH_REST))) status.textContent = restLine();
+      if (load && !act.phase && (status.textContent.startsWith(READY) || status.textContent.startsWith(FETCH_REST))) status.textContent = restLine();
       if (load && !await load) return;
     }
   }
@@ -4512,7 +4514,7 @@
       return false;
     } finally {
       ids.forEach((id) => flying.delete(id)); quietLoads -= +quiet;
-      if (!act.phase && status.textContent.startsWith(FETCH_REST)) status.textContent = restLine();
+      if (!act.phase && (status.textContent.startsWith(READY) || status.textContent.startsWith(FETCH_REST))) status.textContent = restLine();
     }
     ids.forEach((id) => landedAt.set(id, ++landings));
     if (!quiet) {
