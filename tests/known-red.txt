@@ -18,3 +18,5 @@ tagging::pdfua_without_a_pdf_title_is_reported_and_fixed
 tagging::an_fp_eval_of_an_unknown_integer_stays_on_few_paths
 # Open (2026-11-17): a display loses the paragraph's size (math_shift_token keeps no list for it), so \pagetotal is unknown and an [ht] float's fit test is undecided; the paper's root (owner: display-math round, see learnings 2026-11-17 p4).
 differential::a_here_figure_after_a_display_stays_on_its_page
+# Open (2026-11-17, owner p1): one node of tikz_nodes, Root A (digit-split wait in partner).
+termination::convergence::colorlet_of_an_unknown_pgfmath_result

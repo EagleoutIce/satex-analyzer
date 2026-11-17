@@ -910,7 +910,29 @@ mod convergence {
         let Some(a) = latex("tikz-nodes", &document(preamble, body), |_| {}) else { return };
         // A library scan that runs to the file's end gives the document's
         // text back instead of swallowing it, so the rest is read too.
-        converged(&a, 32_000);
+        converged(&a, TIKZ_NODES_FORKS);
+    }
+
+    /// Forks the thirty nodes of [`tikz_nodes_of_unknown_width`] may take.
+    const TIKZ_NODES_FORKS: u64 = 32_000;
+
+    /// (2a) One node's color of (2): `\colorlet` over a pgfmath result of
+    /// unknown value. xcolor reads the percentage digit by digit
+    /// (xcolor.sty 407, 591), so its digit arms must rejoin within the
+    /// line, on few paths and within one node's share of (2)'s forks. Bug
+    /// (2026-11-17, owner p1): 1.3k forks and 8 paths to the line's end, as
+    /// the digit-split wait in `partner` counts the parked arms but not the
+    /// running one, so four arms at one place wait for a fifth.
+    #[test]
+    fn colorlet_of_an_unknown_pgfmath_result() {
+        const NODES: u64 = 30;
+        const FEW_PATHS: usize = 3;
+        let body = r"\pgfmathsetmacro{\w}{1+\pdfuniformdeviate 5}
+\pgfmathparse{\w*2+3}
+\colorlet{c}{blue!\pgfmathresult!red}";
+        let Some(a) = latex("tikz-colorlet", &document("\\usepackage{tikz}", body), |_| {}) else { return };
+        converged(&a, TIKZ_NODES_FORKS / NODES);
+        assert!(a.peak_paths <= FEW_PATHS, "{} paths", a.peak_paths);
     }
 
     /// An environment whose name is one of two: `\end` looks its hooks up
