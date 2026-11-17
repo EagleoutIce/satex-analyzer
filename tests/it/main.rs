@@ -30,6 +30,7 @@ mod depp;
 mod determinism;
 mod differential;
 mod distribution_guard;
+mod spacing_cycle;
 // `satex-doc`, this module's target, is only built with the `doc` feature.
 #[cfg(feature = "doc")]
 mod docs;
