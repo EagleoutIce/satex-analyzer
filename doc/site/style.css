@@ -355,6 +355,8 @@ body.play main { padding: 0; height: 100%; display: grid; grid-template-rows: mi
 .panels > .sect[hidden] { display: none; }
 .panels > .sect > * { margin: 0; } .panels > .sect > .grow { flex: 1 1 0; min-height: 0; max-height: none; }
 .beside #play-pdf { order: 1; border-left: 1px solid var(--border); }
+/* a narrow status bar keeps the pills' counts, not their words: a word cut short reads as a glitch */
+@container (max-width: 56rem) { .statusbar .pill-word { display: none; } }
 @container (max-width: 40rem) { .split-toggle span { display: none; } .split-toggle { padding: .25rem .4rem; } }
 @container (max-width: 44rem) { .beside .panels { grid-auto-flow: row; grid-auto-rows: minmax(0, 1fr); } .beside #play-pdf { border-left: 0; border-top: 1px solid var(--border); } }
 .sect-bar { display: flex; flex-wrap: wrap; align-items: center; gap: .3rem; flex: none; font-size: .78rem; }
@@ -418,7 +420,7 @@ button.small { padding: .05rem .6rem; font-size: .78rem; border-radius: 999px; }
 .statusbar span:empty { display: none; }
 .statusbar #play-status { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 /* the status keeps room for a few words with an ellipsis; the pills and the time give way first, the time with an ellipsis too */
-.statusbar .actbox { min-width: min(24ch, 35%); } .statusbar .pills { flex: 0 1 auto; min-width: 0; overflow: hidden; } .statusbar .pills > * { flex: none; white-space: nowrap; }
+.statusbar .actbox { min-width: min(24ch, 35%); } .statusbar .pills { flex: none; } .statusbar .pills > * { flex: none; white-space: nowrap; }
 .statusbar .statdetail { flex: 0 1 auto; display: flex; min-width: 4ch; } .statusbar .stat-time { min-width: 0; } .statusbar #t-time-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 #play-status:has(.st-msg) { display: flex; align-items: center; gap: .5rem; } #play-status .st-msg { overflow: hidden; text-overflow: ellipsis; min-width: 4rem; flex: 1 1 auto; } #play-status button { flex: 0 1 auto; min-width: 3.5rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 #play-status:has(.st-msg) { flex: 1 1 9rem; }
@@ -2009,7 +2011,10 @@ a.cmd-edit:hover, a.cmd-edit:focus-visible { background: color-mix(in srgb, var(
   .pane .editor, .work > .editor { height: auto; flex: 1 1 0; }
   .statusbar { grid-row: 2; grid-column: 1; overflow: hidden; padding-inline: .6rem; } .statusbar #offline { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .side-tabs { grid-row: 3; grid-column: 1; display: flex; padding: 0; gap: 0; border-top: 1px solid var(--border); background: var(--panel); overflow: hidden; }
-  .side-tabs > button { flex: 1 1 0; min-width: 0; justify-content: center; border-radius: 0; padding: .6rem .1rem .5rem; gap: .2rem; font-size: .7rem; }
+  /* every bottom tab alike (the Editor one is no [role=tab]); a wide label with its count takes the room it needs */
+  .side-tabs > button, .side-tabs > [role=tab] { flex: 1 1 auto; min-width: 0; justify-content: center; border-radius: 0; padding: .6rem .1rem .5rem; gap: .2rem; font-size: .7rem; }
+  /* the severity pills keep their counts: the word would be cut */
+  .statusbar .pill-word { display: none; }
   .side-tabs .split-toggle { display: none; }
   .beside .side-tabs [data-panel=play-pdf] { display: inline-flex; }
   .phone-only { display: inline-flex; align-items: center; background: none; border: 0; color: var(--muted); font-weight: 500; position: relative; }

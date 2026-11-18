@@ -462,7 +462,8 @@ declare global {
     for (const m of gone) {
       if (m.t === 'par' || freshWas(m)) continue;
       if (!ownWas(m)) return m.t[0] === '\\' ? `it would change the command ${m.t}` : 'it would change the markup around it';
-      if (m.t[0] === '\\' && !ESC.test(m.t)) return `it would delete the command ${m.t}`;
+      // a formula's delimiters go only in pairs (balanced above): a whole formula may go
+      if (m.t[0] === '\\' && !ESC.test(m.t) && !/^\\[()[\]]$/.test(m.t)) return `it would delete the command ${m.t}`;
       if (/^(%|verb|&|#)$/.test(m.t)) return 'it would delete markup';
       // an argument's braces go only with their command
       const arg = m.t === '{' ? argOf(text, m.s) : null;
@@ -571,7 +572,8 @@ declare global {
     return [at, at, o + c, o.length];
   }
   /** What Backspace (`back`) or Delete takes at `at`: `[from, to]`, an escape or an empty pair (`$ $`, `{}`, `\(\)`)
-   * whole, a formula whose last character goes with it, a `\` typed with the space that kept it off a word. */
+   * whole, a formula whose last character goes with it, at a formula's `\)` (`\(` for Delete) its character inside,
+   * a `\` typed with the space that kept it off a word. */
   function erased(text: string, at: number, back: boolean, fresh: [number, number] | null = null): [number, number] {
     const v = verbatimAt(text, at);
     if (v) return back ? (at > v.from ? [at - 1, at] : [at, at]) : (at < v.to ? [at, at + 1] : [at, at]);
@@ -580,6 +582,10 @@ declare global {
       if (text.slice(at - h, at + h) === pair) return [at - h, at + h];
     }
     for (const k of [1, 2]) if (text.slice(at - k, at - k + 3) === '$ $') return [at - k, at - k + 3];
+    // next to a formula's delimiter (`\)` before, `\(` after): its character inside goes, never a lone delimiter
+    const odd = (i: number) => { let n = 0; while (text[i - n] === '\\') n++; return n % 2 === 1; };
+    if (back && /^\\[)\]]$/.test(text.slice(at - 2, at)) && odd(at - 2)) return /^\\[(\[]$/.test(text.slice(at - 4, at - 2)) ? [at - 4, at] : erased(text, at - 2, true, fresh);
+    if (!back && /^\\[(\[]$/.test(text.slice(at, at + 2)) && odd(at)) return /^\\[)\]]$/.test(text.slice(at + 2, at + 4)) ? [at, at + 4] : erased(text, at + 2, false, fresh);
     let p = back ? at - 1 : at, q = back ? at : at + 1;
     const esc = /(?:\\(?:textbackslash|textasciitilde|textasciicircum)\{\}|\\[^A-Za-z@\\])/y;
     if (back) {
@@ -594,7 +600,7 @@ declare global {
     // the only character of a formula takes the formula with it
     if (q - p === 1) {
       if (text[p - 1] === '$' && text[q] === '$' && text[p - 2] !== '\\' && scan(text, 0, p, start()).math === '$') return [p - 1, q + 1];
-      if (text.slice(p - 2, p) === '\\(' && text.startsWith('\\)', q)) return [p - 2, q + 2];
+      for (const [o, c] of [['\\(', '\\)'], ['\\[', '\\]']]) if (text.slice(p - 2, p) === o && text.startsWith(c, q)) return [p - 2, q + 2];
     }
     return [Math.max(0, p), Math.min(text.length, q)];
   }

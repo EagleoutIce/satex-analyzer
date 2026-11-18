@@ -1370,6 +1370,33 @@ def tex_mirror(out, tables, packages, core, pdftex_map):
     print(f"playground: site mirror of TeX files: {sum(1 for _ in keep.iterdir())} files, {size / 2**20:.0f} MiB", file=sys.stderr)
 
 
+def seeds(satex, work, project, packages):
+    """Per example, the pdfTeX bundles holding a file its run reads that no named package's closure brings
+    (listings' `lstlang1.sty`): the page fetches them before the first run, else that run finds them absent
+    and runs again. From the listings of the bundle step's check (`files_read`), no run of its own."""
+    tree, kernel = work / "texmf.bundle", KERNELS[0]
+    config = (SITE / "playground.yaml").read_text().replace("/texmf.bundle", str(tree)).encode()
+    env = dict(os.environ, SATEX_CACHE=str(work / "cache-install"))
+    holders, size = {}, {}  # path -> the bundles holding it; bundle -> its bytes
+    for k, name, files, _ in packages:
+        if k == kernel[0]:
+            size[f"{k}/{name}"] = sum(map(len, files.values()))
+            for path in files:
+                holders.setdefault(path, []).append(f"{k}/{name}")
+    out = {}
+    for doc in [d for d in sources() if d.suffix == ".tex" and (project / d.name).is_file()]:
+        read = files_read(satex, kernel[2], project / doc.name, project, env, config=config)
+        each = [holders[key] for p in read if Path(p).is_relative_to(tree) and (key := f"/texmf.bundle/{Path(p).relative_to(tree).as_posix()}") in holders]
+        # a file several bundles hold: one already taken, else the smallest
+        ids = {h[0] for h in each if len(h) == 1}
+        for h in each:
+            if not ids.intersection(h):
+                ids.add(min(h, key=size.get))
+        if ids:
+            out[doc.name] = sorted(ids)
+    return out
+
+
 def browser_tex(out, work, tables, packages):
     """The manifest's `tex`, or None when a download fails: Compile on a static host then says it has none."""
     keep = work / "browser-tex"
@@ -1475,7 +1502,7 @@ def playground(satex, wasm, work, out):
     manifest = {
         "js": emit_local(out, "play/satex.js", (wasm / "satex.js").read_bytes()),
         "wasm": emit_local(out, "play/satex.wasm", wasm_bytes), "wasmSize": len(wasm_bytes),
-        "kernels": kernels, "packages": extra, "preload": first_download(), "unavailable": UNAVAILABLE, "queries": queries, "queryAbout": query_about, "filtered": filtered, "rules": rules,
+        "kernels": kernels, "packages": extra, "seeds": seeds(satex, work, project, packages), "preload": first_download(), "unavailable": UNAVAILABLE, "queries": queries, "queryAbout": query_about, "filtered": filtered, "rules": rules,
         "tex": browser_tex(out, work, tables, packages), "tips": [t[0] for t in json.loads((SITE / "tips.json").read_text())],
         "completion": completion, "samples": samples, "sample": "hello.tex", "root": "../",
         "commands": {name: command for name, command in commands().items() if command != "lint"}, "projects": projects(), "plugins": plugins(), "typePlugins": tiles,

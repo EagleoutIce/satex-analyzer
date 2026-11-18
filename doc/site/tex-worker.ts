@@ -98,8 +98,8 @@ async function prefetch({ m, core }: Instance, names: string[]) {
   }
   const todo = [...new Set(names)].filter((n) => askable(n) && !core.has(n) && !held.has(`${formatOf(n)}/${n}`) && !absent.has(`${formatOf(n)}/${encodeURIComponent(n)}`));
   if (!todo.length) return;
-  let done = 0, bytes = 0, found = 0;
-  const say = () => post({ phase: `fetching ${todo.length} TeX files side by side: ${done} done, ${found} found, ${(bytes / 1048576).toFixed(1)} MiB` });
+  let done = 0, bytes = 0;
+  const say = () => post({ phase: `fetching ${todo.length} TeX files at once: ${done} of ${todo.length}, ${(bytes / 1048576).toFixed(1)} MiB` });
   say();
   const one = async (name: string) => {
     const format = formatOf(name), key = `${format}/${encodeURIComponent(name)}`;
@@ -113,7 +113,7 @@ async function prefetch({ m, core }: Instance, names: string[]) {
           if (!data.length) return;
           hold(m, format, name, data, host);
           if (format === 26 && name.endsWith('.tex')) hold(m, format, name.slice(0, -4), data, host);
-          bytes += data.length; found++;
+          bytes += data.length;
           return;
         }
         if (r.status !== 404) return;
@@ -303,7 +303,7 @@ function preamble(instance: Instance, files: Record<string, Uint8Array | string>
     const { FS, PATH } = instance.m;
     FS.mkdirTree(DUMPS);
     const log = PATH.join(DUMPS, `${job}.log`);
-    post({ phase: 'dumping the preamble as a format' });
+    post({ phase: 'building the format of the preamble (pdfTeX -ini)' });
     const status = run(instance, ['pdftex', '-ini', '--no-shell-escape', '-interaction=nonstopmode', '-file-line-error', `-output-directory=${DUMPS}`, `-jobname=${job}`, `&${FMT.replace(/\.fmt$/, '')}`, 'mylatexformat.ltx', file], commands);
     const said = FS.analyzePath(log).exists ? FS.readFile(log, { encoding: 'utf8' }) as string : '';
     const fmt = PATH.join(DUMPS, `${job}.fmt`), usable = !status && FS.analyzePath(fmt).exists && !/^(! |\S+:\d+: )/m.test(said);

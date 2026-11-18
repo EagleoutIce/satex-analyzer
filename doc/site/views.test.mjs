@@ -1490,10 +1490,16 @@ raw { text % here
   assert.deepEqual(E.key(t, at('x\\)'), '$'), [at('x\\)'), at('x\\)'), '', 3], '`$` elsewhere in it leaves the formula');
   assert.deepEqual(E.key(t, at('x\\)'), '%'), [at('x\\)'), at('x\\)'), '\\%', 2], '`%` in math is escaped');
   assert.equal(typeof E.key(t, at('sec:b', 2), 'a'), 'string', 'a label is a key');
-  // keys in a row, each on the text the one before left (the playground's order): a formula typed in a title and
-  // Backspace after it keeps `\(x\)` whole. Pins Backspace taking the `\)` typed before, leaving `\(x` open.
+  // keys in a row, each on the text the one before left (the playground's order): Backspace right after a formula's
+  // `\)` takes its last character, and a formula of one character whole; Delete before `\(` the same from the front.
+  // Pins Backspace taking the `\)` alone (refused by the gate, so it did nothing) and a lone delimiter left behind.
   const typeKeys = (text, at, keys) => { let f = null; for (const k of keys) { const e = E.key(text, at, k, { fresh: f }); if (typeof e === 'string') continue; const [a, b, body, step] = e; text = text.slice(0, a) + body + text.slice(b); f = E.grow(f, a, b, body.length); at = a + step; } return [text, at]; };
-  assert.equal(typeKeys(t, at('}'), [...' new', 'Enter', '}', '{', '$', 'x', '$', 'Backspace'])[0].split('\n')[0], '\\section{Background new\\}\\{\\(x\\)}\\label{sec:b}');
+  assert.equal(typeKeys(t, at('}'), [...' new', 'Enter', '}', '{', '$', 'x', '$', 'Backspace'])[0].split('\n')[0], '\\section{Background new\\}\\{}\\label{sec:b}');
+  const xy = 'a \\(xy\\) b', close = xy.indexOf('\\)') + 2, open = xy.indexOf('\\(');
+  assert.equal(typeKeys(xy, close, ['Backspace'])[0], 'a \\(x\\) b', 'Backspace after `\\)`: the last character inside');
+  assert.equal(typeKeys(xy, close, ['Backspace', 'Backspace'])[0], 'a  b', 'then the formula of one character whole');
+  assert.equal(typeKeys(xy, open, ['Delete'])[0], 'a \\(y\\) b', 'Delete before `\\(`: the first character inside');
+  assert.equal(typeKeys('a \\[z\\] b', 'a \\[z\\]'.length, ['Backspace'])[0], 'a  b', 'a display `\\[z\\]` the same');
   assert.equal(typeKeys(t, at('}'), [...'$x', 'Backspace'])[0].split('\n')[0], '\\section{Background}\\label{sec:b}', 'the last character of a formula takes it');
   assert.equal(typeKeys('a pipeline. b', 'a pipeline'.length, [...'\\emph{q}'])[0], 'a pipeline\\emph{q}. b', '`\\` before `.`: its space goes once `{` ends the name');
   assert.equal(typeKeys('Some text', 4, [...'\\zz{a}'])[0], 'Some\\zz{a} text', '`\\` before a space: its own space, the text\'s kept. Pins `\\zz` refused as renaming `\\ `');

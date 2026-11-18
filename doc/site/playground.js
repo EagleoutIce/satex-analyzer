@@ -356,7 +356,7 @@
   function pills(ds) {
     const n = (s) => ds.filter((d) => (sev(d) === 'hint' ? 'info' : sev(d)) === s).length;
     const shown = [['error', 'error'], ['warning', 'warning'], ['info', 'suggestion']].map(([s, w]) => [s, w, n(s)]).filter(([, , c]) => c);
-    $('play-pills').innerHTML = shown.map(([s, w, c]) => `<span class="pill-sev sev-${s}" title="${c} ${w}${c > 1 ? 's' : ''} in the open file">${c} ${w}${c > 1 ? 's' : ''}</span>`).join('');
+    $('play-pills').innerHTML = shown.map(([s, w, c]) => `<span class="pill-sev sev-${s}" title="${c} ${w}${c > 1 ? 's' : ''} in the open file">${c}<span class="pill-word"> ${w}${c > 1 ? 's' : ''}</span></span>`).join('');
   }
 
   /** SGR codes to the classes build.py's ansi() writes; OSC hyperlinks and every other control sequence dropped. */
@@ -2149,7 +2149,8 @@
     // a file the build writes (.aux, .toc …) is no source of the reader's: its lines are never marked
     const generated = writtenFiles.some((f) => target.endsWith(`/${f.name}`));
     diagnostics[target] = generated ? [] : ds.filter((d) => !unfinished(d)).map((d) => ({ ...d, fixes: by.get(key(d)) ?? [] }));
-    if (target === uri()) render();
+    // another file's findings count in the list too: they may come after the open file's were drawn
+    if (target === uri() || !act.phase || act.phase === 'Waiting') render();
     drawTree();
   }
   /** Each finding: its severity, place, rule and message once. */
@@ -5962,7 +5963,6 @@
     }
     return best ?? (inside ? pdfSource(page, x, y, word, fine, false) : word ? pdfSource(page, x, y, null, fine) : fine ? pdfSource(page, x, y, null, false) : null);
   }
-  /** The word on the page at a point, if one is under it. */
   /** The page word at a point, 1 bp of slack around each: of several (a footnote mark against its text), the nearest. */
   const pdfWordUnder = (page, x, y) => {
     const off = (w) => Math.max(w[1] - x, 0, x - w[3]) + Math.max(w[2] - y, 0, y - w[4]);
@@ -7804,6 +7804,20 @@
       const got = lineAt(n), i = got ? got[1].indexOf(word) : -1;
       if (i >= 0 && PE.verbatimAt(text, got[0] + i)?.block && PE.verbatimAt(text, got[0] + i + word.length)?.block) { [from, span] = [got[0], [i, i + word.length]]; k += Math.max(0, word.search(/[\p{L}\p{N}]/u)); break; }
     }
+    // a display's rows (align, gather) are set at its end, all from one SyncTeX line (or the next): the clicked word is the k-th
+    // spelling of it in the display's source, k the spellings before it on the page set from the display's lines
+    if (!first && !span && c.view === 'pdf' && Array.isArray(c.word) && lineAt(line)) {
+      const at = lineAt(line)[0], envs = [...text.matchAll(/\\(begin|end)\s*\{(align|gather|multline|flalign|alignat|eqnarray)\*?\}/g)];
+      const b = envs.findLast((m) => m[1] === 'begin' && m.index < at + lineAt(line)[1].length + 1), e = b && envs.find((m) => m.index > b.index && m[1] === 'end');
+      // SyncTeX may name the line after the display's end for some of its rows (unless that line spells the word itself)
+      if (b && e && (e.index >= at || e.index >= (lineAt(line - 1)?.[0] ?? at) && !PE.spans(lineAt(line)[1], word).length)) {
+        const occ = PE.spans(text.slice(b.index, e.index), word).filter(([p, q]) => { const why = pdfWhy(text, b.index + p, b.index + q); return !why || /math/.test(why); });
+        const lines = [pdfPos(text, b.index).line + 1, pdfPos(text, e.index).line + 1], w0 = c.word;
+        const kth = pdfWordsOn(c.page).filter((w) => (w[4] < w0[2] || Math.abs(w[4] - w0[4]) < 1 && w[1] < w0[1]) && (pdfSource(c.page, w[1] + 1, w[4] - 1, w)?.line ?? 0) >= lines[0] && (pdfSource(c.page, w[1] + 1, w[4] - 1, w)?.line ?? 0) <= lines[1])
+          .reduce((n, w) => n + PE.spans(w[5].normalize('NFKC'), word).length, 0);
+        if (occ.length > 1) [from, span] = [b.index, occ[Math.min(kth, occ.length - 1)]];
+      }
+    }
     for (const [p0, len] of first || span ? [] : parts) {
       const part = word.slice(p0, p0 + len);
       // SyncTeX names the line where TeX broke the paragraph (often its end): that line, its neighbours, then the
@@ -8893,8 +8907,10 @@
   /** The bundles holding files the run looked for and did not find (`\IfFileExists`, listings' language files). */
   /** The bundles a run of this root and kernel lacked, kept per browser: the next visit fetches them before its first run. */
   const lackedKey = () => `lacked:${manifest.kernels[state.kernel].id}:${state.example ?? ''}:${state.root ?? state.file}`;
-  const lackedBefore = () => self.satexStore.get(lackedKey(), []);
-  const lackedKeep = (ids) => self.satexStore.set(lackedKey(), [...new Set([...lackedBefore(), ...ids])].slice(-40));
+  /** With the bundles the site's build saw an example's run read (`seeds`): a first visit fetches them before its first run too. */
+  const lackedBefore = () => [...self.satexStore.get(lackedKey(), []),
+    ...manifest.kernels[state.kernel].id === 'pdftex' && state.root === state.example ? manifest.seeds?.[state.example] ?? [] : []];
+  const lackedKeep = (ids) => self.satexStore.set(lackedKey(), [...new Set([...self.satexStore.get(lackedKey(), []), ...ids])].slice(-40));
   async function absentBundles() {
     const request = { file: path(state.root ?? state.file), queries: [{ type: 'files' }] };
     const records = (await lsp('workspace/executeCommand', { command: 'satex/query', arguments: [request] }).catch(() => null))?.[0]?.records ?? [];
@@ -9248,6 +9264,8 @@
   bootOpen('Loading the playground');
   /** The engine's phases (`Status::phase`, src/util/progress.rs) as the card names them. */
   const STAGE = { format: 'kernel cache', package: 'package caches', preamble: 'preamble', document: 'document', lint: 'lint', probe: 'trying commands out' };
+  /** The same phases as the status line says them. */
+  const STAGE_LINE = { format: 'Building the kernel cache', package: 'Caching packages', preamble: 'Analyzing the preamble', document: 'Analyzing the document', lint: 'Checking the lint rules', probe: 'Trying commands out' };
   /** Work that starts this soon after other work ended, with no edit between, goes on in its timeline (a package fetched, the server restarted for it). */
   const FOLLOW_MS = 1500;
   function busy(name, text, { done = null, got = 0, all = 0, stage = null } = {}) {
@@ -9282,7 +9300,7 @@
     // one short line in fixed slots (phase, share, time), the full text in the title and the card
     const pct = Number.isFinite(done) ? `${Math.round(done * 100)} %` : '', tail = overrun ? secs(now - act.started) : left ? `${left} s left` : '';
     // a later build run starts its share again: the run says why the share went back
-    const what = stage?.phase ? `${name} ${STAGE[stage.phase] ?? stage.phase}${stage.run > 1 ? `, run ${stage.run}` : ''}${/^(preamble|document)$/.test(stage.phase) && where ? ` · ${where.replace(/^.*\//, '')}` : ''}` : pct ? name : text;
+    const what = stage?.phase ? `${name === 'Analyzing' && STAGE_LINE[stage.phase] || `${name} ${STAGE[stage.phase] ?? stage.phase}`}${stage.run > 1 ? `, run ${stage.run}` : ''}${/^(preamble|document)$/.test(stage.phase) && where ? ` · ${where.replace(/^.*\//, '')}` : ''}` : pct ? name : text;
     status.innerHTML = `<span class="st-what">${escape(what)}</span>${pct ? `<span class="st-num">${pct}</span>` : ''}${tail ? `<span class="st-num st-left">${escape(tail)}</span>` : ''}`;
     act.shown = status.textContent;
     status.title = text;
