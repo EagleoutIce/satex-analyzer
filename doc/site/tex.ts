@@ -139,7 +139,7 @@ const satexTex = (() => {
   let shared: unknown = null;
   /** A built PDF opened for the pane: page sizes and labels at once, each page drawn when asked. `src` is its URL. */
   async function open(tex: TexSetup, src: string) {
-    const lib = await pdfLib(tex), task = lib.getDocument({ url: src, isEvalSupported: false, worker: shared ??= new lib.PDFWorker() }), doc = await task.promise;
+    const lib = await pdfLib(tex), task = lib.getDocument({ url: src, isEvalSupported: false, fontExtraProperties: true, worker: shared ??= new lib.PDFWorker() }), doc = await task.promise;
     const sizes: number[][] = [];
     for (let n = 1; n <= doc.numPages; n++) {
       const v = (await doc.getPage(n)).getViewport({ scale: DPI / BP_PER_INCH });
@@ -155,7 +155,8 @@ const satexTex = (() => {
       draw: async (n: number) => { const p = await page(n), blob = await draw(p); p.cleanup(); return URL.createObjectURL(blob); },
       /** Page `n`'s text runs in bp from the top left: baseline `y`, `size`, and `font`, the family pdf.js loaded the
        * embedded font as (in the page's document while this PDF is open): the echo of typed text is set in it. `name`:
-       * the font's own name (`CMMI10`), once the page was drawn: typed math is previewed in the page's math faces. */
+       * the font's own name (`CMMI10`, pdf.js's extra font properties), once the page was drawn: typed math is
+       * previewed in the page's math faces. */
       async runs(n: number) {
         const p = await page(n), [x0, , , y1] = p.view as [number, number, number, number];
         const name = (f: string) => { try { return p.commonObjs.has(f) ? String(p.commonObjs.get(f)?.name ?? '') : ''; } catch { return ''; } };

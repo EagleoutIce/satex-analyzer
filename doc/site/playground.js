@@ -392,9 +392,9 @@
     return html + (classes.size ? '</span>' : '');
   }
   const plain = (text) => text.replace(/\x1b\[[0-?]*[ -\/]*[@-~]|\x1b\]8;[^\x1b\x07]*(\x1b\\|\x07)/g, '');
-  /** stderr without the progress bars, which redraw themselves in place. */
+  /** stderr without the progress bars, which redraw themselves in place; the wasm's program name is satex. */
   const quiet = (text) => text.replace(/\x1b\[1A/g, '').split('\x1b[J')
-    .filter((piece) => !/\[[#-]{20}\]/.test(plain(piece))).join('').trim();
+    .filter((piece) => !/\[[#-]{20}\]/.test(plain(piece))).join('').replace(/\bthis\.program\b/g, 'satex').trim();
   const words = (line) => (line.match(/"[^"]*"|'[^']*'|\S+/g) || []).map((w) => w.replace(/^(["'])(.*)\1$/, '$2'));
 
   /** The Markdown satex writes, for hovers and rule explanations: headings, paragraphs, lists,
@@ -947,9 +947,10 @@
   }
   /** How long a completion waits for the server before the kept commands answer (the server's answer still replaces them). */
   const INSTANT_MS = 50;
-  function completions(position, start = position.character, place = null, file = uri()) {
+  /** `patient`: the server's own answer, never the kept items standing in (the Type mode's list asked again). */
+  function completions(position, start = position.character, place = null, file = uri(), patient = false) {
     const k = `${file}|${version}|${position.line}:${position.character}`, word = `${file}|${position.line}:${start}`;
-    if (running && lastItems && lastWord === word) return lastItems;
+    if (running && lastItems && lastWord === word && !patient) return lastItems;
     if (place === '\\' && !scopeItems.has(file) && !prefetching) primeScope(file);
     const served = place && commandItems.get(place), names = place === '\\' && scopeItems.get(file);
     const both = names ? [...(served ?? []), ...names.filter((n) => !served?.some((i) => i.label === n.label))] : served;
@@ -959,7 +960,7 @@
     // else the bundle's classes and packages, else nothing, and the server's answer is kept for next time.
     const seeds = { documentclass: NAMES.classes, LoadClass: NAMES.classes, usepackage: NAMES.packages, RequirePackage: NAMES.packages }[place];
     const now = kept ?? seeds?.map((label) => ({ label, kind: 17 })) ?? [];
-    if (running && kept) return kept;
+    if (running && kept && !patient) return kept;
     if (!asked.has(k)) {
       asked.clear();
       asked.set(k, lsp('textDocument/completion', { textDocument: { uri: file }, position }).then((r) => {
@@ -969,7 +970,7 @@
         return lastItems;
       }).catch(() => []));
     }
-    if (!kept && !running) return asked.get(k);
+    if (patient || !kept && !running) return asked.get(k);
     // what answers now; the server's items replace it when they come
     let early = running > 0;
     // an empty early answer opened no list: the server's items open it while the cursor stays put
@@ -2562,8 +2563,10 @@
     const action = fixAllOf(scope, code ?? '', unsafe), edits = action?.edit?.changes?.[uri()] ?? [];
     const what = unsafe ? 'fix' : 'safe fix';
     if (!edits.length) return toast(`No ${what}es${code ? ` for ${code}` : ''} in this file`);
-    editor.apply(edits);
-    toast(`Applied ${plural(Math.min(edits.length, action.data.count), what)}${edits.length < action.data.count ? `; ${action.data.count - edits.length} overlapping wait for the next check` : ''}`);
+    // the edits of other files go with them (a fix that loads a package edits the preamble)
+    const elsewhere = Object.keys(action.edit.changes).filter((u) => u !== uri() && action.edit.changes[u].length);
+    if (elsewhere.length) applyEdit(action.edit); else editor.apply(edits);
+    toast(`Applied ${plural(Math.min(edits.length, action.data.count), what)}${elsewhere.length ? ` (also in ${elsewhere.map((u) => u.split('/').pop()).join(', ')})` : ''}${edits.length < action.data.count ? `; ${action.data.count - edits.length} overlapping wait for the next check` : ''}`);
   }
   /** Whether Fix all also applies the unsafe fixes: off unless asked, as the command line's --unsafe-fixes. */
   var fixUnsafe = false; // var: a render may run before this line
@@ -3028,6 +3031,8 @@
     if (libFor.replace(/\|[^|]*$/, '') !== key.replace(/\|[^|]*$/, '')) libSig.clear();
     libFresh.clear();
     libFor = key;
+    // the first ask can take a while on a big document: the list says it is coming
+    if (!libNames.length) libraryShow();
     const records = await namesInForce(libInternal.checked);
     // an environment once, by its name: \X stays as the environment, its \endX goes
     const names = new Set(records.map((r) => r.name));
@@ -3089,7 +3094,7 @@
       `<button type="button" class="lib-try-it" data-try="${escape(tried)}" title="try it" aria-label="try it">▸</button>` +
       `<span class="lib-pkg"${r.tag === 'documented' ? ' title="from the package\'s manual: nothing in this run defines it"' : ''}>${escape(libSource(r))}</span></li>`; }).join('') +
       (hits.length > 200 ? `<li class="muted">${num(hits.length - 200)} more: narrow the search</li>` : '') ||
-      `<li class="muted">${!libNames.length ? 'Names in force, after each check.' : from && !libNames.some((r) => libSource(r) === from)
+      `<li class="muted">${!libNames.length ? (libLoading > 0 ? 'Reading the names in force from the last check…' : 'Names in force, after each check.') : from && !libNames.some((r) => libSource(r) === from)
         ? `${escape(from)} is not loaded in this document: <code>\\usepackage{${escape(from)}}</code> loads it.` : 'No name matches.'}</li>`;
   }
   // the package filter: a search over the sources of the names in force with their counts, then the packages the playground knows
@@ -5028,6 +5033,8 @@
     else if (opening) openPlace(opening[1], { line: Number(opening[2]) - 1, character: 0 });
     else if (h.startsWith('s=')) linkAsked(h);
     else if (h in sampleTexts && !shared.has(h) && h !== state.example) exampleAsked(h);
+    // a link to an example this build does not have says so, instead of leaving the last one standing
+    else if (/^[\w.-]+\.(tex|ltx|sty|cls|bib)$/.test(h) && !(h in sampleTexts) && !(h in state.texts)) toast(`No example ${h} here`);
   });
 
   /** A name box in the tree, at `row` or at the end: Enter takes the name, Escape cancels. */
@@ -6169,9 +6176,11 @@
   function pdfBand(page, y) {
     const lines = [...new Set(pdfWordsOn(page).map((w) => Math.round(w[4])))].sort((a, b) => a - b);
     if (lines.length < 2) return null;
-    const gap = 24, top = lines[0], next = lines[1], last = lines.at(-1), prev = lines.at(-2);
-    if (y < top - 12 || next - top > gap && y < (top + next) / 2) return 'head';
-    if (y > last + 6 || last - prev > gap && y > (prev + last) / 2) return 'foot';
+    // a line parted by a gap is a band only in the page's margin: a title page's lines (\\maketitle, a beamer title frame)
+    // stand far apart in the middle of the page and type as text
+    const gap = 24, top = lines[0], next = lines[1], last = lines.at(-1), prev = lines.at(-2), im = pdfImg(page), h = im?.naturalWidth ? pageSize(im)[1] : top + last, edge = 0.16;
+    if (y < top - 12 || next - top > gap && y < (top + next) / 2 && top < h * edge) return 'head';
+    if (y > last + 6 || last - prev > gap && y > (prev + last) / 2 && last > h * (1 - edge)) return 'foot';
     return null;
   }
   /** Where a header or footer word is written: the first line of the project with a header command
@@ -8274,6 +8283,8 @@
         t = last && para.find((u) => u.s > last.s && (u.w[0] !== n[0] || u.w[4] > n[4] + 1));
       }
       // TeX's lines without hyphenation (PE.reflow): overflow runs on into the rows below, a deletion takes words up
+      // (natural widths, rows not justified: shrink and justify made the landing differ more on the thesis, 36 and 53 px
+      // against 17)
       const flow = PE.reflow(pieces.map((q, ix) => ({ ...q, ix })), w[3], { right, left, indent, skip, parskip, rows: later, pull: dl < 0 });
       const rows = [];
       for (const fr of flow.rows) {
@@ -8631,9 +8642,11 @@
     const g0 = pdfSeen();
     if (!pdfMenu && pdfMenuAsk && /^(Enter|Tab)$/.test(e.key) && !e.shiftKey && /^\\[A-Za-z@]*$/.test(g0.text.slice(pdfMenuAsk.from, g0.at))) {
       e.preventDefault();
-      const { from, ask } = pdfMenuAsk;
+      const { from, ask, p } = pdfMenuAsk;
       pdfQueue(async () => {
-        const all = await ask, c = pdfCaretNow(), n = c && /^\\([A-Za-z@]*)$/.exec(editor.text().slice(from, c.at)), item = n && pdfMenuItems(all, n[1])[0];
+        let all = await ask;
+        if (!all.length) { await pdfRunEnd(); all = await completions(p, p.character, '\\', uri(), true); }
+        const c = pdfCaretNow(), n = c && /^\\([A-Za-z@]*)$/.exec(editor.text().slice(from, c.at)), item = n && pdfMenuItems(all, n[1])[0];
         pdfMenuOff();
         if (item) pdfMenuApply(item, from, true);
       });
@@ -8682,27 +8695,42 @@
     if (!pdfCaret || !typed) return;
     // one character at a time: each one's escape or closer depends on where the one before left the caret;
     // `\` starts a command's name, raw, and the completion list the source editor shows opens at the caret
-    for (const ch of typed) pdfEdit((text, at, fresh) => PE.key(text, at, ch, { fresh, inline: pdfInline(), smart: configSet['playground.smart_scripts'] ?? true }));
-    if (typed.includes('\\') || pdfMenu) pdfMenuShow();
+    for (const ch of typed) pdfEdit((text, at, fresh) => {
+      const o = { fresh, inline: pdfInline(), smart: configSet['playground.smart_scripts'] ?? true }, h = pdfCaret?.hint;
+      // a field's hint at the caret: the key typed on the text without it, the hint taken with the key's span
+      if (h && at === h.at && text.startsWith(h.text, at)) {
+        const n = h.text.length, e = PE.key(text.slice(0, at) + text.slice(at + n), at, ch, o);
+        if (typeof e !== 'string' && e[0] === at) return [e[0], e[1] + n, e[2], e[3]];
+      }
+      return PE.key(text, at, ch, o);
+    });
+    // a name typed on (its list may have closed while none matched, or come empty): the list again, asked once the keys
+    // before are written (the server reads the editor's text: a position of keys still queued would be outside it)
+    if (typed.includes('\\') || pdfMenu || /\\[A-Za-z@]*$/.test(pdfSeen().text.slice(Math.max(0, pdfSeen().at - 64), pdfSeen().at))) pdfQueue(() => { pdfMenuShow(); });
   };
   /** The completion list at the caret after a `\`: the source editor's items for the name typed so far, \textbackslash among them. */
   var pdfMenu = null; // { el, items, sel, from }
   function pdfMenuOff() { pdfMenu?.el.remove(); pdfMenu = null; }
-  /** The list asked at the last `\\` while it is on the way: `{ from, ask }`. */
+  /** The list asked at the last `\\` while it is on the way: `{ from, ask, p }`. */
   let pdfMenuAsk = null;
+  /** Once the run under way ends (5 s at most): the server answers a completion then. */
+  const pdfRunEnd = async () => { for (let t = 0; running && t < 100; t++) await new Promise((ok) => setTimeout(ok, 50)); };
   /** The items of the server's list `all` for `\\name`: a macro's call clicked, every command with its own first. */
   function pdfMenuItems(all, name) {
     const back = { label: 'textbackslash', detail: 'a backslash in the text: \\textbackslash{}', insertText: 'textbackslash{}' };
     const made = pdfCaret?.made && `\\${name}` === pdfCaret.made, own = made && (all.find((i) => i.label === name) ?? { label: name, detail: 'the command clicked' });
     return made ? [own, ...rank(all, '').filter((i) => i.label !== name)].slice(0, 60) : rank([...all.filter((i) => i.label !== 'textbackslash'), back], name).slice(0, 60);
   }
-  async function pdfMenuShow() {
+  async function pdfMenuShow(again = true) {
     const g = pdfSeen(), m = /\\([A-Za-z@]*)$/.exec(g.text.slice(Math.max(0, g.at - 64), g.at));
     // verbatim names no command
     if (!m || !pdfCaret || PE.verbatimAt(g.text, g.at)) return pdfMenuOff();
-    const from = g.at - m[0].length, p = pdfPos(g.text, from + 1), ask = completions(p, p.character, '\\');
-    pdfMenuAsk = { from, ask };
+    const from = g.at - m[0].length, p = pdfPos(g.text, from + 1), ask = completions(p, p.character, '\\', uri(), !again);
+    pdfMenuAsk = { from, ask, p };
     const all = await ask;
+    // an early empty answer (a run went on, the server was slow): none shown (a lone \\textbackslash would take Tab),
+    // asked once more after the run, which the server's answer then gives; a Tab meanwhile waits for that
+    if (!all.length && again) { pdfMenuOff(); await pdfRunEnd(); if (pdfMenuAsk?.ask === ask) pdfMenuShow(false); return; }
     if (pdfMenuAsk?.ask === ask) pdfMenuAsk = null;
     // the name as typed now: keys typed while the list came on extend it
     const now = pdfSeen(), n = /^\\([A-Za-z@]*)$/.exec(now.text.slice(from, now.at));
@@ -8730,13 +8758,16 @@
   }
   /** `item` written over `\\name` from `from`; `now`: in the typing queue's turn already (pdfWritten, not pdfEdit). */
   function pdfMenuApply(item, from, now = false) {
-    let caret = -1;
+    let caret = -1, hint = '';
     const body = '\\' + String(item.insertText ?? item.textEdit?.newText ?? item.label).replace(/\$\{(\d+)(?::([^}]*))?\}|\$(\d+)/g, (_, n, text = '', bare, off) => {
-      if (caret < 0 && (n ?? bare) !== '0') caret = off;
+      if (caret < 0 && (n ?? bare) !== '0') { caret = off; hint = text; }
       return text;
     });
     // the offset counted before the replacement: the fields before the first one are none
     (now ? pdfWritten : pdfEdit)((text, at) => [from, at, body, caret < 0 ? body.length : caret + 1], { free: true });
+    // the first field's default text (`\\emph{arg}`) is a hint: the first key typed there replaces it, as a selected field
+    const hinted = () => { if (pdfCaret && hint) pdfCaret.hint = { at: from + caret + 1, text: hint }; };
+    if (now) hinted(); else pdfQueue(hinted);
     // a macro's call renamed: its text is the new command's, the caret has no word left to stand in
     const c = pdfCaret;
     if (c?.made) pdfQueue(() => { if (pdfCaret === c) { pdfCaretOff(); pdfTypeIn.blur(); } if (c.view === 'pdf') pdfRebuild(true); });

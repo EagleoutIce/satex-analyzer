@@ -80,3 +80,24 @@ spec('properties: order, spacing, edges, idempotence', () => {
     assert.deepEqual(again.rows.map((r) => r.out.map((o) => [o.id, o.x])), [first.out.map((o) => [o.id, o.x])], 'idempotent: a laid-out row spills nothing');
   }
 });
+
+// Intuition: TeX shrinks a full row's spaces (a third of each for Computer Modern) before it breaks: a piece that
+// fits only with shrunk spaces stays, and the row is set to the edge, its spaces sharing the shortfall. Pins greedy
+// breaking at natural widths, a word earlier than TeX (a 19 px jump when the build landed).
+spec('shrink keeps a piece a full row holds with shrunk spaces', () => {
+  const f = E.reflow([p(40, 0), p(28), p(28)], 0, { ...LINE, shrink: 1 / 3 });
+  assert.equal(f.rows.length, 1, 'one row: 102 natural, 100 with the spaces shrunk by 2');
+  const last = f.rows[0].out.at(-1);
+  assert.ok(Math.abs(last.x + last.n - 100) < 1e-9, 'set to the edge');
+  assert.equal(E.reflow([p(40, 0), p(28), p(28)], 0, LINE).rows.length, 2, 'without shrink it breaks');
+});
+// Intuition: a row TeX broke for the next is justified: it ends at the right edge, the slack shared by its spaces.
+// The first row is left as the page set its words before the typed text; the paragraph's last row stays ragged.
+spec('justify sets a broken row to the edge, never the first or the last', () => {
+  const f = E.reflow([p(60, 0), p(50), p(30), p(50)], 0, { ...LINE, justify: true });
+  assert.deepEqual(f.rows.map((r) => r.out.length), [1, 2, 1]);
+  const end = (r) => r.out.at(-1).x + r.out.at(-1).n;
+  assert.ok(Math.abs(end(f.rows[1]) - 100) < 1e-9, 'the middle row reaches the edge');
+  assert.equal(end(f.rows[2]), 50, 'the last row ragged');
+  assert.equal(end(f.rows[0]), 60, 'the first row as laid');
+});

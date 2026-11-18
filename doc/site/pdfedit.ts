@@ -23,7 +23,7 @@ type Form = { kind: 'len'; num: number; unit: string } | { kind: 'share'; num: n
 type Piece = { gap: number; n: number; par?: boolean; disp?: number; below?: number };
 /** The lines a paragraph may take: its right edge, its left margin, the indent and gap of a new paragraph, the rows the
  * page set after the first (each its left edge and its own words, gaps set), whether a row may take words up (`pull`). */
-type Line<P> = { right: number; left: number; indent: number; skip: number; parskip: number; rows: { x: number; pieces: P[] }[]; pull?: boolean };
+type Line<P> = { right: number; left: number; indent: number; skip: number; parskip: number; rows: { x: number; pieces: P[] }[]; pull?: boolean; shrink?: number; justify?: boolean };
 /** Rows laid out: each its left edge, its pieces placed (`x`), the page row it takes (`from`: -2 the first, -1 a new
  * one) and a new row's baseline shift from the row before (`dy`); `freed` the page rows whose words all went up. */
 type Flow<P> = { rows: { x: number; from: number; dy: number; par: boolean; out: (P & { x: number })[] }[]; freed: number[] };
@@ -814,26 +814,32 @@ declare global {
    * past the last one a new row a line below; a `par` piece a new paragraph's row, indented, `parskip` lower. A piece
    * wider than a line stands alone on its row. With `pull` a row takes up the next row's words while they fit (a
    * deletion), its row then freed if all went. A `disp` piece stands centered on a new row, what follows it on the
-   * next; past it no page row is taken (the page below is pushed down). Pure: positions only, in bp. */
+   * next; past it no page row is taken (the page below is pushed down). `shrink`: the share of each space a full row
+   * may give up (TeX's shrink, a third for Computer Modern), the row then set to the edge; with `justify` a row broken
+   * for the next ends at the edge as TeX sets it (not the first, whose words before `x0` are the page's). Pure:
+   * positions only, in bp. */
   function reflow<P extends Piece>(pieces: P[], x0: number, line: Line<P>): Flow<P> {
     const queue = [...pieces], rows: Flow<P>['rows'] = [{ x: x0, from: -2, dy: 0, par: false, out: [] }], slots: { x: number; from: number }[] = [];
-    let ri = 0, x = x0, i = 0, after: number | null = null, sunk = false;
+    let ri = 0, x = x0, i = 0, after: number | null = null, sunk = false, gaps = 0;
+    const shrink = line.shrink ?? 0;
     const take = () => { const r = line.rows[ri]!; queue.push(...r.pieces); return { x: r.x, from: ri++ }; };
     const lay = () => {
       for (; i < queue.length; i++) {
         const q = queue[i]!;
         let r = rows.at(-1)!;
         const own = q.disp != null || after != null;
-        if (own || r.out.length && (q.par || q.n > 0 && x + q.gap + q.n > line.right + 0.5)) {
+        if (own || r.out.length && (q.par || q.n > 0 && x + q.gap + q.n - shrink * (gaps + q.gap) > line.right + 0.5)) {
           sunk ||= own;
           const s = !q.par && !sunk && (slots.shift() ?? (ri < line.rows.length ? take() : null));
           const dy = line.skip + (q.disp ?? after ?? (q.par ? line.parskip : 0)), at = q.disp != null ? (line.left + line.right - q.n) / 2 : line.left + (q.par ? line.indent : 0);
           rows.push(r = s ? { x: s.x, from: s.from, dy: 0, par: false, out: [] } : { x: at, from: -1, dy, par: !!q.par, out: [] });
           x = r.x - (own ? 0 : q.gap);
+          gaps = own ? 0 : -q.gap;
         }
         after = q.disp != null ? q.below ?? 0 : null;
         if (own) { r.out.push({ ...q, gap: 0, x }); x += q.n; continue; }
         x += q.gap;
+        if (r.out.length) gaps += q.gap;
         r.out.push({ ...q, x });
         x += q.n;
       }
@@ -846,6 +852,15 @@ declare global {
       slots.push(take());
       lay();
     }
+    // a row past the edge (its spaces shrunk) or broken for the next (justified) ends at the edge: its spaces share it
+    rows.forEach((r, j) => {
+      const last = r.out.at(-1), next = rows[j + 1];
+      if (!last || r.out.length < 2) return;
+      const d = line.right - (last.x + last.n), room = r.out.slice(1).reduce((n, q) => n + q.gap, 0);
+      if (!room || !(shrink && d < -0.01 || line.justify && j > 0 && next && !next.par && next.out[0]?.disp == null && d > 0)) return;
+      let acc = 0;
+      for (const q of r.out.slice(1)) { acc += q.gap; q.x += d * acc / room; }
+    });
     return { rows, freed: slots.map((s) => s.from) };
   }
   /** How far a centered row moves when it grows by `growth`: half of it, for a row as far from both edges of its line
