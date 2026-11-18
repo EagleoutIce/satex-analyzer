@@ -987,8 +987,19 @@ impl Engine {
                 notify_to(&out, Notification::new("satex/typesetRows".into(), params));
             })));
         }
+        // Every row after the edit, as soon as the run meets the last one apart from the page
+        // being built: the last run's rows, its page breaks pending until this run ends.
+        if self.typeset_early.as_ref() == Some(uri) {
+            let (uri, version, out) = (uri.clone(), version_of(&versions, uri), self.outbox.clone());
+            crate::analysis::machine::lax_with(Some(Box::new(move |run| {
+                let rows = handlers::typeset(&run);
+                let params = serde_json::json!({"uri": uri, "version": version, "rows": rows, "preview": true});
+                notify_to(&out, Notification::new("satex/typesetRows".into(), params));
+            })));
+        }
         let (analysis, fresh) = self.run_for(&path, &text);
         crate::analysis::machine::preview_with(None);
+        crate::analysis::machine::lax_with(None);
         // A newer text came while it ran: it stopped, and says nothing. The newer text's run follows.
         if self.cancelled {
             crate::util::progress::note!("satex: a run stopped for a newer text");

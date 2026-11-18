@@ -446,3 +446,57 @@ fn a_paragraph_run_first_typesets_the_edited_paragraph_as_the_full_run() {
     }
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// The paragraph rows of a run, without page rows and places: what the lax page model keeps.
+fn paragraph_rows(analysis: &Analysis) -> Vec<satex::queries::query::Record> {
+    use satex::queries::query::{Filter, Query, run};
+    (run(analysis, Query::Typeset, &Filter::Always).into_iter())
+        .filter(|r| r.get("kind").and_then(|k| k.as_str()) != Some("page"))
+        .map(|mut r| {
+            r.remove("placed");
+            r
+        })
+        .collect()
+}
+
+/// After an edit, the run hands on a whole provisional analysis as soon as its state equals
+/// the last run's apart from the page being built (`lax_with`): the rows after are the last
+/// run's, its page breaks marked not exact. Every paragraph row equals a full run's, so the
+/// Typeset view shows the whole document long before the exact run ends. Bug pinned: the
+/// view waited for the exact run, which the page builder keeps from meeting the last one
+/// until the page ships.
+#[test]
+fn a_lax_page_model_reuses_the_rest_of_the_last_run() {
+    if !installed() {
+        return;
+    }
+    let dir = crate::support::tmp_root().join("incremental-lax");
+    std::fs::create_dir_all(&dir).unwrap();
+    let main = dir.join("main.tex");
+    let cfg = crate::support::config();
+    std::fs::write(&main, PARAGRAPHS).unwrap();
+    let mut checkpoints = Checkpoints::new(&cfg).every(64);
+    checkpoints.analyze(PARAGRAPHS, &main);
+    let mut text = PARAGRAPHS.to_string();
+    // A word in a paragraph: the states meet once the page differs only in what it holds.
+    // Dropping a word may move an output routine (on a cold cache it does here): no
+    // provisional run then may be, the exact one stands alone. None is ever wrong.
+    for (was, now, met) in [("the edits change", "an edit changed", Some(true)), ("a few words", "few words", None)] {
+        text = text.replacen(was, now, 1);
+        std::fs::write(&main, &text).unwrap();
+        let got = std::rc::Rc::new(std::cell::RefCell::new(None));
+        let sink = got.clone();
+        satex::analysis::machine::lax_with(Some(Box::new(move |run| *sink.borrow_mut() = Some(run))));
+        checkpoints.analyze(&text, &main);
+        satex::analysis::machine::lax_with(None);
+        let lax = got.take();
+        if let Some(met) = met {
+            assert_eq!(lax.is_some(), met, "{now}: a provisional run");
+        }
+        if let Some(lax) = lax {
+            let full = Machine::analyze_once(&text, Some(&main), &cfg);
+            assert_eq!(paragraph_rows(&lax), paragraph_rows(&full), "{now}");
+        }
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}

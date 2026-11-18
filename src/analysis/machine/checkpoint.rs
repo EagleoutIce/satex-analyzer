@@ -49,6 +49,22 @@ thread_local! {
     static PREVIEW: std::cell::RefCell<Option<Preview>> = const { std::cell::RefCell::new(None) };
 }
 
+/// What a provisional run hands on: the whole document, the last run's rest spliced in
+/// where the states first agree apart from the page being built.
+pub type Lax = Box<dyn FnOnce(Analysis)>;
+
+thread_local! {
+    static LAX: std::cell::RefCell<Option<Lax>> = const { std::cell::RefCell::new(None) };
+}
+
+/// Asks the next resumed run to hand `then` a provisional whole analysis as soon as its state
+/// equals the last run's apart from the page being built (the lax page model of the Typeset
+/// view): every row after is the last run's, its pages marked not exact. The run itself goes
+/// on exact. `None` withdraws the request.
+pub fn lax_with(then: Option<Lax>) {
+    LAX.set(then);
+}
+
 /// Asks the next resumed run of an edit inside a paragraph to run that paragraph first,
 /// from the same checkpoint, and hand it to `then`: the paragraph is broken into lines
 /// from the state at its start and its own text, so its rows are those of the full run.
@@ -94,6 +110,8 @@ struct Taking<'a> {
     spliced: Option<Box<Machine<'a>>>,
     /// What the last run read after the meeting line.
     tail: Vec<crate::project::overlay::Read>,
+    /// The main file and its text, kept while a provisional run is asked for ([`lax_with`]).
+    main: Option<(crate::engine::tex::FileId, Rc<str>)>,
 }
 
 /// What a run keeps of the one before to meet its state again.
@@ -245,7 +263,10 @@ impl Machine<'_> {
         let total = taking.prior.steps;
         let Some(old) = old.pop() else { return };
         let (reads, old) = (old.reads, old.machine);
-        let differs = self.differs_from(&old).or_else(|| self.splice(&old, reads).err());
+        let differs = self.differs_from(&old, false).or_else(|| self.splice(&old, reads).err());
+        if matches!(differs, Some("page so far" | "mode or pages" | "path state")) {
+            self.lax_splice(&old);
+        }
         if self.cfg.verbose >= 2 {
             crate::util::progress::note!(
                 "satex: state at {path}:{line} vs the last run's: {}",
@@ -278,8 +299,7 @@ impl Machine<'_> {
         }
         // Counts of tokens taken and assignments made differ by the edit's. They are compared
         // only with marks taken since, which differ alike, or before the edit, which both passed.
-        let path = |m: &Machine| format!("{:?}", super::PathState { source_progress: 0, doc_mark: 0, ..m.save_path() });
-        let (mine, theirs) = (path(self), path(old));
+        let (mine, theirs) = (comparable_path(self, false), comparable_path(old, false));
         if mine != theirs {
             return Err("path state");
         }
@@ -290,12 +310,46 @@ impl Machine<'_> {
         }
         // Last: it splices `end` in place, so a failure leaves no end for a later line.
         let mut end = self.checkpoints.on.as_mut().and_then(|t| t.prior.end.take()).ok_or("no end of the last run")?;
-        splice_out(&self.out, &old.out, &mut end.out, window, since.2)?;
+        splice_out(&self.out, &old.out, &mut end.out, window, since.2, false)?;
         end.started = self.started;
         let Some(taking) = self.checkpoints.on.as_mut() else { return Err("no checkpoints") };
         taking.tail = taking.prior.log.get(reads..).unwrap_or_default().to_vec();
         taking.spliced = Some(end);
         Ok(())
+    }
+
+    /// [`lax_with`]: the state equals `old`'s apart from the page being built, so the last
+    /// run's rest, spliced in, is what a lax page model shows; its pages are marked not
+    /// exact. Once per run; this run goes on exact.
+    fn lax_splice(&self, old: &Machine) {
+        let Some(taking) = self.checkpoints.on.as_ref() else { return };
+        let (Some((id, source)), Some(edit), Some(end)) = (&taking.main, &taking.prior.edit, &taking.prior.end) else {
+            return;
+        };
+        if self.mode != crate::engine::mode::Modes::VERTICAL || self.differs_from(old, true).is_some() {
+            return;
+        }
+        let Some(window) = edited_lines(&self.input, &old.input, &self.out.files, edit) else { return };
+        let since = taking.since;
+        let (mine, theirs) = (comparable_path(self, true), comparable_path(old, true));
+        let traces = [&mine, &self.env.trace((since.0, since.1)), &theirs, &old.env.trace((since.0, since.1))];
+        if mine != theirs || traces.iter().any(|t| mentions(t, window)) {
+            return;
+        }
+        if !LAX.with_borrow(Option::is_some) {
+            return;
+        }
+        let mut end = (**end).clone();
+        if splice_out(&self.out, &old.out, &mut end.out, window, since.2, true).is_err() {
+            return;
+        }
+        // where the rest's pages break, the lax model does not know
+        for page in end.out.facts.text.pages.iter_mut().filter(|p| p.0 >= since.2) {
+            page.2 = false;
+        }
+        end.started = self.started;
+        let Some(then) = LAX.take() else { return };
+        then(end.conclude(*id, source));
     }
 
     /// Whether the run just spliced the last run's rest: it then keeps a
@@ -306,7 +360,7 @@ impl Machine<'_> {
 
     /// The first part of the state that differs from `old`'s, a necessary
     /// condition for both runs to go on alike. Facts are compared by count.
-    fn differs_from(&self, old: &Machine) -> Option<&'static str> {
+    fn differs_from(&self, old: &Machine, lax: bool) -> Option<&'static str> {
         let since = self.checkpoints.on.as_ref().map_or((0, 0, 0), |t| t.since);
         let (f, g) = (&self.out.facts, &old.out.facts);
         let counts = |f: &crate::analysis::facts::Facts| {
@@ -318,8 +372,8 @@ impl Machine<'_> {
             (self.conds.len() != old.conds.len(), "conditionals"),
             (!Rc::ptr_eq(&self.outputs, &old.outputs) && self.outputs != old.outputs, "files written"),
             (!Rc::ptr_eq(&self.pending, &old.pending) && self.pending != old.pending, "writes held"),
-            ((self.mode, self.list, self.pages) != (old.mode, old.list, old.pages), "mode or pages"),
-            (self.natural != old.natural, "page so far"),
+            ((self.mode, self.list) != (old.mode, old.list) || !lax && self.pages != old.pages, "mode or pages"),
+            (!lax && self.natural != old.natural, "page so far"),
             (self.out.interner.len() != old.out.interner.len(), "names"),
             (self.out.graph.len() != old.out.graph.len(), "graph"),
             (self.out.files.len() != old.out.files.len(), "files read"),
@@ -352,6 +406,23 @@ fn reading_file(input: &super::Input) -> Option<(&Mouth, bool)> {
         }
     }
     None
+}
+
+/// A machine's path state as two runs that differ by an edit before here are compared:
+/// the source position, the document mark and the open calls' absolute counts left out
+/// ([`super::calls::CallRec::alike_view`]); `lax` also leaves out the page being built.
+fn comparable_path(m: &Machine, lax: bool) -> String {
+    let mut p = super::PathState { source_progress: 0, doc_mark: 0, ..m.save_path() };
+    p.call_recs = Rc::new(p.call_recs.iter().map(|r| Rc::new(r.alike_view(lax))).collect());
+    if lax {
+        // the output routines fired so far, and the braces they read: the page builder's.
+        // `align_state` counts only inside an alignment cell (tex.web § 342).
+        p.pages = 0;
+        if p.cell_base.is_none() {
+            p.align_state = 0;
+        }
+    }
+    format!("{p:?}")
 }
 
 /// Each open file of `input` with its position and the text still to read.
@@ -656,7 +727,7 @@ where
 /// The last run's end `end` with this run's record up to here (`new`) in
 /// place of its own (`at`). Every field is listed: a new one must say how.
 #[rustfmt::skip]
-fn splice_out(new: &Analysis, at: &Analysis, end: &mut Analysis, window: Window, resume: u32) -> Result<(), &'static str> {
+fn splice_out(new: &Analysis, at: &Analysis, end: &mut Analysis, window: Window, resume: u32, lax: bool) -> Result<(), &'static str> {
     let span = |s: &Span| s.file == window.0 && (window.1..=window.2).contains(&s.line);
     let line = |k: &(crate::engine::tex::FileId, u32)| k.0 == window.0 && (window.1..=window.2).contains(&k.1);
     // Kept as the run's end has them: its clock and the caches filled after it.
@@ -675,7 +746,8 @@ fn splice_out(new: &Analysis, at: &Analysis, end: &mut Analysis, window: Window,
     // What this run recorded must be what the last one had here: the rest then leaves the same.
     let alike = [
         (new.interner.len() == at.interner.len() && new.interner == at.interner, "names"),
-        (new.graph.len() == at.graph.len() && new.graph == at.graph, "graph"),
+        // lax: the edited line's nodes sit at other columns; the provisional end keeps the last run's
+        (new.graph.len() == at.graph.len() && (lax || new.graph == at.graph), "graph"),
         (new.calls == at.calls && new.observed == at.observed, "calls"),
         (new.files == at.files, "files"),
         (same(&(new.main_file, &new.literate, &new.project, &new.plugins, &new.distribution, new.document_depth),
@@ -879,6 +951,7 @@ impl<'a> Checkpoints<'a> {
             spliced: None,
             tail: Vec::new(),
             since: (m.env.assignments, m.env.journal_len(), m.out.facts.text.at.len() as u32),
+            main: LAX.with_borrow(Option::is_some).then(|| (id, Rc::from(source))),
         };
         m.checkpoints.on = Some(Box::new(taking));
         let (clock, from) = (std::time::Instant::now(), m.out.steps);

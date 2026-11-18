@@ -134,6 +134,15 @@ pub(crate) struct Memo {
 }
 
 impl CallRec {
+    /// This record as two runs that differ only by an edit before it are compared: the
+    /// assignment count is absolute and moves by the edit's, and under the lax page model
+    /// the list being built is the page's, which may differ.
+    pub(crate) fn alike_view(&self, lax: bool) -> CallRec {
+        let natural = if lax { None } else { self.natural };
+        // the memo's start holds absolute counts too: whether one is kept is what compares
+        CallRec { assigned: 0, forks_at: 0, natural, memo: None, ..self.clone() }
+    }
+
     pub(crate) fn memo_mark(&self) -> Option<crate::engine::env::MemoMark> {
         self.memo.as_ref().map(|m| m.mark)
     }
