@@ -248,6 +248,8 @@ pub enum Source {
     TaggingProject,
     /// ISO 14289, read through the PDF Association's Matterhorn Protocol checkpoints.
     PdfUa,
+    /// The W3C's Web Content Accessibility Guidelines, by success criterion.
+    Wcag,
 }
 
 impl Source {
@@ -291,6 +293,7 @@ impl Source {
             Source::LatexLab => ("latex-lab", "https://ctan.org/pkg/latex-lab"),
             Source::TaggingProject => ("LaTeX tagging project", "https://latex3.github.io/tagging-project/"),
             Source::PdfUa => ("Matterhorn Protocol", "https://pdfa.org/resource/the-matterhorn-protocol/"),
+            Source::Wcag => ("WCAG 2.2", "https://www.w3.org/TR/WCAG22/"),
         }
     }
 
@@ -943,7 +946,7 @@ mod tests {
 
     /// `numbers.txt` counts up from 001 per category letter with no gap, names each code
     /// once, lists every rule, and marks each line no rule has as retired:
-    /// a number is never given twice.
+    /// a number is never given twice. A `# released` mark pins the lines before it.
     #[test]
     fn rule_numbers_are_stable() {
         use super::Category::{self, *};
@@ -965,6 +968,16 @@ mod tests {
         }
         for rule in super::all() {
             assert!(codes.contains(rule.code), "`{}` needs a number: append it to src/lint/numbers.txt", rule.code);
+        }
+        // A release's mark holds the hash of the numbered lines before it: a released line never changes.
+        let numbered = |n: usize| lines.iter().take(n).copied().collect::<Vec<_>>().join("\n");
+        let fnv = |t: &str| {
+            t.bytes().fold(0xcbf2_9ce4_8422_2325u64, |h, b| (h ^ u64::from(b)).wrapping_mul(0x0100_0000_01b3))
+        };
+        for mark in include_str!("../data/lint-numbers.txt").lines().filter_map(|l| l.strip_prefix("# released ")) {
+            let count: usize = mark.split_whitespace().nth(2).and_then(|n| n.parse().ok()).expect("a count");
+            let hash = mark.rsplit("fnv ").next().and_then(|h| h.strip_suffix(')')).expect("a hash");
+            assert_eq!(format!("{:016x}", fnv(&numbered(count))), hash, "a released number changed: {mark}");
         }
     }
 

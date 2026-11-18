@@ -160,7 +160,10 @@ Fix by listing the parts being written in `\\includeonly` while drafting.",
 fn duplicate_package(report: &mut Report) {
     let analysis = report.analysis();
     for (load, options, at, first_load) in report.index().reloads() {
-        if load.options.iter().any(|o| !options.contains(o)) {
+        // one the class or a package made first is `redundant-package-load`'s
+        if load.options.iter().any(|o| !options.contains(o))
+            || super::packages::loaded_before(load, options, first_load).is_some()
+        {
             continue;
         }
         let edits = report.edits().delete_load(load);
@@ -329,7 +332,7 @@ fn package_after_preamble(report: &mut Report) {
         if !load.kind.is_package() || load.span.file != end.file || load.span.before(end.line, end.col) {
             continue;
         }
-        let edits = report.edits().move_to_preamble(load, end);
+        let edits = report.edits().move_before(load, end);
         report.add_fix(
             load.span,
             &load.name,
@@ -339,7 +342,7 @@ fn package_after_preamble(report: &mut Report) {
     }
     let refused = refused_loads(report, end);
     for load in refused {
-        let edits = report.edits().move_to_preamble(&load, end);
+        let edits = report.edits().move_before(&load, end);
         report.add_fix(
             load.span,
             &load.name,

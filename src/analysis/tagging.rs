@@ -118,6 +118,11 @@ fn read(analysis: &Analysis) -> Option<Tagging> {
     if !analysis.defined("GetDocumentProperties") {
         return None;
     }
+    // Tagging never set (no `\DocumentMetadata`): nothing to look up, and the status file is costly.
+    let set = format!("\\GetDocumentProperties{{{}}}", PROPERTIES[0]);
+    if evaluate(analysis, State::End, None, std::slice::from_ref(&set))?.first() == Some(&Val::Empty) {
+        return None;
+    }
     let mut exprs: Vec<String> = PROPERTIES.iter().map(|p| format!("\\GetDocumentProperties{{{p}}}")).collect();
     exprs.push("\\ifcsname pdf_version:\\endcsname\\csname pdf_version:\\endcsname\\fi".into());
     // `\begin{document}`'s state: what `\DocumentMetadata` and the preamble set, before the

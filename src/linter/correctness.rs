@@ -600,7 +600,7 @@ fn scope_names(analysis: &crate::analysis::machine::Analysis) -> Vec<String> {
 
 /// The known name nearest to a misspelled one: a typo, a swapped or missing
 /// letter, or a different case, within a quarter of the name's length.
-fn closest<'a>(name: &str, known: &'a [String]) -> Option<&'a str> {
+pub(crate) fn closest<'a>(name: &str, known: &'a [String]) -> Option<&'a str> {
     let count = name.chars().count();
     let limit = (count / 4).max(1);
     known
@@ -800,7 +800,12 @@ fn unresolved_files(report: &mut Report) {
     let empty = report.analysis.distribution.indexed == 0;
     let analysis = report.analysis();
     for load in &analysis.facts.loads {
-        if load.name.is_empty() || crate::plugins::packages::installable_load(analysis, load) {
+        let respelled = || {
+            let file = crate::plugins::packages::file_of(&load.name, load.kind);
+            load.status == LoadStatus::NotFound
+                && file.is_some_and(|f| super::packages::respelled(analysis, &f).is_some())
+        };
+        if load.name.is_empty() || crate::plugins::packages::installable_load(analysis, load) || respelled() {
             continue;
         }
         let message = match load.status {
@@ -837,7 +842,9 @@ fn unresolved_files(report: &mut Report) {
         Some(rest[..rest.find("' not found")?].to_string())
     });
     for (span, name, _) in missing {
-        if crate::plugins::packages::installable(analysis, &name).is_some() {
+        if crate::plugins::packages::installable(analysis, &name).is_some()
+            || super::packages::respelled(analysis, &name).is_some()
+        {
             continue;
         }
         let message = format!("`{name}` is not in this installation ({distribution})");

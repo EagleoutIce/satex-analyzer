@@ -101,11 +101,18 @@ fn objects(analysis: &Analysis) -> Vec<(Span, Span, &'static str)> {
         "figure" | "sidewaysfigure" => Some("figure"),
         _ => None,
     };
+    let found = environments(analysis, |key| kind(key).is_some());
+    found.into_iter().map(|(b, e, key)| (b, e, kind(key).unwrap_or("table"))).collect()
+}
+
+/// The environments named as `keep` wants that the run entered and left: where each began and
+/// ended, outermost first.
+pub(crate) fn environments(analysis: &Analysis, keep: impl Fn(&str) -> bool) -> Vec<(Span, Span, &str)> {
     let mut marks: Vec<(Span, bool, &str)> = analysis
         .facts
         .occurrences
         .iter()
-        .filter(|o| matches!(o.kind, OccKind::BeginEnvironment | OccKind::EndEnvironment) && kind(&o.key).is_some())
+        .filter(|o| matches!(o.kind, OccKind::BeginEnvironment | OccKind::EndEnvironment) && keep(&o.key))
         .map(|o| (o.span, o.kind == OccKind::BeginEnvironment, o.key.as_str()))
         .collect();
     marks.sort_unstable();
@@ -116,7 +123,7 @@ fn objects(analysis: &Analysis) -> Vec<(Span, Span, &'static str)> {
             open.push((span, key));
         } else if let Some(i) = open.iter().rposition(|(b, k): &(Span, &str)| *k == key && b.file == span.file) {
             let (b, k) = open.remove(i);
-            out.push((b, span, kind(k).unwrap_or("table")));
+            out.push((b, span, k));
         }
     }
     out.sort_unstable();

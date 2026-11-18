@@ -3,7 +3,8 @@
 # its category on a new last line. A removed rule keeps its line, marked
 # `retired` after its code, so its number is never given again. A rule
 # that moves to another category keeps its number, so suppressions and
-# links that name it stay valid.
+# links that name it stay valid. A `# released` line, which scripts/release.sh
+# writes, pins every numbered line above it with a hash.
 C001 already-defined
 C002 bibtex-command-under-biblatex
 C003 build-bibliography-disabled
@@ -130,6 +131,7 @@ S059 bare-reference
 S060 doubled-punctuation
 C054 reference-name-mismatch
 S061 sentence-capital
+# released v0.2.4: the 126 numbered lines above never change (fnv bc9c2f4b49bdd6f4)
 S062 overfull-line
 S063 overfull-box
 S064 wider-than-line
@@ -140,3 +142,8 @@ C058 pdfua-without-title
 C059 tagging-without-language
 C060 tagging-unsupported-engine
 S065 tagged-math-without-mathml
+C061 package-load-order
+S066 redundant-package-load
+C062 unknown-package-name
+S067 low-contrast-color
+S068 indistinct-colors

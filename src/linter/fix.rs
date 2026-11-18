@@ -428,9 +428,10 @@ impl<'a> Edits<'a> {
         Some(vec![edit])
     }
 
-    /// Move a load that stands after `\begin{document}` to the line before it.
-    pub fn move_to_preamble(&self, load: &Load, begin: Span) -> Option<Vec<Edit>> {
-        if begin.file != load.span.file {
+    /// Move a load to a line of its own before `at`: a load after
+    /// `\begin{document}` into the preamble, one package above another.
+    pub fn move_before(&self, load: &Load, at: Span) -> Option<Vec<Edit>> {
+        if at.file != load.span.file {
             return None;
         }
         let (path, text, mut scan, cs) = self.command(load.span)?;
@@ -440,7 +441,7 @@ impl<'a> Edits<'a> {
             None => "",
         };
         let name = scan.name(&cs)?.to_string();
-        let mut edits = self.insert_before(begin, &format!("\\{name}{options}{{{}}}", load.name))?;
+        let mut edits = self.insert_before(at, &format!("\\{name}{options}{{{}}}", load.name))?;
         edits.extend(self.delete_load(load)?);
         let _ = path;
         Some(edits)

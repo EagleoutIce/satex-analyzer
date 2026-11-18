@@ -65,6 +65,19 @@ NEW_VERSION="${MAJOR}.${MINOR}.${PATCH}"
 # Unreleased becomes the new version in CHANGELOG.md (fails when it is empty)
 python3 scripts/changelog.py release "v${NEW_VERSION}"
 
+# The lint numbers given so far are released: a mark with their hash pins them (rule_numbers_are_stable)
+python3 - "v${NEW_VERSION}" <<'PY'
+import sys
+p = 'src/data/lint-numbers.txt'
+lines = open(p).read().rstrip('\n').split('\n')
+numbered = [l for l in lines if l and not l.startswith('#')]
+h = 0xcbf29ce484222325
+for b in '\n'.join(numbered).encode():
+    h = ((h ^ b) * 0x100000001b3) & 0xFFFFFFFFFFFFFFFF
+lines.append(f"# released {sys.argv[1]}: the {len(numbered)} numbered lines above never change (fnv {h:016x})")
+open(p, 'w').write('\n'.join(lines) + '\n')
+PY
+
 # Get commits since last tag
 LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
 

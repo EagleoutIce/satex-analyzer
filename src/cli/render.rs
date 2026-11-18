@@ -868,12 +868,36 @@ pub fn lint_end(analysis: &crate::analysis::machine::Analysis) -> String {
         .filter(|h| !matches!(h.key, "seconds" | "memory"))
         .map(|h| format!("limits.{} = {}{}", h.key, h.value, place(h)))
         .collect();
+    // What the run could not follow or gave up on, one entry per code, first place.
+    let mut gaps: Vec<(&str, &crate::analysis::facts::Diagnostic)> = Vec::new();
+    for d in &analysis.facts.diagnostics {
+        let gap = d.severity == crate::analysis::facts::Severity::Unsupported
+            || crate::analysis::machine::WIDEN_ON.contains(&d.code);
+        if gap && !gaps.iter().any(|(c, _)| *c == d.code) {
+            gaps.push((d.code, d));
+        }
+    }
+    let gaps = match gaps.len() {
+        0 => String::new(),
+        n => {
+            let at = |(code, d): &(&str, &crate::analysis::facts::Diagnostic)| match d.span.line {
+                0 => format!("{code} in {}", analysis.short_name(d.span.file)),
+                line => format!("{code} at {}:{line}", analysis.short_name(d.span.file)),
+            };
+            let shown: Vec<String> = gaps.iter().take(3).map(at).collect();
+            let more = if n > 3 { format!(" and {} more", n - 3) } else { String::new() };
+            format!("{}{more}", shown.join(", "))
+        }
+    };
     let (style, verdict) = match (stop, analysis.exhausted, unread, cut.is_empty()) {
         (Some(hit), ..) => {
             (WARNING, format!("incomplete: limits.{} = {} stopped the run{}", hit.key, hit.value, place(hit)))
         }
         (None, true, ..) => (WARNING, "incomplete: the run's budget ran out".to_string()),
         (None, false, n, _) if n > 0 => (WARNING, format!("incomplete: {} not read", plural(n, "file"))),
+        (None, false, _, _) if !gaps.is_empty() => {
+            (WARNING, format!("incomplete: the run gave up or approximated, {gaps}"))
+        }
         (None, false, _, false) => (IMPRECISION, format!("complete, approximated where {} cut it", cut.join(", "))),
         _ => (GOOD, "complete: the run reached the end".to_string()),
     };

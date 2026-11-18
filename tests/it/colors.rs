@@ -239,3 +239,183 @@ fn recolouring_a_package_colour_is_no_conflict() {
     );
     assert!(f.is_empty(), "{f:?}");
 }
+
+/// Every finding of `code` on the document, whole records.
+fn records(name: &str, code: &str, preamble: &str, body: &str) -> Vec<satex::queries::query::Record> {
+    let directory = scratch(name);
+    let document = format!("\\documentclass{{article}}\n{preamble}\n\\begin{{document}}\n{body}\n\\end{{document}}\n");
+    let main = directory.join("main.tex");
+    std::fs::write(&main, &document).unwrap();
+    let analysis = Machine::analyze(&document, Some(&main), &crate::support::config());
+    let out = satex::linter::lint(&analysis).into_iter().filter(|record| record["code"] == code).collect();
+    let _ = std::fs::remove_dir_all(&directory);
+    out
+}
+
+/// The replacement text of a finding's only edit.
+fn replacement(record: &satex::queries::query::Record) -> String {
+    let edits = record["edits"].as_array().expect("edits");
+    assert_eq!(edits.len(), 1, "{record:?}");
+    edits[0]["replacement"].as_str().unwrap().to_string()
+}
+
+const XCOLOR: &str = "\\usepackage{xcolor}";
+
+/// Intuition: light gray on the white page is hard to read. Pins the WCAG ratio read off the
+/// color the run computed, and the fix that darkens the user's own `\definecolor` in its model.
+#[test]
+fn pale_text_on_the_page_is_low_contrast() {
+    if !installed() {
+        return;
+    }
+    let pale = 0.8;
+    let preamble = format!("{XCOLOR}\n\\definecolor{{pale}}{{gray}}{{{pale}}}");
+    let found = records("pale", "low-contrast-color", &preamble, "\\textcolor{pale}{Faint words}");
+    assert_eq!(found.len(), 1, "{found:?}");
+    assert_eq!(found[0]["name"], "pale");
+    let ratio = satex::project::config::LowContrastColor::default().ratio;
+    assert!(found[0]["message"].as_str().unwrap().contains(&format!("{ratio}:1")), "{found:?}");
+    assert_eq!(found[0]["applicability"], "unsafe");
+    let darker: f64 = replacement(&found[0]).parse().expect("a gray level");
+    assert!(darker < pale, "{found:?}");
+}
+
+/// Intuition: plain black text and a dark named color read well. Pins that ordinary text raises
+/// nothing.
+#[test]
+fn dark_text_is_no_low_contrast() {
+    if !installed() {
+        return;
+    }
+    let found = records("dark", "low-contrast-color", XCOLOR, "Plain words. \\textcolor{blue}{Blue words}");
+    assert!(found.is_empty(), "{found:?}");
+}
+
+/// Intuition: white text in a black `\colorbox` is fine, on a yellow one it is not. Pins that the
+/// box's fill rule (`\color@block`) is the background of the characters the box holds.
+#[test]
+fn a_colorbox_is_the_background_of_its_text() {
+    if !installed() {
+        return;
+    }
+    let dark = records("dark-box", "low-contrast-color", XCOLOR, "\\colorbox{black}{\\color{white}Dark box}");
+    assert!(dark.is_empty(), "{dark:?}");
+    let light = records("light-box", "low-contrast-color", XCOLOR, "\\colorbox{yellow}{\\color{white}Light box}");
+    assert_eq!(light.len(), 1, "{light:?}");
+    assert!(light[0]["message"].as_str().unwrap().contains("`yellow`"), "{light:?}");
+}
+
+/// Intuition: `\pagecolor` repaints the page under all text. Pins the page color as the
+/// background, both ways: white text reads on black, black text does not.
+#[test]
+fn the_page_color_is_the_background() {
+    if !installed() {
+        return;
+    }
+    let white = records("page-white", "low-contrast-color", XCOLOR, "\\pagecolor{black}\\color{white}Night text");
+    assert!(white.is_empty(), "{white:?}");
+    let black = records("page-black", "low-contrast-color", XCOLOR, "\\pagecolor{black}Unseen text");
+    assert_eq!(black.len(), 1, "{black:?}");
+}
+
+/// Intuition: WCAG lets large text pass with less contrast. Pins the size read from `\f@size`:
+/// mid gray fails at the body size and passes in `\Huge`.
+#[test]
+fn large_text_needs_less_contrast() {
+    if !installed() {
+        return;
+    }
+    let small = records("small-gray", "low-contrast-color", XCOLOR, "\\textcolor{gray}{Small words}");
+    assert_eq!(small.len(), 1, "{small:?}");
+    let large = records("large-gray", "low-contrast-color", XCOLOR, "{\\Huge\\textcolor{gray}{Big words}\\par}");
+    assert!(large.is_empty(), "{large:?}");
+}
+
+/// Intuition: a TikZ node's fill is drawn by literals satex does not read. Pins that text over
+/// such a drawing has an unknown background and is left alone, not judged against the page.
+#[test]
+fn text_over_a_tikz_fill_is_left_alone() {
+    if !installed() {
+        return;
+    }
+    let body = "\\tikz\\node[fill=black,text=white]{Node text};";
+    let found = records("tikz-fill", "low-contrast-color", "\\usepackage{tikz}", body);
+    assert!(found.is_empty(), "{found:?}");
+}
+
+/// Intuition: a dark green and a vermillion mark opposite meanings, but look the same to a reader
+/// with protanopia. Pins the simulation, the named deficiency and an Okabe-Ito fix in the user's
+/// own model.
+#[test]
+fn green_and_vermillion_in_one_paragraph_are_indistinct() {
+    if !installed() {
+        return;
+    }
+    let (good, bad) = ("0,128,0", "213,94,0");
+    let preamble = format!("{XCOLOR}\n\\definecolor{{good}}{{RGB}}{{{good}}}\n\\definecolor{{bad}}{{RGB}}{{{bad}}}");
+    let found = records("green-red", "indistinct-colors", &preamble, "\\textcolor{good}{yes} or \\textcolor{bad}{no}");
+    assert_eq!(found.len(), 1, "{found:?}");
+    assert_eq!(found[0]["name"], "bad");
+    assert!(found[0]["message"].as_str().unwrap().contains("protanopia"), "{found:?}");
+    let spec = replacement(&found[0]);
+    let bytes: Vec<u8> = spec.split(',').map(|b| b.parse().expect("an RGB byte")).collect();
+    assert_eq!(bytes.len(), good.split(',').count(), "{spec}");
+    assert_ne!(spec, bad);
+}
+
+/// Intuition: Okabe-Ito's blue and orange stay apart under every deficiency. Pins that a
+/// color-blind-safe pair raises nothing.
+#[test]
+fn okabe_ito_colors_are_distinct() {
+    if !installed() {
+        return;
+    }
+    let preamble =
+        format!("{XCOLOR}\n\\definecolor{{one}}{{RGB}}{{0,114,178}}\n\\definecolor{{two}}{{RGB}}{{230,159,0}}");
+    let found = records("okabe", "indistinct-colors", &preamble, "\\textcolor{one}{yes} or \\textcolor{two}{no}");
+    assert!(found.is_empty(), "{found:?}");
+}
+
+/// Intuition: colors far apart in the document are not compared. Pins the scope: two
+/// paragraphs outside any environment are not side by side, one environment around both is.
+#[test]
+fn only_colors_side_by_side_are_compared() {
+    if !installed() {
+        return;
+    }
+    let preamble =
+        format!("{XCOLOR}\n\\definecolor{{good}}{{RGB}}{{0,128,0}}\n\\definecolor{{bad}}{{RGB}}{{213,94,0}}");
+    let apart = "\\textcolor{good}{yes}\n\n\\textcolor{bad}{no}";
+    let found = records("apart", "indistinct-colors", &preamble, apart);
+    assert!(found.is_empty(), "{found:?}");
+    let together = format!("\\begin{{center}}\n{apart}\n\\end{{center}}");
+    let found = records("together", "indistinct-colors", &preamble, &together);
+    assert_eq!(found.len(), 1, "{found:?}");
+}
+
+/// Intuition: a page background drawn at shipout (beamer's canvas, eso-pic) is not white, and
+/// satex does not read its color. Pins that white text there is left alone, not judged against
+/// a white page.
+#[test]
+fn a_page_drawn_at_shipout_is_an_unknown_background() {
+    if !installed() {
+        return;
+    }
+    let preamble =
+        format!("{XCOLOR}\n\\AddToHook{{shipout/background}}{{\\put(0,0){{\\pdfliteral{{0 g 0 0 600 800 re f}}}}}}");
+    let found = records("shipout", "low-contrast-color", &preamble, "\\color{white}Night text");
+    assert!(found.is_empty(), "{found:?}");
+}
+
+/// Intuition: a character set before xcolor loads must not blind the run to colors later. Pins
+/// that the color macros a character's state reads are looked up again once they exist: the
+/// first lookup missed `\current@page@color`, so every later page color read as none.
+#[test]
+fn colors_defined_after_the_first_character_are_still_read() {
+    if !installed() {
+        return;
+    }
+    let preamble = format!("\\setbox0\\hbox{{x}}\n{XCOLOR}");
+    let found = records("late-names", "low-contrast-color", &preamble, "\\pagecolor{black}Unseen text");
+    assert_eq!(found.len(), 1, "{found:?}");
+}

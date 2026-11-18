@@ -265,6 +265,14 @@ pub fn retracted<'a>(early: &'a [Record], last: &[Record], run: &Analysis) -> Ve
     early.iter().filter(|r| judged(r) && !made.contains(&key(r))).collect()
 }
 
+/// The early findings the run neither made nor withdrew: in a part it did not read. They stay
+/// in the full list, still provisional.
+pub fn unchecked<'a>(early: &'a [Record], last: &[Record], run: &Analysis) -> Vec<&'a Record> {
+    let made: crate::fixed::HashSet<_> = last.iter().map(key).collect();
+    let gone: crate::fixed::HashSet<_> = retracted(early, last, run).into_iter().map(key).collect();
+    early.iter().filter(|r| !made.contains(&key(r)) && !gone.contains(&key(r))).collect()
+}
+
 /// `early main.tex:3:5 S012 comment-marker: …`: how `satex lint` prints an early finding.
 pub fn line(r: &Record) -> String {
     let text = |k: &str| r.get(k).and_then(|v| v.as_str()).unwrap_or_default();
@@ -281,7 +289,7 @@ pub fn verdict(early: &[Record], last: &[Record], run: &Analysis) -> Option<Stri
     let made: crate::fixed::HashSet<_> = last.iter().map(key).collect();
     let confirmed = early.iter().filter(|r| made.contains(&key(r))).count();
     let gone = retracted(early, last, run);
-    let open = early.len() - confirmed - gone.len();
+    let open = unchecked(early, last, run).len();
     let mut out = format!("early findings: {confirmed} confirmed");
     if open > 0 {
         out += &format!(", {open} unchecked (the run did not read their part)");

@@ -201,3 +201,49 @@ fn keys_guesses_the_run_disagrees_with_are_retracted() {
     assert!(early.iter().any(|m| m.contains("nofile")), "{early:#?}");
     assert!(!last.iter().any(|m| m.contains("nofile")), "{last:#?}");
 }
+
+/// Intuition: a verdict of `complete` is a claim, so a run that gave up on a conditional or lost an
+/// argument to unknown text says where, in the file:line it happened, not that it reached the end.
+/// Bug pinned: `satex lint` said "complete: the run reached the end" while the run raised
+/// unsupported gaps, which the default `lint_off: analysis-imprecision` keeps out of the findings.
+/// The document ends inside a conditional of its own, a gap no later precision closes.
+#[test]
+fn the_cli_verdict_names_where_the_run_gave_up() {
+    if !crate::support::installed() {
+        return;
+    }
+    let doc = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/early/open_conditional.tex");
+    let out = crate::support::satex()
+        .args(["lint", "--no-config", "--set", "limits.seconds=0", "--set", "cache.document=false", "-f"])
+        .arg(&doc)
+        .env("SATEX_CACHE", crate::support::test_cache())
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let last = stdout.lines().last().unwrap_or_default();
+    assert!(last.starts_with("incomplete: ") && last.contains("unbalanced-conditional"), "{stdout}");
+    assert!(!stdout.contains("complete: the run reached the end"), "{stdout}");
+}
+
+/// Intuition: an early finding the run could not check is still a finding: the full list at the
+/// end of `satex lint` keeps it, provisional, instead of dropping what stderr showed first.
+/// Bug pinned: a run a budget stopped printed early findings on stderr and none in its final list.
+#[test]
+fn unchecked_early_findings_stay_in_the_full_list() {
+    let body = "% TODO: kept\n";
+    let project = project("unchecked", &[("doc.tex", &document(body))]);
+    let mut cfg = crate::support::bare();
+    cfg.limits.steps = 1;
+    let (early, last, analysis) = both(&project, &cfg);
+    let open = early::unchecked(&early, &last, &analysis);
+    assert_eq!(open.len(), early.len(), "{:?}", messages(&early));
+    assert!(open.iter().all(|r| r["provisional"] == true), "{:?}", messages(&early));
+    let out = crate::support::satex()
+        .args(["lint", "--set", "limits.steps=1", "-f"])
+        .arg(project.0.join("doc.tex"))
+        .env("SATEX_CACHE", crate::support::test_cache())
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("kept"), "{stdout}");
+}
