@@ -843,15 +843,6 @@
               ],
               "x-example": "`after: 8`"
             },
-            "inline": {
-              "default": "\\(",
-              "description": "the inline math delimiters typing into the PDF or Typeset view writes: \\( (LaTeX's), $, or auto (the document's most used)",
-              "type": "string",
-              "x-affects": [
-                "output"
-              ],
-              "x-example": "`inline: $` types `$x$`, `inline: auto` the document's most used"
-            },
             "lexemes": {
               "default": 400000,
               "description": "source tokens a file is read for when looking for math delimiters",
@@ -872,15 +863,6 @@
                 "output"
               ],
               "x-example": "`near: 100`"
-            },
-            "smart_scripts": {
-              "default": true,
-              "description": "typing `_` or `^` into math in the PDF or Typeset view opens a group a space or operator closes",
-              "type": "boolean",
-              "x-affects": [
-                "output"
-              ],
-              "x-example": "`x_42` types `x_{42}`"
             },
             "tags": {
               "default": [
@@ -4522,6 +4504,15 @@
             "output"
           ]
         },
+        "math_inline": {
+          "default": "\\(",
+          "description": "the inline math delimiters typing into the PDF or Typeset view writes: \\( (LaTeX's), $, or auto (the document's most used)",
+          "type": "string",
+          "x-affects": [
+            "output"
+          ],
+          "x-example": "`math_inline: $` types `$x$`, `math_inline: auto` the document's most used"
+        },
         "pdf_zoom": {
           "default": "actual",
           "description": "the PDF's zoom when no zoom was chosen before",
@@ -4534,6 +4525,15 @@
           "x-affects": [
             "output"
           ]
+        },
+        "smart_scripts": {
+          "default": true,
+          "description": "typing `_` or `^` into math in the PDF or Typeset view opens a group a space or operator closes",
+          "type": "boolean",
+          "x-affects": [
+            "output"
+          ],
+          "x-example": "`x_42` types `x_{42}`"
         },
         "theme": {
           "default": "site",

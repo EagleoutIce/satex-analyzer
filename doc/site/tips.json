@@ -58,5 +58,5 @@
   ["Type mode: click a word in the Typeset or PDF view and type there. The source follows.", "doc/site/play.html", "click a word to put a caret there"],
   ["Type mode: `$` starts a formula at the caret. Escape leaves it.", "doc/site/playground.js", "Escape in math leaves the formula"],
   ["Type mode: `\\` opens the command list at the caret. Enter takes one.", "doc/site/playground.js", "the completion list the source editor shows opens at the caret"],
-  ["Type mode: `x_42` writes `x_{42}`. `conventions.math.smart_scripts: false` turns it off.", "doc/site/playground.js", "conventions.math.smart_scripts"]
+  ["Type mode: `x_42` writes `x_{42}`. `playground.smart_scripts: false` turns it off.", "doc/site/playground.js", "playground.smart_scripts"]
 ]

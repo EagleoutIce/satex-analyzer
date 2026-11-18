@@ -6880,8 +6880,8 @@
     // the Typeset view follows the check each edit starts; the pages were built from the ghost, again only if it was wrong
     if (c.view === 'pdf' && (a !== b || body) && pdfSent !== editor.text()) pdfRebuild(pdfLive() && !pdfAuto.on);
   };
-  /** The inline math delimiters typing writes: `conventions.math.inline` (`\(`, `$`, `auto`). */
-  const pdfInline = () => configSet['conventions.math.inline'] ?? '\\(';
+  /** The inline math delimiters typing writes: `playground.math_inline` (`\(`, `$`, `auto`). */
+  const pdfInline = () => configSet['playground.math_inline'] ?? '\\(';
   /** A key at the caret: Backspace and Delete take a character (an escape, an empty pair whole), arrows move over plain text, Enter breaks the line, Escape ends. */
   pdfTypeIn.addEventListener('keydown', (e) => {
     if (!pdfCaret || e.isComposing) return;
@@ -6929,7 +6929,7 @@
     if (!pdfCaret || !typed) return;
     // one character at a time: each one's escape or closer depends on where the one before left the caret;
     // `\` starts a command's name, raw, and the completion list the source editor shows opens at the caret
-    for (const ch of typed) pdfEdit(ch === '\\' ? (text, at) => [at, at, '\\', 1] : (text, at) => PE.typed(text, at, ch, pdfInline(), configSet['conventions.math.smart_scripts'] ?? true));
+    for (const ch of typed) pdfEdit(ch === '\\' ? (text, at) => [at, at, '\\', 1] : (text, at) => PE.typed(text, at, ch, pdfInline(), configSet['playground.smart_scripts'] ?? true));
     if (typed.includes('\\') || pdfMenu) pdfMenuShow();
   };
   /** The completion list at the caret after a `\`: the source editor's items for the name typed so far, \textbackslash among them. */

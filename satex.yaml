@@ -193,12 +193,6 @@ conventions:  # how TeX is usually written, where the text alone does not say
     after: 24  # characters past a display its sentence's punctuation is looked for
       #! affects: output
       #! example: `after: 8`
-    inline: \(  # the inline math delimiters typing into the PDF or Typeset view writes: \( (LaTeX's), $, or auto (the document's most used)
-      #! affects: output
-      #! example: `inline: $` types `$x$`, `inline: auto` the document's most used
-    smart_scripts: true  # typing `_` or `^` into math in the PDF or Typeset view opens a group a space or operator closes
-      #! affects: output
-      #! example: `x_42` types `x_{42}`
   csname:  # commands that do a \csname's job, the first one defined is advised
     use: [csuse, '@nameuse']  # using a control sequence by name
       #! affects: output
@@ -947,6 +941,12 @@ playground:  # what only the web playground reads
     #! affects: output
   tips: true  # tips in the loading banners and the console bar
     #! affects: output
+  math_inline: \(  # the inline math delimiters typing into the PDF or Typeset view writes: \( (LaTeX's), $, or auto (the document's most used)
+    #! affects: output
+    #! example: `math_inline: $` types `$x$`, `math_inline: auto` the document's most used
+  smart_scripts: true  # typing `_` or `^` into math in the PDF or Typeset view opens a group a space or operator closes
+    #! affects: output
+    #! example: `x_42` types `x_{42}`
 
 slice:  # what satex slice leaves out
   trim: true  # leave out the packages, libraries, labels and headings the criterion uses nothing of. Off also keeps what \begin{document} reads
