@@ -53,6 +53,7 @@ Every rule, with a link to its explanation below. The shape gives the severity: 
 | C029 | [`ignored-verbatim-tail`](#ignored-verbatim-tail) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix may change the meaning, only --unsafe-fixes applies it">U</span> | text lost after verbatim end | 0.2.0 | <a class="from" href="Chktex-Coverage" title="follows chktex warning 31">chktex 31</a> |
 | C030 | [`math-script-braces`](#math-script-braces) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | — | <span class="fix fix-safe" title="safe: the fix keeps the document's meaning, --fix applies it">S</span> | script needs braces | 0.2.0 | <a class="from" href="Chktex-Coverage" title="follows chktex warning 3, 25">chktex 3, 25</a> |
 | C031 | [`missing-dependency`](#missing-dependency) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | — | <span class="fix fix-safe" title="safe: the fix keeps the document's meaning, --fix applies it">S</span> | package missing from the dependency file | 0.1.0 | — |
+| C063 | [`misspelled-magic-comment`](#misspelled-magic-comment) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix may change the meaning, only --unsafe-fixes applies it">U</span> | misspelled magic comment | 0.2.5 | — |
 | C061 | [`package-load-order`](#package-load-order) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix may change the meaning, only --unsafe-fixes applies it">U</span> | package overrides an earlier one | 0.2.5 | — |
 | C058 | [`pdfua-without-title`](#pdfua-without-title) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | — | <span class="fix fix-safe" title="safe: the fix keeps the document's meaning, --fix applies it">S</span> | PDF/UA without a title | 0.2.5 | — |
 | C054 | [`reference-name-mismatch`](#reference-name-mismatch) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix may change the meaning, only --unsafe-fixes applies it">U</span> | name does not match the label | 0.2.4 | — |
@@ -162,7 +163,7 @@ Each rule declares the facts it needs. Most need the whole run. A few need only 
 
 | needs | rules |
 | --- | --- |
-| text | [`build-command-placeholders`](#build-command-placeholders), [`build-engine-options`](#build-engine-options) |
+| text | [`build-command-placeholders`](#build-command-placeholders), [`misspelled-magic-comment`](#misspelled-magic-comment), [`build-engine-options`](#build-engine-options) |
 | names | [`user-pattern`](#user-pattern), [`clones`](#clones), [`comment-marker`](#comment-marker) |
 | keys | [`missing-graphic`](#missing-graphic), [`unresolved-file`](#unresolved-file), [`duplicate-package`](#duplicate-package) |
 
@@ -230,7 +231,7 @@ In the rule list below, `S` marks a rule with a safe fix and `U` one with an uns
 One group per category, each with its first rules. A group's button shows the rest.
 
 <div class="fold" id="category-correctness">
-<h3 class="fold-head"><b>correctness</b> (62 rules)</h3>
+<h3 class="fold-head"><b>correctness</b> (63 rules)</h3>
 
 ### already-defined
 
@@ -702,6 +703,16 @@ See [chktex 3](https://www.nongnu.org/chktex/), [chktex 25](https://www.nongnu.o
 depp names the TeX Live package of every file a run reads by where it sits in the tree (`tex/⟨format⟩/⟨package⟩/`) and writes them to `DEPENDS.txt`. The project's dependency file lacks one of them, so an installation made from it (a minimal Docker image, a `texlive.withPackages`) cannot build the document.
 
 Fix by adding the package to the dependency file, or by rerunning depp.
+
+### misspelled-magic-comment
+
+<p class="badges"><code class="num" title="rule number">C063</code> <span class="sev sev-warning" title="default: warning">default: warning</span> <span class="cat cat-correctness">correctness</span> <span class="fix fix-unsafe" title="unsafe: the fix may change the meaning, only --unsafe-fixes applies it">U</span> <span class="since" title="first release">since 0.2.5</span></p>
+
+**misspelled magic comment**
+
+Editors and satex read `% !TeX program = …`, `% !TeX root = …` and their kin before the run: the engine, the root file, the encoding. A typo in the head or the key (`% !rex program`, `% !TeX progam`) turns the line into a plain comment, so the document builds with another engine or root than you meant.
+
+The rule reports a comment that is one or two letters away from a known head (`magic.prefixes`) or key. Fix by writing the head or key as it should be.
 
 ### package-load-order
 

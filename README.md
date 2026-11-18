@@ -258,6 +258,7 @@ warning   correctness  C057    graphic-without-alt               graphic without
 warning   correctness  C029    ignored-verbatim-tail             text lost after verbatim end                
 warning   correctness  C030    math-script-braces                script needs braces                         
 warning   correctness  C031    missing-dependency                package missing from the dependency file    
+warning   correctness  C063    misspelled-magic-comment          misspelled magic comment                    
 warning   correctness  C061    package-load-order                package overrides an earlier one            
 warning   correctness  C058    pdfua-without-title               PDF/UA without a title                      
 warning   correctness  C054    reference-name-mismatch           name does not match the label               

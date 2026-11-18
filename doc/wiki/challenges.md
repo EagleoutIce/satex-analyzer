@@ -387,7 +387,6 @@ The height of a node with `text width` depends on the line breaker, and pgf's ro
 ```sh
 $ satex query typeset -f s2-rounded-paragraph.tex --set limits.seconds=60
 5:64  paragraph  files, de·pen·den·cies, more
-0:0  paragraph  
 7:15  page  page 1
 assumption  page-one-arm
 assumption  clock-assumed
@@ -591,7 +590,6 @@ A `\ref` to an unknown label in math in a tikz node, with the nodes placed by `p
 ```sh
 $ satex query typeset -f s1-tikz-ref.tex --set limits.seconds=60
 7:16  paragraph  B??B??B??B??
-0:0  paragraph  
 13:15  page  page 1
 assumption  page-one-arm
 assumption  clock-assumed

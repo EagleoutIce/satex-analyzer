@@ -18,6 +18,7 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 
 ### Lints
 
+- `feat` **`misspelled-magic-comment`.** `% !rex program = tex` or `% !TeX progam` is reported early, with a fix to `!TeX` or `program`.
 - `feat` **`low-contrast-color`.** Text below WCAG's 4.5:1 contrast (3:1 for large text) against its background is reported. The fix adjusts your `\definecolor` (`lints.low-contrast-color`).
 - `feat` **`indistinct-colors`.** Colors side by side that look alike under protanopia, deuteranopia or tritanopia are reported. The fix suggests an Okabe-Ito color (`lints.indistinct-colors`).
 - `feat` **Package rules.** `package-load-order` finds a later package that redefines an earlier one's command, the fix moves its `\usepackage` up. `redundant-package-load` deletes a load the class or an earlier package made already. `unknown-package-name` suggests an installed package a letter or two away (`graphix` gives `graphicx`).
@@ -27,10 +28,21 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 - `feat` **Rule metadata.** `satex lint --explain`, `--rules`, `satex query --list`, the editor and the wiki show `since`. Summaries are short, rule numbers never change once released.
 - `feat` **Package augmentations.** Per-package lint knowledge is switchable in `satex.yaml`. siunitx comes first: `inconsistent-precision` reads its rounding of `S` columns.
 - `feat` **Spacing and punctuation fixes.** `primitive-tex-command` rewrites `\vskip` to `\vspace` and `\hskip` to `\hspace`. `command-terminated-space` covers `\TeX file` in TikZ nodes and `\fbox`. `scripts/spacing-sweep.py` checks every spacing fix on real documents. `math-punctuation` handles `$use?$ edge`.
+- `fix` **`sentence-capital` skips formulas.** `?` followed by `$x$` is no sentence start.
 - `fix` **No findings from a run stopped before the body.** Such a run shows only why it stopped.
 
 ### Playground
 
+- `feat` **Drag a column's width.** Dragging a column edge in the PDF or the table widget writes `p{…}`, keeping `c`/`r` alignment, snapped to 0.5 mm or `\linewidth` shares.
+- `feat` **Typing in TikZ nodes.** Clicking a node's text in the PDF puts the caret there, and typing edits the node in the source.
+- `feat` **Typing in tables.** Tab and Shift+Tab move between cells, Enter adds a row. Typeset cells get TeX's padding.
+- `feat` **Typing in verbatim.** In listings, `verbatim`, `minted`, `\verb` and `\lstinline` typed characters go in as they are.
+- `feat` **Set the root.** A file's or tab's menu sets the root, a tab marks it, the example keeps it, and `% !TeX root = …` is honoured.
+- `feat` **Optional words read inline.** An undecided macro that sets a word or nothing shows as "is [not] a leap year", with a hover that says why.
+- `feat` **Glue at line edges.** The glue layer shows stretched glue at both ends of a line, such as `\centering`'s skips.
+- `feat` **One math control.** Typing mode has one "math" button: inline at once, display or `align*` from its menu.
+- `feat` **Inline math as `\(…\)`.** `$` and the math button write `\(…\)` by default (`conventions.math.inline`: `\(`, `$` or `auto`).
+- `feat` **Preview cache contents.** The previews.json row counts its arrow tips, patterns and shapes, and shows each kind as a grid.
 - `feat` **Type in the PDF and Typeset views.** On by default: a click puts a caret in the source, a tint shows where text comes from. Text from a macro edits its definition, with Undo and "Type in the argument instead". Enter starts a paragraph, `\` opens completion, `$` starts math, `x_42` types `x_{42}` (`conventions.math.smart_scripts`, `conventions.math.inline`). Hovering a table shows column letters and widths, dragging an edge rewrites `p{…}` as one undo step.
 - `feat` **Select, copy and move in the PDF and Typeset views.** A drag selects words and Ctrl+C copies their source. Home, End, Up and Down follow typeset lines, also in two columns and beamer.
 - `feat` **Circuit widget.** "Edit circuit…" edits a `circuitikz` environment on a grid (parts, wires, labels) and adds `\usepackage{circuitikz}`. "New circuit…" starts one on a blank line.
@@ -39,8 +51,24 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 - `feat` **Completion finds by what a name is.** `\usepackage{…}`, `\documentclass{…}`, `\cite{…}` and `\ref{…}` show each item's catalogue line, citation author, year and title, or label target, searchable with typos forgiven (`\usepackage{network}` offers tikz-network). The language server does the same. Commands such as `\emph` come with braces.
 - `feat` **Cards and hovers.** The type card shows the hovered type with parents and children. Rule explanations link, since badges link to the changelog, hovers show a body as TeX prints it (`type_plugins.pretty.enabled`, off by default).
 - `feat` **Definition history as a timeline.** Each definition is a dot on one line, the one in force filled, undone ones dashed. A macro in a body opens its own history in place.
+- `perf` **Edits rerun and copy less.** Steps per body edit 415k → 85k (−80%), a state copy 20 → 4 ms (−80%), edit → findings 0.40 → 0.18 s (−55%) on a small hyperref document and 0.66 → 0.45 s (−32%) on the thesis example. Findings come before completion data, and the debounce is 100 ms (was 300): back-to-back edits 0.30 → 0.20 s (−33%).
 - `perf` **Edits reach the run and Typeset view at once.** Thesis example 5 s → 0.2 s (−96%). Edited row in the browser 4.5–10 s → 0.6 s (−87 to −94%). Small hyperref document rerun 1 s → 0.1 s (−90%). Edit findings without `\DocumentMetadata` 0.6 s → 0.3 s (−50%).
 - `perf` **Typing in the PDF shows at once.** Key to new page takes about 0.4 s on a short document and 0.5 to 0.6 s on 100 pages. A one-word edit in the browser: 0.3 s → 0.15 s (−50%) on one page, 1.1 s → 0.25 s (−77%) on twenty. Automatic compile offers 0.2 s.
+- `fix` **Measured column widths.** The PDF's column chips show each `l`/`c`/`r` column's width from its cells, not an even share.
+- `fix` **Compile beside the analysis.** The PDF pane says when an analysis runs alongside a build. The browser's TeX builds again.
+- `fix` **Numbers and expl3 names highlighted whole.** `0.05pt`, `-3.5pt` and `2fill` are one number token, `\dim_eval:n` and `\l_tmpa_dim` one command.
+- `fix` **Ruled tables in the Typeset view.** A cell's `|` is drawn on the cell's edge, so a column's rules line up, and no empty row "0" shows.
+- `fix` **Final page hints win.** Preview rows never replace the final rows of the same text, so page hints match the finished run.
+- `fix` **No completion on prose.** Typing words in the PDF or Typeset view opens no list. `\` still opens one.
+- `fix` **Steady PDF while typing.** The wait bar and slice badge no longer push the pages down, and the caret stays drawn across page swaps.
+- `fix` **Trace panes.** The input pane grows with its tokens instead of scrolling, and thin scroll bars keep the corners round.
+- `fix` **Table column chips.** One chip per column, aligned above it; the alignment choices sit behind its ⋯.
+- `fix` **No empty row at the end.** The Typeset view no longer shows a blank row numbered 0 after `\end{document}`.
+- `fix` **Caret between glyphs.** The PDF caret sits on a glyph boundary, measured from the page's pixels, at any zoom and after a rebuild.
+- `fix` **Typeset tints after PDF typing.** The origin tints come back when the Typeset tab opens after typing in the PDF.
+- `fix` **PDF tints per glyph.** A macro's `!` is tinted where the macro set it, never the document's own `!`.
+- `fix` **Table widget buttons.** The + and − buttons are round and never clipped, and the Data buttons form even rows.
+- `fix` **No pulse on hidden panels.** A build's success pulse plays only on a shown panel.
 - `fix` **Typing in the output stays smooth.** The caret follows every key, the PDF no longer dims or flickers, origin tints match between PDF and Typeset, Explain and rename at `\begin` take that command.
 - `fix` **Tidier settings.** Settings open folded with counts, plugins sit in categories, search finds values, cache rows fold to their files.
 - `fix` **Tidier menus and layers.** Go to definition, Find references and the definition history share one Navigate group. The layers menu wraps, the Typeset view starts with `maybe` off.
@@ -56,14 +84,16 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 
 ### Site and docs
 
-- `feat` **Landing page.** A typing animation shows the Type mode and becomes the live editor on click. Showcase cards fill a grid, the front page ring turns a card every 8 s.
+- `feat` **Landing page.** A typing animation shows the Type mode and becomes the live editor on click. Showcase cards turn in a carousel, the front page ring turns a card every 8 s.
 - `feat` **When a site was built.** Hovering the version shows the build time to the minute.
+- `fix` **Showcase carousel back.** The landing page's cards turn on a ring again, each frame hugging its capture; phones keep the stacked grid.
 - `fix` **Smooth typing on the landing and front page.** Sentences fade in at one steady pace without reflow.
 - `docs` **Plainer docs and a clearer front page.** Guide, wiki and README use plain words, the lint page shows each rule's `S` or `U` badge. The front page explains why satex interprets the code, names the MIT license and the flowR inspiration (not used, not required).
 
 ### Analysis
 
 - `feat` **Manuals for TikZ, pgf, primitives and more packages.** Hovers and Explain show pgf's manual, the pdfTeX manual, TeX by Topic and package docs in more formats (`docCommand`, `\DescribeMacro`, `desc` blocks, tcolorbox, enumitem, titlesec, xstring). Set by `docs.named_environments` and `docs.usage_blocks`.
+- `perf` **Text analyzes faster.** A 20k-line paragraph 2.73 → 1.84 s (−33%), 1e5 `\loop` steps 0.66 → 0.53 s (−19%), with identical steps and findings.
 - `perf` **Far fewer path splits.** Four pgfmath divides 803 → 439 splits (−45%). l3fp over an aux position 112.6k splits and 37 s → 104 and 0.6 s (−99.9%, −98%). Tagged `\maketitle` and tables 281 s → 6 s (−98%). xcolor mix 88 → 4 splits (−95%).
 - `perf` **Cheaper steps.** Figure-heavy documents save up to 25% of the time, other documents about 7%.
 - `perf` **Kept call effects.** Calls of 200 steps or more replay when arguments and state match (`limits.call_memo_steps`, 0 turns it off, `limits.call_memo_verify: 1` checks each replay).

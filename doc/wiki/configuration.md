@@ -210,9 +210,9 @@ conventions:  # how TeX is usually written, where the text alone does not say
     after: 24  # characters past a display its sentence's punctuation is looked for
       #! affects: output
       #! example: `after: 8`
-    inline: auto  # the inline math delimiters typing into the PDF or Typeset view writes: $, \(, or auto (the document's most used)
+    inline: \(  # the inline math delimiters typing into the PDF or Typeset view writes: \( (LaTeX's), $, or auto (the document's most used)
       #! affects: output
-      #! example: `inline: \(` types `\(x\)`, `inline: $` types `$x$`
+      #! example: `inline: $` types `$x$`, `inline: auto` the document's most used
     smart_scripts: true  # typing `_` or `^` into math in the PDF or Typeset view opens a group a space or operator closes
       #! affects: output
       #! example: `x_42` types `x_{42}`
@@ -737,7 +737,7 @@ compile:  # what satex compile runs and shows
 lsp:  # how satex lsp serves an editor
   host: 127.0.0.1  # the address --port listens on
     #! affects: output
-  debounce_ms: 300  # how long to wait after an edit before analyzing again. Lower answers sooner but runs more often
+  debounce_ms: 100  # how long to wait after an edit before analyzing again. Lower answers sooner but runs more often
     #! affects: speed
     #! example: `1000`: fast typing triggers one run per pause, not per keystroke
   # port: 2087  # a TCP port to serve on instead of stdio
