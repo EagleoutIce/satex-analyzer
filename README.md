@@ -2,7 +2,7 @@
 
 <p align="center"><a href="https://eagleoutice.github.io/satex-analyzer/"><img src="https://raw.githubusercontent.com/EagleoutIce/satex-analyzer/main/doc/wiki/img/satex-wide.svg" alt="SaTeX: Static Analysis for (La)TeX and Friends" width="600"></a></p>
 
-An abstract interpreter for (La)TeX and related engines. It expands macros, executes primitives and tracks catcode changes and recursion. It is context and path-sensitive and does not typeset the document.
+An abstract interpreter for (La)TeX and related engines. It expands macros, executes primitives and tracks catcode changes and recursion. It keeps track of context and of each path through conditionals. It does not typeset the document.
 It lints documents (with quick-fixes, and finds unused or missing macros), slices them, analyzes their performance, jumps to definitions and lists package options with what they govern.
 
 <p align="center"><img src="doc/demo.gif" alt="SaTeX demo: version, summary, lint, explain, slice, query, kernel timings and the Vim language server" width="900"></p>
@@ -258,6 +258,7 @@ warning   correctness  C057    graphic-without-alt               graphic without
 warning   correctness  C029    ignored-verbatim-tail             text lost after verbatim end                
 warning   correctness  C030    math-script-braces                script needs braces                         
 warning   correctness  C031    missing-dependency                package missing from the dependency file    
+warning   correctness  C061    package-load-order                package overrides an earlier one            
 warning   correctness  C058    pdfua-without-title               PDF/UA without a title                      
 warning   correctness  C054    reference-name-mismatch           name does not match the label               
 warning   correctness  C056    tagging-incompatible-package      package incompatible with tagging           
@@ -273,6 +274,7 @@ warning   correctness  C036    undefined-optional-content        unknown optiona
 warning   correctness  C037    undefined-reference               reference to an undefined label             
 warning   correctness  C038    uninstalled-package               package not installed                       
 warning   correctness  C049    unknown-code-language             unknown listings language                   
+warning   correctness  C062    unknown-package-name              package name misspelled                     
 warning   correctness  C039    unresolved-file                   file not installed                          
 info      correctness  C045    assumption-made                   document assumes a condition                
 info      correctness  C040    expected-load                     file read before a package it expects       
@@ -291,6 +293,7 @@ warning   style        S054    et-al                             et al. spelled 
 warning   style        S006    expl3-scope                       expl3 scope prefix mismatch                 
 warning   style        S007    expl3-type                        expl3 type suffix mismatch                  
 warning   style        S008    group-local-definition            definition lost when its group closes       
+warning   style        S067    low-contrast-color                text color with too little contrast         
 warning   style        S009    math-operator-name                operator name in math italic                
 warning   style        S010    missing-italic-correction         missing italic correction                   
 warning   style        S011    missing-nonbreaking-space         missing tie before a reference              
@@ -324,6 +327,7 @@ info      style        S032    hand-set-quantity                 hand-set number
 info      style        S052    hand-written-author               author name typed before a citation         
 info      style        S051    hand-written-reference            number typed after a reference name         
 info      style        S033    inconsistent-precision            different decimals in a column              
+info      style        S068    indistinct-colors                 colors alike with color blindness           
 info      style        S057    itemize-described                 labelled items in an itemize                
 info      style        S056    itemize-numbered                  numbered items in an itemize                
 info      style        S034    math-punctuation                  punctuation on the wrong side of a formula  
@@ -336,6 +340,7 @@ info      style        S039    prefer-cleveref                   hand-written na
 info      style        S040    primitive-tex-command             plain TeX primitive in LaTeX                
 info      style        S041    quote-ligature                    quotes run together                         
 info      style        S042    quote-punctuation                 punctuation inside the quote                
+info      style        S066    redundant-package-load            package loaded already                      
 info      style        S043    stray-space                       space from a line end in a macro            
 info      style        S044    table-rules                       vertical rules or hline in a table          
 info      style        S065    tagged-math-without-mathml        formulas without MathML                     
@@ -575,9 +580,9 @@ The kernel and the packages are interpreted once and cached. `satex cache build`
 $ satex cache
 cache ~/.cache/satex
   kernel     /usr/local/texlive/YYYY/texmf-dist/tex/latex/base/latex.ltx · 197.8k definitions · cached
-  packages   89 stored, 249.1 MiB
-  prepare    `satex cache build` builds 39 packages: microtype, cleveref, zref-clever, savetrees, tabularray, xurl, … +33
-… 1 more line omitted
+  pruned     63 caches, 72.3 MiB: no build can use them, or past limits.cache_size
+  packages   418 stored, 954.0 MiB
+… 2 more lines omitted
 ```
 
 </details>
@@ -694,16 +699,16 @@ SaTeX merges its built-in defaults, your global `~/.config/satex/satex.yaml`, ev
 
 ## How it works
 
-SaTeX has no abstract syntax tree in the classical sense and it not syntax-guided. When analyzing TeX a token's meaning depends on category codes and on what earlier macros performed, so the token stream only exists while the document runs. 
-SaTeX follows an expansion-guided approach instead using TeX's  machine (mouth, gullet, stomach, save stack).
+SaTeX has no abstract syntax tree in the classical sense and is not syntax-guided. When analyzing TeX a token's meaning depends on category codes and on what earlier macros did, so the token stream only exists while the document runs. 
+SaTeX follows an expansion-guided approach instead using TeX's machine (mouth, gullet, stomach, save stack).
 
 Concretely:
 
 - **State.** Meanings of control sequences, category codes, register values
-  and the save stack, are tracked during the analysis. A value SaTeX cannot decide during resolution is `unknown`, (which propagates).
+  and the save stack, are tracked during the analysis. A value SaTeX cannot decide while running is `unknown`, and that spreads to everything computed from it.
 - **Transfer.** Every primitive has the effect associated with the [concrete TeX/eTeX semantics][concrete semantics]. 
 - **Branching.** We analyze every branch of a conditional if the test is not deterministic. This also applies transitively to macro-expansions.
-- **Termination.** We widen (potentially unbounded) recursive expansion based on the budgets in [`limits`][config]. 
+- **Termination.** Recursive expansion that could go on forever is cut short by approximating it, within the budgets in [`limits`][config]. 
 
 ## Gaps
 

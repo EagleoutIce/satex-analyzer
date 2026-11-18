@@ -16,7 +16,7 @@ Every rule, with a link to its explanation below. The shape gives the severity: 
 
 ## Early findings
 
-Each rule declares the facts it needs. Most need the whole run. A few need only the files' text, or the text and the standard meaning of a few names: which files `\input`, `\include` and `\subfile` read, and which environments, such as `verbatim`, read their bodies verbatim. The `keys` tier also reads what the text's commands name, by their standard meaning: `\label` defines a label, `\ref` and `\cref` refer to one, `\cite` cites a key of the databases `\bibliography` and `\addbibresource` name, `\usepackage` loads a package, and `\includegraphics` includes a file that graphics finds with one of its extensions. A later pass can still change these findings, so the editor does not keep them between passes, as it keeps `text` and `names` ones. These rules run first, on a sketch of the document, before the run starts. `lints.early` in `satex.yaml` lists the names, and the sketch reports this as the assumption `early-standard-names`.
+Each rule declares the facts it needs. Most need the whole run. A few need only the files' text, or the text and the standard meaning of a few names: which files `\input`, `\include` and `\subfile` read, and which environments, such as `verbatim`, take their content as plain text. The `keys` tier also reads what the text's commands name, by their standard meaning: `\label` defines a label, `\ref` and `\cref` refer to one, `\cite` cites a key of the databases `\bibliography` and `\addbibresource` name, `\usepackage` loads a package, and `\includegraphics` includes a file that graphics finds with one of its extensions. A later pass can still change these findings, so the editor does not keep them between passes, as it keeps `text` and `names` ones. These rules run first, on a rough copy of the document, before the run starts. `lints.early` in `satex.yaml` lists the names, and the rough copy reports this as the assumption `early-standard-names`.
 
 {{early}}
 
@@ -62,15 +62,13 @@ A comment can state a property for satex to check. TeX skips the comment. satex 
 A finding's `fix` says what to do. Where that is mechanical it carries the edits, e.g. removing a `\usepackage` line or one name in `\usepackage{a,b,c}`, a `\label{…}`, or turning `\newcommand` into `\renewcommand`. The text output marks them `[fix]` or `[unsafe fix]`:
 
 * **safe** fixes keep the document's meaning: a duplicate `\usepackage`, a definition replaced before it is read, `\renewcommand` of an undefined name.
-* **unsafe** fixes change it and deserve a look: removing a package that may have side effects, an unused label, `\newcommand` turned into `\renewcommand`.
+* **unsafe** fixes may change what the document means, so check them before you keep them: removing a package that may have side effects, an unused label, `\newcommand` turned into `\renewcommand`.
 
 `--fix` applies the safe fixes, `--unsafe-fixes` adds the unsafe ones, `--diff` prints the edits instead of writing them. Only project files change. Overlapping fixes wait for the next round. The document is re-analyzed after each round, up to eight.
 
 `--format json` gives each fix as `applicability` and `edits` (`path`, 1-based `start`/`end`, `replacement`), `--format sarif` as `fixes`, `--format lsp` as diagnostics with `quickfix` code actions.
 
-`S` marks a safe fix, `U` an unsafe one. A rule with both has findings of each kind: the fix is safe where it cannot change what the document means and unsafe where it might. Each finding names its own kind.
-
-{{fixes}}
+In the rule list below, `S` marks a rule with a safe fix and `U` one with an unsafe fix. A rule with both is safe where its fix cannot change what the document means and unsafe where it might. Each finding names its own kind.
 
 ## Explanations
 

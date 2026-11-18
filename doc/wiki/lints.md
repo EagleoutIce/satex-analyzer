@@ -14,9 +14,9 @@ Every rule, with a link to its explanation below. The shape gives the severity: 
 
 | no. | code | kind | engine | quick fix | summary | since | origin |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| C001 | [`already-defined`](#already-defined) | <span class="sev sev-error" title="default: error">◆</span> <span class="cat cat-correctness">correctness</span> | — | <span class="fix fix-safe" title="safe: the fix keeps the document's meaning, --fix applies it">S</span> <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> | command already defined | 0.1.0 | — |
+| C001 | [`already-defined`](#already-defined) | <span class="sev sev-error" title="default: error">◆</span> <span class="cat cat-correctness">correctness</span> | — | <span class="fix fix-safe" title="safe: the fix keeps the document's meaning, --fix applies it">S</span> <span class="fix fix-unsafe" title="unsafe: the fix may change the meaning, only --unsafe-fixes applies it">U</span> | command already defined | 0.1.0 | — |
 | C043 | [`assertion-refuted`](#assertion-refuted) | <span class="sev sev-error" title="default: error">◆</span> <span class="cat cat-correctness">correctness</span> | — | — | assertion fails | 0.2.0 | — |
-| C002 | [`bibtex-command-under-biblatex`](#bibtex-command-under-biblatex) | <span class="sev sev-error" title="default: error">◆</span> <span class="cat cat-correctness">correctness</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> | BibTeX command under biblatex | 0.2.0 | — |
+| C002 | [`bibtex-command-under-biblatex`](#bibtex-command-under-biblatex) | <span class="sev sev-error" title="default: error">◆</span> <span class="cat cat-correctness">correctness</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix may change the meaning, only --unsafe-fixes applies it">U</span> | BibTeX command under biblatex | 0.2.0 | — |
 | C003 | [`build-bibliography-disabled`](#build-bibliography-disabled) | <span class="sev sev-error" title="default: error">◆</span> <span class="cat cat-correctness">correctness</span> | — | — | build never runs BibTeX or biber | 0.1.0 | — |
 | C004 | [`build-command-placeholders`](#build-command-placeholders) | <span class="sev sev-error" title="default: error">◆</span> <span class="cat cat-correctness">correctness</span> | — | — | engine command lacks %S or %O | 0.1.0 | — |
 | C005 | [`build-engine-mismatch`](#build-engine-mismatch) | <span class="sev sev-error" title="default: error">◆</span> <span class="cat cat-correctness">correctness</span> | — | — | build uses the wrong engine or output | 0.1.0 | — |
@@ -24,37 +24,38 @@ Every rule, with a link to its explanation below. The shape gives the severity: 
 | C007 | [`caused-library-error`](#caused-library-error) | <span class="sev sev-error" title="default: error">◆</span> <span class="cat cat-correctness">correctness</span> | — | — | package error caused by the document | 0.2.0 | — |
 | C046 | [`invalid-directive`](#invalid-directive) | <span class="sev sev-error" title="default: error">◆</span> <span class="cat cat-correctness">correctness</span> | — | — | unreadable satex directive | 0.2.0 | — |
 | C008 | [`math-still-open`](#math-still-open) | <span class="sev sev-error" title="default: error">◆</span> <span class="cat cat-correctness">correctness</span> | — | — | math mode left open | 0.2.0 | <a class="from" href="Chktex-Coverage" title="follows chktex warning 16">chktex 16</a> |
-| C055 | [`metadata-after-class`](#metadata-after-class) | <span class="sev sev-error" title="default: error">◆</span> <span class="cat cat-correctness">correctness</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> | DocumentMetadata after documentclass | 0.2.5 | — |
+| C055 | [`metadata-after-class`](#metadata-after-class) | <span class="sev sev-error" title="default: error">◆</span> <span class="cat cat-correctness">correctness</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix may change the meaning, only --unsafe-fixes applies it">U</span> | DocumentMetadata after documentclass | 0.2.5 | — |
 | C047 | [`missing-end`](#missing-end) | <span class="sev sev-error" title="default: error">◆</span> <span class="cat cat-correctness">correctness</span> | — | <span class="fix fix-safe" title="safe: the fix keeps the document's meaning, --fix applies it">S</span> | document has no end | 0.2.0 | — |
 | C009 | [`missing-graphic`](#missing-graphic) | <span class="sev sev-error" title="default: error">◆</span> <span class="cat cat-correctness">correctness</span> | — | — | image missing for this output | 0.1.0 | — |
 | C010 | [`new-redefines`](#new-redefines) | <span class="sev sev-error" title="default: error">◆</span> <span class="cat cat-correctness">correctness</span> | — | — | declaration redefines a command | 0.2.0 | — |
 | C011 | [`not-defined`](#not-defined) | <span class="sev sev-error" title="default: error">◆</span> <span class="cat cat-correctness">correctness</span> | — | <span class="fix fix-safe" title="safe: the fix keeps the document's meaning, --fix applies it">S</span> | renewing an undefined command | 0.1.0 | — |
-| C012 | [`option-clash`](#option-clash) | <span class="sev sev-error" title="default: error">◆</span> <span class="cat cat-correctness">correctness</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> | package loaded with clashing options | 0.1.0 | — |
+| C012 | [`option-clash`](#option-clash) | <span class="sev sev-error" title="default: error">◆</span> <span class="cat cat-correctness">correctness</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix may change the meaning, only --unsafe-fixes applies it">U</span> | package loaded with clashing options | 0.1.0 | — |
 | C013 | [`raised-error`](#raised-error) | <span class="sev sev-error" title="default: error">◆</span> <span class="cat cat-correctness">correctness</span> | — | — | TeX error in the document | 0.1.0 | — |
 | C014 | [`undefined-color`](#undefined-color) | <span class="sev sev-error" title="default: error">◆</span> <span class="cat cat-correctness">correctness</span> | — | — | color used before it is defined | 0.2.0 | — |
-| C015 | [`undefined-control-sequence`](#undefined-control-sequence) | <span class="sev sev-error" title="default: error">◆</span> <span class="cat cat-correctness">correctness</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> | undefined command | 0.1.0 | — |
-| C016 | [`undefined-environment`](#undefined-environment) | <span class="sev sev-error" title="default: error">◆</span> <span class="cat cat-correctness">correctness</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> | undefined environment | 0.1.0 | — |
+| C015 | [`undefined-control-sequence`](#undefined-control-sequence) | <span class="sev sev-error" title="default: error">◆</span> <span class="cat cat-correctness">correctness</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix may change the meaning, only --unsafe-fixes applies it">U</span> | undefined command | 0.1.0 | — |
+| C016 | [`undefined-environment`](#undefined-environment) | <span class="sev sev-error" title="default: error">◆</span> <span class="cat cat-correctness">correctness</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix may change the meaning, only --unsafe-fixes applies it">U</span> | undefined environment | 0.1.0 | — |
 | C017 | [`undefined-glossary-entry`](#undefined-glossary-entry) | <span class="sev sev-error" title="default: error">◆</span> <span class="cat cat-correctness">correctness</span> | — | — | glossary entry never declared | 0.1.0 | — |
 | C018 | [`unguarded-recursion`](#unguarded-recursion) | <span class="sev sev-error" title="default: error">◆</span> <span class="cat cat-correctness">correctness</span> | — | — | recursion that never stops | 0.1.0 | — |
 | C052 | [`bibliography-entry-missing-field`](#bibliography-entry-missing-field) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | — | — | cited entry lacks a required field | 0.2.0 | — |
 | C019 | [`build-missing-custom-dependency`](#build-missing-custom-dependency) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | — | — | glossary files have no latexmk rule | 0.1.0 | — |
 | C020 | [`catcode-escapes-group`](#catcode-escapes-group) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | — | — | category code change outlives its group | 0.1.0 | — |
 | C021 | [`conflicting-color-definition`](#conflicting-color-definition) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | — | — | color name defined twice | 0.2.0 | — |
-| C022 | [`delimiter-not-followed`](#delimiter-not-followed) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> | \left or \right before a brace | 0.2.0 | <a class="from" href="Chktex-Coverage" title="follows chktex warning 43">chktex 43</a> |
+| C022 | [`delimiter-not-followed`](#delimiter-not-followed) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix may change the meaning, only --unsafe-fixes applies it">U</span> | \left or \right before a brace | 0.2.0 | <a class="from" href="Chktex-Coverage" title="follows chktex warning 43">chktex 43</a> |
 | C023 | [`duplicate-bibliography-entry`](#duplicate-bibliography-entry) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | — | — | key declared twice | 0.1.0 | — |
 | C050 | [`duplicate-bibliography-load`](#duplicate-bibliography-load) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | — | <span class="fix fix-safe" title="safe: the fix keeps the document's meaning, --fix applies it">S</span> | database loaded twice | 0.2.0 | — |
-| C051 | [`duplicate-bibliography-work`](#duplicate-bibliography-work) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> | one work under two keys | 0.2.0 | — |
+| C051 | [`duplicate-bibliography-work`](#duplicate-bibliography-work) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix may change the meaning, only --unsafe-fixes applies it">U</span> | one work under two keys | 0.2.0 | — |
 | C024 | [`duplicate-label`](#duplicate-label) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | — | — | label defined twice | 0.1.0 | — |
-| C025 | [`environment-mismatch`](#environment-mismatch) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> | wrong environment closed | 0.1.0 | <a class="from" href="Chktex-Coverage" title="follows chktex warning 9, 10, 15">chktex 9, 10, 15</a> |
+| C025 | [`environment-mismatch`](#environment-mismatch) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix may change the meaning, only --unsafe-fixes applies it">U</span> | wrong environment closed | 0.1.0 | <a class="from" href="Chktex-Coverage" title="follows chktex warning 9, 10, 15">chktex 9, 10, 15</a> |
 | C026 | [`expl-syntax-left-on`](#expl-syntax-left-on) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | — | — | ExplSyntaxOn never turned off | 0.1.0 | — |
 | C027 | [`expl3-constant-set`](#expl3-constant-set) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | — | — | expl3 constant set again | 0.2.0 | — |
 | C028 | [`expl3-signature-mismatch`](#expl3-signature-mismatch) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | — | — | expl3 argument signature mismatch | 0.1.0 | — |
 | C057 | [`graphic-without-alt`](#graphic-without-alt) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | — | — | graphic without alternative text | 0.2.5 | — |
-| C029 | [`ignored-verbatim-tail`](#ignored-verbatim-tail) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> | text lost after verbatim end | 0.2.0 | <a class="from" href="Chktex-Coverage" title="follows chktex warning 31">chktex 31</a> |
+| C029 | [`ignored-verbatim-tail`](#ignored-verbatim-tail) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix may change the meaning, only --unsafe-fixes applies it">U</span> | text lost after verbatim end | 0.2.0 | <a class="from" href="Chktex-Coverage" title="follows chktex warning 31">chktex 31</a> |
 | C030 | [`math-script-braces`](#math-script-braces) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | — | <span class="fix fix-safe" title="safe: the fix keeps the document's meaning, --fix applies it">S</span> | script needs braces | 0.2.0 | <a class="from" href="Chktex-Coverage" title="follows chktex warning 3, 25">chktex 3, 25</a> |
 | C031 | [`missing-dependency`](#missing-dependency) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | — | <span class="fix fix-safe" title="safe: the fix keeps the document's meaning, --fix applies it">S</span> | package missing from the dependency file | 0.1.0 | — |
+| C061 | [`package-load-order`](#package-load-order) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix may change the meaning, only --unsafe-fixes applies it">U</span> | package overrides an earlier one | 0.2.5 | — |
 | C058 | [`pdfua-without-title`](#pdfua-without-title) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | — | <span class="fix fix-safe" title="safe: the fix keeps the document's meaning, --fix applies it">S</span> | PDF/UA without a title | 0.2.5 | — |
-| C054 | [`reference-name-mismatch`](#reference-name-mismatch) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> | name does not match the label | 0.2.4 | — |
+| C054 | [`reference-name-mismatch`](#reference-name-mismatch) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix may change the meaning, only --unsafe-fixes applies it">U</span> | name does not match the label | 0.2.4 | — |
 | C056 | [`tagging-incompatible-package`](#tagging-incompatible-package) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | — | — | package incompatible with tagging | 0.2.5 | — |
 | C060 | [`tagging-unsupported-engine`](#tagging-unsupported-engine) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | <span class="eng" title="only under xetex, tex">xetex, tex</span> | — | engine does not support tagging | 0.2.5 | — |
 | C059 | [`tagging-without-language`](#tagging-without-language) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | — | <span class="fix fix-safe" title="safe: the fix keeps the document's meaning, --fix applies it">S</span> | tagging without a language | 0.2.5 | — |
@@ -62,98 +63,102 @@ Every rule, with a link to its explanation below. The shape gives the severity: 
 | C033 | [`unbalanced-color-stack`](#unbalanced-color-stack) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | <span class="eng" title="only under pdftex, luatex">pdftex, luatex</span> | — | unbalanced color stack | 0.2.0 | — |
 | C034 | [`unbalanced-pdf-content`](#unbalanced-pdf-content) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | <span class="eng" title="only under pdftex, luatex, xetex">pdftex, luatex, xetex</span> | — | unclosed PDF literal | 0.1.0 | — |
 | C053 | [`undefined-bibliography-string`](#undefined-bibliography-string) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | — | — | undefined @string constant | 0.2.0 | — |
-| C035 | [`undefined-citation`](#undefined-citation) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> | citation key not in the bibliography | 0.1.0 | — |
-| C048 | [`undefined-cref-format`](#undefined-cref-format) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> | cleveref has no name for this label | 0.2.0 | — |
+| C035 | [`undefined-citation`](#undefined-citation) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix may change the meaning, only --unsafe-fixes applies it">U</span> | citation key not in the bibliography | 0.1.0 | — |
+| C048 | [`undefined-cref-format`](#undefined-cref-format) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix may change the meaning, only --unsafe-fixes applies it">U</span> | cleveref has no name for this label | 0.2.0 | — |
 | C036 | [`undefined-optional-content`](#undefined-optional-content) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | — | — | unknown optional content group | 0.1.0 | — |
 | C037 | [`undefined-reference`](#undefined-reference) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | — | — | reference to an undefined label | 0.1.0 | — |
 | C038 | [`uninstalled-package`](#uninstalled-package) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | — | — | package not installed | 0.2.0 | — |
 | C049 | [`unknown-code-language`](#unknown-code-language) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | — | — | unknown listings language | 0.2.0 | — |
+| C062 | [`unknown-package-name`](#unknown-package-name) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix may change the meaning, only --unsafe-fixes applies it">U</span> | package name misspelled | 0.2.5 | — |
 | C039 | [`unresolved-file`](#unresolved-file) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | — | — | file not installed | 0.1.0 | <a class="from" href="Chktex-Coverage" title="follows chktex warning 27">chktex 27</a> |
 | C045 | [`assumption-made`](#assumption-made) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-correctness">correctness</span> | — | — | document assumes a condition | 0.2.0 | — |
 | C040 | [`expected-load`](#expected-load) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-correctness">correctness</span> | — | — | file read before a package it expects | 0.2.0 | — |
 | C041 | [`math-mode-mismatch`](#math-mode-mismatch) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-correctness">correctness</span> | — | — | math delimiter in the wrong mode | 0.2.0 | <a class="from" href="Chktex-Coverage" title="follows chktex warning 49">chktex 49</a> |
-| C042 | [`unintended-escape`](#unintended-escape) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-correctness">correctness</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> | command followed by escaped punctuation | 0.2.0 | <a class="from" href="Chktex-Coverage" title="follows chktex warning 21">chktex 21</a> |
+| C042 | [`unintended-escape`](#unintended-escape) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-correctness">correctness</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix may change the meaning, only --unsafe-fixes applies it">U</span> | command followed by escaped punctuation | 0.2.0 | <a class="from" href="Chktex-Coverage" title="follows chktex warning 21">chktex 21</a> |
 | C044 | [`assertion-proved`](#assertion-proved) | <span class="sev sev-hint" title="default: hint">●</span> <span class="cat cat-correctness">correctness</span> | — | — | assertion always holds | 0.2.0 | — |
 | X001 | [`build-shell-escape-unneeded`](#build-shell-escape-unneeded) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-security">security</span> | — | — | build allows unused shell escape | 0.1.0 | — |
 | X002 | [`shell-escape`](#shell-escape) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-security">security</span> | — | — | document runs a program | 0.1.0 | — |
-| S001 | [`accent-on-dotted-letter`](#accent-on-dotted-letter) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-style">style</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> | accent on a dotted i or j | 0.2.0 | <a class="from" href="Chktex-Coverage" title="follows chktex warning 7">chktex 7</a> |
+| S001 | [`accent-on-dotted-letter`](#accent-on-dotted-letter) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-style">style</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix may change the meaning, only --unsafe-fixes applies it">U</span> | accent on a dotted i or j | 0.2.0 | <a class="from" href="Chktex-Coverage" title="follows chktex warning 7">chktex 7</a> |
 | S002 | [`command-terminated-space`](#command-terminated-space) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-style">style</span> | — | <span class="fix fix-safe" title="safe: the fix keeps the document's meaning, --fix applies it">S</span> | space eaten after a command | 0.2.0 | <a class="from" href="Chktex-Coverage" title="follows chktex warning 1">chktex 1</a> |
-| S003 | [`dimension-times`](#dimension-times) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-style">style</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> | x instead of a times sign | 0.2.0 | <a class="from" href="Chktex-Coverage" title="follows chktex warning 29">chktex 29</a> |
-| S004 | [`double-space`](#double-space) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-style">style</span> | — | <span class="fix fix-safe" title="safe: the fix keeps the document's meaning, --fix applies it">S</span> <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> | double space | 0.2.0 | <a class="from" href="Chktex-Coverage" title="follows chktex warning 30, 39">chktex 30, 39</a> |
-| S060 | [`doubled-punctuation`](#doubled-punctuation) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-style">style</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> | doubled punctuation | 0.2.4 | — |
-| S005 | [`ellipsis-dots`](#ellipsis-dots) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-style">style</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> | three periods, not an ellipsis | 0.2.0 | <a class="from" href="Chktex-Coverage" title="follows chktex warning 11">chktex 11</a> |
-| S054 | [`et-al`](#et-al) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-style">style</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> | et al. spelled by hand | 0.2.0 | — |
+| S003 | [`dimension-times`](#dimension-times) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-style">style</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix may change the meaning, only --unsafe-fixes applies it">U</span> | x instead of a times sign | 0.2.0 | <a class="from" href="Chktex-Coverage" title="follows chktex warning 29">chktex 29</a> |
+| S004 | [`double-space`](#double-space) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-style">style</span> | — | <span class="fix fix-safe" title="safe: the fix keeps the document's meaning, --fix applies it">S</span> <span class="fix fix-unsafe" title="unsafe: the fix may change the meaning, only --unsafe-fixes applies it">U</span> | double space | 0.2.0 | <a class="from" href="Chktex-Coverage" title="follows chktex warning 30, 39">chktex 30, 39</a> |
+| S060 | [`doubled-punctuation`](#doubled-punctuation) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-style">style</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix may change the meaning, only --unsafe-fixes applies it">U</span> | doubled punctuation | 0.2.4 | — |
+| S005 | [`ellipsis-dots`](#ellipsis-dots) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-style">style</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix may change the meaning, only --unsafe-fixes applies it">U</span> | three periods, not an ellipsis | 0.2.0 | <a class="from" href="Chktex-Coverage" title="follows chktex warning 11">chktex 11</a> |
+| S054 | [`et-al`](#et-al) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-style">style</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix may change the meaning, only --unsafe-fixes applies it">U</span> | et al. spelled by hand | 0.2.0 | — |
 | S006 | [`expl3-scope`](#expl3-scope) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-style">style</span> | — | — | expl3 scope prefix mismatch | 0.2.0 | — |
 | S007 | [`expl3-type`](#expl3-type) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-style">style</span> | — | — | expl3 type suffix mismatch | 0.2.0 | — |
 | S008 | [`group-local-definition`](#group-local-definition) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-style">style</span> | — | — | definition lost when its group closes | 0.1.0 | — |
-| S009 | [`math-operator-name`](#math-operator-name) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-style">style</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> | operator name in math italic | 0.2.0 | <a class="from" href="Chktex-Coverage" title="follows chktex warning 35">chktex 35</a> |
-| S010 | [`missing-italic-correction`](#missing-italic-correction) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-style">style</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> | missing italic correction | 0.2.0 | <a class="from" href="Chktex-Coverage" title="follows chktex warning 6">chktex 6</a> |
-| S011 | [`missing-nonbreaking-space`](#missing-nonbreaking-space) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-style">style</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> | missing tie before a reference | 0.2.0 | <a class="from" href="Chktex-Coverage" title="follows chktex warning 2">chktex 2</a> |
+| S067 | [`low-contrast-color`](#low-contrast-color) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-style">style</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix may change the meaning, only --unsafe-fixes applies it">U</span> | text color with too little contrast | 0.2.5 | — |
+| S009 | [`math-operator-name`](#math-operator-name) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-style">style</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix may change the meaning, only --unsafe-fixes applies it">U</span> | operator name in math italic | 0.2.0 | <a class="from" href="Chktex-Coverage" title="follows chktex warning 35">chktex 35</a> |
+| S010 | [`missing-italic-correction`](#missing-italic-correction) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-style">style</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix may change the meaning, only --unsafe-fixes applies it">U</span> | missing italic correction | 0.2.0 | <a class="from" href="Chktex-Coverage" title="follows chktex warning 6">chktex 6</a> |
+| S011 | [`missing-nonbreaking-space`](#missing-nonbreaking-space) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-style">style</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix may change the meaning, only --unsafe-fixes applies it">U</span> | missing tie before a reference | 0.2.0 | <a class="from" href="Chktex-Coverage" title="follows chktex warning 2">chktex 2</a> |
 | S063 | [`overfull-box`](#overfull-box) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-style">style</span> | — | — | hbox too wide for its width | 0.2.5 | — |
 | S062 | [`overfull-line`](#overfull-line) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-style">style</span> | — | — | line wider than the text block | 0.2.5 | — |
-| S012 | [`parenthesis-spacing`](#parenthesis-spacing) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-style">style</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> | parenthesis takes the wrong space | 0.2.0 | <a class="from" href="Chktex-Coverage" title="follows chktex warning 36, 37">chktex 36, 37</a> |
-| S013 | [`quote-direction`](#quote-direction) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-style">style</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> | quotation mark points the wrong way | 0.2.0 | <a class="from" href="Chktex-Coverage" title="follows chktex warning 32, 33, 34">chktex 32, 33, 34</a> |
-| S061 | [`sentence-capital`](#sentence-capital) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-style">style</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> | sentence starts lowercase | 0.2.4 | — |
-| S014 | [`sentence-spacing`](#sentence-spacing) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-style">style</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> | wrong space after a period | 0.2.0 | <a class="from" href="Chktex-Coverage" title="follows chktex warning 12, 13">chktex 12, 13</a> |
-| S015 | [`space-before-command`](#space-before-command) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-style">style</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> | line may break before a mark | 0.2.0 | <a class="from" href="Chktex-Coverage" title="follows chktex warning 24, 42">chktex 24, 42</a> |
+| S012 | [`parenthesis-spacing`](#parenthesis-spacing) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-style">style</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix may change the meaning, only --unsafe-fixes applies it">U</span> | parenthesis takes the wrong space | 0.2.0 | <a class="from" href="Chktex-Coverage" title="follows chktex warning 36, 37">chktex 36, 37</a> |
+| S013 | [`quote-direction`](#quote-direction) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-style">style</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix may change the meaning, only --unsafe-fixes applies it">U</span> | quotation mark points the wrong way | 0.2.0 | <a class="from" href="Chktex-Coverage" title="follows chktex warning 32, 33, 34">chktex 32, 33, 34</a> |
+| S061 | [`sentence-capital`](#sentence-capital) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-style">style</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix may change the meaning, only --unsafe-fixes applies it">U</span> | sentence starts lowercase | 0.2.4 | — |
+| S014 | [`sentence-spacing`](#sentence-spacing) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-style">style</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix may change the meaning, only --unsafe-fixes applies it">U</span> | wrong space after a period | 0.2.0 | <a class="from" href="Chktex-Coverage" title="follows chktex warning 12, 13">chktex 12, 13</a> |
+| S015 | [`space-before-command`](#space-before-command) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-style">style</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix may change the meaning, only --unsafe-fixes applies it">U</span> | line may break before a mark | 0.2.0 | <a class="from" href="Chktex-Coverage" title="follows chktex warning 24, 42">chktex 24, 42</a> |
 | S016 | [`space-before-punctuation`](#space-before-punctuation) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-style">style</span> | — | <span class="fix fix-safe" title="safe: the fix keeps the document's meaning, --fix applies it">S</span> | space before punctuation | 0.2.0 | <a class="from" href="Chktex-Coverage" title="follows chktex warning 26">chktex 26</a> |
-| S017 | [`stray-italic-correction`](#stray-italic-correction) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-style">style</span> | — | <span class="fix fix-safe" title="safe: the fix keeps the document's meaning, --fix applies it">S</span> <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> | stray italic correction | 0.2.0 | <a class="from" href="Chktex-Coverage" title="follows chktex warning 5, 28">chktex 5, 28</a> |
+| S017 | [`stray-italic-correction`](#stray-italic-correction) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-style">style</span> | — | <span class="fix fix-safe" title="safe: the fix keeps the document's meaning, --fix applies it">S</span> <span class="fix fix-unsafe" title="unsafe: the fix may change the meaning, only --unsafe-fixes applies it">U</span> | stray italic correction | 0.2.0 | <a class="from" href="Chktex-Coverage" title="follows chktex warning 5, 28">chktex 5, 28</a> |
 | S018 | [`unknown-suppress-code`](#unknown-suppress-code) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-style">style</span> | — | — | suppression names no rule | 0.1.0 | — |
 | S019 | [`user-pattern`](#user-pattern) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-style">style</span> | — | — | matches a project pattern | 0.2.0 | <a class="from" href="Chktex-Coverage" title="follows chktex warning 20, 44">chktex 20, 44</a> |
-| S064 | [`wider-than-line`](#wider-than-line) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-style">style</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> | box wider than its lines | 0.2.5 | — |
-| S020 | [`wrong-dash`](#wrong-dash) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-style">style</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> | wrong dash length | 0.2.0 | <a class="from" href="Chktex-Coverage" title="follows chktex warning 8">chktex 8</a> |
-| S021 | [`wrong-quote-character`](#wrong-quote-character) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-style">style</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> | wrong character used as a quote | 0.2.0 | <a class="from" href="Chktex-Coverage" title="follows chktex warning 18, 19">chktex 18, 19</a> |
+| S064 | [`wider-than-line`](#wider-than-line) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-style">style</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix may change the meaning, only --unsafe-fixes applies it">U</span> | box wider than its lines | 0.2.5 | — |
+| S020 | [`wrong-dash`](#wrong-dash) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-style">style</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix may change the meaning, only --unsafe-fixes applies it">U</span> | wrong dash length | 0.2.0 | <a class="from" href="Chktex-Coverage" title="follows chktex warning 8">chktex 8</a> |
+| S021 | [`wrong-quote-character`](#wrong-quote-character) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-style">style</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix may change the meaning, only --unsafe-fixes applies it">U</span> | wrong character used as a quote | 0.2.0 | <a class="from" href="Chktex-Coverage" title="follows chktex warning 18, 19">chktex 18, 19</a> |
 | S022 | [`zero-italic-correction`](#zero-italic-correction) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-style">style</span> | — | <span class="fix fix-safe" title="safe: the fix keeps the document's meaning, --fix applies it">S</span> | useless italic correction | 0.2.0 | <a class="from" href="Chktex-Coverage" title="follows chktex warning 4">chktex 4</a> |
-| S059 | [`bare-reference`](#bare-reference) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-style">style</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> | reference without a name | 0.2.4 | — |
+| S059 | [`bare-reference`](#bare-reference) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-style">style</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix may change the meaning, only --unsafe-fixes applies it">U</span> | reference without a name | 0.2.4 | — |
 | S023 | [`build-bibliography-unneeded`](#build-bibliography-unneeded) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-style">style</span> | — | — | build runs BibTeX without a bibliography | 0.1.0 | — |
 | S024 | [`build-engine-options`](#build-engine-options) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-style">style</span> | — | — | engine command lacks file:line or SyncTeX | 0.1.0 | — |
 | S025 | [`build-unused-custom-dependency`](#build-unused-custom-dependency) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-style">style</span> | — | — | unused latexmk dependency | 0.1.0 | — |
-| S053 | [`clones`](#clones) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-style">style</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> | repeated block of source | 0.2.0 | — |
+| S053 | [`clones`](#clones) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-style">style</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix may change the meaning, only --unsafe-fixes applies it">U</span> | repeated block of source | 0.2.0 | — |
 | S026 | [`comment-marker`](#comment-marker) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-style">style</span> | — | — | TODO marker in a comment | 0.2.0 | <a class="from" href="Chktex-Coverage" title="follows chktex warning 22">chktex 22</a> |
-| S027 | [`computer-modern-in-t1`](#computer-modern-in-t1) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-style">style</span> | <span class="eng" title="only under pdftex">pdftex</span> | <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> | T1 text relies on cm-super | 0.1.0 | — |
-| S028 | [`csquotes-available`](#csquotes-available) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-style">style</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> | hand-set quotes, csquotes not loaded | 0.2.0 | <a class="from" href="Chktex-Coverage" title="follows chktex warning 18">chktex 18</a> |
-| S029 | [`dead-definition`](#dead-definition) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-style">style</span> | — | <span class="fix fix-safe" title="safe: the fix keeps the document's meaning, --fix applies it">S</span> <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> | definition replaced before use | 0.1.0 | — |
+| S027 | [`computer-modern-in-t1`](#computer-modern-in-t1) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-style">style</span> | <span class="eng" title="only under pdftex">pdftex</span> | <span class="fix fix-unsafe" title="unsafe: the fix may change the meaning, only --unsafe-fixes applies it">U</span> | T1 text relies on cm-super | 0.1.0 | — |
+| S028 | [`csquotes-available`](#csquotes-available) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-style">style</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix may change the meaning, only --unsafe-fixes applies it">U</span> | hand-set quotes, csquotes not loaded | 0.2.0 | <a class="from" href="Chktex-Coverage" title="follows chktex warning 18">chktex 18</a> |
+| S029 | [`dead-definition`](#dead-definition) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-style">style</span> | — | <span class="fix fix-safe" title="safe: the fix keeps the document's meaning, --fix applies it">S</span> <span class="fix fix-unsafe" title="unsafe: the fix may change the meaning, only --unsafe-fixes applies it">U</span> | definition replaced before use | 0.1.0 | — |
 | S030 | [`duplicate-color-value`](#duplicate-color-value) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-style">style</span> | — | — | two names for one color | 0.2.0 | — |
 | S031 | [`duplicate-package`](#duplicate-package) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-style">style</span> | — | <span class="fix fix-safe" title="safe: the fix keeps the document's meaning, --fix applies it">S</span> | package loaded twice | 0.1.0 | — |
-| S032 | [`hand-set-quantity`](#hand-set-quantity) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-style">style</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> | hand-set number and unit | 0.2.0 | — |
-| S052 | [`hand-written-author`](#hand-written-author) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-style">style</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> | author name typed before a citation | 0.2.0 | — |
-| S051 | [`hand-written-reference`](#hand-written-reference) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-style">style</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> | number typed after a reference name | 0.2.0 | — |
+| S032 | [`hand-set-quantity`](#hand-set-quantity) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-style">style</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix may change the meaning, only --unsafe-fixes applies it">U</span> | hand-set number and unit | 0.2.0 | — |
+| S052 | [`hand-written-author`](#hand-written-author) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-style">style</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix may change the meaning, only --unsafe-fixes applies it">U</span> | author name typed before a citation | 0.2.0 | — |
+| S051 | [`hand-written-reference`](#hand-written-reference) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-style">style</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix may change the meaning, only --unsafe-fixes applies it">U</span> | number typed after a reference name | 0.2.0 | — |
 | S033 | [`inconsistent-precision`](#inconsistent-precision) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-style">style</span> | — | — | different decimals in a column | 0.2.0 | — |
-| S057 | [`itemize-described`](#itemize-described) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-style">style</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> | labelled items in an itemize | 0.2.1 | — |
-| S056 | [`itemize-numbered`](#itemize-numbered) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-style">style</span> | — | <span class="fix fix-safe" title="safe: the fix keeps the document's meaning, --fix applies it">S</span> <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> | numbered items in an itemize | 0.2.1 | — |
+| S068 | [`indistinct-colors`](#indistinct-colors) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-style">style</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix may change the meaning, only --unsafe-fixes applies it">U</span> | colors alike with color blindness | 0.2.5 | — |
+| S057 | [`itemize-described`](#itemize-described) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-style">style</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix may change the meaning, only --unsafe-fixes applies it">U</span> | labelled items in an itemize | 0.2.1 | — |
+| S056 | [`itemize-numbered`](#itemize-numbered) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-style">style</span> | — | <span class="fix fix-safe" title="safe: the fix keeps the document's meaning, --fix applies it">S</span> <span class="fix fix-unsafe" title="unsafe: the fix may change the meaning, only --unsafe-fixes applies it">U</span> | numbered items in an itemize | 0.2.1 | — |
 | S034 | [`math-punctuation`](#math-punctuation) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-style">style</span> | — | — | punctuation on the wrong side of a formula | 0.2.0 | <a class="from" href="Chktex-Coverage" title="follows chktex warning 40">chktex 40</a> |
 | S035 | [`math-shift-dollars`](#math-shift-dollars) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-style">style</span> | — | <span class="fix fix-safe" title="safe: the fix keeps the document's meaning, --fix applies it">S</span> | $$ instead of \[ | 0.2.0 | <a class="from" href="Chktex-Coverage" title="follows chktex warning 45, 46">chktex 45, 46</a> |
-| S036 | [`microtype-available`](#microtype-available) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-style">style</span> | <span class="eng" title="only under pdftex, luatex">pdftex, luatex</span> | <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> | microtype not loaded | 0.1.0 | — |
+| S036 | [`microtype-available`](#microtype-available) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-style">style</span> | <span class="eng" title="only under pdftex, luatex">pdftex, luatex</span> | <span class="fix fix-unsafe" title="unsafe: the fix may change the meaning, only --unsafe-fixes applies it">U</span> | microtype not loaded | 0.1.0 | — |
 | S037 | [`numbers-not-aligned`](#numbers-not-aligned) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-style">style</span> | — | — | numbers not aligned | 0.2.0 | — |
-| S038 | [`ot1-font-encoding`](#ot1-font-encoding) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-style">style</span> | <span class="eng" title="only under pdftex">pdftex</span> | <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> | accents built with \accent in OT1 | 0.1.0 | — |
-| S058 | [`package-successor`](#package-successor) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-style">style</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> | package has a successor | 0.2.1 | — |
-| S039 | [`prefer-cleveref`](#prefer-cleveref) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-style">style</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> | hand-written name before a reference | 0.2.0 | — |
-| S040 | [`primitive-tex-command`](#primitive-tex-command) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-style">style</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> | plain TeX primitive in LaTeX | 0.1.0 | <a class="from" href="Chktex-Coverage" title="follows chktex warning 41">chktex 41</a> |
-| S041 | [`quote-ligature`](#quote-ligature) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-style">style</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> | quotes run together | 0.2.0 | <a class="from" href="Chktex-Coverage" title="follows chktex warning 23">chktex 23</a> |
-| S042 | [`quote-punctuation`](#quote-punctuation) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-style">style</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> | punctuation inside the quote | 0.2.0 | <a class="from" href="Chktex-Coverage" title="follows chktex warning 38">chktex 38</a> |
+| S038 | [`ot1-font-encoding`](#ot1-font-encoding) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-style">style</span> | <span class="eng" title="only under pdftex">pdftex</span> | <span class="fix fix-unsafe" title="unsafe: the fix may change the meaning, only --unsafe-fixes applies it">U</span> | accents built with \accent in OT1 | 0.1.0 | — |
+| S058 | [`package-successor`](#package-successor) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-style">style</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix may change the meaning, only --unsafe-fixes applies it">U</span> | package has a successor | 0.2.1 | — |
+| S039 | [`prefer-cleveref`](#prefer-cleveref) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-style">style</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix may change the meaning, only --unsafe-fixes applies it">U</span> | hand-written name before a reference | 0.2.0 | — |
+| S040 | [`primitive-tex-command`](#primitive-tex-command) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-style">style</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix may change the meaning, only --unsafe-fixes applies it">U</span> | plain TeX primitive in LaTeX | 0.1.0 | <a class="from" href="Chktex-Coverage" title="follows chktex warning 41">chktex 41</a> |
+| S041 | [`quote-ligature`](#quote-ligature) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-style">style</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix may change the meaning, only --unsafe-fixes applies it">U</span> | quotes run together | 0.2.0 | <a class="from" href="Chktex-Coverage" title="follows chktex warning 23">chktex 23</a> |
+| S042 | [`quote-punctuation`](#quote-punctuation) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-style">style</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix may change the meaning, only --unsafe-fixes applies it">U</span> | punctuation inside the quote | 0.2.0 | <a class="from" href="Chktex-Coverage" title="follows chktex warning 38">chktex 38</a> |
+| S066 | [`redundant-package-load`](#redundant-package-load) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-style">style</span> | — | <span class="fix fix-safe" title="safe: the fix keeps the document's meaning, --fix applies it">S</span> | package loaded already | 0.2.5 | — |
 | S043 | [`stray-space`](#stray-space) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-style">style</span> | — | <span class="fix fix-safe" title="safe: the fix keeps the document's meaning, --fix applies it">S</span> | space from a line end in a macro | 0.1.0 | — |
 | S044 | [`table-rules`](#table-rules) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-style">style</span> | — | — | vertical rules or hline in a table | 0.2.0 | — |
 | S065 | [`tagged-math-without-mathml`](#tagged-math-without-mathml) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-style">style</span> | <span class="eng" title="only under pdftex">pdftex</span> | — | formulas without MathML | 0.2.5 | — |
-| S055 | [`uncited-bibliography-entry`](#uncited-bibliography-entry) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-style">style</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> | database entry never cited | 0.2.0 | — |
+| S055 | [`uncited-bibliography-entry`](#uncited-bibliography-entry) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-style">style</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix may change the meaning, only --unsafe-fixes applies it">U</span> | database entry never cited | 0.2.0 | — |
 | S045 | [`unit-in-cells`](#unit-in-cells) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-style">style</span> | — | — | unit repeated in every cell | 0.2.0 | — |
-| S046 | [`unreferenced-numbered-display`](#unreferenced-numbered-display) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-style">style</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> | numbered display never referenced | 0.2.0 | — |
+| S046 | [`unreferenced-numbered-display`](#unreferenced-numbered-display) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-style">style</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix may change the meaning, only --unsafe-fixes applies it">U</span> | numbered display never referenced | 0.2.0 | — |
 | S047 | [`unused-bibitem`](#unused-bibitem) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-style">style</span> | — | — | bibitem never cited | 0.1.0 | — |
 | S048 | [`unused-color`](#unused-color) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-style">style</span> | — | — | color never used | 0.2.0 | — |
-| S049 | [`unused-definition`](#unused-definition) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-style">style</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> | macro never used | 0.1.0 | — |
-| S050 | [`unused-label`](#unused-label) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-style">style</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> | label never referenced | 0.1.0 | — |
-| P001 | [`package-after-preamble`](#package-after-preamble) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-performance">performance</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> | package loaded after the preamble | 0.1.0 | — |
-| P002 | [`includeonly-available`](#includeonly-available) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-performance">performance</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> | parts built whole | 0.2.0 | — |
-| P003 | [`preamble-cost`](#preamble-cost) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-performance">performance</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> | slow preamble | 0.1.0 | — |
+| S049 | [`unused-definition`](#unused-definition) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-style">style</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix may change the meaning, only --unsafe-fixes applies it">U</span> | macro never used | 0.1.0 | — |
+| S050 | [`unused-label`](#unused-label) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-style">style</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix may change the meaning, only --unsafe-fixes applies it">U</span> | label never referenced | 0.1.0 | — |
+| P001 | [`package-after-preamble`](#package-after-preamble) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-performance">performance</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix may change the meaning, only --unsafe-fixes applies it">U</span> | package loaded after the preamble | 0.1.0 | — |
+| P002 | [`includeonly-available`](#includeonly-available) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-performance">performance</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix may change the meaning, only --unsafe-fixes applies it">U</span> | parts built whole | 0.2.0 | — |
+| P003 | [`preamble-cost`](#preamble-cost) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-performance">performance</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix may change the meaning, only --unsafe-fixes applies it">U</span> | slow preamble | 0.1.0 | — |
 | P004 | [`recursive-macro`](#recursive-macro) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-performance">performance</span> | — | — | recursive macro | 0.1.0 | — |
-| P005 | [`unused-dependency`](#unused-dependency) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-performance">performance</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> | unused entry in the dependency file | 0.1.0 | — |
-| P006 | [`unused-package`](#unused-package) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-performance">performance</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> | unused package | 0.1.0 | — |
+| P005 | [`unused-dependency`](#unused-dependency) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-performance">performance</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix may change the meaning, only --unsafe-fixes applies it">U</span> | unused entry in the dependency file | 0.1.0 | — |
+| P006 | [`unused-package`](#unused-package) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-performance">performance</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix may change the meaning, only --unsafe-fixes applies it">U</span> | unused package | 0.1.0 | — |
 | A003 | [`unread-document`](#unread-document) | <span class="sev sev-error" title="default: error">◆</span> <span class="cat cat-precision">precision</span> | — | — | document not fully read | 0.2.1 | — |
 | A001 | [`analysis-imprecision`](#analysis-imprecision) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-precision">precision</span> | — | — | analysis had to widen | 0.1.0 | — |
 | A002 | [`assertion-unknown`](#assertion-unknown) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-precision">precision</span> | — | — | assertion not decided | 0.2.0 | — |
 
 ## Early findings
 
-Each rule declares the facts it needs. Most need the whole run. A few need only the files' text, or the text and the standard meaning of a few names: which files `\input`, `\include` and `\subfile` read, and which environments, such as `verbatim`, read their bodies verbatim. The `keys` tier also reads what the text's commands name, by their standard meaning: `\label` defines a label, `\ref` and `\cref` refer to one, `\cite` cites a key of the databases `\bibliography` and `\addbibresource` name, `\usepackage` loads a package, and `\includegraphics` includes a file that graphics finds with one of its extensions. A later pass can still change these findings, so the editor does not keep them between passes, as it keeps `text` and `names` ones. These rules run first, on a sketch of the document, before the run starts. `lints.early` in `satex.yaml` lists the names, and the sketch reports this as the assumption `early-standard-names`.
+Each rule declares the facts it needs. Most need the whole run. A few need only the files' text, or the text and the standard meaning of a few names: which files `\input`, `\include` and `\subfile` read, and which environments, such as `verbatim`, take their content as plain text. The `keys` tier also reads what the text's commands name, by their standard meaning: `\label` defines a label, `\ref` and `\cref` refer to one, `\cite` cites a key of the databases `\bibliography` and `\addbibresource` name, `\usepackage` loads a package, and `\includegraphics` includes a file that graphics finds with one of its extensions. A later pass can still change these findings, so the editor does not keep them between passes, as it keeps `text` and `names` ones. These rules run first, on a rough copy of the document, before the run starts. `lints.early` in `satex.yaml` lists the names, and the rough copy reports this as the assumption `early-standard-names`.
 
 | needs | rules |
 | --- | --- |
@@ -212,101 +217,24 @@ A comment can state a property for satex to check. TeX skips the comment. satex 
 A finding's `fix` says what to do. Where that is mechanical it carries the edits, e.g. removing a `\usepackage` line or one name in `\usepackage{a,b,c}`, a `\label{…}`, or turning `\newcommand` into `\renewcommand`. The text output marks them `[fix]` or `[unsafe fix]`:
 
 * **safe** fixes keep the document's meaning: a duplicate `\usepackage`, a definition replaced before it is read, `\renewcommand` of an undefined name.
-* **unsafe** fixes change it and deserve a look: removing a package that may have side effects, an unused label, `\newcommand` turned into `\renewcommand`.
+* **unsafe** fixes may change what the document means, so check them before you keep them: removing a package that may have side effects, an unused label, `\newcommand` turned into `\renewcommand`.
 
 `--fix` applies the safe fixes, `--unsafe-fixes` adds the unsafe ones, `--diff` prints the edits instead of writing them. Only project files change. Overlapping fixes wait for the next round. The document is re-analyzed after each round, up to eight.
 
 `--format json` gives each fix as `applicability` and `edits` (`path`, 1-based `start`/`end`, `replacement`), `--format sarif` as `fixes`, `--format lsp` as diagnostics with `quickfix` code actions.
 
-`S` marks a safe fix, `U` an unsafe one. A rule with both has findings of each kind: the fix is safe where it cannot change what the document means and unsafe where it might. Each finding names its own kind.
-
-<div class="fold">
-<h3 class="fold-head">71 rules with quick fixes</h3>
-
-* C001 [`already-defined`](#already-defined) <span class="fix fix-safe" title="safe: the fix keeps the document's meaning, --fix applies it">S</span> <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> command already defined
-* C002 [`bibtex-command-under-biblatex`](#bibtex-command-under-biblatex) <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> BibTeX command under biblatex
-* C055 [`metadata-after-class`](#metadata-after-class) <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> DocumentMetadata after documentclass
-* C047 [`missing-end`](#missing-end) <span class="fix fix-safe" title="safe: the fix keeps the document's meaning, --fix applies it">S</span> document has no end
-* C011 [`not-defined`](#not-defined) <span class="fix fix-safe" title="safe: the fix keeps the document's meaning, --fix applies it">S</span> renewing an undefined command
-* C012 [`option-clash`](#option-clash) <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> package loaded with clashing options
-* C015 [`undefined-control-sequence`](#undefined-control-sequence) <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> undefined command
-* C016 [`undefined-environment`](#undefined-environment) <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> undefined environment
-* C022 [`delimiter-not-followed`](#delimiter-not-followed) <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> \left or \right before a brace
-* C050 [`duplicate-bibliography-load`](#duplicate-bibliography-load) <span class="fix fix-safe" title="safe: the fix keeps the document's meaning, --fix applies it">S</span> database loaded twice
-* C051 [`duplicate-bibliography-work`](#duplicate-bibliography-work) <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> one work under two keys
-* C025 [`environment-mismatch`](#environment-mismatch) <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> wrong environment closed
-* C029 [`ignored-verbatim-tail`](#ignored-verbatim-tail) <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> text lost after verbatim end
-* C030 [`math-script-braces`](#math-script-braces) <span class="fix fix-safe" title="safe: the fix keeps the document's meaning, --fix applies it">S</span> script needs braces
-* C031 [`missing-dependency`](#missing-dependency) <span class="fix fix-safe" title="safe: the fix keeps the document's meaning, --fix applies it">S</span> package missing from the dependency file
-* C058 [`pdfua-without-title`](#pdfua-without-title) <span class="fix fix-safe" title="safe: the fix keeps the document's meaning, --fix applies it">S</span> PDF/UA without a title
-* C054 [`reference-name-mismatch`](#reference-name-mismatch) <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> name does not match the label
-* C059 [`tagging-without-language`](#tagging-without-language) <span class="fix fix-safe" title="safe: the fix keeps the document's meaning, --fix applies it">S</span> tagging without a language
-* C035 [`undefined-citation`](#undefined-citation) <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> citation key not in the bibliography
-* C048 [`undefined-cref-format`](#undefined-cref-format) <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> cleveref has no name for this label
-* C042 [`unintended-escape`](#unintended-escape) <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> command followed by escaped punctuation
-* S001 [`accent-on-dotted-letter`](#accent-on-dotted-letter) <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> accent on a dotted i or j
-* S002 [`command-terminated-space`](#command-terminated-space) <span class="fix fix-safe" title="safe: the fix keeps the document's meaning, --fix applies it">S</span> space eaten after a command
-* S003 [`dimension-times`](#dimension-times) <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> x instead of a times sign
-* S004 [`double-space`](#double-space) <span class="fix fix-safe" title="safe: the fix keeps the document's meaning, --fix applies it">S</span> <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> double space
-* S060 [`doubled-punctuation`](#doubled-punctuation) <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> doubled punctuation
-* S005 [`ellipsis-dots`](#ellipsis-dots) <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> three periods, not an ellipsis
-* S054 [`et-al`](#et-al) <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> et al. spelled by hand
-* S009 [`math-operator-name`](#math-operator-name) <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> operator name in math italic
-* S010 [`missing-italic-correction`](#missing-italic-correction) <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> missing italic correction
-* S011 [`missing-nonbreaking-space`](#missing-nonbreaking-space) <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> missing tie before a reference
-* S012 [`parenthesis-spacing`](#parenthesis-spacing) <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> parenthesis takes the wrong space
-* S013 [`quote-direction`](#quote-direction) <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> quotation mark points the wrong way
-* S061 [`sentence-capital`](#sentence-capital) <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> sentence starts lowercase
-* S014 [`sentence-spacing`](#sentence-spacing) <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> wrong space after a period
-* S015 [`space-before-command`](#space-before-command) <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> line may break before a mark
-* S016 [`space-before-punctuation`](#space-before-punctuation) <span class="fix fix-safe" title="safe: the fix keeps the document's meaning, --fix applies it">S</span> space before punctuation
-* S017 [`stray-italic-correction`](#stray-italic-correction) <span class="fix fix-safe" title="safe: the fix keeps the document's meaning, --fix applies it">S</span> <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> stray italic correction
-* S064 [`wider-than-line`](#wider-than-line) <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> box wider than its lines
-* S020 [`wrong-dash`](#wrong-dash) <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> wrong dash length
-* S021 [`wrong-quote-character`](#wrong-quote-character) <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> wrong character used as a quote
-* S022 [`zero-italic-correction`](#zero-italic-correction) <span class="fix fix-safe" title="safe: the fix keeps the document's meaning, --fix applies it">S</span> useless italic correction
-* S059 [`bare-reference`](#bare-reference) <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> reference without a name
-* S053 [`clones`](#clones) <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> repeated block of source
-* S027 [`computer-modern-in-t1`](#computer-modern-in-t1) <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> T1 text relies on cm-super
-* S028 [`csquotes-available`](#csquotes-available) <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> hand-set quotes, csquotes not loaded
-* S029 [`dead-definition`](#dead-definition) <span class="fix fix-safe" title="safe: the fix keeps the document's meaning, --fix applies it">S</span> <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> definition replaced before use
-* S031 [`duplicate-package`](#duplicate-package) <span class="fix fix-safe" title="safe: the fix keeps the document's meaning, --fix applies it">S</span> package loaded twice
-* S032 [`hand-set-quantity`](#hand-set-quantity) <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> hand-set number and unit
-* S052 [`hand-written-author`](#hand-written-author) <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> author name typed before a citation
-* S051 [`hand-written-reference`](#hand-written-reference) <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> number typed after a reference name
-* S057 [`itemize-described`](#itemize-described) <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> labelled items in an itemize
-* S056 [`itemize-numbered`](#itemize-numbered) <span class="fix fix-safe" title="safe: the fix keeps the document's meaning, --fix applies it">S</span> <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> numbered items in an itemize
-* S035 [`math-shift-dollars`](#math-shift-dollars) <span class="fix fix-safe" title="safe: the fix keeps the document's meaning, --fix applies it">S</span> $$ instead of \[
-* S036 [`microtype-available`](#microtype-available) <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> microtype not loaded
-* S038 [`ot1-font-encoding`](#ot1-font-encoding) <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> accents built with \accent in OT1
-* S058 [`package-successor`](#package-successor) <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> package has a successor
-* S039 [`prefer-cleveref`](#prefer-cleveref) <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> hand-written name before a reference
-* S040 [`primitive-tex-command`](#primitive-tex-command) <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> plain TeX primitive in LaTeX
-* S041 [`quote-ligature`](#quote-ligature) <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> quotes run together
-* S042 [`quote-punctuation`](#quote-punctuation) <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> punctuation inside the quote
-* S043 [`stray-space`](#stray-space) <span class="fix fix-safe" title="safe: the fix keeps the document's meaning, --fix applies it">S</span> space from a line end in a macro
-* S055 [`uncited-bibliography-entry`](#uncited-bibliography-entry) <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> database entry never cited
-* S046 [`unreferenced-numbered-display`](#unreferenced-numbered-display) <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> numbered display never referenced
-* S049 [`unused-definition`](#unused-definition) <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> macro never used
-* S050 [`unused-label`](#unused-label) <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> label never referenced
-* P001 [`package-after-preamble`](#package-after-preamble) <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> package loaded after the preamble
-* P002 [`includeonly-available`](#includeonly-available) <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> parts built whole
-* P003 [`preamble-cost`](#preamble-cost) <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> slow preamble
-* P005 [`unused-dependency`](#unused-dependency) <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> unused entry in the dependency file
-* P006 [`unused-package`](#unused-package) <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> unused package
-
-</div>
+In the rule list below, `S` marks a rule with a safe fix and `U` one with an unsafe fix. A rule with both is safe where its fix cannot change what the document means and unsafe where it might. Each finding names its own kind.
 
 ## Explanations
 
 One group per category, each with its first rules. A group's button shows the rest.
 
 <div class="fold" id="category-correctness">
-<h3 class="fold-head"><b>correctness</b> (60 rules)</h3>
+<h3 class="fold-head"><b>correctness</b> (62 rules)</h3>
 
 ### already-defined
 
-<p class="badges"><code class="num" title="rule number">C001</code> <span class="sev sev-error" title="default: error">default: error</span> <span class="cat cat-correctness">correctness</span> <span class="fix fix-safe" title="safe: the fix keeps the document's meaning, --fix applies it">S</span> <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> <span class="since" title="first release">since 0.1.0</span></p>
+<p class="badges"><code class="num" title="rule number">C001</code> <span class="sev sev-error" title="default: error">default: error</span> <span class="cat cat-correctness">correctness</span> <span class="fix fix-safe" title="safe: the fix keeps the document's meaning, --fix applies it">S</span> <span class="fix fix-unsafe" title="unsafe: the fix may change the meaning, only --unsafe-fixes applies it">U</span> <span class="since" title="first release">since 0.1.0</span></p>
 
 **command already defined**
 
@@ -328,7 +256,7 @@ See [Assertions](#assertions).
 
 ### bibtex-command-under-biblatex
 
-<p class="badges"><code class="num" title="rule number">C002</code> <span class="sev sev-error" title="default: error">default: error</span> <span class="cat cat-correctness">correctness</span> <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> <span class="since" title="first release">since 0.2.0</span></p>
+<p class="badges"><code class="num" title="rule number">C002</code> <span class="sev sev-error" title="default: error">default: error</span> <span class="cat cat-correctness">correctness</span> <span class="fix fix-unsafe" title="unsafe: the fix may change the meaning, only --unsafe-fixes applies it">U</span> <span class="since" title="first release">since 0.2.0</span></p>
 
 **BibTeX command under biblatex**
 
@@ -424,7 +352,7 @@ See [chktex 16](https://www.nongnu.org/chktex/), [tex.web § 1047](https://githu
 
 ### metadata-after-class
 
-<p class="badges"><code class="num" title="rule number">C055</code> <span class="sev sev-error" title="default: error">default: error</span> <span class="cat cat-correctness">correctness</span> <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> <span class="since" title="first release">since 0.2.5</span></p>
+<p class="badges"><code class="num" title="rule number">C055</code> <span class="sev sev-error" title="default: error">default: error</span> <span class="cat cat-correctness">correctness</span> <span class="fix fix-unsafe" title="unsafe: the fix may change the meaning, only --unsafe-fixes applies it">U</span> <span class="since" title="first release">since 0.2.5</span></p>
 
 **DocumentMetadata after documentclass**
 
@@ -484,7 +412,7 @@ See [source2e § ltdefns.dtx](https://ctan.org/pkg/source2e).
 
 ### option-clash
 
-<p class="badges"><code class="num" title="rule number">C012</code> <span class="sev sev-error" title="default: error">default: error</span> <span class="cat cat-correctness">correctness</span> <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> <span class="since" title="first release">since 0.1.0</span></p>
+<p class="badges"><code class="num" title="rule number">C012</code> <span class="sev sev-error" title="default: error">default: error</span> <span class="cat cat-correctness">correctness</span> <span class="fix fix-unsafe" title="unsafe: the fix may change the meaning, only --unsafe-fixes applies it">U</span> <span class="since" title="first release">since 0.1.0</span></p>
 
 **package loaded with clashing options**
 
@@ -516,7 +444,7 @@ See [xcolor § 2.5](https://ctan.org/pkg/xcolor).
 
 ### undefined-control-sequence
 
-<p class="badges"><code class="num" title="rule number">C015</code> <span class="sev sev-error" title="default: error">default: error</span> <span class="cat cat-correctness">correctness</span> <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> <span class="since" title="first release">since 0.1.0</span></p>
+<p class="badges"><code class="num" title="rule number">C015</code> <span class="sev sev-error" title="default: error">default: error</span> <span class="cat cat-correctness">correctness</span> <span class="fix fix-unsafe" title="unsafe: the fix may change the meaning, only --unsafe-fixes applies it">U</span> <span class="since" title="first release">since 0.1.0</span></p>
 
 **undefined command**
 
@@ -528,7 +456,7 @@ See [The TeXbook, chapter 27](https://ctan.org/pkg/texbook).
 
 ### undefined-environment
 
-<p class="badges"><code class="num" title="rule number">C016</code> <span class="sev sev-error" title="default: error">default: error</span> <span class="cat cat-correctness">correctness</span> <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> <span class="since" title="first release">since 0.1.0</span></p>
+<p class="badges"><code class="num" title="rule number">C016</code> <span class="sev sev-error" title="default: error">default: error</span> <span class="cat cat-correctness">correctness</span> <span class="fix fix-unsafe" title="unsafe: the fix may change the meaning, only --unsafe-fixes applies it">U</span> <span class="since" title="first release">since 0.1.0</span></p>
 
 **undefined environment**
 
@@ -613,7 +541,7 @@ See [xcolor § 2.5](https://ctan.org/pkg/xcolor).
 
 ### delimiter-not-followed
 
-<p class="badges"><code class="num" title="rule number">C022</code> <span class="sev sev-warning" title="default: warning">default: warning</span> <span class="cat cat-correctness">correctness</span> <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> <a class="from" href="Chktex-Coverage" title="follows chktex warning 43">chktex 43</a> <span class="since" title="first release">since 0.2.0</span></p>
+<p class="badges"><code class="num" title="rule number">C022</code> <span class="sev sev-warning" title="default: warning">default: warning</span> <span class="cat cat-correctness">correctness</span> <span class="fix fix-unsafe" title="unsafe: the fix may change the meaning, only --unsafe-fixes applies it">U</span> <a class="from" href="Chktex-Coverage" title="follows chktex warning 43">chktex 43</a> <span class="since" title="first release">since 0.2.0</span></p>
 
 **\left or \right before a brace**
 
@@ -651,7 +579,7 @@ See [btxdoc § Using BibTeX](https://ctan.org/pkg/bibtex).
 
 ### duplicate-bibliography-work
 
-<p class="badges"><code class="num" title="rule number">C051</code> <span class="sev sev-warning" title="default: warning">default: warning</span> <span class="cat cat-correctness">correctness</span> <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> <span class="since" title="first release">since 0.2.0</span></p>
+<p class="badges"><code class="num" title="rule number">C051</code> <span class="sev sev-warning" title="default: warning">default: warning</span> <span class="cat cat-correctness">correctness</span> <span class="fix fix-unsafe" title="unsafe: the fix may change the meaning, only --unsafe-fixes applies it">U</span> <span class="since" title="first release">since 0.2.0</span></p>
 
 **one work under two keys**
 
@@ -675,7 +603,7 @@ See [source2e § ltxref.dtx](https://ctan.org/pkg/source2e).
 
 ### environment-mismatch
 
-<p class="badges"><code class="num" title="rule number">C025</code> <span class="sev sev-warning" title="default: warning">default: warning</span> <span class="cat cat-correctness">correctness</span> <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> <a class="from" href="Chktex-Coverage" title="follows chktex warning 9, 10, 15">chktex 9, 10, 15</a> <span class="since" title="first release">since 0.1.0</span></p>
+<p class="badges"><code class="num" title="rule number">C025</code> <span class="sev sev-warning" title="default: warning">default: warning</span> <span class="cat cat-correctness">correctness</span> <span class="fix fix-unsafe" title="unsafe: the fix may change the meaning, only --unsafe-fixes applies it">U</span> <a class="from" href="Chktex-Coverage" title="follows chktex warning 9, 10, 15">chktex 9, 10, 15</a> <span class="since" title="first release">since 0.1.0</span></p>
 
 **wrong environment closed**
 
@@ -739,7 +667,7 @@ See [latex-lab § latex-lab-graphic](https://ctan.org/pkg/latex-lab), [Matterhor
 
 ### ignored-verbatim-tail
 
-<p class="badges"><code class="num" title="rule number">C029</code> <span class="sev sev-warning" title="default: warning">default: warning</span> <span class="cat cat-correctness">correctness</span> <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> <a class="from" href="Chktex-Coverage" title="follows chktex warning 31">chktex 31</a> <span class="since" title="first release">since 0.2.0</span></p>
+<p class="badges"><code class="num" title="rule number">C029</code> <span class="sev sev-warning" title="default: warning">default: warning</span> <span class="cat cat-correctness">correctness</span> <span class="fix fix-unsafe" title="unsafe: the fix may change the meaning, only --unsafe-fixes applies it">U</span> <a class="from" href="Chktex-Coverage" title="follows chktex warning 31">chktex 31</a> <span class="since" title="first release">since 0.2.0</span></p>
 
 **text lost after verbatim end**
 
@@ -775,6 +703,18 @@ depp names the TeX Live package of every file a run reads by where it sits in th
 
 Fix by adding the package to the dependency file, or by rerunning depp.
 
+### package-load-order
+
+<p class="badges"><code class="num" title="rule number">C061</code> <span class="sev sev-warning" title="default: warning">default: warning</span> <span class="cat cat-correctness">correctness</span> <span class="fix fix-unsafe" title="unsafe: the fix may change the meaning, only --unsafe-fixes applies it">U</span> <span class="since" title="first release">since 0.2.5</span></p>
+
+**package overrides an earlier one**
+
+A package loaded later redefines a command an earlier package made, and the document uses that command. The later definition wins, often by accident. The finding names the command and both packages, as the run saw them.
+
+Where the earlier package defines the command without checking that it is new, loading the later package first keeps the earlier version. The fix then moves the later `\usepackage` above the earlier one. The rule stays quiet where the later package names the earlier one in its own file: it adapts it on purpose, often after `\@ifpackageloaded`.
+
+See [source2e § ltclass.dtx](https://ctan.org/pkg/source2e).
+
 ### pdfua-without-title
 
 <p class="badges"><code class="num" title="rule number">C058</code> <span class="sev sev-warning" title="default: warning">default: warning</span> <span class="cat cat-correctness">correctness</span> <span class="fix fix-safe" title="safe: the fix keeps the document's meaning, --fix applies it">S</span> <span class="since" title="first release">since 0.2.5</span></p>
@@ -789,7 +729,7 @@ See [Matterhorn Protocol § 06](https://pdfa.org/resource/the-matterhorn-protoco
 
 ### reference-name-mismatch
 
-<p class="badges"><code class="num" title="rule number">C054</code> <span class="sev sev-warning" title="default: warning">default: warning</span> <span class="cat cat-correctness">correctness</span> <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> <span class="since" title="first release">since 0.2.4</span></p>
+<p class="badges"><code class="num" title="rule number">C054</code> <span class="sev sev-warning" title="default: warning">default: warning</span> <span class="cat cat-correctness">correctness</span> <span class="fix fix-unsafe" title="unsafe: the fix may change the meaning, only --unsafe-fixes applies it">U</span> <span class="since" title="first release">since 0.2.4</span></p>
 
 **name does not match the label**
 
@@ -889,7 +829,7 @@ See [btxdoc § The database files](https://ctan.org/pkg/bibtex).
 
 ### undefined-citation
 
-<p class="badges"><code class="num" title="rule number">C035</code> <span class="sev sev-warning" title="default: warning">default: warning</span> <span class="cat cat-correctness">correctness</span> <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> <span class="since" title="first release">since 0.1.0</span></p>
+<p class="badges"><code class="num" title="rule number">C035</code> <span class="sev sev-warning" title="default: warning">default: warning</span> <span class="cat cat-correctness">correctness</span> <span class="fix fix-unsafe" title="unsafe: the fix may change the meaning, only --unsafe-fixes applies it">U</span> <span class="since" title="first release">since 0.1.0</span></p>
 
 **citation key not in the bibliography**
 
@@ -901,7 +841,7 @@ See [source2e § ltbibl.dtx](https://ctan.org/pkg/source2e).
 
 ### undefined-cref-format
 
-<p class="badges"><code class="num" title="rule number">C048</code> <span class="sev sev-warning" title="default: warning">default: warning</span> <span class="cat cat-correctness">correctness</span> <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> <span class="since" title="first release">since 0.2.0</span></p>
+<p class="badges"><code class="num" title="rule number">C048</code> <span class="sev sev-warning" title="default: warning">default: warning</span> <span class="cat cat-correctness">correctness</span> <span class="fix fix-unsafe" title="unsafe: the fix may change the meaning, only --unsafe-fixes applies it">U</span> <span class="since" title="first release">since 0.2.0</span></p>
 
 **cleveref has no name for this label**
 
@@ -961,6 +901,18 @@ The rule reads the keys whose values the run formed such a driver from (`languag
 
 Fix by correcting the name, or by defining the language with `\lstdefinelanguage`.
 
+### unknown-package-name
+
+<p class="badges"><code class="num" title="rule number">C062</code> <span class="sev sev-warning" title="default: warning">default: warning</span> <span class="cat cat-correctness">correctness</span> <span class="fix fix-unsafe" title="unsafe: the fix may change the meaning, only --unsafe-fixes applies it">U</span> <span class="since" title="first release">since 0.2.5</span></p>
+
+**package name misspelled**
+
+No file of this name is installed, and an installed package has a name a letter or two away. The load is then most likely a typo, and LaTeX stops with `File … not found`. A name the package manager can install is `uninstalled-package` instead, and a name with no close match stays `unresolved-file`.
+
+Fix by loading the installed package the finding names.
+
+See [source2e § ltclass.dtx](https://ctan.org/pkg/source2e).
+
 ### unresolved-file
 
 <p class="badges"><code class="num" title="rule number">C039</code> <span class="sev sev-warning" title="default: warning">default: warning</span> <span class="cat cat-correctness">correctness</span> <a class="from" href="Chktex-Coverage" title="follows chktex warning 27">chktex 27</a> <span class="since" title="first release">since 0.1.0</span></p>
@@ -1009,7 +961,7 @@ See [chktex 49](https://www.nongnu.org/chktex/), [source2e § ltmath.dtx](https:
 
 ### unintended-escape
 
-<p class="badges"><code class="num" title="rule number">C042</code> <span class="sev sev-info" title="default: info">default: info</span> <span class="cat cat-correctness">correctness</span> <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> <a class="from" href="Chktex-Coverage" title="follows chktex warning 21">chktex 21</a> <span class="since" title="first release">since 0.2.0</span></p>
+<p class="badges"><code class="num" title="rule number">C042</code> <span class="sev sev-info" title="default: info">default: info</span> <span class="cat cat-correctness">correctness</span> <span class="fix fix-unsafe" title="unsafe: the fix may change the meaning, only --unsafe-fixes applies it">U</span> <a class="from" href="Chktex-Coverage" title="follows chktex warning 21">chktex 21</a> <span class="since" title="first release">since 0.2.0</span></p>
 
 **command followed by escaped punctuation**
 
@@ -1063,11 +1015,11 @@ See [pdftex § -shell-escape](https://ctan.org/pkg/pdftex).
 </div>
 
 <div class="fold" id="category-style">
-<h3 class="fold-head"><b>style</b> (65 rules)</h3>
+<h3 class="fold-head"><b>style</b> (68 rules)</h3>
 
 ### accent-on-dotted-letter
 
-<p class="badges"><code class="num" title="rule number">S001</code> <span class="sev sev-warning" title="default: warning">default: warning</span> <span class="cat cat-style">style</span> <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> <a class="from" href="Chktex-Coverage" title="follows chktex warning 7">chktex 7</a> <span class="since" title="first release">since 0.2.0</span></p>
+<p class="badges"><code class="num" title="rule number">S001</code> <span class="sev sev-warning" title="default: warning">default: warning</span> <span class="cat cat-style">style</span> <span class="fix fix-unsafe" title="unsafe: the fix may change the meaning, only --unsafe-fixes applies it">U</span> <a class="from" href="Chktex-Coverage" title="follows chktex warning 7">chktex 7</a> <span class="since" title="first release">since 0.2.0</span></p>
 
 **accent on a dotted i or j**
 
@@ -1095,7 +1047,7 @@ See [chktex 1](https://www.nongnu.org/chktex/), [The TeXbook, chapter 3](https:/
 
 ### dimension-times
 
-<p class="badges"><code class="num" title="rule number">S003</code> <span class="sev sev-warning" title="default: warning">default: warning</span> <span class="cat cat-style">style</span> <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> <a class="from" href="Chktex-Coverage" title="follows chktex warning 29">chktex 29</a> <span class="since" title="first release">since 0.2.0</span></p>
+<p class="badges"><code class="num" title="rule number">S003</code> <span class="sev sev-warning" title="default: warning">default: warning</span> <span class="cat cat-style">style</span> <span class="fix fix-unsafe" title="unsafe: the fix may change the meaning, only --unsafe-fixes applies it">U</span> <a class="from" href="Chktex-Coverage" title="follows chktex warning 29">chktex 29</a> <span class="since" title="first release">since 0.2.0</span></p>
 
 **x instead of a times sign**
 
@@ -1109,7 +1061,7 @@ See [chktex 29](https://www.nongnu.org/chktex/), [The TeXbook, chapter 16](https
 
 ### double-space
 
-<p class="badges"><code class="num" title="rule number">S004</code> <span class="sev sev-warning" title="default: warning">default: warning</span> <span class="cat cat-style">style</span> <span class="fix fix-safe" title="safe: the fix keeps the document's meaning, --fix applies it">S</span> <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> <a class="from" href="Chktex-Coverage" title="follows chktex warning 30, 39">chktex 30, 39</a> <span class="since" title="first release">since 0.2.0</span></p>
+<p class="badges"><code class="num" title="rule number">S004</code> <span class="sev sev-warning" title="default: warning">default: warning</span> <span class="cat cat-style">style</span> <span class="fix fix-safe" title="safe: the fix keeps the document's meaning, --fix applies it">S</span> <span class="fix fix-unsafe" title="unsafe: the fix may change the meaning, only --unsafe-fixes applies it">U</span> <a class="from" href="Chktex-Coverage" title="follows chktex warning 30, 39">chktex 30, 39</a> <span class="since" title="first release">since 0.2.0</span></p>
 
 **double space**
 
@@ -1123,7 +1075,7 @@ See [chktex 39](https://www.nongnu.org/chktex/), [chktex 30](https://www.nongnu.
 
 ### doubled-punctuation
 
-<p class="badges"><code class="num" title="rule number">S060</code> <span class="sev sev-warning" title="default: warning">default: warning</span> <span class="cat cat-style">style</span> <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> <span class="since" title="first release">since 0.2.4</span></p>
+<p class="badges"><code class="num" title="rule number">S060</code> <span class="sev sev-warning" title="default: warning">default: warning</span> <span class="cat cat-style">style</span> <span class="fix fix-unsafe" title="unsafe: the fix may change the meaning, only --unsafe-fixes applies it">U</span> <span class="since" title="first release">since 0.2.4</span></p>
 
 **doubled punctuation**
 
@@ -1133,7 +1085,7 @@ Fix by deleting the extra mark.
 
 ### ellipsis-dots
 
-<p class="badges"><code class="num" title="rule number">S005</code> <span class="sev sev-warning" title="default: warning">default: warning</span> <span class="cat cat-style">style</span> <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> <a class="from" href="Chktex-Coverage" title="follows chktex warning 11">chktex 11</a> <span class="since" title="first release">since 0.2.0</span></p>
+<p class="badges"><code class="num" title="rule number">S005</code> <span class="sev sev-warning" title="default: warning">default: warning</span> <span class="cat cat-style">style</span> <span class="fix fix-unsafe" title="unsafe: the fix may change the meaning, only --unsafe-fixes applies it">U</span> <a class="from" href="Chktex-Coverage" title="follows chktex warning 11">chktex 11</a> <span class="since" title="first release">since 0.2.0</span></p>
 
 **three periods, not an ellipsis**
 
@@ -1147,7 +1099,7 @@ See [chktex 11](https://www.nongnu.org/chktex/), [The TeXbook, chapter 18](https
 
 ### et-al
 
-<p class="badges"><code class="num" title="rule number">S054</code> <span class="sev sev-warning" title="default: warning">default: warning</span> <span class="cat cat-style">style</span> <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> <span class="since" title="first release">since 0.2.0</span></p>
+<p class="badges"><code class="num" title="rule number">S054</code> <span class="sev sev-warning" title="default: warning">default: warning</span> <span class="cat cat-style">style</span> <span class="fix fix-unsafe" title="unsafe: the fix may change the meaning, only --unsafe-fixes applies it">U</span> <span class="since" title="first release">since 0.2.0</span></p>
 
 **et al. spelled by hand**
 
@@ -1195,9 +1147,21 @@ Fix by moving the definition out of the group, or by prefixing it with `\global`
 
 See [The TeXbook, chapter 5](https://ctan.org/pkg/texbook).
 
+### low-contrast-color
+
+<p class="badges"><code class="num" title="rule number">S067</code> <span class="sev sev-warning" title="default: warning">default: warning</span> <span class="cat cat-style">style</span> <span class="fix fix-unsafe" title="unsafe: the fix may change the meaning, only --unsafe-fixes applies it">U</span> <span class="since" title="first release">since 0.2.5</span></p>
+
+**text color with too little contrast**
+
+Text needs a contrast ratio of at least 4.5:1 against its background to be readable for people with low vision (WCAG 2, success criterion 1.4.3). Large text needs 3:1: from 18pt, or 14pt in bold. The rule reads the color each character was set in, as the run computed it. The background is the page, `\pagecolor`, or the `\colorbox` the character sits in. Text over something satex does not read, such as a TikZ fill or a page background drawn at shipout, is left alone.
+
+The fix darkens or lightens the color in its hue until it reaches the ratio. It rewrites the document's own `\definecolor` where there is one. The limits are `lints.low-contrast-color`.
+
+See [WCAG 2.2 § 1.4.3](https://www.w3.org/TR/WCAG22/).
+
 ### math-operator-name
 
-<p class="badges"><code class="num" title="rule number">S009</code> <span class="sev sev-warning" title="default: warning">default: warning</span> <span class="cat cat-style">style</span> <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> <a class="from" href="Chktex-Coverage" title="follows chktex warning 35">chktex 35</a> <span class="since" title="first release">since 0.2.0</span></p>
+<p class="badges"><code class="num" title="rule number">S009</code> <span class="sev sev-warning" title="default: warning">default: warning</span> <span class="cat cat-style">style</span> <span class="fix fix-unsafe" title="unsafe: the fix may change the meaning, only --unsafe-fixes applies it">U</span> <a class="from" href="Chktex-Coverage" title="follows chktex warning 35">chktex 35</a> <span class="since" title="first release">since 0.2.0</span></p>
 
 **operator name in math italic**
 
@@ -1211,7 +1175,7 @@ See [chktex 35](https://www.nongnu.org/chktex/), [The TeXbook, chapter 18](https
 
 ### missing-italic-correction
 
-<p class="badges"><code class="num" title="rule number">S010</code> <span class="sev sev-warning" title="default: warning">default: warning</span> <span class="cat cat-style">style</span> <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> <a class="from" href="Chktex-Coverage" title="follows chktex warning 6">chktex 6</a> <span class="since" title="first release">since 0.2.0</span></p>
+<p class="badges"><code class="num" title="rule number">S010</code> <span class="sev sev-warning" title="default: warning">default: warning</span> <span class="cat cat-style">style</span> <span class="fix fix-unsafe" title="unsafe: the fix may change the meaning, only --unsafe-fixes applies it">U</span> <a class="from" href="Chktex-Coverage" title="follows chktex warning 6">chktex 6</a> <span class="since" title="first release">since 0.2.0</span></p>
 
 **missing italic correction**
 
@@ -1225,7 +1189,7 @@ See [chktex 6](https://www.nongnu.org/chktex/), [The TeXbook, chapter 4](https:/
 
 ### missing-nonbreaking-space
 
-<p class="badges"><code class="num" title="rule number">S011</code> <span class="sev sev-warning" title="default: warning">default: warning</span> <span class="cat cat-style">style</span> <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> <a class="from" href="Chktex-Coverage" title="follows chktex warning 2">chktex 2</a> <span class="since" title="first release">since 0.2.0</span></p>
+<p class="badges"><code class="num" title="rule number">S011</code> <span class="sev sev-warning" title="default: warning">default: warning</span> <span class="cat cat-style">style</span> <span class="fix fix-unsafe" title="unsafe: the fix may change the meaning, only --unsafe-fixes applies it">U</span> <a class="from" href="Chktex-Coverage" title="follows chktex warning 2">chktex 2</a> <span class="since" title="first release">since 0.2.0</span></p>
 
 **missing tie before a reference**
 
@@ -1265,7 +1229,7 @@ See [tex.web § 889](https://github.com/TeX-Live/texlive-source/blob/dce038dd1bd
 
 ### parenthesis-spacing
 
-<p class="badges"><code class="num" title="rule number">S012</code> <span class="sev sev-warning" title="default: warning">default: warning</span> <span class="cat cat-style">style</span> <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> <a class="from" href="Chktex-Coverage" title="follows chktex warning 36, 37">chktex 36, 37</a> <span class="since" title="first release">since 0.2.0</span></p>
+<p class="badges"><code class="num" title="rule number">S012</code> <span class="sev sev-warning" title="default: warning">default: warning</span> <span class="cat cat-style">style</span> <span class="fix fix-unsafe" title="unsafe: the fix may change the meaning, only --unsafe-fixes applies it">U</span> <a class="from" href="Chktex-Coverage" title="follows chktex warning 36, 37">chktex 36, 37</a> <span class="since" title="first release">since 0.2.0</span></p>
 
 **parenthesis takes the wrong space**
 
@@ -1281,7 +1245,7 @@ See [chktex 36](https://www.nongnu.org/chktex/), [chktex 37](https://www.nongnu.
 
 ### quote-direction
 
-<p class="badges"><code class="num" title="rule number">S013</code> <span class="sev sev-warning" title="default: warning">default: warning</span> <span class="cat cat-style">style</span> <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> <a class="from" href="Chktex-Coverage" title="follows chktex warning 32, 33, 34">chktex 32, 33, 34</a> <span class="since" title="first release">since 0.2.0</span></p>
+<p class="badges"><code class="num" title="rule number">S013</code> <span class="sev sev-warning" title="default: warning">default: warning</span> <span class="cat cat-style">style</span> <span class="fix fix-unsafe" title="unsafe: the fix may change the meaning, only --unsafe-fixes applies it">U</span> <a class="from" href="Chktex-Coverage" title="follows chktex warning 32, 33, 34">chktex 32, 33, 34</a> <span class="since" title="first release">since 0.2.0</span></p>
 
 **quotation mark points the wrong way**
 
@@ -1295,7 +1259,7 @@ See [chktex 32](https://www.nongnu.org/chktex/), [chktex 33](https://www.nongnu.
 
 ### sentence-capital
 
-<p class="badges"><code class="num" title="rule number">S061</code> <span class="sev sev-warning" title="default: warning">default: warning</span> <span class="cat cat-style">style</span> <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> <span class="since" title="first release">since 0.2.4</span></p>
+<p class="badges"><code class="num" title="rule number">S061</code> <span class="sev sev-warning" title="default: warning">default: warning</span> <span class="cat cat-style">style</span> <span class="fix fix-unsafe" title="unsafe: the fix may change the meaning, only --unsafe-fixes applies it">U</span> <span class="since" title="first release">since 0.2.4</span></p>
 
 **sentence starts lowercase**
 
@@ -1305,7 +1269,7 @@ Fix by writing the capital, or `\Cref` for a `\cref`.
 
 ### sentence-spacing
 
-<p class="badges"><code class="num" title="rule number">S014</code> <span class="sev sev-warning" title="default: warning">default: warning</span> <span class="cat cat-style">style</span> <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> <a class="from" href="Chktex-Coverage" title="follows chktex warning 12, 13">chktex 12, 13</a> <span class="since" title="first release">since 0.2.0</span></p>
+<p class="badges"><code class="num" title="rule number">S014</code> <span class="sev sev-warning" title="default: warning">default: warning</span> <span class="cat cat-style">style</span> <span class="fix fix-unsafe" title="unsafe: the fix may change the meaning, only --unsafe-fixes applies it">U</span> <a class="from" href="Chktex-Coverage" title="follows chktex warning 12, 13">chktex 12, 13</a> <span class="since" title="first release">since 0.2.0</span></p>
 
 **wrong space after a period**
 
@@ -1319,7 +1283,7 @@ See [chktex 12](https://www.nongnu.org/chktex/), [chktex 13](https://www.nongnu.
 
 ### space-before-command
 
-<p class="badges"><code class="num" title="rule number">S015</code> <span class="sev sev-warning" title="default: warning">default: warning</span> <span class="cat cat-style">style</span> <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> <a class="from" href="Chktex-Coverage" title="follows chktex warning 24, 42">chktex 24, 42</a> <span class="since" title="first release">since 0.2.0</span></p>
+<p class="badges"><code class="num" title="rule number">S015</code> <span class="sev sev-warning" title="default: warning">default: warning</span> <span class="cat cat-style">style</span> <span class="fix fix-unsafe" title="unsafe: the fix may change the meaning, only --unsafe-fixes applies it">U</span> <a class="from" href="Chktex-Coverage" title="follows chktex warning 24, 42">chktex 24, 42</a> <span class="since" title="first release">since 0.2.0</span></p>
 
 **line may break before a mark**
 
@@ -1347,7 +1311,7 @@ See [chktex 26](https://www.nongnu.org/chktex/), [tex.web § 1043](https://githu
 
 ### stray-italic-correction
 
-<p class="badges"><code class="num" title="rule number">S017</code> <span class="sev sev-warning" title="default: warning">default: warning</span> <span class="cat cat-style">style</span> <span class="fix fix-safe" title="safe: the fix keeps the document's meaning, --fix applies it">S</span> <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> <a class="from" href="Chktex-Coverage" title="follows chktex warning 5, 28">chktex 5, 28</a> <span class="since" title="first release">since 0.2.0</span></p>
+<p class="badges"><code class="num" title="rule number">S017</code> <span class="sev sev-warning" title="default: warning">default: warning</span> <span class="cat cat-style">style</span> <span class="fix fix-safe" title="safe: the fix keeps the document's meaning, --fix applies it">S</span> <span class="fix fix-unsafe" title="unsafe: the fix may change the meaning, only --unsafe-fixes applies it">U</span> <a class="from" href="Chktex-Coverage" title="follows chktex warning 5, 28">chktex 5, 28</a> <span class="since" title="first release">since 0.2.0</span></p>
 
 **stray italic correction**
 
@@ -1385,7 +1349,7 @@ See [chktex 20](https://www.nongnu.org/chktex/), [chktex 44](https://www.nongnu.
 
 ### wider-than-line
 
-<p class="badges"><code class="num" title="rule number">S064</code> <span class="sev sev-warning" title="default: warning">default: warning</span> <span class="cat cat-style">style</span> <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> <span class="since" title="first release">since 0.2.5</span></p>
+<p class="badges"><code class="num" title="rule number">S064</code> <span class="sev sev-warning" title="default: warning">default: warning</span> <span class="cat cat-style">style</span> <span class="fix fix-unsafe" title="unsafe: the fix may change the meaning, only --unsafe-fixes applies it">U</span> <span class="since" title="first release">since 0.2.5</span></p>
 
 **box wider than its lines**
 
@@ -1397,7 +1361,7 @@ See [tex.web § 889](https://github.com/TeX-Live/texlive-source/blob/dce038dd1bd
 
 ### wrong-dash
 
-<p class="badges"><code class="num" title="rule number">S020</code> <span class="sev sev-warning" title="default: warning">default: warning</span> <span class="cat cat-style">style</span> <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> <a class="from" href="Chktex-Coverage" title="follows chktex warning 8">chktex 8</a> <span class="since" title="first release">since 0.2.0</span></p>
+<p class="badges"><code class="num" title="rule number">S020</code> <span class="sev sev-warning" title="default: warning">default: warning</span> <span class="cat cat-style">style</span> <span class="fix fix-unsafe" title="unsafe: the fix may change the meaning, only --unsafe-fixes applies it">U</span> <a class="from" href="Chktex-Coverage" title="follows chktex warning 8">chktex 8</a> <span class="since" title="first release">since 0.2.0</span></p>
 
 **wrong dash length**
 
@@ -1411,7 +1375,7 @@ See [chktex 8](https://www.nongnu.org/chktex/), [The TeXbook, chapter 2](https:/
 
 ### wrong-quote-character
 
-<p class="badges"><code class="num" title="rule number">S021</code> <span class="sev sev-warning" title="default: warning">default: warning</span> <span class="cat cat-style">style</span> <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> <a class="from" href="Chktex-Coverage" title="follows chktex warning 18, 19">chktex 18, 19</a> <span class="since" title="first release">since 0.2.0</span></p>
+<p class="badges"><code class="num" title="rule number">S021</code> <span class="sev sev-warning" title="default: warning">default: warning</span> <span class="cat cat-style">style</span> <span class="fix fix-unsafe" title="unsafe: the fix may change the meaning, only --unsafe-fixes applies it">U</span> <a class="from" href="Chktex-Coverage" title="follows chktex warning 18, 19">chktex 18, 19</a> <span class="since" title="first release">since 0.2.0</span></p>
 
 **wrong character used as a quote**
 
@@ -1439,7 +1403,7 @@ See [chktex 4](https://www.nongnu.org/chktex/), [tex.web § 1113](https://github
 
 ### bare-reference
 
-<p class="badges"><code class="num" title="rule number">S059</code> <span class="sev sev-info" title="default: info">default: info</span> <span class="cat cat-style">style</span> <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> <span class="since" title="first release">since 0.2.4</span></p>
+<p class="badges"><code class="num" title="rule number">S059</code> <span class="sev sev-info" title="default: info">default: info</span> <span class="cat cat-style">style</span> <span class="fix fix-unsafe" title="unsafe: the fix may change the meaning, only --unsafe-fixes applies it">U</span> <span class="since" title="first release">since 0.2.4</span></p>
 
 **reference without a name**
 
@@ -1489,7 +1453,7 @@ See [latexmk § CUSTOM DEPENDENCIES](https://ctan.org/pkg/latexmk).
 
 ### clones
 
-<p class="badges"><code class="num" title="rule number">S053</code> <span class="sev sev-info" title="default: info">default: info</span> <span class="cat cat-style">style</span> <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> <span class="since" title="first release">since 0.2.0</span></p>
+<p class="badges"><code class="num" title="rule number">S053</code> <span class="sev sev-info" title="default: info">default: info</span> <span class="cat cat-style">style</span> <span class="fix fix-unsafe" title="unsafe: the fix may change the meaning, only --unsafe-fixes applies it">U</span> <span class="since" title="first release">since 0.2.0</span></p>
 
 **repeated block of source**
 
@@ -1519,7 +1483,7 @@ See [chktex 22](https://www.nongnu.org/chktex/).
 
 ### computer-modern-in-t1
 
-<p class="badges"><code class="num" title="rule number">S027</code> <span class="sev sev-info" title="default: info">default: info</span> <span class="cat cat-style">style</span> <span class="eng" title="only under pdftex">pdftex</span> <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> <span class="since" title="first release">since 0.1.0</span></p>
+<p class="badges"><code class="num" title="rule number">S027</code> <span class="sev sev-info" title="default: info">default: info</span> <span class="cat cat-style">style</span> <span class="eng" title="only under pdftex">pdftex</span> <span class="fix fix-unsafe" title="unsafe: the fix may change the meaning, only --unsafe-fixes applies it">U</span> <span class="since" title="first release">since 0.1.0</span></p>
 
 **T1 text relies on cm-super**
 
@@ -1533,7 +1497,7 @@ See [lmodern § Latin Modern](https://ctan.org/pkg/lm), [fntguide § 5](https://
 
 ### csquotes-available
 
-<p class="badges"><code class="num" title="rule number">S028</code> <span class="sev sev-info" title="default: info">default: info</span> <span class="cat cat-style">style</span> <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> <a class="from" href="Chktex-Coverage" title="follows chktex warning 18">chktex 18</a> <span class="since" title="first release">since 0.2.0</span></p>
+<p class="badges"><code class="num" title="rule number">S028</code> <span class="sev sev-info" title="default: info">default: info</span> <span class="cat cat-style">style</span> <span class="fix fix-unsafe" title="unsafe: the fix may change the meaning, only --unsafe-fixes applies it">U</span> <a class="from" href="Chktex-Coverage" title="follows chktex warning 18">chktex 18</a> <span class="since" title="first release">since 0.2.0</span></p>
 
 **hand-set quotes, csquotes not loaded**
 
@@ -1547,7 +1511,7 @@ See [chktex 18](https://www.nongnu.org/chktex/), [csquotes § 3.1](https://ctan.
 
 ### dead-definition
 
-<p class="badges"><code class="num" title="rule number">S029</code> <span class="sev sev-info" title="default: info">default: info</span> <span class="cat cat-style">style</span> <span class="fix fix-safe" title="safe: the fix keeps the document's meaning, --fix applies it">S</span> <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> <span class="since" title="first release">since 0.1.0</span></p>
+<p class="badges"><code class="num" title="rule number">S029</code> <span class="sev sev-info" title="default: info">default: info</span> <span class="cat cat-style">style</span> <span class="fix fix-safe" title="safe: the fix keeps the document's meaning, --fix applies it">S</span> <span class="fix fix-unsafe" title="unsafe: the fix may change the meaning, only --unsafe-fixes applies it">U</span> <span class="since" title="first release">since 0.1.0</span></p>
 
 **definition replaced before use**
 
@@ -1581,7 +1545,7 @@ See [source2e § ltclass.dtx](https://ctan.org/pkg/source2e).
 
 ### hand-set-quantity
 
-<p class="badges"><code class="num" title="rule number">S032</code> <span class="sev sev-info" title="default: info">default: info</span> <span class="cat cat-style">style</span> <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> <span class="since" title="first release">since 0.2.0</span></p>
+<p class="badges"><code class="num" title="rule number">S032</code> <span class="sev sev-info" title="default: info">default: info</span> <span class="cat cat-style">style</span> <span class="fix fix-unsafe" title="unsafe: the fix may change the meaning, only --unsafe-fixes applies it">U</span> <span class="since" title="first release">since 0.2.0</span></p>
 
 **hand-set number and unit**
 
@@ -1595,7 +1559,7 @@ See [SI brochure § 5.4.3](https://www.bipm.org/en/publications/si-brochure), [s
 
 ### hand-written-author
 
-<p class="badges"><code class="num" title="rule number">S052</code> <span class="sev sev-info" title="default: info">default: info</span> <span class="cat cat-style">style</span> <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> <span class="since" title="first release">since 0.2.0</span></p>
+<p class="badges"><code class="num" title="rule number">S052</code> <span class="sev sev-info" title="default: info">default: info</span> <span class="cat cat-style">style</span> <span class="fix fix-unsafe" title="unsafe: the fix may change the meaning, only --unsafe-fixes applies it">U</span> <span class="since" title="first release">since 0.2.0</span></p>
 
 **author name typed before a citation**
 
@@ -1611,7 +1575,7 @@ See [biblatex § 3.9.1](https://ctan.org/pkg/biblatex), [The LaTeX Companion § 
 
 ### hand-written-reference
 
-<p class="badges"><code class="num" title="rule number">S051</code> <span class="sev sev-info" title="default: info">default: info</span> <span class="cat cat-style">style</span> <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> <span class="since" title="first release">since 0.2.0</span></p>
+<p class="badges"><code class="num" title="rule number">S051</code> <span class="sev sev-info" title="default: info">default: info</span> <span class="cat cat-style">style</span> <span class="fix fix-unsafe" title="unsafe: the fix may change the meaning, only --unsafe-fixes applies it">U</span> <span class="since" title="first release">since 0.2.0</span></p>
 
 **number typed after a reference name**
 
@@ -1635,9 +1599,21 @@ See [The LaTeX Companion § 2.4](https://ctan.org/pkg/tlc3-examples), [cleveref 
 
 See [siunitx § 4.6](https://ctan.org/pkg/siunitx).
 
+### indistinct-colors
+
+<p class="badges"><code class="num" title="rule number">S068</code> <span class="sev sev-info" title="default: info">default: info</span> <span class="cat cat-style">style</span> <span class="fix fix-unsafe" title="unsafe: the fix may change the meaning, only --unsafe-fixes applies it">U</span> <span class="since" title="first release">since 0.2.5</span></p>
+
+**colors alike with color blindness**
+
+Two colors the document uses side by side look alike to readers with a color vision deficiency. Side by side means in one environment below the document, such as a figure or a TikZ picture, or as text colors in one paragraph. satex simulates protanopia, deuteranopia and tritanopia with the matrices of Machado, Oliveira and Fernandes (2009). It then measures the distance of the two colors in CIELAB. A pair that differs clearly for normal vision but comes closer than `lints.indistinct-colors.below` under a simulation is reported, with the deficiency named.
+
+The fix suggests a color of the Okabe-Ito palette, which stays apart under all three. It rewrites the document's own `\definecolor` where there is one. Telling the meanings apart by more than color also helps: line styles, marks or labels.
+
+See [WCAG 2.2 § 1.4.1](https://www.w3.org/TR/WCAG22/).
+
 ### itemize-described
 
-<p class="badges"><code class="num" title="rule number">S057</code> <span class="sev sev-info" title="default: info">default: info</span> <span class="cat cat-style">style</span> <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> <span class="since" title="first release">since 0.2.1</span></p>
+<p class="badges"><code class="num" title="rule number">S057</code> <span class="sev sev-info" title="default: info">default: info</span> <span class="cat cat-style">style</span> <span class="fix fix-unsafe" title="unsafe: the fix may change the meaning, only --unsafe-fixes applies it">U</span> <span class="since" title="first release">since 0.2.1</span></p>
 
 **labelled items in an itemize**
 
@@ -1645,7 +1621,7 @@ An `itemize` whose every `\item[…]` names its item in words is a `description`
 
 ### itemize-numbered
 
-<p class="badges"><code class="num" title="rule number">S056</code> <span class="sev sev-info" title="default: info">default: info</span> <span class="cat cat-style">style</span> <span class="fix fix-safe" title="safe: the fix keeps the document's meaning, --fix applies it">S</span> <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> <span class="since" title="first release">since 0.2.1</span></p>
+<p class="badges"><code class="num" title="rule number">S056</code> <span class="sev sev-info" title="default: info">default: info</span> <span class="cat cat-style">style</span> <span class="fix fix-safe" title="safe: the fix keeps the document's meaning, --fix applies it">S</span> <span class="fix fix-unsafe" title="unsafe: the fix may change the meaning, only --unsafe-fixes applies it">U</span> <span class="since" title="first release">since 0.2.1</span></p>
 
 **numbered items in an itemize**
 
@@ -1681,7 +1657,7 @@ See [chktex 45](https://www.nongnu.org/chktex/), [chktex 46](https://www.nongnu.
 
 ### microtype-available
 
-<p class="badges"><code class="num" title="rule number">S036</code> <span class="sev sev-info" title="default: info">default: info</span> <span class="cat cat-style">style</span> <span class="eng" title="only under pdftex, luatex">pdftex, luatex</span> <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> <span class="since" title="first release">since 0.1.0</span></p>
+<p class="badges"><code class="num" title="rule number">S036</code> <span class="sev sev-info" title="default: info">default: info</span> <span class="cat cat-style">style</span> <span class="eng" title="only under pdftex, luatex">pdftex, luatex</span> <span class="fix fix-unsafe" title="unsafe: the fix may change the meaning, only --unsafe-fixes applies it">U</span> <span class="since" title="first release">since 0.1.0</span></p>
 
 **microtype not loaded**
 
@@ -1705,7 +1681,7 @@ See [siunitx § 7.12](https://ctan.org/pkg/siunitx).
 
 ### ot1-font-encoding
 
-<p class="badges"><code class="num" title="rule number">S038</code> <span class="sev sev-info" title="default: info">default: info</span> <span class="cat cat-style">style</span> <span class="eng" title="only under pdftex">pdftex</span> <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> <span class="since" title="first release">since 0.1.0</span></p>
+<p class="badges"><code class="num" title="rule number">S038</code> <span class="sev sev-info" title="default: info">default: info</span> <span class="cat cat-style">style</span> <span class="eng" title="only under pdftex">pdftex</span> <span class="fix fix-unsafe" title="unsafe: the fix may change the meaning, only --unsafe-fixes applies it">U</span> <span class="since" title="first release">since 0.1.0</span></p>
 
 **accents built with \accent in OT1**
 
@@ -1719,17 +1695,17 @@ See [source2e § ot1enc.def](https://ctan.org/pkg/source2e), [fntguide § 5](htt
 
 ### package-successor
 
-<p class="badges"><code class="num" title="rule number">S058</code> <span class="sev sev-info" title="default: info">default: info</span> <span class="cat cat-style">style</span> <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> <span class="since" title="first release">since 0.2.1</span></p>
+<p class="badges"><code class="num" title="rule number">S058</code> <span class="sev sev-info" title="default: info">default: info</span> <span class="cat cat-style">style</span> <span class="fix fix-unsafe" title="unsafe: the fix may change the meaning, only --unsafe-fixes applies it">U</span> <span class="since" title="first release">since 0.2.1</span></p>
 
 **package has a successor**
 
-Some packages live on in a fork or a successor that keeps their interface and adds to it: `wrapfig2` continues `wrapfig`. The rule names the successor and what moving to it changes, and its fix loads the successor in the package's place. It stays quiet where the move would break: when another package loads the old one too (wrapfig2 refuses to load next to wrapfig), when the successor is loaded already, or when it is not installed.
+Some packages have a successor with the same commands and more. For example, `wrapfig2` continues `wrapfig`. The rule names the successor and what changes. Its fix loads the successor instead. It stays quiet where the switch would break something: when another package also loads the old one (wrapfig2 refuses to load next to wrapfig), when the successor is loaded already, or when it is not installed.
 
 The pairs are data, not code: `lints.package-successor.successors` lists each package, its successor and what changes, and a project adds its own or clears the list.
 
 ### prefer-cleveref
 
-<p class="badges"><code class="num" title="rule number">S039</code> <span class="sev sev-info" title="default: info">default: info</span> <span class="cat cat-style">style</span> <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> <span class="since" title="first release">since 0.2.0</span></p>
+<p class="badges"><code class="num" title="rule number">S039</code> <span class="sev sev-info" title="default: info">default: info</span> <span class="cat cat-style">style</span> <span class="fix fix-unsafe" title="unsafe: the fix may change the meaning, only --unsafe-fixes applies it">U</span> <span class="since" title="first release">since 0.2.0</span></p>
 
 **hand-written name before a reference**
 
@@ -1745,7 +1721,7 @@ See [cleveref § 2](https://ctan.org/pkg/cleveref).
 
 ### primitive-tex-command
 
-<p class="badges"><code class="num" title="rule number">S040</code> <span class="sev sev-info" title="default: info">default: info</span> <span class="cat cat-style">style</span> <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> <a class="from" href="Chktex-Coverage" title="follows chktex warning 41">chktex 41</a> <span class="since" title="first release">since 0.1.0</span></p>
+<p class="badges"><code class="num" title="rule number">S040</code> <span class="sev sev-info" title="default: info">default: info</span> <span class="cat cat-style">style</span> <span class="fix fix-unsafe" title="unsafe: the fix may change the meaning, only --unsafe-fixes applies it">U</span> <a class="from" href="Chktex-Coverage" title="follows chktex warning 41">chktex 41</a> <span class="since" title="first release">since 0.1.0</span></p>
 
 **plain TeX primitive in LaTeX**
 
@@ -1759,7 +1735,7 @@ See [chktex 41](https://www.nongnu.org/chktex/), [l2tabu § 1](https://ctan.org/
 
 ### quote-ligature
 
-<p class="badges"><code class="num" title="rule number">S041</code> <span class="sev sev-info" title="default: info">default: info</span> <span class="cat cat-style">style</span> <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> <a class="from" href="Chktex-Coverage" title="follows chktex warning 23">chktex 23</a> <span class="since" title="first release">since 0.2.0</span></p>
+<p class="badges"><code class="num" title="rule number">S041</code> <span class="sev sev-info" title="default: info">default: info</span> <span class="cat cat-style">style</span> <span class="fix fix-unsafe" title="unsafe: the fix may change the meaning, only --unsafe-fixes applies it">U</span> <a class="from" href="Chktex-Coverage" title="follows chktex warning 23">chktex 23</a> <span class="since" title="first release">since 0.2.0</span></p>
 
 **quotes run together**
 
@@ -1773,7 +1749,7 @@ See [chktex 23](https://www.nongnu.org/chktex/), [The TeXbook, chapter 2](https:
 
 ### quote-punctuation
 
-<p class="badges"><code class="num" title="rule number">S042</code> <span class="sev sev-info" title="default: info">default: info</span> <span class="cat cat-style">style</span> <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> <a class="from" href="Chktex-Coverage" title="follows chktex warning 38">chktex 38</a> <span class="since" title="first release">since 0.2.0</span></p>
+<p class="badges"><code class="num" title="rule number">S042</code> <span class="sev sev-info" title="default: info">default: info</span> <span class="cat cat-style">style</span> <span class="fix fix-unsafe" title="unsafe: the fix may change the meaning, only --unsafe-fixes applies it">U</span> <a class="from" href="Chktex-Coverage" title="follows chktex warning 38">chktex 38</a> <span class="since" title="first release">since 0.2.0</span></p>
 
 **punctuation inside the quote**
 
@@ -1782,6 +1758,18 @@ Under the logical convention the closing mark comes directly after the quoted wo
 Fix by moving the punctuation after the closing mark.
 
 See [chktex 38](https://www.nongnu.org/chktex/).
+
+### redundant-package-load
+
+<p class="badges"><code class="num" title="rule number">S066</code> <span class="sev sev-info" title="default: info">default: info</span> <span class="cat cat-style">style</span> <span class="fix fix-safe" title="safe: the fix keeps the document's meaning, --fix applies it">S</span> <span class="since" title="first release">since 0.2.5</span></p>
+
+**package loaded already**
+
+The class or an earlier package loads this package already, with the options the document asks for. LaTeX ignores the second request. The document's own request twice is `duplicate-package`, and one with new options is `option-clash`.
+
+Fix by deleting the request. Keep it if the document should still work with another class that does not load the package.
+
+See [source2e § ltclass.dtx](https://ctan.org/pkg/source2e).
 
 ### stray-space
 
@@ -1821,7 +1809,7 @@ See [latex-lab § latex-lab-math](https://ctan.org/pkg/latex-lab).
 
 ### uncited-bibliography-entry
 
-<p class="badges"><code class="num" title="rule number">S055</code> <span class="sev sev-info" title="default: info">default: info</span> <span class="cat cat-style">style</span> <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> <span class="since" title="first release">since 0.2.0</span></p>
+<p class="badges"><code class="num" title="rule number">S055</code> <span class="sev sev-info" title="default: info">default: info</span> <span class="cat cat-style">style</span> <span class="fix fix-unsafe" title="unsafe: the fix may change the meaning, only --unsafe-fixes applies it">U</span> <span class="since" title="first release">since 0.2.0</span></p>
 
 **database entry never cited**
 
@@ -1843,7 +1831,7 @@ See [SI brochure § 5.4.1](https://www.bipm.org/en/publications/si-brochure), [s
 
 ### unreferenced-numbered-display
 
-<p class="badges"><code class="num" title="rule number">S046</code> <span class="sev sev-info" title="default: info">default: info</span> <span class="cat cat-style">style</span> <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> <span class="since" title="first release">since 0.2.0</span></p>
+<p class="badges"><code class="num" title="rule number">S046</code> <span class="sev sev-info" title="default: info">default: info</span> <span class="cat cat-style">style</span> <span class="fix fix-unsafe" title="unsafe: the fix may change the meaning, only --unsafe-fixes applies it">U</span> <span class="since" title="first release">since 0.2.0</span></p>
 
 **numbered display never referenced**
 
@@ -1881,7 +1869,7 @@ See [xcolor § 2.5](https://ctan.org/pkg/xcolor).
 
 ### unused-definition
 
-<p class="badges"><code class="num" title="rule number">S049</code> <span class="sev sev-info" title="default: info">default: info</span> <span class="cat cat-style">style</span> <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> <span class="since" title="first release">since 0.1.0</span></p>
+<p class="badges"><code class="num" title="rule number">S049</code> <span class="sev sev-info" title="default: info">default: info</span> <span class="cat cat-style">style</span> <span class="fix fix-unsafe" title="unsafe: the fix may change the meaning, only --unsafe-fixes applies it">U</span> <span class="since" title="first release">since 0.1.0</span></p>
 
 **macro never used**
 
@@ -1891,7 +1879,7 @@ Fix by deleting it, or by checking why nothing calls it yet.
 
 ### unused-label
 
-<p class="badges"><code class="num" title="rule number">S050</code> <span class="sev sev-info" title="default: info">default: info</span> <span class="cat cat-style">style</span> <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> <span class="since" title="first release">since 0.1.0</span></p>
+<p class="badges"><code class="num" title="rule number">S050</code> <span class="sev sev-info" title="default: info">default: info</span> <span class="cat cat-style">style</span> <span class="fix fix-unsafe" title="unsafe: the fix may change the meaning, only --unsafe-fixes applies it">U</span> <span class="since" title="first release">since 0.1.0</span></p>
 
 **label never referenced**
 
@@ -1904,7 +1892,7 @@ Fix by deleting the `\label`, or by checking the `\ref` that was meant to use it
 
 ### package-after-preamble
 
-<p class="badges"><code class="num" title="rule number">P001</code> <span class="sev sev-warning" title="default: warning">default: warning</span> <span class="cat cat-performance">performance</span> <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> <span class="since" title="first release">since 0.1.0</span></p>
+<p class="badges"><code class="num" title="rule number">P001</code> <span class="sev sev-warning" title="default: warning">default: warning</span> <span class="cat cat-performance">performance</span> <span class="fix fix-unsafe" title="unsafe: the fix may change the meaning, only --unsafe-fixes applies it">U</span> <span class="since" title="first release">since 0.1.0</span></p>
 
 **package loaded after the preamble**
 
@@ -1916,7 +1904,7 @@ See [source2e § ltclass.dtx](https://ctan.org/pkg/source2e).
 
 ### includeonly-available
 
-<p class="badges"><code class="num" title="rule number">P002</code> <span class="sev sev-info" title="default: info">default: info</span> <span class="cat cat-performance">performance</span> <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> <span class="since" title="first release">since 0.2.0</span></p>
+<p class="badges"><code class="num" title="rule number">P002</code> <span class="sev sev-info" title="default: info">default: info</span> <span class="cat cat-performance">performance</span> <span class="fix fix-unsafe" title="unsafe: the fix may change the meaning, only --unsafe-fixes applies it">U</span> <span class="since" title="first release">since 0.2.0</span></p>
 
 **parts built whole**
 
@@ -1928,7 +1916,7 @@ See [source2e § ltfiles.dtx](https://ctan.org/pkg/source2e).
 
 ### preamble-cost
 
-<p class="badges"><code class="num" title="rule number">P003</code> <span class="sev sev-info" title="default: info">default: info</span> <span class="cat cat-performance">performance</span> <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> <span class="since" title="first release">since 0.1.0</span></p>
+<p class="badges"><code class="num" title="rule number">P003</code> <span class="sev sev-info" title="default: info">default: info</span> <span class="cat cat-performance">performance</span> <span class="fix fix-unsafe" title="unsafe: the fix may change the meaning, only --unsafe-fixes applies it">U</span> <span class="since" title="first release">since 0.1.0</span></p>
 
 **slow preamble**
 
@@ -1952,7 +1940,7 @@ Fix, if the recursion is unintended, by breaking the cycle. Otherwise make sure 
 
 ### unused-dependency
 
-<p class="badges"><code class="num" title="rule number">P005</code> <span class="sev sev-info" title="default: info">default: info</span> <span class="cat cat-performance">performance</span> <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> <span class="since" title="first release">since 0.1.0</span></p>
+<p class="badges"><code class="num" title="rule number">P005</code> <span class="sev sev-info" title="default: info">default: info</span> <span class="cat cat-performance">performance</span> <span class="fix fix-unsafe" title="unsafe: the fix may change the meaning, only --unsafe-fixes applies it">U</span> <span class="since" title="first release">since 0.1.0</span></p>
 
 **unused entry in the dependency file**
 
@@ -1962,7 +1950,7 @@ Fix, if the package really is unused, by deleting its line.
 
 ### unused-package
 
-<p class="badges"><code class="num" title="rule number">P006</code> <span class="sev sev-info" title="default: info">default: info</span> <span class="cat cat-performance">performance</span> <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> <span class="since" title="first release">since 0.1.0</span></p>
+<p class="badges"><code class="num" title="rule number">P006</code> <span class="sev sev-info" title="default: info">default: info</span> <span class="cat cat-performance">performance</span> <span class="fix fix-unsafe" title="unsafe: the fix may change the meaning, only --unsafe-fixes applies it">U</span> <span class="since" title="first release">since 0.1.0</span></p>
 
 **unused package**
 

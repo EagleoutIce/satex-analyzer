@@ -2,7 +2,7 @@
 
 # Type plugins
 
-A type plugin adds editor features where text of a type stands. The type comes from the run, as the [type at the cursor](lsp.md#completion) finds it: what TeX read the text as, the kind of name a `\csname` formed from it, else the role of the argument. No plugin looks at a command's name or a text pattern. A new command that takes a color gets the color plugin without any setup.
+A type plugin adds editor features where text of a type stands. The type comes from the run, as the [type at the cursor](lsp.md#completion) finds it: how TeX read the text, what kind of name a `\csname` built from it, else the role of the argument. No plugin looks at a command's name or a text pattern. A new command that takes a color gets the color plugin without any setup.
 
 Each plugin has a block under `type_plugins:` in `satex.yaml`, grouped there by its category: `widget` (dialogs and lenses), `hover`, `completion`, `lint`, `incremental` (whether an edit needs a new run) and `build` (the build file a project is read with, its settings under `l3build:`). `enabled: false` takes all its features away. <div class="plugin-tiles" data-plugin-tiles></div>
 
@@ -79,11 +79,11 @@ VS Code's own color picker goes through `textDocument/colorPresentation`, which 
 
 ## language
 
-A code language (`Ty::Key(Language)`): a key's value listings forms its language driver `\lstlang@⟨language⟩$⟨dialect⟩` from (`language=`, `alsolanguage=`), or a lexer minted hands Pygments (`\begin{minted}{python}`, `\mintinline`, `\inputminted`, `\newminted`). After a key the run read a language for, completion offers the languages the run defined (`\lstdefinelanguage`) and those the language files in `\lstlanguagefiles` declare, each dialect as `[LaTeX]TeX`. In an argument it offers Pygments' lexers: `pygmentize -L lexers`, read once (the program is `pygmentize`, empty for none), else a seed list. The document's own languages come first. Each item's detail says where the language is defined, and so does hover. The rule `unknown-code-language` flags a listings value nothing defines: a warning where the run knew the language files, a note where it did not.
+A code language (`Ty::Key(Language)`): a key's value, from which listings builds its language driver `\lstlang@⟨language⟩$⟨dialect⟩` from (`language=`, `alsolanguage=`), or a lexer that minted hands to Pygments (`\begin{minted}{python}`, `\mintinline`, `\inputminted`, `\newminted`). After a key the run read a language for, completion offers the languages the run defined (`\lstdefinelanguage`) and those the language files in `\lstlanguagefiles` declare, each dialect as `[LaTeX]TeX`. In an argument it offers Pygments' lexers: `pygmentize -L lexers`, read once (the program is `pygmentize`, empty for none), else a seed list. The document's own languages come first. Each item's detail says where the language is defined, and so does hover. The rule `unknown-code-language` flags a listings value nothing defines: a warning where the run knew the language files, a note where it did not.
 
 ## listing
 
-The body of an environment the run read verbatim, a listing. Outside its escapes only what the listing reads completes: the replacement sequences of its `literate=` key, each with what it becomes, offered on the sequence's first characters. Inside an escape TeX runs, so completion, hover and the rules work as anywhere in the document. The sequences and the escape delimiters (`escapeinside`, `escapechar`, `mathescape`) are the run's options in effect at the listing: those the listing's own options set, else those in effect when the run ended (`\lstset`).
+The content of a listing environment, which the run read as plain text. Outside its escapes only what the listing reads completes: the replacement sequences of its `literate=` key, each with what it becomes, offered on the sequence's first characters. Inside an escape TeX runs, so completion, hover and the rules work as anywhere in the document. The sequences and the escape delimiters (`escapeinside`, `escapechar`, `mathescape`) are the run's options in effect at the listing: those the listing's own options set, else those in effect when the run ended (`\lstset`).
 
 ## environment
 

@@ -780,9 +780,6 @@ fn expand(directive: &str) -> Result<String, String> {
     if directive == "rules" {
         return rules_table();
     }
-    if directive == "fixes" {
-        return fixes_list();
-    }
     if directive == "early" {
         return early_table();
     }
@@ -1333,29 +1330,12 @@ fn fix_kinds(rule: &serde_json::Value) -> Option<String> {
         .map(|k| {
             let (short, about) = match k {
                 "safe" => ("S", "safe: the fix keeps the document's meaning, --fix applies it"),
-                _ => ("U", "unsafe: the fix changes the meaning, only --unsafe-fixes applies it"),
+                _ => ("U", "unsafe: the fix may change the meaning, only --unsafe-fixes applies it"),
             };
             format!("<span class=\"fix fix-{k}\" title=\"{about}\">{short}</span>")
         })
         .collect();
     (!kinds.is_empty()).then(|| kinds.join(" "))
-}
-
-/// The rules whose findings carry a quick fix, with its kinds.
-fn fixes_list() -> Result<String, String> {
-    let mut items = String::new();
-    let mut count = 0;
-    for rule in lint_json(&["--rules", "--format", "json"])? {
-        if let Some(kinds) = fix_kinds(&rule) {
-            let (code, number) = (rule["code"].as_str().unwrap_or(""), rule["number"].as_str().unwrap_or(""));
-            let _ =
-                writeln!(items, "* {number} [`{code}`](#{code}) {kinds} {}", rule["message"].as_str().unwrap_or(""));
-            count += 1;
-        }
-    }
-    Ok(format!(
-        "<div class=\"fold\">\n<h3 class=\"fold-head\">{count} rules with quick fixes</h3>\n\n{items}\n</div>\n"
-    ))
 }
 
 /// The JSON `satex lint ARGS` prints.

@@ -293,7 +293,7 @@ $ satex explain '\itshape'
 
 The document class, engine, and build configuration SaTeX detected or was told to assume.
 
-The rows below list what the project walk found, without what `.gitignore` excludes.
+The rows below list what the project scan found, without what `.gitignore` excludes.
 `unreachable` lists the inputs, packages, classes and bibliographies no root reads.
 Without `-f`, each root document is analyzed on its own.
 
@@ -361,9 +361,9 @@ index  step    name         detail                        file
 
 ### Dev mode: the state at each step
 
-`--state` (or `trace_state: true`) gives each step the abstract state it ran in, to track down where a result lost precision. It costs nothing while off. With `--format json` each record has a `state` object. With `--format csv` it is one JSON cell in the `state` column. A text table leaves it out.
+`--state` (or `trace_state: true`) gives each step the analysis state it ran in, to track down where a result lost precision. It costs nothing while off. With `--format json` each record has a `state` object. With `--format csv` it is one JSON cell in the `state` column. A text table leaves it out.
 
-| Key | What it holds |
+| Key | What it contains |
 | --- | --- |
 | `paths` | `live` paths, `forks` made so far, the `peak`, and `apart`: why the waiting paths do not join (progress, stacks, tags), as `SATEX_WHY_APART` prints it |
 | `choices` | the undecided choices this path took: the command, its place, `arm` of `arms`, and `joined` when the choice splits a joined meaning set |
@@ -374,7 +374,7 @@ index  step    name         detail                        file
 | `paired` | the names a join kept paired across its arms, and how many arms |
 | `catcodes` | the catcode of each non-alphanumeric character in the file text ahead |
 
-A `value` names its type in the [`Ty` lattice](Domains#argument-types-the-ty-lattice) (`number`, `dimen`, `glue`, `muglue`, `quantity`, `text`, `any`) and what the domain knows: `exact`, an `interval` `[lo, hi]`, a `set`, or `unknown`. Typed unknown text appears as its own names (`unknown digits:0..1439`). `limits.trace_state` caps each list. In the playground, *dev mode* in the settings turns this on: the trace shows the domains of the selected step, the editor menu offers *Inspect state here*, and the trace exports as JSON or CSV.
+A `value` names its type in the [`Ty` lattice](Domains#argument-types-the-ty-lattice) (`number`, `dimen`, `glue`, `muglue`, `quantity`, `text`, `any`) and what satex knows about its value: `exact`, an `interval` `[lo, hi]`, a `set`, or `unknown`. Typed unknown text appears as its own names (`unknown digits:0..1439`). `limits.trace_state` caps each list. In the playground, *dev mode* in the settings turns this on: the trace shows the domains of the selected step, the editor menu offers *Inspect state here*, and the trace exports as JSON or CSV.
 
 ## tagging
 
@@ -397,7 +397,7 @@ widget       float            environment the run met
 
 ## typeset
 
-The text satex computes the document typesets, one row per paragraph, then the named assumptions it rests on. `{a|b}` is a choice between the arms of an undecided conditional. `⟦x⟧` is text set in a box: it reaches the page only if the box is used. `⟨?⟩` is a character the run could not know. `│` is a table's `|`, `―` an `\hline` or other `\hrule`, `▬` a `\rule` bar. Rules of no width (struts) are left out. The [challenges](Challenges) compare it with what pdflatex sets.
+The text satex computes for the typeset document, one row per paragraph, then the named assumptions it rests on. `{a|b}` is a choice between the arms of an undecided conditional. `⟦x⟧` is text set in a box: it reaches the page only if the box is used. `⟨?⟩` is a character the run could not know. `│` is a table's `|`, `―` an `\hline` or other `\hrule`, `▬` a `\rule` bar. Rules of no width (struts) are left out. The [challenges](Challenges) compare it with what pdflatex sets.
 
 ```text
 $ satex query typeset -f doc/src/wiki/challenges/04-typesetting.tex
@@ -413,7 +413,7 @@ If the preamble meaning differs from the one at the end of the run, both are sho
 
 ## Contexts
 
-A name can mean different things in different places: `\item` outside a list is the kernel's error, inside `enumerate` it starts an item. Each definition records the environments open where it was made, and `explain` shows one record per distinct meaning. `context` says where it holds (`"outside environments"`, `"in enumerate, itemize"`, …).
+A name can mean different things in different places: `\item` outside a list is the kernel's error, inside `enumerate` it starts an item. Each definition records the environments open where it was made, and `explain` shows one record per distinct meaning. `context` says where it applies (`"outside environments"`, `"in enumerate, itemize"`, …).
 
 A name without its own redefinitions can still behave differently by context. `error` is the error a real use raised there, or, without a real use, what running the command in that context raises.
 

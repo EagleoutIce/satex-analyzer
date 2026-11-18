@@ -91,7 +91,7 @@ lint_off: [analysis-imprecision, assertion-proved]  # rules that never report, b
   #! affects: output
   #! example: `lint_off+: [unused-label]`
   #! example: unused labels are no longer reported
-project:
+project:  # which files are the project's own, and which are someone else's
   frozen: []  # globs of files that are read and analyzed but get no findings and no fixes, relative to this file
     #! affects: output
     #! example: `frozen: ['vendor/**']`
@@ -213,6 +213,9 @@ conventions:  # how TeX is usually written, where the text alone does not say
     inline: auto  # the inline math delimiters typing into the PDF or Typeset view writes: $, \(, or auto (the document's most used)
       #! affects: output
       #! example: `inline: \(` types `\(x\)`, `inline: $` types `$x$`
+    smart_scripts: true  # typing `_` or `^` into math in the PDF or Typeset view opens a group a space or operator closes
+      #! affects: output
+      #! example: `x_42` types `x_{42}`
   csname:  # commands that do a \csname's job, the first one defined is advised
     use: [csuse, '@nameuse']  # using a control sequence by name
       #! affects: output
@@ -286,7 +289,7 @@ conventions:  # how TeX is usually written, where the text alone does not say
       internal: 3  # internal names
         #! affects: output
         #! example: `internal: 9`
-lints:
+lints:  # what a single rule reads, under its code
   unused-definition:
     report_public: true  # also report an unused command with a public name. Off for packages, whose commands are their interface
       #! affects: output
@@ -367,6 +370,22 @@ lints:
     rows: 3  # rows with text, header included, before booktabs rules are suggested
       #! affects: output
       #! example: a two-row table with `\hline` gets no finding
+  low-contrast-color:  # WCAG 2 contrast minimum of text against its background
+    ratio: 4.5  # the contrast ratio text needs
+      #! affects: output
+      #! example: `7` asks for WCAG's enhanced contrast
+    large-ratio: 3.0  # the ratio large text needs
+      #! affects: output
+    large: 18.0  # font size in points from which text is large
+      #! affects: output
+    large-bold: 14.0  # font size in points from which bold text is large
+      #! affects: output
+  indistinct-colors:  # colors used side by side that look alike with a color vision deficiency
+    below: 15.0  # CIELAB distance under which two simulated colors look alike
+      #! affects: output
+      #! example: `20` also reports pairs that are only hard to tell apart
+    apart: 30.0  # CIELAB distance from which two colors are meant to differ for normal vision
+      #! affects: output
   clones:  # blocks of the source that repeat with only their values changed
     enabled: true  # look for clones at all
       #! affects: output
@@ -428,7 +447,7 @@ lints:
 # choice.  Each block is a partial config, merged over everything above.
 # A profile can reuse another with a YAML anchor and `<<:` merge key
 # instead of repeating its keys (`profiles.class: {<<: *library, ...}`).
-profiles:
+profiles:  # the settings each kind of input (document, package, class, literate, plain) changes
   document: {}  # a LaTeX document: every default above already fits it
   package: &library  # a .sty, read as its own author sees it
     at_letter: true
@@ -479,7 +498,7 @@ profiles:
 #! example: `texlive.year: 2025`
 #! plugin: provider
 
-texmf:
+texmf:  # where a run looks for the installation besides texlive
   roots: []  # TeX trees to search instead of the ones kpsewhich names
     #! affects: precision
     #! example: `roots: [/opt/texlive/2026/texmf-dist]`
@@ -490,7 +509,7 @@ texmf:
     #! affects: precision
     #! example: off: with no kpsewhich and no roots, no package is found
 
-cache:
+cache:  # the interpreted kernel and packages kept between runs
   enabled: true  # keep the interpreted kernel and packages between runs. Off, every run starts from scratch
     #! affects: speed
     #! example: off: each run reads `latex.ltx` again, seconds instead of milliseconds
@@ -560,7 +579,7 @@ expand_in_reports: []  # macros to show expanded in reports
 # instead, an empty value suggests nothing.  Entries add to what it knows.
 latex_alternatives: {}
 
-gaps:
+gaps:  # what SaTeX could not follow, and how it reports that
   log: true  # write what a run could not follow to a file, for bug reports
     #! affects: output
     #! example: off: nothing is appended to `gaps.ndjson`
@@ -570,7 +589,7 @@ gaps:
   # file: ~/.cache/satex/gaps.ndjson  # where gaps.log writes. Unset: the cache folder
     #! affects: output
 
-analysis:
+analysis:  # where paths join, and what the run assumes
   join_paths_at:  # where all paths still apart are merged into one, reported as paths-joined-at
     #! affects: precision, speed
     #! example: `- hook: begindocument`
@@ -893,6 +912,58 @@ playground:  # what only the web playground reads
   lenses: false  # a button line above each table, figure and drawing besides the mark in the gutter
     #! affects: output
     #! example: `lenses: true`: "Edit image…" stands above each \includegraphics
+  widget_marks: true  # a mark in the gutter on each line a widget edits: a table, a figure, a color
+    #! affects: output
+    #! example: `widget_marks: false`: the gutter shows line numbers and findings only
+  theme: site  # the editor's colors
+    #! option: site: as the site, light or dark
+    #! option: light: always light
+    #! option: dark: always dark
+    #! affects: output
+  font: ""  # the editor's font family, as CSS names it. Empty takes the site's monospace font
+    #! affects: output
+    #! example: `font: "JetBrains Mono, monospace"`
+  font_size: 14  # the editor's font size in px
+    #! affects: output
+    #! example: `font_size: 16`
+  wrap: false  # long lines go on below instead of scrolling sideways
+    #! affects: output
+  line_numbers: true  # line numbers in the editor's gutter
+    #! affects: output
+  check_delay: 400  # how long the analysis waits after the last key, in ms. A command still being typed waits at least 1.5 s
+    #! affects: speed
+    #! example: `check_delay: 1000`: fewer runs on a slow machine
+  compile_after: 0  # how long the edits rest before a PDF build, in ms. 0 builds only on request. The Compile menu sets it too
+    #! affects: output
+    #! example: `compile_after: 1000`: the PDF follows a second after the edits rest
+  type_mode: true  # Type mode on in the Typeset view from the start: a click on a word puts the caret at its place in the source
+    #! affects: output
+  tint_macro: ""  # Type mode's tint of text a macro wrote, a CSS color. Empty takes the theme's violet
+    #! affects: output
+    #! example: `tint_macro: "#e11d48"`
+  tint_argument: ""  # Type mode's tint of text from an argument, a CSS color. Empty takes the theme's cyan
+    #! affects: output
+  tint_moved: ""  # Type mode's tint of text written elsewhere, a CSS color. Empty takes the theme's amber
+    #! affects: output
+  complete_while_typing: true  # the completion list opens while typing. Off, only Ctrl+Space opens it
+    #! affects: output
+  typeset_layers: []  # the Typeset view's layers on at the start. A layer switched in the view stays as switched
+    #! option: envs: environments
+    #! option: keys: key-value options
+    #! option: boxes: boxes
+    #! option: glue: glue
+    #! option: ligs: ligatures
+    #! option: findings: findings
+    #! option: maybe: what only some paths typeset
+    #! affects: output
+    #! example: `typeset_layers: [findings, maybe]`
+  pdf_zoom: actual  # the PDF's zoom when no zoom was chosen before
+    #! option: width: the page as wide as the pane
+    #! option: page: the whole page in view
+    #! option: actual: 100 %
+    #! affects: output
+  tips: true  # tips in the loading banners and the console bar
+    #! affects: output
 
 slice:  # what satex slice leaves out
   trim: true  # leave out the packages, libraries, labels and headings the criterion uses nothing of. Off also keeps what \begin{document} reads
@@ -986,7 +1057,7 @@ arm_joins: true  # inside an \edef or \csname, merge both branches of an undecid
 # Limits: the termination argument. Reaching one stops that part of the run
 # and records a diagnostic. Only choices, site_forks, digit_lengths, paths, meaning_splits, widen_after, recursion_depth,
 # call_summary_after, meaning_set and value_set trade precision for time, the rest only stop a run.
-limits:
+limits:  # what bounds the analysis: reaching one stops that part of the run, so no input makes it loop
   memory: 8GiB  # most memory one run may use. It stops cleanly beyond it. 0 lifts the limit
     #! affects: memory
     #! example: `memory: 2GiB` stops a runaway run before it slows the machine
@@ -1029,6 +1100,9 @@ limits:
   line_overruns: 16  # overruns of one line's budget before the run stops
     #! affects: precision, speed
     #! example: a line that stays stuck after this many cuts ends the run
+  walk_per_step: 1  # map entries a join, compare or resume of waiting paths walks per step charged to the line, so line_steps also bounds that work
+    #! affects: speed
+    #! example: 100 paths waiting at one line are joined at a cost the line's budget sees
   scan_site_factor: 16  # site_forks inside a value scan, as a factor: its arms join where the scan ends
     #! affects: precision, speed
     #! example: expl3's walker over an unknown file name widens instead of forking per token without end
@@ -1098,7 +1172,7 @@ limits:
   call_memo_longest: 200000  # a run longer than this keeps no effect and stops being recorded, so its log costs nothing
     #! affects: speed
     #! example: a whole `tikzpicture` is not recorded, the point computations in it are
-  call_memo_probes: 8  # runs of a definition that may stay short or unclean before its calls are no longer recorded for call_memo_steps
+  call_memo_probes: 8  # runs of a definition that may stay short or unclean before its calls are no longer recorded for call_memo_steps; probed again after probes << n such calls (n: times it ran out)
     #! affects: speed
     #! example: 0 records every call, which costs on every call
   call_memo_variants: 4  # kept effects per code and arguments, one per state they met
@@ -1179,7 +1253,7 @@ A plugin picks a default from the machine, the installation and the build files.
 | build system | `latexmk`, `make`, `tectonic`, or `arara` | the build file beside the document |
 | tools | `biber`, `bibtex`, `makeindex`, `xindy`, `makeglossaries`, … | the commands the document uses (`plugins.tools`) |
 | magic | `% !TeX`, `% !BIB`, `% arara:` | the leading comment block, only narrows a default |
-| discovery | root candidates, own classes and packages, build files, bibliographies | a git-style walk (`.gitignore` respected) |
+| discovery | root candidates, own classes and packages, build files, bibliographies | a scan like git's (`.gitignore` respected) |
 
 - **Engines.** TeX, e-TeX and pdfTeX are modelled in full. LuaTeX and XeTeX are **experimental**: every primitive is known, but their effects are not modelled. ConTeXt is **experimental** too: its kernel is not interpreted, so `undefined-control-sequence` is off.
 - **Lua.** `\directlua`/`\latelua` are read as strings, not run. Literal `require`/`dofile` are dependencies, and unconditional `tex.print` of literals is read back in. Anything else is a `lua-output` gap. Catcode tables and `\luaescapestring` are interpreted, so `ltluatex`, `luacode` and expl3's Lua bridge run from source.
@@ -1202,7 +1276,7 @@ A package is cached per **read set**: the meanings, registers, hooks, options an
 - **Steps** stay what reading would take: `--stats-json` gives `served_steps`, the part replayed, beside `steps`.
 - **Size**: a text a segment grew or edited is stored as the change to the text it began with. A replay checks that text by digest first. A site defined again in one segment keeps one fact.
 - **`satex cache build`** prepares the kernel and `cache.index.packages` (or named packages) for `cache.index.engines`, in parallel on `limits.threads`. It reports progress per package and only rebuilds stale ones (`--refresh` forces).
-- **Background builder** (`cache.background: ask|yes|no`, default `ask`). The first run on a terminal asks once whether satex may prepare the kernels and the installed packages in the background. The editor asks the same once. The answer goes into the global config. On yes, a detached process at the lowest priority runs `satex cache build --background`: the kernel of each engine cached here, then `cache.index.common`, then the packages runs here loaded, then the `cache.index.most_loaded` (200) packages installed packages load most. There is one builder per cache directory. It holds no build lock, so a run never waits on it. It ends `full` when the cache directory reaches `limits.cache_size`, and it never evicts another cache to make room. Once it is done, full or failed, it does not start again until a new satex build. Without `nice` in `/usr/bin` or `/bin` it runs at normal priority, and `satex cache` says so. Only a terminal run whose input and output are both terminals asks, and never `install`, `query`, `gui` or an interactive trace. `satex cache` shows its state, `satex cache stop` stops it until `satex cache build --background` resumes it. `SATEX_NO_SETUP` or `CI` set never asks nor starts it.
+- **Background builder** (`cache.background: ask|yes|no`, default `ask`). The first run on a terminal asks once whether satex may prepare the kernels and the installed packages in the background. The editor asks the same once. The answer goes into the global config. On yes, a detached process at the lowest priority runs `satex cache build --background`: the kernel of each engine cached here, then `cache.index.common`, then the packages runs here loaded, then the `cache.index.most_loaded` (200) packages installed packages load most. There is one builder per cache directory. It takes no build lock, so a run never waits on it. It ends `full` when the cache directory reaches `limits.cache_size`, and it never evicts another cache to make room. Once it is done, full or failed, it does not start again until a new satex build. Without `nice` in `/usr/bin` or `/bin` it runs at normal priority, and `satex cache` says so. Only a terminal run whose input and output are both terminals asks, and never `install`, `query`, `gui` or an interactive trace. `satex cache` shows its state, `satex cache stop` stops it until `satex cache build --background` resumes it. `SATEX_NO_SETUP` or `CI` set never asks nor starts it.
 - **Pruning** keeps this build's kernel and four recent ones, then trims by `limits.cache_size` (2 GiB) least-recently used. `satex cache prune` does only that.
 
 A **document cache** keeps a run's whole analysis, one file per document (`cache.document`, on by default). A run of the edited text, or under other settings, replaces it. `satex cache show document` lists the documents with size and age.
@@ -1374,7 +1448,7 @@ analysis:
 
 ## Stubs
 
-Stubs are a temporary exception. The goal is none. A stub summarizes a macro SaTeX cannot yet run. Each use is an `assumption`.
+Stubs are a temporary exception. The goal is none. A stub stands in for a macro SaTeX cannot yet run. Each use is an `assumption`.
 
 ```yaml
 stubs:
@@ -1391,6 +1465,6 @@ stubs:
 | `limits.memory` | `8GiB` | stops the run with `budget-exhausted` (`--max-memory`), library users get no limit |
 | `limits.seconds` | `300` | stops the run, lints after it share the same budget |
 | `limits.degrade_at_percent` | `100` (off) | past that share of `limits.steps`, halves the time-only limits, reported as `precision-degraded` |
-| `limits.threads` | `0` (`min(4, cores)`) | file walks only, the interpreter is one thread |
+| `limits.threads` | `0` (`min(4, cores)`) | file scans only, the interpreter is one thread |
 
 Steps are counted alike on every machine, so results never depend on speed. Seconds and memory only stop a run. The installation's answers (`kpsewhich --expand-var`, engine version) are cached against the program's path and timestamp.

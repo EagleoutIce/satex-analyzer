@@ -2,7 +2,7 @@
 
 <p align="center"><a href="https://eagleoutice.github.io/satex-analyzer/"><img src="https://raw.githubusercontent.com/EagleoutIce/satex-analyzer/main/doc/wiki/img/satex-wide.svg" alt="SaTeX: Static Analysis for (La)TeX and Friends" width="600"></a></p>
 
-An abstract interpreter for (La)TeX and related engines. It expands macros, executes primitives and tracks catcode changes and recursion. It is context and path-sensitive and does not typeset the document.
+An abstract interpreter for (La)TeX and related engines. It expands macros, executes primitives and tracks catcode changes and recursion. It keeps track of context and of each path through conditionals. It does not typeset the document.
 It lints documents (with quick-fixes, and finds unused or missing macros), slices them, analyzes their performance, jumps to definitions and lists package options with what they govern.
 
 <p align="center"><img src="doc/demo.gif" alt="SaTeX demo: version, summary, lint, explain, slice, query, kernel timings and the Vim language server" width="900"></p>
@@ -213,16 +213,16 @@ SaTeX merges its built-in defaults, your global `~/.config/satex/satex.yaml`, ev
 
 ## How it works
 
-SaTeX has no abstract syntax tree in the classical sense and it not syntax-guided. When analyzing TeX a token's meaning depends on category codes and on what earlier macros performed, so the token stream only exists while the document runs. 
-SaTeX follows an expansion-guided approach instead using TeX's  machine (mouth, gullet, stomach, save stack).
+SaTeX has no abstract syntax tree in the classical sense and is not syntax-guided. When analyzing TeX a token's meaning depends on category codes and on what earlier macros did, so the token stream only exists while the document runs. 
+SaTeX follows an expansion-guided approach instead using TeX's machine (mouth, gullet, stomach, save stack).
 
 Concretely:
 
 - **State.** Meanings of control sequences, category codes, register values
-  and the save stack, are tracked during the analysis. A value SaTeX cannot decide during resolution is `unknown`, (which propagates).
+  and the save stack, are tracked during the analysis. A value SaTeX cannot decide while running is `unknown`, and that spreads to everything computed from it.
 - **Transfer.** Every primitive has the effect associated with the [concrete TeX/eTeX semantics][concrete semantics]. 
 - **Branching.** We analyze every branch of a conditional if the test is not deterministic. This also applies transitively to macro-expansions.
-- **Termination.** We widen (potentially unbounded) recursive expansion based on the budgets in [`limits`][config]. 
+- **Termination.** Recursive expansion that could go on forever is cut short by approximating it, within the budgets in [`limits`][config]. 
 
 ## Gaps
 

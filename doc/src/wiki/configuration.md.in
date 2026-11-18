@@ -30,7 +30,7 @@ A plugin picks a default from the machine, the installation and the build files.
 | build system | {{build-systems}} | the build file beside the document |
 | tools | `biber`, `bibtex`, `makeindex`, `xindy`, `makeglossaries`, … | the commands the document uses (`plugins.tools`) |
 | magic | `% !TeX`, `% !BIB`, `% arara:` | the leading comment block, only narrows a default |
-| discovery | root candidates, own classes and packages, build files, bibliographies | a git-style walk (`.gitignore` respected) |
+| discovery | root candidates, own classes and packages, build files, bibliographies | a scan like git's (`.gitignore` respected) |
 
 - **Engines.** TeX, e-TeX and pdfTeX are modelled in full. LuaTeX and XeTeX are **experimental**: every primitive is known, but their effects are not modelled. ConTeXt is **experimental** too: its kernel is not interpreted, so `undefined-control-sequence` is off.
 - **Lua.** `\directlua`/`\latelua` are read as strings, not run. Literal `require`/`dofile` are dependencies, and unconditional `tex.print` of literals is read back in. Anything else is a `lua-output` gap. Catcode tables and `\luaescapestring` are interpreted, so `ltluatex`, `luacode` and expl3's Lua bridge run from source.
@@ -53,7 +53,7 @@ A package is cached per **read set**: the meanings, registers, hooks, options an
 - **Steps** stay what reading would take: `--stats-json` gives `served_steps`, the part replayed, beside `steps`.
 - **Size**: a text a segment grew or edited is stored as the change to the text it began with. A replay checks that text by digest first. A site defined again in one segment keeps one fact.
 - **`satex cache build`** prepares the kernel and `cache.index.packages` (or named packages) for `cache.index.engines`, in parallel on `limits.threads`. It reports progress per package and only rebuilds stale ones (`--refresh` forces).
-- **Background builder** (`cache.background: ask|yes|no`, default `ask`). The first run on a terminal asks once whether satex may prepare the kernels and the installed packages in the background. The editor asks the same once. The answer goes into the global config. On yes, a detached process at the lowest priority runs `satex cache build --background`: the kernel of each engine cached here, then `cache.index.common`, then the packages runs here loaded, then the `cache.index.most_loaded` (200) packages installed packages load most. There is one builder per cache directory. It holds no build lock, so a run never waits on it. It ends `full` when the cache directory reaches `limits.cache_size`, and it never evicts another cache to make room. Once it is done, full or failed, it does not start again until a new satex build. Without `nice` in `/usr/bin` or `/bin` it runs at normal priority, and `satex cache` says so. Only a terminal run whose input and output are both terminals asks, and never `install`, `query`, `gui` or an interactive trace. `satex cache` shows its state, `satex cache stop` stops it until `satex cache build --background` resumes it. `SATEX_NO_SETUP` or `CI` set never asks nor starts it.
+- **Background builder** (`cache.background: ask|yes|no`, default `ask`). The first run on a terminal asks once whether satex may prepare the kernels and the installed packages in the background. The editor asks the same once. The answer goes into the global config. On yes, a detached process at the lowest priority runs `satex cache build --background`: the kernel of each engine cached here, then `cache.index.common`, then the packages runs here loaded, then the `cache.index.most_loaded` (200) packages installed packages load most. There is one builder per cache directory. It takes no build lock, so a run never waits on it. It ends `full` when the cache directory reaches `limits.cache_size`, and it never evicts another cache to make room. Once it is done, full or failed, it does not start again until a new satex build. Without `nice` in `/usr/bin` or `/bin` it runs at normal priority, and `satex cache` says so. Only a terminal run whose input and output are both terminals asks, and never `install`, `query`, `gui` or an interactive trace. `satex cache` shows its state, `satex cache stop` stops it until `satex cache build --background` resumes it. `SATEX_NO_SETUP` or `CI` set never asks nor starts it.
 - **Pruning** keeps this build's kernel and four recent ones, then trims by `limits.cache_size` (2 GiB) least-recently used. `satex cache prune` does only that.
 
 A **document cache** keeps a run's whole analysis, one file per document (`cache.document`, on by default). A run of the edited text, or under other settings, replaces it. `satex cache show document` lists the documents with size and age.
@@ -147,7 +147,7 @@ analysis:
 
 ## Stubs
 
-Stubs are a temporary exception. The goal is none. A stub summarizes a macro SaTeX cannot yet run. Each use is an `assumption`.
+Stubs are a temporary exception. The goal is none. A stub stands in for a macro SaTeX cannot yet run. Each use is an `assumption`.
 
 ```yaml
 stubs:
@@ -164,6 +164,6 @@ stubs:
 | `limits.memory` | `8GiB` | stops the run with `budget-exhausted` (`--max-memory`), library users get no limit |
 | `limits.seconds` | `300` | stops the run, lints after it share the same budget |
 | `limits.degrade_at_percent` | `100` (off) | past that share of `limits.steps`, halves the time-only limits, reported as `precision-degraded` |
-| `limits.threads` | `0` (`min(4, cores)`) | file walks only, the interpreter is one thread |
+| `limits.threads` | `0` (`min(4, cores)`) | file scans only, the interpreter is one thread |
 
 Steps are counted alike on every machine, so results never depend on speed. Seconds and memory only stop a run. The installation's answers (`kpsewhich --expand-var`, engine version) are cached against the program's path and timestamp.

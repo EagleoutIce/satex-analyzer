@@ -51,7 +51,7 @@ satex lsp --port 9257 --host 0.0.0.0
 | a key list (`\pgfkeys{`, `\tikzset{`, `\keys_set:nn`) | stored keys of the path or family, `key=` then its choices or `true`/`false` |
 | package options | what the package's `\DeclareOption*` hands on, packages needing another engine come last |
 
-Completion and hover ask one query, the **type at the cursor** (`src/lsp/type_at.rs`). It reads the run's facts: what TeX read the text as, the kind of name a `\csname` formed from it (`r@` a label, `pgf@sh@ns@` a node, `\color@` a color). For text the run has not read yet, it takes the role of the argument the cursor is in. The names offered are those of the most precise type found: labels, citation keys, colors, nodes and anchors, files and libraries, keys, units after a number. Nothing is offered in a comment, in verbatim text, or where the text defines a name (`\label{`). A command the run never called is probed once with a marker in each argument, so `\usetikzlibrary{` completes libraries before any library is loaded.
+Completion and hover ask one query, the **type at the cursor** (`src/lsp/type_at.rs`). It uses what the run found out: how TeX read the text, and what kind of name a `\csname` built from it (`r@` a label, `pgf@sh@ns@` a node, `\color@` a color). For text the run has not read yet, it takes the role of the argument the cursor is in. The names offered are those of the most precise type found: labels, citation keys, colors, nodes and anchors, files and libraries, keys, units after a number. Nothing is offered in a comment, in verbatim text, or where the text defines a name (`\label{`). A command the run never called is probed once with a marker in each argument, so `\usetikzlibrary{` completes libraries before any library is loaded.
 
 An argument's purpose, its **role**, decides the offer. Roles come from, in order: what the run saw calls do, the command's own body (through any number of wrappers, with literal prefixes), and a seed table for kernel and common package commands the project does not redefine. So `\newcommand\secref[1]{\ref{sec:#1}}` completes `intro` for the label `sec:intro` before it is ever used.
 
@@ -59,7 +59,7 @@ Each argument also has a **type** ([`Ty`](domains.md#argument-types-the-ty-latti
 
 ### Where a card's text comes from
 
-A card says what documents the name, and nothing else. One chain in `src/queries/said.rs` serves the editor's hover and the site's cards. The first source that speaks wins:
+A card shows only what the documentation says about the name. One list of sources in `src/queries/said.rs` serves the editor's hover and the site's cards. The first source that has an answer wins:
 
 1. The description table (`src/data/describe.tsv`) for primitives and the kernel's user commands.
 2. The manual of each package that defines the name, the first definer first: a `\DescribeMacro` paragraph, a `\begin{macro}` section, an l3doc `function` block, a pgf `command` block. Only prose counts: a `\changes` note, a usage line or a fragment never stands in for a description.
@@ -68,7 +68,7 @@ A card says what documents the name, and nothing else. One chain in `src/queries
 5. The kernel's manual for a name the format defines.
 6. The comment block right above the definition, or the comment that ends its line. `% #1: the text to box` names the argument.
 
-When none of them speaks, the card says `No documentation found`, the sources it tried and `Defined at file:line`. The usage line names each argument by the documentation's syntax line, else by the type the run gives it, else by its place (`⟨arg2⟩`). A default is a hint (`[⟨number⟩ = 0]`), never the label. The `from` chip names the package that owns the name: the format, else the first package that defines it. A package that redefines it shows as `redefined by`. A name another package only `\let`s (tikz-timing's `\draw`) belongs to the loaded package whose manual documents it and whose source defines it (TikZ).
+When none of them has an answer, the card says `No documentation found`, the sources it tried and `Defined at file:line`. The usage line names each argument by the documentation's syntax line, else by the type the run gives it, else by its place (`⟨arg2⟩`). A default is a hint (`[⟨number⟩ = 0]`), never the label. The `from` chip names the package that owns the name: the format, else the first package that defines it. A package that redefines it shows as `redefined by`. A name another package only `\let`s (tikz-timing's `\draw`) belongs to the loaded package whose manual documents it and whose source defines it (TikZ).
 
 ```tex
 % Draws a frame around its argument.

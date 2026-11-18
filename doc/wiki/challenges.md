@@ -1,6 +1,6 @@
 # Why TeX is hard to analyze
 
-satex analyzes TeX, and LaTeX on top of it, by running it on abstract values.
+satex analyzes TeX, and LaTeX on top of it, by running it with unknown or partly known values.
 This page lists what makes that harder than for other languages. Under each problem: what SaTeX does about it, and the research behind that. The problems come first, [what TeX does](Semantics) is the next chapter.
 Every example is a complete document. Below each one, a table puts the text one pdflatex run ships (read from the boxes `\tracingoutput` logs, random seed 7) next to the text satex computes (`satex query typeset`), paragraph by paragraph. If a row is not equal, a short list says why: which conditional stayed undecided. Two collapsed blocks show the commands that ran, with the computed text and with a trace of what each call inserted, what each primitive set and how each conditional went.
 
@@ -32,7 +32,7 @@ A better frame is an abstract machine:
 | `\def`, `\let` at run time | reflection, as in 3-Lisp or fexprs |
 
 λ-calculus tools still apply to control flow: k-CFA style contexts and pushdown precision for calls and returns.
-The machine frame tells how to make the analysis terminate: abstract the continuation and the store to finitely many addresses.
+The machine view shows how to make the analysis stop: keep only finitely many places for the pending input and the stored values.
 
 ## Relations to other formalisms
 
@@ -41,7 +41,7 @@ The machine frame tells how to make the analysis terminate: abstract the continu
 - **Macro processors** such as [m4](https://en.wikipedia.org/wiki/M4_(computer_language)) and the [C preprocessor](https://en.wikipedia.org/wiki/C_preprocessor). They also rescan their output, but they do not typeset, and their syntax is fixed.
 - **Reflective Lisps.** [Fexprs](https://en.wikipedia.org/wiki/Fexpr) receive their arguments unevaluated, and [3-Lisp](https://doi.org/10.1145/800017.800513) lets a program inspect and change its own interpreter. `\meaning`, `\catcode` and `\def` at run time play these roles.
 - **[Abstract interpretation](https://doi.org/10.1145/512950.512973).** satex executes TeX on abstract values. Soundness comes from over-approximating every concrete run.
-- **[Partial evaluation](https://en.wikipedia.org/wiki/Partial_evaluation).** Known parts run, unknown parts stay residual, as in satex's typed unknowns.
+- **[Partial evaluation](https://en.wikipedia.org/wiki/Partial_evaluation).** Known parts run, unknown parts stay as they are, as with satex's typed unknowns.
 - **[Control-flow analysis](https://en.wikipedia.org/wiki/Control-flow_analysis) (k-CFA).** Contexts that keep calls apart. In TeX the call is the macro and its input position.
 
 ## The problems
@@ -52,7 +52,7 @@ The machine frame tells how to make the analysis terminate: abstract the continu
 There is no AST before execution.
 A graph of tokens fits better than a tree.
 Each token is a node. An edge leads to the tokens that can come next: the next character in the file, the body a macro expands to, the arm a conditional takes.
-A `\catcode` change rewires the edges for every token read after it, and a loop is a cycle.
+A `\catcode` change alters the edges for every token read after it, and a loop is a cycle.
 satex analyzes this graph rather than a parse tree, and terminates because it keeps finitely many abstract input positions per site, so every cycle is finite (see [the frame](#a-frame-an-abstract-machine-with-reflection)).
 
 ```tex
@@ -92,7 +92,7 @@ l.5 \foo ⇒ bar
 
 ### 2. Code is data
 
-Macros take token lists, build names with `\csname`, mutate (`\g@addto@macro`), redefine themselves, and read their own text (`\meaning`).
+Macros take token lists, build names with `\csname`, extend themselves (`\g@addto@macro`), redefine themselves, and read their own text (`\meaning`).
 
 ```tex
 \documentclass{article}
@@ -135,7 +135,7 @@ l.7 \meaning\hook ⇒ macro:->
 
 </details>
 
-**What SaTeX does.** Code is data in satex too: a definition is a store update, and the program continues from the new store. This follows [Dalla Preda, Giacobazzi and Debray](https://www2.cs.arizona.edu/~debray/Publications/metamorphism.html), who track the versions of self-modifying code as abstract values (phase semantics).
+**What SaTeX does.** Code is data in satex too: a definition changes the stored macros, and the run goes on with the changed store. This follows [Dalla Preda, Giacobazzi and Debray](https://www2.cs.arizona.edu/~debray/Publications/metamorphism.html), who track the versions of self-modifying code as abstract values (phase semantics).
 
 
 ```tex
@@ -359,8 +359,8 @@ The line breaker is [tex.web](https://github.com/TeX-Live/texlive-source/blob/dc
 Anything else keeps an interval of lines.
 A forced break mid-paragraph keeps one active node per fitness class ([§ 836](https://github.com/TeX-Live/texlive-source/blob/dce038dd1bd98fac739254da4a2066c8347cdf6c/texk/web2c/tex.web#L16474)), so with `\adjdemerits` the lines after it may choose the lines before it.
 satex breaks such a segment only when one class ends it, as after `\\`, and keeps the interval otherwise.
-The page builder fires `\output` at forced breaks (`analysis.assume_forced_page_breaks`, an assumption, on by default, reported as `forced-page-breaks` where a page may fill).
-With the assumption off, a page that may have filled parts the run: one path fires `\output`, the other reads on.
+The page builder runs `\output` at forced breaks (`analysis.assume_forced_page_breaks`, an assumption, on by default, reported as `forced-page-breaks` where a page may fill).
+With the assumption off, a page that may have filled parts the run: one path runs `\output`, the other reads on.
 TeX's choice of the best break ([§§ 1005](https://github.com/TeX-Live/texlive-source/blob/dce038dd1bd98fac739254da4a2066c8347cdf6c/texk/web2c/tex.web#L19552)–[1010](https://github.com/TeX-Live/texlive-source/blob/dce038dd1bd98fac739254da4a2066c8347cdf6c/texk/web2c/tex.web#L19654)) is not modelled yet, so floats that TeX places on the next pages wait for `\clearpage` under the assumption.
 The float loops of LaTeX's output routine then run at the end, where unknown box sizes make them converge only by widening.
 
@@ -450,7 +450,7 @@ l.5 \draw ⇒ \path [draw] (defines \tikz@signal@path \pgfutil@reserved@d \pgfut
 ### 6. Unknown inputs everywhere
 
 The `.aux` file is missing on a first run, and the clock, `\pdfelapsedtime` and random numbers change every run.
-Without knowing what a macro holds, no token stream after it can be read.
+Without knowing what a macro contains, SaTeX cannot read the tokens after it.
 One unknown spreads: forks multiply, and arms with different code cannot be merged.
 
 ```tex
@@ -556,11 +556,11 @@ l.3 \ifdefined\unknownmacro ⇒ false
 </details>
 
 **Unknown must stay cheap.** Soundness alone is not enough: an unknown value must not cost more than a known one.
-Library code walks text a token at a time. pgfmath reads a number digit by digit, expl3 wraps a message by counting its characters, and LaTeX's output routine reads every mark.
-Fed one unknown value, each such walk forks per step, and its loops meet limits instead of ending.
+Library code reads text one token at a time. pgfmath reads a number digit by digit, expl3 breaks a message into lines by counting its characters, and LaTeX's output routine reads every mark.
+Fed one unknown value, each such loop forks at every step and hits a limit instead of ending.
 satex keeps unknowns small instead: digits typed with an interval, a value that is one of a few texts, a mark that is one of the texts given to its class.
 A small interval is split into its values where a name is spelled from it, so each path builds the name TeX builds.
-Where a walk still forks per step, that is a bug to fix, not a price to pay.
+Where such a loop still forks at every step, that is a bug to fix, not a cost to accept.
 
 **A reference in math inside positioned nodes.**
 
@@ -787,7 +787,7 @@ l.6 \close ⇒ \endgroup
 
 ### 9. Progressive recursion
 
-Macros call each other in a cycle and define the macros that continue it. Names are built from a counter, so the cycle never meets the same macro twice.
+Macros call each other in a cycle and define the macros that continue it. Names are built from a counter, so the cycle never reaches the same macro twice.
 
 ```tex
 \documentclass{article}
@@ -902,7 +902,7 @@ One run is not the program. A build runs pdflatex, bibtex or biber, makeindex, a
 Each run reads what the last one wrote: labels and page numbers from the `.aux`, the table of contents, the bibliography, longtable's column widths, tikz's `remember picture` positions.
 A run writes from what it read. A `\ref` that turns `??` into `12` changes a line's width, which moves a page break, which changes a `\pageref`.
 The cycle need not converge. A `\pageref` whose own text pushes its target onto the next page oscillates between two values, and varioref reports such a loop.
-Inside one run the output routine is a cycle of its own: it fires when a page fills, and what it puts back decides the next break.
+Inside one run the output routine is a cycle of its own: it runs when a page fills, and what it puts back decides the next break.
 
 In this example the label moves away from the page the last run recorded. The kept `.aux` says page 1, so this run breaks the page and writes page 2. The next run reads 2, does not break, and writes 1 again. latexmk gives up after its maximum number of runs.
 
@@ -955,7 +955,7 @@ l.6 \label ⇒ \@bsphack \begingroup \UseHookWithArgume… (defines \thepage \pr
 
 </details>
 
-**What SaTeX does.** satex runs the build itself, as latexmk does, and never needs a file an engine wrote. The files a run writes live in a virtual file system, and the first run starts without any. When a run ends, a file it read back sends it round again only where a changed line names a key the run read (a reference, a citation, a key it used) or a macro it expanded or defined (`\@abspage@last` at each shipout, a note column's `\slnc@note`), up to `limits.build_runs` rounds. A line nobody refers to, or one that only changes what a table of contents sets, needs no other round: what such a round would refine is typesetting alone. A round resumes from the last checkpoint before the first read of a changed file, so the part of the document before it is not analyzed again. A file in which a round changed a line already there (a label's page, a counter written back) is from then on the join of what the rounds wrote, so its text only grows and the build settles. Lines only added, as `\bibcite` after the bibliography's first round, stay exact. Past the last round, what still changes is joined the same way: a [widening](https://doi.org/10.1145/512950.512973) of the [Kleene iteration](https://en.wikipedia.org/wiki/Kleene_fixed-point_theorem) the build is. The files an earlier engine run left on disk are read only with `load.build_files`.
+**What SaTeX does.** satex runs the build itself, as latexmk does, and never needs a file an engine wrote. The files a run writes live in a virtual file system, and the first run starts without any. When a run ends, a file it read back starts another round only where a changed line names a key the run read (a reference, a citation, a key it used) or a macro it expanded or defined (`\@abspage@last` at each shipout, a note column's `\slnc@note`), up to `limits.build_runs` rounds. A line nobody refers to, or one that only changes what a table of contents sets, needs no other round: what such a round would refine is typesetting alone. A round resumes from the last checkpoint before the first read of a changed file, so the part of the document before it is not analyzed again. A file in which a round changed a line already there (a label's page, a counter written back) is from then on the join of what the rounds wrote, so its text only grows and the build settles. Lines only added, as `\bibcite` after the bibliography's first round, stay exact. Past the last round, what still changes is joined the same way: a [widening](https://doi.org/10.1145/512950.512973) of the [Kleene iteration](https://en.wikipedia.org/wiki/Kleene_fixed-point_theorem) the build is. The files an earlier engine run left on disk are read only with `load.build_files`.
 
 ## Where satex is still wrong or stuck
 
