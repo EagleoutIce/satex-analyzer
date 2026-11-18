@@ -1690,7 +1690,7 @@ p.ts.ts-foot::before { content: ""; position: absolute; top: 0; left: 0; width: 
 #pdf-type .type-label::after { content: "Type"; }
 body.type-sync #pdf-type .type-label::after { content: "Typing"; }
 #pdf-type[aria-pressed=true] { color: var(--accent); border-color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, var(--bg)); }
-body.type-sync #pdf-type[aria-pressed=true] { background: color-mix(in srgb, var(--accent) 24%, var(--bg)); font-weight: 600; }
+body.type-sync #pdf-type[aria-pressed=true] { background: color-mix(in srgb, var(--accent) 24%, var(--bg)); }
 body.type-sync #play-pdf .pdf-pages { box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--accent) 45%, transparent); }
 #typeset-body { position: relative; }
 #typeset-body.ts-stale::before { content: ''; position: sticky; top: 0; z-index: 4; display: block; height: 2px; margin-bottom: -2px; background: linear-gradient(90deg, transparent, var(--accent), transparent) 0 0 / 40% 100% no-repeat; animation: ts-run 1.2s linear infinite; }
@@ -1710,10 +1710,9 @@ body.type-sync #play-pdf .pdf-pages { box-shadow: inset 0 0 0 2px color-mix(in s
 canvas.pdf-echo { display: block; }
 #typeset-body .ts-orig { z-index: 0; }
 /* Type and its legend: one pill, as tall as the button */
-.type-group { display: inline-flex; align-items: stretch; border: 1px solid var(--border); border-radius: 999px; overflow: hidden; font-size: .72rem; background: var(--bg); }
-.type-group > button.ghost.small { border: 0; border-radius: 0; background: transparent; }
+.type-group { display: inline-flex; align-items: stretch; }
 /* the math control: inline at once, display and align* from its menu; only while typing */
-.math-group { display: none; position: relative; align-items: stretch; margin-left: .3rem; border: 1px solid var(--border); border-radius: 999px; font-size: .72rem; background: var(--bg); }
+.math-group { display: none; position: relative; align-items: stretch; margin-left: .3rem; }
 .ts-typing .math-group, .pdf-typing .math-group { display: inline-flex; }
 .math-group > button.ghost.small { border: 0; border-radius: 999px 0 0 999px; background: transparent; }
 .math-group .math-menu summary { list-style: none; cursor: pointer; height: 100%; display: flex; align-items: center; padding: 0 .45rem; border-left: 1px solid var(--border); border-radius: 0 999px 999px 0; font: inherit; letter-spacing: 0; text-transform: none; color: var(--muted); }
@@ -2531,7 +2530,8 @@ pre.out-block:hover .out-meta { opacity: .85; }
 /* the bar's menus, Insert (math at the caret) and View (dark pages, follow, zoom): pills like the layers button */
 .math-group { border: 0; background: none; }
 .pdf-bar .view-menu { position: relative; }
-.math-group .math-menu summary, .pdf-bar .view-menu summary { text-transform: none; letter-spacing: 0; height: auto; display: inline-flex; align-items: center; padding: .02rem .55rem; border: 1px solid var(--border); border-radius: 999px; background: var(--bg); color: var(--accent); font-size: .72rem; font-weight: 500; white-space: nowrap; }
+/* Type, Insert and View: one pill size */
+.type-group > button.small, .math-group .math-menu summary, .pdf-bar .view-menu summary { text-transform: none; letter-spacing: 0; height: auto; min-height: var(--btn-h-sm); box-sizing: border-box; display: inline-flex; align-items: center; gap: .25rem; padding: .02rem .55rem; border: 1px solid var(--border); border-radius: 999px; background: var(--bg); color: var(--accent); font-size: .72rem; font-weight: 500; line-height: 1.2; white-space: nowrap; }
 .math-group .math-menu[open] summary, .pdf-bar .view-menu[open] summary { border-color: var(--accent); background: var(--sunk); }
 .pdf-bar .view-menu .view-list { left: auto; right: 0; display: flex; flex-wrap: wrap; align-items: center; gap: .3rem; min-width: 0; width: max-content; max-width: 16rem; }
 /* every chip over the pages alike: one height, font, radius; the column chip's buttons are text in it, not buttons of their own */
