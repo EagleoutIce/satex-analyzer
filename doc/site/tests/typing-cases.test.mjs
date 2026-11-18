@@ -148,6 +148,11 @@ test("Type mode's rules at the spots that broke", async () => {
   assert.equal(typeKeys(xy, close, ['Backspace'])[0], 'a \\(x\\) b', 'Backspace after `\\)`: the last character inside');
   assert.equal(typeKeys(xy, close, ['Backspace', 'Backspace'])[0], 'a  b', 'then the formula of one character whole');
   assert.equal(typeKeys(xy, open, ['Delete'])[0], 'a \\(y\\) b', 'Delete before `\\(`: the first character inside');
+  // `\` then `[` (or `(`) outside math opens a formula with its closer, the caret inside: the keys of a display typed
+  // by hand. Pins the `[` refused as a lone `\[` (the source kept `so \y=2`, the formula lost).
+  const para = 'Some text so\n\nMore.', end = para.indexOf('\n');
+  assert.deepEqual(typeKeys(para, end, [...' \\[y=2']), ['Some text so \\[y=2\\]\n\nMore.', end + 6], 'a display formula typed: \\[y=2\\], the caret before \\]');
+  assert.equal(typeKeys(para, end, [...' \\(a'])[0], 'Some text so \\(a\\)\n\nMore.', 'inline the same');
   assert.equal(typeKeys('a \\[z\\] b', 'a \\[z\\]'.length, ['Backspace'])[0], 'a  b', 'a display `\\[z\\]` the same');
   assert.equal(typeKeys(t, at('}'), [...'$x', 'Backspace'])[0].split('\n')[0], '\\section{Background}\\label{sec:b}', 'the last character of a formula takes it');
   assert.equal(typeKeys('a pipeline. b', 'a pipeline'.length, [...'\\emph{q}'])[0], 'a pipeline\\emph{q}. b', '`\\` before `.`: its space goes once `{` ends the name');

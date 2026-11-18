@@ -8,7 +8,7 @@ import html, json, re, subprocess, sys
 from pathlib import Path
 from urllib.parse import quote
 
-LEAN = ["Core", "Concrete", "Abstract", "Soundness"]
+LEAN = ["Core", "Concrete", "Abstract", "Global", "Mouth", "Operands", "Conds", "Soundness"]
 KEYWORDS = set("""def theorem lemma inductive structure abbrev instance class opaque axiom example namespace end section open in
 where deriving with fun match if then else let have show from by do return at using mutual variable universe private protected
 partial unsafe noncomputable attribute macro syntax notation infix infixl infixr prefix postfix set_option import export termination_by
@@ -453,15 +453,15 @@ def mapping(md_text, ctx, refs, runmd):
             tok = html.unescape(mm.group(1))
             full = None
             if tok.startswith(".") and last_base[0]:
-                full = ctx.env.resolve(f"{last_base[0]}{tok}", ["Satex", "Abstract"], []) or ctx.env.resolve(f"{last_base[0]}{tok}", ["Satex"], [])
+                full = next((f for ns in (["Satex", "Abstract"], ["Satex", "Soundness"], ["Satex"]) for f in [ctx.env.resolve(f"{last_base[0]}{tok}", ns, [])] if f), None)
             else:
-                for ns in (["Satex", "Abstract"], ["Satex", "Concrete"], ["Satex"]):
+                for ns in (["Satex", "Abstract"], ["Satex", "Concrete"], ["Satex", "Soundness"], ["Satex"]):
                     full = ctx.env.resolve(tok, ns, [])
                     if full and full in ctx.home:
                         break
                     full = None
                 if not full and last_base[0]:        # a sibling of the row's first name: `Itv.widen`, `wlo`
-                    full = ctx.env.resolve(f"{last_base[0]}.{tok}", ["Satex", "Abstract"], [])
+                    full = next((f for ns in (["Satex", "Abstract"], ["Satex", "Soundness"]) for f in [ctx.env.resolve(f"{last_base[0]}.{tok}", ns, [])] if f), None)
                 elif not last_base[0]:
                     last_base[0] = tok.split(".")[0] if tok[0].isalpha() else None
             if not full or full not in ctx.home:

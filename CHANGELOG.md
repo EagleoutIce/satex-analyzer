@@ -18,6 +18,7 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 
 ### Lints
 
+- `feat` **Packages checked like libraries.** Analyzing a `.sty` or `.cls` calls each command it defines on unknown arguments in the document body and reports an error certain for every argument (`package-call-error`).
 - `feat` **`misspelled-magic-comment`.** `% !rex program = tex` or `% !TeX progam` is reported early, with a fix to `!TeX` or `program`.
 - `feat` **`low-contrast-color`.** Text below WCAG's 4.5:1 contrast (3:1 for large text) against its background is reported. The fix adjusts your `\definecolor` (`lints.low-contrast-color`).
 - `feat` **`indistinct-colors`.** Colors side by side that look alike under protanopia, deuteranopia or tritanopia are reported. The fix suggests an Okabe-Ito color (`lints.indistinct-colors`).
@@ -57,6 +58,11 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 - `fix` **Type mode keeps the source's structure.** One check gates every keystroke: braces, command names, environments, math, comments and verbatim stay intact, Enter in a title is refused (Shift+Enter breaks the line), Backspace after a formula's `\)` takes its last character (a formula of one character whole) and Delete before `\(` its first, contents entries edit their short title, a failed build shows its first TeX error with Undo. Enter at a source line's end, Backspace after a closing `$` and Delete before an opening one work, a command's `[…]` option stays with its command and its argument, and a forest node dragged beside the root stays. A fuzz test checks 48,506 edits. The old code broke 3,669 of its 9,600 key runs, in 8 classes. The playground's unit tests (117, under 4 s) live in themed `doc/site/tests/*.test.mjs` with seeded property tests of the gate, the forest, table and page models.
 - `fix` **Macro text in TikZ nodes is tinted.** Letters a macro sets from code outside your files (`\TeX` in a node) are tinted as macro text. In Type mode a click on them opens the completion at the macro's call.
 - `fix` **Tables in the views.** The PDF's column chips show each `l`/`c`/`r` column's width from its cells, one chip per column above it, alignment choices behind its ⋯, applied like typing on press (the old page and chips stay undimmed, one swap when the build lands), and a click on a width handle no longer writes a `p{…}`. A cell's `|` is drawn on the cell's edge so rules line up. No blank row 0 shows after `\end{document}`. The + and − buttons are round and never clipped. `\ref` and `\cite` an earlier .aux decides read `reference x` or `citation key`. A table whose package calls `\@array` by another name gets "Edit table…".
+- `fix` **Completions and hovers during a run.** A list or card held back by a running check opens once the answer comes, while the cursor or pointer stays.
+- `fix` **Each file keeps its undo history** when you switch between files.
+- `fix` **Fix all edits every file it needs.** A fix that loads a package (`\Cref` needs cleveref) edits the preamble too.
+- `fix` **The outline numbers appendix chapters A, B, …** as LaTeX does.
+- `fix` **Console and links.** The console names `satex`, not `this.program`, and a link to an example the build lacks says so.
 - `fix` **Keys layer follows the shown project.** A failed or outdated query for labels, references and citations is asked again, and another project's keys never stay on the pages.
 - `fix` **Compile beside the analysis.** The PDF pane says when an analysis runs alongside a build. The browser's TeX builds again. A build's success pulse plays only on a shown panel.
 - `fix` **Numbers and expl3 names highlighted whole.** `0.05pt`, `-3.5pt` and `2fill` are one number token, `\dim_eval:n` and `\l_tmpa_dim` one command.
@@ -255,7 +261,7 @@ Usable on real documents: faster and more precise analysis, the playground and `
 ### Playground
 
 - `fix` **Clearer display of uncertain text.** [`1403031`](https://github.com/EagleoutIce/satex-analyzer/commit/1403031)
-- `fix` **A loading widget shows that it is loading.** [`55f7986`](https://github.com/EagleoutIce/satex-analyzer/commit/55f7986)
+- `fix` **A loading widget shows that it is loading.** The Library says so while it reads the names in force. [`55f7986`](https://github.com/EagleoutIce/satex-analyzer/commit/55f7986)
 - `fix` **Showcase screenshots line up.** [`45ba047`](https://github.com/EagleoutIce/satex-analyzer/commit/45ba047) [`1c31cb6`](https://github.com/EagleoutIce/satex-analyzer/commit/1c31cb6) [`b95ee96`](https://github.com/EagleoutIce/satex-analyzer/commit/b95ee96) [`d190837`](https://github.com/EagleoutIce/satex-analyzer/commit/d190837) [`6867c3d`](https://github.com/EagleoutIce/satex-analyzer/commit/6867c3d)
 - `feat` **New front page** with the showcase on a rotating ring. [`22939fd`](https://github.com/EagleoutIce/satex-analyzer/commit/22939fd) [`b711b33`](https://github.com/EagleoutIce/satex-analyzer/commit/b711b33) [`e553530`](https://github.com/EagleoutIce/satex-analyzer/commit/e553530) [`884dcba`](https://github.com/EagleoutIce/satex-analyzer/commit/884dcba) [`0de0584`](https://github.com/EagleoutIce/satex-analyzer/commit/0de0584) [`e6a0098`](https://github.com/EagleoutIce/satex-analyzer/commit/e6a0098) [`9128f0d`](https://github.com/EagleoutIce/satex-analyzer/commit/9128f0d)
 - `fix` **`satex gui` keeps running when its terminal closes** or its output is piped. [`bf8c194`](https://github.com/EagleoutIce/satex-analyzer/commit/bf8c194)

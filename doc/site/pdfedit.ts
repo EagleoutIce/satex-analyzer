@@ -547,6 +547,8 @@ declare global {
     if (v) return !v.block && (c === v.close || c === '\n') ? [at, at, '', 0] : [at, at, c, c.length];
     const fr = (p: number) => !!fresh && fresh[0] <= p && p < fresh[1], letter = /^[A-Za-z@]$/.test(c);
     // the space typed after a `\` (to keep it off the next word) goes once the name is a control symbol
+    // `\[` or `\(` outside math opens a formula: its closer comes with it, the caret inside (never a lone opener)
+    if (lone(text, at) && (c === '[' || c === '(') && !scan(text, 0, at - 1, start()).math) return [at, at + (text[at] === ' ' && fr(at) ? 1 : 0), c === '[' ? '[\\]' : '(\\)', 1];
     if (lone(text, at)) return letter ? [at, at, c, 1] : [at, at + (text[at] === ' ' && fr(at) ? 1 : 0), c, 1];
     // its own space, never one of the text's: a letter typed then renames only what was typed
     if (c === '\\') return [at, at, '\\ ', 1];
