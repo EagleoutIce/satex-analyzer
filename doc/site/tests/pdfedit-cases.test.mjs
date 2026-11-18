@@ -178,6 +178,15 @@ test("\"Type in the argument instead\"", async () => {
   assert.equal(E.argAt(text, '\\greet', 3), text.indexOf('world'), 'not \\greeting');
   assert.equal(E.argAt(text, '\\nope', 2), null);
 });
+// An argument-less macro called as `\model{}` (ui-35): its `{}` is an empty group, no argument to type into, so the
+// note offers no "Type in the argument instead"; one with parameters (`[1]`, `#1`, an xparse `{m}`) keeps it.
+test("no argument to type into for a macro without parameters", async () => {
+  const E = self.satexPdfEdit, use = '\n\\model{} runs.\n';
+  for (const def of ['\\newcommand{\\model}{TinyNet}', '\\newcommand\\model[0]{TinyNet}', '\\def\\model{TinyNet}', '\\NewDocumentCommand{\\model}{}{TinyNet}'])
+    assert.equal(E.argAt(def + use, '\\model', 2), null, def);
+  for (const def of ['\\newcommand{\\model}[1]{Tiny#1}', '\\def\\model#1{Tiny#1}', '\\NewDocumentCommand{\\model}{m}{Tiny#1}', '\\newcommand{\\modelx}{X}', ''])
+    assert.equal(E.argAt(def + use, '\\model', 2), (def + use).indexOf('} runs'), def || 'no definition: a package macro');
+});
 // Typing into an undecided choice (`The year ⟨?⟩ is [not] a leap year.`): the run reads `not` at the call
 // `\tleapy`, so typing goes to the definition that spells it, not the empty one, never `\tleapyx`.
 test("Typing into an undecided choice (`The year ⟨?⟩ is [not] a leap year.`)", async () => {

@@ -787,8 +787,12 @@ declare global {
     while (b < text.length && /[\p{L}\p{N}]/u.test(text[b]!)) b++;
     return a < b ? [a, text.slice(a, b)] : null;
   }
-  /** Where the first argument of a use of macro `name` (`\greet`) starts, on line `line` (1-based) or a neighbour. */
+  /** Where the first argument of a use of macro `name` (`\greet`) starts, on line `line` (1-based) or a neighbour.
+   * None for a macro the text defines without parameters: the `{}` of `\model{}` is an empty group, no argument. */
   function argAt(text: string, name: string, line: number): number | null {
+    const q = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const def = new RegExp(`\\\\(?:re|provide)?newcommand\\*?\\s*\\{?\\s*${q}(?![A-Za-z@])\\s*\\}?\\s*(?:\\[\\s*(\\d))?|\\\\[gex]?def\\s*${q}(?![A-Za-z@])([^{]*)\\{|\\\\(?:New|Renew|Provide|Declare)DocumentCommand\\s*\\{?\\s*${q}(?![A-Za-z@])\\s*\\}?\\s*\\{([^}]*)\\}`).exec(text);
+    if (def && !(+(def[1] ?? 0) > 0) && !def[2]?.includes('#') && !def[3]?.trim()) return null;
     const starts = [0];
     for (let i = text.indexOf('\n'); i >= 0; i = text.indexOf('\n', i + 1)) starts.push(i + 1);
     const re = new RegExp(`${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![a-zA-Z@])\\s*\\{`, 'g');

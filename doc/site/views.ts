@@ -2641,6 +2641,17 @@ const satexViews = (() => {
       numbers: Object.fromEntries(numberPoints(s).map((p) => [p.id, p.style])), perChapter: !!s.numbering?.per_chapter,
     };
   }
+  /** The text area of the run's page in bp from the page's top left corner (TeX's origin 1in in from both edges):
+   * `left` of an odd page, `even` of an even one (\\evensidemargin of a two-sided document), `foot` the footer's
+   * baseline (\\footskip below the area). Null when a length it needs is unknown or the run left it open. */
+  function textArea(s: Rec): { top: number; bottom: number; left: number; right: number; even: number; foot: number } | null {
+    const at = (k: string, need = true) => { const v = s.run?.[k]; return v ? (v[0] === v[1] ? v[0] : NaN) : need ? NaN : 0; };
+    const bp = (sp: number) => sp / 65536 * 72 / 72.27, side = (k: string) => ONE_IN + at('hoffset', false) + at(k);
+    const top = ONE_IN + at('voffset', false) + at('topmargin') + at('headheight') + at('headsep'), th = at('textheight'), tw = at('textwidth');
+    const left = side('oddsidemargin'), even = s.twoside ? side('evensidemargin') : left;
+    const out = { top: bp(top), bottom: bp(top + th), left: bp(left), right: bp(left + tw), even: bp(even), foot: bp(top + th + at('footskip')) };
+    return Object.values(out).every(Number.isFinite) ? out : null;
+  }
   /** The body's margins `st` sets: typearea's from DIV and BCOR (inner 1, outer 2 stripes; one-sided both alike), else its own. */
   function pageBox(st: PageState, twoside: boolean): PageState {
     // as the run computed it, until DIV or BCOR change
@@ -3627,6 +3638,6 @@ button.tv-spec-value { cursor: pointer; } button.tv-spec-value:hover, button.tv-
    * the newest version whose final rows are shown): never older rows, never a preview of a text already final. */
   const rowsWin = (final: number | undefined, version: number | null | undefined, preview: boolean) =>
     version == null || final == null || (preview ? version > final : version >= final);
-  return { rowsWin, loads: { unlanded, lacked }, tipBag, yaml, history: { historyEvent }, render, RENDER, hue, passes, masterDetail, usesView, fold, SPEC, mix, colorBand, oklch, drawing: { expandStyles, STYLE_DEF, parse, emit, mermaidIn, mermaidOut, mermaidLoss, layout, importMermaid, tipsOf, toMatrix, cellPlaces, toLayer, picOptions, relocate, relPos, nearestAnchor, anchorAt, tipMarker, shapeSample, shapeList, cycle, STYLE }, forest: forestFns, circuit: { parse: cParse, body: cBody, emit: cEmit }, page: { pageOf, pageBox, pageNodes, numberNodes, numberInForce, headerOf, headerCalls, headerNodes, fmtRead, fmtWrite, styleNodes, styleSet, styleEdits }, dev: { traceCsv, stateHtml }, templates: { fill, filled, chosen } };
+  return { rowsWin, loads: { unlanded, lacked }, tipBag, yaml, history: { historyEvent }, render, RENDER, hue, passes, masterDetail, usesView, fold, SPEC, mix, colorBand, oklch, drawing: { expandStyles, STYLE_DEF, parse, emit, mermaidIn, mermaidOut, mermaidLoss, layout, importMermaid, tipsOf, toMatrix, cellPlaces, toLayer, picOptions, relocate, relPos, nearestAnchor, anchorAt, tipMarker, shapeSample, shapeList, cycle, STYLE }, forest: forestFns, circuit: { parse: cParse, body: cBody, emit: cEmit }, page: { pageOf, pageBox, textArea, pageNodes, numberNodes, numberInForce, headerOf, headerCalls, headerNodes, fmtRead, fmtWrite, styleNodes, styleSet, styleEdits }, dev: { traceCsv, stateHtml }, templates: { fill, filled, chosen } };
 })();
 self.satexViews = satexViews;

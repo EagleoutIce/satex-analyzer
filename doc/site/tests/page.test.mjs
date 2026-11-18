@@ -22,6 +22,23 @@ test('pageBox: typearea\'s stripes for any DIV and BCOR', () => {
   }
 });
 
+// Intuition: the text area starts 1in + \topmargin + \headheight + \headsep below the page's top and is \textheight
+// high, in big points (72 per inch, TeX's points 72.27). Pins the Type mode guessing the area's foot from the page number.
+test('textArea: the run\'s lengths as the page\'s text area in bp', () => {
+  const PT = 65536, INCH = 72.27, bp = (pt) => pt * 72 / INCH, same = (pt) => [pt * PT, pt * PT];
+  const L = { topmargin: 16, headheight: 12, headsep: 25, textheight: 550, footskip: 30, textwidth: 345, oddsidemargin: 62, evensidemargin: -10 };
+  const run = Object.fromEntries(Object.entries(L).map(([k, v]) => [k, same(v)]));
+  const a = P.textArea({ run, twoside: true }), top = INCH + L.topmargin + L.headheight + L.headsep;
+  const near = (x, want, what) => assert.ok(Math.abs(x - want) < 1e-3, `${what}: ${x}, want ${want}`);
+  near(a.top, bp(top), 'top'); near(a.bottom, bp(top + L.textheight), 'bottom'); near(a.foot, bp(top + L.textheight + L.footskip), 'footer baseline');
+  near(a.left, bp(INCH + L.oddsidemargin), 'odd left'); near(a.right, bp(INCH + L.oddsidemargin + L.textwidth), 'odd right'); near(a.even, bp(INCH + L.evensidemargin), 'even left');
+  near(P.textArea({ run, twoside: false }).even, a.left, 'one-sided: even pages like odd');
+  near(P.textArea({ run: { ...run, voffset: same(5), hoffset: same(-3) }, twoside: true }).top, bp(top + 5), '\\voffset moves it down');
+  assert.equal(P.textArea({ run: { ...run, textheight: [500 * PT, 600 * PT] } }), null, 'an open \\textheight: no area');
+  assert.equal(P.textArea({ run: { textwidth: run.textwidth } }), null, 'unknown lengths: no area');
+  assert.equal(P.textArea({}), null, 'no run');
+});
+
 // Intuition: the numbering in force at a line is the last restart at or before it; later lines never go back to an
 // earlier restart. Pins a page number click that opened the numbering of a later \pagenumbering.
 test('numberInForce: the last point at or before the line', () => {
