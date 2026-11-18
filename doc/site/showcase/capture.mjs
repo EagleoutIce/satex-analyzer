@@ -99,8 +99,9 @@ async function drag(from, to, ms = 900) {
 async function type(text) {
   const KEYS = { '\t': ['Tab', 9], '\n': ['Enter', 13] };
   for (const c of text) {
-    const [key, code] = KEYS[c] ?? (c === '.' ? ['.', 190] : [c, c.toUpperCase().charCodeAt(0)]);
-    const name = KEYS[c] ? key : /\d/.test(c) ? `Digit${c}` : c === '.' ? 'Period' : `Key${c.toUpperCase()}`;
+    // a sign (`$`, `\`, `_`, `}`) has no key code of its own here: its code as a letter would be Home, F12…
+    const [key, code] = KEYS[c] ?? (c === '.' ? ['.', 190] : [c, /[a-z\d ]/i.test(c) ? c.toUpperCase().charCodeAt(0) : 0]);
+    const name = KEYS[c] ? key : /\d/.test(c) ? `Digit${c}` : c === '.' ? 'Period' : /[a-z]/i.test(c) ? `Key${c.toUpperCase()}` : c === ' ' ? 'Space' : '';
     const base = { key, code: name, windowsVirtualKeyCode: code, nativeVirtualKeyCode: code };
     await raw('Input.dispatchKeyEvent', { type: 'keyDown', ...base, ...(KEYS[c] ? (c === '\n' ? { text: '\r' } : {}) : { text: c }) });
     await raw('Input.dispatchKeyEvent', { type: 'keyUp', ...base });

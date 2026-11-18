@@ -18,8 +18,7 @@ use serde_json::{Value as Json, json};
 
 pub(super) struct Color;
 
-/// Red, green and blue from 0 to 1.
-type Rgb = [f64; 3];
+use crate::engine::value::{Rgb, hex, specs};
 
 impl TypePlugin for Color {
     fn name(&self) -> &'static str {
@@ -239,8 +238,7 @@ pub(super) fn items(analysis: &Analysis, path: &str, pos: Pos) -> Vec<Completion
 
 /// A definition's value in rgb.
 fn value(c: &ColorDef) -> Option<Rgb> {
-    let v = super::super::handlers::rgba(c.value.as_ref()?)?;
-    Some([v.red, v.green, v.blue].map(f64::from))
+    c.value.as_ref()?.rgb()
 }
 
 /// The value of a name or an xcolor expression at `pos`: `a!p!b` mixes `p`% of `a` with the
@@ -262,12 +260,6 @@ fn value_at(analysis: &Analysis, _doc: &Text, path: &str, pos: Pos, expr: &str) 
     }
 }
 
-/// `#rrggbb`.
-fn hex(c: Rgb) -> String {
-    let b = |v: f64| (v.clamp(0.0, 1.0) * 255.0).round() as u8;
-    format!("#{:02x}{:02x}{:02x}", b(c[0]), b(c[1]), b(c[2]))
-}
-
 /// A 16px swatch as an SVG data URI, which Markdown hovers show.
 fn swatch_uri(c: Rgb) -> String {
     let svg = format!(
@@ -278,45 +270,6 @@ fn swatch_uri(c: Rgb) -> String {
         "data:image/svg+xml;utf8,{}",
         svg.replace(' ', "%20").replace('<', "%3C").replace('>', "%3E").replace('\'', "%27")
     )
-}
-
-/// The color in each model the document can write (xcolor's or the color package's), as xcolor's
-/// conversions give it (xcolor § 6.3).
-fn specs(c: Rgb, xcolor: bool) -> Vec<(&'static str, String)> {
-    let n = |v: f64| {
-        let s = format!("{:.4}", v.clamp(0.0, 1.0));
-        let s = s.trim_end_matches('0').trim_end_matches('.');
-        if s.is_empty() { "0".to_string() } else { s.to_string() }
-    };
-    let join = |vs: &[f64]| vs.iter().map(|v| n(*v)).collect::<Vec<_>>().join(",");
-    let [r, g, b] = c;
-    let k = 1.0 - r.max(g).max(b);
-    let cmyk = if k >= 1.0 {
-        [0.0, 0.0, 0.0, 1.0]
-    } else {
-        [(1.0 - r - k) / (1.0 - k), (1.0 - g - k) / (1.0 - k), (1.0 - b - k) / (1.0 - k), k]
-    };
-    let gray = 0.3 * r + 0.59 * g + 0.11 * b;
-    let mut out = vec![("rgb", join(&c)), ("cmyk", join(&cmyk)), ("gray", n(gray))];
-    if xcolor {
-        let byte = |v: f64| (v.clamp(0.0, 1.0) * 255.0).round() as u8;
-        out.insert(0, ("HTML", format!("{:02X}{:02X}{:02X}", byte(r), byte(g), byte(b))));
-        out.insert(2, ("RGB", format!("{},{},{}", byte(r), byte(g), byte(b))));
-        out.push(("hsb", join(&hsb(c))));
-    }
-    out
-}
-
-fn hsb([r, g, b]: Rgb) -> [f64; 3] {
-    let (max, min) = (r.max(g).max(b), r.min(g).min(b));
-    let d = max - min;
-    let h = match () {
-        _ if d == 0.0 => 0.0,
-        _ if max == r => ((g - b) / d).rem_euclid(6.0),
-        _ if max == g => (b - r) / d + 2.0,
-        _ => (r - g) / d + 4.0,
-    } / 6.0;
-    [h, if max == 0.0 { 0.0 } else { d / max }, max]
 }
 
 /// The range of the two groups `{model}{spec}` right after the name's closing brace, and the model.
@@ -432,7 +385,7 @@ pub(super) fn presentations(
 
 #[cfg(test)]
 mod tests {
-    use super::{hsb, specs};
+    use crate::engine::value::{hsb, specs};
 
     #[test]
     fn models_convert_as_xcolor_does() {

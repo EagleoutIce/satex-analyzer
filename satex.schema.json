@@ -2,6 +2,7 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "properties": {
     "analysis": {
+      "description": "where paths join, and what the run assumes",
       "properties": {
         "assume_call_learned_effect": {
           "default": true,
@@ -155,6 +156,7 @@
       "type": "object"
     },
     "cache": {
+      "description": "the interpreted kernel and packages kept between runs",
       "properties": {
         "background": {
           "default": "ask",
@@ -870,6 +872,15 @@
                 "output"
               ],
               "x-example": "`near: 100`"
+            },
+            "smart_scripts": {
+              "default": true,
+              "description": "typing `_` or `^` into math in the PDF or Typeset view opens a group a space or operator closes",
+              "type": "boolean",
+              "x-affects": [
+                "output"
+              ],
+              "x-example": "`x_42` types `x_{42}`"
             },
             "tags": {
               "default": [
@@ -2449,6 +2460,7 @@
       "x-example": "`expand_in_reports: ['\\today']`"
     },
     "gaps": {
+      "description": "what SaTeX could not follow, and how it reports that",
       "properties": {
         "file": {
           "description": "where gaps.log writes. Unset: the cache folder",
@@ -2603,6 +2615,7 @@
       "type": "object"
     },
     "limits": {
+      "description": "what bounds the analysis: reaching one stops that part of the run, so no input makes it loop",
       "properties": {
         "alike": {
           "default": 8,
@@ -2680,7 +2693,7 @@
         },
         "call_memo_probes": {
           "default": 8,
-          "description": "runs of a definition that may stay short or unclean before its calls are no longer recorded for call_memo_steps",
+          "description": "runs of a definition that may stay short or unclean before its calls are no longer recorded for call_memo_steps; probed again after probes << n such calls (n: times it ran out)",
           "minimum": 0,
           "type": "integer",
           "x-affects": [
@@ -3215,6 +3228,16 @@
           ],
           "x-example": "satex slice on a long document sees only the first part"
         },
+        "walk_per_step": {
+          "default": 1,
+          "description": "map entries a join, compare or resume of waiting paths walks per step charged to the line, so line_steps also bounds that work",
+          "minimum": 0,
+          "type": "integer",
+          "x-affects": [
+            "speed"
+          ],
+          "x-example": "100 paths waiting at one line are joined at a cost the line's budget sees"
+        },
         "widen_after": {
           "default": 3,
           "description": "how many rounds a loop is followed exactly before what still changes becomes a range",
@@ -3245,6 +3268,7 @@
       "x-example": "`lint_off+: [unused-label]`\nunused labels are no longer reported"
     },
     "lints": {
+      "description": "what a single rule reads, under its code",
       "properties": {
         "build-cost": {
           "description": "when the build is slow enough to suggest a format or \\includeonly",
@@ -3621,6 +3645,31 @@
           },
           "type": "object"
         },
+        "indistinct-colors": {
+          "description": "colors used side by side that look alike with a color vision deficiency",
+          "properties": {
+            "apart": {
+              "default": 30.0,
+              "description": "CIELAB distance from which two colors are meant to differ for normal vision",
+              "minimum": 0,
+              "type": "number",
+              "x-affects": [
+                "output"
+              ]
+            },
+            "below": {
+              "default": 15.0,
+              "description": "CIELAB distance under which two simulated colors look alike",
+              "minimum": 0,
+              "type": "number",
+              "x-affects": [
+                "output"
+              ],
+              "x-example": "`20` also reports pairs that are only hard to tell apart"
+            }
+          },
+          "type": "object"
+        },
         "itemize-described": {
           "properties": {
             "items": {
@@ -3642,6 +3691,49 @@
               "default": 2,
               "minimum": 0,
               "type": "integer"
+            }
+          },
+          "type": "object"
+        },
+        "low-contrast-color": {
+          "description": "WCAG 2 contrast minimum of text against its background",
+          "properties": {
+            "large": {
+              "default": 18.0,
+              "description": "font size in points from which text is large",
+              "minimum": 0,
+              "type": "number",
+              "x-affects": [
+                "output"
+              ]
+            },
+            "large-bold": {
+              "default": 14.0,
+              "description": "font size in points from which bold text is large",
+              "minimum": 0,
+              "type": "number",
+              "x-affects": [
+                "output"
+              ]
+            },
+            "large-ratio": {
+              "default": 3.0,
+              "description": "the ratio large text needs",
+              "minimum": 0,
+              "type": "number",
+              "x-affects": [
+                "output"
+              ]
+            },
+            "ratio": {
+              "default": 4.5,
+              "description": "the contrast ratio text needs",
+              "minimum": 0,
+              "type": "number",
+              "x-affects": [
+                "output"
+              ],
+              "x-example": "`7` asks for WCAG's enhanced contrast"
             }
           },
           "type": "object"
@@ -4366,6 +4458,53 @@
     "playground": {
       "description": "what only the web playground reads",
       "properties": {
+        "check_delay": {
+          "default": 400,
+          "description": "how long the analysis waits after the last key, in ms. A command still being typed waits at least 1.5 s",
+          "minimum": 0,
+          "type": "integer",
+          "x-affects": [
+            "speed"
+          ],
+          "x-example": "`check_delay: 1000`: fewer runs on a slow machine"
+        },
+        "compile_after": {
+          "default": 0,
+          "description": "how long the edits rest before a PDF build, in ms. 0 builds only on request. The Compile menu sets it too",
+          "minimum": 0,
+          "type": "integer",
+          "x-affects": [
+            "output"
+          ],
+          "x-example": "`compile_after: 1000`: the PDF follows a second after the edits rest"
+        },
+        "complete_while_typing": {
+          "default": true,
+          "description": "the completion list opens while typing. Off, only Ctrl+Space opens it",
+          "type": "boolean",
+          "x-affects": [
+            "output"
+          ]
+        },
+        "font": {
+          "default": "",
+          "description": "the editor's font family, as CSS names it. Empty takes the site's monospace font",
+          "type": "string",
+          "x-affects": [
+            "output"
+          ],
+          "x-example": "`font: \"JetBrains Mono, monospace\"`"
+        },
+        "font_size": {
+          "default": 14,
+          "description": "the editor's font size in px",
+          "minimum": 0,
+          "type": "integer",
+          "x-affects": [
+            "output"
+          ],
+          "x-example": "`font_size: 16`"
+        },
         "lenses": {
           "default": false,
           "description": "a button line above each table, figure and drawing besides the mark in the gutter",
@@ -4374,6 +4513,128 @@
             "output"
           ],
           "x-example": "`lenses: true`: \"Edit image…\" stands above each \\includegraphics"
+        },
+        "line_numbers": {
+          "default": true,
+          "description": "line numbers in the editor's gutter",
+          "type": "boolean",
+          "x-affects": [
+            "output"
+          ]
+        },
+        "pdf_zoom": {
+          "default": "actual",
+          "description": "the PDF's zoom when no zoom was chosen before",
+          "enumDescriptions": [
+            "the page as wide as the pane",
+            "the whole page in view",
+            "100 %"
+          ],
+          "type": "string",
+          "x-affects": [
+            "output"
+          ]
+        },
+        "theme": {
+          "default": "site",
+          "description": "the editor's colors",
+          "enumDescriptions": [
+            "as the site, light or dark",
+            "always light",
+            "always dark"
+          ],
+          "type": "string",
+          "x-affects": [
+            "output"
+          ]
+        },
+        "tint_argument": {
+          "default": "",
+          "description": "Type mode's tint of text from an argument, a CSS color. Empty takes the theme's cyan",
+          "type": "string",
+          "x-affects": [
+            "output"
+          ]
+        },
+        "tint_macro": {
+          "default": "",
+          "description": "Type mode's tint of text a macro wrote, a CSS color. Empty takes the theme's violet",
+          "type": "string",
+          "x-affects": [
+            "output"
+          ],
+          "x-example": "`tint_macro: \"#e11d48\"`"
+        },
+        "tint_moved": {
+          "default": "",
+          "description": "Type mode's tint of text written elsewhere, a CSS color. Empty takes the theme's amber",
+          "type": "string",
+          "x-affects": [
+            "output"
+          ]
+        },
+        "tips": {
+          "default": true,
+          "description": "tips in the loading banners and the console bar",
+          "type": "boolean",
+          "x-affects": [
+            "output"
+          ]
+        },
+        "type_mode": {
+          "default": true,
+          "description": "Type mode on in the Typeset view from the start: a click on a word puts the caret at its place in the source",
+          "type": "boolean",
+          "x-affects": [
+            "output"
+          ]
+        },
+        "typeset_layers": {
+          "default": [],
+          "description": "the Typeset view's layers on at the start. A layer switched in the view stays as switched",
+          "items": {
+            "enum": [
+              "envs",
+              "keys",
+              "boxes",
+              "glue",
+              "ligs",
+              "findings",
+              "maybe"
+            ],
+            "enumDescriptions": [
+              "environments",
+              "key-value options",
+              "boxes",
+              "glue",
+              "ligatures",
+              "findings",
+              "what only some paths typeset"
+            ],
+            "type": "string"
+          },
+          "type": "array",
+          "x-affects": [
+            "output"
+          ],
+          "x-example": "`typeset_layers: [findings, maybe]`"
+        },
+        "widget_marks": {
+          "default": true,
+          "description": "a mark in the gutter on each line a widget edits: a table, a figure, a color",
+          "type": "boolean",
+          "x-affects": [
+            "output"
+          ],
+          "x-example": "`widget_marks: false`: the gutter shows line numbers and findings only"
+        },
+        "wrap": {
+          "default": false,
+          "description": "long lines go on below instead of scrolling sideways",
+          "type": "boolean",
+          "x-affects": [
+            "output"
+          ]
         }
       },
       "type": "object"
@@ -4503,6 +4764,7 @@
       "x-example": "`profile: package`\nan unused public macro of your `.sty` is no longer reported"
     },
     "profiles": {
+      "description": "the settings each kind of input (document, package, class, literate, plain) changes",
       "properties": {
         "class": {
           "description": "a .cls, the same defaults as a package",
@@ -4687,6 +4949,7 @@
       "type": "object"
     },
     "project": {
+      "description": "which files are the project's own, and which are someone else's",
       "properties": {
         "freeze_other_repositories": {
           "default": true,
@@ -4821,6 +5084,7 @@
       "type": "object"
     },
     "texmf": {
+      "description": "where a run looks for the installation besides texlive",
       "properties": {
         "bundle": {},
         "fallback": {

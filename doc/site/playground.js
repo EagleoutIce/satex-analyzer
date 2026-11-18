@@ -47,7 +47,7 @@
   }
   // The console's bar says what it is, then shows tips while the page is visible.
   const termTip = document.querySelector('.term-sub');
-  if (termTip && manifest.tips?.length) setInterval(() => { if (!document.hidden) { termTip.innerHTML = `<b>Tip</b> ${tipHtml(tipNext())}`; termTip.classList.remove('sx-tip-in'); void termTip.offsetWidth; termTip.classList.add('sx-tip-in'); } }, TIP_MS);
+  if (termTip && manifest.tips?.length) setInterval(() => { if (!document.hidden && play.tips) { termTip.innerHTML = `<b>Tip</b> ${tipHtml(tipNext())}`; termTip.classList.remove('sx-tip-in'); void termTip.offsetWidth; termTip.classList.add('sx-tip-in'); } }, TIP_MS);
   const base = new URL(manifest.root, document.baseURI).href;
   const [tabs, args, button, status, output, lspStatus, list, count, cmd, kernelBox, toastBox, ctxMenu, treeBox, examplesBox] =
     ['play-tabs', 'play-args', 'play-run', 'play-status', 'play-output', 'lsp-status', 'lsp-diagnostics', 'lsp-count',
@@ -631,22 +631,36 @@
 
   let editor; // { text(), set(text), diagnostics(list), apply(edits), cursor(), select(c), word() }
   let version = 0, synced = 0, saved = 0, analyzedVersion = 0, timer = null, checkStart = 0, retryCompletion = false;
-  let typedAt = 0;
-  /** The Playground tab's settings, per viewer: analysis delay (ms), editor font (px), wrap, line numbers, editor theme. */
-  const PLAY = 'satex-playground', PLAY_DEF = { delay: 400, font: 14, wrap: false, numbers: true, theme: 'site', offline: false };
-  const play = { ...PLAY_DEF };
-  try { Object.assign(play, JSON.parse(localStorage.getItem(PLAY) ?? '{}')); } catch {}
+  let typedAt = 0, syncedAt = 0;
+  /** The satex.yaml settings of this viewer's runs, kept in the browser. */
+  let configSet = {};
+  try { configSet = JSON.parse(localStorage.getItem('satex-config')) ?? {}; } catch {}
+  /** The playground's own settings: `playground.<key>` of the settings, else the schema's default (build.py `manifest.playground`). */
+  const play = new Proxy(manifest.playground ?? {}, { get: (def, k) => configSet[`playground.${String(k)}`] ?? def[k] });
+  // the Playground tab's old per-viewer choices move into the settings once
+  try {
+    const old = JSON.parse(localStorage.getItem('satex-playground') ?? 'null');
+    const NEW = { delay: 'check_delay', font: 'font_size', wrap: 'wrap', numbers: 'line_numbers', theme: 'theme' };
+    if (old) for (const [k, v] of Object.entries(old)) if (NEW[k]) configSet[`playground.${NEW[k]}`] ??= v;
+    if (old?.offline) localStorage.setItem('satex-offline', '1');
+    const auto = JSON.parse(localStorage.getItem('satex-pdf-auto') ?? 'null');
+    if (auto?.on) configSet['playground.compile_after'] ??= +auto.delay || 1000;
+    if (auto) { localStorage.removeItem('satex-pdf-auto'); localStorage.setItem('satex-config', JSON.stringify(configSet)); }
+    if (old) { localStorage.removeItem('satex-playground'); localStorage.setItem('satex-config', JSON.stringify(configSet)); }
+  } catch {}
   function changed() {
     version++;
     typedSincePush = true;
     typedAt = performance.now();
     if (refs && refs.file === state.file) clearRefs();
-    clearTimeout(timer);
-    // A command name or an argument still being typed (`\dra`, `\cite{kn`) waits: the analysis
-    // would block completion for seconds, and its findings would be about unfinished text.
+    // Leading edge: the first edit after a pause goes at once, then at most one per `play.check_delay` (the last one trails).
+    // A command name still being typed (`\dra`) waits for a pause: its findings would be about an unknown name.
+    // Typing in the PDF or Typeset view goes at once: its views wait on this run.
     const line = editor.text().split('\n')[editor.position().line] ?? '', before = line.slice(0, editor.position().character);
     dirty = true;
-    timer = setTimeout(sync, /\\[A-Za-z@]*$|\{[^{}\s]*$/.test(before) ? Math.max(1500, play.delay) : play.delay);
+    const typing = !!document.activeElement?.matches('.pdf-type-in'), naming = !typing && /\\[A-Za-z@]+$/.test(before);
+    if (naming) clearTimeout(timer), timer = null;
+    if (timer === null) timer = setTimeout(sync, typing ? 0 : naming ? play.check_delay : Math.max(0, syncedAt + play.check_delay - performance.now()));
     markStale();
     tsTyped();
     pdfEdited();
@@ -719,7 +733,7 @@
   }
   /** Once typing pauses: the buffer, and an analysis of it. */
   function sync() {
-    clearTimeout(timer); timer = null;
+    clearTimeout(timer); timer = null; syncedAt = performance.now();
     // a completion may have sent the text already: what counts is whether this version was analyzed
     const pushed = push();
     if (pushed || (analyzedVersion !== version && !!state.file && !(state.file in state.ro))) {
@@ -1115,6 +1129,7 @@
       image: '<rect x="2.5" y="3" width="11" height="10" rx="1.5"/><circle cx="6" cy="6.5" r="1.1"/><path d="M2.8 12l3.7-3.6 2.4 2.3 1.7-1.6 2.6 2.6"/>',
       float: '<rect x="2.5" y="2.5" width="11" height="11" rx="1.5"/><rect x="5" y="5" width="6" height="3.2" rx=".6"/><path d="M5 10.8h6"/>',
       tikz: '<circle cx="4" cy="11.5" r="1.6"/><circle cx="12" cy="4.5" r="1.6"/><path d="M5.3 10.4l5.4-4.8"/>',
+      circuit: '<path d="M1.5 8h2.5l1-2.5 2 5 2-5 1 2.5h4.5"/>',
       forest: '<circle cx="8" cy="3.8" r="1.5"/><circle cx="4" cy="12" r="1.5"/><circle cx="12" cy="12" r="1.5"/><path d="M7.2 5.1L4.8 10.6M8.8 5.1l2.4 5.5"/>',
       list: '<path d="M5.5 4h8M5.5 8h8M5.5 12h8"/><circle cx="2.8" cy="4" r=".8"/><circle cx="2.8" cy="8" r=".8"/><circle cx="2.8" cy="12" r=".8"/>',
       widget: '<path d="M3 5h10M3 11h10"/><circle cx="6" cy="5" r="1.5"/><circle cx="10.5" cy="11" r="1.5"/>',
@@ -1163,11 +1178,11 @@
       },
     });
     const theme = new st.Compartment(), lock = new st.Compartment(), lang = new st.Compartment(), setup = new st.Compartment(), prefs = new st.Compartment();
-    // the Playground tab's font, wrap and line numbers
-    const prefsOf = () => [EditorView.theme({ '&.cm-editor': { fontSize: `${play.font}px` }, ...(play.numbers ? {} : { '.cm-lineNumbers': { display: 'none !important' } }) }), play.wrap ? EditorView.lineWrapping : []];
+    // `playground.font`, `font_size`, `wrap` and `line_numbers`
+    const prefsOf = () => [EditorView.theme({ '&.cm-editor': { fontSize: `${play.font_size}px` }, ...(play.font ? { '.cm-scroller': { fontFamily: play.font } } : {}), ...(play.line_numbers ? {} : { '.cm-lineNumbers': { display: 'none !important' } }) }), play.wrap ? EditorView.lineWrapping : []];
     const ev = new EditorView({
       parent, doc: text,
-      extensions: [setup.of(basicSetup), closing, lang.of(/\.bib$/.test(state.file) ? tex.bib : tex.language), language.syntaxHighlighting(tex.highlighter), heatGutter, lint.lintGutter({ tooltipFilter: () => [] }), widgetGutter, lint.linter(null, { tooltipFilter: () => [] }), ac.autocompletion({ override: [complete], activateOnTypingDelay: 40, addToOptions: [{ position: 80, render: (c) => {
+      extensions: [setup.of(basicSetup), closing, lang.of(/\.bib$/.test(state.file) ? tex.bib : tex.language), language.syntaxHighlighting(tex.highlighter), heatGutter, lint.lintGutter({ tooltipFilter: () => [] }), widgetGutter, lint.linter(null, { tooltipFilter: () => [] }), ac.autocompletion({ override: [(c) => (c.explicit || play.complete_while_typing ? complete(c) : null)], activateOnTypingDelay: 40, addToOptions: [{ position: 80, render: (c) => {
         // the detail: a usage line colored like the hover's, then where it comes from
         const span = Object.assign(document.createElement('span'), { className: 'cm-completionDetail' });
         const [, use, from] = (c.usage ?? '').match(/^(.*?)(?:\s+(\([^)]*\)))?$/) ?? [];
@@ -1353,7 +1368,7 @@
     area.addEventListener('input', changed);
     const pos = () => { const before = area.value.slice(0, area.selectionStart).split('\n'); return { line: before.length - 1, character: before.at(-1).length }; };
     return {
-      prefs: () => { area.style.fontSize = `${play.font}px`; area.wrap = play.wrap ? 'soft' : 'off'; },
+      prefs: () => { area.style.fontSize = `${play.font_size}px`; area.style.fontFamily = play.font; area.wrap = play.wrap ? 'soft' : 'off'; },
       text: () => area.value, set: (t, readOnly = false) => { area.value = t; area.readOnly = readOnly; changed(); }, diagnostics: () => {},
       apply: (edits) => { area.value = edited(area.value, edits); changed(); },
       cursor: () => [area.selectionStart, area.selectionEnd], select: ([a, h] = [0, 0]) => area.setSelectionRange(Math.min(a, h), Math.max(a, h)),
@@ -1384,7 +1399,7 @@
   };
   const tsLegacy = {};
   try { for (const k of Object.keys(TS_LAYERS)) { const v = localStorage.getItem(`satex-typeset-${k}`); if (v != null) tsLegacy[k] = v === '1'; } } catch {}
-  const tsOn = self.satexLayers.state('typeset', Object.fromEntries(Object.keys(TS_LAYERS).map((k) => [k, false])), self.satexStore, tsLegacy);
+  const tsOn = self.satexLayers.state('typeset', Object.fromEntries(Object.keys(TS_LAYERS).map((k) => [k, play.typeset_layers.includes(k)])), self.satexStore, tsLegacy);
   $('typeset-layers').innerHTML = self.satexLayers.html(TS_LAYERS, tsOn, { prefix: 'typeset' });
   // the preamble's findings sit on the document's begin mark only while the marks show
   const tsApply = (k) => { typesetBody.classList.toggle(`show-${k}`, tsOn[k]); if (k === 'envs') typesetFindings(); };
@@ -1678,7 +1693,8 @@
     if (!rows || target !== uri()) return;
     typesetRows = rows;
     tsShown = `${target}@${of}`;
-    shownFor(typesetBody, target, of);
+    // never dimmed while typed in: a thin bar says a run is under way (H)
+    shownFor(typesetBody, target, of, 'ts-stale');
     if (pdfOverlayOn?.findings || pdfOverlayOn?.glue || pdfTyping) pdfOverlay();
     const lines = state.texts[state.file]?.split('\n') ?? [];
     const html = cards.typesetView(rows, { file: state.file, closed: tsClosed, plural, lineOf: (n) => lines[n - 1] });
@@ -1750,10 +1766,12 @@
     typesetRows.forEach((r, k) => {
       if (r.kind !== 'paragraph' || !String(r.path ?? '').endsWith(`/${file}`)) return;
       const chars = rowChars(r);
-      // a site may name the character TeX looked ahead to (a ligature or kern test): one column off
+      // a site may name the character TeX looked ahead to (a ligature or kern test): one column off; a macro's
+      // argument is read at the call's end, all its characters at one site past the typed column
       chars.forEach((ch, i) => {
-        if (ch.line !== line || Math.abs(ch.col - col) > 1 || ch.from || !ch.path.endsWith(`/${file}`)) return;
-        const run = chars.slice(i, i + old.length);
+        if (ch.line !== line || ch.from || !ch.path.endsWith(`/${file}`)) return;
+        const run = chars.slice(i, i + old.length), arg = ch.col >= col && run.every((x) => x.col === ch.col);
+        if (Math.abs(ch.col - col) > 1 && !arg) return;
         if (run.length === old.length && run.every((x, j) => x.c === old[j] && x.line === line && !x.from)) hits.push([k, chars.slice(0, i).map((x) => x.c).join(''), chars.map((x) => x.c).join('')]);
       });
     });
@@ -1798,7 +1816,9 @@
     } else editor.focus({ start: at, end: at });
   });
   /** Typing in the Typeset view, as in the PDF: on, a click on a word puts the caret at its place in the source. */
-  var tsTyping = true;
+  var tsTyping = play.type_mode;
+  $('ts-type').setAttribute('aria-pressed', String(tsTyping));
+  $('play-typeset').classList.toggle('ts-typing', tsTyping);
   $('ts-type').onclick = () => {
     tsTyping = !tsTyping;
     $('ts-type').setAttribute('aria-pressed', String(tsTyping));
@@ -1813,6 +1833,15 @@
     return null;
   };
   const tsWords = (text) => [...text.matchAll(/[\p{L}\p{N}]+/gu)];
+  /** The words of a paragraph's text in the view, split where math meets text (`$x_{42}$Generally`: `x42`, `Generally`):
+   * `math(i)` says whether character `i` is set in math. */
+  const tsUnits = (text, math) => tsWords(text).flatMap((m) => {
+    const out = [];
+    for (let s = 0, i = 1; i <= m[0].length; i++) if (i === m[0].length || math(m.index + i) !== math(m.index + i - 1)) out.push(Object.assign([m[0].slice(s, i)], { index: m.index + s })), s = i;
+    return out;
+  });
+  /** tsUnits of a paragraph's view text, the math taken from its row's characters where the view shows them as they are. */
+  const tsViewWords = (text, row) => { const chars = row ? rowChars(row) : [], at = chars.length ? text.indexOf(chars.map((c) => c.c).join('')) : -1; return tsUnits(text, (i) => at >= 0 && !!chars[i - at]?.math); };
   /** The paragraph `p` of the view as the run set it: its row of `typesetRows`. */
   const tsRowOf = (p) => (typesetRows ?? []).find((r) => String(r.line) === p.dataset.line && String(r.col) === p.dataset.col && String(r.path ?? '') === p.dataset.path);
   /** The caret at a click in the Typeset view: the word under it, its characters' sites and origins from the run. */
@@ -1823,11 +1852,11 @@
     const range = document.createRange();
     range.setStart(box, 0);
     range.setEnd(pos.offsetNode, pos.offset);
-    const idx = range.toString().length, all = box.textContent, w = tsWords(all).find((m) => m.index <= idx && idx <= m.index + m[0].length);
+    const idx = range.toString().length, all = box.textContent, words = tsViewWords(all, row), w = words.find((m) => m.index <= idx && idx <= m.index + m[0].length);
     if (!w) return toast('Click on a word to type there');
     // the same word's occurrences before it in the view and in the run's row: the j-th is the one clicked
-    const whole = (t) => tsWords(t).filter((m) => m[0] === w[0]).map((m) => m.index);
-    const j = whole(all).indexOf(w.index), chars = rowChars(row), seen = whole(chars.map((ch) => ch.c).join(''));
+    const chars = rowChars(row), whole = (ws) => ws.filter((m) => m[0] === w[0]).map((m) => m.index);
+    const j = whole(words).indexOf(w.index), seen = whole(tsUnits(chars.map((ch) => ch.c).join(''), (i) => !!chars[i]?.math));
     const at = seen[Math.min(j, seen.length - 1)];
     if (at == null) return toast(`“${w[0]}” has no source place in the run`);
     const ch = chars[at], file = Object.keys(state.texts).find((n) => ch.path.endsWith(n));
@@ -1868,9 +1897,10 @@
     c.p.col = p.dataset.col;
     const g = pdfSeen(), w = PE.wordAt(g.text, g.at), m = w && { index: 0, 0: w[1] }, lo = w ? w[0] : 0;
     // the word around the caret, found again in the paragraph: the nearest one so spelled
-    let near = m && tsWords(box.textContent).filter((x) => x[0] === m[0]).sort((a, b) => Math.abs(a.index - c.idx) - Math.abs(b.index - c.idx))[0];
+    const words = tsViewWords(box.textContent, tsRowOf(p));
+    let near = m && words.filter((x) => x[0] === m[0]).sort((a, b) => Math.abs(a.index - c.idx) - Math.abs(b.index - c.idx))[0];
     // the view lags the text: the word as now written goes in its place at once, until the next run sets it
-    const old = !near && m && tsWords(box.textContent).find((x) => x.index <= c.idx && c.idx <= x.index + x[0].length);
+    const old = !near && m && g.text[w[0] - 1] !== '\\' && words.find((x) => x.index <= c.idx && c.idx <= x.index + x[0].length);
     if (old && tsSplice(box, old.index, old[0].length, m[0])) near = { index: old.index };
     if (near) c.idx = near.index;
     const into = m ? g.at - lo - m.index : 0, spot = tsNodeAt(box, c.idx + (near ? into : 0));
@@ -2052,14 +2082,30 @@
     const own = (actions ?? []).filter((a) => !a.diagnostics?.length && !a.data?.scope);
     // an action that only opens a dialog (`satex.openDialog`, VS Code's `satex.openView`) is a widget here
     const opens = own.filter((a) => !a.edit && /^satex\.open(Dialog|View)$/.test(a.command?.command ?? '') && !(views ?? []).some((v) => v.plugin === a.command.arguments?.[2]));
-    tools = [...(views ?? []).map((view) => ({ view, target: doc.uri })), ...opens.map((open) => ({ open: open.command })), ...own.filter((a) => a.edit).map((action) => ({ action }))];
+    const cv = circuitView(p);
+    tools = [...(views ?? []).map((view) => ({ view, target: doc.uri })), ...cv ? [{ view: cv, target: doc.uri }] : [], ...opens.map((open) => ({ open: open.command })), ...own.filter((a) => a.edit).map((action) => ({ action }))];
     // a title that names its action already (`Edit colour brand`) stands as it is
     const verb = (v) => /^Edit\b/.test(v.title) ? '' : VIEW_VERB[v.plugin] ?? 'Edit', title = (v) => verb(v) ? v.title.replace(/^\p{Lu}(?!\p{Lu})/u, (c) => c.toLowerCase()) : v.title;
     const label = (t) => t.view ? `${verb(t.view)} ${title(t.view)}…`.trim() : (t.open ?? t.action).title;
     const seen = new Set();
     return tools.map((t, i) => [label(t), t.view ? t.view.plugin : t.open ? 'dialog' : 'rewrite', i, !t.action]).filter(([l, , , w]) => !w || !seen.has(l) && seen.add(l));
   }
-  const VIEW_VERB = { color: 'Pick', units: 'Convert', environment: '', tikz: '', keys: 'Edit', history: '' };
+  /** The circuit at `p` (a `circuitikz` environment), else a new one on a blank line of the body: a view the
+   * playground makes itself (views.ts `circuit`), written through the snapshot printer like the server's. */
+  function circuitView(p) {
+    const text = editor.text(), lines = text.split('\n'), at = lines.slice(0, p.line).reduce((n, l) => n + l.length + 1, 0) + p.character;
+    const pos = (o) => { const b = text.slice(0, o).split('\n'); return { line: b.length - 1, character: b.at(-1).length }; };
+    const body = text.indexOf('\\begin{document}'), preamble = text.slice(0, Math.max(0, body)), END = '\\end{circuitikz}';
+    for (const m of text.matchAll(/\\begin\{circuitikz\}/g)) {
+      const e = text.indexOf(END, m.index) + END.length;
+      if (e < END.length || at < m.index || at > e) continue;
+      return { plugin: 'circuit', title: 'Edit circuit', sections: [{ kind: 'circuit', text: text.slice(m.index, e), range: { start: pos(m.index), end: pos(e) }, preamble }] };
+    }
+    if (body < 0 || at < body + 16 || at > text.indexOf('\\end{document}') || (lines[p.line] ?? '').trim()) return null;
+    const here = { line: p.line, character: 0 };
+    return { plugin: 'circuit', title: 'New circuit', sections: [{ kind: 'circuit', text: '', range: { start: here, end: here }, preamble }] };
+  }
+  const VIEW_VERB = { color: 'Pick', units: 'Convert', environment: '', tikz: '', circuit: '', keys: 'Edit', history: '' };
   function runTool(i) {
     const t = tools[i];
     if (t?.action) return fix(t.action);
@@ -2815,17 +2861,29 @@
 
   // The keys, their types, defaults and descriptions come from satex.schema.json; each changed one
   // reaches every run and the language server as `--set key=value`.
-  let configSet = {};
-  try { configSet = JSON.parse(localStorage.getItem('satex-config')) ?? {}; } catch {}
-  // widgets open from their gutter mark; the lens line above them with `playground.lenses`
-  const lensesShown = () => document.body.classList.toggle('show-lenses', configSet['playground.lenses'] === true);
-  const configKeep = (set) => { configSet = set; lensesShown(); try { localStorage.setItem('satex-config', JSON.stringify(set)); } catch {} };
-  lensesShown();
+  /** Applies the playground's own settings to the page: they change no run. */
+  function playApply() {
+    const body = document.body.classList, root = document.documentElement.style;
+    body.toggle('show-lenses', play.lenses === true);
+    body.toggle('no-widget-marks', !play.widget_marks);
+    body.toggle('no-tips', !play.tips);
+    for (const [k, v] of [['macro', play.tint_macro], ['arg', play.tint_argument], ['moved', play.tint_moved]]) {
+      if (v) { root.setProperty(`--orig-${k}`, `color-mix(in srgb, ${v} 25%, transparent)`); root.setProperty(`--orig-${k}-line`, v); }
+      else { root.removeProperty(`--orig-${k}`); root.removeProperty(`--orig-${k}-line`); }
+    }
+    editor?.prefs?.();
+    if (pdfAuto) { pdfAuto.on = play.compile_after > 0; pdfAuto.delay = play.compile_after || pdfAuto.delay; pdfAutoKeep(); }
+  }
+  const configKeep = (set) => { configSet = set; playApply(); try { localStorage.setItem('satex-config', JSON.stringify(set)); } catch {} };
+  playApply();
+  /** Sets `playground.<k>`: its default drops the key. */
+  const playSet = (k, v) => { const { [`playground.${k}`]: _, ...rest } = configSet; configApply(sameValue(v, manifest.playground?.[k]) ? rest : { ...rest, [`playground.${k}`]: v }); };
   const yamlValue = (v) => (typeof v === 'string' ? v : JSON.stringify(v));
-  function configFlags(set = configSet) { return Object.entries(set).flatMap(([k, v]) => ['--set', `${k}=${yamlValue(v)}`]); }
+  /** The settings as flags of a run: the playground's own stay in the page. */
+  function configFlags(set = configSet) { return Object.entries(set).filter(([k]) => !k.startsWith('playground.')).flatMap(([k, v]) => ['--set', `${k}=${yamlValue(v)}`]); }
   /** Whether satex takes the settings `set`: null, else its reason, from a run that only reads them. */
   async function configRefused(set) {
-    if (!Object.keys(set).length) return null;
+    if (!configFlags(set).length) return null;
     const r = await ask({ type: 'run', args: [...configFlags(set), 'query', '--list'], edits: {}, cwd: '/work' }).catch((e) => ({ status: 1, lines: [['err', e.message]] }));
     if (r.status === 0) return null;
     return r.lines.filter(([k, t]) => k === 'err' && !/ignored: /.test(t)).map(([, t]) => plain(t).replace(/^SaTeX: /, '')).pop() ?? 'SaTeX does not take it';
@@ -2849,7 +2907,12 @@
   /** The plugin group the plugins tab shows, else its group buttons. */
   let cfgPluginGroup = null;
   let cfgTab = 'core', cfgYaml = false;
-  const configLoad = () => (configKeys ??= fetch(`${base}${manifest.schema}`).then((r) => r.json()).then((s) => leaves(s.properties)).catch(() => []));
+  /** What each top-level group holds, from the schema's descriptions; `general` gathers the keys of one part. */
+  const cfgGroupAbout = { general: 'the engine, the kernel, the date and the other settings of one key' };
+  const configLoad = () => (configKeys ??= fetch(`${base}${manifest.schema}`).then((r) => r.json()).then((s) => {
+    for (const [k, p] of Object.entries(s.properties ?? {})) if (p.properties && p.description) cfgGroupAbout[k] = p.description;
+    return leaves(s.properties);
+  }).catch(() => []));
   const sameValue = (a, b) => JSON.stringify(a) === JSON.stringify(b);
   /** The names a list of packages or classes completes from: by the key, its description or what its default holds. */
   const NAMES = (() => {
@@ -2996,37 +3059,16 @@
   };
   /** A key's sub-group: a profile's own name, or the second part of a key of three or more. */
   const subOf = (k) => { const p = k.key.split('.'); return p.length >= 3 || (p[0] === 'profiles' && p.length === 2) ? p[1] : null; };
-  /** The Playground tab's rows: `[key, label, about, choices]`, a choice `[value, name]`; no choices is a switch. */
-  const PLAY_ROWS = () => [
-    ['delay', 'Check after typing rests', 'How long the analysis waits after the last key. A command or argument still being typed waits at least 1.5 s.', [[150, '0.15 s'], [400, '0.4 s'], [1000, '1 s'], [2000, '2 s']]],
-    ['auto', 'Compile after edits rest', 'A PDF build once the edits rest this long. The same choice as in the Compile menu.', DELAYS.map(([ms, n]) => [ms, n])],
-    ['font', 'Editor font size', '', [12, 13, 14, 15, 16, 18, 20].map((n) => [n, `${n} px`])],
-    ['wrap', 'Wrap long lines', 'A line longer than the editor goes on below instead of scrolling sideways.'],
-    ['numbers', 'Line numbers', ''],
-    ['theme', 'Editor colors', 'Follow the site, or keep the editor light or dark.', [['site', 'as the site'], ['light', 'light'], ['dark', 'dark']]],
-    ['offline', 'Keep a copy for offline use', `Fetches every package${offlineState.total ? ` (${mib(offlineState.total)} MiB)` : ''} into this browser while it is idle, so the playground works without a connection. Off: only what a document uses is fetched.`],
-  ];
-  const playValue = (k) => k === 'auto' ? (pdfAuto.on ? pdfAuto.delay : 0) : play[k];
+  /** This browser's own choice under the Playground tab's keys: an offline copy of every package. */
+  const offlineOn = () => { try { return localStorage.getItem('satex-offline') === '1'; } catch { return false; } };
   function playSettings() {
-    $('cfg-play-list').innerHTML = PLAY_ROWS().map(([k, label, about, choices]) => {
-      const v = playValue(k), changed = k === 'auto' ? v !== 0 : v !== PLAY_DEF[k];
-      const input = choices ? `<select data-play="${k}" aria-label="${escape(label)}">${choices.map(([c, n]) => `<option value="${escape(String(c))}"${String(c) === String(v) ? ' selected' : ''}>${escape(n)}</option>`).join('')}</select>`
-        : `<input type="checkbox" role="switch" data-play="${k}"${v ? ' checked' : ''} aria-label="${escape(label)}">`;
-      return `<li class="cfg-row${changed ? ' cfg-changed' : ''}"><div class="cfg-what"><span class="cfg-name">${escape(label)}</span>${about ? `<span class="muted cfg-about">${escape(about)}</span>` : ''}</div><label class="${choices ? '' : 'ts-toggle '}cfg-value">${input}</label></li>`;
-    }).join('');
+    const about = `Fetches every package${offlineState.total ? ` (${mib(offlineState.total)} MiB)` : ''} into this browser while it is idle, so the playground works without a connection. Off: only what a document uses is fetched.`;
+    $('cfg-play-list').innerHTML = `<li class="cfg-row${offlineOn() ? ' cfg-changed' : ''}"><div class="cfg-what"><span class="cfg-name">Keep a copy for offline use</span><span class="muted cfg-about">${escape(about)}</span></div><label class="ts-toggle cfg-value"><input type="checkbox" role="switch" data-play="offline"${offlineOn() ? ' checked' : ''} aria-label="keep a copy for offline use"></label></li>`;
   }
   $('cfg-play-list').addEventListener('change', (e) => {
-    const k = e.target.dataset.play;
-    if (!k) return;
-    const v = e.target.type === 'checkbox' ? e.target.checked : /^\d+$/.test(e.target.value) ? +e.target.value : e.target.value;
-    if (k === 'auto') { pdfAuto.on = v > 0; pdfAuto.delay = v || pdfAuto.delay; pdfAutoKeep(); pdfEdited(); }
-    else {
-      play[k] = v;
-      const own = Object.fromEntries(Object.entries(play).filter(([x, y]) => y !== PLAY_DEF[x]));
-      try { if (Object.keys(own).length) localStorage.setItem(PLAY, JSON.stringify(own)); else localStorage.removeItem(PLAY); } catch {}
-      editor?.prefs?.();
-      if (k === 'offline') { if (v) offlineRun(); else offlineState.stop = true; }
-    }
+    if (e.target.dataset.play !== 'offline') return;
+    try { if (e.target.checked) localStorage.setItem('satex-offline', '1'); else localStorage.removeItem('satex-offline'); } catch {}
+    if (e.target.checked) offlineRun(); else offlineState.stop = true;
     playSettings();
   });
   /** The Playground tab's TeX files: this viewer's package sources, kept in the browser. An address without `{name}` is not kept. */
@@ -3049,13 +3091,12 @@
   $('cfg-tex-hosts').oninput = texSave;
   $('cfg-tex-reset').onclick = () => { self.satexStore.set('tex-sources', null); $('cfg-tex-hosts').value = texList().join('\n'); texSave(); };
   if (!TEX_ON) $('cfg-tex').hidden = true;
+  const cfgPlay = $('cfg-play');
   async function configShow() {
     const all = withOverrides(await configLoad()), q = $('cfg-search').value.trim().toLowerCase();
     for (const t of $('cfg-tabs').querySelectorAll('[data-tab]')) t.setAttribute('aria-pressed', String(t.dataset.tab === (cfgYaml ? 'yaml' : cfgTab)));
     $('cfg-yaml').hidden = $('cfg-yaml-ed').hidden = true;
     $('cfg-list').hidden = cfgYaml;
-    $('cfg-play').hidden = cfgYaml || cfgTab !== 'playground';
-    if (!$('cfg-play').hidden) { $('cfg-list').hidden = $('cfg-filters').hidden = true; $('cfg-search').closest('label').hidden = true; playSettings(); if (TEX_ON) texSettings(); return; }
     $('cfg-search').closest('label').hidden = false;
     if (cfgYaml) {
       const v = await yamlEditor(), box = v ? $('cfg-yaml-ed') : $('cfg-yaml'), text = configYamlOf({ ...yamlDefaults(all), ...configSet });
@@ -3065,7 +3106,7 @@
     }
     const keys = all;
     // the filters as chips under the search: what the keys of this tab can be narrowed by
-    const tabKeys = keys.filter((k) => (cfgTab === 'plugins') === !!pluginOf(k));
+    const tabKeys = keys.filter((k) => cfgTab === 'playground' ? groupOf_(k) === 'playground' : (cfgTab === 'plugins') === !!pluginOf(k));
     const groups = [...new Set(tabKeys.map(groupOf_))], affects = [...new Set(tabKeys.flatMap((k) => k.affects))];
     // the filters complete a word that starts with `@`
     const typing = $('cfg-search').value.match(/(?:^|\s)(@\S*)$/)?.[1]?.toLowerCase();
@@ -3107,14 +3148,19 @@
       }).join('');
     };
     const section = (id, head, about, ks, open) => `<li class="cfg-group"><details${open ? ' open' : ''} data-group="${escape(id)}"><summary><b>${escape(head)}</b>` +
-      `${about ? ` <span class="muted">${inline(about)}</span>` : ''} <span class="muted">${plural(ks.length, 'key')}${changedIn(ks) ? `, ${changedIn(ks)} changed` : ''}</span></summary><ul>${rows(id, ks)}</ul></details></li>`;
+      ` <span class="muted">${plural(ks.length, 'key')}${changedIn(ks) ? `, ${changedIn(ks)} changed` : ''}</span>${about ? `<span class="muted cfg-group-about">${inline(about)}</span>` : ''}</summary><ul>${rows(id, ks)}</ul></details></li>`;
     const lists = ['packages', 'classes', 'both'].map((n) => `<datalist id="cfg-dl-${n}">${NAMES[n].map((x) => `<option value="${escape(x)}">`).join('')}</datalist>`).join('') +
       `<datalist id="cfg-dl-top">${tabKeys.filter((k) => !k.key.startsWith('profiles.') && !k.extra).map((k) => `<option value="${escape(k.key)}">`).join('')}</datalist>`;
+    // the Playground tab: its keys as rows, this browser's own choices under them (moved in, so one list scrolls)
+    $('cfg-list').after(cfgPlay);
+    cfgPlay.hidden = true;
     $('cfg-list').innerHTML = (cfgTab === 'plugins'
       ? configPlugins(hits, q, section, row, keys)
-      : groups.map((g) => [g, hits.filter((k) => groupOf_(k) === g)]).filter(([, ks]) => ks.length).map(([g, ks]) => section(g, g, '', ks, !!q || cfgOpen.has(g)))).join('')
+      : cfgTab === 'playground' ? hits.map(row)
+      : groups.map((g) => [g, hits.filter((k) => groupOf_(k) === g)]).filter(([, ks]) => ks.length).map(([g, ks]) => section(g, g, cfgGroupAbout[g] ?? '', ks, !!q || cfgOpen.has(g)))).join('')
       || '<li class="muted">No setting matches.</li>';
     $('cfg-list').insertAdjacentHTML('beforeend', lists);
+    if (cfgTab === 'playground' && !cfgYaml) { $('cfg-list').append(cfgPlay); cfgPlay.hidden = false; playSettings(); if (TEX_ON) texSettings(); }
     if (cfgFocus) { const el = $('cfg-list').querySelector(`[data-cfg="${CSS.escape(cfgFocus)}"] .cfg-chip-in`); cfgFocus = null; el?.focus(); }
     const n = Object.keys(configSet).length;
     $('cfg-total').textContent = n ? `${plural(n, 'setting')} changed` : 'every setting at its default';
@@ -3136,7 +3182,15 @@
     row.classList.toggle('cfg-open', !cfgOpened.delete(row.dataset.key) && !!cfgOpened.add(row.dataset.key));
   });
   let configTimer = 0;
-  const configApply = (set) => { configKeep(set); configShow(); clearTimeout(configTimer); configTimer = setTimeout(() => restart(), 600); };
+  /** The settings a run reads: all but the playground's own. */
+  const runKeys = (set) => JSON.stringify(Object.entries(set).filter(([k]) => !k.startsWith('playground.')).sort());
+  const configApply = (set) => {
+    const runs = runKeys(set) !== runKeys(configSet), zoom = set['playground.pdf_zoom'] !== configSet['playground.pdf_zoom'];
+    configKeep(set);
+    if (zoom) pdfZoomTo(1, PDF_FIT[play.pdf_zoom] ?? '');
+    configShow();
+    if (runs) { clearTimeout(configTimer); configTimer = setTimeout(() => restart(), 600); }
+  };
   $('cfg-open').onclick = () => { $('play-config').showModal(); configShow(); $('cfg-search').focus(); };
   $('cfg-search').oninput = configShow;
   /** The groups opened: each starts shut, its name and counts only. */
@@ -4076,7 +4130,7 @@
   }
   /** Forgets every kept view state and reloads; the drafts, the settings and the theme stay. */
   function resetView() {
-    const stay = new Set([DRAFTS, 'satex-config', 'satex-theme', PLAY, 'satex-download-ok', 'satex-offline']);
+    const stay = new Set([DRAFTS, 'satex-config', 'satex-theme', 'satex-download-ok', 'satex-offline']);
     self.satexStore.clear();
     try { for (const k of Object.keys(localStorage)) if (k.startsWith('satex-') && !stay.has(k)) localStorage.removeItem(k); } catch {}
     removeEventListener('pagehide', keepView);
@@ -4984,11 +5038,14 @@
   addEventListener('offline', () => probeServer());
   /** Zoom of the pages as a factor of the pane's width, in the address's `zoom` like the symbol list's. */
   const pdfZoom = { value: 1, fit: /** @type {'' | 'width' | 'page'} */ ('') };
+  /** `playground.pdf_zoom` as a fit; `actual` is none. */
+  var PDF_FIT = { width: 'width', page: 'page' };
   {
     const z = new URLSearchParams(location.search).get('zoom');
     const kept = self.satexStore.get('pdf-zoom');
     if (z === 'fit' || z === 'page') pdfZoom.fit = z === 'fit' ? 'width' : 'page';
     else if (!z && kept) Object.assign(pdfZoom, { value: Math.min(4, Math.max(0.3, Number(kept.value) || 1)), fit: ['', 'width', 'page'].includes(kept.fit) ? kept.fit : '' });
+    else if (!z) pdfZoom.fit = PDF_FIT[play.pdf_zoom] ?? '';
     else pdfZoom.value = Math.min(4, Math.max(0.3, Number(z) || 1));
   }
   /** `fit` keeps the zoom at the pane (width: the page as wide as the pane; page: the whole first page in view); a number zoom ends it. */
@@ -5172,25 +5229,31 @@
   var pdfQueued = null, pdfSummary = '';
   pdfButtons.forEach((b, i) => { b.onclick = (e) => { e.preventDefault(); compile(); }; });
   /** Auto-compile: a build once the edits rest for the chosen delay, remembered per viewer. var: an edit may come first. */
-  var pdfAuto = { on: false, delay: 1000, timer: 0 };
-  try { const kept = JSON.parse(localStorage.getItem('satex-pdf-auto') ?? '{}'); pdfAuto.on = !!kept.on; pdfAuto.delay = +kept.delay || 1000; } catch {}
+  var pdfAuto = { on: play.compile_after > 0, delay: play.compile_after || 1000, timer: 0, want: false };
   const DELAYS = [[0, 'off'], [200, '0.2 s'], [500, '0.5 s'], [1000, '1 s'], [2000, '2 s'], [5000, '5 s']];
   $('pdf-auto-list').insertAdjacentHTML('beforeend', DELAYS.map(([ms, name]) => `<label><input type="radio" name="pdf-delay" value="${ms}"> ${name}</label>`).join(''));
   const pdfAutoKeep = () => {
     $('pdf-auto-list').querySelectorAll('input').forEach((i) => { i.checked = +i.value === (pdfAuto.on ? pdfAuto.delay : 0); });
     $('pdf-compile').classList.toggle('auto', pdfAuto.on);
     $('pdf-compile').title = pdfAuto.on ? `Automatic compile is on: a build ${pdfAuto.delay / 1000} s after the edits rest. Click to build now (Ctrl+S)` : `Build the project with ${pdfWhere(serverUp)} and show the PDF (Ctrl+S)`;
-    try { localStorage.setItem('satex-pdf-auto', JSON.stringify({ on: pdfAuto.on, delay: pdfAuto.delay })); } catch {}
   };
   pdfAutoKeep();
-  $('pdf-auto-list').onchange = (e) => { const ms = +e.target.value; pdfAuto.on = ms > 0; pdfAuto.delay = ms || pdfAuto.delay; pdfAutoKeep(); pdfEdited(); };
+  $('pdf-auto-list').onchange = (e) => { playSet('compile_after', +e.target.value); pdfEdited(); };
   // the Compile menu closes after a choice and when clicking elsewhere
   addEventListener('pointerdown', (e) => { for (const d of document.querySelectorAll('.pdf-menu[open], .pdf-layers[open]')) if (!d.contains(e.target)) d.open = false; });
   /** An edit: with auto-compile on, a build once the edits rest; one running then queues it. A slice is asked for, never rebuilt on its own. */
   function pdfEdited() {
     if (!pdfAuto?.on || pdf?.slice) return;
     clearTimeout(pdfAuto.timer);
-    pdfAuto.timer = setTimeout(() => { if (pdfAuto.on && !pdfButtons[0].disabled) compile(false, false, null, true); }, pdfAuto.delay);
+    // built once this version's analysis lands (`pdfAutoNow`), the delay a backstop for an analysis that never does
+    pdfAuto.want = true;
+    pdfAuto.timer = setTimeout(pdfAutoNow, pdfAuto.delay);
+  }
+  function pdfAutoNow() {
+    clearTimeout(pdfAuto.timer);
+    if (!pdfAuto.want) return;
+    pdfAuto.want = false;
+    if (pdfAuto.on && !pdfButtons[0].disabled) compile(false, false, null, true);
   }
   /** The last build of this very text, kept by the server, shown when the page opens. */
   const pdfRestore = () => compile(false, true);
@@ -5225,7 +5288,7 @@
   /** The places left by following links, the latest last: Back returns to them. */
   const pdfBack = [], pdfBackButton = $('pdf-back');
   /** The shown build's PDF opened in pdf.js (tex.ts `open`), its number, the pages wanted drawn (in or near view). */
-  var pdfViewer = null, pdfGen = 0, pdfIO = null, pdfDrawing = false, pdfTexted = 0;
+  var pdfViewer = null, pdfGen = 0, pdfIO = null, pdfDrawing = null, pdfTexted = 0;
   const pdfWant = new Set();
   /** The build's PDF opened, where pdf.js is at hand; without it (or a PDF) the pane shows the server's page images. */
   let pdfOpening = null;
@@ -5241,7 +5304,8 @@
   /** Draws the wanted page nearest the middle of the view, one at a time, newest build only; then the text of a browser build. */
   async function pdfDrawNext() {
     const view = pdfViewer, gen = pdfGen, pages = pdfBody.querySelector('.pdf-pages');
-    if (pdfDrawing || !view || !pages) return;
+    // a draw is waited for per build: a closed build's draw that never settles holds no newer page
+    if (pdfDrawing === view || !view || !pages) return;
     const r = pages.getBoundingClientRect(), mid = (r.top + r.bottom) / 2, away = (el) => { const b = el.getBoundingClientRect(); return Math.abs((b.top + b.bottom) / 2 - mid); };
     // the page typed on first: its change is the one waited for
     const typed = (e) => pdfCaret?.view === 'pdf' && +e.dataset.page === pdfCaret.page ? -1 : 0;
@@ -5251,7 +5315,7 @@
       if (pdf?.browser && pdfTexted !== gen) { pdfTexted = gen; view.text().then((t) => { if (gen === pdfGen) { Object.assign(pdf, t); pdfLinksDraw(); pdfOverlay(); pages.dataset.words = ''; } }).catch(() => {}); }
       return;
     }
-    pdfDrawing = true;
+    pdfDrawing = view;
     try {
       const n = +el.dataset.page, url = await view.draw(n), old = el.querySelector('img'), [width, height] = view.sizes[n - 1];
       const img = Object.assign(new Image(), { src: url, alt: old.alt, draggable: false, width, height });
@@ -5268,7 +5332,7 @@
       // a page pdf.js cannot draw stays as it was: asked again it would fail again, a loop that holds the page
       el.dataset.shown = String(gen);
       console.warn('pdf page', e);
-    } finally { pdfDrawing = false; pdfDrawNext(); }
+    } finally { if (pdfDrawing === view) pdfDrawing = null; pdfDrawNext(); }
   }
   /** The links of the pages, again: a browser build learns them after its pages show. */
   function pdfLinksDraw() {
@@ -5473,14 +5537,16 @@
   }
   /** The source of a point on a page: the nearest record of the project's files, one line above another counting more.
    * Boxes carry the line where they closed, so only the points TeX set count. Over a word, only those on its row. */
-  function pdfSource(page, x, y, word, fine = true) {
+  function pdfSource(page, x, y, word, fine = true, inside = !!word) {
     let best = null, score = Infinity;
     for (const b of pdf.boxes ?? []) {
       if (b.page !== page || !(b.file in state.texts) || fine && !'xgk$'.includes(b.kind) || word && Math.abs(b.y - word[4]) > 4) continue;
+      // a word's own records first (SyncTeX's stand at its right end): a nearer one may be the other column's
+      if (inside && (b.x < word[1] - 0.5 || b.x > word[3] + 2)) continue;
       const s = Math.abs(x - b.x) / 4 + Math.abs(y - (b.y - 3));
       if (s < score) { score = s; best = b; }
     }
-    return best ?? (word ? pdfSource(page, x, y, null, fine) : fine ? pdfSource(page, x, y, null, false) : null);
+    return best ?? (inside ? pdfSource(page, x, y, word, fine, false) : word ? pdfSource(page, x, y, null, fine) : fine ? pdfSource(page, x, y, null, false) : null);
   }
   /** The word on the page at a point, if one is under it. */
   const pdfWordUnder = (page, x, y) => (pdf.wordList ?? []).find((w) => w[0] === page && w[1] - 1 <= x && x <= w[3] + 1 && w[2] - 1 <= y && y <= w[4] + 1);
@@ -5495,6 +5561,9 @@
   // a double click selects nothing on the pages (the browser paints the image and its overlays)
   pdfBody.addEventListener('mousedown', (e) => { if (e.detail > 1 && e.target.closest('.pdf-pages')) e.preventDefault(); });
   pdfBody.addEventListener('click', (e) => {
+    // the click that ends a drag over the words selected them: no caret, no jump
+    if (performance.now() - pdfSelEnd < 400) { e.preventDefault(); return; }
+    pdfSelOff();
     if (e.target.closest('.pdf-owner button')) { compile(); return; }
     const al = e.target.closest('.pdf-col-al');
     if (al) { e.preventDefault(); pdfColAlign(al); return; }
@@ -5518,6 +5587,72 @@
     const [w, h] = pageSize(img), r = img.getBoundingClientRect(), page = +img.parentElement.dataset.page;
     const x = (e.clientX - r.left) / r.width * w, y = (e.clientY - r.top) / r.height * h;
     if (pdfTyping) pdfCaretAt(page, x, y); else pdfGo(page, x, y, pdfWordUnder(page, x, y));
+  });
+  /* Selecting on the pages: a drag over the words selects them in reading order, a click stays a click (a caret, a
+   * jump to the source). Ctrl+C copies their source text where the open file spells the first and the last word near
+   * the lines SyncTeX names, else the words as the page reads. */
+  var pdfSel = null, pdfSelEnd = 0; // pdfSel: { page, words, of }
+  const pdfSelOff = () => { pdfSel = null; pdfBody.querySelectorAll('.pdf-sel').forEach((b) => b.remove()); };
+  function pdfSelDraw() {
+    pdfBody.querySelectorAll('.pdf-sel').forEach((b) => b.remove());
+    const el = pdfSel && pdfBody.querySelector(`.pdf-page[data-page="${pdfSel.page}"]`), img = el?.querySelector('img');
+    if (!img?.naturalWidth) return;
+    const [w, h] = pageSize(img);
+    el.insertAdjacentHTML('beforeend', PE.bands(pdfSel.words).map((b) => `<span class="pdf-sel" style="${pdfPlace((b.l - 0.5) / w, (b.t - 0.5) / h, (b.r - b.l + 1) / w, (b.d - b.t + 2) / h)}"></span>`).join(''));
+  }
+  pdfBody.addEventListener('pointerdown', (e) => {
+    const img = e.button === 0 && !pdf?.slice && (e.target.closest('.pdf-page img') ?? (e.target.closest('.pdf-ov:not(.pdf-keys)') && e.target.closest('.pdf-page')?.querySelector('img')));
+    if (!img?.naturalWidth || !pdf?.wordList) return;
+    const page = +img.parentElement.dataset.page, words = pdfWordsOn(page), id = e.pointerId, [x0, y0] = [e.clientX, e.clientY];
+    const at = (m) => { const [w, h] = pageSize(img), r = img.getBoundingClientRect(); return PE.nearest(words, (m.clientX - r.left) / r.width * w, (m.clientY - r.top) / r.height * h); };
+    const a = at(e);
+    let on = false;
+    const move = (m) => {
+      if (m.pointerId !== id || !on && Math.hypot(m.clientX - x0, m.clientY - y0) < 5) return;
+      if (!on) { on = true; pdfCaretOff(); }
+      const b = at(m);
+      if (a < 0 || b < 0) return;
+      pdfSel = { page, words: words.slice(Math.min(a, b), Math.max(a, b) + 1), of: pdf.wordList };
+      pdfSelDraw();
+    };
+    const end = (u) => {
+      if (u.pointerId !== id) return;
+      for (const [t, f] of [['pointermove', move], ['pointerup', end], ['pointercancel', end]]) removeEventListener(t, f);
+      if (!on) return;
+      pdfSelEnd = performance.now();
+      // the hidden input takes the keys: Ctrl+C copies, Ctrl+V finds no caret
+      if (pdfTypeIn.parentElement !== $('play-pdf')) $('play-pdf').append(pdfTypeIn);
+      pdfTypeIn.focus({ preventScroll: true });
+    };
+    for (const [t, f] of [['pointermove', move], ['pointerup', end], ['pointercancel', end]]) addEventListener(t, f);
+  });
+  /** Where page word `w` stands in the open text, at or after offset `min`: its `[from, to]`, else null. */
+  function pdfWordSrc(w, min = 0) {
+    const hit = pdfSource(w[0], w[1] + 1, w[4] - 1, w), text = editor.text(), st = pdfLineStarts(text);
+    if (!hit || hit.file !== state.file) return null;
+    // the line SyncTeX names, its neighbours, then the paragraph before it
+    const near = [hit.line, hit.line + 1, hit.line - 1];
+    for (let n = hit.line - 2; n > 0 && n > hit.line - 40 && text.slice(st[n], st[n + 1]).trim(); n--) near.push(n);
+    for (const n of near) {
+      const a = st[n - 1];
+      if (a == null) continue;
+      const got = PE.spans(text.slice(a, (st[n] ?? text.length + 1) - 1), w[5]).map(([p, q]) => [a + p, a + q]).find(([p]) => p >= min);
+      if (got) return got;
+    }
+    return null;
+  }
+  /** The selection's text: its source where both ends are found in order, else the words as set. */
+  function pdfSelText() {
+    const ws = pdfSel.words, text = editor.text(), from = pdfWordSrc(ws[0]), to = from && pdfWordSrc(ws.at(-1), from[0]);
+    if (!to || to[1] - from[0] > 64 * ws.reduce((n, w) => n + w[5].length + 1, 0)) return PE.joined(ws);
+    const lead = /^[^\p{L}\p{N}]*/u.exec(ws[0][5])[0], tail = /[^\p{L}\p{N}]*$/u.exec(ws.at(-1)[5])[0];
+    return text.slice(text.startsWith(lead, from[0] - lead.length) ? from[0] - lead.length : from[0], text.startsWith(tail, to[1]) ? to[1] + tail.length : to[1]);
+  }
+  document.addEventListener('copy', (e) => {
+    if (!pdfSel || pdfSel.of !== pdf?.wordList || getSelection()?.toString() || !(document.activeElement === pdfTypeIn || document.activeElement === document.body)) return;
+    e.preventDefault();
+    e.clipboardData.setData('text/plain', pdfSelText());
+    toast('Copied the source of the selection');
   });
   /** The source of a point on a page opened in the editor, `word` (a word box) selected in its line when found there.
    * A word the line does not spell under a reference (its number) follows the reference, unless `follow` is false. */
@@ -5923,20 +6058,21 @@
     const file = first && last && Object.keys(state.texts).find((n) => String(first.path).endsWith(n));
     return file ? { file, line: first.line, col: first.col, end: [last.line, last.col], def: first.def, defLine: first.defLine } : null;
   }
-  /** Row `r`'s characters with a source site, math left out: each with its site's path and line and, where the run read
+  /** Row `r`'s characters with a source site (a math atom's marked `math`): each with its site's path and line and, where the run read
    * it elsewhere in the user's files (`origins`), that place and the macro whose definition holds it. */
   function rowChars(r) {
     const chars = [], marked = [...(r.marked ?? r.detail ?? '')], sites = r.sites ?? [], origins = r.origins ?? [];
-    let k = 0, o = -1, i = 0, note = false, math = false;
+    // `atom`: a math note's class (`\u0006i`, `\u00060`…) opens a math atom, an empty one (`\u0006`) closes it
+    let k = 0, o = -1, i = 0, note = false, math = false, atom = '', inMath = false;
     for (let j = 0; j < marked.length; j++) {
       const c = marked[j];
-      if (c === '') { note = true; math = marked[j + 1] === '\u0006'; continue; }
-      if (c === '') { note = math = false; continue; }
-      if (math) continue;
+      if (c === '') { note = true; math = marked[j + 1] === '\u0006'; atom = ''; continue; }
+      if (c === '') { if (math) inMath = atom.length > 1; note = math = false; continue; }
+      if (math) { atom += c; continue; }
       while (k + 1 < sites.length && sites[k + 1].at <= i) k++;
       while (o + 1 < origins.length && origins[o + 1].at <= i) o++;
       const s = sites[k], g = origins[o];
-      if (!note && s && s.at <= i) chars.push({ c, path: String(s.path ?? r.path ?? ''), line: s.line, col: s.col + (s.same ? 0 : i - s.at), from: g?.line ? { path: g.path ?? r.path, line: g.line, col: g.col + i - g.at, def: g.def, defLine: g.def_line } : null });
+      if (!note && s && s.at <= i) chars.push({ c, path: String(s.path ?? r.path ?? ''), line: s.line, col: s.col + (s.same ? 0 : i - s.at), math: inMath, from: g?.line ? { path: g.path ?? r.path, line: g.line, col: g.col + i - g.at, def: g.def, defLine: g.def_line } : null });
       i++;
     }
     return chars;
@@ -5985,14 +6121,28 @@
   const pdfRowWords = (rects) => rects.flatMap((r) => (pdf.wordList ?? []).filter((w) => w[0] === r.page && w[4] >= r.t && w[2] <= r.d && w[3] > r.l - 2 && w[1] < r.r + 2))
     .sort((a, b) => a[0] - b[0] || a[2] - b[2] || a[1] - b[1]);
   /** Where `text` (typeset words) stands among the rows' words: one box per row it covers, else null. */
+  /** Page word `w` cut to the part spelled `t` (a run's text at its edge), its left and right in proportion to the
+   * measured widths; the word whole where it does not spell `t` once. */
+  function pdfWordPart(w, t) {
+    const all = w[5].normalize('NFKC'), at = t ? all.indexOf(t) : -1;
+    if (at < 0 || t === all || all.indexOf(t, at + 1) >= 0) return w;
+    const ctx = pdfEchoCtx ??= document.createElement('canvas').getContext('2d');
+    ctx.font = `20px ${PDF_ECHO_FONT}`;
+    const full = Math.max(0.1, ctx.measureText(all).width), x = (n) => w[1] + (w[3] - w[1]) * ctx.measureText(all.slice(0, n)).width / full;
+    return [w[0], x(at), w[2], x(at + t.length), w[4], t];
+  }
   function pdfWordsOf(rects, text) {
-    const bare = (t) => t.replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, ''), want = text.split(/\s+/).map(bare).filter(Boolean), words = pdfRowWords(rects);
+    // punctuation alone (a macro's `!`) is looked for as it stands
+    const bare = (t) => t.replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, ''), want = text.split(/\s+/).filter(Boolean).map((t) => bare(t) || t), words = pdfRowWords(rects);
     if (!want.length) return null;
-    const fits = (w, t) => { const b = bare(w[5]); return b && (b.includes(t) || t.includes(b)); };
+    const fits = (w, t) => { const b = bare(w[5]); return bare(t) ? b && (b.includes(t) || t.includes(b)) : w[5].includes(t); };
     for (let i = 0; i + want.length <= words.length; i++) {
       if (!want.every((t, j) => fits(words[i + j], t))) continue;
       const rows = new Map();
-      for (const w of words.slice(i, i + want.length)) {
+      for (const [j, w0] of words.slice(i, i + want.length).entries()) {
+        // a run that is part of a page word (`loookotrolool` of `loookotrolool!`, the `!` a macro's) takes its share
+        // of the word's width, as the echo font measures it: per character, not per word
+        const w = pdfWordPart(w0, j === 0 ? text.trimStart().split(/\s+/)[0] : j === want.length - 1 ? text.trimEnd().split(/\s+/).at(-1) : null);
         const key = `${w[0]}:${Math.round(w[4])}`, o = rows.get(key);
         rows.set(key, { page: w[0], l: Math.min(o?.l ?? w[1], w[1]), t: Math.min(o?.t ?? w[2], w[2]), r: Math.max(o?.r ?? w[3], w[3]), d: Math.max(o?.d ?? w[4], w[4]) });
       }
@@ -6366,16 +6516,14 @@
     pdfLiveShow();
     pdfOverlay();
   };
-  /** What typing does with this build's speed, beside the Type button. */
+  /** What typing does with this build's speed: said in the Type button's tooltip. */
+  const pdfTypeTip = pdfTypeButton.title;
   function pdfLiveShow() {
-    const el = $('pdf-live');
-    el.hidden = !pdfTyping;
     const ms = Number.isFinite(pdfRound.ms) ? `${Math.round(pdfRound.ms)} ms` : 'not measured yet';
-    el.textContent = pdfLive() ? 'live' : 'on pause';
-    el.title = pdfLive() ? `The pages follow each key: a build takes ${ms}` : `The pages follow once typing rests (or Enter): a build takes ${ms}, live needs ${LIVE_MS} ms or less`;
+    pdfTypeButton.title = `${pdfTypeTip}. ${pdfLive() ? `The pages follow each key: a build takes ${ms}` : `The pages follow once typing rests: a build takes ${ms}, each key needs ${LIVE_MS} ms or less`}`;
   }
   pdfLiveShow();
-  const pdfCaretOff = () => { pdfCaret = pdfGhost = null; document.querySelectorAll('.pdf-caret, .type-note').forEach((c) => c.remove()); };
+  const pdfCaretOff = () => { pdfMenuOff(); pdfCaret = pdfGhost = null; document.body.classList.remove('type-sync'); document.querySelectorAll('.pdf-caret, .type-note').forEach((c) => c.remove()); };
   pdfTypeIn.addEventListener('blur', pdfCaretOff);
   /** Line starts of the open text, once per version. */
   let pdfStarts = { v: -1, starts: [0] };
@@ -6403,6 +6551,40 @@
     const lead = word[5].search(/[\p{L}\p{N}]/u), k = Math.round((x - word[1]) / Math.max(1, word[3] - word[1]) * word[5].length) - Math.max(0, lead);
     caretPut({ view: 'pdf', page, word }, hit.file, hit.line, word[5], k, nth, () => readAt(hit.file, hit.line, word[5]));
   }
+  /** Home, End, Up and Down at the caret: to the start or end of its line as set, or the line above or below, the
+   * column kept. The PDF's lines are its words on one baseline, chained by gaps narrower than a column's (two
+   * columns share baselines); the Typeset view's are the browser's lines. The source cursor follows (caretPut). */
+  const LINE_GAP = 12;
+  async function caretLine(key) {
+    const el = document.querySelector('.pdf-caret'), c = pdfCaret;
+    if (!el || !c) return;
+    const r = el.getBoundingClientRect(), mid = r.top + r.height / 2;
+    if (c.view === 'ts') {
+      const box = el.parentElement?.querySelector?.('.ts-text') ?? typesetBody.querySelector('.ts-text'), b = [...typesetBody.querySelectorAll('p.ts[data-line] .ts-text')].find((t) => { const q = t.getBoundingClientRect(); return q.top <= mid && mid <= q.bottom; })?.getBoundingClientRect() ?? box?.getBoundingClientRect();
+      if (!b) return;
+      const [x, y] = key === 'Home' ? [b.left + 1, mid] : key === 'End' ? [b.right - 1, mid] : [r.left, mid + (key === 'ArrowUp' ? -1 : 1) * r.height];
+      const target = document.elementFromPoint(x, y);
+      if (target?.closest('p.ts[data-line] .ts-text')) return tsCaretAt({ target, clientX: x, clientY: y });
+      return;
+    }
+    const img = pdfImg(c.page), w = c.word;
+    if (!img || !w) return;
+    const [pw] = pageSize(img), ir = img.getBoundingClientRect(), cx = (r.left - ir.left) / ir.width * pw;
+    const words = pdfWordsOn(c.page), same = (a) => Math.abs(a[4] - w[4]) < 1;
+    // the caret's line: its baseline's words, chained left and right by word gaps
+    const line = [w], row = words.filter(same).sort((a, b) => a[1] - b[1]);
+    for (let i = row.indexOf(w) - 1; i >= 0 && line[0][1] - row[i][3] < LINE_GAP; i--) line.unshift(row[i]);
+    for (let i = row.indexOf(w) + 1; i > 0 && i < row.length && row[i][1] - line.at(-1)[3] < LINE_GAP; i++) line.push(row[i]);
+    let t = key === 'Home' ? line[0] : key === 'End' ? line.at(-1) : null, x = key === 'Home' ? t?.[1] + 0.2 : t?.[3] - 0.05;
+    if (!t) {
+      // the nearest baseline above or below with a word under the caret's x (its column)
+      const up = key === 'ArrowUp', near = words.filter((a) => (up ? a[4] < w[4] - 1 : a[4] > w[4] + 1) && a[1] - LINE_GAP < cx && cx < a[3] + LINE_GAP);
+      const base = near.reduce((m, a) => up ? Math.max(m, a[4]) : Math.min(m, a[4]), up ? -Infinity : Infinity);
+      t = near.filter((a) => a[4] === base).sort((a, b) => Math.abs((a[1] + a[3]) / 2 - cx) - Math.abs((b[1] + b[3]) / 2 - cx))[0];
+      x = t && Math.min(Math.max(cx, t[1] + 0.2), t[3] - 0.05);
+    }
+    if (t) await pdfCaretAt(c.page, x, (t[2] + t[4]) / 2);
+  }
   /** Puts the caret (`c`: its view's own fields) on `word`, set while about line `line` of `file` was read: where the
    * line or a neighbour spells it as plain text (the `nth(n)`-th there), else where the run read it (`read()`, readAt's
    * answer), a macro's definition after a note. `k`: the clicked character's index in the word. `read` first if `first`. */
@@ -6413,15 +6595,28 @@
     let text = editor.text(), from = 0, span = null, written = false, def = null;
     const lineAt = (n) => { const st = pdfLineStarts(text), a = st[n - 1] ?? -1, e = st[n] ?? text.length + 1; return a < 0 ? null : [a, text.slice(a, e - 1)]; };
     // SyncTeX names a line of the paragraph the row was set from: that line first, then its neighbours
-    for (const n of first ? [] : [line, line + 1, line - 1]) {
-      const got = lineAt(n);
-      if (!got) continue;
-      const [a, l] = got, all = PE.spans(l, word);
-      written ||= all.length > 0;
-      // the line's occurrences the output can show (not math, keys, names)
-      const spans = all.filter(([p, q]) => !pdfWhy(text, a + p, a + q)), before = spans.length > 1 ? nth(n) : 0;
-      span = spans[before] ?? (spans.length === 1 ? spans[0] : null);
-      if (span) { from = a; break; }
+    // a word the output runs together with math beside it (`$x_{42}$Generally`, one word on a PDF page): the longest
+    // part around the clicked character the line spells whole
+    // part, cut where letters meet digits or a lower letter an upper one, around the clicked character
+    const cuts = [0, ...[...word].flatMap((c, i) => i && (/\p{N}/u.test(c) !== /\p{N}/u.test(word[i - 1]) || /\p{Lu}/u.test(c) && /\p{Ll}/u.test(word[i - 1])) ? [i] : []), word.length];
+    const parts = cuts.flatMap((a, i) => cuts.slice(i + 1).map((b) => [a, b - a])).filter(([a, n]) => a <= k && k <= a + n).sort((p, q) => q[1] - p[1]);
+    for (const [p0, len] of first ? [] : parts) {
+      const part = word.slice(p0, p0 + len);
+      // SyncTeX names the line where TeX broke the paragraph (often its end): that line, its neighbours, then the
+      // paragraph's lines before it, up to a blank line
+      const near = [line, line + 1, line - 1];
+      for (let n = line - 2; n > 0 && n > line - 40 && (lineAt(n + 1)?.[1] ?? '').trim(); n--) near.push(n);
+      for (const n of near) {
+        const got = lineAt(n);
+        if (!got) continue;
+        const [a, l] = got, all = PE.spans(l, part);
+        written ||= all.length > 0;
+        // the line's occurrences the output can show (text or math; not keys, names)
+        const spans = all.filter(([p, q]) => { const why = pdfWhy(text, a + p, a + q); return !why || /math/.test(why); }), before = spans.length > 1 ? nth(n) : 0;
+        span = spans[before] ?? (spans.length === 1 ? spans[0] : null);
+        if (span) { from = a; break; }
+      }
+      if (span) { k -= p0; word = part; break; }
     }
     if (!span) {
       const got = bare && read();
@@ -6437,7 +6632,7 @@
     // the input moves to the view typed in (a hidden panel takes no focus); moving it ends the old caret
     const home = c.view === 'ts' ? $('play-typeset') : $('play-pdf');
     if (pdfTypeIn.parentElement !== home) home.append(pdfTypeIn);
-    pdfCaret = { ...c, file: state.file, target: uri(), at: from + span[0] + Math.min(Math.max(k, 0), span[1] - span[0]), v: version };
+    pdfCaret = { ...c, file: state.file, target: uri(), anchor: c.view === 'pdf' ? from + span[0] : null, at: from + span[0] + Math.min(Math.max(k, 0), span[1] - span[0]), v: version };
     pdfTypeIn.focus({ preventScroll: true });
     pdfNote(def);
     pdfCaretDraw();
@@ -6485,19 +6680,28 @@
   /** The caret over the pages: in its word as the last build set it, the word as now written beside it while the pages lag. */
   function pdfCaretDraw() {
     pdfBody.querySelectorAll('.pdf-caret, .pdf-echo').forEach((c) => c.remove());
+    // the source editor's cursor follows the caret, scrolled into view (its focus stays in the view typed in)
+    document.body.classList.toggle('type-sync', !!pdfCaret);
+    if (pdfCaret && state.file === pdfCaret.file && !pdfGhost) { const at = pdfCaret.at; if (editor.cursor?.()[1] !== at) editor.select?.([at, at]); }
     if (pdfCaret?.view === 'ts') return tsCaretDraw();
     const c = pdfCaret, img = c && pdfImg(c.page);
     if (!img?.naturalWidth || state.file !== c.file) return;
     const [pw, ph] = pageSize(img), g = pdfSeen(), m = PE.wordAt(g.text, g.at), now = m?.[1];
     // the word around the caret, found again on the page after a build: the nearest one so spelled
     const bare = (w) => w[5].normalize('NFKC').replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, ''), dist = (w) => Math.hypot(w[1] - c.word[1], w[4] - c.word[4]);
-    const near = m && pdfWordsOn(c.page).filter((w) => bare(w) === now).sort((a, b) => dist(a) - dist(b))[0];
-    const w = near && dist(near) < 40 ? near : c.word, into = m ? g.at - m[0] : 0;
-    c.word = w;
-    const shown = w[5].normalize('NFKC'), lead = m ? Math.max(0, shown.indexOf(now)) : 0;
-    let cx = w[1] + (w[3] - w[1]) * Math.min(1, (lead + into) / Math.max(1, shown.length));
-    // the pages lag the text: the row is laid out again at once with the word as now written, until the build lands
-    if (m && bare(w) !== now) cx = pdfEcho(img, w, now, into) ?? cx;
+    const same = m ? pdfWordsOn(c.page).filter((w) => bare(w) === now).sort((a, b) => dist(a) - dist(b)) : [];
+    // past a line break (Enter) the word stands far off: the one SyncTeX sets from the caret's line
+    const line = pdfPos(g.text, g.at).line + 1, near = same[0] && dist(same[0]) < 40 ? same[0] : same.find((w) => pdfSource(c.page, w[1] + 1, w[4] - 1, w)?.line === line);
+    // `anchor`: where the page's word `c.word` starts in the text. The text typed from there on is laid into its row at
+    // once (one word or many, spaces too), until a build sets the caret's word on the page.
+    const set = !!near;
+    if (set || c.anchor == null || g.at < c.anchor) c.anchor = m ? m[0] : g.at;
+    if (set) c.word = near;
+    const w = c.word, shown = w[5].normalize('NFKC'), plain = (t) => t.replace(/\\[A-Za-z@]+\s*|[{}$\\^_~]/g, '').replace(/\s+/g, ' ');
+    const typed = g.text.slice(c.anchor, Math.max(g.at, m ? m[0] + m[1].length : g.at)), into = m ? g.at - m[0] : 0;
+    let cx = w[1] + (w[3] - w[1]) * Math.min(1, ((m ? Math.max(0, shown.indexOf(now)) : 0) + into) / Math.max(1, shown.length));
+    // the pages lag the text: the row is laid out again at once with the text as now written, until the build lands
+    if (!set && typed !== bare(w) && !/\\[A-Za-z@]*$/.test(g.text.slice(c.anchor, g.at))) cx = pdfEcho(img, w, plain(typed), plain(g.text.slice(c.anchor, g.at)).length) ?? cx;
     img.parentElement.insertAdjacentHTML('beforeend', `<span class="pdf-caret" style="left:${cx / pw * 100}%;top:${w[2] / ph * 100}%;height:${(w[4] - w[2]) / ph * 100}%"></span>`);
   }
   /** Draws word `w`'s row with `now` in its place (its edge punctuation kept): the row's words over a patch of the
@@ -6555,12 +6759,26 @@
   };
   /** The inline math delimiters typing writes: `conventions.math.inline` (`$`, `\(`, `auto`). */
   const pdfInline = () => configSet['conventions.math.inline'] ?? 'auto';
-  /** A key at the caret: Backspace and Delete take a character (an escape, an empty pair whole), arrows move over plain text, Enter builds, Escape ends. */
+  /** A key at the caret: Backspace and Delete take a character (an escape, an empty pair whole), arrows move over plain text, Enter breaks the line, Escape ends. */
   pdfTypeIn.addEventListener('keydown', (e) => {
     if (!pdfCaret || e.isComposing) return;
     const step = { ArrowLeft: -1, ArrowRight: 1 }[e.key];
-    if (e.key === 'Escape') { e.preventDefault(); pdfCaretOff(); pdfTypeIn.blur(); }
-    else if (e.key === 'Enter') { e.preventDefault(); pdfRebuild(true); }
+    // the completion list: Up and Down choose, Enter or Tab takes, Escape closes
+    if (pdfMenu && /^(ArrowUp|ArrowDown|Enter|Tab|Escape)$/.test(e.key)) {
+      e.preventDefault();
+      if (e.key === 'Escape') pdfMenuOff();
+      else if (e.key === 'Enter' || e.key === 'Tab') pdfMenuPick(pdfMenu.sel);
+      else { pdfMenu.sel = (pdfMenu.sel + (e.key === 'ArrowUp' ? -1 : 1) + pdfMenu.items.length) % pdfMenu.items.length; pdfMenuDraw(); }
+      return;
+    }
+    if (/^(Home|End|ArrowUp|ArrowDown)$/.test(e.key)) { e.preventDefault(); pdfQueue(() => caretLine(e.key)); return; }
+    if (step || e.key === 'Backspace' || e.key === 'Delete') setTimeout(() => pdfMenu && pdfMenuShow());
+    // Escape in math leaves the formula: the caret goes past its closer; else typing ends
+    const closer = (text, at) => /\$\$?|\\\)|\\\]|\\end\{[^}]*\}/.exec(text.slice(at)), g = pdfSeen();
+    if (e.key === 'Escape' && /math/.test(pdfWhy(g.text, g.at, g.at) ?? '') && closer(g.text, g.at)) { e.preventDefault(); pdfEdit((text, at) => { const m = closer(text, at); return [at, at, '', m ? m.index + m[0].length : 0]; }); }
+    else if (e.key === 'Escape') { e.preventDefault(); pdfCaretOff(); pdfTypeIn.blur(); }
+    // Enter a new paragraph (a blank line), Shift+Enter one line break: TeX reads it as a space; in math a line break only
+    else if (e.key === 'Enter') { e.preventDefault(); pdfEdit((text, at) => { const br = e.shiftKey || /math/.test(PE.editable(text, at, at, []) ?? '') ? '\n' : '\n\n'; return [at, at, br, br.length]; }); pdfRebuild(true); }
     else if (step) {
       e.preventDefault();
       pdfQueue(() => {
@@ -6580,10 +6798,57 @@
     const typed = pdfTypeIn.value;
     pdfTypeIn.value = '';
     if (!pdfCaret || !typed) return;
-    // one character at a time: each one's escape or closer depends on where the one before left the caret
-    for (const ch of typed) pdfEdit((text, at) => PE.typed(text, at, ch, pdfInline()));
+    // one character at a time: each one's escape or closer depends on where the one before left the caret;
+    // `\` starts a command's name, raw, and the completion list the source editor shows opens at the caret
+    for (const ch of typed) pdfEdit(ch === '\\' ? (text, at) => [at, at, '\\', 1] : (text, at) => PE.typed(text, at, ch, pdfInline(), configSet['conventions.math.smart_scripts'] ?? true));
+    if (typed.includes('\\') || pdfMenu) pdfMenuShow();
   };
+  /** The completion list at the caret after a `\`: the source editor's items for the name typed so far, \textbackslash among them. */
+  var pdfMenu = null; // { el, items, sel, from }
+  function pdfMenuOff() { pdfMenu?.el.remove(); pdfMenu = null; }
+  async function pdfMenuShow() {
+    const g = pdfSeen(), m = /\\([A-Za-z@]*)$/.exec(g.text.slice(Math.max(0, g.at - 64), g.at));
+    if (!m || !pdfCaret) return pdfMenuOff();
+    const from = g.at - m[0].length, p = pdfPos(g.text, from + 1);
+    push();
+    const all = await completions(p, p.character, '\\'), back = { label: 'textbackslash', detail: 'a backslash in the text: \\textbackslash{}', insertText: 'textbackslash{}' };
+    const now = pdfSeen();
+    if (!pdfCaret || now.text.slice(from, now.at) !== m[0]) return;
+    const items = rank([...all.filter((i) => i.label !== 'textbackslash'), back], m[1]).slice(0, 60);
+    if (!items.length) return pdfMenuOff();
+    if (!pdfMenu) { pdfMenu = { el: Object.assign(document.createElement('ul'), { className: 'complete type-complete', role: 'listbox' }) }; document.body.append(pdfMenu.el); }
+    Object.assign(pdfMenu, { items, sel: 0, from });
+    pdfMenu.el.onmousedown = (e) => { e.preventDefault(); const li = e.target.closest('li'); if (li) pdfMenuPick(+li.dataset.i); };
+    pdfMenuDraw();
+  }
+  function pdfMenuDraw() {
+    const { el, items, sel } = pdfMenu, caret = document.querySelector('.pdf-caret')?.getBoundingClientRect();
+    el.innerHTML = items.map((i, k) => `<li role="option" aria-selected="${k === sel}" data-i="${k}"><code>\\${escape(i.label)}</code>${i.detail && i.detail !== `\\${i.label}` ? ` <span class="muted">${escape(String(i.detail).split('\n')[0])}</span>` : ''}</li>`).join('');
+    if (caret) Object.assign(el.style, { left: `${Math.min(caret.left, innerWidth - 320)}px`, top: `${caret.bottom + 4}px` });
+    el.children[sel]?.scrollIntoView({ block: 'nearest' });
+  }
+  /** The chosen item replaces the typed `\name`; a snippet's first field takes the caret, its default text kept. */
+  function pdfMenuPick(k) {
+    const item = pdfMenu?.items[k], from = pdfMenu?.from;
+    pdfMenuOff();
+    if (!item) return;
+    let caret = -1;
+    const body = '\\' + String(item.insertText ?? item.textEdit?.newText ?? item.label).replace(/\$\{(\d+)(?::([^}]*))?\}|\$(\d+)/g, (_, n, text = '', bare, off) => {
+      if (caret < 0 && (n ?? bare) !== '0') caret = off;
+      return text;
+    });
+    // the offset counted before the replacement: the fields before the first one are none
+    pdfEdit((text, at) => [from, at, body, caret < 0 ? body.length : caret + 1]);
+  }
   pdfTypeIn.addEventListener('input', (e) => { if (!e.isComposing) pdfTaken(); });
+  // the Type bars' math buttons: inline math (as `$`) or display math at the caret, the caret's focus kept
+  for (const b of document.querySelectorAll('.type-math')) {
+    b.onmousedown = (e) => e.preventDefault();
+    b.onclick = () => {
+      if (!pdfCaret) return toast('Click on a word first: the formula goes in at the caret');
+      pdfEdit((text, at) => /math/.test(pdfWhy(text, at, at) ?? '') ? [at, at, '', 0] : b.dataset.math === '$' ? PE.typed(text, at, '$', pdfInline()) : [at, at, '\\[\\]', 2]);
+    };
+  }
   pdfTypeIn.addEventListener('compositionend', pdfTaken);
   /** Follows a reference or citation (`o`, an occurrence) to what it names: the editor to its definition,
    * the pages to where that is set (a label's line, the bibliography's entry). Back returns. A label opens itself. */
@@ -6905,7 +7170,7 @@
    * otherwise (a redefined `table`, a float of a package) is right once it lands. */
   /** @type {[RegExp, string, string?][]} */
   const SEED_LENSES = [[/\\begin\{(?:figure|table)\*?\}/, 'Edit placement…'], [/\\begin\{(?:tabular[*x]?|array|longtable)\}/, 'Edit table…'],
-    [/\\includegraphics\b/, 'Edit image…'], [/\\begin\{tikzpicture\}/, 'Edit drawing…', 'tikz']];
+    [/\\includegraphics\b/, 'Edit image…'], [/\\begin\{tikzpicture\}/, 'Edit drawing…', 'tikz'], [/\\begin\{circuitikz\}/, 'Edit circuit…', 'circuit']];
   function textLenses(text) {
     if (!/\.tex$/.test(state.file ?? '')) return [];
     const at = uri(), out = [];
@@ -6924,7 +7189,8 @@
   async function lensify() {
     const asked = uri(), found = await lsp('textDocument/codeLens', { textDocument: { uri: asked } }).catch(() => null);
     // no answer (a newer run cancelled this one) keeps the marks: the next run's lenses replace them
-    if (Array.isArray(found) && asked === uri()) editor?.lenses?.(found);
+    // the circuits' lenses are the playground's own: the server has none
+    if (Array.isArray(found) && asked === uri()) editor?.lenses?.([...found, ...textLenses(editor.text()).filter((l) => l.command.arguments[2] === 'circuit')]);
   }
   /** The compile server's PNG of a PDF's first page, else null: a static host has no renderer. */
   async function pdfPage(data) {
@@ -7518,6 +7784,7 @@
     // the root's run reads for every file it publishes
     const absent = final ? [] : await absentBundles();
     if (seq !== published.get(p.uri) || outdated(p)) return;
+    if (current && version === synced && pdfAuto?.want) pdfAutoNow();
     const lacking = final ? [] : self.satexViews.loads.lacked([...new Set([...missing(unresolved, true), ...absent, ...wanted_(named(projectTexts()), state.kernel, true), ...inFlight])],
       fetchedPackages, [inFlight, background], landedAt, saw);
     if (lacking.length) {
@@ -7640,7 +7907,7 @@
       Object.assign(offlineState, { todo, total: todo.reduce((n, [, s]) => n + s, 0), got: 0 });
     } catch (e) { console.warn('offline mode unavailable', e); return; }
     // fetching everything is the viewer's choice (Settings, Playground), never a default: a document fetches what it uses
-    if (!offlineState.todo.length || !play.offline || navigator.connection?.saveData) { offlineShow(''); return; }
+    if (!offlineState.todo.length || !offlineOn() || navigator.connection?.saveData) { offlineShow(''); return; }
     await new Promise((r) => (self.requestIdleCallback ? requestIdleCallback(r, { timeout: 2000 }) : setTimeout(r, 2000)));
     offlineRun();
   }
@@ -7674,13 +7941,15 @@
     s.running = false;
     s.todo = next;
     if (!next.length) offlineShow('');
-    else s.got = s.total - next.reduce((n, [, z]) => n + z, 0), offlineShow(failed ? 'offline copy paused: no connection' : play.offline ? `offline copy stopped at ${mib(s.got)}/${mib(s.total)} MiB` : '', 'Resume', 'fetch the rest of the packages');
+    else s.got = s.total - next.reduce((n, [, z]) => n + z, 0), offlineShow(failed ? 'offline copy paused: no connection' : offlineOn() ? `offline copy stopped at ${mib(s.got)}/${mib(s.total)} MiB` : '', 'Resume', 'fetch the rest of the packages');
   }
   offlineBtn.onclick = () => {
     if (offlineState.running) offlineState.stop = true; else offlineRun();
   };
   addEventListener('online', () => { if (!offlineState.running && offlineState.todo.length && offlineBtn.textContent === 'Resume' && offlineText.textContent.includes('no connection')) offlineRun(); });
 
+  /** The shown build's words, [page, left, top, right, bottom, text] in bp: what the page tests click on. Read-only. */
+  self.satexPdfWords = () => Object.assign([...(pdf?.wordList ?? [])], { dpi: pdf?.dpi });
   /** What doc/site/chaos.mjs reads of the page: what it shows and for which text. Read-only. */
   self.satexHealth = () => ({
     busy: 'busy' in status.dataset, phase: act.phase, status: status.textContent, quiet: Math.round(performance.now() - act.changed), heard: Math.round(performance.now() - lastHeard),

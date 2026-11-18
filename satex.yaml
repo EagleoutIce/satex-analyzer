@@ -74,7 +74,7 @@ lint_off: [analysis-imprecision, assertion-proved]  # rules that never report, b
   #! affects: output
   #! example: `lint_off+: [unused-label]`
   #! example: unused labels are no longer reported
-project:
+project:  # which files are the project's own, and which are someone else's
   frozen: []  # globs of files that are read and analyzed but get no findings and no fixes, relative to this file
     #! affects: output
     #! example: `frozen: ['vendor/**']`
@@ -196,6 +196,9 @@ conventions:  # how TeX is usually written, where the text alone does not say
     inline: auto  # the inline math delimiters typing into the PDF or Typeset view writes: $, \(, or auto (the document's most used)
       #! affects: output
       #! example: `inline: \(` types `\(x\)`, `inline: $` types `$x$`
+    smart_scripts: true  # typing `_` or `^` into math in the PDF or Typeset view opens a group a space or operator closes
+      #! affects: output
+      #! example: `x_42` types `x_{42}`
   csname:  # commands that do a \csname's job, the first one defined is advised
     use: [csuse, '@nameuse']  # using a control sequence by name
       #! affects: output
@@ -269,7 +272,7 @@ conventions:  # how TeX is usually written, where the text alone does not say
       internal: 3  # internal names
         #! affects: output
         #! example: `internal: 9`
-lints:
+lints:  # what a single rule reads, under its code
   unused-definition:
     report_public: true  # also report an unused command with a public name. Off for packages, whose commands are their interface
       #! affects: output
@@ -350,6 +353,22 @@ lints:
     rows: 3  # rows with text, header included, before booktabs rules are suggested
       #! affects: output
       #! example: a two-row table with `\hline` gets no finding
+  low-contrast-color:  # WCAG 2 contrast minimum of text against its background
+    ratio: 4.5  # the contrast ratio text needs
+      #! affects: output
+      #! example: `7` asks for WCAG's enhanced contrast
+    large-ratio: 3.0  # the ratio large text needs
+      #! affects: output
+    large: 18.0  # font size in points from which text is large
+      #! affects: output
+    large-bold: 14.0  # font size in points from which bold text is large
+      #! affects: output
+  indistinct-colors:  # colors used side by side that look alike with a color vision deficiency
+    below: 15.0  # CIELAB distance under which two simulated colors look alike
+      #! affects: output
+      #! example: `20` also reports pairs that are only hard to tell apart
+    apart: 30.0  # CIELAB distance from which two colors are meant to differ for normal vision
+      #! affects: output
   clones:  # blocks of the source that repeat with only their values changed
     enabled: true  # look for clones at all
       #! affects: output
@@ -411,7 +430,7 @@ lints:
 # choice.  Each block is a partial config, merged over everything above.
 # A profile can reuse another with a YAML anchor and `<<:` merge key
 # instead of repeating its keys (`profiles.class: {<<: *library, ...}`).
-profiles:
+profiles:  # the settings each kind of input (document, package, class, literate, plain) changes
   document: {}  # a LaTeX document: every default above already fits it
   package: &library  # a .sty, read as its own author sees it
     at_letter: true
@@ -462,7 +481,7 @@ profiles:
 #! example: `texlive.year: 2025`
 #! plugin: provider
 
-texmf:
+texmf:  # where a run looks for the installation besides texlive
   roots: []  # TeX trees to search instead of the ones kpsewhich names
     #! affects: precision
     #! example: `roots: [/opt/texlive/2026/texmf-dist]`
@@ -473,7 +492,7 @@ texmf:
     #! affects: precision
     #! example: off: with no kpsewhich and no roots, no package is found
 
-cache:
+cache:  # the interpreted kernel and packages kept between runs
   enabled: true  # keep the interpreted kernel and packages between runs. Off, every run starts from scratch
     #! affects: speed
     #! example: off: each run reads `latex.ltx` again, seconds instead of milliseconds
@@ -543,7 +562,7 @@ expand_in_reports: []  # macros to show expanded in reports
 # instead, an empty value suggests nothing.  Entries add to what it knows.
 latex_alternatives: {}
 
-gaps:
+gaps:  # what SaTeX could not follow, and how it reports that
   log: true  # write what a run could not follow to a file, for bug reports
     #! affects: output
     #! example: off: nothing is appended to `gaps.ndjson`
@@ -553,7 +572,7 @@ gaps:
   # file: ~/.cache/satex/gaps.ndjson  # where gaps.log writes. Unset: the cache folder
     #! affects: output
 
-analysis:
+analysis:  # where paths join, and what the run assumes
   join_paths_at:  # where all paths still apart are merged into one, reported as paths-joined-at
     #! affects: precision, speed
     #! example: `- hook: begindocument`
@@ -876,6 +895,58 @@ playground:  # what only the web playground reads
   lenses: false  # a button line above each table, figure and drawing besides the mark in the gutter
     #! affects: output
     #! example: `lenses: true`: "Edit image…" stands above each \includegraphics
+  widget_marks: true  # a mark in the gutter on each line a widget edits: a table, a figure, a color
+    #! affects: output
+    #! example: `widget_marks: false`: the gutter shows line numbers and findings only
+  theme: site  # the editor's colors
+    #! option: site: as the site, light or dark
+    #! option: light: always light
+    #! option: dark: always dark
+    #! affects: output
+  font: ""  # the editor's font family, as CSS names it. Empty takes the site's monospace font
+    #! affects: output
+    #! example: `font: "JetBrains Mono, monospace"`
+  font_size: 14  # the editor's font size in px
+    #! affects: output
+    #! example: `font_size: 16`
+  wrap: false  # long lines go on below instead of scrolling sideways
+    #! affects: output
+  line_numbers: true  # line numbers in the editor's gutter
+    #! affects: output
+  check_delay: 400  # how long the analysis waits after the last key, in ms. A command still being typed waits at least 1.5 s
+    #! affects: speed
+    #! example: `check_delay: 1000`: fewer runs on a slow machine
+  compile_after: 0  # how long the edits rest before a PDF build, in ms. 0 builds only on request. The Compile menu sets it too
+    #! affects: output
+    #! example: `compile_after: 1000`: the PDF follows a second after the edits rest
+  type_mode: true  # Type mode on in the Typeset view from the start: a click on a word puts the caret at its place in the source
+    #! affects: output
+  tint_macro: ""  # Type mode's tint of text a macro wrote, a CSS color. Empty takes the theme's violet
+    #! affects: output
+    #! example: `tint_macro: "#e11d48"`
+  tint_argument: ""  # Type mode's tint of text from an argument, a CSS color. Empty takes the theme's cyan
+    #! affects: output
+  tint_moved: ""  # Type mode's tint of text written elsewhere, a CSS color. Empty takes the theme's amber
+    #! affects: output
+  complete_while_typing: true  # the completion list opens while typing. Off, only Ctrl+Space opens it
+    #! affects: output
+  typeset_layers: []  # the Typeset view's layers on at the start. A layer switched in the view stays as switched
+    #! option: envs: environments
+    #! option: keys: key-value options
+    #! option: boxes: boxes
+    #! option: glue: glue
+    #! option: ligs: ligatures
+    #! option: findings: findings
+    #! option: maybe: what only some paths typeset
+    #! affects: output
+    #! example: `typeset_layers: [findings, maybe]`
+  pdf_zoom: actual  # the PDF's zoom when no zoom was chosen before
+    #! option: width: the page as wide as the pane
+    #! option: page: the whole page in view
+    #! option: actual: 100 %
+    #! affects: output
+  tips: true  # tips in the loading banners and the console bar
+    #! affects: output
 
 slice:  # what satex slice leaves out
   trim: true  # leave out the packages, libraries, labels and headings the criterion uses nothing of. Off also keeps what \begin{document} reads
@@ -969,7 +1040,7 @@ arm_joins: true  # inside an \edef or \csname, merge both branches of an undecid
 # Limits: the termination argument. Reaching one stops that part of the run
 # and records a diagnostic. Only choices, site_forks, digit_lengths, paths, meaning_splits, widen_after, recursion_depth,
 # call_summary_after, meaning_set and value_set trade precision for time, the rest only stop a run.
-limits:
+limits:  # what bounds the analysis: reaching one stops that part of the run, so no input makes it loop
   memory: 8GiB  # most memory one run may use. It stops cleanly beyond it. 0 lifts the limit
     #! affects: memory
     #! example: `memory: 2GiB` stops a runaway run before it slows the machine
@@ -1012,6 +1083,9 @@ limits:
   line_overruns: 16  # overruns of one line's budget before the run stops
     #! affects: precision, speed
     #! example: a line that stays stuck after this many cuts ends the run
+  walk_per_step: 1  # map entries a join, compare or resume of waiting paths walks per step charged to the line, so line_steps also bounds that work
+    #! affects: speed
+    #! example: 100 paths waiting at one line are joined at a cost the line's budget sees
   scan_site_factor: 16  # site_forks inside a value scan, as a factor: its arms join where the scan ends
     #! affects: precision, speed
     #! example: expl3's walker over an unknown file name widens instead of forking per token without end
@@ -1081,7 +1155,7 @@ limits:
   call_memo_longest: 200000  # a run longer than this keeps no effect and stops being recorded, so its log costs nothing
     #! affects: speed
     #! example: a whole `tikzpicture` is not recorded, the point computations in it are
-  call_memo_probes: 8  # runs of a definition that may stay short or unclean before its calls are no longer recorded for call_memo_steps
+  call_memo_probes: 8  # runs of a definition that may stay short or unclean before its calls are no longer recorded for call_memo_steps; probed again after probes << n such calls (n: times it ran out)
     #! affects: speed
     #! example: 0 records every call, which costs on every call
   call_memo_variants: 4  # kept effects per code and arguments, one per state they met

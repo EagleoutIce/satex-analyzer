@@ -3644,6 +3644,37 @@ fn page_styles_read_the_run_and_print() {
     }
 }
 
+/// Page numbering: the page view lists where numbering may restart (`\frontmatter`, `\mainmatter`,
+/// each `\pagenumbering` as written) and whether `page` restarts per chapter. A new style goes on
+/// the line after its mark, since the mark sets its own first; the chapter reset goes in the preamble.
+#[test]
+fn page_numbering_points_and_print() {
+    let text = "\\documentclass{book}\n\\begin{document}\n\\frontmatter\n\\pagenumbering{alph}\nFront\n\\mainmatter\n\\chapter{One}\nText\n\\end{document}\n";
+    let (mut server, uri, dir) = open_set("page-numbering", text, &[]);
+    let views = at(&mut server, &uri, "satex/view", 0, 2);
+    let s =
+        views.as_array().unwrap().iter().find(|v| v["plugin"] == "page").expect("a page view")["sections"][0].clone();
+    let n = &s["numbering"];
+    let names: Vec<_> =
+        n["marks"].as_array().unwrap().iter().map(|m| m["name"].as_str().unwrap().to_string()).collect();
+    assert_eq!(names, ["frontmatter", "mainmatter"], "{n}");
+    assert_eq!(n["calls"][0]["node"]["args"][0]["text"], "alph", "{n}");
+    assert_eq!((n["chapters"].clone(), n["per_chapter"].clone()), (json!(true), json!(false)), "{n}");
+    let main = &n["marks"][1];
+    let nodes = json!([
+        { "kind": "call", "name": "pagenumbering", "args": [{ "open": "{", "text": "Roman" }], "at": main["at"], "line": true },
+        { "kind": "call", "name": "counterwithin", "star": true, "args": [{ "open": "{", "text": "page" }, { "open": "{", "text": "chapter" }], "at": n["insert"], "line": true },
+    ]);
+    let id = server
+        .request("satex/dialogApply", json!({ "textDocument": { "uri": uri }, "kind": "snapshot", "nodes": nodes }));
+    let out = server.response(id)["result"].clone();
+    let written = applied(text, &uri, &json!({ "changes": { uri.clone(): out["edits"] } }), &[]);
+    assert!(written.contains("\\mainmatter\n\\pagenumbering{Roman}\n\\chapter{One}"), "{written}");
+    assert!(written.contains("\\counterwithin*{page}{chapter}\n\\begin{document}"), "{written}");
+    server.shutdown();
+    std::fs::remove_dir_all(dir).ok();
+}
+
 /// Colors with xcolor: items with their hex, hover in every model, an expression mixed, a picker
 /// that writes `[model]{spec}` into `\color`, a `\definecolor` in a TikZ-like key, VS Code's
 /// presentation, and `\definecolor` model conversions.
@@ -4193,6 +4224,21 @@ fn command_items_carry_their_signature() {
     let resolved = server.response(id)["result"].clone();
     let card = resolved["documentation"]["value"].as_str().unwrap_or_default();
     assert!(card.contains("\\greet"), "{resolved}");
+    server.shutdown();
+    std::fs::remove_dir_all(dir).ok();
+}
+
+/// A kernel command's item carries a tab stop per mandatory argument although the document
+/// defines nothing: `\\emph` takes its text in braces. Pins: kernel and package commands
+/// had no definition fact, so `\\emph` came without braces and `{` typed after it was text.
+#[test]
+fn kernel_command_items_carry_their_braces() {
+    let text = "\\documentclass{article}\n\\begin{document}\n\\em\n\\end{document}\n";
+    let (mut server, uri, dir) = open_set("kernel-braces", text, &[]);
+    let items = complete(&mut server, &uri, 2, 3);
+    let emph = items.iter().find(|i| i["label"] == "emph").expect("emph offered");
+    let snippet = emph["insertText"].as_str().unwrap_or_default();
+    assert!(snippet.starts_with("emph{$") || snippet.starts_with("emph${1:{"), "{snippet}");
     server.shutdown();
     std::fs::remove_dir_all(dir).ok();
 }

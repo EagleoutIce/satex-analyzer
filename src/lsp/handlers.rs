@@ -2953,6 +2953,7 @@ fn command_items(analysis: &Analysis, pos: Pos, typed: &str) -> (Vec<CompletionI
         }
         // the usage line, its arguments named, else the bare shape
         let effective = record.get("usage").or_else(|| record.get("effective")).and_then(Json::as_str).unwrap_or("");
+        let shape = record.get("effective").and_then(Json::as_str).unwrap_or("");
         let package = record.get("package").and_then(Json::as_str).unwrap_or("");
         let tier = match (package, internal) {
             ("document", _) => tiers.document,
@@ -2964,7 +2965,9 @@ fn command_items(analysis: &Analysis, pos: Pos, typed: &str) -> (Vec<CompletionI
         // The argument is a name to pick: the editor asks again inside
         // the braces, and an environment brings its `\end`.
         let pick = analysis.settings.conventions.completion.pick.contains(&label);
-        let (insert_text, format) = match takes.get(&name).copied().unwrap_or(0) {
+        // a kernel or package command has no definition fact: its shape counts its `{…}`
+        let braced = || shape.strip_prefix(label.as_str()).unwrap_or(shape).matches('{').count() as u8;
+        let (insert_text, format) = match takes.get(&name).copied().unwrap_or_else(braced) {
             _ if pick => (format!("{label}{{$1}}"), InsertTextFormat::SNIPPET),
             0 => (label.clone(), InsertTextFormat::PLAIN_TEXT),
             min => {
@@ -3295,33 +3298,10 @@ pub(super) fn word_after(text: &str, from: usize, name: &str) -> Option<usize> {
     words(text, name).find(|&i| i >= from)
 }
 
-/// A color xcolor holds exactly, as red, green and blue (xcolor § 6.3's
-/// conversions from its core models).
+/// A color xcolor holds exactly, as an editor's color.
 pub(super) fn rgba(colors: &crate::engine::value::Colors) -> Option<lsp_types::Color> {
-    use crate::engine::value::Model;
-    let color = &colors.hull;
-    let c: Vec<f32> = color.exact()?.iter().map(|&v| v as f32 / crate::engine::value::UNIT as f32).collect();
-    let (r, g, b) = match (color.model.core(), &c[..]) {
-        (Model::Rgb, [r, g, b]) => (*r, *g, *b),
-        (Model::Cmy, [cy, m, y]) => (1.0 - cy, 1.0 - m, 1.0 - y),
-        (Model::Cmyk, [cy, m, y, k]) => ((1.0 - cy) * (1.0 - k), (1.0 - m) * (1.0 - k), (1.0 - y) * (1.0 - k)),
-        (Model::Gray, [g]) => (*g, *g, *g),
-        (Model::Hsb, [h, s, v]) => {
-            let i = (h * 6.0).floor();
-            let f = h * 6.0 - i;
-            let (p, q, t) = (v * (1.0 - s), v * (1.0 - s * f), v * (1.0 - s * (1.0 - f)));
-            match i as i32 % 6 {
-                0 => (*v, t, p),
-                1 => (q, *v, p),
-                2 => (p, *v, t),
-                3 => (p, q, *v),
-                4 => (t, p, *v),
-                _ => (*v, p, q),
-            }
-        }
-        _ => return None,
-    };
-    Some(lsp_types::Color { red: r, green: g, blue: b, alpha: 1.0 })
+    let [red, green, blue] = colors.rgb()?.map(|v| v as f32);
+    Some(lsp_types::Color { red, green, blue, alpha: 1.0 })
 }
 
 /// The first `most` lines of `text` wrapped at `width`, and the characters left out.

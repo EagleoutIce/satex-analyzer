@@ -44,6 +44,9 @@ pub struct Limits {
     pub output_forks: u64,
     /// Overruns of one line's budget before the run stops: the hard bound of the guard.
     pub line_overruns: u32,
+    /// Map entries a join, compare or resume of paths walks per step charged
+    /// to the line: work between steps counts against `line_steps` too.
+    pub walk_per_step: u64,
     /// Steps a line a run wrote may take where satex replays it to see
     /// what it names (labels, keys). Past them that line names nothing.
     pub replay_steps: u64,
@@ -131,7 +134,8 @@ pub struct Limits {
     /// A run longer than this keeps no effect, and stops being recorded.
     pub call_memo_longest: u64,
     /// Runs of one definition that may stay below `call_memo_steps` or
-    /// unclean before its calls are no longer recorded.
+    /// unclean before its calls are no longer recorded, until it is probed
+    /// again after `probes << n` such calls (`n`: times it ran out).
     pub call_memo_probes: u16,
     /// Kept effects per code and arguments, one per state met.
     pub call_memo_variants: u16,
@@ -240,6 +244,7 @@ impl Limits {
             "call_rec_depth" => self.call_rec_depth.into(),
             "output_forks" => self.output_forks,
             "line_overruns" => self.line_overruns.into(),
+            "walk_per_step" => self.walk_per_step,
             "probe_steps" => self.probe_steps,
             "replay_steps" => self.replay_steps,
             "repeat_failures" => self.repeat_failures.into(),
@@ -316,6 +321,9 @@ impl Default for Limits {
             scan_site_factor: 16,
             output_forks: 0,
             line_overruns: 16,
+            // Measured on a thesis stalled at 60 waiting paths: an entry walked
+            // takes ~300 ns, a step ~150 ns, so one entry costs at least a step.
+            walk_per_step: 1,
             // Measured: a `\newlabel` or `\@writefile` line takes a few
             // thousand steps; one of unknown text may take any number.
             replay_steps: 50_000,
@@ -875,12 +883,69 @@ impl Default for SliceConfig {
     }
 }
 
-/// `playground:` in `satex.yaml`: what only the web playground reads.
-#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+/// `playground:` in `satex.yaml`: what only the web playground reads. The
+/// analysis ignores it, and changing it starts no new run.
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct PlaygroundConfig {
     /// A button line above each widget's target besides its gutter mark.
     pub lenses: bool,
+    /// A mark in the editor's gutter on each line a widget edits.
+    pub widget_marks: bool,
+    /// The editor's colors: `site`, `light` or `dark`.
+    pub theme: String,
+    /// The editor's font family. Empty takes the site's monospace font.
+    pub font: String,
+    /// The editor's font size in px.
+    pub font_size: u8,
+    /// Long lines wrap instead of scrolling sideways.
+    pub wrap: bool,
+    /// Line numbers in the editor's gutter.
+    pub line_numbers: bool,
+    /// How long the analysis waits after the last key, in ms.
+    pub check_delay: u32,
+    /// How long the edits rest before a PDF build, in ms. 0 builds only on request.
+    pub compile_after: u32,
+    /// Type mode on in the Typeset view from the start.
+    pub type_mode: bool,
+    /// Type mode's tint of text a macro wrote, a CSS color. Empty takes the theme's.
+    pub tint_macro: String,
+    /// Type mode's tint of text from an argument, a CSS color.
+    pub tint_argument: String,
+    /// Type mode's tint of text written elsewhere, a CSS color.
+    pub tint_moved: String,
+    /// The completion list opens while typing. Off, only Ctrl+Space opens it.
+    pub complete_while_typing: bool,
+    /// The Typeset view's layers on at the start.
+    pub typeset_layers: Vec<String>,
+    /// The PDF's zoom at the start: `width`, `page` or `actual`.
+    pub pdf_zoom: String,
+    /// Tips in the loading banners and the console bar.
+    pub tips: bool,
+}
+
+impl Default for PlaygroundConfig {
+    fn default() -> Self {
+        Self {
+            lenses: false,
+            widget_marks: true,
+            theme: "site".into(),
+            font: String::new(),
+            font_size: 14,
+            wrap: false,
+            line_numbers: true,
+            check_delay: 400,
+            compile_after: 0,
+            type_mode: true,
+            tint_macro: String::new(),
+            tint_argument: String::new(),
+            tint_moved: String::new(),
+            complete_while_typing: true,
+            typeset_layers: Vec::new(),
+            pdf_zoom: "actual".into(),
+            tips: true,
+        }
+    }
 }
 
 /// `docs:` in `satex.yaml`: where the documentation of a package is looked for,
@@ -1338,6 +1403,9 @@ area! {
         /// The delimiters typing into the output writes for inline math: `$`, `\(`, or `auto`,
         /// the one the document uses most.
         inline: String = "auto".into(),
+        /// Typing `_` or `^` into math in the output opens a group, `x_{42}`, which a space,
+        /// an operator or the math's end closes.
+        smart_scripts: bool = true,
     }
 }
 
@@ -2427,6 +2495,8 @@ pub struct Lints {
     pub ellipsis_dots: EllipsisDots,
     pub sentence_capital: SentenceCapital,
     pub table_rules: TableRules,
+    pub low_contrast_color: LowContrastColor,
+    pub indistinct_colors: IndistinctColors,
     pub itemize_numbered: ItemizeNumbered,
     pub itemize_described: ItemizeDescribed,
     pub package_successor: PackageSuccessor,
@@ -2580,6 +2650,42 @@ pub struct TableRules {
 impl Default for TableRules {
     fn default() -> TableRules {
         TableRules { rows: 3 }
+    }
+}
+
+/// `lints.low-contrast-color:` in `satex.yaml`: WCAG 2's contrast minimum (success criterion 1.4.3).
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(default, deny_unknown_fields, rename_all = "kebab-case")]
+pub struct LowContrastColor {
+    /// The contrast ratio text needs against its background.
+    pub ratio: f64,
+    /// The ratio large text needs.
+    pub large_ratio: f64,
+    /// The font size in points from which text is large.
+    pub large: f64,
+    /// The font size in points from which bold text is large.
+    pub large_bold: f64,
+}
+
+impl Default for LowContrastColor {
+    fn default() -> LowContrastColor {
+        LowContrastColor { ratio: 4.5, large_ratio: 3.0, large: 18.0, large_bold: 14.0 }
+    }
+}
+
+/// `lints.indistinct-colors:` in `satex.yaml`: CIELAB distances (CIE76, Delta E).
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct IndistinctColors {
+    /// Two colors closer than this under a simulated color vision deficiency look alike.
+    pub below: f64,
+    /// Two colors at least this far apart for normal vision are meant to differ.
+    pub apart: f64,
+}
+
+impl Default for IndistinctColors {
+    fn default() -> IndistinctColors {
+        IndistinctColors { below: 15.0, apart: 30.0 }
     }
 }
 

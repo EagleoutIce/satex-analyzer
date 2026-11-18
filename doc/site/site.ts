@@ -296,9 +296,18 @@ interface Stream {
     const chips = (names: string[]) => chipList(names, (n) => `<a class="ty ty-chip" href="#" data-ty="${esc(n)}">${esc(n)}</a>`);
     const badge = t.family === 'expl3' ? ' <span class="ty-badge">expl3</span>' : '';
     return `<div class="ty-chain"><b>${esc(name)}</b>${badge}</div><p>${esc(t.about).replace(/`([^`]+)`/g, '<code>$1</code>')}</p>` +
-      (up.length > 1 ? `<div class="ty-below"><span>more general:</span> ${chips(up.slice(0, -1).reverse())}</div>` : '') +
+      `<div class="ty-low"><div>${up.length > 1 ? `<div class="ty-below"><span>more general:</span> ${chips(up.slice(0, -1).reverse())}</div>` : ''}` +
       (below.length ? `<div class="ty-below"><span>more specific:</span> ${chips(below)}</div>` : '') +
-      '<div class="ty-foot">click: the lattice in the wiki</div>';
+      `<div class="ty-foot">click: the lattice in the wiki</div></div>${tyMini(name, up.slice(-3, -1), below)}</div>`;
+  }
+  /** The lattice around a type, small: its parents above, it, its first children below, the edges fading out
+   * toward the border (a CSS mask), so it reads as an excerpt. */
+  function tyMini(name: string, above: string[], below: string[]) {
+    const W = 150, rows = [...above.map((n) => [n]), [name], ...(below.length ? [below.slice(0, 3)] : [])], gap = 26, H = rows.length * gap + 4;
+    const at = rows.map((row, i) => row.map((n, j): [string, number, number] => [n, W * (j + 1) / (row.length + 1), 12 + i * gap]));
+    const edges = at.slice(1).flatMap((row, i) => row.map(([, x, y]) => { const [, px, py] = at[i]!.length === 1 ? at[i]![0]! : at[i]!.find(([n]) => n === name)!; return `<line x1="${px}" y1="${py + 5}" x2="${x}" y2="${y - 8}"/>`; }));
+    const nodes = at.flat().map(([n, x, y]) => `<text x="${x}" y="${y}" text-anchor="middle"${n === name ? ' class="me"' : ''}>${esc(n.length > 16 ? `${n.slice(0, 15)}…` : n)}</text>`);
+    return `<svg class="ty-mini" viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" aria-hidden="true">${edges.join('')}${nodes.join('')}</svg>`;
   }
   // Every tooltip of the site is one of two floating cards made here: `satexTip.card` for a
   // command's card, a finding or a name in a trace, `satexTip.note` for short text (a `title`,
@@ -1149,9 +1158,13 @@ interface Stream {
       `<span class="cat cat-${esc(r.category)}">${esc(r.category)}</span>`,
       ...(engines ? [`<span class="eng" title="only under ${esc(engines)}">${esc(engines)}</span>`] : []),
       ...(r.fixes ?? []).map((f: string) => `<span class="fix fix-${esc(f)}" title="${f === 'safe' ? 'safe: keeps the meaning, --fix applies it' : 'unsafe: may change the meaning, only --unsafe-fixes applies it'}">${f === 'safe' ? 'S' : 'U'}</span>`)];
+    // the release that brought it, as its changelog section (`#v021-…`, found by its version's prefix)
+    if (r.since) badges.push(`<a class="since" title="first release" href="${esc(new URL(`changelog.html#v${String(r.since).replace(/\D/g, '')}`, RULES_URL).href)}">since v${esc(r.since)}</a>`);
     const name = href ? `<a href="${esc(href)}">${esc(r.code)}</a>` : esc(r.code);
+    // a wiki anchor (`[Assertions](#assertions)`) is a section of the rules page
+    const explained = String(r.explanation ?? '').replace(/\]\(#([\w-]+)\)/g, (_, a) => `](${new URL(`wiki/lints.html#${a}`, RULES_URL).href})`);
     return `<section class="rule rule-tip"><h4>${name}</h4><p class="badges">${badges.join(' ')}</p>` +
-      `<p><b>${inline(r.summary ?? r.message ?? '')}</b></p>${markdown(r.explanation ?? '')}${refs ? `<p>See ${refs}.</p>` : ''}</section>`;
+      `<p><b>${inline(r.summary ?? r.message ?? '')}</b></p>${markdown(explained)}${refs ? `<p>See ${refs}.</p>` : ''}</section>`;
   };
   /** A hover's Markdown; its last paragraph, the places and links, is a muted footer. */
   const unescape = (s: string) => s.replace(/&(lt|gt|quot|amp);/g, (m, e) => ({ lt: '<', gt: '>', quot: '"', amp: '&' } as Record<string, string>)[e]!);
@@ -1180,6 +1193,8 @@ interface Stream {
   // A rule named anywhere on the site, as a link into the rules page or its code or number in a
   // code span, shows its card. The cards' data is the rules the build wrote, fetched once.
   const RULES_URL = new URL('rules.json', document.currentScript?.src ?? location.href);
+  // a changelog link names a version only (`#v021`): its section's id goes on with the date
+  if (/^#v\d+$/.test(location.hash) && !document.getElementById(location.hash.slice(1))) addEventListener('DOMContentLoaded', () => document.querySelector(`[id^="${location.hash.slice(1)}-"]`)?.scrollIntoView());
   let ruleData: Promise<Record<string, Rec>> | null = null;
   const ruleNamed = async (name: string) => {
     const all: Record<string, Rec> = await (ruleData ??= fetch(RULES_URL).then((r) => r.ok ? r.json() : {}).catch(() => ({})));
@@ -1619,7 +1634,13 @@ interface Stream {
       fig.dataset.firstFinding = String(Math.round(performance.now() - t0));
     };
     const io = new IntersectionObserver(([e]) => { clearTimeout(timer); if (e!.isIntersecting) timer = setTimeout(go, 600); }, { threshold: .4 });
-    io.observe(fig);
+    // a demo plays in the window until a click or a key: then it gives way to the editor, which starts at once
+    const demo = fig.querySelector<HTMLElement>('.live-demo');
+    if (demo) {
+      const take = (e: Event) => { if (e instanceof KeyboardEvent && e.key !== 'Enter' && e.key !== ' ') return; e.preventDefault(); demo.remove(); go(); };
+      demo.addEventListener('click', take);
+      demo.addEventListener('keydown', take);
+    } else io.observe(fig);
     poster.addEventListener('pointerdown', go, { once: true });
   }
   const own = document.querySelector<HTMLElement>('.example.live');
@@ -1770,8 +1791,7 @@ interface Stream {
     const t = location.hash ? document.getElementById(decodeURIComponent(location.hash.slice(1))) : null;
     t?.closest('details')?.setAttribute('open', '');
     folds.find((g) => g.f.contains(t) && g.f !== t)?.set(true);
-    // a card on the ring sits in a turned row: the ring comes into view, it turns the card to the front
-    (t?.closest('.ring') ?? t)?.scrollIntoView();
+    t?.scrollIntoView();
   };
   addEventListener('hashchange', unfold);
   unfold();
@@ -1997,114 +2017,6 @@ interface Stream {
     // a phone scrolls with the frames still
     const wide = matchMedia('(min-width: 48rem)');
     addEventListener('scroll', () => { if (!queued && wide.matches) { queued = true; requestAnimationFrame(drift); } }, { passive: true });
-  }
-
-  // The showcase's cards on a ring: the card in front is the largest, the others turn away to both sides
-  // and fade behind. It turns on by itself, one whole card at a time and slowly, while nobody points at,
-  // focuses or drags it; the arrows, the arrow keys, a drag or a click on a side card bring a card to the
-  // front and hold the turning for a while. Without motion or on a phone: the plain row below.
-  function ring(row: HTMLElement) {
-    if (matchMedia('(prefers-reduced-motion: reduce)').matches || !matchMedia('(min-width: 48rem)').matches) return false;
-    const cards = [...row.querySelectorAll<HTMLElement>(':scope > .shot')], n = cards.length;
-    if (n < 3) return false;
-    const wrap = row.parentElement!, [prev, next] = wrap.querySelectorAll<HTMLElement>('.cards-nav') as unknown as [HTMLElement, HTMLElement];
-    wrap.classList.add('ring');
-    // the front card's scale; it grows from its top edge (style.css), so the ring is that much taller
-    const step = 360 / n, FRONT = 1.16;
-    let at = 0, goal = 0, raf = 0, front = -1;
-    const norm = (d: number) => ((d % 360) + 540) % 360 - 180;
-    const draw = () => {
-      raf = 0;
-      at += (goal - at) * .14;
-      if (Math.abs(goal - at) < .05) at = goal;
-      const cw = cards[0].offsetWidth, radius = Math.min(cw * .82 / Math.sin(step * Math.PI / 180), cw * 2.6);
-      row.style.height = `${Math.ceil(Math.max(...cards.map((c) => c.offsetHeight)) * (FRONT + .02))}px`;
-      let best = 0, bestCos = -2;
-      cards.forEach((c, i) => {
-        // each card a step out is a fifth smaller: the front one stands out
-        const a = norm(i * step - at), r = a * Math.PI / 180, cos = Math.cos(r);
-        const x = Math.sin(r) * radius, z = (cos - 1) * radius * .55;
-        c.style.transform = `translate3d(calc(-50% + ${x.toFixed(1)}px), 0, ${z.toFixed(1)}px) rotateY(${(-a * .22).toFixed(2)}deg) scale(${(FRONT * .8 ** Math.min(3, Math.abs(a) / step)).toFixed(3)})`;
-        c.style.opacity = Math.max(0, Math.min(1, (cos + .1) / .8)).toFixed(3);
-        // a title rides with its card while the card faces the page
-        c.style.setProperty('--title', Math.max(0, (cos - .55) / .45).toFixed(3));
-        c.style.zIndex = String(Math.round(cos * 100) + 100);
-        c.style.pointerEvents = cos > .2 ? '' : 'none';
-        if (cos > bestCos) { bestCos = cos; best = i; }
-      });
-      if (best !== front) {
-        front = best;
-        cards.forEach((c, i) => c.classList.toggle('ring-front', i === best));
-      }
-      if (at !== goal) raf = requestAnimationFrame(draw);
-    };
-    const kick = () => { if (!raf) raf = requestAnimationFrame(draw); };
-    const turn = (by: number) => { goal = Math.round((goal + by * step) / step) * step; kick(); };
-    // a person's turn holds the automatic one for a while
-    const EVERY = 8000, HOLD = 20000;
-    let held = 0, hover = false, seen = false;
-    const hold = () => { held = performance.now() + HOLD; };
-    prev.disabled = next.disabled = false;
-    prev.onclick = () => { hold(); turn(-1); };
-    next.onclick = () => { hold(); turn(1); };
-    row.addEventListener('keydown', (e) => { if ((e.key === 'ArrowLeft' || e.key === 'ArrowRight') && e.target === row) { e.preventDefault(); hold(); turn(e.key === 'ArrowLeft' ? -1 : 1); } });
-    const face = (i: number) => { hold(); goal += norm(i * step - goal); kick(); };
-    // a side card turns to the front first; the front card's links work as usual
-    cards.forEach((c, i) => c.addEventListener('click', (e) => {
-      if (i === front) return;
-      e.preventDefault();
-      face(i);
-    }, true));
-    // a link to a card (`#shot-table`) turns it to the front
-    const linked = () => { const i = cards.findIndex((c) => `#${c.id}` === location.hash); if (i >= 0) face(i); };
-    addEventListener('hashchange', linked);
-    linked();
-    // a drag turns the ring with the pointer, then settles on the nearest card
-    let drag: { x: number; from: number; moved: boolean } | null = null;
-    row.addEventListener('pointerdown', (e: PointerEvent) => { if (e.button === 0) { hold(); drag = { x: e.clientX, from: goal, moved: false }; } });
-    addEventListener('pointermove', (e) => {
-      if (!drag) return;
-      const dx = e.clientX - drag.x;
-      if (Math.abs(dx) > 6) drag.moved = true;
-      if (drag.moved) { goal = drag.from - dx / wrap.clientWidth * step * 2.2; at = goal; kick(); }
-    });
-    addEventListener('pointerup', () => { if (drag?.moved) { turn(0); row.addEventListener('click', (e: Event) => { e.preventDefault(); e.stopPropagation(); }, { capture: true, once: true }); } drag = null; });
-    // the automatic turn: only while the ring is on screen, the tab shown, and nobody points at or focuses it
-    wrap.addEventListener('pointerenter', () => { hover = true; });
-    wrap.addEventListener('pointerleave', () => { hover = false; });
-    new IntersectionObserver(([e]) => { seen = e.isIntersecting; }, { threshold: .5 }).observe(wrap);
-    setInterval(() => {
-      if (!seen || hover || drag || document.hidden || wrap.contains(document.activeElement) || performance.now() < held) return;
-      turn(1);
-    }, EVERY);
-    // images load late: a card that grows makes the ring taller, so no caption is cut off
-    const grown = new ResizeObserver(kick);
-    grown.observe(wrap);
-    cards.forEach((c) => grown.observe(c));
-    kick();
-    return true;
-  }
-
-  // The showcase's card row: the arrows and the arrow keys step it a card at a time, each arrow gone at its end.
-  for (const row of document.querySelectorAll<HTMLElement>('.cards')) {
-    if (ring(row)) continue;
-    const [prev, next] = row.parentElement!.querySelectorAll<HTMLElement>('.cards-nav') as unknown as [HTMLElement, HTMLElement];
-    const step = (dir: number) => {
-      const card = row.querySelector<HTMLElement>('.shot');
-      if (!card) return;
-      const by = card.getBoundingClientRect().width + parseFloat(getComputedStyle(row).columnGap || '0');
-      row.scrollBy({ left: dir * by, behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
-    };
-    const ends = () => {
-      prev.disabled = row.scrollLeft < 4; next.disabled = row.scrollLeft + row.clientWidth > row.scrollWidth - 4;
-      // the edge fades where more cards wait (style.css)
-      row.classList.toggle('at-start', prev.disabled); row.classList.toggle('at-end', next.disabled);
-    };
-    prev.onclick = () => step(-1);
-    next.onclick = () => step(1);
-    row.addEventListener('keydown', (e) => { if ((e.key === 'ArrowLeft' || e.key === 'ArrowRight') && e.target === row) { e.preventDefault(); step(e.key === 'ArrowLeft' ? -1 : 1); } });
-    row.addEventListener('scroll', ends, { passive: true });
-    new ResizeObserver(ends).observe(row);
   }
 
   // The showcase's videos: only the one in focus plays (the frame most visible near the viewport's centre),

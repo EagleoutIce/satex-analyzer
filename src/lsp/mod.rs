@@ -834,6 +834,8 @@ struct Engine {
     docs: HashMap<Uri, Doc>,
     actions: HashMap<Uri, Vec<Json>>,
     dirty: Vec<Uri>,
+    /// When the last analysis began: an edit after a quiet spell runs at once.
+    flushed: Option<std::time::Instant>,
     /// Leaked once per server: the checkpoints of a run hold it.
     cfg: &'static Config,
     root: PathBuf,
@@ -917,6 +919,7 @@ impl Engine {
             docs: HashMap::default(),
             actions: HashMap::default(),
             dirty: Vec::new(),
+            flushed: None,
             cfg: Box::leak(Box::new(cfg)),
             root,
             main,
@@ -1590,6 +1593,7 @@ impl Engine {
     /// first ([`Self::first`]). One the project takes as given (a submodule's, another
     /// repository's, `project.frozen`) waits until a request asks for it.
     fn flush(&mut self) {
+        self.flushed = Some(std::time::Instant::now());
         let frozen = crate::linter::Frozen::new(&self.cfg.project, &self.root);
         let mut dirty = std::mem::take(&mut self.dirty);
         self.cancelled = false;
@@ -2020,7 +2024,8 @@ fn engine_loop(rx: Receiver<EngineMsg>, mut engine: Engine, debounce: Duration) 
         let received = if let Some(msg) = engine.deferred.pop_front() {
             Ok(msg)
         } else if !engine.dirty.is_empty() {
-            rx.recv_timeout(debounce)
+            // Only the rest of the window since the last run: typing after a pause runs at once.
+            rx.recv_timeout(debounce.saturating_sub(engine.flushed.map_or(debounce, |t| t.elapsed())))
         } else if !engine.prefill.is_empty() {
             // Idle: one more hover, unless a message waits.
             crate::analysis::probe::WANTED.store(false, std::sync::atomic::Ordering::Relaxed);

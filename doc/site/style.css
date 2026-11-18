@@ -942,6 +942,11 @@ code, .tname, .ts-file, .o-file, .tr-at, .place, .loc, .cache-name { text-transf
 .tip-note p { margin: .3rem 0; } .tip-note code { font-size: .74rem; }
 .tip-note .ty-below { font-size: .74rem; } .tip-note .ty-below span { color: var(--muted); margin-right: .2rem; }
 .tip-note .ty-foot { margin-top: .35rem; font-size: .7rem; color: var(--muted); }
+/* the lattice excerpt: bottom right of the card, fading toward its border */
+.tip-note .ty-low { display: flex; align-items: flex-end; gap: .4rem; } .tip-note .ty-low > div { flex: 1 1 auto; min-width: 0; }
+.tip-note .ty-mini { flex: none; margin: 0 -.3rem -.3rem 0; font: 8.5px ui-monospace, Menlo, monospace; fill: var(--muted); stroke: var(--border); stroke-width: 1;
+  -webkit-mask-image: radial-gradient(ellipse 60% 60% at 50% 50%, #000 55%, transparent 100%); mask-image: radial-gradient(ellipse 60% 60% at 50% 50%, #000 55%, transparent 100%); }
+.tip-note .ty-mini text { stroke: none; } .tip-note .ty-mini .me { fill: var(--accent); font-weight: 700; }
 /* the run pop-up */
 .run-pop { display: block; width: min(24rem, calc(100vw - 2rem)); padding: .7rem .8rem; white-space: normal; font: .78rem/1.35 system-ui, sans-serif; }
 .rp-nums { display: grid; grid-template-columns: repeat(auto-fill, minmax(5.5rem, 1fr)); gap: .35rem; } .rp-nums:empty { display: none; }
@@ -1557,8 +1562,12 @@ p.ts.ts-foot::before { content: ""; position: absolute; top: 0; left: 0; width: 
 /* a page of an older build until redrawn: dimmed after a moment, so a quick redraw does not blink */
 .pdf .pdf-page.pdf-stale img { animation: pdf-stale 0s .25s forwards; }
 @keyframes pdf-stale { to { opacity: .45; } }
+/* typing: the last pages stay at full strength until the new ones are decoded and swapped in, no dim frame */
+.type-sync .pdf .pdf-page.pdf-stale img { animation: none; } .type-sync .ov-stale .pdf-ov { opacity: 1; }
 .pdf .pdf-mark { position: absolute; pointer-events: none; background: color-mix(in srgb, var(--accent) 22%, transparent); outline: 1px solid var(--accent); border-radius: 2px; }
 .pdf .pdf-mark.coarse { background: none; outline-style: dashed; }
+/* words selected by a drag on the page */
+.pdf .pdf-sel { position: absolute; z-index: 2; pointer-events: none; background: color-mix(in srgb, var(--accent) 32%, transparent); border-radius: 1px; }
 .pdf .pdf-mark.word { background: color-mix(in srgb, var(--accent) 40%, transparent); outline-width: 2px; }
 .pdf .pdf-pages { user-select: none; -webkit-user-select: none; } .pdf .pdf-pages ::selection { background: transparent; }
 /* dragging a drawing's node never selects its label */
@@ -1611,6 +1620,8 @@ p.ts.ts-foot::before { content: ""; position: absolute; top: 0; left: 0; width: 
 .pdf-type-in { position: absolute; left: 0; top: 0; width: 1px; height: 1px; opacity: 0; pointer-events: none; resize: none; border: 0; padding: 0; }
 .pdf-typing .pdf-page img { cursor: text; }
 #typeset-body { position: relative; }
+#typeset-body.ts-stale::before { content: ''; position: sticky; top: 0; z-index: 4; display: block; height: 2px; margin-bottom: -2px; background: linear-gradient(90deg, transparent, var(--accent), transparent) 0 0 / 40% 100% no-repeat; animation: ts-run 1.2s linear infinite; }
+@keyframes ts-run { from { background-position: -40% 0; } to { background-position: 140% 0; } }
 /* Type mode: where typing goes, a faint tint per origin (text written in place has none) */
 :root { --orig-macro: #7c3aed30; --orig-arg: #0891b230; --orig-moved: #d9770630; --orig-macro-line: #7c3aed; --orig-arg-line: #0891b2; --orig-moved-line: #d97706; }
 @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --orig-macro: #a78bfa40; --orig-arg: #22d3ee38; --orig-moved: #fbbf2438; --orig-macro-line: #a78bfa; --orig-arg-line: #22d3ee; --orig-moved-line: #fbbf24; } }
@@ -1622,13 +1633,16 @@ p.ts.ts-foot::before { content: ""; position: absolute; top: 0; left: 0; width: 
 .ts-orig-arg, .pdf .pdf-orig-arg, .orig-legend .o-arg { background: var(--orig-arg); box-shadow: inset 0 -2px var(--orig-arg-line); }
 .ts-orig-moved, .pdf .pdf-orig-moved, .orig-legend .o-moved { background: var(--orig-moved); box-shadow: inset 0 -2px var(--orig-moved-line); }
 #typeset-body .ts-orig { z-index: 0; }
-/* Type, its legend and its speed: one control, as tall as a layer chip */
-.type-group { display: inline-flex; align-items: stretch; border: 1px solid var(--border); border-radius: 999px; overflow: hidden; font-size: .72rem; }
-.type-group > button { border: 0; border-radius: 0; }
-.type-group .orig-legend { display: none; align-items: center; gap: .2rem; padding: 0 .4rem; border-left: 1px solid var(--border); color: var(--muted); }
-.type-group .orig-legend i { font-style: normal; padding: 0 .3rem; border-radius: 3px; line-height: 1.5; }
+/* Type and its legend: one pill, as tall as the button */
+.type-group { display: inline-flex; align-items: stretch; border: 1px solid var(--border); border-radius: 999px; overflow: hidden; font-size: .72rem; background: var(--bg); }
+.type-group > button.ghost.small { border: 0; border-radius: 0; background: transparent; }
+.type-group .orig-legend { display: none; align-items: center; gap: .25rem; padding: 0 .45rem; border-left: 1px solid var(--border); color: var(--fg); }
+.type-group .orig-legend i { font-style: normal; padding: 0 .3rem 1px; border-radius: 3px; line-height: 1.35; }
 .ts-typing .orig-legend, .pdf-typing .orig-legend { display: inline-flex; }
-.type-group .pdf-live { align-self: center; margin-right: .3rem; }
+.type-group .type-math { display: none; font: .7rem ui-monospace, Menlo, monospace; border-left: 1px solid var(--border) !important; }
+.ts-typing .type-math, .pdf-typing .type-math { display: inline-block; }
+.type-sync .cm-editor .cm-cursor { display: block; border-left: 2px solid var(--accent); opacity: .6; }
+.complete.type-complete { position: fixed; right: auto; width: min(22rem, calc(100vw - 32px)); z-index: 60; background: var(--bg); border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 6px 20px rgba(0,0,0,.18); }
 
 .ts-typing .ts-text { cursor: text; }
 .pdf .pdf-caret, #typeset-body .pdf-caret { position: absolute; z-index: 3; width: 1.5px; margin-left: -.75px; background: var(--accent, #2563eb); animation: pdf-blink 1s steps(1) infinite; pointer-events: none; }
@@ -1641,7 +1655,6 @@ p.ts.ts-foot::before { content: ""; position: absolute; top: 0; left: 0; width: 
 /* typing goes into a definition: said below the view, with a way back */
 .type-note { position: sticky; bottom: 0; z-index: 4; display: flex; flex-wrap: wrap; align-items: center; gap: .4rem; margin: 0; padding: .35rem .6rem; font-size: .8rem; background: color-mix(in srgb, var(--orig-macro) 100%, var(--bg, #fff)); border-top: 1px solid var(--line, #8884); }
 .type-note span { flex: 1 1 16rem; }
-.pdf-live { font-size: .72rem; padding: 0 .3rem; border-radius: 4px; background: var(--sunk); }
 .pdf .pdf-block { z-index: 1; outline: 1px dashed #0e7490; pointer-events: none !important; }
 .pdf .pdf-block b { position: absolute; right: 0; top: 0; transform: translateY(-100%); font: 600 .55rem/1.2 ui-monospace, Menlo, monospace; color: #0e7490; }
 .pdf .pdf-margin { background: #0e749014; pointer-events: none !important; }
@@ -1710,12 +1723,13 @@ p.ts.ts-foot::before { content: ""; position: absolute; top: 0; left: 0; width: 
 @media (max-width: 40rem) { .cache-table td > .chips { display: none; } }
 
 /* PDF bar: one row, Compile with its menu, icon buttons, foldable */
-.pdf-bar { flex-wrap: nowrap; align-items: center; min-width: 0; }
+.pdf-bar { flex-wrap: wrap; align-items: center; min-width: 0; }
 .pdf-bar .pdf-views { flex: 0 1 auto; flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
 /* a tab cut by the bar's edge fades out there, which says the row scrolls on */
 .pdf-bar .pdf-views > * { flex-shrink: 0; }
 .pdf-bar .pdf-views.overflows { mask-image: linear-gradient(to right, #000 calc(100% - 1.6rem), transparent); }
-.pdf-bar .pdf-tools { flex: none; }
+/* a narrow pane (a wide zoom, the editor beside) wraps the tools: none leaves the window */
+.pdf-bar .pdf-tools { flex: 0 1 auto; min-width: 0; flex-wrap: wrap; justify-content: flex-end; }
 .pdf-bar .icon { padding: .05rem .4rem; min-width: 1.5rem; line-height: 1.2; }
 .pdf-bar .icon[aria-pressed=true] { color: var(--accent); border-color: var(--accent); }
 .pdf-split { display: inline-flex; position: relative; flex: none; }
@@ -2046,22 +2060,8 @@ body:not(.show-lenses) .cm-lens-line { display: none; }
 /* landing showcase: the playground's widgets as captured by showcase/capture.mjs, one image per theme, each in a
    window frame (CSS, so it follows the theme and costs no bytes). The big ones reach into the page margin, alternating sides */
 .shots { --out: clamp(0px, (100vw - 64rem) / 2 - 2rem, 10rem); display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--s96); }
-/* one row that scrolls sideways, a card snapping to its start: two cards and the edge of the next in view, one and an edge on a phone */
-.cards-wrap { position: relative; container-type: inline-size; --per: 2.25; }
-.cards { display: grid; grid-auto-flow: column; grid-auto-columns: calc((100% - 2 * var(--s32)) / var(--per)); gap: var(--s32); overflow-x: auto; overscroll-behavior-x: contain;
-  scroll-snap-type: x mandatory; scrollbar-width: none; padding-block: var(--s4); }
-.cards::-webkit-scrollbar { display: none; }
-.cards > .shot { scroll-snap-align: start; }
-.cards:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; border-radius: var(--r-card); }
-/* the arrows sit on the row's edges, halfway down a card's frame */
-.cards-nav { position: absolute; z-index: 2; top: calc(var(--s4) + min(30vh + 2 * var(--s24), (100cqw - 2 * var(--s32)) / var(--per) * 3 / 4) / 2); translate: 0 -50%;
-  display: grid; place-items: center; width: 2.6rem; height: 2.6rem; min-width: 0; padding: 0; border-radius: var(--r-pill); border: 1px solid var(--border);
-  background: color-mix(in srgb, var(--panel) 90%, transparent); color: var(--fg); font-size: 1.4rem; line-height: 1; cursor: pointer; box-shadow: var(--shadow); transition: opacity .2s var(--ease); }
-.cards-prev { left: calc(-1 * var(--s12)); } .cards-next { right: calc(-1 * var(--s12)); }
-.cards-nav:disabled { opacity: 0; pointer-events: none; }
-.cards-nav:hover { border-color: var(--accent); color: var(--accent); }
-/* an odd last card takes the whole row, its picture beside its text */
-@media (max-width: 34rem) { .cards-wrap { --per: 1.15; } .cards { gap: var(--s16); grid-auto-columns: calc((100% - var(--s16)) / var(--per)); } .cards-nav { display: none; } }
+/* the small entries: cards side by side, as many columns as fit, one column on a phone */
+.cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 17rem), 1fr)); gap: var(--s48) var(--s32); }
 .shot { margin: 0; display: flex; flex-direction: column; gap: var(--s16); }
 /* a big row: the frame takes the room, the text a column of about 25rem; the frame reaches into the margin on its side */
 .shot-big { grid-column: 1 / -1; display: grid; grid-template-columns: minmax(0, 1fr) minmax(16rem, 25rem); align-items: start; gap: var(--s48); margin-left: calc(-1 * var(--out)); }
@@ -2073,10 +2073,9 @@ body:not(.show-lenses) .cm-lens-line { display: none; }
   /* a soft light from the top: the window floats on it, no hard frame */
   background: radial-gradient(120% 90% at 50% 0%, color-mix(in srgb, var(--accent) 12%, transparent), transparent 70%), color-mix(in srgb, var(--accent) 2%, var(--sunk));
   border: 1px solid color-mix(in srgb, var(--fg) 6%, transparent); box-shadow: inset 0 1px 0 color-mix(in srgb, var(--fg) 6%, transparent); }
-/* a card: one 4:3 stage, the window inset alike on all sides, its capture whole in it, never cut */
-.cards .shot-stage { display: flex; aspect-ratio: 4 / 3; max-height: calc(30vh + 2 * var(--s24)); }
-.cards .shot-win { flex: 1; min-width: 0; display: flex; flex-direction: column; }
-.cards .shot-win picture { flex: 1; min-height: 0; } .cards .shot-win img { height: 100%; object-fit: contain; object-position: center top; }
+/* a card: one 4:3 stage, the window as big as its capture fits in it, centred, so its frame hugs the capture */
+.cards .shot-stage { display: grid; place-items: center; aspect-ratio: 4 / 3; container-type: size; }
+.cards .shot-win img { width: auto; max-width: 100cqw; max-height: 100cqh; }
 .shot-wide .shot-win { width: 100%; }
 /* the window: the capture itself, cut out with rounded corners and a soft shadow */
 .shot-win { position: relative; display: block; border-radius: var(--r-card); overflow: hidden; background: var(--panel); transform: translate3d(0, var(--lift, 0px), 0);
@@ -2091,9 +2090,6 @@ body:not(.show-lenses) .cm-lens-line { display: none; }
 /* spread sideways, so the pair reads wide rather than tall */
 .shot-stack { --dx: clamp(var(--s48), 12vw, 10rem); --dy: var(--s16); display: grid; padding: var(--dy) 0 0 var(--dx); }
 .shot-stack > .shot-win { grid-area: 1 / 1; }
-/* a stack on a ring card fills the card: both windows the card's height, the back one peeking out on the left */
-.cards .shot-stage:has(> .shot-stack) { display: block; } .cards .shot-stack { --dx: 18%; --dy: var(--s12); height: 100%; box-sizing: border-box; }
-.cards .shot-stack > .shot-win { min-height: 0; height: 100%; } .cards .shot-stack > .shot-win img { height: 100%; object-fit: contain; object-position: center top; }
 .shot-stack > .shot-win:first-child { translate: calc(-1 * var(--dx)) calc(-1 * var(--dy)); opacity: .9; }
 /* where SaTeX runs: one card, a row per editor with what it gets, how to set it up and where to read more */
 .editors { display: grid; grid-template-columns: max-content max-content minmax(0, 1fr) max-content; margin: 0 0 var(--s48); padding: var(--s4) var(--s16); list-style: none;
@@ -2119,13 +2115,12 @@ body:not(.show-lenses) .cm-lens-line { display: none; }
 :root[data-theme=dark] .shot-light { display: none !important; } :root[data-theme=dark] .shot-dark { display: block !important; }
 @media (prefers-color-scheme: dark) { :root:not([data-theme=light]) .shot-light { display: none !important; } :root:not([data-theme=light]) .shot-dark { display: block !important; } }
 .shot-pair { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--s16); align-items: start; }
-/* on a ring card the pair overlaps: before up left, after down right over it, each 80% wide */
-.cards .shot-stage:has(> .shot-pair) { display: block; }
-.cards .shot-pair { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); height: 100%; gap: 0; }
-.cards .shot-pair > div { grid-area: 1 / 1; width: 66%; min-height: 0; display: flex; flex-direction: column; }
-.cards .shot-pair > div:first-child { justify-self: start; align-self: start; opacity: .92; }
-.cards .shot-pair > div:last-child { justify-self: end; align-self: end; z-index: 1; }
-.cards .shot-pair .shot-win { min-height: 0; } .cards .shot-pair .shot-win img { height: auto; max-height: none; object-fit: contain; }
+/* on a card two windows overlap: the first up left, the second down right over it */
+.cards :is(.shot-stack, .shot-pair) { display: grid; grid-template: minmax(0, 1fr) / minmax(0, 1fr); width: 100cqw; height: 100cqh; padding: 0; gap: 0; }
+.cards :is(.shot-stack, .shot-pair) > * { grid-area: 1 / 1; translate: none; }
+.cards :is(.shot-stack, .shot-pair) > :first-child { place-self: start; opacity: .92; } .cards :is(.shot-stack, .shot-pair) > :last-child { place-self: end; z-index: 1; }
+.cards :is(.shot-stack, .shot-pair) img { max-width: 78cqw; max-height: 78cqh; } .cards .shot-pair img { max-height: calc(78cqh - 1.6rem); }
+.cards .shot-pair .shot-tag { margin-left: 0; padding: 0 var(--s8); border-radius: var(--r-pill); background: var(--panel); }
 .shot-tag { display: inline-block; margin: 0 0 var(--s8) var(--s4); font: 600 .72rem system-ui, sans-serif; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
 .shot figcaption h3 { margin: 0 0 var(--s8); font-size: 1.125rem; line-height: 1.3; letter-spacing: -.01em; }
 /* a title is its own link (`#shot-table`): plain, its # shows on hover */
@@ -2157,15 +2152,23 @@ body:not(.show-lenses) .cm-lens-line { display: none; }
 /* the plugin overview folds: a summary row, the tiles under it */
 .pt-groups { list-style: none; padding: 0; margin: var(--s24) 0 var(--s16); display: grid; grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr)); gap: var(--s12); }
 .pt-groups:has(+ .plugins-fold[open]) { display: none; }
-.pt-groups button { all: unset; box-sizing: border-box; cursor: pointer; display: grid; grid-template-columns: auto 1fr auto; align-items: center; column-gap: .6rem; row-gap: .25rem; width: 100%; height: 100%; padding: .8rem 1rem; border: 1px solid var(--border); border-radius: var(--r-lg, 12px); background: var(--panel, transparent); }
+.pt-groups button { all: unset; box-sizing: border-box; cursor: pointer; display: grid; grid-template-columns: auto 1fr auto; grid-template-rows: auto 1fr; align-items: center; align-content: start; column-gap: .6rem; row-gap: .35rem; width: 100%; height: 100%; padding: .8rem 1rem; border: 1px solid var(--border); border-radius: var(--r-lg, 12px); background: var(--panel, transparent); }
 .pt-groups button:hover, .pt-groups button:focus-visible { border-color: color-mix(in srgb, var(--accent) 45%, var(--border)); }
 .pt-groups .pt-icon { width: 1.25rem; height: 1.25rem; } .pt-groups b { font-weight: 600; }
-.pt-groups small { grid-column: 1 / -1; color: var(--muted); font-size: .85rem; line-height: 1.35; }
+.pt-groups small { grid-column: 1 / -1; align-self: start; color: var(--muted); font-size: .85rem; line-height: 1.35; text-wrap: pretty; }
+/* in the settings: three even columns for the six groups, two on a narrow dialog */
+.cfg-pt-groups { margin: 0 0 var(--s12); grid-template-columns: repeat(auto-fill, minmax(min(100%, 19rem), 1fr)); }
 .plugins-fold > summary { display: inline-flex; align-items: center; gap: .5rem; cursor: pointer; font-weight: 600; color: var(--accent); list-style: none; padding: .35rem .8rem; border: 1px solid color-mix(in srgb, var(--accent) 30%, var(--border)); border-radius: var(--r-pill); }
 .plugins-fold > summary::-webkit-details-marker { display: none; }
 .plugins-fold > summary::before { content: "▸"; transition: rotate .2s var(--ease); } .plugins-fold[open] > summary::before { rotate: 90deg; }
 .plugins-fold[open] > summary { margin-bottom: var(--s32); }
-.shot-live .live-grid { display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: 0; min-height: 19rem; }
+.shot-live .live-grid { position: relative; display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: 0; min-height: 19rem; }
+/* the demo over the window: the capture plays there, its top left corner kept; a click makes the window the editor */
+.live-demo { position: absolute; inset: 0; z-index: 2; overflow: hidden; cursor: text; background: var(--panel); }
+.live-demo :is(picture, img, video) { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; object-position: left top; }
+.live-demo-hint { position: absolute; right: var(--s12); bottom: var(--s12); z-index: 1; padding: var(--s4) var(--s12); border-radius: var(--r-pill); font-size: .8rem; font-weight: 600;
+  color: var(--accent); background: color-mix(in srgb, var(--panel) 90%, transparent); border: 1px solid var(--border); box-shadow: var(--shadow); }
+.live-demo:is(:hover, :focus-visible) .live-demo-hint { color: var(--panel); background: var(--accent); }
 .shot-live .live-src { margin: 0; min-height: 19rem; border: 0; border-radius: 0; border-right: 1px solid var(--border); font-size: 12.5px; }
 .shot-live pre.live-src { padding: .5rem .8rem .5rem 2.6rem; background: var(--panel); white-space: pre-wrap; cursor: text; }
 .shot-live .live-ts { padding: .7rem .9rem; font-size: .85rem; overflow: auto; max-height: 22rem; }
@@ -2287,11 +2290,6 @@ header .hd-feedback:hover:not(:disabled) { background: var(--sunk); color: var(-
 .tip .md-table { table-layout: fixed; width: 100%; }
 .tip .md-table th, .tip .md-table td { overflow-wrap: anywhere; }
 .tip code { overflow-wrap: anywhere; }
-/* the carousel fades out at the edge where more cards wait (site.js toggles .at-start/.at-end) */
-.cards { -webkit-mask-image: linear-gradient(to right, #000 0, #000 calc(100% - 4rem), transparent); mask-image: linear-gradient(to right, #000 0, #000 calc(100% - 4rem), transparent); }
-.cards.at-end { -webkit-mask-image: linear-gradient(to right, transparent, #000 4rem, #000 100%); mask-image: linear-gradient(to right, transparent, #000 4rem, #000 100%); }
-.cards.at-start.at-end { -webkit-mask-image: none; mask-image: none; }
-.cards:not(.at-start):not(.at-end) { -webkit-mask-image: linear-gradient(to right, transparent, #000 4rem, #000 calc(100% - 4rem), transparent); mask-image: linear-gradient(to right, transparent, #000 4rem, #000 calc(100% - 4rem), transparent); }
 /* the trace's step list scrolls on its own: stepping keeps the result and the input stream in place (no jump) */
 .tr-all[open] > .tr-tree { max-height: 32vh; overflow: auto; overscroll-behavior: contain; }
 /* changelog badges: the kind of change, then the entry; commit links stay quiet */
@@ -2303,20 +2301,8 @@ main li:has(> .badge) a[href*="/commit/"] code, main li:has(> .badge) a[href*="/
 /* the stepper keeps one height while stepping: the step panel and the token stream scroll inside, nothing below them moves */
 .tr-now { height: 14rem; overflow: auto; align-content: start; overscroll-behavior: contain; }
 #trace-stream { height: 3.6rem; overflow: auto; }
-/* the showcase ring (site.js): full width, the cards on a ring that the page's scroll turns a little, the front one largest */
-.cards-wrap.ring { width: 100vw; margin-inline: calc(50% - 50vw); padding-block: var(--s48) var(--s24); overflow-x: clip; }
-.ring .cards { display: block; position: relative; overflow: visible; perspective: 1700px; transform-style: preserve-3d; -webkit-mask-image: none; mask-image: none; cursor: grab; touch-action: pan-y; user-select: none; }
-.ring .cards:active { cursor: grabbing; }
-.ring .cards > .shot { position: absolute; top: 0; left: 50%; width: min(32rem, 34vw); transform-origin: 50% 0; will-change: transform, opacity; backface-visibility: hidden; }
-.ring .cards > .shot:not(.ring-front) { cursor: pointer; }
-.ring .cards > .shot figcaption > * { transition: opacity .3s var(--ease); }
-.ring .cards > .shot figcaption > h3 { opacity: var(--title, 1); }
-.ring .cards > .shot:not(.ring-front) figcaption > :not(h3) { opacity: 0; }
-.ring .cards-nav { top: 30%; z-index: 300; } .ring .cards-prev { left: var(--s24); } .ring .cards-next { right: var(--s24); }
 /* the live window fills its column like a shot at full size, before and after the engine takes over */
 .shot-live .shot-stage, .shots > .shot-live .shot-win { width: 100%; }
-.ring .cards > .shot:not(.ring-front) figcaption { text-align: center; }
-/* the page settles on the ring when a scroll ends near it: a slight hold, never a lock */
 @media (max-width: 64rem) { .shot-big .shot-stage, .shot-big:nth-child(even of .shot-big) .shot-stage { justify-self: center; } }
 /* the title: the logo a little larger, the claim and buttons under it with room to breathe */
 .logo-anim { width: min(44rem, 100%); }
@@ -2355,3 +2341,6 @@ pre.out-block:hover .out-meta { opacity: .85; }
 .claim .tw { opacity: 0; animation: tw-in 260ms linear forwards; }
 @keyframes tw-in { to { opacity: 1; } }
 .claim-rot > span.typing:has(.tw)::after { visibility: hidden; }
+.cfg-group-about { margin-left: .9em; font-size: .85em; }
+/* `playground.widget_marks` and `playground.tips` off */
+.no-widget-marks .cm-gutter.cm-widgets, .no-tips .sx-tip { display: none !important; }

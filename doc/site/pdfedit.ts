@@ -9,6 +9,8 @@ type Table = { env: string; lines: [number, number]; width: unknown; cols: { ali
 type Placed = { k: number; page: number; x: number; w: number; t: number; d: number; n: number };
 /** A width as written that a drag may rewrite: a length (`3cm`) or a share of a width (`.3\linewidth`). */
 /** A box on a page, in bp: left, top, right, bottom. */
+/** A word on a page as the words file lists it: page, left, top, right, baseline, text, in bp. */
+type Word = [number, number, number, number, number, string];
 type Flat = { page: number; l: number; t: number; r: number; d: number };
 type Form = { kind: 'len'; num: number; unit: string } | { kind: 'share'; num: number; name: string; lead: boolean };
 declare global {
@@ -24,13 +26,16 @@ declare global {
       editable(text: string, from: number, to: number, keys: [number, number][]): string | null;
       spans(line: string, word: string): [number, number][];
       sender<V>(send: (v: V) => Promise<boolean>): { put(v: V): void; flush(): Promise<void> };
-      typed(text: string, at: number, c: string, inline?: string): [number, number, string, number];
+      typed(text: string, at: number, c: string, inline?: string, smart?: boolean): [number, number, string, number];
       erased(text: string, at: number, back: boolean): [number, number];
       columns(boxes: Box[], file: string, table: Table, tables: Table[]): (Placed & { approx?: boolean })[];
       wordAt(text: string, at: number): [number, string] | null;
       argAt(text: string, name: string, line: number): number | null;
       apart<B extends Flat>(boxes: B[]): B[];
       relaid(row: [number, number, string][], k: number, now: string, width: (s: string) => number): [number, number, string][];
+      nearest(words: Word[], x: number, y: number): number;
+      bands(words: Word[]): Flat[];
+      joined(words: Word[]): string;
     };
   }
 }
@@ -176,17 +181,27 @@ declare global {
   /** The inline math delimiters `text` uses most: `\(` where it has more `\(` than `$`, else `$`. */
   const inlineOf = (text: string) => (text.match(/\\\(/g)?.length ?? 0) > (text.match(/(?<![\\$])\$(?!\$)/g)?.length ?? 0) ? '\\(' : '$';
   /** What typing `c` at `at` of `text` writes so the source stays compilable: `[from, to, body, caret]`, the text
-   * `from..to` replaced by `body` and the caret `caret` past `from`. In text a special character is escaped and `$`
+   * `from..to` replaced by `body` and the caret `caret` past `from`. In text a special character is escaped (a brace
+   * after a command's name opens its argument, one before a `}` steps over it) and `$`
    * opens math with its closer (`inline`: `$`, `\(` or `auto`, the document's most used). In math a character goes
-   * in as typed, `{` with its `}`, and a closer typed where it stands steps over it. */
-  function typed(text: string, at: number, c: string, inline = 'auto'): [number, number, string, number] {
+   * in as typed, `{` with its `}`, and a closer typed where it stands steps over it. `smart`: `x_42` writes `x_{42}`. */
+  function typed(text: string, at: number, c: string, inline = 'auto', smart = false): [number, number, string, number] {
     const math = /math/.test(editable(text, at, at, []) ?? '');
     if (!math) {
+      // after a command's name `{` opens its argument, and `}` where one stands steps over it
+      if (c === '{' && /\\[A-Za-z@]+$/.test(text.slice(Math.max(0, at - 64), at))) return [at, at, '{}', 1];
+      if (c === '}' && text[at] === '}') return [at, at, '', 1];
       if (c !== '$') { const body = escaped(c); return [at, at, body, body.length]; }
       const open = inline === '$' || inline === '\\(' ? inline : inlineOf(text);
       return open === '$' ? [at, at, '$$', 1] : [at, at, '\\(\\)', 2];
     }
-    for (const close of c === '$' ? ['$', '\\)'] : c === '}' ? ['}'] : []) if (text.startsWith(close, at)) return [at, at, '', close.length];
+    // smart scripts: `_`/`^` open a group, a space, an operator or the formula's end typed at its end leave it
+    if (smart && (c === '_' || c === '^')) return [at, at, `${c}{}`, 2];
+    if (smart && text[at] === '}' && /[_^]\{[^{}]*$/.test(text.slice(Math.max(0, at - 64), at)) && /[\s$+\-=<>,;:|/*!?()[\]]/.test(c)) {
+      // past the `}` first, then the character as typed there (a space only leaves)
+      return /\s/.test(c) ? [at + 1, at + 1, '', 0] : typed(text, at + 1, c, inline, smart);
+    }
+    for (const close of c === '$' ? ['$', '\\)', '\\]'] : c === '}' ? ['}'] : []) if (text.startsWith(close, at)) return [at, at, '', close.length];
     return c === '{' ? [at, at, '{}', 1] : [at, at, c, c.length];
   }
   /** What Backspace (`back`) or Delete takes at `at`: `[from, to]`, an escape or an empty pair (`$$`, `{}`, `\(\)`) whole. */
@@ -256,5 +271,23 @@ declare global {
     }
     return kept;
   }
-  self.satexPdfEdit = { place, extent, room, form, resized, stepped, plain, editable, spans, sender, typed, erased, columns, wordAt, argAt, relaid, apart };
+  /** The index of the word nearest a point: distance across counts less than distance down (a row first). */
+  function nearest(words: Word[], x: number, y: number): number {
+    let best = -1, score = Infinity;
+    words.forEach((w, i) => { const s = Math.max(0, w[1] - x, x - w[3]) + 4 * Math.max(0, w[2] - y, y - w[4]); if (s < score) { score = s; best = i; } });
+    return best;
+  }
+  /** Selected words as one band per row: consecutive words on a baseline merged, the gaps between them covered. */
+  function bands(words: Word[]): Flat[] {
+    const out: Flat[] = [];
+    for (const w of words) {
+      const o = out.at(-1);
+      if (o && o.page === w[0] && Math.abs(o.d - w[4]) < 1 && w[1] >= o.l) { o.r = Math.max(o.r, w[3]); o.t = Math.min(o.t, w[2]); }
+      else out.push({ page: w[0], l: w[1], t: w[2], r: w[3], d: w[4] });
+    }
+    return out;
+  }
+  /** Words as the page reads: a space between words of a row, a line break between rows. */
+  const joined = (words: Word[]) => bands(words).map((b) => words.filter((w) => w[0] === b.page && Math.abs(w[4] - b.d) < 1 && w[1] >= b.l && w[3] <= b.r).map((w) => w[5]).join(' ')).join('\n');
+  self.satexPdfEdit = { nearest, bands, joined, place, extent, room, form, resized, stepped, plain, editable, spans, sender, typed, erased, columns, wordAt, argAt, relaid, apart };
 })();

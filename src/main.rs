@@ -591,7 +591,7 @@ fn run_on(cli: &mut Cli, file: Option<PathBuf>, explaining: bool, piped: Option<
     let links = cli.link_policy(satex::util::progress::terminal(io::stdout()));
     let context = Context { analysis: &analysis, source: &source, format: cli.format, links };
     let mut out = anstream::stdout().lock();
-    let output = cli.command().run(&context, &mut out)?;
+    let mut output = cli.command().run(&context, &mut out)?;
     if matches!(cli.command, Some(Command::Summary { .. })) && cli.format.is_text() {
         let project = satex::project::build_files::Project::discover(&base_dir(cli.file.as_deref()));
         let _ = write!(out, "{}", environment_text(&cfg, &project));
@@ -608,6 +608,11 @@ fn run_on(cli: &mut Cli, file: Option<PathBuf>, explaining: bool, piped: Option<
         Output::Lint(records) if cfg.verbose >= 1 => satex::linter::early::verdict(&early, records, &analysis),
         _ => None,
     };
+    // an early finding the run could not check stays in the full list
+    if let Output::Lint(records) = &mut output {
+        let open: Vec<_> = satex::linter::early::unchecked(&early, records, &analysis).into_iter().cloned().collect();
+        records.extend(open);
+    }
     let end = match &output {
         Output::Lint(_) if text => render::lint_end(&analysis),
         _ => String::new(),

@@ -30,7 +30,7 @@ interface PageState extends Partial<Record<PKey, number>> {
   mode: string; paper: string; pw: number; ph: number; left: number; right: number; top: number; bottom: number;
   headheight: number; headsep: number; footskip: number; mpwidth: number; mpsep: number; bcor: number;
   div: number | null; ran: { div: number | null; bcor: number } | null; scope: string; from: string; to: string; header: Rec; open: string[];
-  columns: number | null; styles: Rec;
+  columns: number | null; styles: Rec; numbers: Record<string, string>; perChapter: boolean;
 }
 /** A parsed picture body: its statements and the text after the last. */
 interface Parsed { items: Item[]; tail: string }
@@ -1999,6 +1999,226 @@ const satexViews = (() => {
   }
   RENDER.history = (s, _view, ctx) => history(s, ctx);
   RENDER.drawing = drawing;
+  // ---- circuits (circuitikz, opened by the playground): components between two points `\draw (0,0) to[R, l=$R_1$] (2,0);`
+  // (chains too), wires `--`, ground `\draw (0,0) node[ground] {};`, gates `\node[and port] (G1) at (4,1) {};`.
+  // A statement the canvas cannot read stays code; one it can stays as written until edited.
+  /** The palette: circuitikz's name, the button's label, the placement (two points, one point, a gate). */
+  const PARTS: [string, string, string][] = [['short', 'Wire', 'two'], ['R', 'Resistor', 'two'], ['C', 'Capacitor', 'two'], ['L', 'Inductor', 'two'],
+    ['V', 'Voltage', 'two'], ['I', 'Current', 'two'], ['nos', 'Switch', 'two'], ['D', 'Diode', 'two'], ['ground', 'Ground', 'one'],
+    ['and port', 'AND', 'gate'], ['or port', 'OR', 'gate'], ['not port', 'NOT', 'gate']];
+  const placeOf = (kind: string) => PARTS.find((p) => p[0] === kind)?.[2];
+  /** A point or a gate's anchor (`G1.in 1`). */
+  type CPt = number[] | string;
+  interface CPart { kind: string; a: CPt; b?: CPt; label: string; opts: string[]; name?: string }
+  interface CStmt { lead: string; code: string; parts: CPart[] | null; dirty?: boolean }
+  /** The anchors of the ports, about where circuitikz puts them around the node, in cm. */
+  const PORTS: Record<string, Record<string, number[]>> = { and: { 'in 1': [-0.8, 0.28], 'in 2': [-0.8, -0.28], out: [0.8, 0] }, not: { in: [-0.8, 0], out: [0.8, 0] } };
+  PORTS.or = PORTS.and;
+  const cPt = (s: string): CPt => { const m = /^\s*(-?\d*\.?\d+)\s*,\s*(-?\d*\.?\d+)\s*$/.exec(s); return m ? [+m[1]!, +m[2]!] : s.trim(); };
+  const cNum = (v: number) => String(+v.toFixed(2));
+  const cText = (p: CPt) => typeof p === 'string' ? `(${p})` : `(${cNum(p[0]!)},${cNum(p[1]!)})`;
+  /** A part's options read: its kind first, `l=` its label, the rest kept. */
+  function cOpts(list: string[], gate = false): Omit<CPart, 'a'> | null {
+    const [first, ...rest] = list, [k, v] = kv(first ?? '');
+    if (!placeOf(k) || gate !== (placeOf(k) === 'gate')) return null;
+    const l = rest.find((o) => kv(o)[0] === 'l');
+    return { kind: k, label: l ? kv(l)[1] : v, opts: rest.filter((o) => o !== l) };
+  }
+  /** A circuit's body as statements: the ones of components, wires, ground and gates read, the others code. */
+  function cParse(body: string): { stmts: CStmt[]; tail: string } {
+    const stmts: CStmt[] = [];
+    let depth = 0, from = 0;
+    for (let i = 0; i < body.length; i++) {
+      const c = body[i];
+      if (c === '%') { i = body.indexOf('\n', i); if (i < 0) break; continue; }
+      if (c === '{') depth++; else if (c === '}') depth--;
+      else if (c === ';' && !depth) {
+        const raw = body.slice(from, i + 1), lead = /^\s*/.exec(raw)![0], code = raw.slice(lead.length);
+        stmts.push({ lead, code, parts: cRead(code) });
+        from = i + 1;
+      }
+    }
+    return { stmts, tail: body.slice(from) };
+  }
+  function cRead(code: string): CPart[] | null {
+    let m = /^\\draw\s*\(([^()]*)\)\s*node\s*\[([^\]]*)\]\s*\{\}\s*;$/.exec(code);
+    if (m) { const o = cOpts(opts(m[2])); return o && placeOf(o.kind) === 'one' ? [{ ...o, a: cPt(m[1]!) }] : null; }
+    m = /^\\node\s*\[([^\]]*)\]\s*(?:\(([\w-]+)\))?\s*at\s*\(([^()]*)\)\s*\{([^{}]*)\}\s*;$/.exec(code);
+    if (m) { const o = cOpts(opts(m[1]), true); return o && m[2] ? [{ ...o, label: m[4]!, name: m[2], a: cPt(m[3]!) }] : null; }
+    m = /^\\draw\s*\(([^()]*)\)((?:\s*(?:--|to\s*\[[^\]]*\])\s*\([^()]*\))+)\s*;$/.exec(code);
+    if (!m) return null;
+    const parts: CPart[] = [];
+    let a = cPt(m[1]!);
+    for (const [, to, o, b] of m[2]!.matchAll(/(--|to\s*\[([^\]]*)\])\s*\(([^()]*)\)/g)) {
+      const read = to === '--' ? { kind: 'short', label: '', opts: [] } : cOpts(opts(o));
+      if (!read || placeOf(read.kind) !== 'two') return null;
+      parts.push({ ...read, a, b: cPt(b!) });
+      a = cPt(b!);
+    }
+    return parts;
+  }
+  /** One part as circuitikz reads it. */
+  function cEmit(p: CPart): string {
+    const o = (lead: string[]) => [...lead, ...p.opts].join(', ');
+    if (placeOf(p.kind) === 'one') return `\\draw ${cText(p.a)} node[${o([p.kind])}] {};`;
+    if (placeOf(p.kind) === 'gate') return `\\node[${o([p.kind])}] (${p.name}) at ${cText(p.a)} {${p.label}};`;
+    const plain = p.kind === 'short' && !p.label && !p.opts.length;
+    return `\\draw ${cText(p.a)} ${plain ? '--' : `to[${o([p.kind, ...p.label ? [`l=${/[,=]/.test(p.label) ? `{${p.label}}` : p.label}`] : []])}]`} ${cText(p.b!)};`;
+  }
+  const cBody = (st: { stmts: CStmt[]; tail: string }) => st.stmts.map((s) => !s.dirty ? s.lead + s.code : s.parts!.length ? s.lead + s.parts!.map(cEmit).join(s.lead || '\n  ') : '').join('') + st.tail;
+  /** Local paths of the symbols along x (a two-point part, its middle at `c`) or around their point, y down. */
+  const SYMBOL: Record<string, (c: number) => string> = {
+    R: (c) => `M${c - 0.5} 0l.083 -.2l.167 .4l.167 -.4l.167 .4l.167 -.4l.167 .4l.083 -.2`,
+    C: (c) => `M${c - 0.5} 0H${c - 0.08}M${c - 0.08} -.3V.3M${c + 0.08} -.3V.3M${c + 0.08} 0H${c + 0.5}`,
+    L: (c) => `M${c - 0.5} 0${'a.125 .125 0 0 1 .25 0'.repeat(4)}`,
+    V: (c) => `M${c - 0.5} 0H${c - 0.35}M${c + 0.35} 0H${c + 0.5}M${c + 0.2} -.07v.14M${c + 0.13} 0h.14M${c - 0.27} 0h.14`,
+    I: (c) => `M${c - 0.5} 0H${c - 0.35}M${c + 0.35} 0H${c + 0.5}M${c - 0.2} 0H${c + 0.2}M${c + 0.08} -.1L${c + 0.2} 0L${c + 0.08} .1`,
+    nos: (c) => `M${c - 0.5} 0H${c - 0.3}L${c + 0.28} -.3M${c + 0.3} 0H${c + 0.5}`,
+    D: (c) => `M${c - 0.5} 0H${c - 0.25}M${c - 0.25} -.25L${c + 0.25} 0L${c - 0.25} .25ZM${c + 0.25} -.25V.25M${c + 0.25} 0H${c + 0.5}`,
+    short: () => '',
+    ground: () => 'M0 0V.3M-.3 .3H.3M-.2 .4H.2M-.1 .5H.1',
+    and: () => 'M-.6 -.4H0A.4 .4 0 0 1 0 .4H-.6ZM-.8 -.28H-.6M-.8 .28H-.6M.4 0H.8',
+    or: () => 'M-.6 -.4Q-.4 0 -.6 .4Q.2 .4 .5 0Q.2 -.4 -.6 -.4ZM-.8 -.28H-.52M-.8 .28H-.52M.5 0H.8',
+    not: () => 'M-.5 -.35L.3 0L-.5 .35ZM-.8 0H-.5M.46 0H.8',
+  };
+  function circuit(s: Rec, _view: Rec, ctx: ViewCtx) {
+    const env = /^(\\begin\{circuitikz\}(?:\s*\[[^\]]*\])?)([^]*?)(\\end\{circuitikz\})$/.exec(s.text ?? '');
+    let st = cParse(env ? env[2]! : '\n'), sel: CPart | null = null, tool = 'select', drag: Rec | null = null;
+    const H = self.satexDialogs?.history?.(() => st, (v: typeof st) => { st = v; sel = null; draw(); });
+    const parts = () => st.stmts.flatMap((x) => x.parts ?? []);
+    const owner = (p: CPart) => st.stmts.find((x) => x.parts?.includes(p))!;
+    const touch = (p: CPart) => { owner(p).dirty = true; };
+    const where = (p: CPt): number[] => {
+      if (typeof p !== 'string') return p;
+      const [name, anchor = 'center'] = p.split('.'), g = parts().find((q) => q.name === name);
+      const off = g && PORTS[g.kind.split(' ')[0]!]?.[anchor];
+      return g ? [(g.a as number[])[0]! + (off?.[0] ?? 0), (g.a as number[])[1]! + (off?.[1] ?? 0)] : [0, 0];
+    };
+    const root = el('div', 'tv-draw tv-circuit'), bar = el('div', 'tv-tools'), modes = el('div', 'tv-tabs tv-modes');
+    for (const [key, label] of [['select', 'Move'], ...PARTS] as string[][]) {
+      const b = el('button', 'tv-tab', esc(label));
+      b.type = 'button';
+      b.dataset.tool = key!;
+      b.title = key === 'select' ? 'Select and move parts, drag an end' : placeOf(key!) === 'two' ? `${label}: drag from one grid point to another` : `${label}: click a grid point`;
+      b.onclick = () => { tool = key!; draw(); };
+      modes.append(b);
+    }
+    const trash = el('button', 'tv-button tv-danger sd-icon', 'Delete');
+    trash.type = 'button';
+    trash.title = 'Delete the selected part (Del)';
+    const remove = () => { if (!sel) return; const o = owner(sel); o.parts = o.parts!.filter((q) => q !== sel); o.dirty = true; sel = null; H?.settle(); draw(); };
+    trash.onclick = remove;
+    bar.append(modes, ...(H?.controls?.() ?? []), trash);
+    const svg = svgEl('svg', { class: 'tv-canvas', role: 'img', 'aria-label': 'circuit', tabindex: '0' }) as SVGSVGElement;
+    const side = el('div', 'tv-inspect'), status = el('span', 'tv-muted');
+    const at = (e: { clientX: number; clientY: number }) => { const p = svg.createSVGPoint(); p.x = e.clientX; p.y = e.clientY; const q = p.matrixTransform(svg.getScreenCTM()!.inverse()); return [q.x, -q.y]; };
+    /** A pointer's grid point (half a cm), or a gate's anchor near it. */
+    const snap = ([x, y]: number[]): CPt => {
+      for (const g of parts().filter((q) => q.name)) for (const k of Object.keys(PORTS[g.kind.split(' ')[0]!] ?? {})) { const w = where(`${g.name}.${k}`); if (Math.hypot(w[0]! - x!, w[1]! - y!) < 0.2) return `${g.name}.${k}`; }
+      return [Math.round(x! * 2) / 2, Math.round(y! * 2) / 2];
+    };
+    const fresh = () => { let i = 1; while (parts().some((q) => q.name === `G${i}`)) i++; return `G${i}`; };
+    const add = (p: CPart) => { st.stmts.push({ lead: '\n  ', code: '', parts: [p], dirty: true }); sel = p; };
+    svg.onpointerdown = (e) => {
+      const p = at(e), hit = (e.target as Element).closest?.('[data-i]') as SVGElement | null, end = (e.target as Element).getAttribute?.('data-end');
+      svg.setPointerCapture(e.pointerId);
+      svg.focus();
+      if (tool === 'select') {
+        sel = hit ? parts()[+hit.dataset.i!]! : null;
+        drag = sel && { p, a: sel.a, b: sel.b, end };
+        return draw();
+      }
+      const place = placeOf(tool), q = snap(p);
+      if (place === 'two') { const part: CPart = { kind: tool, a: q, b: q, label: '', opts: [] }; add(part); drag = { fresh: part }; }
+      else add({ kind: tool, a: snap(p), label: '', opts: [], ...place === 'gate' ? { name: fresh(), a: [Math.round(p[0]! * 2) / 2, Math.round(p[1]! * 2) / 2] } : {} }), H?.settle();
+      draw();
+    };
+    svg.onpointermove = (e) => {
+      if (!drag) return;
+      const p = at(e);
+      if (drag.fresh) drag.fresh.b = snap(p);
+      else if (drag.end) sel![drag.end as 'a'] = snap(p);
+      else {
+        // the whole part by grid steps; an end on a gate's anchor stays there
+        const d = [Math.round((p[0]! - drag.p[0]) * 2) / 2, Math.round((p[1]! - drag.p[1]) * 2) / 2], mv = (q: CPt) => typeof q === 'string' ? q : [q[0]! + d[0]!, q[1]! + d[1]!];
+        sel!.a = mv(drag.a);
+        if (drag.b) sel!.b = mv(drag.b);
+      }
+      if (sel) touch(sel);
+      draw();
+    };
+    svg.onpointerup = () => {
+      const f = drag?.fresh as CPart | undefined;
+      // a click without a drag places no part between two points
+      if (f && JSON.stringify(f.a) === JSON.stringify(f.b)) { st.stmts.pop(); sel = null; }
+      drag = null;
+      H?.settle();
+      draw();
+    };
+    svg.onkeydown = (e) => { if ((e.key === 'Delete' || e.key === 'Backspace') && sel) { e.preventDefault(); remove(); } };
+    function draw() {
+      for (const b of modes.querySelectorAll<HTMLElement>('[data-tool]')) b.setAttribute('aria-pressed', String(b.dataset.tool === tool));
+      trash.disabled = !sel;
+      const pts = parts().flatMap((p) => [where(p.a), ...p.b ? [where(p.b)] : []]);
+      const xs = [0, 8, ...pts.map((p) => p[0]!)], ys = [0, 5, ...pts.map((p) => p[1]!)];
+      const [x0, x1, y0, y1] = [Math.floor(Math.min(...xs)) - 1, Math.ceil(Math.max(...xs)) + 1, Math.floor(Math.min(...ys)) - 1, Math.ceil(Math.max(...ys)) + 1];
+      svg.setAttribute('viewBox', `${x0} ${-y1} ${x1 - x0} ${y1 - y0}`);
+      let grid = '';
+      for (let x = x0; x <= x1; x++) grid += `M${x} ${-y1}V${-y0}`;
+      for (let y = y0; y <= y1; y++) grid += `M${x0} ${-y}H${x1}`;
+      const out: SVGElement[] = [svgEl('path', { class: 'tv-grid', d: grid })];
+      parts().forEach((p, i) => {
+        const g = svgEl('g', { class: `tv-edge tv-cpart${p === sel ? ' on' : ''}`, 'data-i': i }), [ax, ay] = where(p.a);
+        const local = (d: string, tf: string) => { g.append(svgEl('path', { d, transform: tf }), svgEl('path', { class: 'tv-hit', d, transform: tf, style: 'stroke-width: .3' })); };
+        let lx = ax!, ly = ay! + 0.45;
+        if (p.b) {
+          const [bx, by] = where(p.b), len = Math.hypot(bx! - ax!, by! - ay!), deg = Math.atan2(by! - ay!, bx! - ax!) * 180 / Math.PI, c = len / 2;
+          const sym = SYMBOL[p.kind]?.(c) ?? '', tf = `translate(${ax} ${-ay!}) rotate(${-deg})`;
+          local(`M0 0H${sym ? c - 0.5 : len}${sym ? `M${c + 0.5} 0H${len}` : ''}${sym}`, tf);
+          if (p.kind === 'V' || p.kind === 'I') g.append(svgEl('circle', { cx: c, cy: 0, r: 0.35, transform: tf }));
+          [lx, ly] = [(ax! + bx!) / 2 - Math.sin(deg * Math.PI / 180) * 0.45, (ay! + by!) / 2 + Math.cos(deg * Math.PI / 180) * 0.45];
+          if (p === sel) for (const end of ['a', 'b']) { const [x, y] = where(p[end as 'a']); g.append(svgEl('circle', { class: 'tv-cend', cx: x!, cy: -y!, r: 0.12, 'data-end': end })); }
+        } else {
+          local(SYMBOL[p.kind.split(' ')[0]!]!(0), `translate(${ax} ${-ay!})`);
+          if (p.kind === 'not port') g.append(svgEl('circle', { cx: ax! + 0.38, cy: -ay!, r: 0.08 }));
+          ly = ay! + (p.name ? 0.6 : -0.75);
+        }
+        const t = svgEl('text', { x: lx, y: -ly });
+        t.textContent = plain(p.label).replace(/[_^]/g, '') || (p.name ?? '');
+        g.append(t);
+        out.push(g);
+      });
+      svg.replaceChildren(...out);
+      inspect();
+    }
+    /** The selected part's fields: its kind among those placed alike, label, gate name, other options. */
+    function inspect() {
+      if (!sel) { side.replaceChildren(el('div', 'tv-muted', 'Pick a part from the bar and place it on the grid; with Move, click a part to edit it, drag it or its ends.')); return; }
+      const p = sel, kinds = PARTS.filter((k) => k[2] === placeOf(p.kind));
+      const row = (label: string, input: HTMLElement) => { const r = el('label', 'tv-field', esc(label)); r.append(input); return r; };
+      const kind = el('select', 'tv-input', kinds.map(([k, l]) => `<option value="${esc(k)}"${k === p.kind ? ' selected' : ''}>${esc(l)} (${esc(k)})</option>`).join(''));
+      const text = (v: string, set: (v: string) => void, hint: string) => { const i = el('input', 'tv-input'); i.value = v; i.placeholder = hint; i.oninput = () => { set(i.value); touch(p); draw(); }; i.onchange = () => H?.settle(); return i; };
+      kind.onchange = () => { p.kind = kind.value; touch(p); H?.settle(); draw(); };
+      side.replaceChildren(el('div', 'tv-h', 'Part'), row('kind', kind), row(p.name ? 'text' : 'label', text(p.label, (v) => { p.label = v; }, p.name ? '' : '$R_1$, 10k')),
+        ...p.name ? [row('name', text(p.name, (v) => { const was = p.name; p.name = v.replace(/[^\w-]/g, ''); for (const q of parts()) for (const e of ['a', 'b'] as const) { const r = q[e]; if (typeof r === 'string' && r.startsWith(`${was}.`)) { q[e] = p.name + r.slice(was!.length); touch(q); } } }, 'G1'))] : [],
+        row('options', text(p.opts.join(', '), (v) => { p.opts = opts(v); }, 'v=$U$, i=$I$, color=red')));
+    }
+    const writeIt = () => {
+      const now = `${env?.[1] ?? '\\begin{circuitikz}'}${cBody(st)}${env?.[3] ?? '\\end{circuitikz}'}${env ? '' : '\n'}`;
+      const node = { ...self.satexSnapshot.span(s.range, s.text ?? '', now), package: { name: 'circuitikz', options: '' } };
+      return self.satexSnapshot.write(ctx, [node], (m) => { status.textContent = m; });
+    };
+    const { el: foot } = footer(root, ctx, { status, apply: writeIt, label: env ? 'Apply' : 'Insert circuit', H });
+    const panel = el('div', 'tv-draw-side'), main = el('div', 'tv-draw-main'), kept = st.stmts.filter((x) => !x.parts).length;
+    panel.append(side);
+    if (kept) panel.append(el('div', 'tv-muted', `${kept} statement${kept === 1 ? '' : 's'} the canvas cannot show stay as written.`));
+    if (!/\\usepackage(\[[^\]]*\])?\{[^}]*\bcircuitikz\b/.test(s.preamble ?? '')) panel.append(el('div', 'tv-muted', 'Writing adds \\usepackage{circuitikz}.'));
+    main.append(svg, panel);
+    root.append(bar, main, foot);
+    draw();
+    return root;
+  }
+  RENDER.circuit = circuit;
 
   // trees (forest plugin): the bracket notation `[content, options [child] …]` after the
   // preamble (`for tree={…}, …`); untouched text comes back as it was
@@ -2321,6 +2541,7 @@ const satexViews = (() => {
       scope: 'all', from: s.part?.here ? 'here' : '0', to: 'end', header: headerOf(s.header, s.twoside),
       open: Object.entries(s.run ?? {}).filter(([, v]) => (v as number[])[0] !== (v as number[])[1]).map(([k]) => k),
       columns: s.columns?.two == null ? null : s.columns.two ? 2 : 1, styles: {},
+      numbers: Object.fromEntries(numberPoints(s).map((p) => [p.id, p.style])), perChapter: !!s.numbering?.per_chapter,
     };
   }
   /** The body's margins `st` sets: typearea's from DIV and BCOR (inner 1, outer 2 stripes; one-sided both alike), else its own. */
@@ -2374,7 +2595,32 @@ const satexViews = (() => {
       S.setKeys(c, ['onecolumn', 'twocolumn'], two ? [['twocolumn', '']] : had ? [] : [['onecolumn', '']]);
       if (!out.includes(c)) out.push(c);
     }
-    return out.concat(headerNodes(s.header, st.header, s.twoside), styleNodes(s, st.styles));
+    return out.concat(headerNodes(s.header, st.header, s.twoside), styleNodes(s, st.styles), numberNodes(s, st0, st));
+  }
+  // page numbering (page.rs `numbering`): `\pagenumbering` sets a style and restarts at 1, a matter mark sets its own
+  const NUMBER_STYLES = [['arabic', '1, 2, 3'], ['roman', 'i, ii, iii'], ['Roman', 'I, II, III'], ['alph', 'a, b, c'], ['Alph', 'A, B, C']];
+  /** Where numbering may restart: the document's start, each matter mark (a new call goes after them), each call as written. */
+  const numberPoints = (s: Rec): { id: string; label: string; at?: unknown; node?: SnapNode; style: string }[] => {
+    const n = s.numbering;
+    if (!n) return [];
+    return [{ id: 'start', label: 'Start of the document', at: n.start, style: '' },
+      ...[...n.marks.map((m: Rec, i: number) => ({ id: `m${i}`, row: m.row, label: `After \\${m.name} (line ${m.row + 1})`, at: m.at, style: '' })),
+        ...n.calls.map((c: Rec, i: number) => ({ id: `c${i}`, row: c.row, label: `\\pagenumbering (line ${c.row + 1})`, node: c.node, style: self.satexSnapshot.text(c.node, '{') ?? '' }))].sort((a, b) => a.row - b.row)];
+  };
+  /** The calls that write the numbering `st` sets over `st0`: a style changed in place, a call removed, a new one at its place; the chapter reset in the preamble. */
+  function numberNodes(s: Rec, st0: PageState, st: PageState): SnapNode[] {
+    const S = self.satexSnapshot, out: SnapNode[] = [];
+    for (const p of numberPoints(s)) {
+      const v = st.numbers[p.id] ?? '';
+      if (v === (st0.numbers[p.id] ?? '')) continue;
+      if (p.node) out.push(v ? { ...structuredClone(p.node), args: p.node.args.map((a) => a.open === '{' ? { ...a, text: v } : a) } : S.drop(p.node));
+      else if (v) out.push(S.call('pagenumbering', [S.arg('{', v)], p.at));
+    }
+    if (st.perChapter !== st0.perChapter) {
+      if (st.perChapter) out.push({ ...S.call('counterwithin', [S.arg('{', 'page'), S.arg('{', 'chapter')], s.numbering.insert), star: true });
+      else if (s.numbering.reset) out.push(S.drop(s.numbering.reset));
+    }
+    return out;
   }
 
   // heading styles (src/lsp/plugins/styles.rs): a format text read as fields over its tokens; a
@@ -2736,6 +2982,18 @@ const satexViews = (() => {
         b.onclick = () => self.satexSnapshot.write(ctx, [self.satexSnapshot.call('usepackage', [self.satexSnapshot.arg('{', 'xcolor')], s.headings?.insert)], (m) => { status.textContent = m; });
         out.push(group('Page color', el('div', 'tv-text', ctx.markdown(`No color package is loaded${p?.defined ? '' : ': `\\pagecolor` is not defined'}. xcolor defines the colors to choose from.`)), b));
       }
+      const points = numberPoints(s);
+      if (points.length) {
+        const rows = points.map((q) => pick(q.label, NUMBER_STYLES, st.numbers[q.id], (v) => { st.numbers[q.id] = v; }, q.node ? 'remove this call' : 'as the class sets'));
+        const n = s.numbering, chapter = el('label', 'tv-field');
+        if (n.chapters) {
+          const box = Object.assign(el('input', ''), { type: 'checkbox', checked: st.perChapter, disabled: n.per_chapter && !n.reset, ariaLabel: 'restart with each chapter' });
+          box.onchange = () => { st.perChapter = box.checked; touch(); draw(); };
+          chapter.append(el('span', '', 'Restart with each chapter'), box);
+        }
+        out.push(group('Page numbers', ...rows, ...(n.chapters ? [chapter] : []), el('div', 'tv-text', ctx.markdown('Each `\\pagenumbering` sets the style and starts again at 1. `\\frontmatter` and `\\mainmatter` set their own, so a new call goes after them.' +
+          (n.chapters ? ` Each chapter restarts at 1 with \`\\counterwithin*{page}{chapter}\`${n.per_chapter && !n.reset ? ': the class does it here, so it stays' : ''}.` : '')))));
+      }
       return out;
     }
     // named style sets: kept in this browser, switched by writing their edits
@@ -2993,6 +3251,7 @@ button.tv-spec-value { cursor: pointer; } button.tv-spec-value:hover, button.tv-
 .tv-muted { color: var(--tv-muted); font-size: .78rem; } .tv-sel { align-items: center; min-height: 2rem; } .tv-sel input { flex: 1; font-size: .88rem; }
 .tv-canvas { width: 100%; max-height: 55vh; background: var(--tv-sunk); border: 1px solid var(--tv-border); border-radius: 8px; overflow: hidden; clip-path: inset(0 round 8px); touch-action: none; color: var(--tv-fg); font-family: ui-sans-serif, system-ui, sans-serif; }
 .tv-grid { stroke: var(--tv-border); stroke-width: .01; fill: none; }
+.tv-cpart circle { fill: none; stroke: currentColor; stroke-width: .03; } .tv-cpart.on circle { stroke: var(--tv-accent); } .tv-cpart circle.tv-cend { fill: var(--tv-accent); cursor: move; }
 .tv-canvas text { font-size: .32px; text-anchor: middle; dominant-baseline: central; fill: currentColor; pointer-events: none; }
 .tv-node { cursor: grab; } .tv-node text { font: .32px var(--serif, Georgia, serif); } .tv-node rect, .tv-node circle { fill: var(--tv-bg); stroke: currentColor; stroke-width: .03; }
 .tv-node.bare rect, .tv-node.bare circle { stroke-dasharray: .04 .06; stroke-width: .015; }
@@ -3108,6 +3367,6 @@ button.tv-spec-value { cursor: pointer; } button.tv-spec-value:hover, button.tv-
       return (last = bag.pop());
     };
   }
-  return { loads: { unlanded, lacked }, tipBag, history: { historyEvent }, render, RENDER, hue, passes, masterDetail, usesView, fold, SPEC, mix, colorBand, oklch, drawing: { expandStyles, STYLE_DEF, parse, emit, mermaidIn, mermaidOut, mermaidLoss, layout, importMermaid, tipsOf, toMatrix, cellPlaces, toLayer, picOptions, relocate, relPos, nearestAnchor, anchorAt, tipMarker, shapeSample, shapeList, cycle, STYLE }, forest: forestFns, page: { pageOf, pageBox, pageNodes, headerOf, headerCalls, headerNodes, fmtRead, fmtWrite, styleNodes, styleSet, styleEdits }, dev: { traceCsv, stateHtml }, templates: { fill, filled, chosen } };
+  return { loads: { unlanded, lacked }, tipBag, history: { historyEvent }, render, RENDER, hue, passes, masterDetail, usesView, fold, SPEC, mix, colorBand, oklch, drawing: { expandStyles, STYLE_DEF, parse, emit, mermaidIn, mermaidOut, mermaidLoss, layout, importMermaid, tipsOf, toMatrix, cellPlaces, toLayer, picOptions, relocate, relPos, nearestAnchor, anchorAt, tipMarker, shapeSample, shapeList, cycle, STYLE }, forest: forestFns, circuit: { parse: cParse, body: cBody, emit: cEmit }, page: { pageOf, pageBox, pageNodes, numberNodes, headerOf, headerCalls, headerNodes, fmtRead, fmtWrite, styleNodes, styleSet, styleEdits }, dev: { traceCsv, stateHtml }, templates: { fill, filled, chosen } };
 })();
 self.satexViews = satexViews;

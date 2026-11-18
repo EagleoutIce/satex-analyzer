@@ -1613,25 +1613,9 @@ fn font_styles(analysis: &Analysis) -> Vec<String> {
         .collect()
 }
 
-/// The color a driver's `\current@color` sets as CSS `#rrggbb`, from the
-/// numbers it carries: `0 1 0 rg 0 1 0 RG` (pdfTeX), `color push rgb 0 1 0`
-/// (dvips), `pdf: bc [0 1 0]` (dvipdfmx). One number is a gray, three an
-/// RGB color, four CMYK. `None` for black or no color.
+/// The color a driver's `\current@color` sets as CSS `#rrggbb`. `None` for black or no color.
 fn css_color(spec: &str) -> Option<String> {
-    let number = |t: &str| t.trim_matches(['[', ']']).parse::<f64>().ok();
-    let words: Vec<&str> = spec.split_whitespace().collect();
-    let start = words.iter().position(|t| number(t).is_some())?;
-    let run: Vec<f64> = words[start..].iter().map_while(|t| number(t)).collect();
-    let rgb = match run[..] {
-        [g] => [g; 3],
-        [r, g, b] => [r, g, b],
-        [c, m, y, k] => [(1.0 - c) * (1.0 - k), (1.0 - m) * (1.0 - k), (1.0 - y) * (1.0 - k)],
-        _ => return None,
-    };
-    (rgb != [0.0; 3]).then(|| {
-        let [r, g, b] = rgb.map(|v| (v.clamp(0.0, 1.0) * 255.0).round() as u8);
-        format!("#{r:02x}{g:02x}{b:02x}")
-    })
+    crate::engine::value::driver_rgb(spec).filter(|c| *c != [0.0; 3]).map(crate::engine::value::hex)
 }
 
 fn c_is_space(c: &str) -> bool {

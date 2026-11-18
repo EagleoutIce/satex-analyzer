@@ -4,9 +4,11 @@
   {
    "name": "live",
    "live": true,
+   "demo": "typing",
    "file": "results.tex",
    "title": "Try it here",
    "caption": "Edit this document. Hover a length or the [ht] to see what they mean. The typeset text on the right follows as you type.",
+   "demo-status": "A recording. Click the window to type yourself: SaTeX then starts in your browser (about 10 MB, loaded once).",
    "status": "Computed when this page was built. SaTeX starts in your browser when the window comes into view (about 10 MB, loaded once).",
    "text": "\\documentclass{article}\n\\begin{document}\n\\section{Results}\nRuns took 10-12 s when warm.\n\\vspace{12pt}\n\\begin{figure}[ht]\n  \\centering\n  \\rule{0.6\\linewidth}{2cm}\n  \\caption{The warm cache.}\n\\end{figure}\n\\end{document}\n"
   },
@@ -72,6 +74,87 @@
      "wait": 300
     }
    ]
+  },
+  {
+   "name": "typing",
+   "server": true,
+   "file": "spacing.tex",
+   "title": "Type in the PDF",
+   "big": true,
+   "caption": "Click a word on the page and type. The text goes to its place in the source, $x_42 becomes $x_{42}$, a backslash completes commands, and the page follows each key.",
+   "open": [
+    "panel",
+    "play-pdf"
+   ],
+   "text": "\\documentclass{article}\n\\usepackage[paperwidth=9cm,paperheight=6cm,margin=6mm]{geometry}\n\\begin{document}\n\\section{Results}\nThe loss falls with each run.\n\\end{document}\n",
+   "viewport": [
+    960,
+    600
+   ],
+   "steps": [
+    {
+     "eval": "const t = document.getElementById('play-treetoggle'); if (t.getAttribute('aria-expanded') === 'true') t.click();",
+     "wait": 400
+    },
+    {
+     "eval": "document.querySelector('[data-panel=play-pdf]').click()"
+    },
+    {
+     "eval": "document.getElementById('pdf-compile').click()",
+     "until": "document.querySelector('#pdf-body .pdf-page img')?.complete && self.satexPdfWords().length",
+     "ms": 120000
+    },
+    {
+     "eval": "const f = document.getElementById('pdf-zoom-fit'); if (f.getAttribute('aria-pressed') !== 'true') f.click();",
+     "wait": 1200
+    },
+    {
+     "click": "(() => { const ws = self.satexPdfWords(), w = ws.find((w) => w[5] === 'run.'), img = document.querySelector('#pdf-body .pdf-page img'), r = img.getBoundingClientRect(), pw = img.naturalWidth * 72 / ws.dpi, ph = img.naturalHeight * 72 / ws.dpi; return [r.left + (w[3] - 2.2) / pw * r.width, r.top + (w[2] + w[4]) / 2 / ph * r.height]; })()",
+     "wait": 600
+    },
+    {
+     "until": "document.querySelector('.pdf-caret')"
+    }
+   ],
+   "video": [
+    {
+     "type": " that drops by $x_42$ per",
+     "wait": 700
+    },
+    {
+     "type": " \\emp",
+     "wait": 900
+    },
+    {
+     "until": "document.querySelector('.type-complete li')",
+     "wait": 400,
+     "ms": 20000
+    },
+    {
+     "type": "\n",
+     "wait": 300
+    },
+    {
+     "type": "{step}",
+     "wait": 600
+    },
+    {
+     "type": "\nIt converges",
+     "wait": 400
+    },
+    {
+     "until": "!document.getElementById('play-pdf').classList.contains('pdf-running')",
+     "wait": 2500,
+     "ms": 60000
+    }
+   ],
+   "crop": [
+    ".cm-editor",
+    "#play-pdf"
+   ],
+   "hold": 1500,
+   "keepMouse": true,
+   "keepFocus": true
   },
   {
    "name": "tikz",

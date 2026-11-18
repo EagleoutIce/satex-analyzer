@@ -811,6 +811,20 @@ assert.deepEqual(layers.groups(['grid', 'glue', 'geometry']), [['layout', 'Layou
   console.log('page model: ok');
 }
 
+// page numbering: a style picked after a matter mark is a new \pagenumbering there, a call as written
+// changes its argument or goes, the chapter reset is a starred \counterwithin in the preamble
+{
+  const P = self.satexViews.page, at = (line) => ({ line, character: 0 });
+  const call = { kind: 'call', name: 'pagenumbering', star: false, args: [{ open: '{', inner: null, text: 'alph' }], range: null, text: '\\pagenumbering{alph}' };
+  const s = { numbering: { start: at(2), insert: at(1), chapters: true, per_chapter: false, reset: null, marks: [{ name: 'mainmatter', row: 5, at: at(6) }], calls: [{ row: 3, node: call }] } };
+  const st0 = { numbers: { start: '', m0: '', c0: 'alph' }, perChapter: false };
+  const nodes = P.numberNodes(s, st0, { numbers: { start: '', m0: 'Roman', c0: '' }, perChapter: true });
+  assert.deepEqual(nodes.map((n) => [n.name, n.drop ? 'drop' : n.args.map((a) => a.text).join(','), n.star]), [['pagenumbering', 'drop', false], ['pagenumbering', 'Roman', false], ['counterwithin', 'page,chapter', true]]);
+  assert.deepEqual(nodes[1].at, at(6), 'after the mark: \\mainmatter sets its own style first');
+  assert.deepEqual(P.numberNodes(s, st0, st0), [], 'nothing changed, nothing written');
+  console.log('page numbering: ok');
+}
+
 // heading styles: a format read as fields over its tokens, a change rewriting only its field's tokens;
 // the edits land in the level's last call, else in new calls; hand-written text is kept or refused
 {
@@ -1183,6 +1197,16 @@ assert.equal(typeof self.satexViews.RENDER.history, 'function', 'a history secti
     const opened = '\\(p\\) a\\(\\)b';
     assert.deepEqual(type('\\(p\\) ab', '\\(p\\) a'.length, '$'), ends(opened, opened.lastIndexOf('\\)')), 'auto: the document uses \\(');
     assert.deepEqual(type('ab', 1, '${x'), ends('a${x}$b', 'a${x'.length), 'a brace in math gets its closer');
+    // smart scripts: `_`/`^` open a group, a space, an operator or the formula's end leave it; off, typed raw.
+    // Pins `x_42` typed in the output writing `x_42` (a subscript 4, then 2).
+    const smart = (text, at, keys) => { let t = text; for (const c of keys) { const [a, b, body, step] = E.typed(t, at, c, '$', true); t = t.slice(0, a) + body + t.slice(b); at = a + step; } return [t, at]; };
+    assert.deepEqual(smart('ab', 1, '$x_42$'), ends('a$x_{42}$b'), 'the formula\'s end leaves the group, then the formula');
+    assert.deepEqual(smart('ab', 1, '$x^2+y_i j'), ends('a$x^{2}+y_{i}j$b', 'a$x^{2}+y_{i}j'.length), 'an operator and a space leave it');
+    assert.deepEqual(smart('a$x_{4}$b', 'a$x_{4'.length, '2'), ['a$x_{42}$b', 'a$x_{42'.length], 'moved back in, typing goes on in the group');
+    assert.deepEqual(type('ab', 1, '$x_42$'), ends('a$x_42$b'), 'off: as typed');
+    // a brace after a command's name is its argument: pins `\emph` from the completion list, whose `{` came out `\{`
+    assert.deepEqual(type('a\\emphb', 'a\\emph'.length, '{x}'), ends('a\\emph{x}b'), 'the argument opened and left');
+    assert.deepEqual(type('a\\[x\\]b', 'a\\[x'.length, '$'), ['a\\[x\\]b', 'a\\[x\\]'.length], '$ steps over a display closer');
     // Backspace takes an escape or an empty pair whole, Delete the escape ahead
     assert.deepEqual(E.erased('a\\_b', 3, true), [1, 3]);
     assert.deepEqual(E.erased('a\\textbackslash{}b', 17, true), [1, 17]);
@@ -1199,6 +1223,15 @@ assert.equal(typeof self.satexViews.RENDER.history, 'function', 'a history secti
     const got = E.columns([own, p], 'b.tex', t, [t]).map((c) => [c.k, +c.x.toFixed(1), +c.w.toFixed(1), !!c.approx]);
     const after = 150 + cm(2), rest = (400 - after) / 2;
     assert.deepEqual(got, [[0, 100, 50, true], [1, 150, +cm(2).toFixed(1), false], [2, +after.toFixed(1), +rest.toFixed(1), true], [3, +(after + rest).toFixed(1), +rest.toFixed(1), true]]);
+  }
+  // words selected on a page: the nearest word to a point (its row first), one band per row, the words as read.
+  // Pins the drag selection whose copy fell back to the page's words.
+  {
+    const ws = [[1, 10, 0, 30, 10, 'The'], [1, 34, 0, 60, 10, 'loss'], [1, 10, 14, 40, 24, 'falls.']];
+    assert.equal(E.nearest(ws, 45, 5), 1);
+    assert.equal(E.nearest(ws, 45, 20), 2, 'a row first: the word below, not the nearer edge across');
+    assert.deepEqual(E.bands(ws).map((b) => [b.l, b.r, b.d]), [[10, 60, 10], [10, 40, 24]]);
+    assert.equal(E.joined(ws), 'The loss\nfalls.');
   }
   // a handle's key steps one snap step in the column's unit, never below one step
   assert.equal(E.stepped('3.26cm', 1, false), '3.4cm');
@@ -1254,4 +1287,16 @@ assert.equal(typeof self.satexViews.RENDER.history, 'function', 'a history secti
   const E = self.satexPdfEdit, box = (l, r, kind, page = 1, t = 0) => ({ page, l, r, t, d: t + 10, kind });
   const got = E.apart([box(0, 100, 'macro'), box(40, 70, 'arg'), box(0, 100, 'moved', 1, 20), box(0, 100, 'moved', 2)]);
   assert.deepEqual(got.map((b) => [b.kind, b.page, b.t, b.l, b.r]).sort(), [['arg', 1, 0, 40, 70], ['macro', 1, 0, 0, 40], ['macro', 1, 0, 70, 100], ['moved', 1, 20, 0, 100], ['moved', 2, 0, 0, 100]]);
+}
+// Circuits (circuitikz): a chain splits into parts, ground and gates are read, other statements stay code, and an
+// untouched statement is written back as it was. Pins the circuit view's round trip.
+{
+  const C = self.satexViews.circuit, body = '\n  \\draw (0,0) to[R, l=$R_1$] (2,0) -- (2,2);\n  \\draw (0,0) node[ground] {};\n  \\node[and port] (G1) at (4,1) {};\n  \\fill (1,1) circle (2pt);\n';
+  const st = C.parse(body), parts = st.stmts.map((s) => s.parts?.map((p) => [p.kind, p.label, p.name ?? null, JSON.stringify(p.a), JSON.stringify(p.b ?? null)]) ?? null);
+  assert.deepEqual(parts, [[['R', '$R_1$', null, '[0,0]', '[2,0]'], ['short', '', null, '[2,0]', '[2,2]']], [['ground', '', null, '[0,0]', 'null']], [['and port', '', 'G1', '[4,1]', 'null']], null]);
+  assert.equal(C.body(st), body, 'untouched: as written');
+  st.stmts[0].parts[1] = { ...st.stmts[0].parts[1], b: 'G1.in 1' };
+  st.stmts[0].dirty = true;
+  assert.ok(C.body(st).includes('\\draw (0,0) to[R, l=$R_1$] (2,0);\n  \\draw (2,0) -- (G1.in 1);'), 'an edited chain: one statement per part');
+  assert.equal(C.emit({ kind: 'C', a: [0, 0], b: [0, 1.5], label: 'a, b', opts: ['v=$U$'] }), '\\draw (0,0) to[C, l={a, b}, v=$U$] (0,1.5);');
 }

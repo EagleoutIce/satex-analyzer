@@ -1422,6 +1422,8 @@ def playground(satex, wasm, work, out):
         "symbols": emit(out, "play/symbols.json", json.dumps({**table, "glyphs": emit(out, "play/glyphs.bin.gz", gzip.compress(table["glyphs"], 9, mtime=0)),
                                                                 "fonts": [emit(out, f"play/fonts/{f.name}", f.read_bytes()) for f in files]}).encode()),
         "schema": emit(out, "play/satex.schema.json", (ROOT / "satex.schema.json").read_bytes()),
+        # the playground's own settings' defaults (playground.js `play`), from the schema
+        "playground": {k: p.get("default") for k, p in json.loads((ROOT / "satex.schema.json").read_text())["properties"]["playground"]["properties"].items()},
     }
     sizes = {k["id"]: f"{k['size'] / 2**20:.1f} MiB gz, {len(k['files'])} files" for k in kernels}
     print(f"playground: wasm {len(wasm_bytes) / 2**20:.1f} MiB, {sizes}; {len(extra)} package bundles on demand, "
@@ -1994,23 +1996,30 @@ def showcase(out, live):
 
     # TikZ is written with its italic k, as its manual does
     tikz = lambda text: text.replace("TikZ", "Ti<i class=\"tk\">k</i>Z")
-    # each entry's title links to it (`#shot-table`): site.js scrolls there and turns the card row to it
+    # each entry's title links to it (`#shot-table`): site.js scrolls there and shows it
     title = lambda s: f'<h3><a class="shot-anchor" href="#shot-{s["name"]}">{tikz(html.escape(s["title"]))}</a></h3>'
     figures, cards = [], []
+    # a live window's demo (`"demo": name`): that capture plays in the window until a click makes it the editor
+    has = lambda name: all((src / f"{name}-{scheme}.png").exists() for scheme in ("light", "dark"))
+    demos = {s["demo"] for s in spec["shots"] if s.get("live") and s.get("demo") and has(s["demo"])}
     for s in spec["shots"]:
         name, alt = s["name"], html.escape(f'{s["title"]}: {s["caption"]}')
+        if name in demos:
+            continue
         if s.get("live"):
             # a live editor in the same frame: until site.js starts the engine in view, the build's run of
             # its text stands there, findings underlined and the typeset text beside
             lines, data = live[name]
+            demo = (f'<div class="live-demo" role="button" tabindex="0" aria-label="edit the document yourself">{pictures(s["demo"], "")}'
+                    f'<span class="live-demo-hint">Click to type yourself</span></div>' if s.get("demo") in demos else "")
             figures.append(f'<figure class="shot shot-big shot-live" id="shot-{name}" data-name="{html.escape(s["file"])}"><div class="shot-stage"><div class="shot-win">'
-                           f'<div class="live-grid"><pre class="src live-src live-poster"><code>{lines}</code></pre><div class="ex-side typeset live-ts" aria-label="what SaTeX computes it typesets"></div></div>'
-                           f'<p class="muted live-status" aria-live="polite">{html.escape(s["status"])}</p></div></div>'
+                           f'<div class="live-grid"><pre class="src live-src live-poster"><code>{lines}</code></pre><div class="ex-side typeset live-ts" aria-label="what SaTeX computes it typesets"></div>{demo}</div>'
+                           f'<p class="muted live-status" aria-live="polite">{html.escape(s["demo-status"] if demo else s["status"])}</p></div></div>'
                            f'<script type="application/json" class="ex-data">{data}</script>'
                            f'<figcaption>{title(s)}<p>{tikz(html.escape(s["caption"]))}</p>'
                            f'<a class="shot-try" href="play/index.html">The full playground →</a></figcaption></figure>')
             continue
-        if not all((src / f"{name}-{scheme}.png").exists() for scheme in ("light", "dark")):
+        if not has(name):
             continue
         # the link opens the example and, once its run is in, the widget the shot shows (playground.js `satexOpen`)
         w = s.get("open")
@@ -2028,10 +2037,8 @@ def showcase(out, live):
             f'<figure class="shot{" shot-big" if s.get("big") or s.get("wide") else ""}{" shot-wide" if s.get("wide") else ""}" id="shot-{name}"><a class="shot-stage" href="{html.escape(try_it)}" tabindex="-1">{stage}</a>'
             f'<figcaption>{title(s)}<p>{html.escape(s["caption"])}</p>'
             f'<a class="shot-try" href="{html.escape(try_it)}">Try it in {html.escape(s["file"])} →</a></figcaption></figure>')
-    # the small entries: one row that scrolls sideways, a card at a time (site.js steps it)
-    nav = lambda d, label, arrow: f'<button type="button" class="cards-nav cards-{d}" aria-label="{label}" disabled>{arrow}</button>'
-    return "\n".join(figures + [f'<div class="cards-wrap"><div class="cards" tabindex="0" role="region" aria-label="More of what SaTeX shows, {len(cards)} cards: scroll sideways">{"".join(cards)}</div>'
-                                 f'{nav("prev", "previous cards", "‹")}{nav("next", "next cards", "›")}</div>'])
+    # the small entries: one grid of cards, side by side as far as the page is wide
+    return "\n".join(figures + [f'<div class="cards" role="region" aria-label="More of what SaTeX shows, {len(cards)} cards">{"".join(cards)}</div>'])
 
 
 # what a showcase capture shows: the playground's code and style, besides its example and its entry

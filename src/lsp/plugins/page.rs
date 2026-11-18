@@ -274,11 +274,55 @@ fn view(cx: &Cx, parts: &Parts) -> Json {
         "koma": koma,
         "part": { "here": here, "marks": marks, "end": end },
         "header": header(cx, parts),
+        "numbering": numbering(cx, parts),
         "columns": { "two": super::styles::flag(a, "if@twocolumn"), "class": parts.class.as_ref().and_then(|c| keyed(doc, c.0, true)) },
         "binding": super::register_value(a, "Gm@bindingoffset").map(|v| v.lo),
         "pagecolor": super::styles::pagecolor(cx, parts.begin),
         "headings": super::styles::headings(cx, family(a), parts.begin, span(doc, before_document, before_document).start),
     }]})
+}
+
+/// The matter marks after which a numbering style is set; each sets its own (classes.dtx).
+const MATTERS: [&str; 4] = ["frontmatter", "mainmatter", "appendix", "backmatter"];
+
+/// Page numbering: the places it may restart (the document's start, the matter marks, the
+/// `\pagenumbering` calls as written) and whether `page` restarts with each chapter.
+fn numbering(cx: &Cx, parts: &Parts) -> Json {
+    let (a, doc) = (cx.analysis, cx.doc);
+    let text = doc.body();
+    // a new call goes on the line after the one it follows: a matter mark sets its own style first
+    let after = |at: usize| span(doc, after_byte(text, at), after_byte(text, at)).start;
+    let node = |at: usize| serde_json::to_value(snapshot::read(doc, at, &[], false)?).ok();
+    let written: Vec<Json> = calls(text, "pagenumbering", parts.begin, parts.end)
+        .into_iter()
+        .filter_map(|c| Some(json!({ "node": node(c.0)?, "row": doc.pos(c.0).line })))
+        .collect();
+    let marks: Vec<Json> = MATTERS
+        .iter()
+        .flat_map(|m| calls(text, m, parts.begin, parts.end).into_iter().map(move |c| (m, c)))
+        .map(|(m, c)| json!({ "name": m, "row": doc.pos(c.0).line, "at": after(c.2) }))
+        .collect();
+    // `page` in the chapter's reset list (`\cl@chapter`), and the call that put it there
+    let chapters = macro_text(a, "cl@chapter");
+    let reset = calls(text, "counterwithin", 0, parts.begin)
+        .into_iter()
+        .find(|c| text[c.0..c.2].contains("{page}") && text[c.0..c.2].contains("{chapter}"))
+        .and_then(|c| node(c.0));
+    let before_document = text[..parts.begin].rfind('\n').map_or(0, |n| n + 1);
+    json!({
+        "start": after(parts.begin),
+        "calls": written,
+        "marks": marks,
+        "chapters": chapters.is_some(),
+        "per_chapter": chapters.is_some_and(|t| t.contains("\\@elt {page}") || t.contains("\\@elt{page}")),
+        "reset": reset,
+        "insert": span(doc, before_document, before_document).start,
+    })
+}
+
+/// The byte after the line end at or past `at`.
+fn after_byte(text: &str, at: usize) -> usize {
+    text[at..].find('\n').map_or(text.len(), |n| at + n + 1)
 }
 
 /// The value of a count register `\name` when the run ended.
