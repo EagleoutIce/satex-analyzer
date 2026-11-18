@@ -28,7 +28,8 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 - `feat` **Rule metadata.** `satex lint --explain`, `--rules`, `satex query --list`, the editor and the wiki show `since`. Summaries are short, rule numbers never change once released.
 - `feat` **Package augmentations.** Per-package lint knowledge is switchable in `satex.yaml`. siunitx comes first: `inconsistent-precision` reads its rounding of `S` columns.
 - `feat` **Spacing and punctuation fixes.** `primitive-tex-command` rewrites `\vskip` to `\vspace` and `\hskip` to `\hspace`. `command-terminated-space` covers `\TeX file` in TikZ nodes and `\fbox`. `scripts/spacing-sweep.py` checks every spacing fix on real documents. `math-punctuation` handles `$use?$ edge`.
-- `fix` **`sentence-capital` skips formulas.** `?` followed by `$x$` is no sentence start.
+- `fix` **A `\ref` inside an argument counts.** `\ref` in `\footnote`, `\emph`, `\textbf` or `\caption` now marks its label as used: no false `unused-label` on a first run.
+- `fix` **Prose rules skip math, code, keys and URLs.** 37 false positives in 20 rules fixed. A trigger, or the word it is judged by, in `$…$`, `\verb`, `\texttt`, `\url` or a listing is no prose: `?` before `$x$` starts no sentence. `scripts/lint-sweep.py` sets every prose rule's trigger in 23 contexts.
 - `fix` **No findings from a run stopped before the body.** Such a run shows only why it stopped.
 
 ### Playground
