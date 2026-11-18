@@ -634,6 +634,8 @@ main td .badges, main td .cat { white-space: nowrap; }
 #play-status[data-busy] { display: flex; flex: 0 1 40ch; gap: .5ch; font-variant-numeric: tabular-nums; }
 #play-status .st-what { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 #play-status .st-num { flex: none; min-width: 5ch; text-align: right; color: var(--muted); } #play-status .st-left { min-width: 8ch; }
+/* Stop fits the line: showing it never moves the bar */
+.statusbar #play-stop { min-height: 0; padding-block: 0; line-height: inherit; }
 #play-status .st-num::before { content: "· "; } #play-status[data-busy] + #play-stop { margin-left: .5ch; }
 .sx-fill { position: absolute; inset: 0 auto 0 0; width: calc(var(--done) * 100%); border-radius: inherit; background: var(--accent); transition: width .3s var(--ease); }
 .sx-busy .sx-fill { width: 35%; animation: sx-shimmer 1.2s var(--ease) infinite; }
@@ -1951,9 +1953,9 @@ canvas.pdf-echo { display: block; }
 .pdf-sub-group { display: grid; gap: .1rem; } .pdf-sub-group > label { display: flex; align-items: center; gap: .35rem; cursor: pointer; white-space: nowrap; }
 .pdf-sub-group .count { margin-left: auto; font-weight: 500; color: var(--muted); }
 
-/* one height for every control of the PDF bar */
-.pdf-bar { --bar-h: 1.6rem; }
-.pdf-bar :is(button, summary, a.button, .pdf-views button, #pdf-fold) { box-sizing: border-box; height: var(--bar-h); min-height: var(--bar-h); padding-block: 0; display: inline-flex; align-items: center; justify-content: center; line-height: 1; }
+/* one height and font for every control of the PDF and Typeset bars */
+:is(.pdf-bar, .ts-switches) { --bar-h: 1.6rem; }
+:is(.pdf-bar, .ts-switches) :is(button, summary, a.button, .pdf-views button, #pdf-fold) { font-size: .72rem; white-space: nowrap; box-sizing: border-box; height: var(--bar-h); min-height: var(--bar-h); padding-block: 0; display: inline-flex; align-items: center; justify-content: center; line-height: 1; }
 .pdf-bar .pdf-split > :is(button, details, summary) { height: var(--bar-h); }
 .pdf-bar #pdf-follow[aria-pressed=true] { background: color-mix(in srgb, var(--accent) 18%, var(--bg)); color: var(--accent); border-color: var(--accent); font-weight: 600; }
 .pdf-bar #pdf-follow[aria-pressed=false] { color: var(--muted); border-style: dashed; }
@@ -2292,6 +2294,9 @@ body:not(.show-lenses) .cm-lens-line { display: none; }
 /* one height per button size, everywhere: small buttons, toolbar pills and selects --btn-h-sm, a dialog header's close as its icons --btn-h.
    min-height only (zero specificity), so a part that sets its own size keeps it */
 :where(button.small, .button.small, .pill, select) { min-height: var(--btn-h-sm); box-sizing: border-box; }
+/* a widget's one-line field stands in a row of buttons: as tall as they are; a column's alignment in the table grid as a small button */
+:is(input:not([type]), input[type=text], input[type=number], select).tv-input { height: var(--btn-h); padding-block: 0; }
+.sd-grid th.sd-colh select { height: var(--btn-h-sm); padding-block: 0; font-size: var(--btn-fs); }
 button.small, .button.small { line-height: 1.2; padding-block: 0; }
 dialog > header > button.small:is([id$=-close], [data-close]) { min-width: var(--btn-h); min-height: var(--btn-h); padding: 0; }
 :is(.sd button, .tv-button, .tv-tab, .pop-tools button, .tv-chip, .tv .sd-icon) { box-sizing: border-box; display: inline-flex; align-items: center; justify-content: center; gap: .3rem; min-height: var(--btn-h); padding: 0 var(--btn-px); border-radius: var(--btn-r); font: inherit; font-size: var(--btn-fs); font-weight: 500; line-height: 1.2; cursor: pointer;
@@ -2311,7 +2316,7 @@ dialog > header > button.small:is([id$=-close], [data-close]) { min-width: var(-
 :is(.sd button[aria-pressed=true], .pop-tools button[aria-pressed=true], .tv-tab.on) { background: color-mix(in srgb, var(--accent) 14%, var(--panel)); border-color: var(--accent); color: var(--accent); }
 :is(.sd-seg, .tv-tabs) { display: inline-flex; flex-wrap: nowrap; }
 :is(.sd-seg, .tv-tabs) { gap: 0; border-radius: var(--btn-r); }
-:is(.sd-seg button, .tv-tabs .tv-tab, .tv-tools .tv-tab) { border-radius: 0; margin-left: -1px; min-height: var(--btn-h-sm); padding: 0 .6rem; }
+:is(.sd-seg button, .tv-tabs .tv-tab, .tv-tools .tv-tab) { border-radius: 0; margin-left: -1px; min-height: var(--btn-h); padding: 0 .6rem; }
 :is(.sd-seg button, .tv-tabs .tv-tab, .tv-tools .tv-tab):first-child { border-radius: var(--btn-r) 0 0 var(--btn-r); margin-left: 0; }
 :is(.sd-seg button, .tv-tabs .tv-tab, .tv-tools .tv-tab):last-of-type, .tv-tools .tv-tab:has(+ [data-tool=delete]) { border-radius: 0 var(--btn-r) var(--btn-r) 0; }
 :is(.sd-seg button, .tv-tabs .tv-tab, .tv-tools .tv-tab)[aria-pressed=true], .tv-tab.on { position: relative; z-index: 1; }

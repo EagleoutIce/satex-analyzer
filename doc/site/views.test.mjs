@@ -1726,6 +1726,9 @@ raw { text % here
   assert.deepEqual(E.aligned(['a', 'b', 'c', 'd'], ['a', 'c', 'd']), [0, -1, 1, 2], 'a source word the page lacks');
   assert.deepEqual(E.aligned(['a', 'b', 'c'], ['a', 'X', 'b', 'c']), [0, 2, 3], 'a page word the source lacks (a macro\'s text)');
   assert.deepEqual(E.aligned(['lorem', 'consectetur', 'lorem'], ['lorem', 'consec-', 'tetur', 'lorem']), [0, 1, 3], 'hyphenated across rows: its first part');
+  // a footnote's call glues its first word to the word before (`here.\footnote{A` is `here.A`): it pairs with the
+  // page's `here.`, the footnote's words with the footnote row. Pins its last `here.` taken for the text's `here.`.
+  assert.deepEqual(E.aligned(['words', 'here.A', 'footnote', 'text', 'goes', 'here.'], ['words', 'here.', '1', 'A', 'footnote', 'text', 'goes', 'here.']), [0, 1, 4, 5, 6, 7], 'a footnote call');
   assert.deepEqual(E.aligned(['ﬁne'], ['fine']), [0], 'a ligature as the page spells it');
   assert.deepEqual(E.changed('abcXdef', 'abcYYdef'), [3, 3]);
   assert.deepEqual(E.changed('aaa', 'aaaa'), [3, 0], 'the common end never overlaps the common start');

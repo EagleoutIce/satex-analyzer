@@ -878,15 +878,16 @@
   function primeScope(file) {
     if (!scopeItems.has(file)) scopeItems.set(file, []);
     const t = performance.now();
-    namesInForce(false).then((records) => { scopeMs = performance.now() - t; scopeItems.set(file, records.map((r) => ({ label: r.name.replace(/^\\/, ''), detail: r.effective ?? r.name, kind: 3 }))); });
+    namesInForce(false, true).then((records) => { scopeMs = performance.now() - t; scopeItems.set(file, records.map((r) => ({ label: r.name.replace(/^\\/, ''), detail: r.effective ?? r.name, kind: 3 }))); });
   }
-  /** The names in force at the end of the root's last run (`scope`), asked once per analysis. */
+  /** The names in force at the end of the root's last run (`scope`), asked once per analysis;
+   * `lean`: name, tag, shape and package only, what a completion list shows. */
   const scopeAsked = new Map();
-  function namesInForce(all) {
-    const key = `${state.root ?? state.file}|${all}|${analyzedVersion}`;
+  function namesInForce(all, lean = false) {
+    const key = `${state.root ?? state.file}|${all}|${lean}|${analyzedVersion}`;
     if (!scopeAsked.has(key)) {
       if (scopeAsked.size > 4) scopeAsked.clear();
-      const request = { file: path(state.root ?? state.file), queries: [{ type: 'scope', all }] };
+      const request = { file: path(state.root ?? state.file), queries: [{ type: 'scope', all, lean }] };
       scopeAsked.set(key, lsp('workspace/executeCommand', { command: 'satex/query', arguments: [request] }).then((r) => r?.[0]?.records ?? []).catch(() => []));
     }
     return scopeAsked.get(key);
@@ -1792,7 +1793,9 @@
     const lines = state.texts[state.file]?.split('\n') ?? [];
     const html = cards.typesetView(rows, { file: state.file, closed: tsClosed, plural, lineOf: (n) => lines[n - 1] });
     tsUnpend();
+    const keep = tsAnchor();
     tsMorph(typesetBody, html || '<p class="muted">The document sets no paragraph.</p>');
+    keep();
     tsText = [state.file, sentTexts.get(`${target}@${of}`) ?? null];
     tsTerms();
     tsHeadFoot();
@@ -1803,6 +1806,19 @@
     tsOriginsDraw();
     // the tables' columns as now written, for the PDF's column layer
     if (pdf?.boxes) pdfColsAsk();
+  }
+  /** The paragraph typed in, else the first one in sight: kept where it stands on screen when the view is drawn
+   * again (opening another file folds and unfolds the files' groups above it, and the page jumped by their height). */
+  function tsAnchor() {
+    const top = typesetBody.getBoundingClientRect().top, key = (p) => `${p.dataset.path}|${p.dataset.line}|${p.dataset.col}`;
+    const c = pdfCaret?.view === 'ts' && pdfCaret.p, ps = [...typesetBody.querySelectorAll('p.ts[data-line]')];
+    const p = (c && ps.find((q) => q.dataset.path === c.path && q.dataset.line === c.line)) || ps.find((q) => q.getBoundingClientRect().bottom > top);
+    if (!p) return () => {};
+    const k = key(p), y = p.getBoundingClientRect().top;
+    return () => {
+      const q = [...typesetBody.querySelectorAll('p.ts[data-line]')].find((x) => key(x) === k);
+      if (q) typesetBody.scrollTop += q.getBoundingClientRect().top - y;
+    };
   }
   /** The header and footer the document writes, as the page widget reads them (views.ts `headerOf`), with the
    * defaults of its package filled in: drawn in each page break of the Typeset view, the foot of the page that ends
@@ -2108,19 +2124,37 @@
     if (!box || state.file !== c.file) return;
     c.p.col = p.dataset.col;
     const g = pdfSeen(), w = PE.wordAt(g.text, g.at), m = w && { index: 0, 0: w[1] }, lo = w ? w[0] : 0;
+    // typed since the word was found: the source from its start to the caret's word end stands in its place, spaces
+    // and all, until the view is drawn again (a word alone would drop the words typed before it)
+    const t = c.typed?.box === box && box.textContent === c.typed.seen ? c.typed : (c.typed = null);
+    if (t) {
+      const now = g.text.slice(t.s0, Math.max(g.at, w ? lo + m[0].length : 0));
+      if (g.at >= t.s0 && /^[^\\{}$%&#^_~\n]*$/.test(now) && tsSplice(box, t.at, t.len, now)) {
+        Object.assign(t, { len: now.length, seen: box.textContent });
+        return tsCaretPut(box, t.at + g.at - t.s0, true, '');
+      }
+      c.typed = null;
+    }
     // the word around the caret, found again in the paragraph: the nearest one so spelled
     const words = tsViewWords(box.textContent, tsRowOf(p));
     let near = m && words.filter((x) => x[0] === m[0]).sort((a, b) => Math.abs(a.index - c.idx) - Math.abs(b.index - c.idx))[0];
     // the view lags the text: the word as now written goes in its place at once, until the next run sets it
     const old = !near && m && g.text[w[0] - 1] !== '\\' && words.find((x) => x.index <= c.idx && c.idx <= x.index + x[0].length);
     if (old && tsSplice(box, old.index, old[0].length, m[0])) near = { index: old.index };
-    if (near) c.idx = near.index;
-    const into = m ? g.at - lo - m.index : 0, spot = tsNodeAt(box, c.idx + (near ? into : 0));
+    if (near) {
+      c.idx = near.index;
+      if (m) c.typed = { box, s0: lo, at: near.index, len: m[0].length, seen: box.textContent };
+    }
+    tsCaretPut(box, c.idx + (near && m ? g.at - lo - m.index : 0), !!near, !near && m ? m[0] : '');
+  }
+  /** The caret at character `i` of `box`'s text; off the text as set (`set` false) it carries the word as written. */
+  function tsCaretPut(box, i, set, word) {
+    const spot = tsNodeAt(box, i);
     if (!spot) return;
     const r = document.createRange();
     r.setStart(...spot);
     const rect = r.getClientRects()[0] ?? spot[0].parentElement.getBoundingClientRect(), base = typesetBody.getBoundingClientRect();
-    typesetBody.insertAdjacentHTML('beforeend', `<span class="pdf-caret${near ? '' : ' pdf-caret-stale'}" style="left:${rect.left - base.left + typesetBody.scrollLeft}px;top:${rect.top - base.top + typesetBody.scrollTop}px;height:${rect.height}px">${!near && m ? `<b>${escape(m[0])}</b>` : ''}</span>`);
+    typesetBody.insertAdjacentHTML('beforeend', `<span class="pdf-caret${set ? '' : ' pdf-caret-stale'}" style="left:${rect.left - base.left + typesetBody.scrollLeft}px;top:${rect.top - base.top + typesetBody.scrollTop}px;height:${rect.height}px">${word ? `<b>${escape(word)}</b>` : ''}</span>`);
   }
   /** `len` characters at index `at` of `box`'s text become `text`, when they lie in one text node. */
   function tsSplice(box, at, len, text) {
@@ -7977,6 +8011,16 @@
   }
   /** What the page shows of source text `t`: commands, braces, math shifts and comments left out, spaces as one. */
   const pdfPlainOf = (t, verb) => verb ? t : t.replace(/(?<!\\)%[^\n]*/g, '').replace(/\\[A-Za-z@]+\*?|\\(?=[^A-Za-z@\s])|[{}$^_]/g, '').replace(/[\s~]+/g, ' ');
+  /** The line box of a row (its words `ws` in order) among SyncTeX boxes `bs`: the innermost `(` around it on its
+   * baseline that is more than the row's own width (a centered caption's text box is not), else the widest; null if none. */
+  function pdfLineBox(bs, ws) {
+    if (!ws.length) return null;
+    const l = ws[0][1], r = ws.at(-1)[3], t = Math.min(...ws.map((v) => v[2])), d = Math.max(...ws.map((v) => v[4]));
+    const around = (bs ?? []).filter((y) => y.kind === '(' && y.page === ws[0][0] && y.y >= t && y.y <= d + 0.5 && y.x - 1 <= l && r <= y.x + y.w + 1).sort((p, q) => p.w - q.w);
+    return around.find((y) => l - y.x > 1 || y.x + y.w - r > 1) ?? around.at(-1) ?? null;
+  }
+  /** Whether row `ws` stands centered in line box `box`: as far from both its edges (a caption, `\centering`). */
+  const pdfCentered = (box, ws) => !!box && ws.length > 0 && ws[0][1] - box.x > 4 && Math.abs(ws[0][1] - box.x - (box.x + box.w - ws.at(-1)[3])) < 2;
   /** The font page image `img` sets word `w` in: pdf.js's embedded font of the text run under the word's glyphs (by
    * position: the run on its baseline overlapping it most, never by spelling), its size and baseline in bp. A run
    * whose PDF was closed for a newer build has its face added back (pdfFaces). No run: the echo font as wide as the word. */
@@ -8061,8 +8105,8 @@
       // laid from A's end; what passes the text's right edge wraps: to the start of the paragraph's next row (the next
       // page's too), whose words move along, then to rows of its own a baseline skip apart (the paragraph's own, else
       // 1.2 em), from the paragraph's left edge, painted over what the page set there
-      // the right edge: the innermost line box around A (SyncTeX's `(`, as wide as its line may get), else the paragraph's widest row
-      const hb = (b.boxes ?? []).filter((y) => y.kind === '(' && y.page === w[0] && y.y >= w[2] && y.y <= w[4] + 0.5 && y.x - 1 <= w[1] && w[3] <= y.x + y.w + 1).sort((p, q) => p.w - q.w)[0];
+      // the right edge: the line box of A's row (as wide as its line may get), else the paragraph's widest row
+      const hb = pdfLineBox(b.boxes, pdfImgWords(img).filter((v) => Math.abs(v[4] - w[4]) < 1).sort((x, y) => x[1] - y[1]));
       const onPage = para.filter((t) => t.w[0] === w[0]), right = Math.max(hb ? hb.x + hb.w : 0, ...onPage.map((t) => t.w[3])), left = Math.min(...onPage.map((t) => t.w[1]));
       const bases = [...new Set(onPage.map((t) => Math.round(t.w[4] * 4) / 4))].sort((p, q) => p - q), steps = bases.slice(1).map((v, i) => v - bases[i]).filter((d) => d > f.size * 0.8 && d < f.size * 2.5).sort((p, q) => p - q);
       const skip = steps.length ? steps[steps.length >> 1] : f.size * 1.2;
@@ -8095,6 +8139,17 @@
       // rows past the paragraph's own push what the page sets below them down (cut at the page's foot), never over it
       const extra = rows.filter((r) => r.extra);
       if (extra.length) pdfEchoPush(extra[0].img, extra[0].n[4] - skip + 0.5, extra.filter((r) => r.img === extra[0].img).length * skip);
+      // a centered row (a caption, `\centering`) that did not wrap stays centered: it moves by half its change, the words up to A redrawn from the page too
+      const r0 = rows[0];
+      if (rows.length === 1 && hb && line.length && !verb) {
+        const end0 = Math.max(w[3], ...row.map((t) => t.w[3])), c = pdfCentered(hb, line) ? (Math.max(...r0.out.map((q) => q.x + q.n)) - end0) / 2 : 0;
+        if (c) {
+          for (const q of r0.out) q.x -= c;
+          r0.out.unshift(...line.filter((v) => v[3] <= w[3] + 0.5).map((v) => ({ w: v, x: v[1] - c, n: v[3] - v[1] })));
+          r0.x = Math.min(line[0][1], line[0][1] - c);
+          cx -= c;
+        }
+      }
       for (const r of rows) pdfEchoPaint(r);
     }
     const img = page(w[0]), [pw, ph] = pageSize(img);
@@ -8221,11 +8276,10 @@
     ctx.font = `${size}px ${font}`;
     const width = (t) => ctx.measureText(t).width;
     const laid = PE.relaid(row.map((x) => [x[1], x[3], x[5]]), k, lead + now + tail, width);
-    // a centered row (a caption, `\centering`: as far from its line box's edges on both sides) stays centered: the
-    // whole row moves by half the change, the words before the caret's redrawn too
+    // a centered row (a caption, `\centering`) stays centered: the whole row moves by half the change, the words
+    // before the caret's redrawn too
     const all = pdfImgWords(img).filter((x) => Math.abs(x[4] - w[4]) < 1).sort((a, b) => a[1] - b[1]), before = all.filter((x) => x[1] < w[1] - 0.5);
-    const hb = ((img.__build ?? pdf)?.boxes ?? []).filter((y) => y.kind === '(' && y.page === w[0] && y.y >= w[2] && y.y <= w[4] + 0.5 && y.x - 1 <= all[0][1] && all.at(-1)[3] <= y.x + y.w + 1).sort((p, q) => p.w - q.w)[0];
-    const gap = hb ? all[0][1] - hb.x : 0, c = hb && gap > 4 && Math.abs(gap - (hb.x + hb.w - all.at(-1)[3])) < 2 ? (laid.at(-1)[1] - row.at(-1)[3]) / 2 : 0;
+    const c = pdfCentered(pdfLineBox((img.__build ?? pdf)?.boxes, all), all) ? (laid.at(-1)[1] - row.at(-1)[3]) / 2 : 0;
     const set = (c ? [...before.map((x) => [x[1], x[3], x[5]]), ...laid] : laid.slice(k)).map(([a, b, t]) => [a - c, b - c, t]);
     const [l, r] = [Math.min(c ? all[0][1] : w[1], set[0][0]), Math.max(row.at(-1)[3], set.at(-1)[1])];
     const words = set.map(([a, b, t]) => `<i style="left:${(a - l) / (r - l) * 100}%;width:${(b - a) / (r - l) * 100}%"><span style="transform:scaleX(${(b - a) / Math.max(0.1, width(t))})">${escape(t)}</span></i>`).join('');
@@ -9312,7 +9366,8 @@
     act.shown = status.textContent;
     status.title = text;
     status.dataset.busy = '';
-    $('play-stop')?.toggleAttribute('hidden', !(running > 0 || name === 'Starting'));
+    // Stop once a run lasts: one that ends at once never flashes it
+    $('play-stop')?.toggleAttribute('hidden', !(running > 0 && now - act.started > 600 || name === 'Starting'));
     drawAct();
   }
   // Stop: the run under way ends now; a start under way is dropped and the last findings stay

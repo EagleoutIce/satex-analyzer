@@ -809,13 +809,16 @@ declare global {
   /** Source words `toks` matched to the page's words `words` (both in reading order): per word of the source, the
    * index of the page word that shows it, -1 where none does. Equal spellings pair up in order; one missing or extra
    * on either side (a macro's text, a dropped command) is skipped by looking a few words ahead; a word the page
-   * hyphenated across rows (`consec-` `tetur`) is its first part. */
+   * hyphenated across rows (`consec-` `tetur`) is its first part; one that starts the other (`here.\footnote{A` is
+   * `here.A`, the page sets `here.` and the `A` in the footnote) pairs with it before looking ahead. */
   function aligned(toks: string[], words: string[]): number[] {
     const n = (t: string) => t.normalize('NFKC').replace(/[\u2010-\u2014]/g, '-'), A = toks.map(n), B = words.map(n), out = A.map(() => -1);
     const eq = (i: number, j: number) => A[i] === B[j] || B[j]!.endsWith('-') && j + 1 < B.length && A[i] === B[j]!.slice(0, -1) + B[j + 1];
     const LOOK = 4;
     for (let i = 0, j = 0; i < A.length && j < B.length;) {
       if (eq(i, j)) { out[i] = j; j += A[i] === B[j] ? 1 : 2; i++; continue; }
+      const a = A[i]!, b = B[j]!;
+      if (Math.min(a.length, b.length) >= 3 && (a.startsWith(b) || b.startsWith(a))) { out[i++] = j++; continue; }
       let step: [number, number] | null = null;
       for (let k = 1; k <= LOOK && !step; k++) step = j + k < B.length && eq(i, j + k) ? [0, k] : i + k < A.length && eq(i + k, j) ? [k, 0] : null;
       if (step) { i += step[0]; j += step[1]; } else { i++; j++; }
