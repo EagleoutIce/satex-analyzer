@@ -1444,6 +1444,36 @@ raw { text % here
   assert.deepEqual(got('lof'), ['b.tex:F']);
   assert.deepEqual(got('lot'), []);
   assert.equal(E.key(texts['a.tex'], 'section[Sh'.length + 1, 'x')[2], 'x', 'a short title takes typing');
+  // typing into a contents entry whose heading has no short title writes one: the title copied into `[…]`, the
+  // caret at the clicked character of the copy. Pins the heading's own title staying as it was.
+  const ed = (t, e) => t.slice(0, e[0]) + e[2] + t.slice(e[1]);
+  const sub = 'x\\subsection{Pictures}\\label{p}', head = sub.indexOf('\\sub'), st = E.shortTitle(sub, head, 3);
+  assert.equal(ed(sub, st), 'x\\subsection[Pictures]{Pictures}\\label{p}');
+  assert.equal(ed(sub, st).slice(st[0] + st[3] - 3, st[0] + st[3]), 'Pic', 'the caret after the clicked characters');
+  assert.equal(E.shortTitle(ed(sub, st), head, 0), null, 'a short title written: none more');
+  assert.equal(ed('\\caption{A [b] c}', E.shortTitle('\\caption{A [b] c}', 0, 0)), '\\caption[{A [b] c}]{A [b] c}', 'a `]` in the title: the copy in braces');
+  assert.equal(ed('\\section[Short]{Long}', E.bothTitles('\\section[Short]{Long}', 0)), '\\section{Short}', 'the heading takes the short title');
+  assert.equal(ed('\\caption[{A [b]}] {L}', E.bothTitles('\\caption[{A [b]}] {L}', 0)), '\\caption{A [b]}', "the copy's braces go");
+  // generated text renamed: a line before \begin{document}, or the line written before; under babel in \captions<lang>
+  const pre = '\\documentclass{article}\n\\begin{document}\nx\n\\end{document}';
+  const r1 = E.renamed(pre, '\\contentsname', 'Inhalt');
+  assert.equal(ed(pre, r1).split('\n')[1], '\\renewcommand{\\contentsname}{Inhalt}');
+  assert.equal(ed(pre, r1).slice(r1[3], r1[3] + 6), 'Inhalt', 'the value where the caret goes');
+  const again = ed(pre, r1), r2 = E.renamed(again, '\\contentsname', 'Index');
+  assert.equal(ed(again, r2).split('\n')[1], '\\renewcommand{\\contentsname}{Index}', 'the line written before takes the new value');
+  assert.equal(ed('\\renewcommand\\listfigurename{F}\n' + pre, E.renamed('\\renewcommand\\listfigurename{F}\n' + pre, '\\listfigurename', 'G')).split('\n')[0], '\\renewcommand\\listfigurename{G}', 'the brace-less form too');
+  assert.equal(ed('% \\renewcommand{\\contentsname}{C}\n' + pre, E.renamed('% \\renewcommand{\\contentsname}{C}\n' + pre, '\\contentsname', 'D')).split('\n')[2], '\\renewcommand{\\contentsname}{D}', 'a commented line is none');
+  const bab = '\\documentclass{article}\n\\usepackage[ngerman]{babel}\n\\renewcommand{\\figurename}{Bild}\n\\begin{document}\n\\end{document}', r3 = E.renamed(bab, '\\figurename', 'Abb.', 'ngerman');
+  assert.equal(ed(bab, r3).split('\n')[3], '\\addto\\captionsngerman{\\renewcommand{\\figurename}{Abb.}}', 'babel: in \\captions<lang>, the plain line is not the one in force');
+  assert.equal(ed(ed(bab, r3), E.renamed(ed(bab, r3), '\\figurename', 'Abbildung', 'ngerman')).split('\n')[3], '\\addto\\captionsngerman{\\renewcommand{\\figurename}{Abbildung}}', 'babel: the captions line rewritten');
+  assert.equal(E.renamed('no document', '\\contentsname', 'x'), null);
+  // dot leaders: the kernel's \@dotsep in the list's own file, tocloft's per entry kind; one line a setting
+  const l1 = E.leaders(pre, 'lof', 'none', false);
+  assert.equal(ed(pre, l1).split('\n')[2], '\\makeatletter\\addtocontents{lof}{\\protect\\renewcommand\\protect\\@dotsep{10000}}\\makeatother', 'after \\begin{document}: \\addtocontents writes the .aux');
+  assert.equal(ed(ed(pre, l1), E.leaders(ed(pre, l1), 'lof', '8', false)).split('\n').filter((l) => /dotsep/.test(l)).join('|'), '\\makeatletter\\addtocontents{lof}{\\protect\\renewcommand\\protect\\@dotsep{8}}\\makeatother', 'the spacing rewrites the line');
+  assert.equal(ed(pre, E.leaders(pre, 'toc', 'none', true)).split('\n')[1], '\\renewcommand{\\cftsecdotsep}{\\cftnodots}\\renewcommand{\\cftsubsecdotsep}{\\cftnodots}\\renewcommand{\\cftsubsubsecdotsep}{\\cftnodots}');
+  assert.equal(ed(pre, E.leaders(pre, 'lot', 'nopage', false)).split('\n')[1], '\\cftpagenumbersoff{tab}', 'page numbers: tocloft, in the preamble');
+  assert.equal(E.leaders(pre, 'lof', 'wide', false), null);
 }
 // Typing in a typeset view: the caret stays after each typed character. The view finds its word with wordAt in the
 // text as now written; pins the bug where the caret jumped back to the word's start after each key ("lol" -> "lool").
@@ -1470,6 +1500,14 @@ raw { text % here
   assert.equal(E.argAt(text, '\\greet', 1), text.indexOf('world'), 'the next line');
   assert.equal(E.argAt(text, '\\greet', 3), text.indexOf('world'), 'not \\greeting');
   assert.equal(E.argAt(text, '\\nope', 2), null);
+}
+// Typing into an undecided choice (`The year ⟨?⟩ is [not] a leap year.`): the run reads `not` at the call
+// `\tleapy`, so typing goes to the definition that spells it, not the empty one, never `\tleapyx`.
+{
+  const E = self.satexPdfEdit, text = '\\def\\tleapy{not }\n\\def\\tleapy{}\n\\def\\tleapyx{not}\nis \\tleapy a\n';
+  const at = text.indexOf('\\tleapy a') + 3;
+  assert.deepEqual(E.defining(text, at, 'not'), [['\\tleapy', text.indexOf('not'), 1]]);
+  assert.deepEqual(E.defining(text, text.indexOf(' a\n'), 'not'), [], 'no call there');
 }
 // The typed word drawn at once over the page: it takes its measured width at the page's scale, the words after it move.
 {
@@ -1615,6 +1653,10 @@ raw { text % here
 {
   const E = self.satexPdfEdit, text = 'A \\emph{big} cat~sat, 50\\% % note\n{} $x$ end';
   assert.deepEqual(E.tokens(text, 0, text.length).map((t) => [text.slice(t.s, t.e), t.t]), [['A', 'A'], ['\\emph{big}', 'big'], ['cat', 'cat'], ['sat,', 'sat,'], ['50\\%', '50%'], ['$x$', 'x'], ['end', 'end']]);
+  // a heading sets its long title: the short one (the contents') and the label set no word here (the heading typed
+  // into echoed its words twice: the short title took the long title's page word)
+  const head = '\\section[Background]{Background and Motivation}\\label{sec:bg}\nLiterate';
+  assert.deepEqual(E.tokens(head, 0, head.length).map((t) => [head.slice(t.s, t.e), t.t]), [['{Background', 'Background'], ['and', 'and'], ['Motivation}', 'Motivation'], ['Literate', 'Literate']]);
   assert.deepEqual(E.aligned(['a', 'b', 'c', 'd'], ['a', 'c', 'd']), [0, -1, 1, 2], 'a source word the page lacks');
   assert.deepEqual(E.aligned(['a', 'b', 'c'], ['a', 'X', 'b', 'c']), [0, 2, 3], 'a page word the source lacks (a macro\'s text)');
   assert.deepEqual(E.aligned(['lorem', 'consectetur', 'lorem'], ['lorem', 'consec-', 'tetur', 'lorem']), [0, 1, 3], 'hyphenated across rows: its first part');
@@ -1624,20 +1666,25 @@ raw { text % here
   const doc = 'one\n\ntwo three\nfour\n\nfive';
   assert.deepEqual(E.paragraph(doc, doc.indexOf('three')), [5, 19]);
   assert.deepEqual(E.paragraph(doc, 1), [0, 3]);
+  // a caption is its own paragraph, never the text above its float (the caret was drawn on the line above the figure)
+  const fig = 'Text above.\n\\begin{figure}\n\\caption{From here}\n\\end{figure}\nAfter.';
+  const [c0, c1] = E.paragraph(fig, fig.indexOf('here'));
+  assert.equal(fig.slice(c0, c1), '\\caption{From here}');
+  assert.equal(fig.slice(...E.paragraph(fig, 3)), 'Text above.');
 }
-// TikZ nodes moved by drag (pdfedit.ts): `at (x,y)` keeps its units and digits on the 1 mm grid, a placed node gets
+// TikZ nodes moved by drag (pdfedit.ts): `at (x,y)` keeps its units and digits on the 0.5 mm grid, a placed node gets
 // shifts that add up and go at zero, Alt places it at a fixed point, a path label moves by `pos=`.
 // Pins drags that wrote `at (1.7999999,2cm)` or dropped the `right=of` a node was placed by.
 {
   const T = self.satexTikzMove, pic = { scale: 1, x: 1, y: 1 }, mv = (s, m, p = pic) => T.move(s, 0, p, m)?.text;
-  assert.equal(mv('\\node (a) at (1.50,2cm) {x};', { by: [0.33, -0.21] }), '\\node (a) at (1.80,1.8cm) {x};', 'grid, digits as written');
+  assert.equal(mv('\\node (a) at (1.50,2cm) {x};', { by: [0.33, -0.21] }), '\\node (a) at (1.85,1.8cm) {x};', 'the 0.5 mm grid, digits as written');
   assert.equal(mv('\\node (a) at (10mm,2in) {x};', { by: [0.33, -0.21], free: true }), '\\node (a) at (13.3mm,1.917in) {x};', 'Shift: off the grid');
-  assert.equal(mv('\\node (a) at (1,1) {x};', { by: [0.5, 0] }, { scale: 2, x: 1, y: 1 }), '\\node (a) at (1.3,1) {x};', 'a scaled picture moves by less');
+  assert.equal(mv('\\node (a) at (1,1) {x};', { by: [0.5, 0] }, { scale: 2, x: 1, y: 1 }), '\\node (a) at (1.25,1) {x};', 'a scaled picture moves by less');
   assert.equal(mv('\\node[box, right=of a] (b) {x};', { by: [0.3, -0.2] }), '\\node[box, right=of a, xshift=3mm, yshift=-2mm] (b) {x};');
   assert.equal(mv('\\node[right=of a, xshift=2mm] (b) {x};', { by: [-0.2, 0] }), '\\node[right=of a] (b) {x};', 'a shift moved to zero goes');
-  assert.equal(mv('\\node[right=of a, xshift=1cm] (b) {x};', { by: [0.25, 0] }), '\\node[right=of a, xshift=1.3cm] (b) {x};', 'a shift keeps its unit');
+  assert.equal(mv('\\node[right=of a, xshift=1cm] (b) {x};', { by: [0.25, 0] }), '\\node[right=of a, xshift=1.25cm] (b) {x};', 'a shift keeps its unit');
   assert.equal(mv('\\node (b) {x};', { by: [0.1, 0.1] }), '\\node[xshift=1mm, yshift=1mm] (b) {x};', 'options added where there were none');
-  assert.equal(mv('\\node[draw, right=of a, yshift=2mm] (b) {x};', { to: [2.04, -1.46] }), '\\node[draw] (b) at (2,-1.5) {x};', 'Alt: placed at a point');
+  assert.equal(mv('\\node[draw, right=of a, yshift=2mm] (b) {x};', { to: [2.04, -1.46] }), '\\node[draw] (b) at (2.05,-1.45) {x};', 'Alt: placed at a point');
   assert.equal(mv('\\draw (a) -- node[midway, above] {l} (b);', { pos: 0.304 }), '\\draw (a) -- node[above, pos=0.3] {l} (b);', 'a label along its path');
   const ns = T.nodes('\\begin{tikzpicture}[scale=2]\n\\node (a) at (0,0) {A}; % a; b\n\\node[right=of a] (b) {B};\n\\draw (a) -- node {m} (b) node[pos=.2] {n};\n\\foreach \\i in {1,2} \\node at (\\i,0) {\\i};\n\\end{tikzpicture}');
   assert.deepEqual(ns.map((n) => [n.kind, n.line, n.name, n.placed, n.plain, n.seg, n.pos]), [['node', 2, 'a', false, true, null, null], ['node', 3, 'b', true, false, null, null],
@@ -1645,6 +1692,44 @@ raw { text % here
   assert.equal(ns[0].pic.scale, 2);
   assert.equal(T.posOn([0, 0], [10, 0], [3, 5]), 0.3);
   assert.deepEqual(T.clipped([0, 0], [2, 1], [10, 0], [3, 1]), [[2, 0], [7, 0]], 'cut where it leaves the boxes');
+}
+// TikZ nodes snapped, reshaped and labelled from the PDF (pdfedit.ts): a drag snaps a centre or an edge onto another
+// node's within the tolerance, else its gap onto an equal gap; the context menu rewrites only the node's or the path's
+// own keys. Pins a snap that pulled from beyond the tolerance, a shape change that left `circle` beside `ellipse`, a
+// label put after the target point (`(a) -- (b) node {…}` sits at the end, not midway).
+{
+  const T = self.satexTikzMove, box = (l, t, w = 20, h = 10) => ({ l, t, r: l + w, d: t + h });
+  const s = T.snap(box(0, 0), [48, 31], [box(50, 30), box(100, 80)], 3);
+  assert.deepEqual(s.d, [50, 30], 'left and top edges onto the nearest node\'s');
+  assert.deepEqual(s.guides.map((g) => [g.ax, g.at]), [[0, 50], [0, 60], [0, 70], [1, 30], [1, 35], [1, 40]], 'a guide for each line it shares');
+  assert.deepEqual(T.snap(box(0, 0), [44, 0], [box(50, 30)], 3).d, [44, 0], 'beyond the tolerance: as dragged');
+  // in a row a, b 30 apart: the moved box after b snaps to the same gap
+  const g = T.snap(box(0, 0), [99, 0], [box(0, 0), box(50, 0)], 3);
+  assert.deepEqual(g.d, [100, 0], 'equal spacing');
+  assert.deepEqual(g.gaps[0].segs.map((x) => x.slice(0, 2)), [[20, 50], [70, 100]]);
+  const pic = { scale: 1, x: 1, y: 1, node: ['draw', 'rounded corners'] }, n = (src) => T.nodes(`\\begin{tikzpicture}[every node/.style={draw, rounded corners}]\n${src}\n\\end{tikzpicture}`)[0];
+  assert.equal(T.shapeOf(n('\\node (a) {A};')), 'rounded', 'from the picture\'s every node');
+  assert.equal(T.shapeOf(n('\\node[shape=ellipse] (a) {A};')), 'ellipse');
+  assert.deepEqual(T.shape('\\node[circle, red] (a) {A};', 0, pic, 'ellipse'), { text: '\\node[ellipse, red] (a) {A};', library: 'shapes.geometric' });
+  assert.equal(T.shape('\\node (a) {A};', 0, pic, 'rectangle').text, '\\node[sharp corners] (a) {A};', 'the style\'s round corners undone');
+  assert.equal(T.shape('\\node[rounded corners=2pt] (a) {A};', 0, { ...pic, node: [] }, 'rectangle').text, '\\node (a) {A};', 'an empty option list goes');
+  assert.equal(T.flip('\\node (a) {A};', 0, pic, 'draw'), '\\node[draw=none] (a) {A};', 'the style draws: none');
+  assert.equal(T.flip('\\node[draw=none] (a) {A};', 0, pic, 'draw'), '\\node (a) {A};');
+  assert.equal(T.flip('\\node[red] (a) {A};', 0, pic, 'fill'), '\\node[red, fill=black!10] (a) {A};');
+  assert.deepEqual(T.looks(n('\\node[fill=none] (a) {A};')), { draw: true, fill: false });
+  assert.equal(T.retext('\\node (a) {\\TeX{} file};', 0, 'input'), '\\node (a) {input};');
+  const es = T.edges('\\begin{tikzpicture}\n\\node (a) {A};\n\\draw[->] (a) -- (b) to[bend left] node {x} (c);\n\\end{tikzpicture}');
+  assert.deepEqual(es.map((e) => [e.line, e.opts, e.segs.map((x) => [x.a, x.b])]), [[3, ['->'], [['a', 'b'], ['b', 'c']]]], 'a node statement is no path');
+  assert.equal(T.tipOf(es[0]), '->');
+  const st = '\\draw[->, thick] (a) -- (b);', lab = T.label(st, 0, 'reads');
+  assert.equal(lab.text, '\\draw[->, thick] (a) -- node[midway, above] {reads} (b);');
+  assert.equal(lab.text.slice(lab.at, lab.at + 5), 'reads', 'the caret goes to the label\'s text');
+  assert.equal(T.label('\\draw (a) to[bend left] (b);', 0, '').text, '\\draw (a) to[bend left] node[midway, above] {} (b);');
+  assert.equal(T.tip(st, '<->'), '\\draw[<->, thick] (a) -- (b);');
+  assert.equal(T.tip(st, ''), '\\draw[thick] (a) -- (b);');
+  assert.equal(T.tip('\\draw[->] (a) -- (b);', ''), '\\draw (a) -- (b);');
+  assert.equal(T.tip('\\draw[flow] (a) -- (b);', ''), '\\draw[-, flow] (a) -- (b);', 'a style may give a tip: none written');
+  assert.equal(T.tip('\\draw (a) -- (b);', '->'), '\\draw[->] (a) -- (b);');
 }
 // References switched from the pages (pdfedit.ts): the key written over is the one in the command's list, past its
 // options; a page word is a reference's output when its line does not spell it; the list ranks by fuzzy match.

@@ -145,27 +145,30 @@ const satexTex = (() => {
       sizes.push([Math.ceil(v.width), Math.ceil(v.height)]);
     }
     const labels = await doc.getPageLabels().catch(() => null);
+    // a closed document (a newer build replaced it) is asked nothing: pdf.js would throw from its torn-down worker port
+    let closed = false;
+    const page = (n: number) => closed ? Promise.reject(new Error('the PDF was closed')) : doc.getPage(n);
     return {
       sizes, pagelabels: (labels ?? []).map((label, index) => ({ index, label: { '/P': label } })),
       /** Page `n` as a PNG URL at `DPI`. */
-      draw: async (n: number) => { const page = await doc.getPage(n), blob = await draw(page); page.cleanup(); return URL.createObjectURL(blob); },
+      draw: async (n: number) => { const p = await page(n), blob = await draw(p); p.cleanup(); return URL.createObjectURL(blob); },
       /** Page `n`'s text runs in bp from the top left: baseline `y`, `size`, and `font`, the family pdf.js loaded the
        * embedded font as (in the page's document while this PDF is open): the echo of typed text is set in it. */
       async runs(n: number) {
-        const page = await doc.getPage(n), [x0, , , y1] = page.view as [number, number, number, number];
-        return (await page.getTextContent()).items.filter((i) => i.str?.trim()).map((i) => ({ x: i.transform[4] - x0, y: y1 - i.transform[5], w: i.width, size: Math.hypot(i.transform[2], i.transform[3]), str: i.str, font: i.fontName }));
+        const p = await page(n), [x0, , , y1] = p.view as [number, number, number, number];
+        return (await p.getTextContent()).items.filter((i) => i.str?.trim()).map((i) => ({ x: i.transform[4] - x0, y: y1 - i.transform[5], w: i.width, size: Math.hypot(i.transform[2], i.transform[3]), str: i.str, font: i.fontName }));
       },
       /** The words and links of every page, as `pdftotext -bbox` and the server's links give them. */
       async text() {
         const wordList: unknown[] = [], linkList: unknown[] = [];
         for (let n = 1; n <= doc.numPages; n++) {
-          const page = await doc.getPage(n);
-          wordList.push(...await wordsOf(page, n));
-          linkList.push(...await linksOf(doc, page, n));
+          const p = await page(n);
+          wordList.push(...await wordsOf(p, n));
+          linkList.push(...await linksOf(doc, p, n));
         }
         return { wordList, linkList };
       },
-      close: () => task.destroy(),
+      close: () => { closed = true; return task.destroy(); },
     };
   }
 

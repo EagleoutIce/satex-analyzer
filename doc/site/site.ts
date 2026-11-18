@@ -807,7 +807,15 @@ interface Stream {
     const scale = Math.min(PICTURE_SCALE, (PICTURE_MAX - 2 * PICTURE_PAD) / Math.max(w, 1));
     const width = (w * scale + 2 * PICTURE_PAD).toFixed(0), height = (h * scale + 2 * PICTURE_PAD).toFixed(0);
     const paths = pic.paths.map((p: Rec) => `<path d="${esc(p.d)}" fill="${p.fill ? 'currentColor' : 'none'}" stroke="${p.stroke ? 'currentColor' : 'none'}" stroke-width="${Math.max(p.width, 0.6)}"/>`).join('');
-    const texts = pic.texts.map((t: Rec) => `<text x="${t.x}" y="${t.y}" font-size="9" text-anchor="middle" dominant-baseline="central">${esc(t.text)}</text>`).join('');
+    // each text centred in the closed path around its point (its node's frame), shrunk to fit it; a space between
+    // texts keeps each its own word for a click
+    const frames = pic.paths.filter((p: Rec) => /Z/.test(p.d)).map((p: Rec) => { const v = (p.d.match(/-?\d+(?:\.\d+)?/g) ?? []).map(Number), xs = v.filter((_: number, i: number) => i % 2 === 0), ys = v.filter((_: number, i: number) => i % 2 === 1); return [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)]; });
+    const texts = pic.texts.map((t: Rec, k: number) => {
+      const f = frames.filter((b: number[]) => b[0] <= t.x && t.x <= b[2] && b[1] <= t.y && t.y <= b[3]).sort((a: number[], b: number[]) => (a[2] - a[0]) * (a[3] - a[1]) - (b[2] - b[0]) * (b[3] - b[1]))[0];
+      const x = f ? (f[0] + f[2]) / 2 : t.x, y = f ? (f[1] + f[3]) / 2 : t.y, room = f ? f[2] - f[0] - 4 : Infinity, size = f ? Math.min(9, Math.max(4, f[3] - f[1] - 3)) : 9;
+      const fit = String(t.text).length * size * 0.6 > room ? ` textLength="${room.toFixed(2)}" lengthAdjust="spacingAndGlyphs"` : '';
+      return `<text data-k="${k}" x="${x}" y="${y}" font-size="${size}" text-anchor="middle" dominant-baseline="central"${fit}>${esc(t.text)}</text>`;
+    }).join(' ');
     const label = pic.approximate ? 'TikZ picture as the run drew it, approximate where it did not know a number' : 'TikZ picture as the run drew it';
     return `<svg class="ts-sketch${pic.approximate ? ' approximate' : ''}" role="img" aria-label="${label}" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">` +
       `<g transform="translate(${PICTURE_PAD} ${PICTURE_PAD}) scale(${scale}) translate(${-x} ${-y})">${paths}${texts}</g></svg>`;
@@ -924,7 +932,7 @@ interface Stream {
         return `${tr}<span class="ts-bar" style="width: ${w}pt; height: ${Math.max(h, 0.4)}pt" title="a \\rule ${w}pt wide, ${h}pt high"></span>`;
       }
       if (RULES[note]) return `${tr}<span class="${RULES[note]![0]}${table && note === '│' ? ' ts-cvr' : ''}" title="${RULES[note]![1]}"></span>`;
-      return `${tr}<span class="ts-note">${esc(note)}</span>`;
+      return `${tr}<span class="ts-note"${note === '⟨?⟩' ? ` title="${UNKNOWN_TIP}"` : ''}>${esc(note)}</span>`;
     }
     // set boxes at both ends (a contents line, a label) align the line as a row
     // the glue between lines stands apart from the row it borders
@@ -980,6 +988,7 @@ interface Stream {
       `<span class="ts-pick" role="group" aria-label="the case of ${esc(name)}">` +
       ['both', 'true', 'false'].map((a, i) => `<button type="button" data-arm="${a}" aria-pressed="${a === now}" title="${esc(arm[a])}">${esc(i ? label(i - 1) : 'all')}</button>`).join('') + '</span></span>';
   }).join('');
+  const UNKNOWN_TIP = 'an unknown value: the run could not compute it (a clock, an input, a count it lost track of), so any text may stand here. Edit what sets it in the editor';
   const maybeTip = (c: Rec) => `may be typeset: depends on ${c.test || c.parted || c.mark} (line ${c.line}), which the run could not decide`;
   /** An undecided choice in words: what each case sets, and why it is open. */
   const choiceTip = (c: Rec) => {

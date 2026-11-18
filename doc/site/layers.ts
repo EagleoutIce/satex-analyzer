@@ -11,6 +11,7 @@ declare global {
       state(viewer: string, defaults: On, store: Store, legacy?: Partial<On>): On;
       wire(root: HTMLElement, viewer: string, on: On, store: Store, apply: (id: string) => void): void;
       count(root: ParentNode, id: string, n: number | boolean | undefined): void;
+      menu(details: HTMLElement, list: HTMLElement, on: On, onFold?: () => void): () => void;
       length(text: unknown, font?: Record<string, number>): { pt: number; num: number; unit: string } | null;
     };
   }
@@ -32,6 +33,7 @@ declare global {
     grid: ['grid', 'layout'],
     findings: ['findings', 'analysis'],
     maybe: ['maybe', 'analysis'],
+    origins: ['origins', 'analysis'],
     bad: ['bad boxes', 'analysis'],
   };
   /** `ids` by group, in catalogue order: [[group, label, ids]], empty groups left out. */
@@ -62,6 +64,36 @@ declare global {
   }
   /** Shows `n` beside layer `id`'s name, nothing while it is off or none. */
   const count = (root: ParentNode, id: string, n: number | boolean | undefined) => { const b = root.querySelector(`[data-layer="${id}"]`)?.closest('.layer')?.querySelector('.layer-n'); if (b) b.textContent = n ? String(n) : ''; };
+  /** A viewer's layers menu (`details` holding `list`): double-click on its button (or a group's title) switches
+   * every layer (of the group) off, the next one back as it was (all on when none was); a layer's filters fold
+   * open under its group, then `onFold` fills them. Returns what redraws the button's count. */
+  function menu(details: HTMLElement, list: HTMLElement, on: On, onFold?: () => void) {
+    const summary = details.querySelector('summary') as HTMLElement;
+    let were: { scope: Element; on: string[] } | null = null;
+    const all = (scope: Element) => {
+      const boxes = [...scope.querySelectorAll('input[data-layer]')] as HTMLInputElement[], lit = boxes.filter((b) => b.checked);
+      const was = were?.scope === scope && !lit.length ? were.on : null;
+      if (lit.length) were = { scope, on: lit.map((b) => b.dataset.layer!) };
+      for (const b of boxes) { const want = was ? was.includes(b.dataset.layer!) : !lit.length; if (b.checked !== want) { b.checked = want; b.dispatchEvent(new Event('change', { bubbles: true })); } }
+    };
+    summary.title += ' · double-click: all layers off, again: back on';
+    list.querySelectorAll('.layer-label').forEach((l) => { (l as HTMLElement).title = 'Double-click: this group off, again: back on'; });
+    summary.addEventListener('dblclick', (e) => { e.preventDefault(); all(list); });
+    list.addEventListener('dblclick', (e) => { const t = e.target as Element, g = t.closest('.layer-group'); if (!g || t.closest('input, label, button')) return; e.preventDefault(); all(g); });
+    list.addEventListener('click', (e) => {
+      const t = (e.target as Element).closest('.layer-sub-toggle') as HTMLElement | null;
+      if (!t) return;
+      e.preventDefault();
+      const sub = list.querySelector(`.layer-sub[data-sub="${t.dataset.fold}"]`) as HTMLElement, open = sub.hidden;
+      sub.hidden = !open;
+      t.setAttribute('aria-expanded', String(open));
+      if (open) onFold?.();
+    });
+    const draw = () => { const n = Object.values(on).filter(Boolean).length; summary.innerHTML = `&#x25A4; <span>${n ? `layers ${n}` : 'layers'}</span>`; };
+    list.addEventListener('change', draw);
+    draw();
+    return draw;
+  }
   /** Points per unit, as TeX counts them (tex.web § 458); `px` is pdfTeX's default \pdfpxdimen, 1bp. */
   const PT: Record<string, number> = { pt: 1, pc: 12, in: 72.27, bp: 72.27 / 72, px: 72.27 / 72, cm: 72.27 / 2.54, mm: 72.27 / 25.4, dd: 1238 / 1157, cc: 14856 / 1157, sp: 1 / 65536 };
   /** A TeX length (`1cm`, `.5in`, `12 pt`, `2em` given `font` {em, ex} in pt) as {pt, num, unit}; null when it is none or not above 0. */
@@ -70,5 +102,5 @@ declare global {
     const unit = m?.[2].toLowerCase(), per = unit && (PT[unit] ?? font[unit]);
     return m && unit && per && +m[1] > 0 ? { pt: +m[1] * per, num: +m[1], unit } : null;
   }
-  self.satexLayers = { GROUPS, LAYERS, groups, html, state, wire, count, length };
+  self.satexLayers = { GROUPS, LAYERS, groups, html, state, wire, count, menu, length };
 })();

@@ -416,7 +416,7 @@ async function browser() {
       await send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-color-scheme', value: 'light' }] });
       await js(`document.getElementById('t-time').click()`);
       // 9: a click on the switch itself, with the mouse
-      const sw = await js(`document.querySelector('.side-tabs [data-panel=play-typeset]').click(); const b = document.getElementById('typeset-keys'); b.scrollIntoView({ block: 'center' }); const r = b.getBoundingClientRect(); return [r.x + r.width / 2, r.y + r.height / 2, b.checked, !document.getElementById('play-typeset').hidden]`);
+      const sw = await js(`document.querySelector('.side-tabs [data-panel=play-typeset]').click(); document.getElementById('typeset-layers-menu').open = true; const b = document.getElementById('typeset-keys'); b.scrollIntoView({ block: 'center' }); const r = b.getBoundingClientRect(); return [r.x + r.width / 2, r.y + r.height / 2, b.checked, !document.getElementById('play-typeset').hidden]`);
       await mouse(sw[0], sw[1]);
       await sleep(150);
       const after = await js(`return [document.getElementById('typeset-keys').checked, !document.getElementById('play-typeset').hidden]`);

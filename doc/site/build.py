@@ -2025,7 +2025,7 @@ def showcase(out, live):
                 return None
         return target
 
-    def pictures(stem, alt):
+    def pictures(stem, alt, loop=False):
         pics = []
         for scheme in ("light", "dark"):
             still, video = src / f"{stem}-{scheme}.png", src / f"{stem}-{scheme}.webm"
@@ -2044,7 +2044,9 @@ def showcase(out, live):
                         f'<img src="showcase/{stem}-{scheme}.png" width="{width}" height="{height}" alt="{alt if scheme == "light" else ""}" loading="lazy" decoding="async"></picture>')
             # the video plays over its poster, the still: site.js loads it near the viewport, never under reduced motion
             if (src / f"{stem}-{scheme}.webm").exists():
-                pics.append(f'<video class="shot-video shot-{scheme}" width="{width}" height="{height}" muted playsinline preload="none" aria-hidden="true" '
+                # a demo loops over its first frame, the still: no gap and no jump when it starts over
+                again = f' loop poster="showcase/{still.name}"' if loop else ""
+                pics.append(f'<video class="shot-video shot-{scheme}" width="{width}" height="{height}"{again} muted playsinline preload="none" aria-hidden="true" '
                             f'data-src="showcase/{stem}-{scheme}"></video>')
         return "".join(pics)
 
@@ -2068,10 +2070,12 @@ def showcase(out, live):
             # a live editor in the same frame: until site.js starts the engine in view, the build's run of
             # its text stands there, findings underlined and the typeset text beside
             lines, data = live[name]
-            demo = (f'<div class="live-demo" role="button" tabindex="0" aria-label="edit the document yourself">{pictures(s["demo"], "")}'
+            demo = (f'<div class="live-demo" role="button" tabindex="0" aria-label="edit the document yourself">{pictures(s["demo"], "", loop=True)}'
                     f'<span class="live-demo-hint">Click to type yourself</span></div>' if s.get("demo") in demos else "")
+            # the window keeps the demo's aspect ratio while it plays: nothing below it moves
+            ratio = ' style="--demo-ar: {} / {}"'.format(*size(src / f'{s["demo"]}-light.png')) if demo else ""
             figures.append(f'<figure class="shot shot-big shot-live" id="shot-{name}" data-name="{html.escape(s["file"])}"><div class="shot-stage"><div class="shot-win">'
-                           f'<div class="live-grid"><pre class="src live-src live-poster"><code>{lines}</code></pre><div class="ex-side typeset live-ts" aria-label="what SaTeX computes it typesets"></div>{demo}</div>'
+                           f'<div class="live-grid"{ratio}><pre class="src live-src live-poster"><code>{lines}</code></pre><div class="ex-side typeset live-ts" aria-label="what SaTeX computes it typesets"></div>{demo}</div>'
                            f'<p class="muted live-status" aria-live="polite">{html.escape(s["demo-status"] if demo else s["status"])}</p></div></div>'
                            f'<script type="application/json" class="ex-data">{data}</script>'
                            f'<figcaption>{title(s)}<p>{tikz(html.escape(s["caption"]))}</p>'

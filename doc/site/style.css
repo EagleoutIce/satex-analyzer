@@ -378,7 +378,7 @@ body.play main { padding: 0; height: 100%; display: grid; grid-template-rows: mi
 .cs-ref:hover, .cs-ref:focus-visible { color: var(--accent); }
 .output { white-space: pre-wrap; min-height: 3rem; background: var(--panel); }
 .output .err { color: var(--muted); }
-.statusbar { margin-top: auto; position: sticky; bottom: 0; display: flex; align-items: center; gap: .3rem .8rem; flex-wrap: nowrap; padding: .5rem 1.2rem; border-top: 1px solid var(--border); background: var(--panel); font: 12.5px ui-monospace, Menlo, monospace; }
+.statusbar { margin-top: auto; position: sticky; bottom: 0; z-index: 20; display: flex; align-items: center; gap: .3rem .8rem; flex-wrap: nowrap; padding: .15rem 1.2rem; line-height: 1.5; border-top: 1px solid var(--border); background: var(--panel); font: 12.5px ui-monospace, Menlo, monospace; }
 .statusbar .muted { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 #play-status { white-space: nowrap; } #play-status[data-done=error]:not([data-busy]) { color: var(--error); }
 @media (max-width: 52rem) {
@@ -436,6 +436,8 @@ button.small { padding: .05rem .6rem; font-size: .78rem; border-radius: 999px; }
 .toast { position: fixed; left: 50%; bottom: 1.4rem; transform: translate(-50%, 1rem); opacity: 0; pointer-events: none; z-index: 30; max-width: calc(100% - 32px);
   background: var(--fg); color: var(--bg); padding: .5rem 1rem; border-radius: 999px; box-shadow: var(--shadow); font-size: .9rem; transition: opacity .2s var(--ease), transform .2s var(--ease); }
 .toast.on { opacity: 1; transform: translate(-50%, 0); }
+.toast:has(.toast-undo) { pointer-events: auto; }
+.toast-undo { margin-left: .5rem; font: inherit; color: inherit; background: none; border: 1px solid currentColor; border-radius: 999px; padding: 0 .6rem; cursor: pointer; }
 .style-ask { position: fixed; right: 1rem; bottom: 1rem; z-index: 31; max-width: min(28rem, calc(100% - 32px)); padding: .6rem .8rem; display: flex; flex-wrap: wrap; gap: .4rem; align-items: center;
   background: var(--panel); color: var(--fg); border: 1px solid var(--border); border-radius: 10px; box-shadow: 0 6px 18px rgb(0 0 0 / .15); font-size: .88rem; }
 .style-ask p { margin: 0 0 .2rem; flex-basis: 100%; }
@@ -620,6 +622,12 @@ main td .badges, main td .cat { white-space: nowrap; }
 /* the site's one progress bar: a share that grows smoothly, or a shimmer while the total is unknown */
 .sx-progress { position: relative; display: inline-block; flex: 0 0 auto; width: 7rem; height: .4rem; margin-right: .5rem; vertical-align: middle; overflow: hidden; border-radius: 999px; background: color-mix(in srgb, var(--accent) 14%, transparent); }
 .sx-progress[hidden] { display: none; }
+/* the status line's bar: a 2px line on its top edge, so nothing in the line moves when it comes or goes */
+.statusbar .actbox { position: static; } .statusbar #play-progress { position: absolute; left: 0; right: 0; top: 0; width: auto; height: 2px; margin: 0; border-radius: 0; background: transparent; } .statusbar #play-progress .sx-fill { display: block; }
+#play-status[data-busy] { display: flex; flex: 0 1 40ch; gap: .5ch; font-variant-numeric: tabular-nums; }
+#play-status .st-what { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+#play-status .st-num { flex: none; min-width: 5ch; text-align: right; color: var(--muted); } #play-status .st-left { min-width: 8ch; }
+#play-status .st-num::before { content: "· "; } #play-status[data-busy] + #play-stop { margin-left: .5ch; }
 .sx-fill { position: absolute; inset: 0 auto 0 0; width: calc(var(--done) * 100%); border-radius: inherit; background: var(--accent); transition: width .3s var(--ease); }
 .sx-busy .sx-fill { width: 35%; animation: sx-shimmer 1.2s var(--ease) infinite; }
 @keyframes sx-shimmer { from { transform: translateX(-100%); } to { transform: translateX(300%); } }
@@ -904,7 +912,7 @@ a.ty { color: inherit; border-bottom: 1px dotted var(--muted); } a.ty:hover { co
 .typeset .ts-key { display: none; }
 .typeset.show-keys .ts-key { --k: var(--c6); display: inline; margin: 0 .15rem; padding: 0 .4rem; border-radius: 999px; font: .72rem ui-monospace, Menlo, monospace; white-space: nowrap; color: var(--k); background: color-mix(in srgb, var(--k) 12%, transparent); }
 .typeset.show-keys .ts-key-ref { --k: var(--c4); } .typeset.show-keys .ts-key-cite, .typeset.show-keys .ts-key-bibitem { --k: var(--c3); }
-.typeset.show-keys .ts-key-key, .typeset.show-keys .ts-key-key-use { --k: var(--c5); } .typeset.show-keys .ts-key-entry { --k: var(--c7); } .typeset.show-keys .ts-key-def { border-radius: 2px; box-shadow: inset 2px 0 0 var(--k); }
+.typeset.show-keys .ts-key-key, .typeset.show-keys .ts-key-key-use { --k: var(--c5); } .typeset.show-keys .ts-key-entry { --k: var(--c7); }
 /* the outline and the examples under the project's files */
 .tree .tree-sect { margin: .6rem 0 0; padding: .45rem 0 0; border-top: 1px solid var(--border); }
 .tree .tree-sect > summary { padding: .1rem .3rem .25rem .75rem; font-size: .7rem; letter-spacing: .07em; }
@@ -963,17 +971,25 @@ code, .tname, .ts-file, .o-file, .tr-at, .place, .loc, .cache-name { text-transf
   -webkit-mask-image: radial-gradient(ellipse 60% 60% at 50% 50%, #000 55%, transparent 100%); mask-image: radial-gradient(ellipse 60% 60% at 50% 50%, #000 55%, transparent 100%); }
 .tip-note .ty-mini text { stroke: none; } .tip-note .ty-mini .me { fill: var(--accent); font-weight: 700; }
 /* the run pop-up */
-.run-pop { display: block; width: min(24rem, calc(100vw - 2rem)); padding: .7rem .8rem; white-space: normal; font: .78rem/1.35 system-ui, sans-serif; }
-.rp-nums { display: grid; grid-template-columns: repeat(auto-fill, minmax(5.5rem, 1fr)); gap: .35rem; } .rp-nums:empty { display: none; }
-.rp-nums span { display: flex; flex-direction: column; padding: .3rem .45rem; border-radius: 8px; background: var(--sunk); color: var(--muted); font-size: .7rem; }
-.rp-nums b { color: var(--fg); font: 600 .95rem ui-monospace, Menlo, monospace; }
-.rp-slow h4 { margin: .6rem 0 .25rem; font-size: .7rem; font-weight: 600; letter-spacing: .05em; text-transform: uppercase; color: var(--muted); } .rp-slow:empty { display: none; }
+.run-pop { display: block; width: min(26rem, calc(100vw - 2rem)); padding: .55rem .7rem; white-space: normal; font: .78rem/1.35 system-ui, sans-serif; }
+.rp-head { margin: 0 0 .4rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 600 .72rem ui-monospace, Menlo, monospace; font-variant-numeric: tabular-nums; } .rp-head:empty { display: none; }
+.rp-nums { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: .25rem; } .rp-nums:empty { display: none; }
+@media (max-width: 420px) { .rp-nums { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+.rp-nums span { display: flex; flex-direction: column; min-width: 0; padding: .2rem .35rem; border-radius: 6px; background: var(--sunk); color: var(--muted); font-size: .66rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rp-nums b { color: var(--fg); font: 600 .82rem ui-monospace, Menlo, monospace; font-variant-numeric: tabular-nums; overflow: hidden; text-overflow: ellipsis; }
+.rp-slow:empty { display: none; }
+.rp-sec { border-top: 1px solid var(--border); } .rp-nums, .rp-limits { margin-bottom: .45rem; }
+.rp-sec > summary { display: flex; align-items: baseline; gap: .6rem; padding: .28rem 0; cursor: pointer; list-style: none; white-space: nowrap; }
+.rp-sec > summary::-webkit-details-marker { display: none; }
+.rp-sec > summary::before { content: "▸"; color: var(--muted); font-size: .7rem; } .rp-sec[open] > summary::before { content: "▾"; }
+.rp-k { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; font-size: .7rem; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--muted); }
+.rp-v { flex: none; font: .72rem ui-monospace, Menlo, monospace; font-variant-numeric: tabular-nums; color: var(--fg); }
+.rp-sec[open] { padding-bottom: .35rem; }
 .rp-bar { display: flex; justify-content: space-between; gap: .6rem; padding: .12rem .4rem; margin-bottom: 2px; border-radius: 5px; font: .74rem ui-monospace, Menlo, monospace;
   background: linear-gradient(90deg, color-mix(in srgb, var(--accent) 22%, transparent) var(--p), transparent var(--p)); }
 .rp-bar span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; } .rp-bar span:last-child { color: var(--muted); white-space: nowrap; flex: none; min-width: 11ch; text-align: right; font-variant-numeric: tabular-nums; }
-.rp-limits p { margin: .4rem 0 0; color: var(--warn, #b45309); } .rp-limits:empty { display: none; }
-.rp-times { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: .15rem .8rem; margin: .6rem 0 0; padding-top: .45rem; border-top: 1px solid var(--border); }
-.rp-nums:empty ~ .rp-slow:empty ~ .rp-limits:empty ~ .rp-times { margin-top: 0; padding-top: 0; border-top: 0; }
+.rp-limits p { margin: 0; color: var(--warn, #b45309); } .rp-limits:empty { display: none; }
+.rp-times { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: .15rem .8rem; margin: 0; }
 .rp-times dt { color: var(--muted); } .rp-times dd { margin: 0; min-width: 0; overflow-wrap: anywhere; } .rp-times dd:empty::before { content: "–"; color: var(--muted); }
 .rp-times summary { cursor: pointer; color: var(--muted); font-size: .72rem; }
 .t-chips { display: flex; flex-wrap: wrap; gap: .2rem; margin-top: .2rem; }
@@ -1347,6 +1363,7 @@ ol.refs { font-size: .8rem; color: var(--muted); margin: var(--s16) 0 0; padding
 .typeset .ts-sketch path { stroke-linecap: round; stroke-linejoin: round; }
 .typeset .ts-sketch.approximate { outline: 1px dashed var(--muted); outline-offset: 2px; }
 .typeset .ts-sketch text { fill: currentColor; text-anchor: middle; dominant-baseline: central; font-family: var(--mono, monospace); }
+.ts-typing .ts-sketch text { cursor: text; }
 .typeset .ts[data-env="tikzpicture"] .ts-text { color: var(--muted); font-size: .85em; }
 /* the draw page and widget on narrow screens: the bar wraps, the pad sits above the results, rows wrap */
 .draw-top { flex-wrap: wrap; row-gap: .4rem; } .draw-top .draw-filters { flex: 0 1 auto; min-width: 0; flex-wrap: wrap; row-gap: .3rem; }
@@ -1554,6 +1571,8 @@ p.ts.ts-foot::before { content: ""; position: absolute; top: 0; left: 0; width: 
 .fix-bar { margin-left: auto; display: inline-flex; align-items: center; gap: .4rem; }
 .fix-all { font-size: .7rem; padding: 0 .5rem; } .fix-all .count { font-size: .66rem; margin-left: .2rem; } .cat-head .fix-all { margin-left: .5rem; }
 .pdf .pdf-head { margin: .2rem 0 .4rem; font-size: .8rem; }
+/* a failed build says so over the pages, out of their flow: a page typed on never moves */
+#pdf-body > .pdf-fail { position: absolute; top: 0; left: 0; right: 0; z-index: 6; margin: 0; padding: .3rem .5rem; background: var(--bg); opacity: .96; box-shadow: 0 1px 0 var(--border); }
 .pdf .pdf-records { font-size: .8rem; }
 .pdf .pdf-records p { margin: 0; overflow-wrap: anywhere; } .pdf .pdf-why { color: var(--muted); margin-top: .2rem; }
 .pdf > .pdf-text { flex: 1 0 8rem; min-height: 0; overflow: auto; }
@@ -1615,6 +1634,7 @@ p.ts.ts-foot::before { content: ""; position: absolute; top: 0; left: 0; width: 
 .pdf-layers summary { list-style: none; text-transform: none; letter-spacing: 0; font-weight: 500; cursor: pointer; padding: .02rem .55rem; border: 1px solid var(--border); border-radius: 999px; color: var(--accent); white-space: nowrap; }
 .pdf-layers summary::-webkit-details-marker { display: none; }
 .pdf-layers[open] summary { border-color: var(--accent); background: var(--sunk); }
+.ts-switches .pdf-layer-list { right: auto; left: 0; }
 .pdf-layer-list { position: absolute; right: 0; top: calc(100% + .3rem); z-index: 20; display: grid; gap: .15rem; min-width: 11rem; padding: .4rem .55rem; background: var(--bg); border: 1px solid var(--border); border-radius: 8px; box-shadow: var(--shadow); }
 /* the layers over the pages */
 .pdf .k-bibitem { --k: #0f6b3a; } .pdf .k-key, .pdf .k-key-use { --k: #6f42a8; } .pdf .k-entry { --k: #5c636a; }
@@ -1651,9 +1671,9 @@ p.ts.ts-foot::before { content: ""; position: absolute; top: 0; left: 0; width: 
 .ts-orig, .pdf .pdf-orig { position: absolute; pointer-events: none; border-radius: 2px; }
 .pdf .pdf-orig { pointer-events: auto; z-index: 1; }
 /* a tint and an underline in its color: seen on light text and on dark */
-.ts-orig-macro, .pdf .pdf-orig-macro, .orig-legend .o-macro { background: var(--orig-macro); box-shadow: inset 0 -2px var(--orig-macro-line); }
-.ts-orig-arg, .pdf .pdf-orig-arg, .orig-legend .o-arg { background: var(--orig-arg); box-shadow: inset 0 -2px var(--orig-arg-line); }
-.ts-orig-moved, .pdf .pdf-orig-moved, .orig-legend .o-moved { background: var(--orig-moved); }
+.ts-orig-macro, .pdf .pdf-orig-macro { background: var(--orig-macro); box-shadow: inset 0 -2px var(--orig-macro-line); }
+.ts-orig-arg, .pdf .pdf-orig-arg { background: var(--orig-arg); box-shadow: inset 0 -2px var(--orig-arg-line); }
+.ts-orig-moved, .pdf .pdf-orig-moved { background: var(--orig-moved); }
 /* a band per origin run, one underline: no rounded ends between words */
 .ts-orig, .pdf .pdf-orig { border-radius: 1px; }
 canvas.pdf-echo { display: block; }
@@ -1661,9 +1681,6 @@ canvas.pdf-echo { display: block; }
 /* Type and its legend: one pill, as tall as the button */
 .type-group { display: inline-flex; align-items: stretch; border: 1px solid var(--border); border-radius: 999px; overflow: hidden; font-size: .72rem; background: var(--bg); }
 .type-group > button.ghost.small { border: 0; border-radius: 0; background: transparent; }
-.type-group .orig-legend { display: none; align-items: center; gap: .25rem; padding: 0 .45rem; border-left: 1px solid var(--border); color: var(--fg); }
-.type-group .orig-legend i { font-style: normal; padding: 0 .3rem 1px; border-radius: 3px; line-height: 1.35; }
-.ts-typing .orig-legend, .pdf-typing .orig-legend { display: inline-flex; }
 /* the math control: inline at once, display and align* from its menu; only while typing */
 .math-group { display: none; position: relative; align-items: stretch; margin-left: .3rem; border: 1px solid var(--border); border-radius: 999px; font-size: .72rem; background: var(--bg); }
 .ts-typing .math-group, .pdf-typing .math-group { display: inline-flex; }
@@ -1705,6 +1722,7 @@ canvas.pdf-echo { display: block; }
 .layer-sub-list:has(> .pdf-grid-set) { max-height: none; overflow: visible; }
 .sw-near { background: radial-gradient(circle, var(--accent) 0 35%, transparent 70%); }
 .sw-grid { background: linear-gradient(to right, var(--c4) 1px, transparent 1px) 0 0 / 4px 100%, linear-gradient(to bottom, var(--c4) 1px, transparent 1px) 0 0 / 100% 4px; }
+.sw-origins { background: linear-gradient(90deg, var(--orig-macro-line) 33%, var(--orig-arg-line) 33% 66%, var(--orig-moved-line) 66%); }
 .pdf .pdf-bad { z-index: 1; border-radius: 2px; }
 .pdf .pdf-bad.b-over { outline: 1px solid #d92d20; background: #d92d2014; } .pdf .pdf-bad.b-under { outline: 1px dashed #b07400; background: #b0740014; }
 .pdf .pdf-bar-out { z-index: 2; background: #d92d20; }
@@ -1844,7 +1862,7 @@ canvas.pdf-echo { display: block; }
 /* an equation's number at the margin */
 .typeset .ts-eqno { float: right; margin-left: 1em; } .typeset .ts-leqno { float: left; margin-right: 1em; }
 @keyframes pdf-breathe { 50% { opacity: .3; transform: scale(.7); } }
-.pdf-bar .pdf-state { flex: 1 1 0; }
+.pdf-bar .pdf-state { flex: 1 1 0; font-variant-numeric: tabular-nums; }
 .pdf-menu summary { list-style: none; cursor: pointer; font-size: .72rem; padding: .05rem .45rem; border: 1px solid var(--accent); border-left: 0; border-radius: 0 999px 999px 0; background: var(--accent); color: var(--accent-fg); }
 .pdf-menu summary::-webkit-details-marker { display: none; }
 .pdf-menu-list { position: absolute; left: 0; top: calc(100% + .3rem); z-index: 20; display: grid; gap: .3rem; min-width: 12rem; padding: .4rem .55rem; background: var(--bg); border: 1px solid var(--border); border-radius: 8px; box-shadow: var(--shadow); font-size: .74rem; }
@@ -1868,8 +1886,8 @@ canvas.pdf-echo { display: block; }
 .lib-list.lib-loading::before { content: ""; position: sticky; top: 0; display: block; height: 2px; margin-bottom: -2px; z-index: 2; background: linear-gradient(90deg, transparent, var(--accent), transparent) 0 0 / 40% 100% no-repeat; animation: lib-slide 1s linear infinite; }
 @keyframes lib-slide { from { background-position: -40% 0; } to { background-position: 140% 0; } }
 @media (prefers-reduced-motion: reduce) { .lib-list.lib-loading::before { animation: none; background-size: 100% 100%; opacity: .5; } }
-.pdf-bar .pdf-tools .ghost, .pdf-bar .pdf-layers summary { color: var(--fg); border: 1px solid color-mix(in srgb, var(--fg) 35%, var(--border)); background: var(--bg); }
-.pdf-bar .pdf-tools .ghost:hover, .pdf-bar .pdf-layers summary:hover { border-color: var(--accent); color: var(--accent); }
+.pdf-bar .pdf-tools .ghost, :is(.pdf-bar, .ts-switches) .pdf-layers summary { color: var(--fg); border: 1px solid color-mix(in srgb, var(--fg) 35%, var(--border)); background: var(--bg); }
+.pdf-bar .pdf-tools .ghost:hover, :is(.pdf-bar, .ts-switches) .pdf-layers summary:hover { border-color: var(--accent); color: var(--accent); }
 .pdf-bar .pdf-tools .icon[aria-pressed=true] { color: var(--accent); border-color: var(--accent); }
 .pdf-bar .pdf-menu summary { border: 1px solid var(--accent); }
 @media (prefers-reduced-motion: reduce) { .pdf-split #pdf-compile.auto::before, #play-pdf.pdf-running #pdf-compile.auto::before { animation: none; } }
@@ -2066,7 +2084,7 @@ table.prim td { vertical-align: top; } table.long.prim td:nth-child(3) { white-s
 /* a PDF of another project or root: dimmed, no clicks, says whose it is */
 #play-pdf.pdf-other .pdf-pages, #play-pdf.pdf-other .pdf-text { opacity: .35; filter: grayscale(1); pointer-events: none; }
 .pdf-owner { position: sticky; top: 0; z-index: 3; margin: 0; padding: .4rem .6rem; background: var(--bg); border-bottom: 1px solid var(--border); font-size: .85rem; }
-.pdf-wait { display: block; margin-top: .2rem; color: var(--accent); } .pdf-wait-bar .pdf-wait { margin-top: 0; }
+.pdf-wait { display: block; margin-top: .2rem; color: var(--accent); font-variant-numeric: tabular-nums; } .pdf-wait-bar .pdf-wait { margin-top: 0; }
 /* a build's wait bar lies over the pages, taking no room: each build of the typing moved the pages a bar's height */
 #pdf-body { position: relative; } #pdf-body > .pdf-wait-bar { position: absolute; top: 0; left: 0; right: 0; opacity: .94; }
 .pdf-wait::before { content: ""; display: inline-block; width: .55rem; height: .55rem; margin-right: .35rem; border-radius: 50%; border: 2px solid var(--accent); border-right-color: transparent; vertical-align: -.05rem; animation: pdf-spin .8s linear infinite; }
@@ -2233,6 +2251,8 @@ body:not(.show-lenses) .cm-lens-line { display: none; }
 /* the demo over the window: the capture plays there, its top left corner kept; a click makes the window the editor */
 .live-demo { position: absolute; inset: 0; z-index: 2; overflow: hidden; cursor: text; background: var(--panel); }
 .live-demo :is(picture, img, video) { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; object-position: left top; }
+/* while the demo plays the window has the capture's aspect ratio, so the clip is never cropped or rescaled and nothing jumps */
+.shot-live .live-grid:has(> .live-demo) { aspect-ratio: var(--demo-ar); min-height: 12rem; contain: size; overflow: hidden; } .shots > .shot .live-demo .shot-video { max-height: none; }
 .live-demo-hint { position: absolute; right: var(--s12); bottom: var(--s12); z-index: 1; padding: var(--s4) var(--s12); border-radius: var(--r-pill); font-size: .8rem; font-weight: 600;
   color: var(--accent); background: color-mix(in srgb, var(--panel) 90%, transparent); border: 1px solid var(--border); box-shadow: var(--shadow); }
 .live-demo:is(:hover, :focus-visible) .live-demo-hint { color: var(--panel); background: var(--accent); }
@@ -2427,7 +2447,24 @@ pre.out-block:hover .out-meta { opacity: .85; }
 .pv-grid span { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* TikZ nodes moved by drag: the node under the pointer outlined with its grip, the ghost where it lands */
 .pdf .pdf-tikz, .pdf .pdf-tikz-ghost { position: absolute; box-sizing: border-box; pointer-events: none; border: 1.5px dashed #7c3aed; border-radius: 3px; z-index: 3; }
-.pdf .pdf-tikz-all { pointer-events: auto; cursor: move; touch-action: none; }
+.pdf .pdf-page.pdf-tikz-hot img, .pdf-typing .pdf-page.pdf-tikz-hot img { cursor: move; touch-action: none; }
+.pdf .pdf-tikz-guide { position: absolute; pointer-events: none; z-index: 4; box-sizing: border-box; }
+.pdf .pdf-tikz-gx { border-left: 1px solid #e11d48; }
+.pdf .pdf-tikz-gy { border-top: 1px solid #e11d48; }
+.pdf .pdf-tikz-gap::before, .pdf .pdf-tikz-gap::after { content: ''; position: absolute; background: #e11d48; }
+.pdf .pdf-tikz-gap.pdf-tikz-gy::before, .pdf .pdf-tikz-gap.pdf-tikz-gy::after { top: -4px; width: 1px; height: 7px; left: 0; }
+.pdf .pdf-tikz-gap.pdf-tikz-gy::after { left: auto; right: 0; }
+.pdf .pdf-tikz-gap.pdf-tikz-gx::before, .pdf .pdf-tikz-gap.pdf-tikz-gx::after { left: -4px; height: 1px; width: 7px; top: 0; }
+.pdf .pdf-tikz-gap.pdf-tikz-gx::after { top: auto; bottom: 0; }
+.tikz-menu { position: fixed; z-index: 1000; min-width: 190px; padding: 4px 0; display: flex; flex-direction: column; background: var(--bg, #fff); color: var(--fg, inherit); border: 1px solid var(--border, #8884); border-radius: 6px; box-shadow: var(--shadow, 0 4px 16px #0004); font-size: 13px; }
+.tikz-menu > b { padding: 3px 10px; font-size: 11px; color: var(--muted, #888); font-weight: 600; }
+.tikz-menu hr { width: 100%; margin: 3px 0; border: 0; border-top: 1px solid var(--border, #8884); }
+.tikz-menu button { all: unset; padding: 3px 10px 3px 26px; cursor: pointer; position: relative; }
+.tikz-menu button:hover, .tikz-menu button:focus-visible { background: var(--accent-bg, #0e749033); }
+.tikz-menu button[aria-checked="true"]::before { content: '✓'; position: absolute; left: 9px; }
+.tikz-input { position: fixed; z-index: 1000; width: 240px; padding: 6px; display: grid; gap: 3px; background: var(--bg, #fff); border: 1px solid #7c3aed; border-radius: 6px; box-shadow: var(--shadow, 0 4px 16px #0004); }
+.tikz-input input { font: inherit; padding: 3px 6px; }
+.tikz-input small { color: var(--muted, #888); font-size: 11px; }
 .pdf .pdf-tikz-on { opacity: .35; }
 .pdf .pdf-tikz-grip { position: absolute; left: -9px; top: -9px; width: 14px; height: 14px; border-radius: 50%; pointer-events: auto; cursor: move; touch-action: none; background: #7c3aed; box-shadow: 0 0 0 2px var(--bg, #fff); }
 .pdf .pdf-tikz-ghost { border-style: solid; background: #7c3aed1f; }

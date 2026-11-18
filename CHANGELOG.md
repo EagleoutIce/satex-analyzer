@@ -34,6 +34,12 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 
 ### Playground
 
+- `feat` **Type into generated text.** In Type mode a contents entry without a short title gets one ("Heading too" offers the heading the same text). List headings, caption labels and other names (`Contents`, `Figure`) rename through a preamble `\renewcommand`, in `\captions<language>` under babel. A click on dot leaders offers no dots, wider or closer dots, or no page numbers.
+- `feat` **TikZ nodes: type, snap, shape.** In Type mode a node's text types again and the drag starts at its frame (or with Alt). Drags snap to other nodes with guide lines and equal gaps (Shift: off). A right click switches a node's shape, frame, fill and text, or adds a label and arrow tips to a path. Typeset sketches fit each text in its node and type into it.
+- `feat` **Type into maybe text.** In the Typeset view, typing into an undecided choice (`[not]` of `\tleapy`) edits the definition that spells it, with the macro-definition note. A click on `⟨?⟩` explains the unknown value and types nothing.
+- `feat` **Typeset layers menu.** The Typeset view has the PDF view's layers button and menu instead of its chips row, one shared implementation with the same double-click toggle-all.
+- `feat` **Examples reset on a new build.** Edits to the examples made on an older build are cleared once, with the note "Examples reset for the new build" and an Undo reset button. Settings and uploads stay.
+- `feat` **Compact run stats and status line.** The run pop-up shows one header line, six equal tiles and folded sections, file times marked as carried over from the cold run. The status line is one thin row with a 2px bar and fixed slots.
 - `feat` **Settings: YAML as YAML.** The YAML tab and the export write block lists, nested maps, unquoted text and folded long text. Search and `@changed` work there (hits with their parent keys, Enter and Shift+Enter jump). The changed count in the footer searches `@changed`. The first group of a tab and groups with changes start open, your choices are remembered.
 - `feat` **Go-to lists peek.** A definition lookup shows a spinner, then each target's code with its line marked, the name and what it does, on hover or arrow keys.
 - `feat` **The status line shows how incremental a run was.** Line N → end, its own steps against a full run's, and the time (`satex/runInfo`).
@@ -58,6 +64,7 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 - `feat` **Completion finds by what a name is.** `\usepackage{…}`, `\documentclass{…}`, `\cite{…}` and `\ref{…}` show each item's catalogue line, citation author, year and title, or label target, searchable with typos forgiven (`\usepackage{network}` offers tikz-network). The language server does the same. Commands such as `\emph` come with braces.
 - `feat` **Cards and hovers.** The type card shows the hovered type with parents and children. Rule explanations link, since badges link to the changelog, hovers show a body as TeX prints it (`type_plugins.pretty.enabled`, off by default).
 - `feat` **Definition history as a timeline.** Each definition is a dot on one line, the one in force filled, undone ones dashed. A macro in a body opens its own history in place.
+- `feat-fix` **Typing in the PDF: keys land at once, in the right place and font.** A key reaches the editor in the same frame (was 11–15 s behind the check), a heading click types the long title, a caption or listing click lands in it, the echo uses the page's embedded font (width 0.57–0.66 → 0.98–1.0) and wraps at the line; origins are a layer, the views one menu. Type-mode e2e 2/23 → 13/36 pass.
 - `perf` **`cargo playground` shows a change in minutes.** A Rust change 24:44 → 5:43 (−77%), a CSS change 6:42 → 2:37 (−61%) on 4 cores: pages, wasm and kernel caches swap in first, the rest follows, satex builds once.
 - `perf` **Edits rerun and copy less.** Steps per body edit 415k → 85k (−80%), a state copy 20 → 4 ms (−80%), edit → findings 0.40 → 0.18 s (−55%) on a small hyperref document and 0.66 → 0.45 s (−32%) on the thesis example. Findings come before completion data, and the debounce is 100 ms (was 300): back-to-back edits 0.30 → 0.20 s (−33%).
 - `perf` **Edits reach the run and Typeset view at once.** Thesis example 5 s → 0.2 s (−96%). Edited row in the browser 4.5–10 s → 0.6 s (−87 to −94%). Small hyperref document rerun 1 s → 0.1 s (−90%). Edit findings without `\DocumentMetadata` 0.6 s → 0.3 s (−50%).
@@ -101,6 +108,7 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 - `feat` **Landing page.** A typing animation shows the Type mode and becomes the live editor on click. Showcase cards turn in a carousel, the front page ring turns a card every 8 s.
 - `feat` **When a site was built.** Hovering the version shows the build time to the minute.
 - `perf` **More showcase recordings at once.** Up to 6 browsers record in parallel (was 3), one per two idle cores and 3 GB.
+- `fix` **Landing demo loops in place.** The typing demo loops over its first frame and its window keeps the clip's aspect ratio, so nothing jumps.
 - `fix` **Live window corners.** The typeset side of "Try it here" no longer draws its own rounded border inside the window.
 - `fix` **Crisp showcase cards.** The carousel's front card is drawn again at its scale once the ring rests, no longer an upscaled bitmap.
 - `fix` **Settings dialog hovers.** Tabs, plugin cards and buttons share one flat hover, no card edge is cut, and the footer's controls sit flush right.
@@ -114,10 +122,12 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 ### Analysis
 
 - `feat` **Manuals for TikZ, pgf, primitives and more packages.** Hovers and Explain show pgf's manual, the pdfTeX manual, TeX by Topic and package docs in more formats (`docCommand`, `\DescribeMacro`, `desc` blocks, tcolorbox, enumitem, titlesec, xstring). Set by `docs.named_environments` and `docs.usage_blocks`.
+- `perf` **Long documents keep their pace.** 1000-page article 33.6 → 22.1 s (−34%), 1000-page scrbook −26%, tikz_200 peak 2.95 → 2.63 GB (−11%), same steps and findings.
 - `perf` **Text analyzes faster.** A 20k-line paragraph 2.73 → 1.84 s (−33%), 1e5 `\loop` steps 0.66 → 0.53 s (−19%), with identical steps and findings.
 - `perf` **Far fewer path splits.** Four pgfmath divides 803 → 439 splits (−45%). l3fp over an aux position 112.6k splits and 37 s → 104 and 0.6 s (−99.9%, −98%). Tagged `\maketitle` and tables 281 s → 6 s (−98%). xcolor mix 88 → 4 splits (−95%).
 - `perf` **Cheaper steps.** Figure-heavy documents save up to 25% of the time, other documents about 7%.
 - `perf` **Kept call effects.** Calls of 200 steps or more replay when arguments and state match (`limits.call_memo_steps`, 0 turns it off, `limits.call_memo_verify: 1` checks each replay).
+- `fix` **A stray `#` in a definition is reported there.** `\def\ck#1{The year # is}` now gives TeX's "Illegal parameter number in definition" at the `#`, not only the later error at the use.
 - `fix` **`limits.memory` counts what the process really holds.** The XeTeX thesis example peaked at 17.6 GB under an 8 GiB limit and was cut; it now reaches its end at 2.7 GB. Allocator overhead and resident memory count, and a loop under undecided conditionals no longer keeps every macro body it built.
 - `fix` **No stall while many paths wait at one line.** Joining and resuming waiting paths counts against `limits.walk_per_step`, so such a line is cut and reported instead of running for minutes.
 - `fix` **Call summaries keep no text of other arguments.** Fixes a false missing-number on a beamer title page.

@@ -34,7 +34,11 @@ declare global {
       erased(text: string, at: number, back: boolean, fresh?: [number, number] | null): [number, number];
       checked(text: string, edit: [number, number, string, number?], o?: object): string | null;
       naming(text: string, at: number, fresh?: [number, number] | null): boolean;
-      entries(texts: Record<string, string>, root: string, kind: string): [string, number, number][];
+      entries(texts: Record<string, string>, root: string, kind: string): [string, number, number, number][];
+      shortTitle(text: string, head: number, k: number): [number, number, string, number] | null;
+      bothTitles(text: string, head: number): [number, number, string] | null;
+      renamed(text: string, name: string, value: string, lang?: string): [number, number, string, number] | null;
+      leaders(text: string, kind: string, what: string, tocloft: boolean, chapters?: boolean): [number, number, string] | null;
       grow(f: [number, number] | null | undefined, a: number, b: number, n: number): [number, number] | null;
       key(text: string, at: number, k: string, o?: object): [number, number, string, number] | string;
       broken(text: string, at: number, shift: boolean): [number, number, string, number] | string;
@@ -60,6 +64,7 @@ declare global {
       apart<B extends Flat>(boxes: B[]): B[];
       relaid(row: [number, number, string][], k: number, now: string, width: (s: string) => number): [number, number, string][];
       tokens(text: string, from: number, to: number): Tok[];
+      unset(text: string, from: number, to: number): string;
       aligned(toks: string[], words: string[]): number[];
       changed(was: string, now: string): [number, number];
       paragraph(text: string, at: number): [number, number];
@@ -613,9 +618,8 @@ declare global {
    * document sets them from `root` (`\input`, `\include` followed in `texts`): where each entry's text is written,
    * `[file, from, to]`: a sectioning command's or caption's short title (`\section[Short]{Long}`) if it has one, else
    * its title. Starred sections and captions outside their float make none. */
-  function entries(texts: Record<string, string>, root: string, kind: string): [string, number, number][] {
-    const out: [string, number, number][] = [], seen = new Set<string>();
-    const group = (t: string, i: number, open: string, close: string): number => { let d = 0; for (let j = i; j < t.length; j++) { if (t[j] === '\\') { j++; continue; } if (t[j] === open) d++; else if (t[j] === close && --d === 0) return j; } return -1; };
+  function entries(texts: Record<string, string>, root: string, kind: string): [string, number, number, number][] {
+    const out: [string, number, number, number][] = [], seen = new Set<string>();
     const walk = (name: string) => {
       const file = name in texts ? name : `${name}.tex` in texts ? `${name}.tex` : null;
       if (!file || seen.has(file)) return;
@@ -630,16 +634,82 @@ declare global {
         let i = re.lastIndex;
         while (/\s/.test(t[i] ?? '')) i++;
         let short: [number, number] | null = null;
-        if (t[i] === '[') { const e = group(t, i, '[', ']'); if (e < 0) continue; short = [i + 1, e]; i = e + 1; while (/\s/.test(t[i] ?? '')) i++; }
+        if (t[i] === '[') { const e = closing(t, i, '[', ']'); if (e < 0) continue; short = [i + 1, e]; i = e + 1; while (/\s/.test(t[i] ?? '')) i++; }
         if (t[i] !== '{') continue;
-        const e = group(t, i, '{', '}');
+        const e = closing(t, i, '{', '}');
         if (e < 0) continue;
-        out.push([file, ...(short ?? [i + 1, e])]);
+        out.push([file, ...(short ?? [i + 1, e]), m.index]);
         re.lastIndex = e + 1;
       }
     };
     walk(root);
     return out;
+  }
+  /** Where the group opened at `i` (`open`, `close`) closes, -1 if it does not. */
+  function closing(t: string, i: number, open: string, close: string): number {
+    let d = 0;
+    for (let j = i; j < t.length; j++) { if (t[j] === '\\') { j++; continue; } if (t[j] === open) d++; else if (t[j] === close && --d === 0) return j; }
+    return -1;
+  }
+  const HEAD = /^\\(?:part|chapter|section|subsection|subsubsection|paragraph|caption)\s*/;
+  /** A short title for the sectioning command or caption at `head` (its `\\`) that has none: its title copied into
+   * `[…]` before it, `[from, to, body, caret]` with the caret at `k` in the copy; null when it has one. A `]` outside
+   * braces would end the option early: the copy goes in braces then. */
+  function shortTitle(text: string, head: number, k: number): [number, number, string, number] | null {
+    const m = HEAD.exec(text.slice(head)), at = head + (m?.[0].length ?? 0), e = m && text[at] === '{' ? closing(text, at, '{', '}') : -1;
+    if (e < 0) return null;
+    const t = text.slice(at + 1, e), wrap = /\]/.test(t.replace(/\{[^{}]*\}/g, ''));
+    return [at, at, wrap ? `[{${t}}]` : `[${t}]`, (wrap ? 2 : 1) + Math.min(Math.max(k, 0), t.length)];
+  }
+  /** `\\section[S]{L}` at `head` written `\\section{S}`: the heading takes the short title. `[from, to, body]`. */
+  function bothTitles(text: string, head: number): [number, number, string] | null {
+    const m = HEAD.exec(text.slice(head)), at = head + (m?.[0].length ?? 0), e = m && text[at] === '[' ? closing(text, at, '[', ']') : -1;
+    let i = e + 1;
+    while (e >= 0 && /\s/.test(text[i] ?? '')) i++;
+    const f = e >= 0 && text[i] === '{' ? closing(text, i, '{', '}') : -1;
+    if (f < 0) return null;
+    const s = text.slice(at + 1, e), bare = /^\{.*\}$/s.test(s) && closing(s, 0, '{', '}') === s.length - 1 ? s.slice(1, -1) : s;
+    return [at, f + 1, `{${bare}}`];
+  }
+  /** Offsets of `text` inside a comment. */
+  const commented = (text: string, at: number) => /(?<!\\)%/.test(text.slice(text.lastIndexOf('\n', at - 1) + 1, at));
+  /** Where a line of the preamble goes: the start of `\\begin{document}`'s line, -1 without one. */
+  const preambleEnd = (text: string) => { const d = /\\begin\s*\{document\}/.exec(text); return d ? text.lastIndexOf('\n', d.index - 1) + 1 : -1; };
+  /** Generated text renamed (`\\contentsname` set to `value`): the `\\renewcommand` of `name` already written gets the
+   * value, else a line of its own before `\\begin{document}`. Under babel (`lang`, its language) the names are set
+   * anew at `\\begin{document}`: the line goes into `\\addto\\captions<lang>{…}`, a plain one is not the one in force.
+   * `[from, to, body, value]`: `value` where the value starts after the edit; null without a preamble. */
+  function renamed(text: string, name: string, value: string, lang = ''): [number, number, string, number] | null {
+    const n = name.replace(/[\\@]/g, '\\$&'), re = new RegExp(`\\\\renewcommand\\*?\\s*(?:\\{\\s*${n}\\s*\\}|${n}(?![A-Za-z@]))\\s*\\{`, 'g');
+    for (const m of text.matchAll(re)) {
+      const open = m.index + m[0].length - 1, e = closing(text, open, '{', '}');
+      if (e < 0 || commented(text, m.index) || !lang !== !text.slice(Math.max(0, m.index - 80), m.index).includes(`\\captions${lang}`)) continue;
+      return [open + 1, e, value, open + 1];
+    }
+    const at = preambleEnd(text);
+    if (at < 0) return null;
+    const head = `${lang ? `\\addto\\captions${lang}{` : ''}\\renewcommand{${name}}{`;
+    return [at, at, `${head}${value}}${lang ? '}' : ''}\n`, at + head.length];
+  }
+  /** A contents list's (`toc`, `lof`, `lot`) leaders or page numbers changed: `what` `none` (no dots), a number (the
+   * dots' spacing in mu, 4.5 the kernel's), `nopage` (no page numbers, tocloft's). With tocloft (`tocloft`) per
+   * entry kind in the preamble; else the kernel's `\\@dotsep`, set in the list's own file (`\\addtocontents` read
+   * in the list's group) after `\\begin{document}`. A line written before for the same setting is rewritten. */
+  function leaders(text: string, kind: string, what: string, tocloft: boolean, chapters = false): [number, number, string] | null {
+    const page = what === 'nopage', kinds = { toc: [...chapters ? ['chap'] : [], 'sec', 'subsec', 'subsubsec'], lof: ['fig'], lot: ['tab'] }[kind];
+    if (!kinds || !page && !(what === 'none' || +what > 0)) return null;
+    const v = what === 'none' ? (tocloft ? '\\cftnodots' : '10000') : what;
+    const line = page ? kinds.map((k) => `\\cftpagenumbersoff{${k}}`).join('')
+      : tocloft ? kinds.map((k) => `\\renewcommand{\\cft${k}dotsep}{${v}}`).join('')
+        : `\\makeatletter\\addtocontents{${kind}}{\\protect\\renewcommand\\protect\\@dotsep{${v}}}\\makeatother`;
+    // the same setting written before: its line, values aside
+    const key = (l: string) => l.trim().replace(/\{(?:\\cftnodots|[\d.]+)\}/g, '{}');
+    let a = 0;
+    for (const l of text.split('\n')) { if (key(l) === key(line)) return [a, a + l.length, line]; a += l.length + 1; }
+    const end = preambleEnd(text);
+    if (end < 0) return null;
+    const after = text.indexOf('\n', end) + 1;
+    return page || tocloft ? [end, end, `${line}\n`] : after > 0 ? [after, after, `${line}\n`] : null;
   }
   /** Sends the newest value put, one at a time: a value put while one is under way waits and the latest wins.
    * A send that fails stops there (no retry loop): the next `put` or `flush` sends again. */
@@ -674,19 +744,54 @@ declare global {
       if (m) return a + m.index + m[0].length;
     }
     return null;
+  }  /** The macro called at offset `at` (a site inside `\name`) and the definitions of it whose body spells `word`:
+   * text a parameterless macro sets (`\def\tleapy{not }`), typed into where it is written. In source order,
+   * each as [the macro, the word's offset, its 1-based line]; none when `at` is no call. */
+  function defining(text: string, at: number, word: string): [string, number, number][] {
+    let a = at;
+    while (a > 0 && /[A-Za-z@]/.test(text[a] ?? '') && text[a - 1] !== '\\') a--;
+    if (text[a - 1] === '\\') a--;
+    const name = /^\\[A-Za-z@]+/.exec(text.slice(a))?.[0];
+    if (!name || at > a + name.length) return [];
+    const q = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), re = new RegExp(`\\\\[gex]?def\\s*${q}(?![A-Za-z@])\\s*\\{|\\\\(?:re)?newcommand\\*?\\s*\\{?\\s*${q}\\s*\\}?\\s*\\{`, 'g'), out: [string, number, number][] = [];
+    for (const m of text.matchAll(re)) {
+      const from = m.index + m[0].length;
+      let depth = 1, to = from;
+      for (; to < text.length && depth; to++) if (text[to] === '{' && text[to - 1] !== '\\') depth++; else if (text[to] === '}' && text[to - 1] !== '\\') depth--;
+      for (const [p] of spans(text.slice(from, to - 1), word)) out.push([name, from + p, text.slice(0, from + p).split('\n').length]);
+    }
+    return out;
   }
+
   /** A row's words (`[left, right, text]`) after word `k` became `now`: it takes `width(now)` scaled as the old
    * word was set, the words after it move by the difference, the gaps stay. */
   function relaid(row: [number, number, string][], k: number, now: string, width: (s: string) => number): [number, number, string][] {
     const [l, r, was] = row[k]!, scale = width(was) > 0 ? (r - l) / width(was) : 0, d = width(now) * scale - (r - l);
     return row.map(([a, b, t], i) => i < k ? [a, b, t] : i === k ? [a, b + d, now] : [a + d, b + d, t]);
   }
+  /** `text` with what `from..to` writes but sets elsewhere or nowhere blanked (offsets kept): a sectioning command's or
+   * caption's short title (`\\section[Short]{…}`, set in the contents) and the argument of `\\label` and `\\index`. */
+  function unset(text: string, from: number, to: number): string {
+    const re = /\\(?:(part|chapter|section|subsection|subsubsection|paragraph|caption)\*?\s*\[|(label|index)\s*\{)/g, cut: [number, number][] = [];
+    re.lastIndex = from;
+    for (let m; (m = re.exec(text)) && m.index < to;) {
+      const open = re.lastIndex - 1, close = text[open] === '[' ? ']' : '}';
+      let d = 0, e = -1;
+      for (let j = open; j < text.length && j < to + 4096; j++) { if (text[j] === '\\') { j++; continue; } if (text[j] === text[open]) d++; else if (text[j] === close && --d === 0) { e = j; break; } }
+      if (e < 0) continue;
+      cut.push([m[1] ? open : m.index, e + 1]);
+      re.lastIndex = e + 1;
+    }
+    let out = '', at = 0;
+    for (const [a, b] of cut) { out += text.slice(at, a) + ' '.repeat(b - a); at = b; }
+    return out + text.slice(at);
+  }
   /** The words a paragraph's source `from..to` sets, by offset: runs between spaces (`~` too), commands, braces and
    * math shifts left out; a comment is no word. A word spelled by markup alone (`\\par`, `{}`) sets nothing. */
   function tokens(text: string, from: number, to: number): Tok[] {
-    const out: Tok[] = [], re = /(?<!\\)%[^\n]*|(?:\\%|[^\s~%])+/g;
+    const out: Tok[] = [], re = /(?<!\\)%[^\n]*|(?:\\%|[^\s~%])+/g, src = unset(text, from, to);
     re.lastIndex = from;
-    for (let m; (m = re.exec(text)) && m.index < to;) {
+    for (let m; (m = re.exec(src)) && m.index < to;) {
       if (m[0][0] === '%') continue;
       const t = m[0].replace(/\\[A-Za-z@]+\*?|\\(?=[^A-Za-z@])|[{}$^_]/g, '');
       if (t) out.push({ s: m.index, e: m.index + m[0].length, t });
@@ -717,10 +822,16 @@ declare global {
     while (q < m - p && was[was.length - 1 - q] === now[now.length - 1 - q]) q++;
     return [p, q];
   }
-  /** The paragraph around offset `at`: from after the blank line before it to the blank line after it. */
+  /** The paragraph around offset `at`: from after the blank line before it to the blank line after it, and within the
+   * lines between environment edges (a line with `\\begin{` or `\\end{` other than `at`'s own): a float's caption is
+   * set apart from the text above the float. */
   function paragraph(text: string, at: number): [number, number] {
     const before = text.slice(0, at).search(/\n[ \t]*\n(?![\s\S]*\n[ \t]*\n)/), after = /\n[ \t]*\n/.exec(text.slice(at));
-    return [before < 0 ? 0 : text.indexOf('\n', before + 1) + 1, after ? at + after.index : text.length];
+    let p0 = before < 0 ? 0 : text.indexOf('\n', before + 1) + 1, p1 = after ? at + after.index : text.length;
+    const edge = /\\(begin|end)\s*\{/, l0 = text.lastIndexOf('\n', at - 1) + 1, e0 = text.indexOf('\n', at);
+    for (let e = l0 - 1; e > p0;) { const s = text.lastIndexOf('\n', e - 1) + 1; if (edge.test(text.slice(s, e))) { p0 = e + 1; break; } e = s - 1; }
+    for (let s = e0 < 0 ? p1 : e0 + 1; s < p1;) { const e = text.indexOf('\n', s), end = e < 0 || e > p1 ? p1 : e; if (edge.test(text.slice(s, end))) { p1 = Math.max(s - 1, at); break; } s = end + 1; }
+    return [p0, p1];
   }
   /** Where a caret may stand in a word set from `l` to `r`: the boundary before each character and after the last,
    * at `width(prefix)` scaled to the box (`width`: the echo font's), evenly spaced when it measures nothing. */
@@ -797,7 +908,7 @@ declare global {
   }
   /** Words as the page reads: a space between words of a row, a line break between rows. */
   const joined = (words: Word[]) => bands(words).map((b) => words.filter((w) => w[0] === b.page && Math.abs(w[4] - b.d) < 1 && w[1] >= b.l && w[3] <= b.r).map((w) => w[5]).join(' ')).join('\n');
-  self.satexPdfEdit = { naming, entries, checked, grow, key, broken, scan, start, cells, cellStep, rowAfter, verbatim, verbatimAt, nearest, bands, joined, place, extent, room, form, measure, respec, widthBp, snapWidth, resized, stepped, plain, editable, spans, sender, typed, erased, mathAt, boundaries, boundaryAt, inkSnap, locate, columns, wordAt, argAt, relaid, apart, tokens, aligned, changed, paragraph };
+  self.satexPdfEdit = { naming, entries, shortTitle, bothTitles, renamed, leaders, checked, grow, key, broken, scan, start, cells, cellStep, rowAfter, verbatim, verbatimAt, nearest, bands, joined, place, extent, room, form, measure, respec, widthBp, snapWidth, resized, stepped, plain, editable, spans, sender, typed, erased, mathAt, boundaries, boundaryAt, inkSnap, locate, columns, wordAt, argAt, defining, relaid, apart, tokens, unset, aligned, changed, paragraph };
 })();
 
 // TikZ nodes moved by drag: where each `\node` and path label stands in the source, and the statement a drag
@@ -810,16 +921,32 @@ declare global {
   interface TikzNode {
     kind: 'node' | 'label'; from: number; to: number; i: number; line: number; name: string | null; text: string;
     at: [TikzLen, TikzLen] | null; placed: boolean; plain: boolean; seg: [string, string] | null; pos: number | null; pic: TikzPic;
+    /** Its own options. */
+    opts: string[];
   }
-  /** A picture's scale and units in cm. */
-  type TikzPic = { scale: number; x: number; y: number };
-  /** A move: by a distance (`by`, snapped to the mm grid unless `free`), to a place (`to`, from the origin), or to `pos`. */
-  type TikzMove = { by?: [number, number]; to?: [number, number]; pos?: number; free?: boolean };
+  /** A path (`\draw (a) -- (b);`): its statement, its options' place, each segment between two points and where a label goes in it. */
+  interface TikzEdge { from: number; to: number; line: number; opts: string[]; segs: { a: string; b: string; at: number }[]; pic: TikzPic }
+  /** A picture's scale and units in cm, and the keys its `every node/.style` gives each node. */
+  type TikzPic = { scale: number; x: number; y: number; node?: string[]; at?: number };
+  /** A move: by a distance (`by`), to a place (`to`, from the origin), or to `pos`. Lengths land on the 0.5 mm grid, `grid`
+   * cm an axis where given (0: as is), off it with `free`. */
+  type TikzMove = { by?: [number, number]; to?: [number, number]; pos?: number; free?: boolean; grid?: [number, number] };
+  /** A box on a page, in bp, y down. */
+  type TikzBox = { l: number; t: number; r: number; d: number };
+  /** A guide line at `at` across axis `ax` (0: a vertical line at x) from `from` to `to`; a gap: equal spacings along `ax`, each [from, to, cross]. */
+  type TikzSnap = { d: [number, number]; guides: { ax: number; at: number; from: number; to: number }[]; gaps: { ax: number; segs: [number, number, number][] }[] };
+  type TikzShape = 'rectangle' | 'rounded' | 'circle' | 'ellipse' | 'diamond';
   interface Window {
     satexTikzMove: {
       nodes(text: string): TikzNode[]; move(stmt: string, i: number, pic: TikzPic, m: TikzMove): { text: string; label: string; by: [number, number] } | null;
       len(s: string): TikzLen | null; cm(l: TikzLen, unit: number): number; posOn(a: [number, number], b: [number, number], p: [number, number]): number;
       clipped(a: [number, number], ah: [number, number], b: [number, number], bh: [number, number]): [[number, number], [number, number]];
+      snap(b: TikzBox, d: [number, number], others: TikzBox[], tol: number): TikzSnap;
+      edges(text: string): TikzEdge[];
+      shapeOf(n: TikzNode): TikzShape; shape(stmt: string, i: number, pic: TikzPic, to: TikzShape): { text: string; library: string | null } | null;
+      looks(n: TikzNode): { draw: boolean; fill: boolean }; flip(stmt: string, i: number, pic: TikzPic, key: 'draw' | 'fill'): string | null;
+      retext(stmt: string, i: number, text: string): string | null;
+      tipOf(e: TikzEdge): string; tip(stmt: string, tip: string): string | null; label(stmt: string, seg: number, text: string): { text: string; at: number } | null;
     };
   }
 }
@@ -832,11 +959,13 @@ declare global {
   }
   /** A length in cm, `unit` the cm of a bare number. */
   const cm = (l: TikzLen, unit: number) => l.v * (l.unit ? UNIT[l.unit] : unit);
-  /** `c` cm in the unit of `l` (bare: `unit` cm), on the mm grid unless `free`, with as many digits as needed, at least as written. */
-  function write(l: TikzLen, c: number, unit: number, free: boolean): string {
-    const per = l.unit ? UNIT[l.unit] : unit, mm = free ? c : Math.round(c * 10) / 10;
-    const need = Math.max(0, Math.ceil(-Math.log10(0.1 / per) - 1e-9)) + (free ? 1 : 0);
-    let s = (mm / per).toFixed(Math.max(l.dec, need));
+  const GRID = 0.05;
+  /** `c` cm in the unit of `l` (bare: `unit` cm), on a grid of `step` cm (0: as is, to 0.01 mm), with the digits it needs, at least as written. */
+  function write(l: TikzLen, c: number, unit: number, step: number): string {
+    const per = l.unit ? UNIT[l.unit] : unit, mm = step ? Math.round(c / step) * step : c;
+    let need = l.dec;
+    while (need < 5 && Math.abs(+(mm / per).toFixed(need) * per - mm) > (step || 0.01) / 10) need++;
+    let s = (mm / per).toFixed(need);
     if (s.includes('.')) s = s.replace(/0+$/, '').replace(/\.$/, '');
     if (l.dec && !s.includes('.')) s += '.';
     while (l.dec && s.split('.')[1].length < l.dec) s += '0';
@@ -916,18 +1045,19 @@ declare global {
   }
   /** The picture options' scale and units. */
   function picOf(opts: string): TikzPic {
-    let scale = 1, x = 1, y = 1;
+    let scale = 1, x = 1, y = 1, node: string[] = [];
     for (const kv of keys(opts)) {
       const [k, v = ''] = kv.split('=').map((t) => t.trim()), l = len(v);
       if (k === 'scale' && +v) scale = +v;
       if ((k === 'x' || k === 'y') && l) { if (k === 'x') x = cm(l, 1); else y = cm(l, 1); }
+      if (k === 'every node/.style') node = keys(kv.slice(kv.indexOf('=') + 1).trim().replace(/^\{|\}$/g, ''));
     }
-    return { scale, x, y };
+    return { scale, x, y, node };
   }
-  /** Each node and path label of the text's pictures, comments blanked. */
-  function nodes(text: string): TikzNode[] {
-    const t = text.replace(/(?<!\\)%.*$/gm, (c) => ' '.repeat(c.length)), out: TikzNode[] = [];
-    const lineAt = (i: number) => { let n = 1; for (let k = text.indexOf('\n'); k >= 0 && k < i; k = text.indexOf('\n', k + 1)) n++; return n; };
+  /** Each statement of the text's pictures, comments blanked: its text `s` from offset `at`, its line, its picture. */
+  function stmts(text: string): { s: string; at: number; line: (i: number) => number; pic: TikzPic }[] {
+    const t = text.replace(/(?<!\\)%.*$/gm, (c) => ' '.repeat(c.length)), out: { s: string; at: number; line: (i: number) => number; pic: TikzPic }[] = [];
+    const line = (i: number) => { let n = 1; for (let k = text.indexOf('\n'); k >= 0 && k < i; k = text.indexOf('\n', k + 1)) n++; return n; };
     for (const m of t.matchAll(/\\begin\{tikzpicture\}/g)) {
       let k = m.index! + m[0].length;
       const end = t.indexOf('\\end{tikzpicture}', k);
@@ -935,22 +1065,27 @@ declare global {
       let pic = picOf('');
       while (/\s/.test(t[k])) k++;
       if (t[k] === '[') { const e = close(t, k); pic = picOf(t.slice(k + 1, e)); k = e + 1; }
+      pic.at = m.index;
       // statements end at `;` outside groups; a loop's statements stand for many nodes, skipped whole
       while (k < end) {
         let e = k, depth = 0;
         for (; e < end; e++) { const c = t[e]; if (c === '\\') { e++; continue; } if ('{[('.includes(c)) depth++; else if ('}])'.includes(c)) depth--; else if (c === ';' && depth <= 0) break; }
         const s = t.slice(k, e + 1), lead = s.length - s.trimStart().length;
-        if (!/^\s*\\foreach\b/.test(s)) parts(s).forEach((p, i) => {
-          const o = p.o ? keys(s.slice(p.o[0] + 1, p.o[1])) : [], xy = p.at ? s.slice(p.at[0] + 1, p.at[1]).split(',') : [];
-          const at = xy.length === 2 && len(xy[0]) && len(xy[1]) ? [len(xy[0])!, len(xy[1])!] as [TikzLen, TikzLen] : null;
-          const along = o.map((x) => x.startsWith('pos') ? +x.split('=')[1] : ALONG[x]).find((v) => v != null && !Number.isNaN(v));
-          out.push({ kind: p.kind, from: k + lead, to: e + 1, i, line: lineAt(k + p.t[0]), name: p.name, text: s.slice(p.t[0] + 1, p.t[1]), at, placed: o.some((x) => PLACED.test(x)),
-            plain: !o.some((x) => OFFSET.test(x)) && (!!at || !p.at), seg: p.seg, pos: p.kind === 'label' ? along ?? (p.after ? 1 : 0.5) : null, pic });
-        });
+        if (!/^\s*\\foreach\b/.test(s)) out.push({ s: s.slice(lead), at: k + lead, line, pic });
         k = e + 1;
       }
     }
     return out;
+  }
+  /** Each node and path label of the text's pictures, comments blanked. */
+  function nodes(text: string): TikzNode[] {
+    return stmts(text).flatMap(({ s, at: k, line, pic }) => parts(s).map((p, i) => {
+      const o = p.o ? keys(s.slice(p.o[0] + 1, p.o[1])) : [], xy = p.at ? s.slice(p.at[0] + 1, p.at[1]).split(',') : [];
+      const at = xy.length === 2 && len(xy[0]) && len(xy[1]) ? [len(xy[0])!, len(xy[1])!] as [TikzLen, TikzLen] : null;
+      const along = o.map((x) => x.startsWith('pos') ? +x.split('=')[1] : ALONG[x]).find((v) => v != null && !Number.isNaN(v));
+      return { kind: p.kind, from: k, to: k + s.length, i, line: line(k + p.t[0]), name: p.name, text: s.slice(p.t[0] + 1, p.t[1]), at, placed: o.some((x) => PLACED.test(x)),
+        plain: !o.some((x) => OFFSET.test(x)) && (!!at || !p.at), seg: p.seg, pos: p.kind === 'label' ? along ?? (p.after ? 1 : 0.5) : null, pic, opts: o };
+    }));
   }
   /** Option list `o` (the text between `[`..`]`) with `drop` keys gone and `set` keys written over or added. */
   function setOpts(o: string, drop: RegExp, set: [string, string][]): string {
@@ -962,7 +1097,7 @@ declare global {
   function move(stmt: string, i: number, pic: TikzPic, m: TikzMove) {
     const p = parts(stmt)[i];
     if (!p) return null;
-    const free = !!m.free, opts = p.o ? stmt.slice(p.o[0] + 1, p.o[1]) : '';
+    const free = !!m.free, step = (j: number) => (free ? 0 : m.grid?.[j] ?? GRID), opts = p.o ? stmt.slice(p.o[0] + 1, p.o[1]) : '';
     /** The statement with options `o` (and `at` text `at`, null to keep). */
     const out = (o: string, at: string | null, label: string, by: [number, number]) => {
       let s = stmt;
@@ -979,19 +1114,19 @@ declare global {
     if (m.to) {
       // placed anew: the placement and its shifts dropped, `at` in the units written there, else cm
       const l = at ?? [{ v: 0, unit: '', dec: 0 }, { v: 0, unit: '', dec: 0 }], u = at ? units : [1, 1];
-      const c = m.to.map((v, j) => write(l[j], v / pic.scale, u[j], free)), o = setOpts(ks.filter((k) => !PLACED.test(k) && !SHIFTS.test(k)).join(', '), /$^/, []);
+      const c = m.to.map((v, j) => write(l[j], v / pic.scale, u[j], step(j))), o = setOpts(ks.filter((k) => !PLACED.test(k) && !SHIFTS.test(k)).join(', '), /$^/, []);
       return out(o, `(${c.join(',')})`, `at (${c.join(',')})`, [len(c[0])!, len(c[1])!].map((a, j) => cm(a, u[j])) as [number, number]);
     }
     const by = m.by!.map((v) => v / pic.scale);
     if (at) {
-      const c = at.map((a, j) => write(a, cm(a, units[j]) + by[j], units[j], free));
+      const c = at.map((a, j) => write(a, cm(a, units[j]) + by[j], units[j], step(j)));
       return out(opts, `(${c.join(',')})`, `at (${c.join(',')})`, c.map((s, j) => cm(len(s)!, units[j]) - cm(at[j], units[j])) as [number, number]);
     }
     // a shift as written (a bare one is in pt), else a new one in mm; a shift moved to nothing goes
     const set: [string, string][] = [], gone: string[] = [], said: string[] = [], moved: number[] = [];
     ['xshift', 'yshift'].forEach((n, j) => {
       const k = ks.find((x) => x.split('=')[0].trim() === n), l = (k && len(k.split('=')[1])) || { v: 0, unit: 'mm', dec: 0 };
-      const was = cm(l, UNIT.pt), now = was + by[j], v = write(l.unit ? l : { ...l, unit: 'pt' }, now, 1, free);
+      const was = cm(l, UNIT.pt), now = was + by[j], v = write(l.unit ? l : { ...l, unit: 'pt' }, now, 1, step(j));
       moved.push(cm(len(v)!, 1) - was);
       if (cm(len(v)!, 1) === 0) gone.push(n); else { set.push([n, v]); said.push(`${n}=${v}`); }
     });
@@ -1005,7 +1140,133 @@ declare global {
     const s = Math.min(0.5, exit(ah)), e = Math.max(0.5, 1 - exit(bh));
     return [[a[0] + s * d[0], a[1] + s * d[1]], [a[0] + e * d[0], a[1] + e * d[1]]];
   }
-  self.satexTikzMove = { nodes, move, len, cm, posOn, clipped };
+  /** Box `b` moved by `d` snapped to the `others`: its centre or an edge onto theirs, or its gap to a neighbour onto a gap
+   * between two of them, each axis to the nearest within `tol`. The guides and equal gaps (bars 4 bp past the boxes) shown while snapped. */
+  function snap(b: TikzBox, d: [number, number], others: TikzBox[], tol: number): TikzSnap {
+    const out: [number, number] = [d[0], d[1]], lo = (ax: number, o: TikzBox) => (ax ? o.t : o.l), hi = (ax: number, o: TikzBox) => (ax ? o.d : o.r);
+    const at = (ax: number, o: TikzBox) => [lo(ax, o), (lo(ax, o) + hi(ax, o)) / 2, hi(ax, o)];
+    const moved = (): TikzBox => ({ l: b.l + out[0], r: b.r + out[0], t: b.t + out[1], d: b.d + out[1] });
+    const guides: TikzSnap['guides'] = [], gaps: TikzSnap['gaps'] = [];
+    for (const ax of [0, 1]) {
+      const m = moved(), x = 1 - ax, cross = (o: TikzBox) => lo(x, o) < hi(x, m) && lo(x, m) < hi(x, o);
+      let best: { diff: number; gap?: [number, number, number][] } | null = null;
+      // centres and equal gaps before edges: an edge wins only when nearer by a third of the tolerance
+      let rank = Infinity;
+      const take = (diff: number, gap?: [number, number, number][], edge = false) => { const r = Math.abs(diff) + (edge ? tol / 3 : 0); if (Math.abs(diff) <= tol && r < rank - 1e-6) { best = { diff, gap }; rank = r; } };
+      for (const o of others) at(ax, o).forEach((v, i) => at(ax, m).forEach((w, j) => take(v - w, undefined, i !== 1 || j !== 1)));
+      // equal spacing: the neighbours in line on this axis, their gaps, and the moved box's gap to its nearest one
+      const row = others.filter(cross).sort((p, q) => lo(ax, p) - lo(ax, q)), mid = (o: TikzBox, q: TikzBox) => Math.max(hi(x, o), hi(x, q)) + 4;
+      const pairs = row.slice(1).map((q, k) => [row[k], q]).filter(([p, q]) => lo(ax, q) - hi(ax, p) > 0);
+      const before = row.filter((o) => hi(ax, o) <= lo(ax, m) + tol).at(-1), after = row.find((o) => lo(ax, o) >= hi(ax, m) - tol);
+      for (const [p, q] of pairs) {
+        const g = lo(ax, q) - hi(ax, p), seg: [number, number, number] = [hi(ax, p), lo(ax, q), mid(p, q)];
+        if (before) take(hi(ax, before) + g - lo(ax, m), [seg, [hi(ax, before), hi(ax, before) + g, mid(before, m)]]);
+        if (after) take(lo(ax, after) - g - hi(ax, m), [seg, [lo(ax, after) - g, lo(ax, after), mid(after, m)]]);
+      }
+      if (!best) continue;
+      out[ax] += (best as { diff: number }).diff;
+      const gap = (best as { gap?: [number, number, number][] }).gap;
+      if (gap) { gaps.push({ ax, segs: gap }); continue; }
+      const now = moved();
+      for (const w of at(ax, now)) {
+        const with_ = others.filter((o) => at(ax, o).some((v) => Math.abs(v - w) < 0.01));
+        if (with_.length) guides.push({ ax, at: w, from: Math.min(lo(x, now), ...with_.map((o) => lo(x, o))), to: Math.max(hi(x, now), ...with_.map((o) => hi(x, o))) });
+      }
+    }
+    return { d: out, guides, gaps };
+  }
+  /** The paths of the text's pictures (`\draw`, `\path` …): their options and each segment from point to point, with where
+   * a label (`node[…] {…}`) goes in it, right after its `--` or `to[…]`. */
+  function edges(text: string): TikzEdge[] {
+    const out: TikzEdge[] = [];
+    for (const { s, at, line, pic } of stmts(text)) {
+      const e = edgeOf(s);
+      if (e?.segs.length) out.push({ from: at, to: at + s.length, line: line(at), opts: e.o ? keys(s.slice(e.o[0] + 1, e.o[1])) : [], segs: e.segs, pic });
+    }
+    return out;
+  }
+  /** A path statement's options and segments. */
+  function edgeOf(s: string) {
+    const head = /^\s*\\(draw|path|fill|filldraw)\b/.exec(s);
+    if (!head) return null;
+    let k = head[0].length, o: [number, number] | null = null, last = '', op: number | null = null;
+    const oAt = k, segs: { a: string; b: string; at: number }[] = [], ws = () => { while (/\s/.test(s[k] ?? '')) k++; };
+    ws();
+    if (s[k] === '[') { const e = close(s, k); if (e < 0) return null; o = [k, e]; k = e + 1; }
+    while (k > 0 && k < s.length) {
+      ws();
+      if (s.startsWith('--', k)) { k += 2; op = k; continue; }
+      if (s.startsWith('to', k) && !/[a-z]/i.test(s[k + 2] ?? '')) { k += 2; ws(); if (s[k] === '[') k = close(s, k) + 1; op = k; continue; }
+      if (s.startsWith('node', k) && !/[a-z]/i.test(s[k + 4] ?? '')) {
+        // past its options, name, `at` and text; a label on the segment goes after it
+        k += 4;
+        for (;;) { ws(); if (s.startsWith('at', k) && /\s|\(/.test(s[k + 2] ?? '')) { k += 2; ws(); } if (!'[({'.includes(s[k] ?? 'x')) break; const c = s[k]; k = close(s, k) + 1; if (k <= 0) return null; if (c === '{') break; }
+        if (op != null) op = k;
+        continue;
+      }
+      if (s[k] === '(') { const e = close(s, k), pt = s.slice(k + 1, e).trim(); if (e < 0) return null; if (op != null && last) segs.push({ a: last, b: pt, at: op }); last = pt; op = null; k = e + 1; continue; }
+      if (s[k] === ';') break;
+      // `+(…)`, `|-`, `circle` …: no point known after it
+      last = ''; op = null; k++;
+      while (k < s.length && !/[\s(;]/.test(s[k])) k++;
+    }
+    return { o, oAt, segs };
+  }
+  /** `stmt` with option list `o` for the part whose options stand at `range`, else go at `oAt`; an empty list goes. */
+  const withOpts = (stmt: string, range: [number, number] | null, oAt: number, o: string[]) => {
+    const t = o.join(', ');
+    return range ? stmt.slice(0, range[0]) + (t ? `[${t}]` : '') + stmt.slice(range[1] + 1) : t ? stmt.slice(0, oAt) + `[${t}]` + stmt.slice(oAt) : stmt;
+  };
+  const SHAPES = /^(rectangle|circle|ellipse|diamond|shape\s*=.*|rounded corners(\s*=.*)?|sharp corners)$/;
+  /** A node's shape as its keys and its picture's `every node` say: the last such key wins. */
+  function shapeOf(n: TikzNode): TikzShape {
+    const k = [...(n.pic.node ?? []), ...n.opts].filter((x) => SHAPES.test(x)).at(-1) ?? '', name = k.replace(/^shape\s*=\s*/, '');
+    return name === 'circle' || name === 'ellipse' || name === 'diamond' ? name : /^rounded/.test(k) ? 'rounded' : 'rectangle';
+  }
+  /** Statement `stmt` with node `i` in shape `to`, and the library it needs (`shapes.geometric`), else null. */
+  function shape(stmt: string, i: number, pic: TikzPic, to: TikzShape) {
+    const p = parts(stmt)[i];
+    if (!p) return null;
+    const own = (p.o ? keys(stmt.slice(p.o[0] + 1, p.o[1])) : []).filter((k) => !SHAPES.test(k)), round = (pic.node ?? []).some((k) => /^rounded corners/.test(k));
+    const add = { rectangle: round ? ['sharp corners'] : [], rounded: round ? [] : ['rounded corners'], circle: ['circle'], ellipse: ['ellipse'], diamond: ['diamond'] }[to];
+    // a shape key goes first, as people write it
+    return { text: withOpts(stmt, p.o, p.oAt, to === 'rectangle' || to === 'rounded' ? [...own, ...add] : [...add, ...own]), library: to === 'ellipse' || to === 'diamond' ? 'shapes.geometric' : null };
+  }
+  /** Whether a key list draws (`draw`) or fills (`fill`): the last say wins, `none` says no. */
+  const says = (ks: string[], key: string) => ks.filter((k) => k.split('=')[0].trim() === key).map((k) => !/=\s*none\s*$/.test(k)).at(-1);
+  const looks = (n: TikzNode) => ({ draw: says(n.opts, 'draw') ?? says(n.pic.node ?? [], 'draw') ?? false, fill: says(n.opts, 'fill') ?? says(n.pic.node ?? [], 'fill') ?? false });
+  /** Statement `stmt` with node `i`'s frame (`draw`) or fill switched: its own key goes, `key=none` where the picture's style still gives it. */
+  function flip(stmt: string, i: number, pic: TikzPic, key: 'draw' | 'fill') {
+    const p = parts(stmt)[i];
+    if (!p) return null;
+    const ks = p.o ? keys(stmt.slice(p.o[0] + 1, p.o[1])) : [], style = says(pic.node ?? [], key) ?? false, on = says(ks, key) ?? style;
+    const rest = ks.filter((k) => k.split('=')[0].trim() !== key), want = !on;
+    return withOpts(stmt, p.o, p.oAt, want === style ? rest : [...rest, want ? (key === 'fill' ? 'fill=black!10' : 'draw') : `${key}=none`]);
+  }
+  /** Statement `stmt` with node `i`'s text `text`. */
+  function retext(stmt: string, i: number, text: string) {
+    const p = parts(stmt)[i];
+    return p ? stmt.slice(0, p.t[0] + 1) + text + stmt.slice(p.t[1]) : null;
+  }
+  /** An arrow tip key: `->`, `<->`, `-Stealth`, `{Latex}-{Latex}`, never a key with a value. */
+  const TIP = /^[^=\s]*-[^=\s]*$/;
+  const tipOf = (e: TikzEdge) => e.opts.filter((k) => TIP.test(k)).at(-1) ?? '';
+  /** Path statement `stmt` with arrow tip `tip` (`''`: none, written `-` where a style may give one). */
+  function tip(stmt: string, tip: string) {
+    const e = edgeOf(stmt);
+    if (!e) return null;
+    const ks = e.o ? keys(stmt.slice(e.o[0] + 1, e.o[1])) : [], rest = ks.filter((k) => !TIP.test(k));
+    const styled = rest.some((k) => !/^(thick|thin|very thick|ultra thick|semithick|dashed|dotted|densely dashed|loosely dashed|draw|rounded corners)$/.test(k) && !k.includes('='));
+    return withOpts(stmt, e.o, e.oAt, tip ? [tip, ...rest] : styled ? ['-', ...rest] : rest);
+  }
+  /** Path statement `stmt` with a label `text` on segment `seg` (`node[midway, above] {…}`): the text and the offset of the label's text in it. */
+  function label(stmt: string, seg: number, text: string) {
+    const g = edgeOf(stmt)?.segs[seg];
+    if (!g) return null;
+    const put = ` node[midway, above] {${text}}`;
+    return { text: stmt.slice(0, g.at) + put + stmt.slice(g.at), at: g.at + put.length - 1 - text.length };
+  }
+  self.satexTikzMove = { nodes, move, len, cm, posOn, clipped, snap, edges, shapeOf, shape, looks, flip, retext, tipOf, tip, label };
 })();
 
 // References switched from the pages: a reference's printed number is no text to type into. Where its key stands in
