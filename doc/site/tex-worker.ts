@@ -10,7 +10,7 @@ interface Mod {
 }
 /** A preamble dumped as a format (mylatexformat): what it was dumped from, its file (none: unusable), the dump's log. */
 interface Dumped { key: string; fmt: string | null; log: string }
-interface Instance { m: Mod; out: { lines: string[] }; keep: Cache | null | undefined; header: Uint8Array; asked?: string; last?: { main: string; inputs: string[] }; dumped?: Dumped }
+interface Instance { m: Mod; out: { lines: string[] }; keep: Cache | null | undefined; header: Uint8Array; core: Set<string>; asked?: string; last?: { main: string; inputs: string[] }; dumped?: Dumped }
 interface Command { command: string; status: number; ms: number }
 const TEXMF = '/texlive/texmf-dist', PROJECT = '/home/web_user/project_dir';
 const FMT = `${TEXMF}/texmf-var/web2c/pdftex/pdflatex.fmt`;
@@ -59,6 +59,7 @@ function ask(format: string, name: string): [number, ArrayBuffer | null] {
       x.send();
       if (x.status === 200 && x.response?.byteLength) {
         got.set(`${format}/${encodeURIComponent(name)}`, { bytes: new Uint8Array(x.response!.slice(0)), host });
+        held.add(`${format}/${name}`);
         return [200, x.response];
       }
       if (x.status === 404) continue;
@@ -69,6 +70,59 @@ function ask(format: string, name: string): [number, ArrayBuffer | null] {
   if (!clean) failed.add(name); else missed.add(key);
   // not a 404 after a failure: the engine remembers a 404 as absent
   return [clean ? 404 : 503, null];
+}
+/** kpathsea's format numbers (kpse_file_format_type) by extension: the engine asks `{format}/{name}`. */
+const FORMATS: Record<string, number> = { tfm: 3, bib: 6, bst: 7, map: 11, pfb: 32, vf: 33, ist: 35, enc: 44 };
+const formatOf = (name: string) => FORMATS[name.split('.').pop()!] ?? 26;
+/** The engine's keys of the files it holds: fetched, or kept by the browser. */
+const held = new Set<string>();
+function hold(m: Mod, format: number, name: string, bytes: Uint8Array, host?: string) {
+  m.kpse_remote_register(name, format, bytes);
+  held.add(`${format}/${name}`);
+  if (host) got.set(`${format}/${encodeURIComponent(name)}`, { bytes, host });
+}
+const PARALLEL = 16;
+/** The font map's files per font: Type 1 and encoding. */
+const MAP = 'texmf-var/fonts/map/pdftex/updmap/pdftex.map';
+let map: Map<string, string[]> | undefined;
+/** The files `names` (what the analysis saw the document read) fetched side by side before the first run asks for
+ * them one at a time: each from the sources in order, as ask() would. All 404: absent. A host that fails is left
+ * to ask(). `\input xkvutils` asks the bare name: a `.tex` is held under its stem too. */
+async function prefetch({ m, core }: Instance, names: string[]) {
+  // a font's metrics come with its probe for a virtual font and, by the font map, its Type 1 file and encoding
+  const fonts = names.filter((n) => n.endsWith('.tfm')).map((n) => n.slice(0, -4));
+  if (fonts.length) {
+    map ??= new Map((m.FS.readFile(`${TEXMF}/${MAP}`, { encoding: 'utf8' }) as string).split('\n')
+      .map((l) => [l.split(/\s/, 1)[0]!, [...l.matchAll(/<+\[?([\w.-]+\.(?:pfb|enc))/g)].map((x) => x[1]!)] as [string, string[]]));
+    names = [...names, ...fonts.flatMap((f) => [`${f}.vf`, ...map!.get(f) ?? []])];
+  }
+  const todo = [...new Set(names)].filter((n) => askable(n) && !core.has(n) && !held.has(`${formatOf(n)}/${n}`) && !absent.has(`${formatOf(n)}/${encodeURIComponent(n)}`));
+  if (!todo.length) return;
+  let done = 0, bytes = 0, found = 0;
+  const say = () => post({ phase: `fetching ${todo.length} TeX files side by side: ${done} done, ${found} found, ${(bytes / 1048576).toFixed(1)} MiB` });
+  say();
+  const one = async (name: string) => {
+    const format = formatOf(name), key = `${format}/${encodeURIComponent(name)}`;
+    for (const pattern of sources) {
+      const host = hostOf(pattern);
+      if (dead.has(host)) return;
+      try {
+        const r = await fetch(pattern.replace('{format}', String(format)).replace('{name}', encodeURIComponent(name)), { signal: AbortSignal.timeout(timeout) });
+        if (r.ok) {
+          const data = await bytesOf(r);
+          if (!data.length) return;
+          hold(m, format, name, data, host);
+          if (format === 26 && name.endsWith('.tex')) hold(m, format, name.slice(0, -4), data, host);
+          bytes += data.length; found++;
+          return;
+        }
+        if (r.status !== 404) return;
+      } catch { return; }
+    }
+    missed.add(key); absent.add(key);
+  };
+  const queue = [...todo];
+  await Promise.all(Array.from({ length: PARALLEL }, async () => { for (let n; (n = queue.shift());) { await one(n); done++; say(); } }));
 }
 const Native = self.XMLHttpRequest as unknown as new () => { open(m: string, url: string, async: boolean): void; timeout: number; responseType: string; send(): void; status: number; response: ArrayBuffer | null };
 // the engine's one kind of request (kpse_remote.js): its address says which file, ask() says where from
@@ -137,9 +191,9 @@ async function start(tex: Rec): Promise<Instance> {
       else keep!.delete(request).catch(() => {});
       continue;
     }
-    m.kpse_remote_register(decodeURIComponent(name), +format, await bytesOf((await keep!.match(request))!));
+    hold(m, +format, decodeURIComponent(name), await bytesOf((await keep!.match(request))!));
   }
-  return { m, out, keep, header: Uint8Array.from(m.HEAPU8.subarray(0, HEADER)) };
+  return { m, out, keep, header: Uint8Array.from(m.HEAPU8.subarray(0, HEADER)), core: new Set(tex.files.map(([p]: [string]) => p.slice(p.lastIndexOf('/') + 1))) };
 }
 
 /** One program run: the module's memory as after its boot again, the files it left open closed. */
@@ -157,7 +211,7 @@ function run({ m, out, header }: Instance, args: string[], commands: Command[]) 
 }
 
 /** Builds `main` of `files`: pdfTeX until its references rest, BibTeX and makeindex where the run asks for them. */
-async function build(instance: Instance, files: Record<string, Uint8Array | string>, main: string) {
+async function build(instance: Instance, files: Record<string, Uint8Array | string>, main: string, want: string[]) {
   const { m } = instance, { FS, PATH } = m;
   // a new list or a host that failed: what the engine remembers as absent is asked for again
   const asked = sources.join('\n');
@@ -167,6 +221,8 @@ async function build(instance: Instance, files: Record<string, Uint8Array | stri
   missed = new Set();
   got = new Map(); failed = new Set(); dead = new Set();
   stems = new Set(Object.keys(files).map((n) => n.split('/').pop()!.replace(/\.[^.]*$/, '')));
+  // the preamble's dump reads mylatexformat.ltx, which the core lacks
+  if (sources.length) await prefetch(instance, ['mylatexformat.ltx', ...want]);
   // The last clean build of this main file left its .aux and the like: they seed this one, as latexmk's directory would.
   // Any other build starts from an empty directory.
   const seeded = instance.last?.main === main;
@@ -258,12 +314,14 @@ function preamble(instance: Instance, files: Record<string, Uint8Array | string>
 }
 
 let booting: Promise<Instance> | null = null;
-self.onmessage = async ({ data: { tex, files, main, from } }) => {
+self.onmessage = async ({ data: { tex, files, main, from, want = [], boot } }) => {
+  // the page gathers what to build meanwhile: a failed start is said by the build that waits for it
+  if (boot) { sources = from; timeout = boot.timeoutMs; booting ??= start(boot); booting.catch(() => {}); return; }
   try {
     sources = from;
     timeout = tex.timeoutMs;
     const instance = await (booting ??= start(tex));
-    const answer = await build(instance, files, main);
+    const answer = await build(instance, files, main, want);
     post(answer, answer.outputs.map((o) => o.bytes.buffer));
   } catch (e) {
     post({ error: String((e as Error)?.message ?? e) });

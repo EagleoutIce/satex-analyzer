@@ -1835,6 +1835,13 @@ canvas.pdf-echo { display: block; }
 .ts-view .ts-page-label::before, .ts-view .ts-page-label::after { content: ""; flex: 1; border-top: 1px solid var(--border); }
 /* where pdfTeX breaks a page the run did not: dashed, in the accent, fainter when only possible */
 .ts-view .ts-page-fill { color: var(--accent); }
+/* the foot of the page that ends and the head of the next, in three fields each, under the break's label */
+.ts-view .ts-hf { grid-column: 3; display: grid; gap: .1rem; margin-top: .15rem; font: .7rem/1.3 var(--serif, Georgia, serif); color: var(--muted); }
+.ts-view .ts-hf-row { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: .5rem; }
+.ts-view .ts-hf-cell { min-height: 1.1em; padding: 0 .3rem; border-radius: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
+.ts-view .ts-hf-cell:nth-child(2) { text-align: center; } .ts-view .ts-hf-cell:nth-child(3) { text-align: right; }
+.ts-view .ts-hf-cell:hover { background: var(--sunk, color-mix(in srgb, currentColor 8%, transparent)); color: var(--fg); }
+.ts-view .ts-hf-mark { font-style: italic; opacity: .75; }
 .ts-view .ts-page-fill .ts-page-label::before, .ts-view .ts-page-fill .ts-page-label::after { border-top-style: dashed; border-color: color-mix(in srgb, var(--accent) 45%, transparent); }
 .ts-view .ts-page-fill.ts-maybe { opacity: .6; }
 /* glue that fills a box or cell: the text sits where the fills leave it */

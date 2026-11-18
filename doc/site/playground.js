@@ -493,7 +493,7 @@
   }
   /** `p`, or an error naming `what` once `ms` pass without its answer. */
   const within = (p, ms, what) => Promise.race([p, new Promise((_, reject) => setTimeout(() => reject(new Error(`${what} got no answer in ${Math.round(ms / 1000)} s`)), ms))]);
-  const act = { phase: '', text: '', shown: '', lastSecond: /** @type {number | null} */ (null), since: 0, changed: 0, got: 0, all: 0, started: 0, rest: '', steps: [], run: 0, after: '', version: -1, ended: 0 };
+  const act = { phase: '', text: '', shown: '', lastSecond: /** @type {number | null} */ (null), since: 0, changed: 0, got: 0, all: 0, started: 0, rest: '', steps: [], run: 0, after: '', version: -1, ended: 0, note: '' };
   setInterval(() => {
     // a status that says Analyzing with nothing in flight is stale: findings held back are shown, the bar goes
     if (act.phase === 'Analyzing' && !running && !analysisQueued && !pending.size && performance.now() - act.changed > 10000) { if (heldFindings) publish(heldFindings); phase(); }
@@ -603,10 +603,26 @@
     running += +runs;
     worker.postMessage({ type: 'lsp', message, sent: textsSent ? Atomics.load(textsSent, 0) : null });
     if (notify) return null;
-    const reply = new Promise((resolve, reject) => pending.set(message.id, { resolve, reject }));
+    const reply = new Promise((resolve, reject) => pending.set(message.id, { resolve, reject, label: questionOf(method, params), at: performance.now() }));
     return read ? reply.then((r) => { if (answered.size > 300) answered.delete(answered.keys().next().value); answered.set(key, r); return r; }) : reply;
   }
   const answered = new Map(); // read-only request -> its last finished answer
+  /** What a question asks, as the status line names it while the worker is on it. */
+  const QUERY = { scope: 'listing the commands in force', files: 'listing the files', dependencies: 'listing the packages', occurrences: 'finding the occurrences' };
+  const METHOD = { 'textDocument/completion': 'completing', 'textDocument/codeAction': 'finding fixes', 'textDocument/codeLens': 'finding the widgets', 'textDocument/documentColor': 'finding the colors',
+    'textDocument/hover': 'reading the hover', 'satex/typeset': 'typesetting the text', 'satex/view': 'opening the widget', 'satex/dialog': 'opening the dialog', 'satex/dialogApply': 'applying the change', 'satex/caches': 'listing the caches', 'satex/written': 'listing the written files' };
+  const questionOf = (method, params) => method === 'workspace/executeCommand' && params?.command === 'satex/query'
+    ? params.arguments?.[0]?.queries?.map((q) => q.type === 'explain' ? `explaining ${q.names?.join(' ') ?? ''}` : QUERY[q.type] ?? q.type).join(', ') ?? 'answering'
+    : METHOD[method] ?? method.replace(/^.*\//, '');
+  // The worker answers in order: a question it is on for more than 400 ms (no word from it meanwhile) is named, and an edit's run waiting behind it too.
+  setInterval(() => {
+    if (act.phase && act.phase !== 'Waiting') return;
+    const q = pending.values().next().value, now = performance.now();
+    if (!q) { if (act.phase === 'Waiting') idle(); return; }
+    if (act.phase !== 'Waiting' && now - Math.max(q.at, lastHeard) <= 400) return;
+    const text = `${q.label[0].toUpperCase()}${q.label.slice(1)}${analysisQueued || dirty ? `, then analyzing ${state.file}` : ''}…`;
+    if (text !== act.text) busy('Waiting', text);
+  }, 250);
   // a 0-based LSP line, clamped: a stale or negative position never throws
   const lineOf = (doc, n) => doc.line(Math.max(1, Math.min((n | 0) + 1, doc.lines)));
   const at = (doc, p) => Math.max(0, Math.min(lineOf(doc, p.line).from + (p.character | 0), doc.length));
@@ -717,17 +733,21 @@
   /** After an analysis, the command list the server would offer after a `\\`, asked once at a command
    * of the file: the first `\\` typed then completes at once. */
   function prefetchCommands() {
-    // every name in force: what a `\\` completes from at once, beyond the server's best few hundred
-    namesInForce(false).then((records) => scopeItems.set(uri(), records.map((r) => ({ label: r.name.replace(/^\\/, ''), detail: r.effective ?? r.name, kind: 3 }))));
+    // the names in force again after each run only where asking them is cheap: the worker answers in order, so a slow list holds up the next edit's run
+    if (scopeMs < 1000) primeScope(uri());
     // each kind of place once, from whichever open file of the project has one (`\\ref{` may stand in a chapter only)
+    const asks = [];
     for (const name of Object.keys(state.texts).filter((n) => opened.has(uri(n)))) {
       const text = name === state.file ? editor?.text() ?? '' : state.texts[name];
       for (const [place, offset] of askablePlaces(text)) {
-        if (commandItems.has(place)) continue;
+        if (commandItems.has(place) || asks.some((q) => q[2] === place)) continue;
         const before = text.slice(0, offset).split('\n');
-        completions({ line: before.length - 1, character: before.at(-1).length }, before.at(-1).length, place, uri(name));
+        asks.push([{ line: before.length - 1, character: before.at(-1).length }, before.at(-1).length, place, uri(name)]);
       }
     }
+    // one at a time while the page rests: the worker answers in order, so an edit's run waits for one question, not forty
+    const at = version;
+    (async () => { for (const q of asks) { if (version !== at || pendingRun() || act.phase) return; prefetching = true; completions(...q); prefetching = false; await asked.get(`${q[3]}|${version}|${q[0].line}:${q[0].character}`); } })().catch(() => {});
   }
   /** The kinds of place the text offers a completion in, each with one offset to ask at: after a `\\`,
    * and after the first `{` or `[` of each command (`ref{`, `cite{`, `color{`, `usepackage[`…). */
@@ -852,6 +872,14 @@
   /** What the server last offered in each kind of place of the project (after a `\\`, in `\begin{`, `\cite{`, …):
    * what the same kind of place completes from at once. */
   const commandItems = new Map(), scopeItems = new Map();
+  /** Every name in force: what a `\\` completes from at once, beyond the server's best few hundred. Asked at the first `\\` of a file,
+   * after each run too while the answer is quick (`scopeMs`, the last answer's time). */
+  let scopeMs = Infinity, prefetching = false;
+  function primeScope(file) {
+    if (!scopeItems.has(file)) scopeItems.set(file, []);
+    const t = performance.now();
+    namesInForce(false).then((records) => { scopeMs = performance.now() - t; scopeItems.set(file, records.map((r) => ({ label: r.name.replace(/^\\/, ''), detail: r.effective ?? r.name, kind: 3 }))); });
+  }
   /** The names in force at the end of the root's last run (`scope`), asked once per analysis. */
   const scopeAsked = new Map();
   function namesInForce(all) {
@@ -877,6 +905,7 @@
   function completions(position, start = position.character, place = null, file = uri()) {
     const k = `${file}|${version}|${position.line}:${position.character}`, word = `${file}|${position.line}:${start}`;
     if (running && lastItems && lastWord === word) return lastItems;
+    if (place === '\\' && !scopeItems.has(file) && !prefetching) primeScope(file);
     const served = place && commandItems.get(place), names = place === '\\' && scopeItems.get(file);
     const both = names ? [...(served ?? []), ...names.filter((n) => !served?.some((i) => i.label === n.label))] : served;
     // items asked elsewhere replace no range here: their text goes in at the cursor's word
@@ -1738,13 +1767,10 @@
   var typesetRows = null;
   async function typeset(target, of = diagnosticVersions[target]) {
     if (target !== uri()) return;
-    // a step of its own in the status card, when nothing else is going on
-    const alone = !act.phase;
+    // a slow answer shows in the status line as any question (`questionOf`)
     // the run sent its rows as soon as it ended (`satex/typesetRows`)
     if (tsEarly === `${target}@${of}` && tsShown === tsEarly) return;
-    if (alone) busy('Typesetting', 'Typesetting the text…');
     const rows = await lsp('satex/typeset', { textDocument: { uri: target } }).catch(() => null);
-    if (alone && act.phase === 'Typesetting') idle();
     // an answer that comes after newer final rows (a long run's) never puts its older pages back
     if (!rows || !self.satexViews.rowsWin(tsFinal.get(target), of, false)) return;
     if (of != null) tsFinal.set(target, of);
@@ -1769,6 +1795,7 @@
     tsMorph(typesetBody, html || '<p class="muted">The document sets no paragraph.</p>');
     tsText = [state.file, sentTexts.get(`${target}@${of}`) ?? null];
     tsTerms();
+    tsHeadFoot();
     tsTyped();
     typesetFindings();
     typesetFollow();
@@ -1777,6 +1804,43 @@
     // the tables' columns as now written, for the PDF's column layer
     if (pdf?.boxes) pdfColsAsk();
   }
+  /** The header and footer the document writes, as the page widget reads them (views.ts `headerOf`), with the
+   * defaults of its package filled in: drawn in each page break of the Typeset view, the foot of the page that ends
+   * and the head of the next. Asked once per run of the root file. */
+  let tsHf = { key: null, fields: null };
+  async function tsHeadFoot() {
+    const key = `${uri()}@${version}`;
+    if (tsHf.key !== key) {
+      tsHf = { key, fields: null };
+      const views = await lsp('satex/view', { textDocument: { uri: uri() }, position: { line: 0, character: 0 } }).catch(() => null);
+      const s = (views ?? []).find((v) => v.plugin === 'page')?.sections?.find((x) => x.kind === 'page');
+      if (tsHf.key !== key || !s) return;
+      const P = self.satexViews.page, m = P.headerOf(s.header, !!s.twoside), cleared = (s.header?.calls ?? []).some((c) => c.name === 'fancyhf');
+      // the package's own fields where the document sets none (fancyhdr's, plain's page number)
+      const dflt = !m.package ? { foot: { OC: '\\thepage' } } : m.package === 'fancyhdr' && !cleared ? { head: { OL: '\\leftmark', OR: '\\rightmark' }, foot: { OC: '\\thepage' } } : {};
+      for (const part of ['head', 'foot']) for (const [k, v] of Object.entries(dflt[part] ?? {})) if (!(k in m[part])) m[part][k] = v;
+      tsHf.fields = { m, spots: m.package === 'scrlayer-scrpage' ? ['i', 'c', 'o'] : ['L', 'C', 'R'] };
+    }
+    const f = tsHf.fields;
+    if (!f) return;
+    // a `\\thispagestyle` of the open file between two breaks: `empty` sets neither, `plain` the number at the foot alone
+    const lines = editor.text().split('\n');
+    let from = 0;
+    for (const sep of typesetBody.querySelectorAll('.ts-page')) {
+      sep.querySelector('.ts-hf')?.remove();
+      const all = [...typesetBody.querySelectorAll('p.ts[data-path], .ts-page')], mine = (all.slice(0, all.indexOf(sep)).findLast((q) => q.dataset.path)?.dataset.path ?? '').endsWith(state.file);
+      const style = mine ? lines.slice(from, +sep.dataset.line).join('\n').match(/\\thispagestyle\s*\{(\w+)\}/g)?.at(-1)?.match(/\{(\w+)\}/)?.[1] : null;
+      if (mine) from = +sep.dataset.line;
+      const n = +sep.dataset.page || 0, row = (part, page) => f.spots.map((spot, i) => {
+        const set = part === 'foot' && style ? (style === 'plain' && i === 1 ? '\\thepage' : '') : null, t = set ?? f.m[part][`O${spot}`] ?? '', shown = tsHfText(t, page);
+        return `<span class="ts-hf-cell${t ? '' : ' ts-hf-empty'}" data-part="${part}" data-spot="${i}" data-src="${escape(t)}" title="${part === 'head' ? 'header' : 'footer'} ${['left', 'center', 'right'][i]}${t ? `: ${escape(t)}` : ': empty, click to set'}">${shown}</span>`;
+      }).join('');
+      sep.insertAdjacentHTML('beforeend', `<span class="ts-hf" aria-label="footer of page ${n}, header of the next"><span class="ts-hf-row">${row('foot', n)}</span><span class="ts-hf-row">${row('head', n + 1)}</span></span>`);
+    }
+  }
+  /** A header field's text as set: the page number for `\thepage`, a marker for the running titles, other commands dropped. */
+  const tsHfText = (t, page) => escape(t.replace(/\\thepage\b\s*/g, '\u0001').replace(/\\(left|right)mark\b\s*/g, '\u0002').replace(/\\[A-Za-z@]+\*?\s*/g, '').replace(/[{}]/g, '').trim())
+    .replace(/\u0001/g, `<b>${page || '?'}</b>`).replace(/\u0002/g, '<i class="ts-hf-mark">running title</i>');
   /** Index terms the paragraph's file writes (`\\index{term}`, `\\index{term!sub}`): a small mark in the view; other entry keys stay hidden. */
   function tsTerms() {
     for (const k of typesetBody.querySelectorAll('.ts-key-entry:not(.ts-term-seen)')) {
@@ -1885,12 +1949,17 @@
       if (name) openPlace(name, d.range.start, d.range.end); else editor.focus({ start: d.range.start, end: d.range.end });
       return;
     }
+    // a header or footer field: text the document writes types there (its call's line), the rest opens the Page layout widget at that field
+    const hf = e.target.closest('.ts-hf-cell');
+    if (hf) {
+      const src = hf.dataset.src, own = src && !/^\\(thepage|leftmark|rightmark)$/.test(src.trim()) && pdfHeadText(hf.textContent);
+      if (own) return openPlace(own.file, { line: own.line - 1, character: 0 });
+      if (/\\thepage/.test(src) && e.target.closest('b')) return tsPageNumbers(hf.closest('.ts-page'));
+      return openViews({ line: 0, character: 0 }, 'page', { part: hf.dataset.part, spot: +hf.dataset.spot });
+    }
     // a page break's number: its numbering in the Page layout widget, at the file of the paragraph before it
     const sep = e.target.closest('.ts-page-label');
-    if (sep) {
-      const all = [...typesetBody.querySelectorAll('p.ts[data-path], .ts-page')], k = all.indexOf(sep.parentElement);
-      return pageNumbersAt(all.slice(0, k).findLast((q) => q.dataset.path)?.dataset.path ?? null, +sep.parentElement.dataset.line);
-    }
+    if (sep) return tsPageNumbers(sep.parentElement);
     if (tsTyping && e.target.closest('p.ts[data-line] .ts-text')) return tsCaretAt(e);
     const p = e.target.closest('.ts, .ts-envmark');
     if (!p) return;
@@ -1942,6 +2011,11 @@
     if (state.file !== root) await openPlace(root);
     await openViews({ line: 0, character: 0 }, 'page', { numbers: row });
   }
+  /** The page numbering in force at page break `sep` of the Typeset view, in the file of the paragraph before it. */
+  const tsPageNumbers = (sep) => {
+    const all = [...typesetBody.querySelectorAll('p.ts[data-path], .ts-page')], k = all.indexOf(sep);
+    return pageNumbersAt(all.slice(0, k).findLast((q) => q.dataset.path)?.dataset.path ?? null, +sep.dataset.line);
+  };
   /** The caret at a click in the Typeset view: the word under it, its characters' sites and origins from the run. */
   function tsCaretAt(e) {
     // an unknown value (⟨?⟩) is explained, never typed into
@@ -5045,7 +5119,7 @@
     if (!quiet) {
       loads.clear();
       idle();
-      status.textContent = `${plural(entries.length, 'package')} fetched in ${secs(performance.now() - t)}`;
+      status.textContent = act.note = `${plural(entries.length, 'package')} fetched in ${secs(performance.now() - t)}`;
       const largest = [...entries].sort((a, b) => b.size - a.size).map((e) => `${e.label}: ${size(e.size)}`);
       status.title = [`${size(entries.reduce((n, e) => n + e.size, 0))} for this document:`, ...largest].join('\n');
     }
@@ -5439,7 +5513,8 @@
       const parser = pdfWorker;
       const files = alone === null ? pdfFiles((d) => d) : { [root]: alone };
       pdfSent = files[state.file]; pdfSentAll = files;
-      self.satexTex.build(TEX, files, root, manifest.kernels[state.kernel].engine ?? manifest.kernels[state.kernel].id, (said) => { step = said; }, texSources())
+      const want = alone === null ? texWants() : [];
+      self.satexTex.build(TEX, files, root, manifest.kernels[state.kernel].engine ?? manifest.kernels[state.kernel].id, (said) => { step = said; }, texSources(), want)
         .catch((e) => ({ answer: { browser: true, error: `The browser's TeX stopped: ${e?.message ?? e}`, note: `${GUI} builds with your own TeX and packages.` }, gz: null }))
         .then(({ answer, gz }) => { step = answer.pdf ? 'opening the PDF, reading SyncTeX' : 'reading the log'; pdfOpen(answer); parser.postMessage({ answer, gz }); });
       return;
@@ -5448,6 +5523,20 @@
     const files = alone === null ? pdfFiles() : { [root]: alone };
     pdfSent = files[state.file]; pdfSentAll = files;
     pdfWorker.postMessage({ url: COMPILE, timeout: COMPILE_MS, request: { main: root, files, sets: pdfSets(), ...(TEX ? { pages: false } : {}), ...(slice ? { at } : {}), ...(cached ? { cached } : {}), ...(supersedes ? { supersedes } : {}) } });
+  }
+  /** The files query of the root's last run: `{file, records}`. */
+  var rootFiles = null; // var: a run may publish before this line
+  /** The files the analysis saw the root read past its kernel (from its class on) and its fonts: the browser's
+   * pdfTeX fetches them side by side, not one at a time as it reads. A busy server answers late: none then. */
+  async function texWants() {
+    const request = { file: path(state.root ?? state.file), queries: [{ type: 'files' }] };
+    // the root's last run said it (absentBundles): no wait behind the server's other answers
+    const asked = rootFiles?.file === request.file ? rootFiles.records
+      : lsp('workspace/executeCommand', { command: 'satex/query', arguments: [request] }).then((r) => r?.[0]?.records).catch(() => null);
+    const records = await Promise.race([asked, new Promise((done) => setTimeout(() => done(null), 1500))]) ?? [];
+    const from = Math.max(0, records.findIndex((r) => r.kind === 'class'));
+    return [...new Set(records.filter((r, i) => r.kind === 'font' || i >= from && ['input', 'package', 'class', 'probed', 'absent'].includes(r.kind))
+      .map((r) => String(r.file).split('/').pop()))];
   }
   /** The analysis running beside a build, where it reads: the two share the machine, neither waits for the other
    * (the build runs in its own worker, or on the server). */
@@ -5874,7 +5963,11 @@
     return best ?? (inside ? pdfSource(page, x, y, word, fine, false) : word ? pdfSource(page, x, y, null, fine) : fine ? pdfSource(page, x, y, null, false) : null);
   }
   /** The word on the page at a point, if one is under it. */
-  const pdfWordUnder = (page, x, y) => (pdf.wordList ?? []).find((w) => w[0] === page && w[1] - 1 <= x && x <= w[3] + 1 && w[2] - 1 <= y && y <= w[4] + 1);
+  /** The page word at a point, 1 bp of slack around each: of several (a footnote mark against its text), the nearest. */
+  const pdfWordUnder = (page, x, y) => {
+    const off = (w) => Math.max(w[1] - x, 0, x - w[3]) + Math.max(w[2] - y, 0, y - w[4]);
+    return pdfWordsOn(page).filter((w) => w[1] - 1 <= x && x <= w[3] + 1 && w[2] - 1 <= y && y <= w[4] + 1).sort((a, b) => off(a) - off(b))[0];
+  };
   /** Where `word` stands in a source line: its first whole occurrence, else null. Edge punctuation is not part of it. */
   function wordInLine(text, word) {
     const bare = word.replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, '');
@@ -7229,14 +7322,26 @@
   }
   const SHAPE_NAMES = [['rectangle', 'Rectangle'], ['rounded', 'Rounded rectangle'], ['circle', 'Circle'], ['ellipse', 'Ellipse'], ['diamond', 'Diamond']];
   const TIP_NAMES = [['->', 'Arrow →'], ['<->', 'Both ↔'], ['', 'No tip']];
-  /** The menu of node `p` or path segment `g` at a right click. */
-  function tikzMenu(e, p, g) {
+  const FOREST = self.satexViews.forest, FOREST_SHAPES = [['', 'Rectangle'], ['rounded corners', 'Rounded rectangle'], ['circle', 'Circle']];
+  /** The menu of node `p`, path segment `g` or forest node `f` (forestAt) at a right click. */
+  function tikzMenu(e, p, g, f = null) {
     tikzMenuClose();
     const menu = Object.assign(document.createElement('div'), { className: 'tikz-menu' }), text = editor.text(), items = [];
     menu.setAttribute('role', 'menu');
     const item = (label, run, on = null) => { items.push(run); return `<button role="${on == null ? 'menuitem' : 'menuitemradio'}"${on == null ? '' : ` aria-checked="${on}"`} data-i="${items.length - 1}">${escape(label)}</button>`; };
     let html;
-    if (p) {
+    if (f) {
+      // a forest node: its own options (`draw`, a shape key) and its place in the tree, written as the widget writes
+      const { t, n } = f, key = (o) => o.split('=')[0].trim(), has = (k) => n.opts.some((o) => key(o) === k), sx = e.clientX, sy = e.clientY;
+      const write = (change) => { if (change() === false) return; n.dirty = true; FOREST.settle(t); tikzWrite(f.from, f.to, f.body, FOREST.emit(t)); };
+      const shape = FOREST_SHAPES.find(([k]) => k && has(k))?.[0] ?? '', parent = FOREST.parentOf(t, n);
+      html = `<b>${escape(`Node ${n.content || '(empty)'}`)}</b>` +
+        FOREST_SHAPES.map(([k, l]) => item(l, () => write(() => { n.opts = n.opts.filter((o) => !FOREST_SHAPES.some(([s]) => s && key(o) === s)); if (k) n.opts.push(k); }), shape === k)).join('') + '<hr>' +
+        item('Frame', () => write(() => { n.opts = has('draw') ? n.opts.filter((o) => key(o) !== 'draw') : [...n.opts, 'draw']; }), has('draw')) + '<hr>' +
+        item('Add child', () => write(() => { FOREST.addChild(n); })) +
+        (parent ? item('Add sibling', () => write(() => { FOREST.addSibling(t, n); })) + item(n.children.length ? 'Delete with its subtree' : 'Delete', () => write(() => { FOREST.remove(t, n); })) : '') + '<hr>' +
+        item('Edit text…', () => tikzInput(sx, sy, n.content, 'the text of the node', (v) => write(() => { n.content = v; })));
+    } else if (p) {
       const n = p.n, stmt = text.slice(n.from, n.to), now = TM.shapeOf(n), looks = TM.looks(n), sx = e.clientX, sy = e.clientY;
       html = `<b>${escape(n.name ? `Node ${n.name}` : n.kind === 'label' ? 'Label' : 'Node')}</b>` +
         SHAPE_NAMES.map(([k, l]) => item(l, () => {
@@ -7271,11 +7376,26 @@
     };
   }
   pdfBody.addEventListener('contextmenu', (e) => {
-    const pt = tikzPoint(e), hit = tikzHit(pt), g = !hit && tikzEdgeAt(pt);
-    if (!hit && !g) return;
+    const pt = tikzPoint(e), hit = tikzHit(pt), g = !hit && tikzEdgeAt(pt), f = !hit && !g && pt && forestAt(pt);
+    if (!hit && !g && !f) return;
     e.preventDefault();
-    tikzMenu(e, hit?.p, g && { ...g, page: pt[0] });
+    tikzMenu(e, hit?.p, g && { ...g, page: pt[0] }, f);
   });
+  /** The forest node page point `pt` sets, in the open file: the tree's body `from`..`to` (after `\begin{forest}`),
+   * the tree as the forest widget reads it and the node, the n-th in bracket order as the `[`s before it count. */
+  function forestAt(pt) {
+    const [page, x, y] = pt, word = pdfWordUnder(page, x, y), hit = word && pdfSource(page, x, y, word);
+    if (!hit || hit.file !== state.file) return null;
+    const text = editor.text(), nodes = PE.treeNodes(text, pdfLineStarts(text)[hit.line - 1] ?? -1).filter(([a, b]) => PE.spans(text.slice(a, b), word[5]).length);
+    if (!nodes.length) return null;
+    const at = nodes[Math.min(pdfNth(page, word, hit.line), nodes.length - 1)][0], from = text.lastIndexOf('\\begin{forest}', at) + 14, to = text.indexOf('\\end{forest}', at);
+    let k = -1, group = 0;
+    for (let i = from; i < at; i++) { const c = text[i]; if (c === '\\') i++; else if (c === '%') { while (i < at && text[i] !== '\n') i++; } else if (c === '{') group++; else if (c === '}') group--; else if (c === '[' && !group) k++; }
+    let t = null;
+    try { t = FOREST.parse(text.slice(from, to)); } catch {}
+    const order = (n) => [n, ...n.children.flatMap(order)], n = t && order(t.root)[k];
+    return n ? { from, to, body: text.slice(from, to), t, n } : null;
+  }
   addEventListener('pointerdown', (e) => { if (!e.target.closest?.('.tikz-menu, .tikz-input')) tikzMenuClose(); }, true);
   /* References switched from the pages (pdfedit.ts `satexRefPick`): in Type mode a reference's printed number, a
    * citation's label, is no text to type into. Hovering one outlines it, a click opens the keys the editor completes
@@ -7444,6 +7564,8 @@
   let pdfWords = { of: null, by: new Map() };
   const pdfWordsOn = (page) => { if (pdfWords.of !== pdf?.wordList) pdfWords = { of: pdf?.wordList, by: Map.groupBy(pdf?.wordList ?? [], (w) => w[0]) }; return pdfWords.by.get(page) ?? []; };
   const pdfSame = (a, b) => a.normalize('NFKC') === b.normalize('NFKC');
+  /** How many words spelled as `word` come before it on `page` (reading order) set from line `line`. */
+  const pdfNth = (page, word, line) => pdfWordsOn(page).filter((w) => pdfSame(w[5], word[5]) && (w[4] < word[2] || Math.abs(w[4] - word[4]) < 1 && w[1] < word[1]) && pdfSource(page, w[1] + 1, w[4] - 1, w)?.line === line).length;
   /** The words of the build page image `img` shows, which may be an older build's than the pane's newest (`pdf`). */
   const pdfImgWordsOf = new WeakMap();
   function pdfImgWords(img) {
@@ -7463,7 +7585,8 @@
     if (list && !/[\p{L}\p{N}]/u.test(word[5])) return pdfLeaderMenu(list.file.slice(-3), x, y, page);
     const entry = list && pdfEntry(list, word);
     if (entry) {
-      await caretPut({ view: 'pdf', page, word }, entry.file, entry.line, word[5].normalize('NFKC'), pdfK(page, x, word), () => 0, () => null, false, entry.span);
+      // `entry`: its paragraph's words are the heading's, never this row: the caret follows its own word (pdfCaretDraw)
+      await caretPut({ view: 'pdf', page, word, entry: true }, entry.file, entry.line, word[5].normalize('NFKC'), pdfK(page, x, word), () => 0, () => null, false, entry.span);
       // a heading without a short title: the first key writes one (its contents entry alone changes)
       if (pdfCaret && entry.file === state.file && PE.shortTitle(editor.text(), entry.head, 0)) pdfCaret.pending = pdfShortTitle(pdfCaret, entry.head);
       return;
@@ -7471,7 +7594,7 @@
     const hit = word && pdfSource(page, x, y, word);
     if (!hit) return typeHint();
     // the same words before it on the page set from line n
-    const nth = (n) => pdfWordsOn(page).filter((w) => pdfSame(w[5], word[5]) && (w[4] < word[2] || Math.abs(w[4] - word[4]) < 1 && w[1] < word[1]) && pdfSource(page, w[1] + 1, w[4] - 1, w)?.line === n).length;
+    const nth = (n) => pdfNth(page, word, n);
     // a macro's own text (the TeX logo) is no place to type: its call takes the edit
     // generated text (`Contents`, `Figure` of `Figure 1:`): typing renames it in the preamble
     // a forest node's text (PE.treeNodes): its content between the brackets, the n-th same word the n-th node spelling it
@@ -7924,7 +8047,9 @@
       // laid from A's end; what passes the text's right edge wraps: to the start of the paragraph's next row (the next
       // page's too), whose words move along, then to rows of its own a baseline skip apart (the paragraph's own, else
       // 1.2 em), from the paragraph's left edge, painted over what the page set there
-      const onPage = para.filter((t) => t.w[0] === w[0]), right = Math.max(...onPage.map((t) => t.w[3])), left = Math.min(...onPage.map((t) => t.w[1]));
+      // the right edge: the innermost line box around A (SyncTeX's `(`, as wide as its line may get), else the paragraph's widest row
+      const hb = (b.boxes ?? []).filter((y) => y.kind === '(' && y.page === w[0] && y.y >= w[2] && y.y <= w[4] + 0.5 && y.x - 1 <= w[1] && w[3] <= y.x + y.w + 1).sort((p, q) => p.w - q.w)[0];
+      const onPage = para.filter((t) => t.w[0] === w[0]), right = Math.max(hb ? hb.x + hb.w : 0, ...onPage.map((t) => t.w[3])), left = Math.min(...onPage.map((t) => t.w[1]));
       const bases = [...new Set(onPage.map((t) => Math.round(t.w[4] * 4) / 4))].sort((p, q) => p - q), steps = bases.slice(1).map((v, i) => v - bases[i]).filter((d) => d > f.size * 0.8 && d < f.size * 2.5).sort((p, q) => p - q);
       const skip = steps.length ? steps[steps.length >> 1] : f.size * 1.2;
       let next = para.find((t) => t.s >= A.e && (t.w[0] !== w[0] || t.w[4] > w[4] + 1));
@@ -8033,7 +8158,7 @@
     if (pdfCaret && state.file === pdfCaret.file && !pdfGhost) { const at = pdfCaret.at; if (editor.cursor?.()[1] !== at) editor.select?.([at, at]); }
     if (pdfCaret?.blind) return pdfBlindDraw(pdfCaret);
     if (pdfCaret?.view === 'ts') return tsCaretDraw();
-    if (pdfCaret && state.file === pdfCaret.file && pdfTypeDraw(pdfCaret, pdfSeen())) return pdfCaretAnchor();
+    if (pdfCaret && state.file === pdfCaret.file && !pdfCaret.entry && pdfTypeDraw(pdfCaret, pdfSeen())) return pdfCaretAnchor();
     const c = pdfCaret, img = c && pdfImg(c.page);
     if (!img?.naturalWidth || state.file !== c.file) return;
     const [pw, ph] = pageSize(img), g = pdfSeen(), m = PE.wordAt(g.text, g.at), now = m?.[1];
@@ -8773,6 +8898,7 @@
   async function absentBundles() {
     const request = { file: path(state.root ?? state.file), queries: [{ type: 'files' }] };
     const records = (await lsp('workspace/executeCommand', { command: 'satex/query', arguments: [request] }).catch(() => null))?.[0]?.records ?? [];
+    if (records.length) rootFiles = { file: request.file, records };
     const kernel = manifest.kernels[state.kernel].id;
     const held = records.filter((r) => r.kind === 'absent').map((r) => r.file).filter((f) => HOLDER.has(`${kernel}/${f}`));
     return wanted_(held, state.kernel, true);
@@ -9131,7 +9257,8 @@
       // one analysis is one timeline: only an edit, or work long after, starts the next run
       const edited = version !== act.version;
       if (edited || now - act.ended > FOLLOW_MS) Object.assign(act, { started: now, steps: [], run: act.run + 1, after: act.run && edited ? 'after your edit' : '', version });
-      act.rest = status.dataset.done && status.textContent !== restLine() ? status.textContent : READY;
+      // a fetch's report is of the step before: the run's end comes back to ready, not to it
+      act.rest = status.dataset.done && status.textContent !== restLine() && status.textContent !== act.note ? status.textContent : READY;
     }
     // one step per phase the page or the engine names, in the order they came
     const key = stage?.phase ? `${stage.run ?? 1} ${stage.phase}` : name;
@@ -9154,7 +9281,8 @@
     const overrun = act.lastSecond !== null && now - act.lastSecond > 3000;
     // one short line in fixed slots (phase, share, time), the full text in the title and the card
     const pct = Number.isFinite(done) ? `${Math.round(done * 100)} %` : '', tail = overrun ? secs(now - act.started) : left ? `${left} s left` : '';
-    const what = stage?.phase ? `${name} ${STAGE[stage.phase] ?? stage.phase}` : pct ? name : text;
+    // a later build run starts its share again: the run says why the share went back
+    const what = stage?.phase ? `${name} ${STAGE[stage.phase] ?? stage.phase}${stage.run > 1 ? `, run ${stage.run}` : ''}${/^(preamble|document)$/.test(stage.phase) && where ? ` · ${where.replace(/^.*\//, '')}` : ''}` : pct ? name : text;
     status.innerHTML = `<span class="st-what">${escape(what)}</span>${pct ? `<span class="st-num">${pct}</span>` : ''}${tail ? `<span class="st-num st-left">${escape(tail)}</span>` : ''}`;
     act.shown = status.textContent;
     status.title = text;
@@ -9343,7 +9471,8 @@
       drainAnalysis();
     } else if (data.type === 'status') {
       traceLive?.(data);
-      if (data.text && act.phase === 'Analyzing') phase(data.text, data.total ? Math.min(data.reached / data.total, 1) : null, data);
+      // a run the page did not start (the server's own, one queued behind a question) shows as any other
+      if (data.text && (act.phase === 'Analyzing' || act.phase === 'Waiting' || !act.phase)) phase(data.text, data.total ? Math.min(data.reached / data.total, 1) : null, data);
       // a run cannot be stopped: the last project's goes on before the new server starts, and the line says so
       else if (data.text && act.phase === 'Starting' && running > 0) busy('Starting', `Starting once the last run ends (${data.text.replace(/^Analyzing /, '')})`, { done: data.total ? Math.min(data.reached / data.total, 1) : null });
     } else if (data.type === 'progress') {
@@ -9512,7 +9641,8 @@
     offlineSetup();
     preload().catch(() => {});
     if (!plainLint()) return link && !link.x ? start() : undefined;
-    status.textContent = restLine();
+    // the first analysis may already be under way: its line stays
+    if (!act.phase) status.textContent = restLine();
     status.dataset.done = 'ready';
     pdfRestore();
   })().catch((e) => { status.textContent = `the playground failed: ${e.message}`; status.dataset.done = 'error'; bootClose(); });

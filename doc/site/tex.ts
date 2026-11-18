@@ -175,25 +175,41 @@ const satexTex = (() => {
   /** The worker, kept between builds: it holds the engine and what it has fetched. */
   let worker: Worker | null = null, warm = false;
   const MIB = 1048576;
+  /** A step the worker said, in words: true when it was one. */
+  const said = (data: Rec, tell: (m: string) => void) => {
+    if (data.progress) tell(`downloading ${data.progress.label}: ${Math.round(data.progress.loaded / MIB)} of ${Math.round(data.progress.size / MIB)} MiB`);
+    else if (data.fetching) tell(`fetching ${data.fetching}`);
+    else if (data.phase) tell(data.phase);
+    else return false;
+    return true;
+  };
+  /** The worker, its engine downloading and starting while the page still gathers what to build. */
+  function boot(tex: TexSetup, tell: (m: string) => void, from: unknown) {
+    if (worker) return worker;
+    tell('starting the TeX worker');
+    worker = new Worker(tex.worker);
+    worker.onmessage = ({ data }) => { said(data, tell); };
+    worker.postMessage({ boot: tex, from });
+    return worker;
+  }
   function ask(message: Rec, tell: (m: string) => void) {
-    if (!worker) tell('starting the TeX worker');
-    const w = (worker ??= new Worker(message.tex.worker));
+    const w = boot(message.tex, tell, message.from);
     return new Promise<TexRun>((done, fail) => {
       w.onerror = (e) => fail(new Error(e.message || 'the TeX worker stopped'));
       w.onmessage = ({ data }) => {
-        if (data.progress) tell(`downloading ${data.progress.label}: ${Math.round(data.progress.loaded / MIB)} of ${Math.round(data.progress.size / MIB)} MiB`);
-        else if (data.fetching) tell(`fetching ${data.fetching}`);
-        else if (data.phase) tell(data.phase);
-        else if (data.error) fail(new Error(data.error));
+        if (said(data, tell)) return;
+        if (data.error) fail(new Error(data.error));
         else { warm = true; done(data); }
       };
       w.postMessage(message);
     });
   }
 
-  /** Builds `main` of `files`, asking the sources `from`: `{answer, gz}`, the pane's answer and the SyncTeX data for its worker to parse. */
-  async function build(tex: TexSetup, files: Record<string, unknown>, main: string, engine: string | undefined, tell: (m: string) => void, from: unknown) {
-    const run = await ask({ tex, files, main, from }, tell);
+  /** Builds `main` of `files`, asking the sources `from`: `{answer, gz}`, the pane's answer and the SyncTeX data for its worker to parse.
+   * `want`: the files the analysis saw it read, fetched side by side before the first run. */
+  async function build(tex: TexSetup, files: Record<string, unknown>, main: string, engine: string | undefined, tell: (m: string) => void, from: unknown, want: string[] | Promise<string[]> = []) {
+    boot(tex, tell, from);
+    const run = await ask({ tex, files, main, from, want: await want }, tell);
     tell('reading the log');
     const by: Record<string, Uint8Array> = Object.fromEntries(run.outputs.map((o) => [o.name, o.bytes]));
     const decoded: Record<string, string> = {};
