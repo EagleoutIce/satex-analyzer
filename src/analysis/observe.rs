@@ -1392,15 +1392,15 @@ pub struct Quantities {
 /// nothing, is not drawn. Paths setting it again add none.
 pub fn rule(m: &mut Machine, vertical: bool, [width, height, depth]: [Option<Option<i64>>; 3], span: Span) {
     // A package's load sets no text: a font state row made there would be missing from its replay.
-    if vertical && m.package().is_none() && !m.output_active() && !m.reading_format() {
-        // a rule in a line may stand under the box placed next: `\colorbox`'s `\color@block`
+    if m.package().is_some() || m.reading_format() || m.output_active() {
+        return;
+    }
+    // a rule in a line may stand under the box placed next: `\colorbox`'s `\color@block`
+    if vertical {
         m.text_fill = Some(match width.flatten() {
             Some(w) => Fill::Rule(m.observed_font_state(), w),
             None => Fill::Drawn,
         });
-    }
-    if m.package().is_some() || m.reading_format() || m.output_active() {
-        return;
     }
     let zero = |d: Option<Option<i64>>| d == Some(Some(0));
     let kind = match vertical {
