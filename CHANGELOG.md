@@ -100,6 +100,7 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 - `feat` **A fuller thesis example.** Title page, table of contents, lists of figures and tables, short titles and captions, equations with `\eqref` and an `align`.
 - `feat` **Landing page.** A typing animation shows the Type mode and becomes the live editor on click. Showcase cards turn in a carousel, the front page ring turns a card every 8 s.
 - `feat` **When a site was built.** Hovering the version shows the build time to the minute.
+- `perf` **More showcase recordings at once.** Up to 6 browsers record in parallel (was 3), one per two idle cores and 3 GB.
 - `fix` **Live window corners.** The typeset side of "Try it here" no longer draws its own rounded border inside the window.
 - `fix` **Crisp showcase cards.** The carousel's front card is drawn again at its scale once the ring rests, no longer an upscaled bitmap.
 - `fix` **Settings dialog hovers.** Tabs, plugin cards and buttons share one flat hover, no card edge is cut, and the footer's controls sit flush right.

@@ -2146,9 +2146,9 @@ def recapture(out):
     server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), functools.partial(quiet, directory=str(out)))
     threading.Thread(target=server.serve_forever, daemon=True).start()
     began = time.monotonic()
-    # browsers by what the machine has free now: about 3 GB each with the engine, a few idle cores each, three at most
+    # browsers by what the machine has free now: about 3 GB each with the engine, two idle cores each, six at most
     idle = (os.cpu_count() or 2) - os.getloadavg()[0]
-    slots = max(1, min(3, available_memory() // (3 * 2**30), int(idle) // 4))
+    slots = max(1, min(6, available_memory() // (3 * 2**30), int(idle) // 2))
     names, url = list(due), f"http://127.0.0.1:{server.server_address[1]}/"
     print(f"showcase: recording {len(names)} shots again in {slots} browsers (load {os.getloadavg()[0]:.1f}) because their example, settings or the page code changed: {', '.join(names)}", file=sys.stderr)
     finished = [0]
