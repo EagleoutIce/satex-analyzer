@@ -22,6 +22,8 @@ interface Graph { dir: string; nodes: MNode[]; edges: MEdge[] }
 interface TNode {
   place: string | null; lead: string; content: string; mid: string; opts: string[]; optsText: string; tail: string; hasOpts: boolean;
   children: TNode[]; inner: string; dirty?: boolean; moved?: boolean;
+  /** The white space before each child's `[` as read: the places a changed child list fills in order. */
+  slots?: string[];
 }
 interface Tree { pre: string; root: TNode; post: string }
 /** The page as edited: lengths in sp, the geometry or typearea mode, the header's fields. */
@@ -49,6 +51,10 @@ declare global {
     close?(): void; guard?(dirty: () => boolean): void; markdown(md: string): string; snippet?(file: string, line: number): string | undefined;
     insert?(text: string): void; fetch?(url: string, accept?: string): Promise<{ status: number; type: string; text: string }>;
     trace?(name: string): void;
+    /** The text of the file the view edits, as the editor holds it. */
+    text?(): string;
+    /** What a view shows first: the page numbering in force at a line (1-based) of the root file, a header or footer field. */
+    focus?: { numbers?: number; part?: 'head' | 'foot'; spot?: 0 | 1 | 2 } | null;
   }
   interface Window { satexViews: typeof satexViews }
 }
@@ -2286,6 +2292,7 @@ const satexViews = (() => {
       if (body[i] !== ']') throw new Error('a node is not closed');
       // head + gap with no children: the gap is the head's own tail
       if (!n.children.length) { n.tail += pending; pending = ''; }
+      n.slots = n.children.map((c) => c.place!);
       n.inner = pending;
       i++;
       return n;
@@ -2301,18 +2308,18 @@ const satexViews = (() => {
     return `${n.place ?? ''}[${h}${n.children.map(nodeOut).join('')}${n.inner}]`;
   }
   const treeEmit = (t: Tree) => t.pre + nodeOut(t.root) + t.post;
-  /** A new or moved node's `place` (the white space before its `[`): as the sibling before it has it. */
+  /** The children's `place`s (the white space before a `[`) of a node whose child list changed: the places it was
+   * read with, in order (a later one as its last but one has it); a list never read is spaced as the tree is. */
   function settle(t: Tree) {
+    const all = (n: TNode): TNode[] => [n, ...n.children.flatMap(all)], lined = all(t.root).some((o) => o !== t.root && o.place?.includes('\n'));
     const walk = (n: TNode, depth: number) => {
-      n.children.forEach((c, k) => {
-        if (c.place == null || c.moved) {
-          const ok = (o: TNode) => o !== c && o.place != null && !o.moved;
-          const other = n.children.slice(0, k).reverse().find(ok) ?? n.children.find(ok);
-          c.place = other ? other.place : (n.inner.includes('\n') || t.root.place?.includes('\n') ? `\n${'  '.repeat(depth + 2)}` : ' ');
-          c.moved = false;
-        }
-        walk(c, depth + 1);
-      });
+      const s = n.slots ?? [], now = n.children.map((c) => c.place);
+      if (n.children.some((c) => c.place == null || c.moved) || now.length !== s.length || now.some((p, k) => p !== s[k])) {
+        const own = n.inner.includes('\n') || lined ? `\n${'  '.repeat(depth + 2)}` : ' ';
+        n.children.forEach((c, k) => { c.place = k < s.length ? s[k]! : s.length > 1 ? s[s.length - 1]! : s[0]?.includes('\n') ? s[0] : own; c.moved = false; });
+        n.slots = n.children.map((c) => c.place!);
+      }
+      n.children.forEach((c) => walk(c, depth + 1));
     };
     walk(t.root, 0);
   }
@@ -2347,6 +2354,12 @@ const satexViews = (() => {
     else { const p = parentOf(t, target); if (!p) return false; p.children.splice(p.children.indexOf(target) + +(where === 'after'), 0, n); }
     return true;
   }
+  // the dialog's edits, each returning the node to select (null: nothing done)
+  const addChild = (n: TNode) => { const c = fresh('new'); n.children.push(c); return c; };
+  const addSibling = (t: Tree, n: TNode) => { const p = parentOf(t, n); if (!p) return null; const c = fresh('new'); p.children.splice(p.children.indexOf(n) + 1, 0, c); return c; };
+  const remove = (t: Tree, n: TNode) => { const p = parentOf(t, n); if (!p) return null; p.children.splice(p.children.indexOf(n), 1); return p; };
+  /** Moves `n` one place among its siblings (`by` -1 before, 1 after). */
+  const shift = (t: Tree, n: TNode, by: number) => { const p = parentOf(t, n), k = p ? p.children.indexOf(n) + by : -1, o = p?.children[k]; return o && move(t, n, o, by < 0 ? 'before' : 'after') ? n : null; };
   /** The `for tree={…}` option of the preamble: `[start, end]` of its braces' inside, or null. */
   function forTree(pre: string): [number, number] | null {
     const m = /for\s+tree\s*=\s*\{/.exec(pre);
@@ -2363,6 +2376,46 @@ const satexViews = (() => {
       t.pre = rest ? `${lead}for tree={${text}}, ${rest}` : `${t.root.place ?? '\n'}for tree={${text}}`;
     }
   }
+  // presets of the tree dialog: a preset names option sets (each a choice of keys, '' none) and the styles that
+  // define the keys; it is on when a tree uses its keys, or started from its template
+  // a group's arc between its first and last edge, 3mm below the parent (calc comes with forest)
+  const FM_ARC = '($(.parent anchor)!3mm!(!1.child anchor)$) to[bend right=35] ($(.parent anchor)!3mm!(!l.child anchor)$)';
+  const PRESETS: Rec = {
+    'feature model': {
+      every: 'fm feature',
+      // per node: its edge's decoration, abstract or concrete; per group (a node's children): and, alternative, or
+      node: { kind: ['', 'fm mandatory', 'fm optional'], abstract: ['', 'fm abstract'] },
+      group: { group: ['', 'fm alternative', 'fm or'] },
+      labels: { '': 'none', 'fm mandatory': 'mandatory ●', 'fm optional': 'optional ○', 'fm abstract': 'abstract', 'fm alternative': 'alternative (xor) ⌒', 'fm or': 'or ◠ filled' },
+      styles: [
+        ['fm feature/.style', '{draw, rounded corners=1pt, font=\\sffamily, inner sep=3pt, parent anchor=south, child anchor=north, l sep=8mm, s sep=4mm}'],
+        ['fm abstract/.style', '{font=\\sffamily\\itshape, fill=black!8}'],
+        ['fm mandatory/.style', '{edge label={node[pos=1, circle, draw, fill=black, inner sep=1.5pt]{}}}'],
+        ['fm optional/.style', '{edge label={node[pos=1, circle, draw, fill=white, inner sep=1.5pt]{}}}'],
+        ['fm alternative/.style', `{tikz+={\\draw ${FM_ARC};}}`],
+        ['fm or/.style', `{tikz+={\\fill (.parent anchor) -- ${FM_ARC} -- cycle;}}`],
+        ['/tikz/fm constraints/.style', '{anchor=north, align=left, font=\\sffamily\\small, inner sep=0pt}'],
+      ],
+      template: '\n  for tree={fm feature}\n  [Car, fm abstract [Body, fm mandatory] [Engine, fm mandatory, fm alternative [Electric] [Gas]] [Extras, fm optional, fm or [Radio] [Navigation]]]\n  \\node[fm constraints] at ([yshift=-4mm]current bounding box.south) {Navigation requires Electric};\n',
+    },
+  };
+  /** The preset a tree uses: one whose keys it writes, else null. */
+  const presetOf = (t: Tree): string | null => Object.keys(PRESETS).find((p) => t.pre.includes(PRESETS[p].every) || /fm (mandatory|optional|alternative|or)\b/.test(treeEmit(t))) ?? null;
+  /** A node's choice in option set `set` of preset `p` ('' none). */
+  const optOf = (p: string, n: TNode, set: string) => { const all = { ...PRESETS[p].node, ...PRESETS[p].group }[set] as string[]; return all.find((k) => k && n.opts.includes(k)) ?? ''; };
+  /** Sets a node's choice in option set `set`: the set's other keys go, the chosen one is added. */
+  function setPresetOpt(p: string, n: TNode, set: string, key: string) {
+    const all = { ...PRESETS[p].node, ...PRESETS[p].group }[set] as string[];
+    n.opts = [...n.opts.filter((o) => !all.includes(o)), ...key ? [key] : []];
+    n.dirty = true;
+  }
+  /** The cross-tree constraints the text after a tree lists (`\node[fm constraints] … {a\\b};`), one a line. */
+  const CONSTR = /\n?[ \t]*\\node\s*\[fm constraints\][^{]*\{([^]*?)\};/;
+  const constraintsOf = (t: Tree) => (CONSTR.exec(t.post)?.[1] ?? '').split(/\\\\/).map((c) => c.trim()).filter(Boolean);
+  function setConstraints(t: Tree, list: string[]) {
+    const lines = list.map((c) => c.trim()).filter(Boolean), node = lines.length ? `\n  \\node[fm constraints] at ([yshift=-4mm]current bounding box.south) {${lines.join(' \\\\ ')}};` : '';
+    t.post = CONSTR.test(t.post) ? t.post.replace(CONSTR, node) : node + t.post;
+  }
   /** Leaves side by side, each `width(n)` wide, parents centered over their children, a level per row. */
   function treeLayout(root: TNode, width: (n: TNode) => number = () => 1) {
     const out: { n: TNode; x: number; y: number; g?: SVGElement }[] = [];
@@ -2377,10 +2430,10 @@ const satexViews = (() => {
     walk(root, 0);
     return out;
   }
-  const forestFns = { splitTop, head, parse: treeParse, emit: treeEmit, settle, fresh, outlineIn, outlineOut, move, forTree, setForTree, layout: treeLayout };
+  const forestFns = { splitTop, head, parse: treeParse, emit: treeEmit, settle, fresh, outlineIn, outlineOut, move, forTree, setForTree, layout: treeLayout, PRESETS, presetOf, optOf, setOpt: setPresetOpt, addChild, addSibling, remove, shift, constraintsOf, setConstraints, parentOf };
 
   function forest(s: Rec, view: Rec, ctx: ViewCtx) {
-    const root = el('div', 'tv-draw');
+    const root = el('div', 'tv-draw tv-forest');
     let t0: Tree | null;
     try { t0 = s.wrap ? { pre: '\n  ', root: fresh('root'), post: '\n' } : treeParse(s.body); } catch (e) { t0 = null; root.append(el('div', 'tv-text', esc(`The tree reads as code only: ${(e as Error).message}`))); }
     if (!t0) { if (!root.childElementCount) root.append(el('div', 'tv-text', 'No bracket tree in this environment.')); return root; }
@@ -2392,31 +2445,36 @@ const satexViews = (() => {
     let run = ran();
     let sel = t.root, dragging: TNode | null = null;
     // undo: the shared history of the tree's data; a step back selects the root
-    let ftRow: HTMLElement | null = null;
-    const H = self.satexDialogs.history(() => t, (v: Tree) => {
-      t = v; sel = t.root; run = ran(); draw();
-      const ft = forTree(t.pre);
-      if (ftRow) ftRow.querySelector('input')!.value = ft ? t.pre.slice(...ft) : '';
-    });
+    const H = self.satexDialogs.history(() => t, (v: Tree) => { t = v; sel = t.root; run = ran(); draw(); });
     const changed = () => H.changed;
     const svg = svgEl('svg', { class: 'tv-canvas', role: 'img', 'aria-label': 'tree' });
-    const side = el('div', 'tv-forest-side');
+    const form = el('div', 'tv-forest-form');
     const status = el('span', 'tv-muted');
     const touch = () => { H.settle(); draw(); };
+    const edited = () => { drawTree(); status.textContent = 'changes to apply'; write.disabled = false; };
     const button = (row: Element, label: string, f: () => void, title?: string) => { const b = el('button', 'tv-button', esc(label)); b.type = 'button'; b.onclick = f; if (title) b.title = title; row.append(b); return b; };
-    const field = (label: string, value: string, f: (v: string) => void, rules = ['balanced']) => {
-      const row = el('label', 'tv-row');
-      const input = Object.assign(el('input', 'tv-input'), { value, spellcheck: false, ariaLabel: label });
+    // a form row: its label in the first column, the control across the rest
+    const labelled = (label: string, control: HTMLElement) => { const row = el('label', 'tv-row'); row.append(el('span', 'tv-muted', esc(label)), control); return row; };
+    const field = (label: string, value: string, f: (v: string) => void, rules = ['balanced'], area = false) => {
+      const input = area ? Object.assign(el('textarea', 'tv-input'), { value, rows: 2, spellcheck: false, ariaLabel: label }) : Object.assign(el('input', 'tv-input'), { value, spellcheck: false, ariaLabel: label });
       // typing is one undo step: held while the field has the focus
       input.onfocus = () => H.hold(true);
       input.onblur = () => H.hold(false);
-      input.oninput = () => { f(input.value); drawTree(); status.textContent = 'changes to apply'; write.disabled = false; };
-      row.append(el('span', 'tv-muted', esc(label)), input);
+      input.oninput = () => { f(input.value); edited(); };
+      const row = labelled(label, input);
       self.satexDialogs.guard(input, rules);
       return row;
     };
+    const choice = (label: string, keys: string[], now: string, f: (k: string) => void, names: Rec = {}) => {
+      const box = el('select', 'tv-input');
+      box.ariaLabel = label;
+      for (const k of keys) box.append(Object.assign(el('option'), { value: k, textContent: names[k] ?? k, selected: k === now }));
+      box.onchange = () => { f(box.value); touch(); };
+      return labelled(label, box);
+    };
     const at = (e: { clientX: number; clientY: number }) => { const p = svg.createSVGPoint(); p.x = e.clientX; p.y = e.clientY; return p.matrixTransform(svg.getScreenCTM()!.inverse()); };
     function drawTree() {
+      const fm = presetOf(t);
       const text = (n: TNode) => n.content.replace(/^\{(.*)\}$/, '$1') || (n.children.length ? '∘' : '·');
       const wide = (n: TNode) => Math.max(0.5, 0.17 * text(n).length + 0.3);
       const pos = treeLayout(t.root, (n) => wide(n) + 0.3);
@@ -2432,9 +2490,20 @@ const satexViews = (() => {
       svg.setAttribute('viewBox', box.join(' '));
       const out = [];
       for (const p of pos) for (const c of p.n.children) out.push(svgEl('line', { class: 'tv-tree-edge', x1: p.x, y1: -p.y + 0.2, x2: by.get(c)!.x, y2: -by.get(c)!.y - 0.2 }));
+      // a feature model's marks as its styles draw them: a circle where an edge meets the child, an arc under a group
+      if (fm) for (const p of pos) {
+        const kind = optOf(fm, p.n, 'kind'), group = optOf(fm, p.n, 'group'), kids = p.n.children.map((c) => by.get(c)!);
+        if (kind) out.push(svgEl('circle', { class: `tv-fm-dot${kind === 'fm optional' ? ' open' : ''}`, cx: p.x, cy: -p.y - 0.2, r: 0.09 }));
+        if (group && kids.length > 1) {
+          const ang = (q: { x: number; y: number }) => Math.atan2(-q.y - 0.2 - (-p.y + 0.2), q.x - p.x), r = 0.35, a = ang(kids[0]!), b = ang(kids[kids.length - 1]!);
+          const pa = [p.x + r * Math.cos(a), -p.y + 0.2 + r * Math.sin(a)], pb = [p.x + r * Math.cos(b), -p.y + 0.2 + r * Math.sin(b)];
+          const arc = `M${pa.join(' ')} A${r} ${r} 0 0 0 ${pb.join(' ')}`;
+          out.push(svgEl('path', { class: `tv-fm-arc${group === 'fm or' ? ' fill' : ''}`, d: group === 'fm or' ? `M${p.x} ${-p.y + 0.2} L${pa.join(' ')} ${arc.slice(arc.indexOf('A'))} Z` : arc }));
+        }
+      }
       for (const p of pos) {
         const label = text(p.n), w = wide(p.n);
-        const g = svgEl('g', { class: `tv-node${sel === p.n ? ' on' : ''}${p.n.dirty ? ' dirty' : ''}`, 'data-content': p.n.content });
+        const g = svgEl('g', { class: `tv-node${sel === p.n ? ' on' : ''}${p.n.dirty ? ' dirty' : ''}${fm && optOf(fm, p.n, 'abstract') ? ' abstract' : ''}`, 'data-content': p.n.content });
         g.append(svgEl('rect', { x: p.x - w / 2, y: -p.y - 0.2, width: w, height: 0.4, rx: 0.08 }), Object.assign(svgEl('text', { x: p.x, y: -p.y }), { textContent: label }));
         const name = run.get(p.n)?.name;
         if (name) g.append(Object.assign(svgEl('title'), { textContent: `name: ${name}` }));
@@ -2457,30 +2526,45 @@ const satexViews = (() => {
     }
     function draw() {
       drawTree();
-      side.replaceChildren();
-      const n = sel;
-      side.append(field('content', n.content, (v: string) => { n.content = v; n.dirty = true; }, ['tex']),
+      const n = sel, parent = parentOf(t, n), fm = presetOf(t);
+      form.replaceChildren(el('h4', 'tv-h', 'Selected node'),
+        field('content', n.content, (v: string) => { n.content = v; n.dirty = true; }, ['tex']),
         field('options', n.opts.join(', '), (v: string) => { n.opts = splitTop(v); n.dirty = true; }));
+      if (fm) {
+        const P = PRESETS[fm];
+        if (parent) form.append(choice('feature', P.node.kind, optOf(fm, n, 'kind'), (k) => setPresetOpt(fm, n, 'kind', k), P.labels));
+        form.append(choice('kind', P.node.abstract, optOf(fm, n, 'abstract'), (k) => setPresetOpt(fm, n, 'abstract', k), { ...P.labels, '': 'concrete' }));
+        if (n.children.length > 1) form.append(choice('children', P.group.group, optOf(fm, n, 'group'), (k) => setPresetOpt(fm, n, 'group', k), { ...P.labels, '': 'and (each on its own)' }));
+      }
       const row = el('div', 'tv-actions');
-      button(row, 'Add child', () => { const c = fresh('new'); n.children.push(c); sel = c; touch(); });
-      const parent = parentOf(t, n);
+      const act = (f: () => TNode | null) => () => { const to = f(); if (to) { sel = to; touch(); } };
+      button(row, 'Add child', act(() => addChild(n)));
       if (parent) {
-        button(row, 'Add sibling', () => { const c = fresh('new'); parent.children.splice(parent.children.indexOf(n) + 1, 0, c); sel = c; touch(); });
-        button(row, '←', () => { const k = parent.children.indexOf(n); if (k > 0) { move(t, n, parent.children[k - 1]!, 'before'); touch(); } }, 'move left');
-        button(row, '→', () => { const k = parent.children.indexOf(n); if (k < parent.children.length - 1) { move(t, n, parent.children[k + 1]!, 'after'); touch(); } }, 'move right');
+        const k = parent.children.indexOf(n);
+        button(row, 'Add sibling', act(() => addSibling(t, n)));
+        button(row, '←', act(() => shift(t, n, -1)), 'Move before its left sibling').disabled = k === 0;
+        button(row, '→', act(() => shift(t, n, 1)), 'Move after its right sibling').disabled = k === parent.children.length - 1;
         // a subtree goes as one undoable step; the status says what went
-        button(row, 'Delete', () => { parent.children.splice(parent.children.indexOf(n), 1); sel = parent; touch(); const k = size(n) - 1; if (k) status.textContent = `deleted ${n.content || 'a node'} and ${k} below it: Ctrl+Z brings them back`; },
+        button(row, 'Delete', () => { act(() => remove(t, n))(); const k = size(n) - 1; if (k) status.textContent = `deleted ${n.content || 'a node'} and ${k} below it: Ctrl+Z brings them back`; },
           n.children.length ? `Delete this node and the ${size(n) - 1} below it (Ctrl+Z undoes)` : 'Delete this node');
       }
-      side.append(row);
+      form.append(row, el('h4', 'tv-h', 'Every node (for tree)'));
+      const ft = forTree(t.pre);
+      form.append(field('for tree', ft ? t.pre.slice(...ft) : '', (v: string) => setForTree(t, v)));
+      // a preset: its keys on every node, its styles written with the tree
+      form.append(choice('preset', ['', ...Object.keys(PRESETS)], fm ?? '', (p) => {
+        const f = forTree(t.pre), now = f ? splitTop(t.pre.slice(...f)) : [], every = Object.values(PRESETS).map((x: Rec) => x.every);
+        setForTree(t, [...now.filter((k) => !every.includes(k)), ...p ? [PRESETS[p].every] : []].join(', '));
+      }, { '': 'none (plain forest)' }));
+      const rest = t.pre.trim();
+      if (rest && !(ft && rest.replace(/^for\s+tree\s*=\s*\{[\s\S]*\}\s*,?$/, '') === '')) form.append(el('pre', 'tv-kept', esc(rest)));
+      if (fm) form.append(el('h4', 'tv-h', 'Cross-tree constraints'), field('one a line', constraintsOf(t).join('\n'), (v: string) => setConstraints(t, v.split('\n')), ['balanced'], true));
       status.textContent = changed() ? 'changes to apply' : 'no changes';
       write.disabled = !changed() && !s.wrap;
     }
-    const opts = el('div', 'tv-forest-tree');
-    const ft = forTree(t.pre);
-    opts.append(el('h4', 'tv-h', 'Every node (for tree)'), ftRow = field('for tree', ft ? t.pre.slice(...ft) : '', (v: string) => setForTree(t, v)));
-    const rest = t.pre.trim();
-    if (rest && !(ft && rest.replace(/^for\s+tree\s*=\s*\{[\s\S]*\}\s*,?$/, '') === '')) opts.append(el('pre', 'tv-kept', esc(rest)));
+    // a new tree starts plain or from a preset's template
+    const start = el('div', 'tv-actions');
+    if (s.wrap) for (const p of Object.keys(PRESETS)) button(start, `Start a ${p}`, () => { const n = treeParse(PRESETS[p].template); if (!n) return; t = n; t.root.place = ''; sel = t.root; touch(); }, `Replace the tree by a small ${p} to edit`);
     // indented outlines in and out
     const out = el('details', 'tv-mermaid', '<summary>Indented outline</summary>');
     const text = Object.assign(el('textarea', 'tv-input'), { rows: 5, spellcheck: false, placeholder: '- root\n  - child\n    - grandchild\n  - child', ariaLabel: 'outline' });
@@ -2493,13 +2577,20 @@ const satexViews = (() => {
       // a node whose text breaks the TeX (`50% off`) is shown with its message and the Escape fix, nothing written
       const slip = (n: TNode): TNode | undefined => texIssue(n.content) ? n : n.children.map(slip).find(Boolean);
       const bad = slip(t.root);
-      if (bad) { sel = bad; draw(); status.textContent = `not written: ${bad.content}: ${texIssue(bad.content)}`; return side.querySelector('input')?.focus(); }
+      if (bad) { sel = bad; draw(); status.textContent = `not written: ${bad.content}: ${texIssue(bad.content)}`; return form.querySelector('input')?.focus(); }
       settle(t);
-      // the server prints the environment's snapshot with its new body, forest loaded when the run lacks it
-      return self.satexSnapshot.write(ctx, [{ ...s.node, body: treeEmit(t) }], (m) => { status.textContent = m; });
+      // the server prints the environment's snapshot with its new body, forest loaded when the run lacks it; a
+      // preset's styles go before `\begin{document}` once
+      const S = self.satexSnapshot, out: SnapNode[] = [{ ...s.node, body: treeEmit(t) }], fm = presetOf(t), doc = ctx.text?.() ?? '';
+      const begin = doc.search(/^[ \t]*\\begin\s*\{document\}/m);
+      if (fm && begin >= 0 && !doc.includes(`${PRESETS[fm].every}/.style`)) {
+        const keys = (PRESETS[fm].styles as [string, string][]).map(([k, v]): [string, string] => [k, v.slice(1, -1)]);
+        out.push(S.call('forestset', [S.keys('{', keys)], { line: doc.slice(0, begin).split('\n').length - 1, character: 0 }, { name: 'forest', options: '' }));
+      }
+      return S.write(ctx, out, (m) => { status.textContent = m; });
     };
     const { el: foot, apply: write } = footer(root, ctx, { status, apply: writeIt, label: s.wrap ? 'Insert tree' : 'Apply', H, tools: true });
-    root.append(svg, side, opts, out);
+    root.append(svg, ...start.childElementCount ? [start] : [], form, out);
     if (s.note) root.append(el('div', 'tv-text', ctx.markdown(s.note)));
     root.append(foot);
     draw();
@@ -2601,13 +2692,15 @@ const satexViews = (() => {
   // page numbering (page.rs `numbering`): `\pagenumbering` sets a style and restarts at 1, a matter mark sets its own
   const NUMBER_STYLES = [['arabic', '1, 2, 3'], ['roman', 'i, ii, iii'], ['Roman', 'I, II, III'], ['alph', 'a, b, c'], ['Alph', 'A, B, C']];
   /** Where numbering may restart: the document's start, each matter mark (a new call goes after them), each call as written. */
-  const numberPoints = (s: Rec): { id: string; label: string; at?: unknown; node?: SnapNode; style: string }[] => {
+  const numberPoints = (s: Rec): { id: string; label: string; row?: number; at?: unknown; node?: SnapNode; style: string }[] => {
     const n = s.numbering;
     if (!n) return [];
     return [{ id: 'start', label: 'Start of the document', at: n.start, style: '' },
-      ...[...n.marks.map((m: Rec, i: number) => ({ id: `m${i}`, row: m.row, label: `After \\${m.name} (line ${m.row + 1})`, at: m.at, style: '' })),
-        ...n.calls.map((c: Rec, i: number) => ({ id: `c${i}`, row: c.row, label: `\\pagenumbering (line ${c.row + 1})`, node: c.node, style: self.satexSnapshot.text(c.node, '{') ?? '' }))].sort((a, b) => a.row - b.row)];
+      ...[...n.marks.map((m: Rec, i: number) => ({ id: `m${i}`, row: m.row, label: `After \\${m.name} (line ${m.row})`, at: m.at, style: '' })),
+        ...n.calls.map((c: Rec, i: number) => ({ id: `c${i}`, row: c.row as number, label: `\\pagenumbering (line ${c.row})`, node: c.node, style: self.satexSnapshot.text(c.node, '{') ?? '' }))].sort((a, b) => a.row - b.row)];
   };
+  /** The point whose numbering is in force at line `line` (1-based, as the run's rows): the last at or before it. */
+  const numberInForce = (s: Rec, line: number) => numberPoints(s).filter((q) => (q.row ?? 0) <= line).at(-1)?.id;
   /** The calls that write the numbering `st` sets over `st0`: a style changed in place, a call removed, a new one at its place; the chapter reset in the preamble. */
   function numberNodes(s: Rec, st0: PageState, st: PageState): SnapNode[] {
     const S = self.satexSnapshot, out: SnapNode[] = [];
@@ -2805,7 +2898,9 @@ const satexViews = (() => {
   function page(s: Rec, view: Rec, ctx: ViewCtx) {
     const root = el('div', 'tv-page');
     const st0 = pageOf(s), two = !!s.twoside;
-    let st: PageState = structuredClone(st0), tab = 'margins', unit = s.unit ?? 'cm';
+    let st: PageState = structuredClone(st0), tab = ctx.focus?.numbers != null && s.numbering ? 'options' : ctx.focus?.part ? 'header' : 'margins', unit = s.unit ?? 'cm';
+    // a page number clicked: the numbering in force at its row (the last point at or before it) is the one picked
+    const inForce = tab === 'options' ? numberInForce(s, ctx.focus!.numbers!) : undefined;
     const per = Object.fromEntries(s.units.map((u: Rec) => [u.name, u.sp]));
     const num = (sp: number, u = unit) => +(sp / per[u]).toFixed(s.decimals ?? 2);
     const len = (sp: number) => `${num(sp)}${unit}`;
@@ -2985,7 +3080,11 @@ const satexViews = (() => {
       }
       const points = numberPoints(s);
       if (points.length) {
-        const rows = points.map((q) => pick(q.label, NUMBER_STYLES, st.numbers[q.id], (v) => { st.numbers[q.id] = v; }, q.node ? 'remove this call' : 'as the class sets'));
+        const rows = points.map((q) => {
+          const r = pick(q.label, NUMBER_STYLES, st.numbers[q.id], (v) => { st.numbers[q.id] = v; }, q.node ? 'remove this call' : 'as the class sets');
+          if (q.id === inForce) r.classList.add('tv-focus');
+          return r;
+        });
         const n = s.numbering, chapter = el('label', 'tv-field');
         if (n.chapters) {
           const box = Object.assign(el('input', ''), { type: 'checkbox', checked: st.perChapter, disabled: n.per_chapter && !n.reset, ariaLabel: 'restart with each chapter' });
@@ -3158,6 +3257,13 @@ const satexViews = (() => {
     main.append(svg, side);
     root.append(bar, notes, main, foot);
     draw();
+    // the numbering in force: its group in view, its choice focused
+    if (inForce) setTimeout(() => { const f = side.querySelector<HTMLElement>('.tv-focus'); f?.scrollIntoView({ block: 'center' }); f?.querySelector('select')?.focus({ preventScroll: true }); }, 0);
+    // a header or footer clicked: its field at the click's third (left, center, right; inner, center, outer), else its Load button
+    else if (tab === 'header') setTimeout(() => {
+      const f = [...side.querySelectorAll<HTMLInputElement>(`input[aria-label^="${ctx.focus!.part}"]`)][ctx.focus!.spot ?? 1] ?? side.querySelector<HTMLElement>('.tv-start');
+      f?.scrollIntoView({ block: 'center' }); f?.focus({ preventScroll: true });
+    }, 0);
     return root;
   }
   RENDER.page = page;
@@ -3278,8 +3384,16 @@ button.tv-spec-value { cursor: pointer; } button.tv-spec-value:hover, button.tv-
 .tv-kept pre { margin: .15rem 0; padding: .3rem .5rem; border-radius: 6px; background: var(--tv-sunk); font-size: .75rem; white-space: pre-wrap; color: var(--tv-muted); }
 .tv-mermaid summary { cursor: pointer; font-size: .82rem; color: var(--tv-muted); } .tv-mermaid textarea { width: 100%; box-sizing: border-box; font-family: ui-monospace, monospace; margin: .4rem 0; }
 .tv-tree-edge { stroke: currentColor; stroke-width: .02; } .tv-node.dirty rect { stroke: var(--tv-accent); }
-.tv-forest-side, .tv-forest-tree { display: grid; gap: .4rem; } .tv-forest-side .tv-row > span, .tv-forest-tree .tv-row > span { min-width: 4.5rem; align-self: center; }
+.tv-forest { height: auto; grid-template-rows: none; } .tv-forest > .tv-canvas { height: clamp(8rem, 30vh, 22rem); min-height: 0; }
+.tv-forest-form { display: grid; grid-template-columns: 6.5rem minmax(0, 1fr); gap: .4rem .6rem; align-items: center; }
+.tv-forest-form > .tv-h, .tv-forest-form > .tv-actions, .tv-forest-form > .tv-kept { grid-column: 1 / -1; } .tv-forest-form > .tv-h { margin: .5rem 0 0; } .tv-forest-form > .tv-h:first-child { margin-top: 0; }
+.tv-forest-form > .tv-row { display: contents; } .tv-forest-form > .tv-row > span { grid-column: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; } .tv-forest-form .sd-err { grid-column: 2; }
+.tv-forest-form .tv-input { grid-column: 2; width: 100%; box-sizing: border-box; min-height: var(--btn-h, 1.85rem); padding: .2rem .5rem; font-size: .88rem; } .tv-forest-form textarea.tv-input { resize: vertical; font-family: ui-monospace, monospace; font-size: .82rem; }
+.tv-forest .tv-actions .tv-button { min-height: var(--btn-h, 1.85rem); } .tv-forest .tv-actions .tv-button:disabled { opacity: .45; cursor: default; }
+.tv-fm-dot { fill: currentColor; stroke: currentColor; stroke-width: .02; } .tv-fm-dot.open { fill: var(--tv-bg, #fff); } .tv-fm-arc { fill: none; stroke: currentColor; stroke-width: .025; } .tv-fm-arc.fill { fill: currentColor; } .tv-node.abstract text { font-style: italic; }
+@media (max-width: 480px) { .tv-forest-form { grid-template-columns: 5rem minmax(0, 1fr); } }
 .tv-page { min-width: min(46rem, 100%); } .tv-page-main { display: grid; grid-template-columns: minmax(14rem, 1.2fr) minmax(15rem, 1fr); gap: .9rem; align-items: start; }
+.tv-page-side .tv-field.tv-focus { box-shadow: inset 2px 0 var(--tv-accent); padding-left: .4rem; color: var(--tv-fg); }
 .tv-sheet { max-height: 62vh; } .tv-page-side { display: grid; gap: .6rem; max-height: 62vh; overflow: auto; padding-right: .2rem; } .tv-page-side .tv-field { grid-template-columns: 6.5rem minmax(0, 1fr); }
 .tv-page-grip { stroke: transparent; } .tv-page-grip:hover { stroke: color-mix(in srgb, var(--tv-accent) 35%, transparent); } .tv-grip-x { cursor: ew-resize; } .tv-grip-y { cursor: ns-resize; }
 .tv-page-paper { fill: var(--tv-bg); stroke: var(--tv-muted); stroke-width: .6; } .tv-page-body { fill: color-mix(in srgb, var(--tv-accent) 16%, transparent); stroke: var(--tv-accent); stroke-width: .8; }
@@ -3508,6 +3622,6 @@ button.tv-spec-value { cursor: pointer; } button.tv-spec-value:hover, button.tv-
    * the newest version whose final rows are shown): never older rows, never a preview of a text already final. */
   const rowsWin = (final: number | undefined, version: number | null | undefined, preview: boolean) =>
     version == null || final == null || (preview ? version > final : version >= final);
-  return { rowsWin, loads: { unlanded, lacked }, tipBag, yaml, history: { historyEvent }, render, RENDER, hue, passes, masterDetail, usesView, fold, SPEC, mix, colorBand, oklch, drawing: { expandStyles, STYLE_DEF, parse, emit, mermaidIn, mermaidOut, mermaidLoss, layout, importMermaid, tipsOf, toMatrix, cellPlaces, toLayer, picOptions, relocate, relPos, nearestAnchor, anchorAt, tipMarker, shapeSample, shapeList, cycle, STYLE }, forest: forestFns, circuit: { parse: cParse, body: cBody, emit: cEmit }, page: { pageOf, pageBox, pageNodes, numberNodes, headerOf, headerCalls, headerNodes, fmtRead, fmtWrite, styleNodes, styleSet, styleEdits }, dev: { traceCsv, stateHtml }, templates: { fill, filled, chosen } };
+  return { rowsWin, loads: { unlanded, lacked }, tipBag, yaml, history: { historyEvent }, render, RENDER, hue, passes, masterDetail, usesView, fold, SPEC, mix, colorBand, oklch, drawing: { expandStyles, STYLE_DEF, parse, emit, mermaidIn, mermaidOut, mermaidLoss, layout, importMermaid, tipsOf, toMatrix, cellPlaces, toLayer, picOptions, relocate, relPos, nearestAnchor, anchorAt, tipMarker, shapeSample, shapeList, cycle, STYLE }, forest: forestFns, circuit: { parse: cParse, body: cBody, emit: cEmit }, page: { pageOf, pageBox, pageNodes, numberNodes, numberInForce, headerOf, headerCalls, headerNodes, fmtRead, fmtWrite, styleNodes, styleSet, styleEdits }, dev: { traceCsv, stateHtml }, templates: { fill, filled, chosen } };
 })();
 self.satexViews = satexViews;

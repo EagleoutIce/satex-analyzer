@@ -1,0 +1,22 @@
+\documentclass{article}
+\usepackage{forest}
+% the feature-model styles the tree dialog writes (its feature model preset)
+\forestset{
+  fm feature/.style={draw, rounded corners=1pt, font=\sffamily, inner sep=3pt, parent anchor=south, child anchor=north, l sep=8mm, s sep=4mm},
+  fm abstract/.style={font=\sffamily\itshape, fill=black!8},
+  fm mandatory/.style={edge label={node[pos=1, circle, draw, fill=black, inner sep=1.5pt]{}}},
+  fm optional/.style={edge label={node[pos=1, circle, draw, fill=white, inner sep=1.5pt]{}}},
+  fm alternative/.style={tikz+={\draw ($(.parent anchor)!3mm!(!1.child anchor)$) to[bend right=35] ($(.parent anchor)!3mm!(!l.child anchor)$);}},
+  fm or/.style={tikz+={\fill (.parent anchor) -- ($(.parent anchor)!3mm!(!1.child anchor)$) to[bend right=35] ($(.parent anchor)!3mm!(!l.child anchor)$) -- cycle;}},
+  /tikz/fm constraints/.style={anchor=north, align=left, font=\sffamily\small, inner sep=0pt}
+}
+\begin{document}
+\section{A product line}
+A car is a body, one engine and any extras.
+
+\begin{forest}
+  for tree={fm feature}
+  [Car, fm abstract [Body, fm mandatory] [Engine, fm mandatory, fm alternative [Electric] [Gas]] [Extras, fm optional, fm or [Radio] [Navigation]]]
+  \node[fm constraints] at ([yshift=-4mm]current bounding box.south) {Navigation requires Electric \\ Radio excludes Gas};
+\end{forest}
+\end{document}

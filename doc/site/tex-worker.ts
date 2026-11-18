@@ -34,12 +34,18 @@ const gunzip = (data: Uint8Array) => bytesOf(new Response(new Blob([data as Blob
 let got = new Map<string, { bytes: Uint8Array; host: string }>(), failed = new Set<string>(), dead = new Set<string>(), stems = new Set<string>();
 /** The address patterns to ask, in order, and how long one file may take. */
 let sources: string[] = [], timeout = 0;
+/** Files every source answered 404 for, kept between visits (`ABSENT` keys) while the source list stays: each would
+ * cost a round trip per source and build again. `missed`: the ones this build found. */
+let absent = new Set<string>(), missed = new Set<string>();
+const ABSENT = `${ANSWERED}absent/`, ABSENT_MS = 7 * 24 * 3600e3;
 /** Lookups for the document's own files stay here: nothing to find, and their names are the document's. */
 const askable = (name: string) => !OWN.test(name) && !stems.has(name.replace(/\.[^.]*$/, ''));
 const hostOf = (pattern: string) => new URL(pattern.split('{')[0]).host;
 /** One file from the sources, in order: a 404 goes on to the next, a host that fails is left out for the rest of the build. */
 function ask(format: string, name: string): [number, ArrayBuffer | null] {
   if (!askable(name)) return [404, null];
+  const key = `${format}/${encodeURIComponent(name)}`;
+  if (absent.has(key)) return [404, null];
   let clean = true;
   for (const pattern of sources) {
     const host = hostOf(pattern);
@@ -60,7 +66,7 @@ function ask(format: string, name: string): [number, ArrayBuffer | null] {
     dead.add(host);
     clean = false;
   }
-  if (!clean) failed.add(name);
+  if (!clean) failed.add(name); else missed.add(key);
   // not a 404 after a failure: the engine remembers a 404 as absent
   return [clean ? 404 : 503, null];
 }
@@ -125,6 +131,12 @@ async function start(tex: Rec): Promise<Instance> {
   const keep = await globalThis.caches?.open(KEEP).catch(() => null);
   for (const request of await keep?.keys() ?? []) {
     const [format, name] = request.url.split('/').slice(-2) as [string, string];
+    if (request.url.startsWith(ABSENT)) {
+      const r = await keep!.match(request);
+      if (r?.headers.get('x-sources') === encodeURIComponent(sources.join('\n')) && Date.now() - +(r.headers.get('x-at') ?? 0) < ABSENT_MS) absent.add(`${format}/${name}`);
+      else keep!.delete(request).catch(() => {});
+      continue;
+    }
     m.kpse_remote_register(decodeURIComponent(name), +format, await bytesOf((await keep!.match(request))!));
   }
   return { m, out, keep, header: Uint8Array.from(m.HEAPU8.subarray(0, HEADER)) };
@@ -150,7 +162,9 @@ async function build(instance: Instance, files: Record<string, Uint8Array | stri
   // a new list or a host that failed: what the engine remembers as absent is asked for again
   const asked = sources.join('\n');
   if (asked !== instance.asked || dead.size) m.kpse_remote_clear();
+  if (instance.asked !== undefined && asked !== instance.asked) absent.clear();
   instance.asked = asked;
+  missed = new Set();
   got = new Map(); failed = new Set(); dead = new Set();
   stems = new Set(Object.keys(files).map((n) => n.split('/').pop()!.replace(/\.[^.]*$/, '')));
   // The last clean build of this main file left its .aux and the like: they seed this one, as latexmk's directory would.
@@ -213,6 +227,8 @@ async function build(instance: Instance, files: Record<string, Uint8Array | stri
   walk(dir);
   // kept for the next visit, after the answer is on its way
   if (instance.keep) for (const [key, { bytes }] of got) instance.keep.put(ANSWERED + key, new Response(bytes as BodyInit)).catch(() => {});
+  const said = { 'x-sources': encodeURIComponent(sources.join('\n')), 'x-at': String(Date.now()) };
+  if (instance.keep) for (const key of missed) { absent.add(key); instance.keep.put(ABSENT + key, new Response('', { headers: said })).catch(() => {}); }
   const from: Record<string, number> = {};
   for (const { host } of got.values()) from[host] = (from[host] ?? 0) + 1;
   return { job, outputs, commands, biblatex, from, asked: [...new Set(sources.map(hostOf))], dead: [...dead], failed: [...failed] };

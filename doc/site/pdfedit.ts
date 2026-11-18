@@ -27,6 +27,7 @@ declare global {
       stepped(text: string, dir: number, fine: boolean): string | null;
       room(boxes: Box[], file: string, table: Table): number | null;
       plain(text: string): boolean;
+      treeNodes(text: string, at: number): [number, number][];
       editable(text: string, from: number, to: number, keys: [number, number][]): string | null;
       spans(line: string, word: string): [number, number][];
       sender<V>(send: (v: V) => Promise<boolean>): { put(v: V): void; flush(): Promise<void> };
@@ -347,7 +348,8 @@ declare global {
         } else if ((m[2] === '(' || m[2] === '[') && !st.math) st.math = t;
         else if ((m[2] === ')' || m[2] === ']') && st.math === `\\${m[2] === ')' ? '(' : '['}`) st.math = '';
         put(i, e, t);
-        st.cmd = m[1] ?? '';
+        // a forest's `[` opens its tree, no option: the node text is text
+        st.cmd = t === '\\begin{forest}' ? '' : m[1] ?? '';
         i = e - 1;
         continue;
       }
@@ -828,9 +830,12 @@ declare global {
   function paragraph(text: string, at: number): [number, number] {
     const before = text.slice(0, at).search(/\n[ \t]*\n(?![\s\S]*\n[ \t]*\n)/), after = /\n[ \t]*\n/.exec(text.slice(at));
     let p0 = before < 0 ? 0 : text.indexOf('\n', before + 1) + 1, p1 = after ? at + after.index : text.length;
-    const edge = /\\(begin|end)\s*\{/, l0 = text.lastIndexOf('\n', at - 1) + 1, e0 = text.indexOf('\n', at);
+    // an environment's edge or a heading's line bounds it too: TeX sets a heading apart from the text after it
+    const edge = /\\(begin|end)\s*\{|\\(part|chapter|(sub)*section|paragraph)\*?\s*[[{]/, l0 = text.lastIndexOf('\n', at - 1) + 1, e0 = text.indexOf('\n', at);
     for (let e = l0 - 1; e > p0;) { const s = text.lastIndexOf('\n', e - 1) + 1; if (edge.test(text.slice(s, e))) { p0 = e + 1; break; } e = s - 1; }
     for (let s = e0 < 0 ? p1 : e0 + 1; s < p1;) { const e = text.indexOf('\n', s), end = e < 0 || e > p1 ? p1 : e; if (edge.test(text.slice(s, end))) { p1 = Math.max(s - 1, at); break; } s = end + 1; }
+    // a heading's own line ends it: the text after the heading is the next paragraph
+    if (e0 >= 0 && e0 < p1 && /\\(part|chapter|(sub)*section|paragraph)\*?\s*[[{]/.test(text.slice(l0, e0))) p1 = e0;
     return [p0, p1];
   }
   /** Where a caret may stand in a word set from `l` to `r`: the boundary before each character and after the last,
@@ -908,7 +913,35 @@ declare global {
   }
   /** Words as the page reads: a space between words of a row, a line break between rows. */
   const joined = (words: Word[]) => bands(words).map((b) => words.filter((w) => w[0] === b.page && Math.abs(w[4] - b.d) < 1 && w[1] >= b.l && w[3] <= b.r).map((w) => w[5]).join(' ')).join('\n');
-  self.satexPdfEdit = { naming, entries, shortTitle, bothTitles, renamed, leaders, checked, grow, key, broken, scan, start, cells, cellStep, rowAfter, verbatim, verbatimAt, nearest, bands, joined, place, extent, room, form, measure, respec, widthBp, snapWidth, resized, stepped, plain, editable, spans, sender, typed, erased, mathAt, boundaries, boundaryAt, inkSnap, locate, columns, wordAt, argAt, defining, relaid, apart, tokens, unset, aligned, changed, paragraph };
+  /** The node contents of the forest tree around offset `at` (its `\begin` to its `\end` line), in reading order
+   * (a level per row, left to right): each `[from, to)` the text after a `[` up to its first `[`, `]` or comma at
+   * brace level 0, white space and one pair of outer braces off. Forest sets them all at its `\end`, so SyncTeX
+   * names that line for each: the n-th same word on the page is the n-th node spelling it. */
+  function treeNodes(text: string, at: number): [number, number][] {
+    const b = text.lastIndexOf('\\begin{forest}', at), e = text.indexOf('\\end{forest}', b);
+    if (b < 0 || e < 0 || at > e) return [];
+    const out: [number, number, number][] = [];
+    let depth = 0, group = 0;
+    for (let i = b + 14; i < e; i++) {
+      const c = text[i];
+      if (c === '\\') { i++; continue; }
+      if (c === '%') { while (i < e && text[i] !== '\n') i++; continue; }
+      if (c === '{') group++; else if (c === '}') group--;
+      else if (c === ']' && !group) depth--;
+      else if (c === '[' && !group) {
+        let j = i + 1, g = 0;
+        for (; j < e; j++) { const d = text[j]; if (d === '\\') j++; else if (d === '{') g++; else if (d === '}') g--; else if (!g && (d === '[' || d === ']' || d === ',')) break; }
+        let s0 = i + 1, s1 = j;
+        while (s0 < s1 && /\s/.test(text[s0]!)) s0++;
+        while (s1 > s0 && /\s/.test(text[s1 - 1]!)) s1--;
+        if (text[s0] === '{' && text[s1 - 1] === '}') { s0++; s1--; }
+        if (s1 > s0) out.push([s0, s1, depth]);
+        depth++;
+      }
+    }
+    return out.map((n, k) => [n, k] as const).sort((p, q) => p[0][2] - q[0][2] || p[1] - q[1]).map(([n]) => [n[0], n[1]]);
+  }
+  self.satexPdfEdit = { treeNodes, naming, entries, shortTitle, bothTitles, renamed, leaders, checked, grow, key, broken, scan, start, cells, cellStep, rowAfter, verbatim, verbatimAt, nearest, bands, joined, place, extent, room, form, measure, respec, widthBp, snapWidth, resized, stepped, plain, editable, spans, sender, typed, erased, mathAt, boundaries, boundaryAt, inkSnap, locate, columns, wordAt, argAt, defining, relaid, apart, tokens, unset, aligned, changed, paragraph };
 })();
 
 // TikZ nodes moved by drag: where each `\node` and path label stands in the source, and the statement a drag

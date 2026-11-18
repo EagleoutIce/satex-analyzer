@@ -417,6 +417,9 @@ button.small { padding: .05rem .6rem; font-size: .78rem; border-radius: 999px; }
 /* status bar, toast, drop zone */
 .statusbar span:empty { display: none; }
 .statusbar #play-status { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+/* the status keeps room for a few words with an ellipsis; the pills and the time give way first, the time with an ellipsis too */
+.statusbar .actbox { min-width: min(24ch, 35%); } .statusbar .pills { flex: 0 1 auto; min-width: 0; overflow: hidden; } .statusbar .pills > * { flex: none; white-space: nowrap; }
+.statusbar .statdetail { flex: 0 1 auto; display: flex; min-width: 4ch; } .statusbar .stat-time { min-width: 0; } .statusbar #t-time-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 #play-status:has(.st-msg) { display: flex; align-items: center; gap: .5rem; } #play-status .st-msg { overflow: hidden; text-overflow: ellipsis; min-width: 4rem; flex: 1 1 auto; } #play-status button { flex: 0 1 auto; min-width: 3.5rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 #play-status:has(.st-msg) { flex: 1 1 9rem; }
 .pills { display: inline-flex; gap: .3rem; flex: none; margin-left: auto; }
@@ -567,8 +570,10 @@ main td .badges, main td .cat { white-space: nowrap; }
 /* the findings and the widget marks: one column of two slots, each mark centred on its line */
 .cm-gutter-lint .cm-gutterElement, .cm-widgets .cm-gutterElement { display: flex; align-items: center; justify-content: center; }
 .cm-gutter.cm-gutter-lint { margin-right: 0; } .cm-gutter-lint + .cm-widgets { margin-left: 0; }
-.cm-editor .cm-gutter-lint { width: 16px !important; }
-.cm-gutter-lint .cm-gutterElement { padding: 0; }
+/* one column: the findings' gutter has no width and draws over the widget marks' (a line with a finding shows no widget mark) */
+.cm-editor .cm-gutter-lint { width: 0 !important; overflow: visible; position: relative; z-index: 1; }
+.cm-gutter-lint .cm-gutterElement { padding: 0; width: 16px; pointer-events: none; } .cm-gutter-lint .cm-lint-marker { pointer-events: auto; }
+.no-widget-marks .cm-editor .cm-gutter-lint { width: 16px !important; }
 .cm-wmark { display: inline-grid; place-items: center; position: relative; width: 16px; height: 16px; border-radius: 4px; color: var(--muted); opacity: .7; cursor: pointer; transition: opacity .12s, color .12s, background .12s; }
 .cm-wmark:hover { opacity: 1; color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); }
 .cm-wmark svg { width: 13px; height: 13px; fill: none; stroke: currentColor; stroke-width: 1.4; stroke-linecap: round; stroke-linejoin: round; }
@@ -913,6 +918,8 @@ a.ty { color: inherit; border-bottom: 1px dotted var(--muted); } a.ty:hover { co
 .typeset.show-keys .ts-key { --k: var(--c6); display: inline; margin: 0 .15rem; padding: 0 .4rem; border-radius: 999px; font: .72rem ui-monospace, Menlo, monospace; white-space: nowrap; color: var(--k); background: color-mix(in srgb, var(--k) 12%, transparent); }
 .typeset.show-keys .ts-key-ref { --k: var(--c4); } .typeset.show-keys .ts-key-cite, .typeset.show-keys .ts-key-bibitem { --k: var(--c3); }
 .typeset.show-keys .ts-key-key, .typeset.show-keys .ts-key-key-use { --k: var(--c5); } .typeset.show-keys .ts-key-entry { --k: var(--c7); }
+/* an index term the document writes: a small mark where it stands, its term on hover */
+.typeset:not(.show-keys) .ts-key.ts-term { display: inline-block; width: .32rem; height: .32rem; margin: 0 .12rem; vertical-align: .5rem; overflow: hidden; font-size: 0; border-radius: 1px; transform: rotate(45deg); background: color-mix(in srgb, var(--c7) 70%, transparent); cursor: help; }
 /* the outline and the examples under the project's files */
 .tree .tree-sect { margin: .6rem 0 0; padding: .45rem 0 0; border-top: 1px solid var(--border); }
 .tree .tree-sect > summary { padding: .1rem .3rem .25rem .75rem; font-size: .7rem; letter-spacing: .07em; }
@@ -1002,6 +1009,8 @@ code, .tname, .ts-file, .o-file, .tr-at, .place, .loc, .cache-name { text-transf
 .lib-list li:hover { background: color-mix(in srgb, var(--accent) 6%, transparent); }
 .lib-use { flex: 0 1 auto; min-width: 0; max-width: 45%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font: .74rem ui-monospace, Menlo, monospace; }
 .lib-does { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-size: .76rem; }
+/* phones: the description takes a line of its own under the name, so neither is cut to a letter */
+@media (max-width: 36rem) { .lib-list li { flex-wrap: wrap; row-gap: 0; } .lib-list .lib-use { max-width: none; flex: 1 1 0; } .lib-list .lib-does { order: 9; flex: 1 1 100%; } }
 .lib-with { display: inline; } .lib-with summary { display: inline; cursor: pointer; font-size: .72rem; color: var(--muted); } .lib-with[open] { white-space: normal; }
 .lib-tag, .lib-pkg { font-size: .7rem; color: var(--muted); white-space: nowrap; } .lib-pkg { margin-left: auto; }
 .cache-dialog.try-dialog { height: fit-content; max-height: min(86vh, 52rem); width: min(44rem, calc(100vw - 2rem)); }
@@ -1067,7 +1076,7 @@ details[open] > .cfg-subhead::before { rotate: 45deg; }
 .view-body { padding: 1rem; overflow: auto; }
 /* the drawing canvas: wide, its own panel scrolls, tools and footer stay */
 .cache-dialog.view-dialog:has(.tv-md) { width: min(84rem, calc(100vw - 1rem)); } .tv:has(.tv-md) { max-width: none !important; }
-.cache-dialog.view-dialog:has(.tv-draw) { width: min(76rem, calc(100vw - 1rem)); } .view-body:has(> .tv > .tv-draw) { overflow: hidden; }
+.cache-dialog.view-dialog:has(.tv-draw) { width: min(76rem, calc(100vw - 1rem)); } .view-body:has(> .tv > .tv-draw:not(.tv-forest)) { overflow: hidden; }
 .sig-active { color: var(--accent); text-decoration: underline; }
 .cm-tooltip.cm-completionInfo .cm-item-card { max-width: 28rem; font-size: .85rem; }
 .hover-tools { display: flex; flex-wrap: wrap; gap: .3rem; margin-top: .5rem; padding-top: .5rem; border-top: 1px solid var(--border); }
@@ -1360,7 +1369,7 @@ ol.refs { font-size: .8rem; color: var(--muted); margin: var(--s16) 0 0; padding
 .o-fold[aria-expanded="false"]::before { transform: rotate(-45deg); }
 .o-fold:hover { background: color-mix(in srgb, var(--border) 60%, transparent); }
 .typeset .ts-sketch { display: block; max-width: 100%; height: auto; margin: .3em 0; color: var(--fg, currentColor); }
-.typeset .ts-sketch path { stroke-linecap: round; stroke-linejoin: round; }
+.typeset .ts-sketch path { stroke-linecap: round; stroke-linejoin: round; } .typeset .ts-sketch path.ts-shape { fill: color-mix(in srgb, currentColor 12%, transparent); }
 .typeset .ts-sketch.approximate { outline: 1px dashed var(--muted); outline-offset: 2px; }
 .typeset .ts-sketch text { fill: currentColor; text-anchor: middle; dominant-baseline: central; font-family: var(--mono, monospace); }
 .ts-typing .ts-sketch text { cursor: text; }
@@ -1597,7 +1606,7 @@ p.ts.ts-foot::before { content: ""; position: absolute; top: 0; left: 0; width: 
 .pdf .pdf-page.pdf-stale img { animation: pdf-stale 0s .25s forwards; }
 @keyframes pdf-stale { to { opacity: .45; } }
 /* typing: the last pages stay at full strength until the new ones are decoded and swapped in, no dim frame */
-.type-sync .pdf .pdf-page.pdf-stale img { animation: none; } .type-sync .ov-stale .pdf-ov { opacity: 1; }
+:is(.type-sync, .pdf-hold) .pdf .pdf-page.pdf-stale img { animation: none; } :is(.type-sync, .pdf-hold) .ov-stale .pdf-ov { opacity: 1; }
 .pdf .pdf-mark { position: absolute; pointer-events: none; background: color-mix(in srgb, var(--accent) 22%, transparent); outline: 1px solid var(--accent); border-radius: 2px; }
 .pdf .pdf-mark.coarse { background: none; outline-style: dashed; }
 /* words selected by a drag on the page */
@@ -1822,7 +1831,7 @@ canvas.pdf-echo { display: block; }
 .ts-view .ts-block-label { padding: 0 .35rem; border-radius: 4px; background: var(--sunk); color: var(--fg); }
 /* a page break: a labelled line across the text column */
 .ts-view .ts-page { margin: .5rem 0; font: .66rem ui-monospace, Menlo, monospace; color: var(--muted); }
-.ts-view .ts-page-label { grid-column: 3; display: flex; align-items: center; gap: .5rem; }
+.ts-view .ts-page-label { grid-column: 3; display: flex; align-items: center; gap: .5rem; cursor: pointer; } .ts-view .ts-page-label:hover { color: var(--accent); }
 .ts-view .ts-page-label::before, .ts-view .ts-page-label::after { content: ""; flex: 1; border-top: 1px solid var(--border); }
 /* where pdfTeX breaks a page the run did not: dashed, in the accent, fainter when only possible */
 .ts-view .ts-page-fill { color: var(--accent); }
@@ -2268,6 +2277,11 @@ body:not(.show-lenses) .cm-lens-line { display: none; }
    primary (the accent), ghost (no face until hovered), icon (square), danger (destructive, red on hover),
    and a segmented row of toggles. All share height, radius, font and focus ring. */
 :root { --btn-h: 1.85rem; --btn-h-sm: 1.45rem; --btn-r: 8px; --btn-px: .7rem; --btn-fs: .82rem; --btn-ring: 2px solid var(--accent); --danger: var(--error); }
+/* one height per button size, everywhere: small buttons, toolbar pills and selects --btn-h-sm, a dialog header's close as its icons --btn-h.
+   min-height only (zero specificity), so a part that sets its own size keeps it */
+:where(button.small, .button.small, .pill, select) { min-height: var(--btn-h-sm); box-sizing: border-box; }
+button.small, .button.small { line-height: 1.2; padding-block: 0; }
+dialog > header > button.small:is([id$=-close], [data-close]) { min-width: var(--btn-h); min-height: var(--btn-h); padding: 0; }
 :is(.sd button, .tv-button, .tv-tab, .pop-tools button, .tv-chip, .tv .sd-icon) { box-sizing: border-box; display: inline-flex; align-items: center; justify-content: center; gap: .3rem; min-height: var(--btn-h); padding: 0 var(--btn-px); border-radius: var(--btn-r); font: inherit; font-size: var(--btn-fs); font-weight: 500; line-height: 1.2; cursor: pointer;
   border: 1px solid var(--border); background: var(--sunk); color: var(--fg); transition: background-color var(--quick), border-color var(--quick), color var(--quick); }
 :is(.sd button, .tv-button, .tv-tab, .pop-tools button, .tv-chip, .tv .sd-icon):hover:not(:disabled) { border-color: var(--accent); transform: none; box-shadow: none; }
@@ -2303,7 +2317,7 @@ body:not(.show-lenses) .cm-lens-line { display: none; }
 @media (prefers-reduced-motion: reduce) { :is(.sd button, .tv-button, .tv-tab, .pop-tools button, .tv-chip) { transition: none; } }
 :is(.sd .sd-del, .sd .sd-ins) { min-height: 0; }
 /* feedback: an icon in a widget's header, and its short form */
-header .hd-feedback { margin-left: auto; } header .hd-feedback + button, header .hd-request + .hd-feedback { margin-left: .2rem; } header .hd-request { margin-left: auto; }
+header .hd-feedback { margin-left: auto; } header .hd-feedback + button, header .hd-request + .hd-feedback { margin-left: .2rem; } header .hd-request { margin-left: auto; white-space: nowrap; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .sd-tools + .sd-feedback, .sd > header .sd-feedback { margin-left: .2rem; }
 .feedback-dialog { width: min(32rem, 94vw); } .fb-form { display: grid; gap: .6rem; padding: .2rem 1rem 1rem; }
 .fb-form textarea { font: inherit; padding: .4rem .5rem; border-radius: var(--btn-r); border: 1px solid var(--border); background: var(--panel); color: var(--fg); resize: vertical; }

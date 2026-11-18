@@ -693,7 +693,13 @@ def bundle(satex, work):
         # directory gathers every package any run met, which would ship with the first download.
         shared, alone = work / f"cache-{kernel}", work / f"cache-{kernel}-sample"
         archive = work / f"satex-cache-{kernel}.bin"
-        if FAST and archive.is_file():  # the last build's: the page rebuilds the entries this binary cannot use
+        stamp = archive.with_suffix(".key")
+        built = stamp.read_text() if stamp.is_file() else None
+        if archive.is_file() and built == KEY:
+            return archive
+        # A fast pass keeps another kernel's last archive (the page rebuilds what this binary cannot use),
+        # never pdfTeX's: its kernel is what the first visit analyzes with, minutes to build in the browser.
+        if FAST and archive.is_file() and kernel != "pdftex":
             SKIPPED.append("kernel caches")
             return archive
         shutil.rmtree(alone, ignore_errors=True)
@@ -704,6 +710,7 @@ def bundle(satex, work):
         kenv = dict(os.environ, SATEX_CACHE=str(alone))
         proc([str(satex), *flags, "lint", "-f", SAMPLE], cwd=project, env=kenv, capture_output=True, check=False)
         run(str(satex), "cache", "export", str(archive), env=kenv)
+        stamp.write_text(KEY)
         # a format built here keeps the shared directory warm for the next build
         for f in alone.glob("format-*"):
             if not (shared / f.name).exists():

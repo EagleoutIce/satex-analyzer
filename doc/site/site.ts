@@ -806,13 +806,18 @@ interface Stream {
     const [x, y, w, h] = pic.box;
     const scale = Math.min(PICTURE_SCALE, (PICTURE_MAX - 2 * PICTURE_PAD) / Math.max(w, 1));
     const width = (w * scale + 2 * PICTURE_PAD).toFixed(0), height = (h * scale + 2 * PICTURE_PAD).toFixed(0);
-    const paths = pic.paths.map((p: Rec) => `<path d="${esc(p.d)}" fill="${p.fill ? 'currentColor' : 'none'}" stroke="${p.stroke ? 'currentColor' : 'none'}" stroke-width="${Math.max(p.width, 0.6)}"/>`).join('');
+    // a shape both drawn and filled (a node's `fill=…`) gets a tint, its text stays readable on it; a fill alone (an arrow tip) is solid
+    const paths = pic.paths.map((p: Rec) => `<path d="${esc(p.d)}"${p.fill && p.stroke ? ' class="ts-shape"' : ''} fill="${p.fill ? 'currentColor' : 'none'}" stroke="${p.stroke ? 'currentColor' : 'none'}" stroke-width="${Math.max(p.width, 0.6)}"/>`).join('');
     // each text centred in the closed path around its point (its node's frame), shrunk to fit it; a space between
     // texts keeps each its own word for a click
     const frames = pic.paths.filter((p: Rec) => /Z/.test(p.d)).map((p: Rec) => { const v = (p.d.match(/-?\d+(?:\.\d+)?/g) ?? []).map(Number), xs = v.filter((_: number, i: number) => i % 2 === 0), ys = v.filter((_: number, i: number) => i % 2 === 1); return [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)]; });
+    const framed = pic.texts.map((t: Rec) => frames.filter((b: number[]) => b[0] <= t.x && t.x <= b[2] && b[1] <= t.y && t.y <= b[3]).sort((a: number[], b: number[]) => (a[2] - a[0]) * (a[3] - a[1]) - (b[2] - b[0]) * (b[3] - b[1]))[0]);
+    // one size for the whole picture (its texts were set in one font): the median of the sizes each framed text fits
+    // at (a monospace glyph .6 of the size wide), so one odd frame does not shrink them all; a text wider is squeezed
+    const fits = pic.texts.map((t: Rec, k: number) => { const f = framed[k]; return f ? Math.min(f[3] - f[1] - 3, (f[2] - f[0] - 4) / (Math.max(1, String(t.text).length) * 0.6)) : 9; }).sort((a: number, b: number) => a - b);
+    const size = Math.max(4, Math.min(9, fits[(fits.length - 1) >> 1] ?? 9));
     const texts = pic.texts.map((t: Rec, k: number) => {
-      const f = frames.filter((b: number[]) => b[0] <= t.x && t.x <= b[2] && b[1] <= t.y && t.y <= b[3]).sort((a: number[], b: number[]) => (a[2] - a[0]) * (a[3] - a[1]) - (b[2] - b[0]) * (b[3] - b[1]))[0];
-      const x = f ? (f[0] + f[2]) / 2 : t.x, y = f ? (f[1] + f[3]) / 2 : t.y, room = f ? f[2] - f[0] - 4 : Infinity, size = f ? Math.min(9, Math.max(4, f[3] - f[1] - 3)) : 9;
+      const f = framed[k], x = f ? (f[0] + f[2]) / 2 : t.x, y = f ? (f[1] + f[3]) / 2 : t.y, room = f ? f[2] - f[0] - 4 : Infinity;
       const fit = String(t.text).length * size * 0.6 > room ? ` textLength="${room.toFixed(2)}" lengthAdjust="spacingAndGlyphs"` : '';
       return `<text data-k="${k}" x="${x}" y="${y}" font-size="${size}" text-anchor="middle" dominant-baseline="central"${fit}>${esc(t.text)}</text>`;
     }).join(' ');
@@ -1030,7 +1035,7 @@ interface Stream {
    * break though it filled (`filled`) as a dashed one: pdfTeX breaks it by there. */
   const tsPage = (r: Rec) => `<div class="ts-page${r.filled ? ` ts-page-fill ts-${esc(r.filled)}` : ''}" role="separator" data-line="${r.line}" title="${r.filled
     ? `the page passed \\vsize ${r.filled === 'surely' ? '' : 'maybe '}by line ${r.line}: pdfTeX breaks it there or before (the run breaks pages only where forced)`
-    : `the run shipped page ${r.page} out while reading line ${r.line}`}">` +
+    : `the run shipped page ${r.page} out while reading line ${r.line}`}. Click: its page numbering">` +
     `<span class="ts-at"></span><span class="ts-rails" aria-hidden="true"></span><span class="ts-page-label">${esc(r.detail)}</span></div>`;
   /** The typeset view of a `typeset` query's rows: paragraphs in a grid of one gutter and rails, page breaks as
    * lines, an environment instance of the user's file as one block with its name, a run from another file folded
@@ -1040,7 +1045,9 @@ interface Stream {
   function typesetView(rows: Rec[], { file = null, closed = new Set<string>(), plural = (n: number, w: string) => `${n} ${w}${n === 1 ? '' : 's'}`, lineOf = null }: { file?: string | null; closed?: Set<string>; plural?: (n: number, w: string) => string; lineOf?: ((n: number) => string | null | undefined) | null } = {}) {
     // each row knows its place in `rows`: a view finds the record (its sites) behind a paragraph
     // a paragraph of no source line and no text (the output routine's page boxes) shows nothing: no row "0"
-    const shown: Rec[] = rows.map((r, k): Rec => ({ ...r, k })).filter((r) => r.kind === 'page' || r.kind === 'paragraph' && (r.line || (r.detail ?? '').trim()));
+    const shown: Rec[] = rows.map((r, k): Rec => ({ ...r, k })).filter((r) => r.kind === 'page' || r.kind === 'paragraph' && (r.line || (r.detail ?? '').trim()))
+      // breaks at one line with nothing set between (`\clearpage` then `\twocolumn`'s): one separator, the later page empty
+      .filter((r, i, all) => !(r.kind === 'page' && all[i - 1]?.kind === 'page' && all[i - 1].line === r.line && !all[i - 1].filled === !r.filled));
     envEdges(shown);
     const mine = (r: Rec) => !file || (r.path ?? '').endsWith(file);
     const keyOf = (r: Rec) => r.kind === 'paragraph' && mine(r) && r.outer ? `${r.outer.env}@${r.outer.line}` : null;

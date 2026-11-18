@@ -167,7 +167,8 @@ tr:hover > .sd-rh .sd-del, .sd-colh:hover .sd-del, .sd-del:focus-visible { opaci
 .sd-grid th.sd-colh { padding-top: 1.2rem !important; }
 .sd .sd-colh .sd-del { left: 50%; top: .1rem; margin-left: -.5rem; }
 /* the selection's floating bar */
-.sd-selbar { position: absolute; z-index: 5; display: flex; gap: .15rem; align-items: center; padding: .2rem; background: var(--c-bg); border: 1px solid var(--c-border); border-radius: 10px; box-shadow: 0 8px 24px -8px rgb(0 0 0 / .3); transition: opacity .12s, transform .12s var(--ease); white-space: nowrap; }
+/* the selection's tools: a row of their own above the grid, never over its cells */
+.sd-selbar { position: sticky; left: 0; z-index: 5; display: flex; width: max-content; max-width: 100%; flex-wrap: wrap; margin: 0 0 .4rem; gap: .15rem; align-items: center; padding: .2rem; background: var(--c-bg); border: 1px solid var(--c-border); border-radius: 10px; box-shadow: 0 8px 24px -8px rgb(0 0 0 / .3); transition: opacity .12s, transform .12s var(--ease); white-space: nowrap; }
 .sd-selbar[hidden] { display: flex; opacity: 0; transform: translateY(4px); pointer-events: none; }
 .sd-selbar svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
 .sd-selbar .sd-sep { width: 1px; align-self: stretch; background: var(--c-border); margin: .1rem .15rem; }
@@ -1136,7 +1137,7 @@ tr:hover > .sd-rh .sd-del, .sd-colh:hover .sd-del, .sd-del:focus-visible { opaci
       msg));
     const grid = h('table', { class: 'sd-grid', role: 'grid', 'aria-label': 'the table\'s cells', 'aria-multiselectable': 'true' });
     const bar = h('div', { class: 'sd-selbar', hidden: true, role: 'toolbar', 'aria-label': 'the selection' });
-    const wrap = h('div', { class: 'sd-wrap' }, grid, bar);
+    const wrap = h('div', { class: 'sd-wrap' }, bar, grid);
     main.append(wrap);
 
     // the side: typeset preview, the data in and out
@@ -1343,11 +1344,6 @@ tr:hover > .sd-rh .sd-del, .sd-colh:hover .sd-del, .sd-del:focus-visible { opaci
         b(SVG('<path d="M5 3v10M11 3v10"/><path d="M8 6v4" stroke-width="2"/>'), `Delete ${cols > 1 ? `columns ${c0 + 1}–${c1 + 1}` : `column ${c0 + 1}`}`, () => { change((s) => T.deleteCols(s, c0, c1)) || note('A table needs at least one column'); select([r0, Math.min(c0, t().cols.length - 1)]); }, cols === s.cols.length),
         b(SVG('<path d="M4 4l8 8M12 4l-8 8"/>'), 'Clear the cells (Delete)', () => change((s) => T.clear(s, [r0, c0, r1, c1]))),
       );
-      // above the selection; below it where it would cover the column header
-      const wr = wrap.getBoundingClientRect(), a = first.getBoundingClientRect(), z = last.getBoundingClientRect();
-      const y0 = wr.top - wrap.scrollTop, headBottom = grid.tHead!.getBoundingClientRect().bottom - y0, above = a.top - y0 - bar.offsetHeight - 6;
-      bar.style.top = `${above >= headBottom ? above : z.bottom - y0 + 6}px`;
-      bar.style.left = `${Math.max(0, Math.min(a.left - wr.left + wrap.scrollLeft, wrap.scrollWidth - bar.offsetWidth - 4))}px`;
       bar.hidden = false;
     }
     wrap.addEventListener('focusout', () => setTimeout(placeBar, 0));
