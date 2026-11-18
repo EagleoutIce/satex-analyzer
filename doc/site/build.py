@@ -141,10 +141,11 @@ def parallel(label, jobs, f, workers=None):
                 show()
     stop.set()
     return [out[i] for i in range(len(jobs))]
-# What `satex query files` listed, by what it depends on: the document, the
-# flags, the project config and the installation (its ls-R files). A listing
-# does not depend on the satex build, so a rebuild reuses it; --fresh drops it.
+# What `satex query files` listed, per run (flags, document, directory, config): the listing and
+# what it depends on (the document's text, the config, the installation's ls-R files, the analysis
+# unless --keep-listings). A --fast build takes a run's last listing when that changed; --fresh drops them.
 LISTINGS = {}
+STAMP = ""  # the installation and analysis the listings depend on: set by main()
 LISTINGS_FILE = None  # where they are kept between builds: written after each step, so a stopped build keeps what it listed
 
 
@@ -175,23 +176,25 @@ def prune_memo():
                 p.unlink(missing_ok=True)
 
 
-def memo(work, label, parts, make, key="", later=None, reuse=True):
+def memo(work, label, parts, make, key="", later=None, reuse=True, stale=False):
     """`make()`, remembered in WORK/memo under `label` while `parts` (its inputs) and `key` (the satex
     code whose output it is: KEY, VIEW or BINARY) stay the same: a build that changes only the page's
     code reuses every satex run. A --fast build skips a slow step (one with `later`): it takes the
-    step's last result under another key (with `reuse`), else `later`, and stores nothing holding it."""
+    step's last result under another key (with `reuse`), else `later`, and stores nothing holding it.
+    A `stale` step it makes only when it has no last result, and keeps what it made of skipped steps as one."""
     slot = digest(json.dumps(parts, default=str).encode())
     path = work / "memo" / f"{label}-{slot}-{digest(json.dumps(key).encode())}.pkl"
     MEMO_USED.add(path)
     if path.exists() and not FRESH:
         return pickle.loads(path.read_bytes())
-    if FAST and later is not None:
+    last = max(path.parent.glob(f"{label}-{slot}-*.pkl"), key=lambda p: p.stat().st_mtime, default=None) if reuse else None
+    if FAST and (later is not None or stale and last):
         SKIPPED.append(label)
-        last = max(path.parent.glob(f"{label}-{slot}-*.pkl"), key=lambda p: p.stat().st_mtime, default=None) if reuse else None
         return pickle.loads(last.read_bytes()) if last else later
     skipped = len(SKIPPED)
     value = make()
-    if len(SKIPPED) == skipped:
+    if len(SKIPPED) == skipped or stale:  # one made of skipped steps is only a last result
+        path = path if len(SKIPPED) == skipped else path.with_name(f"{label}-{slot}-stale.pkl")
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(pickle.dumps(value))
     return value
@@ -245,14 +248,17 @@ def files_read(satex, flags, doc, cwd, env, config=b"", absent=False):
     """The paths `satex query files` lists for `doc` (read, or found by `\\openin`), reused while nothing
     it depends on changed; with `absent`, the names it looked for and did not find instead."""
     # the paths it lists are absolute: another checkout's listing names another checkout's files
-    key = digest(json.dumps([flags, str(doc), str(cwd), doc.read_bytes().decode(errors="replace"), config.decode(errors="replace"),
-                             LISTINGS.get("@stamp", "")]).encode())
-    if key not in LISTINGS:
+    job = digest(json.dumps([flags, str(doc), str(cwd), digest(config)]).encode())
+    inputs = digest(json.dumps([doc.read_bytes().decode(errors="replace"), STAMP]).encode())
+    if job in LISTINGS and LISTINGS[job]["inputs"] != inputs and FAST:
+        SKIPPED.append("listings")  # the last listing, stale: the whole build lists again
+    elif LISTINGS.get(job, {}).get("inputs") != inputs:
         done = proc([str(satex), *flags, "query", "files", "-f", str(doc), "--format", "json"],
                               cwd=cwd, env=env, capture_output=True, text=True)
-        LISTINGS[key] = [entry.get("path") or f"?{entry['file']}" for entry in json.loads(done.stdout or "[]")
-                         if "path" in entry or entry.get("kind") == "absent"]
-    return [e[1:] for e in LISTINGS[key] if e.startswith("?")] if absent else [e for e in LISTINGS[key] if not e.startswith("?")]
+        LISTINGS[job] = {"inputs": inputs, "paths": [entry.get("path") or f"?{entry['file']}" for entry in json.loads(done.stdout or "[]")
+                                                     if "path" in entry or entry.get("kind") == "absent"]}
+    paths = LISTINGS[job]["paths"]
+    return [e[1:] for e in paths if e.startswith("?")] if absent else [e for e in paths if not e.startswith("?")]
 
 
 def kpsewhich(names, cwd):
@@ -686,6 +692,10 @@ def bundle(satex, work):
         # The kernel's archive holds the format and what the sample loads, nothing else: the shared
         # directory gathers every package any run met, which would ship with the first download.
         shared, alone = work / f"cache-{kernel}", work / f"cache-{kernel}-sample"
+        archive = work / f"satex-cache-{kernel}.bin"
+        if FAST and archive.is_file():  # the last build's: the page rebuilds the entries this binary cannot use
+            SKIPPED.append("kernel caches")
+            return archive
         shutil.rmtree(alone, ignore_errors=True)
         alone.mkdir(parents=True)
         shared.mkdir(parents=True, exist_ok=True)
@@ -693,7 +703,6 @@ def bundle(satex, work):
             shutil.copy2(f, alone / f.name)
         kenv = dict(os.environ, SATEX_CACHE=str(alone))
         proc([str(satex), *flags, "lint", "-f", SAMPLE], cwd=project, env=kenv, capture_output=True, check=False)
-        archive = work / f"satex-cache-{kernel}.bin"
         run(str(satex), "cache", "export", str(archive), env=kenv)
         # a format built here keeps the shared directory warm for the next build
         for f in alone.glob("format-*"):
@@ -1396,9 +1405,9 @@ def playground(satex, wasm, work, out):
     mining = side.submit(mine, satex, work, sorted(n for n in offered if not n.endswith(".cls")))
     sources_ = [(d.name, d.read_bytes()) for d in sources()] + [(c, (d.parent / c).read_bytes()) for d in sources() for c in projects()[d.name]]
     tables, packages, samples, project = memo(
-        work, "bundle", [LISTINGS.get("@stamp"), offered, sources_, tree_digest(ROOT / "samples"), (SITE / "playground.yaml").read_text(),
+        work, "bundle", [STAMP, offered, sources_, tree_digest(ROOT / "samples"), (SITE / "playground.yaml").read_text(),
                          inspect.getsource(bundle)],
-        lambda: bundle(satex, work), key=VIEW)  # VIEW: it holds the previews query
+        lambda: bundle(satex, work), key=VIEW, stale=True)  # VIEW: it holds the previews query
     PREVIEWS.update(json.loads(tables[0].get("/cache/previews.json") or b"{}"))
     documented = manuals(satex, work, tables, packages, offered, mining.result())
     side.shutdown()
@@ -1449,9 +1458,9 @@ def playground(satex, wasm, work, out):
         # each example's type plugins: where a plugin shows on it (`places`) makes it the plugin's demo
         plugged = {ex: json.loads(run(str(satex), "query", "type-plugins", "--format", "json", "-f", ex, cwd=project, env=env)) for ex in roots(EXAMPLES)}
         return queries, [q for q in queries if per_file(q)], rules, json.loads(run(str(satex), "completions", "json")), about, plugged
-    queries, filtered, rules, completion, query_about, plugged = memo(work, "facts", [tree_digest(project), inspect.getsource(facts)], facts, key=BINARY)
+    queries, filtered, rules, completion, query_about, plugged = memo(work, "facts", [tree_digest(project), inspect.getsource(facts)], facts, key=BINARY, stale=True)
     table, files = memo(work, "symbols", [ICON_PACKAGES, inspect.getsource(icons), inspect.getsource(emoji), inspect.getsource(symbols), inspect.getsource(comprehensive), inspect.getsource(categories), GLYPH],
-                        lambda: symbols(satex, project, dict(os.environ, SATEX_CACHE=str(work / f"cache-{KERNELS[0][0]}"))), key=VIEW)
+                        lambda: symbols(satex, project, dict(os.environ, SATEX_CACHE=str(work / f"cache-{KERNELS[0][0]}"))), key=VIEW, stale=True)
     # every rule's card on any page (site.js), from the same records the playground's findings show
     (out / "rules.json").write_text(json.dumps(rules))
     tiles = plugin_tiles(plugged)
@@ -1790,7 +1799,7 @@ def main():
     # start more of them, so the process ends at once instead of unwinding the main thread only.
     for stop in (signal.SIGINT, signal.SIGTERM):
         signal.signal(stop, lambda number, _: os._exit(128 + number))
-    global MINIFY, SCRATCH, BINARY, KEY, VIEW, FRESH, FAST, SATEX, SITE, EXAMPLES, LISTINGS_FILE
+    global MINIFY, SCRATCH, BINARY, KEY, VIEW, FRESH, FAST, SATEX, SITE, EXAMPLES, LISTINGS_FILE, STAMP
     SATEX, MINIFY = args.satex.resolve(), not args.no_minify
     about = json.loads(subprocess.run([str(SATEX), "--format", "json", "--version"], capture_output=True, text=True).stdout or "{}")
     BINARY, FRESH, FAST = binary_digest(SATEX, about), args.fresh, args.fast
@@ -1811,12 +1820,9 @@ def main():
     shutil.copytree(SITE, snapshot, ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
     SITE, EXAMPLES = snapshot, snapshot / "examples"
     listings = LISTINGS_FILE = work / "listings.json"
-    stamp = installation_stamp() + ("" if args.keep_listings else ";" + KEY)
+    STAMP = installation_stamp() + ("" if args.keep_listings else ";" + KEY)
     if listings.exists() and not args.fresh:
-        LISTINGS.update(json.loads(listings.read_text()))
-    if LISTINGS.get("@stamp") != stamp:
-        LISTINGS.clear()
-        LISTINGS["@stamp"] = stamp
+        LISTINGS.update((k, v) for k, v in json.loads(listings.read_text()).items() if isinstance(v, dict))
 
     cargo = tomllib.loads((ROOT / "Cargo.toml").read_text())["package"]
     homepage, repo = cargo["homepage"].rstrip("/") + "/", cargo["repository"].rstrip("/")
