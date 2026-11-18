@@ -141,3 +141,18 @@ fn a_project_repeating_a_user_setting_is_not_warned() {
     assert!(!warned("plugins:\n  packages: false\n"));
     assert!(warned("plugins:\n  packages: true\n"));
 }
+
+/// Intuition: a package is analyzed like a library of functions: each command it defines is
+/// called once on unknown arguments, and an error certain for every argument is reported at the
+/// definition. Unknown text may be a number, so `\count0=#1` raises nothing (sound, no guess).
+/// Pins: package commands were only checked where the package itself called them.
+#[test]
+fn a_package_command_failing_on_every_call_is_reported() {
+    let source = "\\def\\good#1{#1}\n\\def\\bad#1{\\undefinedthing #1}\n\\def\\num#1{\\count0=#1\\relax}\n";
+    let analysis = analyze_as(Profile::Package, source, "calls.sty");
+    let findings = satex::linter::lint(&analysis);
+    let found: Vec<String> =
+        findings.iter().filter(|r| r["code"] == "package-call-error").map(|r| r["message"].to_string()).collect();
+    assert_eq!(found.len(), 1, "{found:?}");
+    assert!(found[0].contains("\\\\bad") && found[0].contains("Undefined control sequence"), "{found:?}");
+}

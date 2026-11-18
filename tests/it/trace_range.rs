@@ -275,6 +275,26 @@ fn a_trace_step_shows_its_call_and_a_stop_shows_the_state_there() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// A traced call shows its own arguments, not those of the first call at the same site: a
+/// macro's body is one site for every call. Pins the trace widget's arguments, which came from
+/// the site's first call (a call from a package's load) and, once the traced run replayed
+/// package caches (no arguments kept), from none.
+#[test]
+fn a_traced_call_shows_its_own_arguments() {
+    let dir = crate::support::tmp_root().join(format!("satex-trace-own-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let main = "\\def\\inner#1{#1}\n\\def\\outer#1{\\inner{#1}}\n\\outer{first}\n\\outer{second}\n";
+    std::fs::write(dir.join("main.tex"), main).unwrap();
+    let line = main.lines().position(|l| l.contains("second")).unwrap() + 1;
+    let body = serde_json::json!({ "file": dir.join("main.tex"),
+        "config": { "trace": "true", "trace_lines": format!("[{line}, {line}]") }, "queries": [{ "type": "trace" }] });
+    let out = request(&dir, body);
+    let rows = out[0]["records"].as_array().unwrap();
+    let inner = rows.iter().find(|r| r["name"] == "\\inner").cloned().unwrap();
+    assert_eq!(inner["arguments"], serde_json::json!(["second"]), "{inner}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// A register a trace step names by number carries the names the run
 /// allocated to it: `\newcount` gave `\@tempcnta` its count.
 #[test]

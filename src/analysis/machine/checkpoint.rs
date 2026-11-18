@@ -498,6 +498,62 @@ pub struct Checkpoints<'a> {
 }
 
 impl<'a> Checkpoints<'a> {
+    /// Files outside the documents landed (a package bundle). A checkpoint holds while every
+    /// name its run looked up resolves as before: the first that resolves otherwise goes, and
+    /// every later one with it. What a run read is checked at its resume ([`reread`]).
+    pub fn outside_changed(&mut self) {
+        self.end = None;
+        let Some(mut now) = self.list.first().map(|c| c.machine.resolver.fresh()) else { return };
+        let mut holds = |c: &mut Checkpoint<'a>| {
+            let base = c.machine.base.clone();
+            c.machine.resolver.renew(&mut now, &base)
+        };
+        let kept = self.list.iter_mut().position(|c| !holds(c)).unwrap_or(self.list.len());
+        self.list.truncate(kept);
+    }
+
+    /// A trace of lines (`cfg.trace_lines`) run from the last checkpoint before them, under
+    /// `cfg`, instead of from the start: the run before the lines is the last run's. `None`
+    /// where no checkpoint is before them or none holds for `source`.
+    /// `whole`: to the run's end, else only past the lines (the trace alone is asked).
+    pub fn trace_from<'b>(&self, source: &str, cfg: &'b Config, whole: bool) -> Option<Analysis>
+    where
+        'a: 'b,
+    {
+        let (first, last) = cfg.trace_lines?;
+        let traced = |m: &Machine<'a>, f: crate::engine::tex::FileId| match &cfg.trace_file {
+            Some(name) => {
+                m.out.files.get(usize::from(f)).is_some_and(|f| crate::project::config::names_file(&f.path, name))
+            }
+            None => f == m.out.main_file,
+        };
+        // before the lines: the file is open short of them, or not opened yet
+        let before = |c: &&Checkpoint<'a>| {
+            let open = c.machine.input.iter().find_map(|f| match f {
+                Frame::File { mouth, .. } if traced(&c.machine, mouth.file) => Some(mouth.position().0),
+                _ => None,
+            });
+            let opened = (0..c.machine.out.files.len()).any(|f| traced(&c.machine, f as crate::engine::tex::FileId));
+            open.map_or(!opened, |line| line < first)
+        };
+        let c = self.list.iter().rev().find(before)?;
+        let at =
+            reading_file_after(&c.machine.input, 1).map(|(m, _)| (c.machine.out.short_name(m.file), m.position().0));
+        crate::util::progress::note!("satex: trace from the checkpoint at {at:?}");
+        let (mut input, mut drive) = (c.machine.input.clone(), c.drive.clone());
+        reread(&c.machine.out, &mut input, &mut drive, &self.log[..c.reads], source, &mut HashMap::default()).ok()?;
+        let mut m: Machine<'b> = c.machine.clone();
+        (m.input, m.cfg, m.started) = (input, std::borrow::Cow::Borrowed(cfg), std::time::Instant::now());
+        m.checkpoints.resume = Some(Box::new(drive));
+        crate::engine::source::set_encoding(m.out.plugins.engine.encoding());
+        let file = (0..m.out.files.len()).map(|f| f as crate::engine::tex::FileId).find(|&f| traced(&c.machine, f));
+        m.checkpoints.stop = file.filter(|_| !whole).map(|f| (f, last, false));
+        m.run_guarded();
+        m.checkpoints.stop = None;
+        let id = m.out.main_file;
+        Some(m.conclude(id, source))
+    }
+
     pub fn new(cfg: &'a Config) -> Self {
         Checkpoints {
             cfg,

@@ -2014,6 +2014,31 @@ fn a_label_used_only_inside_an_argument_is_not_unused() {
     }
 }
 
+/// Intuition: cleveref's `\\cref` reads the name `\\r@⟨key⟩@cref` its `\\label` declared from the
+/// same document key, so the read is a use of that key, with or without hyperref, for every form
+/// (`\\Cref`, `\\crefrange`, `\\labelcref`, lists). Soundness: `unused-label` must never call a used
+/// label unused (its fix deletes the label). Bug pinned: without hyperref the package-made suffix
+/// `@cref` was folded into the key, so no read matched and S050 fired on referenced labels.
+#[test]
+fn a_label_used_only_by_cleveref_is_not_unused() {
+    for hyperref in ["", "\\usepackage{hyperref}\n"] {
+        for (name, uses) in [
+            ("cref", "\\Cref{sec:a} and \\cref{sec:b}"),
+            ("crefrange", "\\crefrange{sec:a}{sec:b}"),
+            ("labelcref", "\\labelcref{sec:a} and \\labelcref{sec:b}"),
+            ("creflist", "\\cref{sec:a,sec:b}"),
+        ] {
+            let doc = format!(
+                "\\documentclass{{article}}\n{hyperref}\\usepackage{{cleveref}}\n\\begin{{document}}\n\
+                 \\section{{A}}\\label{{sec:a}}\n\\section{{B}}\\label{{sec:b}}\n{uses}.\n\\end{{document}}\n"
+            );
+            let doc = on_disk(&format!("{name}{}", hyperref.len()), &doc, false).expect("temporary directory");
+            let found = findings(&doc.analysis, "unused-label");
+            assert!(found.is_empty(), "{hyperref}{uses}: {found:?}");
+        }
+    }
+}
+
 /// Intuition: in a definition's body `#` must be followed by `#` or a parameter's number; TeX
 /// reports any other `#` right at the definition (tex.web § 479). Soundness: a real TeX error
 /// must never go unreported. Pins: `\\def\\ck#1{The year # is.}` reported only the later

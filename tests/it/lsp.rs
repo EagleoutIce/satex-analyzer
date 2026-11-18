@@ -1186,6 +1186,47 @@ mod roots {
         }
     }
 
+    /// The trace widget's trace of a line runs from the open run's last checkpoint before it, not
+    /// from the start, and records what a run from the start records. Pins opening the trace,
+    /// which ran the whole preamble again (14 s in the browser on the thesis example).
+    #[test]
+    fn a_trace_from_a_checkpoint_is_the_trace_from_the_start() {
+        if !crate::support::installed() {
+            return;
+        }
+        let body: String = (0..40).map(|i| format!("\\twice{{line {i}}}\n")).collect();
+        let main = format!(
+            "\\documentclass{{article}}\n\\newcommand\\twice[1]{{#1#1}}\n\\begin{{document}}\n{body}\\twice{{traced}}\n\\end{{document}}\n"
+        );
+        let (mut server, _, dir) = project_with("trace-checkpoint", &[("main.tex", &main)], "main.tex", true);
+        let line = main.lines().position(|l| l.contains("traced")).unwrap() + 1;
+        let config = json!({ "trace": "true", "trace_document_only": "false", "trace_lines": format!("[{line}, {line}]"),
+                             "trace_col": "1", "trace_file": "main.tex" });
+        let request = json!({ "file": dir.join("main.tex").display().to_string(), "config": config, "queries": [{ "type": "trace" }] });
+        let id =
+            server.request("workspace/executeCommand", json!({ "command": "satex/query", "arguments": [request] }));
+        let reply = server.response(id);
+        let said = server.shutdown();
+        assert!(said.contains("trace from the checkpoint at"), "{said}");
+        let fresh = {
+            use std::io::Write;
+            let mut child = crate::support::satex()
+                .env("SATEX_CACHE", crate::support::test_cache())
+                .args(["--set", "limits.seconds=0", "query", "--request", "-"])
+                .current_dir(&dir)
+                .stdin(std::process::Stdio::piped())
+                .stdout(std::process::Stdio::piped())
+                .spawn()
+                .unwrap();
+            child.stdin.take().unwrap().write_all(request.to_string().as_bytes()).unwrap();
+            serde_json::from_slice::<Value>(&child.wait_with_output().unwrap().stdout).unwrap()
+        };
+        let records = &reply["result"][0]["records"];
+        assert!(records.as_array().is_some_and(|r| r.iter().any(|e| e["arguments"] == json!(["traced"]))), "{reply}");
+        assert_eq!(records, &fresh[0]["records"]);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     /// `a.tex` names the file but does not read it; of `b.tex` and `c.tex`,
     /// which both read it, the likelier one answers, and keeps answering.
     #[test]

@@ -110,6 +110,21 @@ impl Resolver {
         &self.trees().distribution
     }
 
+    /// This resolver as a new one: the installation indexed again, nothing looked up yet.
+    pub(crate) fn fresh(&self) -> Self {
+        Self { trees: OnceCell::new(), cache: HashMap::default(), case_mismatches: RefCell::default(), ..self.clone() }
+    }
+
+    /// Whether every name looked up so far resolves in `now` as it did. Then it searches
+    /// `now`'s index from here on: files that landed since are found.
+    pub(crate) fn renew(&mut self, now: &mut Resolver, base: &Path) -> bool {
+        let same = self.cache.iter().all(|((name, kind), hit)| now.resolve(name, *kind, base) == *hit);
+        if same {
+            self.trees = now.trees.clone();
+        }
+        same
+    }
+
     pub fn resolve(&mut self, name: &str, kind: LoadKind, base: &Path) -> Option<PathBuf> {
         if let Some(hit) = self.cache.get(&(name.to_string(), kind)) {
             return hit.clone();

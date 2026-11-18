@@ -259,6 +259,7 @@ warning   correctness  C029    ignored-verbatim-tail             text lost after
 warning   correctness  C030    math-script-braces                script needs braces                         
 warning   correctness  C031    missing-dependency                package missing from the dependency file    
 warning   correctness  C063    misspelled-magic-comment          misspelled magic comment                    
+warning   correctness  C064    package-call-error                a package command fails on some call        
 warning   correctness  C061    package-load-order                package overrides an earlier one            
 warning   correctness  C058    pdfua-without-title               PDF/UA without a title                      
 warning   correctness  C054    reference-name-mismatch           name does not match the label               
@@ -662,11 +663,11 @@ typeset
 
 ```text
 $ satex trace -f samples/paper.tex
-index   step         name                        detail                    file           
+index   step         name                        detail    arguments       file           
 678     expand       \documentclass                                        paper.tex      @ paper.tex:1:1
-8412    open-file    \article                    /usr/local/texlive/YYYY…  paper.tex      @ paper.tex:1:1
+8412    open-file    \article                    /usr/lo…                  paper.tex      @ paper.tex:1:1
 10261   expand       \par                                                  paper.tex      @ paper.tex:2:1
-10268   expand       \newif                                                paper.tex      @ paper.tex:3:1
+10268   expand       \newif                                \ifdraft        paper.tex      @ paper.tex:3:1
 … 185 more lines omitted
 ```
 

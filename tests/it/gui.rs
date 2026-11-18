@@ -164,6 +164,33 @@ fn gui_language_server_answers_through_the_page_transport() {
     assert!(said.contains("undefinedname"), "{said}");
 }
 
+/// Files landing outside the documents (a package bundle) keep the checkpoints whose lookups they
+/// leave alone, but a name a run looked for and missed is looked for again: an `\\input` of a file
+/// that came since reads it. Pins the checkpoint reuse after a bundle lands, which used to drop
+/// every checkpoint and rerun the preamble after each background fetch.
+#[test]
+fn gui_reads_a_file_that_landed_since_the_last_run() {
+    let text = "\\input late\n\\latemacro\n";
+    let gui = Gui::start("landed", &[("main.tex", text)]);
+    let uri = format!("file://{}", gui.dir.join("main.tex").to_string_lossy());
+    let flags = ["--no-packages", "--no-classes", "--set", "load.format=false", "--set", "texmf.kpsewhich=false"];
+    let args = [&flags[..], &["-f", "main.tex"][..]].concat();
+    gui.page("POST", "/__satex/lsp/reset?s=t", &serde_json::json!({ "args": args, "cwd": gui.dir }).to_string());
+    gui.lsp(serde_json::json!({ "jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {} }));
+    gui.lsp(serde_json::json!({ "jsonrpc": "2.0", "method": "textDocument/didOpen",
+        "params": { "textDocument": { "uri": uri, "languageId": "latex", "version": 1, "text": text } } }));
+    let said = |params: serde_json::Value| {
+        let out = gui.lsp(serde_json::json!({ "jsonrpc": "2.0", "method": "satex/analyze", "params": params }));
+        let published = out.iter().filter(|m| m["method"] == "textDocument/publishDiagnostics");
+        published.map(|m| m["params"]["diagnostics"].to_string()).collect::<String>()
+    };
+    let before = said(serde_json::json!({ "first": uri }));
+    assert!(before.contains("latemacro"), "{before}");
+    std::fs::write(gui.dir.join("late.tex"), "\\let\\latemacro\\relax\n").unwrap();
+    let after = said(serde_json::json!({ "first": uri, "files": true }));
+    assert!(!after.contains("latemacro"), "{after}");
+}
+
 #[test]
 fn gui_runs_the_shown_document_first_and_no_other_unasked() {
     // documents named before `main.tex`: a folder of them must not run them all, nor start from the first
@@ -196,6 +223,9 @@ fn gui_runs_the_shown_document_first_and_no_other_unasked() {
     };
     open("main.tex");
     assert_eq!(analyze("main.tex"), ["main.tex"], "only the opened document runs");
+    // Nothing to run (the page switched back to a file): its findings come again, which ends the
+    // page's run. Without them the status line said "Analyzing" for 10 s after each file switch.
+    assert_eq!(analyze("main.tex"), ["main.tex"], "a run with nothing to do still answers the shown file");
     // opened in turn, the shown one named: it runs first, then the latest opened
     for n in ["a.tex", "b.tex", "c.tex"] {
         open(n);

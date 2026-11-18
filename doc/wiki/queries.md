@@ -341,11 +341,11 @@ Every step: which macro expanded, which primitive ran, what changed. Use `satex 
 
 ```text
 $ satex trace -f samples/paper.tex
-index   step         name                        detail                    file           
+index   step         name                        detail    arguments       file           
 678     expand       \documentclass                                        paper.tex      @ paper.tex:1:1
-8412    open-file    \article                    /usr/local/texlive/YYYY…  paper.tex      @ paper.tex:1:1
+8412    open-file    \article                    /usr/lo…                  paper.tex      @ paper.tex:1:1
 10261   expand       \par                                                  paper.tex      @ paper.tex:2:1
-10268   expand       \newif                                                paper.tex      @ paper.tex:3:1
+10268   expand       \newif                                \ifdraft        paper.tex      @ paper.tex:3:1
 10272   define       \ifdraft                    iffalse                   paper.tex      @ paper.tex:3:7
 … 184 more lines omitted
 ```

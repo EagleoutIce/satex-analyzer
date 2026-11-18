@@ -230,6 +230,9 @@ pub struct Watch {
     /// Tokens the sandbox read up to the end of this run.
     pub steps: u64,
     pub error: Option<String>,
+    /// The engine's own errors the run raised, each with whether it is
+    /// certain (no approximation on the way), for [`call_fault`].
+    pub raised: Vec<(String, bool)>,
     /// The run left the probe name a conditional (`\newif\ifP` made it one).
     pub switch: bool,
     raw: Vec<(Sym, usize, usize, Vec<Token>)>,
@@ -253,6 +256,7 @@ impl Watch {
             exhausted: false,
             steps: 0,
             error: None,
+            raised: Vec::new(),
             switch: false,
             raw: Vec::new(),
             calls: 0,
@@ -516,6 +520,60 @@ fn probe_bare_error(analysis: &Analysis, sym: Sym, context: Option<Sym>, spent: 
         return None;
     }
     watch.error
+}
+
+/// The errors TeX raises when each of `syms` is called like a function on
+/// unknown arguments in the document body: each mandatory argument (and a
+/// required delimited one) holds unknown text, every optional item is left
+/// out. Only an error certain whatever the arguments are counts. A name whose
+/// call ran clean, ran out of budget, or has an item no call text spells (a
+/// `\def`'s parameter text) gives none: no guess.
+pub fn call_faults(analysis: &Analysis, syms: &[Sym]) -> Vec<(Sym, String)> {
+    let shapes: Vec<(Sym, Vec<ArgType>)> = syms
+        .iter()
+        .filter_map(|&s| probe(analysis, s, State::End).filter(|p| p.complete).map(|p| (s, p.spec.items)))
+        .collect();
+    let cfg = sandbox_config(&analysis.settings);
+    let Some(mut machine) = Machine::sandbox(&cfg, analysis, State::End) else { return Vec::new() };
+    let state = machine.document_state();
+    let mut out = Vec::new();
+    for (sym, items) in shapes {
+        let mut args = Vec::new();
+        let spelled = items.iter().all(|item| {
+            match item {
+                ArgType::Mandatory => args.extend(machine.braced_unknown()),
+                ArgType::Delimited { open, close, required: true, .. } => {
+                    let [_, unknown, _] = machine.braced_unknown();
+                    let chr = |c: char| {
+                        Token::new(
+                            crate::engine::tex::Tok::Chr(c, crate::engine::tex::Catcode::Other),
+                            Default::default(),
+                        )
+                    };
+                    args.extend([chr(*open), unknown, chr(*close)]);
+                }
+                ArgType::Optional(_)
+                | ArgType::Star
+                | ArgType::TokenFlag(_)
+                | ArgType::Embellishment(_)
+                | ArgType::Delimited { .. } => {}
+                _ => return false,
+            }
+            true
+        });
+        if !spelled {
+            continue;
+        }
+        let watch = machine.call_from(&state, sym, &args);
+        if watch.exhausted {
+            continue;
+        }
+        let certain = watch.raised.into_iter().find(|(_, c)| *c).map(|(t, _)| t);
+        if let Some(error) = certain.or(watch.error.filter(|e| !e.contains('\u{2}'))) {
+            out.push((sym, error));
+        }
+    }
+    out
 }
 
 /// What calling `sym` alone raises outside any environment (`None`), and

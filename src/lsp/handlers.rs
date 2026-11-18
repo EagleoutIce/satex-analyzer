@@ -2944,12 +2944,13 @@ fn command_items(analysis: &Analysis, pos: Pos, typed: &str) -> (Vec<CompletionI
     let tiers = &analysis.settings.conventions.completion.tiers;
     let typeable =
         |label: &str| label.chars().count() < 2 || label.chars().all(|c| c.is_alphabetic() || letters.contains(&c));
-    let mut items: Vec<(CompletionItem, String)> = {
+    let mut items: Vec<(CompletionItem, &query::ScopeRow)> = {
         let named = |name: &str| crate::engine::tex::bare_name(name).to_lowercase().contains(&typed);
         query::scope_named(analysis, Some((analysis.main_file, pos.line, pos.col)), true, named)
     }
     .into_iter()
-    .filter_map(|record| {
+    .filter_map(|row| {
+        let record = row.lean();
         let name = record.get("name")?.as_str()?.to_string();
         let label = crate::engine::tex::bare_name(&name).to_string();
         if !label.to_lowercase().contains(&typed) || !typeable(&label) {
@@ -2960,8 +2961,6 @@ fn command_items(analysis: &Analysis, pos: Pos, typed: &str) -> (Vec<CompletionI
         if label.is_empty() || (internal && !matches!(tag, "macro" | "primitive" | "environment" | "alias")) {
             return None;
         }
-        // the usage line, its arguments named, else the bare shape
-        let effective = record.get("usage").or_else(|| record.get("effective")).and_then(Json::as_str).unwrap_or("");
         let shape = record.get("effective").and_then(Json::as_str).unwrap_or("");
         let package = record.get("package").and_then(Json::as_str).unwrap_or("");
         let tier = match (package, internal) {
@@ -2988,7 +2987,7 @@ fn command_items(analysis: &Analysis, pos: Pos, typed: &str) -> (Vec<CompletionI
             sort_text: Some(format!("{tier}{:06}{label}", 999_999u32.saturating_sub(count))),
             label: label.clone(),
             kind: Some(if tag == "primitive" { CompletionItemKind::KEYWORD } else { CompletionItemKind::FUNCTION }),
-            detail: Some(format!("{effective}  ({})", written_by(analysis, &record).unwrap_or(package.to_string()))),
+            detail: Some(package.to_string()),
             insert_text: Some(insert_text),
             insert_text_format: Some(format),
             command: pick.then(|| lsp_types::Command {
@@ -2998,9 +2997,7 @@ fn command_items(analysis: &Analysis, pos: Pos, typed: &str) -> (Vec<CompletionI
             }),
             ..Default::default()
         };
-        // the arguments a call reads: the effective usage after the name
-        let args = effective.strip_prefix('\\').unwrap_or(effective).strip_prefix(label.as_str()).unwrap_or("");
-        Some((it, args.to_string()))
+        Some((it, row))
     })
     .collect();
     // A name that starts with what is typed before one that only holds it.
@@ -3008,6 +3005,19 @@ fn command_items(analysis: &Analysis, pos: Pos, typed: &str) -> (Vec<CompletionI
     let shown = analysis.settings.conventions.completion.shown;
     let more = items.len() > shown;
     items.truncate(shown);
+    // the usage line of the shown ones, its arguments named, else the bare shape: only these get a full row
+    let mut items: Vec<(CompletionItem, String)> = (items.into_iter())
+        .map(|(mut item, row)| {
+            let full = row.full(analysis);
+            let effective = full.get("usage").or_else(|| full.get("effective")).and_then(Json::as_str).unwrap_or("");
+            let by = written_by(analysis, &full).unwrap_or_else(|| item.detail.take().unwrap_or_default());
+            item.detail = Some(format!("{effective}  ({by})"));
+            // the arguments a call reads: the effective usage after the name
+            let args =
+                effective.strip_prefix('\\').unwrap_or(effective).strip_prefix(item.label.as_str()).unwrap_or("");
+            (item, args.to_string())
+        })
+        .collect();
     let all = {
         let names: Vec<&str> = items.iter().map(|(i, _)| i.label.as_str()).collect();
         crate::analysis::roles::roles_many(analysis, &names)

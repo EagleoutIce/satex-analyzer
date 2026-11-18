@@ -54,6 +54,7 @@ Every rule, with a link to its explanation below. The shape gives the severity: 
 | C030 | [`math-script-braces`](#math-script-braces) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | — | <span class="fix fix-safe" title="safe: the fix keeps the document's meaning, --fix applies it">S</span> | script needs braces | 0.2.0 | <a class="from" href="Chktex-Coverage" title="follows chktex warning 3, 25">chktex 3, 25</a> |
 | C031 | [`missing-dependency`](#missing-dependency) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | — | <span class="fix fix-safe" title="safe: the fix keeps the document's meaning, --fix applies it">S</span> | package missing from the dependency file | 0.1.0 | — |
 | C063 | [`misspelled-magic-comment`](#misspelled-magic-comment) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix may change the meaning, only --unsafe-fixes applies it">U</span> | misspelled magic comment | 0.2.5 | — |
+| C064 | [`package-call-error`](#package-call-error) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | — | — | a package command fails on some call | 0.2.5 | — |
 | C061 | [`package-load-order`](#package-load-order) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix may change the meaning, only --unsafe-fixes applies it">U</span> | package overrides an earlier one | 0.2.5 | — |
 | C058 | [`pdfua-without-title`](#pdfua-without-title) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | — | <span class="fix fix-safe" title="safe: the fix keeps the document's meaning, --fix applies it">S</span> | PDF/UA without a title | 0.2.5 | — |
 | C054 | [`reference-name-mismatch`](#reference-name-mismatch) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix may change the meaning, only --unsafe-fixes applies it">U</span> | name does not match the label | 0.2.4 | — |
@@ -231,7 +232,7 @@ In the rule list below, `S` marks a rule with a safe fix and `U` one with an uns
 One group per category, each with its first rules. A group's button shows the rest.
 
 <div class="fold" id="category-correctness">
-<h3 class="fold-head"><b>correctness</b> (63 rules)</h3>
+<h3 class="fold-head"><b>correctness</b> (64 rules)</h3>
 
 ### already-defined
 
@@ -713,6 +714,16 @@ Fix by adding the package to the dependency file, or by rerunning depp.
 Editors and satex read `% !TeX program = …`, `% !TeX root = …` and their kin before the run: the engine, the root file, the encoding. A typo in the head or the key (`% !rex program`, `% !TeX progam`) turns the line into a plain comment, so the document builds with another engine or root than you meant.
 
 The rule reports a comment that is one or two letters away from a known head (`magic.prefixes`) or key. Fix by writing the head or key as it should be.
+
+### package-call-error
+
+<p class="badges"><code class="num" title="rule number">C064</code> <span class="sev sev-warning" title="default: warning">default: warning</span> <span class="cat cat-correctness">correctness</span> <span class="since" title="first release">since 0.2.5</span></p>
+
+**a package command fails on some call**
+
+When you analyze a package or class itself, satex calls each command it defines once, the way a static analyzer checks a function: every mandatory argument holds unknown text and optional ones are left out. A TeX error that call raises (an undefined command, a missing number, a runaway argument) is one some document using the package will meet.
+
+The rule reports it at the definition, with TeX's message. Unknown text over-approximates every argument, so the error may need a particular argument: check what the command does with it.
 
 ### package-load-order
 

@@ -2341,11 +2341,10 @@ fn trace(analysis: &Analysis) -> Vec<Record> {
                 }
                 _ => None,
             });
-            if let Some((call, m)) = def {
-                record.insert("parameters".into(), json!(m.parameter_text.render(&analysis.interner)));
-                record.insert("body".into(), json!(detokenize(&m.replacement_text, &analysis.interner)));
-                let args: Vec<String> = call.arguments.iter().map(|a| detokenize(a, &analysis.interner)).collect();
-                record.insert("arguments".into(), json!(args));
+            if let Some(c) = &event.call {
+                record.insert("parameters".into(), json!(c.parameters));
+                record.insert("body".into(), json!(c.body));
+                record.insert("arguments".into(), json!(c.arguments));
             }
             if expand && let Some(body) = event.detail.as_deref() {
                 record.insert("inserts".into(), json!(body));
@@ -4484,7 +4483,13 @@ pub(crate) fn origin_of(analysis: &Analysis, package: Option<Sym>, file: FileId)
 /// tens of thousands the kernel allocates for its own bookkeeping).
 /// `does` is the one-line description of a documented kernel command.
 pub fn scope(analysis: &Analysis, before: Option<(FileId, u32, u32)>, all: bool) -> Vec<Record> {
-    scope_named(analysis, before, all, |_| true)
+    scope_named(analysis, before, all, |_| true).into_iter().map(|row| row.full(analysis)).collect()
+}
+
+/// [`scope`] lean: each name with its tag, shape (`effective`) and package only, what a
+/// completion list shows; the rest (`usage`, `does`, the place) is what [`ScopeRow::full`] adds.
+pub fn scope_lean(analysis: &Analysis, all: bool) -> Vec<Record> {
+    scope_named(analysis, None, all, |_| true).into_iter().map(|row| row.record.clone()).collect()
 }
 
 /// The names [`scope`] shows with `all` at the run's end, without building their records:
@@ -4497,13 +4502,13 @@ pub fn scope_names(analysis: &Analysis) -> Vec<String> {
     names.into_iter().map(|s| analysis.interner.name(s)).filter(|n| !unprintable_name(n)).map(str::to_string).collect()
 }
 
-/// [`scope`] of the names `named` keeps.
+/// The rows of [`scope`] of the names `named` keeps, sorted.
 pub fn scope_named(
     analysis: &Analysis,
     before: Option<(FileId, u32, u32)>,
     all: bool,
     named: impl Fn(&str) -> bool,
-) -> Vec<Record> {
+) -> Vec<&ScopeRow> {
     let rows = crate::util::progress::built(&analysis.scope_rows, || scope_rows(analysis));
     let mut latest: BTreeMap<Sym, usize> = BTreeMap::new();
     // A definition in a file no user file reads (the kernel's, run by
@@ -4543,7 +4548,7 @@ pub fn scope_named(
         }
     }
     let shown = |row: &&ScopeRow| all || row.plain;
-    let row = |i: usize| crate::util::progress::built(&rows.defs[i], || def_row(analysis, &analysis.facts.defs[i]));
+    let row = |i: usize| crate::util::progress::built(&rows.defs[i], || def_row(analysis, i));
     // an internal name is dropped before its row is built: most of a format's names are
     let spelled = |&&i: &&usize| all || !internal_name(analysis, analysis.interner.name(analysis.facts.defs[i].name));
     let defs = latest.values().filter(spelled).filter_map(|&i| row(i).as_ref()).filter(shown);
@@ -4553,16 +4558,71 @@ pub fn scope_named(
         (a.tier, a.record.get("name").and_then(Json::as_str))
             .cmp(&(b.tier, b.record.get("name").and_then(Json::as_str)))
     });
-    out.into_iter().map(|row| row.record.clone()).collect()
+    out
 }
 
-/// One name [`scope`] may show, its tier, and whether a document spells it.
+/// One name [`scope`] may show, its tier, and whether a document spells it. `record` is the
+/// lean part, `more` what only a full row shows: made when first asked, most rows never are.
 #[derive(Clone)]
 pub struct ScopeRow {
     name: String,
     tier: u8,
     record: Record,
     plain: bool,
+    of: RowOf,
+    more: std::sync::OnceLock<Record>,
+}
+
+/// What a [`ScopeRow`] shows: a definition (its index in `facts.defs`) or a name only the
+/// run's end state holds.
+#[derive(Clone, Copy)]
+enum RowOf {
+    Def(usize),
+    Held(Sym),
+}
+
+impl ScopeRow {
+    /// The lean record: name, tag, shape and package.
+    pub fn lean(&self) -> &Record {
+        &self.record
+    }
+
+    /// The whole record: the lean one with the place, `usage` and what the documentation says.
+    pub fn full(&self, analysis: &Analysis) -> Record {
+        let mut record = self.record.clone();
+        record.extend(self.more(analysis).clone());
+        record
+    }
+
+    /// What [`ScopeRow::full`] adds to the lean record.
+    pub fn more(&self, analysis: &Analysis) -> &Record {
+        self.more.get_or_init(|| {
+            let held;
+            let (sym, mac, span) = match self.of {
+                RowOf::Def(i) => {
+                    let def = &analysis.facts.defs[i];
+                    (def.name, def.mac.as_deref(), Some(def.span))
+                }
+                RowOf::Held(sym) => {
+                    held = analysis.env.meaning(sym);
+                    (sym, held.as_macro().map(|m| &**m), None)
+                }
+            };
+            let mut record = span.map(|span| place(analysis, span)).unwrap_or_default();
+            if span.is_none() {
+                record.insert("provider".into(), json!("kernel"));
+            }
+            let file =
+                span.and_then(|s| Some((analysis.files.get(usize::from(s.file))?.path.as_str(), s.line as usize)));
+            let said = super::said::said(analysis, &self.name, file, true);
+            // the comment block above a definition in the project's files names its arguments
+            let comment = span.and_then(|s| source_comment(analysis, s));
+            let params = comment.as_ref().map_or(&[][..], |c| &c.params[..]);
+            record.insert("usage".into(), json!(usage_of(analysis, sym, mac, None, said.usage.as_deref(), params)));
+            super::said::insert(&mut record, &said);
+            record
+        })
+    }
 }
 
 /// What [`scope`] shows of each definition, made when a position first
@@ -4574,26 +4634,20 @@ pub struct ScopeRows {
     rest: Vec<ScopeRow>,
 }
 
-fn def_row(analysis: &Analysis, def: &crate::analysis::facts::Definition) -> Option<ScopeRow> {
+fn def_row(analysis: &Analysis, i: usize) -> Option<ScopeRow> {
+    let def = &analysis.facts.defs[i];
     let name = analysis.interner.name(def.name);
     if unprintable_name(name) {
         return None;
     }
-    let mut record = place(analysis, def.span);
+    let mut record = Map::new();
     record.insert("name".into(), json!(analysis.interner.cs(def.name)));
     record.insert("tag".into(), json!(def.tag));
     record.insert("effective".into(), json!(effective_of(analysis, def.name, def.mac.as_deref(), None)));
     let (tier, origin) = origin_of(analysis, def.package, def.span.file);
     record.insert("package".into(), origin);
-    let file = analysis.files.get(usize::from(def.span.file)).map(|f| f.path.as_str());
-    let said = super::said::said(analysis, name, file.map(|f| (f, def.span.line as usize)), true);
-    // the comment block above a definition in the project's files names its arguments
-    let comment = source_comment(analysis, def.span);
-    let params = comment.as_ref().map_or(&[][..], |c| &c.params[..]);
-    let usage = usage_of(analysis, def.name, def.mac.as_deref(), None, said.usage.as_deref(), params);
-    record.insert("usage".into(), json!(usage));
-    super::said::insert(&mut record, &said);
-    Some(ScopeRow { name: name.to_string(), tier, record, plain: !internal_name(analysis, name) })
+    let plain = !internal_name(analysis, name);
+    Some(ScopeRow { name: name.to_string(), tier, record, plain, of: RowOf::Def(i), more: Default::default() })
 }
 
 fn scope_rows(analysis: &Analysis) -> ScopeRows {
@@ -4634,8 +4688,8 @@ fn scope_rows_from(analysis: &Analysis, prior: Option<(&Analysis, &ScopeRows)>) 
                 .collect()
         })
         .unwrap_or_default();
-    let defs = (analysis.facts.defs.iter())
-        .map(|d| {
+    let defs = (analysis.facts.defs.iter().enumerate())
+        .map(|(i, d)| {
             let cell = std::sync::OnceLock::new();
             let key = (analysis.interner.name(d.name), path(analysis, d.span.file), d.span.line, d.span.col);
             if d.name.0 < same
@@ -4645,7 +4699,7 @@ fn scope_rows_from(analysis: &Analysis, prior: Option<(&Analysis, &ScopeRows)>) 
                 && p.package.map(|s| s.0) == d.package.map(|s| s.0)
                 && d.package.is_none_or(|s| s.0 < same)
             {
-                let _ = cell.set(Some((*row).clone()));
+                let _ = cell.set(Some(ScopeRow { of: RowOf::Def(i), ..(*row).clone() }));
             }
             cell
         })
@@ -4694,7 +4748,7 @@ fn scope_rows_from(analysis: &Analysis, prior: Option<(&Analysis, &ScopeRows)>) 
             && row.record.get("tag").and_then(Json::as_str) == Some(tag)
             && p.env.meaning(sym) == meaning
         {
-            rest.push((*row).clone());
+            rest.push(ScopeRow { of: RowOf::Held(sym), ..(*row).clone() });
             continue;
         }
         let mut record = Map::new();
@@ -4702,14 +4756,8 @@ fn scope_rows_from(analysis: &Analysis, prior: Option<(&Analysis, &ScopeRows)>) 
         record.insert("tag".into(), json!(tag));
         record.insert("effective".into(), json!(effective_of(analysis, sym, meaning.as_macro().map(|m| &**m), None)));
         record.insert("package".into(), json!("kernel"));
-        record.insert("provider".into(), json!("kernel"));
-        let said = super::said::said(analysis, name, None, true);
-        record.insert(
-            "usage".into(),
-            json!(usage_of(analysis, sym, meaning.as_macro().map(|m| &**m), None, said.usage.as_deref(), &[])),
-        );
-        super::said::insert(&mut record, &said);
-        rest.push(ScopeRow { name: name.to_string(), tier: 2, record, plain });
+        let (of, more) = (RowOf::Held(sym), Default::default());
+        rest.push(ScopeRow { name: name.to_string(), tier: 2, record, plain, of, more });
     }
     ScopeRows { defs, rest }
 }

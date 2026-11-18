@@ -1599,10 +1599,10 @@ impl Engine {
     /// Files outside the documents changed (a package bundle landed): every
     /// analyzed document runs again at the next [`Self::flush`].
     fn outside_changed(&mut self) {
-        // a finished run is keyed on the documents' texts alone, a checkpoint holds the state the
-        // missing files left: both are of the installation before the files landed
+        // a finished run is keyed on the documents' texts alone: it runs again, from the last
+        // checkpoint whose lookups the new files leave as they were
         self.runs.clear();
-        self.checkpoints.clear();
+        self.checkpoints.values_mut().for_each(crate::analysis::machine::Checkpoints::outside_changed);
         for (uri, doc) in &self.docs {
             if doc.analysis.is_some() && !self.dirty.contains(uri) {
                 self.dirty.push(uri.clone());
@@ -1760,6 +1760,12 @@ impl Engine {
                     self.fresh(&uri);
                     with_doc(&self.docs, &uri, |a, text| crate::cli::query::answer_request(&body, a, text.body()))?
                 });
+                // a trace of lines: from the root's last checkpoint before them
+                let traced = || {
+                    let checkpoints = self.checkpoints.get(&canonical(file.as_deref()?))?;
+                    crate::cli::query::answer_traced(&body, self.cfg, checkpoints)
+                };
+                let held = held.or_else(traced);
                 let active = self.docs.values().next().map(|d| d.path.clone()).unwrap_or_else(|| self.root.clone());
                 let result =
                     held.map_or_else(|| crate::cli::query::run_request_value(&body, self.cfg, Some(&active)), Ok);

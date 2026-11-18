@@ -47,6 +47,40 @@ fn scope_at_a_position_in_a_subfile() {
     assert!(run(&dir, &["scope", "--at", "nowhere.tex:1:1"]).is_err());
 }
 
+/// A completion list needs a name's tag, shape and package only, so a `lean` scope answers
+/// with just those: the same names in the same order as the full scope, each its full row's
+/// lean part. Pins the slow `scope` request: every row built its usage and documentation
+/// (5 s and 5 MB on the thesis example) when a completion read two fields of each.
+#[test]
+fn a_lean_scope_is_the_full_scope_cut_to_what_completion_shows() {
+    use std::io::Write;
+    let dir = document("lean");
+    let ask = |lean: bool| {
+        let mut child = crate::support::satex()
+            .args(["--no-config", "--no-classes", "--no-packages", "--set", "limits.seconds=0"])
+            .args(["query", "--request", "-"])
+            .current_dir(&dir)
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        let body =
+            serde_json::json!({ "file": "main.tex", "queries": [{ "type": "scope", "all": true, "lean": lean }] });
+        child.stdin.take().unwrap().write_all(body.to_string().as_bytes()).unwrap();
+        let out: serde_json::Value = serde_json::from_slice(&child.wait_with_output().unwrap().stdout).unwrap();
+        out[0]["records"].as_array().cloned().unwrap_or_default()
+    };
+    let (lean, full) = (ask(true), ask(false));
+    assert!(names(&lean).contains(&"\\a") && names(&lean).contains(&"\\relax"), "{:?}", names(&lean));
+    assert_eq!(names(&lean), names(&full));
+    let keys = ["name", "tag", "effective", "package"];
+    for (l, f) in lean.iter().zip(&full) {
+        let cut: serde_json::Map<_, _> =
+            keys.iter().filter_map(|k| Some((k.to_string(), f.get(*k)?.clone()))).collect();
+        assert_eq!(l, &serde_json::Value::Object(cut), "{f}");
+    }
+}
+
 #[test]
 fn explain_and_slice_take_a_file_without_its_extension() {
     let dir = document("explain");

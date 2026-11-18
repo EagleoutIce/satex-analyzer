@@ -154,6 +154,18 @@ pub struct Event {
     /// The characters set before this step ([`crate::analysis::facts::Text::at`]).
     #[serde(default)]
     pub set: u32,
+    /// A macro call's definition and arguments, as written: this call's, where a site's fact
+    /// holds its first call's.
+    #[serde(default)]
+    pub call: Option<Box<TracedCall>>,
+}
+
+/// What [`Event::call`] holds.
+#[derive(PartialEq, Clone, serde::Serialize, serde::Deserialize)]
+pub struct TracedCall {
+    pub parameters: Box<str>,
+    pub body: Box<str>,
+    pub arguments: Box<[Box<str>]>,
 }
 
 /// A loaded file: its path and its [`LoadKind`] (input, package, class).
@@ -6152,7 +6164,7 @@ will look undefined",
     /// Whether `--lines`/`--steps` keep an event at `span`: a line range
     /// keeps the main file's tokens on those lines and everything the calls
     /// there do, in macro bodies and in the files they read.
-    fn in_trace_range(&self, span: Span) -> bool {
+    pub(super) fn in_trace_range(&self, span: Span) -> bool {
         let steps = self.cfg.trace_steps.is_none_or(|(a, b)| (a..=b).contains(&self.read.saturating_sub(1)));
         let lines = self.cfg.trace_lines.is_none_or(|(a, b)| {
             let main = |s: &Span| self.is_trace_file(s.file);
@@ -6283,6 +6295,7 @@ will look undefined",
             meanings,
             state,
             set: self.out.facts.text.at.len() as u32,
+            call: None,
         });
         if self.cfg.trace_stop == Some(index) {
             self.halted = true;
@@ -7319,6 +7332,11 @@ will look undefined",
     /// would run inside them. Frames go through `pop_frame`, which also
     /// stops counting their calls as open.
     pub fn run_line(&mut self, text: &str) -> Vec<String> {
+        self.run_line_budget(text, self.cfg.limits.replay_steps)
+    }
+
+    /// [`Machine::run_line`] with its own step budget.
+    pub fn run_line_budget(&mut self, text: &str, budget: u64) -> Vec<String> {
         let file = self.register_file("\u{2}line".into(), LoadKind::Input);
         let (input, conds, groups) = (self.input.len(), self.conds.len(), self.env.group_level());
         self.catcodes.set('@', Catcode::Letter);
@@ -7334,7 +7352,7 @@ will look undefined",
         self.halted = false;
         self.out.exhausted = false;
         self.out.steps = 0;
-        self.budget = Some(self.cfg.limits.replay_steps);
+        self.budget = Some(budget);
         self.run();
         self.budget = None;
         let defined = self.line_defined.take().unwrap_or_default();
@@ -7356,7 +7374,43 @@ will look undefined",
     /// Run `sym` on `text` read from a file of its own, until the main loop
     /// takes one of those characters itself or the input or budget ends.
     pub fn run_probe(&mut self, sym: Sym, text: &str) -> crate::analysis::probe::Watch {
+        self.run_call(sym, &[], text)
+    }
+
+    /// Enters the document body once (a package's run ends in its preamble),
+    /// with a budget a `\begin{document}` needs, and returns the state to
+    /// start each [`Machine::call_from`] in.
+    pub fn document_state(&mut self) -> (crate::engine::env::Env, CatcodeTable) {
+        if self.out.interner.lookup("document").is_some_and(|d| self.env.is_defined(d)) {
+            let budget = self.cfg.limits.replay_steps.max(self.cfg.limits.probe_steps.saturating_mul(20));
+            self.run_line_budget("\\begin{document}", budget);
+        }
+        (self.env.snapshot(), self.catcodes.clone())
+    }
+
+    /// [`Machine::run_call`] from `state`, leaving no input behind for the next call.
+    pub fn call_from(
+        &mut self,
+        state: &(crate::engine::env::Env, CatcodeTable),
+        sym: Sym,
+        args: &[Token],
+    ) -> crate::analysis::probe::Watch {
+        (self.env, self.catcodes) = (state.0.snapshot(), state.1.clone());
+        let (input, conds) = (self.input.len(), self.conds.len());
+        let watch = self.run_call(sym, args, ".");
+        while self.input.len() > input {
+            self.pop_frame();
+        }
+        self.drop_conditionals(conds);
+        watch
+    }
+
+    /// [`Machine::run_probe`] with `args` read right after the name: a call
+    /// whose arguments hold unknown text ([`Machine::braced_unknown`]).
+    pub fn run_call(&mut self, sym: Sym, args: &[Token], text: &str) -> crate::analysis::probe::Watch {
         let file = self.register_file("\u{2}probe".into(), LoadKind::Input);
+        // the call's own budget: what ran before (`\begin{document}`) is not its
+        (self.out.steps, self.halted, self.out.exhausted) = (0, false, false);
         self.probe = Some(Box::new(crate::analysis::probe::Watch::new(file, sym)));
         self.input.push(Frame::File {
             mouth: Rc::new(Mouth::new(text, file)),
@@ -7367,7 +7421,7 @@ will look undefined",
             ends_at: None,
         });
         let call = Token { tok: Tok::Cs(sym), span: Span::default() };
-        self.push_tokens(Rc::from(vec![call]));
+        self.push_tokens(std::iter::once(call).chain(args.iter().copied()).collect());
         self.run();
         let mut watch = *self.probe.take().expect("set above");
         watch.exhausted = watch.reached.is_none() && (self.halted || self.out.exhausted);
@@ -7956,6 +8010,11 @@ will look undefined",
     /// affect the paths without the error. If no path continues without an
     /// error, the dropped ones continue with TeX's recovery ([`Machine::settle`]).
     pub(crate) fn certain_error(&mut self, text: &str, exact: bool, span: Span) {
+        if let Some(watch) = &mut self.probe {
+            let certain =
+                exact || (self.scratch.approximations == self.scratch.approximations_at_command && !self.approximated);
+            watch.raised.push((text.to_string(), certain && !text.contains('\u{2}')));
+        }
         if !self.halted
             && self.scan_stop.is_none()
             && !self.reading_format()
@@ -8002,6 +8061,10 @@ will look undefined",
     /// Raises one of the engine's own errors, `text` as TeX prints it, at the
     /// document command that led to it, like `\errmessage`.
     fn tex_error(&mut self, text: &str, span: Span) {
+        if let Some(watch) = &mut self.probe {
+            let certain = self.scratch.approximations == self.scratch.approximations_at_command && !self.approximated;
+            watch.raised.push((text.to_string(), certain && !text.contains('\u{2}')));
+        }
         if self.probe.is_some() || self.halted {
             return;
         }
@@ -10939,7 +11002,17 @@ will look undefined",
         let inserts = (self.cfg.trace)
             .then(|| substitute(&m, &arguments, 512).map(|b| crate::engine::tex::detokenize(&b, interner)))
             .flatten();
+        let traced = self.out.trace.len();
         self.record_with(Step::Expand, sym, span, || inserts);
+        if let Some(event) = self.out.trace.get_mut(traced) {
+            let interner = &self.out.interner;
+            let text = |t: &[Token]| crate::engine::tex::detokenize(t, interner).into();
+            event.call = Some(Box::new(TracedCall {
+                parameters: m.parameter_text.render(interner).into(),
+                body: text(&m.replacement_text),
+                arguments: arguments.iter().map(|a| text(a)).collect(),
+            }));
+        }
         // The budget bounds what an expansion adds. Its arguments were already
         // in the input (a `filecontents` line read from the file is one
         // argument, however long), and each `#n` copies one.
@@ -15459,6 +15532,12 @@ impl Machine<'_> {
     }
 
     /// The untyped marker: text no typed text covers. Counted per caller.
+    /// One argument of unknown text in braces: what any call may pass.
+    pub fn braced_unknown(&mut self) -> [Token; 3] {
+        let brace = |c, cat| Token::new(Tok::Chr(c, cat), Span::default());
+        [brace('{', Catcode::Begin), self.untyped(Span::default()), brace('}', Catcode::End)]
+    }
+
     #[track_caller]
     fn untyped(&mut self, span: Span) -> Token {
         let at = std::panic::Location::caller();

@@ -426,6 +426,31 @@ pub fn run_request_value(body: &Json, cfg: &Config, cli_file: Option<&Path>) -> 
     Ok(queries.iter().map(|entry| answer(&analysis, &source, entry)).collect())
 }
 
+/// [`run_request_value`] of a request that only sets what a trace of lines keeps (`trace*`),
+/// run from the last checkpoint of `checkpoints` before those lines: the language server's
+/// trace widget, without a run from the start. `None` where that does not apply.
+pub fn answer_traced(
+    body: &Json,
+    cfg: &Config,
+    checkpoints: &crate::analysis::machine::Checkpoints<'_>,
+) -> Option<Vec<Json>> {
+    let overrides = body.get("config").and_then(Json::as_object)?;
+    let queries = body.get("queries").and_then(Json::as_array).filter(|q| !q.is_empty())?;
+    if body.get("inject").is_some() || !overrides.keys().all(|k| k.starts_with("trace")) {
+        return None;
+    }
+    let mut cfg = cfg.clone();
+    for (path, value) in overrides {
+        cfg.set(path, &scalar(value)).ok()?;
+    }
+    cfg.record_arguments = true;
+    let file = Path::new(body.get("file").and_then(Json::as_str)?);
+    let source = crate::project::overlay::read_to_string(file).ok()?;
+    let whole = queries.iter().any(|q| q.get("type").and_then(Json::as_str) != Some("trace"));
+    let analysis = checkpoints.trace_from(&source, &cfg, whole)?;
+    Some(queries.iter().map(|entry| answer(&analysis, &source, entry)).collect())
+}
+
 /// [`run_request_value`] from an analysis already made of `source` with
 /// arguments recorded, as the language server holds one. `None` only when
 /// the request asks for another configuration, which is another analysis.
@@ -485,6 +510,7 @@ fn answer(analysis: &crate::analysis::machine::Analysis, source: &str, entry: &J
         }
         "controls" => query::controls_of(analysis, &strings("names"), flag("all")),
         // Every name in force at the document's end, as `satex scope` lists them.
+        "scope" if flag("lean") => query::scope_lean(analysis, flag("all")),
         "scope" => query::scope(analysis, None, flag("all")),
         "slice" => {
             let at = match entry.get("at").and_then(Json::as_str).map(super::parse_place) {

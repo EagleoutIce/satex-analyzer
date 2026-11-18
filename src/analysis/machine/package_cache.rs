@@ -1330,6 +1330,14 @@ impl Machine<'_> {
         )
     }
 
+    /// Whether a trace keeps events of the file loaded now. A trace of lines keeps only what the calls
+    /// on them do: a load from elsewhere replays its cache, as an untraced run does.
+    fn traced_load(&self) -> bool {
+        // no file's span: the range is judged by the calls that load the file
+        let inside = crate::engine::tex::Span { file: crate::engine::tex::FileId::MAX, line: 0, col: 0 };
+        self.cfg.trace_lines.is_none() || self.cfg.trace_steps.is_some() || self.in_trace_range(inside)
+    }
+
     /// Whether the file can be served from or recorded into cache: a package/class read at rest, at
     /// any input depth. Below it the input stays as it is: a replay reads only the file, and a
     /// suspended outer load resumes only once its own file is on top again at rest.
@@ -1338,7 +1346,7 @@ impl Machine<'_> {
             if !matches!(kind, LoadKind::Package | LoadKind::Class) || !self.cfg.cache.enabled || self.budget.is_some()
             {
                 return false;
-            } else if self.cfg.trace {
+            } else if self.cfg.trace && self.traced_load() {
                 "the run traces"
             } else if self.on_paths() || !self.cds.is_empty() || self.conds.iter().any(|c| c.dep) {
                 "it is loaded under a conditional"
@@ -1357,7 +1365,8 @@ impl Machine<'_> {
             } else {
                 return true;
             };
-        if self.cfg.verbose >= 1 {
+        // memory pressure turning caches off is said always: the runs after it are slower for it
+        if self.cfg.verbose >= 1 || reason == DEGRADED {
             crate::util::progress::note!(
                 "satex: {name} is not cached: {reason} ({} conditionals open, {} undecided, branch depth {})",
                 self.conds.len(),

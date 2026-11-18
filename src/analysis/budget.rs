@@ -7,13 +7,13 @@
 
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::Cell;
-use std::sync::atomic::{AtomicIsize, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicI64, AtomicUsize, Ordering};
 
 /// What the whole process holds, for allocations made outside any run.
 static PROCESS: Counter = Counter::new();
 /// Everything live in the process, every run's share included: a run
 /// alone in the process answers for it ([`charged`]).
-static TOTAL: AtomicIsize = AtomicIsize::new(0);
+static TOTAL: AtomicI64 = AtomicI64::new(0);
 /// `limits.memory`, 0 for none.
 static LIMIT: AtomicUsize = AtomicUsize::new(0);
 /// Runs going on now, nested ones not counted ([`Run::start`]).
@@ -24,7 +24,8 @@ static WHOLE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new
 /// Live and peak bytes. Live may dip below zero where a run frees what was
 /// allocated before it began; reads clamp at zero.
 pub struct Counter {
-    live: AtomicIsize,
+    // 64 bits on wasm32 too: its memory reaches 4 GiB, past `isize`
+    live: AtomicI64,
     peak: AtomicUsize,
     /// Set once the run holds more than `limits.memory`: it stops at its
     /// next step instead of its next periodic check.
@@ -33,11 +34,7 @@ pub struct Counter {
 
 impl Counter {
     const fn new() -> Counter {
-        Counter {
-            live: AtomicIsize::new(0),
-            peak: AtomicUsize::new(0),
-            over: std::sync::atomic::AtomicBool::new(false),
-        }
+        Counter { live: AtomicI64::new(0), peak: AtomicUsize::new(0), over: std::sync::atomic::AtomicBool::new(false) }
     }
 
     fn live(&self) -> usize {
@@ -165,6 +162,7 @@ fn settle() {
 /// allocation that crossed it, and says no.
 fn flush(bytes: isize, last: isize) -> bool {
     let counter = current();
+    let (bytes, last) = (bytes as i64, last as i64);
     let now = counter.live.fetch_add(bytes, Ordering::Relaxed) + bytes;
     TOTAL.fetch_add(bytes, Ordering::Relaxed);
     let ceiling = ceiling();
@@ -174,7 +172,7 @@ fn flush(bytes: isize, last: isize) -> bool {
         // The run's own bytes only: a run past the limit stops between
         // tokens ([`charged`]), never by failing another's allocation.
         // A ceiling past `isize::MAX` (on wasm32) is no ceiling, not a negative one.
-        && now > isize::try_from(ceiling).unwrap_or(isize::MAX)
+        && now > isize::try_from(ceiling).map_or(i64::MAX, |c| c as i64)
     {
         counter.live.fetch_sub(last, Ordering::Relaxed);
         TOTAL.fetch_sub(last, Ordering::Relaxed);

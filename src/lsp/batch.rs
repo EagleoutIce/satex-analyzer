@@ -50,12 +50,27 @@ impl Batch {
                 if not.params.get("files").is_some_and(|f| f.as_bool() == Some(true)) {
                     engine.outside_changed();
                 }
-                if let Some(first) = not.params.get("first").and_then(|f| f.as_str()).and_then(|f| f.parse().ok())
-                    && engine.dirty.contains(&first)
-                {
-                    engine.first(&first);
+                let first: Option<lsp_types::Uri> = not.params.get("first").and_then(|f| f.as_str()?.parse().ok());
+                if let Some(first) = first.as_ref().filter(|f| engine.dirty.contains(f)) {
+                    engine.first(first);
                 }
+                // The page waits for the shown file's findings to end its run: a run that
+                // published nothing new there (a file switch, a reused run) sends them again,
+                // of the text's version, where they are of the analysis that text has.
+                let last = |e: &super::Engine| {
+                    let f = first.as_ref().filter(|f| !e.dirty.contains(f))?;
+                    let (run, p) = e.published.get(f)?;
+                    let doc = e.docs.get(f)?;
+                    let current =
+                        run.upgrade().zip(doc.analysis.as_ref()).is_some_and(|(r, a)| std::rc::Rc::ptr_eq(&r, a));
+                    current.then(|| (p.clone(), doc.version))
+                };
+                let before = last(engine).map(|(p, _)| p);
                 engine.flush();
+                if let Some((mut again, version)) = last(engine).filter(|(now, _)| Some(now) == before.as_ref()) {
+                    again.version = Some(version);
+                    engine.send_diagnostics(vec![again]);
+                }
                 vec![]
             }
             // An opened document waits for `satex/analyze` too: the page

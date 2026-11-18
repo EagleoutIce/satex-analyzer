@@ -8,6 +8,27 @@ use crate::plugins::Provider;
 
 pub static RULES: &[Rule] = &[
     Rule {
+        code: "package-call-error",
+        since: "0.2.5",
+        category: Category::Correctness,
+        severity: Severity::Warning,
+        summary: "a package command fails on some call",
+        explanation: "\
+When you analyze a package or class itself, satex calls each command it
+defines once, the way a static analyzer checks a function: every mandatory
+argument holds unknown text and optional ones are left out.  A TeX error
+that call raises (an undefined command, a missing number, a runaway
+argument) is one some document using the package will meet.
+
+The rule reports it at the definition, with TeX's message.  Unknown text
+over-approximates every argument, so the error may need a particular
+argument: check what the command does with it.",
+        references: &[],
+        fixes: &[],
+        engines: &[],
+        run: package_call_error,
+    },
+    Rule {
         code: "undefined-glossary-entry",
         since: "0.1.0",
         category: Category::Correctness,
@@ -1468,5 +1489,35 @@ fn expl3_signature_mismatch(report: &mut Report) {
     }
     for (span, name, message) in found {
         report.add(span, &name, message, None);
+    }
+}
+
+/// Each command the analyzed package or class defines, called on unknown arguments.
+fn package_call_error(report: &mut Report) {
+    use crate::project::config::Profile;
+    let analysis = report.analysis;
+    if !matches!(analysis.settings.profile, Some(Profile::Package | Profile::Class)) {
+        return;
+    }
+    let mut seen = std::collections::BTreeSet::new();
+    let defs: Vec<(Sym, Span)> = analysis
+        .facts
+        .defs
+        .iter()
+        .filter(|d| d.span.file == analysis.main_file && d.mac.is_some() && seen.insert(d.name))
+        .map(|d| (d.name, d.span))
+        .collect();
+    let ended = |&(sym, _): &(Sym, Span)| {
+        let last = analysis.facts.defs.iter().rev().find(|d| d.name == sym).and_then(|d| d.mac.as_ref());
+        analysis.env.meaning(sym).as_macro().zip(last).is_some_and(|(m, d)| std::rc::Rc::ptr_eq(d, m))
+    };
+    // the definition the run ended with is the one a document calls
+    let defs: Vec<(Sym, Span)> = defs.into_iter().filter(ended).collect();
+    let syms: Vec<Sym> = defs.iter().map(|d| d.0).collect();
+    for (sym, error) in crate::analysis::probe::call_faults(analysis, &syms) {
+        let Some(&(_, span)) = defs.iter().find(|d| d.0 == sym) else { continue };
+        let name = analysis.interner.cs(sym);
+        let error = error.lines().next().unwrap_or_default().to_string();
+        report.add(span, &name, format!("`{name}` called on unknown arguments raises: {error}"), None);
     }
 }
