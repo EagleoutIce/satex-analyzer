@@ -4339,7 +4339,9 @@
   // ---------------------------------------------------------------- runs
 
   /** The kernel's flags; a project in its own directory under /work reads the playground's satex.yaml by name. */
-  const flags = () => [...manifest.kernels[state.kernel].args, ...(state.dir !== '/work' && !manifest.local ? ['--config', '/work/satex.yaml'] : []), ...configFlags()];
+  /** `?debug`: the server says what it does (`-vv`) in the console. */
+  const DEBUG = new URLSearchParams(location.search).has('debug');
+  const flags = () => [...(DEBUG ? ['-vv'] : []), ...manifest.kernels[state.kernel].args, ...(state.dir !== '/work' && !manifest.local ? ['--config', '/work/satex.yaml'] : []), ...configFlags()];
   const command = () => words(args.value).filter((x) => x !== 'satex' && !x.startsWith('-'))[0];
   /** Plain `lint` repeats what the language server shows: it runs only when asked to. */
   const plainLint = () => words(args.value).filter((x) => x !== 'satex').join(' ') === 'lint';
@@ -6010,12 +6012,15 @@
     return best ?? (inside ? pdfSource(page, x, y, word, fine, false) : word ? pdfSource(page, x, y, null, fine) : fine ? pdfSource(page, x, y, null, false) : null);
   }
   /** The page word at a point, 1 bp of slack around each: of several (a footnote mark against its text), the nearest.
-   * A point in the space before a word belongs to the word before it (its end: `Inside|` before `\texttt{…}`). */
+   * A point in the space between two words of a row goes to the nearer (`Inside|` before `\\texttt{…}`). */
   const pdfWordUnder = (page, x, y) => {
     const off = (w) => Math.max(w[1] - x, 0, x - w[3]) + Math.max(w[2] - y, 0, y - w[4]), on = pdfWordsOn(page);
     const best = on.filter((w) => w[1] - 1 <= x && x <= w[3] + 1 && w[2] - 1 <= y && y <= w[4] + 1).sort((a, b) => off(a) - off(b))[0];
-    if (!best || x >= best[1]) return best;
-    return on.filter((w) => w !== best && Math.abs(w[4] - best[4]) < 1 && w[3] <= x + 0.5 && best[1] - w[3] < 6).sort((a, b) => b[3] - a[3])[0] ?? best;
+    if (best && x >= best[1] && x <= best[3]) return best;
+    // in a gap: the row's words beside it, the nearer
+    const row = on.filter((w) => w[2] - 1 <= y && y <= w[4] + 1), before = row.filter((w) => w[3] <= x).sort((a, b) => b[3] - a[3])[0], after = row.filter((w) => w[1] >= x).sort((a, b) => a[1] - b[1])[0];
+    if (!before || !after || after[1] - before[3] > 6) return best;
+    return x - before[3] <= after[1] - x ? before : after;
   };
   /** Where `word` stands in a source line: its first whole occurrence, else null. Edge punctuation is not part of it. */
   function wordInLine(text, word) {
@@ -8053,7 +8058,8 @@
     };
     if (run && pdfFaceUp(run)) {
       // the face's own glyphs against the fallback's: a character the subset lacks is that much wider (a bold face)
-      const face = `'${run.font}'`, own = [...w[5]].filter((c) => /\p{L}/u.test(c) && pdfHas(ctx, face, c)).join(''), at = (fam) => { ctx.font = `${run.size}px ${fam}`; return ctx.measureText(own).width; };
+      // (over the whole run's letters the face holds, not one word's: a few glyphs misjudge it)
+      const face = `'${run.font}'`, own = [...new Set(run.str ?? w[5])].filter((c) => /\p{L}/u.test(c) && pdfHas(ctx, face, c)).join(''), at = (fam) => { ctx.font = `${run.size}px ${fam}`; return ctx.measureText(own).width; };
       const r = own ? at(face) / at(PDF_ECHO_FONT) : 1;
       return { family: `${face}, ${PDF_ECHO_FONT}`, face, r: r > 0.5 && r < 2 ? r : 1, size: fit(`${face}, ${PDF_ECHO_FONT}`, run.size), base: run.y, own: true };
     }
@@ -8343,9 +8349,9 @@
     ctx.font = `${size}px ${font}`;
     const width = (t) => pdfTextWidth(ctx, f, t, size);
     let laid = PE.relaid(row.map((x) => [x[1], x[3], x[5]]), k, lead + now + tail, width);
-    // a fill takes up the change (a contents line's dot leaders, the space before its page number): what follows it
-    // stays, a dot the text now reaches goes
-    const dots = laid.findIndex(([, , t], i) => i > k && (/^[.·]+$/.test(t) || row[i][1] - row[i - 1][3] > 1.5 * size));
+    // a fill takes up the change (a contents line's dot leaders, the wide space before its page number at the row's
+    // end): what follows it stays, a dot the text now reaches goes
+    const dots = laid.findIndex(([, , t], i) => i > k && (/^[.·]+$/.test(t) || i === row.length - 1 && /^[\dixvlc]+$/i.test(t) && row[i][1] - row[i - 1][3] > 1.5 * size));
     if (dots > 0) laid = laid.flatMap((q, i) => i < dots ? [q] : /^[.·]+$/.test(row[i][5]) && row[i][1] < laid[dots - 1][1] + 2 ? [] : [[row[i][1], row[i][3], row[i][5]]]);
     // a centered row (a caption, `\centering`, a node's text) stays centered: the whole row moves by half the change,
     // the words before the caret's redrawn too
@@ -9607,7 +9613,8 @@
   }
   /** A notification; `ended`: of a run that ended, while others go on. */
   function notified(m, ended = false) {
-    if (m.method === 'satex/styleCandidates') for (const c of m.params.candidates ?? []) askStyle(c);
+    if (m.method === 'satex/log') { if (DEBUG) for (const l of m.params) console.log(`satex: ${l}`); }
+    else if (m.method === 'satex/styleCandidates') for (const c of m.params.candidates ?? []) askStyle(c);
     else if (m.method === 'textDocument/publishDiagnostics' && m.params.uri.startsWith(`file://${state.dir}/`)) publish(m.params, ended);
     else if (m.method === 'satex/runInfo' && m.params.uri === uri()) runInfoShow(m.params);
     // `preview`: the edited paragraph's rows, run first; the run's own rows follow
