@@ -252,7 +252,7 @@ fn record(cx: &Cx, e: &Entry, all: &[Entry], keys: &[&str], family: &[String]) -
             let mut edits: Vec<_> =
                 e.uses.iter().filter_map(|u| u.2.clone()).map(|r| put(cx.doc, r.start, r.end, "${key}")).collect();
             edits.push(put(cx.doc, from, to, ""));
-            forms.push(json!({ "title": "Replace uses and delete", "fields": [{ "name": "key", "choices": others }],
+            forms.push(json!({ "title": "Replace uses and delete", "fields": [{ "name": "key", "label": "replace with", "choices": others }],
                                "edit": edit_of(cx.path, edits) }));
         }
     }

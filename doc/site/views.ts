@@ -196,7 +196,8 @@ const satexViews = (() => {
       const sort = o.sorts?.find((k: Rec) => k.id === by.value) ?? o.sorts?.[0];
       rows = o.rows.filter((r: Rec) => passes(r, search.value, o.chips ?? [], on, o.hay(r)));
       if (sort) rows.sort((a, b) => sort.key(a).localeCompare(sort.key(b), undefined, { numeric: true, sensitivity: 'base' }) * (down ? -1 : 1));
-      const kinds = !!o.head?.[0];
+      // one kind for every row says nothing: no column (a cut `\newgloss…` chip in each row)
+      const kinds = !!o.head?.[0] && new Set(o.rows.map((r: Rec) => o.row(r).kind)).size > 1;
       const table = el('table', 'tv-md-table', `<thead><tr>${kinds ? `<th class="k">${esc(o.head[0])}</th>` : ''}<th>${esc(o.head?.[1] ?? 'Entry')}</th></tr></thead>`);
       const body = el('tbody');
       for (const r of rows.slice(0, 500)) {
@@ -363,6 +364,8 @@ const satexViews = (() => {
           const why = r.actions.filter((a: Rec) => a.disabled || a.note).map((a: Rec) => `${a.title}: ${a.disabled ?? a.note}`);
           body.append(fold(r.actions.some((a: Rec) => a.danger) ? 'Delete…' : 'More actions', acts, why.length ? el('div', 'tv-text', why.map((w: Rec) => `<p>${esc(w)}</p>`).join('')) : null));
         }
+        // one primary button in the pane: the record's own form, the others plain
+        body.querySelectorAll('.tv-form .tv-primary').forEach((b, k) => { if (k) b.classList.remove('tv-primary'); });
         return body;
       };
       // labelled inputs; `go(values, changed names)` makes the edit, applied when every value is balanced
@@ -2409,7 +2412,7 @@ const satexViews = (() => {
     n.opts = [...n.opts.filter((o) => !all.includes(o)), ...key ? [key] : []];
     n.dirty = true;
   }
-  /** The cross-tree constraints the text after a tree lists (`\node[fm constraints] … {a\\b};`), one a line. */
+  /** The cross-tree constraints the text after a tree lists (`\node[fm constraints] … {a\\b};`), one per line. */
   const CONSTR = /\n?[ \t]*\\node\s*\[fm constraints\][^{]*\{([^]*?)\};/;
   const constraintsOf = (t: Tree) => (CONSTR.exec(t.post)?.[1] ?? '').split(/\\\\/).map((c) => c.trim()).filter(Boolean);
   function setConstraints(t: Tree, list: string[]) {
@@ -2475,6 +2478,8 @@ const satexViews = (() => {
     const at = (e: { clientX: number; clientY: number }) => { const p = svg.createSVGPoint(); p.x = e.clientX; p.y = e.clientY; return p.matrixTransform(svg.getScreenCTM()!.inverse()); };
     function drawTree() {
       const fm = presetOf(t);
+      // the preset's look at once (`fm feature`: sans serif, tight corners), before any node has a kind
+      svg.classList.toggle('tv-fm', !!fm);
       const text = (n: TNode) => n.content.replace(/^\{(.*)\}$/, '$1') || (n.children.length ? '∘' : '·');
       const wide = (n: TNode) => Math.max(0.5, 0.17 * text(n).length + 0.3);
       const pos = treeLayout(t.root, (n) => wide(n) + 0.3);
@@ -2504,7 +2509,7 @@ const satexViews = (() => {
       for (const p of pos) {
         const label = text(p.n), w = wide(p.n);
         const g = svgEl('g', { class: `tv-node${sel === p.n ? ' on' : ''}${p.n.dirty ? ' dirty' : ''}${fm && optOf(fm, p.n, 'abstract') ? ' abstract' : ''}`, 'data-content': p.n.content });
-        g.append(svgEl('rect', { x: p.x - w / 2, y: -p.y - 0.2, width: w, height: 0.4, rx: 0.08 }), Object.assign(svgEl('text', { x: p.x, y: -p.y }), { textContent: label }));
+        g.append(svgEl('rect', { x: p.x - w / 2, y: -p.y - 0.2, width: w, height: 0.4, rx: fm ? 0.035 : 0.08 }), Object.assign(svgEl('text', { x: p.x, y: -p.y }), { textContent: label }));
         const name = run.get(p.n)?.name;
         if (name) g.append(Object.assign(svgEl('title'), { textContent: `name: ${name}` }));
         g.onpointerdown = (e) => { e.stopPropagation(); sel = p.n; dragging = p.n; try { svg.setPointerCapture(e.pointerId); } catch { /* synthetic */ } draw(); };
@@ -2558,7 +2563,7 @@ const satexViews = (() => {
       }, { '': 'none (plain forest)' }));
       const rest = t.pre.trim();
       if (rest && !(ft && rest.replace(/^for\s+tree\s*=\s*\{[\s\S]*\}\s*,?$/, '') === '')) form.append(el('pre', 'tv-kept', esc(rest)));
-      if (fm) form.append(el('h4', 'tv-h', 'Cross-tree constraints'), field('one a line', constraintsOf(t).join('\n'), (v: string) => setConstraints(t, v.split('\n')), ['balanced'], true));
+      if (fm) form.append(el('h4', 'tv-h', 'Cross-tree constraints'), field('one per line', constraintsOf(t).join('\n'), (v: string) => setConstraints(t, v.split('\n')), ['balanced'], true));
       status.textContent = changed() ? 'changes to apply' : 'no changes';
       write.disabled = !changed() && !s.wrap;
     }
@@ -3328,7 +3333,7 @@ button.tv-spec-value { cursor: pointer; } button.tv-spec-value:hover, button.tv-
 .tv-md-table { display: table; margin: 0; width: 100%; border-collapse: collapse; font-size: .82rem; table-layout: fixed; }
 .tv-md-table th { position: sticky; top: 0; z-index: 1; background: var(--tv-bg); text-align: left; font-weight: 600; padding: .25rem .4rem; color: var(--tv-muted); font-size: .74rem; border-bottom: 1px solid var(--tv-border); }
 .tv-md-table :is(th, td) { border-width: 0 0 1px; border-style: solid; }
-.tv-md-table th.k, .tv-md-table td.k { width: 6rem; } .tv-md-table td { padding: .3rem .4rem; border-bottom: 1px solid color-mix(in srgb, var(--tv-border) 50%, transparent); vertical-align: top; overflow: hidden; }
+.tv-md-table th.k, .tv-md-table td.k { width: 8rem; } .tv-md-table td { padding: .3rem .4rem; border-bottom: 1px solid color-mix(in srgb, var(--tv-border) 50%, transparent); vertical-align: top; overflow: hidden; }
 .tv-md-table td.m { white-space: nowrap; text-overflow: ellipsis; } .tv-md-table td.m small { display: block; overflow: hidden; text-overflow: ellipsis; color: var(--tv-muted); }
 .tv-md-table tbody tr { cursor: pointer; } .tv-md-table tbody tr:hover { background: color-mix(in srgb, var(--tv-accent) 6%, transparent); } .tv-md-table tr.on { background: color-mix(in srgb, var(--tv-accent) 16%, transparent); }
 .tv-flag { font-size: .66rem; padding: 0 .3rem; border-radius: 4px; margin-left: .25rem; background: var(--tv-sunk); color: var(--tv-muted); } .tv-flag.warn { background: color-mix(in srgb, #e0a000 22%, transparent); color: inherit; }
@@ -3390,7 +3395,7 @@ button.tv-spec-value { cursor: pointer; } button.tv-spec-value:hover, button.tv-
 .tv-forest-form > .tv-row { display: contents; } .tv-forest-form > .tv-row > span { grid-column: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; } .tv-forest-form .sd-err { grid-column: 2; }
 .tv-forest-form .tv-input { grid-column: 2; width: 100%; box-sizing: border-box; min-height: var(--btn-h, 1.85rem); padding: .2rem .5rem; font-size: .88rem; } .tv-forest-form textarea.tv-input { resize: vertical; font-family: ui-monospace, monospace; font-size: .82rem; }
 .tv-forest .tv-actions .tv-button { min-height: var(--btn-h, 1.85rem); } .tv-forest .tv-actions .tv-button:disabled { opacity: .45; cursor: default; }
-.tv-fm-dot { fill: currentColor; stroke: currentColor; stroke-width: .02; } .tv-fm-dot.open { fill: var(--tv-bg, #fff); } .tv-fm-arc { fill: none; stroke: currentColor; stroke-width: .025; } .tv-fm-arc.fill { fill: currentColor; } .tv-node.abstract text { font-style: italic; }
+.tv-fm-dot { fill: currentColor; stroke: currentColor; stroke-width: .02; } .tv-fm-dot.open { fill: var(--tv-bg, #fff); } .tv-fm-arc { fill: none; stroke: currentColor; stroke-width: .025; } .tv-fm-arc.fill { fill: currentColor; } .tv-node.abstract text { font-style: italic; } .tv-fm .tv-node text { font-family: system-ui, sans-serif; } .tv-fm .tv-node.abstract rect { fill: color-mix(in srgb, currentColor 8%, var(--tv-bg)); }
 @media (max-width: 480px) { .tv-forest-form { grid-template-columns: 5rem minmax(0, 1fr); } }
 .tv-page { min-width: min(46rem, 100%); } .tv-page-main { display: grid; grid-template-columns: minmax(14rem, 1.2fr) minmax(15rem, 1fr); gap: .9rem; align-items: start; }
 .tv-page-side .tv-field.tv-focus { box-shadow: inset 2px 0 var(--tv-accent); padding-left: .4rem; color: var(--tv-fg); }

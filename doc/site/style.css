@@ -420,8 +420,10 @@ button.small { padding: .05rem .6rem; font-size: .78rem; border-radius: 999px; }
 .statusbar span:empty { display: none; }
 .statusbar #play-status { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 /* the status keeps room for a few words with an ellipsis; the pills and the time give way first, the time with an ellipsis too */
-.statusbar .actbox { min-width: min(24ch, 35%); } .statusbar .pills { flex: none; } .statusbar .pills > * { flex: none; white-space: nowrap; }
-.statusbar .statdetail { flex: 0 1 auto; display: flex; min-width: 4ch; } .statusbar .stat-time { min-width: 0; } .statusbar #t-time-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* the status text's slot has a fixed basis: its length never moves the pills; digits keep one width */
+.statusbar .actbox { min-width: min(24ch, 35%); flex: 1 1 24ch; } .statusbar { font-variant-numeric: tabular-nums; } .statusbar .pills { flex: none; } .statusbar .pills > * { flex: none; white-space: nowrap; }
+/* short of room the run's steps and time give way first: what is happening stays readable */
+.statusbar .statdetail { flex: 0 1000 auto; display: flex; min-width: 4ch; } .statusbar .stat-time { min-width: 0; } .statusbar #t-time-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 #play-status:has(.st-msg) { display: flex; align-items: center; gap: .5rem; } #play-status .st-msg { overflow: hidden; text-overflow: ellipsis; min-width: 4rem; flex: 1 1 auto; } #play-status button { flex: 0 1 auto; min-width: 3.5rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 #play-status:has(.st-msg) { flex: 1 1 9rem; }
 .pills { display: inline-flex; gap: .3rem; flex: none; margin-left: auto; }
@@ -595,7 +597,8 @@ main td .badges, main td .cat { white-space: nowrap; }
 .ts-slide-env { font-weight: 600; text-transform: uppercase; letter-spacing: .04em; color: var(--accent); }
 .ts-slide-label { padding: 0 .35rem; border-radius: 4px; background: var(--sunk); color: var(--fg); }
 .ts-boxto { display: inline-block; } .ts-leaders { flex: 1; min-width: 1em; margin: 0 .3em; border-bottom: 2px dotted color-mix(in srgb, currentColor 50%, transparent); align-self: center; }
-.typeset .ts-text:has(> .ts-row) { display: flex; align-items: baseline; } .typeset .ts-text > .ts-boxto:last-child { margin-left: auto; text-align: right; }
+/* a line that ends in fill then a box (a contents line's page, leaders or not) sets the box at the right edge */
+.typeset .ts-text:is(:has(> .ts-row), :has(> .ts-fill + .ts-boxto:last-child)) { display: flex; align-items: baseline; } .typeset .ts-text > .ts-boxto:last-child { margin-left: auto; text-align: right; }
 .typeset .ts-table { display: table; border-collapse: collapse; margin: .2rem 0; } .typeset .ts-tr { display: table-row; }
 /* a cell as TeX sets it: \tabcolsep (6pt at 10pt) each side, rows a strut apart (\arraystretch 1: 1.2em), on one baseline */
 .typeset .ts-td { display: table-cell; padding: 0 .6em; line-height: 1.2; vertical-align: baseline; } .typeset .ts-ruled > .ts-td { border-top: 1px solid currentColor; }
@@ -1078,6 +1081,10 @@ details[open] > .cfg-subhead::before { rotate: 45deg; }
 /* a type plugin's view (src/lsp/plugins, rendered by views.js) */
 .cache-dialog.view-dialog { height: fit-content; max-height: 90vh; width: min(40rem, calc(100vw - 1rem)); }
 .view-body { padding: 1rem; overflow: auto; }
+/* a widget's undo and redo in its header, as the table dialog has them (playground.js moves them there) */
+.hd-hist { display: inline-flex; gap: .1rem; margin-left: auto; } .hd-hist:empty { display: none; } .hd-hist + .hd-feedback { margin-left: .2rem; }
+/* a tall form scrolls under its footer: Apply stays in sight */
+.view-body .tv-foot { position: sticky; bottom: -1rem; z-index: 2; margin-bottom: -1rem; padding-block: .6rem; background: var(--tv-bg, var(--panel)); border-top: 1px solid var(--border); }
 /* the drawing canvas: wide, its own panel scrolls, tools and footer stay */
 .cache-dialog.view-dialog:has(.tv-md) { width: min(84rem, calc(100vw - 1rem)); } .tv:has(.tv-md) { max-width: none !important; }
 .cache-dialog.view-dialog:has(.tv-draw) { width: min(76rem, calc(100vw - 1rem)); } .view-body:has(> .tv > .tv-draw:not(.tv-forest)) { overflow: hidden; }
@@ -1818,6 +1825,8 @@ canvas.pdf-echo { display: block; }
 .ts-view p.ts.ts-h { border-bottom: 0; }
 .ts-view p.ts.ts-h .ts-text { border-bottom: 1px solid var(--border); }
 .ts-view p.ts[style*="--skip"] { margin-top: var(--skip); }
+/* another file's rows: its line drawn in the column gap, no rail of their own: opening that file sets them at the same place */
+.ts-view .ts-other > :not(summary) { background: linear-gradient(var(--rail), var(--rail)) calc(var(--gutter) + .15rem) 0 / 2px 100% no-repeat; }
 .ts-view .ts-other { margin: .2rem 0; } .ts-view .ts-other > summary { cursor: pointer; list-style: none; color: var(--muted); font-size: .8rem; }
 .ts-view .ts-other > summary::before { grid-column: 1; grid-row: 1; justify-self: end; } .ts-view .ts-other > summary > .ts-at { display: none; } .ts-view .ts-other > summary > .ts-file { grid-column: 3; grid-row: 1; } .ts-view .ts-other > summary > .muted { grid-column: 3; grid-row: 1; justify-self: end; }
 /* an environment instance of the user's file: one block, its name and line as a chip */
@@ -1850,7 +1859,8 @@ canvas.pdf-echo { display: block; }
 .ts-view .ts-page-fill.ts-maybe { opacity: .6; }
 /* glue that fills a box or cell: the text sits where the fills leave it */
 .typeset .ts-fill { display: inline; }
-.typeset .ts-boxto:has(> .ts-fill) { display: inline-flex; max-width: 100%; } .typeset .ts-boxto > .ts-fill { flex: 1; }
+/* baseline-aligned: a box that starts with its fill (`\hfil 3`, a contents line's page) sits on the line, not above it */
+.typeset .ts-boxto:has(> .ts-fill) { display: inline-flex; align-items: baseline; max-width: 100%; } .typeset .ts-boxto > .ts-fill { flex: 1; }
 .typeset .ts-td:has(> .ts-fill-l) { text-align: right; } .typeset .ts-td:has(> .ts-fill-l):has(> .ts-fill-r) { text-align: center; }
 /* covered material (beamer's \pause, \uncover): its words as a faint ghost where they keep their space */
 .typeset .ts-hidden, .typeset .ts-hidden * { color: color-mix(in srgb, var(--muted) 28%, transparent) !important; }
@@ -1901,7 +1911,9 @@ canvas.pdf-echo { display: block; }
 .pdf-layer-list .pdf-near { display: flex; border-top: 1px solid var(--border); padding-top: .4rem; margin-top: .2rem; }
 .pdf.pdf-near .pdf-ov { transition: opacity .12s; }
 .ts-slide-title { font-weight: 600; color: var(--fg); }
-@media (max-width: 699px) { .pdf-bar .pdf-layers summary span { display: none; } .pdf-bar .pdf-state { min-width: 3rem; } }
+/* a narrow bar (a phone, the PDF beside the editor) keeps the build's state readable: layers and Fold show their icons only */
+.pdf-bar { container-type: inline-size; }
+@container (max-width: 44rem) { .pdf-bar :is(.pdf-layers summary span, .fold-label) { display: none; } .pdf-bar .pdf-state { min-width: 4.5rem; } }
 .lib-list { position: relative; }
 .lib-list.lib-loading::before { content: ""; position: sticky; top: 0; display: block; height: 2px; margin-bottom: -2px; z-index: 2; background: linear-gradient(90deg, transparent, var(--accent), transparent) 0 0 / 40% 100% no-repeat; animation: lib-slide 1s linear infinite; }
 @keyframes lib-slide { from { background-position: -40% 0; } to { background-position: 140% 0; } }
@@ -1955,7 +1967,7 @@ canvas.pdf-echo { display: block; }
 
 /* one height and font for every control of the PDF and Typeset bars */
 :is(.pdf-bar, .ts-switches) { --bar-h: 1.6rem; }
-:is(.pdf-bar, .ts-switches) :is(button, summary, a.button, .pdf-views button, #pdf-fold) { font-size: .72rem; white-space: nowrap; box-sizing: border-box; height: var(--bar-h); min-height: var(--bar-h); padding-block: 0; display: inline-flex; align-items: center; justify-content: center; line-height: 1; }
+:is(.pdf-bar, .ts-switches) :is(button, summary, a.button, .pdf-views button, #pdf-fold) { font-size: .72rem; white-space: nowrap; gap: .3em; box-sizing: border-box; height: var(--bar-h); min-height: var(--bar-h); padding-block: 0; display: inline-flex; align-items: center; justify-content: center; line-height: 1; }
 .pdf-bar .pdf-split > :is(button, details, summary) { height: var(--bar-h); }
 .pdf-bar #pdf-follow[aria-pressed=true] { background: color-mix(in srgb, var(--accent) 18%, var(--bg)); color: var(--accent); border-color: var(--accent); font-weight: 600; }
 .pdf-bar #pdf-follow[aria-pressed=false] { color: var(--muted); border-style: dashed; }
@@ -2299,18 +2311,18 @@ body:not(.show-lenses) .cm-lens-line { display: none; }
 .sd-grid th.sd-colh select { height: var(--btn-h-sm); padding-block: 0; font-size: var(--btn-fs); }
 button.small, .button.small { line-height: 1.2; padding-block: 0; }
 dialog > header > button.small:is([id$=-close], [data-close]) { min-width: var(--btn-h); min-height: var(--btn-h); padding: 0; }
-:is(.sd button, .tv-button, .tv-tab, .pop-tools button, .tv-chip, .tv .sd-icon) { box-sizing: border-box; display: inline-flex; align-items: center; justify-content: center; gap: .3rem; min-height: var(--btn-h); padding: 0 var(--btn-px); border-radius: var(--btn-r); font: inherit; font-size: var(--btn-fs); font-weight: 500; line-height: 1.2; cursor: pointer;
+:is(.sd button, .tv-button, .tv-tab, .pop-tools button, .tv-chip, .tv .sd-icon, .hd-hist .sd-icon) { box-sizing: border-box; display: inline-flex; align-items: center; justify-content: center; gap: .3rem; min-height: var(--btn-h); padding: 0 var(--btn-px); border-radius: var(--btn-r); font: inherit; font-size: var(--btn-fs); font-weight: 500; line-height: 1.2; cursor: pointer;
   border: 1px solid var(--border); background: var(--sunk); color: var(--fg); transition: background-color var(--quick), border-color var(--quick), color var(--quick); }
-:is(.sd button, .tv-button, .tv-tab, .pop-tools button, .tv-chip, .tv .sd-icon):hover:not(:disabled) { border-color: var(--accent); transform: none; box-shadow: none; }
+:is(.sd button, .tv-button, .tv-tab, .pop-tools button, .tv-chip, .tv .sd-icon, .hd-hist .sd-icon):hover:not(:disabled) { border-color: var(--accent); transform: none; box-shadow: none; }
 :is(.sd button, .tv-button, .tv-tab, .pop-tools button, .tv-chip, .tv-unit, .tv-choice, .tv-spec-value):focus-visible { outline: var(--btn-ring); outline-offset: 1px; }
-:is(.sd button, .tv-button, .tv-tab, .tv-chip, .tv .sd-icon):disabled { opacity: .45; cursor: default; }
+:is(.sd button, .tv-button, .tv-tab, .tv-chip, .tv .sd-icon, .hd-hist .sd-icon):disabled { opacity: .45; cursor: default; }
 /* primary: the action the widget is for */
 :is(.sd button.sd-primary, .tv-button.tv-primary) { background: var(--accent); border-color: var(--accent); color: var(--accent-fg); font-weight: 600; padding: 0 1rem; }
 :is(.sd button.sd-primary, .tv-button.tv-primary):hover:not(:disabled) { background: color-mix(in srgb, var(--accent) 86%, var(--fg)); }
 /* ghost and icon: tools that stay quiet until hovered */
-:is(.sd button.sd-ghost, .tv-button.tv-ghost, .sd .sd-selbar button, .sd .sd-icon, .tv .sd-icon, .pop-tools button) { background: none; border-color: transparent; color: var(--muted); }
-:is(.sd button.sd-ghost, .tv-button.tv-ghost, .sd .sd-selbar button, .sd .sd-icon, .tv .sd-icon, .pop-tools button):hover:not(:disabled) { background: var(--sunk); border-color: transparent; color: var(--fg); }
-:is(.sd .sd-icon, .tv .sd-icon, .pop-tools button) { width: var(--btn-h); padding: 0; }
+:is(.sd button.sd-ghost, .tv-button.tv-ghost, .sd .sd-selbar button, .sd .sd-icon, .tv .sd-icon, .hd-hist .sd-icon, .pop-tools button) { background: none; border-color: transparent; color: var(--muted); }
+:is(.sd button.sd-ghost, .tv-button.tv-ghost, .sd .sd-selbar button, .sd .sd-icon, .tv .sd-icon, .hd-hist .sd-icon, .pop-tools button):hover:not(:disabled) { background: var(--sunk); border-color: transparent; color: var(--fg); }
+:is(.sd .sd-icon, .tv .sd-icon, .hd-hist .sd-icon, .pop-tools button) { width: var(--btn-h); padding: 0; }
 :is(.sd-icon, .pop-tools button) svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
 /* toggles: pressed reads as selected, in a segmented row too */
 :is(.sd button[aria-pressed=true], .pop-tools button[aria-pressed=true], .tv-tab.on) { background: color-mix(in srgb, var(--accent) 14%, var(--panel)); border-color: var(--accent); color: var(--accent); }

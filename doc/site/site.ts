@@ -1071,7 +1071,7 @@ interface Stream {
         let j = i;
         while (j < shown.length && shown[j].kind === 'paragraph' && shown[j].path === r.path) j++;
         const run = shown.slice(i, j), name = (r.path ?? '').split('/').pop(), id = `${r.path}|${r.line}`;
-        html.push(`<details class="ts-other" data-id="${esc(id)}"${closed.has(id) ? '' : ' open'}><summary><span class="ts-at"></span><span class="ts-rails" aria-hidden="true"></span><span class="ts-file">${esc(name)}</span> <span class="muted">${plural(run.length, 'paragraph')}</span></summary>${run.map((x) => tsRow(x, 1)).join('')}</details>`);
+        html.push(`<details class="ts-other" data-id="${esc(id)}"${closed.has(id) ? '' : ' open'}><summary><span class="ts-at"></span><span class="ts-rails" aria-hidden="true"></span><span class="ts-file">${esc(name)}</span> <span class="muted">${plural(run.length, 'paragraph')}</span></summary>${run.map((x) => tsRow(x)).join('')}</details>`);
         i = j;
         continue;
       }
@@ -1087,7 +1087,8 @@ interface Stream {
       i = j;
     }
     if (docOpen) html.push(docMark('end', (docEnd ?? docBegin)!));
-    const rails = Math.max(0, ...shown.map((r) => (r.depth ?? 0) + (mine(r) ? 0 : 1)));
+    // the same whichever file is open: a click that opens another file moves no text sideways
+    const rails = Math.max(0, ...shown.map((r) => r.depth ?? 0));
     return html.length ? `<div class="ts-view" style="--rails: ${rails}">${html.join('')}</div>` : '';
   }
   /** One environment instance: its chip, then its rows; a card with steps when its pages repeat its lines. */
