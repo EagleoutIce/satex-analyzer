@@ -34,6 +34,8 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 
 ### Playground
 
+- `feat` **Settings: YAML as YAML.** The YAML tab and the export write block lists, nested maps, unquoted text and folded long text. Search and `@changed` work there (hits with their parent keys, Enter and Shift+Enter jump). The changed count in the footer searches `@changed`. The first group of a tab and groups with changes start open, your choices are remembered.
+- `feat` **Go-to lists peek.** A definition lookup shows a spinner, then each target's code with its line marked, the name and what it does, on hover or arrow keys.
 - `feat` **The status line shows how incremental a run was.** Line N → end, its own steps against a full run's, and the time (`satex/runInfo`).
 - `feat` **Drag TikZ nodes in the PDF.** Dragging a node writes its new `at (x,y)`, an `xshift`/`yshift` for a placed node or `pos=` for a path label, on a 1 mm grid with a ghost showing the coordinates.
 - `feat` **Switch references from the pages.** In Type mode a printed `\ref` or `\cite` takes no typing, and a click opens a fuzzy-searched list of labels and citations and writes the chosen key.
@@ -60,7 +62,8 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 - `perf` **Edits rerun and copy less.** Steps per body edit 415k → 85k (−80%), a state copy 20 → 4 ms (−80%), edit → findings 0.40 → 0.18 s (−55%) on a small hyperref document and 0.66 → 0.45 s (−32%) on the thesis example. Findings come before completion data, and the debounce is 100 ms (was 300): back-to-back edits 0.30 → 0.20 s (−33%).
 - `perf` **Edits reach the run and Typeset view at once.** Thesis example 5 s → 0.2 s (−96%). Edited row in the browser 4.5–10 s → 0.6 s (−87 to −94%). Small hyperref document rerun 1 s → 0.1 s (−90%). Edit findings without `\DocumentMetadata` 0.6 s → 0.3 s (−50%).
 - `perf` **Typing in the PDF shows at once.** Key to new page takes about 0.4 s on a short document and 0.5 to 0.6 s on 100 pages. A one-word edit in the browser: 0.3 s → 0.15 s (−50%) on one page, 1.1 s → 0.25 s (−77%) on twenty. Automatic compile offers 0.2 s.
-- `fix` **Type mode keeps the source's structure.** One check gates every keystroke: braces, command names, environments, math, comments and verbatim stay intact, Enter in a title is refused (Shift+Enter breaks the line), contents entries edit their short title, a failed build shows its first TeX error with Undo. A fuzz test checks 26,010 edits. The old code broke 2,486 of its 9,600 key runs, in 6 classes.
+- `fix` **Macro text in TikZ nodes is tinted.** Letters a macro sets from code outside your files (`\TeX` in a node) are tinted as macro text. In Type mode a click on them opens the completion at the macro's call.
+- `fix` **Type mode keeps the source's structure.** One check gates every keystroke: braces, command names, environments, math, comments and verbatim stay intact, Enter in a title is refused (Shift+Enter breaks the line), contents entries edit their short title, a failed build shows its first TeX error with Undo. A fuzz test checks 48,506 edits. The old code broke 3,669 of its 9,600 key runs, in 8 classes.
 - `fix` **Typing in the PDF keeps its place across rebuilds.** The caret follows the source offset on each new build and the view stays put when a line moves to the next page. Typed text shows in the page's own font, and only the typed row moves. Over 300 keys across a page break, caret jumps went from 60 to 4 and the longest stall from 5 keys to 3.
 - `fix` **Keys layer follows the shown project.** A failed or outdated query for labels, references and citations is asked again, and another project's keys never stay on the pages.
 - `fix` **Measured column widths.** The PDF's column chips show each `l`/`c`/`r` column's width from its cells, not an even share.
@@ -104,6 +107,7 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 - `fix` **Dialogs side by side.** A list with its details stacks only when the dialog itself is too narrow, not by the screen's width.
 - `fix` **Showcase carousel back.** The landing page's cards turn on a ring again, each frame hugging its capture; phones keep the stacked grid.
 - `fix` **Smooth typing on the landing and front page.** Sentences fade in at one steady pace without reflow.
+- `docs` **The license line joins the rotating claims.** "…that it is yours to read, run offline and change, MIT-licensed on GitHub", and an "MIT license" button sits beside Try it, Install and Guide.
 - `docs` **Plainer docs and a clearer front page.** Guide, wiki and README use plain words, the lint page shows each rule's `S` or `U` badge. The front page explains why satex interprets the code, names the MIT license and the flowR inspiration (not used, not required).
 
 ### Analysis
@@ -113,6 +117,7 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 - `perf` **Far fewer path splits.** Four pgfmath divides 803 → 439 splits (−45%). l3fp over an aux position 112.6k splits and 37 s → 104 and 0.6 s (−99.9%, −98%). Tagged `\maketitle` and tables 281 s → 6 s (−98%). xcolor mix 88 → 4 splits (−95%).
 - `perf` **Cheaper steps.** Figure-heavy documents save up to 25% of the time, other documents about 7%.
 - `perf` **Kept call effects.** Calls of 200 steps or more replay when arguments and state match (`limits.call_memo_steps`, 0 turns it off, `limits.call_memo_verify: 1` checks each replay).
+- `fix` **`limits.memory` counts what the process really holds.** The XeTeX thesis example peaked at 17.6 GB under an 8 GiB limit and was cut; it now reaches its end at 2.7 GB. Allocator overhead and resident memory count, and a loop under undecided conditionals no longer keeps every macro body it built.
 - `fix` **No stall while many paths wait at one line.** Joining and resuming waiting paths counts against `limits.walk_per_step`, so such a line is cut and reported instead of running for minutes.
 - `fix` **Call summaries keep no text of other arguments.** Fixes a false missing-number on a beamer title page.
 - `fix` **Text colors after an early character.** Later text and page colors reach the Typeset view and color lints.
