@@ -90,7 +90,7 @@ fn run() -> Result<(), String> {
 fn finish(root: &Path, site: &Path, profile: &str, _lock: &std::fs::File) {
     let examples = root.join("doc/site/examples");
     compile::warm(&compile::root(site), &examples);
-    say("built without the slow steps. Reload the page to load it; the rest follows");
+    say("built without the slow steps. Reload the page to load it. The rest follows");
     match site_build(root, site, profile, false).and_then(|()| swap(site)) {
         Ok(()) => {
             compile::warm(&compile::root(site), &examples);

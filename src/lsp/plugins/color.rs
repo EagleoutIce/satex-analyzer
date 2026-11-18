@@ -18,7 +18,7 @@ use serde_json::{Value as Json, json};
 
 pub(super) struct Color;
 
-use crate::engine::value::{Rgb, hex, specs};
+use crate::util::color::{Rgb, hex, specs};
 
 impl TypePlugin for Color {
     fn name(&self) -> &'static str {
@@ -385,7 +385,7 @@ pub(super) fn presentations(
 
 #[cfg(test)]
 mod tests {
-    use crate::engine::value::{hsb, specs};
+    use crate::util::color::{hsb, specs};
 
     #[test]
     fn models_convert_as_xcolor_does() {

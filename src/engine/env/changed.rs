@@ -10,19 +10,27 @@ use super::Binding;
 
 pub type Entry = (Option<Binding>, u32);
 
-thread_local! {
-    /// Entries the maps of this thread walked since [`take_walked`]: the work
-    /// of joins, comparisons and resumes, which reads no token.
-    static WALKED: Cell<u64> = const { Cell::new(0) };
+/// Entries the maps of one [`super::Env`] walked since [`Walked::take`]: the work of joins,
+/// comparisons and resumes, which reads no token (`Machine::charge` pays them). A copy
+/// starts at 0, so each machine pays its own.
+#[derive(Default)]
+pub struct Walked(Cell<u64>);
+
+impl Walked {
+    fn add(&self, n: usize) {
+        self.0.set(self.0.get() + n as u64);
+    }
+
+    /// The entries walked since the last call.
+    pub fn take(&self) -> u64 {
+        self.0.replace(0)
+    }
 }
 
-fn walk(n: usize) {
-    WALKED.with(|w| w.set(w.get() + n as u64));
-}
-
-/// The entries walked since the last call ([`Machine::charge`] pays them).
-pub fn take_walked() -> u64 {
-    WALKED.with(|w| w.replace(0))
+impl Clone for Walked {
+    fn clone(&self) -> Self {
+        Walked::default()
+    }
 }
 
 const BITS: u32 = 5;
@@ -266,20 +274,36 @@ impl Changed {
         self.size == 0
     }
 
-    pub fn iter(&self) -> impl Iterator<Item = (&u32, &Entry)> {
-        walk(self.size);
+    /// Every entry, paid to `walked`.
+    pub fn iter<'a>(&'a self, walked: &Walked) -> impl Iterator<Item = (&'a u32, &'a Entry)> + use<'a> {
+        walked.add(self.size);
+        self.entries()
+    }
+
+    pub fn keys<'a>(&'a self, walked: &Walked) -> impl Iterator<Item = &'a u32> + use<'a> {
+        self.iter(walked).map(|(k, _)| k)
+    }
+
+    fn entries(&self) -> Iter<'_> {
         Iter { stack: vec![self.root.kids.iter()] }
     }
 
-    pub fn keys(&self) -> impl Iterator<Item = &u32> {
-        self.iter().map(|(k, _)| k)
+    /// The map of `entries`, paid to `walked`.
+    pub fn collect(entries: impl IntoIterator<Item = (u32, Entry)>, walked: &Walked) -> Changed {
+        let mut map = Changed::new();
+        for (k, e) in entries {
+            map.insert_mut(k, e);
+        }
+        walked.add(map.size);
+        map
     }
 
     /// Every name either map holds, with both entries, except names in a
     /// subtree both maps share whose summary `skip` accepts: there the two
     /// entries are one. `skip` gets the subtree's highest group level, with
     /// bit 31 set when an entry there does not join with itself as itself.
-    pub fn pairs<'a>(&'a self, other: &'a Changed, skip: impl Fn(u32) -> bool) -> Vec<Pair<'a>> {
+    /// Paid to `walked`.
+    pub fn pairs<'a>(&'a self, other: &'a Changed, skip: impl Fn(u32) -> bool, walked: &Walked) -> Vec<Pair<'a>> {
         let mut out = Vec::new();
         if Rc::ptr_eq(&self.root, &other.root) && skip(self.root.summary()) {
             return out;
@@ -290,7 +314,7 @@ impl Changed {
                 pairs(p.kid(i), q.kid(i), &skip, &mut out);
             }
         }
-        walk(out.len());
+        walked.add(out.len());
         out
     }
 
@@ -321,26 +345,15 @@ impl<'a> Iterator for Iter<'a> {
     }
 }
 
-impl FromIterator<(u32, Entry)> for Changed {
-    fn from_iter<I: IntoIterator<Item = (u32, Entry)>>(iter: I) -> Self {
-        let mut map = Changed::new();
-        for (k, e) in iter {
-            map.insert_mut(k, e);
-        }
-        walk(map.size);
-        map
-    }
-}
-
 impl serde::Serialize for Changed {
     fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
-        s.collect_seq(self.iter())
+        s.collect_seq(self.entries())
     }
 }
 
 impl<'de> serde::Deserialize<'de> for Changed {
     fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
-        Ok(Vec::<(u32, Entry)>::deserialize(d)?.into_iter().collect())
+        Ok(Changed::collect(Vec::<(u32, Entry)>::deserialize(d)?, &Walked::default()))
     }
 }
 
@@ -380,11 +393,11 @@ mod tests {
         }
         for (map, model) in maps.iter().zip(&models) {
             assert_eq!(map.size(), model.len());
-            let got: BTreeMap<u32, u32> = map.iter().map(|(k, e)| (*k, e.1)).collect();
+            let got: BTreeMap<u32, u32> = map.entries().map(|(k, e)| (*k, e.1)).collect();
             assert_eq!(&got, model);
         }
         for (a, b) in [(0, 1), (3, 4), (10, 11), (5, 30)] {
-            let all = maps[a].pairs(&maps[b], |_| false);
+            let all = maps[a].pairs(&maps[b], |_| false, &Walked::default());
             let mut keys: Vec<u32> = all.iter().map(|p| p.0).collect();
             keys.sort_unstable();
             let union: Vec<u32> = models[a]
@@ -399,7 +412,7 @@ mod tests {
                 assert_eq!(x.map(|e| e.1), models[a].get(k).copied());
                 assert_eq!(y.map(|e| e.1), models[b].get(k).copied());
             }
-            let some: Vec<u32> = maps[a].pairs(&maps[b], |_| true).iter().map(|p| p.0).collect();
+            let some: Vec<u32> = maps[a].pairs(&maps[b], |_| true, &Walked::default()).iter().map(|p| p.0).collect();
             for k in union {
                 if models[a].get(&k) != models[b].get(&k) {
                     assert!(some.contains(&k), "{k} differs but was skipped");

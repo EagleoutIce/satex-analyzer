@@ -763,6 +763,7 @@ fn configure(cli: &Cli, source: Option<&str>) -> Result<(Config, Vec<PathBuf>), 
         cfg.opaque_conditionals.extend(command.opaque_conditionals());
     }
     satex::analysis::budget::set_limit(cfg.limits.memory.as_u64());
+    satex::analysis::budget::whole_process(true);
     Ok((cfg, layers))
 }
 

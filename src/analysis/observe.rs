@@ -307,7 +307,7 @@ pub fn color_stack(m: &mut Machine, stack: Option<i64>, op: crate::analysis::fac
 }
 
 /// Where an occurrence recorded once the run has ended belongs.
-#[derive(Clone)]
+#[derive(Clone, PartialEq)]
 pub struct OccContext {
     pub package: Option<crate::engine::tex::Sym>,
     pub expanded: Option<Span>,
@@ -360,8 +360,16 @@ impl WrittenLine {
     }
 }
 
+/// The names body calls read, each read once: a loop in a call reads its names alike again.
+#[derive(Clone, Default)]
+pub struct NameReads {
+    pub list: Vec<NameRead>,
+    /// Where each name read at a call site stands in `list`.
+    at: crate::fixed::LookupMap<(crate::engine::tex::Sym, Span), Vec<u32>>,
+}
+
 /// A name a call in the document body read.
-#[derive(Clone)]
+#[derive(Clone, PartialEq)]
 pub struct NameRead {
     name: crate::engine::tex::Sym,
     /// The contents of the call's braced arguments.
@@ -460,11 +468,16 @@ pub fn read_name(m: &mut Machine, name: &str) {
     }
     let Some((call, span)) = m.file_call else { return };
     let name = m.intern(name);
-    let recent = m.name_reads.iter().rev().take(8).any(|r| r.name == name && r.span == span);
+    let recent = m.name_reads.list.iter().rev().take(8).any(|r| r.name == name && r.span == span);
     if !recent {
         let context = m.occurrence_context();
-        let parts = call_parts(m, span);
-        m.name_reads.push(NameRead { name, parts, call, span, context });
+        let read = NameRead { name, parts: call_parts(m, span), call, span, context };
+        let reads = &mut m.name_reads;
+        let same = reads.at.entry((name, span)).or_default();
+        if !same.iter().any(|&i| reads.list[i as usize] == read) {
+            same.push(reads.list.len() as u32);
+            reads.list.push(read);
+        }
     }
 }
 
@@ -853,7 +866,7 @@ fn shape(shapes: &mut Vec<Shape>, prefix: &str, suffix: &str) -> usize {
 /// shape are bibliography entries. What is left names files: the databases.
 pub fn relate(m: &mut Machine) {
     let lines = std::mem::take(&mut m.written_lines);
-    let reads = std::mem::take(&mut m.name_reads);
+    let reads = std::mem::take(&mut m.name_reads).list;
     let mut shapes: Vec<Shape> = Vec::new();
     let mut declared: Vec<(usize, String, usize)> = Vec::new();
     for (i, line) in lines.iter().enumerate() {

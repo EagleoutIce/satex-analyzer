@@ -3,6 +3,7 @@
 //!
 //! Each run counts on its own ([`Run`]): runs side by side in one process
 //! (parallel tests, the language server) never see each other's memory.
+//! A run alone in the process answers for all of it ([`charged`]).
 
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::Cell;
@@ -10,11 +11,15 @@ use std::sync::atomic::{AtomicIsize, AtomicUsize, Ordering};
 
 /// What the whole process holds, for allocations made outside any run.
 static PROCESS: Counter = Counter::new();
-/// Everything live in the process, every run's share included: runs side
-/// by side (parallel tests) are held to `limits.memory` together.
+/// Everything live in the process, every run's share included: a run
+/// alone in the process answers for it ([`charged`]).
 static TOTAL: AtomicIsize = AtomicIsize::new(0);
 /// `limits.memory`, 0 for none.
 static LIMIT: AtomicUsize = AtomicUsize::new(0);
+/// Runs going on now, nested ones not counted ([`Run::start`]).
+static RUNS: AtomicUsize = AtomicUsize::new(0);
+/// Whether a run alone answers for the whole process ([`whole_process`]).
+static WHOLE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 /// Live and peak bytes. Live may dip below zero where a run frees what was
 /// allocated before it began; reads clamp at zero.
@@ -58,7 +63,13 @@ impl Run {
     /// A fresh counter, entered on this thread until the guard drops.
     pub fn start() -> (Run, Entered) {
         let run = Run(Box::leak(Box::new(Counter::new())));
-        (run, run.enter())
+        let mut entered = run.enter();
+        // A run inside another (a package cache, a probe) is part of it.
+        entered.outermost = entered.outer.is_none();
+        if entered.outermost {
+            RUNS.fetch_add(1, Ordering::Relaxed);
+        }
+        (run, entered)
     }
 
     /// The run this thread counts for, to hand to a thread it starts.
@@ -69,20 +80,31 @@ impl Run {
     /// Counts this thread's allocations for the run until the guard drops.
     pub fn enter(&self) -> Entered {
         settle();
-        Entered { outer: CURRENT.with(|c| c.replace(Some(self.0))) }
+        Entered { outer: CURRENT.with(|c| c.replace(Some(self.0))), outermost: false }
     }
 }
 
 /// Restores the thread's previous run when dropped.
 pub struct Entered {
     outer: Option<&'static Counter>,
+    /// Whether this started a run of its own, counted in [`RUNS`].
+    outermost: bool,
 }
 
 impl Drop for Entered {
     fn drop(&mut self) {
         settle();
         CURRENT.with(|c| c.set(self.outer));
+        if self.outermost {
+            RUNS.fetch_sub(1, Ordering::Relaxed);
+        }
     }
+}
+
+/// Makes a run alone in the process answer for all of it. The binary
+/// does; a test process, whose memory is many tests' leftovers, does not.
+pub fn whole_process(on: bool) {
+    WHOLE.store(on, Ordering::Relaxed);
 }
 
 /// Sets `limits.memory`, which every run is held to.
@@ -149,8 +171,8 @@ fn flush(bytes: isize, last: isize) -> bool {
     if last > 0
         && ceiling > 0
         && !std::ptr::eq(counter, &PROCESS)
-        // The run's own bytes only: runs side by side are stopped together
-        // between tokens ([`held`]), never by failing one's allocation.
+        // The run's own bytes only: a run past the limit stops between
+        // tokens ([`charged`]), never by failing another's allocation.
         // A ceiling past `isize::MAX` (on wasm32) is no ceiling, not a negative one.
         && now > isize::try_from(ceiling).unwrap_or(isize::MAX)
     {
@@ -168,6 +190,16 @@ fn flush(bytes: isize, last: isize) -> bool {
     true
 }
 
+/// What an allocation of `size` bytes takes from the system allocator.
+/// Assumption, after glibc's malloc and dlmalloc (wasm): a header word
+/// before the block, 16-byte granules, and a smallest chunk of four words.
+/// A run of small allocations (tokens, names, tree nodes) takes about
+/// twice what it asks for, which counting `size` alone missed.
+fn footprint(size: usize) -> usize {
+    const WORD: usize = std::mem::size_of::<usize>();
+    (size + WORD).max(4 * WORD).next_multiple_of(16)
+}
+
 fn take(bytes: usize) -> bool {
     count(bytes as isize)
 }
@@ -178,30 +210,31 @@ fn give(bytes: usize) {
 
 unsafe impl GlobalAlloc for Counted {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        if !take(layout.size()) {
+        let bytes = footprint(layout.size());
+        if !take(bytes) {
             return std::ptr::null_mut();
         }
         let pointer = unsafe { System.alloc(layout) };
         if pointer.is_null() {
-            give(layout.size());
+            give(bytes);
         }
         pointer
     }
 
     unsafe fn dealloc(&self, pointer: *mut u8, layout: Layout) {
         unsafe { System.dealloc(pointer, layout) };
-        give(layout.size());
+        give(footprint(layout.size()));
     }
 
     unsafe fn realloc(&self, pointer: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
-        let old = layout.size();
-        if new_size > old && !take(new_size - old) {
+        let (old, new) = (footprint(layout.size()), footprint(new_size));
+        if new > old && !take(new - old) {
             return std::ptr::null_mut();
         }
         let moved = unsafe { System.realloc(pointer, layout, new_size) };
-        match (moved.is_null(), new_size > old) {
-            (true, true) => give(new_size - old),
-            (false, false) => give(old - new_size),
+        match (moved.is_null(), new > old) {
+            (true, true) => give(new - old),
+            (false, false) => give(old - new),
             _ => {}
         }
         moved
@@ -214,10 +247,54 @@ pub fn in_use() -> usize {
     current().live()
 }
 
-/// What `limits.memory` is checked against: this run's bytes, or the
-/// process's where runs side by side hold more together.
-pub fn held() -> usize {
-    in_use().max(TOTAL.load(Ordering::Relaxed).max(0) as usize)
+/// What `limits.memory` is checked against. Runs side by side each answer
+/// for their own count. A run alone in the binary answers for all of it:
+/// what the process allocated outside the run too (the format, caches
+/// shared between runs), and, where the system says, what is resident
+/// (allocator slack, mapped files), whichever is more.
+pub fn charged() -> usize {
+    let own = in_use();
+    if !WHOLE.load(Ordering::Relaxed) || RUNS.load(Ordering::Relaxed) > 1 {
+        return own;
+    }
+    own.max(TOTAL.load(Ordering::Relaxed).max(0) as usize).max(resident())
+}
+
+/// Resident bytes of the process, read again once [`RESIDENT_EVERY`] passed
+/// or the count moved by a 64th of the limit since (a file read, too slow
+/// for every check); 0 where unknown.
+fn resident() -> usize {
+    static CLOCK: std::sync::LazyLock<std::time::Instant> = std::sync::LazyLock::new(std::time::Instant::now);
+    static READ_AT: AtomicUsize = AtomicUsize::new(0);
+    static READ_WITH: AtomicUsize = AtomicUsize::new(0);
+    static LAST: AtomicUsize = AtomicUsize::new(0);
+    let now = CLOCK.elapsed().as_millis() as usize + RESIDENT_EVERY;
+    let total = TOTAL.load(Ordering::Relaxed).max(0) as usize;
+    let moved = total.abs_diff(READ_WITH.load(Ordering::Relaxed)) > LIMIT.load(Ordering::Relaxed) / 64;
+    let at = READ_AT.load(Ordering::Relaxed);
+    if at != 0 && now < at + RESIDENT_EVERY && !moved {
+        return LAST.load(Ordering::Relaxed);
+    }
+    READ_AT.store(now, Ordering::Relaxed);
+    READ_WITH.store(total, Ordering::Relaxed);
+    let bytes = read_resident().unwrap_or(0);
+    LAST.store(bytes, Ordering::Relaxed);
+    bytes
+}
+
+/// Milliseconds between two reads of the resident size.
+const RESIDENT_EVERY: usize = 50;
+
+/// The resident set size the system reports: Linux's `/proc/self/statm`
+/// (pages); none elsewhere, where the count alone is checked.
+fn read_resident() -> Option<usize> {
+    if !cfg!(target_os = "linux") {
+        return None;
+    }
+    let statm = std::fs::read_to_string("/proc/self/statm").ok()?;
+    let pages: usize = statm.split_whitespace().nth(1)?.parse().ok()?;
+    // 4 KiB pages: the size every Linux target satex builds for uses.
+    Some(pages << 12)
 }
 
 /// Whether this run has held more than `limits.memory`.

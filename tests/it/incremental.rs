@@ -408,7 +408,7 @@ fn rows_in(analysis: &Analysis, path: &str, lo: u32, hi: u32) -> Vec<satex::quer
 }
 
 /// An edit inside a paragraph runs that paragraph first, from the checkpoint the full run
-/// resumes from, up to the paragraph's end (`preview_with`): TeX breaks a paragraph into lines
+/// resumes from, up to the paragraph's end (`RunHooks::preview`): TeX breaks a paragraph into lines
 /// from the state at its start and its own text, so its rows are the full run's. Pins: the
 /// playground waited for the whole run (and the page builder holds the paragraph until the
 /// page ships, so the runs never meet earlier); a longer word and a word in the last
@@ -433,9 +433,9 @@ fn a_paragraph_run_first_typesets_the_edited_paragraph_as_the_full_run() {
         std::fs::write(&main, &text).unwrap();
         let got = std::rc::Rc::new(std::cell::RefCell::new(None));
         let sink = got.clone();
-        satex::analysis::machine::preview_with(Some(Box::new(move |run, path, lo, hi| {
+        checkpoints.hooks.preview = Some(Box::new(move |run, path, lo, hi| {
             *sink.borrow_mut() = Some((rows_in(&run, path, lo, hi), path.to_string(), lo, hi));
-        })));
+        }));
         checkpoints.analyze(&text, &main);
         let (rows, path, lo, hi) = got.take().unwrap_or_else(|| panic!("no paragraph run for {now}"));
         let edited = 1 + text.lines().position(|l| l.contains(now)).unwrap() as u32;
@@ -460,7 +460,7 @@ fn paragraph_rows(analysis: &Analysis) -> Vec<satex::queries::query::Record> {
 }
 
 /// After an edit, the run hands on a whole provisional analysis as soon as its state equals
-/// the last run's apart from the page being built (`lax_with`): the rows after are the last
+/// the last run's apart from the page being built (`RunHooks::provisional`): the rows after are the last
 /// run's, its page breaks marked not exact. Every paragraph row equals a full run's, so the
 /// Typeset view shows the whole document long before the exact run ends. Bug pinned: the
 /// view waited for the exact run, which the page builder keeps from meeting the last one
@@ -486,9 +486,9 @@ fn a_lax_page_model_reuses_the_rest_of_the_last_run() {
         std::fs::write(&main, &text).unwrap();
         let got = std::rc::Rc::new(std::cell::RefCell::new(None));
         let sink = got.clone();
-        satex::analysis::machine::lax_with(Some(Box::new(move |run| *sink.borrow_mut() = Some(run))));
+        checkpoints.hooks.provisional = Some(Box::new(move |run| *sink.borrow_mut() = Some(run)));
         checkpoints.analyze(&text, &main);
-        satex::analysis::machine::lax_with(None);
+        checkpoints.hooks.provisional = None;
         let lax = got.take();
         if let Some(met) = met {
             assert_eq!(lax.is_some(), met, "{now}: a provisional run");

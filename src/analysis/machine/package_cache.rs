@@ -1896,7 +1896,7 @@ impl Machine<'_> {
             file_depth: *file_depth,
             aux: (
                 line_defined.is_some(),
-                written_lines.len() + name_reads.len() + stream_files.len() + key_names.len(),
+                written_lines.len() + name_reads.list.len() + stream_files.len() + key_names.len(),
             ),
             pinned: pinned.len(),
             docstrip: *docstrip,

@@ -2013,3 +2013,26 @@ fn a_label_used_only_inside_an_argument_is_not_unused() {
         assert!(found.is_empty(), "{wrap}: {found:?}");
     }
 }
+
+/// Intuition: in a definition's body `#` must be followed by `#` or a parameter's number; TeX
+/// reports any other `#` right at the definition (tex.web § 479). Soundness: a real TeX error
+/// must never go unreported. Pins: `\\def\\ck#1{The year # is.}` reported only the later
+/// "You can't use `macro parameter character #'" at the use, not the definition's error.
+#[test]
+fn an_illegal_parameter_number_is_reported_at_the_definition() {
+    for (name, body) in [("lone-hash.tex", "The year # is."), ("hash-too-high.tex", "#2 is.")] {
+        let doc = format!(
+            "\\documentclass{{article}}\n\\def\\ck#1{{{body}\\par}}\n\\begin{{document}}\n\\ck{{1900}}\n\\end{{document}}\n"
+        );
+        let Some(analysis) = latex_file(name, &doc) else { return };
+        let found = findings(&analysis, "raised-error");
+        assert!(
+            found.iter().any(|m| m.contains("Illegal parameter number in definition of \\ck")),
+            "{body}: {found:?}"
+        );
+    }
+    // `##` and `#1` are fine
+    let ok = "\\documentclass{article}\n\\def\\ck#1{#1 and ## }\n\\begin{document}\nx\n\\end{document}\n";
+    let Some(analysis) = latex_file("hash-ok.tex", ok) else { return };
+    assert!(!findings(&analysis, "raised-error").iter().any(|m| m.contains("Illegal parameter")));
+}

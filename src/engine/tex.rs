@@ -1476,9 +1476,14 @@ impl Default for EndLineChar {
 
 impl Mouth {
     pub fn new(src: &str, file: FileId) -> Self {
+        Self::shared(src.chars().collect::<Vec<_>>().into(), 0, file)
+    }
+
+    /// A mouth reading `src` from `pos` on as if it began there: line 1, state N.
+    pub fn shared(src: std::rc::Rc<[char]>, pos: usize, file: FileId) -> Self {
         Self {
-            src: src.chars().collect::<Vec<_>>().into(),
-            pos: 0,
+            src,
+            pos,
             line: 1,
             col: 1,
             state: LineState::New,

@@ -306,6 +306,48 @@ fn a_growing_document_stays_under_its_memory_limit() {
     assert!(peak << 20 <= LIMIT * 3 / 2 + (48 << 20), "peak {peak} MiB past a 64M limit");
 }
 
+/// A document that only makes small things (a name and a one-token body
+/// per round) still stops at `limits.memory` with that verdict, holding no
+/// more than the limit past what an empty run holds. Small allocations
+/// take about twice what they ask of the system allocator: counted at
+/// their size alone, such a run held twice its limit (13 GB on a tikz
+/// picture under 8 GiB) or aborted past the hard ceiling.
+#[test]
+fn many_small_allocations_stop_at_the_memory_limit() {
+    const LIMIT: u64 = 64_000_000;
+    let dir = fresh("memory-small");
+    let preamble = "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6\n";
+    let grow = "\\def\\l{\\advance\\count1 1 \\expandafter\\def\\csname m\\the\\count1\\endcsname{x}\\l}\\l\n";
+    std::fs::write(dir.join("empty.tex"), preamble).expect("write document");
+    std::fs::write(dir.join("small.tex"), format!("{preamble}{grow}")).expect("write document");
+    let run = |file: &str| {
+        let output = crate::support::satex()
+            .args(["lint", "--no-config", "--stats", "-f", file, "--max-memory", &LIMIT.to_string()])
+            .args(["--set", "load.format=false", "--set", "limits.seconds=0"])
+            .current_dir(&dir)
+            .output()
+            .expect("satex runs");
+        let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+        assert!(output.status.code().is_some(), "killed: {stderr}");
+        let peak: u64 = stderr
+            .split_whitespace()
+            .zip(stderr.split_whitespace().skip(1))
+            .find_map(|(n, unit)| (unit == "MiB").then(|| n.parse().ok()).flatten())
+            .expect("a peak in --stats");
+        (peak << 20, stderr)
+    };
+    let (empty, _) = run("empty.tex");
+    let (peak, stderr) = run("small.tex");
+    assert!(stderr.contains("limits.memory"), "the memory limit did not stop the run: {stderr}");
+    // A check runs every few hundred tokens: a quarter of the limit covers what grows between.
+    assert!(
+        peak <= empty + LIMIT * 5 / 4,
+        "peak {} MiB past a {LIMIT}-byte limit over {} MiB",
+        peak >> 20,
+        empty >> 20
+    );
+}
+
 /// A path dropped for a certain error in a package (here an image of unknown
 /// width that may be zero, as `\includegraphics` divides by: scaled to a random
 /// width below 100sp, since satex reads the logo's own box exactly) waits until the run

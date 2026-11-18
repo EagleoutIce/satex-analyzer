@@ -4,6 +4,7 @@
 //! changed. That gives the same result as a full run.
 
 use super::explore::Drive;
+use super::provisional;
 use super::{Analysis, Frame, Machine};
 use crate::engine::tex::Mouth;
 use crate::fixed::HashMap;
@@ -35,7 +36,7 @@ struct Checkpoint<'a> {
 /// The checkpoints a run takes, and the drive it resumes with.
 #[derive(Default)]
 pub(super) struct Taker<'a> {
-    on: Option<Box<Taking<'a>>>,
+    pub(super) on: Option<Box<Taking<'a>>>,
     resume: Option<Box<Drive>>,
     /// A paragraph preview's end: the file, its last line, and whether the run has read the file yet.
     stop: Option<(crate::engine::tex::FileId, u32, bool)>,
@@ -45,32 +46,21 @@ pub(super) struct Taker<'a> {
 /// paragraph's file and its first and last line.
 pub type Preview = Box<dyn FnOnce(Analysis, &str, u32, u32)>;
 
-thread_local! {
-    static PREVIEW: std::cell::RefCell<Option<Preview>> = const { std::cell::RefCell::new(None) };
-}
-
 /// What a provisional run hands on: the whole document, the last run's rest spliced in
 /// where the states first agree apart from the page being built.
 pub type Lax = Box<dyn FnOnce(Analysis)>;
 
-thread_local! {
-    static LAX: std::cell::RefCell<Option<Lax>> = const { std::cell::RefCell::new(None) };
-}
-
-/// Asks the next resumed run to hand `then` a provisional whole analysis as soon as its state
-/// equals the last run's apart from the page being built (the lax page model of the Typeset
-/// view): every row after is the last run's, its pages marked not exact. The run itself goes
-/// on exact. `None` withdraws the request.
-pub fn lax_with(then: Option<Lax>) {
-    LAX.set(then);
-}
-
-/// Asks the next resumed run of an edit inside a paragraph to run that paragraph first,
-/// from the same checkpoint, and hand it to `then`: the paragraph is broken into lines
-/// from the state at its start and its own text, so its rows are those of the full run.
-/// `None` withdraws the request.
-pub fn preview_with(then: Option<Preview>) {
-    PREVIEW.set(then);
+/// What the next resumed runs hand on early, besides their result.
+#[derive(Default)]
+pub struct RunHooks {
+    /// For an edit inside a paragraph: run that paragraph first, from the same checkpoint,
+    /// and hand it on. The paragraph is broken into lines from the state at its start and
+    /// its own text, so its rows are those of the full run. Taken by the next run.
+    pub preview: Option<Preview>,
+    /// A provisional whole analysis, as soon as the state equals the last run's apart from
+    /// the page being built (the lax page model of the Typeset view): every row after is the
+    /// last run's, its pages marked not exact. The run itself goes on exact. Kept until it fires.
+    pub provisional: Option<Lax>,
 }
 
 /// Lines `lo..=hi` of the paragraph `text` holds at `line`: up to the blank lines around it.
@@ -84,7 +74,7 @@ fn paragraph_at(text: &str, line: u32) -> Option<(u32, u32)> {
     Some((lo as u32 + 1, hi as u32))
 }
 
-struct Taking<'a> {
+pub(super) struct Taking<'a> {
     list: Vec<Checkpoint<'a>>,
     log: Vec<crate::project::overlay::Read>,
     every: u64,
@@ -101,31 +91,31 @@ struct Taking<'a> {
     /// nearby, so a checkpoint is taken there.
     edit: Option<Edit>,
     /// The last run, whose state this one may meet again after the edit.
-    prior: Prior<'a>,
+    pub(super) prior: Prior<'a>,
     /// Assignments and saves made when this run resumed: the runs differ only in what came after.
-    since: (u64, usize, u32),
+    pub(super) since: (u64, usize, u32),
     /// Where this run's state first equals the last run's (see [`Checkpoints::converged`]).
     converged: Option<(String, u32, u64)>,
     /// The last run's end with this run's facts before the meeting line: this run's end.
     spliced: Option<Box<Machine<'a>>>,
     /// What the last run read after the meeting line.
     tail: Vec<crate::project::overlay::Read>,
-    /// The main file and its text, kept while a provisional run is asked for ([`lax_with`]).
-    main: Option<(crate::engine::tex::FileId, Rc<str>)>,
+    /// The main file, its text and [`RunHooks::provisional`], until it fires.
+    pub(super) provisional: Option<(crate::engine::tex::FileId, Rc<str>, Lax)>,
 }
 
 /// What a run keeps of the one before to meet its state again.
 #[derive(Default)]
-struct Prior<'a> {
+pub(super) struct Prior<'a> {
     /// Its checkpoints that no longer hold, in run order.
     stale: Vec<Checkpoint<'a>>,
     /// Its machine at its end, before concluding.
-    end: Option<Box<Machine<'a>>>,
+    pub(super) end: Option<Box<Machine<'a>>>,
     /// Every file it read, in order.
     log: Vec<crate::project::overlay::Read>,
     steps: u64,
     /// The file edited since.
-    edit: Option<PathBuf>,
+    pub(super) edit: Option<PathBuf>,
 }
 
 /// A file, and the line where it changed.
@@ -307,7 +297,7 @@ impl Machine<'_> {
         }
         // Counts of tokens taken and assignments made differ by the edit's. They are compared
         // only with marks taken since, which differ alike, or before the edit, which both passed.
-        let (mine, theirs) = (comparable_path(self, false), comparable_path(old, false));
+        let (mine, theirs) = (provisional::comparable_path(self, false), provisional::comparable_path(old, false));
         if mine != theirs {
             return Err("path state");
         }
@@ -318,46 +308,12 @@ impl Machine<'_> {
         }
         // Last: it splices `end` in place, so a failure leaves no end for a later line.
         let mut end = self.checkpoints.on.as_mut().and_then(|t| t.prior.end.take()).ok_or("no end of the last run")?;
-        splice_out(&self.out, &old.out, &mut end.out, window, since.2, false)?;
+        provisional::splice_out(&self.out, &old.out, &mut end.out, window, since.2, false)?;
         end.started = self.started;
         let Some(taking) = self.checkpoints.on.as_mut() else { return Err("no checkpoints") };
         taking.tail = taking.prior.log.get(reads..).unwrap_or_default().to_vec();
         taking.spliced = Some(end);
         Ok(())
-    }
-
-    /// [`lax_with`]: the state equals `old`'s apart from the page being built, so the last
-    /// run's rest, spliced in, is what a lax page model shows; its pages are marked not
-    /// exact. Once per run; this run goes on exact.
-    fn lax_splice(&self, old: &Machine) {
-        let Some(taking) = self.checkpoints.on.as_ref() else { return };
-        let (Some((id, source)), Some(edit), Some(end)) = (&taking.main, &taking.prior.edit, &taking.prior.end) else {
-            return;
-        };
-        if self.mode != crate::engine::mode::Modes::VERTICAL || self.differs_from(old, true).is_some() {
-            return;
-        }
-        let Some(window) = edited_lines(&self.input, &old.input, &self.out.files, edit) else { return };
-        let since = taking.since;
-        let (mine, theirs) = (comparable_path(self, true), comparable_path(old, true));
-        let traces = [&mine, &self.env.trace((since.0, since.1)), &theirs, &old.env.trace((since.0, since.1))];
-        if mine != theirs || traces.iter().any(|t| mentions(t, window)) {
-            return;
-        }
-        if !LAX.with_borrow(Option::is_some) {
-            return;
-        }
-        let mut end = (**end).clone();
-        if splice_out(&self.out, &old.out, &mut end.out, window, since.2, true).is_err() {
-            return;
-        }
-        // where the rest's pages break, the lax model does not know
-        for page in end.out.facts.text.pages.iter_mut().filter(|p| p.0 >= since.2) {
-            page.2 = false;
-        }
-        end.started = self.started;
-        let Some(then) = LAX.take() else { return };
-        then(end.conclude(*id, source));
     }
 
     /// Whether the run just spliced the last run's rest: it then keeps a
@@ -368,7 +324,7 @@ impl Machine<'_> {
 
     /// The first part of the state that differs from `old`'s, a necessary
     /// condition for both runs to go on alike. Facts are compared by count.
-    fn differs_from(&self, old: &Machine, lax: bool) -> Option<&'static str> {
+    pub(super) fn differs_from(&self, old: &Machine, lax: bool) -> Option<&'static str> {
         let since = self.checkpoints.on.as_ref().map_or((0, 0, 0), |t| t.since);
         let (f, g) = (&self.out.facts, &old.out.facts);
         let counts = |f: &crate::analysis::facts::Facts| {
@@ -422,23 +378,6 @@ fn reading_file_after(input: &super::Input, tail: usize) -> Option<(&Mouth, bool
     None
 }
 
-/// A machine's path state as two runs that differ by an edit before here are compared:
-/// the source position, the document mark and the open calls' absolute counts left out
-/// ([`super::calls::CallRec::alike_view`]); `lax` also leaves out the page being built.
-fn comparable_path(m: &Machine, lax: bool) -> String {
-    let mut p = super::PathState { source_progress: 0, doc_mark: 0, ..m.save_path() };
-    p.call_recs = Rc::new(p.call_recs.iter().map(|r| Rc::new(r.alike_view(lax))).collect());
-    if lax {
-        // the output routines fired so far, and the braces they read: the page builder's.
-        // `align_state` counts only inside an alignment cell (tex.web § 342).
-        p.pages = 0;
-        if p.cell_base.is_none() {
-            p.align_state = 0;
-        }
-    }
-    format!("{p:?}")
-}
-
 /// Each open file of `input` with its position and the text still to read.
 fn files_at(input: &super::Input) -> Vec<(crate::engine::tex::FileId, (u32, u32), &[char])> {
     (input.iter())
@@ -452,11 +391,11 @@ fn files_at(input: &super::Input) -> Vec<(crate::engine::tex::FileId, (u32, u32)
 }
 
 /// Lines `lo..=hi` of a file.
-type Window = (crate::engine::tex::FileId, u32, u32);
+pub(super) type Window = (crate::engine::tex::FileId, u32, u32);
 
 /// The lines of `edit` that differ between the file `new` reads on top and
 /// the one `old` read, when every other open file is the same.
-fn edited_lines(
+pub(super) fn edited_lines(
     new: &super::Input,
     old: &super::Input,
     files: &[crate::analysis::machine::FileInfo],
@@ -487,7 +426,7 @@ fn edited_lines(
 }
 
 /// Whether `text`, a state written with [`std::fmt::Debug`], holds a place in `window`.
-fn mentions(text: &str, (file, lo, hi): Window) -> bool {
+pub(super) fn mentions(text: &str, (file, lo, hi): Window) -> bool {
     let number = |s: &str, key: &str| {
         s.strip_prefix(key).and_then(|s| s.split(|c: char| !c.is_ascii_digit()).next()?.parse::<u32>().ok())
     };
@@ -496,355 +435,6 @@ fn mentions(text: &str, (file, lo, hi): Window) -> bool {
         let line = s.find("line: ").and_then(|i| number(&s[i..], "line: "));
         file_at == Some(u32::from(file)) && line.is_some_and(|l| (lo..=hi).contains(&l))
     })
-}
-
-/// Serde's bytes of `t`, to compare values of any recorded type.
-fn bytes<T: serde::Serialize + ?Sized>(t: &T) -> Option<Vec<u8>> {
-    postcard::to_allocvec(t).ok()
-}
-
-fn same<T: serde::Serialize + ?Sized>(a: &T, b: &T) -> bool {
-    matches!((bytes(a), bytes(b)), (Some(x), Some(y)) if x == y)
-}
-
-/// `end` becomes `new`'s rows, updated by what the last run changed after
-/// `at`, and the rows it added. Rows are kept per index (a site's row is
-/// updated in place), so a row both runs hold differently must be one the
-/// rest cannot touch: placed on an edited line, of which no token is left.
-fn rows<T: PartialEq + Clone>(new: &[T], at: &[T], end: &mut Vec<T>, edited: impl Fn(&T) -> bool) -> bool {
-    if end.len() < at.len() {
-        return false;
-    }
-    let mut out = Vec::with_capacity(new.len() + end.len() - at.len());
-    for (i, was) in at.iter().enumerate() {
-        let (mine, last) = (new.get(i), &end[i]);
-        let rest_changed = last != was;
-        match mine {
-            Some(mine) if mine == was => out.push(last.clone()),
-            Some(mine) if !rest_changed && edited(mine) && edited(was) => out.push(mine.clone()),
-            None if !rest_changed && edited(was) => {}
-            _ => return false,
-        }
-    }
-    let added = new.get(at.len()..).unwrap_or_default();
-    if !added.iter().all(&edited) {
-        return false;
-    }
-    out.extend(added.iter().cloned());
-    out.extend(end[at.len()..].iter().cloned());
-    *end = out;
-    true
-}
-
-/// `end` becomes `new` with the entries the last run changed after `at`. An
-/// entry this run holds differently from the last must be one the rest of the
-/// run cannot touch: on an edited line (`window`), when no token of it is left.
-fn keyed<K: std::hash::Hash + Eq + Clone, V: PartialEq + Clone>(
-    new: &HashMap<K, V>,
-    at: &HashMap<K, V>,
-    end: &mut HashMap<K, V>,
-    window: impl Fn(&K) -> bool,
-) -> bool {
-    let mut out = new.clone();
-    for k in end.keys().chain(at.keys()) {
-        if end.get(k) != at.get(k) {
-            if new.get(k) != at.get(k) {
-                return false;
-            }
-            match end.get(k) {
-                Some(v) => out.insert(k.clone(), v.clone()),
-                None => out.remove(k),
-            };
-        }
-    }
-    let untouched = |k: &K| end.get(k) == at.get(k);
-    if new.keys().chain(at.keys()).any(|k| new.get(k) != at.get(k) && untouched(k) && !window(k)) {
-        return false;
-    }
-    *end = out;
-    true
-}
-
-/// A value holding offsets into the characters set (how many came before).
-trait Offsets: Sized + Clone + PartialEq {
-    /// The first offset.
-    fn first(&self) -> u32;
-    /// Every offset moved by [`shift`].
-    fn moved(&self, by: Move) -> Option<Self>;
-}
-
-/// Characters set alike in both runs, set at the meeting line, and the change in between.
-type Move = (u32, u32, i64);
-
-/// An offset before the resume stays, one set from the meeting line on moves,
-/// one in between (set in the edited part) is not known.
-fn shift(x: u32, (resume, from, by): Move) -> Option<u32> {
-    match x {
-        _ if x < resume => Some(x),
-        _ if x < from => None,
-        _ => u32::try_from(i64::from(x) + by).ok(),
-    }
-}
-
-impl Offsets for u32 {
-    fn first(&self) -> u32 {
-        *self
-    }
-    fn moved(&self, by: Move) -> Option<Self> {
-        shift(*self, by)
-    }
-}
-
-/// A character range.
-impl Offsets for (u32, u32) {
-    fn first(&self) -> u32 {
-        self.0
-    }
-    fn moved(&self, by: Move) -> Option<Self> {
-        Some((shift(self.0, by)?, shift(self.1, by)?))
-    }
-}
-
-/// A character range and what lies under it.
-impl Offsets for (u32, u32, Option<u16>) {
-    fn first(&self) -> u32 {
-        self.0
-    }
-    fn moved(&self, by: Move) -> Option<Self> {
-        Some((shift(self.0, by)?, shift(self.1, by)?, self.2))
-    }
-}
-
-/// An offset and what was set there.
-macro_rules! offset_first {
-    ($($t:ty),*) => {$(
-        impl Offsets for $t {
-            fn first(&self) -> u32 {
-                self.0
-            }
-            fn moved(&self, by: Move) -> Option<Self> {
-                let mut x = *self;
-                x.0 = shift(x.0, by)?;
-                Some(x)
-            }
-        }
-    )*};
-}
-use crate::analysis::facts::{Align, Just, Rule};
-use crate::engine::tex::Span;
-offset_first!(
-    (u32, Span),
-    (u32, Span, bool),
-    (u32, Align),
-    (u32, u16),
-    (u32, crate::engine::value::Scaled),
-    (u32, Just),
-    (u32, crate::engine::env::NodeId, bool),
-    (u32, bool, u32),
-    (u32, Rule, Span, u32)
-);
-
-/// `end` becomes `new`'s list and the rest's additions, moved by `by` (a
-/// longer word moves every later character). The rest may only add, and what
-/// it reads of the list, its last entry against the characters set so far,
-/// must stand alike in both runs.
-fn offsets<T: Offsets>(new: &[T], at: &[T], end: &mut Vec<T>, (now, then, resume): (u32, u32, u32)) -> bool {
-    let rel = |l: &[T], len: u32| l.last().map(|x| i64::from(x.first()) - i64::from(len));
-    let reads_alike = match (rel(new, now), rel(at, then)) {
-        (Some(x), Some(y)) => x == y || (x < 0 && y < 0),
-        (x, y) => x == y,
-    };
-    let by = i64::from(now) - i64::from(then);
-    let Some(rest) = end.get(at.len()..).filter(|_| reads_alike && end[..at.len()] == *at) else { return false };
-    let Some(rest) = rest.iter().map(|x| x.moved((resume, then, by))).collect::<Option<Vec<T>>>() else { return false };
-    *end = new.iter().cloned().chain(rest).collect();
-    true
-}
-
-/// [`crate::analysis::facts::Text`] spliced: per character this run's then
-/// the rest's, offsets moved, and how they move. A stack the rest pops must be alike here.
-fn splice_text(
-    new: &crate::analysis::facts::Text,
-    at: &crate::analysis::facts::Text,
-    end: &mut crate::analysis::facts::Text,
-    resume: u32,
-) -> Result<Move, &'static str> {
-    let k = at.at.len();
-    // Characters both runs set alike before the edited ones keep their offsets.
-    let from = (resume as usize).min(k).min(new.at.len());
-    let resume = (from + new.at[from..].iter().zip(&at.at[from..k]).take_while(|(a, b)| a == b).count()) as u32;
-    let lens = (new.at.len() as u32, k as u32, resume);
-    let by = (resume, lens.1, i64::from(lens.0) - i64::from(lens.1));
-    let crate::analysis::facts::Text {
-        chars,
-        at: spots,
-        site,
-        closed,
-        pars,
-        par_starts,
-        kept,
-        open,
-        arms,
-        repeats,
-        hyphens,
-        hyphenated,
-        placed,
-        dropped,
-        inserts,
-        rules,
-        align,
-        math,
-        skips,
-        just,
-        pages,
-        fills,
-        open_pages: _,
-        frames,
-        backgrounds,
-        page_drawn,
-    } = end;
-    let per_char = spots.len() >= k && site.len() >= k && spots[..k] == at.at[..] && site[..k] == at.site[..];
-    if !per_char || new.open != at.open || new.open_pages != at.open_pages {
-        return Err("text");
-    }
-    *chars = new.chars.chars().chain(chars.chars().skip(k)).collect();
-    *spots = new.at.iter().chain(&spots[k..]).copied().collect();
-    *site = new.site.iter().chain(&site[k..]).copied().collect();
-    *page_drawn |= new.page_drawn;
-    *open = open.iter().map(|&x| shift(x, by).unwrap_or(x)).collect();
-    *hyphenated = match *hyphenated == at.hyphenated {
-        true => new.hyphenated,
-        false => shift(*hyphenated, by).ok_or("hyphenated")?,
-    };
-    #[rustfmt::skip]
-    let lists = [
-        (offsets(&new.closed, &at.closed, closed, lens), "text closed"), (offsets(&new.pars, &at.pars, pars, lens), "text pars"),
-        (offsets(&new.par_starts, &at.par_starts, par_starts, lens), "text par starts"), (offsets(&new.kept, &at.kept, kept, lens), "text kept"),
-        (offsets(&new.arms, &at.arms, arms, lens), "text arms"), (offsets(&new.repeats, &at.repeats, repeats, lens), "text repeats"),
-        (offsets(&new.hyphens, &at.hyphens, hyphens, lens), "text hyphens"), (offsets(&new.placed, &at.placed, placed, lens), "text placed"),
-        (offsets(&new.dropped, &at.dropped, dropped, lens), "text dropped"), (offsets(&new.inserts, &at.inserts, inserts, lens), "text inserts"),
-        (offsets(&new.rules, &at.rules, rules, lens), "text rules"), (offsets(&new.align, &at.align, align, lens), "text align"),
-        (offsets(&new.math, &at.math, math, lens), "text math"), (offsets(&new.skips, &at.skips, skips, lens), "text skips"),
-        (offsets(&new.just, &at.just, just, lens), "text just"), (offsets(&new.pages, &at.pages, pages, lens), "text pages"),
-        (offsets(&new.fills, &at.fills, fills, lens), "text fills"), (offsets(&new.frames, &at.frames, frames, lens), "text frames"),
-        (offsets(&new.backgrounds, &at.backgrounds, backgrounds, lens), "text backgrounds"),
-    ];
-    lists.into_iter().find(|(ok, _)| !ok).map_or(Ok(by), |(_, what)| Err(what))
-}
-
-/// No key is on an edited line.
-fn never<K>(_: &K) -> bool {
-    false
-}
-
-/// [`keyed`] for a set.
-fn members<K: std::hash::Hash + Eq + Clone, S>(new: &S, at: &S, end: &mut S, window: impl Fn(&K) -> bool) -> bool
-where
-    for<'s> &'s S: IntoIterator<Item = &'s K>,
-    S: FromIterator<K>,
-{
-    let map = |s: &S| s.into_iter().map(|k| (k.clone(), ())).collect::<HashMap<K, ()>>();
-    let mut out = map(end);
-    let ok = keyed(&map(new), &map(at), &mut out, window);
-    if ok {
-        *end = out.into_keys().collect();
-    }
-    ok
-}
-
-/// The last run's end `end` with this run's record up to here (`new`) in
-/// place of its own (`at`). Every field is listed: a new one must say how.
-#[rustfmt::skip]
-fn splice_out(new: &Analysis, at: &Analysis, end: &mut Analysis, window: Window, resume: u32, lax: bool) -> Result<(), &'static str> {
-    let span = |s: &Span| s.file == window.0 && (window.1..=window.2).contains(&s.line);
-    let line = |k: &(crate::engine::tex::FileId, u32)| k.0 == window.0 && (window.1..=window.2).contains(&k.1);
-    // Kept as the run's end has them: its clock and the caches filled after it.
-    let Analysis { interner, graph, calls, observed, files, main_file, literate, project, plugins, distribution,
-        document_depth, preamble_cost, justified_text, entry, format, config, settings, metadata, kernel_sites, fonts,
-        font_states, env, catcodes, facts, trace, typeset, steps, load_steps, served_steps, limits, lines, exhausted,
-        journal_size, held_tokens_left, loop_heads, peak_paths, peak_output_paths, forks, output_forks, call_memo,
-        joined_slots, memory_reported, untyped, package_caches, written, written_runs, build_runs, class_caches,
-        cached_files, preamble, kernel, timings: _, started: _, hot: _, probes: _, context_probes: _, takes: _,
-        role_sources: _, tagging: _, probed_roles: _, bib: _, scope_rows: _, said: _, build_pending: _ } = end;
-    let crate::analysis::facts::Facts { defs, written_files, absent, found, shapes, types, length_fonts, vars,
-        letters, expansions, loads, occurrences, literals, diagnostics, csnames, slots, groups, raised, spaces,
-        kept_spaces, conditionals, quantities, colors, items, color_uses, color_stack, text, overfull,
-        lines: line_reads } = facts;
-    let (n, a) = (&new.facts, &at.facts);
-    // What this run recorded must be what the last one had here: the rest then leaves the same.
-    let alike = [
-        (new.interner.len() == at.interner.len() && new.interner == at.interner, "names"),
-        // lax: the edited line's nodes sit at other columns; the provisional end keeps the last run's
-        (new.graph.len() == at.graph.len() && (lax || new.graph == at.graph), "graph"),
-        (new.calls == at.calls && new.observed == at.observed, "calls"),
-        (new.files == at.files, "files"),
-        (same(&(new.main_file, &new.literate, &new.project, &new.plugins, &new.distribution, new.document_depth),
-            &(at.main_file, &at.literate, &at.project, &at.plugins, &at.distribution, at.document_depth)), "setup"),
-        (same(&(new.preamble_cost, &new.entry, &new.format, &new.config, &new.metadata, &new.kernel_sites),
-            &(at.preamble_cost, &at.entry, &at.format, &at.config, &at.metadata, &at.kernel_sites)), "preamble"),
-        ((&new.fonts, &new.font_states, &new.catcodes, new.exhausted) == (&at.fonts, &at.font_states, &at.catcodes, at.exhausted), "fonts"),
-        ((new.journal_size, new.held_tokens_left, new.loop_heads, new.peak_paths, new.peak_output_paths, new.memory_reported)
-            == (at.journal_size, at.held_tokens_left, at.loop_heads, at.peak_paths, at.peak_output_paths, at.memory_reported), "peaks"),
-        ((&new.package_caches, &new.written, &new.written_runs, new.build_runs, &new.class_caches, &new.cached_files)
-            == (&at.package_caches, &at.written, &at.written_runs, at.build_runs, &at.class_caches, &at.cached_files), "caches"),
-        (new.env.slots.len() == at.env.slots.len() && new.preamble.is_some() == at.preamble.is_some()
-            && new.kernel.is_some() == at.kernel.is_some() && same(&new.settings, &at.settings), "settings"),
-    ];
-    if let Some((_, what)) = alike.into_iter().find(|(ok, _)| !ok) {
-        return Err(what);
-    }
-    let by = splice_text(&n.text, &a.text, text, resume)?;
-    // A literal holds the characters set before it. The rest's move with them; the last
-    // run's before the meeting line are compared as this run would have set them.
-    let moved = |c: u32| if c < by.0 { c } else { u32::try_from(i64::from(c) + by.2).unwrap_or(u32::MAX) };
-    let at_literals: Vec<_> = (a.literals.iter().cloned()).map(|l| crate::analysis::facts::Literal { chars: moved(l.chars), ..l }).collect();
-    for (i, l) in literals.iter_mut().enumerate() {
-        l.chars = match i < a.literals.len() { true => moved(l.chars), false => shift(l.chars, by).ok_or("literals")? };
-    }
-    // Counts: the rest's share added to this run's.
-    for (end, new, at) in [(justified_text, new.justified_text, at.justified_text), (steps, new.steps, at.steps),
-        (load_steps, new.load_steps, at.load_steps), (served_steps, new.served_steps, at.served_steps),
-        (lines, new.lines, at.lines), (forks, new.forks, at.forks), (output_forks, new.output_forks, at.output_forks),
-        (joined_slots, new.joined_slots, at.joined_slots), (untyped, new.untyped, at.untyped)] {
-        *end = end.saturating_sub(at) + new;
-    }
-    for ((end, at), new) in call_memo.iter_mut().zip(at.call_memo).zip(new.call_memo) {
-        *end = end.saturating_sub(at) + new;
-    }
-    let rest = typeset.get(at.typeset.len()..).filter(|_| typeset.starts_with(&at.typeset)).map(str::to_string);
-    *typeset = format!("{}{}", new.typeset, rest.ok_or("typeset")?);
-    let s = |r: &Span| span(r);
-    let checks = [
-        (rows(&n.defs, &a.defs, defs, |r| s(&r.span)), "defs"), (rows(&n.vars, &a.vars, vars, |r| s(&r.span)), "vars"),
-        (rows(&n.letters, &a.letters, letters, |r| s(&r.0)), "letters"),
-        (rows(&n.expansions, &a.expansions, expansions, |r| s(&r.span)), "expansions"),
-        (rows(&n.loads, &a.loads, loads, |r| s(&r.span)), "loads"),
-        (rows(&n.occurrences, &a.occurrences, occurrences, |r| s(&r.span)), "occurrences"),
-        (rows(&n.literals, &at_literals, literals, |r| s(&r.at)), "literals"),
-        // A repeat is counted on its first row, which `diag_seen` names by index.
-        (n.diagnostics.len() == a.diagnostics.len() && rows(&n.diagnostics, &a.diagnostics, diagnostics, |r| s(&r.span)), "diagnostics"),
-        (rows(&n.groups, &a.groups, groups, |r| s(&r.0)), "groups"), (rows(&n.raised, &a.raised, raised, |r| s(&r.span)), "raised"),
-        (rows(&n.conditionals, &a.conditionals, conditionals, |r| s(&r.at)), "conditionals"),
-        (rows(&n.quantities, &a.quantities, quantities, |r| s(&r.span)), "quantities"),
-        (rows(&n.colors, &a.colors, colors, |r| s(&r.span)), "colors"), (rows(&n.items, &a.items, items, |r| s(&r.span)), "items"),
-        (rows(&n.color_uses, &a.color_uses, color_uses, |r| s(&r.span)), "color uses"),
-        (rows(&n.color_stack, &a.color_stack, color_stack, |r| s(&r.span)), "color stack"),
-        (rows(&new.limits, &at.limits, limits, |r| s(&r.at)), "limits"), (rows(&new.trace, &at.trace, trace, |r| s(&r.span)), "trace"),
-        (members(&n.written_files, &a.written_files, written_files, never), "written files"),
-        (members(&n.absent, &a.absent, absent, never), "absent"), (members(&n.found, &a.found, found, never), "found"),
-        (members(&n.kept_spaces, &a.kept_spaces, kept_spaces, span), "kept spaces"),
-        (keyed(&n.shapes, &a.shapes, shapes, never), "shapes"), (keyed(&n.types, &a.types, types, span), "types"),
-        (keyed(&n.length_fonts, &a.length_fonts, length_fonts, span), "length fonts"),
-        (keyed(&n.csnames, &a.csnames, csnames, span), "csnames"), (keyed(&n.slots, &a.slots, slots, span), "slots"),
-        (keyed(&n.spaces, &a.spaces, spaces, span), "spaces"), (keyed(&n.overfull, &a.overfull, overfull, |k| span(&k.0)), "overfull"),
-        (keyed(&n.lines, &a.lines, line_reads, line), "lines read"),
-    ];
-    // Kept from the end: equal here, so the rest left them as the last run's end has them.
-    let _ = (interner, graph, calls, observed, files, main_file, literate, project, plugins, distribution, document_depth,
-        preamble_cost, entry, format, config, settings, metadata, kernel_sites, fonts, font_states, env, catcodes,
-        exhausted, journal_size, held_tokens_left, loop_heads, peak_paths, peak_output_paths, memory_reported,
-        package_caches, written, written_runs, build_runs, class_caches, cached_files, preamble, kernel);
-    checks.into_iter().find(|(ok, _)| !ok).map_or(Ok(()), |(_, what)| Err(what))
 }
 
 /// Whether `\begin{document}` is on the current line or the next one. A lookahead
@@ -903,6 +493,8 @@ pub struct Checkpoints<'a> {
     pub between_runs: Option<BetweenRuns>,
     /// A build an earlier process left between two runs: the next build goes on from it.
     pub pending: Option<super::Unfinished>,
+    /// What the next runs hand on early.
+    pub hooks: RunHooks,
 }
 
 impl<'a> Checkpoints<'a> {
@@ -922,6 +514,7 @@ impl<'a> Checkpoints<'a> {
             build_started: None,
             between_runs: None,
             pending: None,
+            hooks: RunHooks::default(),
         }
     }
 
@@ -970,7 +563,7 @@ impl<'a> Checkpoints<'a> {
         };
         m.started = *self.build_started.get_or_insert(m.started);
         let edit = changed.map(|line| (PathBuf::from(&m.out.files[usize::from(id)].path), line)).or(edit);
-        if let (Some(then), Some((path, line))) = (PREVIEW.take(), &edit) {
+        if let (Some(then), Some((path, line))) = (self.hooks.preview.take(), &edit) {
             self.preview(&m, id, source, path, *line, then);
         }
         let next = m.out.steps + self.every;
@@ -990,7 +583,7 @@ impl<'a> Checkpoints<'a> {
             spliced: None,
             tail: Vec::new(),
             since: (m.env.assignments, m.env.journal_len(), m.out.facts.text.at.len() as u32),
-            main: LAX.with_borrow(Option::is_some).then(|| (id, Rc::from(source))),
+            provisional: self.hooks.provisional.take().map(|then| (id, Rc::from(source), then)),
         };
         m.checkpoints.on = Some(Box::new(taking));
         let (clock, from) = (std::time::Instant::now(), m.out.steps);
@@ -1001,6 +594,7 @@ impl<'a> Checkpoints<'a> {
         let after = crate::project::overlay::log(false);
         if let Some(taking) = m.checkpoints.on.take() {
             let mut taking = *taking;
+            self.hooks.provisional = taking.provisional.take().map(|(.., then)| then);
             (self.list, self.log, self.every) = (taking.list, taking.log, taking.every);
             self.converged = taking.converged;
             match taking.spliced.take() {

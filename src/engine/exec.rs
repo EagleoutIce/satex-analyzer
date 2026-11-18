@@ -624,6 +624,31 @@ impl Machine<'_> {
             && matches!(self.env.meaning(sym), Meaning::Primitive(Primitive::AlignMark))
     }
 
+    /// tex.web § 479: a `#` in a definition's body must be followed by `#` or by the number of
+    /// one of its parameters; else TeX says so and keeps the `#` as a character.
+    fn check_parameters(&mut self, name: Sym, body: &[Token], arity: u8) {
+        let param = |m: &Self, t: &Token| t.is_cat(Catcode::Param) || t.cs().is_some_and(|s| m.means_align_mark(s));
+        let mut i = 0;
+        while i < body.len() {
+            if param(self, &body[i]) {
+                let ok = match body.get(i + 1) {
+                    Some(next) if param(self, next) => true,
+                    Some(Token { tok: Tok::Chr(d, _), .. }) => {
+                        d.to_digit(10).is_some_and(|n| n >= 1 && n <= u32::from(arity))
+                    }
+                    _ => false,
+                };
+                if !ok {
+                    let text = format!("Illegal parameter number in definition of \\{}", self.name(name));
+                    self.diagnose(Severity::Warning, "illegal-parameter-number", body[i].span, text);
+                } else {
+                    i += 1;
+                }
+            }
+            i += 1;
+        }
+    }
+
     pub fn make_macro(&self, parameter_text: ParameterText, body: Vec<Token>) -> Meaning {
         let mut replacement = crate::engine::tex::parameterize(body, |sym| self.means_align_mark(sym));
         // `\def\a#1#{…}`: the `{` that ended the parameter text belongs to the
@@ -712,6 +737,7 @@ impl Machine<'_> {
         }
         let global = self.prefixes.global;
         for body in bodies.into_iter().rev() {
+            self.check_parameters(name, &body, parameter_text.arity);
             let meaning = self.make_macro(parameter_text.clone(), body);
             let splice = self.resolve_copies(name, &meaning, &copies, global);
             self.prefixes.global = global;

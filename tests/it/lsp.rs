@@ -6322,3 +6322,27 @@ fn citations_are_found_by_author_and_show_their_title() {
     server.shutdown();
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// Intuition: a chapter `\input` by the main file is completed from the main file's run:
+/// labels after `\ref{`, environments after `\begin{` and listings keys after
+/// `\begin{lstlisting}[`. Pins: the playground's thesis chapter got empty lists there.
+#[test]
+fn an_input_chapter_completes_refs_environments_and_listing_keys() {
+    let main =
+        "\\documentclass{article}\n\\usepackage{listings}\n\\begin{document}\n\\input{chapter}\n\\end{document}\n";
+    let (mut server, _, _, dir) = open_loaded("chapter-complete", main);
+    std::fs::write(
+        dir.join("chapter.tex"),
+        "\\section{Background}\\label{sec:background}\nSee \\ref{sec:background}.\n\\begin{ite}\n\\begin{lstlisting}[lan]\nx\n\\end{lstlisting}\n",
+    )
+    .unwrap();
+    let (uri, _) = open_file(&mut server, &dir, "chapter.tex");
+    let refs = complete(&mut server, &uri, 1, 9);
+    assert!(labels(&refs).iter().any(|l| l.contains("background")), "ref: {:?}", labels(&refs));
+    let envs = complete(&mut server, &uri, 2, 10);
+    assert!(labels(&envs).iter().any(|l| l.starts_with("itemize")), "begin: {:?}", labels(&envs));
+    let keys = complete(&mut server, &uri, 3, 21);
+    assert!(labels(&keys).iter().any(|l| l.starts_with("language")), "lstlisting: {:?}", labels(&keys));
+    server.shutdown();
+    let _ = std::fs::remove_dir_all(&dir);
+}

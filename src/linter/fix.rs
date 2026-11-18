@@ -133,15 +133,12 @@ const SPACE: Catcode = Catcode::Space;
 
 impl Scan {
     pub fn at(text: &Text, pos: Pos, cats: CatcodeTable) -> Option<Scan> {
-        let offset = text.offset(pos)?;
-        Some(Scan {
-            // The mouth reads what the engine reads, bytes or characters.
-            mouth: Mouth::new(&crate::engine::source::recode(&text.body()[offset..]), 0),
-            cats,
-            interner: Interner::default(),
-            origin: pos,
-            ahead: VecDeque::new(),
-        })
+        // The mouth reads what the engine reads, bytes or characters.
+        let mouth = match text.chars_at(pos) {
+            Some((chars, at)) => Mouth::shared(chars, at, 0),
+            None => Mouth::new(&crate::engine::source::recode(&text.body()[text.offset(pos)?..]), 0),
+        };
+        Some(Scan { mouth, cats, interner: Interner::default(), origin: pos, ahead: VecDeque::new() })
     }
 
     fn translate(&self, line: u32, col: u32) -> Pos {

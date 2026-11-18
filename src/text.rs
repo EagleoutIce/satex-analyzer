@@ -61,13 +61,28 @@ impl Edit {
 pub struct Text {
     body: String,
     starts: Vec<usize>,
+    /// The body as the engine reads it, recoded once per encoding, with each line's first character.
+    chars: std::cell::RefCell<Option<Recoded>>,
 }
+
+/// What one input character is: one byte, or one UTF-8 character.
+/// `Engine::encoding` picks it, and `crate::engine::source` holds the choice for
+/// the run.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum Encoding {
+    /// Every byte is its own character, code 0..=255.
+    Bytes,
+    #[default]
+    Utf8,
+}
+
+type Recoded = (Encoding, std::rc::Rc<[char]>, Vec<usize>);
 
 impl Text {
     pub fn new(body: String) -> Text {
         let mut starts = vec![0];
         starts.extend(body.match_indices('\n').map(|(i, _)| i + 1));
-        Text { body, starts }
+        Text { body, starts, chars: Default::default() }
     }
 
     pub fn line_count(&self) -> usize {
@@ -103,6 +118,29 @@ impl Text {
             std::cmp::Ordering::Equal => Some(end),
             std::cmp::Ordering::Greater => Some(start + crate::engine::source::byte_of_col(line, pos.col)),
         }
+    }
+
+    /// The characters the engine reads, shared, and the index of `pos` in them:
+    /// what [`crate::engine::source::recode`] of the body from `pos` on reads.
+    /// `None` on a line that holds a run's marker, which a cut could split.
+    pub fn chars_at(&self, pos: Pos) -> Option<(std::rc::Rc<[char]>, usize)> {
+        let (start, offset) = (*self.starts.get(pos.line.checked_sub(1)? as usize)?, self.offset(pos)?);
+        let encoding = crate::engine::source::encoding();
+        let bytes = encoding == Encoding::Bytes;
+        if bytes && self.line(pos.line).as_bytes().contains(&0xF4) {
+            return None;
+        }
+        let mut cache = self.chars.borrow_mut();
+        if cache.as_ref().is_none_or(|c| c.0 != encoding) {
+            let chars: std::rc::Rc<[char]> = crate::engine::source::recode(&self.body).chars().collect();
+            let mut firsts = vec![0];
+            firsts.extend(chars.iter().enumerate().filter(|c| *c.1 == '\n').map(|(i, _)| i + 1));
+            *cache = Some((encoding, chars, firsts));
+        }
+        let (_, chars, firsts) = cache.as_ref()?;
+        let into = &self.body[start..offset];
+        let at = firsts[pos.line as usize - 1] + if bytes { into.len() } else { into.chars().count() };
+        Some((chars.clone(), at))
     }
 
     pub fn pos(&self, offset: usize) -> Pos {

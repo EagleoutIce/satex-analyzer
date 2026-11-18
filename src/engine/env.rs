@@ -10,7 +10,7 @@ use crate::engine::value::Value;
 
 mod changed;
 use changed::Changed;
-pub use changed::take_walked;
+pub use changed::Walked;
 /// No trail entry.
 const NONE: u32 = u32::MAX;
 
@@ -255,6 +255,9 @@ pub struct Env {
     memo_on: std::cell::Cell<bool>,
     #[serde(skip)]
     memo: std::cell::RefCell<MemoLog>,
+    /// Map entries walked, for `Machine::charge`.
+    #[serde(skip)]
+    pub walked: Walked,
 }
 
 /// What running calls whose effect may be kept did to the slots: every
@@ -385,17 +388,22 @@ pub struct PathEnv {
 impl PathEnv {
     /// The names this path and `other` (from the same fork) bind differently:
     /// what one changed that the other does not hold.
-    pub fn differing(&self, other: &PathEnv) -> Vec<Sym> {
-        self.differing_over(other, |_| None)
+    pub fn differing(&self, other: &PathEnv, walked: &Walked) -> Vec<Sym> {
+        self.differing_over(other, |_| None, walked)
     }
 
     /// Like [`PathEnv::differing`], but a name only one path changed is
     /// compared with its binding at the fork (`base`, when known). If it was
     /// changed back to the same binding, it does not differ.
-    pub fn differing_over(&self, other: &PathEnv, base: impl Fn(u32) -> Option<Option<Binding>>) -> Vec<Sym> {
+    pub fn differing_over(
+        &self,
+        other: &PathEnv,
+        base: impl Fn(u32) -> Option<Option<Binding>>,
+        walked: &Walked,
+    ) -> Vec<Sym> {
         let differs = |k: u32, b: &Option<Binding>| base(k).is_none_or(|old| !same_slot(&old, b));
         // A subtree both maps share binds its names alike on both paths.
-        (self.slots.pairs(&other.slots, |s| Changed::settled(s, u32::MAX)).into_iter())
+        (self.slots.pairs(&other.slots, |s| Changed::settled(s, u32::MAX), walked).into_iter())
             .filter(|&(k, mine, theirs)| match (mine, theirs) {
                 (Some((m, _)), Some((t, _))) => !same_slot(m, t),
                 (Some((b, _)), None) | (None, Some((b, _))) => differs(k, b),
@@ -429,8 +437,8 @@ impl PathEnv {
     }
 
     /// The names the path changed since its fork.
-    pub fn syms(&self) -> Vec<Sym> {
-        self.slots.keys().map(|&s| Sym(s)).collect()
+    pub fn syms(&self, walked: &Walked) -> Vec<Sym> {
+        self.slots.keys(walked).map(|&s| Sym(s)).collect()
     }
 }
 
@@ -1787,7 +1795,29 @@ impl Env {
             self.trail.clear();
         } else {
             debug_assert!(self.trail.len() >= fork.trail);
+            self.fold_trail(fork.trail);
         }
+    }
+
+    /// The trail past `from`, of a fork just ended, as the enclosing fork
+    /// needs it: only a slot's first change since that fork. A later one
+    /// saved a binding rewinding passes over, and a loop under nested
+    /// undecided conditionals kept every body it ever built that way.
+    fn fold_trail(&mut self, from: usize) {
+        let Some(&floor) = self.floors.last() else { return };
+        let mut kept = from;
+        for k in from..self.trail.len() {
+            let (sym, prev) = (self.trail[k].0 as usize, self.trail[k].3);
+            if prev == NONE || (prev as usize) < floor {
+                self.trailed[sym] = kept as u32;
+                self.trail.swap(kept, k);
+                kept += 1;
+            } else if (prev as usize) < from {
+                // The slot's first change since the enclosing fork came before this fork.
+                self.trailed[sym] = prev;
+            }
+        }
+        self.trail.truncate(kept);
     }
 
     /// What `sym` held when `fork` was made: from the trail if it changed
@@ -1807,10 +1837,10 @@ impl Env {
     /// What the running path changed since `fork`.
     pub fn path(&mut self, fork: &Fork) -> PathEnv {
         debug_assert_eq!(self.floors.get(fork.level), Some(&fork.trail), "the fork is open");
-        let (trail, slots, level) = (&self.trail[fork.trail..], &self.slots, &self.level);
+        let (trail, slots, level, walked) = (&self.trail[fork.trail..], &self.slots, &self.level, &self.walked);
         let slots = self.changed.get_mut(fork.level).map_or_else(Changed::new, |map| {
             let entry = |sym: u32| (sym, (slots[sym as usize].clone(), level[sym as usize]));
-            map.get_or_insert_with(|| trail.iter().map(|e| entry(e.0)).collect()).clone()
+            map.get_or_insert_with(|| Changed::collect(trail.iter().map(|e| entry(e.0)), walked)).clone()
         });
         let low = self.lows.get(fork.level).copied().unwrap_or(fork.marks.len());
         PathEnv { slots, journal: self.journal.clone(), marks: self.marks.clone(), low, corr: self.corr.clone() }
@@ -1875,7 +1905,7 @@ impl Env {
             self.changed.pop();
         }
         self.corr = None;
-        for (sym, (slot, saved)) in path.slots.iter() {
+        for (sym, (slot, saved)) in path.slots.iter(&self.walked) {
             let i = *sym as usize;
             // A name the path left as the fork has it does not count as written.
             if self.level[i] == *saved && same_slot(&self.slots[i], slot) {
@@ -1915,7 +1945,7 @@ impl Env {
         // share it. Each path lays its own changes over it, so the cost is the
         // number of names plus each path's changes, not their product.
         let mut seen = Changed::new();
-        for sym in live.slots.keys() {
+        for sym in live.slots.keys(&self.walked) {
             self.grow(Sym(*sym));
             let i = *sym as usize;
             seen.insert_mut(*sym, (self.slots[i].clone(), self.level[i]));
@@ -1924,12 +1954,12 @@ impl Env {
             // Lay the smaller map over the larger.
             if path.slots.size() * 2 <= seen.size() {
                 let mut slots = seen.clone();
-                for (sym, slot) in path.slots.iter() {
+                for (sym, slot) in path.slots.iter(&self.walked) {
                     slots.insert_mut(*sym, slot.clone());
                 }
                 path.slots = slots;
             } else {
-                for (sym, slot) in seen.iter() {
+                for (sym, slot) in seen.iter(&self.walked) {
                     if !path.slots.contains_key(sym) {
                         path.slots.insert_mut(*sym, slot.clone());
                     }
@@ -2041,8 +2071,12 @@ impl Env {
         // A subtree both paths share whose names each join to themselves at
         // their level leaves `a`'s map as it is: no name there is touched.
         let depth = a.marks.len() as u32;
-        let mut touched: Vec<u32> =
-            a.slots.pairs(&b.slots, |s| Changed::settled(s, depth)).into_iter().map(|(k, ..)| k).collect();
+        let mut touched: Vec<u32> = a
+            .slots
+            .pairs(&b.slots, |s| Changed::settled(s, depth), &self.walked)
+            .into_iter()
+            .map(|(k, ..)| k)
+            .collect();
         touched.sort_unstable();
         let mut grown = Vec::new();
         // Start from `a`'s map, shared where the join keeps `a`'s binding.
@@ -2420,7 +2454,7 @@ impl PathEnv {
     /// widened stack. Their saves are its saves, the groups above keep
     /// theirs. Only groups opened since the fork, so the fork's own levels
     /// stay as they are.
-    pub fn many_from(&mut self, from: usize, to: usize, kind: GroupKind, after: &[Token], id: u64) {
+    pub fn many_from(&mut self, from: usize, to: usize, kind: GroupKind, after: &[Token], id: u64, walked: &Walked) {
         let journal = self.journal.len();
         let marks = Rc::make_mut(&mut self.marks);
         match from < to {
@@ -2444,7 +2478,7 @@ impl PathEnv {
             l if l <= to => top,
             l => l + top - to,
         };
-        let moved: Vec<(u32, Option<Binding>, u32)> = (self.slots.iter())
+        let moved: Vec<(u32, Option<Binding>, u32)> = (self.slots.iter(walked))
             .filter(|(_, (_, l))| level(*l) != *l)
             .map(|(s, (b, l))| (*s, b.clone(), level(*l)))
             .collect();
@@ -3853,6 +3887,32 @@ mod tests {
         assert!(env.path(&outer).slots.is_empty());
         env.unfork(outer);
         assert!(env.trail.is_empty() && env.changed.is_empty());
+    }
+
+    /// A loop under an open fork whose every round opens and ends a fork
+    /// of its own (an undecided conditional) keeps one trail entry per
+    /// slot, not one per round: the rounds' saved bindings held every
+    /// body the loop built (13 GB on a tikz picture). Rewinding the outer
+    /// fork still restores what it saw.
+    #[test]
+    fn ended_inner_forks_leave_one_entry_per_slot() {
+        let rounds = 100;
+        let mut env = Env::with_capacity(8);
+        env.set(Sym(1), int(1), true);
+        let outer = env.fork();
+        for n in 0..rounds {
+            let inner = env.fork();
+            env.set(Sym(1), int(n), true);
+            env.set(Sym(2 + (n % 2) as u32), int(n), true);
+            env.unfork(inner);
+        }
+        assert_eq!(env.trail.len(), 3, "one entry per slot the loop wrote");
+        assert_eq!(env.path(&outer).slots.size(), 3);
+        assert_eq!(value(&env, 1), Some(rounds - 1));
+        env.rewind(&outer);
+        assert_eq!((value(&env, 1), value(&env, 2), value(&env, 3)), (Some(1), None, None));
+        env.unfork(outer);
+        assert!(env.trail.is_empty());
     }
 
     /// A path rebased onto where the running path stands resumes from a

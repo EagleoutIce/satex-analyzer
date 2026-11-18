@@ -42,6 +42,7 @@ mod snapshot;
 pub use plugins::{INTEGRATIONS, plugin_features, works_in};
 mod tabular;
 mod type_at;
+mod typeset_stream;
 mod unreached;
 #[cfg(target_os = "emscripten")]
 mod wasm;
@@ -65,7 +66,7 @@ use lsp_types::{
 };
 use serde_json::Value as Json;
 
-use crate::analysis::machine::{Analysis, Machine};
+use crate::analysis::machine::{Analysis, Machine, RunHooks};
 use crate::project::config::Config;
 use crate::text::Text;
 
@@ -873,10 +874,8 @@ struct Engine {
     taken: u64,
     /// The last run stopped for a newer text.
     cancelled: bool,
-    /// The document whose typeset rows go out as soon as its run ends, before its lints (`satex/analyze` `typeset`).
-    typeset_early: Option<Uri>,
-    /// The rows last sent as `satex/typesetRows`, of this document: what a paragraph preview patches.
-    rows_sent: Option<(Uri, Rc<Vec<serde_json::Value>>)>,
+    /// The Typeset view's rows, sent while a run goes on and once it ends.
+    typeset: typeset_stream::TypesetStream,
     /// A run of no document: what a completion answers from before a
     /// document's first run ends, the installation's classes and packages.
     blank: Option<Rc<Analysis>>,
@@ -939,8 +938,7 @@ impl Engine {
             deferred: Default::default(),
             taken: 0,
             cancelled: false,
-            typeset_early: None,
-            rows_sent: None,
+            typeset: Default::default(),
             blank: None,
             published: HashMap::default(),
             edited: HashMap::default(),
@@ -978,30 +976,9 @@ impl Engine {
         }
         self.cancelled = false;
         self.send_early(&path, &text);
-        // An edit inside a paragraph: its rows go out first, from a run to the paragraph's end.
-        if self.typeset_early.as_ref() == Some(uri)
-            && let Some((_, rows)) = self.rows_sent.as_ref().filter(|(u, _)| u == uri)
-        {
-            let (rows, uri, version, out) =
-                (rows.clone(), uri.clone(), version_of(&versions, uri), self.outbox.clone());
-            crate::analysis::machine::preview_with(Some(Box::new(move |run, path, lo, hi| {
-                let rows = handlers::typeset_preview(&rows, &run, path, lo, hi);
-                let params = serde_json::json!({"uri": uri, "version": version, "rows": rows, "preview": true});
-                notify_to(&out, Notification::new("satex/typesetRows".into(), params));
-            })));
-        }
-        // Every row after the edit, as soon as the run meets the last one apart from the page
-        // being built: the last run's rows, its page breaks pending until this run ends.
-        if self.typeset_early.as_ref() == Some(uri) {
-            let (uri, version, out) = (uri.clone(), version_of(&versions, uri), self.outbox.clone());
-            crate::analysis::machine::lax_with(Some(Box::new(move |run| {
-                let rows = handlers::typeset(&run);
-                let params = serde_json::json!({"uri": uri, "version": version, "rows": rows, "preview": true});
-                notify_to(&out, Notification::new("satex/typesetRows".into(), params));
-            })));
-        }
+        let mut hooks = self.typeset.hooks(uri, version_of(&versions, uri), &self.outbox);
         let started = std::time::Instant::now();
-        let (analysis, fresh) = self.run_for(&path, &text);
+        let (analysis, fresh) = self.run_for(&path, &text, &mut hooks);
         // How incremental the run was, for the status line: where it resumed, the steps it took itself.
         if fresh && let Some(c) = self.checkpoints.get(&path).or_else(|| self.checkpoints.values().next()) {
             let info = serde_json::json!({
@@ -1010,8 +987,6 @@ impl Engine {
             });
             self.notify_now(Notification::new("satex/runInfo".into(), info));
         }
-        crate::analysis::machine::preview_with(None);
-        crate::analysis::machine::lax_with(None);
         // A newer text came while it ran: it stopped, and says nothing. The newer text's run follows.
         if self.cancelled {
             crate::util::progress::note!("satex: a run stopped for a newer text");
@@ -1034,11 +1009,8 @@ impl Engine {
         let prior = changed.then(|| doc.analysis.clone()).flatten();
         // The rows `satex/typeset` answers from this run, out before the rules run.
         let kept = !(analysis.stopped() && doc.analysis.as_ref().is_some_and(|a| !a.stopped()));
-        if fresh && kept && self.typeset_early.as_ref() == Some(uri) {
-            let rows = Rc::new(handlers::typeset(&analysis));
-            let params = serde_json::json!({"uri": uri, "version": version_of(&versions, uri), "rows": *rows});
-            self.rows_sent = Some((uri.clone(), rows));
-            self.notify_now(Notification::new("satex/typesetRows".into(), params));
+        if fresh && kept {
+            self.typeset.finished(uri, version_of(&versions, uri), &analysis, &self.outbox);
         }
         if fresh {
             // Findings before the completion data: they are what the user waits for. The names
@@ -1295,7 +1267,7 @@ impl Engine {
     /// The analysis answering for `path`: that of the root its `% !TeX root`
     /// line names, else, for an input file, of the first candidate root a
     /// run sees reading it, else its own. Whether it is a new run is the second.
-    fn run_for(&mut self, path: &Path, text: &str) -> (Rc<Analysis>, bool) {
+    fn run_for(&mut self, path: &Path, text: &str, hooks: &mut RunHooks) -> (Rc<Analysis>, bool) {
         let key = canonical(path);
         // Any file that is no document (an input, a package's part) is read
         // through the document that reads it; literate sources are their own.
@@ -1323,7 +1295,7 @@ impl Engine {
             if root_key == key || tried.contains(&root_key) {
                 continue;
             }
-            let run = self.run(&root);
+            let run = self.run(&root, hooks);
             if self.cancelled {
                 return run;
             }
@@ -1358,13 +1330,13 @@ impl Engine {
                 "\\documentclass{{{class}}}{load}\\makeatletter\\input{{{name}}}\\makeatother\\begin{{document}}\\end{{document}}\n"
             );
             crate::project::overlay::set(&root, text);
-            return self.run(&root);
+            return self.run(&root, hooks);
         }
         // A package or class no root reads is analyzed as itself, as `-f` does:
         // read into a document's body its `@` names and preamble commands fail.
         use crate::project::config::Profile;
         if matches!(Profile::of_name(Some(path), text), Some(Profile::Package | Profile::Class)) {
-            return self.run(path);
+            return self.run(path, hooks);
         }
         // LaTeX's own hook reads it once the root's preamble is done.
         if input && let Some(root) = preamble {
@@ -1375,14 +1347,14 @@ impl Engine {
             let text =
                 format!("\\AddToHook{{begindocument/end}}{{\\input{{{}}}}}\\input{{{}}}\n", name(path), name(&root));
             crate::project::overlay::set(&part, text);
-            return self.run(&part);
+            return self.run(&part, hooks);
         }
-        self.run(path)
+        self.run(path, hooks)
     }
 
     /// `root` analyzed for the open buffers' texts, reused while they are
     /// those of its last run.
-    fn run(&mut self, root: &Path) -> (Rc<Analysis>, bool) {
+    fn run(&mut self, root: &Path, hooks: &mut RunHooks) -> (Rc<Analysis>, bool) {
         let texts = {
             let mut docs: Vec<(&PathBuf, &String)> = self.docs.values().map(|d| (&d.path, &d.text)).collect();
             docs.sort();
@@ -1413,7 +1385,10 @@ impl Engine {
                         let checkpoints = (engine.checkpoints.entry(key.clone()))
                             .or_insert_with(|| crate::analysis::machine::Checkpoints::new(cfg));
                         checkpoints.between_runs = Some(between_runs);
-                        Machine::build(checkpoints, &source, root, cfg, true)
+                        checkpoints.hooks = std::mem::take(hooks);
+                        let analysis = Machine::build(checkpoints, &source, root, cfg, true);
+                        *hooks = std::mem::take(&mut checkpoints.hooks);
+                        analysis
                     }
                     false => Machine::analyze(&source, Some(root), cfg),
                 }
@@ -2061,7 +2036,6 @@ fn engine_loop(rx: Receiver<EngineMsg>, mut engine: Engine, debounce: Duration) 
     }
 }
 
-/// The version of the open document at `uri` among `versions`.
 /// [`Engine::notify_now`] through `outbox`.
 fn notify_to(outbox: &Sender<Notification>, note: Notification) {
     #[cfg(target_os = "emscripten")]
@@ -2073,6 +2047,7 @@ fn notify_to(outbox: &Sender<Notification>, note: Notification) {
     let _ = outbox.send(note);
 }
 
+/// The version of the open document at `uri` among `versions`.
 fn version_of(versions: &[(PathBuf, i32)], uri: &Uri) -> Option<i32> {
     let path = handlers::uri_to_path(uri)?;
     versions.iter().find(|(p, _)| crate::project::paths::same_file(p, &path)).map(|(_, v)| *v)

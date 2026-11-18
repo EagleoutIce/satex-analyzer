@@ -965,6 +965,15 @@ fn typeset(analysis: &Analysis) -> Vec<Record> {
             }
             None => {
                 close(&mut line, &mut choice, &mut causes);
+                // a hyphenation point stands before the character's keys: they belong to the glyph
+                let hyphen = note("·");
+                let piece = match piece.strip_prefix(hyphen.as_str()) {
+                    Some(glyph) => {
+                        line.push_str(&hyphen);
+                        glyph.to_string()
+                    }
+                    None => piece,
+                };
                 if !piece.trim().is_empty() {
                     let here = (site.file, site.line);
                     if on_line.is_some_and(|at| at != here) {
@@ -1620,7 +1629,7 @@ fn font_styles(analysis: &Analysis) -> Vec<String> {
 
 /// The color a driver's `\current@color` sets as CSS `#rrggbb`. `None` for black or no color.
 fn css_color(spec: &str) -> Option<String> {
-    crate::engine::value::driver_rgb(spec).filter(|c| *c != [0.0; 3]).map(crate::engine::value::hex)
+    crate::util::color::driver_rgb(spec).filter(|c| *c != [0.0; 3]).map(crate::util::color::hex)
 }
 
 fn c_is_space(c: &str) -> bool {

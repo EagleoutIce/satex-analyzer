@@ -2339,16 +2339,7 @@ impl Engine {
     }
 }
 
-/// What one input character is: one byte, or one UTF-8 character.
-/// [`Engine::encoding`] picks it, and [`crate::engine::source`] holds the choice for
-/// the run.
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
-pub enum Encoding {
-    /// Every byte is its own character, code 0..=255.
-    Bytes,
-    #[default]
-    Utf8,
-}
+pub use crate::text::Encoding;
 
 named_enum! {
     /// Which kind of input a run analyzes, and so which `profiles.*` block in

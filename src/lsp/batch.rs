@@ -46,7 +46,7 @@ impl Batch {
             // `{"first": URI}`: the document the page shows, analyzed before the others.
             // `{"typeset": URI}`: its typeset rows go out as `satex/typesetRows` once its run ends.
             Ok(Message::Notification(not)) if not.method == "satex/analyze" => {
-                engine.typeset_early = not.params.get("typeset").and_then(|f| f.as_str()).and_then(|f| f.parse().ok());
+                engine.typeset.early = not.params.get("typeset").and_then(|f| f.as_str()).and_then(|f| f.parse().ok());
                 if not.params.get("files").is_some_and(|f| f.as_bool() == Some(true)) {
                     engine.outside_changed();
                 }

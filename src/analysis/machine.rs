@@ -63,10 +63,11 @@ mod calls;
 mod checkpoint;
 pub mod directive;
 pub(crate) use checkpoint::setup_key;
-pub use checkpoint::{BetweenRuns, Checkpoints, Lax, Preview, lax_with, preview_with};
+pub use checkpoint::{BetweenRuns, Checkpoints, Lax, Preview, RunHooks};
 pub(crate) mod explore;
 mod inspect;
 mod package_cache;
+mod provisional;
 use package_cache::Delta;
 pub use package_cache::prune as prune_caches;
 pub use package_cache::served as cache_served;
@@ -2187,7 +2188,7 @@ pub struct Machine<'a> {
     /// The lines `\write`s handed files and the names body calls read,
     /// related once the run ends (`observe::relate`).
     pub written_lines: Vec<crate::analysis::observe::WrittenLine>,
-    pub name_reads: Vec<crate::analysis::observe::NameRead>,
+    pub name_reads: crate::analysis::observe::NameReads,
     /// A copy of the kernel state at `\begin{document}` that written lines
     /// run in. `Some(None)` once none could be made.
     pub line_sandbox: Option<Option<Box<Machine<'a>>>>,
@@ -2657,7 +2658,7 @@ const CUT_IMPRECISE: [&str; 1] = ["argument-ends-in-unknown"];
 /// run goes on exactly as TeX does, and never widens for them. Each is
 /// raised as the error TeX prints (`raised-error`) and counts toward
 /// [`MAX_ERRORS`] (tex.web § 82).
-pub(crate) const TEX_ERRORS: [(&str, Option<&str>); 15] = [
+pub(crate) const TEX_ERRORS: [(&str, Option<&str>); 16] = [
     ("missing-endcsname", Some("Missing \\endcsname inserted")),
     ("missing-sharp", Some("Missing # inserted in alignment preamble")),
     ("extra-sharp", Some("Only one # is allowed per tab")),
@@ -2675,6 +2676,8 @@ pub(crate) const TEX_ERRORS: [(&str, Option<&str>); 15] = [
     ("runaway-argument", None),
     // tex.web § 1045 `report_illegal_case`: the message names the mode
     ("macro-parameter-character", None),
+    // tex.web § 479: the message names the macro
+    ("illegal-parameter-number", None),
 ];
 
 /// The files of the tokens a token list still holds, `None` for a file.
@@ -2992,7 +2995,7 @@ impl<'a> Machine<'a> {
             built_name: None,
             file_calls: Vec::new(),
             written_lines: Vec::new(),
-            name_reads: Vec::new(),
+            name_reads: Default::default(),
             line_sandbox: None,
             line_defined: None,
             stream_files: HashMap::default(),
@@ -3239,11 +3242,14 @@ impl<'a> Machine<'a> {
             crate::util::progress::set_run(run, runs);
             let mut analysis = checkpoints.analyze(source, path);
             analysis.build_runs = run;
-            // The bibliography tool's file, made from the .bib entries cited: written by the build too.
-            if let Some((at, text)) = Machine::virtual_bbl(&analysis, &base, path)
-                && let Some(name) = at.file_name()
+            // The bibliography tool's and makeindex's files, made from what the run wrote.
+            for (at, text) in [Machine::virtual_bbl(&analysis, &base, path), Machine::virtual_ind(&analysis, path)]
+                .into_iter()
+                .flatten()
             {
-                analysis.written.push((name.to_string_lossy().into_owned(), Some(text)));
+                if let Some(name) = at.file_name() {
+                    analysis.written.push((name.to_string_lossy().into_owned(), Some(text)));
+                }
             }
             history.push(analysis.written.clone());
             caches.get_or_insert_with(|| (analysis.package_caches.clone(), analysis.format.clone()));
@@ -3463,6 +3469,66 @@ impl<'a> Machine<'a> {
         });
         let text = crate::plugins::bib::virtual_bbl(&cited, list, loaded("natbib"));
         Some((base.join(path.file_stem()?).with_extension("bbl"), text))
+    }
+
+    /// The `.ind` makeindex would make from the `.idx` the run wrote, in its default style:
+    /// entries sorted by their sort key (`key@shown`), sub-entries after `!`, the pages of one
+    /// entry merged, a page's format after `|` (`|textbf`). None without index entries.
+    fn virtual_ind(analysis: &Analysis, path: &Path) -> Option<(PathBuf, String)> {
+        let idx = analysis.written.iter().find(|(name, _)| name.ends_with(".idx")).and_then(|(_, t)| t.as_deref())?;
+        // (sort keys, shown levels, page as printed)
+        let mut entries: Vec<(Vec<String>, Vec<String>, String)> = Vec::new();
+        for line in idx.lines() {
+            let Some(rest) = line.trim().strip_prefix("\\indexentry{") else { continue };
+            let Some((entry, page)) = rest.rsplit_once("}{") else { continue };
+            let page = page.trim_end_matches('}');
+            let (entry, format) = entry.split_once('|').map_or((entry, None), |(e, f)| (e, Some(f)));
+            let (keys, shown): (Vec<String>, Vec<String>) = entry
+                .split('!')
+                .map(|level| match level.split_once('@') {
+                    Some((key, shown)) => (key.to_lowercase(), shown.to_string()),
+                    None => (level.to_lowercase(), level.to_string()),
+                })
+                .unzip();
+            let page = match format {
+                Some(f) if !f.starts_with('(') && !f.starts_with(')') => format!("\\{f}{{{page}}}"),
+                _ => page.to_string(),
+            };
+            entries.push((keys, shown, page));
+        }
+        if entries.is_empty() {
+            return None;
+        }
+        entries.sort_by(|a, b| a.0.cmp(&b.0));
+        let mut text = String::from("\\begin{theindex}\n");
+        let (mut last, mut letter): (Vec<String>, Option<char>) = (Vec::new(), None);
+        for (keys, shown, page) in &entries {
+            let first = keys[0].chars().next();
+            if letter.is_some() && first != letter {
+                text.push_str("\n  \\indexspace\n");
+            }
+            letter = first;
+            if *keys == last {
+                // another page of the same entry
+                if !text.ends_with(&format!(", {page}")) {
+                    text.push_str(&format!(", {page}"));
+                }
+                continue;
+            }
+            for (level, item) in
+                shown.iter().enumerate().skip(keys.iter().zip(&last).take_while(|(a, b)| a == b).count())
+            {
+                let cmd = ["item", "subitem", "subsubitem"][level.min(2)];
+                text.push_str(&format!("\n  \\{cmd} {item}"));
+                if level + 1 < shown.len() {
+                    continue;
+                }
+                text.push_str(&format!(", {page}"));
+            }
+            last.clone_from(keys);
+        }
+        text.push_str("\n\n\\end{theindex}\n");
+        Some((path.with_extension("ind"), text))
     }
 
     /// The directory a run of the file at `path` reads from. `-f doc.tex`
@@ -7635,7 +7701,7 @@ will look undefined",
         crate::util::progress::note!(
             "satex: {} tokens, {} MB, at {file}:{line} in {}{paths}",
             self.out.steps,
-            crate::analysis::budget::in_use() >> 20,
+            crate::analysis::budget::charged() >> 20,
             within.join(" < ")
         );
     }
@@ -8372,7 +8438,7 @@ will look undefined",
             self.out.steps += 1;
         }
         *mark = self.out.steps;
-        self.walked += crate::engine::env::take_walked();
+        self.walked += self.env.walked.take();
         if self.out.steps.wrapping_sub(self.checked_at) >= CHECK_INTERVAL
             || self.walked >= CHECK_INTERVAL.saturating_mul(self.walk_per_step())
             || self.out.steps >= self.cfg.limits.steps
@@ -8448,7 +8514,7 @@ will look undefined",
         } else if self.cfg.limits.seconds > 0 && self.started.elapsed().as_secs() >= self.cfg.limits.seconds {
             ("time limit", "seconds")
         } else if self.cfg.limits.memory.as_u64() > 0
-            && crate::analysis::budget::in_use() as u64 >= self.cfg.limits.memory.as_u64()
+            && crate::analysis::budget::charged() as u64 >= self.cfg.limits.memory.as_u64()
         {
             ("memory limit", "memory")
         } else {
@@ -8792,7 +8858,7 @@ will look undefined",
     /// skip, the run stops. A path parked on the line before a cut gets the
     /// cut when it runs again. Returns whether the run stopped.
     fn guard_line(&mut self) -> bool {
-        self.walked += crate::engine::env::take_walked();
+        self.walked += self.env.walked.take();
         let per = self.walk_per_step();
         let spent = self.out.steps.saturating_sub(self.guard.step) + self.walked / per;
         (self.guard.step, self.walked) = (self.out.steps, self.walked % per);

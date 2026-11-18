@@ -69,14 +69,11 @@ impl Machine<'_> {
         if one_line {
             return;
         }
-        let chars: Vec<(char, bool)> = self
-            .out
-            .facts
-            .text
-            .chars
-            .chars()
-            .zip(&self.out.facts.text.at)
-            .skip(from)
+        // The paragraph's characters, read from the end: the text before it may be long.
+        let text = &self.out.facts.text;
+        let mut tail: Vec<char> = text.chars.chars().rev().take(text.at.len().saturating_sub(from)).collect();
+        tail.reverse();
+        let chars: Vec<(char, bool)> = (tail.into_iter().zip(&text.at[from.min(text.at.len())..]))
             .map(|(c, s)| (c, s.modes.within(crate::engine::mode::Modes::RESTRICTED_HORIZONTAL)))
             .collect();
         if chars.is_empty() {

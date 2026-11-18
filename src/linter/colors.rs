@@ -7,11 +7,11 @@ use crate::fixed::HashMap;
 use crate::analysis::facts::{ColorDef, CsnameRole, StackOp};
 use crate::analysis::machine::Analysis;
 use crate::engine::tex::Span;
-use crate::engine::value::{Rgb, driver_rgb, hex, specs};
 use crate::linter::fix::{Applicability, Fix};
 use crate::linter::{Category, Ref, Report, Rule, Severity, Source};
 use crate::project::config::Engine;
 use crate::text::{Edit, Pos};
+use crate::util::color::{Rgb, driver_rgb, hex, specs};
 
 pub static RULES: &[Rule] = &[
     Rule {

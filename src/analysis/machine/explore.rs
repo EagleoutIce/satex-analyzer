@@ -619,7 +619,7 @@ impl Machine<'_> {
                             paths.fork = Some(fork);
                             continue;
                         }
-                        let written = self.env.path(&fork).syms();
+                        let written = self.env.path(&fork).syms(&self.env.walked);
                         self.env.unfork(fork);
                         self.read_on_dropped(written);
                         paths.heads.clear();
@@ -1262,7 +1262,11 @@ impl Machine<'_> {
             let typed = crate::engine::env::typed!(self, syms);
             let slot = |sym: Sym| self.name(sym).starts_with(|c: char| c < ' ');
             // Only compare heads at this place. Comparing bindings is costly.
-            paths.heads.iter().map(|h| same(h) && (crowded || data_apart(&h.config, &here, &typed, &slot))).collect()
+            paths
+                .heads
+                .iter()
+                .map(|h| same(h) && (crowded || data_apart(&h.config, &here, &typed, &slot, &self.env.walked)))
+                .collect()
         };
         // When forced and no separate head matches exactly, join all heads at
         // this place. A join that converges by widening needs no summary.
@@ -1558,7 +1562,7 @@ impl Machine<'_> {
         let widen = |c: &Config, side: usize| {
             let mut env = c.env.clone();
             if let Some((from, to, kind, waiting, id)) = &groups {
-                env.many_from(*from, to[side], *kind, waiting, *id);
+                env.many_from(*from, to[side], *kind, waiting, *id, &self.env.walked);
             }
             let mut state = c.state.clone();
             if let Some((from, frame)) = &conds {
@@ -1618,7 +1622,7 @@ impl Machine<'_> {
         summarized.joined = here.clone_config();
         summarized.summed = self.env.assignments;
         let began = summarized.entry.clone();
-        let written = here.env.differing_over(&began, |s| Some(self.env.at_fork(fork, s)));
+        let written = here.env.differing_over(&began, |s| Some(self.env.at_fork(fork, s)), &self.env.walked);
         paths.stopped.push(summarized);
         keep_last(&mut paths.stopped, self.limits.loop_heads);
         self.resume_config(fork, Config::new(here.state, joined.env, false));
@@ -1648,8 +1652,12 @@ impl Machine<'_> {
         // value equal to the summary's does not count: it may stand for
         // something else together with the names it correlates with.
         let summary = paths.stopped[l].joined.env.clone();
-        let differ: std::collections::HashSet<Sym> =
-            self.env.path(fork).differing_over(&summary, |s| Some(self.env.at_fork(fork, s))).into_iter().collect();
+        let differ: std::collections::HashSet<Sym> = self
+            .env
+            .path(fork)
+            .differing_over(&summary, |s| Some(self.env.at_fork(fork, s)), &self.env.walked)
+            .into_iter()
+            .collect();
         let mut written = self.env.recent_since(paths.stopped[l].recent);
         written.retain(|s| differ.contains(s) || !self.env.slot(*s).is_some_and(|b| b.certain));
         let syms = self.typed_syms();
@@ -1794,7 +1802,7 @@ impl Machine<'_> {
         let entry = paths.stopped[l].entry.clone();
         let summary = Config::new(self.save_path(), self.env.path(fork), false);
         // What the passes wrote: as the summary widens ([`Machine::summarize`]).
-        let written = summary.env.differing_over(&entry, |s| Some(self.env.at_fork(fork, s)));
+        let written = summary.env.differing_over(&entry, |s| Some(self.env.at_fork(fork, s)), &self.env.walked);
         let unknown = self.unknown_text(Unk::Any, span);
         let syms = self.typed_syms();
         for i in exits {
@@ -2113,7 +2121,7 @@ impl Machine<'_> {
     /// pgfmath's operation stack) differs in depth stay apart too: a join
     /// would pop one of both tops, a top neither path holds with its rest.
     fn digits_apart(&self, a: &Config, b: &Config) -> usize {
-        let differing = a.env.differing(&b.env);
+        let differing = a.env.differing(&b.env, &self.env.walked);
         let depth = |c: &Config, sym: Sym| c.env.changed(sym).and_then(stack_depth);
         if differing.iter().any(|&sym| matches!((depth(a, sym), depth(b, sym)), (Some(x), Some(y)) if x != y)) {
             return usize::MAX;
@@ -2878,7 +2886,7 @@ impl Machine<'_> {
             self.undo.len(),
             self.copies.len(),
             self.written_lines.len(),
-            self.name_reads.len(),
+            self.name_reads.list.len(),
             self.key_names.len(),
             self.scratch.loop_summaries.len(),
             self.scratch.summarized.len(),
@@ -3688,7 +3696,13 @@ fn next_script(choices: &[Choice], absent: bool) -> Option<Vec<usize>> {
 /// register's or a code table's entry) and macros whose texts are numbers.
 /// Any other difference is code the paths will run: a macro's text, a
 /// meaning given to a name, or a name left undefined or unknown.
-fn data_apart(a: &Config, b: &Config, typed: &crate::engine::env::Typed, slot: &dyn Fn(Sym) -> bool) -> bool {
+fn data_apart(
+    a: &Config,
+    b: &Config,
+    typed: &crate::engine::env::Typed,
+    slot: &dyn Fn(Sym) -> bool,
+    walked: &crate::engine::env::Walked,
+) -> bool {
     let number = |t: &Token| match t.tok {
         Tok::Chr(c, Catcode::Other) => {
             c.is_ascii_digit() || "+-.,".contains(c) || crate::engine::tex::is_unknown_digit(c)
@@ -3700,7 +3714,7 @@ fn data_apart(a: &Config, b: &Config, typed: &crate::engine::env::Typed, slot: &
         Some(Meaning::Macro(d)) => !(d.parameter_text.items.is_empty() && d.replacement_text.iter().all(number)),
         Some(_) => !slot(sym),
     };
-    a.env.differing(&b.env).into_iter().all(|sym| {
+    a.env.differing(&b.env, walked).into_iter().all(|sym| {
         let (x, y) = (a.env.changed(sym), b.env.changed(sym));
         x.zip(y).is_some_and(|(x, y)| x.meaning == y.meaning) || !code(sym, x) && !code(sym, y)
     })
