@@ -49,6 +49,18 @@ pub fn scan_with(source: &str, cfg: &MagicConfig) -> Vec<Magic> {
         .collect()
 }
 
+/// The keys editors read after a head (`% !TeX program = …`), TeXShop's `TS-program` among them.
+pub const KEYS: [&str; 5] = ["program", "root", "encoding", "spellcheck", "TS-program"];
+
+/// A comment line's head and key, `("!TeX", "program")` for `% !TeX program = lualatex`, known or
+/// not: what a check for a misspelled magic comment compares.
+pub fn head_and_key(line: &str) -> Option<(&str, &str)> {
+    let rest = line.trim_start().strip_prefix('%')?.trim_start();
+    let (head, tail) = rest.split_once(char::is_whitespace)?;
+    let key = tail.split_once('=')?.0.trim();
+    (head.starts_with('!') && !key.is_empty() && !key.contains(char::is_whitespace)).then_some((head, key))
+}
+
 /// `content` after `prefix`, ignoring case: editors write `!TeX`, `!TEX` and
 /// `!tex` alike.
 fn directive<'a>(content: &'a str, prefix: &str) -> Option<&'a str> {

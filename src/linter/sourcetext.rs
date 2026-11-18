@@ -473,24 +473,14 @@ fn comment_marker(report: &mut Report) {
     }
 }
 
-/// The keys of `% !TeX key = …` lines editors know.
-const MAGIC_KEYS: [&str; 5] = ["program", "root", "encoding", "spellcheck", "TS-program"];
-
 fn misspelled_magic_comment(report: &mut Report) {
     let prefixes = report.analysis.settings.magic.prefixes.clone();
-    let keys: Vec<String> = MAGIC_KEYS.iter().map(|k| k.to_string()).collect();
+    let keys: Vec<String> = crate::plugins::magic::KEYS.iter().map(|k| k.to_string()).collect();
     let files = files(report.analysis, report.edits().sources);
     let mut findings = Vec::new();
     for file in &files {
         for (i, line) in file.text.body().lines().enumerate() {
-            let Some(rest) = line.trim_start().strip_prefix('%') else { continue };
-            let rest = rest.trim_start();
-            let Some((head, tail)) = rest.split_once(char::is_whitespace) else { continue };
-            let Some((key, _)) = tail.split_once('=') else { continue };
-            let (head, key) = (head.trim(), key.trim());
-            if !head.starts_with('!') || key.contains(char::is_whitespace) {
-                continue;
-            }
+            let Some((head, key)) = crate::plugins::magic::head_and_key(line) else { continue };
             // the head's own place, then the key's: whichever is the typo
             let col = |word: &str| col_of(line, line.find(word).unwrap_or(0));
             let known = prefixes.iter().any(|p| p.eq_ignore_ascii_case(head));
