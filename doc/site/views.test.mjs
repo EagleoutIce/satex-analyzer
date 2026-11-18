@@ -1,7 +1,7 @@
 // The view models of views.js that need no page: node doc/site/views.test.mjs
 import { load } from './load.mjs';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 
 globalThis.self = globalThis;
 load('./lengths.js');
@@ -1237,15 +1237,15 @@ assert.equal(typeof self.satexViews.RENDER.history, 'function', 'a history secti
   // a closer typed where it stands steps over it. Pins plain-only typing, which refused `_` and could not start a
   // formula, and `$` writing `$…$` where the user asked for `\(…\)`.
   {
-    const type = (text, at, keys, inline) => { let t = text; for (const c of keys) { const [a, b, body, step] = E.typed(t, at, c, inline); t = t.slice(0, a) + body + t.slice(b); at = a + step; } return [t, at]; };
+    const type = (text, at, keys, inline) => { let t = text, f = null; for (const c of keys) { const [a, b, body, step] = E.typed(t, at, c, inline, false, f); f = E.grow(f, a, b, body.length); t = t.slice(0, a) + body + t.slice(b); at = a + step; } return [t, at]; };
     // the caret ends before the text's `b`, or inside the pair just opened
     const ends = (want, at = want.lastIndexOf('b')) => [want, at];
-    assert.deepEqual(type('ab', 1, '_%&#{}~^\\'), ends('a\\_\\%\\&\\#\\{\\}\\textasciitilde{}\\textasciicircum{}\\textbackslash{}b'));
+    assert.deepEqual(type('ab', 1, '_%&#{}~^'), ends('a\\_\\%\\&\\#\\{\\}\\textasciitilde{}\\textasciicircum{}b'));
     assert.deepEqual(type('ab', 1, '$x_1$ y'), ends('a\\(x_1\\) yb'), 'default: `$` types LaTeX\'s `\\(`, `$` steps over `\\)`');
     assert.deepEqual(type('ab', 1, '$x_1$ y', '$'), ends('a$x_1$ yb'), 'math typed raw, the closer stepped over');
     const opened = '\\(p\\) a\\(\\)b';
     assert.deepEqual(type('\\(p\\) ab', '\\(p\\) a'.length, '$', 'auto'), ends(opened, opened.lastIndexOf('\\)')), 'auto: the document uses \\(');
-    assert.deepEqual(type('$p$ ab', '$p$ a'.length, '$', 'auto'), ends('$p$ a$$b', '$p$ a$'.length), 'auto: the document uses $');
+    assert.deepEqual(type('$p$ ab', '$p$ a'.length, '$', 'auto'), ends('$p$ a$ $b', '$p$ a$'.length), 'auto: the document uses $, written `$ $` (`$$` is display math)');
     assert.deepEqual(type('ab', 1, '${x', '$'), ends('a${x}$b', 'a${x'.length), 'a brace in math gets its closer');
     // smart scripts: `_`/`^` open a group, a space, an operator or the formula's end leave it; off, typed raw.
     // Pins `x_42` typed in the output writing `x_42` (a subscript 4, then 2).
@@ -1255,12 +1255,14 @@ assert.equal(typeof self.satexViews.RENDER.history, 'function', 'a history secti
     assert.deepEqual(smart('a$x_{4}$b', 'a$x_{4'.length, '2'), ['a$x_{42}$b', 'a$x_{42'.length], 'moved back in, typing goes on in the group');
     assert.deepEqual(type('ab', 1, '$x_42$', '$'), ends('a$x_42$b'), 'off: as typed');
     // a brace after a command's name is its argument: pins `\emph` from the completion list, whose `{` came out `\{`
-    assert.deepEqual(type('a\\emphb', 'a\\emph'.length, '{x}'), ends('a\\emph{x}b'), 'the argument opened and left');
+    assert.deepEqual(type('ab', 1, '\\emph{x}'), ends('a\\emph{x}b'), 'the argument opened and left');
+    assert.deepEqual(type('a\\TeX b', 'a\\TeX'.length, 's{'), ['a\\TeX{}s\\{ b', 'a\\TeX{}s\\{'.length], 'an older command keeps its name: `{}` ends it');
     assert.deepEqual(type('a\\[x\\]b', 'a\\[x'.length, '$'), ['a\\[x\\]b', 'a\\[x\\]'.length], '$ steps over a display closer');
     // Backspace takes an escape or an empty pair whole, Delete the escape ahead
     assert.deepEqual(E.erased('a\\_b', 3, true), [1, 3]);
     assert.deepEqual(E.erased('a\\textbackslash{}b', 17, true), [1, 17]);
-    assert.deepEqual(E.erased('a$$b', 2, true), [1, 3]);
+    assert.deepEqual(E.erased('a$ $b', 2, true), [1, 4]);
+    assert.deepEqual(E.erased('a$x$b', 3, true), [1, 4], "a formula's only character takes the formula: `$$` would open display math");
     assert.deepEqual(E.erased('a\\%b', 1, false), [1, 3]);
     assert.deepEqual(E.erased('abc', 2, true), [1, 2]);
   }
@@ -1297,6 +1299,144 @@ assert.equal(typeof self.satexViews.RENDER.history, 'function', 'a history secti
   assert.deepEqual(E.spans('the cat, the \\the end', 'the'), [[0, 3], [9, 12]]);
   assert.deepEqual(E.spans('cat, catalog', 'cat,'), [[0, 3]]);
   assert.deepEqual(E.spans('x', '—'), []);
+}
+// Type mode keeps the source's structure: a property test over the site's examples and synthetic documents. From
+// thousands of carets where a page word can put one (plain text or math), random keys (letters, space, Backspace,
+// Delete, Enter, `{`, `}`, `$`, `\`, `_`, `^`, `%`, `&`) go through E.key, the one function the playground uses;
+// after each edit an independent reader checks: braces balanced, no group closed by typing, every command name,
+// environment, comment and math pair as before (commands typed since the caret was put may change), no new paragraph
+// inside a group, no new script outside math, no new `&` but by Enter. Pins `\section{… an }` left by typing into a
+// section title (a paragraph break inside the argument), a `$` inside `\(…\)`, `\` before a word renaming it.
+{
+  const E = self.satexPdfEdit;
+  const dir = new URL('./examples/', import.meta.url);
+  const docs = readdirSync(dir).filter((f) => f.endsWith('.tex')).map((f) => readFileSync(new URL(f, dir), 'utf8'));
+  docs.push(String.raw`\documentclass{article}
+\newcommand{\greet}[1]{Hello, #1!}
+\begin{document}
+\section[Short]{Long title with \emph{words}}\label{sec:a}
+Text with a footnote\footnote{Some \textbf{\emph{nested} words} here.} and \TeX{} words, \LaTeX\ too.
+\caption[Short cap]{A long caption, see Section~\ref{sec:a}.}
+\begin{tabular}{l|c}
+\hline
+one & two \\
+\multicolumn{2}{c}{three words} \\
+four & $x^2$ \\
+\end{tabular}
+Math $a+b=c$ and \(x_i\) and \[\int_0^1 f\] and
+\begin{align*}
+  y &= mx + b \\
+  z &= 2
+\end{align*}
+\begin{itemize}
+  \item[label] first item
+  \item second {\bfseries item}
+\end{itemize}
+\verb|a{b| and \lstinline{c_d} and
+\begin{verbatim}
+raw { text % here
+\end{verbatim}
+\tikz \node[draw] (a) at (0,0) {node text};
+\greet{World} % a comment
+\end{document}
+`);
+  // the independent reader: braces, commands, environments, comments, math, blank lines in groups, scripts, tabs
+  const verbs = (t) => E.verbatim(t);
+  const read = (t, mark = Infinity, end = t.length) => {
+    const r = { depth: 0, low: 0, after: Infinity, cs: [], env: [], com: [], math: '', bad: 0, parIn: 0, script: 0, amp: 0, opens: [] };
+    const vs = verbs(t);
+    let k = 0;
+    for (let i = 0; i < end; i++) {
+      while (vs[k] && vs[k].to < i) k++;
+      if (vs[k] && vs[k].from <= i) { i = vs[k].to - 1; k++; continue; }
+      const c = t[i];
+      if (c === '%') { const e = t.indexOf('\n', i); r.com.push(t.slice(i, e < 0 ? t.length : e)); i = e < 0 ? t.length : e - 1; continue; }
+      if (c === '\\') {
+        const m = /^\\([A-Za-z@]+|[\s\S]?)/.exec(t.slice(i, i + 64)), n = m[1];
+        if (/^[A-Za-z@]/.test(n)) {
+          r.cs.push([i, n]);
+          const env = (n === 'begin' || n === 'end') && /^\{([^{}]*)\}/.exec(t.slice(i + m[0].length));
+          if (env) r.env.push(`${n}:${env[1]}`);
+          if (env && /^(align|equation)\*?$/.test(env[1])) r.math = n === 'begin' ? (r.math ? (r.bad++, r.math) : env[1]) : (r.math === env[1] ? '' : (r.bad++, r.math));
+        } else if (n === '(' || n === '[') { if (r.math) r.bad++; r.math = n; } else if (n === ')' || n === ']') { if (r.math !== (n === ')' ? '(' : '[')) r.bad++; r.math = ''; }
+        i += m[0].length - 1;
+        continue;
+      }
+      if (c === '$') { const two = t[i + 1] === '$' && (r.math === '$$' || !r.math), d = two ? '$$' : '$'; if (!r.math) r.math = d; else if (r.math === d) r.math = ''; else r.bad++; i += d.length - 1; continue; }
+      if (c === '{') { r.depth++; r.opens.push(i); }
+      else if (c === '}') { r.depth--; r.opens.pop(); r.low = Math.min(r.low, r.depth); if (i >= mark) r.after = Math.min(r.after, r.depth); }
+      else if (c === '\n' && /^\n[ \t]*\n/.test(t.slice(i, i + 64)) && r.depth > 0) r.parIn++;
+      else if ((c === '_' || c === '^') && !r.math) r.script++;
+      else if (c === '&') r.amp++;
+    }
+    if (r.math) r.bad++;
+    return r;
+  };
+  // a page word's caret: in or at the edge of a letter run not after a backslash, where Type mode puts one
+  let seed = 0x5a7e;
+  const rand = (n) => { seed = (seed * 1103515245 + 12345) >>> 0; return (seed >>> 8) % n; };
+  const KEYS = [...'abcdefghijklmnopqrstuvwxyz', ' ', ' ', 'Backspace', 'Backspace', 'Delete', 'Enter', 'Shift+Enter', '{', '}', '$', '\\', '\\', '_', '^', '%', '&'];
+  const ESCW = /^(textbackslash|textasciitilde|textasciicircum)$/;
+  let edits = 0, refused = 0;
+  const fails = [];
+  for (const doc of docs) {
+    const base = read(doc), carets = [];
+    for (const m of doc.matchAll(/(?<![\\A-Za-z@])\p{L}+/gu)) for (let p = m.index; p <= m.index + m[0].length; p++) if (/^$|math/.test(E.editable(doc, p, p, []) ?? '')) carets.push(p);
+    for (let run = 0; run < 2400 / docs.length * 4 && carets.length; run++) {
+      let t = doc, at = carets[rand(carets.length)], f = null, fresh = new Array(t.length).fill(false);
+      for (let n = 1 + rand(8); n--;) {
+        const k = KEYS[rand(KEYS.length)], e = E.key(t, at, k, { fresh: f, inline: rand(2) ? '\\(' : '$', smart: !!rand(2) });
+        if (typeof e === 'string') { refused++; continue; }
+        const [a, b, body, step] = e, was = t;
+        t = t.slice(0, a) + body + t.slice(b);
+        fresh = [...fresh.slice(0, a), ...Array(body.length).fill(true), ...fresh.slice(b)];
+        f = E.grow(f, a, b, body.length);
+        at = a + step;
+        edits++;
+        const r = read(t), why = [];
+        if (r.depth !== base.depth || r.low < base.low) why.push('braces');
+        const own = (cs) => cs.filter(([i, nm]) => !ESCW.test(nm) && !fresh.slice(i, i + nm.length + 1).every(Boolean)).map(([, nm]) => nm).join(' ');
+        const own0 = base.cs.filter(([, nm]) => !ESCW.test(nm)).map(([, nm]) => nm).join(' ');
+        if (own(r.cs) !== own0) why.push('commands');
+        if (r.env.join() !== base.env.join()) why.push('environments');
+        if (r.com.join('\n') !== base.com.join('\n')) why.push('comments');
+        if (r.bad > base.bad) why.push('math');
+        if (r.parIn > base.parIn) why.push('paragraph in a group');
+        if (r.script > base.script) why.push('script outside math');
+        if (r.amp > read(was).amp && k !== 'Enter') why.push('alignment tab');
+        // what was typed closes no group it did not open
+        if (body && read(t, a, a + body.length).after < read(was, Infinity, a).depth) why.push('typed text left its group');
+        if (why.length) { fails.push({ why, k, at: a, before: was.slice(Math.max(0, a - 30), b + 30), after: t.slice(Math.max(0, a - 30), a + body.length + 30) }); t = was; at = Math.min(at, t.length); break; }
+      }
+    }
+  }
+  assert.ok(edits > 2000, `the fuzz made ${edits} edits`);
+  assert.deepEqual(fails.slice(0, 3), [], `${fails.length} Type-mode edits broke the source's structure`);
+}
+// Type mode's rules at the spots that broke: Enter in a section title (the bug: `\section{… an }` and a paragraph
+// break inside the argument, a runaway), `\` before a word (it renamed it `\Background`), `$` inside `\(…\)`, Backspace
+// at a group's edge, a comment's line end.
+{
+  const E = self.satexPdfEdit;
+  const t = '\\section{Background}\\label{sec:b}\nText % note\nmore \\(x\\) end.';
+  const at = (s, d = 0) => t.indexOf(s) + d;
+  assert.match(E.key(t, at('ground'), 'Enter'), /paragraph cannot end inside \\section/, 'Enter in a title: refused');
+  assert.deepEqual(E.key(t, at('ground'), 'Shift+Enter'), [at('ground'), at('ground'), '\n', 1], 'Shift+Enter: a line break, a space');
+  assert.deepEqual(E.key(t, at('Back'), '\\'), [at('Back'), at('Back'), '\\ ', 1], '`\\` keeps off the word after it');
+  assert.equal(typeof E.key(t, at('Back'), 'Backspace'), 'string', "Backspace at a group's start keeps the brace");
+  assert.equal(typeof E.key(t, at('note'), 'a'), 'string', 'a comment is no text');
+  assert.equal(typeof E.key(t, at('note', 4), 'Delete'), 'string', "a comment's line end stays");
+  assert.deepEqual(E.key(t, at('x\\)', 1), '$'), [at('x\\)', 1), at('x\\)', 1), '', 2], '`$` in \\(…\\) steps over its closer');
+  assert.deepEqual(E.key(t, at('x\\)'), '$'), [at('x\\)'), at('x\\)'), '', 3], '`$` elsewhere in it leaves the formula');
+  assert.deepEqual(E.key(t, at('x\\)'), '%'), [at('x\\)'), at('x\\)'), '\\%', 2], '`%` in math is escaped');
+  assert.equal(typeof E.key(t, at('sec:b', 2), 'a'), 'string', 'a label is a key');
+  // a contents entry is written where its short title is, else its title; a starred section, a float-less caption none
+  const texts = { 'a.tex': '\\section[Short]{Long}\\input{b}\\section*{No}\\caption{Lone}', 'b.tex': '\\begin{figure}\\caption[F]{Fig}\\end{figure}\\subsection{Sub}\n\\verb|\\section{v}|' };
+  const got = (k) => E.entries(texts, 'a.tex', k).map(([f, a, b]) => `${f}:${texts[f].slice(a, b)}`);
+  assert.deepEqual(got('toc'), ['a.tex:Short', 'b.tex:Sub']);
+  assert.deepEqual(got('lof'), ['b.tex:F']);
+  assert.deepEqual(got('lot'), []);
+  assert.equal(E.key(texts['a.tex'], 'section[Sh'.length + 1, 'x')[2], 'x', 'a short title takes typing');
 }
 // Typing in a typeset view: the caret stays after each typed character. The view finds its word with wordAt in the
 // text as now written; pins the bug where the caret jumped back to the word's start after each key ("lol" -> "lool").
@@ -1360,19 +1500,19 @@ assert.equal(typeof self.satexViews.RENDER.history, 'function', 'a history secti
   assert.deepEqual(E.locate(texts, row, g, g + 8), [[6, 2, 11]], 'after math the page spells otherwise');
   assert.equal(E.locate(['x!', 'x!'], 'x!', 1, 1), null, 'a row the page spells twice: no guess');
 }
-// The math control: one group per Type bar (inline at once, display and align* in its menu), inline in the
-// convention's delimiters, nothing inside math. Pins the two `$x$`/`\[x\]` buttons inside the Type legend.
+// The math control: one Insert menu per Type bar (inline, display and align*), inline in the convention's
+// delimiters, nothing inside math. Pins the two `$x$`/`\[x\]` buttons inside the Type legend.
 {
   const E = self.satexPdfEdit;
   assert.deepEqual(E.mathAt('ab', 1, 'inline'), [1, 1, '\\(\\)', 2], 'LaTeX\'s \\( by default');
-  assert.deepEqual(E.mathAt('ab', 1, 'inline', '$'), [1, 1, '$$', 1]);
+  assert.deepEqual(E.mathAt('ab', 1, 'inline', '$'), [1, 1, '$ $', 1], '`$ $`: `$$` is display math');
   assert.deepEqual(E.mathAt('ab', 1, 'display'), [1, 1, '\\[\\]', 2]);
   assert.deepEqual(E.mathAt('ab', 1, 'align'), [1, 1, '\\begin{align*}\n\n\\end{align*}', '\\begin{align*}\n'.length]);
   assert.deepEqual(E.mathAt('a\\(x\\)b', 4, 'display'), [4, 4, '', 0], 'in math: nothing');
   const html = readFileSync(new URL('./play.html', import.meta.url), 'utf8');
   const groups = [...html.matchAll(/<span class="math-group"[^]*?<\/details><\/span>/g)].map((m) => m[0]);
   assert.equal(groups.length, 2, 'one in the Typeset bar, one in the PDF bar');
-  for (const g of groups) assert.deepEqual([...g.matchAll(/data-math="(\w+)"/g)].map((m) => m[1]), ['inline', 'inline', 'display', 'align']);
+  for (const g of groups) assert.deepEqual([...g.matchAll(/data-math="(\w+)"/g)].map((m) => m[1]), ['inline', 'display', 'align'], 'each once, in the Insert menu');
   assert.ok(!/data-math="[$\\]/.test(html), 'the old $x$ and \\[x\\] buttons are gone');
 }
 // One origin tint per spot: an argument's word inside its macro's run keeps its tint, the run is cut around it
@@ -1461,4 +1601,57 @@ assert.equal(typeof self.satexViews.RENDER.history, 'function', 'a history secti
   assert.equal(step, 1, 'the caret in its first cell');
   const open = '\\begin{tabular}{ll}\na & b\n\\end{tabular}', r = E.rowAfter(open, open.indexOf('& b') + 2);
   assert.equal(open.slice(0, r[0]) + r[2] + open.slice(r[1]), '\\begin{tabular}{ll}\na & b \\\\\n &\n\\end{tabular}', 'a last row without \\\\ gets one');
+}
+// Typing in the PDF: the source words of a paragraph by offset, matched in order to the page's words. The caret and
+// the echo are placed by these offsets, never by a word's spelling alone (`lorem … lorem`), so a rebuilt page that
+// moved the caret's line to the next page still puts the caret after the same character.
+{
+  const E = self.satexPdfEdit, text = 'A \\emph{big} cat~sat, 50\\% % note\n{} $x$ end';
+  assert.deepEqual(E.tokens(text, 0, text.length).map((t) => [text.slice(t.s, t.e), t.t]), [['A', 'A'], ['\\emph{big}', 'big'], ['cat', 'cat'], ['sat,', 'sat,'], ['50\\%', '50%'], ['$x$', 'x'], ['end', 'end']]);
+  assert.deepEqual(E.aligned(['a', 'b', 'c', 'd'], ['a', 'c', 'd']), [0, -1, 1, 2], 'a source word the page lacks');
+  assert.deepEqual(E.aligned(['a', 'b', 'c'], ['a', 'X', 'b', 'c']), [0, 2, 3], 'a page word the source lacks (a macro\'s text)');
+  assert.deepEqual(E.aligned(['lorem', 'consectetur', 'lorem'], ['lorem', 'consec-', 'tetur', 'lorem']), [0, 1, 3], 'hyphenated across rows: its first part');
+  assert.deepEqual(E.aligned(['ﬁne'], ['fine']), [0], 'a ligature as the page spells it');
+  assert.deepEqual(E.changed('abcXdef', 'abcYYdef'), [3, 3]);
+  assert.deepEqual(E.changed('aaa', 'aaaa'), [3, 0], 'the common end never overlaps the common start');
+  const doc = 'one\n\ntwo three\nfour\n\nfive';
+  assert.deepEqual(E.paragraph(doc, doc.indexOf('three')), [5, 19]);
+  assert.deepEqual(E.paragraph(doc, 1), [0, 3]);
+}
+// TikZ nodes moved by drag (pdfedit.ts): `at (x,y)` keeps its units and digits on the 1 mm grid, a placed node gets
+// shifts that add up and go at zero, Alt places it at a fixed point, a path label moves by `pos=`.
+// Pins drags that wrote `at (1.7999999,2cm)` or dropped the `right=of` a node was placed by.
+{
+  const T = self.satexTikzMove, pic = { scale: 1, x: 1, y: 1 }, mv = (s, m, p = pic) => T.move(s, 0, p, m)?.text;
+  assert.equal(mv('\\node (a) at (1.50,2cm) {x};', { by: [0.33, -0.21] }), '\\node (a) at (1.80,1.8cm) {x};', 'grid, digits as written');
+  assert.equal(mv('\\node (a) at (10mm,2in) {x};', { by: [0.33, -0.21], free: true }), '\\node (a) at (13.3mm,1.917in) {x};', 'Shift: off the grid');
+  assert.equal(mv('\\node (a) at (1,1) {x};', { by: [0.5, 0] }, { scale: 2, x: 1, y: 1 }), '\\node (a) at (1.3,1) {x};', 'a scaled picture moves by less');
+  assert.equal(mv('\\node[box, right=of a] (b) {x};', { by: [0.3, -0.2] }), '\\node[box, right=of a, xshift=3mm, yshift=-2mm] (b) {x};');
+  assert.equal(mv('\\node[right=of a, xshift=2mm] (b) {x};', { by: [-0.2, 0] }), '\\node[right=of a] (b) {x};', 'a shift moved to zero goes');
+  assert.equal(mv('\\node[right=of a, xshift=1cm] (b) {x};', { by: [0.25, 0] }), '\\node[right=of a, xshift=1.3cm] (b) {x};', 'a shift keeps its unit');
+  assert.equal(mv('\\node (b) {x};', { by: [0.1, 0.1] }), '\\node[xshift=1mm, yshift=1mm] (b) {x};', 'options added where there were none');
+  assert.equal(mv('\\node[draw, right=of a, yshift=2mm] (b) {x};', { to: [2.04, -1.46] }), '\\node[draw] (b) at (2,-1.5) {x};', 'Alt: placed at a point');
+  assert.equal(mv('\\draw (a) -- node[midway, above] {l} (b);', { pos: 0.304 }), '\\draw (a) -- node[above, pos=0.3] {l} (b);', 'a label along its path');
+  const ns = T.nodes('\\begin{tikzpicture}[scale=2]\n\\node (a) at (0,0) {A}; % a; b\n\\node[right=of a] (b) {B};\n\\draw (a) -- node {m} (b) node[pos=.2] {n};\n\\foreach \\i in {1,2} \\node at (\\i,0) {\\i};\n\\end{tikzpicture}');
+  assert.deepEqual(ns.map((n) => [n.kind, n.line, n.name, n.placed, n.plain, n.seg, n.pos]), [['node', 2, 'a', false, true, null, null], ['node', 3, 'b', true, false, null, null],
+    ['label', 4, null, false, true, ['a', 'b'], 0.5], ['label', 4, null, false, true, ['a', 'b'], 0.2]], 'a loop is skipped, a comment is no statement');
+  assert.equal(ns[0].pic.scale, 2);
+  assert.equal(T.posOn([0, 0], [10, 0], [3, 5]), 0.3);
+  assert.deepEqual(T.clipped([0, 0], [2, 1], [10, 0], [3, 1]), [[2, 0], [7, 0]], 'cut where it leaves the boxes');
+}
+// References switched from the pages (pdfedit.ts): the key written over is the one in the command's list, past its
+// options; a page word is a reference's output when its line does not spell it; the list ranks by fuzzy match.
+// Pins a switch that rewrote `\cite[p.~3]{a,b}`'s options or the other key.
+{
+  const R = self.satexRefPick, line = 'See~\\cite[p.~3]{knuth84, lamport94} and Section~\\ref{sec:intro}.';
+  const at = (k, col) => R.keyAt(line, col, k), col = (s) => line.indexOf(s) + 1;
+  assert.deepEqual(at('lamport94', col('\\cite')), [line.indexOf('lamport94'), line.indexOf('lamport94') + 9]);
+  assert.deepEqual(at('knuth84', col('\\cite')), [line.indexOf('knuth84'), line.indexOf('knuth84') + 7]);
+  assert.equal(at('sec:intro', col('\\cite')), null, 'a key of another command');
+  assert.equal(R.unspelled(line, '[1,'), true);
+  assert.equal(R.unspelled(line, '1.2.'), true);
+  assert.equal(R.unspelled(line, 'Section'), false, 'written in the line');
+  assert.equal(R.unspelled(line, '—.'), false, 'nothing but punctuation: no word');
+  assert.equal(R.fuzzy('sint', 'xyz'), -1);
+  assert.ok(R.fuzzy('sint', 'sec:intro') > R.fuzzy('sint', 'some:other:intent'), 'word starts and runs rank first');
 }

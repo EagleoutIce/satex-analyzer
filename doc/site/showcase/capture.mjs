@@ -55,13 +55,17 @@ const HELPERS = `const v = () => document.querySelector('.cm-editor').satexView;
   self.__at = (n, k = 0) => { const t = v().state.doc.toString(), i = t.indexOf(n) + k, before = t.slice(0, i).split('\\n'); return [before.length - 1, before.at(-1).length, i]; };
   self.__xy = (n, k = 0) => { const i = __at(n, k)[2]; v().dispatch({ selection: { anchor: i }, scrollIntoView: true }); const c = v().coordsAtPos(i); return [c.left + 2, (c.top + c.bottom) / 2]; };`;
 
-async function open(file) {
+/** `config`: satex.yaml settings the entry's page starts with (as the Settings dialog keeps them), e.g. `playground.wrap`. */
+async function open(file, config = null) {
   // a fresh page per entry: an example seen before comes back with its edits (drafts stay in memory), and a view left open or a run not yet in skews the next
   await raw('Page.navigate', { url: 'about:blank' }); await sleep(500); // the old page's last draft write lands before the clear
   // each entry starts from the example as shipped: no draft, no kept view
   await raw('Storage.clearDataForOrigin', { origin: new URL(base).origin, storageTypes: 'local_storage,indexeddb' });
+  const ready = () => until(`return document.getElementById('play-status').dataset.done === 'ready'`, 240000);
   await raw('Page.navigate', { url: `${base}play/index.html#${file}` });
-  await until(`return document.getElementById('play-status').dataset.done === 'ready'`, 240000);
+  await ready();
+  // the settings go in as the Settings dialog keeps them, read when the page starts: once more from the top
+  if (config) { await js(`localStorage.setItem('satex-config', ${JSON.stringify(JSON.stringify(config))}); setTimeout(() => location.reload(), 50);`); await sleep(1500); await ready(); }
   const replace = `[...document.querySelectorAll('dialog[open] button')].find((b) => b.textContent === 'Replace')`;
   const shown = `document.querySelector('#play-tabs [aria-selected=true]')?.textContent.includes(${JSON.stringify(file)})`;
   await until(`return ${shown} || !!${replace}`, 60000);
@@ -241,7 +245,7 @@ try {
       for (let attempt = 0; ; attempt++) {
         try {
           deadline = Infinity;
-          await open(s.file);
+          await open(s.file, s.config);
           // the steps share one budget: a failing wait fails fast, never one timeout per step
           deadline = Date.now() + (s.budget ?? BUDGET) * scale;
           if (process.env.PROBE0) console.log('PROBE0', JSON.stringify(await js(process.env.PROBE0)));

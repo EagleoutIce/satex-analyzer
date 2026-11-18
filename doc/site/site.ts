@@ -95,6 +95,15 @@ interface Stream {
   // CodeMirror, vendored (codemirror.js): the page names its hashed file, a dev server the plain one beside site.js
   const cmAt = document.querySelector<HTMLMetaElement>('meta[name=satex-cm]'), cmUrl = new URL(cmAt?.content ?? 'codemirror.js', cmAt ? location.href : (document.currentScript as HTMLScriptElement).src).href;
   self.siteCM = () => (self.siteCM.loaded ??= import(cmUrl));
+  // pdfedit.js, Type mode's logic shared with the playground: loaded on the first click into a live window's typeset text
+  const peAt = document.querySelector<HTMLMetaElement>('meta[name=satex-pe]'), peUrl = new URL(peAt?.content ?? 'pdfedit.js', peAt ? location.href : (document.currentScript as HTMLScriptElement).src).href;
+  let peLoad: Promise<any> | null = null;
+  const loadPE = () => (peLoad ??= new Promise((ok, bad) => {
+    const s = Object.assign(document.createElement('script'), { src: peUrl });
+    s.onload = () => ok((self as any).satexPdfEdit);
+    s.onerror = () => { peLoad = null; bad(new Error('pdfedit.js did not load')); };
+    document.head.append(s);
+  }));
   self.siteTex = () => (self.siteTex.loaded ??= (async () => {
     const { language: { StreamLanguage }, stex: { stex }, highlight: hl } = await self.siteCM();
     const t = hl.tags;
@@ -1459,7 +1468,7 @@ interface Stream {
    * run of `first` (`data`, an example's) answers: its findings, mapped through the edits, its cards and typeset text. */
   async function liveEditor(fig: HTMLElement & { satexView?: Rec }, host: HTMLElement, name: string, first: string, data: Rec | null = null) {
     const out = fig.querySelector<HTMLElement>('.live-ts')!, status = fig.querySelector('.live-status'), uri = `file:///work/${name}`;
-    let version = 0, timer: ReturnType<typeof setTimeout> | 0 = 0, view: Rec = null!, underline: (ds: Rec[]) => void = () => {}, ran = false, shown = data ? first : null;
+    let version = 0, timer: ReturnType<typeof setTimeout> | 0 = 0, view: Rec = null!, underline: (ds: Rec[]) => void = () => {}, ran = false, redraw = () => {}, shown = data ? first : null;
     const tell = (html: string, bad = false) => { status!.innerHTML = html; status!.classList.toggle('live-bad', bad); };
     async function analyze() {
       say = tell;
@@ -1488,6 +1497,7 @@ interface Stream {
       ran = true;
       shown = now;
       out.innerHTML = paragraphs(rows.filter((r: Rec) => r.kind === 'paragraph' && !String(r.path ?? '').startsWith('/texmf')));
+      redraw();
       underline(found.get(uri) ?? []);
       tell(`Analyzed in ${duration(performance.now() - t0)}. <a href="play/index.html">The playground</a> has traces, the library and more.`);
     }
@@ -1582,7 +1592,102 @@ interface Stream {
       location.href = `play/index.html#${encodeURIComponent(name)}${widget ? `&widget=${widget}&at=${encodeURIComponent(line.slice(0, 40))}` : ''}`;
     };
     card.el.addEventListener('click', act);
-    return { view, analyze, destroy: () => { clearTimeout(timer); version++; view.destroy(); delete fig.satexView; } };
+    // Type mode in the typeset text, as in the playground's Typeset view: a click on a word puts a caret there, keys write
+    // into the source at its place (pdfedit.js: escapes, math, pairs), the text beside shows a plain letter at once
+    let caret: { at: number; line: number; idx: number } | null = null, PE: Rec = null;
+    const typeIn = Object.assign(document.createElement('textarea'), { className: 'pdf-type-in', spellcheck: false, tabIndex: -1 });
+    typeIn.setAttribute('aria-label', 'type into the typeset text');
+    out.after(typeIn);
+    const nodeAt = (box: Node, i: number): [Text, number] | null => {
+      const w = document.createTreeWalker(box, NodeFilter.SHOW_TEXT);
+      for (let n = w.nextNode() as Text | null; n; n = w.nextNode() as Text | null) { if (i <= n.length) return [n, i]; i -= n.length; }
+      return null;
+    };
+    const boxOf = () => caret && out.querySelector<HTMLElement>(`p.ts[data-line="${caret.line}"] .ts-text`);
+    redraw = () => {
+      out.querySelector('.pdf-caret')?.remove();
+      const box = boxOf();
+      if (!caret || !box) return;
+      // after a run the caret's word is found again: its spelling nearest the old place
+      const w = PE.wordAt(view.state.doc.toString(), caret.at), all = box.textContent ?? '';
+      if (w) {
+        const into = caret.at - w[0], want = caret.idx - into;
+        const near = [...all.matchAll(new RegExp(w[1].replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gu'))].map((m) => m.index!).sort((a, b) => Math.abs(a - want) - Math.abs(b - want))[0];
+        if (near != null) caret.idx = near + into;
+      }
+      const spot = nodeAt(box, Math.min(caret.idx, all.length));
+      if (!spot) return;
+      const r = document.createRange();
+      r.setStart(...spot);
+      const rect = r.getClientRects()[0] ?? spot[0].parentElement!.getBoundingClientRect(), base = out.getBoundingClientRect();
+      out.insertAdjacentHTML('beforeend', `<span class="pdf-caret" style="left:${rect.left - base.left + out.scrollLeft}px;top:${rect.top - base.top + out.scrollTop}px;height:${rect.height}px"></span>`);
+    };
+    const typeOff = () => { caret = null; out.querySelector('.pdf-caret')?.remove(); };
+    typeIn.addEventListener('blur', typeOff);
+    /** The caret on the word at the point `x, y` of the typeset text, where its source line spells it as text. */
+    const typeAt = async (x: number, y: number) => {
+      const target = document.elementFromPoint(x, y), p = target?.closest<HTMLElement>('p.ts[data-line]'), box = p?.querySelector('.ts-text');
+      const hit = document.caretPositionFromPoint?.(x, y) ?? (() => { const r = document.caretRangeFromPoint?.(x, y); return r && { offsetNode: r.startContainer, offset: r.startOffset }; })();
+      if (!p || !box || !out.contains(p) || !hit || !box.contains(hit.offsetNode)) return;
+      const r = document.createRange();
+      r.setStart(box, 0);
+      r.setEnd(hit.offsetNode, hit.offset);
+      const idx = r.toString().length, words = [...(box.textContent ?? '').matchAll(/[\p{L}\p{N}]+/gu)];
+      const w = words.find((m) => m.index! <= idx && idx <= m.index! + m[0].length);
+      if (!w) return;
+      PE ??= await loadPE().catch(() => null);
+      if (!PE) return tell('Typing here did not load: edit the source on the left.', true);
+      const text = view.state.doc.toString(), doc = view.state.doc, nth = words.filter((m) => m[0] === w[0] && m.index! < w.index!).length, spots: number[] = [];
+      for (let n = +p.dataset.line!; n <= Math.min(+p.dataset.last!, doc.lines); n++) {
+        const l = doc.line(n);
+        for (const [a, b] of PE.spans(l.text, w[0])) { const why = PE.editable(text, l.from + a, l.from + b, []); if (!why || /math/.test(why)) spots.push(l.from + a); }
+      }
+      const at = spots[nth] ?? spots[0];
+      if (at == null) return tell(`“${esc(w[0])}” is not plain text in the source: edit it on the left.`);
+      caret = { at: at + idx - w.index!, line: +p.dataset.line!, idx };
+      typeIn.focus({ preventScroll: true });
+      view.dispatch({ selection: { anchor: caret.at }, scrollIntoView: true });
+      redraw();
+    };
+    out.addEventListener('click', (e) => typeAt(e.clientX, e.clientY));
+    /** Source `from..to` becomes `body`, the caret `k` past `from`; `shown` is what the typeset text shows of it at once. */
+    const typeWrite = ([from, to, body, k]: [number, number, string, number], shown: string | null, back = 0) => {
+      if (!caret) return;
+      view.dispatch({ changes: { from, to, insert: body }, selection: { anchor: from + k }, userEvent: 'input.type' });
+      const box = boxOf(), spot = box && nodeAt(box, caret.idx - back);
+      if (spot && shown != null && spot[1] + back <= spot[0].length) { spot[0].replaceData(spot[1], back, shown); caret.idx += shown.length - back; }
+      caret.at = from + k;
+      redraw();
+    };
+    typeIn.addEventListener('input', () => {
+      const s = typeIn.value;
+      typeIn.value = '';
+      for (const c of s) if (caret) { const t = PE.typed(view.state.doc.toString(), caret.at, c, undefined, true); typeWrite(t, t[2] === c ? c : null); }
+    });
+    typeIn.addEventListener('keydown', (e) => {
+      if (!caret || e.isComposing) return;
+      const text = view.state.doc.toString(), at = caret.at;
+      if (e.key === 'Escape') { typeIn.blur(); return; }
+      if (e.key === 'Backspace' || e.key === 'Delete') {
+        e.preventDefault();
+        const [from, to] = PE.erased(text, at, e.key === 'Backspace');
+        if (from < to) typeWrite([from, to, '', 0], e.key === 'Backspace' && to - from === 1 && /[\p{L}\p{N} ]/u.test(text[from]!) ? '' : null, e.key === 'Backspace' && to - from === 1 ? 1 : 0);
+      } else if (e.key === 'Enter') {
+        // a new paragraph, in math or with Shift a line break
+        e.preventDefault();
+        const br = e.shiftKey || /math/.test(PE.editable(text, at, at, []) ?? '') ? '\n' : '\n\n';
+        typeWrite([at, at, br, br.length], null);
+        if (br.length > 1) caret = { at: at + 2, line: view.state.doc.lineAt(at + 2).number, idx: 0 };
+      } else if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+        e.preventDefault();
+        const d = e.key === 'ArrowLeft' ? -1 : 1;
+        caret.at = Math.min(Math.max(at + d, 0), text.length);
+        caret.idx = Math.max(0, caret.idx + d);
+        view.dispatch({ selection: { anchor: caret.at } });
+        redraw();
+      }
+    });
+    return { view, analyze, typeAt, destroy: () => { clearTimeout(timer); version++; typeIn.remove(); typeOff(); view.destroy(); delete fig.satexView; } };
   }
   // an example: its source becomes an editor on a click that is no command's, "reset" brings the build's result back
   for (const fig of document.querySelectorAll<HTMLElement>('.example:not(.live)')) {
@@ -1651,7 +1756,7 @@ interface Stream {
   // the showcase's live window: the build's run stands there until the window has been in view a moment, then the engine starts
   for (const fig of document.querySelectorAll<HTMLElement>('.shot-live')) {
     const poster = fig.querySelector<HTMLElement>('.live-poster')!, data = JSON.parse(fig.querySelector<HTMLElement>('.ex-data')!.textContent);
-    let timer: ReturnType<typeof setTimeout> | 0 = 0, started = false;
+    let timer: ReturnType<typeof setTimeout> | 0 = 0, started = false, typing: [number, number] | null = null;
     const go = async () => {
       if (started) return;
       started = true;
@@ -1661,6 +1766,8 @@ interface Stream {
       const t0 = performance.now(), first = data.source;
       const live = await liveEditor(fig, host, fig.dataset.name!, first, data);
       (poster as ChildNode).replaceWith(host);
+      // a click into the typeset text that started the engine puts the caret there once the editor stands
+      if (typing) live.typeAt(...typing);
       await live.analyze();
       fig.dataset.firstFinding = String(Math.round(performance.now() - t0));
     };
@@ -1673,6 +1780,7 @@ interface Stream {
       demo.addEventListener('keydown', take);
     } else io.observe(fig);
     poster.addEventListener('pointerdown', go, { once: true });
+    fig.querySelector<HTMLElement>('.live-ts')!.addEventListener('pointerdown', (e) => { if (!started) { typing = [e.clientX, e.clientY]; go(); } });
   }
   const own = document.querySelector<HTMLElement>('.example.live');
   if (own) {
@@ -2082,7 +2190,9 @@ interface Stream {
         // each card a step out is a fifth smaller: the front one stands out
         const a = norm(i * step - at), r = a * Math.PI / 180, cos = Math.cos(r);
         const x = Math.sin(r) * radius, z = (cos - 1) * radius * .55;
-        c.style.transform = `translate3d(calc(-50% + ${x.toFixed(1)}px), 0, ${z.toFixed(1)}px) rotateY(${(-a * .22).toFixed(2)}deg) scale(${(FRONT * .8 ** Math.min(3, Math.abs(a) / step)).toFixed(3)})`;
+        const k = (FRONT * .8 ** Math.min(3, Math.abs(a) / step)).toFixed(3);
+        // the front card at rest: a flat transform, rasterized at its scale (a 3D one keeps its first, blurry bitmap)
+        c.style.transform = at === goal && Math.abs(a) < .01 ? `translateX(-50%) scale(${k})` : `translate3d(calc(-50% + ${x.toFixed(1)}px), 0, ${z.toFixed(1)}px) rotateY(${(-a * .22).toFixed(2)}deg) scale(${k})`;
         c.style.opacity = Math.max(0, Math.min(1, (cos + .1) / .8)).toFixed(3);
         // a title rides with its card while the card faces the page
         c.style.setProperty('--title', Math.max(0, (cos - .55) / .45).toFixed(3));
@@ -2094,6 +2204,8 @@ interface Stream {
         front = best;
         cards.forEach((c, i) => c.classList.toggle('ring-front', i === best));
       }
+      // at rest no layer hint: the browser draws the cards again at their scale, crisp
+      row.classList.toggle('ring-still', at === goal);
       if (at !== goal) raf = requestAnimationFrame(draw);
     };
     const kick = () => { if (!raf) raf = requestAnimationFrame(draw); };

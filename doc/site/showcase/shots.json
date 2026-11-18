@@ -154,7 +154,10 @@
    ],
    "hold": 1500,
    "keepMouse": true,
-   "keepFocus": true
+   "keepFocus": true,
+   "config": {
+    "playground.wrap": true
+   }
   },
   {
    "name": "tikz",
@@ -788,7 +791,7 @@
     "glossary"
    ],
    "viewport": [
-    640,
+    1000,
     760
    ]
   },
@@ -835,7 +838,7 @@
    ],
    "crop": "#play-view",
    "viewport": [
-    640,
+    1000,
     760
    ]
   },

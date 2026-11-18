@@ -13,6 +13,8 @@ type Placed = { k: number; page: number; x: number; w: number; t: number; d: num
 type Word = [number, number, number, number, number, string];
 /** A verbatim body: `from..to` of the text, a block (`verbatim`, `lstlisting`, `minted`) or inline (`\verb|…|`), its closer. */
 type Verb = { from: number; to: number; block: boolean; close: string };
+/** A source word: its offsets `s..e` in the text and what the page shows of it. */
+type Tok = { s: number; e: number; t: string };
 type Flat = { page: number; l: number; t: number; r: number; d: number };
 type Form = { kind: 'len'; num: number; unit: string } | { kind: 'share'; num: number; name: string; lead: boolean };
 declare global {
@@ -28,8 +30,15 @@ declare global {
       editable(text: string, from: number, to: number, keys: [number, number][]): string | null;
       spans(line: string, word: string): [number, number][];
       sender<V>(send: (v: V) => Promise<boolean>): { put(v: V): void; flush(): Promise<void> };
-      typed(text: string, at: number, c: string, inline?: string, smart?: boolean): [number, number, string, number];
-      erased(text: string, at: number, back: boolean): [number, number];
+      typed(text: string, at: number, c: string, inline?: string, smart?: boolean, fresh?: [number, number] | null): [number, number, string, number];
+      erased(text: string, at: number, back: boolean, fresh?: [number, number] | null): [number, number];
+      checked(text: string, edit: [number, number, string, number?], o?: object): string | null;
+      entries(texts: Record<string, string>, root: string, kind: string): [string, number, number][];
+      grow(f: [number, number] | null | undefined, a: number, b: number, n: number): [number, number] | null;
+      key(text: string, at: number, k: string, o?: object): [number, number, string, number] | string;
+      broken(text: string, at: number, shift: boolean): [number, number, string, number] | string;
+      scan(text: string, from: number, to: number, st: object, out?: { s: number; e: number; t: string }[]): { math: string; groups: [number, string][] };
+      start(): object;
       mathAt(text: string, at: number, kind: string, inline?: string): [number, number, string, number];
       boundaries(text: string, l: number, r: number, width: (s: string) => number): number[];
       boundaryAt(xs: number[], x: number): number;
@@ -49,6 +58,10 @@ declare global {
       argAt(text: string, name: string, line: number): number | null;
       apart<B extends Flat>(boxes: B[]): B[];
       relaid(row: [number, number, string][], k: number, now: string, width: (s: string) => number): [number, number, string][];
+      tokens(text: string, from: number, to: number): Tok[];
+      aligned(toks: string[], words: string[]): number[];
+      changed(was: string, now: string): [number, number];
+      paragraph(text: string, at: number): [number, number];
       nearest(words: Word[], x: number, y: number): number;
       bands(words: Word[]): Flat[];
       joined(words: Word[]): string;
@@ -299,9 +312,62 @@ declare global {
     if (sep) { const at2 = end + sep[0].length; return [at2, at2, `\n${amp} \\\\`, 1]; }
     return [end, end, ` \\\\\n${amp}`, 4];
   }
+  /** A structural token of the source: `{`, `}`, `$`, `$$`, `&`, `#`, `_`, `^`, `par` (a blank line), `%` (a comment),
+   * `verb` (a verbatim body), `\begin{env}`/`\end{env}` with its name, or a control sequence as written (`\emph`, `\%`). */
+  type Mark = { s: number; e: number; t: string };
+  /** Where a scan stands: the open math (its opener or environment, '' outside), the open groups (the `{`'s offset
+   * and the command before it), the command whose `[…]` option is open, the command just read, the last token. */
+  type Scan = { math: string; groups: [number, string][]; opt: string | null; optAt: number; cmd: string; last: Mark | null };
+  const start = (): Scan => ({ math: '', groups: [], opt: null, optAt: 0, cmd: '', last: null });
+  const copy = (s: Scan): Scan => ({ ...s, groups: [...s.groups] });
+  /** Reads `text` from `from` to `to` the way TeX tokenizes it, from state `st` (changed in place, returned); the
+   * tokens go to `out`. A token begun before `to` is read whole. */
+  function scan(text: string, from: number, to: number, st: Scan, out?: Mark[]): Scan {
+    const skip = verbatim(text);
+    const put = (s: number, e: number, t: string) => { st.last = { s, e, t }; out?.push(st.last); };
+    let k = 0;
+    for (let i = from; i < to; i++) {
+      while (skip[k] && skip[k]!.to < i) k++;
+      const v = skip[k];
+      if (v && v.from <= i) { put(v.from, v.to, 'verb'); i = v.to - 1; k++; st.cmd = ''; continue; }
+      const c = text[i]!;
+      if (c === '%') { const nl = text.indexOf('\n', i), e = nl < 0 ? text.length : nl; put(i, e, '%'); i = e - 1; continue; }
+      if (c === '\\') {
+        const m = /^\\(?:([A-Za-z@]+)|([\s\S]))?/.exec(text.slice(i, i + 64))!;
+        let e = i + m[0].length, t = m[0];
+        if (m[1] === 'begin' || m[1] === 'end') {
+          const env = /^\s*\{([^{}\n]*)\}/.exec(text.slice(e, e + 80));
+          if (env) { e += env[0].length; t = `\\${m[1]}{${env[1]}}`; if (MATH.test(env[1]!) && (m[1] === 'begin' ? !st.math : st.math === env[1])) st.math = m[1] === 'begin' ? env[1]! : ''; }
+        } else if ((m[2] === '(' || m[2] === '[') && !st.math) st.math = t;
+        else if ((m[2] === ')' || m[2] === ']') && st.math === `\\${m[2] === ')' ? '(' : '['}`) st.math = '';
+        put(i, e, t);
+        st.cmd = m[1] ?? '';
+        i = e - 1;
+        continue;
+      }
+      if (c === '$') {
+        // `$$` opens display math where no math is open, closes it in display math; inline math ends at one `$`
+        const two = text[i + 1] === '$' && (st.math === '$$' || !st.math), t = two ? '$$' : '$';
+        if (!st.math) st.math = t; else if (st.math === t) st.math = '';
+        put(i, i + t.length, t); i += t.length - 1; st.cmd = '';
+        continue;
+      }
+      if (c === '\n') { const p = /^\n[ \t]*\n(?:[ \t]*\n)*/.exec(text.slice(i, i + 256)); if (p) { put(i, i + p[0].length, 'par'); i += p[0].length - 1; st.cmd = ''; } continue; }
+      if (/\s/.test(c) || c === '*' && st.cmd) continue;
+      if (c === '{') { put(i, i + 1, c); st.groups.push([i, st.cmd]); }
+      else if (c === '}') { put(i, i + 1, c); st.groups.pop(); }
+      else if (/[&#_^]/.test(c)) put(i, i + 1, c);
+      else if (c === '[' && st.cmd && st.opt == null) { st.opt = st.cmd; st.optAt = st.groups.length; st.cmd = ''; continue; }
+      else if (c === ']' && st.opt != null && st.groups.length === st.optAt) { st.cmd = st.opt; st.opt = null; continue; }
+      st.cmd = '';
+    }
+    return st;
+  }
+  /** Groups whose text is a name, not output: keys, files, packages, environments' arguments. */
+  const KEYS = /^(label|ref|eqref|pageref|autoref|[cC]ref|nameref|cite\w*|nocite|input|include|includegraphics|usepackage|documentclass|bibliography(style)?|url)$/;
   /** Why `text`'s characters `from..to` may not be edited as plain text, null when they may. The file is read up to
-   * them: math (`$`, `$$`, `\(`, `\[`, a math environment), an environment's name, a key (`keys`: the run's label,
-   * reference and citation spans) or markup in them. Comments are skipped. */
+   * them: math (`$`, `$$`, `\(`, `\[`, a math environment), a command's name or option, an environment's name, a
+   * comment, a key (`keys`: the run's label, reference and citation spans; else a `\label`, `\ref`, `\cite`… argument). */
   function editable(text: string, from: number, to: number, keys: [number, number][]): string | null {
     if (from < 0 || to > text.length || from > to) return 'it is outside the text';
     // verbatim: every character is text; an inline body holds one line and not its closer
@@ -309,33 +375,119 @@ declare global {
     if (v && to <= v.to) return v.block || !/[\n]/.test(text.slice(from, to)) && !text.slice(from, to).includes(v.close) ? null : 'it ends the verbatim text';
     if (!plain(text.slice(from, to))) return 'the text there holds markup';
     if (keys.some(([a, b]) => a < to && from < b || a === from && b === to)) return 'it is a key (a label, a reference, a citation)';
-    let math = 0, inline = false, display = false, cmd = '';
-    const groups: string[] = [], skip = verbatim(text);
-    for (let i = 0, k = 0; i < from; i++) {
-      // a verbatim body opens no math and no group
-      while (skip[k] && skip[k]!.to < i) k++;
-      if (skip[k] && skip[k]!.from <= i) { i = skip[k]!.to - 1; k++; cmd = ''; continue; }
-      const c = text[i];
-      if (c === '%') { while (i < from && text[i] !== '\n') i++; cmd = ''; continue; }
-      if (c === '\\') {
-        const m = /^\\([A-Za-z@]+|.)/s.exec(text.slice(i, i + 64));
-        const name = m?.[1] ?? '';
-        if (name === '(' || name === '[') math++; else if (name === ')' || name === ']') math = Math.max(0, math - 1);
-        if (name === 'begin' || name === 'end') {
-          const env = /^\s*\{([^}]*)\}/.exec(text.slice(i + 1 + name.length, i + 80))?.[1];
-          if (env != null && MATH.test(env)) math = Math.max(0, math + (name === 'begin' ? 1 : -1));
-        }
-        cmd = /^[A-Za-z@]/.test(name) ? name : '';
-        i += name.length;
-        continue;
-      }
-      if (c === '$') { if (text[i + 1] === '$') { display = !display; i++; } else inline = !inline; cmd = ''; continue; }
-      if (c === '{') groups.push(cmd); else if (c === '}') groups.pop();
-      if (!/\s/.test(c)) cmd = '';
-    }
-    if (math || inline || display) return 'it is math';
-    if (/^(begin|end)$/.test(groups.at(-1) ?? '')) return "it is an environment's name";
+    const st = scan(text, 0, from, start()), l = st.last;
+    if (l && l.s < from && (l.t === '%' ? l.e >= from : l.e > from)) return l.t === '%' ? 'it is a comment' : /^\\(begin|end)\{/.test(l.t) ? "it is an environment's name" : "it is a command's name";
+    if (st.math) return 'it is math';
+    const g = st.groups.at(-1)?.[1] ?? '';
+    if (/^(begin|end)$/.test(g)) return "it is an environment's argument";
+    if (KEYS.test(g)) return 'it is a key (a label, a reference, a citation)';
+    if (st.opt != null && (KEYS.test(st.opt) || /^(begin|end)$/.test(st.opt))) return "it is a command's option";
     return null;
+  }
+  /** What a `{` at `at` follows, with only spaces between: a command, a `]`, `}`, `_` or `^` (it is an argument),
+   * as `[offset, what]`; null where it opens a plain group. */
+  function argOf(text: string, at: number): [number, string] | null {
+    const m = /(?:\\[A-Za-z@]+\*?|\\[^A-Za-z@]|[\]}_^])\s*$/.exec(text.slice(Math.max(0, at - 64), at));
+    return m ? [at - m[0].length, m[0].trimEnd()] : null;
+  }
+  /** Control symbols and words that are escaped characters, deleted whole as the character they show. */
+  const ESC = /^\\([^A-Za-z@()[\]\\]|textbackslash|textasciitilde|textasciicircum)$/;
+  /** Whether the tokens `ms`, in order, open and close as many groups, formulas and environments as they close. */
+  function balanced(ms: Mark[]): boolean {
+    let br = 0, dl = 0, dd = 0, p = 0, q = 0;
+    const env: string[] = [];
+    for (const m of ms) {
+      const t = m.t;
+      if (t === '{') br++; else if (t === '}' && --br < 0) return false;
+      else if (t === '$') dl ^= 1; else if (t === '$$') dd ^= 1;
+      else if (t === '\\(') p++; else if (t === '\\)' && --p < 0) return false;
+      else if (t === '\\[') q++; else if (t === '\\]' && --q < 0) return false;
+      else if (t.startsWith('\\begin{')) env.push(t.slice(7));
+      else if (t.startsWith('\\end{') && env.pop() !== t.slice(5)) return false;
+    }
+    return !br && !dl && !dd && !p && !q && !env.length;
+  }
+  /** What a caret edit may know: the text typed since the caret was put (`fresh`, `[from, to)`: commands typed there
+   * may still change), the run's key spans, whether it adds a table row (`row`) or is a snippet (`free`). */
+  type Opts = { fresh?: [number, number] | null; keys?: [number, number][]; row?: boolean; free?: boolean; inline?: string; smart?: boolean };
+  /** Why edit `[from, to, body]` of `text` would change its structure, null when it keeps it. Kept: every brace,
+   * command name, environment, math delimiter, comment and verbatim body around it, each argument with its command;
+   * what it removes or adds is balanced, removes only escapes and text, adds no comment, no table cell outside a row
+   * edit, no script outside math, no paragraph inside an argument. Commands typed since the caret was put (`o.fresh`)
+   * may change. The one gate of every caret edit: the drawn text and the written one pass it alike. */
+  function checked(text: string, edit: [number, number, string, number?], o: Opts = {}): string | null {
+    const [a, b, body] = edit, n = body.length, d = n - (b - a), f = o.fresh ?? null;
+    if (a === b && !n) return null;
+    if (a < 0 || b > text.length || a > b) return 'it is outside the text';
+    const now = text.slice(0, a) + body + text.slice(b);
+    const v = verbatimAt(text, a);
+    if (v) {
+      const ok = b <= v.to && verbatim(now).length === verbatim(text).length && verbatimAt(now, a)?.to === v.to + d && (v.block || !/\n/.test(body));
+      return ok ? null : 'it ends the verbatim text';
+    }
+    if (o.keys?.some(([p, q]) => p < b && a < q || p < a && a < q)) return 'it is a key (a label, a reference, a citation)';
+    // the lines around the edit, blank lines beside it too (a blank line, a comment's end may join it)
+    let p0 = a, q0 = b;
+    while (p0 > 0 && /\s/.test(text[p0 - 1]!)) p0--;
+    while (q0 < text.length && /\s/.test(text[q0]!)) q0++;
+    const L = text.lastIndexOf('\n', p0 - 1) + 1, nl = text.indexOf('\n', q0), R = nl < 0 ? text.length : nl;
+    const head = scan(text, 0, L, start()), ctx = scan(text, L, a, copy(head)), l = ctx.last;
+    if (l && l.t === '%' && l.s < a && l.e >= a) return 'it is a comment';
+    const g = ctx.groups.at(-1)?.[1] ?? '';
+    if (KEYS.test(g) || /^(begin|end)$/.test(g)) return g === 'begin' || g === 'end' ? "it is an environment's argument" : 'it is a key (a label, a reference, a citation)';
+    if (ctx.opt != null && (KEYS.test(ctx.opt) || /^(begin|end)$/.test(ctx.opt))) return "it is a command's option";
+    const m1: Mark[] = [], m2: Mark[] = [];
+    scan(text, L, R, copy(head), m1);
+    scan(now, L, R + d, copy(head), m2);
+    // a token of the text before the edit, where it stands after it; -1 where the edit cuts it
+    const moved = (m: Mark) => m.e <= a ? m.s : m.s >= b ? m.s + d : -1, id = (s: number, m: Mark) => `${s}:${m.e - m.s}:${m.t}`;
+    const was = new Set(m1.map((m) => id(moved(m), m))), is = new Set(m2.map((m) => id(m.s, m)));
+    const gone = m1.filter((m) => moved(m) < 0 || !is.has(id(moved(m), m))), added = m2.filter((m) => !was.has(id(m.s, m)));
+    const fr = (p: number) => !!f && f[0] <= p && p < f[1];
+    // each character of a token removed (added) is one the edit removes (adds) or one typed since the caret was put
+    const ownWas = (m: Mark) => { for (let p = m.s; p < m.e; p++) if (!(a <= p && p < b) && !fr(p)) return false; return true; };
+    const ownNow = (m: Mark) => { for (let p = m.s; p < m.e; p++) if (!(a <= p && p < a + n) && !fr(p < a ? p : p - d)) return false; return true; };
+    const freshWas = (m: Mark) => !!f && f[0] <= m.s && m.e <= f[1];
+    // typed or not, what goes is balanced: a `\)` typed before goes only with its `\(`
+    if (!balanced(gone)) return 'it would unbalance the braces or the math around it';
+    if (!balanced(added)) return 'it would unbalance the braces or the math';
+    for (const m of gone) {
+      if (m.t === 'par' || freshWas(m)) continue;
+      if (!ownWas(m)) return m.t[0] === '\\' ? `it would change the command ${m.t}` : 'it would change the markup around it';
+      if (m.t[0] === '\\' && !ESC.test(m.t)) return `it would delete the command ${m.t}`;
+      if (/^(%|verb|&|#)$/.test(m.t)) return 'it would delete markup';
+      // an argument's braces go only with their command
+      const arg = m.t === '{' ? argOf(text, m.s) : null;
+      if (arg && !(a <= arg[0] && arg[0] < b) && !fr(arg[0])) return `it would delete an argument of ${arg[1]}`;
+    }
+    for (const m of added) {
+      if (!ownNow(m)) return m.t[0] === '\\' ? `it would change a command's name (${m.t})` : 'it would change the markup around it';
+      if (m.t === '%') return 'it would start a comment';
+      if (m.t === 'verb') return 'it would start verbatim text';
+      if (m.t === 'par' && !o.free && (ctx.groups.length || ctx.math)) return ctx.math ? 'a paragraph cannot end in math' : `a paragraph cannot end inside ${g ? `\\${g}{…}` : 'a group'}: Shift+Enter breaks the line`;
+      if ((m.t === '&' || m.t === '\\\\' && cells(now, m.s)) && !o.row && !o.free) return 'it would add a table cell or row: Tab and Enter do';
+      if (m.t === '#' && !o.free) return 'a # is a macro parameter';
+      if ((m.t === '_' || m.t === '^') && !ctx.math && !o.free) return 'a script belongs in math';
+      if (ctx.math && /^(\\[([]|\$\$?)$/.test(m.t)) return 'math cannot open inside math';
+    }
+    // a brace kept stays an argument of what it followed; one added after a command already there is its `{}` end
+    for (const m of m2) {
+      if (m.t !== '{') continue;
+      const p = m.s < a ? m.s : m.s >= a + n ? m.s - d : -1, now1 = argOf(now, m.s);
+      if (p >= 0 && was.has(id(m.s, m))) {
+        const then = argOf(text, p);
+        if ((then?.[1] ?? '') !== (now1?.[1] ?? '')) return then ? `it would part ${then[1]} from its argument` : 'it would make a group an argument';
+      } else if (now1 && /^\\[A-Za-z@]/.test(now1[1]) && !(a <= now1[0] && now1[0] < a + n) && !fr(now1[0] < a ? now1[0] : now1[0] - d) && now[m.s + 1] !== '}') {
+        return `it would give ${now1[1]} an argument`;
+      }
+    }
+    return null;
+  }
+  /** The fresh span after edit `[from, to)` → `n` characters: grown by an edit in or at it, else the edit's own. */
+  function grow(f: [number, number] | null | undefined, a: number, b: number, n: number): [number, number] | null {
+    if (f && a >= f[0] && b <= f[1]) return [f[0], f[1] + n - (b - a)];
+    if (n) return [a, a + n];
+    return f && b <= f[0] ? [f[0] - (b - a), f[1] - (b - a)] : f && a >= f[1] ? f : null;
   }
   /** Where `word` (a word of the page, edge punctuation left out, ligatures `ﬁ` as letters) stands whole in a source line, each occurrence; none after a backslash. */
   function spans(line: string, word: string): [number, number][] {
@@ -349,55 +501,141 @@ declare global {
   const escaped = (c: string) => /[\\&%#_{}~^]/.test(c) ? ESCAPED[c] ?? `\\${c}` : c;
   /** The inline math delimiters `text` uses most: `\(` where it has more `\(` than `$`, else `$`. */
   const inlineOf = (text: string) => (text.match(/\\\(/g)?.length ?? 0) > (text.match(/(?<![\\$])\$(?!\$)/g)?.length ?? 0) ? '\\(' : '$';
+  /** A command name ending at `at` (an even run of backslashes before its `\`): its offset, else -1. */
+  const nameEnd = (text: string, at: number) => { const m = /(?:^|[^\\])(?:\\\\)*(\\[A-Za-z@]+)$/.exec(text.slice(Math.max(0, at - 64), at)); return m ? at - m[1]!.length : -1; };
+  /** A lone `\` just before `at` (an odd run of backslashes): a command being typed. */
+  const lone = (text: string, at: number) => /(?:^|[^\\])(?:\\\\)*\\$/.test(text.slice(Math.max(0, at - 64), at));
   /** What typing `c` at `at` of `text` writes so the source stays compilable: `[from, to, body, caret]`, the text
-   * `from..to` replaced by `body` and the caret `caret` past `from`. In text a special character is escaped (a brace
-   * after a command's name opens its argument, one before a `}` steps over it) and `$`
+   * `from..to` replaced by `body` and the caret `caret` past `from`. In text a special character is escaped and `$`
    * opens math with its closer (`inline`: `\(`, `$` or `auto`, the document's most used). In math a character goes
-   * in as typed, `{` with its `}`, and a closer typed where it stands steps over it. `smart`: `x_42` writes `x_{42}`. */
-  function typed(text: string, at: number, c: string, inline = '\\(', smart = false): [number, number, string, number] {
+   * in as typed, `{` with its `}`, `%`, `#`, `&` escaped, a closer typed where it stands steps over it, `$` elsewhere
+   * leaves the formula. `\` starts a command (a space keeps it off the word after it); letters name it, another
+   * character makes a control symbol (`\%`). After a command typed since the caret was put (`fresh`) `{` opens its
+   * argument and `}` steps out of one; after an older one a letter or space gets a `{}` first, so the name stays.
+   * `smart`: `x_42` writes `x_{42}`. */
+  function typed(text: string, at: number, c: string, inline = '\\(', smart = false, fresh: [number, number] | null = null): [number, number, string, number] {
     // verbatim takes the character as it is; an inline body never its closer or a line break
     const v = verbatimAt(text, at);
     if (v) return !v.block && (c === v.close || c === '\n') ? [at, at, '', 0] : [at, at, c, c.length];
-    const math = /math/.test(editable(text, at, at, []) ?? '');
-    if (!math) {
-      // after a command's name `{` opens its argument, and `}` where one stands steps over it
-      if (c === '{' && /\\[A-Za-z@]+$/.test(text.slice(Math.max(0, at - 64), at))) return [at, at, '{}', 1];
-      if (c === '}' && text[at] === '}') return [at, at, '', 1];
+    const fr = (p: number) => !!fresh && fresh[0] <= p && p < fresh[1], letter = /^[A-Za-z@]$/.test(c);
+    // the space typed after a `\` (to keep it off the next word) goes once the name is a control symbol
+    if (lone(text, at)) return letter ? [at, at, c, 1] : [at, at + (text[at] === ' ' && fr(at) ? 1 : 0), c, 1];
+    if (c === '\\') return [at, at, /\S/.test(text[at] ?? ' ') ? '\\ ' : '\\', 1];
+    const cs = nameEnd(text, at), own = cs >= 0 && fr(cs);
+    if (cs >= 0 && letter) return own ? [at, at, c, 1] : [at, at, `{}${c}`, 3];
+    // its argument ends the name: the space that kept it off the next word goes
+    if (cs >= 0 && c === '{' && own) return [at, at + (text[at] === ' ' && fr(at) ? 1 : 0), '{}', 1];
+    if (cs >= 0 && c === ' ' && !own) return [at, at, '{} ', 3];
+    if (c === '}' && text[at] === '}' && fr(at)) return [at, at, '', 1];
+    const st = scan(text, 0, at, start());
+    if (!st.math) {
       if (c !== '$') { const body = escaped(c); return [at, at, body, body.length]; }
       const open = inline === '$' || inline === '\\(' ? inline : inlineOf(text);
-      return open === '$' ? [at, at, '$$', 1] : [at, at, '\\(\\)', 2];
+      // `$ $`, not `$$`: TeX reads `$$` as display math; the space goes with the first character typed
+      return open === '$' ? [at, at, '$ $', 1] : [at, at, '\\(\\)', 2];
     }
     // smart scripts: `_`/`^` open a group, a space, an operator or the formula's end typed at its end leave it
     if (smart && (c === '_' || c === '^')) return [at, at, `${c}{}`, 2];
     if (smart && text[at] === '}' && /[_^]\{[^{}]*$/.test(text.slice(Math.max(0, at - 64), at)) && /[\s$+\-=<>,;:|/*!?()[\]]/.test(c)) {
       // past the `}` first, then the character as typed there (a space only leaves)
-      return /\s/.test(c) ? [at + 1, at + 1, '', 0] : typed(text, at + 1, c, inline, smart);
+      return /\s/.test(c) ? [at, at, '', 1] : typed(text, at + 1, c, inline, smart, fresh);
     }
-    for (const close of c === '$' ? ['$', '\\)', '\\]'] : c === '}' ? ['}'] : []) if (text.startsWith(close, at)) return [at, at, '', close.length];
-    return c === '{' ? [at, at, '{}', 1] : [at, at, c, c.length];
+    const empty = st.math === '$' && text[at - 1] === '$' && text.startsWith(' $', at);
+    if (c === '$') {
+      if (empty) return [at, at, '', 2];
+      for (const close of ['$', '\\)', '\\]']) if (text.startsWith(close, at)) return [at, at, '', close.length];
+      // elsewhere in inline math: past the formula's closer
+      const end = st.math === '$' ? /(?<!\\)\$/.exec(text.slice(at)) : st.math === '\\(' ? /\\\)/.exec(text.slice(at)) : null;
+      return end ? [at, at, '', end.index + end[0].length] : [at, at, '', 0];
+    }
+    const body = c === '{' ? '{}' : /[%#&}]/.test(c) ? `\\${c}` : c;
+    return [at, at + (empty ? 1 : 0), body, c === '{' ? 1 : body.length];
   }
   /** The math control at `at`: `[from, to, body, caret]` like typed's. Inline math in the `inline` convention's
    * delimiters, display `\[…\]` or an `align*`, the caret inside; in math already nothing. */
   function mathAt(text: string, at: number, kind: string, inline = '\\('): [number, number, string, number] {
-    if (/math/.test(editable(text, at, at, []) ?? '')) return [at, at, '', 0];
+    if (scan(text, 0, at, start()).math) return [at, at, '', 0];
     if (kind === 'inline') return typed(text, at, '$', inline);
     const [o, c] = kind === 'align' ? ['\\begin{align*}\n', '\n\\end{align*}'] : ['\\[', '\\]'];
     return [at, at, o + c, o.length];
   }
-  /** What Backspace (`back`) or Delete takes at `at`: `[from, to]`, an escape or an empty pair (`$$`, `{}`, `\(\)`) whole. */
-  function erased(text: string, at: number, back: boolean): [number, number] {
+  /** What Backspace (`back`) or Delete takes at `at`: `[from, to]`, an escape or an empty pair (`$ $`, `{}`, `\(\)`)
+   * whole, a formula whose last character goes with it, a `\` typed with the space that kept it off a word. */
+  function erased(text: string, at: number, back: boolean, fresh: [number, number] | null = null): [number, number] {
     const v = verbatimAt(text, at);
     if (v) return back ? (at > v.from ? [at - 1, at] : [at, at]) : (at < v.to ? [at, at + 1] : [at, at]);
-    for (const pair of ['$$', '{}', '\\(\\)']) {
+    for (const pair of ['{}', '\\(\\)', '\\[\\]']) {
       const h = pair.length / 2;
       if (text.slice(at - h, at + h) === pair) return [at - h, at + h];
     }
+    for (const k of [1, 2]) if (text.slice(at - k, at - k + 3) === '$ $') return [at - k, at - k + 3];
+    let p = back ? at - 1 : at, q = back ? at : at + 1;
+    const esc = /(?:\\(?:textbackslash|textasciitilde|textasciicircum)\{\}|\\[^A-Za-z@\\])/y;
     if (back) {
-      const m = /\\(?:textbackslash|textasciitilde|textasciicircum)\{\}$|\\[&%#_{}$]$/.exec(text.slice(Math.max(0, at - 20), at));
-      return m ? [at - m[0].length, at] : [at - 1, at];
+      const m = /(?:\\(?:textbackslash|textasciitilde|textasciicircum)\{\}|(?:^|[^\\])(?:\\\\)*\\[^A-Za-z@\\])$/.exec(text.slice(Math.max(0, at - 20), at));
+      if (m) p = at - (m[0].includes('\\text') ? m[0].length : 2);
+      else if (lone(text, at) && text[at] === ' ' && fresh && fresh[0] <= at && at < fresh[1]) q = at + 1;
+    } else {
+      esc.lastIndex = at;
+      const m = !lone(text, at) && esc.exec(text);
+      if (m) q = at + m[0].length;
     }
-    const m = /^\\(?:textbackslash|textasciitilde|textasciicircum)\{\}|^\\[&%#_{}$]/.exec(text.slice(at, at + 20));
-    return [at, at + (m ? m[0].length : 1)];
+    // the only character of a formula takes the formula with it
+    if (q - p === 1) {
+      if (text[p - 1] === '$' && text[q] === '$' && text[p - 2] !== '\\' && scan(text, 0, p, start()).math === '$') return [p - 1, q + 1];
+      if (text.slice(p - 2, p) === '\\(' && text.startsWith('\\)', q)) return [p - 2, q + 2];
+    }
+    return [Math.max(0, p), Math.min(text.length, q)];
+  }
+  /** Enter (`shift`: Shift+Enter) at `at`: a line in verbatim, a row in a table, a line break in math, a paragraph
+   * in text (a line break with Shift); the reason where none may go. */
+  function broken(text: string, at: number, shift: boolean): [number, number, string, number] | string {
+    const v = verbatimAt(text, at);
+    if (v) return v.block ? [at, at, '\n', 1] : 'inline verbatim holds one line';
+    if (!shift && cells(text, at)) return rowAfter(text, at) ?? 'no row here';
+    const br = shift || scan(text, 0, at, start()).math ? '\n' : '\n\n';
+    return [at, at, br, br.length];
+  }
+  /** A key at the caret (`Backspace`, `Delete`, `Enter`, `Shift+Enter` or a character): the edit it makes, checked,
+   * or why it makes none. */
+  function key(text: string, at: number, k: string, o: Opts = {}): [number, number, string, number] | string {
+    const e = k === 'Backspace' || k === 'Delete' ? [...erased(text, at, k === 'Backspace', o.fresh ?? null), '', 0] as [number, number, string, number]
+      : k === 'Enter' || k === 'Shift+Enter' ? broken(text, at, k === 'Shift+Enter')
+        : typed(text, at, k, o.inline, o.smart, o.fresh ?? null);
+    if (typeof e === 'string') return e;
+    return checked(text, e, { ...o, row: k === 'Enter' }) ?? e;
+  }
+  /** The entries of a table of contents (`toc`), list of figures (`lof`) or of tables (`lot`), in the order the
+   * document sets them from `root` (`\input`, `\include` followed in `texts`): where each entry's text is written,
+   * `[file, from, to]`: a sectioning command's or caption's short title (`\section[Short]{Long}`) if it has one, else
+   * its title. Starred sections and captions outside their float make none. */
+  function entries(texts: Record<string, string>, root: string, kind: string): [string, number, number][] {
+    const out: [string, number, number][] = [], seen = new Set<string>();
+    const group = (t: string, i: number, open: string, close: string): number => { let d = 0; for (let j = i; j < t.length; j++) { if (t[j] === '\\') { j++; continue; } if (t[j] === open) d++; else if (t[j] === close && --d === 0) return j; } return -1; };
+    const walk = (name: string) => {
+      const file = name in texts ? name : `${name}.tex` in texts ? `${name}.tex` : null;
+      if (!file || seen.has(file)) return;
+      seen.add(file);
+      const t = texts[file]!, floats: string[] = [];
+      const re = /(?<!\\)%[^\n]*|\\(input|include)\s*\{([^}]*)\}|\\(begin|end)\s*\{(figure|table)\*?\}|\\(part|chapter|section|subsection|subsubsection|caption)(?![A-Za-z@])(\*?)/g;
+      for (let m: RegExpExecArray | null; (m = re.exec(t));) {
+        if (m[0][0] === '%' || verbatim(t).some((v) => v.from <= m!.index && m!.index < v.to)) continue;
+        if (m[1]) { walk(m[2]!.trim()); continue; }
+        if (m[3]) { if (m[3] === 'begin') floats.push(m[4]!); else floats.pop(); continue; }
+        if (m[6] || (m[5] === 'caption' ? kind !== { figure: 'lof', table: 'lot' }[floats.at(-1) ?? ''] : kind !== 'toc')) continue;
+        let i = re.lastIndex;
+        while (/\s/.test(t[i] ?? '')) i++;
+        let short: [number, number] | null = null;
+        if (t[i] === '[') { const e = group(t, i, '[', ']'); if (e < 0) continue; short = [i + 1, e]; i = e + 1; while (/\s/.test(t[i] ?? '')) i++; }
+        if (t[i] !== '{') continue;
+        const e = group(t, i, '{', '}');
+        if (e < 0) continue;
+        out.push([file, ...(short ?? [i + 1, e])]);
+        re.lastIndex = e + 1;
+      }
+    };
+    walk(root);
+    return out;
   }
   /** Sends the newest value put, one at a time: a value put while one is under way waits and the latest wins.
    * A send that fails stops there (no retry loop): the next `put` or `flush` sends again. */
@@ -438,6 +676,47 @@ declare global {
   function relaid(row: [number, number, string][], k: number, now: string, width: (s: string) => number): [number, number, string][] {
     const [l, r, was] = row[k]!, scale = width(was) > 0 ? (r - l) / width(was) : 0, d = width(now) * scale - (r - l);
     return row.map(([a, b, t], i) => i < k ? [a, b, t] : i === k ? [a, b + d, now] : [a + d, b + d, t]);
+  }
+  /** The words a paragraph's source `from..to` sets, by offset: runs between spaces (`~` too), commands, braces and
+   * math shifts left out; a comment is no word. A word spelled by markup alone (`\\par`, `{}`) sets nothing. */
+  function tokens(text: string, from: number, to: number): Tok[] {
+    const out: Tok[] = [], re = /(?<!\\)%[^\n]*|(?:\\%|[^\s~%])+/g;
+    re.lastIndex = from;
+    for (let m; (m = re.exec(text)) && m.index < to;) {
+      if (m[0][0] === '%') continue;
+      const t = m[0].replace(/\\[A-Za-z@]+\*?|\\(?=[^A-Za-z@])|[{}$^_]/g, '');
+      if (t) out.push({ s: m.index, e: m.index + m[0].length, t });
+    }
+    return out;
+  }
+  /** Source words `toks` matched to the page's words `words` (both in reading order): per word of the source, the
+   * index of the page word that shows it, -1 where none does. Equal spellings pair up in order; one missing or extra
+   * on either side (a macro's text, a dropped command) is skipped by looking a few words ahead; a word the page
+   * hyphenated across rows (`consec-` `tetur`) is its first part. */
+  function aligned(toks: string[], words: string[]): number[] {
+    const n = (t: string) => t.normalize('NFKC').replace(/[\u2010-\u2014]/g, '-'), A = toks.map(n), B = words.map(n), out = A.map(() => -1);
+    const eq = (i: number, j: number) => A[i] === B[j] || B[j]!.endsWith('-') && j + 1 < B.length && A[i] === B[j]!.slice(0, -1) + B[j + 1];
+    const LOOK = 4;
+    for (let i = 0, j = 0; i < A.length && j < B.length;) {
+      if (eq(i, j)) { out[i] = j; j += A[i] === B[j] ? 1 : 2; i++; continue; }
+      let step: [number, number] | null = null;
+      for (let k = 1; k <= LOOK && !step; k++) step = j + k < B.length && eq(i, j + k) ? [0, k] : i + k < A.length && eq(i + k, j) ? [k, 0] : null;
+      if (step) { i += step[0]; j += step[1]; } else { i++; j++; }
+    }
+    return out;
+  }
+  /** Where `now` differs from `was`: the length of their common start, and of their common end after it. */
+  function changed(was: string, now: string): [number, number] {
+    let p = 0, q = 0;
+    const m = Math.min(was.length, now.length);
+    while (p < m && was[p] === now[p]) p++;
+    while (q < m - p && was[was.length - 1 - q] === now[now.length - 1 - q]) q++;
+    return [p, q];
+  }
+  /** The paragraph around offset `at`: from after the blank line before it to the blank line after it. */
+  function paragraph(text: string, at: number): [number, number] {
+    const before = text.slice(0, at).search(/\n[ \t]*\n(?![\s\S]*\n[ \t]*\n)/), after = /\n[ \t]*\n/.exec(text.slice(at));
+    return [before < 0 ? 0 : text.indexOf('\n', before + 1) + 1, after ? at + after.index : text.length];
   }
   /** Where a caret may stand in a word set from `l` to `r`: the boundary before each character and after the last,
    * at `width(prefix)` scaled to the box (`width`: the echo font's), evenly spaced when it measures nothing. */
@@ -514,5 +793,258 @@ declare global {
   }
   /** Words as the page reads: a space between words of a row, a line break between rows. */
   const joined = (words: Word[]) => bands(words).map((b) => words.filter((w) => w[0] === b.page && Math.abs(w[4] - b.d) < 1 && w[1] >= b.l && w[3] <= b.r).map((w) => w[5]).join(' ')).join('\n');
-  self.satexPdfEdit = { cells, cellStep, rowAfter, verbatim, verbatimAt, nearest, bands, joined, place, extent, room, form, measure, respec, widthBp, snapWidth, resized, stepped, plain, editable, spans, sender, typed, erased, mathAt, boundaries, boundaryAt, inkSnap, locate, columns, wordAt, argAt, relaid, apart };
+  self.satexPdfEdit = { entries, checked, grow, key, broken, scan, start, cells, cellStep, rowAfter, verbatim, verbatimAt, nearest, bands, joined, place, extent, room, form, measure, respec, widthBp, snapWidth, resized, stepped, plain, editable, spans, sender, typed, erased, mathAt, boundaries, boundaryAt, inkSnap, locate, columns, wordAt, argAt, relaid, apart, tokens, aligned, changed, paragraph };
+})();
+
+// TikZ nodes moved by drag: where each `\node` and path label stands in the source, and the statement a drag
+// rewrites. `at (x,y)` moves keeping its units and digits, a placed node (`right=of a`) gets `xshift`/`yshift`,
+// a label on a path gets `pos=`. Lengths are cm in the picture's frame, y up.
+declare global {
+  /** A coordinate as written: its number, unit ('' is the picture's x or y unit), digits after the point. */
+  type TikzLen = { v: number; unit: string; dec: number };
+  /** A node of a picture: the statement it stands in (`from`..`to`), its `{…}` line, what places it. */
+  interface TikzNode {
+    kind: 'node' | 'label'; from: number; to: number; i: number; line: number; name: string | null; text: string;
+    at: [TikzLen, TikzLen] | null; placed: boolean; plain: boolean; seg: [string, string] | null; pos: number | null; pic: TikzPic;
+  }
+  /** A picture's scale and units in cm. */
+  type TikzPic = { scale: number; x: number; y: number };
+  /** A move: by a distance (`by`, snapped to the mm grid unless `free`), to a place (`to`, from the origin), or to `pos`. */
+  type TikzMove = { by?: [number, number]; to?: [number, number]; pos?: number; free?: boolean };
+  interface Window {
+    satexTikzMove: {
+      nodes(text: string): TikzNode[]; move(stmt: string, i: number, pic: TikzPic, m: TikzMove): { text: string; label: string; by: [number, number] } | null;
+      len(s: string): TikzLen | null; cm(l: TikzLen, unit: number): number; posOn(a: [number, number], b: [number, number], p: [number, number]): number;
+      clipped(a: [number, number], ah: [number, number], b: [number, number], bh: [number, number]): [[number, number], [number, number]];
+    };
+  }
+}
+(() => {
+  const UNIT: Record<string, number> = { cm: 1, mm: 0.1, in: 2.54, pt: 2.54 / 72.27, bp: 2.54 / 72 };
+  /** `2.5cm`, `-3`, `.5in`: a length as written. */
+  function len(s: string): TikzLen | null {
+    const m = /^\s*([+-]?(?:\d+\.?\d*|\.\d+))\s*(cm|mm|in|pt|bp)?\s*$/.exec(s);
+    return m ? { v: +m[1], unit: m[2] ?? '', dec: m[1].split('.')[1]?.length ?? 0 } : null;
+  }
+  /** A length in cm, `unit` the cm of a bare number. */
+  const cm = (l: TikzLen, unit: number) => l.v * (l.unit ? UNIT[l.unit] : unit);
+  /** `c` cm in the unit of `l` (bare: `unit` cm), on the mm grid unless `free`, with as many digits as needed, at least as written. */
+  function write(l: TikzLen, c: number, unit: number, free: boolean): string {
+    const per = l.unit ? UNIT[l.unit] : unit, mm = free ? c : Math.round(c * 10) / 10;
+    const need = Math.max(0, Math.ceil(-Math.log10(0.1 / per) - 1e-9)) + (free ? 1 : 0);
+    let s = (mm / per).toFixed(Math.max(l.dec, need));
+    if (s.includes('.')) s = s.replace(/0+$/, '').replace(/\.$/, '');
+    if (l.dec && !s.includes('.')) s += '.';
+    while (l.dec && s.split('.')[1].length < l.dec) s += '0';
+    return `${/^-0(\.0*)?$/.test(s) ? s.slice(1) : s}${l.unit}`;
+  }
+  /** The end of the group opened at `i` (`[`, `(`, `{`), braces counted, else -1. */
+  function close(t: string, i: number): number {
+    const want: Record<string, string> = { '[': ']', '(': ')', '{': '}' }, stack = [want[t[i]]];
+    for (let k = i + 1; k < t.length; k++) {
+      const c = t[k];
+      if (c === '\\') { k++; continue; }
+      if (c === '{' || (stack.at(-1) !== '}' && (c === '[' || c === '(') && c === t[i])) stack.push(want[c]);
+      else if (c === stack.at(-1)) { stack.pop(); if (!stack.length) return k; }
+    }
+    return -1;
+  }
+  /** The comma-separated keys of an option list, braces kept together. */
+  function keys(s: string): string[] {
+    const out = [''];
+    let depth = 0;
+    for (const c of s) { if (c === '{') depth++; if (c === '}') depth--; if (c === ',' && !depth) out.push(''); else out[out.length - 1] += c; }
+    return out.map((k) => k.trim()).filter(Boolean);
+  }
+  const PLACED = /^(above|below|left|right)(\s+(left|right))?\s*=.*\bof\b/, SHIFTS = /^[xy]shift\s*=/;
+  const ALONG: Record<string, number> = { 'at start': 0, 'very near start': 0.125, 'near start': 0.25, midway: 0.5, 'near end': 0.75, 'very near end': 0.875, 'at end': 1 };
+  /** Anything but a centred node at its point: an anchor, a placement, a shift, a transformation. */
+  const OFFSET = /^(anchor|above|below|left|right|[xy]?shift|rotate|scale|[xy]scale|label|pin)\b/;
+  /** The parts of statement `s`: each node with its options (`o`: `[`..`]`, else where they go), name, `at`, text. */
+  type Part = { kind: 'node' | 'label'; o: [number, number] | null; oAt: number; name: string | null; at: [number, number] | null; t: [number, number]; seg: [string, string] | null; after: boolean };
+  function parts(s: string): Part[] {
+    const head = /^\s*\\(node|draw|path|fill|filldraw|shade|shadedraw)\b/.exec(s);
+    if (!head) return [];
+    const out: Part[] = [], points: string[] = [];
+    let k = head[0].length, op = false;
+    const ws = () => { while (/\s/.test(s[k] ?? '')) k++; };
+    /** A node from `k` (past `node`): options, name, `at`, text. */
+    const node = (kind: 'node' | 'label', oAt: number) => {
+      let o: [number, number] | null = null, name: string | null = null, at: [number, number] | null = null;
+      for (;;) {
+        ws();
+        if (s[k] === '[') { const e = close(s, k); if (e < 0) return null; o = [k, e]; k = e + 1; }
+        else if (s[k] === '(') { const e = close(s, k); if (e < 0) return null; name = s.slice(k + 1, e).trim(); k = e + 1; }
+        else if (s.startsWith('at', k) && /\s|\(/.test(s[k + 2] ?? '')) { k += 2; ws(); const e = close(s, k); if (e < 0) return null; at = [k, e]; k = e + 1; }
+        else if (s[k] === '{') { const e = close(s, k); if (e < 0) return null; const t: [number, number] = [k, e]; k = e + 1; return { kind, o, oAt, name, at, t, seg: null, after: false } as Part; }
+        else return null;
+      }
+    };
+    if (head[1] === 'node') { const p = node('node', k); return p ? [p] : []; }
+    ws();
+    if (s[k] === '[') k = close(s, k) + 1;
+    while (k > 0 && k < s.length) {
+      ws();
+      if (k >= s.length) break;
+      if (s.startsWith('--', k)) { op = true; k += 2; continue; }
+      if (s.startsWith('to', k) && !/[a-z]/i.test(s[k + 2] ?? '')) { op = true; k += 2; ws(); if (s[k] === '[') k = close(s, k) + 1; continue; }
+      if (s.startsWith('node', k) && !/[a-z]/i.test(s[k + 4] ?? '')) {
+        const oAt = k + 4; k = oAt;
+        const p = node('label', oAt);
+        if (!p) return out;
+        // on the segment it stands in, else the one it follows
+        p.after = !op;
+        p.seg = op ? [points.at(-1) ?? '', ''] : points.length > 1 ? [points.at(-2)!, points.at(-1)!] : null;
+        out.push(p);
+        continue;
+      }
+      if (s[k] === '(' || s.startsWith('+(', k) || s.startsWith('++(', k)) {
+        if (s[k] === '+') { op = false; points.push(''); k = s.indexOf('(', k); k = close(s, k) + 1; continue; }
+        const e = close(s, k), pt = s.slice(k + 1, e).trim();
+        for (const p of out) if (p.seg && p.seg[1] === '' && !p.after) p.seg[1] = pt;
+        points.push(pt); op = false; k = e + 1; continue;
+      }
+      // another operation (`|-`, `circle`, `rectangle`, `..`): the labels before it keep their segments
+      op = false; points.push(''); k++;
+      while (k < s.length && !/[\s(]/.test(s[k])) k++;
+    }
+    return out.map((p) => (p.seg && (!p.seg[0] || !p.seg[1]) ? { ...p, seg: null } : p));
+  }
+  /** The picture options' scale and units. */
+  function picOf(opts: string): TikzPic {
+    let scale = 1, x = 1, y = 1;
+    for (const kv of keys(opts)) {
+      const [k, v = ''] = kv.split('=').map((t) => t.trim()), l = len(v);
+      if (k === 'scale' && +v) scale = +v;
+      if ((k === 'x' || k === 'y') && l) { if (k === 'x') x = cm(l, 1); else y = cm(l, 1); }
+    }
+    return { scale, x, y };
+  }
+  /** Each node and path label of the text's pictures, comments blanked. */
+  function nodes(text: string): TikzNode[] {
+    const t = text.replace(/(?<!\\)%.*$/gm, (c) => ' '.repeat(c.length)), out: TikzNode[] = [];
+    const lineAt = (i: number) => { let n = 1; for (let k = text.indexOf('\n'); k >= 0 && k < i; k = text.indexOf('\n', k + 1)) n++; return n; };
+    for (const m of t.matchAll(/\\begin\{tikzpicture\}/g)) {
+      let k = m.index! + m[0].length;
+      const end = t.indexOf('\\end{tikzpicture}', k);
+      if (end < 0) continue;
+      let pic = picOf('');
+      while (/\s/.test(t[k])) k++;
+      if (t[k] === '[') { const e = close(t, k); pic = picOf(t.slice(k + 1, e)); k = e + 1; }
+      // statements end at `;` outside groups; a loop's statements stand for many nodes, skipped whole
+      while (k < end) {
+        let e = k, depth = 0;
+        for (; e < end; e++) { const c = t[e]; if (c === '\\') { e++; continue; } if ('{[('.includes(c)) depth++; else if ('}])'.includes(c)) depth--; else if (c === ';' && depth <= 0) break; }
+        const s = t.slice(k, e + 1), lead = s.length - s.trimStart().length;
+        if (!/^\s*\\foreach\b/.test(s)) parts(s).forEach((p, i) => {
+          const o = p.o ? keys(s.slice(p.o[0] + 1, p.o[1])) : [], xy = p.at ? s.slice(p.at[0] + 1, p.at[1]).split(',') : [];
+          const at = xy.length === 2 && len(xy[0]) && len(xy[1]) ? [len(xy[0])!, len(xy[1])!] as [TikzLen, TikzLen] : null;
+          const along = o.map((x) => x.startsWith('pos') ? +x.split('=')[1] : ALONG[x]).find((v) => v != null && !Number.isNaN(v));
+          out.push({ kind: p.kind, from: k + lead, to: e + 1, i, line: lineAt(k + p.t[0]), name: p.name, text: s.slice(p.t[0] + 1, p.t[1]), at, placed: o.some((x) => PLACED.test(x)),
+            plain: !o.some((x) => OFFSET.test(x)) && (!!at || !p.at), seg: p.seg, pos: p.kind === 'label' ? along ?? (p.after ? 1 : 0.5) : null, pic });
+        });
+        k = e + 1;
+      }
+    }
+    return out;
+  }
+  /** Option list `o` (the text between `[`..`]`) with `drop` keys gone and `set` keys written over or added. */
+  function setOpts(o: string, drop: RegExp, set: [string, string][]): string {
+    const ks = keys(o).filter((k) => !drop.test(k)), names = (k: string) => k.split('=')[0].trim();
+    for (const [n, v] of set) { const j = ks.findIndex((k) => names(k) === n); if (j >= 0) ks[j] = `${n}=${v}`; else ks.push(`${n}=${v}`); }
+    return ks.join(', ');
+  }
+  /** Statement `stmt` with its `i`th node moved: its text, what the ghost says, `by` the move in the picture's cm (`to`: the place written). */
+  function move(stmt: string, i: number, pic: TikzPic, m: TikzMove) {
+    const p = parts(stmt)[i];
+    if (!p) return null;
+    const free = !!m.free, opts = p.o ? stmt.slice(p.o[0] + 1, p.o[1]) : '';
+    /** The statement with options `o` (and `at` text `at`, null to keep). */
+    const out = (o: string, at: string | null, label: string, by: [number, number]) => {
+      let s = stmt;
+      if (at != null) s = p.at ? s.slice(0, p.at[0]) + at + s.slice(p.at[1] + 1) : s.slice(0, p.t[0]) + `at ${at} ` + s.slice(p.t[0]);
+      s = p.o ? s.slice(0, p.o[0] + 1) + o + s.slice(p.o[1]) : o ? s.slice(0, p.oAt) + `[${o}]` + s.slice(p.oAt) : s;
+      return { text: s, label, by };
+    };
+    if (m.pos != null) {
+      const v = +Math.min(1, Math.max(0, m.pos)).toFixed(free ? 3 : 2);
+      return out(setOpts(opts, new RegExp(`^(pos\\s*=|${Object.keys(ALONG).join('|')})`), [['pos', String(v)]]), null, `pos=${v}`, [0, 0]);
+    }
+    const ks = keys(opts), xy = p.at ? stmt.slice(p.at[0] + 1, p.at[1]).split(',') : [];
+    const at = xy.length === 2 && len(xy[0]) && len(xy[1]) ? [len(xy[0])!, len(xy[1])!] : null, units = [pic.x, pic.y];
+    if (m.to) {
+      // placed anew: the placement and its shifts dropped, `at` in the units written there, else cm
+      const l = at ?? [{ v: 0, unit: '', dec: 0 }, { v: 0, unit: '', dec: 0 }], u = at ? units : [1, 1];
+      const c = m.to.map((v, j) => write(l[j], v / pic.scale, u[j], free)), o = setOpts(ks.filter((k) => !PLACED.test(k) && !SHIFTS.test(k)).join(', '), /$^/, []);
+      return out(o, `(${c.join(',')})`, `at (${c.join(',')})`, [len(c[0])!, len(c[1])!].map((a, j) => cm(a, u[j])) as [number, number]);
+    }
+    const by = m.by!.map((v) => v / pic.scale);
+    if (at) {
+      const c = at.map((a, j) => write(a, cm(a, units[j]) + by[j], units[j], free));
+      return out(opts, `(${c.join(',')})`, `at (${c.join(',')})`, c.map((s, j) => cm(len(s)!, units[j]) - cm(at[j], units[j])) as [number, number]);
+    }
+    // a shift as written (a bare one is in pt), else a new one in mm; a shift moved to nothing goes
+    const set: [string, string][] = [], gone: string[] = [], said: string[] = [], moved: number[] = [];
+    ['xshift', 'yshift'].forEach((n, j) => {
+      const k = ks.find((x) => x.split('=')[0].trim() === n), l = (k && len(k.split('=')[1])) || { v: 0, unit: 'mm', dec: 0 };
+      const was = cm(l, UNIT.pt), now = was + by[j], v = write(l.unit ? l : { ...l, unit: 'pt' }, now, 1, free);
+      moved.push(cm(len(v)!, 1) - was);
+      if (cm(len(v)!, 1) === 0) gone.push(n); else { set.push([n, v]); said.push(`${n}=${v}`); }
+    });
+    return out(setOpts(opts, new RegExp(`^(${gone.join('|') || '$^'})\\s*=`), set), null, said.join(', ') || 'no shift', moved as [number, number]);
+  }
+  /** Where `p` projects onto `a`→`b`, as a part of its length. */
+  const posOn = (a: [number, number], b: [number, number], p: [number, number]) => { const dx = b[0] - a[0], dy = b[1] - a[1], n = dx * dx + dy * dy; return n ? ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / n : 0; };
+  /** The line between two centres cut where it leaves their boxes (half sizes `ah`, `bh`): the path TikZ draws between two nodes. */
+  function clipped(a: [number, number], ah: [number, number], b: [number, number], bh: [number, number]): [[number, number], [number, number]] {
+    const d = [b[0] - a[0], b[1] - a[1]], exit = (h: [number, number]) => Math.min(d[0] ? h[0] / Math.abs(d[0]) : Infinity, d[1] ? h[1] / Math.abs(d[1]) : Infinity);
+    const s = Math.min(0.5, exit(ah)), e = Math.max(0.5, 1 - exit(bh));
+    return [[a[0] + s * d[0], a[1] + s * d[1]], [a[0] + e * d[0], a[1] + e * d[1]]];
+  }
+  self.satexTikzMove = { nodes, move, len, cm, posOn, clipped };
+})();
+
+// References switched from the pages: a reference's printed number is no text to type into. Where its key stands in
+// the command, whether a page word is such output, and a fuzzy rank for the list of keys to switch to.
+declare global {
+  interface Window {
+    satexRefPick: { fuzzy(q: string, t: string): number; keyAt(line: string, col: number, key: string): [number, number] | null; unspelled(line: string, word: string): boolean };
+  }
+}
+(() => {
+  /** How well `q` matches `t` in order, case aside: higher is better, -1 none. Runs and word starts count more. */
+  function fuzzy(q: string, t: string): number {
+    const a = q.toLowerCase().replace(/\s+/g, ''), b = t.toLowerCase();
+    if (!a) return 0;
+    let score = 0, j = 0, run = 0;
+    for (const c of a) {
+      const k = b.indexOf(c, j);
+      if (k < 0) return -1;
+      run = k === j ? run + 1 : 1;
+      score += run * 2 + (k === 0 || /[^a-z0-9]/.test(b[k - 1]) ? 3 : 0) - Math.min(k - j, 5) * 0.1;
+      j = k + 1;
+    }
+    return score + (b.includes(a) ? 10 : 0);
+  }
+  /** Where `key` stands in the key list of the command at column `col` (from 1) of `line`: past its name and `[…]` options. */
+  function keyAt(line: string, col: number, key: string): [number, number] | null {
+    const m = /^\\[A-Za-z@]+\*?\s*(?:\[[^\]]*\]\s*)*\{/.exec(line.slice(col - 1));
+    if (!m) return null;
+    const open = col - 1 + m[0].length, end = line.indexOf('}', open);
+    let at = open;
+    for (const item of line.slice(open, end < 0 ? undefined : end).split(',')) {
+      const lead = item.length - item.trimStart().length;
+      if (item.trim() === key) return [at + lead, at + lead + key.length];
+      at += item.length + 1;
+    }
+    return null;
+  }
+  /** Whether page word `word` is not written in source line `line` outside its commands: the output of one. */
+  function unspelled(line: string, word: string): boolean {
+    const core = word.normalize('NFKC').replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, '');
+    if (!core) return false;
+    const plain = line.replace(/(?<!\\)%.*$/, '').replace(/\\[A-Za-z@]+\*?(\s*\[[^\]]*\])*(\s*\{[^}]*\})*/g, ' ');
+    return !new RegExp(`(?<![\\p{L}\\p{N}])${core.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![\\p{L}\\p{N}])`, 'u').test(plain);
+  }
+  self.satexRefPick = { fuzzy, keyAt, unspelled };
 })();

@@ -34,6 +34,9 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 
 ### Playground
 
+- `feat` **The status line shows how incremental a run was.** Line N → end, its own steps against a full run's, and the time (`satex/runInfo`).
+- `feat` **Drag TikZ nodes in the PDF.** Dragging a node writes its new `at (x,y)`, an `xshift`/`yshift` for a placed node or `pos=` for a path label, on a 1 mm grid with a ghost showing the coordinates.
+- `feat` **Switch references from the pages.** In Type mode a printed `\ref` or `\cite` takes no typing, and a click opens a fuzzy-searched list of labels and citations and writes the chosen key.
 - `feat` **Rule cards in the findings list.** Resting on or focusing a finding shows its message over the rule's full card (explanation, number, category, severity, fix kind, since).
 - `feat` **Drag a column's width.** Dragging a column edge in the PDF or the table widget writes `p{…}`, keeping `c`/`r` alignment, snapped to 0.5 mm or `\linewidth` shares.
 - `feat` **Typing in TikZ nodes.** Clicking a node's text in the PDF puts the caret there, and typing edits the node in the source.
@@ -57,6 +60,9 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 - `perf` **Edits rerun and copy less.** Steps per body edit 415k → 85k (−80%), a state copy 20 → 4 ms (−80%), edit → findings 0.40 → 0.18 s (−55%) on a small hyperref document and 0.66 → 0.45 s (−32%) on the thesis example. Findings come before completion data, and the debounce is 100 ms (was 300): back-to-back edits 0.30 → 0.20 s (−33%).
 - `perf` **Edits reach the run and Typeset view at once.** Thesis example 5 s → 0.2 s (−96%). Edited row in the browser 4.5–10 s → 0.6 s (−87 to −94%). Small hyperref document rerun 1 s → 0.1 s (−90%). Edit findings without `\DocumentMetadata` 0.6 s → 0.3 s (−50%).
 - `perf` **Typing in the PDF shows at once.** Key to new page takes about 0.4 s on a short document and 0.5 to 0.6 s on 100 pages. A one-word edit in the browser: 0.3 s → 0.15 s (−50%) on one page, 1.1 s → 0.25 s (−77%) on twenty. Automatic compile offers 0.2 s.
+- `fix` **Type mode keeps the source's structure.** One check gates every keystroke: braces, command names, environments, math, comments and verbatim stay intact, Enter in a title is refused (Shift+Enter breaks the line), contents entries edit their short title, a failed build shows its first TeX error with Undo. A fuzz test checks 26,010 edits. The old code broke 2,486 of its 9,600 key runs, in 6 classes.
+- `fix` **Typing in the PDF keeps its place across rebuilds.** The caret follows the source offset on each new build and the view stays put when a line moves to the next page. Typed text shows in the page's own font, and only the typed row moves. Over 300 keys across a page break, caret jumps went from 60 to 4 and the longest stall from 5 keys to 3.
+- `fix` **Keys layer follows the shown project.** A failed or outdated query for labels, references and citations is asked again, and another project's keys never stay on the pages.
 - `fix` **Measured column widths.** The PDF's column chips show each `l`/`c`/`r` column's width from its cells, not an even share.
 - `fix` **Compile beside the analysis.** The PDF pane says when an analysis runs alongside a build. The browser's TeX builds again.
 - `fix` **Numbers and expl3 names highlighted whole.** `0.05pt`, `-3.5pt` and `2fill` are one number token, `\dim_eval:n` and `\l_tmpa_dim` one command.
@@ -87,9 +93,15 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 
 ### Site and docs
 
+- `feat` **Type in the landing page's preview.** In "Try it here" a click on a word of the typeset text puts a caret there and keys write into the source, with the playground's Type rules.
 - `feat` **A fuller thesis example.** Title page, table of contents, lists of figures and tables, short titles and captions, equations with `\eqref` and an `align`.
 - `feat` **Landing page.** A typing animation shows the Type mode and becomes the live editor on click. Showcase cards turn in a carousel, the front page ring turns a card every 8 s.
 - `feat` **When a site was built.** Hovering the version shows the build time to the minute.
+- `fix` **Live window corners.** The typeset side of "Try it here" no longer draws its own rounded border inside the window.
+- `fix` **Crisp showcase cards.** The carousel's front card is drawn again at its scale once the ring rests, no longer an upscaled bitmap.
+- `fix` **Settings dialog hovers.** Tabs, plugin cards and buttons share one flat hover, no card edge is cut, and the footer's controls sit flush right.
+- `fix` **Typing demo framing.** The showcase capture can start with settings, the typing demo with wrapped lines, so its editor never scrolls sideways.
+- `fix` **Dialogs side by side.** A list with its details stacks only when the dialog itself is too narrow, not by the screen's width.
 - `fix` **Showcase carousel back.** The landing page's cards turn on a ring again, each frame hugging its capture; phones keep the stacked grid.
 - `fix` **Smooth typing on the landing and front page.** Sentences fade in at one steady pace without reflow.
 - `docs` **Plainer docs and a clearer front page.** Guide, wiki and README use plain words, the lint page shows each rule's `S` or `U` badge. The front page explains why satex interprets the code, names the MIT license and the flowR inspiration (not used, not required).

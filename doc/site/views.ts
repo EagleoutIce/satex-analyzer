@@ -241,6 +241,7 @@ const satexViews = (() => {
     bar.ondblclick = () => set(MD.start, true);
     set(pct);
     node.append(left, bar, right);
+    new ResizeObserver(([e]) => node.classList.toggle('tv-md-narrow', e!.contentRect.width < 640)).observe(node);
     return { node, search, right, scroll, bar, selected: () => sel, rows: () => rows, draw, pick, show, start: () => { draw(); show(); setTimeout(() => (sel ? scroll : search).focus(), 0); } };
   }
   /** Every use of a thing, from the run (`sites`: {file, line}), each with its source line and a link that opens it: the one view all managers show. */
@@ -3230,7 +3231,8 @@ button.tv-spec-value { cursor: pointer; } button.tv-spec-value:hover, button.tv-
 .tv-use { display: grid; grid-template-columns: minmax(5rem, max-content) minmax(0, 1fr); gap: .6rem; padding: .2rem .5rem; align-items: baseline; font-size: .8rem; } .tv-use[hidden] { display: none; }
 .tv-use code { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--tv-muted); font-size: .76rem; } .tv-use + .tv-use { border-top: 1px solid color-mix(in srgb, var(--tv-border) 50%, transparent); }
 .tv-fold > summary { cursor: pointer; font-size: .82rem; color: var(--tv-muted); } .tv-fold[open] { display: grid; gap: .4rem; }
-@media (max-width: 760px) { .tv-md { grid-template-columns: minmax(0, 1fr); height: auto; } .tv-md-bar { display: none; } .tv-md-rows { max-height: 40vh; flex: none; } .tv-md-right { overflow: visible; padding-top: .6rem; border-top: 1px solid var(--tv-border); margin-top: .6rem; } }
+/* stacked only where the list and its detail do not fit side by side (masterDetail measures its width) */
+.tv-md.tv-md-narrow { grid-template-columns: minmax(0, 1fr); height: auto; } .tv-md-narrow > .tv-md-bar { display: none; } .tv-md-narrow .tv-md-rows { max-height: 40vh; flex: none; } .tv-md-narrow > .tv-md-right { overflow: visible; padding-top: .6rem; border-top: 1px solid var(--tv-border); margin-top: .6rem; }
 .tv-records { display: grid; gap: .5rem; }
 .tv-body { display: grid; gap: .6rem; padding: .3rem .6rem .7rem; min-width: 0; } .tv-body .tv-table { font-size: .8rem; display: block; overflow-x: auto; }
 .tv-form { display: grid; gap: .4rem; } .tv-field { display: grid; grid-template-columns: 7rem 1fr; gap: .5rem; align-items: center; font-size: .8rem; color: var(--tv-muted); }

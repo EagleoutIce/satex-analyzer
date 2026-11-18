@@ -149,6 +149,12 @@ const satexTex = (() => {
       sizes, pagelabels: (labels ?? []).map((label, index) => ({ index, label: { '/P': label } })),
       /** Page `n` as a PNG URL at `DPI`. */
       draw: async (n: number) => { const page = await doc.getPage(n), blob = await draw(page); page.cleanup(); return URL.createObjectURL(blob); },
+      /** Page `n`'s text runs in bp from the top left: baseline `y`, `size`, and `font`, the family pdf.js loaded the
+       * embedded font as (in the page's document while this PDF is open): the echo of typed text is set in it. */
+      async runs(n: number) {
+        const page = await doc.getPage(n), [x0, , , y1] = page.view as [number, number, number, number];
+        return (await page.getTextContent()).items.filter((i) => i.str?.trim()).map((i) => ({ x: i.transform[4] - x0, y: y1 - i.transform[5], w: i.width, size: Math.hypot(i.transform[2], i.transform[3]), str: i.str, font: i.fontName }));
+      },
       /** The words and links of every page, as `pdftotext -bbox` and the server's links give them. */
       async text() {
         const wordList: unknown[] = [], linkList: unknown[] = [];
