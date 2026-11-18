@@ -86,10 +86,10 @@
     "panel",
     "play-pdf"
    ],
-   "text": "\\documentclass{article}\n\\usepackage[paperwidth=9cm,paperheight=6cm,margin=6mm]{geometry}\n\\usepackage{tikz}\n\\usetikzlibrary{arrows.meta}\n\\definecolor{accent}{HTML}{0B3D91}\n\\newcommand\\model{TinyNet}\n\\begin{document}\n\\section{Results}\n\\model{} learns fast.\n\n\\begin{tikzpicture}[>={Stealth[length=5pt]}, thick,\n    box/.style={draw=accent, fill=accent!8, rounded corners=3pt, minimum width=12mm, minimum height=6mm}]\n  \\node[box] (d) at (0,0) {data};\n  \\node[box] (m) at (2.6,-0.6) {\\model};\n  \\node[box] (l) at (5.2,0) {loss};\n  \\draw[->, accent] (d) -- node[above, sloped, font=\\scriptsize] {train} (m);\n  \\draw[->, accent] (m) -- (l);\n\\end{tikzpicture}\n\\end{document}\n",
+   "text": "\\documentclass{article}\n\\usepackage[paperwidth=9cm,paperheight=6cm,margin=6mm]{geometry}\n\\usepackage{tikz}\n\\usetikzlibrary{arrows.meta}\n\\definecolor{accent}{HTML}{0B3D91}\n\\tikzset{>=Stealth, thick,\n  box/.style={draw=accent, fill=accent!8,\n  rounded corners=3pt, minimum width=10mm}}\n\\newcommand{\\model}{TinyNet}\n\\begin{document}\n\\section{Results}\nWith \\model, the loss falls fast.\n\n\\begin{tikzpicture}[draw=accent]\n  \\node[box] (d) at (0,0) {data};\n  \\node[box] (m) at (2.6,-0.6) {\\model};\n  \\node[box] (l) at (5.2,0) {loss};\n  \\draw[->] (d) -- node[above] {train} (m);\n  \\draw[->] (m) -- (l);\n\\end{tikzpicture}\n\\end{document}\n",
    "viewport": [
     960,
-    600
+    680
    ],
    "steps": [
     {
@@ -103,6 +103,11 @@
      "eval": "document.getElementById('pdf-compile').click()",
      "until": "document.querySelector('#pdf-body .pdf-page img')?.complete && self.satexPdfWords().length",
      "ms": 120000
+    },
+    {
+     "until": "/^Ready/.test(document.getElementById('play-status').textContent) && document.getElementById('lsp-status').textContent !== 'checking…'",
+     "ms": 400000,
+     "wait": 500
     },
     {
      "eval": "const f = document.getElementById('pdf-zoom-fit'); if (f.getAttribute('aria-pressed') !== 'true') f.click();",
@@ -123,7 +128,7 @@
    "video": [
     {
      "hover": "[self.__pw('fast.')[0] + 60, self.__pw('fast.')[1] + 70]",
-     "wait": 500
+     "wait": 300
     },
     {
      "click": "(() => { const p = self.__pw('fast.'); return [p[0] + 1, p[1]]; })()",
@@ -150,12 +155,12 @@
      "wait": 300
     },
     {
-     "until": "!document.getElementById('play-pdf').classList.contains('pdf-running')",
-     "ms": 60000,
-     "wait": 1000
+     "until": "!document.getElementById('play-pdf').classList.contains('pdf-running') && document.getElementById('lsp-status').textContent !== 'checking…' && !document.getElementById('play-status').classList.contains('busy')",
+     "wait": 600,
+     "ms": 120000
     },
     {
-     "click": "(() => { const p = self.__pw('TinyNet', 1, .5, 0); return [p[0] - 1, p[1]]; })()",
+     "click": "(() => { const p = self.__pw('TinyNet,', .95); return [p[0] - 1, p[1]]; })()",
      "glide": 800,
      "after": 400
     },
@@ -167,12 +172,12 @@
      "wait": 400
     },
     {
-     "until": "!document.getElementById('play-pdf').classList.contains('pdf-running')",
+     "until": "self.satexPdfWords().some((w) => w[5] === 'TinyNet2') && !document.getElementById('play-pdf').classList.contains('pdf-running')",
      "ms": 60000,
-     "wait": 1800
+     "wait": 1000
     },
     {
-     "hover": "(() => { const n = self.satexPdfWords().filter((w) => w[5] === 'TinyNet2').length - 1; return self.__pw('TinyNet2', .5, .5, n); })()",
+     "hover": "self.__pw('TinyNet2', .5)",
      "glide": 500,
      "wait": 0,
      "after": 150
@@ -180,7 +185,7 @@
     {
      "drag": [
       "document.querySelector('#pdf-body .pdf-tikz-grip')",
-      "(() => { const g = document.querySelector('#pdf-body .pdf-tikz-grip').getBoundingClientRect(), a = self.__pw('data', .5), b = (() => { const n = self.satexPdfWords().filter((w) => w[5] === 'TinyNet2').length - 1; return self.__pw('TinyNet2', .5, .5, n); })(); return [g.x + g.width / 2 + 8, g.y + g.height / 2 + a[1] - b[1] + 2]; })()"
+      "(() => { const g = document.querySelector('#pdf-body .pdf-tikz-grip').getBoundingClientRect(), a = self.__pw('data', .5), b = self.__pw('TinyNet2', .5); return [g.x + g.width / 2 + 8, g.y + g.height / 2 + a[1] - b[1] + 2]; })()"
      ],
      "over": 1300,
      "wait": 400
@@ -188,16 +193,16 @@
     {
      "until": "!document.getElementById('play-pdf').classList.contains('pdf-running')",
      "ms": 60000,
-     "wait": 1500
+     "wait": 1000
     },
     {
-     "click": "(() => { const n = self.satexPdfWords().filter((w) => w[5] === 'TinyNet2').length - 1; return self.__pw('TinyNet2', .5, .5, n); })()",
+     "click": "self.__pw('TinyNet2', .5)",
      "right": true,
      "glide": 600,
      "after": 700
     },
     {
-     "eval": "if (!document.querySelector('.tikz-menu')) { const [x, y] = (() => { const n = self.satexPdfWords().filter((w) => w[5] === 'TinyNet2').length - 1; return self.__pw('TinyNet2', .5, .5, n); })(); document.elementFromPoint(x, y).dispatchEvent(new MouseEvent('contextmenu', { clientX: x, clientY: y, bubbles: true, cancelable: true, button: 2 })); }",
+     "eval": "if (!document.querySelector('.tikz-menu')) { const [x, y] = self.__pw('TinyNet2', .5); document.elementFromPoint(x, y).dispatchEvent(new MouseEvent('contextmenu', { clientX: x, clientY: y, bubbles: true, cancelable: true, button: 2 })); }",
      "until": "document.querySelector('.tikz-menu')",
      "ms": 20000
     },
@@ -209,14 +214,14 @@
     {
      "until": "!document.getElementById('play-pdf').classList.contains('pdf-running')",
      "ms": 60000,
-     "wait": 1800
+     "wait": 1200
     }
    ],
    "crop": [
     ".cm-editor",
     "#play-pdf"
    ],
-   "hold": 1500,
+   "hold": 1000,
    "keepMouse": true,
    "keepFocus": true,
    "config": {
