@@ -1612,7 +1612,12 @@ p.ts.ts-foot::before { content: ""; position: absolute; top: 0; left: 0; width: 
 .pdf { display: flex; flex-direction: column; overflow-wrap: anywhere; } .pdf > * { flex: none; }
 .pdf > .pdf-pages { flex: 1 0 16rem; overflow: auto; display: flex; flex-direction: column; align-items: safe center; background: var(--sunk); padding: .4rem; border-radius: 6px; }
 .pdf .pdf-page { position: relative; flex: none; width: calc(var(--pdf-zoom, 1) * 100%); margin-bottom: .5rem; box-shadow: var(--shadow); }
+/* the last build's image of the page typed on, fading over the new one (playground.js pdfDrawNext) */
+.pdf .pdf-page img.pdf-fade { position: absolute; left: 0; top: 0; width: 100%; height: 100%; pointer-events: none; animation: pdf-fade .12s ease-out forwards; }
+@keyframes pdf-fade { to { opacity: 0; } }
 .pdf .pdf-page img { display: block; width: 100%; height: auto; cursor: crosshair; background: #fff; }
+/* overlays (tints, chips, layers, caret, echo) only over a drawn page image, never over a blank page */
+.pdf .pdf-page:not(:has(> img.pdf-drawn)) > :not(img) { visibility: hidden; }
 /* a page of an older build until redrawn: dimmed after a moment, so a quick redraw does not blink */
 .pdf .pdf-page.pdf-stale img { animation: pdf-stale 0s .25s forwards; }
 @keyframes pdf-stale { to { opacity: .45; } }
@@ -1681,6 +1686,12 @@ p.ts.ts-foot::before { content: ""; position: absolute; top: 0; left: 0; width: 
 .pdf .pdf-col-grip:hover, .pdf .pdf-col-drag .pdf-col-grip { opacity: 1; } .pdf .pdf-col-drag, .ov-stale .pdf-ov.pdf-col-drag { opacity: 1; background: #0e74901f; }
 .pdf-type-in { position: absolute; left: 0; top: 0; width: 1px; height: 1px; opacity: 0; pointer-events: none; resize: none; border: 0; padding: 0; }
 .pdf-typing .pdf-page img { cursor: text; }
+/* Type mode at a glance: the button pressed, "Typing" and the pages framed while a caret is in them (Esc ends it) */
+#pdf-type .type-label::after { content: "Type"; }
+body.type-sync #pdf-type .type-label::after { content: "Typing"; }
+#pdf-type[aria-pressed=true] { color: var(--accent); border-color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, var(--bg)); }
+body.type-sync #pdf-type[aria-pressed=true] { background: color-mix(in srgb, var(--accent) 24%, var(--bg)); font-weight: 600; }
+body.type-sync #play-pdf .pdf-pages { box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--accent) 45%, transparent); }
 #typeset-body { position: relative; }
 #typeset-body.ts-stale::before { content: ''; position: sticky; top: 0; z-index: 4; display: block; height: 2px; margin-bottom: -2px; background: linear-gradient(90deg, transparent, var(--accent), transparent) 0 0 / 40% 100% no-repeat; animation: ts-run 1.2s linear infinite; }
 @keyframes ts-run { from { background-position: -40% 0; } to { background-position: 140% 0; } }

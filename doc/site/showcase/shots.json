@@ -81,12 +81,12 @@
    "file": "spacing.tex",
    "title": "Type in the PDF",
    "big": true,
-   "caption": "Click a word on the page and type. The text goes to its place in the source, $x_42 becomes $x_{42}$, a backslash completes commands, and the page follows each key.",
+   "caption": "Click a word on the page and type. The text goes to its place in the source, $x_42 becomes $x_{42}$, and the page follows each key. A TikZ node takes typing too, moves with the mouse along guides to the other nodes, and changes its shape on a right click.",
    "open": [
     "panel",
     "play-pdf"
    ],
-   "text": "\\documentclass{article}\n\\usepackage[paperwidth=9cm,paperheight=6cm,margin=6mm]{geometry}\n\\begin{document}\n\\section{Results}\nThe loss falls with each run.\n\\end{document}\n",
+   "text": "\\documentclass{article}\n\\usepackage[paperwidth=9cm,paperheight=6cm,margin=6mm]{geometry}\n\\usepackage{tikz}\n\\begin{document}\n\\section{Results}\nThe loss falls with each run.\n\n\\begin{tikzpicture}\n  \\node[draw, rounded corners] (d) at (0,0) {data};\n  \\node[draw, rounded corners] (m) at (2.6,-0.5) {net};\n  \\draw[->] (d) -- (m);\n\\end{tikzpicture}\n\\end{document}\n",
    "viewport": [
     960,
     600
@@ -109,42 +109,106 @@
      "wait": 1200
     },
     {
-     "click": "(() => { const ws = self.satexPdfWords(), w = ws.find((w) => w[5] === 'run.'), img = document.querySelector('#pdf-body .pdf-page img'), r = img.getBoundingClientRect(), pw = img.naturalWidth * 72 / ws.dpi, ph = img.naturalHeight * 72 / ws.dpi; return [r.left + (w[3] - 2.2) / pw * r.width, r.top + (w[2] + w[4]) / 2 / ph * r.height]; })()",
-     "wait": 600
+     "eval": "const f = document.getElementById('pdf-follow'); if (f.getAttribute('aria-pressed') === 'true') f.click();",
+     "wait": 300
     },
     {
-     "until": "document.querySelector('.pdf-caret')"
+     "eval": "self.__pw = (t, fx = 1, fy = .5, k = 0) => { const ws = self.satexPdfWords(), w = ws.filter((w) => w[5] === t)[k], img = document.querySelector('#pdf-body .pdf-page img'), r = img.getBoundingClientRect(), pw = img.naturalWidth * 72 / ws.dpi, ph = img.naturalHeight * 72 / ws.dpi; return [r.left + (w[1] + (w[3] - w[1]) * fx) / pw * r.width, r.top + (w[2] + (w[4] - w[2]) * fy) / ph * r.height]; };"
+    },
+    {
+     "eval": "document.head.append(Object.assign(document.createElement('style'), { textContent: '#play-toast { display: none !important; }' })); document.activeElement?.blur(); document.querySelector('.cm-editor').satexView.scrollDOM.scrollTop = 0;",
+     "wait": 400
     }
    ],
    "video": [
     {
-     "type": " that drops by $x_42$ per",
-     "wait": 700
+     "hover": "[self.__pw('run.')[0] + 60, self.__pw('run.')[1] + 70]",
+     "wait": 500
     },
     {
-     "type": " \\emp",
-     "wait": 900
+     "click": "(() => { const p = self.__pw('run.'); return [p[0] + 1, p[1]]; })()",
+     "glide": 700,
+     "after": 500
     },
     {
-     "until": "document.querySelector('.type-complete li')",
-     "wait": 400,
-     "ms": 20000
+     "until": "document.querySelector('.pdf-caret')"
+    },
+    {
+     "type": " It drops by $x_42$ per",
+     "wait": 200
+    },
+    {
+     "type": " step.",
+     "wait": 500
     },
     {
      "type": "\n",
-     "wait": 300
-    },
-    {
-     "type": "{step}",
      "wait": 600
     },
     {
-     "type": "\nIt converges",
+     "type": "It converges.",
+     "wait": 300
+    },
+    {
+     "until": "!document.getElementById('play-pdf').classList.contains('pdf-running')",
+     "wait": 1200,
+     "ms": 60000
+    },
+    {
+     "click": "(() => { const p = self.__pw('net'); return [p[0] - 1.5, p[1]]; })()",
+     "glide": 800,
+     "after": 400
+    },
+    {
+     "until": "document.querySelector('.pdf-caret')"
+    },
+    {
+     "type": " v2",
      "wait": 400
     },
     {
      "until": "!document.getElementById('play-pdf').classList.contains('pdf-running')",
-     "wait": 2500,
+     "wait": 1000,
+     "ms": 60000
+    },
+    {
+     "hover": "self.__pw('v2', .5)",
+     "glide": 300,
+     "wait": 0,
+     "after": 150
+    },
+    {
+     "drag": [
+      "document.querySelector('#pdf-body .pdf-tikz-grip')",
+      "(() => { const g = document.querySelector('#pdf-body .pdf-tikz-grip').getBoundingClientRect(), a = self.__pw('data', .5), b = self.__pw('v2', .5); return [g.x + g.width / 2 + 25, g.y + g.height / 2 + a[1] - b[1] + 2]; })()"
+     ],
+     "over": 1300,
+     "wait": 400
+    },
+    {
+     "until": "!document.getElementById('play-pdf').classList.contains('pdf-running')",
+     "wait": 1500,
+     "ms": 60000
+    },
+    {
+     "click": "self.__pw('v2', .5)",
+     "right": true,
+     "glide": 600,
+     "after": 700
+    },
+    {
+     "eval": "if (!document.querySelector('.tikz-menu')) { const [x, y] = self.__pw('v2', .5); document.elementFromPoint(x, y).dispatchEvent(new MouseEvent('contextmenu', { clientX: x, clientY: y, bubbles: true, cancelable: true, button: 2 })); }",
+     "until": "document.querySelector('.tikz-menu')",
+     "ms": 20000
+    },
+    {
+     "click": "[...document.querySelectorAll('.tikz-menu button')].find((b) => b.textContent === 'Circle')",
+     "glide": 500,
+     "after": 200
+    },
+    {
+     "until": "!document.getElementById('play-pdf').classList.contains('pdf-running')",
+     "wait": 1800,
      "ms": 60000
     }
    ],
@@ -157,7 +221,8 @@
    "keepFocus": true,
    "config": {
     "playground.wrap": true
-   }
+   },
+   "cursor": true
   },
   {
    "name": "tikz",
@@ -883,21 +948,23 @@
     {
      "eval": "document.querySelector('#cfg-tabs [data-tab=core]').click()",
      "until": "document.querySelector('#cfg-tabs [data-tab=core]').getAttribute('aria-pressed') === 'true'",
-     "wait": 1500,
-     "snap": "back"
+     "wait": 1500
     },
     {
      "eval": "document.querySelector('#cfg-tabs [data-tab=plugins]').click()",
      "until": "document.querySelector('#cfg-tabs [data-tab=plugins]').getAttribute('aria-pressed') === 'true'",
      "wait": 1500
+    },
+    {
+     "eval": "const d = document.getElementById('play-config'); d.style.width = '700px'; d.style.maxWidth = '700px'; d.style.height = '525px';",
+     "wait": 800
     }
    ],
    "crop": "#play-config",
    "viewport": [
-    640,
-    760
-   ],
-   "stack": true
+    800,
+    600
+   ]
   }
  ],
  "video": 1000

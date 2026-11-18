@@ -16,6 +16,7 @@ interface TexRun {
 interface PdfPage {
   view: number[]; pageNumber: number; getViewport(o: { scale: number }): { width: number; height: number };
   render(o: Rec): { promise: Promise<void> }; getTextContent(): Promise<{ items: Rec[] }>; getAnnotations(o: Rec): Promise<Rec[]>; cleanup(): void;
+  commonObjs: { has(id: string): boolean; get(id: string): Rec | undefined };
 }
 interface PdfDoc {
   numPages: number; getPage(n: number): Promise<PdfPage>; getDestination(name: string): Promise<any[] | null>; getPageIndex(ref: unknown): Promise<number>;
@@ -153,10 +154,12 @@ const satexTex = (() => {
       /** Page `n` as a PNG URL at `DPI`. */
       draw: async (n: number) => { const p = await page(n), blob = await draw(p); p.cleanup(); return URL.createObjectURL(blob); },
       /** Page `n`'s text runs in bp from the top left: baseline `y`, `size`, and `font`, the family pdf.js loaded the
-       * embedded font as (in the page's document while this PDF is open): the echo of typed text is set in it. */
+       * embedded font as (in the page's document while this PDF is open): the echo of typed text is set in it. `name`:
+       * the font's own name (`CMMI10`), once the page was drawn: typed math is previewed in the page's math faces. */
       async runs(n: number) {
         const p = await page(n), [x0, , , y1] = p.view as [number, number, number, number];
-        return (await p.getTextContent()).items.filter((i) => i.str?.trim()).map((i) => ({ x: i.transform[4] - x0, y: y1 - i.transform[5], w: i.width, size: Math.hypot(i.transform[2], i.transform[3]), str: i.str, font: i.fontName }));
+        const name = (f: string) => { try { return p.commonObjs.has(f) ? String(p.commonObjs.get(f)?.name ?? '') : ''; } catch { return ''; } };
+        return (await p.getTextContent()).items.filter((i) => i.str?.trim()).map((i) => ({ x: i.transform[4] - x0, y: y1 - i.transform[5], w: i.width, size: Math.hypot(i.transform[2], i.transform[3]), str: i.str, font: i.fontName, name: name(i.fontName) }));
       },
       /** The words and links of every page, as `pdftotext -bbox` and the server's links give them. */
       async text() {
@@ -192,15 +195,27 @@ const satexTex = (() => {
     worker.postMessage({ boot: tex, from });
     return worker;
   }
+  /** How long the worker may stay silent during a build before it counts as dead. */
+  const SILENT_MS = 300000;
+  /** An abort of the engine (a trap, out of memory): its instance takes no more builds. */
+  const ABORT = /RuntimeError|Aborted|unreachable|out of memory|memory access out of bounds|stack overflow/i;
+  /** A build's answer. A worker that dies, aborts or goes silent is dropped, the error says `crash`. */
   function ask(message: Rec, tell: (m: string) => void) {
     const w = boot(message.tex, tell, message.from);
     return new Promise<TexRun>((done, fail) => {
-      w.onerror = (e) => fail(new Error(e.message || 'the TeX worker stopped'));
+      let dog = 0;
+      const crash = (why: string) => { clearTimeout(dog); if (worker === w) stop(); fail(Object.assign(new Error(why), { crash: true })); };
+      const watch = () => { clearTimeout(dog); dog = setTimeout(() => crash(`the TeX worker said nothing for ${SILENT_MS / 1000} s`), SILENT_MS) as unknown as number; };
+      w.onerror = (e) => { e.preventDefault?.(); crash(e.message || 'the TeX worker stopped'); };
       w.onmessage = ({ data }) => {
+        watch();
         if (said(data, tell)) return;
-        if (data.error) fail(new Error(data.error));
+        clearTimeout(dog);
+        if (data.error && ABORT.test(data.error)) crash(data.error);
+        else if (data.error) fail(new Error(data.error));
         else { warm = true; done(data); }
       };
+      watch();
       w.postMessage(message);
     });
   }
@@ -209,7 +224,13 @@ const satexTex = (() => {
    * `want`: the files the analysis saw it read, fetched side by side before the first run. */
   async function build(tex: TexSetup, files: Record<string, unknown>, main: string, engine: string | undefined, tell: (m: string) => void, from: unknown, want: string[] | Promise<string[]> = []) {
     boot(tex, tell, from);
-    const run = await ask({ tex, files, main, from, want: await want }, tell);
+    const message = { tex, files, main, from, want: await want };
+    // a crashed engine starts again and builds once more
+    const run = await ask(message, tell).catch((e) => {
+      if (!e.crash) throw e;
+      tell('the TeX engine stopped, starting it again');
+      return ask(message, tell);
+    });
     tell('reading the log');
     const by: Record<string, Uint8Array> = Object.fromEntries(run.outputs.map((o) => [o.name, o.bytes]));
     const decoded: Record<string, string> = {};
@@ -243,6 +264,8 @@ const satexTex = (() => {
   }
   /** Whether the engine runs already: a build then skips its download and start. */
   const ready = () => warm;
-  return { build, stop, open, firstPage, parseLog, advice, hostName, ready };
+  /** chaos tests: the worker dies under the build (an error event, as a crash gives). */
+  const kill = () => { const w = worker; w?.terminate(); w?.dispatchEvent(new ErrorEvent('error', { message: 'the TeX worker crashed' })); return !!w; };
+  return { build, stop, open, firstPage, parseLog, advice, hostName, ready, kill };
 })();
 self.satexTex = satexTex;

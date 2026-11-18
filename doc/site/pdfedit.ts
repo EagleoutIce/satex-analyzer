@@ -17,6 +17,16 @@ type Verb = { from: number; to: number; block: boolean; close: string };
 type Tok = { s: number; e: number; t: string };
 type Flat = { page: number; l: number; t: number; r: number; d: number };
 type Form = { kind: 'len'; num: number; unit: string } | { kind: 'share'; num: number; name: string; lead: boolean };
+/** A piece of a paragraph for the echo's line breaking: its width `n` and the space before it `gap` (bp); `par` starts
+ * a new paragraph (Enter). Anything else it carries (its text, the page word it is) rides along. */
+/** `disp`: display math, centered on a row of its own, that much more space above it (bp), `below` after it. */
+type Piece = { gap: number; n: number; par?: boolean; disp?: number; below?: number };
+/** The lines a paragraph may take: its right edge, its left margin, the indent and gap of a new paragraph, the rows the
+ * page set after the first (each its left edge and its own words, gaps set), whether a row may take words up (`pull`). */
+type Line<P> = { right: number; left: number; indent: number; skip: number; parskip: number; rows: { x: number; pieces: P[] }[]; pull?: boolean };
+/** Rows laid out: each its left edge, its pieces placed (`x`), the page row it takes (`from`: -2 the first, -1 a new
+ * one) and a new row's baseline shift from the row before (`dy`); `freed` the page rows whose words all went up. */
+type Flow<P> = { rows: { x: number; from: number; dy: number; par: boolean; out: (P & { x: number })[] }[]; freed: number[] };
 declare global {
   interface Window {
     satexPdfEdit: {
@@ -64,10 +74,14 @@ declare global {
       argAt(text: string, name: string, line: number): number | null;
       apart<B extends Flat>(boxes: B[]): B[];
       relaid(row: [number, number, string][], k: number, now: string, width: (s: string) => number): [number, number, string][];
+      reflow<P extends Piece>(pieces: P[], x0: number, line: Line<P>): Flow<P>;
+      centered(box: [number, number], row: [number, number], growth: number): number;
       tokens(text: string, from: number, to: number): Tok[];
       unset(text: string, from: number, to: number): string;
       aligned(toks: string[], words: string[]): number[];
       changed(was: string, now: string): [number, number];
+      offsetAt(text: string, p: { line: number; character: number }): number;
+      units(text: string, math: (i: number) => boolean): (string[] & { index: number })[];
       paragraph(text: string, at: number): [number, number];
       nearest(words: Word[], x: number, y: number): number;
       bands(words: Word[]): Flat[];
@@ -319,7 +333,7 @@ declare global {
     if (sep) { const at2 = end + sep[0].length; return [at2, at2, `\n${amp} \\\\`, 1]; }
     return [end, end, ` \\\\\n${amp}`, 4];
   }
-  /** A structural token of the source: `{`, `}`, `$`, `$$`, `&`, `#`, `_`, `^`, `par` (a blank line), `%` (a comment),
+  /** A structural token of the source: `{`, `}`, a command's option `[` and `]`, `$`, `$$`, `&`, `#`, `_`, `^`, `par` (a blank line), `%` (a comment),
    * `verb` (a verbatim body), `\begin{env}`/`\end{env}` with its name, or a control sequence as written (`\emph`, `\%`). */
   type Mark = { s: number; e: number; t: string };
   /** Where a scan stands: the open math (its opener or environment, '' outside), the open groups (the `{`'s offset
@@ -365,8 +379,8 @@ declare global {
       if (c === '{') { put(i, i + 1, c); st.groups.push([i, st.cmd]); }
       else if (c === '}') { put(i, i + 1, c); st.groups.pop(); }
       else if (/[&#_^]/.test(c)) put(i, i + 1, c);
-      else if (c === '[' && st.cmd && st.opt == null) { st.opt = st.cmd; st.optAt = st.groups.length; st.cmd = ''; continue; }
-      else if (c === ']' && st.opt != null && st.groups.length === st.optAt) { st.cmd = st.opt; st.opt = null; continue; }
+      else if (c === '[' && st.cmd && st.opt == null) { put(i, i + 1, c); st.opt = st.cmd; st.optAt = st.groups.length; st.cmd = ''; continue; }
+      else if (c === ']' && st.opt != null && st.groups.length === st.optAt) { put(i, i + 1, c); st.cmd = st.opt; st.opt = null; continue; }
       st.cmd = '';
     }
     return st;
@@ -395,25 +409,26 @@ declare global {
   /** What a `{` at `at` follows, with only spaces between: a command, a `]`, `}`, `_` or `^` (it is an argument),
    * as `[offset, what]`; null where it opens a plain group. */
   function argOf(text: string, at: number): [number, string] | null {
-    const m = /(?:\\[A-Za-z@]+\*?|\\[^A-Za-z@]|[\]}_^])\s*$/.exec(text.slice(Math.max(0, at - 64), at));
+    const m = /(?:\\[A-Za-z@]+\*?|\\[^A-Za-z@]|[\]}_^])[ \t]*(?:\n[ \t]*)?$/.exec(text.slice(Math.max(0, at - 64), at));
     return m ? [at - m[0].length, m[0].trimEnd()] : null;
   }
   /** Control symbols and words that are escaped characters, deleted whole as the character they show. */
   const ESC = /^\\([^A-Za-z@()[\]\\]|textbackslash|textasciitilde|textasciicircum)$/;
   /** Whether the tokens `ms`, in order, open and close as many groups, formulas and environments as they close. */
   function balanced(ms: Mark[]): boolean {
-    let br = 0, dl = 0, dd = 0, p = 0, q = 0;
+    let br = 0, dl = 0, dd = 0, p = 0, q = 0, o = 0;
     const env: string[] = [];
     for (const m of ms) {
       const t = m.t;
       if (t === '{') br++; else if (t === '}' && --br < 0) return false;
+      else if (t === '[') o++; else if (t === ']' && --o < 0) return false;
       else if (t === '$') dl ^= 1; else if (t === '$$') dd ^= 1;
       else if (t === '\\(') p++; else if (t === '\\)' && --p < 0) return false;
       else if (t === '\\[') q++; else if (t === '\\]' && --q < 0) return false;
       else if (t.startsWith('\\begin{')) env.push(t.slice(7));
       else if (t.startsWith('\\end{') && env.pop() !== t.slice(5)) return false;
     }
-    return !br && !dl && !dd && !p && !q && !env.length;
+    return !br && !dl && !dd && !p && !q && !o && !env.length;
   }
   /** What a caret edit may know: the text typed since the caret was put (`fresh`, `[from, to)`: commands typed there
    * may still change), the run's key spans, whether it adds a table row (`row`) or is a snippet (`free`). */
@@ -470,10 +485,12 @@ declare global {
       if (arg && !(a <= arg[0] && arg[0] < b) && !fr(arg[0])) return `it would delete an argument of ${arg[1]}`;
     }
     for (const m of added) {
+      // a blank line joined to the line break beside it (Enter at a line's end) is a new one, its spaces no markup
+      if (m.t === 'par' && !o.free && (ctx.groups.length || ctx.math)) return ctx.math ? 'a paragraph cannot end in math' : `a paragraph cannot end inside ${g ? `\\${g}{…}` : 'a group'}: Shift+Enter breaks the line`;
+      if (m.t === 'par') continue;
       if (!ownNow(m)) return m.t[0] === '\\' ? `it would change a command's name (${m.t})` : 'it would change the markup around it';
       if (m.t === '%') return 'it would start a comment';
       if (m.t === 'verb') return 'it would start verbatim text';
-      if (m.t === 'par' && !o.free && (ctx.groups.length || ctx.math)) return ctx.math ? 'a paragraph cannot end in math' : `a paragraph cannot end inside ${g ? `\\${g}{…}` : 'a group'}: Shift+Enter breaks the line`;
       if ((m.t === '&' || m.t === '\\\\' && cells(now, m.s)) && !o.row && !o.free) return 'it would add a table cell or row: Tab and Enter do';
       if (m.t === '#' && !o.free) return 'a # is a macro parameter';
       if ((m.t === '_' || m.t === '^') && !ctx.math && !o.free) return 'a script belongs in math';
@@ -571,6 +588,15 @@ declare global {
     const [o, c] = kind === 'align' ? ['\\begin{align*}\n', '\n\\end{align*}'] : ['\\[', '\\]'];
     return [at, at, o + c, o.length];
   }
+  /** What Ctrl+Backspace (`back`) or Ctrl+Delete takes: the blanks next to the caret and the word past them, as far as
+   * the text is plain letters; markup next to the caret goes as one Backspace takes it. */
+  function wordErased(text: string, at: number, back: boolean, fresh: [number, number] | null = null): [number, number] {
+    const run = back ? /[\p{L}\p{N}]*[ \t]*$/u.exec(text.slice(Math.max(0, at - 200), at))![0].length : /^[ \t]*[\p{L}\p{N}]*/u.exec(text.slice(at, at + 200))![0].length;
+    // a letter after a `\` is a command's name, not a word
+    const from = back ? at - run : at, to = back ? at : at + run;
+    if (!run || verbatimAt(text, at) || /\\[A-Za-z@]*$/.test(text.slice(Math.max(0, from - 40), from + 1)) && /[A-Za-z@]/.test(text[from] ?? '')) return erased(text, at, back, fresh);
+    return [from, to];
+  }
   /** What Backspace (`back`) or Delete takes at `at`: `[from, to]`, an escape or an empty pair (`$ $`, `{}`, `\(\)`)
    * whole, a formula whose last character goes with it, at a formula's `\)` (`\(` for Delete) its character inside,
    * a `\` typed with the space that kept it off a word. */
@@ -586,6 +612,9 @@ declare global {
     const odd = (i: number) => { let n = 0; while (text[i - n] === '\\') n++; return n % 2 === 1; };
     if (back && /^\\[)\]]$/.test(text.slice(at - 2, at)) && odd(at - 2)) return /^\\[(\[]$/.test(text.slice(at - 4, at - 2)) ? [at - 4, at] : erased(text, at - 2, true, fresh);
     if (!back && /^\\[(\[]$/.test(text.slice(at, at + 2)) && odd(at)) return /^\\[)\]]$/.test(text.slice(at + 2, at + 4)) ? [at, at + 4] : erased(text, at + 2, false, fresh);
+    // the same at an inline `$`: its closer before the caret (Backspace), its opener after it (Delete)
+    if (back && text[at - 1] === '$' && text[at - 2] !== '$' && !odd(at - 2) && scan(text, 0, at - 1, start()).math === '$') return erased(text, at - 1, true, fresh);
+    if (!back && text[at] === '$' && text[at + 1] !== '$' && !odd(at - 1) && !scan(text, 0, at, start()).math) return erased(text, at + 1, false, fresh);
     let p = back ? at - 1 : at, q = back ? at : at + 1;
     const esc = /(?:\\(?:textbackslash|textasciitilde|textasciicircum)\{\}|\\[^A-Za-z@\\])/y;
     if (back) {
@@ -617,6 +646,7 @@ declare global {
    * or why it makes none. */
   function key(text: string, at: number, k: string, o: Opts = {}): [number, number, string, number] | string {
     const e = k === 'Backspace' || k === 'Delete' ? [...erased(text, at, k === 'Backspace', o.fresh ?? null), '', 0] as [number, number, string, number]
+      : k === 'Ctrl+Backspace' || k === 'Ctrl+Delete' ? [...wordErased(text, at, k === 'Ctrl+Backspace', o.fresh ?? null), '', 0] as [number, number, string, number]
       : k === 'Enter' || k === 'Shift+Enter' ? broken(text, at, k === 'Shift+Enter')
         : typed(text, at, k, o.inline, o.smart, o.fresh ?? null);
     if (typeof e === 'string') return e;
@@ -653,10 +683,15 @@ declare global {
     walk(root);
     return out;
   }
-  /** Where the group opened at `i` (`open`, `close`) closes, -1 if it does not. */
+  /** Where the group opened at `i` (`open`, `close`) closes, -1 if it does not; an option's `]` inside braces is text. */
   function closing(t: string, i: number, open: string, close: string): number {
-    let d = 0;
-    for (let j = i; j < t.length; j++) { if (t[j] === '\\') { j++; continue; } if (t[j] === open) d++; else if (t[j] === close && --d === 0) return j; }
+    let d = 0, g = 0;
+    for (let j = i; j < t.length; j++) {
+      if (t[j] === '\\') { j++; continue; }
+      if (open !== '{' && (t[j] === '{' || t[j] === '}')) { g += t[j] === '{' ? 1 : -1; continue; }
+      if (g > 0) continue;
+      if (t[j] === open) d++; else if (t[j] === close && --d === 0) return j;
+    }
     return -1;
   }
   const HEAD = /^\\(?:part|chapter|section|subsection|subsubsection|paragraph|caption)\s*/;
@@ -676,7 +711,8 @@ declare global {
     while (e >= 0 && /\s/.test(text[i] ?? '')) i++;
     const f = e >= 0 && text[i] === '{' ? closing(text, i, '{', '}') : -1;
     if (f < 0) return null;
-    const s = text.slice(at + 1, e), bare = /^\{.*\}$/s.test(s) && closing(s, 0, '{', '}') === s.length - 1 ? s.slice(1, -1) : s;
+    // the braces a copy got for its `]` (shortTitle's wrap) go, any other braces stay
+    const s = text.slice(at + 1, e), bare = /^\{.*\}$/s.test(s) && closing(s, 0, '{', '}') === s.length - 1 && /\]/.test(s.slice(1, -1).replace(/\{[^{}]*\}/g, '')) ? s.slice(1, -1) : s;
     return [at, f + 1, `{${bare}}`];
   }
   /** Offsets of `text` inside a comment. */
@@ -773,6 +809,51 @@ declare global {
 
   /** A row's words (`[left, right, text]`) after word `k` became `now`: it takes `width(now)` scaled as the old
    * word was set, the words after it move by the difference, the gaps stay. */
+  /** Greedy line breaking of `pieces` from `x0` on the first row (TeX without hyphenation): a piece that would pass the
+   * right edge starts the next row, the paragraph's next page row (its words follow, so overflow runs on row by row),
+   * past the last one a new row a line below; a `par` piece a new paragraph's row, indented, `parskip` lower. A piece
+   * wider than a line stands alone on its row. With `pull` a row takes up the next row's words while they fit (a
+   * deletion), its row then freed if all went. A `disp` piece stands centered on a new row, what follows it on the
+   * next; past it no page row is taken (the page below is pushed down). Pure: positions only, in bp. */
+  function reflow<P extends Piece>(pieces: P[], x0: number, line: Line<P>): Flow<P> {
+    const queue = [...pieces], rows: Flow<P>['rows'] = [{ x: x0, from: -2, dy: 0, par: false, out: [] }], slots: { x: number; from: number }[] = [];
+    let ri = 0, x = x0, i = 0, after: number | null = null, sunk = false;
+    const take = () => { const r = line.rows[ri]!; queue.push(...r.pieces); return { x: r.x, from: ri++ }; };
+    const lay = () => {
+      for (; i < queue.length; i++) {
+        const q = queue[i]!;
+        let r = rows.at(-1)!;
+        const own = q.disp != null || after != null;
+        if (own || r.out.length && (q.par || q.n > 0 && x + q.gap + q.n > line.right + 0.5)) {
+          sunk ||= own;
+          const s = !q.par && !sunk && (slots.shift() ?? (ri < line.rows.length ? take() : null));
+          const dy = line.skip + (q.disp ?? after ?? (q.par ? line.parskip : 0)), at = q.disp != null ? (line.left + line.right - q.n) / 2 : line.left + (q.par ? line.indent : 0);
+          rows.push(r = s ? { x: s.x, from: s.from, dy: 0, par: false, out: [] } : { x: at, from: -1, dy, par: !!q.par, out: [] });
+          x = r.x - (own ? 0 : q.gap);
+        }
+        after = q.disp != null ? q.below ?? 0 : null;
+        if (own) { r.out.push({ ...q, gap: 0, x }); x += q.n; continue; }
+        x += q.gap;
+        r.out.push({ ...q, x });
+        x += q.n;
+      }
+    };
+    lay();
+    // a row with room takes up the next row's words (one deleted, the rest shorter): their row then waits for overflow
+    while (line.pull && !sunk && ri < line.rows.length) {
+      const first = line.rows[ri]!.pieces[0];
+      if (first && x + first.gap + first.n > line.right + 0.5) break;
+      slots.push(take());
+      lay();
+    }
+    return { rows, freed: slots.map((s) => s.from) };
+  }
+  /** How far a centered row moves when it grows by `growth`: half of it, for a row as far from both edges of its line
+   * box `box` (more than 4 bp, within 2 bp of each other); else 0. */
+  function centered(box: [number, number], row: [number, number], growth: number): number {
+    const l = row[0] - box[0], r = box[1] - row[1];
+    return l > 4 && Math.abs(l - r) < 2 ? growth / 2 : 0;
+  }
   function relaid(row: [number, number, string][], k: number, now: string, width: (s: string) => number): [number, number, string][] {
     const [l, r, was] = row[k]!, scale = width(was) > 0 ? (r - l) / width(was) : 0, d = width(now) * scale - (r - l);
     return row.map(([a, b, t], i) => i < k ? [a, b, t] : i === k ? [a, b + d, now] : [a + d, b + d, t]);
@@ -801,7 +882,7 @@ declare global {
     re.lastIndex = from;
     for (let m; (m = re.exec(src)) && m.index < to;) {
       if (m[0][0] === '%') continue;
-      const t = m[0].replace(/\\[A-Za-z@]+\*?|\\(?=[^A-Za-z@])|[{}$^_]/g, '');
+      const t = m[0].replace(/\\\\|\\[A-Za-z@]+\*?|\\(?![A-Za-z@])|[{}$^_]/g, '');
       if (t) out.push({ s: m.index, e: m.index + m[0].length, t });
     }
     return out;
@@ -824,6 +905,23 @@ declare global {
       if (step) { i += step[0]; j += step[1]; } else { i++; j++; }
     }
     return out;
+  }
+  /** The offset of LSP position `p` (0-based line, UTF-16 character) in `text`: a character past its line's end is the
+   * line's end (LSP's rule), a line past the text its end. */
+  function offsetAt(text: string, p: { line: number; character: number }): number {
+    let i = 0;
+    for (let l = 0; l < p.line; l++) { const n = text.indexOf('\n', i); if (n < 0) return text.length; i = n + 1; }
+    const e = text.indexOf('\n', i);
+    return Math.min(i + Math.max(0, p.character), e < 0 ? text.length : e);
+  }
+  /** The words of a paragraph's text in the view, split where math meets text (`$x_{42}$Generally`: `x42`, `Generally`):
+   * `math(i)` says whether character `i` is set in math. Each a match-like `[word]` with its `index`. */
+  function units(text: string, math: (i: number) => boolean): (string[] & { index: number })[] {
+    return [...text.matchAll(/[\p{L}\p{N}]+/gu)].flatMap((m) => {
+      const out: (string[] & { index: number })[] = [];
+      for (let s = 0, i = 1; i <= m[0].length; i++) if (i === m[0].length || math(m.index + i) !== math(m.index + i - 1)) { out.push(Object.assign([m[0].slice(s, i)], { index: m.index + s })); s = i; }
+      return out;
+    });
   }
   /** Where `now` differs from `was`: the length of their common start, and of their common end after it. */
   function changed(was: string, now: string): [number, number] {
@@ -950,7 +1048,170 @@ declare global {
     }
     return out.map((n, k) => [n, k] as const).sort((p, q) => p[0][2] - q[0][2] || p[1] - q[1]).map(([n]) => [n[0], n[1]]);
   }
-  self.satexPdfEdit = { treeNodes, naming, entries, shortTitle, bothTitles, renamed, leaders, checked, grow, key, broken, scan, start, cells, cellStep, rowAfter, verbatim, verbatimAt, nearest, bands, joined, place, extent, room, form, measure, respec, widthBp, snapWidth, resized, stepped, plain, editable, spans, sender, typed, erased, mathAt, boundaries, boundaryAt, inkSnap, locate, columns, wordAt, argAt, defining, relaid, apart, tokens, unset, aligned, changed, paragraph };
+  /** `text`'s characters `from..to` as runs of prose and math: `kind` '' (prose), 'inline' or 'display', the math's
+   * body `b..be` inside its delimiters (to `to` while its closer is not typed yet). Read as scan reads it, from the
+   * paragraph's start (no formula spans a blank line): per key, never the whole file. */
+  function mathRuns(text: string, from: number, to: number): { s: number; e: number; kind: string; b: number; be: number }[] {
+    const marks: Mark[] = [], out: { s: number; e: number; kind: string; b: number; be: number }[] = [];
+    let open = scan(text, Math.max(0, text.lastIndexOf('\n\n', from - 1)), from, start()).math, s = from, b = from;
+    scan(text, from, to, start(), marks);
+    const kind = (m: string) => /^(\$|\\\(|math)$/.test(m) ? 'inline' : 'display';
+    const run = (e: number, be: number) => { if (e > s) out.push({ s, e, kind: open ? kind(open) : '', b, be }); s = e; };
+    for (const m of marks) {
+      const env = /^\\(begin|end)\{(.*)\}$/.exec(m.t);
+      if (!open && (/^(\$\$?|\\[([])$/.test(m.t) || env?.[1] === 'begin' && MATH.test(env[2]!))) { run(m.s, m.s); open = env ? env[2]! : m.t; b = m.e; }
+      else if (open && (m.t === open && m.t[0] === '$' || m.t === { '\\(': '\\)', '\\[': '\\]' }[open] || env?.[1] === 'end' && env[2] === open)) { run(m.e, m.s); open = ''; b = s; }
+    }
+    run(to, to);
+    return out;
+  }
+  /** Math laid out for the live preview of typed math: cosmetic only, the build sets the real formula. Glyphs
+   * `[text, x, y, scale, face]` in em of the formula's size (`y` up from the baseline; face 'it' math italic, 'rm'
+   * upright, 'sy' symbols, 'bf' bold), rules `[x, y, w, h]`, the width and the height and depth about the baseline.
+   * TeX's rules, simplified: scripts at 0.7 and 0.5, raised and lowered; a binary operator's medium space, a
+   * relation's thick one, none in scripts; fractions stacked about the axis, full size in display. `width(t, face)`
+   * measures `t` at 1 em. */
+  type MBox = { g: [string, number, number, number, string][]; r: [number, number, number, number][]; w: number; h: number; d: number };
+  function mathLaid(src: string, width: (t: string, face: string) => number, display = false): MBox {
+    const SC = [1, 0.7, 0.5], empty = (): MBox => ({ g: [], r: [], w: 0, h: 0, d: 0 });
+    type Atom = { k: string; b: MBox; lim?: boolean };
+    let i = 0, face: string | null = null, ds = display;
+    const put = (into: MBox, b: MBox, dx: number, dy: number) => {
+      for (const [t, x, y, s, f] of b.g) into.g.push([t, x + dx, y + dy, s, f]);
+      for (const [x, y, w, h] of b.r) into.r.push([x + dx, y + dy, w, h]);
+      into.h = Math.max(into.h, b.h + dy); into.d = Math.max(into.d, b.d - dy);
+    };
+    const glyph = (t: string, f: string, s: number): MBox => ({ g: [[t, 0, 0, s, f]], r: [], w: width(t, f) * s, h: 0.7 * s, d: /[gjpqy,;()[\]{}|∫∑∏⟨⟩]/.test(t) ? 0.22 * s : 0 });
+    const space = (w: number): Atom => ({ k: 'sp', b: { ...empty(), w } });
+    // TeX's spaces between atoms, in mu (1/18 em): thin after punctuation and about operators, medium about binary
+    // operators, thick about relations; in scripts only the thin ones about operators
+    const gap = (a: string, b: string, script: boolean) => a === 'sp' || b === 'sp' ? 0 : a === 'op' && /^(ord|op)$/.test(b) || b === 'op' && /^(ord|close)$/.test(a) ? 3
+      : script ? 0 : a === 'bin' || b === 'bin' ? 4 : (a === 'rel') !== (b === 'rel') ? 5 : a === 'punct' ? 3 : 0;
+    const hbox = (atoms: Atom[], lv: number): MBox => {
+      // a binary operator with no operand on one side is an ordinary atom (a unary minus)
+      atoms.forEach((a, j) => { if (a.k === 'bin' && (!j || /^(bin|op|rel|open|punct)$/.test(atoms[j - 1]!.k) || !atoms[j + 1] || /^(rel|close|punct)$/.test(atoms[j + 1]!.k))) a.k = 'ord'; });
+      const out = empty();
+      atoms.forEach((a, j) => { if (j) out.w += gap(atoms[j - 1]!.k, a.k, lv > 0) / 18 * SC[lv]!; put(out, a.b, out.w, 0); out.w += a.b.w; });
+      return out;
+    };
+    const skip = () => { while (/\s/.test(src[i] ?? '')) i++; };
+    const sub = (lv: number) => Math.min(2, lv + 1);
+    const arg = (lv: number): MBox => { skip(); if (i >= src.length) return empty(); if (src[i] === '{') { i++; return list(lv, '}'); } return atom(lv)?.b ?? empty(); };
+    const raw = (): string => {
+      skip();
+      if (src[i] !== '{') { const m = /^\\(?:[A-Za-z@]+|.?)|^[^]?/.exec(src.slice(i))![0]; i += m.length; return m; }
+      let n = 1, j = ++i;
+      for (; j < src.length && n; j++) n += src[j] === '{' ? 1 : src[j] === '}' ? -1 : 0;
+      const t = src.slice(i, n ? j : j - 1);
+      i = j;
+      return t;
+    };
+    const within = <T>(f: string | null, d: boolean, go: () => T): T => { const was = [face, ds] as const; face = f ?? face; ds = d; try { return go(); } finally { [face, ds] = was; } };
+    const list = (lv: number, close?: string): MBox => {
+      const atoms: Atom[] = [];
+      for (skip(); i < src.length; skip()) {
+        if (src[i] === close) { i++; break; }
+        if (src[i] === '}') { i++; continue; }
+        if (src[i] === '^' || src[i] === '_') { scripts(atoms, lv); continue; }
+        const a = atom(lv);
+        if (a) atoms.push(a);
+      }
+      return hbox(atoms, lv);
+    };
+    // `^` and `_` after the last atom: raised and lowered at the next size, or as limits above and below a display operator
+    const scripts = (atoms: Atom[], lv: number) => {
+      const s = SC[lv]!, base = atoms.at(-1) ?? { k: 'ord', b: empty() }, b = base.b;
+      let up: MBox | null = null, dn: MBox | null = null;
+      while (src[i] === '^' || src[i] === '_') { const c = src[i++]; const x = within(null, false, () => arg(sub(lv))); if (c === '^') up = x; else dn = x; skip(); }
+      const out = empty();
+      if (base.lim) {
+        const w = Math.max(b.w, up?.w ?? 0, dn?.w ?? 0);
+        put(out, b, (w - b.w) / 2, 0);
+        if (up) put(out, up, (w - up.w) / 2, b.h + 0.1 * s + up.d);
+        if (dn) put(out, dn, (w - dn.w) / 2, -(b.d + 0.1 * s + dn.h));
+        out.w = w;
+      } else {
+        put(out, b, 0, 0);
+        const ic = b.g.at(-1)?.[4] === 'it' ? 0.05 * s : 0;
+        if (up) put(out, up, b.w + ic, Math.max(0.4 * s, b.h - 0.25 * s));
+        if (dn) put(out, dn, b.w, -Math.max(up ? 0.25 * s : 0.15 * s, b.d - 0.1 * s));
+        out.w = b.w + Math.max(up ? up.w + ic : 0, dn?.w ?? 0) + 0.05 * s;
+      }
+      if (atoms.length) atoms[atoms.length - 1] = { k: base.k, b: out }; else atoms.push({ k: 'ord', b: out });
+    };
+    const atom = (lv: number): Atom | null => {
+      const s = SC[lv]!, c = src[i]!;
+      if (c === '{') { i++; return { k: 'ord', b: list(lv, '}') }; }
+      if (c === '\\') {
+        const n = /^\\([A-Za-z@]+|.?)/.exec(src.slice(i))![1]!;
+        i += n.length + 1;
+        const mu = ({ ',': 3, ':': 4, '>': 4, ';': 5, '!': -3, ' ': 6, quad: 18, qquad: 36, '\\': 18 } as Record<string, number>)[n];
+        if (mu != null) return space(mu / 18 * s);
+        if (/^([dt]?frac|binom)$/.test(n)) {
+          // the parts one size down, full size in display (`\dfrac` always, `\tfrac` never)
+          const pl = n === 'dfrac' || n !== 'tfrac' && ds && lv === 0 ? lv : sub(lv), [a, b] = within(null, false, () => [arg(pl), arg(pl)]);
+          const ax = 0.25 * s, th = n === 'binom' ? 0 : 0.04 * s, pad = 0.1 * s + th, w = Math.max(a.w, b.w) + 0.2 * s, out = empty();
+          put(out, a, (w - a.w) / 2, ax + pad + a.d);
+          put(out, b, (w - b.w) / 2, ax - pad - b.h);
+          if (th) out.r.push([0.05 * s, ax - th / 2, w - 0.1 * s, th]);
+          out.w = w;
+          return { k: 'ord', b: n === 'binom' ? hbox([{ k: 'open', b: glyph('(', 'rm', s) }, { k: 'ord', b: out }, { k: 'close', b: glyph(')', 'rm', s) }], lv) : out };
+        }
+        if (n === 'sqrt') {
+          if (src[i] === '[') { const e = src.indexOf(']', i); i = e < 0 ? src.length : e + 1; }
+          const a = arg(lv), r = glyph('√', 'sy', s), out = empty(), top = Math.max(a.h, 0.7 * s) + 0.08 * s;
+          put(out, r, 0, 0);
+          put(out, a, r.w, 0);
+          out.r.push([r.w, top, a.w, 0.04 * s]);
+          out.w = r.w + a.w;
+          out.h = top + 0.04 * s;
+          return { k: 'ord', b: out };
+        }
+        // text as written, upright (bold, italic)
+        if (/^(text(rm|bf|it|sf|tt|normal|up)?|mbox|operatorname|emph)$/.test(n)) return { k: n === 'operatorname' ? 'op' : 'ord', b: glyph(raw().replace(/\\[A-Za-z@]+\s*|[{}]/g, ''), n === 'textbf' ? 'bf' : 'rm', s) };
+        const f = /^(mathbf|boldsymbol|bm)$/.test(n) ? 'bf' : n === 'mathit' ? 'it' : /^math(rm|sf|tt|cal|bb|frak|scr)$/.test(n) ? 'rm' : null;
+        if (f) return { k: 'ord', b: within(f, ds, () => arg(lv)) };
+        // markup with no glyph of its own: sizes, styles, an equation's label
+        if (/^(left|right|middle|[bB]igg?[lrm]?|displaystyle|textstyle|scriptstyle|limits|nolimits|nonumber|notag)$/.test(n)) { skip(); if (src[i] === '.') i++; return null; }
+        if (/^(label|tag|begin|end)$/.test(n)) { raw(); return null; }
+        const sym = mathSym(n);
+        if (sym) {
+          const [t, sf, k] = sym, big = k === 'op' && ds && lv === 0;
+          const b = glyph(t, sf, big ? 1.4 * s : s);
+          if (big) { b.g[0]![2] = -0.3 * s; b.h = 0.75 * s; b.d = 0.55 * s; }
+          return { k, b, lim: big && !/^i*int$|^oint$/.test(n) };
+        }
+        if (/^(arc)?(sin|cos|tan|cot)h?$|^(sec|csc|log|ln|lg|exp|lim(inf|sup)?|max|min|sup|inf|det|dim|ker|deg|gcd|arg|Pr|hom)$/.test(n)) return { k: 'op', b: glyph(n, 'rm', s), lim: ds && lv === 0 && /^(lim|max|min|sup|inf|det|gcd|Pr)/.test(n) };
+        // any other command (a user's macro, a name half typed): its name, upright
+        return n ? { k: 'ord', b: glyph(n, 'rm', s) } : null;
+      }
+      i++;
+      if (c === '&' || c === '~') return space(c === '~' ? s / 3 : s);
+      if (/[A-Za-z]/.test(c)) return { k: 'ord', b: glyph(c, face ?? 'it', s) };
+      if (/[0-9.]/.test(c)) { const m = /^[0-9.]*/.exec(src.slice(i))![0]; i += m.length; return { k: 'ord', b: glyph(c + m, face === 'bf' ? 'bf' : 'rm', s) }; }
+      const k = '+-*'.includes(c) ? 'bin' : '=<>:'.includes(c) ? 'rel' : '(['.includes(c) ? 'open' : ')]!?'.includes(c) ? 'close' : ',;'.includes(c) ? 'punct' : 'ord';
+      const t = ({ '-': '−', '*': '∗', "'": '′' } as Record<string, string>)[c] ?? c;
+      return { k, b: glyph(t, t === c ? 'rm' : 'sy', s) };
+    };
+    return list(0);
+  }
+  /** The display-only fallback of the math preview: a command's Unicode character, its face and its kind (TeX's
+   * atoms: ord, op, bin, rel, open, close). For drawing only; what a command means is the build's. */
+  let mathSyms: Map<string, [string, string, string]> | null = null;
+  function mathSym(name: string): [string, string, string] | undefined {
+    mathSyms ??= new Map(Object.entries({
+      'it ord': 'alpha α beta β gamma γ delta δ epsilon ϵ varepsilon ε zeta ζ eta η theta θ vartheta ϑ iota ι kappa κ lambda λ mu μ nu ν xi ξ pi π rho ρ sigma σ tau τ upsilon υ phi ϕ varphi φ chi χ psi ψ omega ω ell ℓ',
+      'rm ord': 'Gamma Γ Delta Δ Theta Θ Lambda Λ Xi Ξ Pi Π Sigma Σ Upsilon Υ Phi Φ Psi Ψ Omega Ω # # % % & & $ $ _ _',
+      'sy ord': 'infty ∞ partial ∂ nabla ∇ forall ∀ exists ∃ emptyset ∅ varnothing ∅ neg ¬ prime ′ ldots … dots … cdots ⋯ vdots ⋮ ddots ⋱ angle ∠ top ⊤ bot ⊥ hbar ℏ Re ℜ Im ℑ aleph ℵ | ‖',
+      'sy bin': 'pm ± mp ∓ times × cdot ⋅ div ÷ ast ∗ star ⋆ circ ∘ bullet ∙ cup ∪ cap ∩ setminus ∖ wedge ∧ land ∧ vee ∨ lor ∨ oplus ⊕ ominus ⊖ otimes ⊗ odot ⊙',
+      'sy rel': 'le ≤ leq ≤ ge ≥ geq ≥ ne ≠ neq ≠ ll ≪ gg ≫ approx ≈ equiv ≡ sim ∼ simeq ≃ cong ≅ propto ∝ in ∈ notin ∉ ni ∋ subset ⊂ subseteq ⊆ supset ⊃ supseteq ⊇ mid ∣ parallel ∥ perp ⊥ to → rightarrow → leftarrow ← gets ← leftrightarrow ↔ Rightarrow ⇒ Leftarrow ⇐ Leftrightarrow ⇔ implies ⟹ iff ⟺ mapsto ↦ vdash ⊢ models ⊨',
+      'sy op': 'sum ∑ prod ∏ coprod ∐ int ∫ iint ∬ oint ∮ bigcup ⋃ bigcap ⋂ bigvee ⋁ bigwedge ⋀ bigoplus ⨁ bigotimes ⨂',
+      'sy open': 'langle ⟨ lbrace { { { lceil ⌈ lfloor ⌊',
+      'sy close': 'rangle ⟩ rbrace } } } rceil ⌉ rfloor ⌋',
+    }).flatMap(([fk, list]) => { const [f, k] = fk.split(' ') as [string, string], xs = list.split(' '); return xs.flatMap((x, j) => j % 2 ? [] : [[x, [xs[j + 1]!, f, k]] as [string, [string, string, string]]]); }));
+    return mathSyms.get(name);
+  }
+  self.satexPdfEdit = { offsetAt, units, treeNodes, naming, entries, shortTitle, bothTitles, renamed, leaders, checked, grow, key, broken, scan, start, cells, cellStep, rowAfter, verbatim, verbatimAt, nearest, bands, joined, place, extent, room, form, measure, respec, widthBp, snapWidth, resized, stepped, plain, editable, spans, sender, typed, erased, mathAt, boundaries, boundaryAt, inkSnap, locate, columns, wordAt, argAt, defining, relaid, reflow, centered, apart, tokens, unset, aligned, changed, paragraph, mathRuns, mathLaid };
 })();
 
 // TikZ nodes moved by drag: where each `\node` and path label stands in the source, and the statement a drag

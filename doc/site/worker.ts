@@ -28,6 +28,21 @@ interface Engine {
   read(path: string): Promise<{ path: string; data: Uint8Array | null }> | { path: string; data: Uint8Array | null };
   caches(): { path: string; size: number }[]; uncache(paths: string[]): Promise<unknown>;
 }
+/** Debug pages only (playground.js `satexChaos`): the next `lsp` message aborts as a panic or an out-of-memory does. */
+let chaosArmed = '';
+function chaosAbort(lines: [string, string][]) {
+  const oom = chaosArmed === 'oom';
+  chaosArmed = '';
+  lines.push(['err', oom ? 'memory allocation of 2147483648 bytes failed' : "panicked at src/analysis/budget.rs: attempt to add with overflow"]);
+  return new WebAssembly.RuntimeError(oom ? 'Aborted(OOM)' : 'unreachable');
+}
+/** The crashes the chaos tests ask for: `panic`, `oom` (at the next `lsp`), `uncaught` (outside a handler), `exit`, `hang`. */
+function chaos(how: string) {
+  if (how === 'exit') self.close();
+  else if (how === 'hang') for (;;);
+  else if (how === 'uncaught') setTimeout(() => { throw new Error('chaos: an uncaught error'); });
+  else chaosArmed = how;
+}
 function SatexEngine(createSatex: (o: Rec) => Promise<Mod>, progress: (label: string, loaded: number, total: number) => void = () => {}, store: Store | null = null, status: (s: any) => void = () => {}, note: (m: any) => void = () => {}): Engine {
   const STALL_MS = 30000, RETRIES = 4, BACKOFF_MS = 1000, PARALLEL = 4;
   const files = new Map<string, Uint8Array>();
@@ -199,7 +214,7 @@ function SatexEngine(createSatex: (o: Rec) => Promise<Mod>, progress: (label: st
 
   /** `satex lsp` in an instance that stays alive: each JSON-RPC message in, the replies out.
    * `reset` drops it: the next message starts one with these flags, in this directory. */
-  let server: Mod | null = null, serverArgs: string[] = [], serverCwd = '/work', serverLines: [string, string][] = [];
+  let server: Mod | null = null, serverArgs: string[] = [], serverCwd = '/work', serverLines: [string, string][] = [], logged = 0;
   /** Whether the page no longer wants the run under way: src/lsp/wasm.rs asks while it runs. */
   let stale = () => false;
   function reset(args: string[] = [], cwd = '/work') { server = null; serverArgs = args; serverCwd = cwd; }
@@ -207,16 +222,18 @@ function SatexEngine(createSatex: (o: Rec) => Promise<Mod>, progress: (label: st
     if (!server) {
       // What the engine is doing while a message runs (src/lsp/wasm.rs).
       const onStatus = (json: string) => status(JSON.parse(json));
-      serverLines = [];
+      serverLines = []; logged = 0;
       // a notification sent while the message still runs (src/lsp/wasm.rs `notify`)
       const onNote = (json: string) => note(JSON.parse(json));
-      server = await boot(serverLines, {}, serverCwd, onStatus, onNote);
-      server.callMain([...serverArgs, 'lsp']); // returns with the runtime alive, see src/lsp/wasm.rs
+      const fresh = await boot(serverLines, {}, serverCwd, onStatus, onNote);
+      fresh.callMain([...serverArgs, 'lsp']); // returns with the runtime alive, see src/lsp/wasm.rs
+      server = fresh; // an instance that aborted while it started is never asked again
     }
     const running = server, text = running.stringToNewUTF8(JSON.stringify(message));
     let out: Rec[];
     stale = cancelled;
     try {
+      if (chaosArmed) throw chaosAbort(serverLines);
       out = JSON.parse(running.UTF8ToString(running._satex_lsp(text)));
     } catch (e) {
       // an abort: what the server said last, its panic among it
@@ -227,6 +244,10 @@ function SatexEngine(createSatex: (o: Rec) => Promise<Mod>, progress: (label: st
       stale = () => false;
       try { running._free(text); } catch {} // an aborted module takes no more calls
     }
+    // what the server said on stderr goes to the page (`satex/log`, its console with ?debug); the last ones stay for a panic's message
+    if (serverLines.length > logged) note({ jsonrpc: '2.0', method: 'satex/log', params: serverLines.slice(logged).map(([, t]) => t) });
+    if (serverLines.length > 64) serverLines.splice(0, serverLines.length - 8);
+    logged = serverLines.length;
     // an analysis may have cached a class or package
     if (out.some((m) => m.method === 'textDocument/publishDiagnostics')) {
       walk(server!.FS, '/cache', files, server!.booted);
@@ -549,6 +570,8 @@ if (typeof cjs === 'object' && cjs.exports) {
         const encode = (t: string) => new TextEncoder().encode(t);
         const edits = Object.fromEntries(Object.entries(data.edits).map(([path, text]) => [path, encode(text as string)]));
         self.postMessage({ type: 'result', ...(await engine!.run(data.args, edits, data.cwd)) });
+      } else if (data.type === 'chaos') {
+        chaos(data.how);
       } else if (data.type === 'caches') {
         self.postMessage({ type: 'caches', entries: engine!.caches() });
       } else if (data.type === 'uncache') {

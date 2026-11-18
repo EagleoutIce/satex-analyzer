@@ -6,15 +6,27 @@
   const $ = (id) => document.getElementById(id);
   const manifest = JSON.parse($('satex-play').textContent);
   let booted = false;
-  /** A start that fails on what an older page left (its stored layout and settings, its cached
-   * bundles): those are dropped and the page loads once more, with a note; a second failure is shown. */
+  /** A failed start loads the page once more. Drafts, settings and layout stay: only the caches go, and only
+   * when the error names one. A second failure is shown, with buttons to try again, clear caches or reset the layout. */
+  const CACHE_FAULT = /indexeddb|idb|cache|bundle|digest|quota/i;
+  const clearCaches = () => {
+    try { for (const k of Object.keys(localStorage)) if (k.startsWith('satex-complete:')) localStorage.removeItem(k); } catch {}
+    try { indexedDB.deleteDatabase('satex-playground'); } catch {}
+  };
+  /** What the viewer typed and chose: never dropped by a recovery. */
+  const KEEP = new Set(['satex-drafts', 'satex-config', 'satex-offline', 'satex-start']);
   const recover = (error) => {
     let again = false;
     try { again = sessionStorage.getItem('satex-recovered') === '1'; sessionStorage.setItem('satex-recovered', '1'); } catch {}
-    if (again) { document.getElementById('play-status').textContent = `The playground did not start: ${error?.message ?? error}`; return; }
-    try { for (const k of Object.keys(localStorage)) if (k.startsWith('satex') && k !== 'satex-drafts') localStorage.removeItem(k); } catch {}
-    try { indexedDB.deleteDatabase('satex-playground'); } catch {}
-    try { sessionStorage.setItem('satex-note', 'The stored layout, settings and caches did not fit this version of the playground: they were reset.'); } catch {}
+    const message = String(error?.message ?? error), cached = CACHE_FAULT.test(message);
+    if (again) {
+      const line = document.getElementById('play-status'), button = (text, act) => Object.assign(document.createElement('button'), { type: 'button', className: 'small ghost', textContent: text, onclick: () => { act(); location.reload(); } });
+      line.replaceChildren(`The playground did not start: ${message}. Your text and settings are kept. `, button('Try again', () => {}), ' ', button('Clear caches and try again', clearCaches),
+        ' ', button('Reset the layout', () => { try { for (const k of Object.keys(localStorage)) if (k.startsWith('satex-') && !KEEP.has(k)) localStorage.removeItem(k); } catch {} }));
+      return;
+    }
+    if (cached) clearCaches();
+    try { sessionStorage.setItem('satex-note', cached ? `The playground did not start (${message}): its caches were cleared. Your text and settings are kept.` : `The playground did not start the first time (${message}) and loaded again.`); } catch {}
     location.reload();
   };
   // the browser's layout notice (`ResizeObserver loop …`) is no failure: it carries no error object
@@ -412,6 +424,8 @@
   // ---------------------------------------------------------------- worker requests
 
   const waiting = {}; // reply type -> resolver; runs, reads and kernel loads go one at a time, in order
+  /** The last messages sent to the server, for the crash log. */
+  const lspRecent = [];
   const REPLY = { run: 'result', bundle: 'bundle', bundles: 'bundle', init: 'ready', read: 'file', caches: 'caches', uncache: 'caches' };
   let line_ = Promise.resolve();
   // a dead worker fails its waiters instead of hanging them, and is replaced
@@ -432,20 +446,45 @@
   // a server starting (an instance over every file) is given the start's own limit, restart() says when that passes
   const hangLimit = () => self.satexHangMs ?? (act.phase === 'Starting' ? START_MS + 5000 : hang);
   let lastHeard = performance.now(), recovering = false, maxGap = 0, recoveries = 0, recent = [];
+  /** Every stop of the language server (its worker died or hung, its wasm aborted), newest last: Report copies them. */
+  const crashes = [];
+  /** This many stops within `CRASH_WINDOW_MS` and the page stops restarting: the line says so, with Restart and Report. */
+  const CRASH_LIMIT = 3, CRASH_WINDOW_MS = 60000;
+  /** Since when the server is down and why: the views dim meanwhile, restart() says how long the restart took. */
+  let downSince = null, downWhy = '';
+  /** Set once the server kept stopping: nothing is asked of it, no watchdog restarts it, until Restart. */
+  let halted = false;
+  /** Records a stop; false once the server keeps stopping. */
+  function crashed(why, detail = '') {
+    const now = performance.now();
+    crashes.push({ at: new Date().toISOString(), why, detail, example: state.example, file: state.file, root: state.root, version, recent: lspRecent.slice() });
+    if (crashes.length > 20) crashes.shift();
+    recent = [...recent.filter((t) => now - t < CRASH_WINDOW_MS), now];
+    if (recent.length >= CRASH_LIMIT) { downSince = null; markStale(); return false; }
+    downSince ??= now;
+    downWhy = why;
+    markStale();
+    return true;
+  }
+  /** The crash log as text, for a bug report. */
+  const crashLog = () => [`SaTeX playground ${BUILD} on ${navigator.userAgent}`, ...crashes.map((c) =>
+    `${c.at} ${c.why} (example ${c.example}, file ${c.file}, root ${c.root}, version ${c.version})\n  last requests: ${c.recent.join(', ')}${c.detail ? `\n  ${c.detail.replace(/\n/g, '\n  ')}` : ''}`)].join('\n');
+  /** The server kept stopping: no restart loop, the line says so, Restart tries again, Report copies the log. */
+  function keepsStopping(why) {
+    halted = true;
+    worker.terminate();
+    failWaiters(new Error(why));
+    for (const p of pending.values()) p.resolve(null);
+    pending.clear(); order.length = 0; running = 0;
+    stoppedLine(`The analyzer keeps stopping on this project (${escape(why)}).`, () => { recent = []; mirrorable ? recoverWorker('asked again', 'Restarting the analyzer…') : restart(); }, true);
+  }
   /** A stuck or dead worker is replaced: the new one gets the kernel, bundles and files the old one had,
    * then the language server starts again on them. What the page shows from the last finished run stays. */
-  async function recoverWorker(why, note = `The language server stopped (${why}). Restarting it, the findings shown are from its last run.`) {
+  async function recoverWorker(why, note = null, counted = note) {
     if (recovering || !booted) return;
-    // a worker that keeps dying on this document (out of memory) is not restarted in a loop: the line says so, a click tries again
-    const now = performance.now();
-    recent = [...recent.filter((t) => now - t < 120000), now];
-    if (recent.length > 3 && why !== 'asked again') {
-      worker.terminate();
-      failWaiters(new Error(why));
-      for (const p of pending.values()) p.resolve(null);
-      pending.clear(); order.length = 0; running = 0;
-      return stoppedLine(`The language server keeps stopping on this project (${escape(why)}).`, () => { recent = []; recoverWorker('asked again', 'Restarting the language server…'); });
-    }
+    // a worker that keeps dying on this document (out of memory) is not restarted in a loop; a stop asked for is no crash
+    if (counted === null && !crashed(why)) return keepsStopping(why);
+    halted = false;
     recovering = true;
     recoveries++;
     if (why.startsWith('no answer')) hang *= 2;
@@ -458,8 +497,7 @@
       pending.clear();
       order.length = 0; running = 0;
       if (!mirrorable) { busy('Stopped', 'The worker stopped. Reload the page to start it again.'); status.dataset.done = 'error'; return; }
-      toast(note);
-      busy('Restarting', 'Restarting the language server…');
+      busy('Restarting', note ?? `The analyzer stopped (${why}). Restarting it…`);
       const w = newWorker();
       const replies = {};
       w.onmessage = ({ data }) => (data.type === 'error' ? replies[REPLY[data.of]]?.reject(new Error(data.message.split('\n')[0])) : replies[data.type]?.resolve(data));
@@ -479,17 +517,18 @@
       synced = 0;
       await restart();
     } catch (e) {
-      stoppedLine(`The language server could not be restarted: ${escape(e.message)}.`, () => recoverWorker('asked again', 'Restarting the language server…'));
+      stoppedLine(`The analyzer could not be restarted: ${escape(e.message)}.`, () => recoverWorker('asked again', 'Restarting the analyzer…'), true);
     } finally {
       recovering = false;
     }
   }
   /** Work that cannot go on by itself: the status line says why, that the text is kept, and offers to try again. */
-  function stoppedLine(why, retry) {
+  function stoppedLine(why, retry, report = false) {
     idle();
-    status.innerHTML = `<span class="st-msg">${why} Your text is kept.</span> <button type="button" class="small ghost" id="play-retry">Try again</button>`;
+    status.innerHTML = `<span class="st-msg">${why} Your text is kept.</span> <button type="button" class="small ghost" id="play-retry">${report ? 'Restart' : 'Try again'}</button>${report ? ' <button type="button" class="small ghost" id="play-report">Report</button>' : ''}`;
     status.dataset.done = 'error';
     $('play-retry').onclick = retry;
+    if (report) $('play-report').onclick = () => { const text = crashLog(); navigator.clipboard?.writeText(text).then(() => toast('The crash log is copied: paste it into a bug report.'), () => { console.log(text); toast('Copying failed: the crash log is in the console.'); }); };
   }
   /** `p`, or an error naming `what` once `ms` pass without its answer. */
   const within = (p, ms, what) => Promise.race([p, new Promise((_, reject) => setTimeout(() => reject(new Error(`${what} got no answer in ${Math.round(ms / 1000)} s`)), ms))]);
@@ -499,7 +538,7 @@
     if (act.phase === 'Analyzing' && !running && !analysisQueued && !pending.size && performance.now() - act.changed > 10000) { if (heldFindings) publish(heldFindings); phase(); }
     // a step that says nothing new for a while (a kernel cache built) shows its time, so the line is seen to live
     else if (act.phase && performance.now() - act.changed > 5000 && status.textContent === act.shown) status.textContent = act.shown = `${act.text} · ${secs(performance.now() - act.since)}`;
-    if (!recovering && performance.now() - lastHeard > hangLimit() && (running > 0 || pending.size || Object.keys(waiting).length))
+    if (!recovering && !halted && performance.now() - lastHeard > hangLimit() && (running > 0 || pending.size || Object.keys(waiting).length))
       recoverWorker(`no answer for ${Math.round(hangLimit() / 1000)} s`);
   }, 2000);
   const ask = (msg, transfer = []) => {
@@ -579,11 +618,13 @@
   const outdated = (p) => p.version != null && (sentVersions.get(p.uri) ?? -Infinity) > p.version;
   function lsp(method, params, notify = false) {
     // while a new worker starts, nothing is asked of the old one: restart() then tells the new one everything
-    if (recovering) return notify ? null : Promise.resolve(null);
+    if (recovering || halted) return notify ? null : Promise.resolve(null);
     // a widget never waits for a run: the run stops (the shared counter), the widget is answered from the last
     // finished one, and the run starts again after it
     if (running > 0 && textsSent && /^satex\/(view|dialog|dialogApply)$/.test(method)) { Atomics.add(textsSent, 0, 1); analysisQueued = true; }
     const message = { jsonrpc: '2.0', method, params, ...(notify ? {} : { id: nextId++ }) };
+    lspRecent.push(method === 'workspace/executeCommand' ? params.command : method);
+    if (lspRecent.length > 8) lspRecent.shift();
     const runs = method === 'satex/analyze';
     // A read-only question asked while a run goes on is answered from the last finished one, never queued behind it.
     const read = !notify && !runs && (method === 'workspace/executeCommand' ? params.command === 'satex/query' : /^textDocument\/(hover|documentSymbol|definition|references|documentHighlight|signatureHelp|foldingRange|inlayHint|documentLink)$/.test(method));
@@ -599,6 +640,8 @@
       if (text != null) { sentTexts.set(`${params.textDocument.uri}@${params.textDocument.version}`, text); if (sentTexts.size > 16) sentTexts.delete(sentTexts.keys().next().value); }
       if (textsSent) Atomics.add(textsSent, 0, 1);
     }
+    // a request at a place of the open text: that text goes first, the worker answers in order (positions never outrun it)
+    if (!notify && !runs && params?.textDocument?.uri === uri()) push();
     order.push(runs);
     running += +runs;
     worker.postMessage({ type: 'lsp', message, sent: textsSent ? Atomics.load(textsSent, 0) : null });
@@ -628,7 +671,7 @@
   const at = (doc, p) => Math.max(0, Math.min(lineOf(doc, p.line).from + (p.character | 0), doc.length));
   const position = (doc, offset) => { const l = doc.lineAt(offset); return { line: l.number - 1, character: offset - l.from }; };
   /** The text `range` (LSP) spans in `text`. */
-  const offsetIn = (text, p) => { let i = 0; for (let l = 0; l < p.line; l++) { const n = text.indexOf('\n', i); if (n < 0) return text.length; i = n + 1; } return Math.min(i + p.character, text.length); };
+  const offsetIn = (text, p) => self.satexPdfEdit.offsetAt(text, p);
   const textIn = (text, r) => text.slice(offsetIn(text, r.start), offsetIn(text, r.end));
   /** `edits` (LSP TextEdits) applied to a plain text, for files not in the editor. */
   function edited(text, edits) {
@@ -812,8 +855,9 @@
   function shownFor(el, target, of, cls = 'stale') { if (el) { shownOf.set(el, [target, of ?? null, cls]); markStale(); } }
   function markStale() {
     const sent = sentVersions.get(uri()), pending = pendingRun();
-    if (!shownOf.has(list)) list.classList.toggle('stale', pending);
-    for (const [el, [target, of, cls]] of shownOf) el.classList.toggle(cls, target !== uri() || (of !== null && sent !== undefined && of !== sent) || typedSincePush || pending);
+    const down = downSince !== null;
+    if (!shownOf.has(list)) list.classList.toggle('stale', pending || down);
+    for (const [el, [target, of, cls]] of shownOf) el.classList.toggle(cls, target !== uri() || (of !== null && sent !== undefined && of !== sent) || typedSincePush || pending || down);
   }
   /** Whether files beside the texts changed (a package landed) since the last analysis asked for: then every document runs again, not only the edited ones. */
   let filesChanged = false;
@@ -928,7 +972,8 @@
     if (!kept && !running) return asked.get(k);
     // what answers now; the server's items replace it when they come
     let early = running > 0;
-    asked.get(k).then(() => { if (early && document.querySelector('.cm-tooltip-autocomplete') && k.endsWith(`|${version}|${position.line}:${position.character}`)) editor.complete?.(); });
+    // an empty early answer opened no list: the server's items open it while the cursor stays put
+    asked.get(k).then((r) => { if (early && (document.querySelector('.cm-tooltip-autocomplete') || retryCompletion && r.length) && k.endsWith(`|${version}|${position.line}:${position.character}`)) editor.complete?.(); });
     if (early) return now;
     // an empty answer (the server's last run has not read this place yet) leaves the kept items standing
     return Promise.race([asked.get(k).then((r) => r.length ? r : now), new Promise((done) => setTimeout(() => { early = true; done(now); }, INSTANT_MS))]);
@@ -1160,7 +1205,6 @@
       const inName = /\\(?:begin|end)\s*\{[^{}%]*$/.test(line.text.slice(0, col)) && /^[^{}%]*\}/.test(line.text.slice(col));
       if (!inName || state.file in state.ro) { if (r) queueMicrotask(() => v.dispatch({ effects: linkedSet.of(null) })); return; }
       const doc = s.doc;
-      push();
       lsp('textDocument/linkedEditingRange', { textDocument: { uri: uri() }, position: position(doc, pos) }).catch(() => null).then((found) => {
         if (v.state.doc !== doc) return;
         const ranges = found?.ranges?.map((x) => [at(doc, x.start), at(doc, x.end)]);
@@ -1373,12 +1417,28 @@
     });
     const span = (r) => [at(doc(), r.start), Math.max(at(doc(), r.end), at(doc(), r.start))];
     let holdTimer = 0;
+    /** The states of the files left, by project path: their undo histories. */
+    const leftStates = new Map();
+    let shownKey = '';
     return {
       prefs: () => { ev.dispatch({ effects: prefs.reconfigure(prefsOf()) }); scheme(); },
       text: () => doc().toString(),
       // another file's text starts at its top: the last file's scroll position may lie past its end
-      // another file: its text without the last one's undo history (an undo never brings another file's text back)
-      set: (t, readOnly = false) => { ev.dispatch({ effects: [setup.reconfigure([]), lang.reconfigure(/\.bib$/.test(state.file) ? tex.bib : tex.language)] }); ev.dispatch({ changes: { from: 0, to: doc().length, insert: t }, selection: { anchor: 0 }, effects: [reset.of(null), lock.reconfigure(readOnly ? [st.EditorState.readOnly.of(true)] : [])] }); ev.dispatch({ effects: setup.reconfigure(basicSetup) }); ev.scrollDOM.scrollTop = 0; ev.dispatch({ effects: lensSet.of(textLenses(t).map((l) => [doc().line(l.range.start.line + 1).from, l])) }); },
+      // another file: its text without the last one's undo history (an undo never brings another file's text back);
+      // a file shown again with the text it was left with gets its own state back, its undo history with it
+      set: (t, readOnly = false) => {
+        if (shownKey) leftStates.set(shownKey, ev.state);
+        const key = shownKey = `${state.dir}/${state.file}`, back = leftStates.get(key);
+        leftStates.delete(key);
+        if (back && !readOnly && back.doc.toString() === t) {
+          ev.setState(back);
+          ev.dispatch({ effects: [reset.of(null), lang.reconfigure(/\.bib$/.test(state.file) ? tex.bib : tex.language), lock.reconfigure([]), prefs.reconfigure(prefsOf())] });
+          scheme();
+          ev.dispatch({ effects: lensSet.of(textLenses(t).map((l) => [doc().line(l.range.start.line + 1).from, l])) });
+          return;
+        }
+        ev.dispatch({ effects: [setup.reconfigure([]), lang.reconfigure(/\.bib$/.test(state.file) ? tex.bib : tex.language)] }); ev.dispatch({ changes: { from: 0, to: doc().length, insert: t }, selection: { anchor: 0 }, effects: [reset.of(null), lock.reconfigure(readOnly ? [st.EditorState.readOnly.of(true)] : [])] }); ev.dispatch({ effects: setup.reconfigure(basicSetup) }); ev.scrollDOM.scrollTop = 0; ev.dispatch({ effects: lensSet.of(textLenses(t).map((l) => [doc().line(l.range.start.line + 1).from, l])) });
+      },
       // `how`: off the undo history (a drag's steps), or as typing (`input.type` joins into one step)
       apply: (edits, how = {}) => ev.dispatch({ changes: edits.map((e) => { const [from, to] = span(e.range); return { from, to, insert: e.newText }; }), ...(how.history === false ? { annotations: st.Transaction.addToHistory.of(false) } : {}), ...(how.userEvent ? { userEvent: how.userEvent } : {}) }),
       /** What changed since the text was `before`, as one undo step: back off the history, then forward on it. */
@@ -1560,13 +1620,24 @@
     // numerals on their own; a starred command (read off its source) gets none
     const count = [], roman = (n) => ['', 'I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX', 'X'][n] ?? String(n);
     let parts = 0;
+    // after `\appendix` the top level restarts in letters: a record is past it when the root line it enters the run at is
+    const rootLines = String(state.texts[root] ?? '').split('\n'), appendixAt = rootLines.findIndex((l) => /^[^%]*\\appendix\b/.test(l)) + 1;
+    const enters = (r) => {
+      if (String(file(r)).endsWith(root)) return r.line;
+      const stem = String(file(r)).split('/').pop().replace(/\.tex$/, '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      return rootLines.findIndex((l) => new RegExp(`^[^%]*\\\\(?:input|include|subfile)\\s*\\{[^}]*\\b${stem}(?:\\.tex)?\\s*\\}`).test(l)) + 1;
+    };
+    let appendix = false;
     const numberOf = (r) => {
       const l = LEVELS.indexOf(r.detail), text = state.texts[Object.keys(state.texts).find((n) => String(r.path ?? r.file).endsWith(n))]?.split('\n')[r.line - 1] ?? '';
       if (l < 0 || l < lowest - 1 && l > 0 || l >= lowest + 3 || /^\\[a-z]+\*/.test(text.slice((r.col ?? 1) - 1))) return '';
       if (l === 0) return roman(++parts);
+      if (appendixAt && !appendix && enters(r) > appendixAt) { appendix = true; count.length = 0; }
       count.length = l + 1;
       for (let i = lowest; i <= l; i++) count[i] = (count[i] ?? 0) + (i === l ? 1 : 0);
-      return count.slice(lowest, l + 1).join('.');
+      const n = count.slice(lowest, l + 1);
+      if (appendix) n[0] = n[0] > 0 && n[0] <= 26 ? String.fromCharCode(64 + n[0]) : n[0];
+      return n.join('.');
     };
     const base = (p) => String(p ?? '').split('/').pop();
     const html = [];
@@ -2003,13 +2074,8 @@
     return null;
   };
   const tsWords = (text) => [...text.matchAll(/[\p{L}\p{N}]+/gu)];
-  /** The words of a paragraph's text in the view, split where math meets text (`$x_{42}$Generally`: `x42`, `Generally`):
-   * `math(i)` says whether character `i` is set in math. */
-  const tsUnits = (text, math) => tsWords(text).flatMap((m) => {
-    const out = [];
-    for (let s = 0, i = 1; i <= m[0].length; i++) if (i === m[0].length || math(m.index + i) !== math(m.index + i - 1)) out.push(Object.assign([m[0].slice(s, i)], { index: m.index + s })), s = i;
-    return out;
-  });
+  /** The words of a paragraph's view text, split where math meets text (pdfedit.ts `units`). */
+  const tsUnits = (text, math) => self.satexPdfEdit.units(text, math);
   /** tsUnits of a paragraph's view text, the math taken from its row's characters where the view shows them as they are. */
   const tsViewWords = (text, row) => { const chars = row ? rowChars(row) : [], at = chars.length ? text.indexOf(chars.map((c) => c.c).join('')) : -1; return tsUnits(text, (i) => at >= 0 && !!chars[i - at]?.math); };
   /** The paragraph `p` of the view as the run set it: its row of `typesetRows`. */
@@ -2497,7 +2563,7 @@
     const what = unsafe ? 'fix' : 'safe fix';
     if (!edits.length) return toast(`No ${what}es${code ? ` for ${code}` : ''} in this file`);
     editor.apply(edits);
-    toast(`Applied ${plural(edits.length, what)}${edits.length < action.data.count ? `; ${action.data.count - edits.length} overlapping wait for the next check` : ''}`);
+    toast(`Applied ${plural(Math.min(edits.length, action.data.count), what)}${edits.length < action.data.count ? `; ${action.data.count - edits.length} overlapping wait for the next check` : ''}`);
   }
   /** Whether Fix all also applies the unsafe fixes: off unless asked, as the command line's --unsafe-fixes. */
   var fixUnsafe = false; // var: a render may run before this line
@@ -4666,7 +4732,10 @@
   /** Each start counts: one superseded by a newer (a switch while the last one starts) stops quietly at its next step. */
   let starts = 0;
   async function restart() {
+    // a server stopped for good: another project or a click starts a new worker first
+    if (halted && mirrorable) { recent = []; return recoverWorker('asked again', 'Restarting the analyzer…'); }
     const gen = ++starts, stale = () => gen !== starts;
+    halted = false;
     following = true;
     pdfOwner();
     sync();
@@ -4707,6 +4776,7 @@
       return;
     }
     try { localStorage.removeItem('satex-start'); } catch {}
+    if (downSince !== null) { toast(`The analyzer stopped (${downWhy}) and restarted in ${secs(performance.now() - downSince)}.`, 6000); downSince = null; markStale(); }
     // an error said before (a failed start, a stopped server) is over: the line comes back to ready, not to it
     if (status.dataset.done === 'error') { status.dataset.done = 'ready'; act.rest = READY; }
     // the server answered: the card may go once no download is left, whichever phase idle() last saw
@@ -5518,7 +5588,8 @@
       const t = secs(performance.now() - start), why = `${pdfWarming ? "waiting for the compile server's setup, then compiling" : 'compiling'} ${what}: ${t}${step && ` · ${step}`}${pdfQueued ? ' · one more queued' : ''}${pdfBeside()}`;
       // the bar's status is short, the pane says it all
       pdfStatus.textContent = `compiling: ${t}`;
-      pdfWait(why, performance.now() - start > TIP_AFTER_MS, note);
+      // a short build (one per key while typing) shows no bar over the page: only the toolbar's timer
+      if (first || performance.now() - start > WAIT_AFTER_MS) pdfWait(why, performance.now() - start > TIP_AFTER_MS, note);
     }, 100);
     pdfTick = tick;
     pdfBusy = true;
@@ -5542,11 +5613,11 @@
         const gen = ++pdfGen, built = { ...data, slice, root, dir, text: pdfSent, texts: pdfSentAll };
         pdfOpen(built).then((view) => {
           // a newer build came first: this one is never shown
-          if (gen !== pdfGen) { if (view !== pdfViewer) view?.close(); for (const url of Object.values(built.blobs ?? {})) URL.revokeObjectURL(/** @type {string} */ (url)); return; }
+          if (gen !== pdfGen) { if (view !== pdfViewer) pdfClose(view); for (const url of Object.values(built.blobs ?? {})) URL.revokeObjectURL(/** @type {string} */ (url)); return; }
           for (const url of Object.values(pdf?.blobs ?? {})) URL.revokeObjectURL(/** @type {string} */ (url));
           const same = pdf && pdf.root === root && pdf.dir === dir;
           // the same PDF again (a kept build) opens once: its view is the one shown
-          if (pdfViewer !== view) pdfViewer?.close();
+          if (pdfViewer !== view) pdfClose(pdfViewer);
           pdfViewer = view;
           pdf = view ? { ...built, pagelabels: built.pagelabels ?? view.pagelabels } : built;
           pdfShow(same);
@@ -5629,6 +5700,8 @@
   }
   /** A build this short shows no tip: it would only flash. */
   const TIP_AFTER_MS = 5000;
+  /** A build this short shows no wait bar over the pages. */
+  const WAIT_AFTER_MS = 1500;
   /** How long a build may take before the page gives up on it: the server's own limit is shorter. */
   const COMPILE_MS = 600000;
   /** The PDF is of one project and root: after a switch it dims, says whose it is, and takes no clicks, until a build of this one replaces it. */
@@ -5707,6 +5780,9 @@
   const pdfBack = [], pdfBackButton = $('pdf-back');
   /** The shown build's PDF opened in pdf.js (tex.ts `open`), its number, the pages wanted drawn (in or near view). */
   var pdfViewer = null, pdfGen = 0, pdfIO = null, pdfDrawing = null, pdfTexted = 0;
+  /** The last key typed into the pages, and how long a page typed on waits after it before a build swaps in. */
+  var pdfKeyAt = -Infinity, pdfHoldTimer = 0;
+  const PDF_HOLD = 400;
   const pdfWant = new Set();
   /** The build's PDF opened, where pdf.js is at hand; without it (or a PDF) the pane shows the server's page images. */
   let pdfOpening = null;
@@ -5714,9 +5790,11 @@
     const src = d.pdf && TEX ? d.blobs?.[d.pdf] ?? `${COMPILE}/${d.base}${d.pdf}` : null;
     if (!src) return Promise.resolve(null);
     // a browser build's PDF opens while its SyncTeX data is read
-    if (pdfOpening?.src !== src) pdfOpening = { src, view: self.satexTex.open(TEX, src).catch(() => null) };
+    if (pdfOpening?.src !== src) { const o = pdfOpening = { src, v: null, view: self.satexTex.open(TEX, src).then((v) => (o.v = v), () => null) }; }
     return pdfOpening.view;
   };
+  /** A view closed: never handed out again for its PDF (a build from the cache has the same address), else its pages fail to draw. */
+  const pdfClose = (view) => { if (pdfOpening?.v === view) pdfOpening = null; view?.close(); };
   /** A blank page of `w`×`h` pixels: the place of a page not drawn yet. */
   const pdfBlank = ([w, h]) => `data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='${w}' height='${h}'/%3E`;
   /** Draws the wanted page nearest the middle of the view, one at a time, newest build only; then the text of a browser build. */
@@ -5727,7 +5805,12 @@
     const r = pages.getBoundingClientRect(), mid = (r.top + r.bottom) / 2, away = (el) => { const b = el.getBoundingClientRect(); return Math.abs((b.top + b.bottom) / 2 - mid); };
     // the page typed on first: its change is the one waited for
     const typed = (e) => pdfCaret?.view === 'pdf' && +e.dataset.page === pdfCaret.page ? -1 : 0;
-    const el = [...pdfWant].filter((e) => e.isConnected && e.dataset.shown !== String(gen)).sort((a, b) => typed(a) - typed(b) || away(a) - away(b))[0];
+    // the page typed on keeps its echo while the keys go on (a pause of PDF_HOLD ms) and while the build lacks what
+    // was typed and a newer one is coming: a build that predates a key never swaps in under it. Other pages update.
+    const coming = !!pdfAuto?.want || $('play-pdf').classList.contains('pdf-running');
+    const idle = performance.now() - pdfKeyAt, hold = typed({ dataset: { page: pdfCaret?.page } }) < 0 && (idle < PDF_HOLD || coming && pdfBuiltText(pdf) !== editor.text());
+    if (hold && idle < PDF_HOLD) { clearTimeout(pdfHoldTimer); pdfHoldTimer = setTimeout(pdfDrawNext, PDF_HOLD - idle + 10); }
+    const el = [...pdfWant].filter((e) => e.isConnected && e.dataset.shown !== String(gen) && !(hold && typed(e) < 0)).sort((a, b) => typed(a) - typed(b) || away(a) - away(b))[0];
     if (!el) {
       pdfHoldEnd();
       // words and links of a browser build come from pdf.js, after the pages in view
@@ -5746,9 +5829,14 @@
       // decoded before the swap: no blank frame
       await img.decode().catch(() => {});
       if (gen !== pdfGen || !el.isConnected) { URL.revokeObjectURL(url); return; }
+      if (!img.naturalWidth) { URL.revokeObjectURL(url); throw new Error('the page image did not decode'); }
+      // drawn: the page's overlays show (style.css hides them over a page with no drawn image)
+      img.classList.add('pdf-drawn');
       img.__build = pdf;
       // a page with no image yet (a placeholder the overlay replaced) gets one
-      if (old) old.replaceWith(img); else el.prepend(img);
+      // the page typed on crossfades (120 ms): what the echo got slightly off settles, never jumps
+      if (old && typed(el) < 0) { old.replaceWith(img); old.classList.add('pdf-fade'); img.after(old); setTimeout(() => old.remove(), 130); }
+      else if (old) old.replaceWith(img); else el.prepend(img);
       if (pdfCaret?.view === 'pdf') pdfCaretDraw();
       pdfFacesPrune();
       if (old?.__url) URL.revokeObjectURL(old.__url);
@@ -5756,9 +5844,11 @@
       el.classList.remove('pdf-stale');
       pdfLoaded_();
     } catch (e) {
-      // a page pdf.js cannot draw stays as it was: asked again it would fail again, a loop that holds the page
-      el.dataset.shown = String(gen);
-      console.warn('pdf page', e);
+      // a page pdf.js cannot draw is tried twice more, then stays as it was (its overlays hidden while it has no drawn
+      // image): asked again forever it would hold the drawing; a newer build closed this one meanwhile: no fault, the
+      // newer one draws
+      if ((el.__fails = (el.__fails ?? 0) + 1) >= 3) el.dataset.shown = String(gen);
+      if (view === pdfViewer && gen === pdfGen) console.warn('pdf page', e);
     } finally { if (pdfDrawing === view) pdfDrawing = null; pdfDrawNext(); }
   }
   /** The links of the pages, again: a browser build learns them after its pages show. */
@@ -5820,7 +5910,7 @@
     if (pdf.wordList) pagesNow.dataset.words = '';
     // the caret at once on the swapped pages, no frame without it
     const caretNow = () => { if (pdfCaret?.view === 'pdf') pdfCaretDraw(); };
-    if (!pdfViewer) { pdfBody.querySelectorAll('.pdf-page img').forEach((img) => img.addEventListener('load', pdfLoaded_, { once: true })); caretNow(); return; }
+    if (!pdfViewer) { pdfBody.querySelectorAll('.pdf-page img').forEach((img) => img.addEventListener('load', () => { if (img.naturalWidth) img.classList.add('pdf-drawn'); pdfLoaded_(); }, { once: true })); caretNow(); return; }
     for (const el of pdfBody.querySelectorAll('.pdf-page')) {
       const img = el.querySelector('img'), was = old.get(el.dataset.page);
       if (was && `${was.naturalWidth}x${was.naturalHeight}` === `${img.getAttribute('width')}x${img.getAttribute('height')}`) { img.replaceWith(was); old.delete(el.dataset.page); }
@@ -7066,7 +7156,6 @@
    * changed while the server printed it (its edits would land on other bytes). `how`: editor.apply's. */
   async function pdfWrite(target, node, body, how) {
     if (uri() !== target) return false;
-    push();
     const v = version;
     const r = await lsp('satex/dialogApply', { textDocument: { uri: target }, kind: 'snapshot', nodes: [{ ...node, body }] }).catch((e) => ({ notes: [String(e?.message ?? e)] }));
     // the text moved on during the round trip: null, the caller may print again
@@ -8157,11 +8246,11 @@
       // the row after `A` as pieces: the text typed, in the page's font, then the words the change left as drawn,
       // each with the gap before it
       const width = (t) => pdfTextWidth(ctx, f, t, f.size * k) / k, pieces = [];
-      // a blank line typed (Enter) starts a paragraph: the piece after it opens an indented row of its own
-      const raw = g.text.slice(A.e, upto), pars = new Set(verb ? [] : [...raw.matchAll(/\n[ \t]*\n/g)].map((m) => pdfPlainOf(raw.slice(0, m.index) + ' ').split(' ').length - 1));
-      for (const [i, part] of pdfPlainOf(raw, verb).split(' ').entries()) pieces.push({ gap: i ? gap : 0, n: width(part), t: part, par: pars.has(i) });
+      // the text typed as pieces, its formulas laid out as math; the caret in the last piece of the text up to it
+      const M = pdfMathOf(img, f), typed = (to) => pdfPieces(g.text, A.e, to, verb, width, gap, M);
+      pieces.push(...typed(upto));
       kept.forEach((t, i) => pieces.push({ gap: i ? t.w[1] - kept[i - 1].w[3] : 0, n: t.w[3] - t.w[1], w: t.w }));
-      const before = pdfPlainOf(g.text.slice(A.e, g.at), verb), into = before.split(' ').length - 1, tail = width(before.split(' ').at(-1));
+      const before = typed(g.at), into = before.length - 1, tail = before.at(-1).n;
       // laid from A's end; what passes the text's right edge wraps: to the start of the paragraph's next row (the next
       // page's too), whose words move along, then to rows of its own a baseline skip apart (the paragraph's own, else
       // 1.2 em), from the paragraph's left edge, painted over what the page set there
@@ -8171,35 +8260,38 @@
       const onPage = para.filter((t) => t.w[0] === w[0]), right = Math.max(hb ? hb.x + hb.w : 0, ...onPage.map((t) => t.w[3])), left = Math.min(hb ? hb.x : Infinity, ...onPage.map((t) => t.w[1]));
       const bases = [...new Set(onPage.map((t) => Math.round(t.w[4] * 4) / 4))].sort((p, q) => p - q), steps = bases.slice(1).map((v, i) => v - bases[i]).filter((d) => d > f.size * 0.8 && d < f.size * 2.5).sort((p, q) => p - q);
       const skip = steps.length ? steps[steps.length >> 1] : f.size * 1.2;
-      let next = para.find((t) => t.s >= A.e && (t.w[0] !== w[0] || t.w[4] > w[4] + 1));
-      const rows = [{ img, w, row, x: w[3], f, k, out: [] }];
-      let x = w[3];
-      for (let i = 0; i < pieces.length; i++) {
-        const q = pieces[i];
-        let r = rows.at(-1);
-        if (i && (q.par || q.n && x + q.gap + q.n > right + 0.5)) {
-          if (next && !q.par) {
-            const n = next.w, nimg = page(n[0]), nrow = para.filter((t) => t.w[0] === n[0] && Math.abs(t.w[4] - n[4]) < 1 && t.s >= next.s);
-            rows.push(r = { img: nimg, w: null, row: nrow, x: n[1], f: pdfFontOf(nimg, n), k: nimg.naturalWidth / pageSize(nimg)[0], out: [], n });
-            // its own words follow what came over
-            pieces.push(...nrow.map((t, j) => ({ gap: j ? t.w[1] - nrow[j - 1].w[3] : gap, n: t.w[3] - t.w[1], w: t.w })));
-            next = null;
-            x = n[1] - q.gap;
-          } else {
-            const o = r.n ?? r.w, at = left + (q.par ? 1.5 * f.size : 0), n = [o[0], at, o[2] + skip, at, o[4] + skip, ''];
-            rows.push(r = { img: r.img, w: null, row: [], x: at, f: { ...r.f, base: r.f.base + skip }, k: r.k, out: [], n, extra: true });
-            x = at - q.gap;
-          }
-        }
-        x += q.gap;
-        r.out.push({ ...q, x });
-        x += q.n;
-        // the caret after the typed piece it stands in
-        if (i === into) { cx = x - q.n + tail; if (r.n) w = r.n; }
+      // a new paragraph (Enter) as the page sets them: its indent the common one of rows that start right of the
+      // margin by under 3 em, its gap what baselines further apart than a line add; else 1.5 em and none
+      const med = (xs) => xs.length ? xs.sort((p, q) => p - q)[xs.length >> 1] : null;
+      const lines = [...Map.groupBy(pdfImgWords(img), (v) => Math.round(v[4]))].sort((p, q) => p[0] - q[0]).map(([y, ws]) => [y, Math.min(...ws.map((v) => v[1]))]);
+      const indent = med(lines.map(([, x]) => x - left).filter((d) => d > 1 && d < 3 * f.size)) ?? 1.5 * f.size;
+      const parskip = med(lines.slice(1).map(([y], i) => y - lines[i][0] - skip).filter((d) => d > 0.5 && d < 2 * skip)) ?? 0;
+      // the paragraph's rows after A's as the page set them, each its words (the first after a word space)
+      const later = [];
+      for (let t = para.find((u) => u.s >= A.e && (u.w[0] !== w[0] || u.w[4] > w[4] + 1)); t;) {
+        const n = t.w, s0 = t.s, nrow = para.filter((u) => u.w[0] === n[0] && Math.abs(u.w[4] - n[4]) < 1 && u.s >= s0), last = nrow.at(-1);
+        later.push({ x: n[1], n, row: nrow, pieces: nrow.map((u, j) => ({ gap: j ? u.w[1] - nrow[j - 1].w[3] : gap, n: u.w[3] - u.w[1], w: u.w })) });
+        t = last && para.find((u) => u.s > last.s && (u.w[0] !== n[0] || u.w[4] > n[4] + 1));
       }
+      // TeX's lines without hyphenation (PE.reflow): overflow runs on into the rows below, a deletion takes words up
+      const flow = PE.reflow(pieces.map((q, ix) => ({ ...q, ix })), w[3], { right, left, indent, skip, parskip, rows: later, pull: dl < 0 });
+      const rows = [];
+      for (const fr of flow.rows) {
+        const prev = rows.at(-1), L = later[fr.from];
+        let r;
+        if (fr.from === -2) r = { img, w, row, x: fr.x, f, k, out: fr.out };
+        else if (L) { const nimg = page(L.n[0]); r = { img: nimg, w: null, row: L.row, x: fr.x, f: pdfFontOf(nimg, L.n), k: nimg.naturalWidth / pageSize(nimg)[0], out: fr.out, n: L.n }; }
+        else { const o = prev.n ?? prev.w, n = [o[0], fr.x, o[2] + fr.dy, fr.x, o[4] + fr.dy, '']; r = { img: prev.img, w: null, row: [], x: fr.x, f: { ...prev.f, base: prev.f.base + fr.dy }, k: prev.k, out: fr.out, n, extra: true, dy: fr.dy }; }
+        rows.push(r);
+        // the caret after the typed piece it stands in
+        const q = fr.out.find((u) => u.ix === into);
+        if (q) { cx = q.x + tail; if (r.n) w = r.n; }
+      }
+      // a row whose words all went up is painted empty
+      for (const ix of flow.freed) { const L = later[ix], nimg = page(L.n[0]); rows.push({ img: nimg, w: null, row: L.row, x: L.x, f: pdfFontOf(nimg, L.n), k: nimg.naturalWidth / pageSize(nimg)[0], out: [], n: L.n }); }
       // rows past the paragraph's own push what the page sets below them down (cut at the page's foot), never over it
       const extra = rows.filter((r) => r.extra);
-      if (extra.length) pdfEchoPush(extra[0].img, extra[0].n[4] - skip + 0.5, extra.filter((r) => r.img === extra[0].img).length * skip);
+      if (extra.length) pdfEchoPush(extra[0].img, extra[0].n[4] - extra[0].dy + 0.5, extra.filter((r) => r.img === extra[0].img).reduce((d, r) => d + r.dy, 0));
       // a centered row (a caption, `\centering`) that did not wrap stays centered: it moves by half its change, the words up to A redrawn from the page too
       const r0 = rows[0];
       if (rows.length === 1 && hb && line.length && !verb) {
@@ -8221,9 +8313,14 @@
     return true;
   }
   /** The page `img` from `top` (bp) down drawn `dy` bp lower: room for rows the echo adds. */
+  let pdfPushWas = null;
   function pdfEchoPush(img, top, dy) {
+    // the same push as the key before: its canvas again (a page-sized repaint a key was most of the echo's cost)
+    const key = `${img.currentSrc}|${top}|${dy}`;
+    if (pdfPushWas?.key === key) return void img.parentElement.append(pdfPushWas.cv);
     const [pw, ph] = pageSize(img), k = img.naturalWidth / pw, W = img.naturalWidth, H = Math.ceil((ph - top) * k), cv = document.createElement('canvas');
     if (H <= 0) return;
+    pdfPushWas = { key, cv };
     Object.assign(cv, { width: W, height: H, className: 'pdf-echo pdf-push' });
     const g = cv.getContext('2d');
     g.fillStyle = '#fff';
@@ -8237,17 +8334,20 @@
   function pdfEchoPaint({ img, w, row, x: x0, f, k, out, n }) {
     const [pw, ph] = pageSize(img), all = [...(w ? [w] : []), ...(n ? [n] : []), ...row.map((t) => t.w)];
     if (!all.length) return;
-    const top = Math.min(...all.map((v) => v[2])) - 1, bot = Math.max(...all.map((v) => v[4])) + 1.5;
+    // the row's band painted over; a formula taller than it reaches past, over the page
+    const band = [Math.min(...all.map((v) => v[2])) - 1, Math.max(...all.map((v) => v[4])) + 1.5], math = out.filter((q) => q.math);
+    const top = Math.min(band[0], ...math.map((q) => f.base - q.math.h * q.M.em - 1)), bot = Math.max(band[1], ...math.map((q) => f.base + q.math.d * q.M.em + 1));
     const x1 = Math.max(x0, ...out.map((q) => q.x + q.n), ...row.map((t) => t.w[3])) + 1;
     const cv = document.createElement('canvas'), W = Math.ceil((x1 - x0) * k), H = Math.ceil((bot - top) * k), cg = cv.getContext('2d');
     Object.assign(cv, { width: W, height: H, className: 'pdf-echo' });
     cg.fillStyle = '#fff';
-    cg.fillRect(0, 0, W, H);
+    cg.fillRect(0, (band[0] - top) * k, W, (band[1] - band[0]) * k);
     cg.fillStyle = '#000';
     cg.font = `${f.size * k}px ${f.family}`;
     for (const q of out) {
       // text as wide as laid out (`n`): glyphs the face lacks are drawn in the fallback, stretched to the page's width
       if (q.t != null) { const m = cg.measureText(q.t).width, sx = m > 0 && q.n ? q.n * k / m : 1; cg.save(); cg.scale(sx, 1); cg.fillText(q.t, (q.x - x0) * k / sx, (f.base - top) * k); cg.restore(); }
+      else if (q.math) pdfMathPaint(cg, q, (q.x - x0) * k, (f.base - top) * k, k);
       // no glyph of a word the change left redrawn: its pixels moved
       // a word moved from another row (wrapped down) comes from its own place, set on this row's baseline
       else {
@@ -8257,6 +8357,62 @@
     }
     cv.style.cssText = `left:${x0 / pw * 100}%;top:${top / ph * 100}%;width:${(x1 - x0) / pw * 100}%;height:${(bot - top) / ph * 100}%`;
     img.parentElement.append(cv);
+  }
+  /** Typed text `from..to` as PE.reflow's pieces: its words in the page's font (`width`, word space `gap`), each formula
+   * one piece laid out as math (PE.mathLaid) in fonts `M`, a display one standing on a row of its own. */
+  function pdfPieces(text, from, to, verb, width, gap, M) {
+    const out = [];
+    for (const r of verb ? [{ s: from, e: to, kind: '' }] : PE.mathRuns(text, from, to)) {
+      if (r.kind) {
+        // TeX's space about a display (about an em at 10pt), more for a formula taller or deeper than a line
+        const box = PE.mathLaid(text.slice(r.b, r.be), M.width, r.kind === 'display'), em = M.em;
+        out.push({ gap: 0, n: box.w * em, math: box, M, ...(r.kind === 'display' ? { disp: (0.8 + Math.max(0, box.h - 0.7)) * em, below: (0.8 + Math.max(0, box.d - 0.25)) * em } : {}) });
+        continue;
+      }
+      // a blank line typed (Enter) starts a paragraph: the piece after it opens an indented row of its own
+      const raw = out.at(-1)?.disp != null ? text.slice(r.s, r.e).replace(/^\s+/, '') : text.slice(r.s, r.e);
+      const pars = new Set(verb ? [] : [...raw.matchAll(/\n[ \t]*\n/g)].map((m) => pdfPlainOf(raw.slice(0, m.index) + ' ').split(' ').length - 1));
+      for (const [i, part] of pdfPlainOf(raw, verb).split(' ').entries()) out.push({ gap: i ? gap : 0, n: width(part), t: part, par: pars.has(i) });
+    }
+    return out.length ? out : [{ gap: 0, n: 0, t: '' }];
+  }
+  /** The fonts typed math is previewed in over page image `img`, its text in font `f` (pdfFontOf): per glyph the page's
+   * own face where a run of a shown page is set in it and its subset holds the glyph (math italic, symbols, bold:
+   * CMMI, CMSY, CMBX by pdf.js's names, Latin Modern's), else a fallback scaled to the page font's x-height.
+   * `font(face, t, px)` the canvas font, `width(t, face)` at 1 em, `em` the text's size in bp. Once per image and font. */
+  const PDF_ECHO_FONT = "'Latin Modern Roman', 'CMU Serif', 'Computer Modern', Georgia, serif";
+  const PDF_MATH_FONT = `'Latin Modern Math', 'STIX Two Math', 'Cambria Math', 'STIXGeneral', ${PDF_ECHO_FONT}`, pdfMathFor = new WeakMap();
+  let pdfMathCtx = null;
+  function pdfMathOf(img, f) {
+    const key = `${f.family} ${f.size}`;
+    if (pdfMathFor.get(img)?.key === key) return pdfMathFor.get(img);
+    const ctx = pdfMathCtx ??= document.createElement('canvas').getContext('2d'), runs = [img, ...pdfBody.querySelectorAll('.pdf-page img')].flatMap((i) => i.__runs ?? []);
+    const faceOf = (re) => { const r = runs.find((r) => re.test(r.name ?? '') && pdfFaceUp(r)); return r ? `'${r.font}'` : null; };
+    const own = { it: faceOf(/CMMI|LMMathItalic|MathItalic/i), sy: faceOf(/CMSY|LMMathSymbols|MathSymbols/i), bf: faceOf(/CMBX|LMRoman\d*-Bold\b/i), rm: f.own ? f.face : null };
+    const xh = (font) => { ctx.font = `100px ${font}`; return ctx.measureText('x').actualBoundingBoxAscent; };
+    const ratio = (fb) => { const r = own.rm && pdfHas(ctx, own.rm, 'x') ? xh(own.rm) / xh(fb) : 1; return r > 0.8 && r < 1.25 ? r : 1; };
+    const fit = { rm: ratio(PDF_ECHO_FONT), sy: ratio(PDF_MATH_FONT) }, memo = new Map();
+    const font = (face, t, px) => {
+      const o = own[face];
+      if (o && [...t].every((c) => pdfHas(ctx, o, c))) return `${px}px ${o}`;
+      return face === 'sy' ? `${px * fit.sy}px ${PDF_MATH_FONT}` : `${face === 'it' ? 'italic ' : face === 'bf' ? 'bold ' : ''}${px * fit.rm}px ${PDF_ECHO_FONT}`;
+    };
+    const width = (t, face) => {
+      const m = `${face} ${t}`;
+      if (!memo.has(m)) { ctx.font = font(face, t, 100); memo.set(m, ctx.measureText(t).width / 100); }
+      return memo.get(m);
+    };
+    const M = { key, own, font, width, em: f.size };
+    pdfMathFor.set(img, M);
+    return M;
+  }
+  /** Draws math piece `q` (pdfPieces') into canvas `cg` from `x` on baseline `y` (canvas px), `k` px a bp. */
+  function pdfMathPaint(cg, q, x, y, k) {
+    const em = q.M.em * k;
+    cg.save();
+    for (const [t, gx, gy, s, face] of q.math.g) { cg.font = q.M.font(face, t, em * s); cg.fillText(t, x + gx * em, y - gy * em); }
+    for (const [rx, ry, rw, rh] of q.math.r) cg.fillRect(x + rx * em, y - (ry + rh) * em, rw * em, Math.max(1, rh * em));
+    cg.restore();
   }
   /** Overlay labels (chips; a glue's leader and spec as one) within reach of the pointer or the caret fade and let the pointer through,
    * so the text under them reads; one the pointer is on shows fully, to be clicked. One rAF per pointer move. */
@@ -8277,16 +8433,29 @@
   /** The caret's place on screen at its last draw: a rebuilt page that moves its line scrolls the pages by as much. */
   let pdfCaretWas = null;
   function pdfCaretAnchor() {
-    const c = pdfCaret, el = pdfBody.querySelector('.pdf-caret'), top = el?.getBoundingClientRect().top;
+    const c = pdfCaret, el = pdfBody.querySelector('.pdf-caret');
+    // the same caret on the same row of the same build cannot have moved on screen: no layout read (one a key forced
+    // the page's layout mid-typing)
+    const key = el && `${el.style.top}|${el.parentElement?.dataset.page}|${pdfGen}`;
+    if (c && pdfCaretWas?.c === c && pdfCaretWas.key === key) return;
+    const top = el?.getBoundingClientRect().top;
     if (c && top != null && pdfCaretWas?.c === c && Math.abs(top - pdfCaretWas.top) > 2) {
       const sc = pdfBody.querySelector('.pdf-pages'), dy = top - pdfCaretWas.top;
       if (sc) { sc.scrollTop += dy; if (pdfKeep) pdfKeep[1] += dy; }
     }
-    pdfCaretWas = c && el ? { c, top: el.getBoundingClientRect().top } : null;
+    pdfCaretWas = c && el ? { c, top: el.getBoundingClientRect().top, key } : null;
     ovNearSoon();
   }
   /** The caret over the pages: in its word as the last build set it, the word as now written beside it while the pages lag. */
+  /** The caret and echo drawn, each draw timed as a `pdf-echo` performance measure (the last 200 kept). */
   function pdfCaretDraw() {
+    const t0 = performance.now();
+    try { return pdfCaretDrawNow(); } finally {
+      performance.measure('pdf-echo', { start: t0 });
+      if (performance.getEntriesByName('pdf-echo').length > 200) performance.clearMeasures('pdf-echo');
+    }
+  }
+  function pdfCaretDrawNow() {
     pdfBody.querySelectorAll('.pdf-caret, .pdf-echo').forEach((c) => c.remove());
     pdfErasedDraw();
     // the source editor's cursor follows the caret, scrolled into view (its focus stays in the view typed in)
@@ -8390,7 +8559,6 @@
     memo.by.set(key, xs);
     return xs;
   }
-  const PDF_ECHO_FONT = "'Latin Modern Roman', 'CMU Serif', 'Computer Modern', Georgia, serif";
   /** The caret's edits in turn: each sees the text the one before left. One runs at once while none waits. */
   let pdfTypeChain = Promise.resolve(), pdfQueued_ = 0;
   const pdfQueue = (f) => {
@@ -8436,6 +8604,7 @@
   const pdfWritten = (plan, how) => {
     const c = pdfCaretNow();
     if (!c) return;
+    pdfKeyAt = performance.now();
     const text = editor.text(), e = pdfPlan(plan, { text, at: c.at, fresh: c.fresh ?? null }, how);
     if (typeof e === 'string') return toast(`Not typed here: ${e}`);
     const [a, b, body, step] = e;
@@ -8458,6 +8627,18 @@
     if (!pdfCaret || e.isComposing) return;
     const step = { ArrowLeft: -1, ArrowRight: 1 }[e.key];
     // the completion list: Up and Down choose, Enter or Tab takes, Escape closes
+    // Tab or Enter right after `\\name` while its list is on the way: the pick waits for the list, the keys after it wait too
+    const g0 = pdfSeen();
+    if (!pdfMenu && pdfMenuAsk && /^(Enter|Tab)$/.test(e.key) && !e.shiftKey && /^\\[A-Za-z@]*$/.test(g0.text.slice(pdfMenuAsk.from, g0.at))) {
+      e.preventDefault();
+      const { from, ask } = pdfMenuAsk;
+      pdfQueue(async () => {
+        const all = await ask, c = pdfCaretNow(), n = c && /^\\([A-Za-z@]*)$/.exec(editor.text().slice(from, c.at)), item = n && pdfMenuItems(all, n[1])[0];
+        pdfMenuOff();
+        if (item) pdfMenuApply(item, from, true);
+      });
+      return;
+    }
     if (pdfMenu && /^(ArrowUp|ArrowDown|Enter|Tab|Escape)$/.test(e.key)) {
       e.preventDefault();
       if (e.key === 'Escape') pdfMenuOff();
@@ -8492,7 +8673,7 @@
         c.at += step;
         pdfCaretDraw();
       });
-    } else if (e.key === 'Backspace' || e.key === 'Delete') { e.preventDefault(); pdfEdit((text, at, fresh) => PE.key(text, at, e.key, { fresh })); }
+    } else if (e.key === 'Backspace' || e.key === 'Delete') { e.preventDefault(); const k = e.ctrlKey || e.altKey ? `Ctrl+${e.key}` : e.key; pdfEdit((text, at, fresh) => PE.key(text, at, k, { fresh })); }
   });
   /** Typed text: once a composition (an input method) ends, never its steps. */
   const pdfTaken = () => {
@@ -8507,18 +8688,26 @@
   /** The completion list at the caret after a `\`: the source editor's items for the name typed so far, \textbackslash among them. */
   var pdfMenu = null; // { el, items, sel, from }
   function pdfMenuOff() { pdfMenu?.el.remove(); pdfMenu = null; }
+  /** The list asked at the last `\\` while it is on the way: `{ from, ask }`. */
+  let pdfMenuAsk = null;
+  /** The items of the server's list `all` for `\\name`: a macro's call clicked, every command with its own first. */
+  function pdfMenuItems(all, name) {
+    const back = { label: 'textbackslash', detail: 'a backslash in the text: \\textbackslash{}', insertText: 'textbackslash{}' };
+    const made = pdfCaret?.made && `\\${name}` === pdfCaret.made, own = made && (all.find((i) => i.label === name) ?? { label: name, detail: 'the command clicked' });
+    return made ? [own, ...rank(all, '').filter((i) => i.label !== name)].slice(0, 60) : rank([...all.filter((i) => i.label !== 'textbackslash'), back], name).slice(0, 60);
+  }
   async function pdfMenuShow() {
     const g = pdfSeen(), m = /\\([A-Za-z@]*)$/.exec(g.text.slice(Math.max(0, g.at - 64), g.at));
     // verbatim names no command
     if (!m || !pdfCaret || PE.verbatimAt(g.text, g.at)) return pdfMenuOff();
-    const from = g.at - m[0].length, p = pdfPos(g.text, from + 1);
-    push();
-    const all = await completions(p, p.character, '\\'), back = { label: 'textbackslash', detail: 'a backslash in the text: \\textbackslash{}', insertText: 'textbackslash{}' };
-    const now = pdfSeen();
-    if (!pdfCaret || now.text.slice(from, now.at) !== m[0]) return;
-    // a macro's call clicked: every command, its own first
-    const made = pdfCaret.made && `\\${m[1]}` === pdfCaret.made, own = made && (all.find((i) => i.label === m[1]) ?? { label: m[1], detail: 'the command clicked' });
-    const items = made ? [own, ...rank(all, '').filter((i) => i.label !== m[1])].slice(0, 60) : rank([...all.filter((i) => i.label !== 'textbackslash'), back], m[1]).slice(0, 60);
+    const from = g.at - m[0].length, p = pdfPos(g.text, from + 1), ask = completions(p, p.character, '\\');
+    pdfMenuAsk = { from, ask };
+    const all = await ask;
+    if (pdfMenuAsk?.ask === ask) pdfMenuAsk = null;
+    // the name as typed now: keys typed while the list came on extend it
+    const now = pdfSeen(), n = /^\\([A-Za-z@]*)$/.exec(now.text.slice(from, now.at));
+    if (!pdfCaret || !n) return;
+    const items = pdfMenuItems(all, n[1]);
     if (!items.length) return pdfMenuOff();
     if (!pdfMenu) { pdfMenu = { el: Object.assign(document.createElement('ul'), { className: 'complete type-complete', role: 'listbox' }) }; document.body.append(pdfMenu.el); }
     Object.assign(pdfMenu, { items, sel: 0, from });
@@ -8537,14 +8726,17 @@
   function pdfMenuPick(k) {
     const item = pdfMenu?.items[k], from = pdfMenu?.from;
     pdfMenuOff();
-    if (!item) return;
+    if (item) pdfMenuApply(item, from);
+  }
+  /** `item` written over `\\name` from `from`; `now`: in the typing queue's turn already (pdfWritten, not pdfEdit). */
+  function pdfMenuApply(item, from, now = false) {
     let caret = -1;
     const body = '\\' + String(item.insertText ?? item.textEdit?.newText ?? item.label).replace(/\$\{(\d+)(?::([^}]*))?\}|\$(\d+)/g, (_, n, text = '', bare, off) => {
       if (caret < 0 && (n ?? bare) !== '0') caret = off;
       return text;
     });
     // the offset counted before the replacement: the fields before the first one are none
-    pdfEdit((text, at) => [from, at, body, caret < 0 ? body.length : caret + 1], { free: true });
+    (now ? pdfWritten : pdfEdit)((text, at) => [from, at, body, caret < 0 ? body.length : caret + 1], { free: true });
     // a macro's call renamed: its text is the new command's, the caret has no word left to stand in
     const c = pdfCaret;
     if (c?.made) pdfQueue(() => { if (pdfCaret === c) { pdfCaretOff(); pdfTypeIn.blur(); } if (c.view === 'pdf') pdfRebuild(true); });
@@ -8819,7 +9011,7 @@
     const names = (cls === 'package' || cls === 'class') ? [...new Set(definedOf(cls, what)?.commands ?? [])].filter((n) => /^\\[A-Za-z]{2,}$/.test(n) && !kernel.has(n)).sort() : [];
     return names.length ? ` ${cards.chipList(names, cards.csChip, 4)}` : '';
   };
-  const plural = (n, w) => `${num(n)} ${w}${n === 1 ? '' : /(s|ch)$/.test(w) ? 'es' : 's'}`;
+  const plural = (n, w) => `${num(n)} ${w}${n === 1 ? '' : /(s|x|ch|sh)$/.test(w) ? 'es' : 's'}`;
   /** One row's details: what it is, what it defines and loads, where its documentation is, and its files. */
   function details(cls, what, needs, files = []) {
     const parts = [];
@@ -9601,14 +9793,11 @@
   }
   /** The server aborted (a panic, out of memory): it starts again on the same texts, with a note. One that
    * keeps aborting stops, saying why, with a way to try again. */
-  let aborts = [];
-  function serverStopped(why) {
-    const now = performance.now();
-    aborts = [...aborts.filter((t) => now - t < 60000), now];
-    if (aborts.length > 2) {
-      return stoppedLine(`The language server stopped again: ${escape(why)}.`, () => { aborts = []; restart(); });
-    }
-    toast(`The language server stopped (${why}). It starts again on your text.`);
+  function serverStopped(why, detail = '') {
+    if (!crashed(why, detail)) return keepsStopping(why);
+    // an instance out of memory may hold its memory: a new worker starts clean
+    if (mirrorable && /memory|OOM|alloc/i.test(detail)) return recoverWorker(why, null, true);
+    busy('Restarting', `The analyzer stopped (${why}). Restarting it…`);
     restart();
   }
   /** A notification; `ended`: of a run that ended, while others go on. */
@@ -9652,7 +9841,7 @@
       for (const p of pending.values()) p.resolve(null);
       pending.clear();
       drainAnalysis();
-      serverStopped(data.message.split('\n')[0]);
+      serverStopped(data.message.split('\n')[0], data.message);
     } else if (data.type === 'error') {
       answer(REPLY[data.of])?.reject(new Error(data.message.split('\n')[0]));
     } else {
@@ -9756,6 +9945,10 @@
   });
   /** chaos.mjs: the worker crashes (an error event) or hangs (goes silent). */
   self.satexKill = (how) => { worker.terminate(); if (how === 'crash') onWorkerError({ message: 'the worker crashed' }); };
+  /** chaos tests on ?debug pages: the worker panics or runs out of memory at its next message, throws outside one, exits, hangs. */
+  if (DEBUG) self.satexChaos = (how) => how === 'forget' ? void (recent = []) : worker.postMessage({ type: 'chaos', how });
+  /** The crash log Report copies. Read-only. */
+  self.satexCrashes = () => crashes.map((c) => ({ ...c }));
   (async () => {
     let given;
     if (location.protocol === 'file:') {

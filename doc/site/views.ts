@@ -2348,13 +2348,13 @@ const satexViews = (() => {
   const size = (n: TNode): number => 1 + n.children.reduce((k, c) => k + size(c), 0);
   /** Moves `n` before or after `target` (`where` = 'before' | 'after'), or under it ('child'). */
   function move(t: Tree, n: TNode, target: TNode, where: string) {
-    if (within(n, target)) return false;
+    // the root has no siblings: nothing goes before or after it (checked first, so a refused move loses no node)
     const from = parentOf(t, n);
-    if (!from) return false;
+    if (within(n, target) || !from || where !== 'child' && !parentOf(t, target)) return false;
     from.children.splice(from.children.indexOf(n), 1);
     n.moved = true;
     if (where === 'child') target.children.push(n);
-    else { const p = parentOf(t, target); if (!p) return false; p.children.splice(p.children.indexOf(target) + +(where === 'after'), 0, n); }
+    else { const p = parentOf(t, target)!; p.children.splice(p.children.indexOf(target) + +(where === 'after'), 0, n); }
     return true;
   }
   // the dialog's edits, each returning the node to select (null: nothing done)

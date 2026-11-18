@@ -2076,18 +2076,20 @@ def showcase(out, live):
                 if made := derive(still, ext):
                     shutil.copy2(made, out / "showcase" / f"{stem}-{scheme}.{ext}")
                     sources += f'<source type="{kind}" srcset="showcase/{stem}-{scheme}.{ext}">'
+            # a video's name carries its content's hash: a browser's cached copy of an older take never plays
+            vstem = f"{stem}-{scheme}.{digest(video.read_bytes())[:10]}" if video.exists() else ""
             if video.exists():
-                shutil.copy2(video, out / "showcase" / video.name)
+                shutil.copy2(video, out / "showcase" / f"{vstem}.webm")
                 if made := derive(video, "mp4"):
-                    shutil.copy2(made, out / "showcase" / f"{stem}-{scheme}.mp4")
+                    shutil.copy2(made, out / "showcase" / f"{vstem}.mp4")
             pics.append(f'<picture class="shot-{scheme}">{sources}'
                         f'<img src="showcase/{stem}-{scheme}.png" width="{width}" height="{height}" alt="{alt if scheme == "light" else ""}" loading="lazy" decoding="async"></picture>')
             # the video plays over its poster, the still: site.js loads it near the viewport, never under reduced motion
             if (src / f"{stem}-{scheme}.webm").exists():
                 # a demo loops over its first frame, the still: no gap and no jump when it starts over
-                again = f' loop poster="showcase/{still.name}"' if loop else ""
+                again = f' loop poster="showcase/{still.name}?v={digest(still.read_bytes())[:8]}"' if loop else ""
                 pics.append(f'<video class="shot-video shot-{scheme}" width="{width}" height="{height}"{again} muted playsinline preload="none" aria-hidden="true" '
-                            f'data-src="showcase/{stem}-{scheme}"></video>')
+                            f'data-src="showcase/{vstem}"></video>')
         return "".join(pics)
 
     # the capture as cut out, no title bar around it

@@ -50,7 +50,7 @@ self.satexDraw = (
 ) => {
   const esc = (s: unknown) =>
     String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c as '&']);
-  const plural = (n: number, w: string) => `${n} ${w}${n === 1 ? '' : /(s|ch)$/.test(w) ? 'es' : 's'}`;
+  const plural = (n: number, w: string) => `${n} ${w}${n === 1 ? '' : /(s|x|ch|sh)$/.test(w) ? 'es' : 's'}`;
   // The candidates (build.py `symbols`) are unicode-math's table and the icon packages' commands, each
   // drawn in the font that sets it. The drawing and each glyph are cut to their ink, scaled into one
   // square with their aspect kept, and reduced to their outline: a filled icon and a drawn outline

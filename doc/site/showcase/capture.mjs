@@ -83,14 +83,29 @@ async function write(text) {
   await until(`return ${QUIET}`, 120000);
   await sleep(1000);
 }
-const mouse = async (type, [x, y], extra = {}) => raw('Input.dispatchMouseEvent', { type, x, y, button: 'none', ...extra });
+let at = [1, 1];
+const mouse = async (type, [x, y], extra = {}) => { at = [x, y]; return raw('Input.dispatchMouseEvent', { type, x, y, button: 'none', ...extra }); };
+/** An eased move from where the mouse is to `to` over `ms`, as a hand moves. */
+async function glide(to, ms, extra = {}) {
+  const a = at, n = Math.max(1, Math.round(ms / 30));
+  for (let i = 1; i <= n; i++) {
+    const t = i / n, e = t < .5 ? 2 * t * t : 1 - (-2 * t + 2) ** 2 / 2;
+    await mouse('mouseMoved', [a[0] + (to[0] - a[0]) * e, a[1] + (to[1] - a[1]) * e], extra);
+    await sleep(ms / n);
+  }
+}
+/** A drawn arrow that follows the mouse: a headless screencast shows no pointer. */
+const CURSOR = `if (!document.getElementById('showcase-cursor')) { const c = document.createElement('div'); c.id = 'showcase-cursor';
+  c.style.cssText = 'position:fixed;left:0;top:0;width:18px;height:24px;z-index:2147483647;pointer-events:none;transform:translate(-40px,-40px)';
+  c.innerHTML = '<svg width="18" height="24" viewBox="0 0 18 24"><path d="M1 1v19l5-5 3.5 7.5 3-1.4L9 13.6h7z" fill="#111" stroke="#fff" stroke-width="1.4" stroke-linejoin="round"/></svg>';
+  document.documentElement.append(c); addEventListener('mousemove', (e) => { c.style.transform = 'translate(' + e.clientX + 'px,' + e.clientY + 'px)'; }, true); }`;
 
 /** The point an expression gives: [x, y], or an element's centre. */
 const point = (e) => js(`const t = ${e}; if (Array.isArray(t)) return t; t.scrollIntoView({ block: 'nearest' }); const r = t.getBoundingClientRect(); return [r.x + r.width / 2, r.y + r.height / 2];`);
 /** A mouse drag from one point to another over `ms`, eased, as a hand moves. */
 async function drag(from, to, ms = 900) {
   const [a, b] = [await point(from), await point(to)], n = Math.max(8, Math.round(ms / 30));
-  await mouse('mouseMoved', a);
+  await glide(a, Math.min(500, Math.hypot(a[0] - at[0], a[1] - at[1]) * 2));
   await mouse('mousePressed', a, { button: 'left', buttons: 1, clickCount: 1 });
   for (let i = 1; i <= n; i++) {
     const t = i / n, e = t < .5 ? 2 * t * t : 1 - (-2 * t + 2) ** 2 / 2;
@@ -114,8 +129,8 @@ async function type(text) {
 }
 const OPENED = `document.querySelector('dialog.sd-dialog[open]') || document.getElementById('play-view').open`;
 
-/** One step: `eval` runs, `until` waits for, `hover`/`click` point at an expression giving [x, y] or an element,
- * `drag` is [from, to], `open` opens the entry's widget. */
+/** One step: `eval` runs, `until` waits for, `hover`/`click` point at an expression giving [x, y] or an element
+ * (`glide` ms: the mouse moves there first, `right`: the right button), `drag` is [from, to], `open` opens the entry's widget. */
 async function step(s, shot) {
   if (s.open) s = { eval: `return await satexOpen(${JSON.stringify(Object.fromEntries(['widget', 'at', 'k'].map((k, i) => [k, shot.open[i]])))})`, until: OPENED, ...s, open: undefined };
   if (s.drag) { await drag(...s.drag, s.over); if (s.wait) await sleep(s.wait); return; }
@@ -132,9 +147,10 @@ async function step(s, shot) {
   const target = s.hover ?? s.click;
   if (target) {
     const p = await point(target);
-    await mouse('mouseMoved', [p[0] - 4, p[1]]);
-    await mouse('mouseMoved', p);
-    if (s.click) for (const type of ['mousePressed', 'mouseReleased']) await mouse(type, p, { button: 'left', clickCount: 1 });
+    if (s.glide) await glide(p, s.glide); else { await mouse('mouseMoved', [p[0] - 4, p[1]]); await mouse('mouseMoved', p); }
+    const button = s.right ? 'right' : 'left';
+    if (s.click) for (const type of ['mousePressed', 'mouseReleased']) await mouse(type, p, { button, buttons: type === 'mousePressed' ? (s.right ? 2 : 1) : 0, clickCount: 1 });
+    if (s.after) await sleep(s.after);
   }
 }
 
@@ -171,6 +187,7 @@ async function record(s, stem, [w, h]) {
       frames.push([f, performance.now() / 1000]);
       raw('Page.screencastFrameAck', { sessionId: p.sessionId });
     });
+    if (s.cursor) await js(CURSOR);
     await raw('Page.startScreencast', { format: 'png', maxWidth: w * 2, maxHeight: h * 2, everyNthFrame: 1 });
     await sleep(300);
     for (const st of s.video) await step({ ms: 45000, ...st }, s);
@@ -230,6 +247,8 @@ try {
   for (let i = 0; i < 100 && !page; i++) { await sleep(100); page = (await raw('Target.getTargets', {}, null)).result?.targetInfos?.find((t) => t.type === 'page'); }
   session = (await raw('Target.attachToTarget', { targetId: page.targetId, flatten: true }, null)).result.sessionId;
   await raw('Runtime.enable');
+  // `cargo playground --dev` reloads the page when a site file changes: a take keeps its page
+  await raw('Page.addScriptToEvaluateOnNewDocument', { source: `const E = self.EventSource; if (E) self.EventSource = class extends E { constructor(u, o) { super(String(u).includes('/__dev/') ? 'data:,' : u, o); } };` });
   mkdirSync(out, { recursive: true });
   const schemes = (process.env.SCHEMES ?? 'light,dark').split(',');
   const failures = [];
