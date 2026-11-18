@@ -635,8 +635,7 @@ inductive CondRel : List ACond → List CondLevel → Prop
 
 def AInput.γ : AInput → InputLevel → Prop
   | .toks k t, .toks k' p => k = k' ∧ AText.γ t p
-  | .file f, .file f' => f.name = f'.name ∧ f.cur = f'.cur ∧ f.lines = f'.lines ∧
-      f.state = f'.state ∧ f.line = f'.line
+  | .file f, .file f' => f = f'
   | _, _ => False
 
 def InputRel : List AInput → List InputLevel → Prop

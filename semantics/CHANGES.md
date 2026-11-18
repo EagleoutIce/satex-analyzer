@@ -3,6 +3,28 @@
 Coordination log for the three semantics jobs. Newest first. Core names are
 stable once published; a change to one is announced here first.
 
+## Reader round (2026-11-18)
+
+* Abstract: `AInput.γ` pins a file level exactly (`f = f'`), so `eofSeen`,
+  `text` and `pseudo` are no longer free.
+* New `Satex/Mouth.lean`: `aint`, `atoks`, `acat` (values the abstract eqtb
+  knows exactly), the line tokenizer `alineTok` and `ascan` (§§ 343–356),
+  and `amouth`, `get_next` over the abstract input with files (§§ 357–362,
+  `\everyeof`).
+* New `Satex/Operands.lean`: `GState` (moved from Global, now with `feof`),
+  `GState.next` (replaces `anext`), `ameaning` (moved), the operand readers
+  `rtoken`, `letRhs`, `letOps`, `abody`, `defOps`, `GState.finish`,
+  `GState.define`, and the number reader `xnext`, `xnonblank`, `adigits`,
+  `scanInt` (decimal digits, alphabetic constants), `optSpace`,
+  `optEquals`, `back`, `acodeOk` (`raise_γ` moved here).
+* New `Satex/Conds.lean`: `condExact`, `apass` (§ 494), `askip` (§ 500),
+  `askipFi` (§ 510) and their lemmas.
+* Global: `read` follows files, spaces, `\let` with a known right side,
+  `\def`/`\gdef` without parameters, integer parameters, `\count`
+  registers and code tables (`\catcode`, …) set to numbers it reads, `\endinput`, a stray `\endcsname`,
+  `\iftrue`/`\iffalse` and the `\else`/`\or`/`\fi` of a known level. The main theorem's statement is
+  unchanged. It is stronger because `read` answers `none` in fewer cases.
+
 ## Audit A fixes (2026-11-07)
 
 * Core: `Item.vbox`, `Cmd.alter` (`\spacefactor`, `\prevdepth`, `\prevgraf`,

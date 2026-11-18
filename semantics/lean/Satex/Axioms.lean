@@ -16,6 +16,27 @@ open Satex.Soundness
 /-- info: 'Satex.Soundness.step_covered' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in #print axioms step_covered
 
+/-- info: 'Satex.Soundness.amouth_sound' depends on axioms: [propext, Quot.sound] -/
+#guard_msgs in #print axioms amouth_sound
+
+/-- info: 'Satex.Soundness.letOps_sound' depends on axioms: [propext, Quot.sound] -/
+#guard_msgs in #print axioms letOps_sound
+
+/-- info: 'Satex.Soundness.defOps_sound' depends on axioms: [propext, Quot.sound] -/
+#guard_msgs in #print axioms defOps_sound
+
+/-- info: 'Satex.Soundness.gdefine_sound' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms gdefine_sound
+
+/-- info: 'Satex.Soundness.scanInt_sound' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms scanInt_sound
+
+/-- info: 'Satex.Soundness.askip_sound' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms askip_sound
+
+/-- info: 'Satex.Soundness.askipFi_sound' depends on axioms: [propext, Quot.sound] -/
+#guard_msgs in #print axioms askipFi_sound
+
 /-- info: 'Satex.Soundness.run_covered_families' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in #print axioms run_covered_families
 

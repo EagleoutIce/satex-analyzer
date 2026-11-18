@@ -2,7 +2,7 @@
 
 > Written with AI assistance from Claude Code (Claude Opus 5.5; build fixes with Claude Sonnet 5.5), directed and reviewed by the author.
 
-Files: `lean/Satex/Soundness.lean` and `lean/Satex/Global.lean` (main theorem), imported from `lean/Satex.lean`.
+Files: `lean/Satex/Soundness.lean`, `lean/Satex/Mouth.lean` (the abstract mouth), `lean/Satex/Operands.lean` (the global state and operand readers), `lean/Satex/Conds.lean` (conditionals) and `lean/Satex/Global.lean` (main theorem), imported from `lean/Satex.lean`.
 `lake build` succeeds (Lean 4.35.0, core only). No `sorry` in any file.
 `lean/Satex/Axioms.lean` checks with `#guard_msgs` that the main theorems use only `propext`, `Classical.choice` and `Quot.sound`. The build fails if that changes.
 
@@ -10,16 +10,51 @@ Files: `lean/Satex/Soundness.lean` and `lean/Satex/Global.lean` (main theorem), 
 
 `satex_sound_and_terminating` (`lean/Satex/Global.lean`) has no hypothesis. The reader `read` and the run `OStep` are definitions.
 
-The abstract run is over `Option GState`. `GState` is an `AState` with the pending prefixes and the `\afterassignment` token pinned exactly (audit C15). `none` is `lost`: the named havoc, γ = every state.
-`read` follows the next literal token on top of a token list (exhausted lists are popped, § 324) whose meaning is one exact meaning. It runs these transfers:
+The abstract run is over `Option GState`. `GState` is an `AState` with the pending prefixes, the `\afterassignment` token and `force_eof` pinned exactly (audit C15). `none` is `lost`: the named havoc, γ = every state.
+
+### The mouth
+
+`read` takes the next token with `GState.next`, which runs `amouth` (`Mouth.lean`):
+
+- from a token list: the next literal token. Used-up lists are popped (§ 324).
+- from a file: TeX's tokenizer as a function (`alineTok`, §§ 343–356). Letters, others, spaces, `{`, `}`, math shift, alignment tab, parameter, superscript and subscript characters, active characters, control words and control symbols, ignored, invalid and comment characters, and the end of a line (a space, `\par` or nothing, by the scanner state). Each catcode comes from the abstract eqtb and must be one known number (`acat`).
+- at the end of a line: the next line with the `\endlinechar` in force (§ 362), if that is one known number.
+- at the end of a file: the file level goes, or `\everyeof` comes first when it is a known literal list (etex.ch). `force_eof` decides first, as in § 362.
+
+Intuition: a file level is concrete in SaTeX. Its name, lines, rest of line and scanner state are known, so `AInput.γ` pins it exactly (`f = f'`). Only the catcode table is abstract. So the tokenizer can run as it is, asking the abstract eqtb for each catcode it needs. The alternative, an abstract tokenizer over catcode sets, would fork at every character whose catcode is not known. SaTeX does not do that either.
+
+The choice to make the tokenizer a function, not a relation like `LineTok`: the reader must compute its answer. `alineTok_sound` shows that every `LineTok` derivation gives the function's answer. So the relation is deterministic wherever the function answers. `^^` reductions are not followed. They rewrite the buffer, and documents rarely use them.
+
+Why `force_eof` is in `GState`: `\endinput` sets it and the end of a line reads it. Left free, every line end would split into "next line" and "file ended".
+
+### Commands
+
+`read` follows a token whose meaning is one exact meaning and runs these transfers:
 
 - a macro without parameters (§ 389): its body is pushed, used-up lists popped first (§ 390);
-- an undefined name (§ 370), `\relax` (§ 1045), a prefix (§ 1211);
+- an undefined name (§ 370), `\relax` (§ 1045), a prefix (§ 1211), a space (§ 1045): glue in a paragraph, nothing elsewhere, and γ does not see the list;
 - `\begingroup` and `{` outside math (`AState.beginGroup`, § 1063);
 - `\endgroup` and `}` when the abstract save stack names the group (`atopGroup`): a simple or semi-simple group closes (`AState.endGroup`, §§ 281–283), the error cases change nothing γ sees;
-- `\aftergroup` (save entry, § 1271) with a pinned group level, `\afterassignment` (token kept, § 1269).
+- `\aftergroup` (save entry, § 1271) with a pinned group level, `\afterassignment` (token kept, § 1269);
+- `\let` (§ 1221) whose right side has a known meaning, with at most `\global` pending: `define_sound` through `gdefine_sound`;
+- `\def` and `\gdef` (§ 1218) without parameters: the replacement text up to the matching `}` (`abody`), then `define_sound`;
+- an integer parameter (§ 1228), a `\count` register (§ 1224) and a code table entry (§ 1232: `\catcode`, `\lccode`, …) set to a number the reader follows, such as `\tolerance=200`, `\count0=5` or `` \catcode`\@=11 ``: `assign_local_sound` and `assign_global_sound` through `gdefine_sound`. An invalid code is an error and gives 0, as in TeX. For `\lccode` and `\uccode` the limit depends on the engine, so only codes up to 255 (valid in all) or past 1114111 (valid in none) are followed;
+- `\endinput` (§ 378): `force_eof` is set, so the file ends at its line end (§ 362);
+- `\endcsname` without `\csname`: an error (§ 1135);
+- `\iftrue` and `\iffalse` (§§ 498, 500), also under a name `\let` to them (as `\newif` makes), and the `\else`, `\or` and `\fi` of a level the stack knows (§ 510). A false test skips to its `\else` or `\fi` without expansion, nesting by meaning (`apass`, `askip`, `askipFi` in `Conds.lean`). The stack must be exact (no `many` frame). One path per test: the run does not fork.
 
-Anything else gives `read = none` and the run goes to `lost`: a file on top of the input, a hole, digits or a one-of on top, an unknown or `may` meaning, a primitive matched by name (alignments, §1046), a box or list group's `}`, and every command not listed above, assignments included.
+The operand readers live in `Operands.lean`: `rtoken` (§ 1215), `letRhs` (§ 1221), `abody` (§ 473), `optEquals` (§ 405) and `scanInt` (§ 440: decimal digits or an alphabetic constant up to 255). Each one reads with `GState.next` and has a lemma that the concrete relation (`RToken`, `LetRhs`, `ParamText`, `DefBody`, `OptEquals`, `ScanInt`) gives the same result.
+
+Numbers are read after expansion (`XNext`). The reader does not expand. It follows a number only while each token it reads has a known meaning that does not expand. One lemma makes this cheap: every `Expand` rule starts with an expandable token (`expand_head`). So a token known not to expand rules out all of them at once, and `XNext` is then just `Next`. `GState.define` ends every assignment as `finishAssign` does (§ 1269): the prefixes go, the `\afterassignment` token is pushed. `\globaldefs` must be one known number.
+
+Anything else gives `read = none` and the run goes to `lost`:
+
+- the mouth: a hole, digits or a one-of on top of a token list, a file character whose catcode is not one known number, a `^^` reduction, a line end when `\endlinechar` is not known, a file end when `\everyeof` is not a known literal list;
+- the meaning: an unknown or `may` meaning, a primitive matched by name (alignments, § 1046);
+- the command: a box or list group's `}`, and every command not listed above. Among them: macros with parameters, `\edef`, `\futurelet`, other assignments, conditionals other than `\iftrue`/`\iffalse` (their tests read numbers, dimensions or tokens), `\unless`, a `\fi` while a test is read or with no level open, `\par`, and a letter or other character in vertical mode (it starts a paragraph);
+- skipping: a skipped token whose meaning is not known (inner conditionals are found by meaning);
+- the operands: a space token before the name or before `=` (only a token list holds one there), `\long`, `\outer` or `\protected` before an assignment, a parameter or `#` in a `\def`, a body longer than the input (`isize`), an unknown `\globaldefs`;
+- numbers: a sign, an octal or hexadecimal constant, an alphabetic constant past 255, an internal quantity (`\count1=\count2`), a token that would expand next to a number, two spaces in a row before it. Dimension, glue and token registers, `\chardef` and relatives, `\advance`, `\multiply` and `\divide` are not followed.
 
 The theorem says:
 
@@ -29,17 +64,19 @@ The theorem says:
 4. with any budget the budgeted run covers it, has no infinite run and none longer than its budget;
 5. every abstract state has finitely many successors.
 
+The statement is the same as before this round. What changed is `read`: it answers `none` in fewer cases, and `step_covered` proves the new ones.
+
 `step_covered` is the work: for each state `read` follows, every `Exec` rule (and every `Expand` rule) that could fire is either the one the reader models, with its result covered, or refuted by the head token's meaning, the prefixes, the mode or the group code.
 
-Counter-model check: `Read`, `Other` and `hsplit` are gone. `read` and `OStep` are fixed, so neither `Read := ⊥` nor `Other := Concrete.Step E` can be chosen. A reader that always answered `none` would make the theorem trivial; this one answers `none` only in the cases listed above, and `step_covered` must hold in all others.
+Counter-model check: `Read`, `Other` and `hsplit` are gone. `read` and `OStep` are fixed, so neither `Read := ⊥` nor `Other := Concrete.Step E` can be chosen. A reader that always answered `none` would make the theorem trivial. This one answers `none` only in the cases listed above, and `step_covered` must hold in all others.
 
 What this does not say:
 
-- After the first command `read` does not follow, the run is `lost` and nothing more is claimed. A real document starts from a file, so today `lost` comes at the first token of a file. The theorem is free of assumptions but weak.
-- The proven assignment transfers (`assign_*_sound`, `define_sound`, `weakAssign_sound`) are not used: an assignment reads operands (`ScanInt`, `Value`, `RToken`, `LetRhs`), and `read` has no abstract scanner yet. `\let` with literal tokens is the cheapest next step.
-- `branch_sound`/`ifNum_branch_sound`: conditionals read their test (`ScanInt`, `\ifx` tokens); not followed. `scanDelim_sound`, `stripBraces_sound`, `substitute_sound`: macros with parameters need `scanUndelim_sound` (open) and reading across levels. `loopHead_sound`, `summaryHavoc_sound`, `aval_widen_sound`: no join or widening in `OStep` yet (one path per `read` result). These stay guarded in `Axioms.lean` only.
-- The old split (`run_covered_families`, `fam_covered`, `ReadCovers`) remains as a generic lemma; no main theorem uses it.
-- `State.forceEof`, `eofSeen`, `pseudo`, `text`, read streams and the nest beyond the mode kind are still free in γ (C15). `read` never follows a file, so it never needs them.
+- After the first command `read` does not follow, the run is `lost` and nothing more is claimed. Files are now read, so a run no longer is `lost` at the first token of a file. It is `lost` at the first command outside the list. Code made only of the commands above is followed until the input runs out: definitions without parameters, `\let`, groups, spaces, `\catcode` and `\count` assignments, `\iftrue` and `\iffalse`. In a LaTeX document it is early: `\documentclass` is a macro with parameters, and the first letter of text starts a paragraph.
+- Only integer parameters, `\count` registers and code tables are followed, with numbers `scanInt` reads. `weakAssign_sound` is not used. A `\catcode` change the reader follows is seen by the tokenizer at once: the catcode it asks for is the new exact value.
+- `branch_sound`/`ifNum_branch_sound` are not used: `\iftrue` and `\iffalse` need no narrowing. `\ifnum` is not followed yet: it needs a reader for the relation, and documents mostly compare internal quantities, which `scanInt` does not read. `\ifx` compares primitives by `E.primId`, which the abstract state does not know. `scanDelim_sound`, `stripBraces_sound`, `substitute_sound`: macros with parameters need `scanUndelim_sound` (open) and reading across levels. `loopHead_sound`, `summaryHavoc_sound`, `aval_widen_sound`: no join or widening in `OStep` yet (one path per `read` result). These stay guarded in `Axioms.lean` only.
+- The old split (`run_covered_families`, `fam_covered`, `ReadCovers`) remains as a generic lemma. No main theorem uses it.
+- Read streams and the nest beyond the mode kind are still free in γ (C15). `force_eof` is pinned in `GState`, and file levels (`eofSeen`, `text`, `pseudo` included) are pinned exactly in `AInput.γ`.
 - The termination conjunct is the budget's: it holds for any relation (C14). What is specific to the model: (2), (3) and (5).
 
 ## Proven
@@ -58,7 +95,7 @@ What this does not say:
 | conditionals | `branch_sound` (item 6) takes the narrowing's soundness as hypothesis `hnarrow`. `\ifnum` over intervals discharges it: `narrow_sound` (`Itv.narrow`), `ifNumTest_sound`, `ifNumNarrow_sound`, `ifNum_branch_sound`. Other tests have no narrowing lemma. `compare_sound`, `astate_join_sound` (item 10, joinable states only) |
 | arguments | `scanDelim_sound` (item 7, over typed holes, digits and one-of tokens, delimiters across items: R2-1, R2-6), `dropAbs_sound` (leading tokens), `stripBraces_sound` (§ 400), `substitute_sound` (§ 390) |
 | loop head | `loopHead_post`, `loopHead_sound`, `loopHead_rounds` |
-| global | `run_covered`, `run_covered_families`, `fam_covered` (generic), `budget_star`, `sound_and_terminating`; Global: `anext_sound`, `anext_not_drained`, `gnext_sound`, `ameaning_sound`, `atopGroup_sound`, `unsaveAux_top`, `unsave_code`, `apopDone_sound`, `close_sound`, `step_covered`, `ostep_covered`, `budget_enough`, `satex_sound_and_terminating` (no hypothesis) |
+| global | `run_covered`, `run_covered_families`, `fam_covered` (generic), `budget_star`, `sound_and_terminating`; Mouth: `aint_sound`, `alit_γ`, `atoks_sound`, `acat_sound`, `ascan_sound`, `alineTok_sound`, `amouth_sound`, `amouth_not_drained`; Operands: `ameaning_sound`, `gnext_sound`, `gnext_not_drained`, `rtoken_sound`, `letRhs_sound`, `letOps_sound`, `abody_sound`, `defOps_sound`, `finish_sound`, `gdefine_sound`, `expand_head`, `xnext_sound`, `xnonblank_sound`, `adigits_sound`, `signs_plain`, `optSpace_sound`, `scanInt_sound`, `optEquals_sound`, `back_sound`, `acodeOk_sound`; Conds: `condRel_length`, `setLimitAt_top`, `apass_sound`, `askip_sound`, `askipFi_sound`; Global: `appendItem_γ`, `atopGroup_sound`, `unsaveAux_top`, `unsave_code`, `apopDone_sound`, `close_sound`, `step_covered`, `ostep_covered`, `budget_enough`, `satex_sound_and_terminating` (no hypothesis) |
 
 ## Audit (2026-11-04)
 
@@ -112,7 +149,7 @@ Concrete.lean and Core.lean follow tex.web for audit C1–C13. Each changed rule
 
 ## Open
 
-- `read` beyond literal token lists: an abstract tokenizer for files (`LineTok` over known catcodes) and abstract scanners (`ScanInt`, `ScanDimen`, `Internal`, `MatchParams`, `RToken`, `LetRhs` over `AInput`). Each one moves cases from `lost` into `step_covered`. Without them `scanDelim_sound` is not linked to `Expand.call`.
+- `read` beyond what it follows now: the rest of `ScanInt` (signs, constants, internal quantities), `ScanDimen`, `Internal`, `MatchParams` over `AInput`. Each one moves cases from `lost` into `step_covered`. The file tokenizer (`alineTok`), `RToken`, `LetRhs`, `OptEquals` and `ScanInt` for decimal digits and alphabetic constants are done (2026-11-18). Without them `scanDelim_sound` is not linked to `Expand.call`.
 - `scanUndelim_sound`: not proven. Fixed on the way: a hole of class `c` may hold only spaces, and a one-of's rest is its members' suffixes. Still open: a one-of member with an unbalanced `{` whose group ends in a later item (`groupBody` passes non-token items whole).
 - `expand_sound` (item 8): needs abstract `MatchParams` in `read` and `scanUndelim_sound`. It must also assume the restrictions of `expandWith`: a file on top of the input and a non-macro meaning leave the state unchanged, arguments are read from the top token list only (TeX reads across levels), and `#{` (`braceDelim`, §§ 473, 476) is ignored.
 - `many` save frames hold only restore entries. `\aftergroup` tokens inside repeated groups are not covered, and `closeFrom` on a `many` frame never returns them.

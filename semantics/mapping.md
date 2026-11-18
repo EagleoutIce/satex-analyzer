@@ -51,6 +51,17 @@ Line numbers and statuses are of 26ef7ce (2026-11-04, branch `getting-sound`). T
 
 | Lean | Rust | Status |
 | --- | --- | --- |
+| `GState`, `GState.γ` | `Machine` state: `Env`, `prefixes`, `after_assignment`, the mouth's pending end of file, machine.rs | same. `feof` is `Mouth::pending_eof` (tex.rs), set by `\endinput` |
+| `acat`, `aint`, `atoks` | catcode lookup of `CatcodeTable`, `Env` values, tex.rs, env.rs | the model reads a value only when it is one known number or one literal list. The Rust tokenizes by its catcode table, which holds known codes only, finer elsewhere: catcode sets are not modelled |
+| `alineTok`, `ascan` | `Mouth::next_with`, `read_cs_name_inner`, src/engine/tex.rs | same for the cases the model follows. The model does not follow `^^` reductions, the Rust does |
+| `amouth`, `GState.next` | `Machine::next_token`, `end_input_frame`, machine.rs | same: used-up lists popped, the next line with `\endlinechar`, `\everyeof` at a file end, `\endinput` ends the file at the line end |
+| `GState.rtoken`, `letRhs`, `letOps` | `read_r_token`, machine.rs; `primitive_let`, exec.rs | same where the model follows. A space token before the name or the `=` is not followed by the model |
+| `abody`, `defOps`, `macroOf` | `primitive_def`, `make_macro`, exec.rs | same for macros without parameters. `isize` is the model's fuel for termination, it never binds on a body inside the input |
+| `xnext`, `xnonblank`, `optEquals`, `back` | `next_x_token`, `next_non_blank_x_token`, `scan_optional_equals`, src/engine/scan.rs, commands.rs; `unread`, machine.rs | same where the model follows. The model does not expand: it stops at a token that would |
+| `scanInt`, `adigits`, `optSpace`, `alphaCode` | `scan_int_from`, `scan_digits`, `scan_alphabetic_constant`, `scan_optional_x_space`, src/engine/scan.rs | same for unsigned decimal digits and alphabetic constants up to 255. Signs, octal and hexadecimal constants and internal quantities are not modelled |
+| `acodeOk` | `assign_char_code`, exec.rs | same. The model follows `\lccode`/`\uccode` values only where the engines agree |
+| `apass`, `askip`, `askipFi`, `condExact` | `Machine::pass_text`, machine.rs; `conditional`, `conditional_else`, `conditional_fi`, exec.rs | same where the model follows: one path, the stack exact. The Rust also joins undecided tests at `\fi` (`branch_sound`, not used here) |
+| `GState.finish`, `GState.define` | `execute` puts the `\afterassignment` token back (§ 1269), `scoped` (`\globaldefs`, § 1214), exec.rs | same. The model needs `\globaldefs` known. The Rust assigns globally, then widens to either, and reports `unknown-globaldefs` |
 | `AState.assign` | `Env::set` / `set_tracked`, env.rs:839-880 | same where the level is known (tex.web §§ 277, 279). Unknown level or unpinned: `touched` (P1, P5) |
 | `AState.weakAssign`, `weakAt` | `weaken_registers`, src/engine/exec.rs:3726 (`weaken_register_range` 3738) | same values up to `limits.value_set` locations. Levels: the model joins old and new (`lvJoin`) and leaves `touched`. Not checked against the Rust's levels |
 | `AState.havocRegs` | `weaken_registers` past the bound, `register_top`, exec.rs:5037 (dimension top too small: R2-5) | same |

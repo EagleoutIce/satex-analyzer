@@ -1,225 +1,21 @@
 /-
 Satex.Global: the main theorem with no free assumption. The abstract
-reader `read` is fixed; where it cannot follow TeX's reading it says so
-(`none`), and the run goes to `lost`, the named havoc that covers every
-state. Everything else is proven.
+reader `read` is fixed. It takes the next token from a token list or a
+file (Satex.Mouth) and runs the command's transfer. Where it cannot follow
+TeX's reading it says so (`none`), and the run goes to `lost`, the named
+havoc that covers every state. Everything else is proven.
 
 Written with AI assistance from Claude Code (Claude Opus 5.5), directed and
 reviewed by the author.
 -/
 import Lean
-import Satex.Soundness
+import Satex.Conds
 
 namespace Satex.Soundness
 
 open Satex Satex.Abstract
 
-/-! ## 1. The global abstract state
-
-`AState.γ` leaves the pending prefixes and the `\afterassignment` token
-free (audit C15). The reader must decide them, so the global state pins
-them exactly. -/
-
-/-- An abstract state with the pending prefixes and the `\afterassignment`
-token (§ 1211, § 1269).
-source: tex.web § 1211 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L22720, § 1269 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L23473
-source: SaTeX `Machine::prefixes`, `Machine::after_assignment` https://github.com/EagleoutIce/satex-analyzer/blob/main/src/analysis/machine.rs -/
-structure GState where
-  a : AState
-  pfx : Nat := 0
-  after : Option Token := none
-
-def GState.γ (g : GState) (s : State) : Prop :=
-  g.a.γ s ∧ s.pending.prefixes = g.pfx ∧ s.pending.afterAssignment = g.after
-
-/-! ## 2. The abstract mouth
-
-The reader follows literal tokens on top of the input. An exhausted token
-list is popped first (§ 324). A file, a hole, typed digits or a one-of on
-top: the reader does not follow (`none`). -/
-
-/-- `get_next` (§ 357) over abstract input: the next literal token.
--- source: tex.web § 357 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L7480
--- source: SaTeX `next_token` https://github.com/EagleoutIce/satex-analyzer/blob/main/src/analysis/machine.rs -/
-def anext : List AInput → Option (Token × List AInput)
-  | .toks _ [] :: rest => anext rest
-  | .toks k (.tok t :: xs) :: rest => some (t, .toks k xs :: rest)
-  | _ => none
-
-theorem anext_sound : ∀ {s : State} {t' : Token} {s1 : State}, Concrete.Next s t' s1 →
-    ∀ (ai : List AInput) (t : Token) (ai' : List AInput), InputRel ai s.input →
-    anext ai = some (t, ai') →
-    t' = t ∧ s1 = { s with input := s1.input } ∧ InputRel ai' s1.input := by
-  intro s t' s1 h
-  induction h with
-  | @tok s k t0 ts rest hin =>
-    intro ai t ai' hr ha
-    rw [hin] at hr
-    match ai, hr, ha with
-    | .toks k' [] :: ar, hr, _ =>
-      obtain ⟨⟨_, hx⟩, _⟩ := hr
-      cases hx
-    | .toks k' (.tok u :: xs) :: ar, hr, ha =>
-      obtain ⟨⟨hk, p1, p2, he, h1, h2⟩, hrest⟩ := hr
-      simp only [anext, Option.some.injEq, Prod.mk.injEq] at ha
-      obtain ⟨rfl, rfl⟩ := ha
-      simp only [AItem.γ] at h1
-      subst h1 hk
-      simp only [List.singleton_append, List.cons.injEq] at he
-      obtain ⟨rfl, rfl⟩ := he
-      exact ⟨rfl, rfl, ⟨rfl, h2⟩, hrest⟩
-    | .toks _ (.hole _ :: _) :: _, _, ha => simp [anext] at ha
-    | .toks _ (.digits _ :: _) :: _, _, ha => simp [anext] at ha
-    | .toks _ (.oneOf _ :: _) :: _, _, ha => simp [anext] at ha
-    | .file _ :: _, hr, _ => exact hr.1.elim
-    | [], hr, _ => exact hr.elim
-  | @tokEnd s s' k rest t0 hin _ ih =>
-    intro ai t ai' hr ha
-    rw [hin] at hr
-    match ai, hr, ha with
-    | .toks k' [] :: ar, hr, ha =>
-      obtain ⟨e1, e2, e3⟩ := ih ar t ai' hr.2 ha
-      exact ⟨e1, by rw [e2], e3⟩
-    | .toks k' (.tok u :: xs) :: ar, hr, _ =>
-      obtain ⟨⟨_, p1, p2, he, h1, _⟩, _⟩ := hr
-      simp only [AItem.γ] at h1
-      subst h1
-      cases he
-    | .toks _ (.hole _ :: _) :: _, _, ha => simp [anext] at ha
-    | .toks _ (.digits _ :: _) :: _, _, ha => simp [anext] at ha
-    | .toks _ (.oneOf _ :: _) :: _, _, ha => simp [anext] at ha
-    | .file _ :: _, hr, _ => exact hr.1.elim
-    | [], hr, _ => exact hr.elim
-  | @fileTok s f rest _ _ _ hin _ =>
-    intro ai t ai' hr ha
-    rw [hin] at hr
-    match ai, hr, ha with
-    | .toks _ _ :: _, hr, _ => exact hr.1.elim
-    | .file _ :: _, _, ha => simp [anext] at ha
-    | [], hr, _ => exact hr.elim
-  | @nextLine s _ f rest _ _ _ _ hin _ _ _ _ _ =>
-    intro ai t ai' hr ha
-    rw [hin] at hr
-    match ai, hr, ha with
-    | .toks _ _ :: _, hr, _ => exact hr.1.elim
-    | .file _ :: _, _, ha => simp [anext] at ha
-    | [], hr, _ => exact hr.elim
-  | @endFile s _ f rest _ _ hin _ _ _ _ =>
-    intro ai t ai' hr ha
-    rw [hin] at hr
-    match ai, hr, ha with
-    | .toks _ _ :: _, hr, _ => exact hr.1.elim
-    | .file _ :: _, _, ha => simp [anext] at ha
-    | [], hr, _ => exact hr.elim
-  | @everyEof s _ f rest _ _ hin _ _ _ _ _ _ _ _ =>
-    intro ai t ai' hr ha
-    rw [hin] at hr
-    match ai, hr, ha with
-    | .toks _ _ :: _, hr, _ => exact hr.1.elim
-    | .file _ :: _, _, ha => simp [anext] at ha
-    | [], hr, _ => exact hr.elim
-
-/-- With a literal token next, the input is not drained (§ 360). -/
-theorem anext_not_drained : ∀ {s : State}, Concrete.Drained s →
-    ∀ (ai : List AInput) (t : Token) (ai' : List AInput), InputRel ai s.input →
-    anext ai ≠ some (t, ai') := by
-  intro s h
-  induction h with
-  | @empty s hin =>
-    intro ai t ai' hr ha
-    rw [hin] at hr
-    match ai, hr with
-    | [], _ => simp [anext] at ha
-  | @tokEnd s k rest hin _ ih =>
-    intro ai t ai' hr ha
-    rw [hin] at hr
-    match ai, hr, ha with
-    | .toks _ [] :: ar, hr, ha => exact ih ar t ai' hr.2 ha
-    | .toks _ (.tok u :: xs) :: ar, hr, _ =>
-      obtain ⟨⟨_, p1, p2, he, h1, _⟩, _⟩ := hr
-      simp only [AItem.γ] at h1
-      subst h1
-      cases he
-    | .toks _ (.hole _ :: _) :: _, _, ha => simp [anext] at ha
-    | .toks _ (.digits _ :: _) :: _, _, ha => simp [anext] at ha
-    | .toks _ (.oneOf _ :: _) :: _, _, ha => simp [anext] at ha
-    | .file _ :: _, hr, _ => exact hr.1.elim
-  | @nextLine s f rest _ _ _ hin _ _ _ _ _ =>
-    intro ai t ai' hr ha
-    rw [hin] at hr
-    match ai, hr, ha with
-    | .toks _ _ :: _, hr, _ => exact hr.1.elim
-    | .file _ :: _, _, ha => simp [anext] at ha
-  | @endFile s f rest _ hin _ _ _ _ =>
-    intro ai t ai' hr ha
-    rw [hin] at hr
-    match ai, hr, ha with
-    | .toks _ _ :: _, hr, _ => exact hr.1.elim
-    | .file _ :: _, _, ha => simp [anext] at ha
-
-/-- A step of the abstract mouth covers the concrete one: same token, only
-the input moved. -/
-theorem gnext_sound {g : GState} {s s1 : State} {t' t : Token} {ai : List AInput}
-    (hg : g.γ s) (hn : Concrete.Next s t' s1) (ha : anext g.a.input = some (t, ai)) :
-    t' = t ∧ s1 = { s with input := s1.input } ∧
-      ({ g with a := { g.a with input := ai } } : GState).γ s1 := by
-  obtain ⟨⟨h1, h2, h3, h4, h5, h6, h7⟩, hp, hq⟩ := hg
-  obtain ⟨e1, e2, e3⟩ := anext_sound hn g.a.input t ai h6 ha
-  refine ⟨e1, e2, ?_⟩
-  rw [e2]
-  exact ⟨⟨h1, h2, h3, h4, h5, e3, h7⟩, hp, hq⟩
-
-/-! ## 3. Meanings the reader knows
-
-A meaning is known when the binding is one exact meaning
-(`Binding.meaning` without `may`). -/
-
-def ameaningCs (a : AState) (r : CsRef) : Option Meaning :=
-  match a.eqtb (.meaning r) with
-  | .meanings [.exact m] => some m
-  | _ => none
-
-/-- `meaningTok` (§ 357, § 358) over the abstract state. -/
-def ameaning (a : AState) : Token → Option Meaning
-  | .char c k => some (.char c k)
-  | .cs r => ameaningCs a r
-  | .noexp r => (ameaningCs a r).map (fun m => if m.expandable then Concrete.notExpanded else m)
-  | .outParam _ => some .undefined
-
-theorem ameaningCs_sound {a : AState} {s : State} {r : CsRef} {m : Meaning} (ha : a.γ s)
-    (h : ameaningCs a r = some m) : s.meaningOf r = m := by
-  have hv := ha.1 (.meaning r)
-  unfold ameaningCs at h
-  split at h
-  · rename_i e
-    rw [e] at hv
-    simp only [Option.some.injEq] at h
-    subst h
-    obtain ⟨am, m', hm, hval, hγ⟩ := hv
-    simp only [List.mem_singleton] at hm
-    subst hm
-    simp only [AMeaning.γ] at hγ
-    subst hγ
-    simp only [State.meaningOf, State.get, hval]
-  · cases h
-
-theorem ameaning_sound {a : AState} {s : State} {t : Token} {m : Meaning} (ha : a.γ s)
-    (h : ameaning a t = some m) : Concrete.meaningTok s t = m := by
-  cases t with
-  | char c k => simp only [ameaning, Option.some.injEq] at h; exact h
-  | cs r => exact ameaningCs_sound ha h
-  | noexp r =>
-    simp only [ameaning, Option.map_eq_some_iff] at h
-    obtain ⟨m', h1, h2⟩ := h
-    simp only [Concrete.meaningTok, ameaningCs_sound ha h1]
-    exact h2
-  | outParam n => simp only [ameaning, Option.some.injEq] at h; exact h
-
-theorem ameaning_input (a : AState) (x : List AInput) (t : Token) :
-    ameaning { a with input := x } t = ameaning a t := by
-  cases t <;> rfl
-
-/-! ## 4. Group codes and used-up lists the reader knows -/
+/-! ## 1. Group codes and used-up lists the reader knows -/
 
 /-- The code of the innermost group (§ 1064 `cur_group`) if the abstract
 save stack decides it: a plain frame, or none at all (`bottom`).
@@ -311,9 +107,9 @@ theorem apopDone_sound : ∀ (ai : List AInput) (ci : List InputLevel) (ai' : Li
   | [], _ :: _, _, hr, _ => hr.elim
   | _ :: _, [], _, hr, _ => hr.elim
 
-/-! ## 5. The reader
+/-! ## 2. The reader
 
-`read` follows the next literal token and runs the command's transfer.
+`read` takes the next token (`GState.next`) and runs the command's transfer.
 It answers `none` where it does not follow: the run goes to `lost`. -/
 
 /-- Primitive names some rules match by name (alignments, § 1046): the
@@ -326,23 +122,28 @@ def bodyName : Token → CsRef
   | .noexp r => r
   | _ => .name ""
 
+/-- The macro `\def` stores (§ 1218): prefix bits 1 `\long`, 2 `\outer`,
+8 `\protected`, no parameters. -/
+def macroOf (p : Nat) (body : TokList) : Macro :=
+  { long := Nat.testBit p 0, outer := Nat.testBit p 1, prot := Nat.testBit p 3, params := [],
+    braceDelim := false, brace := .char 123 .bgroup, body := body }
+
 /-- The command of a known meaning. `g1` is the state after the token. -/
-def readCmd (L : Limits) (g : GState) (t : Token) (ai : List AInput) : Meaning → Option (List GState)
+def readCmd (L : Limits) (g : GState) (t : Token) (g1 : GState) : Meaning → Option (List GState)
   /- A macro without parameters (§ 389): its body comes next.
   source: tex.web § 389 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L7938; SaTeX `expand_macro` https://github.com/EagleoutIce/satex-analyzer/blob/main/src/analysis/machine.rs -/
   | .call mc =>
     if mc.params = [] ∧ mc.braceDelim = false then
-      match apopDone ai with
+      match apopDone g1.a.input with
       | some ai2 =>
         let body : AText := AText.ofList (Concrete.subst [] mc.body ++ [])
-        some [{ g with a := { g.a with input := AInput.toks (.macroBody (bodyName t)) body :: ai2 } }]
+        some [{ g1 with a := { g1.a with input := AInput.toks (.macroBody (bodyName t)) body :: ai2 } }]
       | none => none
     else none
   /- "Undefined control sequence" (§ 370): an error, nothing else.
   source: tex.web § 370 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L7723; SaTeX `expand_macro` https://github.com/EagleoutIce/satex-analyzer/blob/main/src/analysis/machine.rs -/
-  | .undefined => some [{ g with a := { g.a with input := ai } }]
+  | .undefined => some [g1]
   | .prim n c =>
-    let g1 : GState := { g with a := { g.a with input := ai } }
     if n ∈ byName then none else
     match c with
     /- § 1045: `\relax` does nothing; with prefixes pending it is skipped (§ 1211).
@@ -367,19 +168,130 @@ def readCmd (L : Limits) (g : GState) (t : Token) (ai : List AInput) : Meaning �
     source: tex.web § 1271 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L23490; SaTeX `defer_after_group` https://github.com/EagleoutIce/satex-analyzer/blob/main/src/analysis/machine.rs -/
     | .aftergroup =>
       if g.pfx = 0 ∧ g.a.pinned = true then
-        match anext ai with
-        | some (u, ai2) =>
-          some [{ g with a := if g.a.curLevel > 1 then
-                    { g.a with input := ai2, save := .insertToken u.stored :: g.a.save }
-                  else { g.a with input := ai2 } }]
+        match g1.next with
+        | some (u, g2) =>
+          some [{ g2 with a := if g.a.curLevel > 1 then
+                    { g2.a with save := .insertToken u.stored :: g2.a.save }
+                  else g2.a }]
         | none => none
       else none
     /- `\afterassignment` (§ 1269): the token is kept.
     source: tex.web § 1269 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L23473; SaTeX `Machine::after_assignment` https://github.com/EagleoutIce/satex-analyzer/blob/main/src/analysis/machine.rs -/
     | .afterassignment =>
       if g.pfx = 0 then
-        match anext ai with
-        | some (u, ai2) => some [{ g with a := { g.a with input := ai2 }, after := some u.stored }]
+        match g1.next with
+        | some (u, g2) => some [{ g2 with after := some u.stored }]
+        | none => none
+      else none
+    /- `\let` (§ 1221) with a right side the reader follows. Only `\global`
+    may be pending: `\long`, `\outer` and `\protected` make it an error (§ 1213).
+    source: tex.web § 1221 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L22838; SaTeX `primitive_let` https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/exec.rs -/
+    | .letCmd false =>
+      if Nat.land g.pfx 11 = 0 then
+        match g1.letOps with
+        | some (r, m, g3) =>
+          match g3.define (Nat.testBit g3.pfx 2) (.meaning r) (.meanings [.exact m]) with
+          | some g4 => some [g4]
+          | none => none
+        | none => none
+      else none
+    /- `\def`, `\gdef` (§ 1218) without parameters: the prefixes go into the macro.
+    source: tex.web § 1218 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web; SaTeX `primitive_def` https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/exec.rs -/
+    | .defCmd glob false =>
+      match g1.defOps with
+      | some (r, body, g4) =>
+        match g4.define (glob || Nat.testBit g4.pfx 2) (.meaning r)
+            (.meanings [.exact (.call (macroOf g4.pfx body))]) with
+        | some g5 => some [g5]
+        | none => none
+      | none => none
+    /- `\endinput` (§ 378): `force_eof` is set, the file ends at its line end (§ 362).
+    source: tex.web § 378 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L7807; SaTeX `take_pending_eof` https://github.com/EagleoutIce/satex-analyzer/blob/main/src/analysis/machine.rs -/
+    | .endinput => some [{ g1 with feof := true }]
+    /- "Extra \endcsname" (§ 1135): an error, nothing else.
+    source: tex.web § 1135 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web; SaTeX `execute` https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/exec.rs -/
+    | .endcsname => if g.pfx = 0 then some [g1] else none
+    /- An integer parameter (§ 1228) set to explicit decimal digits.
+    source: tex.web § 1228 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web; SaTeX `scan_register_value` https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/exec.rs -/
+    | .intPar ip =>
+      if Nat.land g.pfx 11 = 0 then
+        match g1.optEquals with
+        | some g2 =>
+          match g2.scanInt with
+          | some (nv, g3) =>
+            match g3.define (Nat.testBit g3.pfx 2) (.intPar ip) (.ints [Itv.exact nv]) with
+            | some g4 => some [g4]
+            | none => none
+          | none => none
+        | none => none
+      else none
+    /- `\iftrue`, `\iffalse` (§§ 498, 500): a level is pushed; a false test skips
+    to its `\else` or `\fi` (Satex.Conds). The stack must be exact.
+    source: tex.web § 498 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web; SaTeX `conditional` https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/exec.rs -/
+    | .ifTest op =>
+      if condExact g.a.cond = true then
+        match op with
+        | .iftrue => some [{ g1 with a := { g1.a with cond := ⟨.elseCode, .iftrue, false⟩ :: g1.a.cond } }]
+        | .iffalse =>
+          match askip (isize g1.a.input + 1)
+              { g1 with a := { g1.a with cond := ⟨.ifCode, .iffalse, false⟩ :: g1.a.cond } } with
+          | some (.fi, g2) => some [{ g2 with a := { g2.a with cond := g1.a.cond } }]
+          | some (.elseCode, g2) =>
+            some [{ g2 with a := { g2.a with cond := ⟨.fiCode, .iffalse, false⟩ :: g1.a.cond } }]
+          | _ => none
+        | _ => none
+      else none
+    /- `\fi`, `\else`, `\or` (§ 510) of a known level: `\fi` pops it, `\else`
+    and `\or` skip to the `\fi` first.
+    source: tex.web § 510 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web; SaTeX `conditional_else`, `conditional_fi` https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/exec.rs -/
+    | .fiOrElse fc =>
+      match g.a.cond with
+      | k :: ks =>
+        if k.many = false ∧ k.limit ≠ .ifCode ∧ fc.toNat ≤ k.limit.toNat then
+          if fc = .fi then some [{ g1 with a := { g1.a with cond := ks } }]
+          else
+            match askipFi (isize g1.a.input + 1) g1 with
+            | some g2 => some [{ g2 with a := { g2.a with cond := ks } }]
+            | none => none
+        else none
+      | [] => none
+    /- `\catcode`, `\lccode`, … (§ 1232) with explicit digits or an alphabetic
+    constant. An invalid code is an error and gives 0.
+    source: tex.web § 1232 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L23040; SaTeX `assign_char_code` https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/exec.rs -/
+    | .codeTable tab =>
+      if Nat.land g.pfx 11 = 0 then
+        match g1.scanInt with
+        | some (ch, g2) =>
+          match g2.optEquals with
+          | some g3 =>
+            match g3.scanInt with
+            | some (v, g4) =>
+              match acodeOk tab v with
+              | some b =>
+                match g4.define (Nat.testBit g4.pfx 2) (.code tab ch.toNat)
+                    (.ints [Itv.exact (if b then v else 0)]) with
+                | some g5 => some [g5]
+                | none => none
+              | none => none
+            | none => none
+          | none => none
+        | none => none
+      else none
+    /- `\count n = v` (§ 1224) with explicit decimal digits.
+    source: tex.web § 1224 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L22902; SaTeX `scan_register_value` https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/exec.rs -/
+    | .register .count =>
+      if Nat.land g.pfx 11 = 0 then
+        match g1.scanInt with
+        | some (i, g2) =>
+          match g2.optEquals with
+          | some g3 =>
+            match g3.scanInt with
+            | some (nv, g4) =>
+              match g4.define (Nat.testBit g4.pfx 2) (.reg .count i.toNat) (.ints [Itv.exact nv]) with
+              | some g5 => some [g5]
+              | none => none
+            | none => none
+          | none => none
         | none => none
       else none
     | _ => none
@@ -387,38 +299,37 @@ def readCmd (L : Limits) (g : GState) (t : Token) (ai : List AInput) : Meaning �
   source: tex.web § 1063 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L20637; SaTeX `Env::push_group` https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/env.rs -/
   | .char _ .bgroup =>
     if g.pfx = 0 ∧ ModeKind.math ∉ g.a.modes then
-      some [{ g with a := AState.beginGroup { g.a with input := ai } .simple }]
+      some [{ g1 with a := g1.a.beginGroup .simple }]
     else none
   /- `}` (§§ 1068–1069): a simple group closes; bottom, semi-simple and math
   groups give an error. Box and list groups: not followed.
   source: tex.web § 1068 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L20715, § 1069 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L20735; SaTeX `Env::pop_group` https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/env.rs -/
   | .char _ .egroup =>
-    let g1 : GState := { g with a := { g.a with input := ai } }
     if g.pfx = 0 then
       match atopGroup g.a.save with
       | some .simple => some ((g1.a.endGroup L .simple).map fun b => { g1 with a := b })
       | some .bottom | some .semiSimple | some .mathShift | some .mathLeft => some [g1]
       | _ => none
     else none
+  /- A space (§ 1045): glue in a paragraph, nothing elsewhere. `γ` does not
+  see the list, so the state after the token covers every case.
+  source: tex.web § 1045 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L20377; SaTeX `space_glue` https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/mode.rs -/
+  | .char _ .space => some [g1]
   | _ => none
 
-/-- SaTeX's abstract reader: the next literal token, its known meaning,
-the command's transfer. `none`: the reader does not follow (a file, unknown
-text or an unknown meaning on top, a command without a transfer here). -/
+/-- SaTeX's abstract reader: the next token, its known meaning, the
+command's transfer. `none`: the reader does not follow (unknown text or a
+catcode it does not know next, an unknown meaning, a command without a
+transfer here). -/
 def read (L : Limits) (g : GState) : Option (List GState) :=
-  match anext g.a.input with
-  | some (t, ai) =>
+  match g.next with
+  | some (t, g1) =>
     match ameaning g.a t with
-    | some m => readCmd L g t ai m
+    | some m => readCmd L g t g1 m
     | none => none
   | none => none
 
-/-! ## 6. The reader covers TeX's step -/
-
-theorem raise_γ {g : GState} {s : State} (msg : String) (hg : g.γ s) : g.γ (Concrete.raise msg s) := by
-  unfold Concrete.raise Concrete.logOut
-  dsimp only
-  split <;> exact hg
+/-! ## 3. The reader covers TeX's step -/
 
 theorem topGroup_eq (s : State) : Concrete.topGroup s = Concrete.topGroup.go s.save := rfl
 
@@ -458,6 +369,25 @@ theorem unsave_pending (s : State) : (Concrete.unsave s).1.pending = s.pending :
   dsimp only
   split <;> rfl
 
+theorem unsave_forceEof (s : State) : (Concrete.unsave s).1.forceEof = s.forceEof := by
+  unfold Concrete.unsave
+  split
+  rename_i E ins g rest _
+  dsimp only
+  split <;> rfl
+
+/-- A list item is not in `γ`: only the mode's kind is, and it stays. -/
+theorem appendItem_γ {g : GState} {s : State} (i : Item) (hg : g.γ s) :
+    g.γ (Concrete.appendItem i s) := by
+  unfold Concrete.appendItem
+  split
+  · rename_i l rest hn
+    obtain ⟨⟨h1, h2, h3, h4, h5, h6, h7⟩, hp⟩ := hg
+    refine ⟨⟨h1, h2, h3, h4, h5, h6, ?_⟩, hp⟩
+    simp only [State.mode, hn] at h7 ⊢
+    exact h7
+  · exact hg
+
 /-- Closing a group of a code the abstract save stack names. -/
 theorem close_sound (L : Limits) {g : GState} {s : State} {c : GroupCode} (hg : g.γ s)
     (htop : atopGroup g.a.save = some c) (hb : c ≠ .bottom) :
@@ -466,9 +396,11 @@ theorem close_sound (L : Limits) {g : GState} {s : State} {c : GroupCode} (hg : 
   have ht := atopGroup_sound hg.1.2.2.2.1 htop
   obtain ⟨E', ins, ctx, crest, hu⟩ := unsaveAux_top s.save s.eqtb [] c ht hb
   obtain ⟨b, hb', hγ⟩ := endGroup_sound L hg.1 hu
-  refine ⟨{ g with a := b }, List.mem_map.mpr ⟨b, hb', rfl⟩, hγ, ?_⟩
-  rw [unsave_pending]
-  exact hg.2
+  obtain ⟨hp, hq, hf⟩ := hg.2
+  refine ⟨{ g with a := b }, List.mem_map.mpr ⟨b, hb', rfl⟩, hγ, ?_, ?_, ?_⟩
+  · rw [unsave_pending]; exact hp
+  · rw [unsave_pending]; exact hq
+  · rw [unsave_forceEof]; exact hf
 
 theorem begin_sound {g : GState} {s : State} (c : GroupCode) (hg : g.γ s) :
     ({ g with a := g.a.beginGroup c } : GState).γ (Concrete.newSaveLevel c none s) :=
@@ -503,7 +435,7 @@ macro_rules
   | `(tactic| hcD $hg $ha $s) => `(tactic|
       (revert_hyp Concrete.Drained $s
        intro hd
-       exact absurd $ha (anext_not_drained hd _ _ _ $hg.1.2.2.2.2.2.1)))
+       exact absurd $ha (gnext_not_drained hd $hg)))
 syntax "hcNP " ident ident ident term : tactic
 macro_rules
   | `(tactic| hcNP $hg $ha $hm $s) => `(tactic|
@@ -586,7 +518,8 @@ theorem step_covered (E : Concrete.Engine) (L : Limits) {g : GState} {s s' : Sta
   simp only [read] at hr
   split at hr
   case h_2 => cases hr
-  rename_i t ai ha
+  rename_i t g1 ha
+  obtain ⟨ai, fe, rfl⟩ := next_eq ha
   split at hr
   case h_2 => cases hr
   rename_i m hm
@@ -659,7 +592,8 @@ theorem step_covered (E : Concrete.Engine) (L : Limits) {g : GState} {s s' : Sta
       split at hr
       · rename_i hcond
         split at hr
-        · rename_i u ai2 hai2
+        · rename_i u g2 hai2
+          obtain ⟨ai2, fe2, rfl⟩ := next_eq hai2
           simp only [Option.some.injEq] at hr; subst hr
           cases hx
           case aftergroup =>
@@ -683,7 +617,8 @@ theorem step_covered (E : Concrete.Engine) (L : Limits) {g : GState} {s s' : Sta
     · -- \afterassignment
       split at hr
       · split at hr
-        · rename_i u ai2 hai2
+        · rename_i u g2 hai2
+          obtain ⟨ai2, fe2, rfl⟩ := next_eq hai2
           simp only [Option.some.injEq] at hr; subst hr
           cases hx
           case afterassignment =>
@@ -691,9 +626,451 @@ theorem step_covered (E : Concrete.Engine) (L : Limits) {g : GState} {s s' : Sta
             revert_hyp Concrete.Next _ _ _
             intro hn2
             obtain ⟨rfl, hs2, hg2⟩ := gnext_sound hg1 hn2 hai2
-            exact ⟨_, List.mem_singleton.mpr rfl, hg2.1, hg2.2.1, rfl⟩
+            exact ⟨_, List.mem_singleton.mpr rfl, hg2.1, hg2.2.1, rfl, hg2.2.2.2⟩
           case expand => cases ‹Concrete.Expand E s s'› <;> hcE hg ha hm s
           all_goals hc hg ha hm s
+        · cases hr
+      · cases hr
+    · -- \let
+      split at hr
+      · rename_i hpf11
+        split at hr
+        · rename_i r mu g3 hops
+          split at hr
+          · rename_i g4 hdef
+            simp only [Option.some.injEq] at hr; subst hr
+            cases hx
+            case let_ =>
+              rename_i s1 s2 s3 s4 t' u r' hh hcmd hrt hrhs hs4
+              obtain ⟨hn, -, -⟩ := hh
+              obtain ⟨rfl, -, hg1⟩ := gnext_sound hg hn ha
+              obtain ⟨rfl, hmu, hg3⟩ := letOps_sound hg1 hrt hrhs hops
+              subst hs4
+              refine ⟨_, List.mem_singleton.mpr rfl, ?_⟩
+              unfold Concrete.assignTo Concrete.pfxGlobal
+              rw [hg3.2.1]
+              exact gdefine_sound (v := .meanings [.exact mu]) hg3
+                ⟨_, _, List.mem_singleton.mpr rfl, rfl, hmu⟩ hdef
+            case expand => cases ‹Concrete.Expand E s s'› <;> hcE hg ha hm s
+            all_goals hc hg ha hm s
+          · cases hr
+        · cases hr
+      · cases hr
+    · -- \def
+      rename_i glob
+      split at hr
+      · rename_i r body g4 hops
+        split at hr
+        · rename_i g5 hdef
+          simp only [Option.some.injEq] at hr; subst hr
+          cases hx
+          case def_ =>
+            rename_i s1 s2 s3 s4 t' glob' r' ps b body' hh hcmd hrt hpt hdb
+            obtain ⟨hn, -, -⟩ := hh
+            obtain ⟨rfl, -, hg1⟩ := gnext_sound hg hn ha
+            have hm1 := ameaning_sound hg1.1 ((ameaning_input _ _ _).trans hm)
+            rw [Concrete.cmdOf, hm1] at hcmd
+            cases hcmd
+            obtain ⟨rfl, rfl, rfl, rfl, hg4⟩ := defOps_sound hg1 hrt hpt hdb hops
+            refine ⟨_, List.mem_singleton.mpr rfl, ?_⟩
+            unfold Concrete.pfxGlobal
+            rw [hg4.2.1]
+            exact gdefine_sound (v := .meanings [.exact (.call (macroOf g4.pfx body'))]) hg4
+              ⟨_, _, List.mem_singleton.mpr rfl, rfl, rfl⟩ hdef
+          case expand => cases ‹Concrete.Expand E s s'› <;> hcE hg ha hm s
+          all_goals hc hg ha hm s
+        · cases hr
+      · cases hr
+    · -- \endinput
+      simp only [Option.some.injEq] at hr; subst hr
+      cases hx
+      case expand =>
+        cases ‹Concrete.Expand E s s'›
+        case endinput =>
+          revert_hyp Concrete.Next s _ _
+          intro hn
+          obtain ⟨rfl, -, hg1⟩ := gnext_sound hg hn ha
+          exact ⟨_, List.mem_singleton.mpr rfl, hg1.1, hg1.2.1, hg1.2.2.1, rfl⟩
+        all_goals hcE hg ha hm s
+      all_goals hc hg ha hm s
+    · -- \endcsname
+      split at hr
+      · simp only [Option.some.injEq] at hr; subst hr
+        cases hx
+        case endcsname =>
+          hd hg ha hm hg1 hm1 s
+          exact ⟨_, List.mem_singleton.mpr rfl, raise_γ _ hg1⟩
+        case expand => cases ‹Concrete.Expand E s s'› <;> hcE hg ha hm s
+        all_goals hc hg ha hm s
+      · cases hr
+    · -- an integer parameter
+      split at hr
+      · split at hr
+        · rename_i g2 hoe
+          split at hr
+          · rename_i nv g3 hsi
+            split at hr
+            · rename_i g4 hdef
+              simp only [Option.some.injEq] at hr; subst hr
+              cases hx
+              case intPar =>
+                rename_i s1 s2 s3 t' ip' v hh hcmd hoe' hval
+                obtain ⟨hn, -, -⟩ := hh
+                obtain ⟨rfl, -, hg1⟩ := gnext_sound hg hn ha
+                have hm1 := ameaning_sound hg1.1 ((ameaning_input _ _ _).trans hm)
+                rw [Concrete.cmdOf, hm1] at hcmd
+                cases hcmd
+                have hg2 := optEquals_sound hg1 hoe' hoe
+                cases hval with
+                | int hsc =>
+                  obtain ⟨rfl, hg3⟩ := scanInt_sound hg2 hsc hsi
+                  refine ⟨_, List.mem_singleton.mpr rfl, ?_⟩
+                  unfold Concrete.assignTo Concrete.pfxGlobal
+                  rw [hg3.2.1]
+                  exact gdefine_sound (v := .ints [Itv.exact _]) hg3
+                    ⟨_, _, List.mem_singleton.mpr rfl, rfl, Int.le_refl _, Int.le_refl _⟩ hdef
+              case expand => cases ‹Concrete.Expand E s s'› <;> hcE hg ha hm s
+              all_goals hc hg ha hm s
+            · cases hr
+          · cases hr
+        · cases hr
+      · cases hr
+    · -- \iftrue, \iffalse
+      split at hr
+      · rename_i hex
+        split at hr
+        · -- \iftrue
+          simp only [Option.some.injEq] at hr; subst hr
+          cases hx
+          case expand =>
+            cases ‹Concrete.Expand E s s'›
+            case ifTrue =>
+              have hch := ‹Concrete.CondHead _ _ _ _ _›
+              have htest := ‹Concrete.Test _ _ _ _ _›
+              have hb := ‹(_ != _) = _›
+              cases hch with
+              | plain hn hcmd =>
+                obtain ⟨rfl, -, hg1⟩ := gnext_sound hg hn ha
+                have hm1 := ameaning_sound hg1.1 ((ameaning_input _ _ _).trans hm)
+                rw [Concrete.cmdOf, hm1] at hcmd
+                cases hcmd
+                cases htest
+                case iftrue =>
+                  refine ⟨_, List.mem_singleton.mpr rfl, ?_⟩
+                  simp only [setLimitAt_top]
+                  obtain ⟨⟨h1, h2, h3, h4, h5, h6, h7⟩, hp⟩ := hg1
+                  exact ⟨⟨h1, h2, h3, h4, CondRel.one rfl rfl rfl h5, h6, h7⟩, hp⟩
+                all_goals (exfalso; simp_all)
+              | unless_ hn hcmd _ _ _ =>
+                obtain ⟨rfl, -, hg1⟩ := gnext_sound hg hn ha
+                have hm1 := ameaning_sound hg1.1 ((ameaning_input _ _ _).trans hm)
+                rw [Concrete.cmdOf, hm1] at hcmd
+                cases hcmd
+            case ifFalse =>
+              have hch := ‹Concrete.CondHead _ _ _ _ _›
+              have htest := ‹Concrete.Test _ _ _ _ _›
+              have hb := ‹(_ != _) = _›
+              have hskip := ‹Concrete.SkipFalse _ _ _›
+              cases hch with
+              | plain hn hcmd =>
+                obtain ⟨rfl, -, hg1⟩ := gnext_sound hg hn ha
+                have hm1 := ameaning_sound hg1.1 ((ameaning_input _ _ _).trans hm)
+                rw [Concrete.cmdOf, hm1] at hcmd
+                cases hcmd
+                cases htest
+                case iftrue => simp at hb
+                all_goals (exfalso; simp_all)
+              | unless_ hn hcmd _ _ _ =>
+                obtain ⟨rfl, -, hg1⟩ := gnext_sound hg hn ha
+                have hm1 := ameaning_sound hg1.1 ((ameaning_input _ _ _).trans hm)
+                rw [Concrete.cmdOf, hm1] at hcmd
+                cases hcmd
+            all_goals hcE hg ha hm s
+          all_goals hc hg ha hm s
+        · -- \iffalse
+          split at hr
+          · rename_i g2 hask
+            simp only [Option.some.injEq] at hr; subst hr
+            cases hx
+            case expand =>
+              cases ‹Concrete.Expand E s s'›
+              case ifFalse =>
+                have hch := ‹Concrete.CondHead _ _ _ _ _›
+                have htest := ‹Concrete.Test _ _ _ _ _›
+                have hb := ‹(_ != _) = _›
+                have hskip := ‹Concrete.SkipFalse _ _ _›
+                cases hch with
+                | plain hn hcmd =>
+                  obtain ⟨rfl, -, hg1⟩ := gnext_sound hg hn ha
+                  have hm1 := ameaning_sound hg1.1 ((ameaning_input _ _ _).trans hm)
+                  rw [Concrete.cmdOf, hm1] at hcmd
+                  cases hcmd
+                  cases htest
+                  case iffalse =>
+                    have hcr := hg1.1.2.2.2.2.1
+                    obtain ⟨⟨h1, h2, h3, h4, h5, h6, h7⟩, hp⟩ := hg1
+                    obtain ⟨s1', hg2, hc1, hfi | hel⟩ := askip_sound hskip (by simp) _ _ g2 .fi
+                      (by exact ⟨⟨h1, h2, h3, h4, CondRel.one rfl rfl rfl h5, h6, h7⟩, hp⟩) hask
+                    · obtain ⟨-, rfl⟩ := hfi
+                      refine ⟨_, List.mem_singleton.mpr rfl, ?_⟩
+                      obtain ⟨⟨k1, k2, k3, k4, -, k6, k7⟩, kp⟩ := hg2
+                      refine ⟨⟨k1, k2, k3, k4, ?_, k6, k7⟩, kp⟩
+                      simp only [hc1, List.drop_succ_cons, List.drop_zero]
+                      exact hcr
+                    · cases hel.1
+                  all_goals (exfalso; simp_all)
+                | unless_ hn hcmd _ _ _ =>
+                  obtain ⟨rfl, -, hg1⟩ := gnext_sound hg hn ha
+                  have hm1 := ameaning_sound hg1.1 ((ameaning_input _ _ _).trans hm)
+                  rw [Concrete.cmdOf, hm1] at hcmd
+                  cases hcmd
+              case ifTrue =>
+                have hch := ‹Concrete.CondHead _ _ _ _ _›
+                have htest := ‹Concrete.Test _ _ _ _ _›
+                have hb := ‹(_ != _) = _›
+                cases hch with
+                | plain hn hcmd =>
+                  obtain ⟨rfl, -, hg1⟩ := gnext_sound hg hn ha
+                  have hm1 := ameaning_sound hg1.1 ((ameaning_input _ _ _).trans hm)
+                  rw [Concrete.cmdOf, hm1] at hcmd
+                  cases hcmd
+                  cases htest
+                  case iffalse => simp at hb
+                  all_goals (exfalso; simp_all)
+                | unless_ hn hcmd _ _ _ =>
+                  obtain ⟨rfl, -, hg1⟩ := gnext_sound hg hn ha
+                  have hm1 := ameaning_sound hg1.1 ((ameaning_input _ _ _).trans hm)
+                  rw [Concrete.cmdOf, hm1] at hcmd
+                  cases hcmd
+              all_goals hcE hg ha hm s
+            all_goals hc hg ha hm s
+          · rename_i g2 hask
+            simp only [Option.some.injEq] at hr; subst hr
+            cases hx
+            case expand =>
+              cases ‹Concrete.Expand E s s'›
+              case ifFalse =>
+                have hch := ‹Concrete.CondHead _ _ _ _ _›
+                have htest := ‹Concrete.Test _ _ _ _ _›
+                have hb := ‹(_ != _) = _›
+                have hskip := ‹Concrete.SkipFalse _ _ _›
+                cases hch with
+                | plain hn hcmd =>
+                  obtain ⟨rfl, -, hg1⟩ := gnext_sound hg hn ha
+                  have hm1 := ameaning_sound hg1.1 ((ameaning_input _ _ _).trans hm)
+                  rw [Concrete.cmdOf, hm1] at hcmd
+                  cases hcmd
+                  cases htest
+                  case iffalse =>
+                    have hcr := hg1.1.2.2.2.2.1
+                    obtain ⟨⟨h1, h2, h3, h4, h5, h6, h7⟩, hp⟩ := hg1
+                    obtain ⟨s1', hg2, hc1, hfi | hel⟩ := askip_sound hskip (by simp) _ _ g2 .elseCode
+                      (by exact ⟨⟨h1, h2, h3, h4, CondRel.one rfl rfl rfl h5, h6, h7⟩, hp⟩) hask
+                    · cases hfi.1
+                    · obtain ⟨-, rfl⟩ := hel
+                      refine ⟨_, List.mem_singleton.mpr rfl, ?_⟩
+                      obtain ⟨⟨k1, k2, k3, k4, -, k6, k7⟩, kp⟩ := hg2
+                      refine ⟨⟨k1, k2, k3, k4, ?_, k6, k7⟩, kp⟩
+                      simp only [hc1, setLimitAt_top]
+                      exact CondRel.one rfl rfl rfl hcr
+                  all_goals (exfalso; simp_all)
+                | unless_ hn hcmd _ _ _ =>
+                  obtain ⟨rfl, -, hg1⟩ := gnext_sound hg hn ha
+                  have hm1 := ameaning_sound hg1.1 ((ameaning_input _ _ _).trans hm)
+                  rw [Concrete.cmdOf, hm1] at hcmd
+                  cases hcmd
+              case ifTrue =>
+                have hch := ‹Concrete.CondHead _ _ _ _ _›
+                have htest := ‹Concrete.Test _ _ _ _ _›
+                have hb := ‹(_ != _) = _›
+                cases hch with
+                | plain hn hcmd =>
+                  obtain ⟨rfl, -, hg1⟩ := gnext_sound hg hn ha
+                  have hm1 := ameaning_sound hg1.1 ((ameaning_input _ _ _).trans hm)
+                  rw [Concrete.cmdOf, hm1] at hcmd
+                  cases hcmd
+                  cases htest
+                  case iffalse => simp at hb
+                  all_goals (exfalso; simp_all)
+                | unless_ hn hcmd _ _ _ =>
+                  obtain ⟨rfl, -, hg1⟩ := gnext_sound hg hn ha
+                  have hm1 := ameaning_sound hg1.1 ((ameaning_input _ _ _).trans hm)
+                  rw [Concrete.cmdOf, hm1] at hcmd
+                  cases hcmd
+              all_goals hcE hg ha hm s
+            all_goals hc hg ha hm s
+          · cases hr
+        · cases hr
+      · cases hr
+    · -- \fi, \else, \or
+      split at hr
+      · rename_i k ks hcd
+        split at hr
+        · rename_i hk
+          split at hr
+          · rename_i hfi
+            subst hfi
+            simp only [Option.some.injEq] at hr; subst hr
+            cases hx
+            case expand =>
+              cases ‹Concrete.Expand E s s'›
+              all_goals first | (hcE hg ha hm s; done) | skip
+              all_goals
+                have hn := ‹Concrete.Next s _ _›
+                obtain ⟨e, -, hg1⟩ := gnext_sound hg hn ha
+                subst e
+                have hm1 := ameaning_sound hg1.1 ((ameaning_input _ _ _).trans hm)
+                have hcr := hg1.1.2.2.2.2.1
+                simp only [hcd] at hcr
+                obtain ⟨c0, crest, hcc, hl, hrest⟩ := condRel_cons hcr hk.1
+                have hcmd := ‹Concrete.cmdOf _ _ = some (Cmd.fiOrElse _)›
+                rw [Concrete.cmdOf, hm1] at hcmd
+                simp only [Option.some.injEq, Cmd.fiOrElse.injEq] at hcmd
+              case fi =>
+                simp only [hcc, List.cons.injEq] at *
+                obtain ⟨-, rfl⟩ := ‹c0 = _ ∧ crest = _›
+                refine ⟨_, List.mem_singleton.mpr rfl, ?_⟩
+                obtain ⟨⟨h1, h2, h3, h4, -, h6, h7⟩, hp⟩ := hg1
+                exact ⟨⟨h1, h2, h3, h4, hrest, h6, h7⟩, hp⟩
+              case fiExtra =>
+                simp only [hcc] at *
+                obtain ⟨hx, -⟩ := ‹_ > _ ∧ _›
+                subst hcmd
+                rw [← hl] at hx
+                exact absurd hx (Nat.not_lt.mpr hk.2.2)
+              case fiInsertRelax =>
+                simp only [hcc, List.cons.injEq] at *
+                obtain ⟨rfl, -⟩ := ‹c0 = _ ∧ crest = _›
+                simp only [← hl] at *
+                exact absurd ‹k.limit = IfLimit.ifCode› hk.2.1
+            all_goals hc hg ha hm s
+          · split at hr
+            · rename_i g2 hsk
+              simp only [Option.some.injEq] at hr; subst hr
+              cases hx
+              case expand =>
+                cases ‹Concrete.Expand E s s'›
+                all_goals first | (hcE hg ha hm s; done) | skip
+                all_goals
+                  have hn := ‹Concrete.Next s _ _›
+                  obtain ⟨e, -, hg1⟩ := gnext_sound hg hn ha
+                  subst e
+                  have hm1 := ameaning_sound hg1.1 ((ameaning_input _ _ _).trans hm)
+                  have hcr := hg1.1.2.2.2.2.1
+                  simp only [hcd] at hcr
+                  obtain ⟨c0, crest, hcc, hl, hrest⟩ := condRel_cons hcr hk.1
+                  have hcmd := ‹Concrete.cmdOf _ _ = some (Cmd.fiOrElse _)›
+                  rw [Concrete.cmdOf, hm1] at hcmd
+                  simp only [Option.some.injEq, Cmd.fiOrElse.injEq] at hcmd
+                case elseOr =>
+                  have hskip := ‹Concrete.SkipToFi _ _›
+                  obtain ⟨hg2, hc2⟩ := askipFi_sound hskip _ _ g2 hg1 hsk
+                  refine ⟨_, List.mem_singleton.mpr rfl, ?_⟩
+                  obtain ⟨⟨h1, h2, h3, h4, -, h6, h7⟩, hp⟩ := hg2
+                  refine ⟨⟨h1, h2, h3, h4, ?_, h6, h7⟩, hp⟩
+                  simp only [hc2, hcc, List.drop_succ_cons, List.drop_zero]
+                  exact hrest
+                case fiExtra =>
+                  simp only [hcc] at *
+                  obtain ⟨hx, -⟩ := ‹_ > _ ∧ _›
+                  subst hcmd
+                  rw [← hl] at hx
+                  exact absurd hx (Nat.not_lt.mpr hk.2.2)
+                case fiInsertRelax =>
+                  simp only [hcc, List.cons.injEq] at *
+                  obtain ⟨rfl, -⟩ := ‹c0 = _ ∧ crest = _›
+                  simp only [← hl] at *
+                  exact absurd ‹k.limit = IfLimit.ifCode› hk.2.1
+              all_goals hc hg ha hm s
+            · cases hr
+        · cases hr
+      · cases hr
+    · -- a code table
+      split at hr
+      · split at hr
+        · rename_i ch g2 hsi1
+          split at hr
+          · rename_i g3 hoe
+            split at hr
+            · rename_i v g4 hsi
+              split at hr
+              · rename_i b hok
+                split at hr
+                · rename_i g5 hdef
+                  simp only [Option.some.injEq] at hr; subst hr
+                  cases hx
+                  case code =>
+                    rename_i s1 s2 s3 s4 t' tab' c' v' hh hcmd hsc1 h0 hmax hoe' hsc2
+                    obtain ⟨hn, -, -⟩ := hh
+                    obtain ⟨rfl, -, hg1⟩ := gnext_sound hg hn ha
+                    have hm1 := ameaning_sound hg1.1 ((ameaning_input _ _ _).trans hm)
+                    rw [Concrete.cmdOf, hm1] at hcmd
+                    cases hcmd
+                    obtain ⟨rfl, hg2⟩ := scanInt_sound hg1 hsc1 hsi1
+                    have hg3 := optEquals_sound hg2 hoe' hoe
+                    obtain ⟨rfl, hg4⟩ := scanInt_sound hg3 hsc2 hsi
+                    have hb := acodeOk_sound E hok
+                    refine ⟨_, List.mem_singleton.mpr rfl, ?_⟩
+                    split
+                    · rename_i hcond
+                      have e : b = true := hb.mp hcond
+                      subst e
+                      unfold Concrete.assignTo Concrete.pfxGlobal
+                      rw [hg4.2.1]
+                      exact gdefine_sound (v := .ints [Itv.exact _]) hg4
+                        ⟨_, _, List.mem_singleton.mpr rfl, rfl, Int.le_refl _, Int.le_refl _⟩ hdef
+                    · rename_i hcond
+                      have e : b = false := by
+                        cases b
+                        · rfl
+                        · exact absurd (hb.mpr rfl) hcond
+                      subst e
+                      unfold Concrete.assignTo Concrete.pfxGlobal
+                      rw [raise_pending, hg4.2.1]
+                      exact gdefine_sound (v := .ints [Itv.exact _]) (raise_γ _ hg4)
+                        ⟨_, _, List.mem_singleton.mpr rfl, rfl, Int.le_refl _, Int.le_refl _⟩ hdef
+                  case expand => cases ‹Concrete.Expand E s s'› <;> hcE hg ha hm s
+                  all_goals hc hg ha hm s
+                · cases hr
+              · cases hr
+            · cases hr
+          · cases hr
+        · cases hr
+      · cases hr
+    · -- a count register
+      split at hr
+      · split at hr
+        · rename_i i g2 hsi1
+          split at hr
+          · rename_i g3 hoe
+            split at hr
+            · rename_i nv g4 hsi
+              split at hr
+              · rename_i g5 hdef
+                simp only [Option.some.injEq] at hr; subst hr
+                cases hx
+                case register =>
+                  rename_i s1 s2 s3 s4 t' k i' v hh hcmd hk hsc1 h0 hmax hoe' hval
+                  obtain ⟨hn, -, -⟩ := hh
+                  obtain ⟨rfl, -, hg1⟩ := gnext_sound hg hn ha
+                  have hm1 := ameaning_sound hg1.1 ((ameaning_input _ _ _).trans hm)
+                  rw [Concrete.cmdOf, hm1] at hcmd
+                  cases hcmd
+                  obtain ⟨rfl, hg2⟩ := scanInt_sound hg1 hsc1 hsi1
+                  have hg3 := optEquals_sound hg2 hoe' hoe
+                  cases hval with
+                  | int hsc =>
+                    obtain ⟨rfl, hg4⟩ := scanInt_sound hg3 hsc hsi
+                    refine ⟨_, List.mem_singleton.mpr rfl, ?_⟩
+                    unfold Concrete.assignTo Concrete.pfxGlobal Concrete.trapVal
+                    rw [hg4.2.1]
+                    exact gdefine_sound (v := .ints [Itv.exact _]) hg4
+                      ⟨_, _, List.mem_singleton.mpr rfl, rfl, Int.le_refl _, Int.le_refl _⟩ hdef
+                case expand => cases ‹Concrete.Expand E s s'› <;> hcE hg ha hm s
+                all_goals hc hg ha hm s
+              · cases hr
+            · cases hr
+          · cases hr
         · cases hr
       · cases hr
     · cases hr
@@ -759,6 +1136,20 @@ theorem step_covered (E : Concrete.Engine) (L : Limits) {g : GState} {s s' : Sta
         case expand => cases ‹Concrete.Expand E s s'› <;> hcE hg ha hm s
         all_goals hc hg ha hm s
       · cases hr
+    case space =>
+      simp only [Option.some.injEq] at hr; subst hr
+      cases hx
+      case spaceH =>
+        hd hg ha hm hg1 hm1 s
+        exact ⟨_, List.mem_singleton.mpr rfl, appendItem_γ _ hg1⟩
+      case spaceOther =>
+        hd hg ha hm hg1 hm1 s
+        exact ⟨_, List.mem_singleton.mpr rfl, hg1⟩
+      case prefixSkip =>
+        hd hg ha hm hg1 hm1 s
+        exact ⟨_, List.mem_singleton.mpr rfl, hg1⟩
+      case expand => cases ‹Concrete.Expand E s s'› <;> hcE hg ha hm s
+      all_goals hc hg ha hm s
     case egroup =>
       split at hr
       · split at hr
@@ -809,7 +1200,7 @@ theorem step_covered (E : Concrete.Engine) (L : Limits) {g : GState} {s s' : Sta
       · cases hr
   all_goals (simp only [readCmd] at hr; cases hr)
 
-/-! ## 7. The run
+/-! ## 4. The run
 
 The abstract run is over `Option GState`. `none` is `lost`: the named
 havoc, γ = every state. The run goes there only where `read` says it does
@@ -869,8 +1260,8 @@ theorem budget_enough (E : Concrete.Engine) (L : Limits) :
 4. with any budget the budgeted run covers it (past the cut: nothing
    claimed), it has no infinite run and none longer than its budget;
 5. every abstract state has finitely many successors.
-What makes it weak: `read` follows only literal tokens on top of token
-lists and a few commands (PROOF-STATUS "The main theorem"). Counter-model
+What makes it weak: `read` follows files and token lists, but only a few
+commands (PROOF-STATUS "The main theorem"). Counter-model
 check: `read` and `OStep` are definitions, so neither `Read := ⊥` nor
 `Other := Concrete.Step E` can be chosen; a step from a state the reader
 follows must be one of the rules `step_covered` matches, all others are
