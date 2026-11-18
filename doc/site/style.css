@@ -578,10 +578,15 @@ main td .badges, main td .cat { white-space: nowrap; }
 .ts-boxto { display: inline-block; } .ts-leaders { flex: 1; min-width: 1em; margin: 0 .3em; border-bottom: 2px dotted color-mix(in srgb, currentColor 50%, transparent); align-self: center; }
 .typeset .ts-text:has(> .ts-row) { display: flex; align-items: baseline; } .typeset .ts-text > .ts-boxto:last-child { margin-left: auto; text-align: right; }
 .typeset .ts-table { display: table; border-collapse: collapse; margin: .2rem 0; } .typeset .ts-tr { display: table-row; }
-.typeset .ts-td { display: table-cell; padding: 0 .7em; } .typeset .ts-ruled > .ts-td { border-top: 1px solid currentColor; }
+/* a cell as TeX sets it: \tabcolsep (6pt at 10pt) each side, rows a strut apart (\arraystretch 1: 1.2em), on one baseline */
+.typeset .ts-td { display: table-cell; padding: 0 .6em; line-height: 1.2; vertical-align: baseline; } .typeset .ts-ruled > .ts-td { border-top: 1px solid currentColor; }
 .typeset .ts-tr.ts-ruled:empty { display: block; border-top: 1px solid currentColor; }
 /* a rule after a row is its lower border (`\bottomrule`); a cell of leaders alone a rule over its column (`\cmidrule`) */
-.typeset .ts-tr:has(+ .ts-rule-after) > .ts-td { border-bottom: 1px solid currentColor; } .typeset .ts-tr + .ts-rule-after { display: none; }
+.typeset .ts-tr:has(+ .ts-rule-after) > .ts-td { border-bottom: 1px solid currentColor; } .typeset .ts-tr + .ts-tr.ts-rule-after { display: none; }
+/* a cell's `|` at its edge: the edge itself, full height, so a column's rules line up row over row */
+.typeset .ts-td:has(> .ts-cvr) { position: relative; }
+.typeset .ts-vrule:is(.ts-edge-l, .ts-edge-r) { position: absolute; top: 0; bottom: 0; height: auto; margin: 0; }
+.typeset .ts-edge-l { left: 0; } .typeset .ts-edge-r { right: 0; } .typeset .ts-edge-l.ts-edge-2 { left: 3px; } .typeset .ts-edge-r.ts-edge-2 { right: 3px; }
 .typeset .ts-tr:has(> .ts-rule) { font-size: 0; line-height: 0; } .typeset .ts-td.ts-rule { background: linear-gradient(currentColor, currentColor) center / calc(100% - .5em) .5px no-repeat; height: 4px; }
 .typeset .ts-vrule { display: inline-block; width: 0; height: 1.2em; margin: 0 .35em; vertical-align: -.25em; border-left: 1px solid currentColor; }
 .typeset .ts-hrule { display: block; height: 0; margin: .15em 0; border-top: 1px solid currentColor; }
@@ -1610,7 +1615,14 @@ p.ts.ts-foot::before { content: ""; position: absolute; top: 0; left: 0; width: 
 .pdf .pdf-fig { z-index: 1; border: 1px dashed #c2410c; background: #c2410c0d; pointer-events: none !important; }
 .pdf .pdf-fig b { position: absolute; left: 0; bottom: 0; font: 600 .55rem/1.2 ui-monospace, Menlo, monospace; color: #fff; background: #c2410c; padding: 0 .2rem; }
 .pdf .pdf-col { z-index: 2; border-inline: 1px solid #0e7490; background: #0e74900a; pointer-events: none !important; }
-.pdf .pdf-col b { position: absolute; left: 0; top: 0; transform: translateY(-100%); font: 600 .55rem/1.3 ui-monospace, Menlo, monospace; color: #fff; background: #0e7490; padding: 0 .25rem; border-radius: 3px 3px 0 0; white-space: nowrap; pointer-events: auto; }
+.pdf .pdf-col b { position: absolute; left: 0; top: 0; transform: translateY(-100%); display: flex; align-items: stretch; max-width: 100%; box-sizing: border-box; font: 600 .55rem/1.3 ui-monospace, Menlo, monospace; color: #fff; background: #0e7490; padding: 0 0 0 .25rem; border-radius: 3px 3px 0 0; white-space: nowrap; pointer-events: auto; }
+/* one chip per column, never wider than it: the name shortens, the ⋯ stays; its menu opens below the chip */
+.pdf .pdf-col-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; padding-right: .2rem; }
+.pdf .pdf-col-more { flex: none; font: inherit; color: inherit; background: transparent; border: 0; border-left: 1px solid #ffffff55; padding: 0 .25rem; cursor: pointer; border-radius: 0 3px 0 0; }
+.pdf .pdf-col-more:hover, .pdf .pdf-col-more[aria-expanded="true"] { background: #ffffff40; }
+.pdf .pdf-col-open { z-index: 6; } .pdf .pdf-col-open b { max-width: none; overflow: visible; }
+.pdf .pdf-col-menu { position: absolute; left: 0; top: 100%; display: flex; background: #0e7490; border-radius: 0 0 3px 3px; box-shadow: 0 4px 10px -4px rgb(0 0 0 / .4); }
+.pdf .pdf-col-menu .pdf-col-al:first-child { border-left: 0; margin-left: 0; }
 .pdf .pdf-col-al { font: inherit; color: inherit; background: transparent; border: 0; border-left: 1px solid #ffffff55; margin-left: .2rem; padding: 0 .2rem; cursor: pointer; }
 .pdf .pdf-col-al[aria-pressed="true"] { background: #ffffff40; } .pdf .pdf-col-al:hover { background: #ffffff66; }
 .pdf .pdf-col-fixed { border-inline-style: dashed; } .pdf .pdf-col-fixed b { background: #475569; }
@@ -1639,8 +1651,17 @@ p.ts.ts-foot::before { content: ""; position: absolute; top: 0; left: 0; width: 
 .type-group .orig-legend { display: none; align-items: center; gap: .25rem; padding: 0 .45rem; border-left: 1px solid var(--border); color: var(--fg); }
 .type-group .orig-legend i { font-style: normal; padding: 0 .3rem 1px; border-radius: 3px; line-height: 1.35; }
 .ts-typing .orig-legend, .pdf-typing .orig-legend { display: inline-flex; }
-.type-group .type-math { display: none; font: .7rem ui-monospace, Menlo, monospace; border-left: 1px solid var(--border) !important; }
-.ts-typing .type-math, .pdf-typing .type-math { display: inline-block; }
+/* the math control: inline at once, display and align* from its menu; only while typing */
+.math-group { display: none; position: relative; align-items: stretch; margin-left: .3rem; border: 1px solid var(--border); border-radius: 999px; font-size: .72rem; background: var(--bg); }
+.ts-typing .math-group, .pdf-typing .math-group { display: inline-flex; }
+.math-group > button.ghost.small { border: 0; border-radius: 999px 0 0 999px; background: transparent; }
+.math-group .math-menu summary { list-style: none; cursor: pointer; height: 100%; display: flex; align-items: center; padding: 0 .45rem; border-left: 1px solid var(--border); border-radius: 0 999px 999px 0; font: inherit; letter-spacing: 0; text-transform: none; color: var(--muted); }
+.math-group .math-menu summary:hover, .math-menu[open] summary { color: var(--fg); background: var(--panel); }
+.math-menu summary::-webkit-details-marker, .math-group .math-menu summary::before { display: none; content: none; }
+.math-menu .pdf-menu-list { left: auto; right: 0; min-width: 10rem; gap: .1rem; padding: .3rem; }
+.math-menu .pdf-menu-list button.ghost.small { display: flex; gap: .8rem; border: 0; border-radius: 6px; padding: .25rem .5rem; }
+.math-menu .pdf-menu-list button:hover { background: var(--panel); transform: none; box-shadow: none; }
+.math-menu .pdf-menu-list code { margin-left: auto; font-size: .7rem; color: var(--muted); }
 .type-sync .cm-editor .cm-cursor { display: block; border-left: 2px solid var(--accent); opacity: .6; }
 .complete.type-complete { position: fixed; right: auto; width: min(22rem, calc(100vw - 32px)); z-index: 60; background: var(--bg); border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 6px 20px rgba(0,0,0,.18); }
 
@@ -1818,6 +1839,10 @@ p.ts.ts-foot::before { content: ""; position: absolute; top: 0; left: 0; width: 
 .pdf-menu-list button { text-align: left; }
 .pdf-badge { font-size: .62rem; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; padding: 0 .4rem; border-radius: 4px; color: #fff; background: #b45309; }
 .pdf-sep { display: flex; align-items: center; gap: .5rem; font-size: .72rem; color: #b45309; margin: 0 0 .4rem; }
+/* over the pages, taking no room: a slice and a full build in turn never move the pages (the caret jumped a line) */
+.pdf-pages > .pdf-sep { position: sticky; top: 0; z-index: 4; height: 0; margin: 0; align-items: flex-start; overflow: visible; }
+.pdf-pages > .pdf-sep > span, .pdf-pages > .pdf-sep > .pdf-badge { margin-top: .2rem; background: var(--bg); padding: 0 .3rem; border-radius: 4px; }
+.pdf-pages > .pdf-sep::after { margin-top: .7rem; }
 .pdf-sep::after { content: ""; flex: 1; border-top: 2px dashed #b45309; }
 #play-pdf.pdf-is-slice .pdf-pages { box-shadow: inset 0 0 0 2px #b4530955; }
 #play-pdf.pdf-folded .pdf-views, #play-pdf.pdf-folded .pdf-tools > :not(#pdf-fold):not(#pdf-follow) { display: none; }
@@ -2020,6 +2045,8 @@ table.prim td { vertical-align: top; } table.long.prim td:nth-child(3) { white-s
 #play-pdf.pdf-other .pdf-pages, #play-pdf.pdf-other .pdf-text { opacity: .35; filter: grayscale(1); pointer-events: none; }
 .pdf-owner { position: sticky; top: 0; z-index: 3; margin: 0; padding: .4rem .6rem; background: var(--bg); border-bottom: 1px solid var(--border); font-size: .85rem; }
 .pdf-wait { display: block; margin-top: .2rem; color: var(--accent); } .pdf-wait-bar .pdf-wait { margin-top: 0; }
+/* a build's wait bar lies over the pages, taking no room: each build of the typing moved the pages a bar's height */
+#pdf-body { position: relative; } #pdf-body > .pdf-wait-bar { position: absolute; top: 0; left: 0; right: 0; opacity: .94; }
 .pdf-wait::before { content: ""; display: inline-block; width: .55rem; height: .55rem; margin-right: .35rem; border-radius: 50%; border: 2px solid var(--accent); border-right-color: transparent; vertical-align: -.05rem; animation: pdf-spin .8s linear infinite; }
 @media (prefers-reduced-motion: reduce) { .pdf-wait::before { animation: none; } }
 .pdf-why { display: block; margin: .15rem 0 0 .9rem; font-size: .74rem; }
@@ -2046,6 +2073,11 @@ body:not(.show-lenses) .cm-lens-line { display: none; }
 .typeset .ts-choice { border-bottom: 1px dashed color-mix(in srgb, var(--c3, #c80) 75%, transparent); background: color-mix(in srgb, var(--c3, #c80) 7%, transparent); }
 .typeset .ts-choice > .ts-arm-false { opacity: .7; } .typeset .ts-choice > .ts-arm-false:not(:empty)::before { content: "|"; margin: 0 .3em; color: var(--muted); font-style: normal; }
 .typeset .ts-choice > .ts-arm:empty::after { content: "∅"; color: var(--muted); font-size: .8em; }
+/* a choice with an empty case is an optional part: `is [not] a leap year`, no ∅ and no bar */
+.typeset .ts-choice:has(> .ts-arm:empty) { background: none; cursor: help; }
+.typeset .ts-choice:has(> .ts-arm:empty) > .ts-arm:empty { display: none; }
+.typeset .ts-choice:has(> .ts-arm:empty) > .ts-arm { opacity: 1; } .typeset .ts-choice:has(> .ts-arm:empty) > .ts-arm::before { content: none; }
+.typeset .ts-choice:has(> .ts-arm:empty)::before { content: "["; color: var(--muted); } .typeset .ts-choice:has(> .ts-arm:empty)::after { content: "]"; color: var(--muted); }
 .typeset .ts-choice > .ts-arm-false:empty::before { content: "|"; margin: 0 .3em; color: var(--muted); }
 .typeset .ts-switch { display: inline-flex; align-items: baseline; gap: .15rem; margin-right: .4rem; padding: 0 .3rem; border-radius: 4px; font: .66rem ui-monospace, Menlo, monospace; color: var(--c3, #c80); background: color-mix(in srgb, var(--c3, #c80) 12%, transparent); vertical-align: .1em; }
 .typeset .ts-switch code { font: inherit; margin-right: .2rem; } .typeset .ts-switch-q { margin-right: .25rem; font-style: italic; opacity: .8; } .typeset .ts-switch button { font: inherit; padding: 0 .3rem; border: 0; border-radius: 3px; background: none; color: inherit; cursor: pointer; }
@@ -2076,6 +2108,19 @@ body:not(.show-lenses) .cm-lens-line { display: none; }
 /* a card: one 4:3 stage, the window as big as its capture fits in it, centred, so its frame hugs the capture */
 .cards .shot-stage { display: grid; place-items: center; aspect-ratio: 4 / 3; container-type: size; }
 .cards .shot-win img { width: auto; max-width: 100cqw; max-height: 100cqh; }
+/* the showcase ring (site.ts): full width, the cards on a ring, the front one largest; arrows on its edges */
+.cards-wrap.ring { position: relative; width: 100vw; margin-inline: calc(50% - 50vw); padding-block: var(--s48) var(--s24); overflow-x: clip; }
+.ring .cards { display: block; position: relative; perspective: 1700px; transform-style: preserve-3d; cursor: grab; touch-action: pan-y; user-select: none; }
+.ring .cards:active { cursor: grabbing; } .ring .cards:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; border-radius: var(--r-card); }
+.ring .cards > .shot { position: absolute; top: 0; left: 50%; width: min(32rem, 34vw); transform-origin: 50% 0; will-change: transform, opacity; backface-visibility: hidden; }
+.ring .cards > .shot:not(.ring-front) { cursor: pointer; }
+.ring .cards > .shot figcaption > * { transition: opacity .3s var(--ease); }
+.ring .cards > .shot figcaption > h3 { opacity: var(--title, 1); }
+.ring .cards > .shot:not(.ring-front) figcaption { text-align: center; } .ring .cards > .shot:not(.ring-front) figcaption > :not(h3) { opacity: 0; }
+.cards-nav { position: absolute; z-index: 300; top: 30%; translate: 0 -50%; display: grid; place-items: center; width: 2.6rem; height: 2.6rem; min-width: 0; padding: 0;
+  border-radius: var(--r-pill); border: 1px solid var(--border); background: color-mix(in srgb, var(--panel) 90%, transparent); color: var(--fg); font-size: 1.4rem; line-height: 1; cursor: pointer; box-shadow: var(--shadow); }
+.cards-nav:hover { border-color: var(--accent); color: var(--accent); }
+.cards-prev { left: var(--s24); } .cards-next { right: var(--s24); }
 .shot-wide .shot-win { width: 100%; }
 /* the window: the capture itself, cut out with rounded corners and a soft shadow */
 .shot-win { position: relative; display: block; border-radius: var(--r-card); overflow: hidden; background: var(--panel); transform: translate3d(0, var(--lift, 0px), 0);
@@ -2300,7 +2345,10 @@ header .hd-feedback:hover:not(:disabled) { background: var(--sunk); color: var(-
 main li:has(> .badge) a[href*="/commit/"] code, main li:has(> .badge) a[href*="/compare/"] code { font-size: .72rem; opacity: .7; }
 /* the stepper keeps one height while stepping: the step panel and the token stream scroll inside, nothing below them moves */
 .tr-now { height: 14rem; overflow: auto; align-content: start; overscroll-behavior: contain; }
-#trace-stream { height: 3.6rem; overflow: auto; }
+/* the input grows with its chips up to a cap (a fixed 3.6rem overflowed with the catcode legend: a scroll bar on
+   every step), and a thin bar on a clear track keeps the panels' rounded corners whole */
+#trace-stream { height: auto; min-height: 3.6rem; max-height: 9rem; overflow: hidden auto; }
+:is(.tr-now, #trace-stream, .tr-all[open] > .tr-tree) { scrollbar-width: thin; scrollbar-color: color-mix(in srgb, var(--muted) 45%, transparent) transparent; }
 /* the live window fills its column like a shot at full size, before and after the engine takes over */
 .shot-live .shot-stage, .shots > .shot-live .shot-win { width: 100%; }
 @media (max-width: 64rem) { .shot-big .shot-stage, .shot-big:nth-child(even of .shot-big) .shot-stage { justify-self: center; } }
@@ -2344,3 +2392,12 @@ pre.out-block:hover .out-meta { opacity: .85; }
 .cfg-group-about { margin-left: .9em; font-size: .85em; }
 /* `playground.widget_marks` and `playground.tips` off */
 .no-widget-marks .cm-gutter.cm-widgets, .no-tips .sx-tip { display: none !important; }
+/* the previews.json cache row: its pictures' kinds and counts, one kind's pictures as a grid */
+.pv-cats { display: inline-flex; flex-wrap: wrap; gap: .15rem; align-items: baseline; margin-left: .4rem; font-size: .72rem; color: var(--muted); }
+.pv-kind { border: 0; background: none; padding: 0 .2rem; font: inherit; color: var(--accent); cursor: pointer; border-radius: 4px; }
+.pv-kind[aria-pressed="true"] { background: var(--panel); }
+.pv-kind b { font-weight: 600; color: var(--fg); }
+.pv-grid { list-style: none; margin: .4rem 0 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(4.6rem, 1fr)); gap: .3rem; max-height: 14rem; overflow: auto; }
+.pv-grid li { display: grid; justify-items: center; gap: .1rem; padding: .25rem; border-radius: 6px; background: #fff; color: #333; font-size: .6rem; min-width: 0; }
+.pv-grid img { width: 100%; height: 2rem; object-fit: contain; }
+.pv-grid span { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

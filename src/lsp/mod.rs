@@ -1032,18 +1032,18 @@ impl Engine {
             self.notify_now(Notification::new("satex/typesetRows".into(), params));
         }
         if fresh {
-            // What a completion reads of the new run is built first, while the last run (or the
-            // installation) answers: the format's names carried over from the last run. Its
-            // diagnostics then say it answers. The playground's server answers only once a
-            // message is done: there the first completion builds the rest.
-            if let Some(prior) = &prior {
-                self.serving(|_| crate::queries::query::carry_scope(prior, &analysis));
-            }
+            // Findings before the completion data: they are what the user waits for. The names
+            // carried over from the last run follow: until then a completion answers from the last run. The playground's server answers only
+            // once a message is done: there the first completion builds the rest.
+            // what a hover shows of the new run (its roles, what a name typesets) before the findings
             if !cfg!(target_os = "emscripten") {
                 self.serving(|_| handlers::warm(&analysis));
             }
             self.install(uri, &analysis, &text, changed);
             self.publish_run(&analysis, &path, &versions, None);
+            if let Some(prior) = &prior {
+                self.serving(|_| crate::queries::query::carry_scope(prior, &analysis));
+            }
         } else {
             self.install(uri, &analysis, &text, changed);
             // the same texts under newer versions: the same diagnostics, of these versions

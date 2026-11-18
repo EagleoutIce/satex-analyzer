@@ -145,7 +145,7 @@ function run({ m, out, header }: Instance, args: string[], commands: Command[]) 
 }
 
 /** Builds `main` of `files`: pdfTeX until its references rest, BibTeX and makeindex where the run asks for them. */
-async function build(instance: Instance, files: Record<string, Uint8Array>, main: string) {
+async function build(instance: Instance, files: Record<string, Uint8Array | string>, main: string) {
   const { m } = instance, { FS, PATH } = m;
   // a new list or a host that failed: what the engine remembers as absent is asked for again
   const asked = sources.join('\n');
@@ -220,10 +220,12 @@ async function build(instance: Instance, files: Record<string, Uint8Array>, main
 
 /** The format of `main`'s preamble, dumped again when the preamble or another file of the project changed.
  * None where the dump fails or reports an error: the runs then read the preamble themselves and report it. */
-function preamble(instance: Instance, files: Record<string, Uint8Array>, main: string, dir: string, file: string, job: string, commands: Command[]) {
-  const source = new TextDecoder().decode(files[main]), at = source.indexOf('\\begin{document}');
+function preamble(instance: Instance, files: Record<string, Uint8Array | string>, main: string, dir: string, file: string, job: string, commands: Command[]) {
+  // the page sends its texts as strings, images as bytes
+  const str = (d: Uint8Array | string, enc = 'utf-8') => typeof d === 'string' ? d : new TextDecoder(enc).decode(d);
+  const source = str(files[main]!), at = source.indexOf('\\begin{document}');
   if (at < 0 || source.startsWith('%&')) return null;
-  const others = Object.keys(files).filter((n) => n !== main).sort().map((n) => `${n}\0${new TextDecoder('latin1').decode(files[n])}`);
+  const others = Object.keys(files).filter((n) => n !== main).sort().map((n) => `${n}\0${str(files[n]!, 'latin1')}`);
   const key = [main, source.slice(0, at), ...others].join('\0');
   if (instance.dumped?.key !== key) {
     const { FS, PATH } = instance.m;

@@ -146,6 +146,12 @@ interface Stream {
     // a `%\satex@assert{…}` directive (configure, assume, assert) is a comment satex reads: its own class, TeX after it
     // a magic comment's key (`% !TeX program =`, `% arara:`) and its value, apart from a plain comment
     const MAGIC = /^%\s*(?:!T[eE]X\s+(?:TS-)?[\w-]+\s*=?|arara:)/;
+    // an expl3 name (`\dim_eval:n`, `\l_tmpa_dim`, `\__mod_fn:`) is one command: `_` and `:` are letters there. Under
+    // `\ExplSyntaxOn` any; elsewhere only an unmistakable one (a word of 2+ letters before `:`, a scope prefix), not `$\alpha_i$`
+    const EXPL = /^\\(?:__[A-Za-z@_]+:?[A-Za-z]*|[A-Za-z@]+(?:_[A-Za-z@]+)*_[A-Za-z@]{2,}:[A-Za-z]*|[lgcq]_[A-Za-z@_]*_[A-Za-z@]+)/;
+    const EXPL_ON = /^\\(?:ExplSyntaxO(n|ff)|ProvidesExpl(?:Package|Class|File))(?![A-Za-z])/;
+    // a number with its unit is one token: sign, digits, fraction, `true`, a unit (`fil`… after plus/minus)
+    const NUM = /^[-+]?(?:\d+\.?\d*|\.\d+)(?:(?:true)?(?:pt|pc|in|bp|cm|mm|dd|cc|sp|em|ex|mu|px|nd|nc)|fil{1,3})?/;
     // a verbatim body (lstlisting, minted, verbatim) is code in the language it names, not TeX:
     // its comments, strings and numbers by that language's comment marker, TeX by TeX's own rules
     const VERBATIM = /\\begin\{(lstlisting|verbatim\*?|Verbatim|BVerbatim|minted|comment)\}(?:\[([^\]]*)\])?(?:\{([^}]*)\})?/;
@@ -163,8 +169,8 @@ interface Stream {
     const tex = {
       ...stex,
       tokenTable: { ...stex.tokenTable, ...Object.fromEntries(PARAMS.map((tag, i) => [`param${i + 1}`, tag])) },
-      startState: () => ({ ...stex.startState(), magic: false, verb: null, opening: null }),
-      copyState: (st: Rec) => ({ ...stex.copyState(st), magic: st.magic, verb: st.verb, opening: st.opening }),
+      startState: () => ({ ...stex.startState(), magic: false, verb: null, opening: null, expl: false }),
+      copyState: (st: Rec) => ({ ...stex.copyState(st), magic: st.magic, verb: st.verb, opening: st.opening, expl: st.expl }),
       token: (s: Stream, st: Rec) => {
         if (s.sol()) { st.magic = false; if (st.opening) [st.verb, st.opening] = [st.opening, null]; }
         if (st.verb) {
@@ -178,11 +184,16 @@ interface Stream {
         if (st.magic) { s.skipToEnd(); return 'attributeValue'; }
         if (s.sol() && s.match(MAGIC)) { st.magic = true; return 'meta'; }
         if (s.match(/^%\s*\\satex@[A-Za-z]+/)) return 'processingInstruction';
+        // a space alone, so a number after it starts its own token (`- 0.05pt`)
+        if (s.eatSpace()) return null;
+        const on = s.match(EXPL_ON);
+        if (on) { st.expl = (on as RegExpMatchArray)[1] !== 'ff'; return 'tag'; }
+        if (s.match(st.expl ? /^\\[A-Za-z@_:]+/ : EXPL)) return 'tag';
         // a parameter `#1`…`#9` (`##1` inside a nested definition) keeps its number's tint wherever it stands
         const param = s.match(/^#+([1-9])/);
         if (param) return `param${(param as RegExpMatchArray)[1]}`;
         // a number is a number wherever it stands: `\count3` and `by 400` alike
-        if (st.verb == null && s.match(/^[-+]?(?:\d+\.?\d*|\.\d+)/)) return 'number';
+        if (st.verb == null && s.match(NUM)) return 'number';
         return s.match(/^\\[^A-Za-z@\xc0-\uffff]/) ? 'tag' : stex.token(s, st);
       },
     };
@@ -903,13 +914,21 @@ interface Stream {
         bar = null;
         return `${tr}<span class="ts-bar" style="width: ${w}pt; height: ${Math.max(h, 0.4)}pt" title="a \\rule ${w}pt wide, ${h}pt high"></span>`;
       }
-      if (RULES[note]) return `${tr}<span class="${RULES[note]![0]}" title="${RULES[note]![1]}"></span>`;
+      if (RULES[note]) return `${tr}<span class="${RULES[note]![0]}${table && note === '│' ? ' ts-cvr' : ''}" title="${RULES[note]![1]}"></span>`;
       return `${tr}<span class="ts-note">${esc(note)}</span>`;
     }
     // set boxes at both ends (a contents line, a label) align the line as a row
     // the glue between lines stands apart from the row it borders
     // a cell holding only leaders is a rule over its column (booktabs' `\cmidrule`), not a row of dots
     html = html.replace(/<span class="ts-td">\s*<span class="ts-leaders" aria-hidden="true"><\/span>((?:<i class="ts-fill[^>]*><\/i>)?)\s*(?=<\/span>)/g, '<span class="ts-td ts-rule" title="a rule over this column">$1');
+    // a table's `|` at a cell's start or end (glue aside) is that cell's edge: drawn on the edge, the cell's full
+    // height, so the rules of a column line up row over row as TeX's \halign sets them
+    const pad = '(?:<i [^>]*><\\/i>|\\s)*';
+    html = html.replace(new RegExp(`(<span class="ts-td">${pad})<span class="ts-vrule ts-cvr"`, 'g'), '$1<span class="ts-vrule ts-cvr ts-edge-l"')
+      .replace(new RegExp(`<span class="ts-vrule ts-cvr"(?=[^>]*><\\/span>${pad}<\\/span>)`, 'g'), '<span class="ts-vrule ts-cvr ts-edge-r"')
+      // `||`: the second rule beside the edge, a little inside
+      .replace(new RegExp(`(<span class="ts-vrule ts-cvr ts-edge-l"[^>]*><\\/span>${pad})<span class="ts-vrule ts-cvr"`, 'g'), '$1<span class="ts-vrule ts-cvr ts-edge-l ts-edge-2"')
+      .replace(new RegExp(`<span class="ts-vrule ts-cvr"(?=[^>]*><\\/span>${pad}<span class="ts-vrule ts-cvr ts-edge-r")`, 'g'), '<span class="ts-vrule ts-cvr ts-edge-r ts-edge-2"');
     const bare = html.replace(/<i class="ts-glue ts-glue-(?:vskip|parskip)[^>]*><\/i>/g, '');
     const aligned = bare.startsWith('<span class="ts-boxto"') && bare.endsWith('\u0000') || html.includes('ts-leaders');
     if (picture) return sketchSvg(picture);
@@ -938,7 +957,8 @@ interface Stream {
     const m = /^`?\\([rb])@(.+?)`?$/.exec(name ?? '');
     return m ? (m[1] === 'r' ? ['reference', m[2], 'the reference'] : ['citation', m[2], 'the citation']) : null;
   };
-  const switches = (r: Rec) => (r.causes ?? []).filter((c: Rec) => c.on != null).map((c: Rec) => {
+  // a chip only for a reference or citation the next run decides; any other choice reads inline (choiceTip)
+  const switches = (r: Rec) => (r.causes ?? []).filter((c: Rec) => c.on != null && splitKind(c.test || c.parted || c.mark)).map((c: Rec) => {
     const name = c.test || c.parted || c.mark, kind = splitKind(name);
     // a conditional's test is true or false; other parted paths (a macro of several meanings) are named by the text each sets
     const label = (i: number) => c.test || !c.arms ? ['true', 'false'][i] : c.arms[i] ? `“${c.arms[i]}”` : 'nothing';
@@ -952,6 +972,16 @@ interface Stream {
       ['both', 'true', 'false'].map((a, i) => `<button type="button" data-arm="${a}" aria-pressed="${a === now}" title="${esc(arm[a])}">${esc(i ? label(i - 1) : 'all')}</button>`).join('') + '</span></span>';
   }).join('');
   const maybeTip = (c: Rec) => `may be typeset: depends on ${c.test || c.parted || c.mark} (line ${c.line}), which the run could not decide`;
+  /** An undecided choice in words: what each case sets, and why it is open. */
+  const choiceTip = (c: Rec) => {
+    const name = c.test || c.parted || c.mark, say = (t: string) => t ? `“${t}”` : 'empty';
+    return c.arms && !c.test ? `${name} is ${say(c.arms[0])} or ${say(c.arms[1])} here: the run could not decide which (line ${c.line}), so both are kept`
+      : `the text when ${name} is true, or when it is false: the run could not decide it (line ${c.line}), so both are kept`;
+  };
+  /** A choice's arms as text: a space both end with (or one ends with, the other empty) after the choice,
+   * so an optional word reads `is [not] a`, not `is [not ]a`. */
+  const choiceSpaces = (h: string) => h.replace(/(<span class="ts-choice[^>]*><span class="ts-arm ts-arm-true">)([^<]*)(<\/span><span class="ts-arm ts-arm-false">)([^<]*)(<\/span><\/span>)/g,
+    (m, a, x: string, b, y: string, e) => (x.endsWith(' ') || !x) && (y.endsWith(' ') || !y) && (x || y) ? `${a}${x.trimEnd()}${b}${y.trimEnd()}${e} ` : m);
   /** Each paragraph's environments opened since the last paragraph (`envOpen`) and closed after it (`envClose`). */
   function envEdges(rows: Rec[]) {
     const id = (e: Rec) => `${e.env}@${e.line}`;
@@ -975,8 +1005,8 @@ interface Stream {
       `${k != null ? ` data-k="${k}"` : ''} data-path="${esc(r.path ?? '')}" data-line="${r.line}"${last > r.line ? ` data-last="${last}"` : ''} data-col="${r.col}" data-plain="${esc(r.detail ?? '')}"${r.lines?.length ? ` data-lines="${esc(JSON.stringify(r.lines))}"` : ''}` +
       ` style="--depth: ${d}${typeof r.skip === 'number' && !r.heading ? `; --skip: ${Math.max(r.skip, 0)}pt` : ''}">` +
       `<span class="ts-at"${last > r.line ? ` title="lines ${r.line}–${last}"` : ''}>${r.line ?? ''}</span><span class="ts-rails" aria-hidden="true"></span>` +
-      `<span class="ts-text">${switches(r)}${(r.causes ?? []).filter((c: Rec) => c.on != null).reduce((h: string, c: Rec) => h.replaceAll(`<span class="ts-choice" data-on="${esc(c.on)}">`, `<span class="ts-choice${splitKind(c.test || c.parted || c.mark) ? ' ts-ref' : ''}" data-on="${esc(c.on)}" title="${esc(maybeTip(c))}">`),
-        notation(withKeys(r.marked ?? r.detail ?? '', r.keys, r.fonts, r.align, r.ligatures, r.lines), r.sketches, r.sketch))}</span></p>`;
+      `<span class="ts-text">${switches(r)}${choiceSpaces((r.causes ?? []).filter((c: Rec) => c.on != null).reduce((h: string, c: Rec) => { const ref = splitKind(c.test || c.parted || c.mark); return h.replaceAll(`<span class="ts-choice" data-on="${esc(c.on)}">`, `<span class="ts-choice${ref ? ' ts-ref' : ''}" data-on="${esc(c.on)}" title="${esc(ref ? maybeTip(c) : choiceTip(c))}">`); },
+        notation(withKeys(r.marked ?? r.detail ?? '', r.keys, r.fonts, r.align, r.ligatures, r.lines), r.sketches, r.sketch)))}</span></p>`;
   };
   /** A page `\shipout` sent out, as a labelled line where the next one begins; a page the run did not
    * break though it filled (`filled`) as a dashed one: pdfTeX breaks it by there. */
@@ -991,7 +1021,8 @@ interface Stream {
    * title, what the output routine set) as its header, one step per page, a stepper and a diff between steps. */
   function typesetView(rows: Rec[], { file = null, closed = new Set<string>(), plural = (n: number, w: string) => `${n} ${w}${n === 1 ? '' : 's'}`, lineOf = null }: { file?: string | null; closed?: Set<string>; plural?: (n: number, w: string) => string; lineOf?: ((n: number) => string | null | undefined) | null } = {}) {
     // each row knows its place in `rows`: a view finds the record (its sites) behind a paragraph
-    const shown: Rec[] = rows.map((r, k): Rec => ({ ...r, k })).filter((r) => r.kind === 'paragraph' || r.kind === 'page');
+    // a paragraph of no source line and no text (the output routine's page boxes) shows nothing: no row "0"
+    const shown: Rec[] = rows.map((r, k): Rec => ({ ...r, k })).filter((r) => r.kind === 'page' || r.kind === 'paragraph' && (r.line || (r.detail ?? '').trim()));
     envEdges(shown);
     const mine = (r: Rec) => !file || (r.path ?? '').endsWith(file);
     const keyOf = (r: Rec) => r.kind === 'paragraph' && mine(r) && r.outer ? `${r.outer.env}@${r.outer.line}` : null;
@@ -2017,6 +2048,90 @@ interface Stream {
     // a phone scrolls with the frames still
     const wide = matchMedia('(min-width: 48rem)');
     addEventListener('scroll', () => { if (!queued && wide.matches) { queued = true; requestAnimationFrame(drift); } }, { passive: true });
+  }
+
+  // The showcase's cards on a ring: the card in front is the largest, the others turn away to both sides
+  // and fade behind. It turns on by itself, one whole card at a time and slowly, while nobody points at,
+  // focuses or drags it; the arrows, the arrow keys, a drag or a click on a side card bring a card to the
+  // front and hold the turning for a while. Without motion or on a phone: the plain grid.
+  for (const row of document.querySelectorAll<HTMLElement>('.cards')) {
+    const cards = [...row.querySelectorAll<HTMLElement>(':scope > .shot')], n = cards.length;
+    if (n < 3 || matchMedia('(prefers-reduced-motion: reduce)').matches || !matchMedia('(min-width: 48rem)').matches) continue;
+    const wrap = Object.assign(document.createElement('div'), { className: 'cards-wrap ring' });
+    const nav = (d: string, label: string, arrow: string) => {
+      const b = Object.assign(document.createElement('button'), { type: 'button', className: `cards-nav cards-${d}`, textContent: arrow });
+      b.setAttribute('aria-label', label);
+      return b;
+    };
+    const prev = nav('prev', 'previous card', '‹'), next = nav('next', 'next card', '›');
+    row.before(wrap);
+    wrap.append(row, prev, next);
+    row.tabIndex = 0;
+    // the front card's scale; it grows from its top edge (style.css), so the ring is that much taller
+    const step = 360 / n, FRONT = 1.16;
+    let at = 0, goal = 0, raf = 0, front = -1;
+    const norm = (d: number) => ((d % 360) + 540) % 360 - 180;
+    const draw = () => {
+      raf = 0;
+      at += (goal - at) * .14;
+      if (Math.abs(goal - at) < .05) at = goal;
+      const cw = cards[0]!.offsetWidth, radius = Math.min(cw * .82 / Math.sin(step * Math.PI / 180), cw * 2.6);
+      row.style.height = `${Math.ceil(Math.max(...cards.map((c) => c.offsetHeight)) * (FRONT + .02))}px`;
+      let best = 0, bestCos = -2;
+      cards.forEach((c, i) => {
+        // each card a step out is a fifth smaller: the front one stands out
+        const a = norm(i * step - at), r = a * Math.PI / 180, cos = Math.cos(r);
+        const x = Math.sin(r) * radius, z = (cos - 1) * radius * .55;
+        c.style.transform = `translate3d(calc(-50% + ${x.toFixed(1)}px), 0, ${z.toFixed(1)}px) rotateY(${(-a * .22).toFixed(2)}deg) scale(${(FRONT * .8 ** Math.min(3, Math.abs(a) / step)).toFixed(3)})`;
+        c.style.opacity = Math.max(0, Math.min(1, (cos + .1) / .8)).toFixed(3);
+        // a title rides with its card while the card faces the page
+        c.style.setProperty('--title', Math.max(0, (cos - .55) / .45).toFixed(3));
+        c.style.zIndex = String(Math.round(cos * 100) + 100);
+        c.style.pointerEvents = cos > .2 ? '' : 'none';
+        if (cos > bestCos) { bestCos = cos; best = i; }
+      });
+      if (best !== front) {
+        front = best;
+        cards.forEach((c, i) => c.classList.toggle('ring-front', i === best));
+      }
+      if (at !== goal) raf = requestAnimationFrame(draw);
+    };
+    const kick = () => { if (!raf) raf = requestAnimationFrame(draw); };
+    const turn = (by: number) => { goal = Math.round((goal + by * step) / step) * step; kick(); };
+    // a person's turn holds the automatic one for a while
+    const EVERY = 8000, HOLD = 20000;
+    let held = 0, hover = false, seen = false;
+    const hold = () => { held = performance.now() + HOLD; };
+    prev.onclick = () => { hold(); turn(-1); };
+    next.onclick = () => { hold(); turn(1); };
+    row.addEventListener('keydown', (e) => { if ((e.key === 'ArrowLeft' || e.key === 'ArrowRight') && e.target === row) { e.preventDefault(); hold(); turn(e.key === 'ArrowLeft' ? -1 : 1); } });
+    const face = (i: number) => { hold(); goal += norm(i * step - goal); kick(); };
+    // a side card turns to the front first; the front card's links work as usual
+    cards.forEach((c, i) => c.addEventListener('click', (e) => { if (i !== front) { e.preventDefault(); face(i); } }, true));
+    // a link to a card (`#shot-table`) turns it to the front, the ring in view
+    const linked = () => { const i = cards.findIndex((c) => `#${c.id}` === location.hash); if (i >= 0) { face(i); wrap.scrollIntoView(); } };
+    addEventListener('hashchange', linked);
+    linked();
+    // a drag turns the ring with the pointer, then settles on the nearest card
+    let drag: { x: number; from: number; moved: boolean } | null = null;
+    row.addEventListener('pointerdown', (e: PointerEvent) => { if (e.button === 0) { hold(); drag = { x: e.clientX, from: goal, moved: false }; } });
+    addEventListener('pointermove', (e) => {
+      if (!drag) return;
+      const dx = e.clientX - drag.x;
+      if (Math.abs(dx) > 6) drag.moved = true;
+      if (drag.moved) { goal = drag.from - dx / wrap.clientWidth * step * 2.2; at = goal; kick(); }
+    });
+    addEventListener('pointerup', () => { if (drag?.moved) { turn(0); row.addEventListener('click', (e: Event) => { e.preventDefault(); e.stopPropagation(); }, { capture: true, once: true }); } drag = null; });
+    // the automatic turn: only while the ring is on screen, the tab shown, and nobody points at or focuses it
+    wrap.addEventListener('pointerenter', () => { hover = true; });
+    wrap.addEventListener('pointerleave', () => { hover = false; });
+    new IntersectionObserver(([e]) => { seen = !!e?.isIntersecting; }, { threshold: .5 }).observe(wrap);
+    setInterval(() => { if (seen && !hover && !drag && !document.hidden && !wrap.contains(document.activeElement) && performance.now() >= held) turn(1); }, EVERY);
+    // images load late: a card that grows makes the ring taller, so no caption is cut off
+    const grown = new ResizeObserver(kick);
+    grown.observe(wrap);
+    cards.forEach((c) => grown.observe(c));
+    kick();
   }
 
   // The showcase's videos: only the one in focus plays (the frame most visible near the viewport's centre),

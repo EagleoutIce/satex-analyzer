@@ -1180,9 +1180,10 @@
     const theme = new st.Compartment(), lock = new st.Compartment(), lang = new st.Compartment(), setup = new st.Compartment(), prefs = new st.Compartment();
     // `playground.font`, `font_size`, `wrap` and `line_numbers`
     const prefsOf = () => [EditorView.theme({ '&.cm-editor': { fontSize: `${play.font_size}px` }, ...(play.font ? { '.cm-scroller': { fontFamily: play.font } } : {}), ...(play.line_numbers ? {} : { '.cm-lineNumbers': { display: 'none !important' } }) }), play.wrap ? EditorView.lineWrapping : []];
+    // typing in the PDF or Typeset view writes here too: its own list opens after `\`, the source's never for its prose
     const ev = new EditorView({
       parent, doc: text,
-      extensions: [setup.of(basicSetup), closing, lang.of(/\.bib$/.test(state.file) ? tex.bib : tex.language), language.syntaxHighlighting(tex.highlighter), heatGutter, lint.lintGutter({ tooltipFilter: () => [] }), widgetGutter, lint.linter(null, { tooltipFilter: () => [] }), ac.autocompletion({ override: [(c) => (c.explicit || play.complete_while_typing ? complete(c) : null)], activateOnTypingDelay: 40, addToOptions: [{ position: 80, render: (c) => {
+      extensions: [setup.of(basicSetup), closing, lang.of(/\.bib$/.test(state.file) ? tex.bib : tex.language), language.syntaxHighlighting(tex.highlighter), heatGutter, lint.lintGutter({ tooltipFilter: () => [] }), widgetGutter, lint.linter(null, { tooltipFilter: () => [] }), ac.autocompletion({ override: [(c) => (c.explicit || play.complete_while_typing) && !document.activeElement?.matches('.pdf-type-in') ? complete(c) : null], activateOnTypingDelay: 40, addToOptions: [{ position: 80, render: (c) => {
         // the detail: a usage line colored like the hover's, then where it comes from
         const span = Object.assign(document.createElement('span'), { className: 'cm-completionDetail' });
         const [, use, from] = (c.usage ?? '').match(/^(.*?)(?:\s+(\([^)]*\)))?$/) ?? [];
@@ -1684,10 +1685,16 @@
     if (alone) busy('Typesetting', 'Typesetting the text…');
     const rows = await lsp('satex/typeset', { textDocument: { uri: target } }).catch(() => null);
     if (alone && act.phase === 'Typesetting') idle();
+    // an answer that comes after newer final rows (a long run's) never puts its older pages back
+    if (!rows || !self.satexViews.rowsWin(tsFinal.get(target), of, false)) return;
+    if (of != null) tsFinal.set(target, of);
     typesetShow(target, of, rows);
   }
   /** The rows a run sent before its findings, of the text with version `of`. */
   var tsEarly = null, tsShown = null;
+  /** Per file, the newest version whose final rows are shown: a preview (lax rows, page breaks maybe) of that text
+   * or anything older never replaces them, so the page hints are always the final run's. */
+  var tsFinal = new Map();
   /** `rows` of `target`'s run of version `of` in the Typeset view. */
   function typesetShow(target, of, rows) {
     if (!rows || target !== uri()) return;
@@ -1866,6 +1873,9 @@
     const read = () => readOf(ch.from, chars[at + w[0].length - 1].from);
     caretPut({ view: 'ts', p: { path: p.dataset.path, line: p.dataset.line, col: p.dataset.col }, idx: w.index }, file, ch.line, w[0], idx - w.index, nth, read, !!ch.from);
   }
+  // the tints and the caret are placed from the view's layout: one drawn while its tab was hidden (a run the PDF's
+  // typing started) has none, so each is drawn again once the view is shown or resized
+  new ResizeObserver(() => { if (!typesetBody.checkVisibility()) return; tsOriginsDraw(); if (pdfCaret?.view === 'ts') pdfCaretDraw(); }).observe(typesetBody);
   /** In Type mode, the text not written where it is set, tinted by where typing would go (ORIGIN_TIPS). */
   function tsOriginsDraw() {
     typesetBody.querySelectorAll('.ts-orig').forEach((x) => x.remove());
@@ -4411,7 +4421,7 @@
   }
   function drawTabs() {
     tabs.innerHTML = state.open.map((n) => `<button role="tab" aria-selected="${n === state.file}" data-name="${escape(n)}"${n in state.ro ? ` class="ro" title="${escape(state.ro[n])}, read-only"` : ` title="${escape(n)}${n === state.root ? ', the root' : ''}"`}>` +
-      `${escape(n)}<span class="x" role="button" aria-label="close ${escape(n)}" title="close"></span></button>`).join('');
+      `${escape(n)}${n === state.root ? '<span class="rootmark" title="the root: runs and the language server read the project from here">root</span>' : ''}<span class="x" role="button" aria-label="close ${escape(n)}" title="close"></span></button>`).join('');
     tabs.querySelector('[aria-selected=true]')?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
   }
   const redraw = () => { drawTabs(); drawTree(); };
@@ -4424,6 +4434,7 @@
     const v = self.satexStore.get(viewKey(), {});
     v.file = state.file;
     v.open = state.open;
+    v.root = state.root;
     (v.at ??= {})[state.file] = { c: editor.cursor(), y: Math.round(editor.scroll()) };
     self.satexStore.set(viewKey(), v);
   }
@@ -4459,6 +4470,8 @@
     lensify();
     colorize();
     pdfColsAsk();
+    const named = magicRoot(name);
+    if (named && named !== state.root) makeRoot(named);
   }
   /** Closes a tab; the last one closed leaves the root open. */
   function closeTab(name) {
@@ -4475,10 +4488,16 @@
     if (e.target.closest('.x')) closeTab(tab.dataset.name); else choose(tab.dataset.name);
   };
   tabs.onauxclick = (e) => { const tab = e.target.closest('button'); if (tab && e.button === 1) closeTab(tab.dataset.name); };
+  tabs.oncontextmenu = (e) => {
+    const n = e.target.closest('button')?.dataset.name;
+    if (!n) return;
+    e.preventDefault();
+    showMenu([...rootItem(n), ['Close', '', () => closeTab(n)]], e.clientX, e.clientY);
+  };
   tabs.ondblclick = (e) => { const n = e.target.closest('button')?.dataset.name; if (n && !(n in state.ro)) renameFile(n); };
 
   /** An example in place of the project: its files (as last edited), its root, its command. */
-  async function example(ex, { file = ex, list = null, root = ex, command = null } = {}) {
+  async function example(ex, { file = ex, list = null, root = null, command = null } = {}) {
     if (!editor || !(ex in sampleTexts)) return;
     sync();
     if (state.upload) Object.assign(state, { dir: '/work', texts: { ...sampleTexts, ...drafts().texts }, upload: false, lists: drafts().lists ?? {}, bins: {} });
@@ -4489,8 +4508,8 @@
     state.dir = `/work/ex/${ex.replace(/\.[^.]+$/, '')}`;
     manualKernel = false;
     if (state.example && state.example !== ex) keepView();
-    Object.assign(state, { example: ex, root: state.files.includes(root) ? root : ex, open: [...state.files], file: state.files.includes(file) ? file : ex });
-    const kept = self.satexStore.get(viewKey(), {});
+    const kept = self.satexStore.get(`view:${ex}`, {});
+    Object.assign(state, { example: ex, root: [root, kept.root].find((n) => state.files.includes(n)) ?? magicRoot(ex) ?? ex, open: [...state.files], file: state.files.includes(file) ? file : ex });
     if (file === ex && state.files.includes(kept.file)) state.file = kept.file;
     if (Array.isArray(kept.open) && kept.open.length && kept.open.every((n) => state.files.includes(n))) state.open = [...new Set([...kept.open, state.file])];
     editor.set(state.texts[state.file]);
@@ -4502,10 +4521,22 @@
     outBox.hidden = true;
     if (!plainLint()) start();
   }
+  /** The menu entry that makes a TeX file the root. */
+  const rootItem = (name) => /\.(tex|ltx)$/.test(name) && name !== state.root && !(name in state.ro) ? [['Set as root', '', () => makeRoot(name)]] : [];
+  /** The root a file names in its head (`% !TeX root = ../main.tex`), relative to its folder, if it is a project file. */
+  function magicRoot(name) {
+    const m = (state.texts[name] ?? '').slice(0, 4000).match(/^%\s*!T[eE]X\s+root\s*=\s*(.+?)\s*$/m);
+    if (!m) return null;
+    const parts = [];
+    for (const p of `${name.replace(/[^/]*$/, '')}${m[1]}`.split('/')) if (p === '..') parts.pop(); else if (p && p !== '.') parts.push(p);
+    const at = parts.join('/'), named = [at, `${at}.tex`].find((n) => state.files.includes(n));
+    return named && named !== name ? named : null;
+  }
   /** Another root: the server starts over from it. */
   async function makeRoot(name) {
     state.root = name;
     manualKernel = false;
+    keepView();
     redraw();
     await restart();
     toast(`${name} is the root`);
@@ -4547,7 +4578,7 @@
     e.preventDefault();
     const name = row.dataset.name, ro = name in state.ro;
     showMenu([
-      ...(/\.(tex|ltx)$/.test(name) && name !== state.root ? [['Use as root', '', () => makeRoot(name)]] : []),
+      ...rootItem(name),
       ['Open', '', () => choose(name)],
       ...(ro ? [] : [['Rename…', 'F2', () => renameFile(name)], ['Delete', '', () => deleteFile(name)]]),
       // an example's file as it came: the kept draft goes
@@ -5125,7 +5156,7 @@
     let step = onServer ? '' : first ? 'starting the TeX worker' : 'pdfTeX';
     const note = first ? 'The first compile downloads and starts the TeX engine. The browser keeps it: later compiles skip this.' : '';
     const tick = cached ? 0 : setInterval(() => {
-      const t = secs(performance.now() - start), why = `${pdfWarming ? "waiting for the compile server's setup, then compiling" : 'compiling'} ${what}: ${t}${step && ` · ${step}`}${pdfQueued ? ' · one more queued' : ''}`;
+      const t = secs(performance.now() - start), why = `${pdfWarming ? "waiting for the compile server's setup, then compiling" : 'compiling'} ${what}: ${t}${step && ` · ${step}`}${pdfQueued ? ' · one more queued' : ''}${pdfBeside()}`;
       // the bar's status is short, the pane says it all
       pdfStatus.textContent = `compiling: ${t}`;
       pdfWait(why, performance.now() - start > TIP_AFTER_MS, note);
@@ -5149,7 +5180,7 @@
       if (data.none || cached && pdf?.slice) pdfStatus.textContent = pdfSummary;
       else {
         pdfSummary = data.error ? '' : `${what} in ${data.cached ? 'cache' : secs(performance.now() - start)}`;
-        const gen = ++pdfGen, built = { ...data, slice, root, dir };
+        const gen = ++pdfGen, built = { ...data, slice, root, dir, text: pdfSent };
         pdfOpen(built).then((view) => {
           // a newer build came first: this one is never shown
           if (gen !== pdfGen) { if (view !== pdfViewer) view?.close(); for (const url of Object.values(built.blobs ?? {})) URL.revokeObjectURL(/** @type {string} */ (url)); return; }
@@ -5182,6 +5213,13 @@
     pdfSent = files[state.file];
     pdfWorker.postMessage({ url: COMPILE, timeout: COMPILE_MS, request: { main: root, files, sets: pdfSets(), ...(TEX ? { pages: false } : {}), ...(slice ? { at } : {}), ...(cached ? { cached } : {}), ...(supersedes ? { supersedes } : {}) } });
   }
+  /** The analysis running beside a build, where it reads: the two share the machine, neither waits for the other
+   * (the build runs in its own worker, or on the server). */
+  const pdfBeside = () => {
+    if (!(running > 0 || act.phase === 'Analyzing')) return '';
+    const [file, line] = (act.where ?? '').split(/:(?=\d*$)/), n = state.texts[Object.keys(state.texts).find((f) => file && file.endsWith(f)) ?? '']?.split('\n').length;
+    return ` · the analysis runs alongside${line ? ` (line ${line}${n ? ` of ${n}` : ''}, ${secs(performance.now() - act.started)})` : ''}`;
+  };
   /** The build under way (its root and project) and its status timer; the open file's text the last build was sent. */
   var pdfRunning = null, pdfTick = 0, pdfSent = null;
   /** Drops the build under way: its worker goes, the server stops it once the next request says it supersedes it. */
@@ -5240,7 +5278,7 @@
   pdfAutoKeep();
   $('pdf-auto-list').onchange = (e) => { playSet('compile_after', +e.target.value); pdfEdited(); };
   // the Compile menu closes after a choice and when clicking elsewhere
-  addEventListener('pointerdown', (e) => { for (const d of document.querySelectorAll('.pdf-menu[open], .pdf-layers[open]')) if (!d.contains(e.target)) d.open = false; });
+  addEventListener('pointerdown', (e) => { for (const d of document.querySelectorAll('.pdf-menu[open], .pdf-layers[open], .math-menu[open]')) if (!d.contains(e.target)) d.open = false; });
   /** An edit: with auto-compile on, a build once the edits rest; one running then queues it. A slice is asked for, never rebuilt on its own. */
   function pdfEdited() {
     if (!pdfAuto?.on || pdf?.slice) return;
@@ -5265,10 +5303,11 @@
       compile(false, false, null, true);
     }
   });
-  /** A short jitter on failure, a soft pulse on success: on each of `els`, once. */
+  /** A short jitter on failure, a soft pulse on success: on each of `els` shown now, once. A hidden one's animation
+   * would wait and play when its tab opens. */
   function flare(els, ok) {
     for (const el of els) {
-      if (!el) continue;
+      if (!el?.checkVisibility()) continue;
       el.classList.remove('flare-ok', 'flare-bad');
       void el.offsetWidth; // restarts the animation
       el.classList.add(ok ? 'flare-ok' : 'flare-bad');
@@ -5387,7 +5426,9 @@
     const pagesNow = pdfBody.querySelector('.pdf-pages');
     // the words are there (find, typing): a browser build learns them after its first pages
     if (pdf.wordList) pagesNow.dataset.words = '';
-    if (!pdfViewer) { pdfBody.querySelectorAll('.pdf-page img').forEach((img) => img.addEventListener('load', pdfLoaded_, { once: true })); return; }
+    // the caret at once on the swapped pages, no frame without it
+    const caretNow = () => { if (pdfCaret?.view === 'pdf') pdfCaretDraw(); };
+    if (!pdfViewer) { pdfBody.querySelectorAll('.pdf-page img').forEach((img) => img.addEventListener('load', pdfLoaded_, { once: true })); caretNow(); return; }
     for (const el of pdfBody.querySelectorAll('.pdf-page')) {
       const img = el.querySelector('img'), was = old.get(el.dataset.page);
       if (was && `${was.naturalWidth}x${was.naturalHeight}` === `${img.getAttribute('width')}x${img.getAttribute('height')}`) { img.replaceWith(was); old.delete(el.dataset.page); }
@@ -5395,6 +5436,7 @@
     }
     for (const img of old.values()) if (img?.__url) URL.revokeObjectURL(img.__url);
     if (scroll && keep) [pagesNow.scrollLeft, pagesNow.scrollTop] = scroll;
+    caretNow();
     pdfIO = new IntersectionObserver((seen) => { for (const e of seen) if (e.isIntersecting) pdfWant.add(e.target); else pdfWant.delete(e.target); pdfDrawNext(); }, { root: pagesNow, rootMargin: '100% 0px' });
     pagesNow.querySelectorAll('.pdf-page').forEach((el) => pdfIO.observe(el));
     pdfSettle();
@@ -5566,7 +5608,9 @@
     pdfSelOff();
     if (e.target.closest('.pdf-owner button')) { compile(); return; }
     const al = e.target.closest('.pdf-col-al');
-    if (al) { e.preventDefault(); pdfColAlign(al); return; }
+    if (al) { e.preventDefault(); pdfColMenu = null; pdfColAlign(al); return; }
+    const menu = e.target.closest('.pdf-col-more');
+    if (menu) { e.preventDefault(); pdfColMenu = pdfColMenu === menu.dataset.menu ? null : menu.dataset.menu; pdfOverlay(); return; }
     if ($('play-pdf').classList.contains('pdf-other')) { e.preventDefault(); return; }
     const chip = e.target.closest('.pdf-key');
     if (chip) { e.preventDefault(); pdfToTarget(pdfKeys[+chip.dataset.k]); return; }
@@ -6167,10 +6211,22 @@
     }
     const boxes = pdf?.boxes ?? [], out = [];
     const near = (a, b) => a.page === b.page && Math.abs(a.y - b.y) < 0.5;
+    // glue stretched at a line's very start or end (`\centering`'s \leftskip and \rightskip, a last line's
+    // \parfillskip, a footer's \hfil): SyncTeX records it at the edges of the line's box. The rows' marks lack a
+    // line's skips, so these are found here, on both sides, never matched to a mark.
+    const lines = boxes.filter((b) => b.kind === '(' && b.w > 0), edge = new Set();
+    for (const b of boxes) {
+      if (b.kind !== 'k' || b.w < 1) continue;
+      const box = lines.find((o) => near(o, b) && (Math.abs(b.x - b.w - o.x) < 0.5 || Math.abs(b.x - (o.x + o.w)) < 0.5));
+      if (!box) continue;
+      const left = Math.abs(b.x - b.w - box.x) < 0.5;
+      edge.add(b);
+      out.push({ page: b.page, l: b.x - b.w, r: b.x, t: b.y - 3.5, d: b.y + 0.5, file: b.file, line: b.line, kind: 'fill', spec: `${left ? 'start' : 'end'} · ${(b.w * 72.27 / 72).toFixed(1)}pt` });
+    }
     const span = (b) => b.kind === 'k' ? [b.x - b.w, b.x] : [b.x, Math.min(...boxes.filter((o) => near(o, b) && o.x > b.x + 0.01).map((o) => o.x), ...boxes.filter((o) => o.kind === '(' && near(o, b)).map((o) => o.x + o.w))];
     for (const w of want.values()) {
       const marks = w.marks.sort((a, b) => (a[0] === 'fill' ? 0 : 1) - (b[0] === 'fill' ? 0 : 1));
-      const own = boxes.filter((b) => b.line === w.line && w.path.endsWith(b.file) && (b.kind === 'k' && b.w > 0 || b.kind === 'g'));
+      const own = boxes.filter((b) => b.line === w.line && w.path.endsWith(b.file) && !edge.has(b) && (b.kind === 'k' && b.w > 0 || b.kind === 'g'));
       const wide = own.map((b) => [b, span(b)]).filter(([, [l, r]]) => Number.isFinite(r) && r > l).sort((a, b) => (b[1][1] - b[1][0]) - (a[1][1] - a[1][0]));
       wide.slice(0, marks.length).forEach(([b, [l, r]], i) => {
         // a low bracket on the baseline, as the Typeset view draws it
@@ -6275,15 +6331,25 @@
       for (const [i, t] of pdfCols.tables.entries()) {
         // the layer shows every table, a hover the one under the pointer
         if (!pdfOverlayOn.widths && i !== pdfHoverTable) continue;
-        for (const c of PE.columns(pdf.boxes ?? [], state.file, t, pdfCols.tables)) {
-          const col = t.cols[c.k], can = !!col.node && !!self.satexPdfEdit.form(col.width), d = pdfDrag?.t === i && pdfDrag.k === c.k ? pdfDrag : null;
+        // one row of chips: every column's box starts at the table's top on its page, each chip within its column
+        const placed = PE.columns(pdf.boxes ?? [], state.file, t, pdfCols.tables, pdf.wordList ?? []), tops = new Map();
+        for (const c of placed) tops.set(c.page, Math.min(tops.get(c.page) ?? Infinity, c.t));
+        for (const c of placed) {
+          const col = t.cols[c.k], d = pdfDrag?.t === i && pdfDrag.k === c.k ? pdfDrag : null;
+          // a width as written is dragged in its form; an l, c or r column without one becomes a p column of the width dragged
+          const wide = !!col.node && !!PE.form(col.width), grow = !col.width && !!col.spec && !!PE.respec(col.align, ''), can = wide || grow;
           // the width as now written, before the next build places it
-          const len = can && self.satexLayers.length(col.width), w = d?.w ?? (len ? len.pt * 72 / 72.27 : c.w), shown = d?.text ?? (can ? col.width : `${+(c.w * 2.54 / 72).toFixed(2)}cm`);
-          const why = can ? `column ${c.k + 1} of ${t.env}: ${col.width}. Drag the edge to rewrite it (Shift: finer)` : `column ${c.k + 1} of ${t.env}, ${lengths(c.w * 72.27 / 72)}: ${col.align === 'X' ? 'tabularx computes it from the table width' : `written as ${col.width}, edit it in the source`}`;
+          const len = wide && self.satexLayers.length(col.width), w = d?.w ?? (len ? len.pt * 72 / 72.27 : c.w), cm = `${+(c.w * 2.54 / 72).toFixed(2)}cm`, shown = d?.text ?? (wide ? col.width : cm);
+          const why = wide ? `column ${c.k + 1} of ${t.env}: ${col.width}. Drag the edge to rewrite it (Shift: finer, no snap to \\linewidth)`
+            : grow ? `column ${c.k + 1} of ${t.env}, ${c.measured ? 'its cells' : 'about'} ${lengths(c.w * 72.27 / 72)}: drag the edge to give it a width, as a p column keeping its alignment (Shift: finer)`
+              : `column ${c.k + 1} of ${t.env}, ${lengths(c.w * 72.27 / 72)}: ${col.align === 'X' ? 'tabularx computes it from the table width' : `written as ${col.width}, edit it in the source`}`;
           // the column's letter and the ones it may become: l c r, or p m b for a column with a width
           const kin = col.spec && ['lcr', 'pmb'].find((s) => s.includes(col.align)), al = kin ? [...kin].map((a) => `<button type="button" class="pdf-col-al" data-t="${i}" data-k="${c.k}" data-a="${a}" aria-pressed="${a === col.align}" title="column ${c.k + 1}: ${ALIGNS[a]}">${a}</button>`).join('') : '';
-          const head = `${escape(col.width ? `${col.align}{${shown}}` : `${col.align} ${c.approx ? '≈' : ''}${+(c.w * 2.54 / 72).toFixed(2)}cm`)}${al}`;
-          box(c.page, `pdf-col${can ? '' : ' pdf-col-fixed'}${d ? ' pdf-col-drag' : ''}`, c.x, c.t - 1, c.x + w, c.d + 1, c.approx ? `${why} (place approximate)` : why, `<b>${head}</b>${can ? `<i class="pdf-col-grip" data-t="${i}" data-k="${c.k}" data-w="${c.w}" role="slider" tabindex="0" aria-label="width of column ${c.k + 1}" aria-valuenow="${+(w * 2.54 / 72).toFixed(2)}" aria-valuetext="${escape(shown)}"></i>` : ''}`);
+          // the chip: the column's letter and width; the letters it may become behind its ⋯
+          const id = `${i}:${c.k}`, open = pdfColMenu === id;
+          const more = al ? `<button type="button" class="pdf-col-more" data-menu="${id}" aria-expanded="${open}" title="more options for column ${c.k + 1}">⋯</button>${open ? `<span class="pdf-col-menu" role="group" aria-label="column ${c.k + 1}">${al}</span>` : ''}` : '';
+          const head = `<span class="pdf-col-name">${escape(d ? d.label : col.width ? `${col.align}{${shown}}` : `${col.align} ${c.approx ? '≈' : ''}${cm}`)}</span>${more}`;
+          box(c.page, `pdf-col${can ? '' : ' pdf-col-fixed'}${d ? ' pdf-col-drag' : ''}${open ? ' pdf-col-open' : ''}`, c.x, tops.get(c.page) - 1, c.x + w, c.d + 1, c.approx ? `${why} (place approximate)` : why, `<b>${head}</b>${can ? `<i class="pdf-col-grip" data-t="${i}" data-k="${c.k}" data-w="${c.w}" role="slider" tabindex="0" aria-label="width of column ${c.k + 1}" aria-valuenow="${+(w * 2.54 / 72).toFixed(2)}" aria-valuetext="${escape(shown)}"></i>` : ''}`);
         }
       }
     }
@@ -6292,11 +6358,20 @@
       const tints = [];
       for (const r of typesetRows ?? []) {
         if (!r.origins) continue;
-        const chars = rowOrigins(r);
-        for (const [kind, a, b] of originRuns(chars)) {
-          const file = Object.keys(state.texts).find((n) => chars[a].path.endsWith(n)), text = chars.slice(a, b + 1).map((ch) => ch.c).join('');
-          const where = file && pdfWordsOf(pdfRects(file, chars[a].line, true), text);
-          for (const q of where || []) tints.push({ page: q.page, l: q.l - 0.5, t: q.t - 0.5, r: q.r + 0.5, d: q.d + 1, kind, title: `${text}: ${ORIGIN_TIPS[kind]}${chars[a].from?.def ? ` (${chars[a].from.def}, line ${chars[a].from.defLine})` : ''}` });
+        const chars = rowOrigins(r), runs = originRuns(chars);
+        if (!runs.length) continue;
+        // each run found by its place in the row among the page words its lines set: a `!` of a macro is the one
+        // after its argument, never the document's own `!` spelled the same
+        const rects = [...new Set(chars.map((ch) => `${ch.path}\n${ch.line}`))].flatMap((k) => { const [path, line] = k.split('\n'), file = Object.keys(state.texts).find((n) => path.endsWith(n)); return file ? pdfRects(file, +line, true) : []; });
+        const words = [...new Set(pdfRowWords(rects))].sort((x, y) => x[0] - y[0] || (Math.abs(x[4] - y[4]) < 3 ? x[1] - y[1] : x[4] - y[4]));
+        const texts = words.map((w) => w[5].normalize('NFKC').replace(/\s+/g, '')), solid = [], at = [];
+        chars.forEach((ch, i) => { at[i] = solid.length; if (ch.c.trim()) solid.push(ch.c); });
+        for (const [kind, a, b] of runs) {
+          const text = chars.slice(a, b + 1).map((ch) => ch.c).join(''), title = `${text}: ${ORIGIN_TIPS[kind]}${chars[a].from?.def ? ` (${chars[a].from.def}, line ${chars[a].from.defLine})` : ''}`;
+          for (const [k, from, to] of PE.locate(texts, solid.join(''), at[a], at[b]) ?? []) {
+            const w = words[k], img = pdfImg(w[0]), xs = img?.naturalWidth ? pdfBounds(img, w) : null;
+            tints.push({ page: w[0], l: (xs?.[from] ?? w[1]) - 0.5, t: w[2] - 0.5, r: (xs?.[to] ?? w[3]) + 0.5, d: w[4] + 1, kind, title });
+          }
         }
       }
       // one tint per spot: a word set inside a wider run (an argument in its macro's text) keeps its own
@@ -6370,6 +6445,8 @@
   /* Editing in the PDF (pdfedit.ts): a column's width dragged at its edge, plain text typed at a caret. Both write
    * through the snapshot printer (src/lsp/snapshot.rs) onto the text they were printed for; a drag is one undo step. */
   /** The open file's tables with the widths a drag rewrites (src/lsp/dialogs.rs `columns`), `\linewidth` in pt. */
+  /** The column chip whose ⋯ menu is open (`table:column`), kept while the layer redraws. */
+  var pdfColMenu = null;
   var pdfCols = null, pdfDrag = null, pdfTyping = true, pdfCaret = null, pdfKeep = null; // var: a run may end before these lines ran
   /** The last build's round trip, from Compile to its first page shown: live typing needs it short. */
   var pdfRound = { start: 0, ms: Infinity };
@@ -6405,15 +6482,28 @@
   /** A drag (or a key) on the handle `g` begins: the column's width as written, the room the table has on its line. */
   function pdfGrab(g) {
     const i = +g.dataset.t, t = pdfCols?.tables[i], k = +g.dataset.k, col = t?.cols[k], page = +g.closest('.pdf-page').dataset.page, img = pdfImg(page);
-    if (!col?.node || !img?.naturalWidth || pdfDrag) return null;
+    // a width as written, else an l, c or r column's letter that becomes a p column
+    const grow = !col?.width && !!col?.spec && !!PE.respec(col.align, '');
+    if (!(col?.node || grow) || !img?.naturalWidth || pdfDrag) return null;
     const was = +g.dataset.w, whole = PE.extent(pdf.boxes, state.file, t)?.w ?? was, block = pdfBlocks().get(page);
     // the line the table sits on (a minipage's, an item's), else \linewidth as the run ended, else the text block
     const line = PE.room(pdf.boxes, state.file, t) ?? (pdfCols.linewidth ? pdfCols.linewidth * 72 / 72.27 : block ? block.r - block.l : Infinity);
-    const target = uri();
-    const d = pdfDrag = { t: i, k, page, was, w: was, max: Math.max(was, line - (whole - was)), col: col.width, text: col.width, node: structuredClone(col.node), before: editor.text(), perBp: img.getBoundingClientRect().width / pageSize(img)[0] };
+    // tabularx: a column grows into its X columns, each kept 1 cm wide
+    const xs = PE.columns(pdf.boxes, state.file, t, pdfCols.tables, pdf.wordList ?? []).filter((c) => t.cols[c.k].align === 'X');
+    const room = xs.length ? was + xs.reduce((n, c) => n + c.w, 0) - xs.length * 72 / 2.54 : line - (whole - was);
+    const target = uri(), lw = pdfCols.linewidth ? pdfCols.linewidth * 72 / 72.27 : Number.isFinite(line) ? line : 0;
+    // the node rewritten: the width's own, else the column's letter, loading array where its `>{…}` or `m` needs it
+    const wrap = (text) => grow ? PE.respec(col.align, text).body : text;
+    const node = grow ? { ...structuredClone(col.spec), ...(PE.respec(col.align, '').array ? { package: { name: 'array', options: '' } } : {}) } : structuredClone(col.node);
+    const d = pdfDrag = { t: i, k, page, was, w: was, max: Math.max(was, room), col: col.width || null, text: col.width, label: grow ? col.align : col.width, wrap, line: lw, node, before: editor.text(), perBp: img.getBoundingClientRect().width / pageSize(img)[0] };
     d.send = PE.sender(async (text) => {
-      if (!(await pdfWrite(target, d.node, text, { history: false }))) return false;
-      d.node = { ...d.node, text, body_at: [0, text.length], range: { start: d.node.range.start, end: { line: d.node.range.start.line, character: d.node.range.start.character + text.length } } };
+      const body = wrap(text), rows = () => editor.text().split('\n').length, n0 = rows();
+      if (!(await pdfWrite(target, d.node, body, { history: false }))) return false;
+      // a package loaded above the table moves it down
+      const at = { ...d.node.range.start, line: d.node.range.start.line + rows() - n0 };
+      d.node = { ...d.node, text: body, body_at: [0, body.length], range: { start: at, end: { line: at.line, character: at.character + body.length } } };
+      // written once: the package is loaded, later sends rewrite only the letter
+      delete d.node.package;
       if (pdfLive()) pdfRebuild(true);
       return true;
     });
@@ -6422,14 +6512,14 @@
   }
   /** The width the drag stands at (`text` as written), shown on the live handle and sent. */
   function pdfDragSet(text) {
-    const d = pdfDrag, f = text && PE.form(text), f0 = PE.form(d?.col ?? '');
-    if (!d || !f || !f0) return;
-    const w = d.was * f.num / f0.num;
+    const d = pdfDrag, w = text && PE.widthBp(text, d?.line ?? 0);
+    if (!d || !w) return;
     if (w > d.max + 0.01) return;
     d.w = w; d.text = text;
+    d.label = d.col ? text : d.wrap(text).replace(/^>\{\\(centering|raggedleft)\\arraybackslash\}/, (_, a) => a === 'centering' ? 'c→' : 'r→');
     // a build may have replaced the handle and the page: the ones there now
     const host = pdfBody.querySelector('.pdf-col-drag'), img = pdfImg(d.page);
-    if (host && img?.naturalWidth) { host.style.width = `${w / pageSize(img)[0] * 100}%`; host.querySelector('b').textContent = text; }
+    if (host && img?.naturalWidth) { host.style.width = `${w / pageSize(img)[0] * 100}%`; host.querySelector('b').textContent = d.label; }
     d.send.put(text);
   }
   /** The drag ends (a release, a cancel, a key): the last width written, the drag one undo step, the pages built. */
@@ -6438,7 +6528,7 @@
     if (!d) return;
     try {
       await d.send.flush();
-      if (d.node.text !== d.text) toast('The text changed meanwhile: the width was not written');
+      if (d.text && d.node.text !== d.wrap(d.text)) toast('The text changed meanwhile: the width was not written');
       editor.squash?.(d.before);
     } finally {
       pdfDrag = null;
@@ -6456,7 +6546,7 @@
     const d = pdfGrab(g);
     if (!d) return;
     const x0 = e.clientX, id = e.pointerId;
-    const move = (m) => { if (m.pointerId === id) pdfDragSet(PE.resized(d.col, d.was, Math.min(d.max, Math.max(2, d.was + (m.clientX - x0) / d.perBp)), m.shiftKey)); };
+    const move = (m) => { if (m.pointerId === id) pdfDragSet(PE.snapWidth(d.col, d.was, Math.min(d.max, Math.max(2, d.was + (m.clientX - x0) / d.perBp)), d.line, m.shiftKey)); };
     // every end (a release, a cancel by the browser or the system) ends the drag and its listeners
     const end = (u) => {
       if (u.pointerId !== id) return;
@@ -6473,7 +6563,7 @@
     const d = pdfGrab(g);
     if (!d) return;
     pdfGripFocus = [d.t, d.k];
-    pdfDragSet(PE.stepped(d.col, dir, e.shiftKey));
+    pdfDragSet(d.col ? PE.stepped(d.col, dir, e.shiftKey) : PE.snapWidth(null, d.was, d.was + dir * (e.shiftKey ? 0.1 : 0.5) * 72 / 25.4, d.line, true));
     pdfDragEnd();
   });
   /** What each column letter does, for the column layer's buttons. */
@@ -6547,9 +6637,9 @@
     if (!hit) return toast('Click on a word to type there');
     // the same words before it on the page set from line n
     const nth = (n) => pdfWordsOn(page).filter((w) => pdfSame(w[5], word[5]) && (w[4] < word[2] || Math.abs(w[4] - word[4]) < 1 && w[1] < word[1]) && pdfSource(page, w[1] + 1, w[4] - 1, w)?.line === n).length;
-    // the character under the click: its share of the word's width
-    const lead = word[5].search(/[\p{L}\p{N}]/u), k = Math.round((x - word[1]) / Math.max(1, word[3] - word[1]) * word[5].length) - Math.max(0, lead);
-    caretPut({ view: 'pdf', page, word }, hit.file, hit.line, word[5], k, nth, () => readAt(hit.file, hit.line, word[5]));
+    // the boundary between two characters nearest the click
+    const img = pdfImg(page), lead = word[5].normalize('NFKC').search(/[\p{L}\p{N}]/u), k = (img ? PE.boundaryAt(pdfBounds(img, word), x) : Math.round((x - word[1]) / Math.max(1, word[3] - word[1]) * word[5].length)) - Math.max(0, lead);
+    caretPut({ view: 'pdf', page, word }, hit.file, hit.line, word[5].normalize('NFKC'), k, nth, () => readAt(hit.file, hit.line, word[5]));
   }
   /** Home, End, Up and Down at the caret: to the start or end of its line as set, or the line above or below, the
    * column kept. The PDF's lines are its words on one baseline, chained by gaps narrower than a column's (two
@@ -6689,7 +6779,13 @@
     const [pw, ph] = pageSize(img), g = pdfSeen(), m = PE.wordAt(g.text, g.at), now = m?.[1];
     // the word around the caret, found again on the page after a build: the nearest one so spelled
     const bare = (w) => w[5].normalize('NFKC').replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, ''), dist = (w) => Math.hypot(w[1] - c.word[1], w[4] - c.word[4]);
-    const same = m ? pdfWordsOn(c.page).filter((w) => bare(w) === now).sort((a, b) => dist(a) - dist(b)) : [];
+    // typing goes forward: the word is at or after the one the caret was in (reading order), never an earlier one
+    // spelled the same (`some … some`), unless the caret moved back past where it was put
+    const ahead = (w) => g.at < (c.anchor ?? 0) || w[4] > c.word[4] + 1 || Math.abs(w[4] - c.word[4]) <= 1 && w[1] >= c.word[1] - 0.5;
+    // and only pages built from the text as now up to the caret's word place it: a lagging build's word (the rest of
+    // the word typed into) stands where the text was, the caret would bounce between rows
+    const fresh = !m || pdf?.text == null || pdf.text.slice(0, m[0] + m[1].length) === g.text.slice(0, m[0] + m[1].length);
+    const same = m && fresh ? pdfWordsOn(c.page).filter((w) => bare(w) === now && ahead(w)).sort((a, b) => dist(a) - dist(b)) : [];
     // past a line break (Enter) the word stands far off: the one SyncTeX sets from the caret's line
     const line = pdfPos(g.text, g.at).line + 1, near = same[0] && dist(same[0]) < 40 ? same[0] : same.find((w) => pdfSource(c.page, w[1] + 1, w[4] - 1, w)?.line === line);
     // `anchor`: where the page's word `c.word` starts in the text. The text typed from there on is laid into its row at
@@ -6697,31 +6793,58 @@
     const set = !!near;
     if (set || c.anchor == null || g.at < c.anchor) c.anchor = m ? m[0] : g.at;
     if (set) c.word = near;
-    const w = c.word, shown = w[5].normalize('NFKC'), plain = (t) => t.replace(/\\[A-Za-z@]+\s*|[{}$\\^_~]/g, '').replace(/\s+/g, ' ');
-    const typed = g.text.slice(c.anchor, Math.max(g.at, m ? m[0] + m[1].length : g.at)), into = m ? g.at - m[0] : 0;
-    let cx = w[1] + (w[3] - w[1]) * Math.min(1, ((m ? Math.max(0, shown.indexOf(now)) : 0) + into) / Math.max(1, shown.length));
+    // verbatim is set as written, one fixed-width column a character: nothing to strip, the caret at its column
+    const verb = !!PE.verbatimAt(g.text, g.at), w = c.word, shown = w[5].normalize('NFKC'), plain = (t) => verb ? t : t.replace(/\\[A-Za-z@]+\s*|[{}$\\^_~]/g, '').replace(/\s+/g, ' ');
+    const typed = g.text.slice(c.anchor, Math.max(g.at, m ? m[0] + m[1].length : g.at)), into = m ? g.at - m[0] : 0, col = Math.min(shown.length, (m ? Math.max(0, shown.indexOf(now)) : 0) + into);
+    let cx = verb ? w[1] + (w[3] - w[1]) / Math.max(1, shown.length) * col : pdfBounds(img, w)[col];
     // the pages lag the text: the row is laid out again at once with the text as now written, until the build lands
-    if (!set && typed !== bare(w) && !/\\[A-Za-z@]*$/.test(g.text.slice(c.anchor, g.at))) cx = pdfEcho(img, w, plain(typed), plain(g.text.slice(c.anchor, g.at)).length) ?? cx;
+    if (!set && typed !== bare(w) && !(verb && pdf?.text === g.text) && (verb || !/\\[A-Za-z@]*$/.test(g.text.slice(c.anchor, g.at)))) cx = pdfEcho(img, w, plain(typed), plain(g.text.slice(c.anchor, g.at)).length, verb) ?? cx;
     img.parentElement.insertAdjacentHTML('beforeend', `<span class="pdf-caret" style="left:${cx / pw * 100}%;top:${w[2] / ph * 100}%;height:${(w[4] - w[2]) / ph * 100}%"></span>`);
   }
   /** Draws word `w`'s row with `now` in its place (its edge punctuation kept): the row's words over a patch of the
    * page, each as wide as the page set it, the ones after moved by the change. The caret's x (`into` in `now`), in bp. */
-  function pdfEcho(img, w, now, into) {
+  function pdfEcho(img, w, now, into, mono = false) {
     const [pw, ph] = pageSize(img), px = img.getBoundingClientRect().height / ph;
     const row = pdfWordsOn(+img.parentElement.dataset.page).filter((x) => Math.abs(x[4] - w[4]) < 1 && x[1] >= w[1] - 0.5).sort((a, b) => a[1] - b[1]);
     const k = row.findIndex((x) => x[1] === w[1] && x[5] === w[5]);
     if (k < 0) return null;
     const lead = /^[^\p{L}\p{N}]*/u.exec(w[5])[0], tail = /[^\p{L}\p{N}]*$/u.exec(w[5])[0], size = (w[4] - w[2]) * 0.8;
     const ctx = pdfEchoCtx ??= document.createElement('canvas').getContext('2d');
-    ctx.font = `${size}px ${PDF_ECHO_FONT}`;
+    const font = mono ? 'ui-monospace, monospace' : PDF_ECHO_FONT;
+    ctx.font = `${size}px ${font}`;
     const width = (t) => ctx.measureText(t).width;
     const laid = PE.relaid(row.map((x) => [x[1], x[3], x[5]]), k, lead + now + tail, width), [l, r] = [w[1], Math.max(row.at(-1)[3], laid.at(-1)[1])];
     const words = laid.slice(k).map(([a, b, t]) => `<i style="left:${(a - l) / (r - l) * 100}%;width:${(b - a) / (r - l) * 100}%"><span style="transform:scaleX(${(b - a) / Math.max(0.1, width(t))})">${escape(t)}</span></i>`).join('');
-    img.parentElement.insertAdjacentHTML('beforeend', `<span class="pdf-echo" style="left:${l / pw * 100}%;top:${w[2] / ph * 100}%;width:${(r - l + 1) / pw * 100}%;height:${(w[4] - w[2]) / ph * 100}%;font:${size * px}px/1 ${PDF_ECHO_FONT}">${words}</span>`);
+    img.parentElement.insertAdjacentHTML('beforeend', `<span class="pdf-echo" style="left:${l / pw * 100}%;top:${w[2] / ph * 100}%;width:${(r - l + 1) / pw * 100}%;height:${(w[4] - w[2]) / ph * 100}%;font:${size * px}px/1 ${font}">${words}</span>`);
     const [a, b, t] = laid[k];
     return a + (b - a) * width(lead + now.slice(0, into)) / Math.max(0.1, width(t));
   }
-  let pdfEchoCtx = null;
+  let pdfEchoCtx = null, pdfInkCanvas = null;
+  /** Word `w`'s caret stops on page image `img`, in bp: its character boundaries as the echo font spaces them, each
+   * inner one moved to the gap between glyphs the page's pixels show near it. Once per word and image. */
+  const pdfBoundsOf = new WeakMap();
+  function pdfBounds(img, w) {
+    let memo = pdfBoundsOf.get(img);
+    if (memo?.src !== img.currentSrc) pdfBoundsOf.set(img, memo = { src: img.currentSrc, by: new Map() });
+    const key = w.join(' '), text = w[5].normalize('NFKC');
+    if (memo.by.has(key)) return memo.by.get(key);
+    const ctx = pdfEchoCtx ??= document.createElement('canvas').getContext('2d');
+    ctx.font = `${(w[4] - w[2]) * 0.8}px ${PDF_ECHO_FONT}`;
+    const xs = PE.boundaries(text, w[1], w[3], (t) => ctx.measureText(t).width);
+    try {
+      // the word's pixels: each column's darkness, the inner boundaries snapped to its gaps (a third of a glyph's reach)
+      const k = img.naturalWidth / pageSize(img)[0], sx = Math.floor(w[1] * k), sy = Math.floor(w[2] * k), sw = Math.ceil(w[3] * k) - sx, sh = Math.ceil(w[4] * k) - sy;
+      const c = pdfInkCanvas ??= document.createElement('canvas'), g = c.getContext('2d', { willReadFrequently: true });
+      Object.assign(c, { width: sw, height: sh });
+      g.drawImage(img, sx, sy, sw, sh, 0, 0, sw, sh);
+      const d = g.getImageData(0, 0, sw, sh).data, ink = new Array(sw).fill(0);
+      for (let p = 0; p < d.length; p += 4) ink[(p >> 2) % sw] += (765 - d[p] - d[p + 1] - d[p + 2]) * d[p + 3] / 255;
+      const reach = (w[3] - w[1]) / Math.max(1, text.length) * k / 3;
+      for (let i = 1; i < text.length; i++) xs[i] = (sx + PE.inkSnap(xs[i] * k - sx, ink, reach)) / k;
+    } catch {} // a page that cannot be read (tainted, not decoded) keeps the measured boundaries
+    memo.by.set(key, xs);
+    return xs;
+  }
   const PDF_ECHO_FONT = "'Latin Modern Roman', 'CMU Serif', 'Computer Modern', Georgia, serif";
   /** The caret's edits in turn: each sees the text the one before left. */
   let pdfTypeChain = Promise.resolve();
@@ -6757,8 +6880,8 @@
     // the Typeset view follows the check each edit starts; the pages were built from the ghost, again only if it was wrong
     if (c.view === 'pdf' && (a !== b || body) && pdfSent !== editor.text()) pdfRebuild(pdfLive() && !pdfAuto.on);
   };
-  /** The inline math delimiters typing writes: `conventions.math.inline` (`$`, `\(`, `auto`). */
-  const pdfInline = () => configSet['conventions.math.inline'] ?? 'auto';
+  /** The inline math delimiters typing writes: `conventions.math.inline` (`\(`, `$`, `auto`). */
+  const pdfInline = () => configSet['conventions.math.inline'] ?? '\\(';
   /** A key at the caret: Backspace and Delete take a character (an escape, an empty pair whole), arrows move over plain text, Enter breaks the line, Escape ends. */
   pdfTypeIn.addEventListener('keydown', (e) => {
     if (!pdfCaret || e.isComposing) return;
@@ -6778,7 +6901,13 @@
     if (e.key === 'Escape' && /math/.test(pdfWhy(g.text, g.at, g.at) ?? '') && closer(g.text, g.at)) { e.preventDefault(); pdfEdit((text, at) => { const m = closer(text, at); return [at, at, '', m ? m.index + m[0].length : 0]; }); }
     else if (e.key === 'Escape') { e.preventDefault(); pdfCaretOff(); pdfTypeIn.blur(); }
     // Enter a new paragraph (a blank line), Shift+Enter one line break: TeX reads it as a space; in math a line break only
-    else if (e.key === 'Enter') { e.preventDefault(); pdfEdit((text, at) => { const br = e.shiftKey || /math/.test(PE.editable(text, at, at, []) ?? '') ? '\n' : '\n\n'; return [at, at, br, br.length]; }); pdfRebuild(true); }
+    // in a table Tab and Shift+Tab step from cell to cell, Enter adds a row after the caret's
+    else if (e.key === 'Tab' && PE.cells(g.text, g.at)) {
+      e.preventDefault();
+      pdfQueue(() => { const c = pdfCaretNow(), to = c && PE.cellStep(editor.text(), c.at, e.shiftKey ? -1 : 1); if (to == null) return; c.at = to; pdfCaretDraw(); });
+    } else if (e.key === 'Enter' && !e.shiftKey && !PE.verbatimAt(g.text, g.at) && PE.cells(g.text, g.at)) { e.preventDefault(); pdfEdit((text, at) => PE.rowAfter(text, at) ?? [at, at, '', 0]); pdfRebuild(true); }
+    // in verbatim one source line, as the listing shows it; none in an inline \verb
+    else if (e.key === 'Enter') { e.preventDefault(); pdfEdit((text, at) => { const v = PE.verbatimAt(text, at); if (v) return v.block ? [at, at, '\n', 1] : [at, at, '', 0]; const br = e.shiftKey || /math/.test(PE.editable(text, at, at, []) ?? '') ? '\n' : '\n\n'; return [at, at, br, br.length]; }); pdfRebuild(true); }
     else if (step) {
       e.preventDefault();
       pdfQueue(() => {
@@ -6808,7 +6937,8 @@
   function pdfMenuOff() { pdfMenu?.el.remove(); pdfMenu = null; }
   async function pdfMenuShow() {
     const g = pdfSeen(), m = /\\([A-Za-z@]*)$/.exec(g.text.slice(Math.max(0, g.at - 64), g.at));
-    if (!m || !pdfCaret) return pdfMenuOff();
+    // verbatim names no command
+    if (!m || !pdfCaret || PE.verbatimAt(g.text, g.at)) return pdfMenuOff();
     const from = g.at - m[0].length, p = pdfPos(g.text, from + 1);
     push();
     const all = await completions(p, p.character, '\\'), back = { label: 'textbackslash', detail: 'a backslash in the text: \\textbackslash{}', insertText: 'textbackslash{}' };
@@ -6841,12 +6971,16 @@
     pdfEdit((text, at) => [from, at, body, caret < 0 ? body.length : caret + 1]);
   }
   pdfTypeIn.addEventListener('input', (e) => { if (!e.isComposing) pdfTaken(); });
-  // the Type bars' math buttons: inline math (as `$`) or display math at the caret, the caret's focus kept
+  // the Type bars' math control: inline math (the convention's delimiters), display or align* at the caret, the
+  // caret's focus kept; in math already it does nothing
   for (const b of document.querySelectorAll('.type-math')) {
     b.onmousedown = (e) => e.preventDefault();
     b.onclick = () => {
+      b.closest('details')?.removeAttribute('open');
       if (!pdfCaret) return toast('Click on a word first: the formula goes in at the caret');
-      pdfEdit((text, at) => /math/.test(pdfWhy(text, at, at) ?? '') ? [at, at, '', 0] : b.dataset.math === '$' ? PE.typed(text, at, '$', pdfInline()) : [at, at, '\\[\\]', 2]);
+      const kind = b.dataset.math;
+      if (kind === 'align' && !Object.values(state.texts).some((t) => /\\(?:usepackage|RequirePackage)\s*(?:\[[^\]]*\])?\s*\{[^}]*\b(?:amsmath|mathtools)\b/.test(t))) return toast('align* needs amsmath: add \\usepackage{amsmath}');
+      pdfEdit((text, at) => PE.mathAt(text, at, kind, pdfInline()));
     };
   }
   pdfTypeIn.addEventListener('compositionend', pdfTaken);
@@ -7002,10 +7136,11 @@
     const hits = (verb, hit) => hit.length ? ` <span class="muted cache-hit">${verb} ${hit.slice(0, 3).map((n) => `<code>${escape(n.replace(/\.cls$/, ''))}</code>`).join(', ')}${hit.length > 3 ? ` +${hit.length - 3}` : ''}</span>` : '';
     cacheList.innerHTML = rows.map(({ e, l: [kind, cls, what, needs], u, hit, via }, i, _, more = details(cls, what, needs, e.files)) =>
       `<tr><td title="${escape(e.path)}">${cacheBadge(cls, kind)}</td>` +
-      `<td>${more ? `<button type="button" class="cache-name" aria-expanded="${via.length > 0}" aria-controls="cache-sub-${i}">${escape(what || kind)}</button>` : `<span class="cache-name">${escape(what || kind)}</span>`}${(cls === 'package' || cls === 'class') && manualPackages().has(what) ? ' <span class="manual" title="the package\'s manual is mined for descriptions">docs</span>' : ''}${exported(cls, what)}${hits('defines', hit)}${hits('loads', via)}</td><td class="used">${u[1] || '<span class="use-no" title="not used by the open document">—</span>'}</td><td class="loads">${needs.length ? `<span class="cache-fold" title="it loads ${needs.length}">${needs.length}</span>` : ''}</td>` +
+      `<td>${more ? `<button type="button" class="cache-name" aria-expanded="${via.length > 0}" aria-controls="cache-sub-${i}">${escape(what || kind)}</button>` : `<span class="cache-name">${escape(what || kind)}</span>`}${cls === 'previews' ? ` <span class="pv-cats" data-pv="${escape(`${e.files[0]?.path}\n${e.size}`)}"></span>` : ''}${(cls === 'package' || cls === 'class') && manualPackages().has(what) ? ' <span class="manual" title="the package\'s manual is mined for descriptions">docs</span>' : ''}${exported(cls, what)}${hits('defines', hit)}${hits('loads', via)}</td><td class="used">${u[1] || '<span class="use-no" title="not used by the open document">—</span>'}</td><td class="loads">${needs.length ? `<span class="cache-fold" title="it loads ${needs.length}">${needs.length}</span>` : ''}</td>` +
       `<td class="num">${size(e.size)}</td><td><button type="button" class="small ghost" data-path="${escape(e.files.map((f) => f.path).join('\n'))}" aria-label="drop ${escape(what || kind)}">Drop</button></td></tr>` +
       (more ? `<tr class="cache-sub" id="cache-sub-${i}"${via.length ? '' : ' hidden'}><td></td><td colspan="5">${more}</td></tr>` : '')).join('') ||
       `<tr><td colspan="6" class="muted">${cacheEntries.length ? 'No match.' : 'Nothing cached yet.'}</td></tr>`;
+    previewKinds();
     // the packages and classes listed, and how many of them have their manual mined
     const pkgs = new Set(rows.filter(({ l }) => l[1] === 'package' || l[1] === 'class').map(({ l }) => l[2])), manual = manualPackages();
     $('cache-total').textContent = rows.length ? `${rows.length} ${rows.length === 1 ? 'entry' : 'entries'}, ${size(rows.reduce((n, { e }) => n + e.size, 0))} in total`
@@ -7077,7 +7212,7 @@
   const colorSwatches = (list) => `<details class="cache-colors"><summary>defines ${plural(list.length, 'color')}</summary><ul>${list.map(([n, css]) => `<li title="${escape(n)}"><i${css ? ` style="background:${css}"` : ' class="nocolor"'}></i>${escape(n)}</li>`).join('')}</ul></details>`;
   /** One line for the entries whose name says little. */
   const CACHE_NOTES = {
-    previews: 'Sprites of TikZ arrow tips, patterns and colors that TeX drew, shown in completion previews.',
+    previews: 'Pictures of TikZ arrow tips, patterns and node shapes that TeX drew, shown in completion previews.',
     hashes: 'Content hashes SaTeX uses to tell whether a cached package or file changed.',
     facts: 'What the installation is like (TeX Live version, engines), probed once.',
     document: 'Whole runs of the documents, one per text and settings, each served again while its text, settings and the files it read stay the same.',
@@ -7120,6 +7255,32 @@
     if (files.length) parts.push(`<span class="muted">${files.length > 1 ? `${plural(files.length, 'file')}: ` : 'file '}${files.map((f) => `<code title="${escape(f.path)}">${escape(f.path.split('/').pop())}</code> ${size(f.size)}`).join(', ')}</span>`);
     return parts.map((p) => `<div>${p}</div>`).join('');
   }
+  /** previews.json's pictures by kind (`arrow:Stealth` an arrow tip), read from the file once per path and size. */
+  let previewSheet = { key: null, by: new Map() };
+  const PREVIEW_KINDS = { arrow: 'arrow tips', pattern: 'patterns', shape: 'shapes' };
+  /** The cache row of previews.json: how many pictures of each kind, each kind's name opening them as a grid. */
+  async function previewKinds() {
+    const el = cacheList.querySelector('.pv-cats');
+    if (!el) return;
+    const key = el.dataset.pv;
+    if (previewSheet.key !== key) {
+      const got = await ask({ type: 'read', path: key.split('\n')[0] }).catch(() => null);
+      let sheet = {};
+      try { sheet = JSON.parse(new TextDecoder().decode(got?.data)); } catch {} // unreadable: no kinds shown
+      previewSheet = { key, by: Map.groupBy(Object.entries(sheet), ([n]) => n.split(':')[0]) };
+    }
+    el.innerHTML = [...previewSheet.by].map(([k, list]) => `<button type="button" class="pv-kind" data-kind="${escape(k)}" title="show the ${escape(PREVIEW_KINDS[k] ?? k)}">${escape(PREVIEW_KINDS[k] ?? k)} <b>${num(list.length)}</b></button>`).join('<span aria-hidden="true">·</span>');
+  }
+  /** One kind's pictures below the row, each named on hover; again closes them. */
+  function previewGrid(button) {
+    const cell = button.closest('td'), kind = button.dataset.kind, open = cell.querySelector('.pv-grid');
+    open?.remove();
+    cell.querySelectorAll('.pv-kind').forEach((b) => b.setAttribute('aria-pressed', 'false'));
+    if (open?.dataset.kind === kind) return;
+    button.setAttribute('aria-pressed', 'true');
+    const svg = (t) => `data:image/svg+xml;charset=utf-8,${encodeURIComponent(t)}`;
+    cell.insertAdjacentHTML('beforeend', `<ul class="pv-grid" data-kind="${escape(kind)}">${(previewSheet.by.get(kind) ?? []).map(([n, t]) => `<li title="${escape(n.slice(kind.length + 1))}"><img alt="${escape(n.slice(kind.length + 1))}" src="${svg(t)}"><span>${escape(n.slice(kind.length + 1))}</span></li>`).join('')}</ul>`);
+  }
   // a worker restarted meanwhile fails the question: the next run asks again
   const loadCaches = async () => { try { await usage(); drawCaches((await ask({ type: 'caches' })).entries); } catch {} };
   cacheFilter.oninput = () => drawCaches();
@@ -7138,6 +7299,8 @@
   $('cache-close').onclick = () => cacheBox.close();
   cacheBox.onclick = (e) => { if (e.target === cacheBox) cacheBox.close(); }; // a click on the backdrop
   cacheList.onclick = (e) => {
+    const kind = e.target.closest('.pv-kind');
+    if (kind) return previewGrid(kind);
     const fold = e.target.closest('button.cache-name');
     if (fold) {
       const open = fold.getAttribute('aria-expanded') !== 'true';
@@ -7836,7 +7999,10 @@
     if (m.method === 'satex/styleCandidates') for (const c of m.params.candidates ?? []) askStyle(c);
     else if (m.method === 'textDocument/publishDiagnostics' && m.params.uri.startsWith(`file://${state.dir}/`)) publish(m.params, ended);
     // `preview`: the edited paragraph's rows, run first; the run's own rows follow
-    else if (m.method === 'satex/typesetRows' && !outdated(m.params)) { if (!m.params.preview) tsEarly = `${m.params.uri}@${m.params.version}`; typesetShow(m.params.uri, m.params.version, m.params.rows); }
+    else if (m.method === 'satex/typesetRows' && !outdated(m.params) && self.satexViews.rowsWin(tsFinal.get(m.params.uri), m.params.version, !!m.params.preview)) {
+      if (!m.params.preview) { tsEarly = `${m.params.uri}@${m.params.version}`; tsFinal.set(m.params.uri, m.params.version); }
+      typesetShow(m.params.uri, m.params.version, m.params.rows);
+    }
   }
   async function onWorkerMessage({ data }) {
     if (running > 0 || pending.size) maxGap = Math.max(maxGap, Math.round(performance.now() - lastHeard));

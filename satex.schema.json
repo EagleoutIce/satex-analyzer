@@ -844,13 +844,13 @@
               "x-example": "`after: 8`"
             },
             "inline": {
-              "default": "auto",
-              "description": "the inline math delimiters typing into the PDF or Typeset view writes: $, \\(, or auto (the document's most used)",
+              "default": "\\(",
+              "description": "the inline math delimiters typing into the PDF or Typeset view writes: \\( (LaTeX's), $, or auto (the document's most used)",
               "type": "string",
               "x-affects": [
                 "output"
               ],
-              "x-example": "`inline: \\(` types `\\(x\\)`, `inline: $` types `$x$`"
+              "x-example": "`inline: $` types `$x$`, `inline: auto` the document's most used"
             },
             "lexemes": {
               "default": 400000,
@@ -4218,7 +4218,7 @@
       "description": "how satex lsp serves an editor",
       "properties": {
         "debounce_ms": {
-          "default": 300,
+          "default": 100,
           "description": "how long to wait after an edit before analyzing again. Lower answers sooner but runs more often",
           "minimum": 0,
           "type": "integer",

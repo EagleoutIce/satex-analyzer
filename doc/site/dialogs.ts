@@ -122,6 +122,8 @@ dialog.pop.pop-peek::backdrop { opacity: 0; }
 .sd-grid td, .sd-grid th { padding: 0; background: none; border: 0; }
 .sd-grid th.sd-colh { padding: 0 .15rem .3rem; vertical-align: bottom; font-weight: normal; position: relative; }
 .sd-grid th.sd-colh select { width: 100%; min-width: 5.5rem; }
+.sd-wgrip { position: absolute; top: 0; right: -4px; bottom: 0; width: 7px; cursor: col-resize; touch-action: none; z-index: 2; } .sd-wgrip:hover, .sd-wgrip:focus-visible { background: color-mix(in srgb, var(--c-accent, #4a8) 40%, transparent); }
+.sd-wout { position: absolute; right: 0; top: -1.3rem; font: 11px ui-monospace, monospace; background: var(--c-accent, #4a8); color: #fff; padding: 0 .3rem; border-radius: 3px; white-space: nowrap; z-index: 3; }
 .sd-grid th.sd-colh input { width: 100%; margin-top: .2rem; box-sizing: border-box; }
 .sd-grid td.sd-cell { vertical-align: middle; position: relative; border: 1px solid var(--c-border); background: var(--c-bg); min-width: 5rem; height: 1.8rem; box-sizing: border-box; padding: 0 .5rem !important; white-space: nowrap; cursor: cell; transition: background .1s; outline: none; font: 13px/1.3 ui-monospace, monospace; }
 .sd-grid td.sd-cell + td.sd-cell { border-left-width: 0; }
@@ -145,21 +147,25 @@ dialog.pop.pop-peek::backdrop { opacity: 0; }
 .sd-grid tr.sd-rule td.sd-ruled { background: linear-gradient(var(--c-fg), var(--c-fg)) 0 50% / 100% var(--w, 1px) no-repeat; }
 .sd-grid tr.sd-end td { height: 1.5rem; vertical-align: middle; }
 .sd-grid .sd-chips { white-space: nowrap; padding-left: .4rem !important; }
-.sd-grid td.sd-vcol, .sd-grid th.sd-vcol { width: .55rem; min-width: .55rem; cursor: pointer; border: 0; position: relative; }
+.sd-grid td.sd-vcol, .sd-grid th.sd-vcol { width: 1.2rem; min-width: 1.2rem; padding: 0 !important; cursor: pointer; border: 0; position: relative; }
 .sd-grid th.sd-vcol.on, .sd-grid td.sd-vcol.on { background: linear-gradient(var(--c-fg), var(--c-fg)) 50% 0 / 1px 100% no-repeat; }
 .sd-grid th.sd-vcol:hover { background: linear-gradient(var(--c-accent), var(--c-accent)) 50% 0 / 2px 100% no-repeat; }
 /* inserting in place: a slim + on the line between rows (in the gutter) and columns (in the header) */
-.sd .sd-ins { position: absolute; z-index: 3; display: grid; place-items: center; width: .95rem; height: .95rem; padding: 0; border-radius: 50%; font-size: .8rem; font-weight: 700; line-height: 1; border: 1px solid var(--c-accent); background: var(--c-bg); color: var(--c-accent); opacity: 0; transition: opacity .12s, transform .12s; }
+/* the round + and − buttons: one fixed size, never squeezed by a narrow cell (max-width) nor clipped */
+.sd :is(.sd-ins, .sd-del) { box-sizing: border-box; flex: none; width: 1rem; height: 1rem; min-width: 1rem; max-width: none; min-height: 0; padding: 0 !important; display: grid; place-items: center; border-radius: 50% !important; font: 700 .8rem/1 system-ui, sans-serif; }
+.sd .sd-ins { position: absolute; z-index: 3; border: 1px solid var(--c-accent); background: var(--c-bg); color: var(--c-accent); opacity: 0; transition: opacity .12s, transform .12s; }
 .sd-grid:hover .sd-ins { opacity: .28; }
 .sd .sd-ins:hover, .sd .sd-ins:focus-visible { opacity: 1; transform: scale(1.12); background: var(--c-accent); color: var(--c-accent-fg); }
-.sd-rule .sd-ins { right: .37rem; top: 50%; margin-top: -.475rem; }
-.sd-vcol .sd-ins { left: 50%; top: 50%; margin: -.475rem 0 0 -.475rem; }
+.sd-rule .sd-ins { right: .37rem; top: 50%; margin-top: -.5rem; }
+.sd-vcol .sd-ins { left: 50%; top: 50%; margin: -.5rem 0 0 -.5rem; }
 .sd-grid tr.sd-rule:has(.sd-ins:hover) td:not(.sd-rh) { background: linear-gradient(var(--c-accent), var(--c-accent)) 0 50% / 100% 2px no-repeat; }
 /* the − on a hovered row or column */
-.sd-del { position: absolute; display: grid; place-items: center; width: 1rem; height: 1rem; padding: 0 !important; border-radius: 50% !important; font-size: .85rem; line-height: 1; opacity: 0; transform: scale(.8); transition: opacity .12s, transform .12s; color: var(--error, #b42318); }
+.sd .sd-del { position: absolute; border: 1px solid color-mix(in srgb, var(--error, #b42318) 45%, transparent); background: var(--c-bg); opacity: 0; transform: scale(.8); transition: opacity .12s, transform .12s; color: var(--error, #b42318); }
 tr:hover > .sd-rh .sd-del, .sd-colh:hover .sd-del, .sd-del:focus-visible { opacity: 1; transform: none; }
 .sd-rh .sd-del { position: static; }
-.sd-colh .sd-del { right: -.35rem; top: -.55rem; }
+/* a column's − above its type, inside its header: the grid's edge never clips it */
+.sd-grid th.sd-colh { padding-top: 1.2rem !important; }
+.sd .sd-colh .sd-del { left: 50%; top: .1rem; margin-left: -.5rem; }
 /* the selection's floating bar */
 .sd-selbar { position: absolute; z-index: 5; display: flex; gap: .15rem; align-items: center; padding: .2rem; background: var(--c-bg); border: 1px solid var(--c-border); border-radius: 10px; box-shadow: 0 8px 24px -8px rgb(0 0 0 / .3); transition: opacity .12s, transform .12s var(--ease); white-space: nowrap; }
 .sd-selbar[hidden] { display: flex; opacity: 0; transform: translateY(4px); pointer-events: none; }
@@ -172,7 +178,10 @@ tr:hover > .sd-rh .sd-del, .sd-colh:hover .sd-del, .sd-del:focus-visible { opaci
 .sd-prev td.mr { vertical-align: middle; }
 .sd-prev .math { font-style: italic; }
 .sd-import { display: grid; gap: .35rem; }
-.sd-data { flex-wrap: nowrap; } .sd-data-label { width: 3.6rem; color: var(--c-muted); font-size: .85em; }
+/* the Data groups: a label column, then the buttons as equal shares of one row */
+.sd-row.sd-data { display: grid; grid-template-columns: 3.6rem 1fr; gap: .35rem; } .sd-data-label { color: var(--c-muted); font-size: .85em; }
+.sd-row.sd-data .sd-seg { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; min-width: 0; }
+.sd-row.sd-data .sd-seg button { min-width: 0; padding: 0 .4rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .sd-wrap.sd-over { outline: 2px dashed var(--c-accent); outline-offset: -2px; border-radius: 8px; }
 .sd-import textarea { min-height: 5rem; font: 12px/1.4 ui-monospace, monospace; resize: vertical; }
 @media (prefers-reduced-motion: reduce) { dialog.pop[open], .sd *, .sd-selbar { animation: none !important; transition: none !important; } }
@@ -1209,6 +1218,36 @@ tr:hover > .sd-rh .sd-del, .sd-colh:hover .sd-del, .sd-del:focus-visible { opaci
         const ins = tag === 'th' ? h('button', { type: 'button', class: 'sd-ins', title: label, 'aria-label': label, onclick: (e: Event) => { e.stopPropagation(); change((s) => T.insertCol(s, k)); select([focus[0], k]); } }, '+') : null;
         return h(tag, { class: 'sd-vcol' + (s.seps[k]?.includes('|') ? ' on' : ''), title: 'Click to add or remove a vertical rule', onclick: () => change((s) => { s.seps[k] = s.seps[k].includes('|') ? s.seps[k].replace(/\|/g, '') : s.seps[k] + '|'; }) }, ins);
       };
+      /** A handle on a column's right edge: a drag sets its width as the PDF's column layer does (pdfedit.ts `snapWidth`):
+       * one screen pixel a CSS pixel of paper (0.75 bp), an l, c or r column starting at its longest cell (5 bp a character) and becoming a p column keeping its alignment. */
+      const widthGrip = (c: TCol) => {
+        const PE = (self as unknown as { satexPdfEdit?: { snapWidth(t: string | null, was: number, now: number, line: number, fine: boolean): string | null; widthBp(t: string, line: number): number | null } }).satexPdfEdit;
+        if (!PE || !(WIDTH.includes(c.align) || 'lcr'.includes(c.align) && c.align)) return null;
+        const g = h('span', { class: 'sd-wgrip', role: 'slider', tabindex: '0', 'aria-label': 'column width', title: 'Drag to set the column width (Shift: finer)' });
+        const out = h('span', { class: 'sd-wout', hidden: true });
+        g.onpointerdown = (e: PointerEvent) => {
+          e.preventDefault(); e.stopPropagation();
+          const line = (ctx.linewidth as number | undefined) ?? 345 * 72 / 72.27, k = t().cols.indexOf(c), start = WIDTH.includes(c.align) ? PE.widthBp(c.arg, line) ?? 85 : Math.max(28, ...t().rows.map((r) => (T.cellAt(r, k)[0] >= 0 ? r.cells[T.cellAt(r, k)[0]]!.text.length : 0) * 5)), x0 = e.clientX;
+          const was = WIDTH.includes(c.align) ? c.arg : null, align = c.align, pre = c.pre;
+          let text: string | null = null;
+          g.setPointerCapture(e.pointerId);
+          g.onpointermove = (m: PointerEvent) => { text = PE.snapWidth(was, start, Math.max(2, start + (m.clientX - x0) * 0.75), line, m.shiftKey); if (text) { out.hidden = false; out.textContent = `${WIDTH.includes(align) ? align : 'p'}{${text}}`; } };
+          g.onpointerup = () => {
+            g.onpointermove = g.onpointerup = null; out.hidden = true;
+            if (!text) return;
+            const w = text;
+            change(() => {
+              c.arg = w;
+              if (!WIDTH.includes(align)) {
+                c.align = 'p';
+                const keep = ({ c: '>{\\centering\\arraybackslash}', r: '>{\\raggedleft\\arraybackslash}' } as Record<string, string>)[align];
+                if (keep && !pre) { c.pre = keep; if (!has('array')) c.package = 'array'; }
+              }
+            });
+          };
+        };
+        return h('span', { class: 'sd-wbox' }, g, out);
+      };
       const head = h('tr', {}, h('th', { class: 'sd-rh' }), s.cols.flatMap((c, k) => {
         const loaded = COLS.filter(([, , p]) => !p || has(p)), more = COLS.filter(([, , p]) => p && !has(p));
         const known = COLS.some(([a]) => a === c.align);
@@ -1228,7 +1267,7 @@ tr:hover > .sd-rh .sd-del, .sd-colh:hover .sd-del, .sd-del:focus-visible { opaci
           oninput: (e: Event) => { const v = (e.target as HTMLInputElement).value; c[key] = v ? `${open}{${v}}` : ''; draw(); f.refresh(); } }));
         const del = n > 1 ? h('button', { type: 'button', class: 'sd-del', title: `Remove column ${k + 1}`, 'aria-label': `remove column ${k + 1}`, onclick: () => { change((s) => T.deleteCols(s, k, k)); select([focus[0], Math.min(k, t().cols.length - 1)]); } }, '−') : null;
         return [vbar(k), h('th', { class: 'sd-colh' }, sel, arg && c.align !== 'S' ? texField(arg) : arg,
-          h('div', { class: 'sd-injects' }, inject('pre', '>', 'Insert before each cell'), inject('post', '<', 'Insert after each cell')), del)];
+          h('div', { class: 'sd-injects' }, inject('pre', '>', 'Insert before each cell'), inject('post', '<', 'Insert after each cell')), del, widthGrip(c))];
       }), vbar(n));
       const rows: HTMLElement[] = [];
       // grid columns a clean \multirow takes in the rule rows below its first

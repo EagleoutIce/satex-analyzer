@@ -24,6 +24,17 @@ load('./pdfedit.js');
   // the check that runs once all landed sees them: it is shown, no endless rerun
   assert.deepEqual(lacked(ids.slice(0, 3), asked, [inFlight, background], landedAt, 3), []);
 }
+// Typeset rows: final rows win. A preview (a lax run's rows, page breaks marked maybe) of a text whose final rows
+// are shown, or any older rows, never replaces them. Pins "page 2 → 3 maybe" and "page 1–4" on a one-page text.
+{
+  const { rowsWin } = self.satexViews;
+  assert.equal(rowsWin(undefined, 3, true), true, 'nothing final yet: a preview shows');
+  assert.equal(rowsWin(5, 5, true), false, 'a preview of the text already final');
+  assert.equal(rowsWin(5, 4, true), false);
+  assert.equal(rowsWin(5, 4, false), false, 'older final rows');
+  assert.equal(rowsWin(5, 5, false), true);
+  assert.equal(rowsWin(5, 6, true), true, 'a newer text\'s preview');
+}
 // Tips (tips.json): each stays true, its evidence still stands where it says.
 {
   const tips = JSON.parse(readFileSync(new URL('./tips.json', import.meta.url), 'utf8'));
@@ -576,6 +587,18 @@ console.log('table model: ok');
   assert.match(booktabs, /<span class="ts-tr ts-ruled ts-rule-after"><\/span><\/span>$/);
   assert.match(booktabs, /<span class="ts-td"><\/span><span class="ts-td ts-rule" title="a rule over this column"><i class="ts-fill/);
   assert.equal(booktabs.match(/class="ts-td"/g).length, 5);
+  // `|c|c|`: a `|` at a cell's start or end is that cell's edge, drawn over its full height so a column's rules line
+  // up row over row; one inside a cell stays inline. A row of no line and no text (page boxes) is no row "0".
+  // Pins the ruled tabular whose rules sat beside each cell's text and a bogus row numbered 0.
+  {
+    const F = M('fill 0.0pt plus 1.0fil');
+    const ruled = notation(`${M('begin')}${N('―')}${N('│')}${F}a${F}${N('│')}${M('cell')}${F}b${N('│')}x${F}${N('│')}${M('row')}${N('│')}c${M('cell')}dd${N('│')}${M('row')}${N('―')}${M('end')}`);
+    assert.equal(ruled.match(/ts-edge-l/g).length, 2, 'each row\'s leading |');
+    assert.equal(ruled.match(/ts-edge-r/g).length, 3, 'a cell\'s trailing |, glue after it aside');
+    assert.equal(ruled.match(/class="ts-vrule ts-cvr"/g).length, 1, 'the | inside `b|x` stays inline');
+    assert.equal(notation(`${M('begin')}a${N('│')} ${N('│')}${M('cell')}b${M('end')}`).match(/ts-edge-r/g).length, 2, '`||`: both rules at the edge');
+    assert.ok(!/<p [^>]*data-line="0"/.test(typesetView([{ kind: 'paragraph', line: 0, col: 0, detail: '', marked: '' }, { kind: 'paragraph', line: 3, detail: 'x', marked: 'x' }])), 'no row 0');
+  }
   // display limits: one column of over, operator, under; a sub after them is a script again
   const sum = notation(`${N('\u0006L')}∑${N('\u0006')}${M('under')}i=1${M('scriptend')}${M('over')}N${M('scriptend')}x${M('sub')}i${M('scriptend')}`);
   assert.equal(sum, '<span class="ts-limits"><span class="ts-op">∑</span><span class="ts-under">i=1</span><span class="ts-over">N</span></span>x<span class="ts-sub">i</span>');
@@ -615,13 +638,17 @@ console.log('table model: ok');
   ];
   const marks = [...typesetView(rows).matchAll(/ts-env-(begin|end)[^]*?\\(?:begin|end)\{(\w+)\}|<p [^]*?<span class="ts-text">(\w+)/g)].map((m) => m[3] ?? `${m[1]} ${m[2]}`);
   assert.deepEqual(marks, ['Before', 'begin quote', 'Outer', 'begin center', 'Inner', 'end center', 'end quote', 'After']);
-  // a paragraph that may be set carries a switch per conditional
-  const may = typesetView([{ kind: 'paragraph', line: 3, detail: 'x', marked: 'x', causes: [{ on: '7', test: '\\ifdraft', line: 3, mark: '{x|}' }] }]);
-  assert.match(may, /<span class="ts-switch" data-on="7" title="may be typeset: depends on \\ifdraft \(line 3\)[^"]*"><span class="ts-switch-q">maybe<\/span><code>\\ifdraft<\/code><span class="ts-pick" role="group"[^>]*><button type="button" data-arm="both" aria-pressed="true"/);
-  // a macro of several meanings is no test: its options are the texts its paths set
-  const meant = typesetView([{ kind: 'paragraph', line: 3, detail: 'x', marked: 'x', causes: [{ on: '8', test: '', parted: '`\\tleapy`', line: 3, mark: '{|not }', arms: ['', 'not '] }] }]);
-  assert.deepEqual([...meant.matchAll(/<button type="button" data-arm="(\w+)"[^>]*>(.*?)<\/button>/g)].map((m) => [m[1], m[2]]), [['both', 'all'], ['true', 'nothing'], ['false', '“not ”']]);
-  assert.match(may, /<button type="button" data-arm="true"[^>]*>true<\/button>/);
+  // an undecided choice reads inline with its tip, no chip: `is [not] a leap year` (an optional word, the space after
+  // it outside), a test's choice too; a reference the next run decides keeps its chip. Pins the cryptic
+  // `maybe \tleapy all|nothing|"not "` chip and `is ∅ | not a`.
+  const choice = (on) => `\uE000\u0001choice\u0001${on}\uE001\uE000{\uE001`, arm = '\uE000|\uE001', shut = '\uE000}\uE001';
+  const meant = typesetView([{ kind: 'paragraph', line: 3, detail: 'is a', marked: `is ${choice(8)}${arm}not ${shut}a`, causes: [{ on: '8', test: '', parted: '`\\tleapy`', line: 3, mark: '{|not }', arms: ['', 'not '] }] }]);
+  assert.ok(!meant.includes('ts-switch'), 'no chip');
+  assert.match(meant, /<span class="ts-choice" data-on="8" title="`\\tleapy` is empty or “not ” here: the run could not decide which \(line 3\), so both are kept"><span class="ts-arm ts-arm-true"><\/span><span class="ts-arm ts-arm-false">not<\/span><\/span> a/);
+  const may = typesetView([{ kind: 'paragraph', line: 3, detail: 'x', marked: `${choice(7)}x${arm}${shut}`, causes: [{ on: '7', test: '\\ifdraft', line: 3, mark: '{x|}' }] }]);
+  assert.match(may, /title="the text when \\ifdraft is true, or when it is false/);
+  const ref = typesetView([{ kind: 'paragraph', line: 3, detail: 'x', marked: 'x', causes: [{ on: '9', test: '', parted: '\\r@fig', line: 3, mark: '{|}' }] }]);
+  assert.match(ref, /<span class="ts-switch ts-ref ts-switch-reference" data-on="9"/);
   // the document's marks from the open file's lines; a block's header joins its begin mark
   const doc = ['\\documentclass{article}', '\\begin{document}', 'x', '\\begin{figure}[ht]', 'y\\label{f}', '\\end{figure}', '\\end{document}'];
   const fig = { env: 'figure', line: 4, end: 6 };
@@ -660,6 +687,27 @@ console.log('table model: ok');
   assert.ok(hist.undo()); assert.deepEqual(state, { a: 4 }, 'reset undoes');
   state = { a: 5 }; hist.settle();
   assert.equal(hist.redo(), false, 'a new change drops the redo steps');
+}
+
+// The editor's TeX tokenizer (site.js `siteTex`): a number with its unit is one token, sign and fraction included,
+// and an expl3 name with its `_` and `:` is one command. Pins `- 0.05pt` whose `0` stayed plain beside a colored
+// `.05pt`, and `\dim_eval:n` split into `\dim`, `_eval`, `:n`.
+{
+  document.documentElement.style ??= {};
+  const cm = await import('./codemirror.js');
+  self.siteCM = () => Promise.resolve(cm);
+  const p = (await self.siteTex()).language.streamParser;
+  const toks = (line) => {
+    const st = p.startState(2), s = new cm.language.StringStream(line, 2, 2), out = [];
+    while (!s.eol()) { const t = p.token(s, st); if (t) out.push(`${s.current()}:${t}`); s.start = s.pos; }
+    return out;
+  };
+  assert.deepEqual(toks('1pt - 0.05pt + .5em'), ['1pt:number', '0.05pt:number', '.5em:number']);
+  assert.deepEqual(toks('\\vskip -3.5pt plus 2fill minus 1truecm'), ['\\vskip:tag', '-3.5pt:number', '2fill:number', '1truecm:number']);
+  assert.deepEqual(toks('{ \\dim_eval:n { \\l_tmpa_dim + 0.05pt } }').filter((t) => !t.endsWith(':bracket')), ['\\dim_eval:n:tag', '\\l_tmpa_dim:tag', '0.05pt:number']);
+  // under \ExplSyntaxOn any name; elsewhere a math subscript stays apart
+  assert.ok(toks('\\ExplSyntaxOn \\foo_x:').includes('\\foo_x::tag'));
+  assert.deepEqual(toks('$\\alpha_i: x$').slice(0, 2), ['$:keyword', '\\alpha:tag']);
 }
 
 // array's column injections: the text inside `>{…}` and `<{…}`, several joined
@@ -1185,25 +1233,27 @@ assert.equal(typeof self.satexViews.RENDER.history, 'function', 'a history secti
     assert.deepEqual(sent, [4, 6], 'after a success the newest goes');
   }
   // typing in the output writes what the output then shows: specials escaped in text, `$` opens math with its closer
-  // (the convention's, else the document's most used), in math characters as typed, a closer typed where it stands
-  // steps over it. Pins plain-only typing, which refused `_` and could not start a formula.
+  // (the convention's: LaTeX's `\(` by default, `$`, or `auto`, the document's most used), in math characters as typed,
+  // a closer typed where it stands steps over it. Pins plain-only typing, which refused `_` and could not start a
+  // formula, and `$` writing `$…$` where the user asked for `\(…\)`.
   {
     const type = (text, at, keys, inline) => { let t = text; for (const c of keys) { const [a, b, body, step] = E.typed(t, at, c, inline); t = t.slice(0, a) + body + t.slice(b); at = a + step; } return [t, at]; };
     // the caret ends before the text's `b`, or inside the pair just opened
     const ends = (want, at = want.lastIndexOf('b')) => [want, at];
     assert.deepEqual(type('ab', 1, '_%&#{}~^\\'), ends('a\\_\\%\\&\\#\\{\\}\\textasciitilde{}\\textasciicircum{}\\textbackslash{}b'));
-    assert.deepEqual(type('ab', 1, '$x_1$ y'), ends('a$x_1$ yb'), 'math typed raw, the closer stepped over');
-    assert.deepEqual(type('ab', 1, '$x$', '\\('), ends('a\\(x\\)b'), 'the convention names the delimiters');
+    assert.deepEqual(type('ab', 1, '$x_1$ y'), ends('a\\(x_1\\) yb'), 'default: `$` types LaTeX\'s `\\(`, `$` steps over `\\)`');
+    assert.deepEqual(type('ab', 1, '$x_1$ y', '$'), ends('a$x_1$ yb'), 'math typed raw, the closer stepped over');
     const opened = '\\(p\\) a\\(\\)b';
-    assert.deepEqual(type('\\(p\\) ab', '\\(p\\) a'.length, '$'), ends(opened, opened.lastIndexOf('\\)')), 'auto: the document uses \\(');
-    assert.deepEqual(type('ab', 1, '${x'), ends('a${x}$b', 'a${x'.length), 'a brace in math gets its closer');
+    assert.deepEqual(type('\\(p\\) ab', '\\(p\\) a'.length, '$', 'auto'), ends(opened, opened.lastIndexOf('\\)')), 'auto: the document uses \\(');
+    assert.deepEqual(type('$p$ ab', '$p$ a'.length, '$', 'auto'), ends('$p$ a$$b', '$p$ a$'.length), 'auto: the document uses $');
+    assert.deepEqual(type('ab', 1, '${x', '$'), ends('a${x}$b', 'a${x'.length), 'a brace in math gets its closer');
     // smart scripts: `_`/`^` open a group, a space, an operator or the formula's end leave it; off, typed raw.
     // Pins `x_42` typed in the output writing `x_42` (a subscript 4, then 2).
     const smart = (text, at, keys) => { let t = text; for (const c of keys) { const [a, b, body, step] = E.typed(t, at, c, '$', true); t = t.slice(0, a) + body + t.slice(b); at = a + step; } return [t, at]; };
     assert.deepEqual(smart('ab', 1, '$x_42$'), ends('a$x_{42}$b'), 'the formula\'s end leaves the group, then the formula');
     assert.deepEqual(smart('ab', 1, '$x^2+y_i j'), ends('a$x^{2}+y_{i}j$b', 'a$x^{2}+y_{i}j'.length), 'an operator and a space leave it');
     assert.deepEqual(smart('a$x_{4}$b', 'a$x_{4'.length, '2'), ['a$x_{42}$b', 'a$x_{42'.length], 'moved back in, typing goes on in the group');
-    assert.deepEqual(type('ab', 1, '$x_42$'), ends('a$x_42$b'), 'off: as typed');
+    assert.deepEqual(type('ab', 1, '$x_42$', '$'), ends('a$x_42$b'), 'off: as typed');
     // a brace after a command's name is its argument: pins `\emph` from the completion list, whose `{` came out `\{`
     assert.deepEqual(type('a\\emphb', 'a\\emph'.length, '{x}'), ends('a\\emph{x}b'), 'the argument opened and left');
     assert.deepEqual(type('a\\[x\\]b', 'a\\[x'.length, '$'), ['a\\[x\\]b', 'a\\[x\\]'.length], '$ steps over a display closer');
@@ -1281,6 +1331,50 @@ assert.equal(typeof self.satexViews.RENDER.history, 'function', 'a history secti
   assert.deepEqual(E.relaid([[0, 12, 'Hello,'], [14, 26, 'world!']], 0, 'Hellmo,', width), [[0, 14, 'Hellmo,'], [16, 28, 'world!']]);
   assert.deepEqual(E.relaid([[0, 10, 'ab'], [12, 20, 'cd']], 1, 'cdd', width), [[0, 10, 'ab'], [12, 24, 'cdd']]);
 }
+// The caret on a page stands between two characters, never inside a glyph: boundaries spaced by the font's widths
+// (a wide `m` takes more than an `i`), a click going to the nearest one, and the page's pixels moving each to the
+// gap between the glyphs. Pins the caret drawn at an even share of the word, in the middle of a glyph.
+{
+  const E = self.satexPdfEdit, width = (s) => [...s].reduce((n, c) => n + (c === 'm' ? 3 : 1), 0);
+  assert.deepEqual(E.boundaries('mi', 0, 8, width), [0, 6, 8], 'the m three times as wide as the i');
+  assert.deepEqual(E.boundaries('ab', 0, 4, () => 0), [0, 2, 4], 'nothing measured: even shares');
+  assert.equal(E.boundaryAt([0, 6, 8], 5), 1, 'inside the m, nearer its end');
+  assert.equal(E.boundaryAt([0, 6, 8], 7.5), 2);
+  // columns: glyph, glyph, gap, gap, glyph; the estimate 2.2 goes to the gap's middle, 3
+  const ink = [9, 9, 0, 0, 9];
+  assert.equal(E.inkSnap(2.2, ink, 2), 3);
+  assert.equal(E.inkSnap(1.4, ink, 0.5), 1.5, 'no gap in reach: the least ink nearest, a column\'s middle');
+  assert.equal(E.inkSnap(9, ink, 1), 9, 'outside the word: as it was');
+}
+// A tint on the PDF marks the glyphs a run of the row set, found by their place in the row: the `!` of
+// `\greet{…}` (`Hello, #1!`) is the one after the argument, not the document's own `!` after `you`. Math the page
+// writes otherwise (`−` for `-`) stays outside the context. Pins the macro tint on the document's last `!`.
+{
+  const E = self.satexPdfEdit;
+  const texts = ['Hello,', 'Walter!', 'x42', '+', '2', '−', '41Generally', 'I’d', 'say', 'you!'];
+  const row = 'Hello,Walter!x42+2-41GenerallyI’dsayyou!', bang = row.indexOf('!');
+  assert.deepEqual(E.locate(texts, row, bang, bang), [[1, 6, 7]], 'the macro\'s `!`, after Walter');
+  assert.deepEqual(E.locate(texts, row, row.lastIndexOf('!'), row.lastIndexOf('!')), [[9, 3, 4]], 'the text\'s own `!`');
+  assert.deepEqual(E.locate(texts, row, 0, bang), [[0, 0, 6], [1, 0, 7]], 'a run over two words');
+  const g = row.indexOf('Generally');
+  assert.deepEqual(E.locate(texts, row, g, g + 8), [[6, 2, 11]], 'after math the page spells otherwise');
+  assert.equal(E.locate(['x!', 'x!'], 'x!', 1, 1), null, 'a row the page spells twice: no guess');
+}
+// The math control: one group per Type bar (inline at once, display and align* in its menu), inline in the
+// convention's delimiters, nothing inside math. Pins the two `$x$`/`\[x\]` buttons inside the Type legend.
+{
+  const E = self.satexPdfEdit;
+  assert.deepEqual(E.mathAt('ab', 1, 'inline'), [1, 1, '\\(\\)', 2], 'LaTeX\'s \\( by default');
+  assert.deepEqual(E.mathAt('ab', 1, 'inline', '$'), [1, 1, '$$', 1]);
+  assert.deepEqual(E.mathAt('ab', 1, 'display'), [1, 1, '\\[\\]', 2]);
+  assert.deepEqual(E.mathAt('ab', 1, 'align'), [1, 1, '\\begin{align*}\n\n\\end{align*}', '\\begin{align*}\n'.length]);
+  assert.deepEqual(E.mathAt('a\\(x\\)b', 4, 'display'), [4, 4, '', 0], 'in math: nothing');
+  const html = readFileSync(new URL('./play.html', import.meta.url), 'utf8');
+  const groups = [...html.matchAll(/<span class="math-group"[^]*?<\/details><\/span>/g)].map((m) => m[0]);
+  assert.equal(groups.length, 2, 'one in the Typeset bar, one in the PDF bar');
+  for (const g of groups) assert.deepEqual([...g.matchAll(/data-math="(\w+)"/g)].map((m) => m[1]), ['inline', 'inline', 'display', 'align']);
+  assert.ok(!/data-math="[$\\]/.test(html), 'the old $x$ and \\[x\\] buttons are gone');
+}
 // One origin tint per spot: an argument's word inside its macro's run keeps its tint, the run is cut around it
 // (pins the double box "Helmlo [World]"); rows apart and other pages stay whole.
 {
@@ -1299,4 +1393,72 @@ assert.equal(typeof self.satexViews.RENDER.history, 'function', 'a history secti
   st.stmts[0].dirty = true;
   assert.ok(C.body(st).includes('\\draw (0,0) to[R, l=$R_1$] (2,0);\n  \\draw (2,0) -- (G1.in 1);'), 'an edited chain: one statement per part');
   assert.equal(C.emit({ kind: 'C', a: [0, 0], b: [0, 1.5], label: 'a, b', opts: ['v=$U$'] }), '\\draw (0,0) to[C, l={a, b}, v=$U$] (0,1.5);');
+}
+// Column widths by drag (pdfedit.ts): an `l`/`c`/`r` column becomes a `p` keeping its alignment, a drag snaps to
+// 0.5 mm or to a twentieth of `\linewidth` when near one, and an `l` column's width is its cells' ink on the page.
+// Pins "≈1.6cm" for every column of an l/c/r table and a drag that could not widen a column without a width.
+{
+  const E = self.satexPdfEdit, MM = 72 / 25.4, line = 400;
+  assert.deepEqual(E.respec('l', '3cm'), { body: 'p{3cm}', array: false });
+  assert.deepEqual(E.respec('c', '3cm'), { body: '>{\\centering\\arraybackslash}p{3cm}', array: true }, 'c keeps its centering');
+  assert.deepEqual(E.respec('r', '2cm'), { body: '>{\\raggedleft\\arraybackslash}p{2cm}', array: true });
+  assert.deepEqual(E.respec('m', '2cm'), { body: 'm{2cm}', array: true }, 'm needs array');
+  assert.equal(E.respec('X', '2cm'), null, 'tabularx computes X');
+  // 0.5 mm steps in cm, a share near a twentieth of the line, a share kept a share, mm kept mm, Shift finer
+  assert.equal(E.snapWidth(null, 40, 30.2 * MM, line, false), '3cm', '30.2 mm: 30 mm');
+  assert.equal(E.snapWidth(null, 40, 30.3 * MM, line, false), '3.05cm');
+  assert.equal(E.snapWidth(null, 40, 0.25 * line + 1, line, false), '.25\\linewidth', 'near a quarter of the line');
+  assert.equal(E.snapWidth(null, 40, line, line, false), '\\linewidth');
+  assert.equal(E.snapWidth(null, 40, 0.25 * line + 1, line, true), `${+((0.25 * line + 1) / MM / 10).toFixed(2)}cm`, 'Shift: no share snap');
+  assert.equal(E.snapWidth('20mm', 20 * MM, 25.2 * MM, line, false), '25mm');
+  assert.equal(E.snapWidth('.3\\linewidth', 0.3 * line, 0.4 * line, line, false), '.4\\linewidth');
+  assert.equal(E.snapWidth('\\dimexpr 2cm', 40, 50, line, false), null, 'a form not read is not rewritten');
+  assert.equal(Math.round(E.widthBp('.5\\linewidth', line)), Math.round(line / 2));
+  // two rows of three left cells: each column's ink; a \multicolumn row (two runs) tells nothing
+  const box = { page: 1, file: 'a.tex', line: 9, kind: '(', x: 100, y: 200, w: 200, h: 40, d: 2 };
+  const w = (x, r, y, t = 'a') => [1, x, y - 7, r, y, t];
+  const words = [w(106, 130, 170), w(150, 170, 170), w(172, 190, 170), w(220, 240, 170), w(106, 120, 185), w(150, 160, 185), w(220, 260, 185), w(106, 180, 198), w(220, 230, 198)];
+  assert.deepEqual(E.measure(words, box, 3), [[106, 130], [150, 190], [220, 260]], 'a word space joins, a cell gap parts');
+  const table = { env: 'tabular', lines: [1, 9], width: null, cols: [{ align: 'l', width: '' }, { align: 'c', width: '' }, { align: 'r', width: '' }] };
+  const cols = E.columns([box], 'a.tex', table, [table], words);
+  assert.deepEqual(cols.map((c) => [c.x, c.w, !!c.measured, !!c.approx]), [[106, 24, true, false], [150, 40, true, false], [220, 40, true, false]]);
+  assert.ok(E.columns([box], 'a.tex', table, [table]).every((c) => c.approx), 'without words: shared evenly, said approximate');
+}
+// Typing in verbatim (pdfedit.ts): listings, verbatim, minted, \verb and \lstinline take every character as it is,
+// no escape, no math, no group; a `$` inside a listing opens no math for the text after it. Pins `\` typed into a
+// listing written as \textbackslash{} and the text after a `$` in a \verb read as math.
+{
+  const E = self.satexPdfEdit;
+  const text = 'Pay \\verb|$x_1| now.\n\\begin{lstlisting}[language=C]\nint a = b_c{};\n\\end{lstlisting}\n\\begin{minted}{python}\nx = "$"\n\\end{minted}\nAfter \\lstinline{f(x)} and 50 more.\n';
+  const at = (s, k = 0) => text.indexOf(s) + k;
+  assert.deepEqual(E.verbatim(text).map((v) => text.slice(v.from, v.to)), ['$x_1', '\nint a = b_c{};\n', '\nx = "$"\n', 'f(x)']);
+  for (const c of ['\\', '{', '_', '$', '%', '^']) assert.deepEqual(E.typed(text, at('b_c'), c, '\\(', true), [at('b_c'), at('b_c'), c, 1], `${c} in a listing: as typed`);
+  assert.deepEqual(E.typed(text, at('$x_1', 1), '|'), [at('$x_1', 1), at('$x_1', 1), '', 0], "\\verb's closer is never typed");
+  assert.deepEqual(E.typed(text, at('f(x)', 1), '_'), [at('f(x)', 1), at('f(x)', 1), '_', 1]);
+  assert.equal(E.editable(text, at('b_c'), at('b_c', 3), []), null, 'markup characters in a listing are text');
+  assert.equal(E.editable(text, at('50'), at('50', 2), []), null, 'a `$` in verbatim opens no math after it');
+  assert.equal(E.editable(text, at('now'), at('now', 3), []), null);
+  assert.deepEqual(E.erased(text, at('{};', 1), true), [at('{};'), at('{};', 1)], 'one character, never an empty pair');
+  assert.deepEqual(E.typed(text, at('now'), '_'), [at('now'), at('now'), '\\_', 2], 'outside: escaped as before');
+  assert.equal(E.verbatimAt('% \\verb|x|\nplain', 9), null, 'a comment holds no verbatim');
+}
+// Typing in a table (pdfedit.ts): Tab and Shift+Tab step from cell to cell, row over row, past rules; Enter adds a
+// row after the caret's, as many cells as it has. Pins Enter writing a blank line (a paragraph) inside a tabular.
+{
+  const E = self.satexPdfEdit;
+  const text = 'x\n\\begin{tabular}{l|c}\n\\toprule\nqq & cd \\\\\n\\midrule\nef & {g & h} \\\\\n\\bottomrule\n\\end{tabular}\n';
+  const at = (s, k = 0) => text.indexOf(s) + k;
+  const t = E.cells(text, at('cd'));
+  assert.deepEqual(t.rows.map((r) => r.map(([a, b]) => text.slice(a, b))), [['qq', 'cd'], ['ef', '{g & h}']], 'rules and a group\'s & are no cells');
+  assert.deepEqual([t.r, t.c], [0, 1]);
+  assert.equal(E.cellStep(text, at('qq', 1), 1), at('cd', 2), 'Tab: the end of the next cell');
+  assert.equal(E.cellStep(text, at('cd', 1), 1), at('ef', 2), 'row over row, past \\midrule');
+  assert.equal(E.cellStep(text, at('ef'), -1), at('cd', 2), 'Shift+Tab');
+  assert.equal(E.cellStep(text, at('{g', 1), 1), null, 'past the last cell');
+  assert.equal(E.cellStep('no table', 2, 1), null);
+  const [a, b, body, step] = E.rowAfter(text, at('ef'));
+  assert.equal(text.slice(0, a) + body + text.slice(b), text.replace('{g & h} \\\\\n', '{g & h} \\\\\n & \\\\\n'), 'a new row after the caret\'s');
+  assert.equal(step, 1, 'the caret in its first cell');
+  const open = '\\begin{tabular}{ll}\na & b\n\\end{tabular}', r = E.rowAfter(open, open.indexOf('& b') + 2);
+  assert.equal(open.slice(0, r[0]) + r[2] + open.slice(r[1]), '\\begin{tabular}{ll}\na & b \\\\\n &\n\\end{tabular}', 'a last row without \\\\ gets one');
 }

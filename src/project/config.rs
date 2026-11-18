@@ -650,7 +650,7 @@ pub struct LspConfig {
 
 impl Default for LspConfig {
     fn default() -> LspConfig {
-        LspConfig { port: None, host: "127.0.0.1".into(), debounce_ms: 300 }
+        LspConfig { port: None, host: "127.0.0.1".into(), debounce_ms: 100 }
     }
 }
 
@@ -1400,9 +1400,9 @@ area! {
         near: usize = 400,
         /// How far past a display the sentence's punctuation is looked for.
         after: usize = 24,
-        /// The delimiters typing into the output writes for inline math: `$`, `\(`, or `auto`,
-        /// the one the document uses most.
-        inline: String = "auto".into(),
+        /// The delimiters typing into the output writes for inline math: `\(` (LaTeX's), `$`, or
+        /// `auto`, the one the document uses most.
+        inline: String = "\\(".into(),
         /// Typing `_` or `^` into math in the output opens a group, `x_{42}`, which a space,
         /// an operator or the math's end closes.
         smart_scripts: bool = true,

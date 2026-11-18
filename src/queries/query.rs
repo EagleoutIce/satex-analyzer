@@ -1118,6 +1118,11 @@ fn typeset(analysis: &Analysis) -> Vec<Record> {
             out.push(record);
         }
     }
+    // a paragraph that set nothing and stands on no line (`\end{document}`'s closing `\par`) is no row
+    out.retain(|r| {
+        let is = |k: &str, v: Json| r.get(k) == Some(&v);
+        !(is("kind", json!("paragraph")) && is("line", json!(0)) && is("detail", json!("")))
+    });
     out
 }
 
