@@ -20,7 +20,7 @@ type Form = { kind: 'len'; num: number; unit: string } | { kind: 'share'; num: n
 /** A piece of a paragraph for the echo's line breaking: its width `n` and the space before it `gap` (bp); `par` starts
  * a new paragraph (Enter). Anything else it carries (its text, the page word it is) rides along. */
 /** `disp`: display math, centered on a row of its own, that much more space above it (bp), `below` after it. */
-type Piece = { gap: number; n: number; par?: boolean; disp?: number; below?: number; st?: number; sh?: number; hy?: boolean };
+type Piece = { gap: number; n: number; par?: boolean; disp?: number; below?: number; st?: number; sh?: number; hy?: boolean; hw?: number };
 /** The lines a paragraph may take: its right edge, its left margin, the indent and gap of a new paragraph, the rows the
  * page set after the first (each its left edge and its own words, gaps set), whether a row may take words up (`pull`). */
 type Line<P> = { right: number; left: number; indent: number; skip: number; parskip: number; rows: { x: number; pieces: P[] }[]; pull?: boolean; shrink?: number; justify?: boolean; fit?: boolean };
@@ -850,7 +850,8 @@ declare global {
       for (let i = j - 1; i >= 0; i--) {
         if (best[i] === Infinity || (i && !can(i))) continue;
         // the line i..j-1: its glue from i+1 on (the space before i is dropped at a break)
-        const L = i ? width : first, w = W[j]! - W[i]! - (i ? pieces[i]!.gap : 0), str = S[j]! - S[i + 1]!, shr = H[j]! - H[i + 1]!;
+        // a line ending at a hyphenation point carries the hyphen (`hw` wide)
+        const L = i ? width : first, w = W[j]! - W[i]! - (i ? pieces[i]!.gap : 0) + (j < n && pieces[j - 1]!.hy ? pieces[j - 1]!.hw ?? 0 : 0), str = S[j]! - S[i + 1]!, shr = H[j]! - H[i + 1]!;
         if (w - shr > Math.max(first, width) + 0.01) break; // a line from further left is longer still: none fits
         if (w - shr > L + 0.01) continue;
         const last = j === n, r = last ? (w <= L ? 0 : (L - w) / shr) : w < L ? (str > 0 ? (L - w) / str : Infinity) : w > L ? (L - w) / shr : 0;
@@ -890,6 +891,9 @@ declare global {
           out.push({ ...q, x });
           x += q.n;
         }
+        // a line broken at a hyphenation point ends with the hyphen
+        const end = all[b - 1];
+        if (b < all.length && end?.hy) out.push({ gap: 0, n: end.hw ?? 0, t: '-', x } as unknown as P & { x: number });
         return { x: li ? slot?.x ?? line.left : x0, from: li ? (slot ? li - 1 : -1) : -2, dy: li && !slot ? line.skip : 0, par: false, out };
       });
       return { rows, freed: line.rows.map((_, i) => i).filter((i) => i >= starts.length - 1) };

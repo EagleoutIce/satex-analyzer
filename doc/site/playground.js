@@ -8218,6 +8218,21 @@
     for (let j = i + 1; i >= 0 && j < line.length && line[j][1] - line[j - 1][3] < em; j++) out.push(line[j]);
     return out;
   }
+  /** TeX's hyphenation points of the run's words, as the typeset rows mark them (a `·` before each): word → the
+   * offsets of its points. A word typed since the run has none until the next one lands. */
+  let pdfHyphOf = null;
+  function pdfHyphens() {
+    if (pdfHyphOf?.rows === typesetRows) return pdfHyphOf.map;
+    const map = new Map();
+    for (const r of typesetRows ?? []) for (const t of String(r.detail ?? '').split(/\s+/)) {
+      if (!t.includes('·')) continue;
+      const parts = t.split('·'), cuts = [];
+      parts.slice(0, -1).reduce((at, p) => (cuts.push(at + p.length), at + p.length), 0);
+      map.set(parts.join(''), cuts);
+    }
+    pdfHyphOf = { rows: typesetRows, map };
+    return map;
+  }
   /** The font's natural interword space on page image `img`, in bp: the common gap of the rows that end short of the
    * right edge `right` (a paragraph's last row: TeX sets its spaces unstretched), punctuation's wider ones aside;
    * else a third of `em`. */
@@ -8343,7 +8358,8 @@
       if (A) A = { ...A, e: te(A) };
       // typing at a paragraph's start (after Enter): the text stands before its first word, on that word's row
       else if (para[0]?.s >= P) { const F = para[0].w; A = { s: P, e: P, w: [F[0], F[1], F[2], F[1], F[4], ''] }; }
-      if (!A) return false;
+      // a table's cells are no paragraph to re-flow (its rows' words pair with no line): the word-based echo sets them
+      if (!A || PE.cells(g.text, g.at)) return false;
       w = A.w;
       const img = page(w[0]), [pw, ph] = pageSize(img), k = img.naturalWidth / pw;
       const row = para.filter((t) => t.s >= A.e && t.w[0] === w[0] && Math.abs(t.w[4] - w[4]) < 1), kept = row.filter((t) => t.s >= edit), F = kept[0];
@@ -8404,7 +8420,24 @@
         const prev = seq[j - 1], t = prev.t ?? prev.w?.[5] ?? '';
         Object.assign(q, q.gap > 2.5 * sp ? { st: 0, sh: 0 } : PE.glue(t, sp));
       });
-      const flow = PE.reflow(pieces.map((q, ix) => ({ ...q, ix })), w[3], { right, left, indent, skip, parskip, rows: later, pull: dl < 0, fit: fits });
+      // words at TeX's hyphenation points (the run's, pdfHyphens): a line may break inside one, as TeX did; the page's
+      // words split by their glyphs' places, typed ones by their measure (never the word the caret is in)
+      const tagged = pieces.map((q, ix) => ({ ...q, ix }));
+      if (fits) {
+        const H = pdfHyphens(), hw = width('-');
+        const split = (q) => {
+          const t = q.ix === into ? null : q.t ?? q.w?.[5]?.normalize('NFKC'), cuts = t && H.get(t);
+          if (!cuts?.length) return [q];
+          const xs = q.t == null ? pdfBounds(page(q.w[0]), q.w) : null, at = [0, ...cuts, t.length];
+          return at.slice(0, -1).map((a, i) => {
+            const b = at[i + 1], part = { ...q, gap: i ? 0 : q.gap, st: i ? 0 : q.st, sh: i ? 0 : q.sh, hy: i < at.length - 2, hw };
+            return xs ? { ...part, n: xs[b] - xs[a], w: [q.w[0], xs[a], q.w[2], xs[b], q.w[4], t.slice(a, b)] } : { ...part, n: width(t.slice(a, b)), t: t.slice(a, b) };
+          });
+        };
+        tagged.splice(0, tagged.length, ...tagged.flatMap(split));
+        for (const r of later) r.pieces = r.pieces.flatMap(split);
+      }
+      const flow = PE.reflow(tagged, w[3], { right, left, indent, skip, parskip, rows: later, pull: dl < 0, fit: fits });
       const rows = [];
       for (const fr of flow.rows) {
         const prev = rows.at(-1), L = later[fr.from];
@@ -8769,7 +8802,8 @@
       pdfQueue(async () => {
         // the server's own list: the names standing in for it carry no snippet (`\\emph` without its braces)
         let all = (await pdfWithin(ask)) ?? [];
-        if (!all.some((i) => i.insertText)) { await pdfRunEnd(); all = (await pdfWithin(completions(p, p.character, '\\', uri(), true))) ?? []; }
+        // no snippets yet (a run under way holds the server): the commands the last list gave, else the server's after the run
+        if (!all.some((i) => i.insertText)) all = commandItems.get('\\')?.some((i) => i.insertText) ? commandItems.get('\\') : (await pdfRunEnd(), (await pdfWithin(completions(p, p.character, '\\', uri(), true))) ?? []);
         const c = pdfCaretNow(), n = c && /^\\([A-Za-z@]*)$/.exec(editor.text().slice(from, c.at)), item = n && pdfMenuItems(all, n[1])[0];
         pdfMenuOff();
         if (item) pdfMenuApply(item, from, true);
@@ -8785,7 +8819,7 @@
         if (!m) return;
         const from = c.at - m[0].length, p = pdfPos(t, from + 1);
         let all = (await pdfWithin(completions(p, p.character, '\\', uri(), true))) ?? [];
-        if (!all.some((i) => i.insertText)) { await pdfRunEnd(); all = (await pdfWithin(completions(p, p.character, '\\', uri(), true))) ?? []; }
+        if (!all.some((i) => i.insertText)) all = commandItems.get('\\')?.some((i) => i.insertText) ? commandItems.get('\\') : (await pdfRunEnd(), (await pdfWithin(completions(p, p.character, '\\', uri(), true))) ?? []);
         const item = pdfMenuItems(all, m[1])[0];
         pdfMenuOff();
         if (item) pdfMenuApply(item, from, true);

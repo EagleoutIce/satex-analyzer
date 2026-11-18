@@ -86,3 +86,15 @@ test('glue by space factor', () => {
   assert.equal(g('TeX.').gap, 3, 'a capital before the stop: TeX gives 999 (an `\\@` would be needed), so does the echo');
   assert.equal(g('NASA.').gap, 3, 'a capital before the stop: 999, no extra space');
 });
+// Intuition: a word split at TeX's hyphenation points (pieces with `hy`, no space between) breaks there when that
+// fits best, the line then one hyphen (`hw`) wider and ending in it; unbroken its parts stand flush. Pins the 18 px
+// landing jump of "lyre-bird", which the echo could not break.
+test('hyphenation points', () => {
+  const ps = [{ n: 70, gap: 0 }, { n: 12, gap: 4, hy: true, hw: 3, t: 'lyre' }, { n: 12, gap: 0, t: 'bird' }];
+  const f = E.fit(ps, 90, 90, 10000);
+  assert.deepEqual(f.breaks, [2], 'broken after "lyre": 70 + 4 + 12 + 3 = 89 fits, 101 does not');
+  const r = E.reflow(ps, 0, { right: 90, left: 0, indent: 0, skip: 12, parskip: 0, rows: [], fit: true });
+  assert.deepEqual(r.rows.map((x) => x.out.map((q) => q.t ?? q.n)), [[70, 'lyre', '-'], ['bird']], 'the hyphen drawn at the break');
+  const wide = E.reflow(ps, 0, { right: 120, left: 0, indent: 0, skip: 12, parskip: 0, rows: [], fit: true });
+  assert.deepEqual(wide.rows[0].out.map((q) => q.x), [0, 74, 86], 'unbroken: the parts flush, no hyphen');
+});
