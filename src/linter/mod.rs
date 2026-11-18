@@ -625,8 +625,9 @@ impl Needs {
 /// The rules that need less than the run, under the assumption that no build file decides what is
 /// verbatim or which files are read. Every other rule needs the run.
 // No labels or citations: `label=` keys and macros make them, the text scan misses those.
-const NEEDS: [(&str, Needs); 8] = [
+const NEEDS: [(&str, Needs); 9] = [
     ("build-command-placeholders", Needs::Text),
+    ("misspelled-magic-comment", Needs::Text),
     ("build-engine-options", Needs::Text),
     ("comment-marker", Needs::Names),
     ("user-pattern", Needs::Names),

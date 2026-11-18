@@ -84,6 +84,25 @@ Fix by removing the backslash.",
         run: unintended_escape,
     },
     Rule {
+        code: "misspelled-magic-comment",
+        since: "0.2.5",
+        category: Category::Correctness,
+        severity: Severity::Warning,
+        summary: "misspelled magic comment",
+        explanation: "\
+Editors and satex read `% !TeX program = …`, `% !TeX root = …` and their kin
+before the run: the engine, the root file, the encoding.  A typo in the head
+or the key (`% !rex program`, `% !TeX progam`) turns the line into a plain
+comment, so the document builds with another engine or root than you meant.
+
+The rule reports a comment that is one or two letters away from a known head
+(`magic.prefixes`) or key.  Fix by writing the head or key as it should be.",
+        references: &[],
+        fixes: &[Applicability::Unsafe],
+        engines: &[],
+        run: misspelled_magic_comment,
+    },
+    Rule {
         code: "comment-marker",
         since: "0.2.0",
         category: Category::Style,
@@ -451,6 +470,54 @@ fn comment_marker(report: &mut Report) {
             false => format!("`{marker}` left in a comment: {note}"),
         };
         report.add(span, &marker, message, Some("do what the note asks and delete it".into()));
+    }
+}
+
+/// The keys of `% !TeX key = …` lines editors know.
+const MAGIC_KEYS: [&str; 5] = ["program", "root", "encoding", "spellcheck", "TS-program"];
+
+fn misspelled_magic_comment(report: &mut Report) {
+    let prefixes = report.analysis.settings.magic.prefixes.clone();
+    let keys: Vec<String> = MAGIC_KEYS.iter().map(|k| k.to_string()).collect();
+    let files = files(report.analysis, report.edits().sources);
+    let mut findings = Vec::new();
+    for file in &files {
+        for (i, line) in file.text.body().lines().enumerate() {
+            let Some(rest) = line.trim_start().strip_prefix('%') else { continue };
+            let rest = rest.trim_start();
+            let Some((head, tail)) = rest.split_once(char::is_whitespace) else { continue };
+            let Some((key, _)) = tail.split_once('=') else { continue };
+            let (head, key) = (head.trim(), key.trim());
+            if !head.starts_with('!') || key.contains(char::is_whitespace) {
+                continue;
+            }
+            // the head's own place, then the key's: whichever is the typo
+            let col = |word: &str| col_of(line, line.find(word).unwrap_or(0));
+            let known = prefixes.iter().any(|p| p.eq_ignore_ascii_case(head));
+            let fix = match known {
+                false => crate::linter::correctness::closest(head, &prefixes).map(|p| (head, p.to_string())),
+                true if !keys.iter().any(|k| k.eq_ignore_ascii_case(key)) => {
+                    crate::linter::correctness::closest(key, &keys).map(|k| (key, k.to_string()))
+                }
+                true => None,
+            };
+            if let Some((wrong, right)) = fix {
+                let span = Span { file: file.id, line: i as u32 + 1, col: col(wrong) };
+                findings.push((span, wrong.to_string(), right));
+            }
+        }
+    }
+    for (span, wrong, right) in findings {
+        let end = Pos::new(span.line, span.col + wrong.chars().count() as u32);
+        let edits = report.edits().text(span.file).map(|(path, _)| {
+            vec![Edit { path, start: Pos::new(span.line, span.col), end, replacement: right.clone() }]
+        });
+        report.add_fix(
+            span,
+            &wrong,
+            format!("`{wrong}` in a magic comment: editors read only `{right}`"),
+            Fix::new(format!("write `{right}`"), Applicability::Unsafe, edits),
+        );
     }
 }
 

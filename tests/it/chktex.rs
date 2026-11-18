@@ -1932,8 +1932,9 @@ fn a_sentence_that_starts_in_lowercase_is_reported() {
     if !crate::support::installed() {
         return;
     }
+    // `$x$` after `?` is a formula, no sentence start
     let body = "We stop here. then we go. Words like iPhone. iPhone works. Ask approx. the same. \
-                It runs! next one. Wait... and so etc. and so.";
+                It runs! next one. Wait... and so etc. and so. Funny? $x_{42}$ grows.";
     let found = records("capital", &math_document(body), "sentence-capital");
     assert_eq!(found.iter().flat_map(replacements).collect::<Vec<_>>(), ["T", "N"], "{found:?}");
     // The two rules split the periods: `approx.` and `etc.` ask for a word space, `here.` does not.
@@ -1971,4 +1972,24 @@ fn a_skip_primitive_is_rewritten_to_the_latex_command() {
         satex::linter::lint(&doc.analysis).into_iter().filter(|r| r["code"] == "primitive-tex-command").collect();
     let fixes: Vec<String> = found.iter().flat_map(replacements).collect();
     assert_eq!(fixes, [r"\vspace{\baselineskip}", r"\hspace{1em plus 2pt}"], "{found:?}");
+}
+
+/// Intuition: a typo in a magic comment's head or key makes it a plain comment, so editors build
+/// with another engine or root than meant. Pins: `% !rex program = tex` (a user's typo) went
+/// unreported; the head is found and fixed to `!TeX`, a misspelled key to its known name, and a
+/// correct comment stays quiet.
+#[test]
+fn a_misspelled_magic_comment_is_found_and_fixed() {
+    let body = "\\documentclass{article}\n\\begin{document}\nx\n\\end{document}\n";
+    for (name, line, wrong, right) in [
+        ("magic-head", "% !rex program = tex", "!rex", "!TeX"),
+        ("magic-key", "% !TeX progam = lualatex", "progam", "program"),
+    ] {
+        let doc = on_disk(name, &format!("{line}\n{body}"), false).expect("temporary directory");
+        let found = findings(&doc.analysis, "misspelled-magic-comment");
+        assert!(found.len() == 1 && found[0].contains(wrong) && found[0].contains(right), "{line}: {found:?}");
+    }
+    let doc =
+        on_disk("magic-right", &format!("% !TeX program = lualatex\n{body}"), false).expect("temporary directory");
+    assert!(findings(&doc.analysis, "misspelled-magic-comment").is_empty());
 }

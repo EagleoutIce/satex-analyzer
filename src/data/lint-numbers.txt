@@ -147,3 +147,4 @@ S066 redundant-package-load
 C062 unknown-package-name
 S067 low-contrast-color
 S068 indistinct-colors
+C063 misspelled-magic-comment

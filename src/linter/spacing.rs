@@ -543,7 +543,13 @@ fn sentence_capital(report: &mut Report) {
     for (byte, mark) in view.chars().match_indices(['.', '!', '?']) {
         let i = view.at(byte);
         let Some(next) = view.char_at(i + 2).filter(|c| c.is_lowercase()) else { continue };
-        if !view.is_prose(i) || !plain_space(report, i + 1) || !view.beside(i + 1) || !view.beside(i + 2) {
+        // the word after it is prose too: `$x$` after `?` is a formula, no sentence start
+        if !view.is_prose(i)
+            || view.math(i + 2)
+            || !plain_space(report, i + 1)
+            || !view.beside(i + 1)
+            || !view.beside(i + 2)
+        {
             continue;
         }
         if mark == "." && (view.char_at(i.wrapping_sub(1)) == Some('.') || !ends_sentence(report, i)) {
