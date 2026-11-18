@@ -1129,6 +1129,18 @@ fn call_summary_pops_a_deeper_stack() {
     assert!(defined(&a, "ok"), "the second pop gives K");
 }
 
+/// Intuition: one call site parses three expressions over an unknown count. A call key
+/// ignores character tokens, so pgfmath's strip call, which keeps the expression text in
+/// `\pgfmath@bgroup@stripped`, has one key for `\cnt+1` and `max(\cnt,10)`. Bug (a beamer
+/// title page, 171 paths): the summary gave the fourth parse the joined texts of the first
+/// runs, a false missing-number at pgfmathparser:775 and `\WRONG` defined. A write that
+/// holds tokens of its run's arguments describes no call with other arguments.
+#[test]
+fn call_summary_keeps_no_text_of_other_arguments() {
+    let Some(a) = check("call_summary_own_argument", "main.tex", &[]) else { return };
+    assert!(defined(&a, "ok") && crate::support::undefined(&a, "WRONG"), "max(\\cnt,10) is 10");
+}
+
 /// `\peek` reads the top of a stack it leaves alone. Two runs saw unknown
 /// text there, the third call sees `K`, so `\ok` is defined. Bug: only
 /// count registers were compared with what the runs read, so the summary
@@ -1137,4 +1149,44 @@ fn call_summary_pops_a_deeper_stack() {
 fn call_summary_peeks_at_a_known_top() {
     let Some(a) = check("call_summary_peek", "main.tex", &[]) else { return };
     assert!(defined(&a, "ok"), "the peek gives K");
+}
+
+/// The number after `marker` in `source`.
+fn number_after(source: &str, marker: &str) -> i64 {
+    let rest = &source[source.find(marker).unwrap_or_else(|| panic!("{marker} in the fixture")) + marker.len()..];
+    rest[..rest.find(|c: char| !c.is_ascii_digit()).unwrap_or(rest.len())].parse().expect("a number")
+}
+
+/// Intuition: the fixture parses a random count in `[-shift, span - shift)` and adds a constant,
+/// so `\pgfmathresult` is a number between those bounds plus the constant on every path, and
+/// `\ifdim` against either bound decides on every path. A path past a bound holds a value TeX
+/// never prints; a path on which the in-range arm is gone would be unsound.
+/// Bug pinned: the result was any number text (`\unknown name:text of:ds+`, loop summaries of
+/// the parser's dispatch `\pgfmath@parse@next` widened to unknown), so both bounds stayed open.
+#[test]
+fn pgfmath_signed_random_count_plus_a_constant_stays_in_range() {
+    if !installed() {
+        return;
+    }
+    let root = dir("pgfmath_count_signed");
+    let path = root.join("main.tex");
+    let fixture = std::fs::read_to_string(&path).expect("fixture source");
+    let span = number_after(&fixture, "\\pdfuniformdeviate ");
+    let shift = number_after(&fixture, &format!("\\pdfuniformdeviate {span}-"));
+    let add = number_after(&fixture, "\\pgfmathresult+");
+    let (lo, hi) = (add - shift, add + span - 1 - shift);
+    let checks = format!(
+        "\\ifdim\\pgfmathresult pt<{lo}pt \\gdef\\Low{{}}\\else\\ifdim\\pgfmathresult pt>{hi}pt \\gdef\\High{{}}\\else\\gdef\\InRange{{}}\\fi\\fi\n\\gdef\\SatexReachedEnd{{}}"
+    );
+    let source = fixture.replace("\\gdef\\SatexReachedEnd{}", &checks);
+    let mut cfg = crate::support::discover(&root);
+    cfg.cache.dir = Some(crate::support::scratch_dir(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/scratch/documents-pgfmath_count_signed"),
+    ));
+    crate::support::seed_kernel(&cfg);
+    let a = Machine::analyze(&source, Some(&path), &cfg);
+    assert!(defined(&a, "SatexReachedEnd"), "the end is reached on every path");
+    assert!(!undefined(&a, "InRange"), "the true value's arm is live");
+    let outside: Vec<_> = ["Low", "High"].into_iter().filter(|n| !undefined(&a, n)).collect();
+    assert!(outside.is_empty(), "\\pgfmathresult may lie outside {lo}..{hi}: {outside:?}");
 }

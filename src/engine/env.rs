@@ -10,6 +10,7 @@ use crate::engine::value::Value;
 
 mod changed;
 use changed::Changed;
+pub use changed::take_walked;
 /// No trail entry.
 const NONE: u32 = u32::MAX;
 

@@ -10,7 +10,7 @@
 
 use super::*;
 use crate::engine::env::{Fork, PathEnv, Reach};
-use crate::engine::value::Num;
+use crate::engine::value::{Num, Value};
 
 /// Maximum reruns of one command. Further choices are left to the caller,
 /// which widens them, as it does past `limits.choices`.
@@ -2109,11 +2109,18 @@ impl Machine<'_> {
     /// their macros hold different digits of a split number (a lookahead
     /// `\def`d from it), the paths are at different stages of reading it and
     /// stay apart until the statement ends (`usize::MAX`).
+    /// Paths whose stack of groups (a toks or macro text of `{…}` only,
+    /// pgfmath's operation stack) differs in depth stay apart too: a join
+    /// would pop one of both tops, a top neither path holds with its rest.
     fn digits_apart(&self, a: &Config, b: &Config) -> usize {
+        let differing = a.env.differing(&b.env);
+        let depth = |c: &Config, sym: Sym| c.env.changed(sym).and_then(|b| stack_depth(b));
+        if differing.iter().any(|&sym| matches!((depth(a, sym), depth(b, sym)), (Some(x), Some(y)) if x != y)) {
+            return usize::MAX;
+        }
         if self.scratch.split_digits.is_empty() {
             return 0;
         }
-        let differing = a.env.differing(&b.env);
         let texts = |c: &Config, sym: Sym| {
             let b = c.env.changed(sym);
             let may = b.and_then(|b| b.may.as_deref()).unwrap_or_default();
@@ -3207,7 +3214,8 @@ impl Machine<'_> {
         }
         if a.number.is_some() || b.number.is_some() {
             let number = join_numbers(a.number, b.number);
-            return (number != a.number).then(|| Accum { number, ..a.clone() });
+            let spell = a.spell.filter(|_| a.spell == b.spell);
+            return (number != a.number || spell != a.spell).then(|| Accum { number, spell, ..a.clone() });
         }
         let (p, q) = (a.to_vec(), b.to_vec());
         if same_text(&p, &q) {
@@ -3612,6 +3620,29 @@ fn same_code(a: &Tag, b: &Tag) -> bool {
 /// digit split join only once as many paths wait as the split made (`apart`),
 /// or the statement is over. Joined earlier, a 1-digit arm would pair with a
 /// 2-digit arm that is a pass behind.
+/// The groups a stack holds: a toks or macro text of top-level `{…}`
+/// groups only, at least one.
+fn stack_depth(b: &Binding) -> Option<usize> {
+    let text: &[Token] = match (&b.value, &b.meaning) {
+        (Value::Toks(t), _) => t,
+        (_, Meaning::Macro(m)) if m.arity() == 0 => &m.replacement_text,
+        _ => return None,
+    };
+    let (mut level, mut groups) = (0usize, 0usize);
+    for t in text {
+        match t.tok {
+            Tok::Chr(_, Catcode::Begin) => {
+                groups += usize::from(level == 0);
+                level += 1;
+            }
+            Tok::Chr(_, Catcode::End) => level = level.checked_sub(1)?,
+            _ if level == 0 => return None,
+            _ => {}
+        }
+    }
+    (groups > 0 && level == 0).then_some(groups)
+}
+
 fn partner(parked: &[Config], config: &Config, apart: &dyn Fn(&Config, &Config) -> usize) -> Option<usize> {
     let (key, tag) = (&config.key, &config.tag);
     let here: Vec<usize> = (0..parked.len()).filter(|&i| !parked[i].ended && parked[i].key == *key).collect();

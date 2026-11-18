@@ -239,18 +239,18 @@ pub struct Metadata {
 /// Per name, the probes run in each context it was called from.
 pub type ContextProbes = HashMap<Sym, Vec<(Option<Sym>, Option<String>)>>;
 
-/// Cached per-character font state: the five NFSS names, the bodies they
+/// Cached per-character font state: the [`crate::engine::commands::NFSS`] names, the bodies they
 /// had when last resolved, and the resolved row. Costs a few pointer
 /// comparisons instead of five macro lookups.
 #[derive(Clone, Default)]
 pub(crate) struct FontWatch {
-    pub(crate) names: Option<[Option<Sym>; 6]>,
+    pub(crate) names: Option<[Option<Sym>; crate::engine::commands::NFSS.len()]>,
     /// Held, not just pointed at, so a freed body cannot be mistaken for
     /// an unchanged one through a reused address.
-    pub(crate) bodies: [Option<std::rc::Rc<[Token]>>; 6],
+    pub(crate) bodies: [Option<std::rc::Rc<[Token]>>; crate::engine::commands::NFSS.len()],
     /// The same bodies as bare addresses, which is what the per-character
     /// comparison reads.
-    pub(crate) at: [Option<*const u8>; 6],
+    pub(crate) at: [Option<*const u8>; crate::engine::commands::NFSS.len()],
     pub(crate) state: u16,
     /// `\pickup@font` and `\font@name`.
     pub(crate) pick: Option<(Sym, Sym, Sym)>,
@@ -1234,6 +1234,7 @@ pub(crate) type Gapped = (String, String, TextClass, Option<Sym>);
 /// arms of a choice inside the scan join where they meet again. Older
 /// tokens are frozen in shared chunks, so saving a path costs little.
 #[derive(Debug, Clone, Default)]
+
 pub(crate) struct Accum {
     chunks: Vec<Rc<[Token]>>,
     tail: Vec<Token>,
@@ -1247,6 +1248,8 @@ pub(crate) struct Accum {
     pub(crate) name: Option<Box<NameAccum>>,
     /// What a [`Unit::Number`] scan read: its value, else its hull.
     pub(crate) number: Option<(Option<i64>, Option<crate::engine::value::Num>)>,
+    /// And how it is spelled, where it is known ([`Machine::abs_spell`]).
+    pub(crate) spell: Option<crate::engine::exec::Spell>,
     /// The input levels where the scan began: its text is above them.
     base: usize,
     /// The conditionals open where the scan began.
@@ -1307,7 +1310,7 @@ impl Accum {
 
     /// One built from `toks`, standing as this one does.
     pub(crate) fn with(&self, toks: Vec<Token>) -> Accum {
-        let (depth, done, number, base) = (self.depth, self.done, self.number, self.base);
+        let (depth, done, number, spell, base) = (self.depth, self.done, self.number, self.spell, self.base);
         Accum {
             own: self.own,
             conds: self.conds,
@@ -1317,6 +1320,7 @@ impl Accum {
             done,
             name: None,
             number,
+            spell,
             base,
             paired: Vec::new(),
             text: self.text,
@@ -1633,6 +1637,10 @@ pub(crate) struct Scratch {
     pub(crate) arg_site: Option<Span>,
     /// The macro being called goes by a name of unknown spelling.
     pub(crate) family_call: bool,
+    /// The undelimited parameters of the macro whose arguments are read
+    /// that it puts back together ([`Machine::rejoined_params`]), and
+    /// whether the one read now is such.
+    pub(crate) rejoined: (u32, bool),
     /// The test just read a box whose kind the run does not know: its arms
     /// rest on contents the run cannot see.
     pub(crate) blind_box: bool,
@@ -1830,6 +1838,9 @@ pub struct Machine<'a> {
     pub(crate) redefines_hint: Option<(Sym, (bool, bool))>,
     /// See [`crate::analysis::facts::Spot::apart`].
     pub(crate) text_apart: bool,
+    /// What was drawn since the last character: the next box placed with characters stands
+    /// on it ([`crate::analysis::facts::Text::backgrounds`]).
+    pub(crate) text_fill: Option<crate::analysis::observe::Fill>,
     /// The macro whose expansion the last token read came from. A list
     /// pushed or given back while it is processed keeps it.  `None`: a file.
     source: Option<Sym>,
@@ -1903,6 +1914,15 @@ pub struct Machine<'a> {
     /// what was added to it (`\numexpr x-10`).
     pub(crate) abs_from: Option<crate::engine::exec::From>,
     pub(crate) abs_whole: bool,
+    /// How the constant [`Machine::abs`] was read from is spelled: digits,
+    /// then typed digits, so `\number` prints both, not a fresh number of
+    /// their hull. Tagged with the [`Machine::scan_int`] that owns it.
+    pub(crate) abs_spell: Option<(u64, crate::engine::exec::Spell)>,
+    /// The innermost [`Machine::scan_int`] running, and the last one begun.
+    pub(crate) spell_owner: (u64, u64),
+    /// Typed digits read as one argument ([`Machine::read_undelimited`]):
+    /// a macro is assumed to put them back together whole.
+    pub(crate) read_whole: HashSet<Sym>,
     /// The operands a traced numeric test compared (`1900 = 1900`), for its branch step.
     pub(crate) compared: Option<String>,
     /// A unit's value over an interval of numbers (see `scan_units`).
@@ -2042,6 +2062,9 @@ pub struct Machine<'a> {
     /// The step count the budget was last checked at. A distance, not a
     /// multiple: a read can step onto a multiple the charge then passes.
     checked_at: u64,
+    /// Map entries walked and not yet charged to a line: path work between
+    /// steps, `limits.walk_per_step` of them one step ([`Machine::charge`]).
+    walked: u64,
     /// The cacheable package or class being loaded: its end forgets what a
     /// replay of it would not bring ([`Machine::end_cacheable_load`]).
     cacheable_load: Option<FileId>,
@@ -2581,6 +2604,8 @@ struct LineGuard {
     held: HeldCharges,
     /// The most one line took, for `-vvvv`.
     peak: u64,
+    /// Steps per source line over the run, never reset, for `-vv`.
+    tally: LookupMap<(FileId, u32), u64>,
 }
 
 /// A path's view of the guard: the line it stands on, the overruns of it
@@ -2676,7 +2701,7 @@ const ENGINE_WARNINGS: [&str; 6] =
 /// ("That makes 100 errors; please try again").
 const MAX_ERRORS: u32 = 100;
 
-const WIDEN_ON: [&str; 6] = [
+pub(crate) const WIDEN_ON: [&str; 6] = [
     "argument-ends-in-unknown",
     "unbalanced-conditional",
     "unbalanced-file",
@@ -2835,6 +2860,7 @@ impl<'a> Machine<'a> {
             script_groups: Vec::new(),
             redefines_hint: None,
             text_apart: false,
+            text_fill: None,
             source: None,
             packages: Rc::default(),
             load_start: None,
@@ -2867,6 +2893,9 @@ impl<'a> Machine<'a> {
             abs_from: None,
             compared: None,
             abs_whole: false,
+            abs_spell: None,
+            spell_owner: (0, 0),
+            read_whole: Default::default(),
             ranged: None,
             narrowing: None,
             diag_seen: Default::default(),
@@ -2922,6 +2951,7 @@ impl<'a> Machine<'a> {
             path_id: 0,
             path_ids: 0,
             checked_at: 0,
+            walked: 0,
             unknown_digits,
             unknown_more,
             typed_syms: None,
@@ -5387,11 +5417,17 @@ will look undefined",
         // A pseudo file stays until a read reaches its end (tex.web § 362).
         // The open output routine's text stays too: its `}` may be the token
         // put back, which closes the group from there (§ 1100).
-        while let Some(Frame::Tokens { toks, pos, expanding, upper, .. }) = self.input.last()
-            && *pos >= toks.len()
-            && *expanding != Some(self.pseudo_file)
-            && !(*expanding == Some(self.output_sym) && !*upper && self.output_active())
-        {
+        // An emptied put-back frame goes too (§ 325): a call pushed on it
+        // would share it with its caller, who then reads what the call puts back.
+        while match self.input.last() {
+            Some(Frame::Tokens { toks, pos, expanding, upper, .. }) => {
+                *pos >= toks.len()
+                    && *expanding != Some(self.pseudo_file)
+                    && !(*expanding == Some(self.output_sym) && !*upper && self.output_active())
+            }
+            Some(Frame::Returned(t)) => t.is_empty(),
+            _ => false,
+        } {
             self.pop_frame();
         }
     }
@@ -7307,6 +7343,13 @@ will look undefined",
             Frame::File { mouth, .. } if !mouth.ending() => Some(mouth.here()),
             _ => None,
         });
+        if self.cfg.verbose >= 2 && self.budget.is_none() {
+            let mut lines: Vec<_> = self.guard.tally.iter().map(|(k, v)| (*v, *k)).collect();
+            lines.sort_unstable_by(|a, b| b.cmp(a));
+            for (steps, (file, line)) in lines.into_iter().take(20) {
+                crate::util::progress::note!("satex: line steps {steps} at {}:{line}", self.out.short_name(file));
+            }
+        }
         if self.cfg.verbose >= 4 {
             crate::util::progress::note!(
                 "satex: run ended: halted {} exhausted {} levels {} open file {:?}",
@@ -8322,18 +8365,26 @@ will look undefined",
     /// The one place work besides reading tokens is paid: a driver
     /// iteration that read no token (a re-meet, a summary pass, a join, a
     /// resume) costs one step. So `limits.steps` bounds every loop.
+    /// The map entries a join, compare or resume walks are paid too, to the
+    /// line, so many paths waiting at one line cannot stall it.
     pub(super) fn charge(&mut self, mark: &mut u64) {
         if self.out.steps == *mark {
             self.out.steps += 1;
         }
         *mark = self.out.steps;
+        self.walked += crate::engine::env::take_walked();
         if self.out.steps.wrapping_sub(self.checked_at) >= CHECK_INTERVAL
+            || self.walked >= CHECK_INTERVAL.saturating_mul(self.walk_per_step())
             || self.out.steps >= self.cfg.limits.steps
             || crate::analysis::budget::over()
         {
             self.checked_at = self.out.steps;
             self.check_budget();
         }
+    }
+
+    fn walk_per_step(&self) -> u64 {
+        self.limits.walk_per_step.max(1)
     }
 
     fn over_budget(&mut self) -> bool {
@@ -8741,8 +8792,10 @@ will look undefined",
     /// skip, the run stops. A path parked on the line before a cut gets the
     /// cut when it runs again. Returns whether the run stopped.
     fn guard_line(&mut self) -> bool {
-        let spent = self.out.steps.saturating_sub(self.guard.step);
-        self.guard.step = self.out.steps;
+        self.walked += crate::engine::env::take_walked();
+        let per = self.walk_per_step();
+        let spent = self.out.steps.saturating_sub(self.guard.step) + self.walked / per;
+        (self.guard.step, self.walked) = (self.out.steps, self.walked % per);
         let at = self.position_span();
         let key = self.guard_key(at);
         // The line of `\\begin{document}` still runs the end-of-preamble hooks.
@@ -8755,6 +8808,9 @@ will look undefined",
         };
         if limit == 0 || self.budget.is_some() || self.halted {
             return false;
+        }
+        if self.cfg.verbose >= 2 {
+            *self.guard.tally.entry((at.file, at.line)).or_default() += spent;
         }
         let entry = self.guard.lines.entry(key).or_default();
         entry.0 += spent;
@@ -9290,8 +9346,9 @@ will look undefined",
         if matches!(unit, Unit::Number) {
             let value = self.scan_number();
             let abs = if value.is_none() { self.abs.take() } else { None };
+            let spell = self.abs_spell.take().filter(|_| abs.is_some()).map(|(_, s)| s);
             if let Some(acc) = self.scans.last_mut() {
-                (acc.number, acc.done) = (Some((value, abs)), true);
+                (acc.number, acc.spell, acc.done) = (Some((value, abs)), spell, true);
             }
             return true;
         }
@@ -9313,6 +9370,7 @@ will look undefined",
         }
         let acc = self.scan_paths(Unit::Number, Accum::default());
         let (value, abs) = acc.number.unwrap_or((None, None));
+        self.abs_spell = acc.spell.map(|s| (0, s));
         self.abs = abs;
         self.abs_exact = None;
         value
@@ -10278,7 +10336,8 @@ will look undefined",
         let unknown = if sym == pick {
             of(self, name)
         } else {
-            crate::engine::commands::NFSS
+            // the page color, last, picks no font
+            crate::engine::commands::NFSS[..crate::engine::commands::NFSS.len() - 1]
                 .iter()
                 .chain(&["f@encoding"])
                 .any(|n| self.out.interner.lookup(n).is_some_and(|n| of(self, n)))
@@ -11067,7 +11126,13 @@ will look undefined",
         let id = self.scan_begin();
         let mut arguments = match &m.arg_spec {
             Some(spec) => self.read_signature(spec),
-            None => self.match_parameter_text(&m.parameter_text),
+            None => {
+                let mask = self.rejoined_params(m);
+                let outer = std::mem::replace(&mut self.scratch.rejoined, (mask, false));
+                let arguments = self.match_parameter_text(&m.parameter_text);
+                self.scratch.rejoined = outer;
+                arguments
+            }
         };
         if self.scan_end(id) {
             let unknown = self.unknown_text(Unk::Any, self.position_span());
@@ -11302,6 +11367,22 @@ will look undefined",
                 if self.part_digits(t, num) {
                     return self.read_undelimited();
                 }
+                // Digits of any length stay whole, but TeX reads a `-` alone,
+                // the magnitude after it, and a `0` alone: whole, they begin
+                // with a digit 1 to 9 ([`Machine::part_signs`]). A macro that
+                // puts them back together reads them as TeX does.
+                let rejoined = self.scratch.rejoined.1;
+                if !rejoined
+                    && num.lo <= 0
+                    && crate::engine::scan::unbounded_digits(num)
+                    && self.part_signs(t, num, true)
+                {
+                    return self.read_undelimited();
+                }
+                self.read_whole.insert(t.cs().expect("typed digits are a name"));
+                if rejoined {
+                    return vec![t];
+                }
                 self.diagnose(
                     Severity::Assumption,
                     "digits-read-as-one-token",
@@ -11413,29 +11494,94 @@ will look undefined",
         );
     }
 
+    /// The undelimited parameters `#k` of `m` (bit k) that its body only
+    /// puts back together with a delimited `#k+1` (`#1#2\sep`) or tests by
+    /// the first character (`\if #1-`), `#k+1` only after `#k`: typed digits
+    /// read there whole give the text TeX gives, and the test narrows them.
+    fn rejoined_params(&self, m: &MacroDef) -> u32 {
+        let items = &m.parameter_text.items;
+        let body = &m.replacement_text;
+        let tests = |t: &Token| {
+            t.cs().is_some_and(|sym| {
+                matches!(
+                    self.env.meaning(sym),
+                    Meaning::Primitive(Primitive::If(
+                        crate::engine::builtins::Cond::Chars | crate::engine::builtins::Cond::Catcodes
+                    ))
+                )
+            })
+        };
+        let mut mask = 0;
+        for w in items.windows(3) {
+            let [ParamItem::Param(k, _), ParamItem::Param(l, _), ParamItem::Lit(_)] = w else { continue };
+            let (k, l) = (*k, *l);
+            let rejoins = body.iter().enumerate().all(|(i, t)| match t.tok {
+                Tok::Param(n) if n == k => {
+                    body.get(i + 1).is_some_and(|x| x.tok == Tok::Param(l)) || i > 0 && tests(&body[i - 1])
+                }
+                Tok::Param(n) if n == l => i > 0 && body[i - 1].tok == Tok::Param(k),
+                _ => true,
+            });
+            if rejoins && k < 32 {
+                mask |= 1 << k;
+            }
+        }
+        mask
+    }
+
     /// Typed digits `t` in `num`, some negative, put back on a path each:
     /// `-` and their magnitude, or `t` without its negative part.
     pub(crate) fn part_sign(&mut self, t: Token, num: crate::engine::value::Num) -> bool {
+        self.part_signs(t, num, false)
+    }
+
+    /// Typed digits `t` in `num` put back on a path per sign: `-` and their
+    /// magnitude, `t` without its negative part. With `zero`, `0` is a path
+    /// of its own, so `t` on the last one begins with a digit 1 to 9.
+    fn part_signs(&mut self, t: Token, num: crate::engine::value::Num, zero: bool) -> bool {
         use crate::engine::value::{Num, Quantity, Value};
         let Some(sym) = t.cs() else { return false };
-        let minus = |m: &mut Self| {
-            let mut text = m.text_tokens("-", t.span);
-            text.extend(m.digits_in(crate::engine::scan::magnitude(num), t.span));
-            m.unread_all(&text);
-        };
-        if num.hi < 0 {
-            minus(self);
-            return true;
-        }
-        self.split(sym, t.span, 2, |m, arm| {
-            if arm == 0 {
-                minus(m);
-                return true;
+        let zero = zero && num.lo <= 0 && num.hi >= 0;
+        let from = if zero { 1 } else { 0 };
+        let arms: Vec<u8> = [(num.lo < 0, 0), (zero, 1), (num.hi >= from, 2)]
+            .into_iter()
+            .filter_map(|(on, arm)| on.then_some(arm))
+            .collect();
+        let arm_of = |m: &mut Self, arm: u8| match arm {
+            0 => {
+                let mut text = m.text_tokens("-", t.span);
+                // A negative integer's magnitude is 1 or more: `\number` never prints `-0`.
+                let negative = if zero { Num::range(num.lo, -1) } else { num };
+                text.extend(m.digits_in(crate::engine::scan::magnitude(negative), t.span));
+                // Not narrowed: pgfmath's parser reads the same digits again
+                // where a narrowed copy loses its operator (tikz bend).
+                m.unread_all(&text);
+                true
             }
-            let live = m.refine_value(sym, Value::from_num(Quantity::Int, Num::range(0, num.hi)));
-            m.unread(t);
-            live
-        })
+            1 => {
+                let text = m.text_tokens("0", t.span);
+                m.unread_all(&text);
+                m.refine_value(sym, Value::from_num(Quantity::Int, Num::range(0, 0)))
+            }
+            _ => {
+                let live = m.refine_value(sym, Value::from_num(Quantity::Int, Num::range(from.max(num.lo), num.hi)));
+                m.unread(t);
+                live
+            }
+        };
+        match arms[..] {
+            [] => false,
+            [0] => {
+                arm_of(self, 0);
+                true
+            }
+            [_] if !zero => false,
+            [arm] => {
+                arm_of(self, arm);
+                true
+            }
+            _ => self.split(sym, t.span, arms.len(), |m, i| arm_of(m, arms[i])),
+        }
     }
 
     /// Unknown digits taken as one token (an undelimited argument, the
@@ -12723,7 +12869,9 @@ will look undefined",
                                 || self.is_unknown_name(sym)
                                     && (self.unknown_text_name(sym) || !self.one_unexpandable(sym))
                         });
+                        self.scratch.rejoined.1 = self.scratch.rejoined.0 >> n & 1 == 1;
                         let arg = self.read_undelimited();
+                        self.scratch.rejoined.1 = false;
                         if bare && let [t] = arg[..] {
                             fuzzy = Some(t.span);
                             hole = Some(t);

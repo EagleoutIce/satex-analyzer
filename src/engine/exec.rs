@@ -36,6 +36,9 @@ type Learn = (
 type Operands = (Vec<Vec<(u32, u8)>>, Option<Token>);
 pub(crate) type Narrowing =
     (Sym, crate::engine::value::Quantity, crate::engine::value::Num, Option<Vec<i64>>, char, (i64, i64));
+/// A constant spelled as known digits (their value, none for 0) and then
+/// typed digits ([`Machine::abs_spell`]).
+pub(crate) type Spell = (i64, Sym);
 /// A number read as a register's value plus a constant ([`Machine::abs_from`]).
 pub(crate) type From = (Sym, crate::engine::value::Quantity, i64);
 
@@ -976,7 +979,18 @@ impl Machine<'_> {
                 None => {
                     // A bounded value prints as digits typed with its bound,
                     // a roman numeral as letters of category 12, perhaps none.
+                    let spell = self.abs_spell.take();
                     let digits = match self.abs.take() {
+                        // tex.web § 65 prints the digits read, leading zeros dropped.
+                        Some(_)
+                            if kind == TextOf::Number
+                                && let Some((_, (lead, sym))) = spell =>
+                        {
+                            let mut text =
+                                if lead > 0 { self.text_tokens(&lead.to_string(), span) } else { Vec::new() };
+                            text.push(Token::new(Tok::Cs(sym), span));
+                            text
+                        }
                         Some(num) if kind == TextOf::Number => self.digits_in(num, span),
                         // A small interval is one of its numerals, so a name
                         // spelled from it splits per value (tex.web § 69).
@@ -4214,10 +4228,12 @@ impl Machine<'_> {
             return;
         };
         let index = self.register_def_number(kind, index, span);
+        let global = self.prefixes.global;
         self.define(name, Meaning::Register(kind, index as u16), by, DefMode::Declare, span);
         if matches!(kind, RegKind::Char | RegKind::MathChar | RegKind::UMathChar) {
-            // The binding `define` saved already, so a group takes it back whole.
-            self.env.set_value_in_place(name, Value::Int(index));
+            // Part of the same assignment, at the level `define` wrote: a
+            // kept effect replays it as one.
+            self.env.set_value(name, Value::Int(index), global);
         }
     }
 

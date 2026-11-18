@@ -10,6 +10,21 @@ use super::Binding;
 
 pub type Entry = (Option<Binding>, u32);
 
+thread_local! {
+    /// Entries the maps of this thread walked since [`take_walked`]: the work
+    /// of joins, comparisons and resumes, which reads no token.
+    static WALKED: Cell<u64> = const { Cell::new(0) };
+}
+
+fn walk(n: usize) {
+    WALKED.with(|w| w.set(w.get() + n as u64));
+}
+
+/// The entries walked since the last call ([`Machine::charge`] pays them).
+pub fn take_walked() -> u64 {
+    WALKED.with(|w| w.replace(0))
+}
+
 const BITS: u32 = 5;
 /// A node's [`Node::summary`] not computed since it last changed.
 const DIRTY: u32 = u32::MAX;
@@ -252,6 +267,7 @@ impl Changed {
     }
 
     pub fn iter(&self) -> impl Iterator<Item = (&u32, &Entry)> {
+        walk(self.size);
         Iter { stack: vec![self.root.kids.iter()] }
     }
 
@@ -274,6 +290,7 @@ impl Changed {
                 pairs(p.kid(i), q.kid(i), &skip, &mut out);
             }
         }
+        walk(out.len());
         out
     }
 
@@ -310,6 +327,7 @@ impl FromIterator<(u32, Entry)> for Changed {
         for (k, e) in iter {
             map.insert_mut(k, e);
         }
+        walk(map.size);
         map
     }
 }

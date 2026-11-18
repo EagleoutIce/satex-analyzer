@@ -3409,3 +3409,18 @@ fn typed_digits_before_a_one_of_fraction_read_on_into_it() {
     assert!(!codes.contains(&"missing-number"), "{codes:?}");
     assert!(crate::support::defined(&analysis, "after"));
 }
+
+/// Digits then typed digits that may be negative (`1\x`, `\x` from
+/// -10^9 to 10^9): TeX reads `1` and stops at the `-`, so under `\numexpr`
+/// `1\x` is 1 minus the magnitude, which may be below 0. Bug pinned:
+/// `scan_digits` read the typed digits as more digits and marked the
+/// number unsigned, so the test `<0` never took its true arm.
+#[test]
+fn digits_then_typed_digits_of_either_sign_may_be_negative() {
+    let analysis = analyze(
+        r"\edef\x{\the\numexpr\pdfuniformdeviate 2000000001-1000000000\relax}
+\ifnum\numexpr1\x\relax<0 \def\negative{}\fi\def\after{}",
+    );
+    assert!(crate::support::defined(&analysis, "after"));
+    assert!(crate::support::maybe_defined(&analysis, "negative"), "1\\x may be below 0");
+}

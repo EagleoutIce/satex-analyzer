@@ -1300,12 +1300,14 @@ fn digits_of_any_length_stay_one_argument_above_any_small_bound() {
           \edef\x{\the\count1}\def\f#1#2\end{\gdef\got{#1}\gdef\rest{#2}}\expandafter\f\x\end",
     );
     assert!(!with_code(&analysis, "digits-read-as-one-token").is_empty());
-    // A number with only a negative side has any length too.
+    // A number with only a negative side has any length too: its read parts by sign (`-`, or
+    // `0`), never by length.
     let negative = analyze(
         r"\count1=\pdflastypos \ifnum\count1>0 \count1=0 \fi
           \edef\x{\the\count1}\def\f#1#2\end{\gdef\got{#1}\gdef\rest{#2}}\expandafter\f\x\end",
     );
-    assert!(!with_code(&negative, "digits-read-as-one-token").is_empty());
+    let signs = ["-", "0"].len();
+    assert!(negative.peak_paths <= signs, "{} paths", negative.peak_paths);
 }
 
 /// Intuition: a printed number is one `-` at most, first, then digits. No `--` can start in it, so

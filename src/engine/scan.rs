@@ -443,12 +443,19 @@ impl Machine<'_> {
         // Only a register read as the whole number leaves its members to
         // the test that scans it (see `Machine::register_value`).
         let register = self.reads_whole(token);
+        let outer = self.spell_owner.0;
+        self.spell_owner.1 += 1;
+        let mine = self.spell_owner.1;
+        self.spell_owner.0 = mine;
+        self.abs_spell = None;
         self.abs = None;
         self.abs_exact = None;
         self.abs_parts = None;
         self.abs_whole = false;
         let magnitude = self.scan_int_from(token).0;
+        self.spell_owner.0 = outer;
         let keep = (register || std::mem::take(&mut self.abs_whole)) && magnitude.is_none();
+        self.abs_spell = self.abs_spell.take().filter(|(owner, _)| keep && !negative && *owner == mine);
 
         let abs = self.abs.take().filter(|_| keep);
         let exact = self.abs_exact.take().filter(|_| keep && !negative);
@@ -500,6 +507,14 @@ impl Machine<'_> {
                     from = (i == 0 && complete(k, j)).then_some(whole);
                 }
             }
+            // A `-` ends them: typed digits after them part by sign.
+            if let Some(t) = next
+                && let Some(n) = t.cs().filter(|&c| self.typed_slice(c).is_none()).and_then(|c| self.typed_digits_of(c))
+                && n.lo < 0
+                && self.part_sign(t, n)
+            {
+                next = self.next_x_token();
+            }
             // Digits, or unknown text that may be digits (a one-of no
             // path split), read on as [`Machine::scan_digits`] does.
             let more = next.is_some_and(|t| {
@@ -510,6 +525,8 @@ impl Machine<'_> {
             if more {
                 // More digits after them: any number, unsigned where these are.
                 let backed_up = self.scan_digits(DECIMAL, next).1;
+                // its spelling began before the digits scan_digits saw
+                self.abs_spell = None;
                 self.unsigned_number(num.lo >= 0);
                 return (None, backed_up);
             }
@@ -763,6 +780,11 @@ impl Machine<'_> {
         // interval is known: `9` then digits in 331..350 is 9331..9350. Appending the digits of
         // `d` is increasing in `d`, so the ends of the interval make the ends of the value.
         let mut hull = Some((0i64, 0i64));
+        // tex.web § 445: past the largest number TeX says so and reads on at it.
+        let cap = |v: i64| v.min(MAX_INT);
+        let owner = self.spell_owner.0;
+        // Its spelling while it is known digits, then one whole typed number.
+        let mut spell: Option<(i64, Option<Sym>)> = Some((0, None)).filter(|_| radix == 10);
         let result = loop {
             let Some(token) = next else { break None };
             if self.split_scanned(token) {
@@ -780,15 +802,32 @@ impl Machine<'_> {
             let maybe = !digits && self.is_unknown(token);
             if digits || maybe {
                 let typed = token.cs().filter(|_| radix == 10).and_then(|sym| self.typed_digits_of(sym));
+                // After digits a `-` ends them (`1\x` is 1, then `-` and the
+                // magnitude): a path per sign, read again.
+                if let Some(n) = typed
+                    && n.lo < 0
+                    && (any || unknown)
+                    && self.typed_slice(token.cs().expect("typed digits are a name")).is_none()
+                    && self.part_sign(token, n)
+                {
+                    next = self.next_x_token();
+                    continue;
+                }
                 // a slice of a number's places is as wide as the places it holds, leading zeros too
                 let width = |d: i64| match token.cs().and_then(|c| self.typed_slice(c)) {
                     Some((_, _, i, j)) => j - i,
                     None => d.to_string().len() as u32,
                 };
+                let whole = token.cs().filter(|&c| typed.is_some_and(|n| n.lo >= 0) && self.typed_slice(c).is_none());
+                spell = match (spell, whole) {
+                    (Some((lead, None)), Some(sym)) => Some((lead, Some(sym))),
+                    _ => None,
+                };
                 hull = match (hull, typed) {
                     (Some((lo, hi)), Some(n)) if n.lo >= 0 => {
-                        let append = |v: i64, d: i64| v.checked_mul(10i64.checked_pow(width(d))?)?.checked_add(d);
-                        append(lo, n.lo).zip(append(hi, n.hi)).filter(|&(_, h)| h <= MAX_INT)
+                        let append =
+                            |v: i64, d: i64| v.saturating_mul(10i64.saturating_pow(width(d))).saturating_add(d);
+                        Some((cap(append(lo, n.lo)), cap(append(hi, n.hi))))
                     }
                     _ => None,
                 };
@@ -817,9 +856,8 @@ impl Machine<'_> {
             };
             any = true;
             last = Some(d);
-            hull = hull
-                .and_then(|(lo, hi)| Some((lo.checked_mul(radix)? + d, hi.checked_mul(radix)? + d)))
-                .filter(|&(_, h)| h <= MAX_INT);
+            spell = spell.filter(|(_, typed)| typed.is_none()).map(|(lead, _)| (cap(lead * 10 + d), None));
+            hull = hull.map(|(lo, hi)| (cap(lo.saturating_mul(radix) + d), cap(hi.saturating_mul(radix) + d)));
             value = (value * radix + d).min(MAX_INT);
             next = self.next_x_token();
         };
@@ -827,8 +865,14 @@ impl Machine<'_> {
         self.abs_odd = last.map(|d| d % 2 != 0);
         if unknown {
             self.unsigned_number(unsigned == Some(true));
-            if let Some((lo, hi)) = hull.filter(|_| any) {
+            if let Some((lo, hi)) = hull.filter(|_| any).filter(|&(_, h)| h <= MAX_INT) {
                 (self.abs, self.abs_whole) = (Some(Num::range(lo, hi)), true);
+                // Spelled as read where TeX prints it so: no number past the
+                // largest, or digits a macro is assumed to put back together.
+                self.abs_spell = spell
+                    .and_then(|(lead, typed)| Some((lead, typed?)))
+                    .filter(|&(_, sym)| hi < MAX_INT || self.read_whole.contains(&sym))
+                    .map(|s| (owner, s));
             }
             return (None, result.unwrap_or(false));
         }

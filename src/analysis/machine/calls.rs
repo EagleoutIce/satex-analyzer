@@ -154,6 +154,10 @@ pub(crate) struct MemoCode {
     _code: Rc<crate::engine::tex::MacroDef>,
     misses: u16,
     kept: u32,
+    /// Calls not recorded since its probes ran out, and how often they ran
+    /// out: past `probes << rounds` such calls it is probed again.
+    refused: u64,
+    rounds: u8,
 }
 
 /// Whether `b` holds a token at one of `spans`.
@@ -186,8 +190,11 @@ fn memo_key(code: &Rc<crate::engine::tex::MacroDef>, args: &[Vec<Token>]) -> u64
 struct Run {
     writes: Vec<(Sym, Option<Binding>)>,
     reads: Vec<Sym>,
-    /// Values of count registers it read but did not write. A later call that sees other values may behave differently.
+    /// Precise values of names it read but did not write. A later call that sees other values may behave differently.
     read_values: Vec<(Sym, Option<Binding>)>,
+    /// The names it wrote after reading them (a stack pop, a counter step), `None` where the
+    /// read log overflowed. A stack's text joined over runs says nothing of what it held below.
+    updated: Option<Vec<Sym>>,
     args: Rc<[Vec<Token>]>,
     /// Whether it closed the group around its call (an `\\endgroup` for a
     /// `\\begingroup` its caller opened).
@@ -428,10 +435,11 @@ impl Machine<'_> {
         let same = checked || runs.runs.windows(2).all(|w| names(&w[0]) == names(&w[1]));
         if !same
             || !checked
-                && runs
-                    .runs
-                    .windows(2)
-                    .any(|w| accumulates(&w[0], &w[1]) || updates(&w[0], &w[1]) || self.folds_code(&w[0], &w[1]))
+                && (runs.runs.iter().any(|r| self.rewrote(r))
+                    || runs
+                        .runs
+                        .windows(2)
+                        .any(|w| accumulates(&w[0], &w[1]) || updates(&w[0], &w[1]) || self.folds_code(&w[0], &w[1])))
         {
             let runs = self.call_runs.get_mut(&key).expect("recorded");
             runs.leaky = true;
@@ -448,23 +456,37 @@ impl Machine<'_> {
                 .iter()
                 .flat_map(|r| &r.reads)
                 .any(|&sym| self.env.slot(sym).is_some_and(|b| self.imprecise(b)));
-        if !unknown || runs.runs.iter().any(|r| self.reads_otherwise(r)) {
+        // The join holds where the call reads what one of the runs read.
+        if !unknown || runs.runs.iter().all(|r| self.reads_otherwise(r)) {
             return false;
         }
         self.apply_summary(key, key.1, arguments)
     }
 
-    /// The count registers a run read but did not write, with their precise
-    /// values (the page, a counter, a compared value).
+    /// Whether a run rewrote what it read where a summary cannot stand in: a macro or token
+    /// list (a stack: its join keeps no rest of today's), or a register still precise (the
+    /// real run is exact and cheap). An unknown register joined over runs widens to its range.
+    fn rewrote(&self, run: &Run) -> bool {
+        run.updated.as_ref().is_none_or(|names| {
+            names.iter().any(|&sym| {
+                self.env.slot(sym).is_none_or(|b| {
+                    !self.imprecise(b)
+                        || matches!(b.meaning, Meaning::Macro(_))
+                        || matches!(b.value, crate::engine::value::Value::Toks(_))
+                })
+            })
+        })
+    }
+
+    /// The names a run read but did not write, with their precise values.
     fn read_values(&self, reads: &[Sym], writes: &[(Sym, Option<Binding>)]) -> Vec<(Sym, Option<Binding>)> {
-        let count = |sym: Sym| self.name(sym).strip_prefix(super::REGISTER).is_some_and(|n| n.starts_with("count"));
         let held = |&sym: &Sym| {
             Some((sym, self.env.slot_at(sym.0))).filter(|(_, b)| b.as_ref().is_some_and(|b| !self.imprecise(b)))
         };
-        reads.iter().filter(|&&sym| count(sym) && !writes.iter().any(|w| w.0 == sym)).filter_map(held).collect()
+        reads.iter().filter(|&&sym| !writes.iter().any(|w| w.0 == sym)).filter_map(held).collect()
     }
 
-    /// Whether a count the run read now holds a different precise value. The
+    /// Whether a name the run read now holds a different precise value. The
     /// call may then decide differently (like a note column reading the page),
     /// so the run does not describe it.
     fn reads_otherwise(&self, run: &Run) -> bool {
@@ -479,7 +501,9 @@ impl Machine<'_> {
     /// wrote a typed number from its own arguments that this call's arguments
     /// do not hold, since that number does not belong to this call.
     fn apply_summary(&mut self, key: CallKey, span: Span, arguments: &[Vec<Token>]) -> bool {
-        let runs = std::mem::take(&mut self.call_runs.get_mut(&key).expect("recorded").runs);
+        let all = std::mem::take(&mut self.call_runs.get_mut(&key).expect("recorded").runs);
+        // The runs that read what the call reads now: their writes, not every run's.
+        let runs: Vec<Run> = all.iter().filter(|r| !self.reads_otherwise(r)).cloned().collect();
         let mut syms: Vec<Sym> = runs.iter().flat_map(|r| r.writes.iter().map(|w| w.0)).collect();
         syms.sort_unstable();
         syms.dedup();
@@ -499,6 +523,20 @@ impl Machine<'_> {
             alike.then(|| theirs.iter().zip(&here).filter_map(|(a, b)| Some(((*a)?, (*b)?))).collect())
         };
         let maps: Option<Vec<Vec<(Sym, Sym)>>> = runs.iter().map(to).collect();
+        // Whether a write holds tokens of its run's arguments while this call's differ: the
+        // key ignores characters, so `\def\x{#1}` at `1+u` does not describe a call at `max(u,9)`.
+        let same_tok = |x: &Token, y: &Token| {
+            x.tok == y.tok || [x, y].iter().all(|t| t.cs().is_some_and(|s| self.is_unknown_marker(s)))
+        };
+        let own = |r: &Run, b: &Binding| {
+            let alike = r.args.len() == arguments.len()
+                && r.args
+                    .iter()
+                    .zip(arguments)
+                    .all(|(a, h)| a.len() == h.len() && a.iter().zip(h).all(|(x, y)| same_tok(x, y)));
+            let spans: Vec<Span> = r.args.iter().flatten().map(|t| t.span).filter(|s| *s != Span::default()).collect();
+            !alike && carries(b, &spans)
+        };
         // Whether a write mentions a typed number from its run's arguments that this call's arguments do not have.
         let foreign = |r: &Run, b: &Option<Binding>| {
             let theirs = numbers(&r.args);
@@ -512,6 +550,7 @@ impl Machine<'_> {
                 .filter_map(|t| t.cs())
                 .map(|s| self.typed_slice(s).map_or(s, |c| c.0))
                 .any(|s| theirs.contains(&Some(s)) && !here.contains(&Some(s)))
+                || own(r, b)
         };
         let mut refused = false;
         let index: Vec<std::collections::HashMap<Sym, &Option<Binding>>> =
@@ -547,7 +586,7 @@ impl Machine<'_> {
             }
         }
         if refused {
-            self.call_runs.get_mut(&key).expect("recorded").runs = runs;
+            self.call_runs.get_mut(&key).expect("recorded").runs = all;
             return false;
         }
         self.mint();
@@ -556,7 +595,7 @@ impl Machine<'_> {
             self.env.set(sym, b, global);
         }
         let reported = std::mem::replace(&mut self.call_runs.get_mut(&key).expect("recorded").reported, true);
-        self.call_runs.get_mut(&key).expect("recorded").runs = runs;
+        self.call_runs.get_mut(&key).expect("recorded").runs = all;
         self.approximated = true;
         if self.cfg.verbose >= 4 {
             let names: Vec<&str> = syms.iter().map(|s| self.name(*s)).collect();
@@ -661,10 +700,15 @@ impl Machine<'_> {
                 continue;
             }
             let read_values = self.read_values(&reads, &writes);
+            // an input it rewrote (read while it held what the call met, then written): a pop
+            let mut written: Vec<Sym> = writes.iter().map(|w| w.0).collect();
+            written.sort_unstable();
+            let updated = self.env.read_before(rec.reads, rec.assigned, &written);
             let run = Run {
                 writes,
                 reads,
                 read_values,
+                updated,
                 args: rec.args.clone(),
                 closes: false,
                 peeks: false,
@@ -726,6 +770,7 @@ impl Machine<'_> {
             writes,
             reads: Vec::new(),
             read_values: Vec::new(),
+            updated: Some(Vec::new()),
             args: rec.args.clone(),
             closes,
             peeks,
@@ -1082,15 +1127,7 @@ impl Machine<'_> {
             steps >= u64::from(self.limits.call_memo_steps)
                 && self.keep_memo(&rec, &start, steps, Some((token, rest.into())))
         });
-        let entry = self.memo_codes.entry(Rc::as_ptr(&rec.code) as usize).or_insert_with(|| MemoCode {
-            _code: rec.code.clone(),
-            misses: 0,
-            kept: 0,
-        });
-        match kept {
-            true => entry.kept += 1,
-            false => entry.misses = entry.misses.saturating_add(1),
-        }
+        self.memo_verdict(&rec.code, kept);
         // The run's effect stops here: its later part is the caller's.
         for rec in Rc::make_mut(&mut self.call_recs) {
             if rec.groups == level && rec.memo.is_some() {
@@ -1110,18 +1147,28 @@ impl Machine<'_> {
     /// preamble's facts go into package caches, which a replay must not tell
     /// apart from a read.
     fn memo_records(&mut self, code: &Rc<crate::engine::tex::MacroDef>) -> bool {
-        let probes = self.limits.call_memo_probes;
-        self.step_depth == 1
+        if !(self.step_depth == 1
             && self.package_capture.is_none()
             && !self.in_preamble()
             && self.limits.call_memo_steps > 0
             && self.budget.is_none()
             && self.cacheable_load.is_none()
-            && !self.cfg.trace
-            && self
-                .memo_codes
-                .get(&(Rc::as_ptr(code) as usize))
-                .is_none_or(|c| probes == 0 || c.kept > 0 || c.misses < probes)
+            && !self.cfg.trace)
+        {
+            return false;
+        }
+        let probes = self.limits.call_memo_probes;
+        let Some(c) = self.memo_codes.get_mut(&(Rc::as_ptr(code) as usize)) else { return true };
+        if probes == 0 || c.kept > 0 || c.misses < probes {
+            return true;
+        }
+        // Misses in one place (hooks at `\\begin{document}`) say little of
+        // calls in another: probed again after geometrically more calls.
+        c.refused += 1;
+        if c.refused >= u64::from(probes) << c.rounds.min(40) {
+            (c.refused, c.misses, c.rounds) = (0, 0, c.rounds.saturating_add(1));
+        }
+        false
     }
 
     /// Whether a call of `code` on `args` was met before: only a repeated
@@ -1207,10 +1254,17 @@ impl Machine<'_> {
             return;
         }
         let kept = clean && steps >= u64::from(self.limits.call_memo_steps) && self.keep_memo(rec, start, steps, None);
-        let entry = self.memo_codes.entry(Rc::as_ptr(&rec.code) as usize).or_insert_with(|| MemoCode {
-            _code: rec.code.clone(),
+        self.memo_verdict(&rec.code, kept);
+    }
+
+    /// Counts a recorded run of `code` as kept or missed ([`Self::memo_records`]).
+    fn memo_verdict(&mut self, code: &Rc<crate::engine::tex::MacroDef>, kept: bool) {
+        let entry = self.memo_codes.entry(Rc::as_ptr(code) as usize).or_insert_with(|| MemoCode {
+            _code: code.clone(),
             misses: 0,
             kept: 0,
+            refused: 0,
+            rounds: 0,
         });
         match kept {
             true => entry.kept += 1,

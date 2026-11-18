@@ -1312,6 +1312,12 @@ fn record_pdf(m: &mut Machine, payload: &[Token], detail: &str, span: Span) {
     let expanded = m.expand_tokens(payload.into());
     let text = crate::engine::tex::text_with_groups(&expanded, &m.out.interner);
     let at = m.file_call.map_or(span, |(_, at)| at);
+    if matches!(detail, "literal" | "special") {
+        match m.output_active() {
+            true => m.out.facts.text.page_drawn = true,
+            false => m.text_fill = Some(Fill::Drawn),
+        }
+    }
     if detail == "literal" && m.out.facts.literals.len() < m.cfg.limits.facts {
         let chars = m.out.facts.text.at.len() as u32;
         m.out.facts.literals.push(crate::analysis::facts::Literal { at, text: text.clone(), chars });
@@ -1390,6 +1396,14 @@ pub struct Quantities {
 /// `scan_rule_spec` sizes (tex.web § 463). A strut, no wider or taller than
 /// nothing, is not drawn. Paths setting it again add none.
 pub fn rule(m: &mut Machine, vertical: bool, [width, height, depth]: [Option<Option<i64>>; 3], span: Span) {
+    // A package's load sets no text: a font state row made there would be missing from its replay.
+    if vertical && m.package().is_none() && !m.output_active() && !m.reading_format() {
+        // a rule in a line may stand under the box placed next: `\colorbox`'s `\color@block`
+        m.text_fill = Some(match width.flatten() {
+            Some(w) => Fill::Rule(m.observed_font_state(), w),
+            None => Fill::Drawn,
+        });
+    }
     if m.package().is_some() || m.reading_format() || m.output_active() {
         return;
     }
@@ -1409,6 +1423,33 @@ pub fn rule(m: &mut Machine, vertical: bool, [width, height, depth]: [Option<Opt
     let (at, marks) = (text.at.len() as u32, text.align.len() as u32);
     if text.rules.len() < m.cfg.limits.facts && !text.rules.ends_with(&[(at, kind, site, marks)]) {
         text.rules.push((at, kind, site, marks));
+    }
+}
+
+/// What the run drew in a line since the last character it set.
+#[derive(Clone, Copy, Debug)]
+pub enum Fill {
+    /// A rule this wide, in the color of this font state.
+    Rule(u16, crate::engine::value::Scaled),
+    /// A literal or special: drawn, in a color satex does not read.
+    Drawn,
+}
+
+/// A box with the characters `ranges` placed `width` wide: over the [`Fill`] drawn since the last
+/// character, when that covers it. A rule that may be narrower draws an unknown background.
+pub fn background(m: &mut Machine, ranges: &[(u32, u32)], width: crate::engine::mode::Dim) {
+    if !ranges.iter().any(|r| r.0 < r.1) {
+        return;
+    }
+    let under = match m.text_fill.take() {
+        Some(Fill::Rule(state, w)) if width.hi <= w => Some(state),
+        Some(Fill::Rule(_, w)) if width.lo > w => return,
+        Some(_) => None,
+        None => return,
+    };
+    let backgrounds = &mut m.out.facts.text.backgrounds;
+    if backgrounds.len() < m.cfg.limits.facts {
+        backgrounds.extend(ranges.iter().filter(|r| r.0 < r.1).map(|r| (r.0, r.1, under)));
     }
 }
 
@@ -1641,6 +1682,7 @@ fn set(m: &mut Machine, c: char, code: Option<i64>, span: Span) {
     if m.out.facts.text.at.len() >= m.cfg.limits.facts {
         return;
     }
+    m.text_fill = None;
     let font_state = m.observed_font_state();
     let certain = m.exact();
     let first = m.cds.first().copied().or(m.parted_by);

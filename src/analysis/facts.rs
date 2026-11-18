@@ -337,6 +337,8 @@ pub struct FontState {
     pub size: Rc<str>,
     /// `\current@color`: the driver code the run's color selection set.
     pub color: Rc<str>,
+    /// `\current@page@color`: the driver code `\pagecolor` set (pdftex.def), empty before.
+    pub page: Rc<str>,
     /// `\the\font`, 0 for none: what [`crate::analysis::machine::Analysis::fonts`]
     /// names the metrics of.  NFSS says what the document asked for, this
     /// says what the engine loaded, and a lint needs both.
@@ -406,6 +408,14 @@ pub struct Text {
     pub chars: String,
     /// One per character of `chars`, in the same order.
     pub at: Vec<Spot>,
+    /// Characters a box holds that the run placed over something drawn: `start..end` of
+    /// `chars` and the font state whose `color` filled a rule under them (`\colorbox`'s
+    /// `\color@block`), `None` when a literal or special drew it in a color satex does not read.
+    /// Innermost first: the first entry holding a character is its background.
+    pub backgrounds: Vec<(u32, u32, Option<u16>)>,
+    /// The output routine drew with a literal or special (a page background, a watermark): the
+    /// page under the text may not be white.
+    pub page_drawn: bool,
     /// Where a character's overhang cannot reach the next one: after a
     /// `\/` (tex.web § 1113) or at a paragraph's end, as the number of
     /// characters set before it, ascending.

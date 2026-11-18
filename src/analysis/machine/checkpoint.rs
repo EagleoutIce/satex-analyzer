@@ -172,8 +172,10 @@ impl Machine<'_> {
             return false;
         }
         // A lookahead in the preamble (`\@ifnextchar[`) may hold the next line's first token.
+        // The body's first checkpoint takes one too: `\begin{document}` ends looking ahead
+        // (`\ignorespaces`), after its hooks, and an edit below resumes past them.
         let settled = match lookahead {
-            true => opens,
+            true => opens || document && !taking.document,
             false => mouth.line_mark().is_some_and(|m| !m.ended),
         };
         // Not inside `\include`: TeX continues reading after the included file.
@@ -591,6 +593,16 @@ impl Offsets for (u32, u32) {
     }
 }
 
+/// A character range and what lies under it.
+impl Offsets for (u32, u32, Option<u16>) {
+    fn first(&self) -> u32 {
+        self.0
+    }
+    fn moved(&self, by: Move) -> Option<Self> {
+        Some((shift(self.0, by)?, shift(self.1, by)?, self.2))
+    }
+}
+
 /// An offset and what was set there.
 macro_rules! offset_first {
     ($($t:ty),*) => {$(
@@ -676,6 +688,8 @@ fn splice_text(
         fills,
         open_pages: _,
         frames,
+        backgrounds,
+        page_drawn,
     } = end;
     let per_char = spots.len() >= k && site.len() >= k && spots[..k] == at.at[..] && site[..k] == at.site[..];
     if !per_char || new.open != at.open || new.open_pages != at.open_pages {
@@ -684,6 +698,7 @@ fn splice_text(
     *chars = new.chars.chars().chain(chars.chars().skip(k)).collect();
     *spots = new.at.iter().chain(&spots[k..]).copied().collect();
     *site = new.site.iter().chain(&site[k..]).copied().collect();
+    *page_drawn |= new.page_drawn;
     *open = open.iter().map(|&x| shift(x, by).unwrap_or(x)).collect();
     *hyphenated = match *hyphenated == at.hyphenated {
         true => new.hyphenated,
@@ -700,6 +715,7 @@ fn splice_text(
         (offsets(&new.math, &at.math, math, lens), "text math"), (offsets(&new.skips, &at.skips, skips, lens), "text skips"),
         (offsets(&new.just, &at.just, just, lens), "text just"), (offsets(&new.pages, &at.pages, pages, lens), "text pages"),
         (offsets(&new.fills, &at.fills, fills, lens), "text fills"), (offsets(&new.frames, &at.frames, frames, lens), "text frames"),
+        (offsets(&new.backgrounds, &at.backgrounds, backgrounds, lens), "text backgrounds"),
     ];
     lists.into_iter().find(|(ok, _)| !ok).map_or(Ok(by), |(_, what)| Err(what))
 }

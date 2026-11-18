@@ -311,3 +311,23 @@ fn an_fp_eval_of_an_unknown_integer_stays_on_few_paths() {
     assert!(a.forks <= FEW_FORKS, "{} forks", a.forks);
     assert_eq!(crate::support::body(&a, "after"), "reached");
 }
+
+/// The integer form above, held to the bound its sign split reaches. l3fp reads the first
+/// character of `\x` (`9 < 1\token_to_str:N #2`, `\if:w 0`, `` `#2 ``), so a whole token of
+/// unknown sign forked per test (7.6k forks). Now a read parts it into `-` and its magnitude (1 or more),
+/// `0`, or whole digits beginning with 1 to 9, and `\int_value:w 1 #1` prints `1` then the same
+/// token, so `1 #1` takes it off again. What forks still is the length inside l3fp's 4-digit
+/// blocks (`\__fp_parse_pack_leading:NNNNNww`), which the target above wants gone too.
+#[test]
+fn an_fp_eval_of_an_unknown_integer_forks_only_on_its_length() {
+    if !crate::support::installed() {
+        return;
+    }
+    let source = "\\documentclass{article}\n\\begin{document}\n\\ExplSyntaxOn\\tl_gset:Ne\\x{\\int_use:N\\pdflastxpos}\\tl_gset:Ne\\y{\\fp_eval:n{\\x}}\\ExplSyntaxOff\n\\gdef\\after{reached}\n\\end{document}\n";
+    crate::support::analyze_latex(source);
+    let a = crate::support::analyze_latex(source);
+    assert_eq!(crate::support::body(&a, "after"), "reached");
+    // sign arms, then length arms per block: 1.2k today
+    const SIGN_THEN_LENGTH_FORKS: u64 = 1_300;
+    assert!(a.forks <= SIGN_THEN_LENGTH_FORKS, "{} forks", a.forks);
+}

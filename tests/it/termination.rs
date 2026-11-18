@@ -1432,6 +1432,55 @@ fn a_repeated_call_applies_its_kept_effect() {
     assert!(kept.steps * 3 <= ran.steps * 2, "{} steps kept, {} run", kept.steps, ran.steps);
 }
 
+/// Misses of a definition in one place say little of its calls elsewhere:
+/// short `\upto{1}` runs (below `call_memo_steps`) used up its probes,
+/// and the many long `\upto{300}` calls after them were never recorded
+/// again. In a thesis, pgfmath's parser missed this way in the first calls
+/// of the body, so every later tikz picture ran without kept effects (a
+/// sankey diagram 120M -> 170M steps on its line). A probed-out definition
+/// is probed again after geometrically more calls.
+#[test]
+fn early_misses_do_not_stop_recording_for_good() {
+    let probes = usize::from(cfg(1).limits.call_memo_probes);
+    // `probes` misses, then `probes` refused calls, then noted, kept, replayed.
+    let long = "\\upto{300}".repeat(probes + 6);
+    let [kept, ran] = memo_runs(&format!(
+        "\\countdef\\n=10
+\\def\\upto#1{{{{\\n=0 \\def\\step{{\\advance\\n 1 \\ifnum\\n<#1 \\expandafter\\step\\fi}}\\step\\xdef\\got{{\\the\\n}}}}}}
+{}
+{long}
+\\def\\three{{300}}\\ifx\\got\\three\\def\\Kept{{}}\\else\\def\\Lost{{}}\\fi
+",
+        "\\upto{1}".repeat(probes + 1)
+    ));
+    for a in [&kept, &ran] {
+        assert!(crate::support::defined(a, "Kept") && !crate::support::maybe_defined(a, "Lost"));
+    }
+    assert!(kept.call_memo[1] >= 3, "{:?} kept, replayed, saved", kept.call_memo);
+}
+
+/// A `\chardef` is one assignment, also when satex writes its number into
+/// the binding after defining it. That second write was taken for a change
+/// no assignment replays, so no call that made a `\chardef` kept its effect
+/// (a thesis's pgfmath calls never did). `\got` must still be 200 after
+/// the replays, and a replay in a group stays local to it.
+#[test]
+fn a_chardef_in_a_call_keeps_its_effect() {
+    let [kept, ran] = memo_runs(
+        "\\countdef\\n=10 \\chardef\\got=1
+\\def\\upto{\\n=0 \\def\\step{\\advance\\n 1 \\ifnum\\n<200 \\expandafter\\step\\fi}\\step\\chardef\\got=\\n}
+\\upto\\upto\\upto\\upto\\upto \\ifnum\\got=200 \\def\\Kept{}\\else\\def\\Lost{}\\fi
+\\chardef\\got=5 \\begingroup\\upto\\endgroup
+\\ifnum\\got=5 \\def\\Local{}\\else\\def\\Leaked{}\\fi
+",
+    );
+    for a in [&kept, &ran] {
+        assert!(crate::support::defined(a, "Kept") && !crate::support::maybe_defined(a, "Lost"));
+        assert!(crate::support::defined(a, "Local") && !crate::support::maybe_defined(a, "Leaked"));
+    }
+    assert!(kept.call_memo[1] >= 3, "{:?} kept, replayed, saved", kept.call_memo);
+}
+
 /// A kept effect holds only while every name its run read holds what it
 /// held: `\calc` reads `\base`, so after `\def\base{2}` it runs again and
 /// leaves `2300`, not the `1300` its first runs kept.
@@ -1574,4 +1623,29 @@ fn a_summary_holds_only_for_the_body_it_ran() {
     let shown =
         satex::engine::tex::detokenize(&def.mac.as_ref().expect("a macro").replacement_text, &analysis.interner);
     assert_eq!(shown, "5");
+}
+
+/// Joining, comparing and resuming waiting paths reads no token. On a thesis
+/// with 60 paths waiting at one line this work ran for minutes while the
+/// step count stood still, so `limits.line_steps` never cut the line. The
+/// map entries such work walks are charged to the line too: with the line's
+/// budget at what all the run's steps cost, the line is cut once the walks
+/// count (`limits.walk_per_step` 1) and not while they are free. Here two
+/// paths stay apart in one group (one queued an `\aftergroup`) while both
+/// define names, so each switch between them walks what they changed.
+#[test]
+fn work_on_waiting_paths_counts_against_the_line_budget() {
+    let source = "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\count1=\\pdfelapsedtime
+\\def\\loop{\\ifnum\\count2<4000 \\advance\\count2 1 \\expandafter\\def\\csname n\\the\\count2\\endcsname{}\\expandafter\\loop\\fi}
+\\begingroup\\ifnum\\count1>5 \\aftergroup\\relax\\fi\\loop\\endgroup
+";
+    let run = |walk_per_step: u64, line_steps: u64| {
+        let mut cfg = cfg(1_000_000_000);
+        (cfg.limits.walk_per_step, cfg.limits.line_steps) = (walk_per_step, line_steps);
+        Machine::analyze(source, None, &cfg)
+    };
+    let cut = |a: &satex::analysis::machine::Analysis| a.facts.diagnostics.iter().any(|d| d.code == "line-budget-cut");
+    let free = run(u64::MAX, 0);
+    assert!(!cut(&run(u64::MAX, free.steps)), "steps alone stay within the budget");
+    assert!(cut(&run(1, free.steps)), "the walks of the waiting paths are charged to the line");
 }

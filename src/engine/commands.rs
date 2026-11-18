@@ -24,7 +24,9 @@ const FONT_SLOT: &str = "\u{4}font";
 
 /// The five macros LaTeX keeps the current font in (fntguide § 2), then the
 /// one xcolor and color keep the current color in.
-pub(crate) const NFSS: [&str; 6] = ["cf@encoding", "f@family", "f@series", "f@shape", "f@size", "current@color"];
+/// The macros a character's [`crate::analysis::facts::FontState`] reads, the page color last.
+pub(crate) const NFSS: [&str; 7] =
+    ["cf@encoding", "f@family", "f@series", "f@shape", "f@size", "current@color", "current@page@color"];
 /// etex_man § 3: `\eTeXversion` and `\eTeXrevision`.
 const ETEX_VERSION: i64 = 2;
 const ETEX_REVISION: &str = ".6";
@@ -1161,13 +1163,15 @@ impl Machine<'_> {
     }
 
     /// Which row of [`crate::analysis::machine::Analysis::font_states`] the character
-    /// about to be set belongs to. Called once per character; the five
-    /// NFSS macros are re-resolved only when a body's token list changed.
+    /// about to be set belongs to. Called once per character; the [`NFSS`]
+    /// macros are re-resolved only when a body's token list changed.
     pub(crate) fn observed_font_state(&mut self) -> u16 {
+        // Interned, not looked up: a name not met yet (`\current@color` before xcolor loads) is
+        // read once it is defined, and the moment of the lookup decides nothing.
         if self.font_watch.names.is_none() {
-            self.font_watch.names = Some(NFSS.map(|name| self.out.interner.lookup(name)));
+            self.font_watch.names = Some(NFSS.map(|name| Some(self.intern(name))));
         }
-        let names = self.font_watch.names.unwrap_or([None; 6]);
+        let names = self.font_watch.names.unwrap_or([None; NFSS.len()]);
         let at = names.map(|name| self.nfss_at(name));
         if at == self.font_watch.at {
             return self.font_watch.state;
@@ -1184,6 +1188,7 @@ impl Machine<'_> {
             shape: text(&bodies[3]),
             size: text(&bodies[4]),
             color: text(&bodies[5]),
+            page: text(&bodies[6]),
             font: self.observed_font(),
         };
         self.font_watch.bodies = bodies;

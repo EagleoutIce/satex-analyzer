@@ -4341,6 +4341,7 @@ impl Machine<'_> {
     /// register appends nothing (tex.web § 1076).
     pub(crate) fn append_box(&mut self, state: BoxState, dims: [Dim; 3]) {
         let ranges = std::mem::take(&mut self.fetched);
+        crate::analysis::observe::background(self, &ranges, dims[0]);
         self.place_chars(ranges, self.mode.within(Modes::INTERNAL_VERTICAL.union(Modes::RESTRICTED_HORIZONTAL)));
         crate::analysis::observe::box_break(self);
         // An hbox of known size, none of it above or below what an empty

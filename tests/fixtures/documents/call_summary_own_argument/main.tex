@@ -1,0 +1,12 @@
+\documentclass{article}
+\usepackage{pgfmath}
+% one call site, three expressions over an unknown count: the strip
+% call that keeps the expression text has the same key for all three.
+\newcount\cnt \cnt=\pdfuniformdeviate 9
+\def\f#1{\pgfmathparse{#1}\let\r\pgfmathresult}
+\begin{document}
+\f{\the\cnt+1}\f{\the\cnt+2}\f{\the\cnt+3}
+\f{max(\the\cnt,10)}
+\ifdim\r pt=10pt \gdef\ok{}\else\gdef\WRONG{}\fi
+\gdef\SatexReachedEnd{}
+\end{document}

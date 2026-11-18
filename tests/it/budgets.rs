@@ -77,7 +77,8 @@ const METADATA_LOADING: u64 = 87_207_865;
 const FLAG: u64 = 852156;
 const NOTEBOOK: u64 = 3669404;
 const OVERFULL: u64 = 2287795;
-const PGFMATH_TYPED: u64 = 1328927;
+// 2026-11-17: calls that pop or peek the parser stacks no longer summarize (unsound), +31% steps
+const PGFMATH_TYPED: u64 = 1740671;
 const GRAPHIC: u64 = 1181589;
 const REGEX_SCAN: u64 = 10924212;
 
