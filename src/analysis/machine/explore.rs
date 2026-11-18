@@ -2114,7 +2114,7 @@ impl Machine<'_> {
     /// would pop one of both tops, a top neither path holds with its rest.
     fn digits_apart(&self, a: &Config, b: &Config) -> usize {
         let differing = a.env.differing(&b.env);
-        let depth = |c: &Config, sym: Sym| c.env.changed(sym).and_then(|b| stack_depth(b));
+        let depth = |c: &Config, sym: Sym| c.env.changed(sym).and_then(stack_depth);
         if differing.iter().any(|&sym| matches!((depth(a, sym), depth(b, sym)), (Some(x), Some(y)) if x != y)) {
             return usize::MAX;
         }

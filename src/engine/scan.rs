@@ -784,7 +784,7 @@ impl Machine<'_> {
         let cap = |v: i64| v.min(MAX_INT);
         let owner = self.spell_owner.0;
         // Its spelling while it is known digits, then one whole typed number.
-        let mut spell: Option<(i64, Option<Sym>)> = Some((0, None)).filter(|_| radix == 10);
+        let mut spell: Option<(i64, Option<Sym>)> = (radix == 10).then_some((0, None));
         let result = loop {
             let Some(token) = next else { break None };
             if self.split_scanned(token) {

@@ -854,8 +854,10 @@ fn opens_document(mouth: &Mouth) -> bool {
     let line_start = source[..mouth.offset().min(source.len())].iter().rposition(|&c| c == '\n').map_or(0, |i| i + 1);
     // Asked before every command outside the body: the answer per line is kept.
     // The cache holds the text, so no other text can reuse its address.
+    /// The text, a line start and whether `\\begin{document}` is near it.
+    type Opens = Option<(std::rc::Rc<[char]>, usize, bool)>;
     thread_local! {
-        static LAST: std::cell::RefCell<Option<(std::rc::Rc<[char]>, usize, bool)>> = const { std::cell::RefCell::new(None) };
+        static LAST: std::cell::RefCell<Opens> = const { std::cell::RefCell::new(None) };
     }
     if let Some(opens) = LAST.with_borrow(|last| {
         last.as_ref().filter(|(text, at, _)| std::rc::Rc::ptr_eq(text, source) && *at == line_start).map(|l| l.2)
