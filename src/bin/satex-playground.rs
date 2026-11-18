@@ -9,7 +9,8 @@
 //! exists. The other pages and the wasm still need a rebuild.
 //!
 //! Without `--dev`, a last build in `--out` serves at once while the new one
-//! builds beside it (`--out` with `.next`); the new one replaces it when done.
+//! builds beside it (`--out` with `.next`). It replaces the last one twice:
+//! first with the slow steps' last results (`build.py --fast`), then whole.
 //!
 //! The playground's Compile button posts to this server, which builds the
 //! project with the machine's TeX (`src/cli/gui/compile.rs`). `satex gui`
@@ -22,6 +23,7 @@
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
+use std::sync::atomic::{AtomicU32, Ordering};
 
 use satex::cli::gui::{compile, http};
 
@@ -72,22 +74,78 @@ fn run() -> Result<(), String> {
         println!("playground: serving the last build at {url} while rebuilding. Ctrl+C stops");
         let next = site.clone();
         std::thread::spawn(move || match build(root, &next, profile) {
-            Ok(()) => {
-                compile::warm(&compile::root(&next), &root.join("doc/site/examples"));
-                say("built. Reload the page to load this build");
-            }
+            Ok(lock) => finish(root, &next, profile, &lock),
             Err(message) => eprintln!("playground: {message}. The last build stays"),
         });
         return serve(&site, listener, dev);
     }
-    build(root, &site, profile)?;
-    compile::warm(&compile::root(&site), &root.join("doc/site/examples"));
+    let lock = build(root, &site, profile)?;
+    let next = site.clone();
+    std::thread::spawn(move || finish(root, &next, profile, &lock));
     println!("playground: serving {url}. Ctrl+C stops");
     serve(&site, listener, dev)
 }
 
-/// Builds the site into `site.next`, then swaps it in for `site`.
-fn build(root: &Path, site: &Path, profile: &str) -> Result<(), String> {
+/// After the fast build: the whole one, swapped in when done. `_lock` keeps other builds out.
+fn finish(root: &Path, site: &Path, profile: &str, _lock: &std::fs::File) {
+    let examples = root.join("doc/site/examples");
+    compile::warm(&compile::root(site), &examples);
+    say("built without the slow steps. Reload the page to load it; the rest follows");
+    match site_build(root, site, profile, false).and_then(|()| swap(site)) {
+        Ok(()) => {
+            compile::warm(&compile::root(site), &examples);
+            say("built whole. Reload the page to load this build");
+        }
+        Err(message) => eprintln!("playground: {message}. The fast build stays"),
+    }
+}
+
+/// The running `doc/site/build.py`, stopped when a newer server takes the port:
+/// left alone it would build into the same work directory as the newer one.
+static BUILD: AtomicU32 = AtomicU32::new(0);
+
+/// `doc/site/build.py` into `site.next`: `fast` leaves the slow steps to the next run.
+fn site_build(root: &Path, site: &Path, profile: &str, fast: bool) -> Result<(), String> {
+    let target = std::env::var_os("CARGO_TARGET_DIR").map_or_else(|| root.join("target"), PathBuf::from);
+    let mut python = Command::new("python3");
+    python
+        .arg("doc/site/build.py")
+        .arg("--satex")
+        .arg(target.join(profile).join("satex"))
+        .arg("--wasm")
+        .arg(target.join("wasm32-unknown-emscripten").join(profile))
+        // The edit loop: package listings outlive an interpreter change.
+        .args(["--keep-listings", "--out"])
+        .arg(site.with_extension("next"))
+        .arg("--work")
+        .arg(site.with_file_name("site-work"))
+        .env("SATEX_WASM_READY", target.join("playground-wasm.ready"))
+        .current_dir(root);
+    // the fast one serves for minutes only: no .gz beside each file
+    python.arg(if fast { "--fast" } else { "--precompress" });
+    let mut child = python.spawn().map_err(|e| format!("cannot run python3: {e}"))?;
+    BUILD.store(child.id(), Ordering::SeqCst);
+    let status = child.wait().map_err(|e| e.to_string());
+    BUILD.store(0, Ordering::SeqCst);
+    let status = status?;
+    status.success().then_some(()).ok_or_else(|| format!("doc/site/build.py failed ({status})"))
+}
+
+/// `site.next` in place of `site`.
+fn swap(site: &Path) -> Result<(), String> {
+    let old = site.with_extension("old");
+    let _ = std::fs::remove_dir_all(&old);
+    if site.exists() {
+        std::fs::rename(site, &old).map_err(|e| e.to_string())?;
+    }
+    std::fs::rename(site.with_extension("next"), site).map_err(|e| e.to_string())?;
+    let _ = std::fs::remove_dir_all(&old);
+    Ok(())
+}
+
+/// Builds satex and the site without its slow steps into `site.next`, then swaps
+/// it in for `site`. The lock it returns holds until the whole build is done.
+fn build(root: &Path, site: &Path, profile: &'static str) -> Result<std::fs::File, String> {
     say("[1/4] toolchain: wasm32-unknown-emscripten, Emscripten SDK");
     let wasm = wasm_cargo()?;
     let cargo = || {
@@ -106,35 +164,21 @@ fn build(root: &Path, site: &Path, profile: &str) -> Result<(), String> {
         lock.lock().map_err(|e| e.to_string())?;
     }
     // Both builds from one source and profile: a cache is keyed on the source digest. The native
-    // one by the `cargo` running this, whose library build it reuses (rustup's `rustc` would redo it).
+    // one by the `cargo` running this, whose library build it reuses (rustup's `rustc` would redo it),
+    // with its features: other features are another build of the library.
     say("[2/4] satex, native");
     step(
         Command::new(std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into()))
-            .args(["build", "--profile", profile, "--bin", "satex"])
+            .args(["build", "--profile", profile, "--features", "tools", "--bin", "satex"])
             .current_dir(root),
     )?;
     // The site's runs need only the native build; it reads the wasm last,
     // once `ready` names it built, so the two overlap.
     say("[3/4] satex, wasm, while [4/4] builds the site: pages, TeX files, caches");
-    let wasm_dir = target.join("wasm32-unknown-emscripten").join(profile);
     let ready = target.join("playground-wasm.ready");
     let _ = std::fs::remove_file(&ready);
-    let next = site.with_extension("next");
-    let mut python = Command::new("python3")
-        .arg("doc/site/build.py")
-        .arg("--satex")
-        .arg(target.join(profile).join("satex"))
-        .arg("--wasm")
-        .arg(&wasm_dir)
-        // The edit loop: package listings outlive an interpreter change.
-        .args(["--precompress", "--keep-listings", "--out"])
-        .arg(&next)
-        .arg("--work")
-        .arg(site.with_file_name("site-work"))
-        .env("SATEX_WASM_READY", &ready)
-        .current_dir(root)
-        .spawn()
-        .map_err(|e| format!("cannot run python3: {e}"))?;
+    let (root_, site_) = (root.to_path_buf(), site.to_path_buf());
+    let python = std::thread::spawn(move || site_build(&root_, &site_, profile, true));
     // Quiet: its progress line would garble the site's; errors still show.
     let built = step(
         cargo()
@@ -143,17 +187,11 @@ fn build(root: &Path, site: &Path, profile: &str) -> Result<(), String> {
     );
     let _ = std::fs::write(&ready, if built.is_ok() { "ok" } else { "failed" });
     eprintln!("\r\x1b[Kplayground: [3/4] satex, wasm: {}", if built.is_ok() { "built" } else { "failed" });
-    let status = python.wait().map_err(|e| e.to_string())?;
+    let python = python.join().map_err(|_| "doc/site/build.py's thread panicked".to_string())?;
     built?;
-    status.success().then_some(()).ok_or_else(|| format!("doc/site/build.py failed ({status})"))?;
-    let old = site.with_extension("old");
-    let _ = std::fs::remove_dir_all(&old);
-    if site.exists() {
-        std::fs::rename(site, &old).map_err(|e| e.to_string())?;
-    }
-    std::fs::rename(&next, site).map_err(|e| e.to_string())?;
-    let _ = std::fs::remove_dir_all(&old);
-    Ok(())
+    python?;
+    swap(site)?;
+    Ok(lock)
 }
 
 /// Serves `site` on 127.0.0.1 the way a static host such as GitHub Pages
@@ -178,6 +216,11 @@ fn respond(mut stream: std::net::TcpStream, site: &Path, dev: Option<&Path>) -> 
     if method == "POST" && path == "/__satex/quit" {
         http::status(&mut stream, "200 OK", "x-satex-playground: quit\r\n")?;
         let _ = std::io::Write::flush(&mut stream);
+        let build = BUILD.swap(0, Ordering::SeqCst);
+        if build != 0 {
+            // its SIGTERM handler ends it at once (build.py `main`)
+            let _ = Command::new("kill").arg(build.to_string()).status();
+        }
         std::process::exit(0);
     }
     if let Some(rest) = path.strip_prefix("/__satex/compile") {

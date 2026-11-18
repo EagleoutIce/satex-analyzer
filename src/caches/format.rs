@@ -25,7 +25,7 @@ pub const SEMANTIC_VERSION: u32 = 2;
 /// The key every cache file name carries: `s⟨SEMANTIC_VERSION⟩`. A build
 /// outside the `release` profile appends its source digest (build.rs), so a
 /// developer's edits between bumps never replay a stale local cache.
-pub(crate) fn cache_key() -> &'static str {
+pub fn cache_key() -> &'static str {
     static KEY: std::sync::LazyLock<String> =
         std::sync::LazyLock::new(|| format!("s{SEMANTIC_VERSION}{}", env!("SATEX_CACHE_GUARD")));
     &KEY

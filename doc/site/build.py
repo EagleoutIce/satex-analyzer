@@ -9,7 +9,7 @@ files` says the samples and the offered packages read, and its caches from `sate
     build.py --satex target/release/satex --wasm target/wasm32-unknown-emscripten/release --out site-out
 """
 
-import argparse, contextlib, io, tarfile, math, unicodedata, base64, concurrent.futures, datetime, gzip, hashlib, html, inspect, json, os, pickle, re, shutil, signal, subprocess, sys, tempfile, threading, time, tomllib, urllib.parse
+import argparse, contextlib, functools, io, tarfile, math, unicodedata, base64, concurrent.futures, datetime, gzip, hashlib, html, inspect, json, os, pickle, re, shutil, signal, subprocess, sys, tempfile, threading, time, tomllib, urllib.parse
 from pathlib import Path
 
 import semantics as sem
@@ -154,39 +154,77 @@ def save_listings():
         tmp.write_text(json.dumps(LISTINGS))
         tmp.replace(LISTINGS_FILE)
 # The satex binary's digest, its cache key (what the analysis is: reporting code
-# aside) and whether to ignore remembered results (--fresh): set by main().
-BINARY, KEY, FRESH, SATEX = "", "", False, None
+# aside), that key with the reporting code but the language server's (what a query,
+# `scope` or `explain` prints), whether to ignore remembered results (--fresh)
+# and whether to leave the slow steps to the next build (--fast): set by main().
+BINARY, KEY, VIEW, FRESH, FAST, SATEX = "", "", "", False, False, None
 MEMO_USED = set()  # the memo files this build asked for
+SKIPPED = []  # the slow steps a --fast build left out
 
 
 def prune_memo():
     """Drop the memo files this build superseded: those of a label it asked for under other parts.
-    A label it did not ask for (a step it reused whole) keeps its files."""
+    A label it did not ask for (a step it reused whole) keeps its files. Packed bundles it did not use go too."""
+    for p in (SCRATCH / "gz").glob("*.gz") if GZ_USED else ():
+        if p not in GZ_USED:
+            p.unlink(missing_ok=True)
     for d in {p.parent for p in MEMO_USED}:
-        asked = {p.name.rsplit("-", 1)[0] for p in MEMO_USED if p.parent == d}
+        asked = {p.name.rsplit("-", 2)[0] for p in MEMO_USED if p.parent == d}
         for p in d.glob("*.pkl"):
-            if p not in MEMO_USED and p.name.rsplit("-", 1)[0] in asked:
+            if p not in MEMO_USED and p.name.rsplit("-", 2)[0] in asked:
                 p.unlink(missing_ok=True)
 
 
-def memo(work, label, parts, make):
-    """`make()`, remembered in WORK/memo under `label` while `parts` (what it depends on) stay the
-    same: a build that changes only the page's code reuses every satex run."""
-    path = work / "memo" / f"{label}-{digest(json.dumps(parts, default=str).encode())}.pkl"
+def memo(work, label, parts, make, key="", later=None, reuse=True):
+    """`make()`, remembered in WORK/memo under `label` while `parts` (its inputs) and `key` (the satex
+    code whose output it is: KEY, VIEW or BINARY) stay the same: a build that changes only the page's
+    code reuses every satex run. A --fast build skips a slow step (one with `later`): it takes the
+    step's last result under another key (with `reuse`), else `later`, and stores nothing holding it."""
+    slot = digest(json.dumps(parts, default=str).encode())
+    path = work / "memo" / f"{label}-{slot}-{digest(json.dumps(key).encode())}.pkl"
     MEMO_USED.add(path)
     if path.exists() and not FRESH:
         return pickle.loads(path.read_bytes())
+    if FAST and later is not None:
+        SKIPPED.append(label)
+        last = max(path.parent.glob(f"{label}-{slot}-*.pkl"), key=lambda p: p.stat().st_mtime, default=None) if reuse else None
+        return pickle.loads(last.read_bytes()) if last else later
+    skipped = len(SKIPPED)
     value = make()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_bytes(pickle.dumps(value))
+    if len(SKIPPED) == skipped:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(pickle.dumps(value))
     return value
 
 
-def binary_digest(satex):
-    """The binary's digest without the build time and commit it names (`satex --version`):
+def reporting(skip):
+    """The digest of build.rs's REPORTING code outside `skip`: what a run prints besides its analysis."""
+    listed = re.search(r"const REPORTING: &\[&str\] = &\[(.*?)\];", (ROOT / "build.rs").read_text(), re.S)[1]
+    paths = [ROOT / p for p in re.findall(r'"([^"]+)"', listed) if p not in skip]
+    files = sorted(f for p in paths for f in ([p] if p.is_file() else p.rglob("*")) if f.is_file())
+    return digest(b"".join(str(f.relative_to(ROOT)).encode() + f.read_bytes() for f in files))
+
+
+GZ_USED = set()  # the WORK/gz files this build asked for
+
+
+def gz(data):
+    """`data` gzipped at level 9, kept in WORK/gz by its digest: a bundle that did not change is not packed again."""
+    path = SCRATCH / "gz" / f"{hashlib.sha256(data).hexdigest()}.gz"
+    GZ_USED.add(path)
+    if path.exists():
+        return path.read_bytes()
+    packed = gzip.compress(data, 9, mtime=0)
+    path.parent.mkdir(exist_ok=True)
+    path.with_suffix(f".{threading.get_ident()}").write_bytes(packed)
+    path.with_suffix(f".{threading.get_ident()}").replace(path)
+    return packed
+
+
+def binary_digest(satex, about):
+    """The binary's digest without the build time and commit it names (`about`, `satex --version`):
     relinking the same code keeps every run keyed on it."""
     data = satex.read_bytes()
-    about = json.loads(subprocess.run([str(satex), "--format", "json", "--version"], capture_output=True, text=True).stdout or "{}")
     for stamp in filter(None, (about.get("built"), about.get("commit"))):
         data = data.replace(stamp.encode(), b"")
     return digest(data)
@@ -669,7 +707,9 @@ def bundle(satex, work):
     def fresh(kernel, flags):
         """One cache archive per package or class held by the entries running every example made,
         from a copy of the kernel's caches (`satex cache export --only`)."""
-        return memo(work, f"fresh-{kernel}", [KEY, kernel, flags, tree_digest(project), first_download()], lambda: fresh_run(kernel, flags))
+        # the runs of every example: a --fast build ships no package caches (the page makes them)
+        return memo(work, f"fresh-{kernel}", [kernel, flags, tree_digest(project), first_download()], lambda: fresh_run(kernel, flags),
+                    key=KEY, later={}, reuse=False)
 
     def fresh_run(kernel, flags):
         cache = work / f"cache-docs-{kernel}"
@@ -766,7 +806,7 @@ def previews(satex, work, tree):
     """Completion's and the drawing canvas's pictures of the arrow tips, patterns and node shapes the bundled TikZ libraries declare,
     drawn by TeX here (`satex query previews`): the browser has no TeX to draw them."""
     libs = sorted(p.name.removeprefix("tikzlibrary").removesuffix(".code.tex") for p in tree.rglob("tikzlibrary*.code.tex"))
-    data = memo(work, "previews", [BINARY, libs], lambda: previews_run(satex, work, libs))
+    data = memo(work, "previews", [libs], lambda: previews_run(satex, work, libs), key=VIEW, later=b"{}")
     PREVIEWS.update(json.loads(data))
     return data
 
@@ -872,7 +912,7 @@ def scope_cards(satex, work, names):
         prims = parallel("hover cards: primitives per engine", kernels, lambda k: scope(k[0], k[2], "\\documentclass{article}\n\\begin{document}\n\\end{document}\n", ["--filter", "tag=primitive"], name=f"prims-{k[0]}"))
         engines = {label: {r["name"] for r in got} for (kernel, label, flags), got in zip(kernels, prims)}
         return records, engines, templates(scope, probe, names)
-    return memo(work, "cards-scope-keyed3", [BINARY, wanted, sorted(names)], make)
+    return memo(work, "cards-scope-keyed3", [wanted, sorted(names)], make, key=VIEW, later=({}, {}, []))
 
 
 # Declarations whose names are made from a key: the probe declares one key, a record naming it is a template for any key.
@@ -967,7 +1007,7 @@ def mine(satex, work, names):
         except (json.JSONDecodeError, IndexError, KeyError):
             return []
     # beside the bundle's own steps: half the workers each
-    return memo(work, "manuals", [BINARY, names], lambda: [r for rs in parallel("[4/4] package manuals", names, mined) for r in rs])
+    return memo(work, "manuals", [names], lambda: [r for rs in parallel("[4/4] package manuals", names, mined) for r in rs], key=VIEW, later=[])
 
 
 def manuals(satex, work, tables, packages, offered, records):
@@ -979,17 +1019,18 @@ def manuals(satex, work, tables, packages, offered, records):
     # the installation itself, not the bundle's tree: its packages' documented sources are beside them
     rest = sorted({name for _, name, _, _ in packages if not name.endswith(".cls")} - set(offered))
     records = records + (mine(satex, work, rest) if rest else [])
+    real = functools.cache(lambda path: Path(path).resolve())  # many records name one file
     by_file = {}
     for r in records:
-        by_file.setdefault(str(Path(r.pop("package_file")).resolve()), {}).setdefault(r.pop("dir"), {})[r["name"]] = r
+        by_file.setdefault(str(real(r.pop("package_file"))), {}).setdefault(r.pop("dir"), {})[r["name"]] = r
     documented = set()
     for files in [*tables, *(f for _, _, f, _ in packages)]:
         # any file of a package, pgf's `.code.tex` too: the first of each documentation directory carries its records
         for held in [p for p in files if p.startswith("/texmf.bundle/")]:
             native = str(dist / held.removeprefix("/texmf.bundle/"))
             for d, rows in by_file.get(native, {}).items():
-                if Path(d).resolve().is_relative_to(dist):
-                    target = f"/texmf.bundle/{Path(d).resolve().relative_to(dist).as_posix()}/{Path(native).stem}.satex-docs"
+                if real(d).is_relative_to(dist):
+                    target = f"/texmf.bundle/{real(d).relative_to(dist).as_posix()}/{Path(native).stem}.satex-docs"
                     files[target] = json.dumps(list(rows.values()), ensure_ascii=False).encode()
                     documented.add(Path(native).stem)
     return documented
@@ -1036,6 +1077,7 @@ def commands():
     return {name: named.get(name, "lint") for name in roots(EXAMPLES)}
 
 
+@functools.cache
 def projects():
     """The files each document reads beside itself (`satex query files`): tabs next to it,
     analyzed together with it. Its own build files (`thesis.aux`) are not among them."""
@@ -1092,8 +1134,8 @@ def explained(satex, project, env, name, names, dist):
     playground's: a distribution file under /texmf.bundle, a project file by its name."""
     if not names:
         return {}
-    return memo(work_of(env), "explained", [BINARY, name, sorted(names), tree_digest(project), str(dist)],
-                lambda: explained_run(satex, project, env, name, names, dist))
+    return memo(work_of(env), "explained", [name, sorted(names), tree_digest(project), str(dist)],
+                lambda: explained_run(satex, project, env, name, names, dist), key=VIEW, later={})
 
 
 def explained_run(satex, project, env, name, names, dist):
@@ -1117,8 +1159,9 @@ def work_of(env):
 def findings(satex, project, env, name, source):
     """The example's findings: ranges as the language server reports them, with the text
     each fix replaces."""
-    return memo(work_of(env), "findings", [BINARY, name, source, tree_digest(project)],
-                lambda: findings_run(satex, project, env, name, source))
+    # the language server's ranges: keyed on the whole binary
+    return memo(work_of(env), "findings", [name, source, tree_digest(project)],
+                lambda: findings_run(satex, project, env, name, source), key=BINARY, later=[])
 
 
 def findings_run(satex, project, env, name, source):
@@ -1160,7 +1203,7 @@ def typeset(satex, project, env, name, source):
         # the project's own files: an \\input chapter's text too, not a package's
         own = lambda path: not Path(path).is_absolute() or Path(path).resolve().is_relative_to(project.resolve())
         return [{k: r[k] for k in keep if k in r} for r in rows if r.get("kind") == "paragraph" and own(str(r.get("path", "")))]
-    return memo(work_of(env), "typeset", [BINARY, name, source, tree_digest(project), inspect.getsource(typeset)], make)
+    return memo(work_of(env), "typeset", [name, source, tree_digest(project), inspect.getsource(typeset)], make, key=VIEW, later=[])
 
 
 def examples(satex, work, project):
@@ -1332,7 +1375,7 @@ def browser_tex(out, work, tables, packages):
         print(f"::warning::playground: no browser TeX, Compile on this site says so: {e}", file=sys.stderr)
         return None
     files, blob = tex_core(tar, map_)
-    packed = gzip.compress(blob, 9, mtime=0)
+    packed = gz(blob)
     tex_mirror(out, tables, packages, files, map_)
     with tarfile.open(fileobj=io.BytesIO(pdfjs)) as t:
         lib, worker, pdfjs_licence = (t.extractfile(f"package/{n}").read() for n in ("legacy/build/pdf.min.mjs", "legacy/build/pdf.worker.min.mjs", "LICENSE"))
@@ -1353,9 +1396,9 @@ def playground(satex, wasm, work, out):
     mining = side.submit(mine, satex, work, sorted(n for n in offered if not n.endswith(".cls")))
     sources_ = [(d.name, d.read_bytes()) for d in sources()] + [(c, (d.parent / c).read_bytes()) for d in sources() for c in projects()[d.name]]
     tables, packages, samples, project = memo(
-        work, "bundle", [KEY, LISTINGS.get("@stamp"), offered, sources_, tree_digest(ROOT / "samples"), (SITE / "playground.yaml").read_text(),
+        work, "bundle", [LISTINGS.get("@stamp"), offered, sources_, tree_digest(ROOT / "samples"), (SITE / "playground.yaml").read_text(),
                          inspect.getsource(bundle)],
-        lambda: bundle(satex, work))
+        lambda: bundle(satex, work), key=VIEW)  # VIEW: it holds the previews query
     PREVIEWS.update(json.loads(tables[0].get("/cache/previews.json") or b"{}"))
     documented = manuals(satex, work, tables, packages, offered, mining.result())
     side.shutdown()
@@ -1366,9 +1409,11 @@ def playground(satex, wasm, work, out):
     if ready and Path(ready).read_text() != "ok":
         sys.exit("playground: the wasm build failed")
     wasm_bytes = (wasm / "satex.wasm").read_bytes()
+    # zlib lets go of the GIL: the bundles a change touched are packed side by side
+    with concurrent.futures.ThreadPoolExecutor(os.cpu_count()) as pool:
+        packs = list(pool.map(lambda files: gz(b"".join(files.values())), [*tables, *(f for _, _, f, _ in packages)]))
     kernels = []
-    for (kernel, label, flags), files in zip(KERNELS, tables):
-        packed = gzip.compress(b"".join(files.values()), 9, mtime=0)
+    for (kernel, label, flags), files, packed in zip(KERNELS, tables, packs):
         kernels.append({"id": kernel, "label": label, "args": flags, "size": len(packed),
                         **({"badge": EXPERIMENTAL[kernel][0], "note": EXPERIMENTAL[kernel][1]} if kernel in EXPERIMENTAL else {}),
                         "bundle": emit_local(out, f"play/{kernel}.bin.gz", packed),
@@ -1378,8 +1423,7 @@ def playground(satex, wasm, work, out):
         kernels.append({**base, "engine": engine, "label": label,
                         **({"badge": EXPERIMENTAL[engine][0], "note": EXPERIMENTAL[engine][1]} if engine in EXPERIMENTAL else {})})
     extra = []
-    for kernel, name, files, needs in packages:
-        packed = gzip.compress(b"".join(files.values()), 9, mtime=0)
+    for (kernel, name, files, needs), packed in zip(packages, packs[len(tables):]):
         extra.append({"id": f"{kernel}/{name}", "name": name.removesuffix(".cls"), "kernel": kernel, "needs": needs, "label": name,
                       "size": len(packed), "bundle": emit_local(out, f"play/pkg/{kernel}-{name}.bin.gz", packed),
                       "manual": name.removesuffix(".cls") in documented,
@@ -1405,9 +1449,9 @@ def playground(satex, wasm, work, out):
         # each example's type plugins: where a plugin shows on it (`places`) makes it the plugin's demo
         plugged = {ex: json.loads(run(str(satex), "query", "type-plugins", "--format", "json", "-f", ex, cwd=project, env=env)) for ex in roots(EXAMPLES)}
         return queries, [q for q in queries if per_file(q)], rules, json.loads(run(str(satex), "completions", "json")), about, plugged
-    queries, filtered, rules, completion, query_about, plugged = memo(work, "facts", [BINARY, tree_digest(project), inspect.getsource(facts)], facts)
-    table, files = memo(work, "symbols", [BINARY, ICON_PACKAGES, inspect.getsource(icons), inspect.getsource(emoji), inspect.getsource(symbols), inspect.getsource(comprehensive), inspect.getsource(categories), GLYPH],
-                        lambda: symbols(satex, project, dict(os.environ, SATEX_CACHE=str(work / f"cache-{KERNELS[0][0]}"))))
+    queries, filtered, rules, completion, query_about, plugged = memo(work, "facts", [tree_digest(project), inspect.getsource(facts)], facts, key=BINARY)
+    table, files = memo(work, "symbols", [ICON_PACKAGES, inspect.getsource(icons), inspect.getsource(emoji), inspect.getsource(symbols), inspect.getsource(comprehensive), inspect.getsource(categories), GLYPH],
+                        lambda: symbols(satex, project, dict(os.environ, SATEX_CACHE=str(work / f"cache-{KERNELS[0][0]}"))), key=VIEW)
     # every rule's card on any page (site.js), from the same records the playground's findings show
     (out / "rules.json").write_text(json.dumps(rules))
     tiles = plugin_tiles(plugged)
@@ -1419,7 +1463,7 @@ def playground(satex, wasm, work, out):
         "tex": browser_tex(out, work, tables, packages), "tips": [t[0] for t in json.loads((SITE / "tips.json").read_text())],
         "completion": completion, "samples": samples, "sample": "hello.tex", "root": "../",
         "commands": {name: command for name, command in commands().items() if command != "lint"}, "projects": projects(), "plugins": plugins(), "typePlugins": tiles,
-        "symbols": emit(out, "play/symbols.json", json.dumps({**table, "glyphs": emit(out, "play/glyphs.bin.gz", gzip.compress(table["glyphs"], 9, mtime=0)),
+        "symbols": emit(out, "play/symbols.json", json.dumps({**table, "glyphs": emit(out, "play/glyphs.bin.gz", gz(table["glyphs"])),
                                                                 "fonts": [emit(out, f"play/fonts/{f.name}", f.read_bytes()) for f in files]}).encode()),
         "schema": emit(out, "play/satex.schema.json", (ROOT / "satex.schema.json").read_bytes()),
         # the playground's own settings' defaults (playground.js `play`), from the schema
@@ -1734,6 +1778,9 @@ def main():
                     help="write a .gz beside each compressible file, for a server that serves those as GitHub Pages compresses")
     ap.add_argument("--no-minify", action="store_true", help="ship scripts, styles and pages as written (no source maps), for debugging")
     ap.add_argument("--docs-only", action="store_true", help="only the documentation pages (the wiki, the semantics and the hover cards): no playground, home, draw or bench pages")
+    ap.add_argument("--fast", action="store_true",
+                    help="leave the slow steps (package caches, hover cards, manuals, the examples' results, showcase captures) "
+                         "to the next build: take their last results, else none")
     ap.add_argument("--fresh", action="store_true", help="redo every satex run instead of reusing WORK/listings.json and WORK/memo")
     ap.add_argument("--keep-listings", action="store_true",
                     help="reuse the files each package was listed to read across satex builds (a development loop: "
@@ -1743,10 +1790,15 @@ def main():
     # start more of them, so the process ends at once instead of unwinding the main thread only.
     for stop in (signal.SIGINT, signal.SIGTERM):
         signal.signal(stop, lambda number, _: os._exit(128 + number))
-    global MINIFY, SCRATCH, BINARY, KEY, FRESH, SATEX, SITE, EXAMPLES, LISTINGS_FILE
+    global MINIFY, SCRATCH, BINARY, KEY, VIEW, FRESH, FAST, SATEX, SITE, EXAMPLES, LISTINGS_FILE
     SATEX, MINIFY = args.satex.resolve(), not args.no_minify
-    BINARY, FRESH = binary_digest(args.satex.resolve()), args.fresh
-    KEY = BINARY if args.docs_only else json.loads(proc([str(args.satex), "cache", "--format", "json"], capture_output=True, text=True).stdout or "{}").get("key") or BINARY
+    about = json.loads(subprocess.run([str(SATEX), "--format", "json", "--version"], capture_output=True, text=True).stdout or "{}")
+    BINARY, FRESH, FAST = binary_digest(SATEX, about), args.fresh, args.fast
+    # `--version` names the key at once; `satex cache` (an older binary) first builds the kernel's cache for it
+    KEY = BINARY if args.docs_only else about.get("cache_key") or json.loads(
+        proc([str(SATEX), "cache", "--format", "json"], capture_output=True, text=True).stdout or "{}").get("key") or BINARY
+    # a release key names no source (format.rs `cache_key`): its runs follow the whole binary
+    VIEW = digest((KEY + reporting({"src/lsp", "src/bin"})).encode()) if re.search(r"d[0-9a-f]{16}$", KEY) else BINARY
     out, work = args.out.resolve(), (args.work or args.out.resolve().parent / "site-work").resolve()
     shutil.rmtree(out, ignore_errors=True)
     out.mkdir(parents=True)
@@ -1889,7 +1941,10 @@ def main():
         parts[key], found = sem.mark_cards(parts[key], PREVIEW_NAMES())
         names |= found
     with stage("hover cards: satex scope --all per engine"):
-        card_data = sem.cards(names, formal.rows, lean, refs, *scope_cards(args.satex.resolve(), work, names), {k.split(":", 1)[1]: v for k, v in PREVIEWS.items()}, sem.builtin_lines(ROOT), sem.example_defs(pending), source_fallback())
+        scoped = scope_cards(args.satex.resolve(), work, names)
+        # a --fast build without this binary's records: no search of the sources for each name it lacks (minutes)
+        fallback = None if "cards-scope-keyed3" in SKIPPED else source_fallback()
+        card_data = sem.cards(names, formal.rows, lean, refs, *scoped, {k.split(":", 1)[1]: v for k, v in PREVIEWS.items()}, sem.builtin_lines(ROOT), sem.example_defs(pending), fallback)
     # satex's own comment directives: no package defines them
     card_data.update((k, v) for k, v in sem.directive_cards(ROOT).items() if k in card_data)
     assets["cards"] = emit(out, "cs-cards.json", json.dumps(card_data, ensure_ascii=False, separators=(",", ":")).encode())
@@ -1925,11 +1980,14 @@ def main():
     (out / ".nojekyll").write_text("")
     with stage("link check"):
         sem.check_links(out, refs.used)
-    prune_memo()
+    if SKIPPED:
+        print(f"fast build: left to the next build: {', '.join(sorted(set(SKIPPED)))}", file=sys.stderr)
+    else:
+        prune_memo()
     with stage("offline bundle list"):
         offline(out)
     # the showcase's captures follow the UI they show: stale ones are taken again from this build
-    if recapture(out):
+    if not FAST and recapture(out):
         home()
     if args.precompress:
         with stage("gzip of the site"):

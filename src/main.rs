@@ -953,6 +953,8 @@ fn overview_json(
         "commit": if commit.is_empty() { None } else { Some(commit) },
         "built": env!("SATEX_BUILD_TIME"),
         "source": env!("SATEX_SOURCE_ID"),
+        // what each cache file name carries (`satex cache`), without reading the kernel
+        "cache_key": satex::caches::format::cache_key(),
         "repository": env!("CARGO_PKG_REPOSITORY"),
         "plugin_count": plugins.values().filter_map(|items| items.as_array()).map(Vec::len).sum::<usize>(),
         "plugins": plugins,
