@@ -1388,6 +1388,37 @@ fn a_picture_is_drawn_from_the_literals_the_run_wrote() {
     assert_eq!(picture["approximate"], false);
 }
 
+/// Intuition: a `forest` tree is a picture its package's code draws, so it is drawn like a
+/// `tikzpicture`: its edges and each node's text where the run put the node's box.
+/// Pins two bugs: only an environment named `tikzpicture` was drawn, and a box set while
+/// another was open took that one's boxes with it, so every node's text moved with each
+/// node placed after it.
+#[test]
+fn a_forest_tree_is_drawn_with_its_nodes_and_edges() {
+    if !crate::support::installed() {
+        return;
+    }
+    let rows = typeset_rows("forest", "\\usepackage{forest}", "\\begin{forest}\n[A [B][C]]\n\\end{forest}");
+    let tree = rows.iter().map(|r| &r["sketch"]).find(|p| p.is_object());
+    let tree = tree.unwrap_or_else(|| panic!("a drawn tree: {rows:?}"));
+    let at = |name: &str| {
+        let t = tree["texts"].as_array().unwrap().iter().find(|t| t["text"] == name);
+        let t = t.unwrap_or_else(|| panic!("node {name}: {tree}"));
+        (t["x"].as_f64().unwrap(), t["y"].as_f64().unwrap())
+    };
+    let ((ax, ay), (bx, by), (cx, cy)) = (at("A"), at("B"), at("C"));
+    // the children stand on one line below the root (SVG's y grows down), one each side of it
+    assert!(by == cy && by > ay && bx < ax && ax < cx, "{tree}");
+    let edges = tree["paths"].as_array().unwrap();
+    assert_eq!(edges.len(), 2, "an edge to each child: {tree}");
+    // each edge runs from below the root's baseline down to above its child's
+    for e in edges {
+        let v: Vec<f64> = e["d"].as_str().unwrap().split(' ').filter_map(|w| w.parse().ok()).collect();
+        assert!(v[1] > ay - 1.0 && v[3] < by, "{tree}");
+    }
+    assert_eq!(tree["approximate"], false);
+}
+
 /// The char offset of byte offset `b` in `text`.
 fn text_offset(text: &[char], b: usize) -> usize {
     let mut bytes = 0;

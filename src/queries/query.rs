@@ -1310,25 +1310,38 @@ fn drawn_boxes(analysis: &Analysis) -> Vec<Drawn> {
         sites.get(i).is_none_or(|s| *s > key(to))
     };
     let mut out = Vec::new();
-    let mut open: Vec<(&str, Span)> = Vec::new();
+    // each open environment, and whether a picture its code ran (a `forest`'s) ended in it
+    let mut open: Vec<(&str, Span, bool)> = Vec::new();
     let mut written = written_by(analysis);
-    for o in analysis.facts.occurrences.iter().filter(|o| origin(analysis, o.span.file) == "document") {
+    // a build file read back (`.ind`, `.bbl`) draws nothing the document wrote
+    let ours = |o: &&crate::analysis::facts::Occurrence| {
+        origin(analysis, o.span.file) == "document" && analysis.project_file(o.span.file)
+    };
+    for o in analysis.facts.occurrences.iter().filter(ours) {
         match o.kind {
-            OccKind::BeginEnvironment => open.push((o.key.as_str(), o.span)),
+            OccKind::BeginEnvironment => open.push((o.key.as_str(), o.span, false)),
             OccKind::EndEnvironment => {
-                if let Some(k) = open.iter().rposition(|(name, _)| *name == o.key) {
-                    let (name, from) = open.remove(k);
-                    // What the picture drew, read from the literals the run wrote.
-                    let sketch = match name == "tikzpicture" && from.file == o.span.file {
-                        true => crate::queries::picture::draw(analysis, from, o.span).unwrap_or(Json::Null),
-                        false => Json::Null,
-                    };
+                if let Some(k) = open.iter().rposition(|(name, ..)| *name == o.key) {
+                    let (name, from, drew) = open.remove(k);
+                    let own = written(name, from);
+                    if name == "tikzpicture"
+                        && !own
+                        && let Some(outer) = open.last_mut()
+                    {
+                        outer.2 = true;
+                    }
                     // Text an environment reads back at its end (a frame) is placed after `\end{…}`.
                     let end = Span { col: o.span.col + format!("\\end{{{name}}}").len() as u32, ..o.span };
-                    if from.file == o.span.file && written(name, from) && (empty(from, end) || !sketch.is_null()) {
+                    // What the picture drew, read from the literals the run wrote.
+                    let sketch = match (name == "tikzpicture" || drew) && own && from.file == o.span.file {
+                        true => crate::queries::picture::draw(analysis, from, end).unwrap_or(Json::Null),
+                        false => Json::Null,
+                    };
+                    if from.file == o.span.file && own && (empty(from, end) || !sketch.is_null()) {
                         // An empty one holding others (a figure of one picture) stands for them.
                         out.retain(|d: &Drawn| !(key(d.0) > key(from) && key(d.3) < key(o.span)));
-                        out.push((from, name.to_string(), sketch, o.span, empty(from, o.span)));
+                        // a picture drawn at its `\end` (a tree) sets its text there
+                        out.push((from, name.to_string(), sketch, end, empty(from, if drew { end } else { o.span })));
                     }
                 }
             }
@@ -4531,7 +4544,9 @@ pub fn scope_named(
     }
     let shown = |row: &&ScopeRow| all || row.plain;
     let row = |i: usize| crate::util::progress::built(&rows.defs[i], || def_row(analysis, &analysis.facts.defs[i]));
-    let defs = latest.values().filter_map(|&i| row(i).as_ref()).filter(shown);
+    // an internal name is dropped before its row is built: most of a format's names are
+    let spelled = |&&i: &&usize| all || !internal_name(analysis, analysis.interner.name(analysis.facts.defs[i].name));
+    let defs = latest.values().filter(spelled).filter_map(|&i| row(i).as_ref()).filter(shown);
     let rest = rows.rest.iter().filter(|r| named(&r.name)).filter(shown);
     let mut out: Vec<&ScopeRow> = defs.chain(rest).collect();
     out.sort_by(|a, b| {

@@ -7,8 +7,6 @@
 # (none open)
 
 # == precision ==
-# owner: main (2026-11-18), listings keys: key_family does not reach \lstset through \csname lstlisting@\endcsname
-lsp::an_input_chapter_completes_refs_environments_and_listing_keys
 # owner: lintv (2026-11-18), facts: no Ref occurrence for a \ref in a command argument, accent occurrence in a footnote missed
 lint_contexts::prose_rules_find_their_trigger_in_footnotes
 # owner: Root L (W2), 7 paths

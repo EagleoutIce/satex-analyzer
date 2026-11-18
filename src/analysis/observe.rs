@@ -293,6 +293,33 @@ pub fn color_literal(m: &mut Machine, color: Option<(&[Token], bool)>, span: Spa
 /// operators follow: no PDF operator spells them.
 pub const POP_COLOR: &str = "%pop-color";
 pub const PUSH_COLOR: &str = "%push-color";
+/// The literal a box placed in a drawing stands as: `%place x y a:b …`, see [`placed`].
+pub const PLACE: &str = "%place";
+
+/// Whether the call running now drew the last literal, room left for more.
+pub fn drawing(m: &Machine) -> bool {
+    let at = m.file_call.map(|(_, at)| at);
+    m.out.facts.literals.last().is_some_and(|l| Some(l.at) == at) && m.out.facts.literals.len() < m.cfg.limits.facts
+}
+
+/// A box with text put on a horizontal list while the same call draws (pgf puts a node's
+/// text by `\hskip x \raise y \hbox{…}`): where its origin lands, `?` where not known,
+/// and the characters it holds. The picture's reader moves that text there.
+pub fn placed(m: &mut Machine, ranges: &[(u32, u32)], shift: crate::engine::mode::Dim) {
+    if ranges.is_empty() || m.list_kind() != Some(true) {
+        return;
+    }
+    let at = m.file_call.map(|(_, at)| at);
+    let pt = |v: Option<i64>| v.map_or("?".to_string(), |v| format!("{}", v as f64 / 65536.0));
+    let along = m.natural.and_then(|n| n.along.known());
+    let (at, chars) = (at.expect("drawing"), m.out.facts.text.at.len() as u32);
+    // the ranges count back from `chars`, so they move with it when a rerun shifts the text
+    let mut text = format!("{PLACE} {} {}", pt(along), pt(shift.known().map(|s| -s)));
+    for (a, b) in ranges {
+        text.push_str(&format!(" {}:{}", chars.saturating_sub(*a), chars.saturating_sub(*b)));
+    }
+    m.out.facts.literals.push(crate::analysis::facts::Literal { at, text, chars });
+}
 
 /// A `\pdfcolorstack` the run executed (pdfTeX manual § 8.9.8): `stack` is
 /// `None` when [`Machine::scan_int`] could not decide it.
@@ -686,12 +713,15 @@ fn line(m: &mut Machine, tokens: &[Token], span: Span) {
     let here = extent.as_ref().map(|(here, _)| *here);
     let own = extent.as_ref().map(|(_, text)| own_text(span, text));
     let mut list = String::new();
+    // A build file read back (`.aux` passing `\contentsline` on to the `.toc`)
+    // holds the run's own text, not keys the document gave.
+    let document = m.own_file(span.file);
     while let Some((group, end)) = group_span(tokens, at) {
         onward(m, &group, span, &list);
         let text = characters(&group).trim().to_string();
         list.clone_from(&text);
         // A line written onward carries its own keys.
-        if self::head(m, &group).is_none() {
+        if document && self::head(m, &group).is_none() {
             keys.extend(given(&group, span, here));
         }
         args.push(text);

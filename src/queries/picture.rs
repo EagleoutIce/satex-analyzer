@@ -5,12 +5,14 @@
 //! `h`) and painting (`S`, `s`, `f`, `F`, `f*`, `B`, `B*`, `b`, `b*`, `n`).
 //! pgf typesets a node's text before it draws the node's frame, so text
 //! stands at the middle of the next shape painted after it, else where
-//! the drawing stands at the end. A literal with a number the run did not know is left
-//! out, and the picture says it is approximate.
+//! the drawing stands at the end. A box the run put while drawing ([`PLACE`]) moves the
+//! text in it there, its baseline's left end, and a box placing it again moves it on.
+//! A literal with a number the run did not know is left out, and the picture says it is approximate.
 
 use serde_json::{Value, json};
 
 use crate::analysis::machine::Analysis;
+use crate::analysis::observe::PLACE;
 use crate::engine::tex::Span;
 
 /// A color's operands as `#rrggbb`: one gray, three RGB or four CMYK values in 0..1.
@@ -45,6 +47,9 @@ fn apply(m: Matrix, x: f64, y: f64) -> (f64, f64) {
     (m[0] * x + m[2] * y + m[4], m[1] * x + m[3] * y + m[5])
 }
 
+/// A text's characters, where it stands, its color, and whether a box placed it there.
+type Placed = ((u32, u32), f64, f64, Option<String>, bool);
+
 /// What one picture draws: its painted paths and placed texts, in points
 /// with y growing downwards as SVG has it.
 #[derive(Default)]
@@ -60,9 +65,10 @@ struct Canvas {
     /// The bounding box of the path being built.
     bounds: Option<[f64; 4]>,
     paths: Vec<Value>,
-    texts: Vec<Value>,
+    /// Each text's characters, where it stands, its color, and whether a box placed it there.
+    texts: Vec<Placed>,
     /// Text typeset that waits for the shape it goes into, with its color.
-    pending: Vec<(String, Option<String>)>,
+    pending: Vec<((u32, u32), Option<String>)>,
     box_all: Option<[f64; 4]>,
     approximate: bool,
 }
@@ -79,7 +85,9 @@ impl Canvas {
         if let Some(b) = self.bounds.take()
             && (stroke || fill)
         {
-            self.paths.push(json!({ "d": self.path.trim(), "stroke": stroke, "fill": fill, "width": self.width }));
+            let [s, f] = self.colors.clone();
+            let path = json!({ "d": self.path.trim(), "stroke": stroke, "fill": fill, "width": self.width, "strokeColor": s, "fillColor": f });
+            self.paths.push(path);
             self.place((b[0] + b[2]) / 2.0, (b[1] + b[3]) / 2.0);
             let all = self.box_all.get_or_insert(b);
             *all = [all[0].min(b[0]), all[1].min(b[1]), all[2].max(b[2]), all[3].max(b[3])];
@@ -90,7 +98,10 @@ impl Canvas {
     /// One literal's operators, operands before each. A color stack's
     /// push saves the colors before its operators set new ones, its pop
     /// brings them back.
-    fn run(&mut self, text: &str) {
+    fn run(&mut self, text: &str, chars: u32) {
+        if let Some(place) = text.strip_prefix(PLACE) {
+            return self.place_box(place, chars);
+        }
         if text == crate::analysis::observe::POP_COLOR {
             self.colors = self.color_stack.pop().unwrap_or_default();
             return;
@@ -197,18 +208,42 @@ impl Canvas {
         true
     }
 
-    fn text(&mut self, text: &str) {
-        let text = text.trim();
-        if !text.is_empty() {
-            self.pending.push((text.to_string(), self.colors[1].clone()));
+    fn text(&mut self, from: u32, to: u32) {
+        if from < to {
+            self.pending.push(((from, to), self.colors[1].clone()));
         }
     }
 
     /// The waiting text, at `(x, y)`.
     fn place(&mut self, x: f64, y: f64) {
-        let round = |v: f64| (v * 100.0).round() / 100.0;
-        for (text, color) in std::mem::take(&mut self.pending) {
-            self.texts.push(json!({ "text": text, "x": round(x), "y": round(-y), "color": color }));
+        for (range, color) in std::mem::take(&mut self.pending) {
+            self.texts.push((range, x, y, color, false));
+        }
+    }
+
+    /// `x y a:b …`: the text in the ranges (counted back from `chars`) moves by `(x, y)`,
+    /// to there where no box placed it yet. Unknown shifts, or a turned or scaled
+    /// drawing, leave it where it was and the picture approximate.
+    fn place_box(&mut self, place: &str, chars: u32) {
+        let mut words = place.split_whitespace();
+        let shift =
+            (words.next().and_then(|w| w.parse::<f64>().ok()), words.next().and_then(|w| w.parse::<f64>().ok()));
+        let ((Some(dx), Some(dy)), [1.0, 0.0, 0.0, 1.0, ..]) = (shift, self.ctm) else {
+            self.approximate = true;
+            return;
+        };
+        let (ox, oy) = apply(self.ctm, dx, dy);
+        let ranges: Vec<(u32, u32)> = words
+            .filter_map(|w| w.split_once(':'))
+            .filter_map(|(a, b)| Some((chars.checked_sub(a.parse().ok()?)?, chars.checked_sub(b.parse().ok()?)?)))
+            .collect();
+        let within = |r: (u32, u32)| ranges.iter().any(|&(a, b)| a <= r.0 && r.1 <= b);
+        let (inside, rest) = std::mem::take(&mut self.pending).into_iter().partition(|(r, _)| within(*r));
+        self.pending = rest;
+        self.texts.extend(inside.into_iter().map(|(r, c): ((u32, u32), _)| (r, 0.0, 0.0, c, false)));
+        for t in self.texts.iter_mut().filter(|t| within(t.0)) {
+            (t.1, t.2) = if t.4 { (t.1 + dx, t.2 + dy) } else { (ox, oy) };
+            t.4 = true;
         }
     }
 }
@@ -221,23 +256,50 @@ pub fn draw(analysis: &Analysis, from: Span, to: Span) -> Option<Value> {
     let literals: Vec<_> = analysis.facts.literals.iter().filter(|l| inside(l.at)).collect();
     let chars: Vec<char> = analysis.facts.text.chars.chars().collect();
     let mut canvas = Canvas { ctm: IDENTITY, width: 0.4, ..Canvas::default() };
-    for (i, literal) in literals.iter().enumerate() {
+    // A box placed after the drawing's last literal moves all of it (pgf puts the picture
+    // so): no text of its own.
+    let last = literals.iter().rposition(|l| !l.text.starts_with(PLACE)).unwrap_or(0);
+    for (i, literal) in literals.iter().enumerate().take(last + 1) {
         if literal.text.contains(|c: char| crate::engine::tex::is_unknown_char(c) || c == '\u{2}') {
             canvas.approximate = true;
             continue;
         }
         // What was typeset since the literal before goes into the next shape.
-        let before = i.checked_sub(1).map_or(literal.chars, |j| literals[j].chars) as usize;
-        let set: String = chars.get(before..literal.chars as usize).unwrap_or_default().iter().collect();
-        canvas.text(&set);
-        canvas.run(&literal.text);
+        let before = i.checked_sub(1).map_or(literal.chars, |j| literals[j].chars);
+        canvas.text(before, literal.chars);
+        canvas.run(&literal.text, literal.chars);
     }
     let (x, y) = apply(canvas.ctm, 0.0, 0.0);
     canvas.place(x, y);
+    // a placed text stands inside the picture, from its baseline up about a 10pt line's ascent
+    for t in canvas.texts.iter().filter(|t| t.4) {
+        let all = canvas.box_all.get_or_insert([t.1, t.2, t.1, t.2]);
+        *all = [all[0].min(t.1), all[1].min(t.2), all[2].max(t.1), all[3].max(t.2 + 7.0)];
+    }
     let b = canvas.box_all?;
+    let round = |v: f64| (v * 100.0).round() / 100.0;
+    // a box placed with text that never reached the page (forest's calibration node) drew nothing
+    let mut shipped = vec![false; canvas.texts.len()];
+    for r in &analysis.facts.text.placed {
+        for (k, t) in canvas.texts.iter().enumerate() {
+            shipped[k] |= r.0 < t.0.1 && t.0.0 < r.1;
+        }
+    }
+    let texts: Vec<Value> = (canvas.texts.iter().zip(shipped))
+        .filter(|(t, shipped)| *shipped || !t.4)
+        .filter_map(|(((from, to), x, y, color, base), _)| {
+            let text: String = chars.get(*from as usize..*to as usize)?.iter().collect();
+            let text = text.trim();
+            let mut at = json!({ "text": text, "x": round(*x), "y": round(-y), "color": color });
+            if *base {
+                at["base"] = json!(true);
+            }
+            (!text.is_empty()).then_some(at)
+        })
+        .collect();
     Some(json!({
         "paths": canvas.paths,
-        "texts": canvas.texts,
+        "texts": texts,
         "box": [b[0], -b[3], b[2] - b[0], b[3] - b[1]],
         "approximate": canvas.approximate,
     }))

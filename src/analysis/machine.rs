@@ -3722,6 +3722,7 @@ impl<'a> Machine<'a> {
         m.out.plugins.depp = crate::plugins::depp::Depp::read(&m.out);
         m.say_clock();
         m.out.timings.finish();
+        m.link_csname_calls();
         m.out.calls.finish();
         m.out.observed.finish();
         crate::analysis::observe::relate(&mut m);
@@ -7217,6 +7218,43 @@ will look undefined",
         };
         if written {
             self.out.observed.add(source, sym);
+        }
+    }
+
+    /// Calls a body makes through `\csname…\endcsname` of characters
+    /// (`\csname lstlisting@\endcsname`), added at the run's end when every
+    /// name is interned: only names the run knows, so no name is made.
+    /// A name the body defines (`\expandafter\def\csname…`) is no call.
+    fn link_csname_calls(&mut self) {
+        let prim = |m: &Self, t: &Token| t.cs().and_then(|cs| m.env.meaning(cs).prim());
+        let mut edges = Vec::new();
+        for &name in &self.out.calls.nodes {
+            let Some(m) = self.env.meaning(name).as_macro().cloned() else { continue };
+            let body = &m.replacement_text;
+            for (i, token) in body.iter().enumerate() {
+                if prim(self, token) != Some(Primitive::Csname) {
+                    continue;
+                }
+                let defines = body[..i]
+                    .iter()
+                    .rev()
+                    .find(|u| prim(self, u) != Some(Primitive::ExpandAfter))
+                    .is_some_and(|u| matches!(prim(self, u), Some(Primitive::Def { .. } | Primitive::Let { .. })));
+                let chars: Option<String> = body[i + 1..]
+                    .iter()
+                    .take_while(|u| prim(self, u) != Some(Primitive::Endcsname))
+                    .map(|u| match u.tok {
+                        Tok::Chr(c, _) => Some(c),
+                        _ => None,
+                    })
+                    .collect();
+                if let Some(callee) = chars.filter(|_| !defines).and_then(|c| self.out.interner.lookup(&c)) {
+                    edges.push((name, callee));
+                }
+            }
+        }
+        for (name, callee) in edges {
+            self.out.calls.add(name, callee);
         }
     }
 

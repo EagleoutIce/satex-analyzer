@@ -6346,3 +6346,17 @@ fn an_input_chapter_completes_refs_environments_and_listing_keys() {
     server.shutdown();
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// Intuition: a float's `[…]` is a placement, not a key list: `h`, `t`, `b`, `p`, `!` are
+/// offered, each letter once. Pins: `\begin{table}[ht]` completed nothing.
+#[test]
+fn a_float_placement_completes_the_letters_not_yet_typed() {
+    let text = "\\documentclass{article}\n\\begin{document}\n\\begin{table}[ht]\nx\n\\end{table}\n\\end{document}\n";
+    let (mut server, uri, _, dir) = open_loaded("placement", text);
+    let items = complete(&mut server, &uri, 2, 16);
+    let got = labels(&items);
+    assert!(got.contains(&"b") && got.contains(&"p") && got.contains(&"!"), "{got:?}");
+    assert!(!got.contains(&"h") && !got.contains(&"t"), "{got:?}");
+    server.shutdown();
+    let _ = std::fs::remove_dir_all(&dir);
+}

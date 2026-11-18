@@ -1895,6 +1895,15 @@ pub(super) fn bracket_keys(analysis: &Analysis, doc: &Text, arg: &Arg) -> Vec<Co
         }
     }
     let mut items = option_items(analysis, &target);
+    // A float's `[…]` takes placement letters, each once.
+    if items.is_empty() && material(analysis, &target) == Some(super::dialogs::FLOAT) {
+        let typed = arg.inside;
+        let letters = super::dialogs::letters(analysis).into_iter().filter(|(c, _)| !typed.contains(*c));
+        return letters
+            .enumerate()
+            .map(|(i, (c, why))| item(c.to_string(), CompletionItemKind::VALUE, Some(why.to_string()), i))
+            .collect();
+    }
     // An optional argument with a default offers it; a numeric default
     // makes it a count (`\newcommand`'s `[0]`): the counts follow.
     if items.is_empty()

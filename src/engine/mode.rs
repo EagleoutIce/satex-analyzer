@@ -146,6 +146,8 @@ pub struct Nest {
     pub placed: bool,
     /// How many characters the document had set when the group opened.
     pub from: u32,
+    /// How many ranges boxes used before carried when it opened: the rest are its own.
+    pub carried: u32,
     /// An `\halign`'s rows, or a `\noalign` in one.
     pub align: Option<Align>,
     /// How many conditionals were open when the group opened.
@@ -203,6 +205,7 @@ impl Nest {
             natural: join_natural(self.natural, other.natural),
             placed: self.placed && other.placed,
             from: self.from.min(other.from),
+            carried: self.carried.min(other.carried),
             conds: self.conds.min(other.conds),
             align: match (self.align, other.align) {
                 (Some(a), Some(b)) => Some(a.join(b)),
@@ -2318,6 +2321,7 @@ impl Machine<'_> {
             natural: self.natural,
             placed: false,
             from: self.out.facts.text.at.len() as u32,
+            carried: self.carried_chars.len() as u32,
             align: None,
             conds: self.conds.len() as u32,
         }
@@ -2572,7 +2576,7 @@ impl Machine<'_> {
         let now = self.out.facts.text.at.len() as u32;
         let inside = nest.list.within(Modes::INTERNAL_VERTICAL.union(Modes::RESTRICTED_HORIZONTAL));
         if let Some((register, global, within)) = nest.target {
-            let ranges = self.gather_chars(nest.from, now);
+            let ranges = self.gather_chars(&nest, now);
             self.set_aside(nest.from, now);
             self.set_box_chars(register, ranges, global);
             self.set_box(register, kind, global, within);
@@ -2635,7 +2639,10 @@ impl Machine<'_> {
                 }
             }
         } else if nest.placed {
-            let own = self.gather_chars(nest.from, now);
+            let own = self.gather_chars(&nest, now);
+            if crate::analysis::observe::drawing(self) {
+                crate::analysis::observe::placed(self, &own, nest.shift);
+            }
             self.place_chars(own, inside);
             let dims = self.shifted(dims, nest.shift);
             self.note_content(&Item::Box(dims));
@@ -2745,7 +2752,7 @@ impl Machine<'_> {
             }
         } else if nest.part == SHIPPED {
             // its text and the boxes used in it reach the page
-            let own = self.gather_chars(nest.from, now);
+            let own = self.gather_chars(&nest, now);
             self.place_chars(own, false);
             self.ship_pending();
             if kind == BoxState::Unknown {
@@ -7267,8 +7274,10 @@ impl Machine<'_> {
     /// What a box made from `from` to `now` holds, in the order of its list:
     /// boxes made earlier and used in it first, then what was set in it and
     /// the boxes made in it, as set.
-    fn gather_chars(&mut self, from: u32, now: u32) -> Vec<(u32, u32)> {
-        let carried = std::mem::take(&mut self.carried_chars);
+    fn gather_chars(&mut self, nest: &Nest, now: u32) -> Vec<(u32, u32)> {
+        let from = nest.from;
+        // the boxes used in it since it opened: those before travel with the enclosing box
+        let carried = self.carried_chars.split_off((nest.carried as usize).min(self.carried_chars.len()));
         let (mut ranges, mut within): (Vec<_>, Vec<_>) = carried.into_iter().partition(|r| r.0 < from);
         // no text of its own, boxes made before used in it, rules both ways at its place: a frame around them
         let text = &mut self.out.facts.text;

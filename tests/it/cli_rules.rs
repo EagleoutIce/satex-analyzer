@@ -102,15 +102,23 @@ fn silent_stdin_gets_a_note() {
         .spawn()
         .unwrap();
     let mut stderr = child.stderr.take().unwrap();
+    // stdout drains on its own thread: a child blocked writing a full pipe
+    // would never close stderr, and reading stderr to its end would hang
+    let mut stdout = child.stdout.take().unwrap();
+    let drained = std::thread::spawn(move || {
+        let mut out = String::new();
+        stdout.read_to_string(&mut out).map(|_| out)
+    });
     // the note's first byte, then close stdin
     let mut first = [0u8; 1];
     stderr.read_exact(&mut first).unwrap();
     drop(child.stdin.take());
     let mut rest = String::new();
     stderr.read_to_string(&mut rest).unwrap();
-    let out = child.wait_with_output().unwrap();
+    child.wait().unwrap();
+    let out = drained.join().unwrap().unwrap();
     assert!(rest.contains("reading the document from stdin"), "{rest}");
-    assert!(String::from_utf8_lossy(&out.stdout).contains("main.tex"));
+    assert!(out.contains("main.tex"));
 }
 
 /// `satex cache` and its subcommands never read stdin, so an open pipe does

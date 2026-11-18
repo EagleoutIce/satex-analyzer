@@ -8220,11 +8220,18 @@
     const font = f.family;
     ctx.font = `${size}px ${font}`;
     const width = (t) => ctx.measureText(t).width;
-    const laid = PE.relaid(row.map((x) => [x[1], x[3], x[5]]), k, lead + now + tail, width), [l, r] = [w[1], Math.max(row.at(-1)[3], laid.at(-1)[1])];
-    const words = laid.slice(k).map(([a, b, t]) => `<i style="left:${(a - l) / (r - l) * 100}%;width:${(b - a) / (r - l) * 100}%"><span style="transform:scaleX(${(b - a) / Math.max(0.1, width(t))})">${escape(t)}</span></i>`).join('');
+    const laid = PE.relaid(row.map((x) => [x[1], x[3], x[5]]), k, lead + now + tail, width);
+    // a centered row (a caption, `\centering`: as far from its line box's edges on both sides) stays centered: the
+    // whole row moves by half the change, the words before the caret's redrawn too
+    const all = pdfImgWords(img).filter((x) => Math.abs(x[4] - w[4]) < 1).sort((a, b) => a[1] - b[1]), before = all.filter((x) => x[1] < w[1] - 0.5);
+    const hb = ((img.__build ?? pdf)?.boxes ?? []).filter((y) => y.kind === '(' && y.page === w[0] && y.y >= w[2] && y.y <= w[4] + 0.5 && y.x - 1 <= all[0][1] && all.at(-1)[3] <= y.x + y.w + 1).sort((p, q) => p.w - q.w)[0];
+    const gap = hb ? all[0][1] - hb.x : 0, c = hb && gap > 4 && Math.abs(gap - (hb.x + hb.w - all.at(-1)[3])) < 2 ? (laid.at(-1)[1] - row.at(-1)[3]) / 2 : 0;
+    const set = (c ? [...before.map((x) => [x[1], x[3], x[5]]), ...laid] : laid.slice(k)).map(([a, b, t]) => [a - c, b - c, t]);
+    const [l, r] = [Math.min(c ? all[0][1] : w[1], set[0][0]), Math.max(row.at(-1)[3], set.at(-1)[1])];
+    const words = set.map(([a, b, t]) => `<i style="left:${(a - l) / (r - l) * 100}%;width:${(b - a) / (r - l) * 100}%"><span style="transform:scaleX(${(b - a) / Math.max(0.1, width(t))})">${escape(t)}</span></i>`).join('');
     img.parentElement.insertAdjacentHTML('beforeend', `<span class="pdf-echo" style="left:${l / pw * 100}%;top:${w[2] / ph * 100}%;width:${(r - l + 1) / pw * 100}%;height:${(w[4] - w[2]) / ph * 100}%;font:${size * px}px/1 ${font}">${words}</span>`);
     const [a, b, t] = laid[k];
-    return a + (b - a) * width(lead + now.slice(0, into)) / Math.max(0.1, width(t));
+    return a - c + (b - a) * width(lead + now.slice(0, into)) / Math.max(0.1, width(t));
   }
   let pdfEchoCtx = null, pdfInkCanvas = null;
   /** Word `w`'s caret stops on page image `img`, in bp: its character boundaries as the echo font spaces them, each

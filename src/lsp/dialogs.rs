@@ -164,7 +164,7 @@ pub fn hover_link(analysis: &Analysis, doc: &Text, path: &str, uri: &str, pos: P
 }
 
 /// [`super::handlers::material`]'s index of a float.
-const FLOAT: usize = 3;
+pub(super) const FLOAT: usize = 3;
 
 /// The placement `[…]` at the start of `s` (spaces before it allowed) and the bytes up to its `]`.
 fn placement(s: &str) -> Option<(String, usize)> {
@@ -176,7 +176,7 @@ fn placement(s: &str) -> Option<(String, usize)> {
 
 /// The placement letters `\@xfloat` tests (latex.ltx), with what each lets LaTeX do; `H` when the
 /// run defined float.sty's `\@float@HH`. A seed table: the letters' meaning is prose, not run data.
-fn letters(analysis: &Analysis) -> Vec<(char, &'static str)> {
+pub(super) fn letters(analysis: &Analysis) -> Vec<(char, &'static str)> {
     let mut out = vec![
         ('h', "here, where it stands, if it fits there (a lone `h` becomes `ht`)"),
         ('t', "at the top of a page, at most `topnumber` floats taking at most `\\topfraction` of it"),

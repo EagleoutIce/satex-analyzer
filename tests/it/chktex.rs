@@ -2036,3 +2036,21 @@ fn an_illegal_parameter_number_is_reported_at_the_definition() {
     let Some(analysis) = latex_file("hash-ok.tex", ok) else { return };
     assert!(!findings(&analysis, "raised-error").iter().any(|m| m.contains("Illegal parameter")));
 }
+
+/// Intuition: an entry key is text the document gave a writing call (`\index{x}`). The
+/// `.aux` read back at the end passes `\contentsline{section}{…}{1}` on to the `.toc`; that is
+/// the run's own text. Pins: "section" and "1" showed up as index entries in the `.aux`.
+#[test]
+fn a_contents_line_read_back_from_the_aux_is_no_entry() {
+    let source = "\\documentclass{article}\n\\begin{document}\n\\tableofcontents\n\\section{A}\n\\subsection{B}\n\\end{document}\n";
+    let Some(doc) = on_disk("aux-entries", source, true) else { return };
+    let entries: Vec<&str> = doc
+        .analysis
+        .facts
+        .occurrences
+        .iter()
+        .filter(|o| o.kind == satex::engine::builtins::OccKind::Entry)
+        .map(|o| o.key.as_str())
+        .collect();
+    assert!(entries.is_empty(), "{entries:?}");
+}
