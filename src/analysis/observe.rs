@@ -412,21 +412,16 @@ fn call_parts(m: &mut Machine, span: Span) -> std::rc::Rc<[String]> {
     parts
 }
 
-/// The contents of the braced arguments in `text`.
+/// The contents of the braced groups in `text`, at every depth: a key in an argument's
+/// argument (`\textbf{see \ref{a}}`) is a part too.
 fn argument_parts(text: &str) -> Vec<String> {
     let mut parts = Vec::new();
-    let (mut depth, mut start) = (0usize, 0usize);
+    let mut open: Vec<usize> = Vec::new();
     for (at, c) in text.char_indices() {
         match c {
-            '{' => {
-                depth += 1;
-                if depth == 1 {
-                    start = at + 1;
-                }
-            }
-            '}' if depth > 0 => {
-                depth -= 1;
-                if depth == 0 {
+            '{' => open.push(at + 1),
+            '}' => {
+                if let Some(start) = open.pop() {
                     parts.push(text[start..at].trim().to_string());
                 }
             }
