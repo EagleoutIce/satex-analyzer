@@ -1,4 +1,4 @@
-\section{Background}\label{sec:background}
+\section[Background]{Background and Motivation}\label{sec:background}
 Literate programming~\cite{knuth84} and the \TeX book~\cite{knuth86}
 come first. Section~\ref{sec:background} says why, and
 Sections~\ref{sec:listings} and~\ref{sec:pictures} show code and a picture.
@@ -23,5 +23,28 @@ Figure~\ref{fig:flow} draws the pipeline.
     \draw[->] (tex) -- (satex);
     \draw[->] (satex) -- (out);
   \end{tikzpicture}
-  \caption{From source to findings}\label{fig:flow}
+  \caption[The pipeline]{From source to findings: \TeX{} reads, SaTeX checks}\label{fig:flow}
 \end{figure}
+
+\subsection{Cost}\label{sec:cost}
+A run of $n$ lines with $k$ paths costs
+\begin{equation}\label{eq:cost}
+  T(n, k) = \sum_{i=1}^{n} c_i \cdot k_i \le c_{\max}\, n k ,
+\end{equation}
+so Equation~\eqref{eq:cost} bounds it by the longest line.
+Joining two paths keeps both meanings:
+\begin{align}
+  m(p \sqcup q) &= m(p) \cup m(q), \label{eq:join}\\
+  |m(p \sqcup q)| &\le |m(p)| + |m(q)| .
+\end{align}
+Table~\ref{tab:runs} lists measured runs.
+\begin{table}[ht]
+  \centering
+  \begin{tabular}{lrr}
+    Document & Lines & Seconds \\
+    \hline
+    article & 800 & 1.6 \\
+    book & 3200 & 6.7 \\
+  \end{tabular}
+  \caption[Measured runs]{Measured runs of SaTeX on generated documents}\label{tab:runs}
+\end{table}

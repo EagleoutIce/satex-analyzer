@@ -1,4 +1,5 @@
 \documentclass{article}
+\usepackage{amsmath}
 \usepackage{listings}
 \usepackage{tikz}
 \usepackage{makeidx}
@@ -8,7 +9,24 @@
 \newglossaryentry{tex}{name={\TeX}, description={the typesetting system by Knuth}}
 \newglossaryentry{satex}{name={SaTeX}, description={a checker that reads the document the way \TeX{} does}}
 \lstset{basicstyle=\ttfamily\small, columns=fullflexible}
+\title{Reading \TeX{} the Way \TeX{} Does}
+\author{A.\ Student}
+\date{November 2026}
 \begin{document}
+\begin{titlepage}
+  \centering
+  {\Large A thesis on static analysis\par}
+  \vspace{2cm}
+  {\huge\bfseries Reading \TeX{} the Way \TeX{} Does\par}
+  \vspace{1.5cm}
+  {\large A.\ Student\par}
+  \vfill
+  {\large November 2026\par}
+\end{titlepage}
+\tableofcontents
+\listoffigures
+\listoftables
+\clearpage
 \input{chapter}
 \section{Terms}
 \Gls{satex} reads the \gls{tex} source\index{source} and reports what it finds\index{finding}.
@@ -18,5 +36,5 @@ The macro\index{macro} definitions it sees are the ones \gls{tex} expands.
 \bibliographystyle{plain}
 \bibliography{refs}
 % satex checks this on every path: the thesis stays short
-%\satex@assert{\thepage < 5 and \value{section} >= 1}
+%\satex@assert{\thepage < 9 and \value{section} >= 1}
 \end{document}

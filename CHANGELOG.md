@@ -34,6 +34,7 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 
 ### Playground
 
+- `feat` **Rule cards in the findings list.** Resting on or focusing a finding shows its message over the rule's full card (explanation, number, category, severity, fix kind, since).
 - `feat` **Drag a column's width.** Dragging a column edge in the PDF or the table widget writes `p{…}`, keeping `c`/`r` alignment, snapped to 0.5 mm or `\linewidth` shares.
 - `feat` **Typing in TikZ nodes.** Clicking a node's text in the PDF puts the caret there, and typing edits the node in the source.
 - `feat` **Typing in tables.** Tab and Shift+Tab move between cells, Enter adds a row. Typeset cells get TeX's padding.
@@ -86,6 +87,7 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 
 ### Site and docs
 
+- `feat` **A fuller thesis example.** Title page, table of contents, lists of figures and tables, short titles and captions, equations with `\eqref` and an `align`.
 - `feat` **Landing page.** A typing animation shows the Type mode and becomes the live editor on click. Showcase cards turn in a carousel, the front page ring turns a card every 8 s.
 - `feat` **When a site was built.** Hovering the version shows the build time to the minute.
 - `fix` **Showcase carousel back.** The landing page's cards turn on a ring again, each frame hugging its capture; phones keep the stacked grid.
