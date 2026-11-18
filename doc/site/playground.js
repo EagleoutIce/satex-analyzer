@@ -900,7 +900,8 @@
     let early = running > 0;
     asked.get(k).then(() => { if (early && document.querySelector('.cm-tooltip-autocomplete') && k.endsWith(`|${version}|${position.line}:${position.character}`)) editor.complete?.(); });
     if (early) return now;
-    return Promise.race([asked.get(k), new Promise((done) => setTimeout(() => { early = true; done(now); }, INSTANT_MS))]);
+    // an empty answer (the server's last run has not read this place yet) leaves the kept items standing
+    return Promise.race([asked.get(k).then((r) => r.length ? r : now), new Promise((done) => setTimeout(() => { early = true; done(now); }, INSTANT_MS))]);
   }
   /** The last hover of each command, by file: shown at once while a run goes on. */
   const keptHovers = new Map();
