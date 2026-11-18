@@ -358,7 +358,7 @@ fn hand_written_reference(report: &mut Report) {
         // The space between is the source's ` ` or `~`, whatever the run
         // set for it.
         let typed = (start..end).filter(|&k| k != word_end).all(|k| {
-            view.is_prose_text(k)
+            view.is_word_prose(k)
                 && view.span(k).is_some_and(|s| {
                     s.file == first.file && s.line == first.line && s.col == first.col + (k - start) as u32
                 })
@@ -532,7 +532,7 @@ fn hand_written_author(report: &mut Report) {
         // The name is prose the document set, not math, verbatim or a heading's argument read twice.
         let prose = |from: usize| {
             let at = Span { file: span.file, line: span.line, col: col(from) };
-            view.at_span(at).is_some_and(|i| view.is_prose_text(i)).then_some(at)
+            view.at_span(at).is_some_and(|i| view.is_word_prose(i)).then_some(at)
         };
         let Some(typed) = spellings(&names).into_iter().find(|s| {
             before.strip_suffix(s.as_str()).is_some_and(|b| !b.chars().last().is_some_and(char::is_alphanumeric))
@@ -625,7 +625,7 @@ fn et_al(report: &mut Report) {
     let mut seen = HashSet::default();
     let mut findings = Vec::new();
     for i in 0..view.len() {
-        if !matches!(view.char_at(i), Some('e' | 'E')) || view.char_at(i + 1) != Some('t') || !view.is_prose_text(i) {
+        if !matches!(view.char_at(i), Some('e' | 'E')) || view.char_at(i + 1) != Some('t') || !view.is_word_prose(i) {
             continue;
         }
         let Some(at) = view.span(i).filter(|s| seen.insert(*s)) else { continue };
@@ -637,7 +637,7 @@ fn et_al(report: &mut Report) {
         let words = line[..byte].chars().last().is_some_and(char::is_alphanumeric)
             || line[byte + end..].chars().next().is_some_and(char::is_alphanumeric);
         let col = |k: usize| at.col + line[byte..byte + k].chars().count() as u32;
-        let prose = |k: usize| view.at_span(Span { col: col(k), ..at }).is_some_and(|v| view.is_prose_text(v));
+        let prose = |k: usize| view.at_span(Span { col: col(k), ..at }).is_some_and(|v| view.is_word_prose(v));
         // `etal` without a gap or a period is no `et al.` at all.
         if words || (gap.is_empty() && dot.is_empty()) || !prose(al_start) {
             continue;

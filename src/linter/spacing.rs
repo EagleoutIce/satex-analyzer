@@ -9,7 +9,7 @@ use crate::analysis::machine::Analysis;
 use crate::engine::builtins::OccKind;
 use crate::engine::mode::Modes;
 use crate::engine::tex::{Span, Sym};
-use crate::linter::fix::{Applicability, Edit, Edits, Fix, Pos, Text};
+use crate::linter::fix::{Applicability, Edit, Fix, Pos, Text};
 use crate::linter::text::{PUNCTUATION, Rewrite, View};
 use crate::linter::{Category, Ref, Report, Rule, Severity, Source};
 
@@ -199,9 +199,10 @@ right, and reports a space inside the parentheses only where a real space
 token became glue.  A missing space is the noisier half, because `word(s)` is
 ordinary English, so those findings come as notes.
 
-Code shown as text is not prose.  The rule skips text in the typewriter
-family (`\\ttdefault`) and a call: a `(` right after a name, around a list of
-single words or nothing, as in `plot(x, y)` or `c(1, 2, 3)`.  What an
+Code shown as text is not prose.  Every prose rule skips text in math, in
+verbatim and in the typewriter family (`\\ttdefault`, as `\\texttt` and
+`\\url` set), and this one a call too: a `(` right after a name, around a
+list of single words or nothing, as in `plot(x, y)` or `c(1, 2, 3)`.  What an
 undefined command or environment leaves behind is unknown code as well, so
 every prose rule skips it: the command's arguments and the rest of its
 statement or line, an environment's body up to its `\\end`.
@@ -254,12 +255,12 @@ fn space_before(analysis: &Analysis, source: &Text, span: Span) -> Option<(Span,
     analysis.facts.spaces.get(&at).map(|modes| (at, 1, *modes))
 }
 
-/// [`space_before`] `span` where it became glue, with the path and text of
-/// the file it stands in.
-fn glue_before(analysis: &Analysis, edits: &Edits<'_>, span: Span) -> Option<(String, Rc<Text>, Span, u32)> {
-    let (path, source) = edits.text(span.file)?;
-    let (at, width, modes) = space_before(analysis, &source, span)?;
-    glue(modes).then_some((path, source, at, width))
+/// [`space_before`] `span` where it became glue in prose, with the path
+/// and text of the file it stands in.
+fn glue_before(report: &Report, span: Span) -> Option<(String, Rc<Text>, Span, u32)> {
+    let (path, source) = report.edits().text(span.file)?;
+    let (at, width, modes) = space_before(report.analysis, &source, span)?;
+    (glue(modes) && report.text().prose_at(at)).then_some((path, source, at, width))
 }
 
 fn write_over(path: &str, at: Span, width: u32, with: &str) -> Vec<Edit> {
@@ -316,7 +317,7 @@ fn command_terminated_space(report: &mut Report) {
         }
         let after = Span { file: span.file, line: span.line, col: next as u32 + 1 };
         let Some(i) = view.at_span(after) else { continue };
-        if !view.char_at(i).is_some_and(char::is_alphanumeric) || !view.is_prose_text(i) {
+        if !view.char_at(i).is_some_and(char::is_alphanumeric) || !view.is_word_prose(i) {
             continue;
         }
         // Anything set in a box of its own stands apart from the word: both sides in one
@@ -402,7 +403,6 @@ fn sites(
 fn missing_nonbreaking_space(report: &mut Report) {
     let analysis = report.analysis;
     let ties = &analysis.settings.conventions.ties;
-    let edits = report.edits();
     let naming: HashSet<Span> = analysis
         .facts
         .expansions
@@ -414,7 +414,7 @@ fn missing_nonbreaking_space(report: &mut Report) {
         if naming.contains(&span) {
             continue;
         }
-        let Some((path, source, at, width)) = glue_before(analysis, &edits, span) else { continue };
+        let Some((path, source, at, width)) = glue_before(report, span) else { continue };
         // A tie only helps where a word stands in front of the space.
         let line: Vec<char> = source.line(at.line).chars().collect();
         let word = at.col.checked_sub(2).and_then(|k| line.get(k as usize)).copied();
@@ -446,7 +446,7 @@ fn plain_space(report: &Report, index: usize) -> bool {
     let view = report.text();
     let Some(span) = view.span(index) else { return false };
     view.char_at(index) == Some(' ')
-        && view.is_prose_text(index)
+        && view.is_word_prose(index)
         && report.analysis.facts.spaces.contains_key(&span)
         && glue(view.modes(index))
 }
@@ -466,13 +466,13 @@ fn sentence_spacing(report: &mut Report) {
     let mut findings = Vec::new();
     for (byte, _) in view.chars().match_indices('.') {
         let i = view.at(byte);
-        if !view.is_prose(i) || !plain_space(report, i + 1) {
+        if !view.is_word_prose(i) || !plain_space(report, i + 1) {
             continue;
         }
-        let before = i.checked_sub(1).and_then(|k| view.char_at(k));
+        let before = i.checked_sub(1).and_then(|k| view.text_char(k));
         // What follows in another box (an `\item` label) or paragraph is
         // not the rest of this sentence.
-        let next = view.char_at(i + 2).filter(|_| view.beside(i + 1) && view.beside(i + 2));
+        let next = view.text_char(i + 2).filter(|_| view.beside(i + 1) && view.beside(i + 2));
         let (Some(before), Some(after)) = (before, next) else { continue };
         // tex.web § 1034: two capitals hold the space factor below 1000, so
         // the period cannot raise it and the space stays a word space.
@@ -542,14 +542,9 @@ fn sentence_capital(report: &mut Report) {
     let mut findings = Vec::new();
     for (byte, mark) in view.chars().match_indices(['.', '!', '?']) {
         let i = view.at(byte);
-        let Some(next) = view.char_at(i + 2).filter(|c| c.is_lowercase()) else { continue };
-        // the word after it is prose too: `$x$` after `?` is a formula, no sentence start
-        if !view.is_prose(i)
-            || view.math(i + 2)
-            || !plain_space(report, i + 1)
-            || !view.beside(i + 1)
-            || !view.beside(i + 2)
-        {
+        // `$x$` or `\texttt{x}` after `?` is no word, so no sentence start.
+        let Some(next) = view.text_char(i + 2).filter(|c| c.is_lowercase()) else { continue };
+        if !view.is_word_prose(i) || !plain_space(report, i + 1) || !view.beside(i + 1) || !view.beside(i + 2) {
             continue;
         }
         if mark == "." && (view.char_at(i.wrapping_sub(1)) == Some('.') || !ends_sentence(report, i)) {
@@ -593,10 +588,9 @@ fn rewrite_space(range: std::ops::Range<usize>, name: &str, message: String, wan
 
 fn space_before_command(report: &mut Report) {
     let analysis = report.analysis;
-    let edits = report.edits();
     let ties = &analysis.settings.conventions.ties;
     for (span, what) in sites(analysis, report.text(), &[OccKind::Label], &[&ties.unspaced, &ties.footnote], true) {
-        let Some((path, _, at, width)) = glue_before(analysis, &edits, span) else { continue };
+        let Some((path, _, at, width)) = glue_before(report, span) else { continue };
         let footnote = ties.footnote.contains(&what);
         let cost = match footnote {
             true => "so the mark can be set away from the word it belongs to",
@@ -626,7 +620,7 @@ fn space_before_punctuation(report: &mut Report) {
         if mark == ':' && matches!(view.char_at(i + 2), Some(':' | '=')) {
             continue;
         }
-        if !plain_space(report, i) || !view.is_ours(i + 1) {
+        if !plain_space(report, i) || !view.is_word_prose(i + 1) {
             continue;
         }
         let message = format!("space before `{mark}`: it stands between the word and the mark");
@@ -648,7 +642,7 @@ fn double_space(report: &mut Report) {
             continue;
         }
         if !analysis.settings.conventions.ties.hard.contains(&analysis.interner.cs(expansion.name))
-            || view.code_at(span)
+            || !view.prose_at(span)
         {
             continue;
         }
@@ -665,7 +659,7 @@ fn double_space(report: &mut Report) {
                 .filter(|modes| glue(**modes) && line.get(end as usize - 1) == Some(&' '))
                 .map(|modes| (at, 1, *modes));
         }
-        if let Some((at, width, _)) = found {
+        if let Some((at, width, _)) = found.filter(|(at, ..)| view.prose_at(*at)) {
             ties.push((at, width, path));
         }
     }
@@ -703,14 +697,12 @@ fn double_space(report: &mut Report) {
 
 fn parenthesis_spacing(report: &mut Report) {
     let view = report.text();
-    let mono = crate::linter::shared::macro_text(report.analysis(), "ttdefault");
     let mut code = HashSet::default();
     let mut findings = Vec::new();
-    for i in view.prose_text() {
+    for i in view.word_prose() {
         let Some(paren) = view.char_at(i).filter(|c| matches!(c, '(' | ')')) else { continue };
-        // Code shown as text: set in the typewriter family, or a call.
-        let typewriter = view.font(i).is_some_and(|f| mono.as_deref() == Some(&*f.family));
-        if typewriter || code.contains(&i) {
+        // Code shown as text: a call ([`View::word_prose`] skips the typewriter family).
+        if code.contains(&i) {
             continue;
         }
         if let Some(close) = call(view, i) {
@@ -750,7 +742,7 @@ fn parenthesis_spacing(report: &mut Report) {
             false => (i.saturating_sub(32)..i).rev().find_map(partner),
         }
         .unwrap_or(false);
-        if !one_word && outside.filter(|&k| near(k)).and_then(|k| view.char_at(k)).is_some_and(char::is_alphabetic) {
+        if !one_word && outside.filter(|&k| near(k)).and_then(|k| view.text_char(k)).is_some_and(char::is_alphabetic) {
             let side = if open { "in front of" } else { "after" };
             let message = format!("missing space {side} the `{paren}`: it is set against the word");
             let want = if open { format!(" {paren}") } else { format!("{paren} ") };

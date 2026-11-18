@@ -92,8 +92,8 @@ fn wrong_dash(report: &mut Report) {
     let mut findings = Vec::new();
     let mut i = 0;
     while i < view.len() {
-        // A hyphen the run read verbatim is program text, not a dash.
-        if view.code(i) {
+        // A hyphen in code, a key or a URL is no dash.
+        if !view.is_prose_or_formula(i) {
             i += 1;
             continue;
         }
@@ -150,8 +150,9 @@ fn quantity_around(view: &View, quantities: &HashSet<Span>, start: usize, end: u
 fn run(analysis: &Analysis, view: &View, quantities: &HashSet<Span>, start: usize, end: usize) -> Option<Rewrite> {
     let settings = &analysis.settings.lints.wrong_dash;
     let n = end - start;
-    let left = start.checked_sub(1).and_then(|i| view.char_at(i));
-    let right = view.char_at(end);
+    // A formula or code beside the hyphens is no word they join.
+    let left = start.checked_sub(1).and_then(|i| view.text_char(i));
+    let right = view.text_char(end);
     // Every `-` in math mode is a minus sign, and no ligature joins two.
     if view.math(start) {
         let message = format!("{} in math mode set {n} minus signs, not {}", hyphens(n), dash(n));

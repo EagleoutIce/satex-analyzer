@@ -6,9 +6,12 @@
 //! back into positions with [`View::at`].  The typographic rules all work
 //! this way, so none of them reads the interpreter.
 //!
-//! [`View::prose`] and its kin are the one answer to "may a rule report
-//! this character", and [`Rewrite`] the one way to say what belongs there
-//! instead.
+//! [`View::is_word_prose`] is the one answer to "may a prose rule report
+//! this character", [`View::is_text`] to "does this neighbour read as
+//! prose", [`View::prose_at`] the same for a source position, and
+//! [`Rewrite`] the one way to say what belongs there instead.  Rules that
+//! read formulas ask [`View::is_formula`], rules that measure fonts
+//! [`View::is_prose`].
 
 use crate::fixed::HashMap;
 use std::cell::OnceCell;
@@ -35,6 +38,12 @@ pub struct View<'a> {
     code_at: crate::linter::verbatim::Bodies,
     /// One per file: whether the author wrote it.
     document: Vec<bool>,
+    /// `\ttdefault`: code shown as text is set in it.
+    mono: Option<String>,
+    /// The mode each of the document's command sites was read in.  Built
+    /// the first time a rule asks.
+    modes_at: OnceCell<HashMap<Span, Modes>>,
+    expansions: &'a [crate::analysis::facts::Expansion],
     /// Which character the run set at a source position, the first one
     /// where several share it.  Built the first time a rule asks.
     at_span: OnceCell<HashMap<Span, usize>>,
@@ -71,6 +80,9 @@ impl<'a> View<'a> {
             code: code_of(text, analysis, &code_at),
             code_at,
             document,
+            mono: crate::analysis::machine::macro_text(analysis, "ttdefault"),
+            modes_at: OnceCell::new(),
+            expansions: &analysis.facts.expansions,
             at_span: OnceCell::new(),
         }
     }
@@ -171,15 +183,63 @@ impl<'a> View<'a> {
         self.span(index).is_some_and(|span| self.document(span.file))
     }
 
-    /// [`View::is_ours`], and no [`View::code`]: the characters a
-    /// typographic rule may report.
+    /// [`View::is_ours`], and no [`View::code`]: what a rule that measures
+    /// the font (an italic correction, an accent) may report, in any font
+    /// and mode.
     pub fn is_prose(&self, index: usize) -> bool {
         self.is_ours(index) && !self.code(index)
     }
 
-    /// [`View::is_prose`], and outside mathematics.
-    pub fn is_prose_text(&self, index: usize) -> bool {
-        self.is_prose(index) && !self.math(index)
+    /// Whether the character is set in the typewriter family, where a
+    /// document shows code, keys and URLs (`\texttt`, `\url`, listings).
+    pub fn typewriter(&self, index: usize) -> bool {
+        self.mono.as_deref().is_some_and(|mono| self.font(index).is_some_and(|f| &*f.family == mono))
+    }
+
+    /// Whether the character reads as prose, whoever set it: not math, not
+    /// code, not typewriter.  A prose rule asks it of every neighbour it
+    /// decides by, so a formula or a key beside the trigger is no word.
+    pub fn is_text(&self, index: usize) -> bool {
+        !self.math(index) && !self.code(index) && !self.typewriter(index)
+    }
+
+    /// The document's own prose: [`View::is_ours`] and [`View::is_text`].
+    /// The characters a prose rule may report.
+    pub fn is_word_prose(&self, index: usize) -> bool {
+        self.is_ours(index) && self.is_text(index)
+    }
+
+    /// The document's own formula: what a rule that reads math may report.
+    pub fn is_formula(&self, index: usize) -> bool {
+        self.is_prose(index) && self.math(index)
+    }
+
+    /// [`View::is_word_prose`] or [`View::is_formula`]: for a rule that
+    /// reads both, such as three periods or `640x480`.
+    pub fn is_prose_or_formula(&self, index: usize) -> bool {
+        self.is_word_prose(index) || self.is_formula(index)
+    }
+
+    /// The character at `index` when it [`View::is_text`].
+    pub fn text_char(&self, index: usize) -> Option<char> {
+        self.char_at(index).filter(|_| self.is_text(index))
+    }
+
+    /// Whether the document wrote prose at a source position: no code, and
+    /// [`View::is_text`] of the character set there, else not in math by
+    /// the mode the command read there was in.
+    pub fn prose_at(&self, span: Span) -> bool {
+        if !self.document(span.file) || self.code_at(span) {
+            return false;
+        }
+        if let Some(i) = self.at_span(span) {
+            return self.is_text(i);
+        }
+        let modes = self.modes_at.get_or_init(|| {
+            let mine = self.expansions.iter().filter(|e| self.document(e.span.file));
+            mine.map(|e| (e.span, e.mode)).collect()
+        });
+        !modes.get(&span).is_some_and(|m| m.is_known() && m.meets(Modes::ANY_MATH))
     }
 
     /// Every character the document set, in order.
@@ -192,9 +252,9 @@ impl<'a> View<'a> {
         (0..self.len()).filter(|i| self.is_prose(*i))
     }
 
-    /// Every character [`View::is_prose_text`] holds for, in order.
-    pub fn prose_text(&self) -> impl DoubleEndedIterator<Item = usize> + '_ {
-        (0..self.len()).filter(|i| self.is_prose_text(*i))
+    /// Every character [`View::is_word_prose`] holds for, in order.
+    pub fn word_prose(&self) -> impl DoubleEndedIterator<Item = usize> + '_ {
+        (0..self.len()).filter(|i| self.is_word_prose(*i))
     }
 
     /// Whether TeX set this character straight after the one before, so a

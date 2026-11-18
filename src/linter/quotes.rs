@@ -231,8 +231,8 @@ fn marks(view: &View) -> Vec<Mark> {
     let mut i = 0;
     while i < view.len() {
         let Some(c) = view.char_at(i) else { break };
-        // A quotation character the run read verbatim is program text.
-        if !view.text_mode(i) || view.code(i) {
+        // A quotation character in code or typewriter text is no quotation.
+        if !view.text_mode(i) || !view.is_text(i) {
             i += 1;
             continue;
         }
@@ -240,7 +240,7 @@ fn marks(view: &View) -> Vec<Mark> {
             '`' | '\'' => {
                 let (mut left, mut right) = (c == '`', c == '\'');
                 let mut end = i + 1;
-                while end < view.len() && view.joined(end) && view.text_mode(end) && !view.code(end) {
+                while end < view.len() && view.joined(end) && view.text_mode(end) && view.is_text(end) {
                     match view.char_at(end) {
                         Some('`') => left = true,
                         Some('\'') => right = true,

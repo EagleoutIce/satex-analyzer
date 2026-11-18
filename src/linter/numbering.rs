@@ -293,7 +293,7 @@ struct Site {
 fn ref_sites(report: &Report) -> Vec<Site> {
     let (analysis, view, edits) = (report.analysis(), report.text(), report.edits());
     let mut spans: Vec<Span> = (analysis.facts.occurrences.iter())
-        .filter(|o| o.kind == OccKind::Ref && view.document(o.span.file))
+        .filter(|o| o.kind == OccKind::Ref && view.prose_at(o.span))
         .map(|o| o.span)
         .collect();
     spans.sort_by_key(|s| (s.file, s.line, s.col));

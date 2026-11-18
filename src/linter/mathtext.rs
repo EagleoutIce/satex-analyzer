@@ -254,7 +254,7 @@ fn regions(view: &View) -> Vec<Region> {
     for i in 0..view.len() {
         let mode = view.modes(i);
         let Some(span) = view.span(i) else { continue };
-        if !mode.is_known() || !mode.meets(Modes::ANY_MATH) || !view.is_prose(i) {
+        if !mode.is_known() || !mode.meets(Modes::ANY_MATH) || !view.is_formula(i) {
             continue;
         }
         let joins = out.last().is_some_and(|last| {
@@ -778,7 +778,7 @@ fn ellipsis_dots(report: &mut Report) {
     let mut i = 0;
     while i + 2 < view.len() {
         let dots = (i..i + 3).all(|j| view.char_at(j) == Some('.') && (j == i || view.joined(j)));
-        if !dots || !view.is_prose(i) {
+        if !dots || !view.is_prose_or_formula(i) {
             i += 1;
             continue;
         }
@@ -829,7 +829,7 @@ fn doubled_punctuation(report: &mut Report) {
         if a == '.' && (dots(i.checked_sub(1)) || dots(Some(i + 2))) {
             continue;
         }
-        if !view.beside(i + 1) || !view.is_prose_text(i) || !view.is_prose_text(i + 1) {
+        if !view.beside(i + 1) || !view.is_word_prose(i) || !view.is_word_prose(i + 1) {
             continue;
         }
         findings.push((i + extra, format!("{a}{b}")));
@@ -862,7 +862,7 @@ fn dimension_times(report: &mut Report) {
     let view = report.text();
     let mut findings = Vec::new();
     for i in 1..view.len().saturating_sub(1) {
-        if view.char_at(i) != Some('x') || !view.is_prose(i) {
+        if view.char_at(i) != Some('x') || !view.is_prose_or_formula(i) {
             continue;
         }
         let Some(dimension) = between_numbers(view, i) else { continue };

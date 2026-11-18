@@ -96,10 +96,14 @@ fn hand_set_quantity(report: &mut Report) {
         // length no real run does), in the document's own text, not a count.
         .filter(|q| {
             q.certain
-                && !view.code_at(q.span)
                 && document(q.span.file)
                 && document(q.unit_span.file)
-                && !q.within.iter().any(|file| packages.contains(file))
+                // Typeset as prose or a formula, though a class's footnote or caption macro
+                // set it: else a number read in a package's macro (a TikZ key) is no quantity.
+                && view.at_span(q.span).map_or_else(
+                    || !view.code_at(q.span) && !q.within.iter().any(|file| packages.contains(file)),
+                    |i| view.is_prose_or_formula(i),
+                )
                 && !plural(&analysis.settings.conventions.units, &q.number, &q.unit)
         })
         .cloned()

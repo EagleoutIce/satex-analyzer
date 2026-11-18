@@ -1993,3 +1993,23 @@ fn a_misspelled_magic_comment_is_found_and_fixed() {
         on_disk("magic-right", &format!("% !TeX program = lualatex\n{body}"), false).expect("temporary directory");
     assert!(findings(&doc.analysis, "misspelled-magic-comment").is_empty());
 }
+
+/// Intuition: a label is used when any `\\ref` names it, wherever that `\\ref` stands: in a
+/// footnote, a caption, `\\emph`. Soundness: `unused-label` must never call a used label unused.
+/// Bug pinned: on a run without a `.aux`, a `\\ref` inside a command's argument recorded no
+/// reference, so its label was reported unused.
+#[test]
+fn a_label_used_only_inside_an_argument_is_not_unused() {
+    for (name, wrap) in [
+        ("ref-footnote", "\\footnote{see \\ref{sec:a}}"),
+        ("ref-emph", "\\emph{see \\ref{sec:a}}"),
+        ("ref-caption", "\\begin{figure}\\caption{see \\ref{sec:a}}\\end{figure}"),
+    ] {
+        let doc = format!(
+            "\\documentclass{{article}}\n\\begin{{document}}\n\\section{{A}}\\label{{sec:a}}\nText {wrap}.\n\\end{{document}}\n"
+        );
+        let doc = on_disk(name, &doc, false).expect("temporary directory");
+        let found = findings(&doc.analysis, "unused-label");
+        assert!(found.is_empty(), "{wrap}: {found:?}");
+    }
+}

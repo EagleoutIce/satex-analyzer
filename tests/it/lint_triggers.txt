@@ -1,0 +1,33 @@
+# Each prose rule's trigger, one per line: rule, tab, the trigger in plain prose,
+# tab, the word `@` stands for there (the word the rule decides by).  Read by
+# tests/it/lint_contexts.rs and scripts/lint-sweep.py.
+sentence-capital	It works well? @ is fine.	this
+sentence-capital	We saw the house. @ was red.	it
+sentence-spacing	We like apples etc. @ pears.	and
+sentence-spacing	We met the ABC. @ came later.	Then
+space-before-punctuation	the word , and more.	
+parenthesis-spacing	see the @(the note) now.	word
+parenthesis-spacing	see ( the note ) now.	
+dimension-times	a 640x480 screen.	
+doubled-punctuation	apples, etc.. and more.	
+ellipsis-dots	and so on... then more.	
+et-al	Smith et. al. showed it.	
+wrong-dash	on pages @-5 we read.	3
+wrong-dash	a well--@ fact.	known
+wrong-quote-character	he said "hi" there.	
+quote-direction	a ``word`` here.	
+quote-ligature	```Hi,'' he said.' Then	
+quote-punctuation	he said ``word.'' Then more.	
+command-terminated-space	I like \LaTeX @ much.	so
+double-space	see Dr.~ Smith now.	
+space-before-command	the word \footnote{A note.} here.	
+missing-nonbreaking-space	see @ \ref{sec:a} now.	Section
+missing-italic-correction	The {\em f} before roman text.	
+stray-italic-correction	a \textit{word\/}. More.	
+zero-italic-correction	a \textrm{word\/} more.	
+accent-on-dotted-letter	a na\^jve man.	
+bare-reference	as shown in \ref{sec:a} we.	
+hand-written-reference	see Section 1 for more.	
+hand-set-quantity	it takes 2ms to run.	
+math-operator-name	we have $sin(x)$ here.	
+math-punctuation	we get $x=1.$ Then more.	
