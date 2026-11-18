@@ -1605,8 +1605,8 @@
     const ask = ++outlineAsk, root = state.root;
     // another project's keys never stay on this one's pages
     if (outlineRoot !== root) { occurrences = []; outlineRoot = root; }
-    // an edit in an included file leaves the held analysis of the root stale: a config forces a fresh one
-    const request = { file: path(root), queries: [{ type: 'occurrences' }], ...(state.file !== root ? { config: { trace: 'false' } } : {}) };
+    // the server answers from the root's run for the open buffers' texts, an included file's edit run first
+    const request = { file: path(root), queries: [{ type: 'occurrences' }] };
     const rs = (await lsp('workspace/executeCommand', { command: 'satex/query', arguments: [request] }).catch(() => null))?.[0]?.records;
     if (ask !== outlineAsk || root !== state.root) return;
     // a failed ask (a worker restarting, a run stopped) is asked again, a few times with a growing pause
@@ -6256,6 +6256,12 @@
   function pdfWordSrc(w, min = 0) {
     const hit = pdfSource(w[0], w[1] + 1, w[4] - 1, w), text = editor.text(), st = pdfLineStarts(text);
     if (!hit || hit.file !== state.file) return null;
+    // the build shows this text: the paragraph's own word of the page (pdfParaWords, the echo's alignment), so a word
+    // the paragraph spells more than once (alike sentences on one source line) is the one dragged over, not the first
+    if (pdfBuiltText(pdf) === text) for (const n of [hit.line, hit.line - 1]) {
+      const t = st[n - 1] != null && pdfParaWords(pdf, st[n - 1]).find((u) => u.w === w);
+      if (t && t.s >= min) return [t.s, t.e];
+    }
     // the line SyncTeX names, its neighbours, then the paragraph before it
     const near = [hit.line, hit.line + 1, hit.line - 1];
     for (let n = hit.line - 2; n > 0 && n > hit.line - 40 && text.slice(st[n], st[n + 1]).trim(); n--) near.push(n);
@@ -6283,7 +6289,13 @@
   /** Backspace, Delete or a character over the selection: one gated edit takes its source span (a character then
    * goes in at the caret left there). The words vanish at once, painted over until a newer build shows the page. */
   function pdfSelErase() {
-    const sel = pdfSel, span = sel.of === pdf?.wordList && pdfSelSpan(), text = editor.text();
+    const sel = pdfSel;
+    // a build landed since the drag: the same words where it sets them (unmoved), else none
+    if (sel.of !== pdf?.wordList && pdf?.wordList) {
+      const ws = pdfWordsOn(sel.page), words = sel.words.map((o) => ws.find((w) => w[5] === o[5] && Math.abs(w[1] - o[1]) < 2 && Math.abs(w[4] - o[4]) < 2));
+      if (words.every(Boolean)) Object.assign(sel, { words, of: pdf.wordList });
+    }
+    const span = sel.of === pdf?.wordList && pdfSelSpan(), text = editor.text();
     if (!span) return toast('Not typed here: the selection is not found in the open file. Edit it in the editor');
     const why = PE.checked(text, [...span, '', 0], { keys: pdfKeySpans(state.file, text) });
     if (why) return toast(`Not typed here: ${why}`);
@@ -8174,7 +8186,7 @@
     return around.find((y) => l - y.x > 1 || y.x + y.w - r > 1) ?? around.at(-1) ?? null;
   }
   /** Whether row `ws` stands centered in line box `box`: as far from both its edges (a caption, `\centering`). */
-  const pdfCentered = (box, ws) => !!box && ws.length > 0 && ws[0][1] - box.x > 4 && Math.abs(ws[0][1] - box.x - (box.x + box.w - ws.at(-1)[3])) < 2;
+  const pdfCentered = (box, ws) => !!box && ws.length > 0 && ws[0][1] - box.x > 4 && Math.abs(ws[0][1] - box.x - (box.x + box.w - ws.at(-1)[3])) < Math.max(2, 0.2 * (ws[0][4] - ws[0][2]));
   /** The font page image `img` sets word `w` in: pdf.js's embedded font of the text run under the word's glyphs (by
    * position: the run on its baseline overlapping it most, never by spelling), its size and baseline in bp. A run
    * whose PDF was closed for a newer build has its face added back (pdfFaces). No run: the echo font as wide as the word. */
@@ -8316,12 +8328,16 @@
       const parskip = med(lines.slice(1).map(([y], i) => y - lines[i][0] - skip).filter((d) => d > 0.5 && d < 2 * skip)) ?? 0;
       // the paragraph's rows after A's as the page set them, each its words (the first after a word space)
       const later = [];
-      for (let t = para.find((u) => u.s >= A.e && (u.w[0] !== w[0] || u.w[4] > w[4] + 1)); t;) {
+      // (up to a break the source forces, `\\par` or `\\\\`: TeX never runs a line on over one, nor takes words back)
+      const forced = (a, b) => /\\par(?![A-Za-z@])|\\\\/.test(B.slice(a, b));
+      for (let t = para.find((u) => u.s >= A.e && (u.w[0] !== w[0] || u.w[4] > w[4] + 1)), prev = row.at(-1) ?? A; t && !forced(prev.s, t.s);) {
         const n = t.w, s0 = t.s, nrow = para.filter((u) => u.w[0] === n[0] && Math.abs(u.w[4] - n[4]) < 1 && u.s >= s0), last = nrow.at(-1);
         // the row's page words from its first source word on (`TeXbook [2]`, `1.1`: macro output kept)
         const ws = pdfRun(pdfImgWords(page(n[0])).filter((v) => Math.abs(v[4] - n[4]) < 1).sort((a, b) => a[1] - b[1]), n);
         later.push({ x: n[1], n, row: ws.map((v) => ({ w: v })), pieces: ws.map((v, j) => ({ gap: j ? v[1] - ws[j - 1][3] : gap, n: v[3] - v[1], w: v })) });
+        prev = last ?? prev;
         t = last && para.find((u) => u.s > last.s && (u.w[0] !== n[0] || u.w[4] > n[4] + 1));
+        if (t && forced(prev.s, t.s)) break;
       }
       // TeX's lines without hyphenation (PE.reflow): overflow runs on into the rows below, a deletion takes words up
       // (natural widths, rows not justified: shrink and justify made the landing differ more on the thesis, 36 and 53 px
@@ -8507,12 +8523,15 @@
       if (performance.getEntriesByName('pdf-echo').length > 200) performance.clearMeasures('pdf-echo');
     }
   }
+  let pdfCursorTimer = 0;
   function pdfCaretDrawNow() {
     pdfBody.querySelectorAll('.pdf-caret, .pdf-echo').forEach((c) => c.remove());
     pdfErasedDraw();
-    // the source editor's cursor follows the caret, scrolled into view (its focus stays in the view typed in)
+    // the source editor's cursor follows the caret, scrolled into view (its focus stays in the view typed in), once
+    // the keys rest: a selection moved and scrolled each key cost the editor a layout per key (10-30 ms)
     document.body.classList.toggle('type-sync', !!pdfCaret);
-    if (pdfCaret && state.file === pdfCaret.file && !pdfGhost) { const at = pdfCaret.at; if (editor.cursor?.()[1] !== at) editor.select?.([at, at]); }
+    clearTimeout(pdfCursorTimer);
+    if (pdfCaret) pdfCursorTimer = setTimeout(() => { const c = pdfCaret; if (c && state.file === c.file && !pdfGhost && editor.cursor?.()[1] !== c.at) editor.select?.([c.at, c.at]); }, 150);
     if (pdfCaret?.blind) return pdfBlindDraw(pdfCaret);
     if (pdfCaret?.view === 'ts') return tsCaretDraw();
     if (pdfCaret && state.file === pdfCaret.file && !pdfCaret.entry && pdfTypeDraw(pdfCaret, pdfSeen())) return pdfCaretAnchor();
@@ -10015,7 +10034,7 @@
   /** What doc/site/chaos.mjs reads of the page: what it shows and for which text. Read-only. */
   self.satexHealth = () => ({
     busy: 'busy' in status.dataset, phase: act.phase, status: status.textContent, quiet: Math.round(performance.now() - act.changed), heard: Math.round(performance.now() - lastHeard),
-    boot: !!boot.open, example: state.example, file: state.file, root: state.root, dir: state.dir, version, text: editor?.text() ?? null,
+    boot: !!boot.open, example: state.example, file: state.file, root: state.root, dir: state.dir, version, text: editor?.text() ?? null, cursor: editor?.cursor?.() ?? null,
     list: shownOf.get(list)?.slice(0, 2) ?? null, listStale: list.classList.contains('stale'), sent: sentVersions.get(uri()) ?? null,
     shown: diagnosticVersions[uri()] ?? null, due: timer !== null || dirty, running, pending: pending.size, waiting: Object.keys(waiting), queued: analysisQueued, recovering,
     pdf: pdf ? { dir: pdf.dir, root: pdf.root } : null, pdfOther: $('play-pdf').classList.contains('pdf-other'), pdfBusy, gap: maxGap, undimmed: [...shownOf].filter(([el, [t, , cls]]) => t !== uri() && !el.classList.contains(cls)).map(([el]) => el.id || el.className), loading: [...inFlight], held: held.length, recoveries, runs: act.run, step: act.steps.at(-1)?.label ?? '', since: Math.round(performance.now() - act.started),
