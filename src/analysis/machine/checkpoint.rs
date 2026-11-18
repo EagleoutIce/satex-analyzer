@@ -893,6 +893,8 @@ pub struct Checkpoints<'a> {
     pub converged: Option<(String, u32, u64)>,
     /// Steps of the last run.
     steps: u64,
+    /// Steps the last run took itself (from its resume point, or all of them), and all its steps.
+    pub ran: (u64, u64),
     /// The last run's machine at its end, before concluding.
     end: Option<Box<Machine<'a>>>,
     /// When the build's first run started. `limits.seconds` counts from here for every run.
@@ -915,6 +917,7 @@ impl<'a> Checkpoints<'a> {
             resumed: None,
             converged: None,
             steps: 0,
+            ran: (0, 0),
             end: None,
             build_started: None,
             between_runs: None,
@@ -993,6 +996,7 @@ impl<'a> Checkpoints<'a> {
         let (clock, from) = (std::time::Instant::now(), m.out.steps);
         m.run_guarded();
         let ran = (clock.elapsed(), m.out.steps - from);
+        self.ran = (ran.1, m.out.steps);
         // Reads after the last checkpoint. No resume depends on them, but the build's reruns do.
         let after = crate::project::overlay::log(false);
         if let Some(taking) = m.checkpoints.on.take() {
@@ -1008,6 +1012,9 @@ impl<'a> Checkpoints<'a> {
             }
         }
         self.steps = m.out.steps;
+        if self.resumed.is_none() {
+            self.ran = (m.out.steps, m.out.steps);
+        }
         self.end = Some(Box::new(m.clone()));
         let (clock, verbose) = (std::time::Instant::now(), self.cfg.verbose >= 2);
         let analysis = m.conclude(id, source);

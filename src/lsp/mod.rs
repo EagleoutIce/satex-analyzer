@@ -1000,7 +1000,16 @@ impl Engine {
                 notify_to(&out, Notification::new("satex/typesetRows".into(), params));
             })));
         }
+        let started = std::time::Instant::now();
         let (analysis, fresh) = self.run_for(&path, &text);
+        // How incremental the run was, for the status line: where it resumed, the steps it took itself.
+        if fresh && let Some(c) = self.checkpoints.get(&path).or_else(|| self.checkpoints.values().next()) {
+            let info = serde_json::json!({
+                "uri": uri, "version": version_of(&versions, uri), "ms": started.elapsed().as_millis() as u64,
+                "resumedLine": c.resumed.as_ref().map(|r| r.1), "ranSteps": c.ran.0, "steps": c.ran.1,
+            });
+            self.notify_now(Notification::new("satex/runInfo".into(), info));
+        }
         crate::analysis::machine::preview_with(None);
         crate::analysis::machine::lax_with(None);
         // A newer text came while it ran: it stopped, and says nothing. The newer text's run follows.
