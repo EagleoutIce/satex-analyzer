@@ -81,12 +81,12 @@
    "file": "spacing.tex",
    "title": "Type in the PDF",
    "big": true,
-   "caption": "Click a word on the page and type. The text goes to its place in the source, $x_42 becomes $x_{42}$, and the page follows each key. A TikZ node takes typing too, moves with the mouse along guides to the other nodes, and changes its shape on a right click.",
+   "caption": "Click a word on the page and type. The text goes to its place in the source, $x_42 becomes $x_{42}$, and the page follows each key. Typing into a macro's output edits its definition, so every use changes. A TikZ node moves with the mouse along guides to the other nodes and changes its shape on a right click.",
    "open": [
     "panel",
     "play-pdf"
    ],
-   "text": "\\documentclass{article}\n\\usepackage[paperwidth=9cm,paperheight=6cm,margin=6mm]{geometry}\n\\usepackage{tikz}\n\\begin{document}\n\\section{Results}\nThe loss falls with each run.\n\n\\begin{tikzpicture}\n  \\node[draw, rounded corners] (d) at (0,0) {data};\n  \\node[draw, rounded corners] (m) at (2.6,-0.5) {net};\n  \\draw[->] (d) -- (m);\n\\end{tikzpicture}\n\\end{document}\n",
+   "text": "\\documentclass{article}\n\\usepackage[paperwidth=9cm,paperheight=6cm,margin=6mm]{geometry}\n\\usepackage{tikz}\n\\usetikzlibrary{arrows.meta}\n\\definecolor{accent}{HTML}{0B3D91}\n\\newcommand\\model{TinyNet}\n\\begin{document}\n\\section{Results}\n\\model{} learns fast.\n\n\\begin{tikzpicture}[>={Stealth[length=5pt]}, thick,\n    box/.style={draw=accent, fill=accent!8, rounded corners=3pt, minimum width=12mm, minimum height=6mm}]\n  \\node[box] (d) at (0,0) {data};\n  \\node[box] (m) at (2.6,-0.6) {\\model};\n  \\node[box] (l) at (5.2,0) {loss};\n  \\draw[->, accent] (d) -- node[above, sloped, font=\\scriptsize] {train} (m);\n  \\draw[->, accent] (m) -- (l);\n\\end{tikzpicture}\n\\end{document}\n",
    "viewport": [
     960,
     600
@@ -122,11 +122,11 @@
    ],
    "video": [
     {
-     "hover": "[self.__pw('run.')[0] + 60, self.__pw('run.')[1] + 70]",
+     "hover": "[self.__pw('fast.')[0] + 60, self.__pw('fast.')[1] + 70]",
      "wait": 500
     },
     {
-     "click": "(() => { const p = self.__pw('run.'); return [p[0] + 1, p[1]]; })()",
+     "click": "(() => { const p = self.__pw('fast.'); return [p[0] + 1, p[1]]; })()",
      "glide": 700,
      "after": 500
     },
@@ -151,53 +151,53 @@
     },
     {
      "until": "!document.getElementById('play-pdf').classList.contains('pdf-running')",
-     "wait": 1200,
-     "ms": 60000
+     "ms": 60000,
+     "wait": 1000
     },
     {
-     "click": "(() => { const p = self.__pw('net'); return [p[0] - 1.5, p[1]]; })()",
+     "click": "(() => { const p = self.__pw('TinyNet', 1, .5, 0); return [p[0] - 1, p[1]]; })()",
      "glide": 800,
      "after": 400
     },
     {
-     "until": "document.querySelector('.pdf-caret')"
+     "until": "document.querySelector('.pdf-caret') && document.querySelector('.type-note')"
     },
     {
-     "type": " v2",
+     "type": "2",
      "wait": 400
     },
     {
      "until": "!document.getElementById('play-pdf').classList.contains('pdf-running')",
-     "wait": 1000,
-     "ms": 60000
+     "ms": 60000,
+     "wait": 1800
     },
     {
-     "hover": "self.__pw('v2', .5)",
-     "glide": 300,
+     "hover": "(() => { const n = self.satexPdfWords().filter((w) => w[5] === 'TinyNet2').length - 1; return self.__pw('TinyNet2', .5, .5, n); })()",
+     "glide": 500,
      "wait": 0,
      "after": 150
     },
     {
      "drag": [
       "document.querySelector('#pdf-body .pdf-tikz-grip')",
-      "(() => { const g = document.querySelector('#pdf-body .pdf-tikz-grip').getBoundingClientRect(), a = self.__pw('data', .5), b = self.__pw('v2', .5); return [g.x + g.width / 2 + 25, g.y + g.height / 2 + a[1] - b[1] + 2]; })()"
+      "(() => { const g = document.querySelector('#pdf-body .pdf-tikz-grip').getBoundingClientRect(), a = self.__pw('data', .5), b = (() => { const n = self.satexPdfWords().filter((w) => w[5] === 'TinyNet2').length - 1; return self.__pw('TinyNet2', .5, .5, n); })(); return [g.x + g.width / 2 + 8, g.y + g.height / 2 + a[1] - b[1] + 2]; })()"
      ],
      "over": 1300,
      "wait": 400
     },
     {
      "until": "!document.getElementById('play-pdf').classList.contains('pdf-running')",
-     "wait": 1500,
-     "ms": 60000
+     "ms": 60000,
+     "wait": 1500
     },
     {
-     "click": "self.__pw('v2', .5)",
+     "click": "(() => { const n = self.satexPdfWords().filter((w) => w[5] === 'TinyNet2').length - 1; return self.__pw('TinyNet2', .5, .5, n); })()",
      "right": true,
      "glide": 600,
      "after": 700
     },
     {
-     "eval": "if (!document.querySelector('.tikz-menu')) { const [x, y] = self.__pw('v2', .5); document.elementFromPoint(x, y).dispatchEvent(new MouseEvent('contextmenu', { clientX: x, clientY: y, bubbles: true, cancelable: true, button: 2 })); }",
+     "eval": "if (!document.querySelector('.tikz-menu')) { const [x, y] = (() => { const n = self.satexPdfWords().filter((w) => w[5] === 'TinyNet2').length - 1; return self.__pw('TinyNet2', .5, .5, n); })(); document.elementFromPoint(x, y).dispatchEvent(new MouseEvent('contextmenu', { clientX: x, clientY: y, bubbles: true, cancelable: true, button: 2 })); }",
      "until": "document.querySelector('.tikz-menu')",
      "ms": 20000
     },
@@ -208,8 +208,8 @@
     },
     {
      "until": "!document.getElementById('play-pdf').classList.contains('pdf-running')",
-     "wait": 1800,
-     "ms": 60000
+     "ms": 60000,
+     "wait": 1800
     }
    ],
    "crop": [

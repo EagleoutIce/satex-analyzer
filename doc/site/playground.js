@@ -8413,8 +8413,8 @@
       // TeX's total fit (PE.fit) with the font's interword glue: the natural space from the page's ragged rows (a
       // paragraph's last), stretch and shrink as Computer Modern's, scaled after punctuation (\\nonfrenchspacing); a
       // page gap wider than spaces get (a logo the word list lacks) kept as it is. Greedy where no fit is in tolerance.
-      // (a paragraph of one row, a heading's, a cell's, a caption's, keeps the page's own spaces and greedy breaking)
-      const fits = later.length > 0, sp = pdfSpace(img, right, f.size), seq = fits ? [...pieces, ...later.flatMap((r) => r.pieces)] : [];
+      // (a paragraph of one row that stays one, a heading's, a cell's, a caption's, keeps the page's own spaces)
+      const fits = later.length > 0 || pieces.reduce((n, q) => n + q.gap + q.n, w[3]) > right, sp = pdfSpace(img, right, f.size), seq = fits ? [...pieces, ...later.flatMap((r) => r.pieces)] : [];
       seq.forEach((q, j) => {
         if (!j || !(q.gap > 0)) return;
         const prev = seq[j - 1], t = prev.t ?? prev.w?.[5] ?? '';
@@ -8454,7 +8454,19 @@
       for (const ix of flow.freed) { const L = later[ix], nimg = page(L.n[0]); rows.push({ img: nimg, w: null, row: L.row, x: L.x, f: pdfFontOf(nimg, L.n), k: nimg.naturalWidth / pageSize(nimg)[0], out: [], n: L.n }); }
       // rows past the paragraph's own push what the page sets below them down (cut at the page's foot), never over it
       const extra = rows.filter((r) => r.extra);
-      if (extra.length) pdfEchoPush(extra[0].img, extra[0].n[4] - extra[0].dy + 0.5, extra.filter((r) => r.img === extra[0].img).reduce((d, r) => d + r.dy, 0));
+      if (extra.length) {
+        const e0 = extra[0], pg = e0.n[0], blk = pdfBlock(pg), foot = blk ? blk.d + 1 : Infinity, nimg = pdfImg(pg + 1), nb = nimg?.naturalWidth ? pdfBlock(pg + 1) : null;
+        pdfEchoPush(e0.img, e0.n[4] - e0.dy + 0.5, extra.reduce((d, r) => d + r.dy, 0));
+        // a row past the text area's foot goes on at the top of the next page's (its `n` moved in place: the caret's too)
+        const sh = nb ? nb.t - 1 - foot : 0;
+        if (nb) for (const r of extra) {
+          if (r.n[0] !== pg || r.n[4] <= foot) continue;
+          Object.assign(r, { img: nimg, k: nimg.naturalWidth / pageSize(nimg)[0], f: { ...r.f, base: r.f.base + sh } });
+          r.n[0] = pg + 1; r.n[2] += sh; r.n[4] += sh;
+        }
+      }
+      // a deletion that freed rows pulls what follows up (from the next page's top too)
+      else if (flow.freed.length) { const L = later[flow.freed[0]], nimg = page(L.n[0]); pdfEchoPush(nimg, L.n[2] - 0.5, -flow.freed.length * skip); }
       // a centered row (a caption, `\centering`) that did not wrap stays centered: it moves by half its change, the words up to A redrawn from the page too
       const r0 = rows[0];
       if (rows.length === 1 && hb && line.length && !verb) {
@@ -8475,22 +8487,55 @@
     img.parentElement.insertAdjacentHTML('beforeend', `<span class="pdf-caret" style="left:${cx / pw * 100}%;top:${w[2] / ph * 100}%;height:${(w[4] - w[2]) / ph * 100}%"></span>`);
     return true;
   }
-  /** The page `img` from `top` (bp) down drawn `dy` bp lower: room for rows the echo adds. */
+  /** The text area of each page of the shown build, once per build: its edges from the lines SyncTeX places
+   * (pdfBlocks), its top the highest of any page's, its foot the lowest line of any page or, on a page with a footer
+   * (a page number below the text), that footer's baseline less 2.5 baselines (article's \\footskip of 30pt): a page
+   * not full shows where its text could go on. */
+  let pdfBlocksOf = null;
+  function pdfBlock(page) {
+    if (pdfBlocksOf?.pdf !== pdf) {
+      const map = pdfBlocks(), all = [...map.values()], top = Math.min(...all.map((b) => b.t)), low = Math.max(...all.map((b) => b.d));
+      for (const [pg, b] of map) {
+        const foot = (pdf.wordList ?? []).filter((w) => w[0] === pg && w[2] > b.d + 18 && /^[\divxlc]+$/i.test(w[5])).sort((a, c) => c[4] - a[4])[0];
+        map.set(pg, { ...b, t: Math.min(b.t, top), d: Math.max(b.d, low, foot ? foot[4] - 2.5 * 12 : 0) });
+      }
+      pdfBlocksOf = { pdf, map };
+    }
+    return pdfBlocksOf.map.get(page) ?? null;
+  }
+  /** The text area of page image `img` from `top` (bp) down moved `dy` bp (lower; higher when negative), as TeX's page
+   * builder would: what passes its foot continues at the top of the next page's text area, that page's text moved as
+   * much (a deletion pulls the next page's first lines up to fill the foot). Header and footer stay. */
   let pdfPushWas = null;
   function pdfEchoPush(img, top, dy) {
-    // the same push as the key before: its canvas again (a page-sized repaint a key was most of the echo's cost)
-    const key = `${img.currentSrc}|${top}|${dy}`;
-    if (pdfPushWas?.key === key) return void img.parentElement.append(pdfPushWas.cv);
-    const [pw, ph] = pageSize(img), k = img.naturalWidth / pw, W = img.naturalWidth, H = Math.ceil((ph - top) * k), cv = document.createElement('canvas');
-    if (H <= 0) return;
-    pdfPushWas = { key, cv };
-    Object.assign(cv, { width: W, height: H, className: 'pdf-echo pdf-push' });
-    const g = cv.getContext('2d');
-    g.fillStyle = '#fff';
-    g.fillRect(0, 0, W, H);
-    if (H > dy * k) g.drawImage(img, 0, top * k, W, H - dy * k, 0, dy * k, W, H - dy * k);
-    cv.style.cssText = `left:0;top:${top / ph * 100}%;width:100%;height:${(ph - top) / ph * 100}%`;
-    img.parentElement.append(cv);
+    // the same push as the key before: its canvases again (a page-sized repaint a key was most of the echo's cost)
+    const page = +img.parentElement.dataset.page, next = pdfImg(page + 1), key = `${img.currentSrc}|${next?.currentSrc}|${top}|${dy}`;
+    if (pdfPushWas?.key === key) { for (const [host, cv] of pdfPushWas.cvs) host.append(cv); return; }
+    const cvs = [], band = (im, from, to, paint) => {
+      const [pw, ph] = pageSize(im), k = im.naturalWidth / pw, W = im.naturalWidth, H = Math.ceil((to - from) * k);
+      if (H <= 0) return;
+      const cv = Object.assign(document.createElement('canvas'), { width: W, height: H, className: 'pdf-echo pdf-push' }), g = cv.getContext('2d');
+      g.fillStyle = '#fff';
+      g.fillRect(0, 0, W, H);
+      // `src` from y `a` to `b` (its page's bp) drawn at `y` of this band
+      paint((src, a, b, y) => { const kk = src.naturalWidth / pageSize(src)[0]; if (b > a) g.drawImage(src, 0, a * kk, src.naturalWidth, (b - a) * kk, 0, (y - from) * k, W, (b - a) * k); });
+      cv.style.cssText = `left:0;top:${from / ph * 100}%;width:100%;height:${(to - from) / ph * 100}%`;
+      im.parentElement.append(cv);
+      cvs.push([im.parentElement, cv]);
+    };
+    const blk = pdfBlock(page), foot = blk ? blk.d + 1 : pageSize(img)[1];
+    const nb = next?.naturalWidth ? pdfBlock(page + 1) : null, head = nb ? nb.t - 1 : 0, nfoot = nb ? nb.d + 1 : 0;
+    if (dy >= 0) {
+      band(img, top, foot, (draw) => draw(img, top, foot - dy, top + dy));
+      // what passed the foot: the rows the echo adds there (pdfTypeDraw sets them on the next page) and the text after them
+      const over = Math.min(dy, foot - top), rows = dy - over;
+      if (nb && over > 0) band(next, head, nfoot, (draw) => { draw(img, foot - over, foot, head + rows); draw(next, head, nfoot - dy, head + dy); });
+    } else {
+      const up = -dy;
+      band(img, top, foot, (draw) => { draw(img, top + up, foot, top); if (nb) draw(next, head, head + up, foot - up); });
+      if (nb) band(next, head, nfoot, (draw) => draw(next, head + up, nfoot, head));
+    }
+    pdfPushWas = { key, cvs };
   }
   /** Paints over page image `img` the rest of a row from `x` (bp): its words (`row`'s, and `w`'s height) covered,
    * then each piece of `out` at its `x`: a text `t` in font `f`, or a word `w` as the page drew it, moved. */
