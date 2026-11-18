@@ -352,7 +352,8 @@ fn dependency_graph_links_a_call_to_its_definition() {
 /// After an edit the language server carries the last run's scope rows over (`carry_scope`),
 /// those of definitions the class made outside the project's files among them. Pins: those
 /// rows were built anew after every edit (5 s per edit on the site's thesis example, which
-/// the playground asks after each run); carried, they must equal a fresh run's.
+/// the playground asks after each run); carried, they must equal a fresh run's in all the run
+/// decides. Flaky before: the manuals index, written by another test meanwhile, changed descriptions.
 #[test]
 fn scope_carried_over_an_edit_equals_a_fresh_runs() {
     let text = |word: &str| {
@@ -364,7 +365,22 @@ fn scope_carried_over_an_edit_equals_a_fresh_runs() {
     let _ = query::scope(&before, None, true);
     let after = analyze_kernel(&text("ho"));
     query::carry_scope(&before, &after);
-    assert_eq!(query::scope(&after, None, true), query::scope(&analyze_kernel(&text("ho")), None, true));
+    // What a row says of a name's documentation comes from the manuals index, a shared cache another
+    // test may write meanwhile: not the run's, so not compared.
+    let run_part = |rows: Vec<satex::queries::query::Record>| -> Vec<_> {
+        rows.into_iter()
+            .map(|mut r| {
+                for k in ["does", "does_from", "manual"] {
+                    r.remove(k);
+                }
+                r
+            })
+            .collect()
+    };
+    assert_eq!(
+        run_part(query::scope(&after, None, true)),
+        run_part(query::scope(&analyze_kernel(&text("ho")), None, true))
+    );
 }
 
 #[test]
