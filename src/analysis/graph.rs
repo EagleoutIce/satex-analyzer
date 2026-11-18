@@ -126,7 +126,7 @@ pub struct DependencyGraph {
     /// The call read from a file whose expansion last ran a definition site.
     /// A definition vertex stands for its site in every expansion that runs
     /// it, so what reads the definition reads the call that made it now.
-    made_by: HashMap<NodeId, NodeId>,
+    made_by: LookupMap<NodeId, NodeId>,
     /// How many times each name has been defined so far, counting every run of a
     /// definition site.
     defs_of: LookupMap<Sym, u32>,

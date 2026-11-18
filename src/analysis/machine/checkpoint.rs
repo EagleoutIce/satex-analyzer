@@ -150,8 +150,16 @@ impl Machine<'_> {
     /// outside any scan, and when enough steps passed or the document just began.
     pub(super) fn checkpoint_due(&self) -> bool {
         let Some(taking) = &self.checkpoints.on else { return false };
-        let Some((mouth, lookahead)) = reading_file(&self.input) else { return false };
         let document = self.out.document_depth.is_some();
+        // The body's first checkpoint: `\begin{document}` ends with `\ignorespaces`, which reads
+        // on into the body, so it is taken with that one token left. Once `\document` has let
+        // `\@nodocument` go (latex.ltx), not while `\document` itself waits.
+        let hooked = || {
+            let name = self.out.interner.lookup("@nodocument");
+            !name.is_some_and(|n| matches!(self.env.observed_meaning(n), crate::engine::tex::Meaning::Macro(_)))
+        };
+        let body = document && !taking.document && hooked();
+        let Some((mouth, lookahead)) = reading_file_after(&self.input, usize::from(body)) else { return false };
         let gap = self.edit_gap(taking, mouth);
         let edit = gap == Some(0);
         // Before `\begin{document}`, which reads the `.aux` that a rerun may change.
@@ -172,10 +180,8 @@ impl Machine<'_> {
             return false;
         }
         // A lookahead in the preamble (`\@ifnextchar[`) may hold the next line's first token.
-        // The body's first checkpoint takes one too: `\begin{document}` ends looking ahead
-        // (`\ignorespaces`), after its hooks, and an edit below resumes past them.
         let settled = match lookahead {
-            true => opens || document && !taking.document,
+            true => opens || body,
             false => mouth.line_mark().is_some_and(|m| !m.ended),
         };
         // Not inside `\include`: TeX continues reading after the included file.
@@ -203,7 +209,7 @@ impl Machine<'_> {
     pub(super) fn take_checkpoint(&mut self, drive: Drive) {
         let machine = self.clone();
         let (steps, document) = (self.out.steps, self.out.document_depth.is_some());
-        let gap = match (&self.checkpoints.on, reading_file(&self.input)) {
+        let gap = match (&self.checkpoints.on, reading_file_after(&self.input, 1)) {
             (Some(taking), Some((mouth, _))) => self.edit_gap(taking, mouth),
             _ => None,
         };
@@ -218,7 +224,7 @@ impl Machine<'_> {
         if self.cfg.verbose >= 2 {
             crate::util::progress::note!(
                 "satex: checkpoint at {:?}, step {steps}",
-                reading_file(&self.input).map(|(m, _)| m.position())
+                reading_file_after(&self.input, 1).map(|(m, _)| m.position())
             );
         }
         // The first checkpoint for this edit unpins the previous edit's.
@@ -397,10 +403,16 @@ impl Machine<'_> {
 /// The file being read and whether a lookahead put tokens back above it.
 /// Token lists already read to their end are skipped: TeX drops them at the next read.
 fn reading_file(input: &super::Input) -> Option<(&Mouth, bool)> {
+    reading_file_after(input, 0)
+}
+
+/// [`reading_file`], where token lists with at most `tail` tokens left count as a lookahead.
+fn reading_file_after(input: &super::Input, tail: usize) -> Option<(&Mouth, bool)> {
     let mut lookahead = false;
     for frame in input.iter().rev() {
         match frame {
             Frame::Tokens { toks, pos, .. } if *pos >= toks.len() => {}
+            Frame::Tokens { toks, pos, .. } if toks.len() - pos <= tail => lookahead = true,
             Frame::Returned(toks) if toks.is_empty() => {}
             Frame::Returned(_) => lookahead = true,
             Frame::File { mouth, .. } => return Some((mouth, lookahead)),
@@ -840,16 +852,22 @@ fn splice_out(new: &Analysis, at: &Analysis, end: &mut Analysis, window: Window,
 fn opens_document(mouth: &Mouth) -> bool {
     let source = mouth.source();
     let line_start = source[..mouth.offset().min(source.len())].iter().rposition(|&c| c == '\n').map_or(0, |i| i + 1);
-    let mut breaks = 0;
-    let two_lines: String = source[line_start..]
-        .iter()
-        .copied()
-        .take_while(|&c| {
-            breaks += usize::from(c == '\n');
-            breaks < 2
-        })
-        .collect();
-    two_lines.contains("\\begin{document}")
+    // Asked before every command outside the body: the answer per line is kept.
+    // The cache holds the text, so no other text can reuse its address.
+    thread_local! {
+        static LAST: std::cell::RefCell<Option<(std::rc::Rc<[char]>, usize, bool)>> = const { std::cell::RefCell::new(None) };
+    }
+    if let Some(opens) = LAST.with_borrow(|last| {
+        last.as_ref().filter(|(text, at, _)| std::rc::Rc::ptr_eq(text, source) && *at == line_start).map(|l| l.2)
+    }) {
+        return opens;
+    }
+    let rest = &source[line_start..];
+    let end = rest.iter().enumerate().filter(|&(_, &c)| c == '\n').nth(1).map_or(rest.len(), |(i, _)| i);
+    const WANTED: [char; 16] = ['\\', 'b', 'e', 'g', 'i', 'n', '{', 'd', 'o', 'c', 'u', 'm', 'e', 'n', 't', '}'];
+    let opens = rest[..end].windows(WANTED.len()).any(|w| w == WANTED);
+    LAST.set(Some((source.clone(), line_start, opens)));
+    opens
 }
 
 /// Callback for each run of a build that is followed by another run.
@@ -1057,10 +1075,18 @@ impl<'a> Checkpoints<'a> {
     ) -> (Option<(Machine<'a>, crate::engine::tex::FileId)>, Option<Edit>, Vec<Checkpoint<'a>>) {
         let (mut holds, mut edit, mut old) = (HashMap::default(), None, Vec::new());
         while let Some(checkpoint) = self.list.pop() {
-            let (mut m, mut drive) = (checkpoint.machine.clone(), checkpoint.drive.clone());
-            if let Err(changed) = reread(&mut m, &mut drive, &self.log[..checkpoint.reads], source, &mut holds) {
+            // Only the input is reread: the machine is copied once it holds.
+            let (mut input, mut drive) = (checkpoint.machine.input.clone(), checkpoint.drive.clone());
+            if let Err(changed) = reread(
+                &checkpoint.machine.out,
+                &mut input,
+                &mut drive,
+                &self.log[..checkpoint.reads],
+                source,
+                &mut holds,
+            ) {
                 if self.cfg.verbose >= 2 {
-                    let at = reading_file(&m.input).map(|(m, _)| m.position());
+                    let at = reading_file_after(&input, 1).map(|(m, _)| m.position());
                     crate::util::progress::note!("satex: checkpoint at {at:?} does not hold: {changed:?}");
                 }
                 // Keep the furthest changed line any invalid checkpoint found.
@@ -1068,12 +1094,14 @@ impl<'a> Checkpoints<'a> {
                 old.push(checkpoint);
                 continue;
             }
+            let mut m = checkpoint.machine.clone();
+            m.input = input;
             // `limits.seconds` bounds the whole build, so a resumed run gets only
             // the time the earlier runs left. The limit only stops a run, it never changes its result.
             m.started = self.build_started.unwrap_or_else(std::time::Instant::now);
             m.checkpoints.resume = Some(Box::new(drive));
             crate::engine::source::set_encoding(m.out.plugins.engine.encoding());
-            if let Some((mouth, _)) = reading_file(&m.input) {
+            if let Some((mouth, _)) = reading_file_after(&m.input, 1) {
                 if self.cfg.verbose >= 2 {
                     crate::util::progress::note!("satex: resuming at {:?}, step {}", mouth.position(), m.out.steps);
                 }
@@ -1091,20 +1119,20 @@ impl<'a> Checkpoints<'a> {
     }
 }
 
-/// Points every path of `m` and `drive` at the current file contents.
+/// Points `input` and every path of `drive` at the current file contents.
 /// Succeeds if each file in `log` is unchanged and each open file still starts
 /// with what was read of it. Otherwise returns where a file changed, if known.
 fn reread(
-    m: &mut Machine,
+    out: &Analysis,
+    input: &mut super::Input,
     drive: &mut Drive,
     log: &[crate::project::overlay::Read],
     source: &str,
     holds: &mut HashMap<(PathBuf, bool), bool>,
 ) -> Result<(), Option<Edit>> {
-    let paths: Vec<PathBuf> = m.out.files.iter().map(|f| PathBuf::from(&f.path)).collect();
-    let main = m.out.main_file;
-    let mut inputs: Vec<(&mut super::Input, bool)> =
-        std::iter::once((&mut m.input, true)).chain(drive.inputs()).collect();
+    let paths: Vec<PathBuf> = out.files.iter().map(|f| PathBuf::from(&f.path)).collect();
+    let main = out.main_file;
+    let mut inputs: Vec<(&mut super::Input, bool)> = std::iter::once((input, true)).chain(drive.inputs()).collect();
     let files = |input: &super::Input| -> Vec<crate::engine::tex::FileId> {
         (input.iter())
             .filter_map(|f| match f {

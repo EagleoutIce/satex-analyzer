@@ -162,7 +162,21 @@ enum FontSource {
 
 impl Machine<'_> {
     pub(crate) fn engine_sym(&mut self, key: &str) -> Sym {
-        self.intern(&format!("{ENGINE}{key}"))
+        self.engine_sym_fmt(format_args!("{key}"))
+    }
+
+    /// [`Machine::engine_sym`] of a key built in place: typesetting reads
+    /// engine keys per character, and a new string for each was a hot cost.
+    pub(crate) fn engine_sym_fmt(&mut self, key: std::fmt::Arguments) -> Sym {
+        use std::fmt::Write;
+        thread_local! { static NAME: Cell<String> = const { Cell::new(String::new()) }; }
+        let mut name = NAME.take();
+        name.clear();
+        name.push(ENGINE);
+        _ = name.write_fmt(key);
+        let sym = self.intern(&name);
+        NAME.set(name);
+        sym
     }
 
     pub(crate) fn engine_int(&mut self, key: &str) -> Option<i64> {
@@ -191,7 +205,7 @@ impl Machine<'_> {
     /// The slot standing for a whole family of engine keys, e.g. every
     /// `charclass.⟨n⟩`. A real key never holds an `ENGINE` character, so this is none of them.
     fn unpinned_sym(&mut self, family: &str) -> Sym {
-        self.engine_sym(&format!("{family}{ENGINE}any"))
+        self.engine_sym_fmt(format_args!("{family}{ENGINE}any"))
     }
 
     /// A write through a number satex could not pin down: any key of the
@@ -837,7 +851,7 @@ impl Machine<'_> {
                 if self.engine_unpinned("interchartoks.") {
                     return Some(Value::Unknown);
                 }
-                let sym = self.engine_sym(&format!("interchartoks.{a}.{b}"));
+                let sym = self.engine_sym_fmt(format_args!("interchartoks.{a}.{b}"));
                 match self.env.value(sym) {
                     Value::Unknown if self.env.get(sym).is_none() => Some(Value::Toks(Rc::from(Vec::new()))),
                     value => Some(value),
@@ -987,7 +1001,7 @@ impl Machine<'_> {
     // ---- fonts -------------------------------------------------------------
 
     fn font_key(&mut self, font: u32, field: &str) -> Sym {
-        self.engine_sym(&format!("font{font}.{field}"))
+        self.engine_sym_fmt(format_args!("font{font}.{field}"))
     }
 
     pub(crate) fn font_field(&mut self, font: u32, field: &str) -> Value {
@@ -1404,13 +1418,14 @@ impl Machine<'_> {
     }
 
     pub(crate) fn font_dimen(&mut self, font: u32, k: usize) -> Option<Value> {
-        let stored = self.font_field(font, &format!("p{k}"));
+        let field = format!("p{k}");
+        let stored = self.font_field(font, &field);
         if !matches!(stored, Value::Unknown) {
             return Some(stored);
         }
         // An assignment satex could not follow put the font file's own
         // parameter out of reach (tex.web § 580).
-        if self.font_field_set(font, &format!("p{k}")) {
+        if self.font_field_set(font, &field) {
             return Some(Value::Unknown);
         }
         let params = self.font_params(font)?;
@@ -2438,7 +2453,7 @@ impl Machine<'_> {
             None => vec![self.unknown_text(Unk::Any, span)],
             Some(count) if n < 0 || n >= count => chars(NO_MATCH, span),
             Some(_) => {
-                let sym = self.engine_sym(&format!("{LAST_MATCH}{n}"));
+                let sym = self.engine_sym_fmt(format_args!("{LAST_MATCH}{n}"));
                 match self.env.value(sym) {
                     Value::Toks(text) => text.iter().map(|t| Token::new(t.tok, span)).collect(),
                     _ => vec![self.unknown_text(Unk::Any, span)],

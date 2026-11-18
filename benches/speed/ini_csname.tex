@@ -1,0 +1,9 @@
+% \csname construction in a loop, 1e5 names (pdftex -ini)
+\catcode`\{=1 \catcode`\}=2 \catcode`\#=6
+\def\loop#1\repeat{\def\body{#1}\iterate}
+\def\iterate{\body \let\next\iterate \else\let\next\relax\fi \next}
+\let\repeat=\fi
+\countdef\n=10 \n=0
+\loop \expandafter\edef\csname x\the\n\endcsname{\the\n}\advance\n by 1 \ifnum\n<100000 \repeat
+\message{\csname x99\endcsname}
+\end

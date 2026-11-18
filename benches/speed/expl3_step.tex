@@ -1,0 +1,11 @@
+% expl3 \int_step_inline:nn and \tl_map_inline:Nn
+\documentclass{article}
+\begin{document}
+\ExplSyntaxOn
+\int_new:N \l_bench_int
+\int_step_inline:nn {20000} { \int_incr:N \l_bench_int }
+\tl_set:Ne \l_tmpa_tl { \prg_replicate:nn {20000} {ab} }
+\tl_map_inline:Nn \l_tmpa_tl { \int_incr:N \l_bench_int }
+\int_use:N \l_bench_int
+\ExplSyntaxOff
+\end{document}

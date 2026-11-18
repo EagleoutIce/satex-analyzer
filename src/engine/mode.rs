@@ -1611,7 +1611,10 @@ impl Machine<'_> {
         }
         let mut shape = None;
         for k in 1..=lines {
-            let (i, l) = (self.engine_sym(&format!("parshape.i{k}")), self.engine_sym(&format!("parshape.l{k}")));
+            let (i, l) = (
+                self.engine_sym_fmt(format_args!("parshape.i{k}")),
+                self.engine_sym_fmt(format_args!("parshape.l{k}")),
+            );
             let (i, l) = (self.env.value(i).as_dimen()?, self.env.value(l).as_dimen()?);
             if shape.is_some_and(|s| s != (i, l)) {
                 return None;
@@ -4412,7 +4415,7 @@ impl Machine<'_> {
             return;
         }
         for name in crate::engine::builtins::PAGE_SO_FAR.split_whitespace() {
-            let sym = self.engine_sym(&format!("page.set.{name}"));
+            let sym = self.engine_sym_fmt(format_args!("page.set.{name}"));
             match self.env.value(sym) {
                 _ if fresh => self.env.set_value(sym, Value::Int(0), true),
                 Value::Int(_) => {}

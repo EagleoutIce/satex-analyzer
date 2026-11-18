@@ -2027,7 +2027,7 @@ pub struct Machine<'a> {
     /// holds no delimiter: a runaway after it refutes that arm.
     arm_assumed: bool,
     /// Recorded runs per call ([`calls`]).
-    call_runs: HashMap<calls::CallKey, calls::CallRuns>,
+    call_runs: crate::fixed::LookupMap<calls::CallKey, Rc<calls::CallRuns>>,
     /// Kept effects of calls, by code and arguments ([`calls`]).
     memos: HashMap<u64, Vec<Rc<calls::Memo>>>,
     memo_codes: HashMap<usize, calls::MemoCode>,
@@ -2104,7 +2104,7 @@ pub struct Machine<'a> {
     expansion_sites: crate::fixed::LookupMap<(Span, Sym), Site>,
     /// Per site, the names written in the round before its last expansion
     /// and what they held then, under [`Site::assigned`] of that one.
-    site_writes: HashMap<(Span, Sym), (u64, Written)>,
+    site_writes: crate::fixed::LookupMap<(Span, Sym), (u64, Written)>,
     /// Hashes of input lists' pending heads, by list and position: a deep
     /// input below a call is hashed once, not at every call.
     shape_memo: std::cell::RefCell<Vec<ShapeSlot>>,
@@ -2934,7 +2934,7 @@ impl<'a> Machine<'a> {
             font_watch: FontWatch::default(),
             dont_expand,
             unknown,
-            call_runs: HashMap::default(),
+            call_runs: Default::default(),
             memos: HashMap::default(),
             memo_codes: HashMap::default(),
             memo_seen: HashSet::default(),
@@ -4539,7 +4539,7 @@ will look undefined",
         self.side_effects += 1;
         let name = Self::output_name(name);
         for k in ["w", "h"] {
-            let sym = self.engine_sym(&format!("produced.{name}.{k}"));
+            let sym = self.engine_sym_fmt(format_args!("produced.{name}.{k}"));
             if self.env.get(sym).is_some() {
                 self.set_engine(&format!("produced.{name}.{k}"), crate::engine::value::Value::Unknown, true);
             }

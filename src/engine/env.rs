@@ -265,7 +265,7 @@ pub struct Env {
 struct MemoLog {
     reads: Vec<u32>,
     pre: Vec<(u32, Option<Binding>)>,
-    at: crate::fixed::HashMap<u32, usize>,
+    at: LookupMap<u32, usize>,
     floor: usize,
     globals: Vec<u32>,
     locals: Vec<u32>,

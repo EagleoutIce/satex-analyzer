@@ -37,7 +37,7 @@ pub mod codec {
     pub enum Mode {
         /// Names and paths are written out in full: equal bytes mean equal
         /// values in any run.
-        Hash { names: Rc<Vec<Rc<str>>>, files: Vec<Rc<str>> },
+        Hash { names: super::Names, files: Vec<Rc<str>> },
         /// Numbers are written as indices into tables built on the way.
         Encode { syms: HashMap<u32, u32>, sym_order: Vec<u32>, files: HashMap<FileId, u32>, file_order: Vec<FileId> },
         /// Indices are read back through the tables of the run installing it.
@@ -490,11 +490,14 @@ impl std::hash::Hasher for NameHasher {
 
 /// The table of control sequence names: every [`Sym`] is an index into it,
 /// and [`Token`] carries the [`Sym`] rather than the text.
-#[derive(PartialEq, Default, Clone)]
+#[derive(Default, Clone)]
 pub struct Interner {
+    /// The names up to the last fold, shared by the copies a checkpoint makes: a copy
+    /// costs the names numbered since, not all of them.
+    base: Rc<NameTable>,
+    /// The names numbered since, after the base's.
     map: std::collections::HashMap<Rc<str>, Sym, NameHash>,
-    /// Shared with the package caches' hash mode, which reads it per load.
-    names: Rc<Vec<Rc<str>>>,
+    names: Vec<Rc<str>>,
     /// While a package cache is being captured: every name asked for, in the
     /// order it was first asked for, which is the order a run that does not
     /// have them yet would number them in.
@@ -503,10 +506,63 @@ pub struct Interner {
     registers: std::collections::HashMap<(&'static str, i64), Sym, NameHash>,
 }
 
+/// Names and their symbols: one layer of an [`Interner`].
+#[derive(Default, Clone)]
+struct NameTable {
+    map: std::collections::HashMap<Rc<str>, Sym, NameHash>,
+    names: Vec<Rc<str>>,
+}
+
+/// New names a copy holds apart before they go into the shared base: a fold copies a
+/// shared base once per this many names and a sixteenth of the base.
+const FOLD_AFTER: usize = 1024;
+
+/// Equal when they number the same names alike.
+impl PartialEq for Interner {
+    fn eq(&self, other: &Self) -> bool {
+        let names = self.len() == other.len()
+            && (Rc::ptr_eq(&self.base, &other.base) && self.names == other.names
+                || self.names().iter().eq(other.names().iter()));
+        names && self.touched == other.touched && self.registers == other.registers
+    }
+}
+
+/// Every name of an [`Interner`], in symbol order, sharing its strings.
+#[derive(Clone)]
+pub struct Names {
+    base: Rc<NameTable>,
+    rest: Rc<[Rc<str>]>,
+}
+
+impl Names {
+    pub fn len(&self) -> usize {
+        self.base.names.len() + self.rest.len()
+    }
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+    pub fn get(&self, i: usize) -> Option<&Rc<str>> {
+        self.base.names.get(i).or_else(|| self.rest.get(i.checked_sub(self.base.names.len())?))
+    }
+    pub fn last(&self) -> Option<&Rc<str>> {
+        self.rest.last().or_else(|| self.base.names.last())
+    }
+    pub fn iter(&self) -> impl Iterator<Item = &Rc<str>> {
+        self.base.names.iter().chain(self.rest.iter())
+    }
+}
+
+impl std::ops::Index<usize> for Names {
+    type Output = Rc<str>;
+    fn index(&self, i: usize) -> &Rc<str> {
+        self.get(i).expect("a name of the interner")
+    }
+}
+
 /// Written as its names: the rest is rebuilt from them.
 impl Serialize for Interner {
     fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
-        self.names.serialize(s)
+        s.collect_seq(self.names().iter())
     }
 }
 
@@ -522,7 +578,7 @@ impl Interner {
     pub fn from_names(names: Vec<String>) -> Interner {
         let mut interner = Interner::default();
         interner.map.reserve(names.len());
-        Rc::make_mut(&mut interner.names).reserve(names.len());
+        interner.names.reserve(names.len());
         for name in names {
             interner.intern(&name);
         }
@@ -530,13 +586,18 @@ impl Interner {
     }
 
     pub fn intern(&mut self, s: &str) -> Sym {
-        let sym = match self.map.get(s) {
-            Some(&sym) => sym,
+        let sym = match self.lookup(s) {
+            Some(sym) => sym,
             None => {
                 let rc: Rc<str> = Rc::from(s);
-                let sym = Sym(self.names.len() as u32);
-                Rc::make_mut(&mut self.names).push(rc.clone());
+                let sym = Sym(self.len() as u32);
+                self.names.push(rc.clone());
                 self.map.insert(rc, sym);
+                if self.names.len() > FOLD_AFTER + self.base.names.len() / 16 {
+                    let base = Rc::make_mut(&mut self.base);
+                    base.names.append(&mut self.names);
+                    base.map.extend(self.map.drain());
+                }
                 sym
             }
         };
@@ -587,10 +648,16 @@ impl Interner {
         previous.map(|(_, order)| order).unwrap_or_default()
     }
     pub fn lookup(&self, s: &str) -> Option<Sym> {
-        self.map.get(s).copied()
+        match self.base.map.get(s) {
+            Some(&sym) => Some(sym),
+            None if self.map.is_empty() => None,
+            None => self.map.get(s).copied(),
+        }
     }
     pub fn name(&self, s: Sym) -> &str {
-        self.names.get(s.0 as usize).map(|r| &**r).unwrap_or("?")
+        let i = s.0 as usize;
+        let at = self.base.names.get(i).or_else(|| self.names.get(i - self.base.names.len()));
+        at.map(|r| &**r).unwrap_or("?")
     }
     /// `\foo`, as TeX prints it (tex.web § 49).
     pub fn cs(&self, s: Sym) -> String {
@@ -614,14 +681,14 @@ impl Interner {
     }
 
     pub fn len(&self) -> usize {
-        self.names.len()
+        self.base.names.len() + self.names.len()
     }
     pub fn is_empty(&self) -> bool {
-        self.names.is_empty()
+        self.len() == 0
     }
     /// Every name, in symbol order, sharing the interner's strings.
-    pub fn names(&self) -> Rc<Vec<Rc<str>>> {
-        self.names.clone()
+    pub fn names(&self) -> Names {
+        Names { base: self.base.clone(), rest: Rc::from(&self.names[..]) }
     }
 }
 

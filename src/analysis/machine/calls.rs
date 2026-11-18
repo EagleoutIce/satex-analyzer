@@ -347,7 +347,7 @@ impl Machine<'_> {
         if !memo {
             self.memo_verify = None;
         }
-        let runs = self.call_runs.entry(key).or_default();
+        let runs = Rc::make_mut(self.call_runs.entry(key).or_default());
         let site = !runs.leaky && runs.runs.len() + runs.active < needed;
         if site {
             runs.active += 1;
@@ -441,13 +441,13 @@ impl Machine<'_> {
                         .windows(2)
                         .any(|w| accumulates(&w[0], &w[1]) || updates(&w[0], &w[1]) || self.folds_code(&w[0], &w[1])))
         {
-            let runs = self.call_runs.get_mut(&key).expect("recorded");
+            let runs = Rc::make_mut(self.call_runs.get_mut(&key).expect("recorded"));
             runs.leaky = true;
             runs.runs.clear();
             return false;
         }
         let len = runs.runs.len();
-        self.call_runs.get_mut(&key).expect("recorded").shaped = Some(len);
+        Rc::make_mut(self.call_runs.get_mut(&key).expect("recorded")).shaped = Some(len);
         let runs = self.call_runs.get(&key).expect("recorded");
         // Summarize only if an operand is unknown: an argument, or a name the runs read.
         let unknown = arguments.iter().any(|a| self.has_unknown(a))
@@ -501,7 +501,7 @@ impl Machine<'_> {
     /// wrote a typed number from its own arguments that this call's arguments
     /// do not hold, since that number does not belong to this call.
     fn apply_summary(&mut self, key: CallKey, span: Span, arguments: &[Vec<Token>]) -> bool {
-        let all = std::mem::take(&mut self.call_runs.get_mut(&key).expect("recorded").runs);
+        let all = std::mem::take(&mut Rc::make_mut(self.call_runs.get_mut(&key).expect("recorded")).runs);
         // The runs that read what the call reads now: their writes, not every run's.
         let runs: Vec<Run> = all.iter().filter(|r| !self.reads_otherwise(r)).cloned().collect();
         let mut syms: Vec<Sym> = runs.iter().flat_map(|r| r.writes.iter().map(|w| w.0)).collect();
@@ -586,7 +586,7 @@ impl Machine<'_> {
             }
         }
         if refused {
-            self.call_runs.get_mut(&key).expect("recorded").runs = all;
+            Rc::make_mut(self.call_runs.get_mut(&key).expect("recorded")).runs = all;
             return false;
         }
         self.mint();
@@ -594,8 +594,9 @@ impl Machine<'_> {
             let global = b.global;
             self.env.set(sym, b, global);
         }
-        let reported = std::mem::replace(&mut self.call_runs.get_mut(&key).expect("recorded").reported, true);
-        self.call_runs.get_mut(&key).expect("recorded").runs = all;
+        let reported =
+            std::mem::replace(&mut Rc::make_mut(self.call_runs.get_mut(&key).expect("recorded")).reported, true);
+        Rc::make_mut(self.call_runs.get_mut(&key).expect("recorded")).runs = all;
         self.approximated = true;
         if self.cfg.verbose >= 4 {
             let names: Vec<&str> = syms.iter().map(|s| self.name(*s)).collect();
@@ -670,7 +671,7 @@ impl Machine<'_> {
                 continue;
             }
             let clean = whole && balanced && !peeks && !rec.soft;
-            let entry = self.call_runs.entry(rec.key).or_default();
+            let entry = Rc::make_mut(self.call_runs.entry(rec.key).or_default());
             entry.active = entry.active.saturating_sub(1);
             if !clean {
                 entry.leaky = true;
@@ -681,7 +682,7 @@ impl Machine<'_> {
                 continue;
             }
             let Some(reads) = self.env.reads_since(rec.reads) else {
-                self.call_runs.get_mut(&rec.key).expect("entry").leaky = true;
+                Rc::make_mut(self.call_runs.get_mut(&rec.key).expect("entry")).leaky = true;
                 continue;
             };
             // Only runs over unknown operands are recorded. What a run on
@@ -694,7 +695,7 @@ impl Machine<'_> {
             // A run that wrote nothing acted only through the tokens it left
             // or consumed, which a summary cannot replay.
             if writes.is_empty() {
-                let entry = self.call_runs.get_mut(&rec.key).expect("entry");
+                let entry = Rc::make_mut(self.call_runs.get_mut(&rec.key).expect("entry"));
                 entry.leaky = true;
                 entry.runs.clear();
                 continue;
@@ -716,7 +717,7 @@ impl Machine<'_> {
                 loose: false,
                 outputs: Vec::new(),
             };
-            self.call_runs.get_mut(&rec.key).expect("entry").runs.push(run);
+            Rc::make_mut(self.call_runs.get_mut(&rec.key).expect("entry")).runs.push(run);
         }
         if self.call_recs.is_empty() {
             self.env.log_reads(false);
@@ -732,7 +733,7 @@ impl Machine<'_> {
             return;
         }
         let k = usize::from(self.limits.call_learn_after);
-        let entry = self.call_runs.entry(key).or_default();
+        let entry = Rc::make_mut(self.call_runs.entry(key).or_default());
         entry.code.get_or_insert_with(|| rec.code.clone());
         let forked = self.learn_forks > rec.forks_at;
         if entry.leaky || entry.runs.len() >= k {
@@ -755,7 +756,7 @@ impl Machine<'_> {
         // It wrote a name from its arguments, so the next call writes another name.
         let handed = writes.iter().any(|w| rec.args.iter().flatten().any(|t| t.cs() == Some(w.0)));
         if !whole || handed || writes.is_empty() {
-            let entry = self.call_runs.get_mut(&key).expect("entry");
+            let entry = Rc::make_mut(self.call_runs.get_mut(&key).expect("entry"));
             entry.leaky = true;
             entry.runs.clear();
             return;
@@ -765,7 +766,7 @@ impl Machine<'_> {
         let syms: Vec<Sym> = writes.iter().filter(|_| loose).map(|w| w.0).collect();
         let met = self.env.read_before(rec.reads, rec.assigned, &syms).unwrap_or_else(|| syms.clone());
         let outputs = syms.into_iter().filter(|s| met.binary_search(s).is_err()).collect();
-        let entry = self.call_runs.get_mut(&key).expect("entry");
+        let entry = Rc::make_mut(self.call_runs.get_mut(&key).expect("entry"));
         entry.runs.push(Run {
             writes,
             reads: Vec::new(),
@@ -785,7 +786,7 @@ impl Machine<'_> {
             let alike = runs.windows(2).all(|w| {
                 (loose || names(&w[0]) == names(&w[1])) && (w[0].closes, w[0].peeks) == (w[1].closes, w[1].peeks)
             }) && self.typed_effect(&runs);
-            let entry = self.call_runs.get_mut(&key).expect("entry");
+            let entry = Rc::make_mut(self.call_runs.get_mut(&key).expect("entry"));
             entry.leaky = !alike;
             if alike {
                 entry.runs = runs;
@@ -838,7 +839,7 @@ impl Machine<'_> {
             self.pop_frame();
         }
         self.mark_cut_scans();
-        let runs = std::mem::take(&mut self.call_runs.get_mut(&key).expect("checked").runs);
+        let runs = std::mem::take(&mut Rc::make_mut(self.call_runs.get_mut(&key).expect("checked")).runs);
         let keep = rec.depth.saturating_sub(usize::from(runs[0].closes));
         self.close_since((rec.conds, self.env.group_id_at(keep), u64::MAX), false);
         (self.mode, self.natural, self.material) = (rec.mode, rec.natural, rec.material);
@@ -850,7 +851,7 @@ impl Machine<'_> {
             self.soften_call_recs();
         }
         self.apply_learned(&runs, span);
-        let entry = self.call_runs.get_mut(&key).expect("checked");
+        let entry = Rc::make_mut(self.call_runs.get_mut(&key).expect("checked"));
         entry.runs = runs;
         let reported = std::mem::replace(&mut entry.reported, true);
         self.approximated = true;
@@ -1004,6 +1005,7 @@ impl Machine<'_> {
             if rec.site
                 && let Some(entry) = self.call_runs.get_mut(&rec.key)
             {
+                let entry = Rc::make_mut(entry);
                 entry.active = entry.active.saturating_sub(1);
             }
         }
