@@ -16,9 +16,10 @@ use crate::linter::{Category, Ref, Report, Rule, Severity, Source};
 pub static RULES: &[Rule] = &[
     Rule {
         code: "command-terminated-space",
+        since: "0.2.0",
         category: Category::Style,
         severity: Severity::Warning,
-        summary: "a control word ate the space after it and the next word is set against what it produced",
+        summary: "space eaten after a command",
         explanation: "\
 TeX reads a control word and then discards the spaces after it (The TeXbook,
 chapter 3), so `\\TeX ok` sets `TEXok`.
@@ -38,9 +39,10 @@ is swallowed there, so the rule stays silent and the intent shows.",
     },
     Rule {
         code: "missing-nonbreaking-space",
+        since: "0.2.0",
         category: Category::Style,
         severity: Severity::Warning,
-        summary: "an ordinary space in front of a reference lets the line break before the number",
+        summary: "missing tie before a reference",
         explanation: "\
 A reference should not begin a line on its own, so a tie belongs in front of
 it.  `~` is an interword space TeX may not break at (The TeXbook, chapter 14).
@@ -61,9 +63,10 @@ Fix by writing `Figure~\\ref{fig:one}`.",
     },
     Rule {
         code: "sentence-spacing",
+        since: "0.2.0",
         category: Category::Style,
         severity: Severity::Warning,
-        summary: "a period set the wrong width of space for the sentence around it",
+        summary: "wrong space after a period",
         explanation: "\
 How wide a space TeX sets follows the space factor of the character before
 it (tex.web § 1034).  A period raises it to 3000, which asks for the wider
@@ -90,9 +93,10 @@ Fix by writing `etc.\\ and`, or `the ABC\\@. Next`.",
     },
     Rule {
         code: "sentence-capital",
+        since: "0.2.4",
         category: Category::Style,
         severity: Severity::Warning,
-        summary: "a sentence starts with a lowercase letter",
+        summary: "sentence starts lowercase",
         explanation: "\
 In the languages of `lints.sentence-capital.languages` (by `\\languagename`), a
 sentence starts with a capital.  A finding needs `.`, `!` or `?`, a space,
@@ -110,9 +114,10 @@ Fix by writing the capital, or `\\Cref` for a `\\cref`.",
     },
     Rule {
         code: "space-before-command",
+        since: "0.2.0",
         category: Category::Style,
         severity: Severity::Warning,
-        summary: "a space lets the line break between a word and the mark that belongs to it",
+        summary: "line may break before a mark",
         explanation: "\
 `\\label` records the page its own position falls on, and `\\index` and
 `\\footnote` mark the word they stand after (source2e, ltxref.dtx).  A space
@@ -135,9 +140,10 @@ Fix by deleting the space, so the command touches the word.",
     },
     Rule {
         code: "space-before-punctuation",
+        since: "0.2.0",
         category: Category::Style,
         severity: Severity::Warning,
-        summary: "a space stands between a word and the punctuation after it",
+        summary: "space before punctuation",
         explanation: "\
 Punctuation belongs against the word it follows.  A space in front of a comma
 or a period is glue, and the reader sees it on the page.
@@ -155,9 +161,10 @@ Fix by deleting the space.",
     },
     Rule {
         code: "double-space",
+        since: "0.2.0",
         category: Category::Style,
         severity: Severity::Warning,
-        summary: "two interword spaces reached the page, one of them from a tie",
+        summary: "double space",
         explanation: "\
 TeX reads a run of spaces as one space token (The TeXbook, chapter 8), so two spaces
 in the source set one on the page.  satex reports only the spaces that really
@@ -179,9 +186,10 @@ Fix by deleting the ordinary space.",
     },
     Rule {
         code: "parenthesis-spacing",
+        since: "0.2.0",
         category: Category::Style,
         severity: Severity::Warning,
-        summary: "a parenthesis carries the space of the text inside it instead of the text around it",
+        summary: "parenthesis takes the wrong space",
         explanation: "\
 A parenthesis takes the space of the text around it, never of the text
 inside it: `text (inside) text`, not `text( inside )text`.
@@ -331,7 +339,7 @@ fn command_terminated_space(report: &mut Report) {
         report.add_fix(
             at,
             "swallowed",
-            format!("{name} took the space after its name, and the run set `{set}`. If `{set}` is meant, write `{name}{{}}{next}`"),
+            format!("space eaten after {name}: the run set `{set}`. If `{set}` is meant, write `{name}{{}}{next}`"),
             Fix::new(format!("write `{name}{{}}` so the space survives"), Applicability::Safe, Some(edits)),
         );
     }
@@ -417,7 +425,7 @@ fn missing_nonbreaking_space(report: &mut Report) {
         report.add_fix(
             at,
             "tie",
-            format!("an ordinary space stands in front of {what}, so the line may break between the word and it"),
+            format!("missing tie before {what}: an ordinary space lets the line break there"),
             Fix::new("write a tie, `~`, instead of the space", Applicability::Unsafe, fix),
         );
     }
@@ -484,10 +492,11 @@ fn sentence_spacing(report: &mut Report) {
             && view.joined(i + 2)
             && !ends_sentence(report, i);
         if capitals && after.is_uppercase() && !listed {
-            let message = format!("the period after `{word}` set a word space, where a sentence ends");
+            let message = format!("wrong space after the period: `{word}.` set a word space, where a sentence ends");
             findings.push(rewrite_space(i..i + 1, "intersentence", message, r"\@."));
         } else if listed || runs_on {
-            let message = format!("the period in `{spelled}` set a sentence space, where the sentence runs on");
+            let message =
+                format!("wrong space after the period: `{spelled}` set a sentence space, where the sentence runs on");
             // `\ ` is a control space: the fix names it with its period, since
             // a lone backslash reads as a typo.
             let fix = format!(r"write `{spelled}\ ` (a control space), so the space stays a word space");
@@ -591,7 +600,7 @@ fn space_before_command(report: &mut Report) {
         report.add_fix(
             at,
             if footnote { "footnote" } else { "pagereference" },
-            format!("a space stands in front of {what}, and the line may break there, {cost}"),
+            format!("line may break before {what}: a space stands in front of it, {cost}"),
             Fix::new("delete the space", Applicability::Unsafe, fix),
         );
     }
@@ -614,7 +623,7 @@ fn space_before_punctuation(report: &mut Report) {
         if !plain_space(report, i) || !view.is_ours(i + 1) {
             continue;
         }
-        let message = format!("a space stands between the word and the `{mark}` after it");
+        let message = format!("space before `{mark}`: it stands between the word and the mark");
         findings.push(Rewrite::new(i..i + 1, "punctuation", message, "").fix("delete the space").safe());
     }
     for finding in findings {
@@ -711,7 +720,7 @@ fn parenthesis_spacing(report: &mut Report) {
         let near = |k: usize| view.beside(k.max(i));
         if inside.is_some_and(|k| plain_space(report, k) && near(k)) {
             let side = if open { "after" } else { "in front of" };
-            let message = format!("a space stands {side} the `{paren}`, inside the parentheses");
+            let message = format!("space {side} the `{paren}`, inside the parentheses");
             let at = inside.unwrap_or(i);
             findings.push(Rewrite::new(at..at + 1, "parenthesis", message, "").fix("delete the space"));
             continue;
@@ -737,7 +746,7 @@ fn parenthesis_spacing(report: &mut Report) {
         .unwrap_or(false);
         if !one_word && outside.filter(|&k| near(k)).and_then(|k| view.char_at(k)).is_some_and(char::is_alphabetic) {
             let side = if open { "in front of" } else { "after" };
-            let message = format!("no space stands {side} the `{paren}`, so it is set against the word");
+            let message = format!("missing space {side} the `{paren}`: it is set against the word");
             let want = if open { format!(" {paren}") } else { format!("{paren} ") };
             let fix = "put a space on the other side";
             findings.push(Rewrite::new(i..i + 1, "parenthesis", message, want).fix(fix).at(Severity::Info));

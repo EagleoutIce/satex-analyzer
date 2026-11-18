@@ -10,9 +10,10 @@ use crate::linter::{Category, Ref, Report, Rule, Severity, Source};
 pub static RULES: &[Rule] = &[
     Rule {
         code: "expl3-scope",
+        since: "0.2.0",
         category: Category::Style,
         severity: Severity::Warning,
-        summary: "an expl3 variable's scope prefix disagrees with how the run assigned it",
+        summary: "expl3 scope prefix mismatch",
         explanation: "\
 A variable named `\\l_…` is local and `\\g_…` global (interface3). The run set
 this one the other way: a `\\l_` variable by a global function (`\\tl_gset:Nn`),
@@ -27,9 +28,10 @@ Fix by renaming the variable or using the function of the other scope.",
     },
     Rule {
         code: "expl3-type",
+        since: "0.2.0",
         category: Category::Style,
         severity: Severity::Warning,
-        summary: "an expl3 variable's type suffix disagrees with the functions that set it",
+        summary: "expl3 type suffix mismatch",
         explanation: "\
 A variable's name ends in its type (`_tl`, `_seq`, `_int`, … in interface3). The
 run made or set this one with another module's function, as `\\seq_set_split:Nnn`
@@ -44,9 +46,10 @@ Fix by renaming the variable or using the functions of its type.",
     },
     Rule {
         code: "expl3-constant-set",
+        since: "0.2.0",
         category: Category::Correctness,
         severity: Severity::Warning,
-        summary: "an expl3 constant is set after it was declared",
+        summary: "expl3 constant set again",
         explanation: "\
 A `\\c_…` variable is a constant (interface3): it is made once, by `\\…_const:N…`
 or `\\…_new:N`, and never set. The run set this one again.

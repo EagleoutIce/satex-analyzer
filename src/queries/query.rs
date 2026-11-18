@@ -324,6 +324,33 @@ impl Query {
         Self::ALL.iter().find(|(_, q)| *q == self).map(|(n, _)| *n).unwrap_or("query")
     }
 
+    /// The satex release that first had the query.
+    pub fn since(self) -> &'static str {
+        match self {
+            Query::Calls
+            | Query::Catcodes
+            | Query::Definitions
+            | Query::Dependencies
+            | Query::DependencyGraph
+            | Query::Diagnostics
+            | Query::Distribution
+            | Query::Expansions
+            | Query::Files
+            | Query::Gaps
+            | Query::Occurrences
+            | Query::Options
+            | Query::Pgfkeys
+            | Query::Plugins
+            | Query::Produces
+            | Query::Project
+            | Query::Recursion
+            | Query::SideEffects
+            | Query::Trace => "0.1.0",
+            Query::Previews | Query::TypePlugins | Query::Typeset => "0.2.0",
+            Query::Tagging => "0.2.5",
+        }
+    }
+
     /// What the query answers, in a few words: the one place `--list`, the wiki and the playground read.
     pub fn about(self) -> &'static str {
         match self {

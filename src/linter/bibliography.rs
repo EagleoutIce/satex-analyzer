@@ -12,9 +12,10 @@ use crate::linter::{Category, Ref, Report, Rule, Severity, Source};
 pub static RULES: &[Rule] = &[
     Rule {
         code: "undefined-citation",
+        since: "0.1.0",
         category: Category::Correctness,
         severity: Severity::Warning,
-        summary: "a citation names a key no bibliography entry declares",
+        summary: "citation key not in the bibliography",
         explanation: "\
 No `\\bibitem` and no entry of the `.bib` databases `\\bibliography` names
 declares this key, so LaTeX prints `?` and warns `Citation … undefined`.
@@ -34,9 +35,10 @@ entry to the first database, to fill in.",
     },
     Rule {
         code: "duplicate-bibliography-entry",
+        since: "0.1.0",
         category: Category::Correctness,
         severity: Severity::Warning,
-        summary: "the same key is declared by two bibliography entries",
+        summary: "key declared twice",
         explanation: "\
 Two `\\bibitem`s with one key make LaTeX warn `Label … multiply defined` and
 every citation resolves to the later one.  Two `.bib` entries with one key make
@@ -50,9 +52,10 @@ Fix by renaming or deleting one of them.",
     },
     Rule {
         code: "unused-bibitem",
+        since: "0.1.0",
         category: Category::Style,
         severity: Severity::Info,
-        summary: "a `\\bibitem` written in the document is never cited",
+        summary: "bibitem never cited",
         explanation: "\
 A `thebibliography` written by hand lists what it lists, cited or not.  A
 database only contributes what is cited, so its entries are not reported.
@@ -66,9 +69,10 @@ Fix by citing the entry, or by deleting it.",
     },
     Rule {
         code: "bibtex-command-under-biblatex",
+        since: "0.2.0",
         category: Category::Correctness,
         severity: Severity::Error,
-        summary: "a BibTeX command biblatex replaces stops the run",
+        summary: "BibTeX command under biblatex",
         explanation: "\
 biblatex makes the commands of a BibTeX bibliography raise errors where it has
 its own: the style is its `style` option, not `\\bibliographystyle`, and the

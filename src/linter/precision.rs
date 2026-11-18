@@ -5,9 +5,10 @@ use crate::linter::{Category, Report, Rule, Severity};
 pub static RULES: &[Rule] = &[
     Rule {
         code: "expected-load",
+        since: "0.2.0",
         category: Category::Correctness,
         severity: Severity::Info,
-        summary: "the file was read after a package it expects loaded",
+        summary: "file read before a package it expects",
         explanation: "\
 A package or class read on its own may use names that another one defines,
 as a beamer theme uses beamer's.  When `load.expect_detect` is on, SaTeX looks
@@ -24,9 +25,10 @@ Fix by naming what the file expects in `load.expect`, or by loading it with
     },
     Rule {
         code: "unread-document",
+        since: "0.2.1",
         category: Category::Precision,
         severity: Severity::Error,
-        summary: "the analysis did not read all of the document",
+        summary: "document not fully read",
         explanation: "\
 A file the document's own `\\input`, `\\include` or `\\subfile` names exists but
 the run never read it, or a scan read on past the document's end.  Every finding
@@ -42,9 +44,10 @@ it.  Raising the limits in `satex.yaml` may close it.",
     },
     Rule {
         code: "analysis-imprecision",
+        since: "0.1.0",
         category: Category::Precision,
         severity: Severity::Info,
-        summary: "the analysis had to widen",
+        summary: "analysis had to widen",
         explanation: "\
 Undecided conditionals are analyzed arm by arm, so they are not reported here.
 This rule reports the two places where the analysis is incomplete instead:

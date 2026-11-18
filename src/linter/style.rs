@@ -11,9 +11,10 @@ use crate::linter::{Category, Ref, Report, Rule, Severity, Source};
 pub static RULES: &[Rule] = &[
     Rule {
         code: "dead-definition",
+        since: "0.1.0",
         category: Category::Style,
         severity: Severity::Info,
-        summary: "a definition is replaced before anything uses it",
+        summary: "definition replaced before use",
         explanation: "\
 The name is defined, and defined again, with no use in between: the first
 replacement text never reaches the typesetter.  Both definitions are made on
@@ -31,9 +32,10 @@ Fix by deleting the first definition, or by checking which one was meant.",
     },
     Rule {
         code: "unused-label",
+        since: "0.1.0",
         category: Category::Style,
         severity: Severity::Info,
-        summary: "a label is never referenced",
+        summary: "label never referenced",
         explanation: "\
 Fix by deleting the `\\label`, or by checking the `\\ref` that was meant to use it.",
         references: &[],
@@ -43,9 +45,10 @@ Fix by deleting the `\\label`, or by checking the `\\ref` that was meant to use 
     },
     Rule {
         code: "group-local-definition",
+        since: "0.1.0",
         category: Category::Style,
         severity: Severity::Warning,
-        summary: "a definition is made inside a group and lost when it closes",
+        summary: "definition lost when its group closes",
         explanation: "\
 `\\def` and `\\newcommand` are local.  Inside `{…}`, `\\begingroup…\\endgroup` or
 an environment, the definition disappears at the closing brace.
@@ -59,9 +62,10 @@ Fix by moving the definition out of the group, or by prefixing it with
     },
     Rule {
         code: "primitive-tex-command",
+        since: "0.1.0",
         category: Category::Style,
         severity: Severity::Info,
-        summary: "a plain TeX primitive is used where LaTeX has its own interface",
+        summary: "plain TeX primitive in LaTeX",
         explanation: "\
 chktex warning 41 (`You ought to not use primitive TeX in LaTeX code`) flags
 the primitives in chktexrc's `Primitives` list.  satex reports one only where
@@ -81,9 +85,10 @@ Fix by using LaTeX's interface for the same job.",
     },
     Rule {
         code: "unused-definition",
+        since: "0.1.0",
         category: Category::Style,
         severity: Severity::Info,
-        summary: "a macro defined in the document is never used",
+        summary: "macro never used",
         explanation: "\
 Nothing expands this name.  A name some other definition of it gives a
 meaning that is read is used: a default a later call overrides is no unused
@@ -97,9 +102,10 @@ Fix by deleting it, or by checking why nothing calls it yet.",
     },
     Rule {
         code: "stray-space",
+        since: "0.1.0",
         category: Category::Style,
         severity: Severity::Info,
-        summary: "a macro body picked up a space from an unescaped line end",
+        summary: "space from a line end in a macro",
         explanation: "\
 Inside a macro's replacement text, TeX turns the end of a line into a space
 token unless a control word already skipped it or a `%` swallowed the rest
@@ -204,8 +210,9 @@ fn stray_space(report: &mut Report) {
                     (true, false) => "may insert",
                 };
                 let name = report.cs(def.name);
-                let message =
-                    format!("`{name}`'s body ends a line without `%`, so using `{name}` {verb} a space there");
+                let message = format!(
+                    "stray space in `{name}`: its body ends a line without `%`, so using `{name}` {verb} a space there"
+                );
                 // A body whose `}` starts the next line closes on this one instead.
                 let closes = i + 1 == body.len()
                     && text.as_deref().is_some_and(|t| t.line(tok.span.line + 1).trim_start().starts_with('}'));

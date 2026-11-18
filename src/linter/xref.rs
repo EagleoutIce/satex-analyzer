@@ -20,9 +20,10 @@ use crate::linter::{Category, Ref, Report, Rule, Severity, Source};
 pub static RULES: &[Rule] = &[
     Rule {
         code: "hand-written-reference",
+        since: "0.2.0",
         category: Category::Style,
         severity: Severity::Info,
-        summary: "a number typed after a reference name, where `\\ref` would keep it right",
+        summary: "number typed after a reference name",
         explanation: "\
 `see Section 2` stays `2` when a section is added in front of it.  `\\ref`
 prints the number the label has in this run, so it never goes stale.
@@ -52,9 +53,10 @@ before it, `in 3.)`, is never read.",
     },
     Rule {
         code: "hand-written-author",
+        since: "0.2.0",
         category: Category::Style,
         severity: Severity::Info,
-        summary: "an author name typed before a citation that prints it from the bibliography",
+        summary: "author name typed before a citation",
         explanation: "\
 In `Knuth \\cite{knuth84}` the name is typed by hand.  natbib's `\\citet` and
 biblatex's `\\textcite` print the author from the entry and the citation
@@ -80,9 +82,10 @@ key may be the slip.",
     },
     Rule {
         code: "et-al",
+        since: "0.2.0",
         category: Category::Style,
         severity: Severity::Warning,
-        summary: "`et al.` spelled another way, or a citation number typed after it",
+        summary: "et al. spelled by hand",
         explanation: "\
 `et al.` shortens *et alii*.  `et` is a whole word, so only `al.` takes a
 period.  `et. al.`, `et.al.`, `et al` and the spelled-out `et alii` or
@@ -103,9 +106,10 @@ is the business of `sentence-spacing`.",
     },
     Rule {
         code: "undefined-cref-format",
+        since: "0.2.0",
         category: Category::Correctness,
         severity: Severity::Warning,
-        summary: "cleveref has no name for a label's type, so `\\cref` prints `??`",
+        summary: "cleveref has no name for this label",
         explanation: "\
 cleveref prints a reference with the format of the label's type: `\\cref`
 the `cref` one, `\\Cref` the `Cref` one, `\\crefrange` the range ones.

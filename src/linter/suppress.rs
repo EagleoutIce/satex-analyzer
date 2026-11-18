@@ -19,9 +19,10 @@ use crate::queries::query::Record;
 
 pub static RULES: &[Rule] = &[Rule {
     code: "unknown-suppress-code",
+    since: "0.1.0",
     category: Category::Style,
     severity: Severity::Warning,
-    summary: "a satex-disable comment names a code no rule has",
+    summary: "suppression names no rule",
     explanation: "\
 A `satex-disable…`/`satex-enable` magic comment named a code that
 `satex lint --rules` does not list, most often a typo.  It suppresses

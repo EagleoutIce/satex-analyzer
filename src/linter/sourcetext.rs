@@ -18,9 +18,10 @@ use crate::project::config::{CommentMarker, UserPattern};
 pub static RULES: &[Rule] = &[
     Rule {
         code: "unbalanced-brackets",
+        since: "0.2.0",
         category: Category::Correctness,
         severity: Severity::Warning,
-        summary: "a file sets more of one bracket than of its partner",
+        summary: "unbalanced brackets",
         explanation: "\
 TeX gives `(`, `)`, `[` and `]` no meaning of their own, but a document uses
 them for structure, so a count that does not match lost a bracket
@@ -39,9 +40,10 @@ Fix by adding the bracket that is missing.",
     },
     Rule {
         code: "user-pattern",
+        since: "0.2.0",
         category: Category::Style,
         severity: Severity::Warning,
-        summary: "the source matches a pattern the project asked to be warned about",
+        summary: "matches a project pattern",
         explanation: "\
 chktex keeps two lists of its own in `chktexrc`: `UserWarn`, literal strings
 to report (warning 20), and `UserWarnRegex`, regular expressions
@@ -62,9 +64,10 @@ pattern from `satex.yaml`.",
     },
     Rule {
         code: "unintended-escape",
+        since: "0.2.0",
         category: Category::Correctness,
         severity: Severity::Info,
-        summary: "a command is followed by an escaped punctuation mark, which is another command",
+        summary: "command followed by escaped punctuation",
         explanation: "\
 `\\TeX\\. Right?` does not set `TeX. Right?`.  `\\.` is the dot accent, so it
 takes the `R` and sets `TeXṘight?` (chktex 21).
@@ -82,9 +85,10 @@ Fix by removing the backslash.",
     },
     Rule {
         code: "comment-marker",
+        since: "0.2.0",
         category: Category::Style,
         severity: Severity::Info,
-        summary: "a comment still carries a TODO-style marker",
+        summary: "TODO marker in a comment",
         explanation: "\
 chktex's warning 22 prints every comment it finds, which is noise in a
 document of any size.
@@ -103,9 +107,10 @@ Fix by doing what the note asks and deleting it.",
     },
     Rule {
         code: "ignored-verbatim-tail",
+        since: "0.2.0",
         category: Category::Correctness,
         severity: Severity::Warning,
-        summary: "text stands on the line that closes a verbatim body and never reaches the page",
+        summary: "text lost after verbatim end",
         explanation: "\
 A verbatim environment that reads its body line by line throws away whatever
 follows `\\end{…}` on the same line.  `fancyvrb` does this and the kernel's

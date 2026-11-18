@@ -11,9 +11,10 @@ use crate::linter::{Category, Report, Rule, Severity};
 pub static RULES: &[Rule] = &[
     Rule {
         code: "itemize-numbered",
+        since: "0.2.1",
         category: Category::Style,
         severity: Severity::Info,
-        summary: "an `itemize` numbers its items by hand",
+        summary: "numbered items in an itemize",
         explanation: "\
 `\\item[1.]`, `\\item[2.]`, … in an `itemize` count by hand what `enumerate`
 counts itself: an item added or moved leaves the numbers wrong, and
@@ -30,9 +31,10 @@ items than `lints.itemize-numbered.items` (2) is left alone.",
     },
     Rule {
         code: "itemize-described",
+        since: "0.2.1",
         category: Category::Style,
         severity: Severity::Info,
-        summary: "an `itemize` labels its items with words",
+        summary: "labelled items in an itemize",
         explanation: "\
 An `itemize` whose every `\\item[…]` names its item in words is a
 `description`: that list sets each label in bold and hangs the text after

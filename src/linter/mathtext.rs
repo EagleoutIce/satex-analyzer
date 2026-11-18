@@ -15,9 +15,10 @@ use crate::linter::{Category, Ref, Report, Rule, Severity, Source};
 pub static RULES: &[Rule] = &[
     Rule {
         code: "math-shift-dollars",
+        since: "0.2.0",
         category: Category::Style,
         severity: Severity::Info,
-        summary: "display math opened with `$$` where LaTeX spells it \\[",
+        summary: "$$ instead of \\[",
         explanation: "\
 `$$ … $$` is plain TeX's display.  LaTeX spells it `\\[ … \\]`, which obeys
 the `fleqn` and `leqno` class options and the class's `\\everydisplay`
@@ -41,9 +42,10 @@ Fix by writing `\\[ … \\]`.",
     },
     Rule {
         code: "math-script-braces",
+        since: "0.2.0",
         category: Category::Correctness,
         severity: Severity::Warning,
-        summary: "`^` and `_` take one token, so what follows needs braces",
+        summary: "script needs braces",
         explanation: "\
 `^` and `_` attach the single next token to the atom before them (The TeXbook,
 chapter 16).  `x^12` sets the exponent 1 and then a 2 of its own size, and
@@ -65,9 +67,10 @@ Fix by putting the script between `{` and `}`.",
     },
     Rule {
         code: "delimiter-not-followed",
+        since: "0.2.0",
         category: Category::Correctness,
         severity: Severity::Warning,
-        summary: "`\\left`, `\\right` or `\\middle` is followed by a brace or a math shift",
+        summary: "\\left or \\right before a brace",
         explanation: "\
 `\\left`, `\\right` and `\\middle` scan a delimiter: one character with a
 `\\delcode`, or one control sequence made by `\\delimiter` (tex.web § 1161).
@@ -86,9 +89,10 @@ delimiter is wanted.",
     },
     Rule {
         code: "math-still-open",
+        since: "0.2.0",
         category: Category::Correctness,
         severity: Severity::Error,
-        summary: "the run is still in math mode where the text ends",
+        summary: "math mode left open",
         explanation: "\
 A `$` that is never closed leaves TeX in math mode.  The next `\\par` makes TeX
 report `Missing $ inserted` and close the formula itself (tex.web § 1047
@@ -107,9 +111,10 @@ Fix by closing the formula.",
     },
     Rule {
         code: "math-mode-mismatch",
+        since: "0.2.0",
         category: Category::Correctness,
         severity: Severity::Info,
-        summary: "\\(, \\), \\[ or \\] stands where the mode does not allow it",
+        summary: "math delimiter in the wrong mode",
         explanation: "\
 LaTeX's four math delimiters each test the mode before they act.  `\\(` and
 `\\[` require that math is off, `\\)` inner math and `\\]` display math.  Where
@@ -128,9 +133,10 @@ Fix by pairing each delimiter with its own partner.",
     },
     Rule {
         code: "math-operator-name",
+        since: "0.2.0",
         category: Category::Style,
         severity: Severity::Warning,
-        summary: "an operator name is set in math italic instead of by its command",
+        summary: "operator name in math italic",
         explanation: "\
 Letters in math mode are set in math italic, one variable per letter, with
 the spacing of a product (The TeXbook, chapter 18), so `$sin(x)$` sets a product of
@@ -149,9 +155,10 @@ Fix by writing the command.",
     },
     Rule {
         code: "ellipsis-dots",
+        since: "0.2.0",
         category: Category::Style,
         severity: Severity::Warning,
-        summary: "three periods set three periods, not an ellipsis",
+        summary: "three periods, not an ellipsis",
         explanation: "\
 Three `.` characters are set with the spacing of three periods, which is
 tighter than an ellipsis (The TeXbook, chapter 18).  `\\ldots` sets them on the
@@ -169,9 +176,10 @@ Fix by writing the command.",
     },
     Rule {
         code: "doubled-punctuation",
+        since: "0.2.4",
         category: Category::Style,
         severity: Severity::Warning,
-        summary: "two punctuation marks in a row, where one belongs",
+        summary: "doubled punctuation",
         explanation: "\
 `etc..` sets two periods where one does both jobs.  `,,`, `;;`, `?.`,
 `!.`, `,.`, `;.` and `:.` are the same slip.  It counts a period a command
@@ -185,9 +193,10 @@ Fix by deleting the extra mark.",
     },
     Rule {
         code: "dimension-times",
+        since: "0.2.0",
         category: Category::Style,
         severity: Severity::Warning,
-        summary: "the letter x stands between two numbers where a multiplication sign belongs",
+        summary: "x instead of a times sign",
         explanation: "\
 `640x480` sets the letter x between the numbers.  The sign for a product is
 `\\times`, a binary operator with the spacing of one (The TeXbook, chapter 16).
@@ -204,9 +213,10 @@ Fix by writing the operator.",
     },
     Rule {
         code: "math-punctuation",
+        since: "0.2.0",
         category: Category::Style,
         severity: Severity::Info,
-        summary: "punctuation sits on the wrong side of a formula",
+        summary: "punctuation on the wrong side of a formula",
         explanation: "\
 A formula is part of the sentence around it.  Punctuation that ends the
 sentence goes after the closing delimiter of inline math, and inside a
@@ -454,7 +464,7 @@ fn math_script_braces(report: &mut Report) {
                 span: span_at(region.first.file, lexed.tokens[k - 1].start),
                 name: "bracket",
                 message: format!(
-                    "`{script}` attaches only to the `{bracket}` before it, not to what that bracket closes"
+                    "script on a bracket only: `{script}` attaches only to the `{bracket}` before it, not to what that bracket closes"
                 ),
                 fix: format!("enclose the bracketed group in `{{}}` before the `{script}`"),
                 edits: None,
@@ -469,7 +479,7 @@ fn math_script_braces(report: &mut Report) {
                 span: span_at(region.first.file, start),
                 name: "script",
                 message: format!(
-                    "`{script}` takes one token, so `{script}{spelling}` sets only `{}` as the script",
+                    "script needs braces: `{script}` takes one token, so `{script}{spelling}` sets only `{}` as the script",
                     spelling.chars().next().unwrap_or(' ')
                 ),
                 fix: format!("write `{script}{{{spelling}}}`"),
@@ -559,7 +569,7 @@ fn delimiter_not_followed(report: &mut Report) {
         };
         findings.push((
             expansion.span,
-            format!("`{name}` scans a delimiter, and `{found}` is not one: TeX inserts `.` and sets nothing"),
+            format!("missing delimiter after `{name}`: `{found}` is not one, so TeX inserts `.` and sets nothing"),
             fix,
             edit,
         ));
@@ -719,7 +729,7 @@ fn operator(analysis: &Analysis, view: &View, edits: &Edits, range: std::ops::Ra
     }
     let name = format!("\\{word}");
     let message = format!(
-        "`{word}` is set in math italic, as a product of {} variables, where `{name}` sets it upright as one operator",
+        "operator name in math italic: `{word}` is a product of {} variables, where `{name}` sets one upright operator",
         range.len()
     );
     Some(Rewrite::new(range, "operator", message, name))
@@ -782,7 +792,7 @@ fn ellipsis_dots(report: &mut Report) {
     for (range, want) in findings {
         let finding = match want {
             Some(want) => {
-                let message = format!("three periods set three periods, where `{want}` sets an ellipsis");
+                let message = format!("three periods, not an ellipsis: `{want}` sets one");
                 let with = spelled(view, range.end, want);
                 Rewrite::new(range, "ellipsis", message, with).fix(format!("write `{want}`"))
             }
@@ -825,7 +835,7 @@ fn doubled_punctuation(report: &mut Report) {
         findings.push((i + extra, format!("{a}{b}")));
     }
     for (at, pair) in findings {
-        let message = format!("`{pair}` sets two punctuation marks in a row, where one belongs");
+        let message = format!("doubled punctuation: `{pair}` sets two marks in a row, where one belongs");
         let gone = view.char_at(at).unwrap_or_default();
         report.rewrite(Rewrite::new(at..at + 1, "doubled", message, "").fix(format!("delete the extra `{gone}`")));
     }
@@ -866,8 +876,9 @@ fn dimension_times(report: &mut Report) {
         ));
     }
     for (at, want, dimension) in findings {
-        let message =
-            format!("`{dimension}` sets the letter x between the numbers, where `{want}` sets a multiplication sign");
+        let message = format!(
+            "x instead of a times sign: `{dimension}` sets the letter x, where `{want}` sets a multiplication sign"
+        );
         report.rewrite(Rewrite::new(at..at + 1, "times", message, want));
     }
 }
@@ -946,7 +957,7 @@ fn math_punctuation(report: &mut Report) {
             report.add(
                 span,
                 "name",
-                format!("`{name}` is a name, yet math sets its letters as a product of variables and `{c}` as a mark"),
+                format!("name set as a product: `{name}` is a name, yet math sets its letters as variables and `{c}` as a mark"),
                 Some(format!("set it as one name: `\\mathit{{{name}}}`, or a command of your own such as `\\newcommand\\edge[1]{{\\mathit{{#1}}}}`")),
             );
             continue;

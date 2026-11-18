@@ -313,6 +313,8 @@ impl Source {
 /// against a [`Report`].
 pub struct Rule {
     pub code: &'static str,
+    /// The satex release that first had the rule, `0.2.0`.
+    pub since: &'static str,
     pub category: Category,
     pub severity: Severity,
     pub summary: &'static str,
@@ -821,6 +823,7 @@ pub fn rules() -> Vec<Record> {
             let mut record = serde_json::Map::new();
             record.insert("number".into(), json!(rule.number()));
             record.insert("code".into(), json!(rule.code));
+            record.insert("since".into(), json!(rule.since));
             record.insert("category".into(), json!(rule.category.as_str()));
             record.insert("severity".into(), json!(rule.severity.as_str()));
             record.insert("message".into(), json!(rule.summary));
@@ -902,6 +905,7 @@ pub fn rule_markdown(rule: &Rule) -> String {
         format!("`{}`", rule.number()),
         format!("{shape} default: {}", rule.severity.as_str()),
         rule.category.as_str().to_string(),
+        format!("since {}", rule.since),
     ];
     badges.extend((!engines.is_empty()).then(|| format!("only {}", engines.join(", "))));
     badges.extend(rule.fixes.iter().map(|f| format!("{} fix", f.as_str())));
@@ -988,6 +992,25 @@ mod tests {
                 let rest = &text[at + 1..];
                 !entity(at) && (rest.is_empty() || rest.starts_with([' ', '\n']) || rest.starts_with("\\n"))
             })
+    }
+
+    /// Every rule and query says the release that first had it, as
+    /// `major.minor.patch`, and none is newer than the next release (the
+    /// crate's version, or its next patch while that one is out).
+    #[test]
+    fn every_rule_and_query_has_a_valid_since() {
+        let version = |v: &str| -> Option<(u32, u32, u32)> {
+            let parts: Vec<u32> = v.split('.').map(|p| p.parse().ok()).collect::<Option<_>>()?;
+            <[u32; 3]>::try_from(parts).ok().map(|[a, b, c]| (a, b, c))
+        };
+        let (major, minor, patch) = version(env!("CARGO_PKG_VERSION")).unwrap();
+        let next = (major, minor, patch + 1);
+        let rules = super::all().map(|r| (r.code, r.since));
+        let queries = crate::queries::query::Query::ALL.iter().map(|(n, q)| (*n, q.since()));
+        for (name, since) in rules.chain(queries) {
+            let parsed = version(since).unwrap_or_else(|| panic!("`{name}` has no valid since: `{since}`"));
+            assert!(parsed <= next, "`{name}` is since {since}, newer than the next release");
+        }
     }
 
     /// What satex says is short sentences: no string literal outside

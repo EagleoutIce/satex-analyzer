@@ -13,9 +13,10 @@ use crate::project::config::Engine;
 
 pub static RULES: &[Rule] = &[Rule {
     code: "wrong-dash",
+    since: "0.2.0",
     category: Category::Style,
     severity: Severity::Warning,
-    summary: "a run of hyphens sets a dash of the wrong length for what stands around it",
+    summary: "wrong dash length",
     explanation: "\
 TeX's text fonts turn `-` into a hyphen, `--` into an en-dash and `---` into
 an em-dash (The TeXbook, chapter 2).
@@ -108,7 +109,7 @@ fn wrong_dash(report: &mut Report) {
                     _ => "---",
                 };
                 let message = format!(
-                    "{} is set from the character itself, which only some encodings carry",
+                    "dash from its own character: {} is set from the character itself, which only some encodings carry",
                     dash(spelling.len())
                 );
                 findings.push(Rewrite::new(i..i + 1, "unicode", message, spelling));

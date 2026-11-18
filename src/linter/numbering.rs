@@ -13,9 +13,10 @@ use crate::linter::{Category, Ref, Report, Rule, Severity, Source};
 pub static RULES: &[Rule] = &[
     Rule {
         code: "prefer-cleveref",
+        since: "0.2.0",
         category: Category::Style,
         severity: Severity::Info,
-        summary: "a name written before `\\ref` that cleveref prints by itself",
+        summary: "hand-written name before a reference",
         explanation: "\
 In `Section~\\ref{sec:x}` the word `Section` is typed by hand.  If the
 section becomes an appendix, the word is wrong.  cleveref's `\\cref` and
@@ -41,9 +42,10 @@ Fix by writing `\\Cref{sec:x}` and loading cleveref.",
     },
     Rule {
         code: "bare-reference",
+        since: "0.2.4",
         category: Category::Style,
         severity: Severity::Info,
-        summary: "a `\\ref` with no name before it, so the reader gets a bare number",
+        summary: "reference without a name",
         explanation: "\
 `see \\ref{sec:x}` sets `see 2`: a number, not what it numbers.
 
@@ -62,9 +64,10 @@ command (as last defined), else `\\cref` (`\\Cref` opening a sentence), else
     },
     Rule {
         code: "reference-name-mismatch",
+        since: "0.2.4",
         category: Category::Correctness,
         severity: Severity::Warning,
-        summary: "the name before a `\\ref` is another kind than the label's",
+        summary: "name does not match the label",
         explanation: "\
 `Subsection~\\ref{sec:a}` or `Chapter~\\ref{sec:a}` for a section, or
 `Figure~\\ref{tab:b}`, names the wrong kind of thing.  The general word for a
@@ -80,9 +83,10 @@ Fix by writing the label's own name, or `\\Cref`.",
     },
     Rule {
         code: "unreferenced-numbered-display",
+        since: "0.2.0",
         category: Category::Style,
         severity: Severity::Info,
-        summary: "a display that stepped a counter is never referenced, so its number is spent for nothing",
+        summary: "numbered display never referenced",
         explanation: "\
 `\\begin{equation}` and its relatives step a counter and print a number
 beside the display.  The starred forms set the same mathematics and spend no

@@ -16,9 +16,10 @@ use crate::project::config::Engine;
 pub static RULES: &[Rule] = &[
     Rule {
         code: "ot1-font-encoding",
+        since: "0.1.0",
         category: Category::Style,
         severity: Severity::Info,
-        summary: "accented letters are built with `\\accent` because the text is set in OT1",
+        summary: "accents built with \\accent in OT1",
         explanation: "\
 OT1, LaTeX's default text encoding, has no accented letters: it builds each
 one with the `\\accent` primitive (ot1enc.def, fntguide § 5).  TeX does not
@@ -41,9 +42,10 @@ Fix by loading `\\usepackage[T1]{fontenc}`.",
     },
     Rule {
         code: "computer-modern-in-t1",
+        since: "0.1.0",
         category: Category::Style,
         severity: Severity::Info,
-        summary: "T1 text in Computer Modern relies on cm-super for scalable fonts",
+        summary: "T1 text relies on cm-super",
         explanation: "\
 Computer Modern in T1 is the EC family, which TeX Live ships as scalable
 Type 1 fonts only through cm-super.  Without it the PDF gets bitmap fonts
@@ -62,9 +64,10 @@ installed.",
     },
     Rule {
         code: "microtype-available",
+        since: "0.1.0",
         category: Category::Style,
         severity: Severity::Info,
-        summary: "the engine can protrude characters and expand fonts, but microtype is not loaded",
+        summary: "microtype not loaded",
         explanation: "\
 pdfTeX and LuaTeX writing PDF support character protrusion and font expansion
 (pdfTeX manual, `\\pdfprotrudechars` and `\\pdfadjustspacing`), which make

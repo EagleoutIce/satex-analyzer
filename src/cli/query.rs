@@ -21,7 +21,11 @@ pub fn run(
 ) -> Result<Output, String> {
     if list {
         let names = Query::ALL.iter().map(|(name, query)| {
-            Record::from_iter([("name".to_string(), json!(*name)), ("about".to_string(), json!(query.about()))])
+            Record::from_iter([
+                ("name".to_string(), json!(*name)),
+                ("about".to_string(), json!(query.about())),
+                ("since".to_string(), json!(query.since())),
+            ])
         });
         return Ok(Output::Records(names.collect()));
     }

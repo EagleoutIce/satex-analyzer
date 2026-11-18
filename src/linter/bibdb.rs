@@ -248,9 +248,10 @@ pub fn twins(dbs: &[Db]) -> Vec<(&Entry, &Entry, &'static str)> {
 pub static RULES: &[Rule] = &[
     Rule {
         code: "duplicate-bibliography-load",
+        since: "0.2.0",
         category: Category::Correctness,
         severity: Severity::Warning,
-        summary: "a database is loaded twice",
+        summary: "database loaded twice",
         explanation: "\
 A `.bib` file named twice (`\\bibliography{a,a}`, `\\addbibresource` twice, or
 `\\bibliography` and `\\addbibresource` both) is read twice. BibTeX reports
@@ -264,9 +265,10 @@ Fix by dropping the second load.",
     },
     Rule {
         code: "duplicate-bibliography-work",
+        since: "0.2.0",
         category: Category::Correctness,
         severity: Severity::Warning,
-        summary: "two bibliography entries name one work under different keys",
+        summary: "one work under two keys",
         explanation: "\
 Two entries with the same DOI, or the same title and year, are one work under two
 keys, in one database or in two. Citing both prints it twice in the bibliography.
@@ -280,9 +282,10 @@ other has, and the citations of the other key cite the kept one.",
     },
     Rule {
         code: "bibliography-entry-missing-field",
+        since: "0.2.0",
         category: Category::Correctness,
         severity: Severity::Warning,
-        summary: "a cited entry lacks a field its type requires",
+        summary: "cited entry lacks a required field",
         explanation: "\
 The style's data model requires fields per entry type: the `.bst`'s
 `output.check`s (BibTeX warns `empty journal in knuth84`), or biblatex's mandatory
@@ -297,9 +300,10 @@ Fix by adding the field.",
     },
     Rule {
         code: "undefined-bibliography-string",
+        since: "0.2.0",
         category: Category::Correctness,
         severity: Severity::Warning,
-        summary: "a `.bib` value uses a constant no `@string` defines",
+        summary: "undefined @string constant",
         explanation: "\
 A bare word in a field value is a constant: an `@string` of the databases, or
 one the style predefines (`jan`). Any other is undefined: BibTeX warns `I don't
@@ -313,9 +317,10 @@ Fix by defining the constant, or by writing the value in braces.",
     },
     Rule {
         code: "uncited-bibliography-entry",
+        since: "0.2.0",
         category: Category::Style,
         severity: Severity::Info,
-        summary: "a database entry is never cited",
+        summary: "database entry never cited",
         explanation: "\
 An entry no `\\cite` names is left out of the bibliography. That is what a shared
 database is for, so this is only a note. `\\nocite{*}` cites everything.

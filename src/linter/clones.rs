@@ -18,9 +18,10 @@ use crate::project::config::{CloneScope, Clones};
 
 pub static RULES: &[Rule] = &[Rule {
     code: "clones",
+    since: "0.2.0",
     category: Category::Style,
     severity: Severity::Info,
-    summary: "a block of the source repeats with only its values changed",
+    summary: "repeated block of source",
     explanation: "\
 Two figures that differ only in the width, the file, the caption and the
 label are one macro used twice. Copies drift apart when one is edited and

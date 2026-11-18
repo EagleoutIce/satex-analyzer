@@ -11,9 +11,10 @@ use crate::linter::{Category, Ref, Report, Rule, Severity, Source};
 pub static RULES: &[Rule] = &[
     Rule {
         code: "wrong-quote-character",
+        since: "0.2.0",
         category: Category::Style,
         severity: Severity::Warning,
-        summary: "a character that is not a quotation mark stands in for one",
+        summary: "wrong character used as a quote",
         explanation: "\
 TeX sets a quotation from two backticks and two apostrophes, which the
 font's ligature program pairs into the marks (The TeXbook, chapter 2).
@@ -37,9 +38,10 @@ Fix by opening with two backticks and closing with two apostrophes, or with
     },
     Rule {
         code: "quote-direction",
+        since: "0.2.0",
         category: Category::Style,
         severity: Severity::Warning,
-        summary: "a quotation mark points the wrong way, or a run of them mixes both directions",
+        summary: "quotation mark points the wrong way",
         explanation: "\
 A backtick opens a quotation and an apostrophe closes it (The TeXbook, chapter 2).
 A mark the other way round sets the wrong glyph, and `` `' `` sets an empty
@@ -63,9 +65,10 @@ Fix by turning the mark the right way round.",
     },
     Rule {
         code: "quote-ligature",
+        since: "0.2.0",
         category: Category::Style,
         severity: Severity::Info,
-        summary: "three quotation marks in a row set a double and a single mark with nothing between them",
+        summary: "quotes run together",
         explanation: "\
 Three backticks in a row set a left double quote followed by a left single
 quote, glued together (The TeXbook, chapter 2).  The reader cannot tell which
@@ -83,9 +86,10 @@ with the double mark on the outside.",
     },
     Rule {
         code: "quote-punctuation",
+        since: "0.2.0",
         category: Category::Style,
         severity: Severity::Info,
-        summary: "punctuation stands inside the closing quotation mark",
+        summary: "punctuation inside the quote",
         explanation: "\
 Under the logical convention the closing mark comes directly after the
 quoted words, and punctuation that belongs to the sentence stands outside
@@ -102,9 +106,10 @@ Fix by moving the punctuation after the closing mark.",
     },
     Rule {
         code: "csquotes-available",
+        since: "0.2.0",
         category: Category::Style,
         severity: Severity::Info,
-        summary: "the document sets quotation marks by hand instead of loading csquotes",
+        summary: "hand-set quotes, csquotes not loaded",
         explanation: "\
 `\\enquote{…}` sets the marks the current language wants, nests an inner
 quotation inside an outer one, and keeps one spelling for the whole document
@@ -416,8 +421,10 @@ fn quote_ligature(report: &mut Report) {
             Kind::Right => format!("{}\\,''", "'".repeat(n - 2)),
             _ => continue,
         };
-        let message =
-            format!("{} set a double and a single quotation mark with nothing between them", named(mark.kind, n));
+        let message = format!(
+            "quotes run together: {} set a double and a single quotation mark with nothing between them",
+            named(mark.kind, n)
+        );
         let advice = format!("write {}", shown(&want));
         findings.push(Rewrite::new(mark.start..mark.end, "ligature", message, want).fix(advice));
     }
@@ -439,8 +446,7 @@ fn quote_punctuation(report: &mut Report) {
         let Some(punctuation) = view.char_at(at).filter(|c| PUNCTUATION.contains(*c)) else { continue };
         let closing = "'".repeat(mark.len());
         let want = format!("{closing}{punctuation}");
-        let message =
-            format!("`{punctuation}` stands inside the quotation, where the sentence it belongs to is outside it");
+        let message = format!("punctuation inside the quote: `{punctuation}` belongs to the sentence outside it");
         let advice = format!("write {}", shown(&want));
         findings.push(Rewrite::new(at..mark.end, "punctuation", message, want).fix(advice));
     }
@@ -473,7 +479,7 @@ fn csquotes_available(report: &mut Report) {
     report.add_fix(
         span,
         "csquotes",
-        format!("the document sets {count} quotation marks by hand and csquotes is not loaded{follows}"),
+        format!("hand-set quotes, csquotes not loaded: the document sets {count} quotation marks by hand{follows}"),
         Fix::new("load `\\usepackage{csquotes}` and write `\\enquote{…}`", Applicability::Unsafe, edits),
     );
 }

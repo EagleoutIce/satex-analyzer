@@ -20,9 +20,10 @@ use crate::linter::{Category, Ref, Report, Rule, Severity, Source};
 pub static RULES: &[Rule] = &[
     Rule {
         code: "stray-italic-correction",
+        since: "0.2.0",
         category: Category::Style,
         severity: Severity::Warning,
-        summary: "a repeated italic correction, or one in front of a period or comma",
+        summary: "stray italic correction",
         explanation: "\
 `\\/` appends a kern as wide as the italic correction of the last character
 on the current list (The TeXbook, chapter 4).  The rule reports two places where
@@ -45,9 +46,10 @@ Fix by deleting the `\\/`.",
     },
     Rule {
         code: "zero-italic-correction",
+        since: "0.2.0",
         category: Category::Style,
         severity: Severity::Warning,
-        summary: "the italic correction is zero here, so `\\/` changes nothing",
+        summary: "useless italic correction",
         explanation: "\
 `\\/` appends a kern as wide as the italic correction the font gives the last
 character on the current list (tex.web § 1113).  Where that correction is zero
@@ -70,9 +72,10 @@ Fix by deleting the `\\/`.",
     },
     Rule {
         code: "missing-italic-correction",
+        since: "0.2.0",
         category: Category::Style,
         severity: Severity::Warning,
-        summary: "a slanted letter runs into upright text with no `\\/` between them",
+        summary: "missing italic correction",
         explanation: "\
 A slanted letter leans over the space after it, and `\\/` adds the kern the
 font asks for (The TeXbook, chapter 4).
@@ -95,9 +98,10 @@ Fix by writing `\\/` after the last slanted character.",
     },
     Rule {
         code: "accent-on-dotted-letter",
+        since: "0.2.0",
         category: Category::Style,
         severity: Severity::Warning,
-        summary: "an accent sits on top of the dot of an `i` or a `j`",
+        summary: "accent on a dotted i or j",
         explanation: "\
 An accent is placed over the whole character, so an `i` keeps its dot under
 it (The TeXbook, chapter 9).  `\\i` and `\\j` are the dotless letters, and math has
@@ -339,7 +343,10 @@ fn zero_italic_correction(report: &mut Report) {
                 }
                 (
                     "zero",
-                    format!("{} gives `{c}` no italic correction, so this \\/ adds a kern of zero", fonts.name(state)),
+                    format!(
+                        "useless italic correction: {} gives `{c}` none, so this \\/ adds a kern of zero",
+                        fonts.name(state)
+                    ),
                 )
             }
         };
@@ -395,7 +402,7 @@ fn missing_italic_correction(report: &mut Report) {
     }
     for finding in findings {
         let message = format!(
-            "`{}` ends the text set in {}, which leans {} over what follows, and no \\/ takes that back",
+            "missing italic correction after `{}`: the text set in {} leans {} over what follows, and no \\/ takes that back",
             finding.letter,
             finding.shape,
             points(finding.italic)

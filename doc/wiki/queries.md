@@ -6,29 +6,29 @@
 
 `satex query NAME -f FILE` runs a query and prints its records. `satex query --list` names them all. Every query takes `--filter EXPR` (e.g. `'tag=macro and arity>0'`) and `--format json`/`csv`. The examples analyze `samples/paper.tex`.
 
-- [calls](#calls): which control sequences each macro's body invokes
-- [catcodes](#catcodes): explicit \catcode assignments the document makes
-- [definitions](#definitions): every macro, environment and register the document or its packages define
-- [dependencies](#dependencies): files, packages and classes read, and what loaded each
-- [dependency-graph](#dependency-graph): the dependency graph between files and packages as records
-- [diagnostics](#diagnostics): what satex noticed while interpreting, apart from lint rules
-- [distribution](#distribution): the detected TeX installation, version and searched trees
-- [expansions](#expansions): how often each macro was expanded during the run
-- [files](#files): every file read, in the order it was opened
-- [gaps](#gaps): constructs the run could not interpret, grouped by cause
-- [occurrences](#occurrences): package banners, passed options and other one-off events
-- [options](#options): the keys an environment or command's optional argument accepts
-- [pgfkeys](#pgfkeys): pgfkeys defined at the end of the run and what each does
-- [plugins](#plugins): what each plugin chose for this run, and why
-- [previews](#previews): arrow tips and patterns the run declared, drawn by TeX
-- [produces](#produces): where a given text can come from, expanded or not
-- [project](#project): document class, engine and build settings detected or assumed
-- [recursion](#recursion): macros that call themselves, directly or through others
-- [side-effects](#side-effects): definitions and assignments a macro makes when called
-- [tagging](#tagging): PDF tagging: whether it is on, the standard, language, title and each package's status
-- [trace](#trace): every step: macro expansions, primitives run, changes made
-- [type-plugins](#type-plugins): the editor's type plugins: the types each triggers on and its features
-- [typeset](#typeset): the text the document typesets, one row per paragraph
+- [calls](#calls): which control sequences each macro's body invokes (since 0.1.0)
+- [catcodes](#catcodes): explicit \catcode assignments the document makes (since 0.1.0)
+- [definitions](#definitions): every macro, environment and register the document or its packages define (since 0.1.0)
+- [dependencies](#dependencies): files, packages and classes read, and what loaded each (since 0.1.0)
+- [dependency-graph](#dependency-graph): the dependency graph between files and packages as records (since 0.1.0)
+- [diagnostics](#diagnostics): what satex noticed while interpreting, apart from lint rules (since 0.1.0)
+- [distribution](#distribution): the detected TeX installation, version and searched trees (since 0.1.0)
+- [expansions](#expansions): how often each macro was expanded during the run (since 0.1.0)
+- [files](#files): every file read, in the order it was opened (since 0.1.0)
+- [gaps](#gaps): constructs the run could not interpret, grouped by cause (since 0.1.0)
+- [occurrences](#occurrences): package banners, passed options and other one-off events (since 0.1.0)
+- [options](#options): the keys an environment or command's optional argument accepts (since 0.1.0)
+- [pgfkeys](#pgfkeys): pgfkeys defined at the end of the run and what each does (since 0.1.0)
+- [plugins](#plugins): what each plugin chose for this run, and why (since 0.1.0)
+- [previews](#previews): arrow tips and patterns the run declared, drawn by TeX (since 0.2.0)
+- [produces](#produces): where a given text can come from, expanded or not (since 0.1.0)
+- [project](#project): document class, engine and build settings detected or assumed (since 0.1.0)
+- [recursion](#recursion): macros that call themselves, directly or through others (since 0.1.0)
+- [side-effects](#side-effects): definitions and assignments a macro makes when called (since 0.1.0)
+- [tagging](#tagging): PDF tagging: whether it is on, the standard, language, title and each package's status (since 0.2.5)
+- [trace](#trace): every step: macro expansions, primitives run, changes made (since 0.1.0)
+- [type-plugins](#type-plugins): the editor's type plugins: the types each triggers on and its features (since 0.2.0)
+- [typeset](#typeset): the text the document typesets, one row per paragraph (since 0.2.0)
 
 ## calls
 
@@ -155,7 +155,7 @@ id   kind     file
 2    input    texsys.cfg                                
 3    input    texsys.aux                                
 4    input    expl3.ltx                                 
-… 295 more lines omitted
+… 307 more lines omitted
 ```
 
 ## gaps

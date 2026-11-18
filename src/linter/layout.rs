@@ -10,9 +10,10 @@ use crate::linter::{Category, Ref, Report, Rule, Severity, Source};
 pub static RULES: &[Rule] = &[
     Rule {
         code: "overfull-line",
+        since: "0.2.5",
         category: Category::Style,
         severity: Severity::Warning,
-        summary: "a line of the paragraph is wider than the text block",
+        summary: "line wider than the text block",
         explanation: "\
 TeX breaks a paragraph into lines and packs each to the line width (tex.web
 § 889). A line whose natural width, less all its glue can shrink, still
@@ -41,9 +42,10 @@ never rewrites the text itself.",
     },
     Rule {
         code: "overfull-box",
+        since: "0.2.5",
         category: Category::Style,
         severity: Severity::Warning,
-        summary: "an `\\hbox to` holds more than its width",
+        summary: "hbox too wide for its width",
         explanation: "\
 `\\hbox to ⟨width⟩{…}`, and the LaTeX boxes built on it such as
 `\\makebox[⟨width⟩][s]{…}`, pack their material to a given width (tex.web
@@ -61,9 +63,10 @@ shrinkable glue (`\\hss`) where sticking out is meant.",
     },
     Rule {
         code: "wider-than-line",
+        since: "0.2.5",
         category: Category::Style,
         severity: Severity::Warning,
-        summary: "a box set in a paragraph is wider than its lines",
+        summary: "box wider than its lines",
         explanation: "\
 A box or rule set in a paragraph, such as an `\\includegraphics`, a
 `tabular` or a `tikzpicture`, that is wider than the line width

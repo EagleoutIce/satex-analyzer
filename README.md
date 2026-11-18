@@ -218,143 +218,143 @@ style (9)
 
 ```text
 $ satex lint --rules
-severity  category     number  code                              message                                                
-error     correctness  C001    already-defined                   `\newcommand` redefines an existing name               
-error     correctness  C043    assertion-refuted                 an assertion fails on a run of the document            
-error     correctness  C002    bibtex-command-under-biblatex     a BibTeX command biblatex replaces stops the run       
-error     correctness  C003    build-bibliography-disabled       the document has a bibliography, but the build never…  
-error     correctness  C004    build-command-placeholders        an engine command in the latexmkrc lacks %S or %O      
-error     correctness  C005    build-engine-mismatch             the build runs another engine, or another output, th…  
-error     correctness  C006    build-shell-escape-missing        the document runs programs through `\write18`, but t…  
-error     correctness  C007    caused-library-error              the document makes package code raise a TeX error      
-error     correctness  C046    invalid-directive                 a `%\satex@` directive cannot be read                  
-error     correctness  C008    math-still-open                   the run is still in math mode where the text ends      
-error     correctness  C055    metadata-after-class              `\DocumentMetadata` comes after `\documentclass`       
-error     correctness  C047    missing-end                       the document ends without `\bye` or `\end{document}`   
-error     correctness  C009    missing-graphic                   an included image is not there for this output target  
-error     correctness  C010    new-redefines                     a `\new…` declaration silently redefines an existing…  
-error     correctness  C011    not-defined                       `\renewcommand` targets a name that does not exist     
-error     correctness  C012    option-clash                      a package is loaded twice with different options       
-error     correctness  C013    raised-error                      the document's code raises a TeX error                 
-error     correctness  C014    undefined-color                   a color is used, or aliased from, before xcolor ever…  
-error     correctness  C015    undefined-control-sequence        a control sequence is used that nothing defines        
-error     correctness  C016    undefined-environment             `\begin` names an environment that is not defined      
-error     correctness  C017    undefined-glossary-entry          a glossary or acronym entry is used but never declar…  
-error     correctness  C018    unguarded-recursion               a recursive macro has nothing that can stop it         
-warning   correctness  C052    bibliography-entry-missing-field  a cited entry lacks a field its type requires          
-warning   correctness  C019    build-missing-custom-dependency   the document writes glossary files, but latexmk has …  
-warning   correctness  C020    catcode-escapes-group             a category code change is still in force at the end …  
-warning   correctness  C021    conflicting-color-definition      the same color name is defined twice with different …  
-warning   correctness  C022    delimiter-not-followed            `\left`, `\right` or `\middle` is followed by a brac…  
-warning   correctness  C023    duplicate-bibliography-entry      the same key is declared by two bibliography entries   
-warning   correctness  C050    duplicate-bibliography-load       a database is loaded twice                             
-warning   correctness  C051    duplicate-bibliography-work       two bibliography entries name one work under differe…  
-warning   correctness  C024    duplicate-label                   the same label is defined twice                        
-warning   correctness  C025    environment-mismatch              `\end` names an environment other than the one that …  
-warning   correctness  C026    expl-syntax-left-on               `\ExplSyntaxOn` is never turned off                    
-warning   correctness  C027    expl3-constant-set                an expl3 constant is set after it was declared         
-warning   correctness  C028    expl3-signature-mismatch          an expl3 function takes other arguments than its nam…  
-warning   correctness  C057    graphic-without-alt               tagging is on, and a graphic has no alternative text   
-warning   correctness  C029    ignored-verbatim-tail             text stands on the line that closes a verbatim body …  
-warning   correctness  C030    math-script-braces                `^` and `_` take one token, so what follows needs br…  
-warning   correctness  C031    missing-dependency                a TeX Live package the run reads from is not in the …  
-warning   correctness  C058    pdfua-without-title               PDF/UA is claimed, but the PDF gets no title           
-warning   correctness  C054    reference-name-mismatch           the name before a `\ref` is another kind than the la…  
-warning   correctness  C056    tagging-incompatible-package      tagging is on, but a package or class loaded is inco…  
-warning   correctness  C060    tagging-unsupported-engine        tagging is on under an engine the tagging code does …  
-warning   correctness  C059    tagging-without-language          tagging is on, but `\DocumentMetadata` names no lang…  
-warning   correctness  C032    unbalanced-brackets               a file sets more of one bracket than of its partner    
-warning   correctness  C033    unbalanced-color-stack            a `\pdfcolorstack` push is never popped, or a pop ha…  
-warning   correctness  C034    unbalanced-pdf-content            a PDF literal opens marked content or a graphics sta…  
-warning   correctness  C053    undefined-bibliography-string     a `.bib` value uses a constant no `@string` defines    
-warning   correctness  C035    undefined-citation                a citation names a key no bibliography entry declares  
-warning   correctness  C048    undefined-cref-format             cleveref has no name for a label's type, so `\cref` …  
-warning   correctness  C036    undefined-optional-content        marked content refers to an optional content group n…  
-warning   correctness  C037    undefined-reference               `\ref` names a label that is never defined             
-warning   correctness  C038    uninstalled-package               the package is not installed, and the distribution c…  
-warning   correctness  C049    unknown-code-language             a listings key names a language nothing defines        
-warning   correctness  C039    unresolved-file                   a package, class or input file is not in the install…  
-info      correctness  C045    assumption-made                   the document assumes a condition                       
-info      correctness  C040    expected-load                     the file was read after a package it expects loaded    
-info      correctness  C041    math-mode-mismatch                \(, \), \[ or \] stands where the mode does not allo…  
-info      correctness  C042    unintended-escape                 a command is followed by an escaped punctuation mark…  
-hint      correctness  C044    assertion-proved                  an assertion holds on every path                       
-warning   security     X001    build-shell-escape-unneeded       the build allows `\write18`, but the document never …  
-warning   security     X002    shell-escape                      the document runs a program through `\write18`         
-warning   style        S001    accent-on-dotted-letter           an accent sits on top of the dot of an `i` or a `j`    
-warning   style        S002    command-terminated-space          a control word ate the space after it and the next w…  
-warning   style        S003    dimension-times                   the letter x stands between two numbers where a mult…  
-warning   style        S004    double-space                      two interword spaces reached the page, one of them f…  
-warning   style        S060    doubled-punctuation               two punctuation marks in a row, where one belongs      
-warning   style        S005    ellipsis-dots                     three periods set three periods, not an ellipsis       
-warning   style        S054    et-al                             `et al.` spelled another way, or a citation number t…  
-warning   style        S006    expl3-scope                       an expl3 variable's scope prefix disagrees with how …  
-warning   style        S007    expl3-type                        an expl3 variable's type suffix disagrees with the f…  
-warning   style        S008    group-local-definition            a definition is made inside a group and lost when it…  
-warning   style        S009    math-operator-name                an operator name is set in math italic instead of by…  
-warning   style        S010    missing-italic-correction         a slanted letter runs into upright text with no `\/`…  
-warning   style        S011    missing-nonbreaking-space         an ordinary space in front of a reference lets the l…  
-warning   style        S063    overfull-box                      an `\hbox to` holds more than its width                
-warning   style        S062    overfull-line                     a line of the paragraph is wider than the text block   
-warning   style        S012    parenthesis-spacing               a parenthesis carries the space of the text inside i…  
-warning   style        S013    quote-direction                   a quotation mark points the wrong way, or a run of t…  
-warning   style        S061    sentence-capital                  a sentence starts with a lowercase letter              
-warning   style        S014    sentence-spacing                  a period set the wrong width of space for the senten…  
-warning   style        S015    space-before-command              a space lets the line break between a word and the m…  
-warning   style        S016    space-before-punctuation          a space stands between a word and the punctuation af…  
-warning   style        S017    stray-italic-correction           a repeated italic correction, or one in front of a p…  
-warning   style        S018    unknown-suppress-code             a satex-disable comment names a code no rule has       
-warning   style        S019    user-pattern                      the source matches a pattern the project asked to be…  
-warning   style        S064    wider-than-line                   a box set in a paragraph is wider than its lines       
-warning   style        S020    wrong-dash                        a run of hyphens sets a dash of the wrong length for…  
-warning   style        S021    wrong-quote-character             a character that is not a quotation mark stands in f…  
-warning   style        S022    zero-italic-correction            the italic correction is zero here, so `\/` changes …  
-info      style        S059    bare-reference                    a `\ref` with no name before it, so the reader gets …  
-info      style        S023    build-bibliography-unneeded       the build configures BibTeX or biber for a document …  
-info      style        S024    build-engine-options              the engine command could report errors as file:line …  
-info      style        S025    build-unused-custom-dependency    a latexmk custom dependency that nothing in the docu…  
-info      style        S053    clones                            a block of the source repeats with only its values c…  
-info      style        S026    comment-marker                    a comment still carries a TODO-style marker            
-info      style        S027    computer-modern-in-t1             T1 text in Computer Modern relies on cm-super for sc…  
-info      style        S028    csquotes-available                the document sets quotation marks by hand instead of…  
-info      style        S029    dead-definition                   a definition is replaced before anything uses it       
-info      style        S030    duplicate-color-value             two color names store the exact same color             
-info      style        S031    duplicate-package                 a package is loaded more than once                     
-info      style        S032    hand-set-quantity                 a number and its unit are set by hand where siunitx …  
-info      style        S052    hand-written-author               an author name typed before a citation that prints i…  
-info      style        S051    hand-written-reference            a number typed after a reference name, where `\ref` …  
-info      style        S033    inconsistent-precision            the numbers of a table column give different numbers…  
-info      style        S057    itemize-described                 an `itemize` labels its items with words               
-info      style        S056    itemize-numbered                  an `itemize` numbers its items by hand                 
-info      style        S034    math-punctuation                  punctuation sits on the wrong side of a formula        
-info      style        S035    math-shift-dollars                display math opened with `$$` where LaTeX spells it …  
-info      style        S036    microtype-available               the engine can protrude characters and expand fonts,…  
-info      style        S037    numbers-not-aligned               a table column of numbers does not line them up at t…  
-info      style        S038    ot1-font-encoding                 accented letters are built with `\accent` because th…  
-info      style        S058    package-successor                 the document loads a package that a successor contin…  
-info      style        S039    prefer-cleveref                   a name written before `\ref` that cleveref prints by…  
-info      style        S040    primitive-tex-command             a plain TeX primitive is used where LaTeX has its ow…  
-info      style        S041    quote-ligature                    three quotation marks in a row set a double and a si…  
-info      style        S042    quote-punctuation                 punctuation stands inside the closing quotation mark   
-info      style        S043    stray-space                       a macro body picked up a space from an unescaped lin…  
-info      style        S044    table-rules                       a table is ruled with vertical rules or `\hline`       
-info      style        S065    tagged-math-without-mathml        PDF/UA-2 under pdfLaTeX: formulas get no MathML        
-info      style        S055    uncited-bibliography-entry        a database entry is never cited                        
-info      style        S045    unit-in-cells                     every number of a table column carries the same unit   
-info      style        S046    unreferenced-numbered-display     a display that stepped a counter is never referenced…  
-info      style        S047    unused-bibitem                    a `\bibitem` written in the document is never cited    
-info      style        S048    unused-color                      a color the document defines is never used             
-info      style        S049    unused-definition                 a macro defined in the document is never used          
-info      style        S050    unused-label                      a label is never referenced                            
-warning   performance  P001    package-after-preamble            a package is loaded after `\begin{document}`           
-info      performance  P002    includeonly-available             a document of several `\include`d parts is built who…  
-info      performance  P003    preamble-cost                     the preamble costs time on every build                 
-info      performance  P004    recursive-macro                   a macro calls itself, directly or through others       
-info      performance  P005    unused-dependency                 the dependency file lists a TeX Live package no file…  
-info      performance  P006    unused-package                    a loaded package defines nothing the document uses     
-error     precision    A003    unread-document                   the analysis did not read all of the document          
-info      precision    A001    analysis-imprecision              the analysis had to widen                              
-info      precision    A002    assertion-unknown                 an assertion could not be decided                      
+severity  category     number  code                              message                                     
+error     correctness  C001    already-defined                   command already defined                     
+error     correctness  C043    assertion-refuted                 assertion fails                             
+error     correctness  C002    bibtex-command-under-biblatex     BibTeX command under biblatex               
+error     correctness  C003    build-bibliography-disabled       build never runs BibTeX or biber            
+error     correctness  C004    build-command-placeholders        engine command lacks %S or %O               
+error     correctness  C005    build-engine-mismatch             build uses the wrong engine or output       
+error     correctness  C006    build-shell-escape-missing        build forbids needed shell escape           
+error     correctness  C007    caused-library-error              package error caused by the document        
+error     correctness  C046    invalid-directive                 unreadable satex directive                  
+error     correctness  C008    math-still-open                   math mode left open                         
+error     correctness  C055    metadata-after-class              DocumentMetadata after documentclass        
+error     correctness  C047    missing-end                       document has no end                         
+error     correctness  C009    missing-graphic                   image missing for this output               
+error     correctness  C010    new-redefines                     declaration redefines a command             
+error     correctness  C011    not-defined                       renewing an undefined command               
+error     correctness  C012    option-clash                      package loaded with clashing options        
+error     correctness  C013    raised-error                      TeX error in the document                   
+error     correctness  C014    undefined-color                   color used before it is defined             
+error     correctness  C015    undefined-control-sequence        undefined command                           
+error     correctness  C016    undefined-environment             undefined environment                       
+error     correctness  C017    undefined-glossary-entry          glossary entry never declared               
+error     correctness  C018    unguarded-recursion               recursion that never stops                  
+warning   correctness  C052    bibliography-entry-missing-field  cited entry lacks a required field          
+warning   correctness  C019    build-missing-custom-dependency   glossary files have no latexmk rule         
+warning   correctness  C020    catcode-escapes-group             category code change outlives its group     
+warning   correctness  C021    conflicting-color-definition      color name defined twice                    
+warning   correctness  C022    delimiter-not-followed            \left or \right before a brace              
+warning   correctness  C023    duplicate-bibliography-entry      key declared twice                          
+warning   correctness  C050    duplicate-bibliography-load       database loaded twice                       
+warning   correctness  C051    duplicate-bibliography-work       one work under two keys                     
+warning   correctness  C024    duplicate-label                   label defined twice                         
+warning   correctness  C025    environment-mismatch              wrong environment closed                    
+warning   correctness  C026    expl-syntax-left-on               ExplSyntaxOn never turned off               
+warning   correctness  C027    expl3-constant-set                expl3 constant set again                    
+warning   correctness  C028    expl3-signature-mismatch          expl3 argument signature mismatch           
+warning   correctness  C057    graphic-without-alt               graphic without alternative text            
+warning   correctness  C029    ignored-verbatim-tail             text lost after verbatim end                
+warning   correctness  C030    math-script-braces                script needs braces                         
+warning   correctness  C031    missing-dependency                package missing from the dependency file    
+warning   correctness  C058    pdfua-without-title               PDF/UA without a title                      
+warning   correctness  C054    reference-name-mismatch           name does not match the label               
+warning   correctness  C056    tagging-incompatible-package      package incompatible with tagging           
+warning   correctness  C060    tagging-unsupported-engine        engine does not support tagging             
+warning   correctness  C059    tagging-without-language          tagging without a language                  
+warning   correctness  C032    unbalanced-brackets               unbalanced brackets                         
+warning   correctness  C033    unbalanced-color-stack            unbalanced color stack                      
+warning   correctness  C034    unbalanced-pdf-content            unclosed PDF literal                        
+warning   correctness  C053    undefined-bibliography-string     undefined @string constant                  
+warning   correctness  C035    undefined-citation                citation key not in the bibliography        
+warning   correctness  C048    undefined-cref-format             cleveref has no name for this label         
+warning   correctness  C036    undefined-optional-content        unknown optional content group              
+warning   correctness  C037    undefined-reference               reference to an undefined label             
+warning   correctness  C038    uninstalled-package               package not installed                       
+warning   correctness  C049    unknown-code-language             unknown listings language                   
+warning   correctness  C039    unresolved-file                   file not installed                          
+info      correctness  C045    assumption-made                   document assumes a condition                
+info      correctness  C040    expected-load                     file read before a package it expects       
+info      correctness  C041    math-mode-mismatch                math delimiter in the wrong mode            
+info      correctness  C042    unintended-escape                 command followed by escaped punctuation     
+hint      correctness  C044    assertion-proved                  assertion always holds                      
+warning   security     X001    build-shell-escape-unneeded       build allows unused shell escape            
+warning   security     X002    shell-escape                      document runs a program                     
+warning   style        S001    accent-on-dotted-letter           accent on a dotted i or j                   
+warning   style        S002    command-terminated-space          space eaten after a command                 
+warning   style        S003    dimension-times                   x instead of a times sign                   
+warning   style        S004    double-space                      double space                                
+warning   style        S060    doubled-punctuation               doubled punctuation                         
+warning   style        S005    ellipsis-dots                     three periods, not an ellipsis              
+warning   style        S054    et-al                             et al. spelled by hand                      
+warning   style        S006    expl3-scope                       expl3 scope prefix mismatch                 
+warning   style        S007    expl3-type                        expl3 type suffix mismatch                  
+warning   style        S008    group-local-definition            definition lost when its group closes       
+warning   style        S009    math-operator-name                operator name in math italic                
+warning   style        S010    missing-italic-correction         missing italic correction                   
+warning   style        S011    missing-nonbreaking-space         missing tie before a reference              
+warning   style        S063    overfull-box                      hbox too wide for its width                 
+warning   style        S062    overfull-line                     line wider than the text block              
+warning   style        S012    parenthesis-spacing               parenthesis takes the wrong space           
+warning   style        S013    quote-direction                   quotation mark points the wrong way         
+warning   style        S061    sentence-capital                  sentence starts lowercase                   
+warning   style        S014    sentence-spacing                  wrong space after a period                  
+warning   style        S015    space-before-command              line may break before a mark                
+warning   style        S016    space-before-punctuation          space before punctuation                    
+warning   style        S017    stray-italic-correction           stray italic correction                     
+warning   style        S018    unknown-suppress-code             suppression names no rule                   
+warning   style        S019    user-pattern                      matches a project pattern                   
+warning   style        S064    wider-than-line                   box wider than its lines                    
+warning   style        S020    wrong-dash                        wrong dash length                           
+warning   style        S021    wrong-quote-character             wrong character used as a quote             
+warning   style        S022    zero-italic-correction            useless italic correction                   
+info      style        S059    bare-reference                    reference without a name                    
+info      style        S023    build-bibliography-unneeded       build runs BibTeX without a bibliography    
+info      style        S024    build-engine-options              engine command lacks file:line or SyncTeX   
+info      style        S025    build-unused-custom-dependency    unused latexmk dependency                   
+info      style        S053    clones                            repeated block of source                    
+info      style        S026    comment-marker                    TODO marker in a comment                    
+info      style        S027    computer-modern-in-t1             T1 text relies on cm-super                  
+info      style        S028    csquotes-available                hand-set quotes, csquotes not loaded        
+info      style        S029    dead-definition                   definition replaced before use              
+info      style        S030    duplicate-color-value             two names for one color                     
+info      style        S031    duplicate-package                 package loaded twice                        
+info      style        S032    hand-set-quantity                 hand-set number and unit                    
+info      style        S052    hand-written-author               author name typed before a citation         
+info      style        S051    hand-written-reference            number typed after a reference name         
+info      style        S033    inconsistent-precision            different decimals in a column              
+info      style        S057    itemize-described                 labelled items in an itemize                
+info      style        S056    itemize-numbered                  numbered items in an itemize                
+info      style        S034    math-punctuation                  punctuation on the wrong side of a formula  
+info      style        S035    math-shift-dollars                $$ instead of \[                            
+info      style        S036    microtype-available               microtype not loaded                        
+info      style        S037    numbers-not-aligned               numbers not aligned                         
+info      style        S038    ot1-font-encoding                 accents built with \accent in OT1           
+info      style        S058    package-successor                 package has a successor                     
+info      style        S039    prefer-cleveref                   hand-written name before a reference        
+info      style        S040    primitive-tex-command             plain TeX primitive in LaTeX                
+info      style        S041    quote-ligature                    quotes run together                         
+info      style        S042    quote-punctuation                 punctuation inside the quote                
+info      style        S043    stray-space                       space from a line end in a macro            
+info      style        S044    table-rules                       vertical rules or hline in a table          
+info      style        S065    tagged-math-without-mathml        formulas without MathML                     
+info      style        S055    uncited-bibliography-entry        database entry never cited                  
+info      style        S045    unit-in-cells                     unit repeated in every cell                 
+info      style        S046    unreferenced-numbered-display     numbered display never referenced           
+info      style        S047    unused-bibitem                    bibitem never cited                         
+info      style        S048    unused-color                      color never used                            
+info      style        S049    unused-definition                 macro never used                            
+info      style        S050    unused-label                      label never referenced                      
+warning   performance  P001    package-after-preamble            package loaded after the preamble           
+info      performance  P002    includeonly-available             parts built whole                           
+info      performance  P003    preamble-cost                     slow preamble                               
+info      performance  P004    recursive-macro                   recursive macro                             
+info      performance  P005    unused-dependency                 unused entry in the dependency file         
+info      performance  P006    unused-package                    unused package                              
+error     precision    A003    unread-document                   document not fully read                     
+info      precision    A001    analysis-imprecision              analysis had to widen                       
+info      precision    A002    assertion-unknown                 assertion not decided                       
 ```
 
 </details>
@@ -363,8 +363,8 @@ info      precision    A002    assertion-unknown                 an assertion co
 
 ```text
 $ satex lint --explain unguarded-recursion
-C018 unguarded-recursion  correctness / error
-a recursive macro has nothing that can stop it
+C018 unguarded-recursion  correctness / error / since 0.1.0
+recursion that never stops
 
 The run saw the macro's expansion reach the macro again, could not see the
 recursion end, and found no conditional (no `\if…`, `\else` or `\fi`) to
@@ -575,9 +575,9 @@ The kernel and the packages are interpreted once and cached. `satex cache build`
 $ satex cache
 cache ~/.cache/satex
   kernel     /usr/local/texlive/YYYY/texmf-dist/tex/latex/base/latex.ltx · 197.8k definitions · cached
-  pruned     204 caches, 628.2 MiB: no build can use them, or past limits.cache_size
-  packages   57 stored, 186.8 MiB
-… 2 more lines omitted
+  packages   89 stored, 249.1 MiB
+  prepare    `satex cache build` builds 39 packages: microtype, cleveref, zref-clever, savetrees, tabularray, xurl, … +33
+… 1 more line omitted
 ```
 
 </details>

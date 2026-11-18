@@ -11,9 +11,10 @@ use crate::plugins::augment::{Draft, Subject};
 pub static RULES: &[Rule] = &[
     Rule {
         code: "numbers-not-aligned",
+        since: "0.2.0",
         category: Category::Style,
         severity: Severity::Info,
-        summary: "a table column of numbers does not line them up at their decimal mark",
+        summary: "numbers not aligned",
         explanation: "\
 A column of numbers is read by comparing them, which works when each digit
 stands under the digit of the same place: the units under the units, the
@@ -32,9 +33,10 @@ all numbers, three or more, set in a column that does not align them.",
     },
     Rule {
         code: "inconsistent-precision",
+        since: "0.2.0",
         category: Category::Style,
         severity: Severity::Info,
-        summary: "the numbers of a table column give different numbers of decimals",
+        summary: "different decimals in a column",
         explanation: "\
 `1.5`, `2.25` and `3` in one column claim three different precisions, and do
 not line up even at their decimal mark.  Give them one precision.  An `S`
@@ -47,9 +49,10 @@ column of [siunitx](https://ctan.org/pkg/siunitx) rounds them with
     },
     Rule {
         code: "unit-in-cells",
+        since: "0.2.0",
         category: Category::Style,
         severity: Severity::Info,
-        summary: "every number of a table column carries the same unit",
+        summary: "unit repeated in every cell",
         explanation: "\
 A unit repeated in every cell of a column says the same thing on each line
 and pushes the numbers out of alignment.  The
@@ -64,9 +67,10 @@ over an `S` column of bare numbers.",
     },
     Rule {
         code: "table-rules",
+        since: "0.2.0",
         category: Category::Style,
         severity: Severity::Info,
-        summary: "a table is ruled with vertical rules or `\\hline`",
+        summary: "vertical rules or hline in a table",
         explanation: "\
 [booktabs](https://ctan.org/pkg/booktabs) gives a table three rules of
 different weights, `\\toprule`, `\\midrule` and `\\bottomrule`, with space

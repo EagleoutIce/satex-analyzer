@@ -11,9 +11,10 @@ use crate::linter::{Category, Ref, Report, Rule, Severity, Source};
 
 pub static RULES: &[Rule] = &[Rule {
     code: "hand-set-quantity",
+    since: "0.2.0",
     category: Category::Style,
     severity: Severity::Info,
-    summary: "a number and its unit are set by hand where siunitx would set them",
+    summary: "hand-set number and unit",
     explanation: "\
 `2ms` sets the number and the unit as one word, so the line may break
 between them and the unit is italic in math.  The

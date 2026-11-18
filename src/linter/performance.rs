@@ -8,9 +8,10 @@ use crate::linter::{Category, Ref, Report, Rule, Severity, Source};
 pub static RULES: &[Rule] = &[
     Rule {
         code: "duplicate-package",
+        since: "0.1.0",
         category: Category::Style,
         severity: Severity::Info,
-        summary: "a package is loaded more than once",
+        summary: "package loaded twice",
         explanation: "\
 The second request is ignored by LaTeX.  It costs nothing at run time but it
 hides which load carries the options.  A request with options the first did
@@ -24,9 +25,10 @@ Fix by deleting the later `\\usepackage`.",
     },
     Rule {
         code: "unused-package",
+        since: "0.1.0",
         category: Category::Performance,
         severity: Severity::Info,
-        summary: "a loaded package defines nothing the document uses",
+        summary: "unused package",
         explanation: "\
 Every name the package defines is unused, and no code outside it reads a
 setting it made (a class's `\\textheight` is read for every page).  It may
@@ -41,9 +43,10 @@ on every build.",
     },
     Rule {
         code: "recursive-macro",
+        since: "0.1.0",
         category: Category::Performance,
         severity: Severity::Info,
-        summary: "a macro calls itself, directly or through others",
+        summary: "recursive macro",
         explanation: "\
 Recursion is normal in TeX, but an unguarded one loops until TeX runs out of
 memory, and the analysis has to widen at it. Everything the recursion would
@@ -58,9 +61,10 @@ a conditional terminates it.",
     },
     Rule {
         code: "package-after-preamble",
+        since: "0.1.0",
         category: Category::Performance,
         severity: Severity::Warning,
-        summary: "a package is loaded after `\\begin{document}`",
+        summary: "package loaded after the preamble",
         explanation: "\
 `\\usepackage` belongs in the preamble.  After `\\begin{document}` LaTeX raises
 `\\usepackage before \\begin{document}` and the package cannot set anything up.
@@ -73,9 +77,10 @@ Fix by moving the load into the preamble.",
     },
     Rule {
         code: "missing-dependency",
+        since: "0.1.0",
         category: Category::Correctness,
         severity: Severity::Warning,
-        summary: "a TeX Live package the run reads from is not in the dependency file",
+        summary: "package missing from the dependency file",
         explanation: "\
 depp names the TeX Live package of every file a run reads by where it sits in
 the tree (`tex/⟨format⟩/⟨package⟩/`) and writes them to `DEPENDS.txt`.  The
@@ -91,9 +96,10 @@ Fix by adding the package to the dependency file, or by rerunning depp.",
     },
     Rule {
         code: "unused-dependency",
+        since: "0.1.0",
         category: Category::Performance,
         severity: Severity::Info,
-        summary: "the dependency file lists a TeX Live package no file of the run comes from",
+        summary: "unused entry in the dependency file",
         explanation: "\
 Every installation made from the dependency file carries the package, but the
 run reads nothing from it.  It may still be needed for what satex does not
@@ -108,9 +114,10 @@ Fix, if the package really is unused, by deleting its line.",
     },
     Rule {
         code: "preamble-cost",
+        since: "0.1.0",
         category: Category::Performance,
         severity: Severity::Info,
-        summary: "the preamble costs time on every build",
+        summary: "slow preamble",
         explanation: "\
 The packages the document asks for and the files read before
 `\\begin{document}`, reported when the preamble takes most of the tokens
@@ -129,9 +136,10 @@ Fix by dumping the preamble into a format and starting every build from it.",
     },
     Rule {
         code: "includeonly-available",
+        since: "0.2.0",
         category: Category::Performance,
         severity: Severity::Info,
-        summary: "a document of several `\\include`d parts is built whole",
+        summary: "parts built whole",
         explanation: "\
 `\\includeonly` names the parts a build reads.  The others keep their page
 numbers and labels from their `.aux` files (source2e, ltfiles.dtx).  A draft

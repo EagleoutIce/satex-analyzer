@@ -20,6 +20,8 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 
 ### Lints
 
+- `feat` **Every rule and query says when it came.** `satex lint --explain`, `--rules`, `satex query --list`, the editor's rule card and the wiki show `since` with the first release.
+- `feat` **Shorter rule summaries.** Each summary names what is wrong in a few words, and the findings that opened with the mechanism now open with what is wrong.
 - `fix` **A swallowed space inside a box.** `\TeX file` in a TikZ node or an `\fbox` sets `TEXfile` there too, and `command-terminated-space` now says so. Each spacing fix is checked to give back the exact text it asks for, and `scripts/spacing-sweep.py` runs the same check over real documents.
 - `feat` **PDF tagging lints.** With `\DocumentMetadata{tagging=on}`: `tagging-incompatible-package` (from TeX Live's own tagging-status list, run as TeX), `graphic-without-alt`, `pdfua-without-title` (fix: `\title[pdftitle=…]`), `tagging-without-language` (fix: writes the language LaTeX guessed), `metadata-after-class`, `tagging-unsupported-engine` and `tagged-math-without-mathml`. `satex query tagging` lists what the run set up.
 - `feat` **Accessibility manager.** "Accessibility…" on `\DocumentMetadata` edits tagging, the PDF standard, the language and the PDF title, each figure's alternative text and each table's header rows. The image dialog gets an alternative text field (`type_plugins.tagging`).
@@ -34,6 +36,7 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 
 ### Playground
 
+- `perf` **The whole Typeset view follows an edit at once.** As soon as a run after an edit meets the last run again apart from the page being built, every row of the rest is the last run's, its page breaks marked maybe, while the exact run goes on and replaces them.
 - `perf` **An edited paragraph's row comes first.** After an edit inside a paragraph the server runs that paragraph alone from the checkpoint before it and sends its row, then the whole run's rows. Questions of an older text are dropped instead of answered behind the newer text's run, and the names in force are carried over an edit (the thesis example: 5 s to 0.2 s). On the thesis example the edited row lands 0.6 s after the typing pause in the browser, down from 4.5 to 10 s.
 - `perf` **The Typeset view follows typing.** A word typed in a paragraph shows at once, marked pending, until the run's row replaces it. The run sends its rows as soon as it ends, before its findings, and the view redraws only the paragraphs that changed.
 - `fix` **Typing in the PDF and Typeset views keeps its caret.** The caret stays after each typed character, also when the view is set again. A word inside a macro's text has one tint, not a box in a box. The PDF no longer stops drawing its pages after a build that gave the same PDF again.

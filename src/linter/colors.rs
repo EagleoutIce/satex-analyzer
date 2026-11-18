@@ -12,9 +12,10 @@ use crate::project::config::Engine;
 pub static RULES: &[Rule] = &[
     Rule {
         code: "undefined-color",
+        since: "0.2.0",
         category: Category::Correctness,
         severity: Severity::Error,
-        summary: "a color is used, or aliased from, before xcolor ever defines it",
+        summary: "color used before it is defined",
         explanation: "\
 xcolor reaches every color through `\\color@⟨name⟩` (xcolor § 2.5). A name
 the run never defined there raises `Undefined color` when xcolor itself
@@ -30,9 +31,10 @@ Fix by defining the color first, or by correcting its name.",
     },
     Rule {
         code: "unused-color",
+        since: "0.2.0",
         category: Category::Style,
         severity: Severity::Info,
-        summary: "a color the document defines is never used",
+        summary: "color never used",
         explanation: "\
 The document names a color with `\\definecolor`, `\\providecolor` or
 `\\colorlet` and never reads it back through `\\color`, `\\textcolor` or a
@@ -48,9 +50,10 @@ document text wrote, and xcolor's `.` for the current color.",
     },
     Rule {
         code: "conflicting-color-definition",
+        since: "0.2.0",
         category: Category::Correctness,
         severity: Severity::Warning,
-        summary: "the same color name is defined twice with different colors",
+        summary: "color name defined twice",
         explanation: "\
 Two `\\definecolor`-family calls store different colors under the same
 name. Only the last one is ever read back.  Silent where the first is a
@@ -65,9 +68,10 @@ definition.",
     },
     Rule {
         code: "duplicate-color-value",
+        since: "0.2.0",
         category: Category::Style,
         severity: Severity::Info,
-        summary: "two color names store the exact same color",
+        summary: "two names for one color",
         explanation: "\
 Two `\\definecolor`-family calls, the later one the document's own, store
 the same model and components under different names.  Not wrong, but one
@@ -83,9 +87,10 @@ named after the color it takes.",
     },
     Rule {
         code: "unbalanced-color-stack",
+        since: "0.2.0",
         category: Category::Correctness,
         severity: Severity::Warning,
-        summary: "a `\\pdfcolorstack` push is never popped, or a pop has nothing to pop",
+        summary: "unbalanced color stack",
         explanation: "\
 `\\pdfcolorstack⟨stack⟩ push` and `pop` nest like `q`/`Q` in the page's own
 content stream (pdfTeX manual, § 8.9.8): a viewer that reads the stack back

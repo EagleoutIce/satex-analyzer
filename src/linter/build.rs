@@ -19,9 +19,10 @@ use crate::project::config::Engine;
 pub static RULES: &[Rule] = &[
     Rule {
         code: "build-shell-escape-missing",
+        since: "0.1.0",
         category: Category::Correctness,
         severity: Severity::Error,
-        summary: "the document runs programs through `\\write18`, but the build does not allow it",
+        summary: "build forbids needed shell escape",
         explanation: "\
 The run reached `\\write18`, which only hands its text to the shell when the
 engine is started with `-shell-escape` (or `-shell-restricted` and a program
@@ -43,9 +44,10 @@ Fix by adding `-shell-escape` to the command, e.g.
     },
     Rule {
         code: "build-shell-escape-unneeded",
+        since: "0.1.0",
         category: Category::Security,
         severity: Severity::Warning,
-        summary: "the build allows `\\write18`, but the document never uses it",
+        summary: "build allows unused shell escape",
         explanation: "\
 `-shell-escape` lets every package and every `.aux` or `.bbl` line the
 document reads run any program as you.  The run reached no `\\write18`, so the
@@ -60,9 +62,10 @@ the arara directive).",
     },
     Rule {
         code: "build-engine-mismatch",
+        since: "0.1.0",
         category: Category::Correctness,
         severity: Severity::Error,
-        summary: "the build runs another engine, or another output, than the document needs",
+        summary: "build uses the wrong engine or output",
         explanation: "\
 latexmk's `$pdf_mode` picks the engine: 1 runs `$pdflatex`, 4 `$lualatex`, 5
 `$xelatex`, and 0, 2 and 3 run `$latex` for DVI (latexmk(1), `$pdf_mode`).  The
@@ -79,9 +82,10 @@ Fix by setting `$pdf_mode` to the engine the document is written for.",
     },
     Rule {
         code: "build-bibliography-disabled",
+        since: "0.1.0",
         category: Category::Correctness,
         severity: Severity::Error,
-        summary: "the document has a bibliography, but the build never runs BibTeX or biber",
+        summary: "build never runs BibTeX or biber",
         explanation: "\
 `$bibtex_use = 0` tells latexmk never to run BibTeX or biber (latexmk(1),
 `$bibtex_use`), so the `.bbl` file the bibliography is read from is never made
@@ -96,9 +100,10 @@ Fix by removing the setting.  latexmk's default, 1, runs them whenever the
     },
     Rule {
         code: "build-bibliography-unneeded",
+        since: "0.1.0",
         category: Category::Style,
         severity: Severity::Info,
-        summary: "the build configures BibTeX or biber for a document without a bibliography",
+        summary: "build runs BibTeX without a bibliography",
         explanation: "\
 The latexmkrc sets `$bibtex_use`, `$bibtex` or `$biber`, but the document names
 no bibliography database (`\\bibliography`, `\\addbibresource`), so the setting
@@ -112,9 +117,10 @@ Fix by removing the setting.",
     },
     Rule {
         code: "build-missing-custom-dependency",
+        since: "0.1.0",
         category: Category::Correctness,
         severity: Severity::Warning,
-        summary: "the document writes glossary files, but latexmk has no rule to process them",
+        summary: "glossary files have no latexmk rule",
         explanation: "\
 latexmk runs BibTeX, biber and makeindex by itself, but a glossary is sorted by
 a program it does not know about (`makeglossaries`, `makeindex` with a glossary
@@ -134,9 +140,10 @@ The glossaries manual gives the rule, e.g.
     },
     Rule {
         code: "build-unused-custom-dependency",
+        since: "0.1.0",
         category: Category::Style,
         severity: Severity::Info,
-        summary: "a latexmk custom dependency that nothing in the document triggers",
+        summary: "unused latexmk dependency",
         explanation: "\
 `add_cus_dep(from, to, …)` makes latexmk run a program when a file with the
 `from` extension is newer than the `to` file it produces (latexmk(1), \"CUSTOM
@@ -151,9 +158,10 @@ Fix by removing the rule, or keep it if another document of the project needs it
     },
     Rule {
         code: "build-command-placeholders",
+        since: "0.1.0",
         category: Category::Correctness,
         severity: Severity::Error,
-        summary: "an engine command in the latexmkrc lacks %S or %O",
+        summary: "engine command lacks %S or %O",
         explanation: "\
 latexmk substitutes `%S` with the source file and `%O` with the options it
 passes itself (latexmk(1), \"FORMAT OF COMMAND SPECIFICATIONS\").  A command
@@ -168,9 +176,10 @@ Fix by ending the command with `%O %S`.",
     },
     Rule {
         code: "build-engine-options",
+        since: "0.1.0",
         category: Category::Style,
         severity: Severity::Info,
-        summary: "the engine command could report errors as file:line and write SyncTeX data",
+        summary: "engine command lacks file:line or SyncTeX",
         explanation: "\
 `-file-line-error` makes the engine report `file:line: message` instead of
 `! message`, which editors and satex's log reading can jump to.  `-synctex=1`

@@ -1297,13 +1297,16 @@ fn badges(
 fn rules_table() -> Result<String, String> {
     let chktex = chktex_origins()?;
     let mut out = String::from(
-        "| no. | code | kind | engine | quick fix | summary | origin |\n| --- | --- | --- | --- | --- | --- | --- |\n",
+        "| no. | code | kind | engine | quick fix | summary | since | origin |\n| --- | --- | --- | --- | --- | --- | --- | --- |\n",
     );
     for rule in lint_json(&["--rules", "--format", "json"])? {
         let [number, code, summary] = ["number", "code", "message"].map(|k| rule[k].as_str().unwrap_or(""));
         let [kind, engine, fixes, origin] = badges(&rule, &chktex, false);
-        let _ =
-            writeln!(out, "| {number} | [`{code}`](#{code}) | {kind} | {engine} | {fixes} | {summary} | {origin} |");
+        let since = rule["since"].as_str().unwrap_or("");
+        let _ = writeln!(
+            out,
+            "| {number} | [`{code}`](#{code}) | {kind} | {engine} | {fixes} | {summary} | {since} | {origin} |"
+        );
     }
     Ok(out)
 }
@@ -1433,7 +1436,9 @@ fn explain_section(
     let number =
         format!("<code class=\"num\" title=\"rule number\">{}</code>", listed["number"].as_str().unwrap_or(""));
     let badges = badges(listed, chktex, true).into_iter().filter(|b| b != "—");
-    let shown: Vec<String> = std::iter::once(number).chain(badges).collect();
+    let since =
+        format!("<span class=\"since\" title=\"first release\">since {}</span>", rule["since"].as_str().unwrap_or(""));
+    let shown: Vec<String> = std::iter::once(number).chain(badges).chain(std::iter::once(since)).collect();
     let _ = writeln!(out, "<p class=\"badges\">{}</p>\n", shown.join(" "));
     let _ = writeln!(out, "**{summary}**\n");
     out.push_str(&explanation_markdown(rule["explanation"].as_str().unwrap_or("")));
@@ -1633,7 +1638,8 @@ fn queries_list() -> Result<String, String> {
     let mut out = String::new();
     for row in rows {
         let (name, about) = (row["name"].as_str().unwrap_or(""), row["about"].as_str().unwrap_or(""));
-        let _ = writeln!(out, "- [{name}](#{name}): {about}");
+        let since = row["since"].as_str().unwrap_or("");
+        let _ = writeln!(out, "- [{name}](#{name}): {about} (since {since})");
     }
     Ok(out)
 }

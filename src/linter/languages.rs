@@ -10,9 +10,10 @@ use crate::queries::languages::{listings, listings_key};
 
 pub static RULES: &[Rule] = &[Rule {
     code: "unknown-code-language",
+    since: "0.2.0",
     category: Category::Correctness,
     severity: Severity::Warning,
-    summary: "a listings key names a language nothing defines",
+    summary: "unknown listings language",
     explanation: "\
 listings finds a language through the driver `\\lstlang@⟨language⟩$⟨dialect⟩`, which
 `\\lstdefinelanguage` defines and the language files (`\\lstlanguagefiles`, `lstlang1.sty`

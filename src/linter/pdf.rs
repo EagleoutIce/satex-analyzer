@@ -15,9 +15,10 @@ use crate::project::config::Engine;
 pub static RULES: &[Rule] = &[
     Rule {
         code: "unbalanced-pdf-content",
+        since: "0.1.0",
         category: Category::Correctness,
         severity: Severity::Warning,
-        summary: "a PDF literal opens marked content or a graphics state that is never closed",
+        summary: "unclosed PDF literal",
         explanation: "\
 `\\pdfliteral` and `\\special{pdf:…}` (what ocgx2, ocg-p and pdfbase use to
 write raw PDF) drop `q`/`Q` and `BMC`/`BDC`/`EMC` straight into the page's
@@ -39,9 +40,10 @@ for both ends.",
     },
     Rule {
         code: "undefined-optional-content",
+        since: "0.1.0",
         category: Category::Correctness,
         severity: Severity::Warning,
-        summary: "marked content refers to an optional content group no resource names",
+        summary: "unknown optional content group",
         explanation: "\
 `/OC /name BDC` refers to `/name` in the page's `/Properties` resources, which
 maps it to an optional content group (PDF 32000, § 8.11.3.2).  A name that no

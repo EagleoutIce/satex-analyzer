@@ -12,9 +12,10 @@ use crate::project::config::Engine;
 pub static RULES: &[Rule] = &[
     Rule {
         code: "metadata-after-class",
+        since: "0.2.5",
         category: Category::Correctness,
         severity: Severity::Error,
-        summary: "`\\DocumentMetadata` comes after `\\documentclass`",
+        summary: "DocumentMetadata after documentclass",
         explanation: "\
 `\\DocumentMetadata` sets up the PDF management and tagging code before
 anything else is loaded, so it has to be the first command of the document.
@@ -30,9 +31,10 @@ Fix by moving the call above `\\documentclass`.",
     },
     Rule {
         code: "tagging-incompatible-package",
+        since: "0.2.5",
         category: Category::Correctness,
         severity: Severity::Warning,
-        summary: "tagging is on, but a package or class loaded is incompatible with it",
+        summary: "package incompatible with tagging",
         explanation: "\
 The LaTeX tagging project keeps a status for each package and class, and TeX
 Live ships it as `latex-tagging-status.ltx` (what
@@ -51,9 +53,10 @@ switching tagging off until it is supported.",
     },
     Rule {
         code: "graphic-without-alt",
+        since: "0.2.5",
         category: Category::Correctness,
         severity: Severity::Warning,
-        summary: "tagging is on, and a graphic has no alternative text",
+        summary: "graphic without alternative text",
         explanation: "\
 With tagging on, every `\\includegraphics` becomes a `Figure` structure
 element, which needs alternative text (PDF/UA, ISO 14289-1 § 7.3).  Without
@@ -74,9 +77,10 @@ what the graphic shows. The image dialog has a field for it.",
     },
     Rule {
         code: "pdfua-without-title",
+        since: "0.2.5",
         category: Category::Correctness,
         severity: Severity::Warning,
-        summary: "PDF/UA is claimed, but the PDF gets no title",
+        summary: "PDF/UA without a title",
         explanation: "\
 PDF/UA requires a document title in the XMP metadata (`dc:title`), shown by
 the viewer in place of the file name.  pdfmanagement writes it from the
@@ -94,9 +98,10 @@ Fix with `\\title{…}` under tagging, or `\\hypersetup{pdftitle={…}}`.  Where
     },
     Rule {
         code: "tagging-without-language",
+        since: "0.2.5",
         category: Category::Correctness,
         severity: Severity::Warning,
-        summary: "tagging is on, but `\\DocumentMetadata` names no language",
+        summary: "tagging without a language",
         explanation: "\
 A tagged PDF names its natural language in the catalog's `/Lang`, which
 screen readers use to pick a voice (PDF/UA, ISO 14289-1 § 7.2).
@@ -117,9 +122,10 @@ and silences the warning: check that it is the right one.",
     },
     Rule {
         code: "tagging-unsupported-engine",
+        since: "0.2.5",
         category: Category::Correctness,
         severity: Severity::Warning,
-        summary: "tagging is on under an engine the tagging code does not support",
+        summary: "engine does not support tagging",
         explanation: "\
 The tagging code supports pdfLaTeX and LuaLaTeX.  Under XeLaTeX (and other
 DVI-based routes) tagpdf cannot mark interword spaces as real space
@@ -134,9 +140,10 @@ Fix by compiling with LuaLaTeX, which the tagging project recommends, or pdfLaTe
     },
     Rule {
         code: "tagged-math-without-mathml",
+        since: "0.2.5",
         category: Category::Style,
         severity: Severity::Info,
-        summary: "PDF/UA-2 under pdfLaTeX: formulas get no MathML",
+        summary: "formulas without MathML",
         explanation: "\
 Under LuaLaTeX the tagging code turns each formula into MathML (luamml).
 pdfLaTeX cannot: it only attaches MathML it reads from

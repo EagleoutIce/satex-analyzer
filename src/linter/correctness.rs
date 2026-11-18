@@ -9,9 +9,10 @@ use crate::plugins::Provider;
 pub static RULES: &[Rule] = &[
     Rule {
         code: "undefined-glossary-entry",
+        since: "0.1.0",
         category: Category::Correctness,
         severity: Severity::Error,
-        summary: "a glossary or acronym entry is used but never declared",
+        summary: "glossary entry never declared",
         explanation: "\
 `\\gls` and its relatives name an entry that no `\\newglossaryentry`,
 `\\newacronym`, `\\acro` or `\\DeclareAcronym` declares.  A real run stops
@@ -25,9 +26,10 @@ Fix by declaring the entry, or by correcting the key.",
     },
     Rule {
         code: "shell-escape",
+        since: "0.1.0",
         category: Category::Security,
         severity: Severity::Warning,
-        summary: "the document runs a program through `\\write18`",
+        summary: "document runs a program",
         explanation: "\
 `\\write18` hands its text to the shell.  A run only does that when the engine
 was started with `--shell-escape`, or with `--shell-restricted` and the
@@ -42,9 +44,10 @@ Fix by running with the flag the document needs, or by removing the call.",
     },
     Rule {
         code: "missing-graphic",
+        since: "0.1.0",
         category: Category::Correctness,
         severity: Severity::Error,
-        summary: "an included image is not there for this output target",
+        summary: "image missing for this output",
         explanation: "\
 `\\includegraphics` names a file that graphicx cannot find, with any extension
 in `\\Gin@extensions`, beside the document or on `\\graphicspath`.  Which
@@ -59,9 +62,10 @@ Fix by adding the file, or by producing the format the driver reads.",
     },
     Rule {
         code: "expl3-signature-mismatch",
+        since: "0.1.0",
         category: Category::Correctness,
         severity: Severity::Warning,
-        summary: "an expl3 function takes other arguments than its name says",
+        summary: "expl3 argument signature mismatch",
         explanation: "\
 An expl3 name carries its signature after the colon
 ([interface3](https://ctan.org/pkg/expl3), \"Naming conventions\"): one letter
@@ -81,9 +85,10 @@ text.",
     },
     Rule {
         code: "unguarded-recursion",
+        since: "0.1.0",
         category: Category::Correctness,
         severity: Severity::Error,
-        summary: "a recursive macro has nothing that can stop it",
+        summary: "recursion that never stops",
         explanation: "\
 The run saw the macro's expansion reach the macro again, could not see the
 recursion end, and found no conditional (no `\\if…`, `\\else` or `\\fi`) to
@@ -99,9 +104,10 @@ Fix by adding the test that stops it, or by removing the self-reference.",
     },
     Rule {
         code: "undefined-control-sequence",
+        since: "0.1.0",
         category: Category::Correctness,
         severity: Severity::Error,
-        summary: "a control sequence is used that nothing defines",
+        summary: "undefined command",
         explanation: "\
 The name has no meaning at the point it is used, so a real run would stop with
 `Undefined control sequence`.  When the message says \"not on every path\", the
@@ -116,9 +122,10 @@ correcting the spelling.",
     },
     Rule {
         code: "raised-error",
+        since: "0.1.0",
         category: Category::Correctness,
         severity: Severity::Error,
-        summary: "the document's code raises a TeX error",
+        summary: "TeX error in the document",
         explanation: "\
 Running the document reaches `\\errmessage`, which every LaTeX error
 (`\\PackageError`, `\\msg_error:nn`, the kernel's own) ends in: a real run
@@ -134,9 +141,10 @@ document's error too: it is shown at the call that opens it.",
     },
     Rule {
         code: "missing-end",
+        since: "0.2.0",
         category: Category::Correctness,
         severity: Severity::Error,
-        summary: "the document ends without `\\bye` or `\\end{document}`",
+        summary: "document has no end",
         explanation: "\
 Every path of the run reads the document to its end without meeting TeX's
 `\\end`: plain TeX's `\\bye`, or LaTeX's `\\end{document}`.  TeX then stops
@@ -152,9 +160,10 @@ Fix by ending the document with `\\bye` (plain TeX) or `\\end{document}` (LaTeX)
     },
     Rule {
         code: "caused-library-error",
+        since: "0.2.0",
         category: Category::Correctness,
         severity: Severity::Error,
-        summary: "the document makes package code raise a TeX error",
+        summary: "package error caused by the document",
         explanation: "\
 An engine error such as `Argument has an extra }` arises inside package code.
 The cause is the document's own call into that code.  The finding sits at
@@ -174,9 +183,10 @@ then a warning that names the earlier error.",
     },
     Rule {
         code: "undefined-environment",
+        since: "0.1.0",
         category: Category::Correctness,
         severity: Severity::Error,
-        summary: "`\\begin` names an environment that is not defined",
+        summary: "undefined environment",
         explanation: "\
 `\\begin{name}` expands `\\name`, and nothing defines it.  A real run reports
 `Environment name undefined`.
@@ -190,9 +200,10 @@ Fix by loading the package that provides the environment or by defining it with
     },
     Rule {
         code: "unresolved-file",
+        since: "0.1.0",
         category: Category::Correctness,
         severity: Severity::Warning,
-        summary: "a package, class or input file is not in the installation",
+        summary: "file not installed",
         explanation: "\
 The file was searched for in the document's directory, the configured search
 paths and the TEXMF trees, and not found. Case mismatches on case-insensitive
@@ -209,9 +220,10 @@ Fix by installing the package, adding its directory to `search_paths` in
     },
     Rule {
         code: "option-clash",
+        since: "0.1.0",
         category: Category::Correctness,
         severity: Severity::Error,
-        summary: "a package is loaded twice with different options",
+        summary: "package loaded with clashing options",
         explanation: "\
 LaTeX loads a package once.  A second `\\usepackage` with options the first one
 did not have raises `Option clash for package`.
@@ -225,9 +237,10 @@ Fix by giving all the options to the first load, or by using
     },
     Rule {
         code: "already-defined",
+        since: "0.1.0",
         category: Category::Correctness,
         severity: Severity::Error,
-        summary: "`\\newcommand` redefines an existing name",
+        summary: "command already defined",
         explanation: "\
 `\\newcommand` refuses to redefine and raises `Command … already defined`.
 The finding names the definition it ran into: the package that made it, or
@@ -245,9 +258,10 @@ the redefinition is intended, or pick another name.",
     },
     Rule {
         code: "new-redefines",
+        since: "0.2.0",
         category: Category::Correctness,
         severity: Severity::Error,
-        summary: "a `\\new…` declaration silently redefines an existing command",
+        summary: "declaration redefines a command",
         explanation: "\
 A LaTeX `\\new…` command declares a fresh name, and some do not check that it
 is: `\\newif\\begin` makes `\\begin` a conditional (and defines `\\gintrue`
@@ -266,9 +280,10 @@ name begins with `if`), or by declaring the argument it lacks.",
     },
     Rule {
         code: "not-defined",
+        since: "0.1.0",
         category: Category::Correctness,
         severity: Severity::Error,
-        summary: "`\\renewcommand` targets a name that does not exist",
+        summary: "renewing an undefined command",
         explanation: "\
 `\\renewcommand` requires an existing definition and raises
 `Undefined control sequence`.
@@ -281,9 +296,10 @@ Fix with `\\newcommand`, or load the package that was supposed to define it.",
     },
     Rule {
         code: "undefined-reference",
+        since: "0.1.0",
         category: Category::Correctness,
         severity: Severity::Warning,
-        summary: "`\\ref` names a label that is never defined",
+        summary: "reference to an undefined label",
         explanation: "\
 No `\\label` in the document or its inputs declares this key, so the reference
 prints `??`.  When the run left a project file unread, the label may stand
@@ -297,9 +313,10 @@ Fix by adding the `\\label`, or by correcting the key.",
     },
     Rule {
         code: "duplicate-label",
+        since: "0.1.0",
         category: Category::Correctness,
         severity: Severity::Warning,
-        summary: "the same label is defined twice",
+        summary: "label defined twice",
         explanation: "\
 LaTeX warns `Label … multiply defined` and every reference resolves to the
 later one.  The finding stands at the innermost command of the document's
@@ -315,9 +332,10 @@ Fix by renaming one of them.",
     },
     Rule {
         code: "catcode-escapes-group",
+        since: "0.1.0",
         category: Category::Correctness,
         severity: Severity::Warning,
-        summary: "a category code change is still in force at the end of the run",
+        summary: "category code change outlives its group",
         explanation: "\
 `\\catcode` is local, so a change made inside a group is undone by the closing
 brace.  One still in force at the end of the document was made at the outer
@@ -332,9 +350,10 @@ the old value explicitly.  `satex query catcodes` shows the current table.",
     },
     Rule {
         code: "environment-mismatch",
+        since: "0.1.0",
         category: Category::Correctness,
         severity: Severity::Warning,
-        summary: "`\\end` names an environment other than the one that is open",
+        summary: "wrong environment closed",
         explanation: "\
 Environments nest like brackets: the name `\\end` gives has to match the one
 `\\begin` most recently opened.  chktex tracks this as warnings 9 (`'%s'
@@ -362,9 +381,10 @@ environments first.",
     },
     Rule {
         code: "expl-syntax-left-on",
+        since: "0.1.0",
         category: Category::Correctness,
         severity: Severity::Warning,
-        summary: "`\\ExplSyntaxOn` is never turned off",
+        summary: "ExplSyntaxOn never turned off",
         explanation: "\
 With expl3 syntax on, spaces are ignored and `_` and `:` are letters, so
 ordinary text stops working.

@@ -17,9 +17,10 @@ use crate::plugins::packages::{Manager, Provided, shell, tree_writable, unresolv
 pub static RULES: &[Rule] = &[
     Rule {
         code: "uninstalled-package",
+        since: "0.2.0",
         category: Category::Correctness,
         severity: Severity::Warning,
-        summary: "the package is not installed, and the distribution could install it",
+        summary: "package not installed",
         explanation: "\
 The file was not found in any tree the run searched, and the distribution's
 package manager names a package that ships it.  The load is therefore no
@@ -39,9 +40,10 @@ the package repository: turn on `plugins.packages` in `satex.yaml`.",
     },
     Rule {
         code: "package-successor",
+        since: "0.2.1",
         category: Category::Style,
         severity: Severity::Info,
-        summary: "the document loads a package that a successor continues",
+        summary: "package has a successor",
         explanation: "\
 Some packages live on in a fork or a successor that keeps their interface
 and adds to it: `wrapfig2` continues `wrapfig`.  The rule names the

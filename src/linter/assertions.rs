@@ -23,9 +23,10 @@ See [Assertions](#assertions).";
 pub static RULES: &[Rule] = &[
     Rule {
         code: "assertion-refuted",
+        since: "0.2.0",
         category: Category::Correctness,
         severity: Severity::Error,
-        summary: "an assertion fails on a run of the document",
+        summary: "assertion fails",
         explanation: "\
 The condition of `%\\satex@assert` is false on a path that approximated
 nothing, so a run of the document reaches it false.  The finding names the
@@ -39,9 +40,10 @@ See [Assertions](#assertions).",
     },
     Rule {
         code: "assertion-unknown",
+        since: "0.2.0",
         category: Category::Precision,
         severity: Severity::Info,
-        summary: "an assertion could not be decided",
+        summary: "assertion not decided",
         explanation: "\
 The condition of `%\\satex@assert` is neither true on every path nor false on
 an exact one: a value it reads is not known, a path approximated, or no path
@@ -55,9 +57,10 @@ See [Assertions](#assertions).",
     },
     Rule {
         code: "assertion-proved",
+        since: "0.2.0",
         category: Category::Correctness,
         severity: Severity::Hint,
-        summary: "an assertion holds on every path",
+        summary: "assertion always holds",
         explanation: "\
 The condition of `%\\satex@assert` is true on every path that reads it.  The
 paths cover every run of the document, so the property holds, under the
@@ -71,9 +74,10 @@ See [Assertions](#assertions).",
     },
     Rule {
         code: "assumption-made",
+        since: "0.2.0",
         category: Category::Correctness,
         severity: Severity::Info,
-        summary: "the document assumes a condition",
+        summary: "document assumes a condition",
         explanation: "\
 `%\\satex@assume` drops the paths where its condition is false and narrows the
 registers it compares on the others.  What the run proves after it holds for
@@ -87,9 +91,10 @@ See [Assertions](#assertions).",
     },
     Rule {
         code: "invalid-directive",
+        since: "0.2.0",
         category: Category::Correctness,
         severity: Severity::Error,
-        summary: "a `%\\satex@` directive cannot be read",
+        summary: "unreadable satex directive",
         explanation: SYNTAX,
         references: &[],
         fixes: &[],

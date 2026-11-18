@@ -209,7 +209,7 @@ const BARE: &[FindingRow] = &[
         "punctuation_inside_a_quotation_is_reported",
         "He said ``hello.'' and left.",
         "quote-punctuation",
-        Some(&["stands inside the quotation"]),
+        Some(&["punctuation inside the quote"]),
     ),
     ("punctuation_after_a_quotation_is_not_reported", "He said ``hello''. Then he left.", "quote-punctuation", None),
     // csquotes covers all of the above at once.
@@ -608,8 +608,8 @@ fn a_brace_after_left_is_reported() {
         return;
     };
     let found = findings(&doc.analysis, "delimiter-not-followed");
-    assert!(found.iter().any(|m| m.contains(r"`\left` scans a delimiter, and `{`")), "{found:?}");
-    assert!(found.iter().any(|m| m.contains(r"`\right` scans a delimiter, and `}`")), "{found:?}");
+    assert!(found.iter().any(|m| m.contains(r"missing delimiter after `\left`: `{`")), "{found:?}");
+    assert!(found.iter().any(|m| m.contains(r"missing delimiter after `\right`: `}`")), "{found:?}");
 }
 
 #[test]
