@@ -2150,7 +2150,7 @@ def recapture(out):
     idle = (os.cpu_count() or 2) - os.getloadavg()[0]
     slots = max(1, min(3, available_memory() // (3 * 2**30), int(idle) // 4))
     names, url = list(due), f"http://127.0.0.1:{server.server_address[1]}/"
-    print(f"showcase: retaking {len(names)} shots in {slots} browsers (load {os.getloadavg()[0]:.1f}) whose page code, example or entry changed: {', '.join(names)}", file=sys.stderr)
+    print(f"showcase: recording {len(names)} shots again in {slots} browsers (load {os.getloadavg()[0]:.1f}) because their example, settings or the page code changed: {', '.join(names)}", file=sys.stderr)
     finished = [0]
 
     def run(part):
