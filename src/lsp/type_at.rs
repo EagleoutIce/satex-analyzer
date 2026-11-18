@@ -59,6 +59,14 @@ impl Hit {
     pub fn of(ty: Ty) -> Hit {
         Hit { ty, prefix: String::new(), suffix: String::new(), file: false, defines: false, typed: None, value: false }
     }
+
+    /// Whether the text is a declared key's whole name (`\gls{⟨label⟩}`), not an item of a
+    /// list a key is read from (`\pgfkeys{/demo/.cd,⟨keys⟩}`).
+    pub fn names_key(&self) -> bool {
+        self.ty == Ty::Key(KeyKind::Declared)
+            && !self.value
+            && ![&self.prefix, &self.suffix].iter().any(|a| a.contains([',', '=']))
+    }
 }
 
 /// The name at the cursor: its start and what is typed of it.
@@ -218,7 +226,7 @@ fn argument_roles(analysis: &Analysis, p: &Place) -> Vec<Hit> {
     let mut out: Vec<Hit> = mine
         .iter()
         .map(|r| Hit {
-            defines: matches!(r.kind, RoleKind::Occ(OccKind::Label | OccKind::BibItem)),
+            defines: matches!(r.kind, RoleKind::Occ(OccKind::Label | OccKind::BibItem | OccKind::Key)),
             ..hit(r.ty(), &r.prefix, &r.suffix, matches!(r.kind, RoleKind::Load(_)))
         })
         .collect();
@@ -229,8 +237,9 @@ fn argument_roles(analysis: &Analysis, p: &Place) -> Vec<Hit> {
         RoleKind::Type(t) => !matches!(t, Ty::Key(_) | Ty::File(_)),
     });
     let path = p.inside.split(',').any(|k| k.trim_start().starts_with('/'));
-    let declared = mine.iter().any(|r| r.ty() == Ty::Key(KeyKind::Declared));
-    if keyed && (declared || path || !crate::queries::query::options(analysis, &p.cmd).is_empty()) {
+    // an argument that names a declared key whole is no list
+    let named = out.iter().any(Hit::names_key);
+    if keyed && (path || (!named && !crate::queries::query::options(analysis, &p.cmd).is_empty())) {
         out.insert(0, hit(Ty::Key(KeyKind::Option), "", "", false));
     }
     out
@@ -273,9 +282,19 @@ pub(super) fn file_of(analysis: &Analysis, path: &str) -> Option<crate::engine::
         .find(|&i| crate::project::paths::same_file(std::path::Path::new(analysis.file_name(i)), path))
 }
 
-/// Whether the run set the character at `span` as text: a verbatim `\`.
-fn set_as_text(analysis: &Analysis, span: Span) -> bool {
-    analysis.facts.text.at.iter().any(|s| s.span == span)
+/// Whether the run set the `\` at `span` as a character (`verbatim`). A command's
+/// output carries the command's place: only a `\` set there is the `\` itself.
+pub(super) fn set_as_text(analysis: &Analysis, span: Span) -> bool {
+    let text = &analysis.facts.text;
+    text.chars.chars().zip(&text.at).any(|(c, s)| c == '\\' && s.span == span)
+}
+
+/// [`set_as_text`], or the run expanded the `\` as an active character (listings' code):
+/// no control sequence starts there. A listing's own `\end{lstlisting}` reads so too.
+pub(super) fn read_as_text(analysis: &Analysis, span: Span) -> bool {
+    let backslash = format!("{}\\", crate::engine::tex::ACTIVE);
+    set_as_text(analysis, span)
+        || analysis.facts.expansions.iter().any(|e| e.span == span && analysis.interner.name(e.name) == backslash)
 }
 
 /// Whether a number with a unit's first letters stands at the cursor (`2.5c`) where a

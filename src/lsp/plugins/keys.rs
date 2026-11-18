@@ -45,6 +45,10 @@ impl TypePlugin for Keys {
     }
 
     fn complete(&self, cx: &Cx, hit: &Hit) -> Option<Vec<CompletionItem>> {
+        // a declared key's argument names the key (`\gls{⟨label⟩}`): the glossary plugin's
+        if hit.names_key() {
+            return None;
+        }
         let arg = cx.at.place.as_ref()?.arg();
         let after = {
             let line = cx.doc.line(cx.pos.line);

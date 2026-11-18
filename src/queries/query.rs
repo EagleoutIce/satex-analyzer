@@ -57,6 +57,16 @@ impl Filter {
         Ok(filter)
     }
 
+    /// The fields the filter tests.
+    pub fn fields(&self) -> Vec<&str> {
+        match self {
+            Filter::Always => Vec::new(),
+            Filter::Test { field, .. } => vec![field.as_str()],
+            Filter::And(a, b) | Filter::Or(a, b) => [a.fields(), b.fields()].concat(),
+            Filter::Not(a) => a.fields(),
+        }
+    }
+
     pub fn accepts(&self, record: &Record) -> bool {
         match self {
             Filter::Always => true,
@@ -622,18 +632,15 @@ fn typeset(analysis: &Analysis) -> Vec<Record> {
     let push_foot = |out: &mut Vec<Record>, foot: &mut String, at: Span, keys: &mut Keys<'_>| {
         if foot.trim().is_empty() {
             foot.clear();
+            keys.clear();
             return;
         }
         let mut record = paragraph(analysis, at, &std::mem::take(foot), Vec::new(), keys);
         record.insert("footnote".into(), json!(true));
         out.push(record);
     };
-    // the source line the paragraph's text stands on now
-    let mut on_line: Option<(FileId, u32)> = None;
-    // the source site of the last character set: the next one marks its own unless it follows
-    let mut last_site: Option<Span> = None;
-    // the same for where each character was read, and which files the user wrote (no `.aux`)
-    let mut last_origin: Option<Span> = None;
+    // where the paragraph's and its footnotes' characters stand, and which files the user wrote (no `.aux`)
+    let (mut places, mut foot_places, mut foot_keys) = (Places::default(), Places::default(), Keys::new());
     let mut documents: HashMap<FileId, bool> = HashMap::default();
     // each replacement-text token of a definition in the user's files: the macro and its line
     let bodies: HashMap<Span, (Sym, u32)> = analysis
@@ -867,6 +874,9 @@ fn typeset(analysis: &Analysis) -> Vec<Record> {
         let piece = if boxed { format!("{}{c}{}", note("⟦"), note("⟧")) } else { c };
         // an insert's text (a footnote) goes to the foot, after the paragraph that set it
         if text.inserts.iter().any(|&(a, b)| (a..b).contains(&(i as u32))) {
+            if !piece.trim().is_empty() {
+                foot_places.mark(analysis, &mut documents, &bodies, site, spot.span, &piece, &mut foot, &mut foot_keys);
+            }
             foot.push_str(&piece);
             put_keys(&named[cut..upto], &mut line, &mut choice, &mut keys);
             put_keys(&named[read_keys], &mut line, &mut choice, &mut keys);
@@ -928,11 +938,11 @@ fn typeset(analysis: &Analysis) -> Vec<Record> {
                 attach_picture(analysis, &mut record, &pictures);
             }
             out.push(record);
-            push_foot(&mut out, &mut foot, site, &mut keys);
+            push_foot(&mut out, &mut foot, site, &mut foot_keys);
+            foot_places = Places::default();
             breaks(&mut out, i, site);
             style = "";
-            on_line = None;
-            last_origin = None;
+            (places.on_line, places.last_origin) = (None, None);
         }
         put_keys(&named[cut..upto], &mut line, &mut choice, &mut keys);
         put_keys(&named[read_keys], &mut line, &mut choice, &mut keys);
@@ -975,48 +985,7 @@ fn typeset(analysis: &Analysis) -> Vec<Record> {
                     None => piece,
                 };
                 if !piece.trim().is_empty() {
-                    let here = (site.file, site.line);
-                    if on_line.is_some_and(|at| at != here) {
-                        line.push(KEY);
-                        keys.push_back((LINE, site.line.to_string().into()));
-                    }
-                    on_line = Some(here);
-                    // a piece of several characters (a note, a math atom) shares its site
-                    let single = unmarked(&piece).chars().count() == 1;
-                    let follows =
-                        last_site.is_some_and(|l| (l.file, l.line, l.col + 1) == (site.file, site.line, site.col));
-                    if !(single && follows) {
-                        line.push(KEY);
-                        let file = analysis.file_name(site.file);
-                        let step = if single { "" } else { ":0" };
-                        // the site is where reading stood after the character: one column back is its own
-                        // (a macro's text: the last letter of its name)
-                        let col = site.col.saturating_sub(1).max(1);
-                        keys.push_back((SITE, format!("{file}\u{1}{}:{col}{step}", site.line).into()));
-                    }
-                    last_site = single.then_some(site);
-                    // a character read in the user's files elsewhere than where it was set (`\title`'s argument,
-                    // set by `\maketitle`): where it was read, as long as the next ones follow on
-                    let own = single
-                        .then_some(spot.span)
-                        .filter(|o| (o.file, o.line) != (site.file, site.line))
-                        .filter(|o| *documents.entry(o.file).or_insert_with(|| analysis.project_file(o.file)));
-                    let follows = match (own, last_origin) {
-                        (Some(o), Some(l)) => (l.file, l.line, l.col + 1) == (o.file, o.line, o.col),
-                        (None, None) => true,
-                        _ => false,
-                    };
-                    if !follows {
-                        line.push(KEY);
-                        let at = own.map(|o| {
-                            let def = bodies.get(&o).map_or(String::new(), |&(name, line)| {
-                                format!("\u{1}{}\u{1}{line}", analysis.interner.cs(name))
-                            });
-                            format!("{}\u{1}{}:{}{def}", analysis.file_name(o.file), o.line, o.col)
-                        });
-                        keys.push_back((ORIGIN, at.unwrap_or_default().into()));
-                    }
-                    last_origin = own;
+                    places.mark(analysis, &mut documents, &bodies, site, spot.span, &piece, &mut line, &mut keys);
                     // a page that broke before the paragraph's first character stands before it
                     if fresh {
                         breaks(&mut out, i, site);
@@ -1092,7 +1061,7 @@ fn typeset(analysis: &Analysis) -> Vec<Record> {
         }
         out.push(record);
     }
-    push_foot(&mut out, &mut foot, first.unwrap_or_default(), &mut keys);
+    push_foot(&mut out, &mut foot, first.unwrap_or_default(), &mut foot_keys);
     breaks(&mut out, usize::MAX, first.unwrap_or_default());
     // A kernel read only partly leaves the document names the engine's
     // format defines (`\documentclass` set as text), so none of the text is
@@ -1592,6 +1561,77 @@ const ORIGIN: &str = "origin";
 
 /// The marks waiting for their [`KEY`] in a paragraph's text: kind and value.
 type Keys<'a> = std::collections::VecDeque<(&'a str, std::borrow::Cow<'a, str>)>;
+
+/// Where a stream of set characters (a paragraph's, a footnote's) stands in the sources: the
+/// [`LINE`], [`SITE`] and [`ORIGIN`] marks it still owes, each only where the last one stops.
+#[derive(Default)]
+struct Places {
+    /// The source line the text stands on now.
+    on_line: Option<(FileId, u32)>,
+    /// The site of the last character set: the next one marks its own unless it follows.
+    last_site: Option<Span>,
+    /// The same for where the last character was read.
+    last_origin: Option<Span>,
+}
+
+impl Places {
+    /// Marks `piece` (no blank), set at `site` and read at `read`: its line, its site and, read in
+    /// the user's files elsewhere than set (`\title`'s argument by `\maketitle`), where it was read.
+    #[allow(clippy::too_many_arguments)]
+    fn mark<'a>(
+        &mut self,
+        analysis: &Analysis,
+        documents: &mut HashMap<FileId, bool>,
+        bodies: &HashMap<Span, (Sym, u32)>,
+        site: Span,
+        read: Span,
+        piece: &str,
+        line: &mut String,
+        keys: &mut Keys<'a>,
+    ) {
+        let here = (site.file, site.line);
+        if self.on_line.is_some_and(|at| at != here) {
+            line.push(KEY);
+            keys.push_back((LINE, site.line.to_string().into()));
+        }
+        self.on_line = Some(here);
+        // a piece of several characters (a note, a math atom) shares its site
+        let single = unmarked(piece).chars().count() == 1;
+        let follows = self.last_site.is_some_and(|l| (l.file, l.line, l.col + 1) == (site.file, site.line, site.col));
+        if !(single && follows) {
+            line.push(KEY);
+            let file = analysis.file_name(site.file);
+            let step = if single { "" } else { ":0" };
+            // the site is where reading stood after the character: one column back is its own
+            // (a macro's text: the last letter of its name)
+            let col = site.col.saturating_sub(1).max(1);
+            keys.push_back((SITE, format!("{file}\u{1}{}:{col}{step}", site.line).into()));
+        }
+        self.last_site = single.then_some(site);
+        // a character read in the user's files elsewhere than where it was set: where it was read,
+        // as long as the next ones follow on
+        let own = single
+            .then_some(read)
+            .filter(|o| (o.file, o.line) != (site.file, site.line))
+            .filter(|o| *documents.entry(o.file).or_insert_with(|| analysis.project_file(o.file)));
+        let follows = match (own, self.last_origin) {
+            (Some(o), Some(l)) => (l.file, l.line, l.col + 1) == (o.file, o.line, o.col),
+            (None, None) => true,
+            _ => false,
+        };
+        if !follows {
+            line.push(KEY);
+            let at = own.map(|o| {
+                let def = bodies
+                    .get(&o)
+                    .map_or(String::new(), |&(name, line)| format!("\u{1}{}\u{1}{line}", analysis.interner.cs(name)));
+                format!("{}\u{1}{}:{}{def}", analysis.file_name(o.file), o.line, o.col)
+            });
+            keys.push_back((ORIGIN, at.unwrap_or_default().into()));
+        }
+        self.last_origin = own;
+    }
+}
 
 /// The kind of a [`KEY`] that marks an alignment's part, not a key.
 const ALIGN: &str = "align";

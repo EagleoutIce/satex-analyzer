@@ -994,6 +994,18 @@
 
   async function codemirror(parent, text) {
     const [{ EditorView, basicSetup }, language, lint, ac, view, st, { oneDark }, tex] = [...await EDITOR, await self.siteTex()];
+    /** Tab takes the completion list's item; right after `\\name` before the list shows (typed fast) it asks for the list
+     * and takes its first item once it comes, the focus kept in the editor (Tab moved it away, the keys after it lost). */
+    const tabCompletes = (v) => {
+      if (ac.completionStatus(v.state) === 'active') return ac.acceptCompletion(v);
+      const { head, empty } = v.state.selection.main, line = v.state.doc.lineAt(head);
+      if (!empty || !/\\[A-Za-z@]+$/.test(line.text.slice(0, head - line.from))) return false;
+      if (!ac.completionStatus(v.state)) ac.startCompletion(v);
+      // a key typed meanwhile cancels: the list would take a name the person typed on
+      const t0 = performance.now(), doc = v.state.doc, tick = () => { const s = ac.completionStatus(v.state); if (v.state.doc !== doc) return; if (s === 'active') ac.acceptCompletion(v); else if (s === 'pending' || performance.now() - t0 < 1500) setTimeout(tick, 30); };
+      tick();
+      return true;
+    };
     /** Words (file names in arguments) the server resolves a definition for, by start offset. */
     const resolves = new Map();
     const KIND = { 3: 'function', 14: 'keyword', 9: 'namespace', 18: 'variable' };
@@ -1323,7 +1335,7 @@
         if (c.preview) span.prepend(Object.assign(document.createElement('img'), { className: 'cm-preview', src: `data:image/svg+xml;utf8,${encodeURIComponent(c.preview)}`, alt: '' }));
         return span;
       } }] }),
-        linkField, markField, flashField, swatchField, lensField, linkedField, heatField, mirror, st.Prec.high(closeEnvironment), view.keymap.of([{ key: 'F2', run: () => { renameBox(); return true; } }, { key: 'Shift-F10', run: () => { const c = editor.coords() ?? { left: 40, bottom: 80 }; menuAt(c.left, c.bottom); return true; } }]),
+        linkField, markField, flashField, swatchField, lensField, linkedField, heatField, mirror, st.Prec.high(closeEnvironment), view.keymap.of([{ key: 'Tab', run: tabCompletes }, { key: 'F2', run: () => { renameBox(); return true; } }, { key: 'Shift-F10', run: () => { const c = editor.coords() ?? { left: 40, bottom: 80 }; menuAt(c.left, c.bottom); return true; } }]),
         EditorView.updateListener.of((u) => { if (u.docChanged) { resolves.clear(); changed(); } else if (u.selectionSet) explainSoon(); if (u.docChanged || u.selectionSet) linkAround(u.view); }), theme.of([]), lock.of([]), prefs.of(prefsOf())],
     });
     ev.dom.satexView = ev; // doc/site/showcase.mjs reads the text and the places through it
@@ -6763,6 +6775,7 @@
       ch.kind = ch.from?.def || shared.get(okeys[i]) ? 'macro' : ch.from && !cell(ch.line, ch.from.line) ? 'moved' : calls.has(keys[i]) ? 'arg' : 'text';
       ch.made = ch.kind === 'macro' && !ch.from?.def;
     });
+    caseMoved(chars);
     // a stored argument set by a later call (`\title{…}` by `\maketitle`) when the run sent no origins for it: its words,
     // found in order as plain text of the file, are that argument moved; what is not written there (`\TeX`'s letters) stays made
     for (let i = 0; i < chars.length;) {
@@ -6785,15 +6798,31 @@
     });
     return chars;
   }
+  /** Case-changed text (amsart's `\\MakeUppercase` of `\\author{Some Author}`): TeX makes new character tokens for the
+   * letters it changes, read nowhere in the files, and keeps the others (`S`, `A`), read in place. A made character next
+   * to a moved one is read beside it where the source spells it there up to case: each such run grows from its ends. */
+  function caseMoved(chars) {
+    const grow = (i, step) => {
+      for (let j = i + step, p = chars[i].from; p && !p.def && chars[j]?.made && !chars[j].from; j += step) {
+        const col = p.col + step, c = srcLine(p.path, p.line)?.[col - 1];
+        if (c == null || c.toLowerCase() !== chars[j].c.toLowerCase()) return;
+        p = chars[j].from = { path: p.path, line: p.line, col };
+        Object.assign(chars[j], { kind: 'moved', made: false });
+      }
+    };
+    for (let i = 0; i < chars.length; i++) if (chars[i].from && !chars[i].from.def) { grow(i, 1); grow(i, -1); }
+  }
   /** rowOrigins' made characters `i..j` (one call's text) whose words stand in order as plain text of their file, a few
    * characters apart (`\title{Reading \TeX{} the Way}`): each gets the place it is written as `from`, made no more. */
+  let lowered = [null, ''];
   function argMoved(chars, i, j) {
     const path = chars[i].path, file = Object.keys(state.texts).find((f) => path.endsWith(f)), src = file === state.file ? editor.text() : state.texts[file];
     const words = typeof src === 'string' ? tsWords(chars.slice(i, j).map((ch) => ch.c).join('')) : [];
     if (words.length < 2) return;
-    // a plain occurrence: no part of a name or a longer word, not in a comment
+    // a plain occurrence up to case (`\\MakeUppercase`): no part of a name or a longer word, not in a comment
+    const low = lowered[0] === src ? lowered[1] : (lowered = [src, src.toLowerCase()])[1], hay = low.length === src.length ? low : src, as = (w) => hay === src ? w : w.toLowerCase();
     const plain = (w, from) => {
-      for (let a = src.indexOf(w, from); a >= 0; a = src.indexOf(w, a + 1)) {
+      for (let a = hay.indexOf(as(w), from); a >= 0; a = hay.indexOf(as(w), a + 1)) {
         const before = src.slice(src.lastIndexOf('\n', a - 1) + 1, a);
         if (/[\p{L}\p{N}@]/u.test(src[a - 1] ?? '') || /\\[A-Za-z@]*$/.test(before) || /[\p{L}\p{N}]/u.test(src[a + w.length] ?? '') || /(^|[^\\])%/.test(before)) continue;
         return a;
@@ -8043,7 +8072,14 @@
     }
     if (inside) k = Math.min(Math.max(k, 0), span[1] - span[0]);
     else if (!span) {
-      const got = bare && read();
+      let got = bare && read();
+      // rows of an older text or of the file shown before (a click right after an edit or a switch): this text's first
+      const current = () => tsShown === `${uri()}@${sentVersions.get(uri())}`;
+      for (let n = 0; bare && !got && !current() && n < 40; n++) {
+        if (n === 2) toast('Waiting for the analysis to read this text…', null);
+        await new Promise((ok) => setTimeout(ok, 250));
+        if ((got = read()) && n >= 2) toast.off();
+      }
       if ((!got || !(got.file in state.texts)) && await miss?.()) return;
       if (!got) return toast(written ? `Not typed here: “${word}” is not plain text in the source. Edit it in the editor`
         : `Not typed here: “${bare || word}” comes from code satex cannot place in your files (a package, or unknown). Edit it in the editor`);
@@ -8051,10 +8087,12 @@
       if (got.file !== state.file) return toast(`${got.file} cannot be opened here`);
       text = editor.text();
       const a = (lineAt(got.line)?.[0] ?? -1) + got.col - 1;
+      // spelled there up to case: a `\\MakeUppercase`d title is typed into its lower-case source
+      const spelled = a >= 0 && text.slice(a, a + bare.length).toLowerCase() === bare.toLowerCase();
       // read at a macro's call (an undecided `\\tleapy`): typed into the definition that spells the word
-      const [made] = a < 0 || text.slice(a, a + bare.length) === bare ? [] : PE.defining(text, a, bare).filter(([, b]) => !pdfWhy(text, b, b + bare.length));
+      const [made] = a < 0 || spelled ? [] : PE.defining(text, a, bare).filter(([, b]) => !pdfWhy(text, b, b + bare.length));
       if (made) [from, span, def] = [made[1], [0, bare.length], { file: got.file, def: made[0], defLine: made[2], bare, before: text, call: got.line, callFile: file }];
-      else if (a < 0 || text.slice(a, a + bare.length) !== bare || pdfWhy(text, a, a + bare.length)) return toast(`Not typed here: “${bare}” is not plain text where it was read. Edit it in the editor`);
+      else if (!spelled || pdfWhy(text, a, a + bare.length)) return toast(`Not typed here: “${bare}” is not plain text where it was read. Edit it in the editor`);
       else [from, span, def] = [a, [0, bare.length], got.def ? { ...got, bare, before: text, call: line, callFile: file } : null];
     }
     // the input moves to the view typed in (a hidden panel takes no focus); moving it ends the old caret
@@ -8170,12 +8208,27 @@
   }
   /** What the page shows of source text `t`: commands, braces, math shifts and comments left out, spaces as one. */
   const pdfPlainOf = (t, verb) => verb ? t : t.replace(/(?<!\\)%[^\n]*/g, '').replace(/\\[A-Za-z@]+\*?|\\(?=[^A-Za-z@\s])|[{}$^_]/g, '').replace(/[\s~]+/g, ' ');
+  /** Whether page word `v` stands on the row of word `r`: its baseline, or raised within its height and narrower than
+   * it is tall (a \\thanks ∗, a footnote's number). */
+  const pdfOnRow = (v, r) => Math.abs(v[4] - r[4]) < 1 || v[4] < r[4] && v[4] > r[2] && v[3] - v[1] < r[4] - r[2];
   /** The words of row `line` (in order) from word `w` on, while they follow each other (a gap under 3 em of their
    * height: never another column's or node's words on the same baseline). */
   function pdfRun(line, w) {
     const i = line.findIndex((v) => v[1] >= w[1] - 0.5), out = i < 0 ? [] : [line[i]], em = 3 * (w[4] - w[2]);
     for (let j = i + 1; i >= 0 && j < line.length && line[j][1] - line[j - 1][3] < em; j++) out.push(line[j]);
     return out;
+  }
+  /** The font's natural interword space on page image `img`, in bp: the common gap of the rows that end short of the
+   * right edge `right` (a paragraph's last row: TeX sets its spaces unstretched), punctuation's wider ones aside;
+   * else a third of `em`. */
+  function pdfSpace(img, right, em) {
+    const gaps = [];
+    for (const ws of Map.groupBy(pdfImgWords(img), (v) => Math.round(v[4])).values()) {
+      const r = ws.sort((a, b) => a[1] - b[1]);
+      if (r.length < 3 || r.at(-1)[3] > right - 2 * em) continue;
+      r.slice(1).forEach((v, i) => { const g = v[1] - r[i][3]; if (!/[.,:;!?)]$/.test(r[i][5]) && g > 0.2 * em && g < 0.6 * em) gaps.push(g); });
+    }
+    return gaps.length ? gaps.sort((a, b) => a - b)[gaps.length >> 1] : em / 3;
   }
   /** The line box of a row (its words `ws` in order) among SyncTeX boxes `bs`: the innermost `(` around it on its
    * baseline that is more than the row's own width (a centered caption's text box is not), else the widest; null if none. */
@@ -8299,7 +8352,7 @@
       const f = pdfFontOf(img, w[5] ? w : para[0].w), ctx = pdfEchoCtx ??= document.createElement('canvas').getContext('2d');
       ctx.font = `${f.size * k}px ${f.family}`;
       // the row's word space as the page set it, else a third of an em (TeX's text fonts)
-      const line = pdfImgWords(img).filter((v) => Math.abs(v[4] - w[4]) < 1).sort((x, y) => x[1] - y[1]);
+      const line = pdfImgWords(img).filter((v) => pdfOnRow(v, w)).sort((x, y) => x[1] - y[1]);
       const gaps = line.slice(1).map((v, i) => v[1] - line[i][3]).filter((d) => d > 0 && d < f.size), gap = gaps.length ? gaps.sort((x, y) => x - y)[gaps.length >> 1] : f.size / 3;
       // the row after `A` as pieces: the text typed, in the page's font, then the words the change left as drawn,
       // each with the gap before it
@@ -8309,7 +8362,7 @@
       pieces.push(...typed(upto));
       // the words kept as the page set them, macro output among them (`[1]` of a \\cite), not only the source's words
       const keptW = F ? pdfRun(line, F.w) : [];
-      keptW.forEach((v, i) => pieces.push({ gap: i ? v[1] - keptW[i - 1][3] : 0, n: v[3] - v[1], w: v }));
+      keptW.forEach((v, i) => pieces.push({ gap: i ? v[1] - keptW[i - 1][3] : 0, n: v[3] - v[1], w: v, ride: w[4] }));
       const before = typed(g.at), into = before.length - 1, tail = before.at(-1).n;
       // laid from A's end; what passes the text's right edge wraps: to the start of the paragraph's next row (the next
       // page's too), whose words move along, then to rows of its own a baseline skip apart (the paragraph's own, else
@@ -8323,9 +8376,10 @@
       // a new paragraph (Enter) as the page sets them: its indent the common one of rows that start right of the
       // margin by under 3 em, its gap what baselines further apart than a line add; else 1.5 em and none
       const med = (xs) => xs.length ? xs.sort((p, q) => p - q)[xs.length >> 1] : null;
-      const lines = [...Map.groupBy(pdfImgWords(img), (v) => Math.round(v[4]))].sort((p, q) => p[0] - q[0]).map(([y, ws]) => [y, Math.min(...ws.map((v) => v[1]))]);
+      const lines = [...Map.groupBy(pdfImgWords(img), (v) => Math.round(v[4]))].sort((p, q) => p[0] - q[0]).map(([y, ws]) => [y, Math.min(...ws.map((v) => v[1])), Math.max(...ws.map((v) => v[3]))]);
       const indent = med(lines.map(([, x]) => x - left).filter((d) => d > 1 && d < 3 * f.size)) ?? 1.5 * f.size;
-      const parskip = med(lines.slice(1).map(([y], i) => y - lines[i][0] - skip).filter((d) => d > 0.5 && d < 2 * skip)) ?? 0;
+      // the gap only between a paragraph's short last row and an indented first row after it (a heading's is no parskip)
+      const parskip = Math.max(med(lines.slice(1).filter(([, x], i) => Math.abs(x - left - indent) < 1 && lines[i][2] < right - 2 * f.size).map(([y], i, all) => y - lines[lines.indexOf(all[i]) - 1][0] - skip).filter((d) => d > -0.5 && d < 2 * skip)) ?? 0, 0);
       // the paragraph's rows after A's as the page set them, each its words (the first after a word space)
       const later = [];
       // (up to a break the source forces, `\\par` or `\\\\`: TeX never runs a line on over one, nor takes words back)
@@ -8333,16 +8387,24 @@
       for (let t = para.find((u) => u.s >= A.e && (u.w[0] !== w[0] || u.w[4] > w[4] + 1)), prev = row.at(-1) ?? A; t && !forced(prev.s, t.s);) {
         const n = t.w, s0 = t.s, nrow = para.filter((u) => u.w[0] === n[0] && Math.abs(u.w[4] - n[4]) < 1 && u.s >= s0), last = nrow.at(-1);
         // the row's page words from its first source word on (`TeXbook [2]`, `1.1`: macro output kept)
-        const ws = pdfRun(pdfImgWords(page(n[0])).filter((v) => Math.abs(v[4] - n[4]) < 1).sort((a, b) => a[1] - b[1]), n);
-        later.push({ x: n[1], n, row: ws.map((v) => ({ w: v })), pieces: ws.map((v, j) => ({ gap: j ? v[1] - ws[j - 1][3] : gap, n: v[3] - v[1], w: v })) });
+        const ws = pdfRun(pdfImgWords(page(n[0])).filter((v) => pdfOnRow(v, n)).sort((a, b) => a[1] - b[1]), n);
+        later.push({ x: n[1], n, row: ws.map((v) => ({ w: v })), pieces: ws.map((v, j) => ({ gap: j ? v[1] - ws[j - 1][3] : gap, n: v[3] - v[1], w: v, ride: n[4] })) });
         prev = last ?? prev;
         t = last && para.find((u) => u.s > last.s && (u.w[0] !== n[0] || u.w[4] > n[4] + 1));
         if (t && forced(prev.s, t.s)) break;
       }
       // TeX's lines without hyphenation (PE.reflow): overflow runs on into the rows below, a deletion takes words up
-      // (natural widths, rows not justified: shrink and justify made the landing differ more on the thesis, 36 and 53 px
-      // against 17)
-      const flow = PE.reflow(pieces.map((q, ix) => ({ ...q, ix })), w[3], { right, left, indent, skip, parskip, rows: later, pull: dl < 0 });
+      // TeX's total fit (PE.fit) with the font's interword glue: the natural space from the page's ragged rows (a
+      // paragraph's last), stretch and shrink as Computer Modern's, scaled after punctuation (\\nonfrenchspacing); a
+      // page gap wider than spaces get (a logo the word list lacks) kept as it is. Greedy where no fit is in tolerance.
+      // (a paragraph of one row, a heading's, a cell's, a caption's, keeps the page's own spaces and greedy breaking)
+      const fits = later.length > 0, sp = pdfSpace(img, right, f.size), seq = fits ? [...pieces, ...later.flatMap((r) => r.pieces)] : [];
+      seq.forEach((q, j) => {
+        if (!j || !(q.gap > 0)) return;
+        const prev = seq[j - 1], t = prev.t ?? prev.w?.[5] ?? '';
+        Object.assign(q, q.gap > 2.5 * sp ? { st: 0, sh: 0 } : PE.glue(t, sp));
+      });
+      const flow = PE.reflow(pieces.map((q, ix) => ({ ...q, ix })), w[3], { right, left, indent, skip, parskip, rows: later, pull: dl < 0, fit: fits });
       const rows = [];
       for (const fr of flow.rows) {
         const prev = rows.at(-1), L = later[fr.from];
@@ -8420,7 +8482,8 @@
       // a word moved from another row (wrapped down) comes from its own place, set on this row's baseline
       else {
         const src = pdfImg(q.w[0]) ?? img, base = (w ?? n ?? q.w)[4], sx = q.w[1] * k - 1, sw = (q.w[3] - q.w[1]) * k + 2, sy = q.w[2] - 1, sh = (q.w[4] - q.w[2] + 2.5) * k;
-        cg.drawImage(src, sx, sy * k, sw, sh, (q.x - x0) * k - 1, (sy + base - q.w[4] - top) * k, sw, sh);
+        // a raised mark (a \\thanks ∗, a footnote's number) keeps its height over the baseline of the row it rode
+        cg.drawImage(src, sx, sy * k, sw, sh, (q.x - x0) * k - 1, (sy + base - (q.ride ?? q.w[4]) - top) * k, sw, sh);
       }
     }
     cv.style.cssText = `left:${x0 / pw * 100}%;top:${top / ph * 100}%;width:${(x1 - x0) / pw * 100}%;height:${(bot - top) / ph * 100}%`;
@@ -8705,9 +8768,25 @@
       const { from, ask, p } = pdfMenuAsk;
       pdfQueue(async () => {
         // the server's own list: the names standing in for it carry no snippet (`\\emph` without its braces)
-        let all = await ask;
-        if (!all.some((i) => i.insertText)) { await pdfRunEnd(); all = await completions(p, p.character, '\\', uri(), true); }
+        let all = (await pdfWithin(ask)) ?? [];
+        if (!all.some((i) => i.insertText)) { await pdfRunEnd(); all = (await pdfWithin(completions(p, p.character, '\\', uri(), true))) ?? []; }
         const c = pdfCaretNow(), n = c && /^\\([A-Za-z@]*)$/.exec(editor.text().slice(from, c.at)), item = n && pdfMenuItems(all, n[1])[0];
+        pdfMenuOff();
+        if (item) pdfMenuApply(item, from, true);
+      });
+      return;
+    }
+    // Tab before the list was asked for the text as it lands (keys typed faster than their edits): once they land, the
+    // name before the caret takes the list's first, as a Tab on the shown list would
+    if (!pdfMenu && e.key === 'Tab' && !e.shiftKey && !PE.cells(g0.text, g0.at)) {
+      e.preventDefault();
+      pdfQueue(async () => {
+        const c = pdfCaretNow(), t = editor.text(), m = c && /\\([A-Za-z@]+)$/.exec(t.slice(Math.max(0, c.at - 64), c.at));
+        if (!m) return;
+        const from = c.at - m[0].length, p = pdfPos(t, from + 1);
+        let all = (await pdfWithin(completions(p, p.character, '\\', uri(), true))) ?? [];
+        if (!all.some((i) => i.insertText)) { await pdfRunEnd(); all = (await pdfWithin(completions(p, p.character, '\\', uri(), true))) ?? []; }
+        const item = pdfMenuItems(all, m[1])[0];
         pdfMenuOff();
         if (item) pdfMenuApply(item, from, true);
       });
@@ -8774,6 +8853,8 @@
   function pdfMenuOff() { pdfMenu?.el.remove(); pdfMenu = null; }
   /** The list asked at the last `\\` while it is on the way: `{ from, ask, p }`. */
   let pdfMenuAsk = null;
+  /** `pr`, or null after `ms`: a completion the busy server does not answer never holds the keys queued after it. */
+  const pdfWithin = (pr, ms = 2000) => Promise.race([pr, new Promise((ok) => setTimeout(() => ok(null), ms))]);
   /** Once the run under way ends (5 s at most): the server answers a completion then. */
   const pdfRunEnd = async () => { for (let t = 0; running && t < 100; t++) await new Promise((ok) => setTimeout(ok, 50)); };
   /** The items of the server's list `all` for `\\name`: a macro's call clicked, every command with its own first. */

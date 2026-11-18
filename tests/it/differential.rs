@@ -1656,6 +1656,66 @@ fn title_text_knows_where_it_was_read() {
     assert!(paragraph(&rows, "Plain")["origins"].is_null(), "{rows:?}");
 }
 
+/// amsart upper-cases its title block with `\\MakeUppercase`: expl3 keeps a letter already upper-case
+/// as the token read (`S` of `Some`) and makes a fresh one for each other (`OME`), read nowhere in the
+/// files, so only the kept letters name where they were read (the editor matches the rest up to case).
+/// Its `\\thanks` and `\\date` go to the foot and name where they were read. Pins the amsart rows whose
+/// foot had no sites at all: every word there was refused.
+#[test]
+fn amsart_title_block_knows_where_it_was_read() {
+    if !crate::support::installed() {
+        return;
+    }
+    let source = "\\documentclass{amsart}\n\\title{Plain Title}\n\\author{Some Author}\n\\thanks{Thanked words}\n\\date{Some Date}\n\\begin{document}\n\\maketitle\nBody.\n\\end{document}\n";
+    let rows = typeset_doc("amsart-origins", source, &[]);
+    let origin_at = |row: &serde_json::Value, at: u64| {
+        row["origins"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .rfind(|o| o["at"].as_u64() <= Some(at))
+            .and_then(|o| Some((o["line"].as_u64()?, o["col"].as_u64()? + at - o["at"].as_u64()?)))
+    };
+    let author = paragraph(&rows, "SOME AUTHOR");
+    assert_eq!(origin_at(author, 0), Some((3, 9)), "{author}");
+    assert_eq!(origin_at(author, 5), Some((3, 14)), "{author}");
+    let foot = paragraph(&rows, "Thanked");
+    assert!(foot["sites"].as_array().is_some_and(|s| !s.is_empty()), "{foot}");
+    let detail = foot["detail"].as_str().unwrap_or_default();
+    // the last `Date`: the first is amsart's `\\datename`
+    let at = |w: &str| detail.rfind(w).expect("in the foot") as u64;
+    assert_eq!(origin_at(foot, at("Thanked")), Some((4, 9)), "{foot}");
+    assert_eq!(origin_at(foot, at("Date")), Some((5, 12)), "{foot}");
+}
+
+/// A footnote set away from where it is written (`\\thanks` in `\\author`, set by `\\maketitle`) names
+/// its sites and where its words were read, as the title's own text does. Pins the footnote rows that
+/// carried neither: a click on a `\\thanks` word could not be placed in the source.
+#[test]
+fn thanks_text_knows_where_it_was_read() {
+    if !crate::support::installed() {
+        return;
+    }
+    let source = "\\documentclass{article}\n\\title{Alpha}\n\\author{Carol\\thanks{Thanked words}}\n\\begin{document}\n\\maketitle\nPlain text.\n\\end{document}\n";
+    let rows = typeset_doc("thanks-origins", source, &[]);
+    let row = paragraph(&rows, "Thanked");
+    assert_eq!(row["footnote"], true, "{row}");
+    assert!(row["sites"].as_array().is_some_and(|s| !s.is_empty()), "{row}");
+    let detail = row["detail"].as_str().unwrap_or_default();
+    let col = source.lines().nth(2).and_then(|l| l.find("Thanked")).unwrap() as u64 + 1;
+    for word in ["Thanked", "words"] {
+        let at = detail.find(word).expect("in detail") as u64;
+        let o = row["origins"].as_array().into_iter().flatten().rfind(|o| o["at"].as_u64() <= Some(at));
+        let o = o.unwrap_or_else(|| panic!("{word} has an origin: {row}"));
+        let off = source.lines().nth(2).and_then(|l| l.find(word)).unwrap() as u64 + 1 - col;
+        assert_eq!(
+            (o["line"].as_u64(), o["col"].as_u64().map(|c| c + at - o["at"].as_u64().unwrap())),
+            (Some(3), Some(col + off)),
+            "{word}: {row}"
+        );
+    }
+}
+
 /// Text a user macro's replacement text sets (`\\greet`'s `Hello`) names that macro and its definition's
 /// line, so typing into the output can edit the definition. The argument (`world`) names none. Pins the
 /// origins that only gave a place: the editor could not tell a body from an argument.

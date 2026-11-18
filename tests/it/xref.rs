@@ -322,3 +322,23 @@ fn biblatex_knows_the_month_constants() {
     let found = records("months", body, bib, "undefined-bibliography-string");
     assert!(found.is_empty(), "{found:?}");
 }
+
+/// Intuition: cleveref's `\\cref` reads the name `\\r@⟨key⟩@cref` its `\\label` declared from the
+/// same document key, so the read is a use of that key, with or without hyperref, for every form
+/// (`\\Cref`, `\\crefrange`, `\\labelcref`, lists). Soundness: `unused-label` must never call a used
+/// label unused (its fix deletes the label). Bug pinned: without hyperref the package-made suffix
+/// `@cref` was folded into the key, and a list `f,g` was one part, so no read matched and S050
+/// fired on referenced labels.
+#[test]
+fn a_label_used_only_by_cleveref_is_not_unused() {
+    let keys = ["a", "b", "c", "d", "e", "f", "g"];
+    let labels: String = keys.iter().map(|k| format!("\\section{{{k}}}\\label{{{k}}}\n")).collect();
+    let uses = "\\Cref{a}, \\cref{b}, \\crefrange{c}{d}, \\labelcref{e}, \\cref{f,g}.";
+    for hyperref in ["", "\\usepackage{hyperref}\n"] {
+        let body =
+            format!("{hyperref}\\usepackage{{cleveref}}\n\\begin{{document}}\n{labels}{uses}\n\\end{{document}}\n");
+        let found = records(&format!("unused-cref{}", hyperref.len()), &body, "", "unused-label");
+        let found: Vec<_> = found.iter().map(|r| r["message"].to_string()).collect();
+        assert!(found.is_empty(), "{hyperref}: {found:?}");
+    }
+}

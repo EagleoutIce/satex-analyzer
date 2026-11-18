@@ -1760,6 +1760,23 @@ impl Engine {
                     self.fresh(&uri);
                     with_doc(&self.docs, &uri, |a, text| crate::cli::query::answer_request(&body, a, text.body()))?
                 });
+                // A root no buffer shows: its run for the open buffers' texts, kept or resumed.
+                let plain = body.get("config").is_none() && body.get("inject").is_none();
+                let source = file
+                    .as_deref()
+                    .filter(|_| held.is_none() && plain)
+                    .and_then(|f| crate::project::overlay::read_to_string(f).ok());
+                let held = match (held, file.as_deref(), source) {
+                    (None, Some(root), Some(source)) if discovery::is_document(&source) => {
+                        // the edited buffers' runs first: the root's run for their texts is among them
+                        self.flush();
+                        let (analysis, _) = self.run(root, &mut RunHooks::default());
+                        (!self.cancelled)
+                            .then(|| crate::cli::query::answer_request(&body, &analysis, &source))
+                            .flatten()
+                    }
+                    (held, ..) => held,
+                };
                 // a trace of lines: from the root's last checkpoint before them
                 let traced = || {
                     let checkpoints = self.checkpoints.get(&canonical(file.as_deref()?))?;

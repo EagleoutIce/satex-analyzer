@@ -153,6 +153,11 @@ test("Type mode's rules at the spots that broke", async () => {
   const para = 'Some text so\n\nMore.', end = para.indexOf('\n');
   assert.deepEqual(typeKeys(para, end, [...' \\[y=2']), ['Some text so \\[y=2\\]\n\nMore.', end + 6], 'a display formula typed: \\[y=2\\], the caret before \\]');
   assert.equal(typeKeys(para, end, [...' \\(a'])[0], 'Some text so \\(a\\)\n\nMore.', 'inline the same');
+  // an environment typed by hand: its name goes into a fresh \\begin{…}, Enter writes the \\end{name} with it and puts
+  // the caret on the line between. Pins the `{` refused (`\\beginitemize\\}`) and a lone \\begin left behind.
+  const envd = typeKeys('Some text.\n\nMore.', 10, ['Enter', ...'\\begin{itemize}', 'Enter']);
+  assert.deepEqual(envd, ['Some text.\n\n\\begin{itemize}\n\n\\end{itemize}\n\nMore.', 28], 'the pair, the caret inside');
+  assert.equal(typeof E.key('a \\begin{x} b \\end{x}', 9, 'y'), 'string', 'a name not being typed stays a name');
   assert.equal(typeKeys('a \\[z\\] b', 'a \\[z\\]'.length, ['Backspace'])[0], 'a  b', 'a display `\\[z\\]` the same');
   assert.equal(typeKeys(t, at('}'), [...'$x', 'Backspace'])[0].split('\n')[0], '\\section{Background}\\label{sec:b}', 'the last character of a formula takes it');
   assert.equal(typeKeys('a pipeline. b', 'a pipeline'.length, [...'\\emph{q}'])[0], 'a pipeline\\emph{q}. b', '`\\` before `.`: its space goes once `{` ends the name');

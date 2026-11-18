@@ -20,10 +20,10 @@ type Form = { kind: 'len'; num: number; unit: string } | { kind: 'share'; num: n
 /** A piece of a paragraph for the echo's line breaking: its width `n` and the space before it `gap` (bp); `par` starts
  * a new paragraph (Enter). Anything else it carries (its text, the page word it is) rides along. */
 /** `disp`: display math, centered on a row of its own, that much more space above it (bp), `below` after it. */
-type Piece = { gap: number; n: number; par?: boolean; disp?: number; below?: number };
+type Piece = { gap: number; n: number; par?: boolean; disp?: number; below?: number; st?: number; sh?: number; hy?: boolean };
 /** The lines a paragraph may take: its right edge, its left margin, the indent and gap of a new paragraph, the rows the
  * page set after the first (each its left edge and its own words, gaps set), whether a row may take words up (`pull`). */
-type Line<P> = { right: number; left: number; indent: number; skip: number; parskip: number; rows: { x: number; pieces: P[] }[]; pull?: boolean; shrink?: number; justify?: boolean };
+type Line<P> = { right: number; left: number; indent: number; skip: number; parskip: number; rows: { x: number; pieces: P[] }[]; pull?: boolean; shrink?: number; justify?: boolean; fit?: boolean };
 /** Rows laid out: each its left edge, its pieces placed (`x`), the page row it takes (`from`: -2 the first, -1 a new
  * one) and a new row's baseline shift from the row before (`dy`); `freed` the page rows whose words all went up. */
 type Flow<P> = { rows: { x: number; from: number; dy: number; par: boolean; out: (P & { x: number })[] }[]; freed: number[] };
@@ -75,6 +75,8 @@ declare global {
       apart<B extends Flat>(boxes: B[]): B[];
       relaid(row: [number, number, string][], k: number, now: string, width: (s: string) => number): [number, number, string][];
       reflow<P extends Piece>(pieces: P[], x0: number, line: Line<P>): Flow<P>;
+      fit(pieces: Piece[], first: number, width: number, tolerance?: number): { breaks: number[]; ratios: number[] } | null;
+      glue(before: string, space: number): { gap: number; st: number; sh: number };
       centered(box: [number, number], row: [number, number], growth: number): number;
       tokens(text: string, from: number, to: number): Tok[];
       unset(text: string, from: number, to: number): string;
@@ -456,8 +458,10 @@ declare global {
     const L = text.lastIndexOf('\n', p0 - 1) + 1, nl = text.indexOf('\n', q0), R = nl < 0 ? text.length : nl;
     const head = scan(text, 0, L, start()), ctx = scan(text, L, a, copy(head)), l = ctx.last;
     if (l && l.t === '%' && l.s < a && l.e >= a) return 'it is a comment';
-    const g = ctx.groups.at(-1)?.[1] ?? '';
-    if (KEYS.test(g) || /^(begin|end)$/.test(g)) return g === 'begin' || g === 'end' ? "it is an environment's argument" : 'it is a key (a label, a reference, a citation)';
+    const g = ctx.groups.at(-1)?.[1] ?? '', gAt = ctx.groups.at(-1)?.[0] ?? -1;
+    // an environment's name being typed (its `\\begin{` fresh) takes letters: Enter completes the pair (broken)
+    const naming = g === 'begin' && !!f && f[0] <= gAt && gAt < f[1] && /^[A-Za-z*@]*$/.test(body);
+    if (!naming && (KEYS.test(g) || /^(begin|end)$/.test(g))) return g === 'begin' || g === 'end' ? "it is an environment's argument" : 'it is a key (a label, a reference, a citation)';
     if (ctx.opt != null && (KEYS.test(ctx.opt) || /^(begin|end)$/.test(ctx.opt))) return "it is a command's option";
     const m1: Mark[] = [], m2: Mark[] = [];
     scan(text, L, R, copy(head), m1);
@@ -472,8 +476,10 @@ declare global {
     const ownNow = (m: Mark) => { for (let p = m.s; p < m.e; p++) if (!(a <= p && p < a + n) && !fr(p < a ? p : p - d)) return false; return true; };
     const freshWas = (m: Mark) => !!f && f[0] <= m.s && m.e <= f[1];
     // typed or not, what goes is balanced: a `\)` typed before goes only with its `\(`
-    if (!balanced(gone)) return 'it would unbalance the braces or the math around it';
-    if (!balanced(added)) return 'it would unbalance the braces or the math';
+    // an environment being typed (its `\\begin{…` all typed since the caret was put) counts once Enter writes its pair
+    const typing = (m: Mark, own: (m: Mark) => boolean) => m.t.startsWith('\\begin{') && own(m);
+    if (!balanced(gone) && !balanced(gone.filter((m) => !typing(m, freshWas)))) return 'it would unbalance the braces or the math around it';
+    if (!balanced(added) && !balanced(added.filter((m) => !typing(m, ownNow)))) return 'it would unbalance the braces or the math';
     for (const m of gone) {
       if (m.t === 'par' || freshWas(m)) continue;
       if (!ownWas(m)) return m.t[0] === '\\' ? `it would change the command ${m.t}` : 'it would change the markup around it';
@@ -637,7 +643,11 @@ declare global {
   }
   /** Enter (`shift`: Shift+Enter) at `at`: a line in verbatim, a row in a table, a line break in math, a paragraph
    * in text (a line break with Shift); the reason where none may go. */
-  function broken(text: string, at: number, shift: boolean): [number, number, string, number] | string {
+  function broken(text: string, at: number, shift: boolean, fresh: [number, number] | null = null): [number, number, string, number] | string {
+    // Enter after an environment's `\\begin{name}` just typed: its `\\end{name}` comes with it, the caret on the line
+    // between (the pair written whole, from the `\\begin` on: never a lone \\begin or \\end)
+    const env = /\\begin\{([A-Za-z*@]+)\}$/.exec(text.slice(Math.max(0, at - 80), at));
+    if (env && !shift && fresh && fresh[0] <= at - env[0].length) { const b = at - env[0].length, o = `${env[0]}\n`; return [b, at, `${o}\n\\end{${env[1]}}`, o.length]; }
     const v = verbatimAt(text, at);
     if (v) return v.block ? [at, at, '\n', 1] : 'inline verbatim holds one line';
     if (!shift && cells(text, at)) return rowAfter(text, at) ?? 'no row here';
@@ -649,7 +659,7 @@ declare global {
   function key(text: string, at: number, k: string, o: Opts = {}): [number, number, string, number] | string {
     const e = k === 'Backspace' || k === 'Delete' ? [...erased(text, at, k === 'Backspace', o.fresh ?? null), '', 0] as [number, number, string, number]
       : k === 'Ctrl+Backspace' || k === 'Ctrl+Delete' ? [...wordErased(text, at, k === 'Ctrl+Backspace', o.fresh ?? null), '', 0] as [number, number, string, number]
-      : k === 'Enter' || k === 'Shift+Enter' ? broken(text, at, k === 'Shift+Enter')
+      : k === 'Enter' || k === 'Shift+Enter' ? broken(text, at, k === 'Shift+Enter', o.fresh ?? null)
         : typed(text, at, k, o.inline, o.smart, o.fresh ?? null);
     if (typeof e === 'string') return e;
     return checked(text, e, { ...o, row: k === 'Enter' }) ?? e;
@@ -820,7 +830,70 @@ declare global {
    * may give up (TeX's shrink, a third for Computer Modern), the row then set to the edge; with `justify` a row broken
    * for the next ends at the edge as TeX sets it (not the first, whose words before `x0` are the page's). Pure:
    * positions only, in bp. */
+  /** TeX's total-fit line breaking (Knuth and Plass) of one paragraph's `pieces`: a break before a piece with a space
+   * (`gap`, its `st` stretch and `sh` shrink, else half and a third of it, Computer Modern's) or after a hyphen
+   * (`hy`, penalty 50); the first line `first` wide, the rest `width`; each line's badness 100·r³ for its glue's
+   * ratio r, at most `tolerance` (TeX's 200), demerits (10 + badness)² (+ 50² at a hyphen), the last line filled
+   * (`\\parfillskip`). The breaks with least total demerits: the pieces starting each line after the first, and each
+   * line's glue ratio (0 for the last). Null when no break sequence keeps every line within the tolerance. */
+  function fit(pieces: Piece[], first: number, width: number, tolerance = 200): { breaks: number[]; ratios: number[] } | null {
+    const n = pieces.length, st = (q: Piece) => q.st ?? q.gap / 2, sh = (q: Piece) => q.sh ?? q.gap / 3;
+    // prefix sums of widths, stretch and shrink, the glue before piece j counted from j on
+    const W = [0], S = [0], H = [0];
+    pieces.forEach((q, j) => { W.push(W[j]! + q.n + (j ? q.gap : 0)); S.push(S[j]! + (j ? st(q) : 0)); H.push(H[j]! + (j ? sh(q) : 0)); });
+    const can = (j: number) => j > 0 && (pieces[j]!.gap > 0 || !!pieces[j - 1]!.hy);
+    // best[j]: least demerits of lines covering pieces 0..j-1 with a break before j (j = n: the end)
+    const best: number[] = Array(n + 1).fill(Infinity), from: number[] = Array(n + 1).fill(-1), ratio: number[] = Array(n + 1).fill(0);
+    best[0] = 0;
+    for (let j = 1; j <= n; j++) {
+      if (j < n && !can(j)) continue;
+      for (let i = j - 1; i >= 0; i--) {
+        if (best[i] === Infinity || (i && !can(i))) continue;
+        // the line i..j-1: its glue from i+1 on (the space before i is dropped at a break)
+        const L = i ? width : first, w = W[j]! - W[i]! - (i ? pieces[i]!.gap : 0), str = S[j]! - S[i + 1]!, shr = H[j]! - H[i + 1]!;
+        if (w - shr > Math.max(first, width) + 0.01) break; // a line from further left is longer still: none fits
+        if (w - shr > L + 0.01) continue;
+        const last = j === n, r = last ? (w <= L ? 0 : (L - w) / shr) : w < L ? (str > 0 ? (L - w) / str : Infinity) : w > L ? (L - w) / shr : 0;
+        if (r < -1) continue;
+        const bad = Math.min(10000, 100 * Math.abs(r) ** 3);
+        if (bad > tolerance) continue;
+        const d = best[i]! + (10 + bad) ** 2 + (pieces[j - 1]?.hy && !last ? 50 ** 2 : 0);
+        if (d < best[j]!) { best[j] = d; from[j] = i; ratio[j] = r; }
+      }
+    }
+    if (best[n] === Infinity) return null;
+    const breaks: number[] = [], ratios: number[] = [];
+    for (let j = n; j > 0; j = from[j]!) { ratios.unshift(ratio[j]!); if (from[j]! > 0) breaks.unshift(from[j]!); }
+    return { breaks, ratios };
+  }
+  /** The interword glue after word `before` for a font whose space is `space` bp, as TeX's \\nonfrenchspacing sets
+   * it with Computer Modern's proportions (stretch half the space, shrink a third, extra space a third): scaled by the
+   * space factor of the word's last character (3000 after `.?!`, 2000 `:`, 1500 `;`, 1250 `,`; a closing bracket or
+   * quote keeps the one before it; a capital before the stop 999), the extra space from 2000 on. */
+  function glue(before: string, space: number): { gap: number; st: number; sh: number } {
+    const t = before.replace(/[)\]'’”"]+$/, ''), c = t.at(-1) ?? '';
+    const sf = /[.?!]/.test(c) && /\p{Lu}/u.test(t.at(-2) ?? '') ? 999 : ({ '.': 3000, '?': 3000, '!': 3000, ':': 2000, ';': 1500, ',': 1250 } as Record<string, number>)[c] ?? 1000;
+    return { gap: space + (sf >= 2000 ? space / 3 : 0), st: space / 2 * sf / 1000, sh: space / 3 * 1000 / sf };
+  }
   function reflow<P extends Piece>(pieces: P[], x0: number, line: Line<P>): Flow<P> {
+    // `fit`: TeX's total fit over the typed pieces and every page row after them, each line but the last justified;
+    // greedy below where nothing fits within the tolerance, or a new paragraph or display is typed
+    const all = line.fit && !pieces.some((q) => q.par || q.disp != null) ? [...pieces, ...line.rows.flatMap((r) => r.pieces)] : null;
+    const k = all && fit(all, line.right - x0, line.right - line.left);
+    if (all && k) {
+      const starts = [0, ...k.breaks], rows: Flow<P>['rows'] = starts.map((a, li) => {
+        const b = starts[li + 1] ?? all.length, r = k.ratios[li]!, slot = li ? line.rows[li - 1] : null, out: (P & { x: number })[] = [];
+        let x = li ? slot?.x ?? line.left : x0;
+        for (let j = a; j < b; j++) {
+          const q = all[j] as P;
+          if (j > a) x += q.gap + r * (r > 0 ? q.st ?? q.gap / 2 : q.sh ?? q.gap / 3);
+          out.push({ ...q, x });
+          x += q.n;
+        }
+        return { x: li ? slot?.x ?? line.left : x0, from: li ? (slot ? li - 1 : -1) : -2, dy: li && !slot ? line.skip : 0, par: false, out };
+      });
+      return { rows, freed: line.rows.map((_, i) => i).filter((i) => i >= starts.length - 1) };
+    }
     const queue = [...pieces], rows: Flow<P>['rows'] = [{ x: x0, from: -2, dy: 0, par: false, out: [] }], slots: { x: number; from: number }[] = [];
     let ri = 0, x = x0, i = 0, after: number | null = null, sunk = false, gaps = 0;
     const shrink = line.shrink ?? 0;
@@ -1228,7 +1301,7 @@ declare global {
     }).flatMap(([fk, list]) => { const [f, k] = fk.split(' ') as [string, string], xs = list.split(' '); return xs.flatMap((x, j) => j % 2 ? [] : [[x, [xs[j + 1]!, f, k]] as [string, [string, string, string]]]); }));
     return mathSyms.get(name);
   }
-  self.satexPdfEdit = { offsetAt, units, treeNodes, naming, entries, shortTitle, bothTitles, renamed, leaders, checked, grow, key, broken, scan, start, cells, cellStep, rowAfter, verbatim, verbatimAt, nearest, bands, joined, place, extent, room, form, measure, respec, widthBp, snapWidth, resized, stepped, plain, editable, spans, sender, typed, erased, mathAt, boundaries, boundaryAt, inkSnap, locate, columns, wordAt, argAt, defining, relaid, reflow, centered, apart, tokens, unset, aligned, changed, paragraph, mathRuns, mathLaid };
+  self.satexPdfEdit = { offsetAt, units, treeNodes, naming, entries, shortTitle, bothTitles, renamed, leaders, checked, grow, key, broken, scan, start, cells, cellStep, rowAfter, verbatim, verbatimAt, nearest, bands, joined, place, extent, room, form, measure, respec, widthBp, snapWidth, resized, stepped, plain, editable, spans, sender, typed, erased, mathAt, boundaries, boundaryAt, inkSnap, locate, columns, wordAt, argAt, defining, relaid, reflow, fit, glue, centered, apart, tokens, unset, aligned, changed, paragraph, mathRuns, mathLaid };
 })();
 
 // TikZ nodes moved by drag: where each `\node` and path label stands in the source, and the statement a drag

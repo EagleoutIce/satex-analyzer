@@ -26,13 +26,38 @@ impl TypePlugin for Glossary {
         &[Ty::Key(KeyKind::Declared)]
     }
     fn features(&self) -> &'static [&'static str] {
-        &["view", "manage"]
+        &["complete", "view", "manage"]
     }
     fn enabled(&self, cfg: &TypePlugins) -> bool {
         cfg.glossary.enabled
     }
     fn opened_by(&self) -> Option<(&'static [&'static str], &'static str)> {
         Some((&["printglossaries", "printglossary", "printnoidxglossaries", "newglossaryentry"], "Manage glossary…"))
+    }
+    /// The declared keys an argument naming one takes (`\gls{⟨label⟩}`), behind its prefix.
+    fn complete(&self, cx: &Cx, hit: &Hit) -> Option<Vec<lsp_types::CompletionItem>> {
+        // the declaring commands of the keys this command was seen to read, else every one but itself
+        let cmd = cx.at.place.as_ref()?.cmd.clone();
+        let occ = &cx.analysis.facts.occurrences;
+        let used = |key: &str| {
+            occ.iter().any(|o| o.kind == OccKind::KeyUse && o.detail.as_deref() == Some(cmd.as_str()) && o.key == key)
+        };
+        let all = entries(cx);
+        let read: Vec<String> = all.iter().filter(|e| used(&e.key)).map(|e| e.head.clone()).collect();
+        let items: Vec<_> = (all.into_iter())
+            .filter(|e| if read.is_empty() { e.head != cmd } else { read.contains(&e.head) })
+            .filter_map(|e| {
+                let key = e.key.strip_prefix(hit.prefix.as_str())?.strip_suffix(hit.suffix.as_str())?.to_string();
+                Some(lsp_types::CompletionItem {
+                    sort_text: Some(key.clone()),
+                    kind: Some(lsp_types::CompletionItemKind::REFERENCE),
+                    detail: Some(e.head),
+                    label: key,
+                    ..Default::default()
+                })
+            })
+            .collect();
+        (!items.is_empty()).then_some(items)
     }
     fn view(&self, cx: &Cx, _hit: &Hit) -> Option<Json> {
         let mut v = self.manage(cx)?;

@@ -574,14 +574,16 @@ impl Analysis {
         }
         let main = self.files.get(usize::from(self.main_file)).map(|f| f.path.as_str()).unwrap_or_default();
         let dir = crate::project::paths::dir_of(Path::new(main));
-        // A build file (`.aux`, `.toc`), or any the run writes, is its own
-        // output read back: what it declares the document's calls did first.
         self.files.get(usize::from(file)).is_some_and(|f| {
             let path = Path::new(&f.path);
-            crate::project::paths::within(&dir, path)
-                && !self.settings.load.is_build_file(path)
-                && !self.written.iter().any(|(name, _)| path.ends_with(name))
+            crate::project::paths::within(&dir, path) && !self.build_file(path)
         })
+    }
+
+    /// Whether `path` is a build file (`.aux`, `.bbl`) or any the run
+    /// writes: its own output read back, derived from the sources.
+    pub fn build_file(&self, path: &Path) -> bool {
+        self.settings.load.is_build_file(path) || self.written.iter().any(|(name, _)| path.ends_with(name))
     }
 
     /// Whether the run left `\name` defined.

@@ -90,11 +90,18 @@ pub fn run(
     let filter = parse_filter(filter)?;
     let select = |record: &Record| (all || record["origin"] == "document") && filter.accepts(record);
     let timings = &context.analysis.timings;
-    let records: Vec<Record> = timings
-        .around(crate::util::timing::Phase::Lint, || lint::lint(context.analysis))
-        .into_iter()
-        .filter(|r| select(r))
-        .collect();
+    let found = timings.around(crate::util::timing::Phase::Lint, || lint::lint(context.analysis));
+    // a field no finding has selects nothing: `rule=…` for `code=…` would read as "no findings"
+    if let Some(field) =
+        filter.fields().into_iter().find(|f| !found.is_empty() && !found.iter().any(|r| r.contains_key(*f)))
+    {
+        let mut fields: Vec<&String> = found.iter().flat_map(|r| r.keys()).collect();
+        fields.sort();
+        fields.dedup();
+        let fields: Vec<&str> = fields.into_iter().map(String::as_str).collect();
+        return Err(format!("no finding has the field `{field}`. Findings have: {}", fields.join(", ")));
+    }
+    let records: Vec<Record> = found.into_iter().filter(|r| select(r)).collect();
     if style {
         return Ok(Output::Records(lint::style_candidates(&records, &context.analysis.settings.lints.style_prompt)));
     }

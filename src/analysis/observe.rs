@@ -457,7 +457,9 @@ fn argument_parts(text: &str) -> Vec<String> {
             '{' => open.push(at + 1),
             '}' => {
                 if let Some(start) = open.pop() {
-                    parts.push(text[start..at].trim().to_string());
+                    // a list's members are parts too (`\cref{a,b}`)
+                    let part = &text[start..at];
+                    parts.extend(part.split(',').chain([part]).map(|p| p.trim().to_string()));
                 }
             }
             _ => {}
@@ -937,7 +939,13 @@ pub fn relate(m: &mut Machine) {
                 .unwrap_or_else(|| declared[j].1.clone())
         })
         .collect();
+    // The package's addition joins the shape: `\r@⟨key⟩@cref` is of shape `r@…@cref`.
     for (d, key) in declared.iter_mut().zip(canon) {
+        if let Some(off) = d.1.find(key.as_str()).filter(|_| key != d.1) {
+            let (prefix, suffix) = (&shapes[d.0].0, &shapes[d.0].1);
+            let (prefix, suffix) = (format!("{prefix}{}", &d.1[..off]), format!("{}{suffix}", &d.1[off + key.len()..]));
+            d.0 = shape(&mut shapes, &prefix, &suffix);
+        }
         d.1 = key;
     }
     for &(at, _, i) in &declared {

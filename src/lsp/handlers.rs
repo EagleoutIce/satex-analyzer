@@ -73,6 +73,17 @@ pub fn word_span(line: &str, col: u32) -> Option<(String, bool, u32)> {
     })
 }
 
+/// [`word_at`] in `path`, but no command where the run set its `\` as
+/// text: in a verbatim body a backslash word calls and defines nothing.
+fn code_word(analysis: &Analysis, doc: &Text, path: &str, pos: Pos) -> Option<(String, bool)> {
+    let (name, is_command, col) = word_span(doc.line(pos.line), pos.col)?;
+    let file = super::type_at::file_of(analysis, path);
+    let text = file.is_some_and(|file| {
+        super::type_at::read_as_text(analysis, crate::engine::tex::Span { file, line: pos.line, col })
+    });
+    (!(is_command && text)).then_some((name, is_command))
+}
+
 /// The path a run recorded a file under, resolved to a `file://` URI.
 /// `lsp_types::Uri` (since 0.95) is a thin wrapper over a generic RFC 3986
 /// URI, not a `url::Url`, so there is no `from_file_path`/`to_file_path`
@@ -155,7 +166,7 @@ pub fn hover(analysis: &Analysis, doc: &Text, path: &str, position: Position) ->
     if let Some(markdown) = magic_hover(analysis, doc, pos) {
         return Some(markdown_hover(markdown));
     }
-    let word = word_at(doc.line(pos.line), pos.col);
+    let word = code_word(analysis, doc, path, pos);
     let markdown = match word {
         Some((name, true)) => {
             placed(analysis, command_hover(analysis, &name, active_at(analysis, &name, path, pos))?, &name, path, pos)
@@ -1266,7 +1277,7 @@ fn file_target(analysis: &Analysis, doc: &Text, pos: Pos) -> Option<GotoDefiniti
 /// or bibliography entry a key names.
 pub fn definition(analysis: &Analysis, doc: &Text, path: &str, position: Position) -> Option<GotoDefinitionResponse> {
     let pos = to_pos(doc, position);
-    let (name, is_command) = word_at(doc.line(pos.line), pos.col)?;
+    let (name, is_command) = code_word(analysis, doc, path, pos)?;
     if let Some(target) = typed_target(analysis, doc, path, pos, &name) {
         return Some(GotoDefinitionResponse::Array(vec![target]));
     }
@@ -1306,6 +1317,10 @@ pub fn definition(analysis: &Analysis, doc: &Text, path: &str, position: Positio
                         .and_then(Json::as_str)
                         .is_some_and(|k| matches!(k, "label" | "bibitem" | "entry" | "key"))
             })
+            // A citation key is defined by its database entry.
+            .chain(bib_entries(analysis).iter().filter(|e| e.key == name).map(|e| {
+                Record::from_iter([("path".into(), Json::from(e.file.as_str())), ("line".into(), Json::from(e.line))])
+            }))
             .collect();
         // An environment name is defined as a control sequence.
         if keys.is_empty() { query::explain(analysis, std::slice::from_ref(&name), true).ok()?.0 } else { keys }
@@ -1318,6 +1333,12 @@ pub fn definition(analysis: &Analysis, doc: &Text, path: &str, position: Positio
     // The kernel's own definition of a name the run redefines.
     let kernel = analysis.interner.lookup(&name).and_then(|s| analysis.kernel_sites.get(&s));
     records.extend(kernel.map(|span| query::place(analysis, *span)));
+    // A build file (`.bbl`, `.aux`) is derived from the sources: its sites
+    // count only when no source defines the name.
+    let build = |r: &Record| r.get("path").and_then(Json::as_str).is_some_and(|p| analysis.build_file(Path::new(p)));
+    if records.iter().any(|r| !build(r) && r.get("line").is_some()) {
+        records.retain(|r| !build(r));
+    }
     let mut locations: Vec<Location> = Vec::new();
     for at in records.iter().filter_map(|r| record_location(r, &sources)) {
         if !locations.contains(&at) {
@@ -1326,7 +1347,16 @@ pub fn definition(analysis: &Analysis, doc: &Text, path: &str, position: Positio
     }
     // The run may stop before a later file defines the name: scan the source.
     if locations.is_empty() && is_command {
-        for site in super::unreached::sites(analysis, path, &name) {
+        // a `\def` shown in a verbatim body defines nothing
+        let shown = |site: &super::unreached::Site| {
+            super::type_at::file_of(analysis, &site.path).is_some_and(|file| {
+                super::type_at::read_as_text(
+                    analysis,
+                    crate::engine::tex::Span { file, line: site.pos.line, col: site.pos.col },
+                )
+            })
+        };
+        for site in super::unreached::sites(analysis, path, &name).into_iter().filter(|s| !shown(s)) {
             eprintln!("satex: \\{name} at {}:{} not reached by the analysis (source scan)", site.path, site.pos.line);
             let position = to_lsp(&site.text, site.pos);
             locations.push(Location { uri: path_uri(&site.path), range: Range { start: position, end: position } });
@@ -1407,7 +1437,7 @@ pub fn references(
     declarations: bool,
 ) -> Option<Vec<Location>> {
     let pos = to_pos(doc, position);
-    let (name, is_command) = word_at(doc.line(pos.line), pos.col)?;
+    let (name, is_command) = code_word(analysis, doc, path, pos)?;
     let sources = Sources::default();
     let locations: Vec<Location> = bound_sites(analysis, path, position, &name, is_command, declarations)
         .iter()
@@ -1447,7 +1477,7 @@ fn site_range(record: &Record, sources: &Sources, name: &str, is_command: bool) 
 /// the cursor, definitions included.
 pub fn highlights(analysis: &Analysis, doc: &Text, path: &str, position: Position) -> Option<Vec<DocumentHighlight>> {
     let pos = to_pos(doc, position);
-    let (name, is_command) = word_at(doc.line(pos.line), pos.col)?;
+    let (name, is_command) = code_word(analysis, doc, path, pos)?;
     let sources = Sources::default();
     let out: Vec<DocumentHighlight> = bound_sites(analysis, path, position, &name, is_command, true)
         .iter()

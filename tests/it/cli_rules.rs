@@ -196,3 +196,30 @@ fn lsp_names_a_closed_client() {
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(stderr.contains("closed the connection before `initialize`"), "{stderr}");
 }
+
+/// Intuition: a lint filter on a field no finding has selects nothing, so it says which fields
+/// there are instead of "no findings". Pins `lint --filter rule=unused-label` (the rule's name is
+/// the field `code`), which printed "no findings" while unused-label findings stood.
+#[test]
+fn a_lint_filter_on_a_missing_field_names_the_fields() {
+    let dir = crate::support::scratch_dir(crate::support::tmp_root().join("cli-rules-filter-field"));
+    let doc = "\\documentclass{article}\n\\begin{document}\n\\section{A}\\label{sec:a}\n\\end{document}\n";
+    std::fs::write(dir.join("main.tex"), doc).unwrap();
+    let run = |filter: &str| {
+        let out = crate::support::satex()
+            .args(["lint", "-f", "main.tex", "--format", "json", "--filter", filter])
+            .current_dir(&dir)
+            .stdin(Stdio::null())
+            .output()
+            .unwrap();
+        (
+            out.status.success(),
+            String::from_utf8_lossy(&out.stdout).into_owned(),
+            String::from_utf8_lossy(&out.stderr).into_owned(),
+        )
+    };
+    let (ok, stdout, _) = run("code=unused-label");
+    assert!(ok && stdout.contains("sec:a"), "{stdout}");
+    let (ok, _, stderr) = run("rule=unused-label");
+    assert!(!ok && stderr.contains("`rule`") && stderr.contains("code"), "{stderr}");
+}

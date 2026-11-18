@@ -1163,6 +1163,33 @@ mod roots {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// Intuition: a query about a root no buffer shows (the playground's outline while an
+    /// included file is open) is answered from the run the open buffers' texts made, which an
+    /// edit resumed from a checkpoint, not by a run from the start. Pins the outline's query,
+    /// which ran the whole preamble again after every edit in an included file, and answered
+    /// from the file on disk while the edit waited to be run.
+    #[test]
+    fn a_query_about_the_root_answers_from_the_included_file_s_run() {
+        if !crate::support::installed() {
+            return;
+        }
+        let main = "\\documentclass{article}\n\\begin{document}\n\\input{chap}\n\\end{document}\n";
+        let (mut server, uri, dir) =
+            project_with("root-query", &[("main.tex", main), ("chap.tex", "\\label{disk}\n")], "chap.tex", true);
+        server.notify(
+            "textDocument/didChange",
+            json!({ "textDocument": { "uri": uri, "version": 2 }, "contentChanges": [{ "text": "\\label{buffer}\n" }] }),
+        );
+        let request =
+            json!({ "file": dir.join("main.tex").display().to_string(), "queries": [{ "type": "occurrences" }] });
+        let id =
+            server.request("workspace/executeCommand", json!({ "command": "satex/query", "arguments": [request] }));
+        let reply = server.response(id);
+        server.shutdown();
+        assert!(reply["result"][0].to_string().contains("buffer"), "{reply}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     /// The playground's trace of a call: `\begin{document}` after a package,
     /// one there and one missing, still runs and records its steps.
     #[test]
@@ -6398,6 +6425,90 @@ fn a_float_placement_completes_the_letters_not_yet_typed() {
     let got = labels(&items);
     assert!(got.contains(&"b") && got.contains(&"p") && got.contains(&"!"), "{got:?}");
     assert!(!got.contains(&"h") && !got.contains(&"t"), "{got:?}");
+    server.shutdown();
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The `result` of `method` at 0-based `line`:`character`.
+fn ask_at(server: &mut Server, method: &str, uri: &str, line: u32, character: u32) -> Value {
+    let id = server.request(
+        method,
+        json!({ "textDocument": { "uri": uri }, "position": { "line": line, "character": character } }),
+    );
+    server.response(id)["result"].clone()
+}
+
+/// Intuition: a citation key is defined by its database entry; the `.bbl`
+/// `\bibitem` is derived from it by the build. Pins: go to definition on
+/// `\cite{knuth86}` landed only in the `.bbl` the run wrote.
+#[test]
+fn a_citation_s_definition_is_its_database_entry_not_the_bbl() {
+    let text = "\\documentclass{article}\n\\begin{document}\n\\cite{knuth86}\n\\bibliographystyle{plain}\n\\bibliography{refs}\n\\end{document}\n";
+    let dir = crate::support::tmp_root().join(format!("satex-lsp-citedef-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        dir.join("refs.bib"),
+        "% refs\n@book{knuth86, author = {Donald E. Knuth}, title = {The TeXbook}, year = 1986}\n",
+    )
+    .unwrap();
+    let (mut server, uri, _, dir) = open_loaded("citedef", text);
+    let def = ask_at(&mut server, "textDocument/definition", &uri, 2, 8);
+    let at: Vec<(&str, u64)> = def
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|l| Some((l["uri"].as_str()?, l["range"]["start"]["line"].as_u64()?)))
+        .collect();
+    let entry_line = 1;
+    assert_eq!(at.len(), 1, "{def}");
+    assert!(at[0].0.ends_with("refs.bib") && at[0].1 == entry_line, "{def}");
+    server.shutdown();
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Intuition: `\gls[⟨options⟩]{⟨label⟩}` takes glslink keys in `[…]` and an
+/// entry label in `{…}`. Pins: `\gls{` offered the glslink keys
+/// (`format=`, `hyper`) instead of the `\newglossaryentry` labels.
+#[test]
+fn gls_completes_entries_in_braces_and_keys_in_brackets() {
+    let text = "\\documentclass{article}\n\\usepackage{glossaries}\n\\newglossaryentry{tex}{name={TeX}, description={a system}}\n\\begin{document}\n\\gls{}\n\\gls[]{tex}\n\\end{document}\n";
+    let (mut server, uri, _, dir) = open_loaded("glsentry", text);
+    let entries = complete(&mut server, &uri, 4, 5);
+    assert!(labels(&entries).contains(&"tex"), "{:?}", labels(&entries));
+    assert!(
+        !labels(&entries).iter().any(|l| l.starts_with("hyper") || l.starts_with("format")),
+        "{:?}",
+        labels(&entries)
+    );
+    let keys = complete(&mut server, &uri, 5, 5);
+    assert!(labels(&keys).iter().any(|l| l.starts_with("hyper")), "{:?}", labels(&keys));
+    server.shutdown();
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Intuition: inside a verbatim body (`lstlisting`) a backslash word is
+/// text, not a command: it neither defines nor uses anything. Pins: go to
+/// definition on `\twice` in a listing jumped to the `\def` shown one line
+/// above in the same listing.
+#[test]
+fn verbatim_text_is_neither_definition_nor_use() {
+    let lines = [
+        "\\documentclass{article}",
+        "\\usepackage{listings}",
+        "\\begin{document}",
+        "\\begin{lstlisting}",
+        "\\def\\twice#1{#1#1}",
+        "\\twice{ab}",
+        "\\end{lstlisting}",
+        "\\end{document}",
+    ];
+    let (mut server, uri, _, dir) = open_loaded("verbdef", &(lines.join("\n") + "\n"));
+    let call = lines.iter().position(|l| l.starts_with("\\twice")).unwrap() as u32;
+    let def = ask_at(&mut server, "textDocument/definition", &uri, call, 2);
+    assert!(def.as_array().is_none_or(Vec::is_empty), "{def}");
+    let shown = lines.iter().position(|l| l.starts_with("\\def")).unwrap() as u32;
+    let refs = ask_at(&mut server, "textDocument/references", &uri, shown, 6);
+    assert!(refs.as_array().is_none_or(Vec::is_empty), "{refs}");
     server.shutdown();
     let _ = std::fs::remove_dir_all(&dir);
 }
