@@ -1882,12 +1882,13 @@
     const idx = range.toString().length, all = box.textContent, words = tsViewWords(all, row), w = words.find((m) => m.index <= idx && idx <= m.index + m[0].length);
     if (!w) return typeHint();
     // the same word's occurrences before it in the view and in the run's row: the j-th is the one clicked
-    const chars = rowChars(row), whole = (ws) => ws.filter((m) => m[0] === w[0]).map((m) => m.index);
+    const chars = rowOrigins(row), whole = (ws) => ws.filter((m) => m[0] === w[0]).map((m) => m.index);
     const j = whole(words).indexOf(w.index), seen = whole(tsUnits(chars.map((ch) => ch.c).join(''), (i) => !!chars[i]?.math));
     const at = seen[Math.min(j, seen.length - 1)];
     if (at == null) return toast(`“${w[0]}” has no source place in the run`);
     const ch = chars[at], file = Object.keys(state.texts).find((n) => ch.path.endsWith(n));
     if (!file) return toast(`Not typed here: “${w[0]}” is set from ${ch.path.split('/').pop() || 'code'} outside your files`);
+    if (ch.made) return madeOpen(file, ch);
     // on a line, the occurrences before it read there
     const nth = (n) => seen.filter((a) => a < at && chars[a].line === n && !chars[a].from).length;
     const read = () => readOf(ch.from, chars[at + w[0].length - 1].from);
@@ -1910,7 +1911,7 @@
     const base = typesetBody.getBoundingClientRect(), html = [];
     for (const p of typesetBody.querySelectorAll('p.ts[data-line]')) {
       const row = tsRowOf(p), box = p.querySelector('.ts-text');
-      if (!row?.origins || !box) continue;
+      if (!row?.sites || !box) continue;
       const chars = rowOrigins(row), runs = originRuns(chars), at = box.textContent.indexOf(chars.map((ch) => ch.c).join(''));
       // the view's text and the run's characters line up only where the view adds nothing between them
       if (!runs.length || at < 0) continue;
@@ -2316,9 +2317,31 @@
     if (k && (Array.isArray(r) ? r.length : r)) { if (defIndex.size > 500) defIndex.delete(defIndex.keys().next().value); defIndex.set(k, r); }
     return r;
   }
+  /** The texts peeked at, by path: a project file as edited, another read once. */
+  const peekTexts = new Map();
+  const peekText = (file) => {
+    const own = file.startsWith(`${state.dir}/`) ? file.slice(state.dir.length + 1) : null;
+    if (own && own in state.texts) return Promise.resolve(String(state.texts[own]));
+    if (!peekTexts.has(file)) peekTexts.set(file, ask({ type: 'read', path: file }).then((got) => (got?.data ? new TextDecoder().decode(got.data) : null)).catch(() => null));
+    return peekTexts.get(file);
+  };
+  /** A definition's peek: `name`, what its record says it does, and the lines around `start` with that line marked. */
+  async function definitionPeek([url, start], name, records) {
+    if (url.protocol !== 'file:') return `<p class="muted">${escape(url.href)}</p>`;
+    const file = decodeURIComponent(url.pathname), base = file.split('/').pop(), text = await peekText(file);
+    const own = records.find((r) => r.line === start.line + 1 && String(r.path ?? r.file ?? '').split('/').pop() === base), does = (own ?? records[0])?.does;
+    const lines = text?.split('\n') ?? [], from = Math.max(0, start.line - 3), to = Math.min(lines.length, start.line + 6);
+    const code = lines.slice(from, to).map((l, i) => `<span class="${from + i === start.line ? 'peek-at' : ''}"><i>${from + i + 1}</i>${escape(l) || ' '}</span>`).join('');
+    return `<div class="peek-head"><code>${escape(name)}</code> <span class="muted">${escape(base)}:${start.line + 1}</span></div>${does ? `<p class="peek-does">${escape(does)}</p>` : ''}` +
+      (code ? `<pre class="peek-code">${code}</pre>` : '<p class="muted">The file is not available here.</p>');
+  }
   async function definition(x = innerWidth / 2, y = innerHeight / 3) {
     sync();
-    const r = await definitionAt(editor.text(), editor.position());
+    const text = editor.text(), at = editor.position(), w = wordAt(text.split('\n', at.line + 1)[at.line] ?? '', at.character);
+    // a lookup that takes a moment shows a spinner where its list will stand
+    let wait = setTimeout(() => { wait = null; showMenu([['Looking up the definitions…', '', null]], x, y); }, 150);
+    const r = await definitionAt(text, at);
+    if (wait) clearTimeout(wait); else if (ctxMenu.querySelector('.ctx-wait')) { ctxMenu.hidden = true; ctxMenu.innerHTML = ''; }
     const locs = (Array.isArray(r) ? r : r ? [r] : []).map((l) => /** @type {[URL, any]} */ ([new URL(l.uri ?? l.targetUri), (l.range ?? l.targetSelectionRange).start]));
     if (!locs.length) {
       // while packages download their commands are not defined yet: the answer comes with the next run
@@ -2327,7 +2350,10 @@
     }
     const open = ([url, start]) => url.protocol === 'file:' ? openPlace(decodeURIComponent(url.pathname), start) : window.open(url.href, '_blank', 'noopener');
     if (locs.length === 1) return open(locs[0]);
-    showMenu(locs.map((l) => [l[0].protocol === 'file:' ? `${decodeURIComponent(l[0].pathname).split('/').pop()}:${l[1].line + 1}` : l[0].href, '', () => open(l)]), x, y);
+    // each target peeks on hover or arrow focus: its code, the name and what it does
+    const name = w?.[3] ? `\\${w[2]}` : w?.[2] ?? '', records = name.startsWith('\\') ? explainRecords(name).catch(() => []) : Promise.resolve([]);
+    showMenu(locs.map((l) => [l[0].protocol === 'file:' ? `${decodeURIComponent(l[0].pathname).split('/').pop()}:${l[1].line + 1}` : l[0].href, '', () => open(l)]), x, y,
+      async (i) => definitionPeek(locs[i], name, await records));
   }
   /** Binary inputs never open as text: a PDF or an image in a tab of the browser, another binary as a download. */
   const BINARY = /\.(pdf|png|jpe?g|gif|webp|bmp|tiff?|eps|ps|tfm|pfb|otf|ttf|ofm|jp2)$/i, SHOWN = { pdf: 'application/pdf', png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp' };
@@ -2498,10 +2524,14 @@
   }
   /** The page's one context menu at (x, y): rows `[label, hint, action]`, a row `[label, hint, rows]` a submenu.
    * The keys: arrows move, Right or Enter opens a submenu, Left or Escape closes it, Enter runs a row. */
-  function showMenu(items, x, y) {
+  /** A menu of `[label, hint, act]` rows (`act` a submenu's rows, or null for a row that only says something);
+   * `peek(i)` the HTML shown beside the menu while row `i` has the focus. */
+  function showMenu(items, x, y, peek = null) {
     const close = () => { ctxMenu.hidden = true; ctxMenu.innerHTML = ''; };
     const build = (box, rows) => {
-      box.innerHTML = rows.map(([label, hint, act], i) => Array.isArray(act)
+      box.innerHTML = rows.map(([label, hint, act], i) => act === null
+        ? `<li role="menuitem" tabindex="-1" data-i="${i}" aria-disabled="true" class="ctx-wait">${escape(label)}</li>`
+        : Array.isArray(act)
         ? `<li role="menuitem" tabindex="-1" data-i="${i}" aria-haspopup="menu" aria-expanded="false" class="ctx-sub">${escape(label)}<span class="muted">▸</span></li>`
         : `<li role="menuitem" tabindex="-1" data-i="${i}">${escape(label)}<span class="muted">${escape(hint)}</span></li>`).join('');
       box.rows = rows;
@@ -2525,6 +2555,7 @@
     const shut = (li) => { li.querySelector(':scope > .ctx')?.remove(); li.setAttribute('aria-expanded', 'false'); };
     const runRow = (li) => {
       const act = li.closest('.ctx').rows[li.dataset.i][2];
+      if (act === null) return;
       if (Array.isArray(act)) return openSub(li, true);
       close();
       act();
@@ -2556,9 +2587,22 @@
       e.stopPropagation();
       go();
     };
+    ctxPeek = peek && { peek, shown: null };
     ctxMenu.querySelector('li')?.focus();
   }
   addEventListener('mousedown', (e) => { if (!e.target.closest('.ctx')) for (const m of document.querySelectorAll('.ctx')) m.hidden = true; });
+  /** The open menu's peek (showMenu's `peek`) and the row it shows: beside the menu, on the side with room. */
+  let ctxPeek = null;
+  ctxMenu.addEventListener('focusin', async (e) => {
+    const li = e.target.closest?.('#play-ctx > li'), at = ctxPeek;
+    if (!li || !at || at.shown === li.dataset.i) return;
+    at.shown = li.dataset.i;
+    const html = await at.peek(+li.dataset.i);
+    if (ctxPeek !== at || at.shown !== li.dataset.i || ctxMenu.hidden) return;
+    const box = ctxMenu.querySelector(':scope > .ctx-peek') ?? ctxMenu.appendChild(Object.assign(document.createElement('div'), { className: 'ctx-peek' }));
+    box.innerHTML = html;
+    box.classList.toggle('ctx-peek-left', ctxMenu.getBoundingClientRect().right + box.offsetWidth + 8 > innerWidth);
+  });
   // Escape closes the open menu, else the open dialog, wherever the focus is: the browser's own close
   // of a dialog opened by a script can wait for a user gesture, and the keys after it would go nowhere
   addEventListener('keydown', (e) => {
@@ -2935,7 +2979,7 @@
   playApply();
   /** Sets `playground.<k>`: its default drops the key. */
   const playSet = (k, v) => { const { [`playground.${k}`]: _, ...rest } = configSet; configApply(sameValue(v, manifest.playground?.[k]) ? rest : { ...rest, [`playground.${k}`]: v }); };
-  const yamlValue = (v) => (typeof v === 'string' ? v : JSON.stringify(v));
+  const yamlValue = (v) => (typeof v === 'string' && self.satexViews.yaml.plain(v) ? v : JSON.stringify(v));
   /** The settings as flags of a run: the playground's own stay in the page. */
   function configFlags(set = configSet) { return Object.entries(set).filter(([k]) => !k.startsWith('playground.')).flatMap(([k, v]) => ['--set', `${k}=${yamlValue(v)}`]); }
   /** Whether satex takes the settings `set`: null, else its reason, from a run that only reads them. */
@@ -3023,7 +3067,7 @@
     // a plugin without settings is a plain line: always on
     const plugin = (p) => {
       const ks = keys.filter((k) => pluginOf(k) === tileBase(p) && (!q || hits.includes(k) || named(p)));
-      return ks.length ? section(tileBase(p), p.name, p.about, ks, !!q || cfgOpen.has(tileBase(p))) : `<li class="cfg-plain" title="${escape(p.about.replaceAll('`', ''))}"><b>${escape(p.name)}</b><span>${inline(p.about)}</span><span class="muted">always on</span></li>`;
+      return ks.length ? section(tileBase(p), p.name, p.about, ks, !!q) : `<li class="cfg-plain" title="${escape(p.about.replaceAll('`', ''))}"><b>${escape(p.name)}</b><span>${inline(p.about)}</span><span class="muted">always on</span></li>`;
     };
     return [head, ...(group ? [group] : shown).flatMap((c) => c.plugins).map(plugin), request];
   }
@@ -3037,13 +3081,13 @@
   }
   /** An example as code, with the effect of each switch (`on:`, `off:`) and the prose apart, and a button that sets a value it spells. */
   function configExample(k) {
-    const lines = typeof k.example === 'string' ? k.example.split('\n') : [configYamlOf({ [k.key]: k.example })];
+    const lines = typeof k.example === 'string' ? k.example.split('\n') : [configYamlOf({ [k.key]: k.example }, true)];
     return lines.map((line) => {
       const effect = line.match(/^(on|off): (.*)$/);
       if (effect) return `<p class="cfg-effect"><span class="cfg-aff">${effect[1]}</span> ${inline(effect[2])}</p>`;
       // a line that is one code span spells a value or code; backticks elsewhere are prose with code in it
       const bare = line.match(/^`([^`]+)`$/)?.[1] ?? line, value = exampleValue(k, bare);
-      if (value !== undefined) return `<p class="cfg-try"><code>${escape(configYamlOf({ [k.key]: value }).replace(/\n\s*/g, ' '))}</code><button type="button" class="ghost small" data-use="${escape(k.key)}" data-value="${escape(JSON.stringify(value))}">use</button></p>`;
+      if (value !== undefined) return `<p class="cfg-try"><code>${escape(configYamlOf({ [k.key]: value }, true).replace(/\n\s*/g, ' '))}</code><button type="button" class="ghost small" data-use="${escape(k.key)}" data-value="${escape(JSON.stringify(value))}">use</button></p>`;
       return /^[\\%]/.test(bare) && bare !== line || /^[\\%]/.test(line) ? `<pre><code>${escape(bare)}</code></pre>` : `<p>${inline(line)}</p>`;
     }).join('');
   }
@@ -3059,18 +3103,9 @@
       : `<input type="text" value="${escape(typeof v === 'string' ? v : JSON.stringify(v))}" spellcheck="false">`}<button type="button" class="ghost small" data-drop="${i}" aria-label="remove">×</button></li>`;
     return `<ul class="cfg-items" data-cfg="${escape(k.key)}" data-list="1">${list.map(item).join('')}<li><button type="button" class="ghost small" data-add="1">Add</button></li></ul>`;
   }
-  /** A map key as YAML writes it: plain when YAML takes it so, else quoted (a start such as `%` or `*`, a space, `: `). */
-  const yamlKey = (k) => (/^[^\s#%*&!@`|>'"{}[\],?:-][^\s]*$/u.test(k) && !/:(\s|$)/.test(k) ? k : JSON.stringify(k));
-  const YAML_KEY = String.raw`"(?:[^"\\]|\\.)*"|[^\s"#:][^\s:]*`;
-  /** The name a key's text spells: a quoted key unquoted. */
-  const keyName = (raw) => { try { return raw.startsWith('"') ? JSON.parse(raw) : raw; } catch { return raw; } };
-  /** The settings changed, as the satex.yaml that sets them. */
-  const configYamlOf = (set) => {
-    const tree = {};
-    for (const [k, v] of Object.entries(set)) { const parts = k.split('.'); let at = tree; parts.slice(0, -1).forEach((p) => { at = at[p] ??= {}; }); at[parts.at(-1)] = v; }
-    const out = (o, pad) => Object.entries(o).map(([k, v]) => v && typeof v === 'object' && !Array.isArray(v) ? `${pad}${yamlKey(k)}:\n${out(v, `${pad}  `)}` : `${pad}${yamlKey(k)}: ${yamlValue(v)}`).join('\n');
-    return out(tree, '');
-  };
+  const { KEY: YAML_KEY, keyName } = self.satexViews.yaml;
+  /** The settings changed, as the satex.yaml that sets them (views.ts `yaml`, the YAML tab's and the export's one writer). */
+  const configYamlOf = (set, flow = false) => self.satexViews.yaml.dump(set, flow);
   /** Every key at its default, as the YAML view shows them: the changed ones replace theirs. */
   const yamlDefaults = (keys) => Object.fromEntries(keys.filter((k) => !k.extra && k.def != null && !k.key.startsWith('profiles.')).map((k) => [k.key, k.def]));
   /** The settings a YAML text changes: its keys at their default are no change. */
@@ -3078,29 +3113,10 @@
     const defaults = yamlDefaults(keys);
     return Object.fromEntries(Object.entries(set).filter(([k, v]) => !(k in defaults) || !sameValue(v, defaults[k])));
   };
-  /** The YAML view's text as settings: nested keys by indentation, each value as JSON or else as text; null when it does not read. */
+  /** The YAML view's text as settings: a map-valued setting (`objects`, also under a profile) whole; null when it does not read. */
   const configFromYaml = (text, objects = new Set()) => {
-    const set = {}, stack = [], isObj = (p) => objects.has(p) || objects.has(p.replace(/^profiles\.[^.]+\./, ''));
-    for (const line of text.split('\n')) {
-      if (!line.trim() || /^\s*#/.test(line)) continue;
-      const m = line.match(new RegExp(`^(\\s*)(${YAML_KEY})\\s*:\\s*(.*)$`));
-      if (!m) return null;
-      const depth = m[1].length, name = keyName(m[2]);
-      while (stack.length && stack.at(-1)[0] >= depth) stack.pop();
-      const path = [...stack.map((s) => s[1]), name];
-      // under a map-valued setting, the keys are the map's entries, whatever they spell
-      const at = path.findIndex((_, i) => isObj(path.slice(0, i + 1).join('.')));
-      const value = m[3] === '' ? undefined : (() => { try { return JSON.parse(m[3]); } catch { return m[3]; } })();
-      if (at >= 0 && at < path.length - 1) {
-        let o = (set[path.slice(0, at + 1).join('.')] ??= {});
-        for (const part of path.slice(at + 1, -1)) o = (o[part] ??= {});
-        if (value === undefined) stack.push([depth, name]); else o[name] = value;
-        continue;
-      }
-      if (value === undefined) { stack.push([depth, name]); if (at === path.length - 1) set[path.join('.')] ??= {}; continue; }
-      set[path.join('.')] = value;
-    }
-    return set;
+    const tree = self.satexViews.yaml.read(text);
+    return tree && self.satexViews.yaml.flat(tree, (p) => objects.has(p) || objects.has(p.replace(/^profiles\.[^.]+\./, '')));
   };
   /** Overrides added to a profile (`profiles.package.engine`), shown as rows although nothing is set yet. */
   const cfgAdded = new Set();
@@ -3158,7 +3174,11 @@
     if (cfgYaml) {
       const v = await yamlEditor(), box = v ? $('cfg-yaml-ed') : $('cfg-yaml'), text = configYamlOf({ ...yamlDefaults(all), ...configSet });
       box.hidden = false;
-      if (v) { if (!v.hasFocus && v.state.doc.toString() !== text) { yamlSetting = true; v.dispatch({ changes: { from: 0, to: v.state.doc.length, insert: text } }); yamlSetting = false; } v.requestMeasure(); }
+      if (v) {
+        if (!v.hasFocus && v.state.doc.toString() !== text) { yamlSetting = true; v.dispatch({ changes: { from: 0, to: v.state.doc.length, insert: text } }); yamlSetting = false; }
+        if (yamlQuery !== q) { yamlQuery = q; yamlAt = null; v.dispatch({}); }
+        v.requestMeasure();
+      }
       else if (document.activeElement !== box) box.value = text;
     }
     const keys = all;
@@ -3198,14 +3218,16 @@
       return [...subs].filter(([, rs]) => rs.length || g === 'profiles').map(([s, rs]) => {
         if (s == null) return rs.map(row).join('');
         const id = `${g}.${s}`, vals = rs.map((k) => configSet[k.key] ?? k.def), short = vals.length && vals.every((v) => typeof v === 'string' && [...v].length <= 3);
-        const open = !!q || (cfgSubOpen.get(id) ?? rs.length <= CFG_SUB_OPEN);
-        return `<li class="cfg-sub" data-sub="${escape(id)}"><details${open ? ' open' : ''} data-subgroup="${escape(id)}"><summary class="cfg-subhead"><b><span class="cfg-prefix">${escape(g)}.</span>${escape(s)}</b>` +
+        const open = !!q || (cfgFold[`s:${id}`] ?? (rs.length <= CFG_SUB_OPEN || changedIn(rs) > 0));
+        return `<li class="cfg-sub" data-sub="${escape(id)}"><details${open ? ' open' : ''} data-shown="${open ? 1 : 0}" data-subgroup="${escape(id)}"><summary class="cfg-subhead"><b><span class="cfg-prefix">${escape(g)}.</span>${escape(s)}</b>` +
           `<span class="muted cfg-sub-sum">${plural(rs.length, 'key')}${short ? `: ${escape(vals.slice(0, 12).join(' '))}${vals.length > 12 ? ' …' : ''}` : ''}${changedIn(rs) ? `, ${changedIn(rs)} changed` : ''}</span></summary>` +
           `${g === 'profiles' ? `<input type="text" class="cfg-addkey" list="cfg-dl-top" data-addto="${escape(s)}" placeholder="add a key to this profile…" aria-label="add a key to profile ${escape(s)}" spellcheck="false">` : ''}<ul>${rs.map(row).join('')}</ul></details></li>`;
       }).join('');
     };
-    const section = (id, head, about, ks, open) => `<li class="cfg-group"><details${open ? ' open' : ''} data-group="${escape(id)}"><summary><b>${escape(head)}</b>` +
-      ` <span class="muted">${plural(ks.length, 'key')}${changedIn(ks) ? `, ${changedIn(ks)} changed` : ''}</span>${about ? `<span class="muted cfg-group-about">${inline(about)}</span>` : ''}</summary><ul>${rows(id, ks)}</ul></details></li>`;
+    // a group opens on a search, by the viewer's choice, else when first in its tab or holding a changed setting
+    let firstGroup = true;
+    const section = (id, head, about, ks, hit) => { const open = hit || (cfgFold[`g:${id}`] ?? (firstGroup || changedIn(ks) > 0)); firstGroup = false; return `<li class="cfg-group"><details${open ? ' open' : ''} data-shown="${open ? 1 : 0}" data-group="${escape(id)}"><summary><b>${escape(head)}</b>` +
+      ` <span class="muted">${plural(ks.length, 'key')}${changedIn(ks) ? `, ${changedIn(ks)} changed` : ''}</span>${about ? `<span class="muted cfg-group-about">${inline(about)}</span>` : ''}</summary><ul>${rows(id, ks)}</ul></details></li>`; };
     const lists = ['packages', 'classes', 'both'].map((n) => `<datalist id="cfg-dl-${n}">${NAMES[n].map((x) => `<option value="${escape(x)}">`).join('')}</datalist>`).join('') +
       `<datalist id="cfg-dl-top">${tabKeys.filter((k) => !k.key.startsWith('profiles.') && !k.extra).map((k) => `<option value="${escape(k.key)}">`).join('')}</datalist>`;
     // the Playground tab: its keys as rows, this browser's own choices under them (moved in, so one list scrolls)
@@ -3214,13 +3236,14 @@
     $('cfg-list').innerHTML = (cfgTab === 'plugins'
       ? configPlugins(hits, q, section, row, keys)
       : cfgTab === 'playground' ? hits.map(row)
-      : groups.map((g) => [g, hits.filter((k) => groupOf_(k) === g)]).filter(([, ks]) => ks.length).map(([g, ks]) => section(g, g, cfgGroupAbout[g] ?? '', ks, !!q || cfgOpen.has(g)))).join('')
+      : groups.map((g) => [g, hits.filter((k) => groupOf_(k) === g)]).filter(([, ks]) => ks.length).map(([g, ks]) => section(g, g, cfgGroupAbout[g] ?? '', ks, !!q))).join('')
       || '<li class="muted">No setting matches.</li>';
     $('cfg-list').insertAdjacentHTML('beforeend', lists);
     if (cfgTab === 'playground' && !cfgYaml) { $('cfg-list').append(cfgPlay); cfgPlay.hidden = false; playSettings(); if (TEX_ON) texSettings(); }
     if (cfgFocus) { const el = $('cfg-list').querySelector(`[data-cfg="${CSS.escape(cfgFocus)}"] .cfg-chip-in`); cfgFocus = null; el?.focus(); }
     const n = Object.keys(configSet).length;
     $('cfg-total').textContent = n ? `${plural(n, 'setting')} changed` : 'every setting at its default';
+    $('cfg-total').classList.toggle('cfg-total-go', !!n);
   }
   /** Compact: the rows show their key and value only, a click on a row opens its description and example. */
   let cfgCompact = false;
@@ -3250,12 +3273,24 @@
   };
   $('cfg-open').onclick = () => { $('play-config').showModal(); configShow(); $('cfg-search').focus(); };
   $('cfg-search').oninput = configShow;
-  /** The groups opened: each starts shut, its name and counts only. */
-  const cfgOpen = new Set();
-  /** Sub-groups toggled by hand; one of up to `CFG_SUB_OPEN` keys starts open. */
-  const cfgSubOpen = new Map(), CFG_SUB_OPEN = 4;
-  $('cfg-list').addEventListener('toggle', (e) => { const g = e.target.dataset?.subgroup; if (g && !$('cfg-search').value.trim()) cfgSubOpen.set(g, e.target.open); }, true);
-  $('cfg-list').addEventListener('toggle', (e) => { const g = e.target.dataset?.group; if (g && !$('cfg-search').value.trim()) { if (e.target.open) cfgOpen.add(g); else cfgOpen.delete(g); } }, true);
+  // the count of changed settings searches for them
+  $('cfg-total').title = 'show the changed settings';
+  $('cfg-total').onclick = () => { if (!$('cfg-total').classList.contains('cfg-total-go')) return; $('cfg-search').value = '@changed'; $('cfg-search').focus(); configShow(); };
+  // Enter (Shift+Enter back) goes from hit to hit in the YAML tab
+  $('cfg-search').addEventListener('keydown', (e) => { if (e.key === 'Enter' && cfgYaml && yamlFind) { e.preventDefault(); yamlFind(e.shiftKey); yamlView.dispatch({}); } });
+  /** Groups (`g:<id>`) and sub-groups (`s:<id>`) opened or shut by hand, kept in this browser. Without a choice the first
+   * group of a tab, a group with a changed setting and a sub-group of up to `CFG_SUB_OPEN` keys start open. */
+  const CFG_FOLD = 'satex-config-groups', CFG_SUB_OPEN = 4;
+  let cfgFold = {};
+  try { cfgFold = JSON.parse(localStorage.getItem(CFG_FOLD)) ?? {}; } catch {}
+  const cfgFoldSet = (id, open) => { cfgFold[id] = open; try { localStorage.setItem(CFG_FOLD, JSON.stringify(cfgFold)); } catch {} };
+  // a toggle the page made (the open state it rendered) is no choice
+  $('cfg-list').addEventListener('toggle', (e) => {
+    const d = e.target, id = d.dataset?.group ? `g:${d.dataset.group}` : d.dataset?.subgroup ? `s:${d.dataset.subgroup}` : null;
+    if (!id || $('cfg-search').value.trim() || d.open === (d.dataset.shown === '1')) return;
+    d.dataset.shown = d.open ? '1' : '0';
+    cfgFoldSet(id, d.open);
+  }, true);
   // a tile's demo opens its example (the hash) behind the closed dialog
   $('cfg-list').addEventListener('click', (e) => { const d = e.target.closest('.pt-demo'); if (d) { e.preventDefault(); $('play-config').close(); location.hash = new URL(d.href).hash; } });
   $('cfg-tabs').addEventListener('click', (e) => { const t = e.target.closest('[data-tab]'); if (!t) return; cfgYaml = t.dataset.tab === 'yaml'; if (!cfgYaml) cfgTab = t.dataset.tab; configShow(); });
@@ -3268,11 +3303,13 @@
   });
   // the YAML view: the whole of the changed settings as satex.yaml, read back and checked as it is typed
   let yamlTimer = 0, yamlView = null, yamlLint = null, yamlSetting = false, yamlWhy = { text: null, why: null };
+  /** The YAML tab's search, the hit line Enter went to, and the jump (Shift+Enter back). */
+  let yamlQuery = '', yamlAt = null, yamlFind = null;
   const yamlGet = () => (yamlView ? yamlView.state.doc.toString() : $('cfg-yaml').value);
   const yamlChanged = () => {
     clearTimeout(yamlTimer);
     yamlTimer = setTimeout(async () => {
-      const text = yamlGet(), keys = await configLoad(), read = configFromYaml(text, new Set(keys.filter((k) => k.type === 'object').map((k) => k.key))), set = read && yamlChanges(read, keys), why = set ? await configRefused(set) : 'it does not read as `key: value` lines';
+      const text = yamlGet(), keys = await configLoad(), read = configFromYaml(text, new Set(keys.filter((k) => k.type === 'object').map((k) => k.key))), set = read && yamlChanges(read, keys), why = set ? await configRefused(set) : 'it does not read as YAML';
       (yamlView ? $('cfg-yaml-ed') : $('cfg-yaml')).classList.toggle('cfg-yaml-bad', !!why);
       $('cfg-total').textContent = why ? `not applied: ${why}` : '';
       yamlWhy = { text, why };
@@ -3305,8 +3342,11 @@
         return out;
       };
       const mode = language.StreamLanguage.define({ token(st) {
-        if (st.sol()) { st.eatSpace(); if (st.peek() === '#') { st.skipToEnd(); return 'comment'; } if (st.match(new RegExp(`(?:${YAML_KEY})(?=\\s*:(\\s|$))`))) return 'propertyName'; }
+        if (st.sol()) { st.eatSpace(); if (st.peek() === '#') { st.skipToEnd(); return 'comment'; } }
         if (st.eatSpace()) return null;
+        // a key starts its line or follows a list's `- `
+        if (/^[\s-]*$/.test(st.string.slice(0, st.pos)) && st.match(new RegExp(`(?:${YAML_KEY})(?=\\s*:(\\s|$))`))) return 'propertyName';
+        if (st.match(/-(?=\s|$)/) || st.match(/[|>][+-]?$/)) return 'punctuation';
         if (st.match(/"(?:[^"\\]|\\.)*"?/)) return 'string';
         if (st.match(/-?\d+(\.\d+)?\b/)) return 'number';
         if (st.match(/(true|false|null)\b/)) return 'bool';
@@ -3356,15 +3396,16 @@
         return { pos: from, end: to, above: true, create: () => ({ dom }) };
       });
       const check = (v) => {
-        const doc = v.state.doc, out = [];
+        const doc = v.state.doc, out = [], info = self.satexViews.yaml.paths(doc.toString());
         for (let n = 1; n <= doc.lines; n++) {
           const line = doc.line(n);
-          if (!line.text.trim() || /^\s*#/.test(line.text)) continue;
+          // a list's items and a folded text's lines are the value of their key's line
+          if (!line.text.trim() || /^\s*#/.test(line.text) || (info[n - 1]?.inner && /^\s*-( |$)|^\s/.test(line.text))) continue;
           const m = lineKey(line.text);
           if (!m) { out.push({ from: line.from, to: line.to, severity: 'error', message: 'not a `key: value` line' }); continue; }
           const from = line.from + m[1].length, key = { from, to: from + m[2].length }, full = [...pathOf(doc, n), keyName(m[2])].join('.'), k = leafOf(full);
           if (!k) { if (!known(full)) out.push({ ...key, severity: 'warning', message: `unknown setting ${full}` }); continue; }
-          if (!m[5]) continue;
+          if (!m[5] || /^[|>][+-]?$/.test(m[5])) continue;
           let value; try { value = JSON.parse(m[5]); } catch { value = m[5]; }
           const bad = (why) => out.push({ from: line.from + m[0].length - m[5].length, to: line.to, severity: 'error', message: why });
           if (full.endsWith('+') || k.type === 'array') { if (!Array.isArray(value)) bad('a list: ["a", "b"]'); }
@@ -3379,8 +3420,36 @@
         }
         return out;
       };
+      /** The search's hits: lines of a setting it matches, the keys above them as context, the rest dimmed; `runs` the first line of each run of hits. */
+      const hitsOf = (doc) => {
+        const words = yamlQuery.split(/\s+/).filter(Boolean), info = self.satexViews.yaml.paths(doc.toString());
+        if (!words.length) return { marks: [], runs: [] };
+        const hit = info.map((x, i) => {
+          if (!x?.path.length) return false;
+          const text = doc.line(i + 1).text.toLowerCase();
+          let k; for (let j = x.path.length; j && !k; j--) k = leafOf(x.path.slice(0, j).join('.'));
+          return words.every((w) => w === '@changed' ? self.satexViews.yaml.changed(x.path, configSet) : w.startsWith('@') ? !!k && configMatch(k, w) : text.includes(w) || (!!k && configMatch(k, w)));
+        });
+        const ctx = new Set();
+        hit.forEach((h, i) => { if (!h) return; let need = info[i].indent; for (let j = i - 1; j >= 0 && need > 0; j--) if (info[j] && !info[j].inner && info[j].indent < need) { ctx.add(j); need = info[j].indent; } });
+        const runs = hit.flatMap((h, i) => (h && !hit[i - 1] ? [i + 1] : []));
+        const marks = info.map((x, i) => x && view.Decoration.line({ class: i + 1 === yamlAt ? 'cfg-yhit cfg-ycur' : hit[i] ? 'cfg-yhit' : ctx.has(i) ? 'cfg-yctx' : 'cfg-ydim' }).range(doc.line(i + 1).from)).filter(Boolean);
+        return { marks, runs };
+      };
+      const found = view.ViewPlugin.fromClass(class {
+        constructor(v) { this.at = null; this.update({ view: v, docChanged: true }); }
+        update(u) { if (!u.docChanged && this.q === yamlQuery && this.at === yamlAt) return; this.q = yamlQuery; this.at = yamlAt; this.decorations = view.Decoration.set(hitsOf(u.view.state.doc).marks, true); }
+      }, { decorations: (p) => p.decorations });
+      yamlFind = (back) => {
+        const v = yamlView, { runs } = hitsOf(v.state.doc);
+        if (!runs.length) return;
+        const cur = yamlAt ?? 0, to = back ? runs.findLast((n) => n < cur) ?? runs.at(-1) : runs.find((n) => n > cur) ?? runs[0];
+        yamlAt = to;
+        const pos = v.state.doc.line(to).from;
+        v.dispatch({ selection: { anchor: pos }, effects: EditorView.scrollIntoView(pos, { y: 'center' }) });
+      };
       yamlLint = (v) => lint.forceLinting(v);
-      yamlView = new EditorView({ parent: $('cfg-yaml-ed'), doc: configYamlOf({ ...yamlDefaults(keys), ...configSet }), extensions: [basicSetup, mode, language.syntaxHighlighting(highlighter), ac.autocompletion({ override: [complete] }), hover,
+      yamlView = new EditorView({ parent: $('cfg-yaml-ed'), doc: configYamlOf({ ...yamlDefaults(keys), ...configSet }), extensions: [basicSetup, mode, language.syntaxHighlighting(highlighter), ac.autocompletion({ override: [complete] }), hover, found,
         lint.linter(check, { delay: 250 }), EditorView.updateListener.of((u) => { if (u.docChanged && !yamlSetting) yamlChanged(); })] });
       return yamlView;
     } catch (e) { console.warn('settings YAML editor:', e); return null; }
@@ -3463,7 +3532,7 @@
     cfgYaml = false;
     cfgTab = pluginOf(k) ? 'plugins' : 'core';
     if (!$('cfg-list').querySelector(`[data-key="${CSS.escape(key)}"]`) || !configMatch(k, $('cfg-search').value.trim().toLowerCase())) $('cfg-search').value = '';
-    cfgOpen.add(pluginOf(k) ?? groupOf_(k));
+    cfgFoldSet(`g:${pluginOf(k) ?? groupOf_(k)}`, true);
     if (pluginOf(k)) cfgPluginGroup = TILES.find((c) => c.plugins.some((p) => tileBase(p) === pluginOf(k)))?.name ?? 'analysis';
     await configShow();
     const row = $('cfg-list').querySelector(`[data-key="${CSS.escape(key)}"]`);
@@ -5512,13 +5581,14 @@
   /** A failed build's head: its error, else the first TeX error (`! …` and its `l.N`) of the log, with Undo of the
    * last Type edit while one is the newest change: never a bare "exit 1". */
   function pdfFailed(records, runs) {
-    const status = runs.find((r) => r.status)?.status;
-    if (!pdf.error && !status && pdf.pdf) { pdfLastType = null; return ''; }
-    const rec = records.find((r) => r.severity === 'error'), text = `${pdf.log ?? Object.values(pdf.logs ?? {}).join('\n')}\n${pdf.stderr ?? ''}`;
+    const status = runs.find((r) => r.status)?.status, rec = records.find((r) => r.severity === 'error');
+    // a TeX error after a Type edit counts though pages came out: TeX went on past it
+    if (!pdf.error && !status && pdf.pdf && !(rec && pdfLastType)) { if (!rec) pdfLastType = null; return ''; }
+    const text = `${pdf.log ?? Object.values(pdf.logs ?? {}).join('\n')}\n${pdf.stderr ?? ''}`;
     const bang = /^! (.+)$/m.exec(text), at = bang && /^l\.(\d+)/m.exec(text.slice(bang.index));
     const what = rec ? `${rec.message} (${rec.line ? `${rec.path}:${rec.line}` : rec.path})` : bang ? `${bang[1]}${at ? ` (line ${at[1]})` : ''}` : pdf.error ?? `the build stopped (exit ${status})`;
     const undo = pdfLastType && state.file === pdfLastType.file && pdfLastType.after === editor.text() ? '<button type="button" class="small" data-do="undo">Undo typing since the last good build</button>' : '';
-    return `<p class="pdf-head pdf-fail x-err" role="alert"><span>${pdf.error && rec ? `${escape(pdf.error)}: ` : 'The build failed: '}${escape(what)}</span> ${undo}</p>`;
+    return `<p class="pdf-head pdf-fail x-err" role="alert"><span>${pdf.error && rec ? `${escape(pdf.error)}: ` : status || !pdf.pdf ? 'The build failed: ' : 'TeX stopped at an error: '}${escape(what)}</span> ${undo}</p>`;
   }
   /** The Type edits since the last good build: their file, the text before the first and after the last. Undo puts
    * the text back while nothing else changed since. */
@@ -6216,14 +6286,41 @@
   }
   /** What a typing caret on each of row `r`'s characters edits (rowChars' with `kind`): `macro` a definition's text,
    * `moved` text read elsewhere in the user's files (`\title`'s argument), `arg` an argument of a macro whose text
-   * stands beside it (approximate: set at the macro's site, not read in place), `text` text written where it is set. */
+   * stands beside it (approximate: set at the macro's site, not read in place), `text` text written where it is set.
+   * Several letters set at one source place and read nowhere in the user's files are the text of the macro called
+   * there (`\\TeX`'s T, E, X): `macro` too, with `made` set, as code satex cannot place in the files. */
   function rowOrigins(r) {
-    const chars = rowChars(r), calls = new Set(chars.filter((ch) => ch.from?.def).map((ch) => `${ch.line}:${ch.col}`));
+    const chars = rowChars(r), at = (ch) => `${ch.path}:${ch.line}:${ch.col}`, calls = new Set(chars.filter((ch) => ch.from?.def).map(at));
+    // letters read nowhere else, several at a place where a control sequence's name ends: that macro's own text
+    const shared = new Map();
+    for (const ch of chars) if (!ch.from && ch.c.trim()) shared.set(at(ch), (shared.get(at(ch)) ?? 0) + 1);
+    // (a listing's `\\def` sets the name's own letters: no macro made them)
+    for (const [k, n] of shared) {
+      const ch = chars.find((c) => at(c) === k), line = srcLine(ch.path, ch.line), text = chars.filter((c) => !c.from && at(c) === k).map((c) => c.c).join('').trim();
+      const call = n > 1 && callEnding(line, ch.col);
+      shared.set(k, !!call && !text.startsWith(call.name.slice(1)));
+    }
     // a cell is set at its row's end, read in place: no move
     const cell = (a, b) => (pdfCols?.tables ?? []).some((t) => t.lines[0] <= Math.min(a, b) && Math.max(a, b) <= t.lines[1]);
-    for (const ch of chars) ch.kind = ch.from?.def ? 'macro' : ch.from && !cell(ch.line, ch.from.line) ? 'moved' : calls.has(`${ch.line}:${ch.col}`) ? 'arg' : 'text';
+    for (const ch of chars) {
+      ch.kind = ch.from?.def ? 'macro' : ch.from && !cell(ch.line, ch.from.line) ? 'moved' : calls.has(at(ch)) ? 'arg' : shared.get(at(ch)) ? 'macro' : 'text';
+      ch.made = ch.kind === 'macro' && !ch.from;
+    }
     return chars;
   }
+  /** The control sequence whose name ends at column `col` (1-based, a run's site) of a line: its columns and name. */
+  const callEnding = (line, col) => {
+    const head = !/[A-Za-z@]/.test(line?.[col] ?? '') && line?.slice(0, col).match(/\\([A-Za-z@]+)$/);
+    return head ? { from: col - head[0].length, to: col, name: head[0] } : null;
+  };
+  /** Line `n` (1-based) of the open file or another file of the project the run's `path` names. */
+  let srcLines = { text: null, lines: [] };
+  const srcLine = (path, n) => {
+    const file = Object.keys(state.texts).find((f) => String(path).endsWith(f)), text = file === state.file ? editor.text() : state.texts[file];
+    if (typeof text !== 'string') return null;
+    if (srcLines.text !== text) srcLines = { text, lines: text.split('\n') };
+    return srcLines.lines[n - 1] ?? null;
+  };
   /** The runs of row `r` not written in place, as [kind, first, last] indices of rowOrigins' characters: a space
    * belongs to the run of its origin (`Hello, #1!`'s space is the macro's), only the row's edge spaces are left out. */
   const originRuns = (chars) => {
@@ -6232,6 +6329,7 @@
     const solid = chars.map((ch) => !!ch.c.trim()), lo = solid.indexOf(true), hi = solid.lastIndexOf(true);
     return runs.map(([k, a, b]) => [k, Math.max(a, lo), Math.min(b, hi)]).filter(([, a, b]) => a <= b && solid.slice(a, b + 1).includes(true));
   };
+  const MADE_TIP = "a macro's text from code outside your files: a click opens the macro's completion";
   const ORIGIN_TIPS = { macro: "a macro's definition: typing there changes every use", arg: "a macro's argument: typing there edits this use", moved: 'read elsewhere in your files: typing goes there' };
   /** The characters of row `r` whose source site (the run's `sites`: where the user's file was read when it was set)
    * `wanted` takes: their text, and the first and last one's offset in `detail`. */
@@ -6459,7 +6557,7 @@
     if (pdfTyping) {
       const tints = [];
       for (const r of typesetRows ?? []) {
-        if (!r.origins) continue;
+        if (!r.sites) continue;
         const chars = rowOrigins(r), runs = originRuns(chars);
         if (!runs.length) continue;
         // each run found by its place in the row among the page words its lines set: a `!` of a macro is the one
@@ -6469,7 +6567,7 @@
         const texts = words.map((w) => w[5].normalize('NFKC').replace(/\s+/g, '')), solid = [], at = [];
         chars.forEach((ch, i) => { at[i] = solid.length; if (ch.c.trim()) solid.push(ch.c); });
         for (const [kind, a, b] of runs) {
-          const text = chars.slice(a, b + 1).map((ch) => ch.c).join(''), title = `${text}: ${ORIGIN_TIPS[kind]}${chars[a].from?.def ? ` (${chars[a].from.def}, line ${chars[a].from.defLine})` : ''}`;
+          const text = chars.slice(a, b + 1).map((ch) => ch.c).join(''), title = `${text}: ${chars[a].made ? MADE_TIP : ORIGIN_TIPS[kind]}${chars[a].from?.def ? ` (${chars[a].from.def}, line ${chars[a].from.defLine})` : ''}`;
           const sa = chars.findIndex((ch, i) => i >= a && ch.c.trim()), sb = chars.findLastIndex((ch, i) => i <= b && ch.c.trim());
           const same = (p, q) => p && q && p[0] === q[0] && Math.abs(p[4] - q[4]) < 1;
           // one band per row the run covers: its words and the spaces between them, an edge space up to the next word
@@ -6579,7 +6677,8 @@
     push();
     const v = version;
     const r = await lsp('satex/dialogApply', { textDocument: { uri: target }, kind: 'snapshot', nodes: [{ ...node, body }] }).catch((e) => ({ notes: [String(e?.message ?? e)] }));
-    if (uri() !== target || version !== v) return false;
+    // the text moved on during the round trip: null, the caller may print again
+    if (uri() !== target || version !== v) return uri() === target ? null : false;
     if (!r?.edits?.length) { if (r?.notes?.length) toast(r.notes.join('; ')); return false; }
     editor.apply(r.edits, how);
     push();
@@ -6954,8 +7053,35 @@
     if (!hit) return typeHint();
     // the same words before it on the page set from line n
     const nth = (n) => pdfWordsOn(page).filter((w) => pdfSame(w[5], word[5]) && (w[4] < word[2] || Math.abs(w[4] - word[4]) < 1 && w[1] < word[1]) && pdfSource(page, w[1] + 1, w[4] - 1, w)?.line === n).length;
+    // a macro's own text (the TeX logo) is no place to type: its call takes the edit
+    const made = madeAt(hit.file, hit.line, word[5]);
+    if (made) return madeOpen(hit.file, made);
     // the boundary between two characters nearest the click
     caretPut({ view: 'pdf', page, word }, hit.file, hit.line, word[5].normalize('NFKC'), pdfK(page, x, word), nth, () => readAt(hit.file, hit.line, word[5]));
+  }
+  /** The first of the macro-made characters (rowOrigins' `made`) a word set from about line `line` of `file` spells, null if none. */
+  function madeAt(file, line, word) {
+    const bare = word.normalize('NFKC').replace(/\s+/g, '');
+    let best = null, near = 4;
+    for (const r of bare ? typesetRows ?? [] : []) {
+      if (!r.sites) continue;
+      const chars = rowOrigins(r).filter((ch) => ch.c.trim() && ch.path.endsWith(file)), text = chars.map((ch) => ch.c).join('');
+      for (let i = text.indexOf(bare); i >= 0; i = text.indexOf(bare, i + 1)) {
+        const d = Math.abs(chars[i].line - line);
+        if (d < near && chars.slice(i, i + bare.length).every((ch) => ch.made)) { near = d; best = chars[i]; }
+      }
+    }
+    return best;
+  }
+  /** A click on a macro's own text: the editor's cursor after the call that set it (`ch`'s site), its completion open. */
+  async function madeOpen(file, ch) {
+    if (file !== state.file) await openPlace(file, { line: ch.line - 1, character: 0 });
+    const call = file === state.file && callEnding(srcLine(ch.path, ch.line), ch.col), a = call && pdfLineStarts(editor.text())[ch.line - 1];
+    if (!call || a == null) return toast('Not typed here: this text comes from code outside your files. Edit it in the editor');
+    editor.select([a + call.to, a + call.to]);
+    // after the click's own focus moves
+    setTimeout(() => { editor.refocus(); editor.complete(); }, 60);
+    toast(`${call.name} sets this text: pick another command, or edit the call`);
   }
   /** The boundary between two characters of `word` nearest `x`: the clicked character's index. */
   const pdfK = (page, x, word) => { const img = pdfImg(page), lead = word[5].normalize('NFKC').search(/[\p{L}\p{N}]/u); return (img ? PE.boundaryAt(pdfBounds(img, word), x) : Math.round((x - word[1]) / Math.max(1, word[3] - word[1]) * word[5].length)) - Math.max(0, lead); };
@@ -7058,7 +7184,11 @@
     // the input moves to the view typed in (a hidden panel takes no focus); moving it ends the old caret
     const home = c.view === 'ts' ? $('play-typeset') : $('play-pdf');
     if (pdfTypeIn.parentElement !== home) home.append(pdfTypeIn);
-    pdfCaret = { ...c, file: state.file, target: uri(), anchor: c.view === 'pdf' ? from + span[0] : null, at: from + span[0] + Math.min(Math.max(k, 0), span[1] - span[0]), v: version };
+    // a click past the word's letters goes past its punctuation too (`first.|`) where the source spells it there
+    const tail = /[^\p{L}\p{N}]*$/u.exec(word)[0];
+    let past = 0;
+    while (past < tail.length && text[from + span[1] + past] === tail[past]) past++;
+    pdfCaret = { ...c, file: state.file, target: uri(), anchor: c.view === 'pdf' ? from + span[0] : null, at: from + span[0] + Math.min(Math.max(k, 0), span[1] - span[0] + past), v: version };
     pdfTypeIn.focus({ preventScroll: true });
     pdfNote(def);
     pdfCaretDraw();
@@ -7351,7 +7481,8 @@
     pdfGhost = { text: g.text.slice(0, a) + body + g.text.slice(b), at: a + step, fresh: PE.grow(g.fresh, a, b, body.length), n: (pdfGhost?.n ?? 0) + 1 };
     pdfCaretDraw();
     // the build starts from the text as the keys will leave it: it need not wait for the printer's round trip
-    if (pdfCaret.view === 'pdf' && pdfGhost.text !== g.text) pdfRebuild(pdfLive() && !pdfAuto.on);
+    // a command's name half typed (`\em`) is no build: it waits for the name's end
+    if (pdfCaret.view === 'pdf' && pdfGhost.text !== g.text && !PE.naming(pdfGhost.text, pdfGhost.at, pdfGhost.fresh)) pdfRebuild(pdfLive() && !pdfAuto.on);
     pdfQueue(async () => { try { await pdfWritten(plan, how); } finally { if (pdfGhost && --pdfGhost.n <= 0) { pdfGhost = null; if (pdfCaret) pdfCaretDraw(); } } });
   };
   /** The text as the keys queued will leave it, with the caret in it; the editor's while none waits. */
@@ -7360,18 +7491,26 @@
   const pdfWritten = async (plan, how) => {
     const c = pdfCaretNow();
     if (!c) return;
-    const text = editor.text(), e = pdfPlan(plan, { text, at: c.at, fresh: c.fresh ?? null }, how);
-    if (typeof e === 'string') return toast(`Not typed here: ${e}`);
-    const [a, b, body, step] = e, gone = text.slice(a, b);
-    if (a !== b || body) {
-      const node = self.satexSnapshot.span({ start: pdfPos(text, a), end: pdfPos(text, b) }, gone, body);
-      if (!(await pdfWrite(c.target, node, body, { userEvent: 'input.type' }))) { if (pdfCaret === c) pdfCaretNow(); return; }
+    let text, a, b, body, step;
+    // a write the text overtook (a version bump with the same text) is printed again, never dropped
+    for (let tries = 0; ; tries++) {
+      text = editor.text();
+      const e = pdfPlan(plan, { text, at: c.at, fresh: c.fresh ?? null }, how);
+      if (typeof e === 'string') return toast(`Not typed here: ${e}`);
+      [a, b, body, step] = e;
+      if (a === b && !body) break;
+      const node = self.satexSnapshot.span({ start: pdfPos(text, a), end: pdfPos(text, b) }, text.slice(a, b), body);
+      const ok = await pdfWrite(c.target, node, body, { userEvent: 'input.type' });
+      if (ok) break;
+      if (ok === null && tries < 3 && pdfCaret === c && editor.text() === text) { c.v = version; continue; }
+      if (pdfCaret === c) pdfCaretNow();
+      return;
     }
     if (a !== b || body) pdfLastType = { file: c.file, before: pdfLastType?.file === c.file ? pdfLastType.before : text, after: editor.text() };
     Object.assign(c, { at: a + step, v: version, fresh: PE.grow(c.fresh, a, b, body.length) });
     pdfCaretDraw();
     // the Typeset view follows the check each edit starts; the pages were built from the ghost, again only if it was wrong
-    if (c.view === 'pdf' && (a !== b || body) && pdfSent !== editor.text()) pdfRebuild(pdfLive() && !pdfAuto.on);
+    if (c.view === 'pdf' && (a !== b || body) && pdfSent !== editor.text() && !PE.naming(editor.text(), c.at, c.fresh)) pdfRebuild(pdfLive() && !pdfAuto.on);
   };
   /** The inline math delimiters typing writes: `playground.math_inline` (`\(`, `$`, `auto`). */
   const pdfInline = () => configSet['playground.math_inline'] ?? '\\(';
@@ -8613,6 +8752,8 @@
   self.satexPdfWords = () => Object.assign([...(pdf?.wordList ?? [])], { dpi: pdf?.dpi });
   /** The last check's occurrences (labels, references, citations): what the keys layer shows. Read-only. */
   self.satexOccurrences = () => occurrences.map((o) => ({ ...o }));
+  /** The last typeset's rows with each character's origin kind (rowOrigins): what the tint tests read. Read-only. */
+  self.satexTypesetOrigins = () => (typesetRows ?? []).map((r) => ({ path: r.path, line: r.line, detail: r.detail, origins: r.origins, sites: r.sites, chars: r.sites ? rowOrigins(r).map((ch) => `${ch.c}:${ch.kind}`).join(' ') : null }));
   /** The shown build's SyncTeX boxes: what the drag tests aim at. Read-only. */
   self.satexPdfBoxes = () => [...(pdf?.boxes ?? [])];
   /** The PDF caret's offset in the text as typed so far, its page: what the typing tests measure. Read-only. */

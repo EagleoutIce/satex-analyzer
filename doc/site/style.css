@@ -480,6 +480,16 @@ button.small { padding: .05rem .6rem; font-size: .78rem; border-radius: 999px; }
 .ctx[hidden], .menu-wrap .ctx[hidden] { display: none; }
 .ctx li:focus, .ctx li[aria-expanded=true] { outline: none; background: color-mix(in srgb, var(--accent) 14%, transparent); }
 .ctx-nested { animation: none; }
+/* a menu still looking its rows up, and a go-to list's peek at the focused target beside it */
+.ctx li.ctx-wait { justify-content: flex-start; align-items: center; gap: .5rem; cursor: progress; color: var(--muted); background: none; }
+.ctx-wait::before { content: ""; flex: none; width: .8rem; height: .8rem; border: 2px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: ctx-spin .8s linear infinite; } @keyframes ctx-spin { to { rotate: 1turn; } }
+.ctx-peek { position: absolute; top: -1px; left: calc(100% + 6px); width: min(34rem, 60vw); padding: .5rem .6rem; background: var(--panel); border: 1px solid var(--border); border-radius: 8px; box-shadow: var(--shadow); font-size: .8rem; cursor: default; }
+.ctx-peek.ctx-peek-left { left: auto; right: calc(100% + 6px); }
+.ctx-peek .peek-head code { font-weight: 600; } .ctx-peek .peek-does { margin: .25rem 0 .4rem; color: var(--muted); white-space: normal; }
+.peek-code { margin: 0; padding: .3rem 0; background: var(--sunk); border-radius: 6px; font-size: .74rem; line-height: 1.45; overflow: hidden; }
+.peek-code > span { display: block; padding: 0 .5rem 0 0; white-space: pre; overflow: hidden; text-overflow: ellipsis; } .peek-code i { display: inline-block; width: 3.2em; padding-right: .7em; text-align: right; font-style: normal; color: var(--muted); user-select: none; }
+.peek-code > .peek-at { background: color-mix(in srgb, var(--accent) 16%, transparent); box-shadow: inset 3px 0 0 var(--accent); }
+@media (prefers-reduced-motion: reduce) { .ctx-wait::before { animation-duration: 2.4s; } }
 .renamebox { position: fixed; z-index: 36; font: 13px ui-monospace, Menlo, monospace; padding: .2rem .5rem; border: 1px solid var(--accent); border-radius: 6px; background: var(--panel); color: var(--fg); box-shadow: var(--shadow); outline: none; }
 .cm-linked { outline: 1px solid color-mix(in srgb, var(--accent) 55%, transparent); border-radius: 2px; }
 .cm-deflink { text-decoration: underline; color: var(--accent); cursor: pointer; }
@@ -1880,7 +1890,11 @@ canvas.pdf-echo { display: block; }
 /* the settings: one quiet hover for tabs, cards and buttons, no lift (the list's scroll edge would cut it); the count left, the rest flush right */
 #play-config button:hover:not(:disabled) { transform: none; box-shadow: none; }
 #cfg-tabs .lib-kind:hover:not([aria-pressed=true]) { color: var(--accent); background: none; }
-#play-config .pt-groups button:hover { background: color-mix(in srgb, var(--accent) 5%, var(--panel)); }
+#play-config :is(.pt-groups button, .cfg-row, .cfg-plain, .cfg-group > details > summary, .cfg-subhead):hover { background: color-mix(in srgb, var(--accent) 5%, var(--panel)); }
+#play-config .cfg-row.cfg-changed:hover { background: color-mix(in srgb, var(--accent) 10%, var(--panel)); }
+#cfg-total.cfg-total-go { cursor: pointer; } #cfg-total.cfg-total-go:hover { color: var(--accent); text-decoration: underline; }
+/* the YAML tab's search: hit lines tinted, the keys above them as they are, the rest faded */
+.cfg-yed .cfg-yhit { background: color-mix(in srgb, var(--accent) 13%, transparent); } .cfg-yed .cfg-ycur { background: color-mix(in srgb, var(--accent) 28%, transparent); } .cfg-yed .cfg-ydim { opacity: .4; }
 #play-config > footer { justify-content: flex-end; gap: .8rem; } #play-config > footer > #cfg-total { margin-right: auto; } #play-config > footer > .ts-toggle { margin-left: 0; }
 .cfg-opt-why { display: block; margin-top: .15rem; font-size: .72rem; line-height: 1.3; } .cfg-chip-hint { flex: 1 0 100%; font-size: .72rem; color: var(--error); }
 /* the outline's keys: definitions green and uses blue, as the PDF layers draw them */

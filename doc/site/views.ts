@@ -3352,6 +3352,141 @@ button.tv-spec-value { cursor: pointer; } button.tv-spec-value:hover, button.tv-
       (st.paired?.names?.length ? `<div class="ds-sec"><b>paired by a join</b><span>${st.paired.names.map(cs).join(' ')} · ${st.paired.arms} arms</span></div>` : '') +
       (cats ? `<div class="ds-sec"><b>catcodes ahead</b><span>${cats}</span></div>` : '');
   };
+  /** satex.yaml as the settings dialog writes and reads it: block maps and lists, plain text where YAML reads it back
+   * as the same string, long text folded (`>-`). `read` also takes flow values (`[a, b]`, JSON) and `|` blocks. */
+  const yaml = (() => {
+    const WIDTH = 80;
+    const KEY = String.raw`"(?:[^"\\]|\\.)*"|[^\s"#:][^\s:]*`, KEY_LINE = new RegExp(`^(${KEY})\\s*:(?:\\s+(.*?))?\\s*$`);
+    /** A map key as YAML writes it: plain when YAML takes it so, else quoted (a start such as `%` or `*`, `: `). */
+    const key = (k: string) => (/^[^\s#%*&!@`|>'"{}[\],?:-][^\s]*$/u.test(k) && !/:(\s|$)/.test(k) ? k : JSON.stringify(k));
+    const keyName = (raw: string) => { try { return raw.startsWith('"') ? JSON.parse(raw) : raw; } catch { return raw; } };
+    /** Whether text stays itself unquoted: no indicator first, no `: ` or ` #`, nothing YAML reads as a number, bool or null. */
+    const plain = (s: string) => s !== '' && s.trim() === s && !/[\u0000-\u001f]/.test(s) && !/^([?:,[\]{}#&*!|>'"%@`]|-(\s|$))/.test(s) && !/: |:$| #/.test(s)
+      && !/^(~|null|true|false|yes|no|on|off|y|n|[-+]?(\.?\d[\d_.]*([eE][-+]?\d+)?|0x[\da-f]+|0o[0-7]+|\.inf|\.nan))$/i.test(s);
+    /** A scalar starting at column `col`, its block (when folded) indented by `pad`. */
+    const scalar = (v: unknown, col: number, pad: string): string => {
+      if (typeof v !== 'string') return JSON.stringify(v) ?? 'null';
+      if (!plain(v)) return JSON.stringify(v);
+      if (col + v.length <= WIDTH || !v.includes(' ') || / {2}/.test(v)) return v;
+      const lines: string[] = [];
+      let at = '';
+      for (const w of v.split(' ')) { if (at && pad.length + at.length + 1 + w.length > WIDTH) { lines.push(at); at = w; } else at = at ? `${at} ${w}` : w; }
+      return `>-\n${[...lines, at].map((l) => pad + l).join('\n')}`;
+    };
+    /** A value after `key:` (or `-`) at indentation `pad`: a space and a scalar, or its block below. */
+    const node = (v: unknown, pad: string, col: number, flow: boolean): string => {
+      if (Array.isArray(v)) return !v.length || flow ? ` ${JSON.stringify(v)}` : `\n${v.map((x) => item(x, `${pad}  `)).join('\n')}`;
+      if (v && typeof v === 'object') return !Object.keys(v).length ? ' {}' : `\n${map(v as Rec, `${pad}  `, flow)}`;
+      return ` ${scalar(v, col + 1, `${pad}  `)}`;
+    };
+    const item = (x: unknown, pad: string): string => (x && typeof x === 'object' && !Array.isArray(x) && Object.keys(x).length
+      ? `${pad}- ${map(x as Rec, `${pad}  `, false).slice(pad.length + 2)}` : `${pad}-${node(x, pad, pad.length + 1, Array.isArray(x))}`);
+    const map = (o: Rec, pad = '', flow = false): string => Object.entries(o).map(([k, v]) => `${pad}${key(k)}:${node(v, pad, pad.length + key(k).length + 1, flow)}`).join('\n');
+    /** Dotted settings (`cache.enabled`) as nested maps. */
+    const tree = (set: Rec) => {
+      const out: Rec = {};
+      for (const [k, v] of Object.entries(set)) { const parts = k.split('.'); let at = out; for (const p of parts.slice(0, -1)) at = at[p] ??= {}; at[parts.at(-1)!] = v; }
+      return out;
+    };
+    /** The settings as satex.yaml; `flow` keeps lists on their key's line. */
+    const dump = (set: Rec, flow = false) => map(tree(set), '', flow);
+    /** A scalar's text as its value: JSON, `'quoted'`, a flow list of plain items, else YAML's plain types. */
+    const value = (s: string): unknown => {
+      try { return JSON.parse(s); } catch { /* not JSON */ }
+      if (/^'.*'$/.test(s)) return s.slice(1, -1).replaceAll("''", "'");
+      s = s.replace(/\s+#.*$/, '');
+      if (/^\[.*\]$/.test(s)) return s.slice(1, -1).split(',').map((x) => x.trim()).filter(Boolean).map(value);
+      if (/^(~|null)$/.test(s)) return null;
+      if (/^(true|false)$/.test(s)) return s === 'true';
+      if (/^[-+]?(\d+(\.\d*)?|\.\d+)([eE][-+]?\d+)?$/.test(s)) return Number(s);
+      return s;
+    };
+    /** satex.yaml's text as nested maps, null when it does not read. An empty `key:` holds `{}`. */
+    const read = (text: string): Rec | null => {
+      const ls = text.split('\n').map((t) => t.replace(/\r$/, ''));
+      let i = 0;
+      const ind = (t: string) => t.match(/^ */)![0].length, dash = (t: string) => /^\s*-( |$)/.test(t);
+      const skip = () => { while (i < ls.length && (!ls[i]!.trim() || /^\s*#/.test(ls[i]!))) i++; };
+      const fail = () => { throw new Error('yaml'); };
+      // a value after `key:` or `- `, the line already taken; its block lies deeper than `n`
+      const after = (rest: string, n: number): unknown => {
+        const block = rest.match(/^([|>])([+-]?)$/);
+        if (block) {
+          const body: string[] = [];
+          for (; i < ls.length && (!ls[i]!.trim() || ind(ls[i]!) > n); i++) body.push(ls[i]!);
+          while (body.length && !body.at(-1)!.trim()) body.pop();
+          const cut = Math.min(...body.filter((l) => l.trim()).map(ind)), lines = body.map((l) => l.slice(cut));
+          const s = block[1] === '|' ? lines.join('\n') : lines.reduce((a, l) => (!l ? `${a}\n` : !a || a.endsWith('\n') ? a + l : `${a} ${l}`), '');
+          return block[2] === '-' ? s : `${s}\n`;
+        }
+        if (rest) return value(rest);
+        skip();
+        return i < ls.length && (ind(ls[i]!) > n || (ind(ls[i]!) === n && dash(ls[i]!))) ? nodeAt(ind(ls[i]!)) : {};
+      };
+      const nodeAt = (n: number): unknown => (dash(ls[i]!) ? list(n) : mapAt(n));
+      const mapAt = (n: number): Rec => {
+        const o: Rec = {};
+        for (skip(); i < ls.length && ind(ls[i]!) === n && !dash(ls[i]!); skip()) {
+          const m = ls[i]!.slice(n).match(KEY_LINE) ?? fail()!;
+          i++;
+          o[keyName(m[1]!)] = after(m[2] ?? '', n);
+        }
+        if (i < ls.length && ind(ls[i]!) > n) fail();
+        return o;
+      };
+      const list = (n: number): unknown[] => {
+        const out: unknown[] = [];
+        for (skip(); i < ls.length && ind(ls[i]!) === n && dash(ls[i]!); skip()) {
+          const rest = ls[i]!.slice(n + 1), content = rest.trimStart(), col = n + 1 + rest.length - content.length;
+          // `- key: v` opens a map at the key's column
+          if (KEY_LINE.test(content) && !/^[[{"']/.test(content)) { ls[i] = ' '.repeat(col) + content; out.push(mapAt(col)); continue; }
+          i++;
+          out.push(after(content, n));
+        }
+        return out;
+      };
+      try {
+        skip();
+        const r = i < ls.length ? nodeAt(ind(ls[i]!)) : {};
+        skip();
+        return i < ls.length || Array.isArray(r) ? null : r as Rec;
+      } catch { return null; }
+    };
+    /** The settings a tree holds: dotted keys down to a value, a map-valued setting (`isObj`) whole. */
+    const flat = (t: Rec, isObj: (k: string) => boolean, at = '', out: Rec = {}) => {
+      for (const [k, v] of Object.entries(t)) {
+        const p = at + k;
+        if (isObj(p) || !v || typeof v !== 'object' || Array.isArray(v)) out[p] = v; else flat(v, isObj, `${p}.`, out);
+      }
+      return out;
+    };
+    /** Each line's key path and whether it is inside a value (a list item, a folded block) rather than a `key:` line. */
+    const paths = (text: string) => {
+      const stack: [number, string][] = [];
+      let under = -1, last: string[] = [];
+      return text.split('\n').map((t) => {
+        if (!t.trim() || /^\s*#/.test(t)) return null;
+        const n = t.match(/^ */)![0].length;
+        if (under >= 0 && n > under) return { path: last, inner: true, indent: n };
+        under = -1;
+        if (/^\s*-( |$)/.test(t)) {
+          while (stack.length && stack.at(-1)![0] > n) stack.pop();
+          under = n; last = stack.map((s) => s[1]);
+          return { path: last, inner: true, indent: n };
+        }
+        while (stack.length && stack.at(-1)![0] >= n) stack.pop();
+        const m = t.slice(n).match(KEY_LINE);
+        if (!m) return { path: stack.map((s) => s[1]), inner: true, indent: n };
+        const path = [...stack.map((s) => s[1]), keyName(m[1]!)];
+        stack.push([n, keyName(m[1]!)]);
+        if (/^[|>][+-]?$/.test(m[2] ?? '')) { under = n; last = path; }
+        return { path, inner: false, indent: n };
+      });
+    };
+    /** Whether a line at `path` belongs to a changed setting (`set`'s keys, `key+` an addition): `@changed` in the YAML tab. */
+    const changed = (path: string[], set: Rec) => path.some((_, i) => { const k = path.slice(0, i + 1).join('.'); return k in set || `${k}+` in set; });
+    return { dump, read, flat, tree, paths, changed, key, keyName, plain, KEY };
+  })();
   /** The next tip each call: the list in random order, none again until all were shown, never the same twice in a row. */
   /** Package loads, as the playground tracks them: `asked` the bundles fetched or fetching, `flying` the downloads under way,
    * `landedAt` each landed one's count. A run began when `saw` had landed: it lacked one not in yet, or one in only since. */
@@ -3373,6 +3508,6 @@ button.tv-spec-value { cursor: pointer; } button.tv-spec-value:hover, button.tv-
    * the newest version whose final rows are shown): never older rows, never a preview of a text already final. */
   const rowsWin = (final: number | undefined, version: number | null | undefined, preview: boolean) =>
     version == null || final == null || (preview ? version > final : version >= final);
-  return { rowsWin, loads: { unlanded, lacked }, tipBag, history: { historyEvent }, render, RENDER, hue, passes, masterDetail, usesView, fold, SPEC, mix, colorBand, oklch, drawing: { expandStyles, STYLE_DEF, parse, emit, mermaidIn, mermaidOut, mermaidLoss, layout, importMermaid, tipsOf, toMatrix, cellPlaces, toLayer, picOptions, relocate, relPos, nearestAnchor, anchorAt, tipMarker, shapeSample, shapeList, cycle, STYLE }, forest: forestFns, circuit: { parse: cParse, body: cBody, emit: cEmit }, page: { pageOf, pageBox, pageNodes, numberNodes, headerOf, headerCalls, headerNodes, fmtRead, fmtWrite, styleNodes, styleSet, styleEdits }, dev: { traceCsv, stateHtml }, templates: { fill, filled, chosen } };
+  return { rowsWin, loads: { unlanded, lacked }, tipBag, yaml, history: { historyEvent }, render, RENDER, hue, passes, masterDetail, usesView, fold, SPEC, mix, colorBand, oklch, drawing: { expandStyles, STYLE_DEF, parse, emit, mermaidIn, mermaidOut, mermaidLoss, layout, importMermaid, tipsOf, toMatrix, cellPlaces, toLayer, picOptions, relocate, relPos, nearestAnchor, anchorAt, tipMarker, shapeSample, shapeList, cycle, STYLE }, forest: forestFns, circuit: { parse: cParse, body: cBody, emit: cEmit }, page: { pageOf, pageBox, pageNodes, numberNodes, headerOf, headerCalls, headerNodes, fmtRead, fmtWrite, styleNodes, styleSet, styleEdits }, dev: { traceCsv, stateHtml }, templates: { fill, filled, chosen } };
 })();
 self.satexViews = satexViews;

@@ -33,6 +33,7 @@ declare global {
       typed(text: string, at: number, c: string, inline?: string, smart?: boolean, fresh?: [number, number] | null): [number, number, string, number];
       erased(text: string, at: number, back: boolean, fresh?: [number, number] | null): [number, number];
       checked(text: string, edit: [number, number, string, number?], o?: object): string | null;
+      naming(text: string, at: number, fresh?: [number, number] | null): boolean;
       entries(texts: Record<string, string>, root: string, kind: string): [string, number, number][];
       grow(f: [number, number] | null | undefined, a: number, b: number, n: number): [number, number] | null;
       key(text: string, at: number, k: string, o?: object): [number, number, string, number] | string;
@@ -505,11 +506,13 @@ declare global {
   const nameEnd = (text: string, at: number) => { const m = /(?:^|[^\\])(?:\\\\)*(\\[A-Za-z@]+)$/.exec(text.slice(Math.max(0, at - 64), at)); return m ? at - m[1]!.length : -1; };
   /** A lone `\` just before `at` (an odd run of backslashes): a command being typed. */
   const lone = (text: string, at: number) => /(?:^|[^\\])(?:\\\\)*\\$/.test(text.slice(Math.max(0, at - 64), at));
+  /** Whether a command's name is being typed at `at`: a lone `\` before it, or a name typed since the caret was put. */
+  const naming = (text: string, at: number, fresh: [number, number] | null = null) => { const cs = nameEnd(text, at); return lone(text, at) || cs >= 0 && !!fresh && fresh[0] <= cs && cs < fresh[1]; };
   /** What typing `c` at `at` of `text` writes so the source stays compilable: `[from, to, body, caret]`, the text
    * `from..to` replaced by `body` and the caret `caret` past `from`. In text a special character is escaped and `$`
    * opens math with its closer (`inline`: `\(`, `$` or `auto`, the document's most used). In math a character goes
    * in as typed, `{` with its `}`, `%`, `#`, `&` escaped, a closer typed where it stands steps over it, `$` elsewhere
-   * leaves the formula. `\` starts a command (a space keeps it off the word after it); letters name it, another
+   * leaves the formula. `\` starts a command (its own space keeps it off what follows); letters name it, another
    * character makes a control symbol (`\%`). After a command typed since the caret was put (`fresh`) `{` opens its
    * argument and `}` steps out of one; after an older one a letter or space gets a `{}` first, so the name stays.
    * `smart`: `x_42` writes `x_{42}`. */
@@ -520,7 +523,8 @@ declare global {
     const fr = (p: number) => !!fresh && fresh[0] <= p && p < fresh[1], letter = /^[A-Za-z@]$/.test(c);
     // the space typed after a `\` (to keep it off the next word) goes once the name is a control symbol
     if (lone(text, at)) return letter ? [at, at, c, 1] : [at, at + (text[at] === ' ' && fr(at) ? 1 : 0), c, 1];
-    if (c === '\\') return [at, at, /\S/.test(text[at] ?? ' ') ? '\\ ' : '\\', 1];
+    // its own space, never one of the text's: a letter typed then renames only what was typed
+    if (c === '\\') return [at, at, '\\ ', 1];
     const cs = nameEnd(text, at), own = cs >= 0 && fr(cs);
     if (cs >= 0 && letter) return own ? [at, at, c, 1] : [at, at, `{}${c}`, 3];
     // its argument ends the name: the space that kept it off the next word goes
@@ -793,7 +797,7 @@ declare global {
   }
   /** Words as the page reads: a space between words of a row, a line break between rows. */
   const joined = (words: Word[]) => bands(words).map((b) => words.filter((w) => w[0] === b.page && Math.abs(w[4] - b.d) < 1 && w[1] >= b.l && w[3] <= b.r).map((w) => w[5]).join(' ')).join('\n');
-  self.satexPdfEdit = { entries, checked, grow, key, broken, scan, start, cells, cellStep, rowAfter, verbatim, verbatimAt, nearest, bands, joined, place, extent, room, form, measure, respec, widthBp, snapWidth, resized, stepped, plain, editable, spans, sender, typed, erased, mathAt, boundaries, boundaryAt, inkSnap, locate, columns, wordAt, argAt, relaid, apart, tokens, aligned, changed, paragraph };
+  self.satexPdfEdit = { naming, entries, checked, grow, key, broken, scan, start, cells, cellStep, rowAfter, verbatim, verbatimAt, nearest, bands, joined, place, extent, room, form, measure, respec, widthBp, snapWidth, resized, stepped, plain, editable, spans, sender, typed, erased, mathAt, boundaries, boundaryAt, inkSnap, locate, columns, wordAt, argAt, relaid, apart, tokens, aligned, changed, paragraph };
 })();
 
 // TikZ nodes moved by drag: where each `\node` and path label stands in the source, and the statement a drag

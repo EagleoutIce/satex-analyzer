@@ -1384,7 +1384,7 @@ raw { text % here
     for (const m of doc.matchAll(/(?<![\\A-Za-z@])\p{L}+/gu)) for (let p = m.index; p <= m.index + m[0].length; p++) if (/^$|math/.test(E.editable(doc, p, p, []) ?? '')) carets.push(p);
     for (let run = 0; run < 2400 / docs.length * 4 && carets.length; run++) {
       let t = doc, at = carets[rand(carets.length)], f = null, fresh = new Array(t.length).fill(false);
-      for (let n = 1 + rand(8); n--;) {
+      for (let n = 1 + rand(12); n--;) {
         const k = KEYS[rand(KEYS.length)], e = E.key(t, at, k, { fresh: f, inline: rand(2) ? '\\(' : '$', smart: !!rand(2) });
         if (typeof e === 'string') { refused++; continue; }
         const [a, b, body, step] = e, was = t;
@@ -1430,6 +1430,13 @@ raw { text % here
   assert.deepEqual(E.key(t, at('x\\)'), '$'), [at('x\\)'), at('x\\)'), '', 3], '`$` elsewhere in it leaves the formula');
   assert.deepEqual(E.key(t, at('x\\)'), '%'), [at('x\\)'), at('x\\)'), '\\%', 2], '`%` in math is escaped');
   assert.equal(typeof E.key(t, at('sec:b', 2), 'a'), 'string', 'a label is a key');
+  // keys in a row, each on the text the one before left (the playground's order): a formula typed in a title and
+  // Backspace after it keeps `\(x\)` whole. Pins Backspace taking the `\)` typed before, leaving `\(x` open.
+  const typeKeys = (text, at, keys) => { let f = null; for (const k of keys) { const e = E.key(text, at, k, { fresh: f }); if (typeof e === 'string') continue; const [a, b, body, step] = e; text = text.slice(0, a) + body + text.slice(b); f = E.grow(f, a, b, body.length); at = a + step; } return [text, at]; };
+  assert.equal(typeKeys(t, at('}'), [...' new', 'Enter', '}', '{', '$', 'x', '$', 'Backspace'])[0].split('\n')[0], '\\section{Background new\\}\\{\\(x\\)}\\label{sec:b}');
+  assert.equal(typeKeys(t, at('}'), [...'$x', 'Backspace'])[0].split('\n')[0], '\\section{Background}\\label{sec:b}', 'the last character of a formula takes it');
+  assert.equal(typeKeys('a pipeline. b', 'a pipeline'.length, [...'\\emph{q}'])[0], 'a pipeline\\emph{q}. b', '`\\` before `.`: its space goes once `{` ends the name');
+  assert.equal(typeKeys('Some text', 4, [...'\\zz{a}'])[0], 'Some\\zz{a} text', '`\\` before a space: its own space, the text\'s kept. Pins `\\zz` refused as renaming `\\ `');
   // a contents entry is written where its short title is, else its title; a starred section, a float-less caption none
   const texts = { 'a.tex': '\\section[Short]{Long}\\input{b}\\section*{No}\\caption{Lone}', 'b.tex': '\\begin{figure}\\caption[F]{Fig}\\end{figure}\\subsection{Sub}\n\\verb|\\section{v}|' };
   const got = (k) => E.entries(texts, 'a.tex', k).map(([f, a, b]) => `${f}:${texts[f].slice(a, b)}`);
@@ -1654,4 +1661,38 @@ raw { text % here
   assert.equal(R.unspelled(line, '—.'), false, 'nothing but punctuation: no word');
   assert.equal(R.fuzzy('sint', 'xyz'), -1);
   assert.ok(R.fuzzy('sint', 'sec:intro') > R.fuzzy('sint', 'some:other:intent'), 'word starts and runs rank first');
+}
+// Settings YAML (playground Settings, YAML tab and export): one serializer writes block lists, nested maps, plain text
+// where YAML keeps it a string and folds long text; the reader takes it back unchanged. Pins the YAML tab that printed
+// lists and objects as JSON (`join_paths_at: [{"command":"\\document","hook":null}]`).
+{
+  const { dump, read, flat, paths } = self.satexViews.yaml;
+  const long = Array.from({ length: 30 }, (_, i) => `word${i}`).join(' ');
+  const set = {
+    'analysis.join_paths_at': [{ command: '\\document', hook: null }], 'cache.index.common': ['microtype', 'cleveref'], 'cache.index.engines': [],
+    'bib.backend': 'biber', 'at_letter': false, 'limits.steps': 200, 'odd.texts': ['true', '1.5', 'a: b', '#x', '- y', '', 'yes'], 'notes.about': long,
+    'conventions.math_symbols': { 'α': 'alpha', '%': 'percent' }, 'profiles.package.engine+': ['luatex'],
+  };
+  const text = dump(set);
+  assert.match(text, /^analysis:\n {2}join_paths_at:\n {4}- command: \\document\n {6}hook: null$/m, 'a list of maps in blocks, plain backslash');
+  assert.match(text, /^ {4}common:\n {6}- microtype\n {6}- cleveref$/m, 'a block list');
+  assert.match(text, /^ {4}engines: \[\]$/m, 'an empty list stays flow');
+  assert.match(text, /^ {2}backend: biber$/m, 'plain text unquoted');
+  assert.match(text, /- "true"\n.*- "1\.5"\n.*- "a: b"\n.*- "#x"\n.*- "- y"\n.*- ""\n.*- "yes"/s, 'text YAML would read as something else is quoted');
+  assert.match(text, /about: >-\n {4}word0 /, 'long text folded');
+  assert.ok(text.split('\n').every((l) => l.length <= 80), 'no line past the width');
+  assert.match(text, /"%": percent/, 'a key YAML would misread is quoted');
+  const objects = new Set(['conventions.math_symbols']);
+  assert.deepEqual(flat(read(text), (k) => objects.has(k)), set, 'read gives the settings back');
+  assert.equal(dump({ 'a.b': ['x', 'y'] }, true), 'a:\n  b: ["x","y"]', 'flow keeps a list on its line');
+  // what people type: flow lists, comments, a list at its key's indentation, `|` blocks, an empty key
+  assert.deepEqual(read('a: [x, "y z", 3]  # c\nb:\n- 1\n- two\nc: |\n  l1\n  l2\nd:\n'), { a: ['x', 'y z', 3], b: [1, 'two'], c: 'l1\nl2\n', d: {} });
+  assert.equal(read('a: 1\n  b: 2'), null, 'stray indentation does not read');
+  assert.equal(read('just text'), null);
+  // `@changed` in the YAML tab: a changed key's lines, its list items and a map setting's entries; never the group above
+  const changed = { 'cache.index.common': ['a'], 'conventions.math_symbols': { 'α': 'alpha' }, 'load.packages+': ['x'] };
+  const lines = dump({ ...changed, 'cache.enabled': true }).split('\n'), hit = paths(lines.join('\n')).map((p, i) => p && self.satexViews.yaml.changed(p.path, changed) && lines[i].trim());
+  assert.deepEqual(hit.filter(Boolean), ['common:', '- a', 'math_symbols:', 'α: alpha', 'packages+:', '- x']);
+  // each line's path: a list's items and a folded text's lines belong to their key
+  assert.deepEqual(paths(text).slice(0, 4).map((p) => p && [p.path.join('.'), p.inner]), [['analysis', false], ['analysis.join_paths_at', false], ['analysis.join_paths_at', true], ['analysis.join_paths_at', true]]);
 }
