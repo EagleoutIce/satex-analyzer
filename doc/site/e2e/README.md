@@ -69,6 +69,7 @@ Each run writes `results.md`, `results.json`, a screenshot per failure and, when
 | `scenarios/index.mjs` | all areas, the tiers, unique names |
 | `fixtures/titles/` | title pages of ten classes |
 | `run.mjs` | the runner |
+| `fuzz/` | the seeded glitch fuzzer of Type mode: `node doc/site/e2e/fuzz/run.mjs --port N --seeds 1-5 [--docs hello,markup] [--views pdf,ts] [--min]` prints each failure's step list (`--replay` replays it); the shrunk lists live in `scenarios/fuzz.mjs` |
 
 A typing scenario names the word to click, where the caret must land in the source, the keys and what must hold after: the source, the final caret, the echo's font and rows, no duplicated or stray echo text, no caret jump without a key. The field list is at the top of `scenarios/sources.mjs` and in each kind's comment.
 

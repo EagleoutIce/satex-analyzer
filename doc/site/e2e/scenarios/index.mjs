@@ -17,10 +17,11 @@ import dark from './dark-mode.mjs';
 import tikz from './tikz-actions.mjs';
 import crash from './crash-recovery.mjs';
 import editor from './editor.mjs';
+import fuzz from './fuzz.mjs';
 
 const AREAS = { 'typing-pdf': typingPdf, 'titles-footnotes': titles, math, clicks, select, 'tints-typeset': tints, widgets,
   completion, 'double-click': dbl, 'footer-blank': foot, 'echo-paragraphs': newpara, 'follow-highlight': follow,
-  'dark-mode': dark, 'tikz-actions': tikz, 'crash-recovery': crash, editor };
+  'dark-mode': dark, 'tikz-actions': tikz, 'crash-recovery': crash, editor, fuzz };
 
 export const SCENARIOS = Object.entries(AREAS).flatMap(([area, list]) => list.map((sc) => ({ area, ...sc })));
 

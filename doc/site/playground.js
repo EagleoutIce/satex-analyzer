@@ -8802,8 +8802,8 @@
     }).catch(() => pdfBreakAsked.set(w.key, false));
   }
   function pdfTexBreaks(fkey, words, tagged, later, indent, line) {
-    // `playground.tex_breaks`: off, the echo breaks by its own fit only
-    if (!texReady || play.tex_breaks === false || self.__noTexBreaks) return null;
+    // `playground.tex_breaks` (off by default): the echo breaks by its own fit only
+    if (!texReady || play.tex_breaks !== true) return null;
     const params = { textDocument: { uri: uri(state.root ?? state.file) }, path: uri(state.file), line, words, indent: Math.abs(indent) < 0.5 ? 0 : Math.round(indent * 65536 * 72.27 / 72) };
     const key = JSON.stringify([params.path, line, params.indent, words]);
     if (!pdfBreakAsked.has(key)) {
@@ -8996,6 +8996,11 @@
       if (A) A = { ...A, e: te(A) };
       // typing at a paragraph's start (after Enter): the text stands before its first word, on that word's row
       else if (para[0]?.s >= P) { const F = para[0].w; A = { s: P, e: P, w: [F[0], F[1], F[2], F[1], F[4], ''] }; }
+      // a command between A and the change (`about \\model{} here,|`) sets words no source word pairs with, which the
+      // text from A drops, a display's closer (`\\]⏎and,|`) starts a row of its own: the echo starts at the first word
+      // after it, the row before it as the page set it
+      const N = A && /\\[A-Za-z@\]]|\$\$/.test(B.slice(A.e, P)) && para.find((t) => t.s > A.e && t.s <= P && !/\\/.test(B.slice(t.s, P)));
+      if (N) A = { s: N.s, e: N.s, w: [N.w[0], N.w[1], N.w[2], N.w[1], N.w[4], ''] };
       // a table's cells are no paragraph to re-flow (its rows' words pair with no line): the word-based echo sets them
       if (!A || PE.cells(g.text, g.at)) return false;
       w = A.w;

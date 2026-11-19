@@ -34,6 +34,7 @@ for (const job of jobs) {
     if (process.argv.includes('--min') && f.step >= 0) { rec.min = await minimize(fresh, rec, f.cls, +arg('budget', '8')); console.log(`  minimized: ${J(rec.min)}`); }
     console.log(`  replay: --replay '${J({ doc: job.doc, view: job.view, steps: rec.min ?? rec.steps })}'`);
     found.push(rec);
+    if (process.env.FZ_DUMP) writeFileSync(join(OUT, 'last.json'), J(r.last, null, 1));
   }
   await p.close();
 }

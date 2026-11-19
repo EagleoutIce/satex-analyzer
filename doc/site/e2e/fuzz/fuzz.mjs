@@ -52,7 +52,8 @@ async function key(p, k) {
 
 // What the view shows now, read in the page: the caret (relative to its page or the Typeset body), the PDF's echo
 // draws and uncovered page words, the Typeset rows with their words' font sizes
-const SNAP = `self.__fzSnap = (view) => {
+const SNAP = `if (!self.__fzDI) { self.__fzDI = CanvasRenderingContext2D.prototype.drawImage; CanvasRenderingContext2D.prototype.drawImage = function (src, sx, ...r) { if (r.length === 7 && this.canvas.classList?.contains('pdf-echo')) (this.canvas.__imgs ??= []).push(sx); return self.__fzDI.call(this, src, sx, ...r); }; }
+self.__fzSnap = (view) => {
   const h = satexHealth(), root = document.getElementById(view === 'pdf' ? 'play-pdf' : 'play-typeset');
   const c = root.querySelector('.pdf-caret'), cr = c && c.checkVisibility() ? c.getBoundingClientRect() : null;
   const host = view === 'pdf' ? c?.closest('.pdf-page') : document.getElementById('typeset-body'), hr = host?.getBoundingClientRect();
@@ -74,11 +75,12 @@ const SNAP = `self.__fzSnap = (view) => {
       end();
     }
   } else {
+    // an echo of moved page pixels only (no text drawn) still shows the page's words: it covers none
     const cans = [...root.querySelectorAll('.pdf-echo:not(.pdf-push, .pdf-erased)')];
     out.draws = []; out.boxes = [];
     for (const e of cans) {
       const r = e.getBoundingClientRect(), k = r.width / Math.max(1, e.width);
-      if (r.width * r.height > 1 && e.checkVisibility()) out.boxes.push([+e.closest('.pdf-page')?.dataset.page, r.left, r.top, r.right, r.bottom]);
+      if (r.width * r.height > 1 && e.checkVisibility() && e.__texts?.length) out.boxes.push([+e.closest('.pdf-page')?.dataset.page, r.left, r.top, r.right, r.bottom]);
       for (const q of e.__texts ?? []) { ctx.font = q.font; out.draws.push({ t: q.t, font: q.font, sy: q.sy, x: r.left + q.x * k, y: r.top + q.y * k, k, mixed: (e.__mixed ?? []).includes(q.t), px: parseFloat(/([\\d.]+)px/.exec(q.font)?.[1] ?? '0') * k * (q.sy ?? 1) }); }
     }
     const ws = satexPdfWords(); out.words = [];
@@ -86,8 +88,13 @@ const SNAP = `self.__fzSnap = (view) => {
     for (const w of ws) {
       const img = root.querySelector('.pdf-page[data-page="' + w[0] + '"] img'); if (!img?.naturalWidth) continue;
       const ir = img.getBoundingClientRect(), k = ir.width / (img.naturalWidth * 72 / ws.dpi), b = [ir.left + w[1] * k, ir.top + w[2] * k, ir.left + w[3] * k, ir.top + w[4] * k];
-      const covered = out.boxes.some((c) => c[0] === w[0] && b[0] >= c[1] - 1 && b[2] <= c[3] + 1 && (b[1] + b[3]) / 2 >= c[2] && (b[1] + b[3]) / 2 <= c[4]);
+      const covered = out.boxes.some((c) => c[0] === w[0] && Math.min(b[2], c[3]) - Math.max(b[0], c[1]) > (b[2] - b[0]) / 2 && (b[1] + b[3]) / 2 >= c[2] && (b[1] + b[3]) / 2 <= c[4]);
       out.words.push({ t: w[5], b, covered });
+      // a page word under a text echo that the echo neither moved (its pixels) nor drew as text: gone from the row
+      if (covered) { const cv = cans.find((e) => { const r = e.getBoundingClientRect(); return e.__texts?.length && e.closest('.pdf-page')?.dataset.page == w[0] && Math.min(b[2], r.right) - Math.max(b[0], r.left) > (b[2] - b[0]) / 2 && (b[1] + b[3]) / 2 >= r.top && (b[1] + b[3]) / 2 <= r.bottom; });
+        // moved or drawn by any echo of the view (a word wraps to another row's echo)
+        const all = [...root.querySelectorAll('.pdf-echo')], kk = ws.dpi / 72, moved = all.some((e) => (e.__imgs ?? []).some((sx) => Math.abs((sx + 1) / kk - w[1]) < 1)), drawn = all.some((e) => (e.__texts ?? []).some((q) => q.t.includes(w[5]) || w[5].includes(q.t) && q.t.length > 1));
+        if (cv && !moved && !drawn) (out.gone ??= []).push(w[5]); }
     }
   }
   return out;
@@ -172,16 +179,17 @@ export async function run(p, { doc, view, steps }) {
   let s = await p.eval(`__fzSnap(${J(view)})`);
   for (const t of tokens(shown(s))) seenText.add(t);
   const mk = markupWords(s.text ?? '', seenText);
-  let errs = 0;
+  let errs = 0, placed = false;
   const fail = (i, cls, msg) => fails.push({ step: i, cls, msg: msg.slice(0, 400) });
   for (let i = 0; i < steps.length && !fails.length; i++) {
     const st = steps[i], before = s;
     const kind = st.startsWith('w:') ? 'type' : st.startsWith('k:') ? (/^k:(.|Enter|Backspace|Delete|Ctrl\+Backspace)$/.test(st) ? 'edit' : 'move') : st.startsWith('c:') ? 'click' : st;
     let clicked = null;
-    if (kind === 'type') { for (const ch of st.slice(2)) { await key(p, ch); await sleep(35); } typed.add(st.slice(2)); }
+    if (kind === 'type') { for (const ch of st.slice(2)) { await key(p, ch); await sleep(35); } if (placed) typed.add(st.slice(2)); }
     else if (kind === 'edit' || kind === 'move') await key(p, st.slice(2));
-    else if (kind === 'click') { clicked = await click(p, view, st); await p.until(`satexPdfCaret()`, 3000); }
-    else if (kind === 'v') { view = view === 'pdf' ? 'ts' : 'pdf'; await toView(p, view); }
+    else if (kind === 'click') { clicked = await click(p, view, st); placed = !!await p.until(`satexPdfCaret()`, 3000); }
+    // a switch ends the caret (the other view's is placed by a click): keys until the next click type nowhere
+    else if (kind === 'v') { view = view === 'pdf' ? 'ts' : 'pdf'; await toView(p, view); placed = false; }
     else if (kind === 'wait') {
       await landed(p, view);
       await sleep(400);
@@ -205,8 +213,10 @@ export async function run(p, { doc, view, steps }) {
       const page = new Set(s.words.map((w) => w.t));
       for (const d of s.draws) for (const t of tokens(d.t)) {
         const known = (x) => page.has(x) || seenText.has(x) || [...typed, ...page, ...seenText].some((y) => y.includes(x)) || [...Array(x.length - 1).keys()].some((j) => [x.slice(0, j + 1), x.slice(j + 1)].every((h) => [...typed, ...page, ...seenText].some((y) => y.includes(h))));
-        if (t.length > 2 && !known(t)) fail(i, 'echo-foreign', `echo draws ${J(t)}, neither typed nor on the page`);
+        if (t.length > 2 && !known(t) && !src.includes(t)) fail(i, 'echo-foreign', `echo draws ${J(t)}, neither typed nor on the page`);
       }
+      const gone = (s.gone ?? []).filter((t) => src.includes(t));
+      if (gone.length) fail(i, 'echo-lost', `page words under the echo neither moved nor drawn: ${J(gone)}`);
       // (4) one size a row's letters, no word in a face lacking its glyphs
       const rows = Map.groupBy(s.draws.filter((d) => /\p{L}{2}/u.test(d.t)), (d) => Math.round(d.y / 3));
       for (const [, ds] of rows) { const px = [...new Set(ds.map((d) => d.px.toFixed(1)))]; if (px.length > 1 && Math.max(...px) / Math.min(...px) > 1.08) fail(i, 'mixed-size', `one row in sizes ${px.join('/')}: ${J(ds.map((d) => d.t))}`); }
@@ -215,23 +225,24 @@ export async function run(p, { doc, view, steps }) {
       for (const a of s.boxes) for (const b of s.boxes) if (a !== b && a[0] === b[0] && a[2] < b[2] && b[2] < a[4] - 1.5 && a[1] < b[3] - 1 && b[1] < a[3] - 1) fail(i, 'overlap', `echo rows overlap: ${J([a, b].map((x) => x.map(Math.round)))}`);
     } else if (s.sizes.length) fail(i, 'mixed-size', `a word in two sizes: ${J(s.sizes.slice(0, 3))}`);
     // (3) after typing a word the caret stands at its last glyph, on its row
-    if (kind === 'type' && s.caret) {
+    if (kind === 'type' && s.caret && placed) {
       const tok = st.slice(2), mid = s.caret[1] + s.caret[2] / 2;
       if (!src.includes(tok)) fail(i, 'lost-key', `${J(tok)} typed, not in the source at ${s.at}`);
       else {
-        const x = await p.eval(`__fzEnd(${J(s.view)}, ${J(tok)}, ${mid}, ${s.caret[2]})`);
-        if (x == null && !(s.view === 'pdf' && before.build !== s.build)) fail(i, 'wrong-row', `${J(tok)} not drawn on the caret's row (caret ${J(s.caret.map(Math.round))}): ${J(text.slice(0, 200))}`);
+        // drawn by the echo, else a landed page word ending in it on the caret's row
+        const x = await p.eval(`__fzEnd(${J(s.view)}, ${J(tok)}, ${mid}, ${s.caret[2]})`) ?? (s.view === 'pdf' ? s.words.filter((w) => !w.covered && w.t.includes(tok) && Math.abs((w.b[1] + w.b[3]) / 2 - mid) < s.caret[2]).map((w) => w.t.endsWith(tok) ? w.b[2] : s.caret[0]).at(-1) : null) ?? null;
+        if (x == null && !(s.view === 'pdf' && before.build !== s.build)) fail(i, 'wrong-row', `${J(tok)} not drawn on the caret's row (caret ${J(s.caret.map(Math.round))}): ${J(text.slice(0, 200))}${s.view === 'pdf' ? ` echoes ${J(s.boxes.map((b) => b.map(Math.round)))} draws ${J(s.draws.map((d) => [d.t, Math.round(d.y)]))}` : ''}`);
         else if (x != null && Math.abs(x - s.caret[0]) > 3) fail(i, 'caret-glyph', `caret at x ${Math.round(s.caret[0])}, ${J(tok)} ends at ${Math.round(x)}`);
       }
     }
-    if ((kind === 'type' || kind === 'edit') && !s.caret) fail(i, 'caret-lost', 'no caret after an editing key');
+    if ((kind === 'type' || kind === 'edit') && !s.caret && placed) fail(i, 'caret-lost', 'no caret after an editing key');
     // (6) a landing moves the caret by at most 3 px, keeps the Typeset rows' text
     if (kind === 'wait' && before.rel && s.rel && before.text === s.text && before.view === s.view && (Math.abs(before.rel[0] - s.rel[0]) > 3 || Math.abs(before.rel[1] - s.rel[1]) > 3))
       fail(i, 'land-jump', `the caret moved ${J(before.rel.map(Math.round))} -> ${J(s.rel.map(Math.round))} as the build landed`);
     if (kind === 'wait') for (const t of typed) { const n = count(src, t); if (n && count(text, t) < n && !inMarkup(src, t)) fail(i, 'lost-word', `${J(t)} ${n}x in the source, ${count(text, t)}x shown after landing`); }
     for (const t of toks) seenText.add(t);
   }
-  return { fails, log, view };
+  return { fails, log, view, last: s };
 }
 /** Whether every occurrence of `t` in `src` sits in math or a command name: places the shown text spells otherwise. */
 const inMarkup = (src, t) => [...src.matchAll(new RegExp(t, 'g'))].every((m) => { const pre = src.slice(0, m.index); return /\\[a-zA-Z]*$/.test(pre) || (pre.split('$').length - 1) % 2 === 1 || pre.lastIndexOf('\\[') > pre.lastIndexOf('\\]') || /\\begin\{(equation|align|tikzpicture|lstlisting)\}(?![^]*\\end\{\1\})/.test(pre); });
@@ -256,8 +267,8 @@ export async function minimize(fresh, sc, cls, budget = 10) {
 
 /** The `fuzz` scenario kind: a saved step list replayed, its invariants as failures. */
 export async function fuzz(p, sc) {
-  const r = await run(p, sc);
-  const res = { name: sc.name, kind: 'fuzz', fails: r.fails.map((f) => `step ${f.step} ${sc.steps[f.step]} [${f.cls}] ${f.msg}`), perf: [], info: { log: r.log.slice(-6) } };
+  const r = await run(p, { ...sc, steps: sc.seq });
+  const res = { name: sc.name, kind: 'fuzz', fails: r.fails.map((f) => `step ${f.step} ${sc.seq[f.step]} [${f.cls}] ${f.msg}`), perf: [], info: { log: r.log.slice(-6) } };
   if (res.fails.length) res.shot = await p.shot(`${sc.name}-fuzz.png`);
   return res;
 }
