@@ -1410,6 +1410,7 @@ declare global {
       named(stmt: string, i: number, name: string): string | null; fresh(text: string, picAt: number, base: string): string;
       bendAdd(stmt: string, seg: number, pt: string): string | null; bendMove(stmt: string, seg: number, pt: string): string | null; isBend(stmt: string, seg: number): boolean;
       bendRemove(stmt: string, seg: number): string | null; bendCurve(stmt: string, seg: number, out: number, into: number): string | null;
+      withKeys(stmt: string, i: number, list: string[]): string | null; picOrdinal(text: string, at: number): number; picAt(text: string, k: number): number | null;
       sizers(text: string): TikzSizer[]; snapSize(now: number, line: number, name: string, used: [string, number][]): string;
       picOpts(text: string, picAt: number): { from: number; to: number; keys: string[] } | null; picSet(text: string, picAt: number, group: RegExp, add: string[]): { from: number; to: number; was: string; now: string } | null;
       dependents(text: string, n: TikzNode): { direct: TikzNode[]; all: TikzNode[] };
@@ -1832,6 +1833,8 @@ declare global {
   const inGroup = (k: string, group: string, names: string[] = []) => GROUP[group]?.test(k) || (group === 'draw' && names.includes(k)) || (group.startsWith('style:') && k === group.slice(6));
   /** The keys of part `i` that group `group` owns, as written. */
   const current = (stmt: string, i: number, group: string, names: string[] = []) => (keysAt(stmt, i) ?? []).filter((k) => inGroup(k, group, names));
+  /** `stmt` with part `i`'s option list replaced by `list` as a whole (none: it goes), else null. */
+  const withKeys = (stmt: string, i: number, list: string[]) => { const r = optsOf(stmt, i); return r && withOpts(stmt, r.o, r.oAt, list); };
   /** `stmt` with part `i`'s keys of `group` (and those it excludes) replaced by `add` (none: they go), else null. */
   function set(stmt: string, i: number, group: string, add: string[], names: string[] = []) {
     const r = optsOf(stmt, i), ks = keysAt(stmt, i);
@@ -1863,6 +1866,13 @@ declare global {
   const inout = (stmt: string, seg: number, out: number, into: number) => toKeys(stmt, seg, (ks) => [...ks.filter((k) => !CURVE.test(k)), `out=${out}`, `in=${into}`]);
   /** `stmt` with segment `seg`'s looseness `v` (1, the default, unwritten). */
   const looseness = (stmt: string, seg: number, v: number) => toKeys(stmt, seg, (ks) => [...ks.filter((k) => !/^looseness\s*=/.test(k)), ...(v === 1 ? [] : [`looseness=${v}`])]);
+  /** The pictures of `text` (`\begin{tikzpicture}` outside comments): their offsets, in order. A picture's ordinal among
+   * them names it across edits above it, where its offset moves. */
+  const picStarts = (text: string) => [...text.replace(/(?<!\\)%.*$/gm, (c) => ' '.repeat(c.length)).matchAll(/\\begin\{tikzpicture\}/g)].map((m) => m.index!);
+  /** The ordinal of the picture at offset `at`, -1 for none. */
+  const picOrdinal = (text: string, at: number) => picStarts(text).indexOf(at);
+  /** The offset of picture `k`, null when the text has fewer. */
+  const picAt = (text: string, k: number) => picStarts(text)[k] ?? null;
   // ---- box widths a drag on the pages rewrites
   /** Each width argument of `\begin{minipage}{W}`, `\parbox{W}`, `\makebox[W]`, `\framebox[W]`, `\resizebox{W}`,
    * `\includegraphics[width=W]` in `text`: the command, its lines (first to where the box ends), the value's range. */
@@ -2059,7 +2069,7 @@ declare global {
     return stmt.slice(0, a) + stmt.slice(p.t[1] + 1);
   }
   self.satexTikzMove = { nodes, move, len, cm, posOn, clipped, snap, edges, shapeOf, shape, looks, flip, retext, tipOf, tip, tipEnds, tipSpec, tipVary, tipParts, label,
-    SHAPES: SHAPE_LIST, library, keysAt, current, set, segOf, route, bend, inout, looseness, segPath, addEdge, named, fresh, bendAdd, bendMove, isBend, bendRemove, bendCurve, sizers, snapSize, picOpts, picSet, snapAngle, angle, unlabel, relation, placing, place, placeDelta, dependents, convention, setConvention, written };
+    SHAPES: SHAPE_LIST, library, keysAt, current, set, segOf, route, bend, inout, looseness, segPath, addEdge, named, fresh, bendAdd, bendMove, isBend, bendRemove, bendCurve, withKeys, picOrdinal, picAt, sizers, snapSize, picOpts, picSet, snapAngle, angle, unlabel, relation, placing, place, placeDelta, dependents, convention, setConvention, written };
 })();
 
 // References switched from the pages: a reference's printed number is no text to type into. Where its key stands in

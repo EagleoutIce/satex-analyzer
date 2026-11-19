@@ -674,7 +674,17 @@ async function forestScenario(p, sc) {
     const text0 = await p.eval(`satexHealth().text`);
     await p.s('Input.dispatchMouseEvent', { type: 'mouseMoved', x: b[0], y: b[1] });
     await sleep(80);
-    await p.mouse(b[0], b[1]);
+    if (sc.plus === 'drag') {
+      // pressed on the handle, released on the right quarter of `sc.to`: after that node
+      const t = await wordAt(p, sc.to);
+      if (!t) { res.fails.push('setup: no drop word'); return res; }
+      const tx = t[0] + (t[2] - t[0]) * 0.9, ty = (t[1] + t[3]) / 2;
+      await p.s('Input.dispatchMouseEvent', { type: 'mousePressed', x: b[0], y: b[1], button: 'left', clickCount: 1 });
+      for (let k = 1; k <= 8; k++) { await p.s('Input.dispatchMouseEvent', { type: 'mouseMoved', x: b[0] + (tx - b[0]) * k / 8, y: b[1] + (ty - b[1]) * k / 8, button: 'left', buttons: 1 }); await sleep(30); }
+      if (!await p.until(`document.querySelector('#play-pdf .pdf-forest-tag')?.textContent`, 2000)) res.fails.push('no drop tag while dragging');
+      await shot(p, res, 'drag');
+      await p.s('Input.dispatchMouseEvent', { type: 'mouseReleased', x: tx, y: ty, button: 'left', clickCount: 1 });
+    } else await p.mouse(b[0], b[1]);
     const text1 = await p.until(`satexHealth().text !== ${J(text0)} && satexHealth().text`, 8000);
     if (!text1) { res.fails.push('source unchanged'); return res; }
     if (!sc.want.test(text1)) res.fails.push(`source: ${J(text1.match(/\\begin\{forest\}[^]*?\\end\{forest\}/)?.[0]?.slice(0, 300))}, want ${sc.want}`);
@@ -686,12 +696,17 @@ async function forestScenario(p, sc) {
   const items = await p.until(`(() => { const m = document.querySelector('.pa-root'); return m && [...m.querySelectorAll(':scope > button')].map(${label}); })()`, 4000);
   if (!items) { res.fails.push('no node menu'); await shot(p, res, 'nomenu'); return res; }
   res.info.items = items.join(' | ');
-  if (!items.includes(sc.choose)) { res.fails.push(`no ${J(sc.choose)} in ${J(items)}`); return res; }
+  // `choose`: a row, or the rows down submenus to one
+  const path = [sc.choose].flat();
+  if (!items.includes(path[0])) { res.fails.push(`no ${J(path[0])} in ${J(items)}`); return res; }
   const text0 = await p.eval(`satexHealth().text`);
-  const row = await p.eval(`(() => { const b = [...document.querySelectorAll('.pa-root > button')].find((b) => (${label})(b) === ${J(sc.choose)}), r = b.getBoundingClientRect(); return [r.x + r.width / 2, r.y + r.height / 2]; })()`);
-  await p.s('Input.dispatchMouseEvent', { type: 'mouseMoved', x: row[0], y: row[1] });
-  await sleep(120);
-  await p.mouse(row[0], row[1]);
+  for (const [i, l] of path.entries()) {
+    const row = await p.eval(`(() => { const b = [...[...document.querySelectorAll('.pa-menu')].at(-1).querySelectorAll(':scope > button')].find((b) => (${label})(b) === ${J(l)}); if (!b) return null; const r = b.getBoundingClientRect(); return [r.x + Math.min(40, r.width / 2), r.y + r.height / 2]; })()`);
+    if (!row) { res.fails.push(`no ${J(l)} in the submenu`); return res; }
+    await p.s('Input.dispatchMouseEvent', { type: 'mouseMoved', x: row[0], y: row[1] });
+    await sleep(150);
+    if (i === path.length - 1) await p.mouse(row[0], row[1]);
+  }
   if (sc.input != null) {
     if (!await p.until(`document.querySelector('.tikz-input input')`, 2000)) { res.fails.push('no text input'); return res; }
     await p.eval(`(() => { const i = document.querySelector('.tikz-input input'); i.value = ${J(sc.input)}; })()`);
@@ -703,7 +718,7 @@ async function forestScenario(p, sc) {
   if (!sc.want.test(text1)) res.fails.push(`source: ${J(text1.match(/\\begin\{forest\}[^]*?\\end\{forest\}/)?.[0]?.slice(0, 300))}, want ${sc.want}`);
   // the rest of the file as it was
   const strip = (t) => t.replace(/\\begin\{forest\}[^]*?\\end\{forest\}/, '');
-  if (strip(text1) !== strip(text0)) res.fails.push('text outside the tree changed');
+  if (!sc.outside && strip(text1) !== strip(text0)) res.fails.push('text outside the tree changed');
   return res;
 }
 

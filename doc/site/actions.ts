@@ -325,6 +325,22 @@ declare global {
     }
     return out;
   }
+  /** A key as compared: spaces around `=` and runs of spaces dropped. */
+  const norm = (k: string) => k.trim().replace(/\s*=\s*/g, '=').replace(/\s+/g, ' ');
+  /** `s` (a statement written by a menu row) with the keys of part `i` that spell a document style's whole body (two keys
+   * or more, in any order) written as that style's name: `draw, rounded corners, fill=blue!10` becomes `box`. */
+  function preferStyle(ctx: PaCtx, s: string | null, i: number) {
+    const T = TM(), ks = s == null ? null : T.keysAt(s, i);
+    if (!ks?.length) return s;
+    const have = ks.map(norm);
+    for (const d of styles(ctx.all)) {
+      const body = d.body.split(/,(?![^{]*\})/).map(norm).filter(Boolean);
+      if (body.length < 2 || have.includes(d.name) || !body.every((b) => have.includes(b))) continue;
+      const at = have.findIndex((k) => body.includes(k)), rest = ks.filter((_, j) => !body.includes(have[j]!));
+      return T.withKeys(s!, i, [...rest.slice(0, at), d.name, ...rest.slice(at)]);
+    }
+    return s;
+  }
   /** Rows applying the document's named styles to part `i` (-1: the path), each ticked where used, with where it is defined. */
   function namedRows(ctx: PaCtx, stmt: string, i: number, put: (s: string | null) => void): PaItem[] {
     const T = TM(), ks = T.keysAt(stmt, i) ?? [], own = styles(ctx.text), seen = new Set<string>();
@@ -430,7 +446,7 @@ declare global {
     name: 'tikz-node', title: 'TikZ nodes', about: 'A node\'s shape, style, text, rotation and place in its picture, and new edges from it', type: 'tikz', targets: ['tikz-node'],
     groups(t, ctx) {
       const T = TM(), n: TikzNode = t.n, stmt = ctx.text.slice(n.from, n.to), now = T.shapeOf(n), looks = T.looks(n);
-      const put = (s: string | null, pre: PaEdit[] = []) => { if (s != null && s !== stmt) ctx.write([...pre, { from: n.from, to: n.to, now: s }]); };
+      const put = (s0: string | null, pre: PaEdit[] = []) => { const s = preferStyle(ctx, s0, n.i); if (s != null && s !== stmt) ctx.write([...pre, { from: n.from, to: n.to, now: s }]); };
       const shapeTo = (to: string, label: string, extra: string[] = []) => { const r = T.shape(stmt, n.i, n.pic, to, extra); if (r) { const pre = needs(ctx, ctx.facts?.shapes?.find((s: Rec) => s.name === to)?.load?.match(/^\\usetikzlibrary\{(.+)\}$/)?.[1] ?? r.library, label); if (pre) put(r.text, pre); } };
       const ks = T.keysAt(stmt, n.i) ?? [], sides = val(ks, 'regular polygon sides'), points = val(ks, 'star points');
       const shapes: PaItem[] = T.SHAPES.map(([k, label]) => k === 'regular polygon'
@@ -504,26 +520,36 @@ declare global {
       ...vary.map((f, i) => ({ label: f, head: i ? undefined : `${cur!.name} variant`, on: cur!.opts.includes(f), run: () => { const v = T.tipVary(now, f, !cur!.opts.includes(f)); if (v != null) pick(v); } }))];
   }
   /** Tip rows of a path: the common pairs, then each end on its own. `now` the path's arrow key, `to` writes a new one. */
-  function tipGroup(ctx: PaCtx, now: string, to: (spec: string, metaNeeded: boolean) => void): PaItem[] {
+  /** The arrow key a path's named style brings (`flow/.style={-Stealth, thick}`), the last style's that has one: its key and the style. */
+  function styleTip(ctx: PaCtx, opts: string[]): [string, string] | null {
+    const T = TM(), defs = styles(ctx.all);
+    for (const k of [...opts].reverse()) {
+      const d = defs.find((x) => x.name === k), keys = d ? d.body.split(/,(?![^{]*\})/).map((x) => x.trim()) : [];
+      const tip = keys.filter((x) => x.includes('-') && T.tipEnds(x)).at(-1);
+      if (tip) return [tip, k];
+    }
+    return null;
+  }
+  function tipGroup(ctx: PaCtx, now: string, to: (spec: string, metaNeeded: boolean) => void, from: string | null = null): PaItem[] {
     const T = TM(), [s, e] = T.tipEnds(now) ?? ['', ''], declared = new Set((ctx.facts?.tips ?? []).map((x: Rec) => String(x.name)));
     // a run that declared arrows.meta's tips has the library
     const loaded = [...declared].some((d) => META.test(d)), meta = (t: string) => !loaded && META.test(T.tipParts(t)?.name ?? t);
     const put = (a: string, b: string) => to(T.tipSpec(a, b), meta(a) || meta(b));
-    return [...TIPS.map(([label, v]) => ({ label, on: T.tipSpec(...(T.tipEnds(v) ?? ['', ''])) === T.tipSpec(s, e), run: () => put(...(T.tipEnds(v) ?? ['', ''])) })),
+    return [...TIPS.map(([label, v], i) => ({ label, head: i || !from ? undefined : `From style ${from}`, on: T.tipSpec(...(T.tipEnds(v) ?? ['', ''])) === T.tipSpec(s, e), run: () => put(...(T.tipEnds(v) ?? ['', ''])) })),
       { label: 'Start', head: 'Each end', items: tipRows(ctx, s, true, (t) => put(t, e)) }, { label: 'End', items: tipRows(ctx, e, false, (t) => put(s, t)) }];
   }
   self.satexPageActions.register({
     name: 'tikz-edge', title: 'TikZ paths', about: 'A path\'s arrow tips, color, width, dash, routing (straight, right angles, bends, angles) and a new label', type: 'tikz', targets: ['tikz-edge'],
     groups(t, ctx) {
       const T = TM(), e: TikzEdge = t.e, k: number = t.k, stmt = ctx.text.slice(e.from, e.to), tip = T.tipOf(e), g = T.segOf(stmt, k);
-      const put = (s: string | null, pre: PaEdit[] = []) => { if (s != null && s !== stmt) ctx.write([...pre, { from: e.from, to: e.to, now: s }]); };
+      const put = (s0: string | null, pre: PaEdit[] = []) => { const s = preferStyle(ctx, s0, -1); if (s != null && s !== stmt) ctx.write([...pre, { from: e.from, to: e.to, now: s }]); };
       const tipTo = (v: string, meta: boolean) => { const pre = needs(ctx, meta ? 'arrows.meta' : null, `The ${v} tip`); if (pre) put(T.tip(stmt, v), pre); };
       const bent = g?.keys.map((x) => /^bend (left|right)(?:\s*=\s*(.*))?$/.exec(x)).find(Boolean), angles = !!g?.keys.some((x) => /^(in|out)\s*=/.test(x));
       const bendRows = (side: string): PaItem[] => [...['15', '30', '45', '60'].map((a) => ({ label: `${a}°`, on: bent?.[1] === side && (bent[2] ?? '30') === a, run: () => put(T.bend(stmt, k, side, +a)) })),
         custom(ctx, 'Custom…', 'the bend angle in degrees', bent?.[2] ?? '30', (v) => { if (Number.isFinite(+v)) put(T.bend(stmt, k, side, +v)); })];
       const loose = /^looseness\s*=\s*(.*)$/.exec(g?.keys.find((x) => /^looseness/.test(x)) ?? '')?.[1] ?? '1';
       return [
-        { title: 'Arrow tips', items: tipGroup(ctx, tip, tipTo) },
+        { title: 'Arrow tips', items: tip ? tipGroup(ctx, tip, tipTo) : ((st) => tipGroup(ctx, st?.[0] ?? '', tipTo, st?.[1] ?? null))(styleTip(ctx, e.opts)) },
         { title: 'Style', items: styleRows(ctx, stmt, -1, put, true) },
         ...(g ? [{ title: 'Route', items: [
           { label: 'Straight', on: g.kind === '--' || (g.kind === 'to' && !bent && !angles), run: () => put(g.kind === 'to' ? T.bend(stmt, k, null) : T.route(stmt, k, '--')) },
@@ -575,9 +601,50 @@ declare global {
           ...(parent ? [{ label: 'Add sibling', run: () => write(() => { FOREST.addSibling(tree, n); }) }, { label: n.children.length ? 'Delete with its subtree' : 'Delete', run: () => write(() => { FOREST.remove(tree, n); }) }] : [])] },
         { title: 'Text', inline: true, items: [{ label: 'Edit text…', run: () => ask(ctx.x, ctx.y, n.content, 'the text of the node', (v) => write(() => { n.content = v; })) }] },
         ...(FOREST.presetOf(tree) ? [] : [{ title: 'Preset', inline: true, items: [{ label: 'Transform to feature model', run: () => toPreset(ctx, t.f, 'feature model') }] }]),
+        ...(FOREST.presetOf(tree) === 'feature model' && styleBody(ctx.all, 'fm feature') ? [{ title: 'Feature model look', items: fmLookRows(ctx) }] : []),
       ];
     },
   });
+  /** The body of style `name`'s definition in `text` (`name/.style={…}`): its range inside the braces, null when not there. */
+  function styleBody(text: string, name: string): [number, number] | null {
+    const m = new RegExp(`(^|[,{\\s])${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*/\\.style\\s*=\\s*\\{`).exec(text);
+    if (!m) return null;
+    const a = m.index + m[0].length;
+    for (let k = a, d = 1; k < text.length; k++) { if (text[k] === '\\') { k++; continue; } if (text[k] === '{') d++; else if (text[k] === '}' && !--d) return [a, k]; }
+    return null;
+  }
+  /** The keys of a style body split at its top-level commas. */
+  const bodyKeys = (b: string) => { const out = ['']; let d = 0; for (const c of b) { if (c === '{') d++; if (c === '}') d--; if (c === ',' && !d) out.push(''); else out[out.length - 1] += c; } return out.map((k) => k.trim()).filter(Boolean); };
+  /** The edit setting key `key` of style `name` in `text` to `value` (null: the key goes; '' a bare key), keeping its other keys. */
+  function styleKeySet(text: string, name: string, key: string, value: string | null): PaEdit | null {
+    const r = styleBody(text, name);
+    if (!r) return null;
+    const ks = bodyKeys(text.slice(r[0], r[1])), at = ks.findIndex((k) => k.split('=')[0]!.trim() === key), rest = ks.filter((k) => k.split('=')[0]!.trim() !== key);
+    if (value != null) rest.splice(at < 0 ? rest.length : at, 0, value === '' ? key : `${key}=${value}`);
+    return { from: r[0], to: r[1], now: rest.join(', ') };
+  }
+  /** The value of key `key` in style `name` of `text` ('' bare, null absent). */
+  const styleKeyOf = (text: string, name: string, key: string) => { const r = styleBody(text, name), k = r && bodyKeys(text.slice(r[0], r[1])).find((x) => x.split('=')[0]!.trim() === key); return k == null ? null : k.includes('=') ? k.slice(k.indexOf('=') + 1).trim() : ''; };
+  /** A feature model's look, set in its `\forestset` styles: level and sibling distance, which way it grows, arrow ends,
+   * and how far a group's arc bends. Each row one edit of the document's style definitions. */
+  function fmLookRows(ctx: PaCtx): PaItem[] {
+    const F = 'fm feature', t = ctx.text, set = (e: (PaEdit | null)[]) => { if (e.every(Boolean)) ctx.write(e); else ctx.toast('The feature model\'s styles are not in this file: change them where its \\forestset is'); };
+    const len = (key: string, list: string[]): PaItem[] => list.map((v) => ({ label: v, on: styleKeyOf(t, F, key) === v, run: () => set([styleKeySet(t, F, key, v)]) }));
+    const east = styleKeyOf(t, F, "grow'") === '0' || styleKeyOf(t, F, 'grow') === 'east', edge = styleKeyOf(t, F, 'edge');
+    /** The edit growing the tree `grow'=g` (null: down, forest's default) with its edges from anchor `pa` to `ca`. */
+    const grow = (g: string | null, pa: string, ca: string) => { const r = styleBody(t, F); if (!r) return null; const ks = bodyKeys(t.slice(...r)).filter((k) => !/^(grow'?|parent anchor|child anchor)\s*=/.test(k));
+      return { from: r[0], to: r[1], now: [...ks, ...(g == null ? [] : [`grow'=${g}`]), `parent anchor=${pa}`, `child anchor=${ca}`].join(', ') }; };
+    // the arc of `fm alternative` and `fm or`: one bend for both
+    const bendOf = (n: string) => { const r = styleBody(t, n); return r && /bend right=(\d+)/.exec(t.slice(...r))?.[1]; };
+    const bends = (deg: string) => ['fm alternative', 'fm or'].map((n) => { const r = styleBody(t, n); return r && { from: r[0], to: r[1], now: t.slice(...r).replace(/bend right=\d+/g, `bend right=${deg}`) }; });
+    return [
+      { label: 'Level distance (l sep)', items: len('l sep', ['4mm', '8mm', '12mm']) },
+      { label: 'Sibling distance (s sep)', items: len('s sep', ['2mm', '4mm', '8mm']) },
+      { label: 'Grows', items: [{ label: 'down (edges south to north)', on: !east, run: () => set([grow(null, 'south', 'north')]) }, { label: 'right (edges east to west)', on: east, run: () => set([grow('0', 'east', 'west')]) }] },
+      { label: 'Arrow ends', items: [['none', null], ['→ to the child', '{->}'], ['← to the parent', '{<-}']].map(([l, v]) => ({ label: l!, on: (edge ?? null) === v, run: () => set([styleKeySet(t, F, 'edge', v)]) })) },
+      { label: 'Group arcs', items: ['25', '35', '50'].map((d) => ({ label: `bend ${d}°`, on: bendOf('fm alternative') === d, run: () => set(bends(d)) })) },
+    ];
+  }
   /** Tree `f` with preset `p` on (its key in `for tree`) and the preset's styles in a `\forestset` above `\begin{document}`
    * once, as the forest widget writes them; one undo step. A file without `\begin{document}` is told the styles it lacks. */
   function toPreset(ctx: PaCtx, f: Rec, p: string) {

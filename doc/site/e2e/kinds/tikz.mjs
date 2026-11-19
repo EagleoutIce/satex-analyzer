@@ -34,6 +34,8 @@ async function build(p, ms = 180000) {
 /** The screen box of the `nth` page word `word` (scrolled into view). */
 async function word(p, w, nth = 0) {
   return p.eval(`(async () => {
+    // a build landing replaces the pages: their words come a moment later, so the word is waited for
+    for (let k = 0; k < 40 && !satexPdfWords().filter((x) => x[5] === ${J(w)})[${nth}]; k++) await new Promise((ok) => setTimeout(ok, 250));
     const ws = satexPdfWords().filter((x) => x[5] === ${J(w)}), x = ws[${nth}]; if (!x) { self.__missing = { want: ${J(w)}, words: satexPdfWords().map((x) => x[5]).join(' ').slice(0, 300), build: document.querySelector('#play-pdf .pdf-page img')?.__build?.text === satexHealth().text, status: document.getElementById('pdf-status')?.textContent }; return null; }
     const img = () => document.querySelector('#play-pdf .pdf-page[data-page="' + x[0] + '"] img'), sc = document.querySelector('#play-pdf .pdf-pages'), dpi = satexPdfWords().dpi;
     let r = img().getBoundingClientRect(), k = r.width / (img().naturalWidth * 72 / dpi);
@@ -140,8 +142,8 @@ export async function tikz(p, sc) {
     } });
     // paths
     await act(p, 'edge-tip-both', between('source', 'run'), ['Arrow tips', '↔'], /\\draw\[flow, <->\] \(src\) -- \(run\);/, { shot: true });
-    // each end on its own, the tips drawn by TeX beside their names
-    await act(p, 'edge-tip-start', between('source', 'run'), ['Arrow tips', 'Start', 'Kite'], /\\draw\[flow, Kite-\] \(src\) -- \(run\);/, { shot: true });
+    // each end on its own, the tips drawn by TeX beside their names; the end `flow` brings stays
+    await act(p, 'edge-tip-start', between('source', 'run'), ['Arrow tips', 'Start', 'Kite'], /\\draw\[flow, Kite-Stealth\] \(src\) -- \(run\);/, { shot: true });
     {
       const r = { name: 'edge-tip-previews', fails: [], info: {} };
       try {
@@ -152,12 +154,14 @@ export async function tikz(p, sc) {
           await p.s('Input.dispatchMouseEvent', { type: 'mouseMoved', x: at[0], y: at[1] });
           await sleep(160);
         }
-        const got = await p.eval(`(() => { const m = [...document.querySelectorAll('.pa-menu')].at(-1); return { rows: m.querySelectorAll(':scope > button').length, imgs: [...m.querySelectorAll('img.pa-img')].filter((i) => i.naturalWidth > 0).length, heads: [...m.querySelectorAll(':scope > b')].map((b) => b.textContent) }; })()`);
+        const got = await p.eval(`(() => { const m = [...document.querySelectorAll('.pa-menu')].at(-1); return { rows: m.querySelectorAll(':scope > button').length, imgs: [...m.querySelectorAll('img.pa-img')].filter((i) => i.naturalWidth > 0).length, heads: [...m.querySelectorAll(':scope > b')].map((b) => b.textContent), on: [...m.querySelectorAll('[aria-checked=true] span')].map((s) => s.textContent) }; })()`);
         r.info = got;
         await p.shot('edge-tip-previews.png');
         if (got.rows < 25) r.fails.push(`only ${got.rows} tips`);
         if (got.imgs < 15) r.fails.push(`only ${got.imgs} pictures`);
         if (!got.heads.includes('arrows.meta')) r.fails.push(`heads ${J(got.heads)}`);
+        // `flow` brings -Stealth: its end is ticked
+        if (!got.on.includes('Stealth')) r.fails.push(`ticked ${J(got.on)}, want Stealth from the style flow`);
       } catch (e) { r.fails.push(String(e.message)); }
       await p.eval(`document.querySelectorAll('.pa-menu').forEach((e) => e.remove())`);
       results.push(r);
@@ -212,7 +216,17 @@ export async function tikz(p, sc) {
         r.info = got;
         if (got.lines < 8 || got.axes !== 2 || !got.labels.includes('0')) r.fails.push(`grid ${JSON.stringify(got)}`);
         if (await text(p) !== t0) r.fails.push('the grid wrote text');
-        await rclick(p, node);
+        // a line typed above the picture moves its offset: the grid stays with the picture
+        await p.eval(`document.querySelector('.cm-content').focus()`);
+        await p.s('Input.dispatchKeyEvent', { type: 'rawKeyDown', key: 'Home', code: 'Home', modifiers: 2, windowsVirtualKeyCode: 36 });
+        await p.s('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Home', code: 'Home', modifiers: 2, windowsVirtualKeyCode: 36 });
+        await p.s('Input.insertText', { text: '% moved\n' });
+        await build(p);
+        if (!await p.until(`document.querySelector('#play-pdf svg.pdf-tikz-grid')`, 5000)) r.fails.push('the grid went when a line was typed above the picture');
+        await undo(p);
+        await build(p);
+        const node2 = mid(await word(p, 'run')) ?? node;
+        await rclick(p, node2);
         await choose(p, ['Show grid']);
         if (!await p.until(`!document.querySelector('#play-pdf svg.pdf-tikz-grid')`, 3000)) r.fails.push('the grid stayed after switching it off');
       } catch (e) { r.fails.push(String(e.message)); await p.shot('picture-grid-fail.png').catch(() => {}); }
@@ -225,7 +239,7 @@ export async function tikz(p, sc) {
     // a label added, then its own menu, then typed into
     await act(p, 'edge-label-add', between('source', 'run'), ['Label', 'Add label, above…'], /\\draw\[flow\] \(src\) -- node\[midway, above\] \{feeds\} \(run\);/, { then: () => typeIn(p, 'feeds') });
     // put the label back for the label menu
-    const withLabel = (await text(p)).replace('\\draw[flow] (src) -- (run);', '\\draw[flow] (src) -- node[midway, above] {feeds} (run);');
+    const noLabel = await text(p), withLabel = noLabel.replace('\\draw[flow] (src) -- (run);', '\\draw[flow] (src) -- node[midway, above] {feeds} (run);');
     await p.eval(`document.querySelector('.cm-content').focus()`);
     await p.s('Input.dispatchKeyEvent', { type: 'rawKeyDown', key: 'a', code: 'KeyA', modifiers: 2, windowsVirtualKeyCode: 65 });
     await p.s('Input.dispatchKeyEvent', { type: 'keyUp', key: 'a', code: 'KeyA', modifiers: 2, windowsVirtualKeyCode: 65 });
@@ -248,6 +262,24 @@ export async function tikz(p, sc) {
       } catch (e) { r.fails.push(String(e.message)); }
       log(`${r.fails.length ? 'FAIL' : 'pass'} ${r.name} ${J(r.info)}${r.fails.map((f) => `\n    ${f}`).join('')}`);
       results.push(r);
+    }
+    // a write that leaves a path with the keys of a document style names the style: `-Stealth` there, `thick` picked, `flow`
+    {
+      await p.eval(`document.querySelector('.cm-content').focus()`);
+      await p.s('Input.dispatchKeyEvent', { type: 'rawKeyDown', key: 'a', code: 'KeyA', modifiers: 2, windowsVirtualKeyCode: 65 });
+      await p.s('Input.dispatchKeyEvent', { type: 'keyUp', key: 'a', code: 'KeyA', modifiers: 2, windowsVirtualKeyCode: 65 });
+      await p.s('Input.insertText', { text: noLabel.replace('\\draw[dashed] (note) -- (run);', '\\draw[dashed, -Stealth] (note) -- (run);') });
+      await build(p);
+      const down = async () => { const a = await word(p, 'run'), b = await word(p, 'pass'); return a && b && [(a.l + a.r) / 2, (a.b + b.t) / 2]; };
+      await act(p, 'style-prefer', down, ['Style', 'Line width', 'thick (0.8pt)'], /\\draw\[dashed, flow\] \(note\) -- \(run\);/, { compile: false });
+    }
+    // the label taken out again: the paths below are clicked where it stood
+    {
+      await p.eval(`document.querySelector('.cm-content').focus()`);
+      await p.s('Input.dispatchKeyEvent', { type: 'rawKeyDown', key: 'a', code: 'KeyA', modifiers: 2, windowsVirtualKeyCode: 65 });
+      await p.s('Input.dispatchKeyEvent', { type: 'keyUp', key: 'a', code: 'KeyA', modifiers: 2, windowsVirtualKeyCode: 65 });
+      await p.s('Input.insertText', { text: noLabel });
+      await build(p);
     }
     // the rotate handle: pressed above the node, dragged to its left (90°)
     {

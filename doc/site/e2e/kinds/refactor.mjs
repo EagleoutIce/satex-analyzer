@@ -11,9 +11,10 @@ const view = `document.querySelector('#play-editor .cm-editor').satexView`;
 const toastNow = (p) => p.eval(`document.getElementById('play-toast')?.textContent ?? ''`);
 /** The pages of the text now: the write's own rebuild, else Compile pressed; `{ ok, status }`. */
 async function built(p) {
-  const fresh = `(() => { const i = document.querySelector('#play-pdf .pdf-page img'); return i?.__build?.text === satexHealth().text && !document.querySelector('#play-pdf.pdf-running'); })()`;
+  const fresh = `(() => [...document.querySelectorAll('#play-pdf .pdf-page img')].some((i) => i.__build?.text === satexHealth().text) && !document.querySelector('#play-pdf.pdf-running'))()`;
   if (await p.until(fresh, 60000)) return { ok: true, status: await p.eval(`document.getElementById('pdf-status')?.textContent ?? ''`) };
-  return build(p);
+  const b = await build(p);
+  return b.ok ? b : { ok: false, status: `no pages of the new text: ${b.status}` };
 }
 /** One PDF action: the menu at `at()`, `path`, `then`; the text checked (a write waits behind a running analysis),
  * built unless `keep`, undone by one Ctrl+Z. */

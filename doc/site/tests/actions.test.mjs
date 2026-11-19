@@ -320,6 +320,78 @@ test('forest: transform to feature model', withStore(() => {
   assert.equal((run(own).match(/fm feature\/\.style/g) ?? []).length, 1, 'the document\'s own styles kept');
 }));
 
+// Intuition: a picture is named by its place among the file's pictures, so a grid switched on stays on its picture when
+// text above it changes (its offset moves, its ordinal does not); a commented-out picture is none. Pins the grid keyed by
+// offset, lost on the first key typed above the picture.
+test('pictures by ordinal', () => {
+  const a = 'x\n\\begin{tikzpicture}\\end{tikzpicture}\n% \\begin{tikzpicture}\n\\begin{tikzpicture}\\end{tikzpicture}', b = `more text\n${a}`;
+  const second = a.lastIndexOf('\\begin{tikzpicture}');
+  assert.equal(T.picOrdinal(a, second), 1);
+  assert.equal(T.picAt(b, T.picOrdinal(a, second)), b.lastIndexOf('\\begin{tikzpicture}'));
+  assert.equal(T.picOrdinal(a, 5), -1);
+  assert.equal(T.picAt(a, 2), null);
+  assert.equal(T.nodes(wrap('\\node (a) {A};'))[0].pic.at, T.picAt(wrap('\\node (a) {A};'), 0), 'the offsets the node parser gives');
+});
+
+// Intuition: a path without a tip of its own draws the tip its style brings, so the menu ticks that one and says where it
+// comes from; a pick writes the tip after the style, so it wins. Pins `\draw[flow]` (flow: -Stealth) ticked "none".
+test('arrow tips from a style', withStore(() => {
+  const text = '\\tikzset{flow/.style={-Stealth, thick}}\n\\begin{tikzpicture}\n\\node (a) {A}; \\node (b) at (2,0) {B};\n\\draw[flow] (a) -- (b);\n\\end{tikzpicture}\n';
+  const e = T.edges(text)[0], c = ctxOf(text, null, { tips: [{ name: 'Stealth' }] }), items = PA.groups({ kind: 'tikz-edge', e, k: 0 }, c).find((g) => g.title === 'Arrow tips').items;
+  assert.equal(items[0].head, 'From style flow');
+  assert.equal(items.find((r) => r.label === 'none').on, false);
+  assert.equal(items.find((r) => r.label === 'End').items.find((r) => r.label === 'Stealth').on, true);
+  items.find((r) => r.label === 'Start').items.find((r) => r.label === 'Latex').run();
+  assert.match(edit(text, c.writes[0]), /\\draw\[flow, Latex-Stealth\]/);
+  const own = text.replace('[flow]', '[flow, ->]'), c2 = ctxOf(own, null, { tips: [] });
+  const it2 = PA.groups({ kind: 'tikz-edge', e: T.edges(own)[0], k: 0 }, c2).find((g) => g.title === 'Arrow tips').items;
+  assert.equal(it2[0].on, true, 'its own tip ticked');
+  assert.equal(it2[0].head, undefined);
+}));
+
+// Intuition: when a menu row leaves a part with the very keys a document style holds, the write names the style instead,
+// in the place of its first key; a style of one key, or one only partly matched, leaves the keys as they are. Pins a path
+// given `thick` beside `-Stealth` that kept both raw where `flow` says the same.
+test('writes prefer a matching document style', withStore(() => {
+  const head = '\\tikzset{flow/.style={-Stealth, thick}, hot/.style={fill=red!20}, box/.style={draw, rounded corners, fill=blue!10}}\n';
+  const text = `${head}\\begin{tikzpicture}\n\\node (a) {A}; \\node (b) at (2,0) {B};\n\\draw[-Stealth, red] (a) -- (b);\n\\end{tikzpicture}\n`;
+  const e = T.edges(text)[0], c = ctxOf(text, null, { tips: [{ name: 'Stealth' }] });
+  const style = PA.groups({ kind: 'tikz-edge', e, k: 0 }, c).find((g) => g.title === 'Style').items;
+  style.find((r) => r.label === 'Line width').items.find((r) => /^thick/.test(r.label)).run();
+  assert.match(edit(text, c.writes[0]), /\\draw\[flow, red\] \(a\) -- \(b\);/);
+  const t2 = text.replace('\\node (a) {A};', '\\node[draw, fill = blue!10] (a) {A};'), n = T.nodes(t2)[0], c2 = ctxOf(t2);
+  PA.groups({ kind: 'tikz-node', n }, c2).find((g) => g.title === 'Style').items.find((r) => r.label === 'Rounded corners').items.find((r) => r.label === '4pt').run();
+  assert.match(edit(t2, c2.writes[0]), /\\node\[draw, fill = blue!10, rounded corners=4pt\] \(a\)/, 'rounded corners=4pt is not the style\'s key');
+  const c3 = ctxOf(t2);
+  PA.groups({ kind: 'tikz-node', n }, c3).find((g) => g.title === 'Style').items.find((r) => r.label === 'Fill color').items.find((r) => r.label === 'None').run();
+  assert.match(edit(t2, c3.writes[0]), /\\node\[draw, fill=none\] \(a\)|\\node\[draw\] \(a\)/, 'no style of one key, none partly matched');
+}));
+
+// Intuition: a feature model's look is its `\forestset` styles: each row rewrites one key of `fm feature` (or the arc's bend
+// in both group styles), keeps every other key, ticks the value in force, and the document still parses as a tree. Pins
+// a growth switch that left the old anchors (edges from the south of a tree growing right).
+test('forest: feature model look via its styles', withStore(() => {
+  const SITE = new URL('../', import.meta.url), text = readFileSync(new URL('examples/feature-model.tex', SITE), 'utf8'), F = self.satexViews.forest;
+  const from = text.indexOf('\\begin{forest}') + 14, to = text.indexOf('\\end{forest}'), t = F.parse(text.slice(from, to));
+  const rows = (tx) => PA.groups({ kind: 'forest-node', f: { from, to, body: tx.slice(from, to), t, n: t.root } }, ctxOf(tx)).find((g) => g.title === 'Feature model look').items;
+  const run = (tx, ...path) => { const c = ctxOf(tx); const its = PA.groups({ kind: 'forest-node', f: { from, to, body: tx.slice(from, to), t, n: t.root } }, c).find((g) => g.title === 'Feature model look').items;
+    path.reduce((r, l, i) => { const x = r.find((y) => y.label === l); assert.ok(x, l); if (i === path.length - 1) x.run(); return x.items; }, its); return edit(tx, c.writes[0]); };
+  assert.equal(rows(text)[0].items.find((r) => r.on).label, '8mm', 'l sep in force ticked');
+  const wide = run(text, 'Level distance (l sep)', '12mm');
+  assert.match(wide, /fm feature\/\.style=\{draw, rounded corners=1pt, font=\\sffamily, inner sep=3pt, parent anchor=south, child anchor=north, l sep=12mm, s sep=4mm\}/);
+  const right = run(text, 'Grows', 'right (edges east to west)');
+  assert.match(right, /fm feature\/\.style=\{[^}]*grow'=0, parent anchor=east, child anchor=west\}/);
+  assert.doesNotMatch(right.slice(right.indexOf('fm feature/'), right.indexOf('fm abstract')), /anchor=south|anchor=north/, 'the old anchors go');
+  assert.equal(rows(right).find((r) => r.label === 'Grows').items[1].on, true);
+  assert.equal(run(right, 'Grows', 'down (edges south to north)').slice(0, 900), text.replace('parent anchor=south, child anchor=north, l sep=8mm, s sep=4mm', 'l sep=8mm, s sep=4mm, parent anchor=south, child anchor=north').slice(0, 900), 'and back');
+  assert.match(run(text, 'Arrow ends', '→ to the child'), /s sep=4mm, edge=\{->\}\}/);
+  const bent = run(text, 'Group arcs', 'bend 50°');
+  assert.equal((bent.match(/bend right=50/g) ?? []).length, 2, 'both group styles');
+  assert.equal(F.parse(bent.slice(from, bent.indexOf('\\end{forest}'))).root.children.length, 3);
+  // no styles in the document: no rows
+  assert.equal(PA.groups({ kind: 'forest-node', f: { from: 14, to: 40, body: '', t, n: t.root } }, ctxOf('\\begin{forest}[a [b]]\\end{forest}')).some((g) => g.title === 'Feature model look'), false);
+}));
+
 // Intuition: the forest plugin's rows rewrite the tree as the forest widget emits it; the table plugin's rows name
 // the column's letters. Pins the menus moved from the playground losing a row.
 test('forest and table rows', withStore(() => {

@@ -110,3 +110,10 @@ test('every layer has a themed swatch', async () => {
     assert.doesNotMatch(rule[1], /#[0-9a-f]{3,8}\b/i, `.sw-${k} names a bare colour, not a token`);
   }
 });
+// The Typeset math layer (user 2026-11-19) tints the run's math marks: one band per stretch of one mode, none where
+// the mode is unset (pins runsBy, which also groups the origins' runs).
+test('runs of one key', async () => {
+  const L = self.satexLayers;
+  assert.deepEqual(L.runsBy(['inline', 'inline', null, 'display', 'display', 'inline'], (x) => x), [['inline', 0, 1], ['display', 3, 4], ['inline', 5, 5]]);
+  assert.deepEqual(L.runsBy([null, ''], (x) => x), []);
+});

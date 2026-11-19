@@ -3641,7 +3641,10 @@
     // a plugin without settings is a plain line: always on
     const plugin = (p) => {
       if (p.pa) return paSwitch(p.pa);
-      if (p.keys) return section(p.name, p.name, p.about, keys.filter((k) => p.keys.includes(k.key)), !!q);
+      // a key this build's schema lacks yet: its name, set in the YAML tab
+      const own = p.keys && keys.filter((k) => p.keys.includes(k.key));
+      if (own?.length) return section(p.name, p.name, p.about, own, !!q);
+      if (own) return `<li class="cfg-plain"><b>${escape(p.name)}</b><span>${inline(p.about)}</span><span class="muted">${p.keys.map((k) => `<code>${escape(k)}</code>`).join(' ')}</span></li>`;
       const ks = keys.filter((k) => pluginOf(k) === tileBase(p) && (!q || hits.includes(k) || named(p)));
       return ks.length ? section(tileBase(p), p.name, p.about, ks, !!q) : `<li class="cfg-plain" title="${escape(p.about.replaceAll('`', ''))}"><b>${escape(p.name)}</b><span>${inline(p.about)}</span><span class="muted">always on</span></li>`;
     };
@@ -7818,7 +7821,8 @@
     const r = await lsp('satex/dialogApply', { textDocument: { uri: target }, kind: 'snapshot', nodes: Array.isArray(node) ? node : [{ ...node, body }] }).catch((e) => ({ notes: [String(e?.message ?? e)] }));
     // the text moved on during the round trip: null, the caller may print again
     if (uri() !== target || version !== v) return uri() === target ? null : false;
-    if (!r?.edits?.length) { if (r?.notes?.length) toast(r.notes.join('; ')); return false; }
+    // `how.say`: a refusal without a note is said too (a menu's write that does nothing looks like a lost click)
+    if (!r?.edits?.length) { if (r?.notes?.length || how?.say) toast(r?.notes?.length ? r.notes.join('; ') : 'The language server wrote nothing for this change'); return false; }
     editor.apply(r.edits, how);
     push();
     return true;
@@ -7979,7 +7983,7 @@
     const lock = deps ? ` ${free ? `Unlocked: a drag moves only ${what}, the ${plural(deps, 'node')} placed from it stay where they are` : `Locked: the ${plural(deps, 'node')} placed from it move along`}. Click to ${free ? 'lock' : 'unlock'}.` : '';
     el.innerHTML = cls.includes('ghost') ? `<b>${escape(label)}</b>` : `<i class="pdf-tikz-grip${deps ? ` pdf-tikz-lock${free ? ' pdf-tikz-free' : ''}` : ''}" title="Drag to move ${escape(what)}${p.n.kind === 'label' ? ' along its path' : ''}: it snaps to the other nodes (Shift: no snapping, Ctrl: on the picture's grid, Alt: to a fixed place).${escape(lock)} Right click: its shape, style, text, rotation and new edges"></i>` +
       (p.n.kind === 'node' ? `<i class="pdf-tikz-rot" title="Drag to rotate ${escape(what)} in 15° steps (Shift: 1°)"></i>` : '') +
-      (cls.includes('ghost') ? '' : `<i class="pdf-tikz-gridbtn${tikzGridOn.has(p.n.pic.at) ? ' on' : ''}" role="button" title="The grid of this picture, in its units (Ctrl snaps to it)"></i>`);
+      (cls.includes('ghost') ? '' : `<i class="pdf-tikz-gridbtn${tikzGrid(p.n.pic.at) ? ' on' : ''}" role="button" title="The grid of this picture, in its units (Ctrl snaps to it)"></i>`);
     el.dataset.k = String(tikzSeen.list.indexOf(p));
     host.append(el);
   }
@@ -8102,7 +8106,7 @@
   pdfBody.addEventListener('pointerdown', (e) => {
     if (e.button !== 0 || pdfDrag || tikzMoving || tikzLink || e.target.closest?.('.pa-menu, .tikz-input')) return;
     const gb = e.target.closest?.('.pdf-tikz-gridbtn');
-    if (gb) { e.preventDefault(); e.stopPropagation(); const p = tikzSeen?.list[+gb.closest('.pdf-tikz').dataset.k]; if (p) gb.classList.toggle('on', tikzGrid(p.n.pic.at, !tikzGridOn.has(p.n.pic.at))); return; }
+    if (gb) { e.preventDefault(); e.stopPropagation(); const p = tikzSeen?.list[+gb.closest('.pdf-tikz').dataset.k]; if (p) gb.classList.toggle('on', tikzGrid(p.n.pic.at, !tikzGrid(p.n.pic.at))); return; }
     const rot = e.target.closest?.('.pdf-tikz-rot');
     if (rot) { e.preventDefault(); e.stopPropagation(); tikzRotate(e, tikzSeen?.list[+rot.closest('.pdf-tikz').dataset.k]); return; }
     const grip = e.target.closest?.('.pdf-tikz-grip'), hit = grip ? { p: tikzSeen?.list[+grip.closest('.pdf-tikz').dataset.k] } : tikzHit(tikzPoint(e));
@@ -8287,16 +8291,20 @@
     };
     for (const [t, f] of [['pointermove', move], ['pointerup', end], ['pointercancel', end], ['keydown', key]]) addEventListener(t, f);
   }, true);
-  /** The pictures whose grid shows, by their offset in the text: switched per picture for this session. var: the overlay may draw before this line ran. */
+  /** The pictures whose grid shows, this session: `file#k`, the file's k-th picture, so an edit above it keeps it.
+   * var: the overlay may draw before this line ran. */
   var tikzGridOn = new Set();
-  const tikzGrid = (at, on) => { if (on != null) { if (on) tikzGridOn.add(at); else tikzGridOn.delete(at); tikzGridDraw(); } return tikzGridOn.has(at); };
+  const tikzGridKey = (at) => `${state.file}#${TM.picOrdinal(editor.text(), at)}`;
+  const tikzGrid = (at, on) => { const k = tikzGridKey(at); if (on != null) { if (on) tikzGridOn.add(k); else tikzGridOn.delete(k); tikzGridDraw(); } return tikzGridOn.has(k); };
   /** The grid of each picture switched on: lines every half unit of its own units (whole units stronger), over its nodes and
    * paths and a step around, the axes through its origin labelled. In bp over the page, as the picture's transform puts it. */
   function tikzGridDraw() {
     for (const el of pdfBody.querySelectorAll('.pdf-tikz-grid')) el.remove();
     if (!tikzGridOn?.size || pdf?.slice) return;
     const text = editor.text(), all = tikzPlaced(), NS = 'http://www.w3.org/2000/svg';
-    for (const at of tikzGridOn) {
+    for (const key of tikzGridOn) {
+      const cut = key.lastIndexOf('#'), at = key.slice(0, cut) === state.file ? TM.picAt(text, +key.slice(cut + 1)) : null;
+      if (at == null) continue;
       const ns = all.filter((q) => q.n.pic.at === at), o = ns.find((q) => q.origin);
       if (!o) continue;
       const pic = o.n.pic, k = pic.scale * CM, end = text.indexOf('\\end{tikzpicture}', at);
@@ -8394,8 +8402,12 @@
     if (body === text.slice(a, b)) return false;
     // a caret typing elsewhere holds an offset in the text before this write: it ends, never echoes the wrong span
     if (pdfCaret) pdfCaretOff();
-    const ok = await pdfWrite(uri(), self.satexSnapshot.span({ start: tikzPos(text, a), end: tikzPos(text, b) }, text.slice(a, b), body), body);
+    const send = () => pdfWrite(uri(), self.satexSnapshot.span({ start: tikzPos(text, a), end: tikzPos(text, b) }, text.slice(a, b), body), body, { say: true });
+    let ok = await send();
+    // the text moved during the round trip (null) yet is the same again: printed once more
+    if (ok === null && editor.text() === text) ok = await send();
     if (ok) pdfRebuild(true);
+    else if (ok === null) toast('The text changed meanwhile: nothing was written');
     return ok;
   }
   /** The run's facts of the picture at offset `at` (its shapes and their libraries, colors, arrow tips: the tikz plugin's `run`), asked once per text. */
@@ -8612,7 +8624,7 @@
     if (!w) return;
     const [pw, ph] = pageSize(img), el = Object.assign(document.createElement('span'), { className: 'pdf-forest-add' });
     el.style.cssText = `left:${(w[3] + 2) / pw * 100}%;top:${w[2] / ph * 100}%`;
-    el.innerHTML = `<button type="button" data-add="child" title="Add a child below ${escape(f.n.content || 'this node')}">+↓</button>${FOREST.parentOf(f.t, f.n) ? `<button type="button" data-add="sibling" title="Add a sibling after ${escape(f.n.content || 'this node')}">+→</button>` : ''}`;
+    el.innerHTML = `<button type="button" data-add="child" title="Add a child below ${escape(f.n.content || 'this node')}">+↓</button>${FOREST.parentOf(f.t, f.n) ? `<button type="button" data-add="sibling" title="Add a sibling after ${escape(f.n.content || 'this node')}">+→</button><button type="button" data-add="drag" class="pdf-forest-drag" title="Drag ${escape(f.n.content || 'this node')} with its subtree onto another node: its left part puts it before, its right part after, its middle makes it a child">⠿</button>` : ''}`;
     img.parentElement.append(el);
     forestHover = f;
   }
@@ -8622,12 +8634,51 @@
     e.preventDefault(); e.stopPropagation();
     const text = editor.text();
     if (text.slice(f.from, f.to) !== f.body) return;
+    if (b.dataset.add === 'drag') return forestDrag(e, f, text);
     if (b.dataset.add === 'child') FOREST.addChild(f.n); else FOREST.addSibling(f.t, f.n);
     f.n.dirty = true;
     FOREST.settle(f.t);
     tikzClear('.pdf-forest-add');
     paWrite(text, [{ from: f.from, to: f.to, now: FOREST.emit(f.t) }]);
   }, true);
+  /** The nodes of a tree in the order they are written. */
+  const forestOrder = (n) => [n, ...n.children.flatMap(forestOrder)];
+  /** Where a drop at page point `pt` puts a dragged node: the node of tree `f` under it and `before`, `after` (the word's
+   * left or right quarter) or `child`; null off its nodes. */
+  function forestDrop(f, pt) {
+    const g = pt && forestAt(pt), w = g && pdfWordUnder(pt[0], pt[1], pt[2]);
+    if (!g || g.from !== f.from || !w) return null;
+    const k = forestOrder(g.t.root).indexOf(g.n), target = forestOrder(f.t.root)[k], u = (pt[1] - w[1]) / Math.max(1, w[3] - w[1]);
+    return target && { target, where: u < 0.25 ? 'before' : u > 0.75 ? 'after' : 'child', w };
+  }
+  /** A drag of node `f.n` with its subtree from its handle: a tag names the drop, the release moves it (forest widget `move`). */
+  function forestDrag(e0, f, text) {
+    const id = e0.pointerId;
+    let drop = null;
+    tikzMoving = f;
+    const move = (m) => {
+      if (m.pointerId !== id) return;
+      tikzClear('.pdf-forest-tag');
+      const pt = tikzPoint(m);
+      drop = forestDrop(f, pt);
+      if (!drop || drop.target === f.n) { drop = null; return; }
+      const [pw, ph] = pageSize(pt[4]), tag = Object.assign(document.createElement('b'), { className: 'pdf-tikz-tag pdf-forest-tag', textContent: `${drop.where === 'child' ? 'child of' : drop.where} ${drop.target.content}` });
+      tag.style.cssText = `left:${drop.w[1] / pw * 100}%;top:${drop.w[2] / ph * 100}%`;
+      pt[4].parentElement.append(tag);
+    };
+    const end = (u) => {
+      if (u.pointerId !== id) return;
+      for (const [t, fn] of [['pointermove', move], ['pointerup', end], ['pointercancel', end]]) removeEventListener(t, fn);
+      tikzMoving = null;
+      tikzClear('.pdf-forest-tag, .pdf-forest-add');
+      if (u.type === 'pointercancel' || !drop || editor.text() !== text) return;
+      pdfSelEnd = performance.now();
+      if (!FOREST.move(f.t, f.n, drop.target, drop.where)) { toast('A node cannot go into its own subtree'); return; }
+      FOREST.settle(f.t);
+      paWrite(text, [{ from: f.from, to: f.to, now: FOREST.emit(f.t) }]);
+    };
+    for (const [t, fn] of [['pointermove', move], ['pointerup', end], ['pointercancel', end]]) addEventListener(t, fn);
+  }
   /* References switched from the pages (pdfedit.ts `satexRefPick`): in Type mode a reference's printed number, a
    * citation's label, is no text to type into. Hovering one outlines it, a click opens the keys the editor completes
    * in its braces, searched as typed. A choice writes the new key through the snapshot printer. */
