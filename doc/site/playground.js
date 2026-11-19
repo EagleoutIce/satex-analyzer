@@ -252,6 +252,18 @@
   /** Texts sent to the server, shared with the worker where the page is cross-origin isolated: a run
    * stops once a newer text was sent (src/lsp/wasm.rs), instead of being waited for. */
   const textsSent = self.crossOriginIsolated ? new Int32Array(new SharedArrayBuffer(4)) : null;
+  /** The worker's mailbox for a cheap question while a run holds it (worker.ts `mailTake`): sent and taken counts, a
+   * length, then the bytes; one question at a time. */
+  const mailbox = self.crossOriginIsolated ? new SharedArrayBuffer(16 + (1 << 16)) : null;
+  function mailSend(message) {
+    const h = new Int32Array(mailbox, 0, 4), bytes = new TextEncoder().encode(JSON.stringify(message));
+    if (Atomics.load(h, 0) !== Atomics.load(h, 1) || bytes.length > mailbox.byteLength - 16) return false;
+    new Uint8Array(mailbox, 16).set(bytes);
+    Atomics.store(h, 2, bytes.length);
+    Atomics.add(h, 0, 1);
+    worker.postMessage({ type: 'mail' });
+    return true;
+  }
   worker.onmessage = (e) => onWorkerMessage(e);
   worker.onerror = (e) => onWorkerError(e);
   const escape = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
@@ -620,9 +632,14 @@
     // while a new worker starts, nothing is asked of the old one: restart() then tells the new one everything
     if (recovering || halted) return notify ? null : Promise.resolve(null);
     // a widget never waits for a run: the run stops (the shared counter), the widget is answered from the last
-    // finished one, and the run starts again after it
-    if (running > 0 && textsSent && /^satex\/(view|dialog|dialogApply)$/.test(method)) { Atomics.add(textsSent, 0, 1); analysisQueued = true; }
+    // finished one, and the run starts again after it; not the PDF's column query each run asks (it restarted
+    // every run it was asked during, the worker never free)
+    if (running > 0 && textsSent && /^satex\/(view|dialog|dialogApply)$/.test(method) && params?.kind !== 'columns') { Atomics.add(textsSent, 0, 1); analysisQueued = true; }
     const message = { jsonrpc: '2.0', method, params, ...(notify ? {} : { id: nextId++ }) };
+    // TeX's hyphenation and line breaking for the echo while a run goes on: the mailbox, answered at the run's pauses
+    if (!notify && running > 0 && mailbox && /^satex\/(hyphenate|break)$/.test(method) && mailSend(message)) {
+      return new Promise((resolve, reject) => pending.set(message.id, { resolve, reject, label: questionOf(method, params), at: performance.now() }));
+    }
     lspRecent.push(method === 'workspace/executeCommand' ? params.command : method);
     if (lspRecent.length > 8) lspRecent.shift();
     const runs = method === 'satex/analyze';
@@ -776,8 +793,8 @@
   /** After an analysis, the command list the server would offer after a `\\`, asked once at a command
    * of the file: the first `\\` typed then completes at once. */
   function prefetchCommands() {
-    // the names in force again after each run only where asking them is cheap: the worker answers in order, so a slow list holds up the next edit's run
-    if (scopeMs < 1000) primeScope(uri());
+    // the names in force once, then again after each run only where asking them is cheap: the worker answers in order, so a slow list holds up the next edit's run
+    if (scopeMs < 1000 || !scopeItems.has(uri())) primeScope(uri());
     // each kind of place once, from whichever open file of the project has one (`\\ref{` may stand in a chapter only)
     const asks = [];
     for (const name of Object.keys(state.texts).filter((n) => opened.has(uri(n)))) {
@@ -788,9 +805,10 @@
         asks.push([{ line: before.length - 1, character: before.at(-1).length }, before.at(-1).length, place, uri(name)]);
       }
     }
-    // one at a time while the page rests: the worker answers in order, so an edit's run waits for one question, not forty
+    // one at a time while no run is due: the worker answers in order, so an edit's run waits for one question, not forty
+    // (the status may still say Analyzing: this runs as the run's findings come in)
     const at = version;
-    (async () => { for (const q of asks) { if (version !== at || pendingRun() || act.phase) return; prefetching = true; completions(...q); prefetching = false; await asked.get(`${q[3]}|${version}|${q[0].line}:${q[0].character}`); } })().catch(() => {});
+    (async () => { for (const q of asks) { if (version !== at || pendingRun()) return; prefetching = true; completions(...q); prefetching = false; await asked.get(`${q[3]}|${version}|${q[0].line}:${q[0].character}`); } })().catch(() => {});
   }
   /** The kinds of place the text offers a completion in, each with one offset to ask at: after a `\\`,
    * and after the first `{` or `[` of each command (`ref{`, `cite{`, `color{`, `usepackage[`…). */
@@ -876,6 +894,7 @@
   function drainAnalysis() {
     if (running === 0) hang = HANG_MS;
     if (running > 0) return;
+    refreshKept();
     if (!analysisQueued) { if (heldFindings) publish(heldFindings); markStale(); return; }
     analysisQueued = false;
     analyze();
@@ -884,21 +903,8 @@
   const phase = (text, done = null, stage = null) => text ? busy('Analyzing', text[0].toUpperCase() + text.slice(1), { done, stage }) : idle();
   function checking() { phase(`Analyzing ${state.file}…`); checkStart = performance.now(); }
 
-  /** Completion order: how well the item matches first (the exact name, a prefix of the label, a part
-   * of it, a part of what it is found by such as a citation's title, the label's characters in order:
-   * `m/f` finds `mode/fast`); then the project's own commands, documented ones, internals (`@`, `_`, `:`)
-   * last; then the server's order (its own ranking, typos forgiven) and shorter names. A long text's
-   * characters in order are no match: any word has them. */
-  const tier = (i) => /\(document\)$/.test(i.detail ?? '') ? 0 : /[@_:]/.test(i.label) ? 2 : 1;
-  const subsequence = (text, typed) => { let k = 0; for (const c of text) if (c === typed[k]) k++; return k === typed.length; };
-  const closeness = (i, typed) => {
-    const label = i.label.toLowerCase(), found = (i.filterText ?? '').toLowerCase();
-    return label === typed ? -1 : label.startsWith(typed) ? 0 : label.includes(typed) ? 1 : found.includes(typed) ? 2
-      : subsequence(label, typed) ? 3 : null;
-  };
-  const rank = (items, typed) => items
-    .map((i) => [i, tier(i), closeness(i, typed.toLowerCase())]).filter((x) => x[2] !== null)
-    .sort((a, b) => a[2] - b[2] || a[1] - b[1] || (a[0].sortText ?? '').localeCompare(b[0].sortText ?? '') || a[0].label.length - b[0].label.length || a[0].label.localeCompare(b[0].label)).map((x) => x[0]);
+  /** Completion order and the lists kept for a busy worker (views.ts `complete`). */
+  const { rank, kept: keptList, reselect } = self.satexViews.complete;
   /** The `#rrggbb` of a Color item (kind 16) whose documentation is one, else null. */
   const colorOf = (item) => {
     const doc = typeof item.documentation === 'string' ? item.documentation : item.documentation?.value;
@@ -945,22 +951,31 @@
   function loadSeed() {
     try { const seed = JSON.parse(localStorage.getItem(seedKey()) ?? 'null'); if (Array.isArray(seed)) commandItems.set('\\', seed); } catch {}
   }
+  /** The kept items of a kind of place (`\\`: the names in force too), or null where none were asked yet. */
+  const keptFor = (place, file = uri()) => place ? keptList(commandItems.get(place), place === '\\' ? scopeItems.get(file) : undefined) : null;
+  /** Whether a list shown during a run came from the kept items: once the worker is free, the open list takes the server's. */
+  let keptShown = false;
+  function refreshKept() {
+    if (!keptShown || running) return;
+    keptShown = false;
+    asked.clear();
+    editor?.refresh?.();
+    if (pdfMenu) pdfMenuShow(true, true);
+  }
   /** How long a completion waits for the server before the kept commands answer (the server's answer still replaces them). */
   const INSTANT_MS = 50;
   /** `patient`: the server's own answer, never the kept items standing in (the Type mode's list asked again). */
   function completions(position, start = position.character, place = null, file = uri(), patient = false) {
     const k = `${file}|${version}|${position.line}:${position.character}`, word = `${file}|${position.line}:${start}`;
-    if (running && lastItems && lastWord === word && !patient) return lastItems;
+    if (running && lastItems && lastWord === word && !patient) { keptShown = true; return lastItems; }
     if (place === '\\' && !scopeItems.has(file) && !prefetching) primeScope(file);
-    const served = place && commandItems.get(place), names = place === '\\' && scopeItems.get(file);
-    const both = names ? [...(served ?? []), ...names.filter((n) => !served?.some((i) => i.label === n.label))] : served;
-    // items asked elsewhere replace no range here: their text goes in at the cursor's word
-    const kept = both?.map(({ textEdit, ...i }) => (textEdit ? { ...i, insertText: i.insertText ?? textEdit.newText } : i));
+    const kept = keptFor(place, file);
     // A run keeps the worker busy, so a question would wait behind it. The last items answer,
     // else the bundle's classes and packages, else nothing, and the server's answer is kept for next time.
     const seeds = { documentclass: NAMES.classes, LoadClass: NAMES.classes, usepackage: NAMES.packages, RequirePackage: NAMES.packages }[place];
     const now = kept ?? seeds?.map((label) => ({ label, kind: 17 })) ?? [];
-    if (running && kept && !patient) return kept;
+    // the server is asked once the run ends, and an open list then takes its items (`refreshKept`)
+    if (running && kept && !patient) { keptShown = true; return kept; }
     if (!asked.has(k)) {
       asked.clear();
       asked.set(k, lsp('textDocument/completion', { textDocument: { uri: file }, position }).then((r) => {
@@ -974,7 +989,7 @@
     // what answers now; the server's items replace it when they come
     let early = running > 0;
     // an empty early answer opened no list: the server's items open it while the cursor stays put
-    asked.get(k).then((r) => { if (early && (document.querySelector('.cm-tooltip-autocomplete') || retryCompletion && r.length) && k.endsWith(`|${version}|${position.line}:${position.character}`)) editor.complete?.(); });
+    asked.get(k).then((r) => { if (!early || !k.endsWith(`|${version}|${position.line}:${position.character}`)) return; if (document.querySelector('.cm-tooltip-autocomplete')) editor.refresh?.(); else if (retryCompletion && r.length) editor.complete?.(); });
     if (early) return now;
     // an empty answer (the server's last run has not read this place yet) leaves the kept items standing
     return Promise.race([asked.get(k).then((r) => r.length ? r : now), new Promise((done) => setTimeout(() => { early = true; done(now); }, INSTANT_MS))]);
@@ -998,8 +1013,19 @@
      * and takes its first item once it comes, the focus kept in the editor (Tab moved it away, the keys after it lost). */
     const tabCompletes = (v) => {
       if (ac.completionStatus(v.state) === 'active') return ac.acceptCompletion(v);
-      const { head, empty } = v.state.selection.main, line = v.state.doc.lineAt(head);
-      if (!empty || !/\\[A-Za-z@]+$/.test(line.text.slice(0, head - line.from))) return false;
+      const { head, empty } = v.state.selection.main, line = v.state.doc.lineAt(head), before = line.text.slice(0, head - line.from);
+      if (!empty) return false;
+      // the word at the caret in its kind of place (a command's name, an argument's item: `\\ref{eq:jo`): the kept
+      // list's first item that holds the word replaces it at once, the worker never waited for (a run may hold it)
+      const cmd = /\\([A-Za-z@]+)$/.exec(before), word = cmd?.[1] ?? /[\w@*:./-]*$/.exec(before)[0];
+      const place = cmd ? '\\' : placeAt(before.slice(0, before.length - word.length)), item = place && word && rank(keptFor(place) ?? [], word).find((i) => i.label.toLowerCase().includes(word.toLowerCase()));
+      if (item) {
+        const from = head - word.length, a = itemApply(item);
+        if (typeof a === 'function') a(v, null, from, head); else v.dispatch({ changes: { from, to: head, insert: a }, selection: { anchor: from + a.length }, userEvent: 'input.complete' });
+        ac.closeCompletion(v);
+        return true;
+      }
+      if (!cmd) return false;
       if (!ac.completionStatus(v.state)) ac.startCompletion(v);
       // a key typed meanwhile cancels: the list would take a name the person typed on
       const t0 = performance.now(), doc = v.state.doc, tick = () => { const s = ac.completionStatus(v.state); if (v.state.doc !== doc) return; if (s === 'active') ac.acceptCompletion(v); else if (s === 'pending' || performance.now() - t0 < 1500) setTimeout(tick, 30); };
@@ -1063,7 +1089,7 @@
         hex: colorOf(i), preview: i.data?.preview, color: colorOf(i), type: KIND[i.kind] ?? 'text',
         // the side panel: a command's card, the one hover and Explain show; else the server's documentation
         info: before === '\\' ? () => itemInfo(i) : i.documentation ? () => Object.assign(document.createElement('div'), { className: 'hover cm-item-card', innerHTML: card(i.documentation.value ?? i.documentation) }) : i.data?.key ? () => itemInfo(i, true) : undefined,
-        apply: again(i, i.insertTextFormat === 2 ? ac.snippet((i.insertText ?? i.textEdit?.newText ?? i.label).replace(/\$\{(\d+)(:[^}]*)?\}|\$(\d+)/g, (_, n, text, bare) => `#{${n ?? bare}${text ?? ''}}`)) : i.textEdit?.newText ?? i.insertText ?? i.label),
+        apply: itemApply(i),
       });
       return { from, to: edit ? Math.max(at(ctx.state.doc, edit.range.end), ctx.pos) : ctx.pos, filter: false, options: options(typed), update };
     }
@@ -1078,6 +1104,8 @@
       }
       return html ? Object.assign(document.createElement('div'), { className: 'hover cm-item-card', innerHTML: html }) : null;
     }
+    /** What taking `i` writes: its snippet (fields as CodeMirror's `#{n:text}`) or text. */
+    const itemApply = (i) => again(i, i.insertTextFormat === 2 ? ac.snippet((i.insertText ?? i.textEdit?.newText ?? i.label).replace(/\$\{(\d+)(:[^}]*)?\}|\$(\d+)/g, (_, n, text, bare) => `#{${n ?? bare}${text ?? ''}}`)) : i.textEdit?.newText ?? i.insertText ?? i.label);
     /** An item whose command reopens completion (a key family's `/demo/`): inserted, then completion opens on its keys. */
     function again(item, apply) {
       if (item.command?.command === 'editor.action.triggerParameterHints') return (v, c, from, to) => {
@@ -1482,6 +1510,19 @@
         };
       }))),
       complete: () => ac.startCompletion(ev),
+      /** The open list asked again (the worker is free), the selection kept on its item. */
+      refresh: () => {
+        if (ac.completionStatus(ev.state) !== 'active') return;
+        const label = ac.selectedCompletion(ev.state)?.label, doc = ev.state.doc, t0 = performance.now();
+        ac.startCompletion(ev);
+        const keep = () => {
+          if (ev.state.doc !== doc) return;
+          if (ac.completionStatus(ev.state) === 'pending' && performance.now() - t0 < 3000) return void setTimeout(keep, 20);
+          const i = reselect(ac.currentCompletions(ev.state), label);
+          if (i > 0 && ac.completionStatus(ev.state) === 'active') ev.dispatch({ effects: ac.setSelectedCompletion(i) });
+        };
+        keep();
+      },
       hoverAgain: () => { const f = hoverRetry; hoverRetry = null; f?.(); },
       /** The open hover card asked again where it stands: after one of its links rewrote the text. */
       rehover: async () => {
@@ -2086,6 +2127,8 @@
   });
   // a double click on an image, a table or a drawing opens its widget, as in the PDF
   typesetBody.addEventListener('dblclick', (e) => {
+    // a picture node's text: Type mode on, the caret in it
+    if (e.target.closest?.('.ts-sketch text')) { e.preventDefault(); if (!tsTyping) $('ts-type').click(); tsCaretAt(e); return; }
     const site = !e.target.closest('.ts-finding, .ts-hf-cell, .ts-page') && tsSiteAt(e.target);
     if (!site) return;
     e.preventDefault();
@@ -2309,6 +2352,7 @@
     const others = Object.entries(diagnostics).filter(([u]) => u !== uri()).flatMap(([u, rs]) => rs.map((d) => ({ ...d, file: u.split('/').pop(), target: u })));
     listed = [...ds, ...others];
     if (retryCompletion && !running) { retryCompletion = false; asked.clear(); editor.complete?.(); }
+    refreshKept();
     // no count while a load the next run needs is under way: 0 would read as none
     count.textContent = loadingFor && !listed.length ? '…' : String(listed.length);
     shownFor(list, uri(), diagnosticVersions[uri()]);
@@ -3468,9 +3512,14 @@
   const offlineOn = () => { try { return localStorage.getItem('satex-offline') === '1'; } catch { return false; } };
   function playSettings() {
     const about = `Fetches every package${offlineState.total ? ` (${mib(offlineState.total)} MiB)` : ''} into this browser while it is idle, so the playground works without a connection. Off: only what a document uses is fetched.`;
-    $('cfg-play-list').innerHTML = `<li class="cfg-row${offlineOn() ? ' cfg-changed' : ''}"><div class="cfg-what"><span class="cfg-name">Keep a copy for offline use</span><span class="muted cfg-about">${escape(about)}</span></div><label class="ts-toggle cfg-value"><input type="checkbox" role="switch" data-play="offline"${offlineOn() ? ' checked' : ''} aria-label="keep a copy for offline use"></label></li>`;
+    // the page actions (actions.ts): each plugin switched for this viewer; off with its type plugin too
+    const pa = self.satexPageActions.plugins.map((p) => { const on = self.satexPageActions.on(p.name), by = configSet[`type_plugins.${p.type}.enabled`] === false;
+      return `<li class="cfg-row${on || by ? '' : ' cfg-changed'}"><div class="cfg-what"><span class="cfg-name">Page actions: ${escape(p.title)}</span><span class="muted cfg-about">${escape(p.about)}. A right click in the PDF or the Typeset view.${by ? ` Off with the ${escape(p.type)} plugin.` : ''}</span></div><label class="ts-toggle cfg-value"><input type="checkbox" role="switch" data-play="pa:${escape(p.name)}"${on ? ' checked' : ''}${by ? ' disabled' : ''} aria-label="page actions: ${escape(p.title)}"></label></li>`; }).join('');
+    $('cfg-play-list').innerHTML = `<li class="cfg-row${offlineOn() ? ' cfg-changed' : ''}"><div class="cfg-what"><span class="cfg-name">Keep a copy for offline use</span><span class="muted cfg-about">${escape(about)}</span></div><label class="ts-toggle cfg-value"><input type="checkbox" role="switch" data-play="offline"${offlineOn() ? ' checked' : ''} aria-label="keep a copy for offline use"></label></li>${pa}`;
   }
   $('cfg-play-list').addEventListener('change', (e) => {
+    const pa = /^pa:(.+)$/.exec(e.target.dataset.play ?? '');
+    if (pa) { self.satexPageActions.setOn(pa[1], e.target.checked); playSettings(); return; }
     if (e.target.dataset.play !== 'offline') return;
     try { if (e.target.checked) localStorage.setItem('satex-offline', '1'); else localStorage.removeItem('satex-offline'); } catch {}
     if (e.target.checked) offlineRun(); else offlineState.stop = true;
@@ -6171,7 +6220,11 @@
   pdfBody.addEventListener('dblclick', (e) => {
     const img = e.target.closest('.pdf-page img') ?? (e.target.closest('.pdf-ov:not(.pdf-keys), .pdf-caret, .pdf-echo') && e.target.closest('.pdf-page')?.querySelector('img'));
     if (!img?.naturalWidth || pdf?.slice || $('play-pdf').classList.contains('pdf-other')) return;
-    const [w, h] = pageSize(img), r = img.getBoundingClientRect(), site = pdfSiteAt(+img.parentElement.dataset.page, (e.clientX - r.left) / r.width * w, (e.clientY - r.top) / r.height * h);
+    const [w, h] = pageSize(img), r = img.getBoundingClientRect(), page = +img.parentElement.dataset.page, x = (e.clientX - r.left) / r.width * w, y = (e.clientY - r.top) / r.height * h;
+    // a picture node's text: Type mode on, the caret in it (text a macro sets says where it is defined)
+    const node = tikzHit([page, x, y, w / r.width, img]);
+    if (node && !node.frame) { e.preventDefault(); if (!pdfTyping) pdfTypeButton.click(); pdfCaretAt(page, x, y); return; }
+    const site = pdfSiteAt(page, x, y);
     if (!site) return;
     e.preventDefault();
     pdfCaretOff();
@@ -6182,11 +6235,8 @@
     if (performance.now() - pdfSelEnd < 400) { e.preventDefault(); return; }
     pdfSelOff();
     if (e.target.closest('.pdf-owner button')) { compile(); return; }
-    const al = e.target.closest('.pdf-col-al');
-    // a pointer chose on press (the menu may be redrawn before the release); a key's click (detail 0) chooses here
-    if (al) { e.preventDefault(); if (!e.detail) { pdfColMenu = null; pdfColAlign(al); } return; }
     const menu = e.target.closest('.pdf-col-more');
-    if (menu) { e.preventDefault(); pdfColMenu = pdfColMenu === menu.dataset.menu ? null : menu.dataset.menu; pdfOverlay(); return; }
+    if (menu) { e.preventDefault(); pdfColMenuOpen(menu); return; }
     if ($('play-pdf').classList.contains('pdf-other')) { e.preventDefault(); return; }
     const chip = e.target.closest('.pdf-key');
     if (chip) { e.preventDefault(); pdfToTarget(pdfKeys[+chip.dataset.k]); return; }
@@ -7182,10 +7232,10 @@
             : grow ? `column ${c.k + 1} of ${t.env}, ${c.measured ? 'its cells' : 'about'} ${lengths(c.w * 72.27 / 72)}: drag the edge to give it a width, as a p column keeping its alignment (Shift: finer)`
               : `column ${c.k + 1} of ${t.env}, ${lengths(c.w * 72.27 / 72)}: ${col.align === 'X' ? 'tabularx computes it from the table width' : `written as ${col.width}, edit it in the source`}`;
           // the column's letter and the ones it may become: l c r, or p m b for a column with a width
-          const kin = col.spec && ['lcr', 'pmb'].find((s) => s.includes(col.align)), al = kin ? [...kin].map((a) => `<button type="button" class="pdf-col-al" data-t="${i}" data-k="${c.k}" data-a="${a}" aria-pressed="${a === col.align}" title="column ${c.k + 1}: ${ALIGNS[a]}">${a}</button>`).join('') : '';
-          // the chip: the column's letter and width; the letters it may become behind its ⋯
+          const kin = col.spec && ['lcr', 'pmb'].find((s) => s.includes(col.align));
+          // the chip: the column's letter and width; the letters it may become in the page actions' menu behind its ⋯
           const id = `${i}:${c.k}`, open = pdfColMenu === id;
-          const more = al ? `<button type="button" class="pdf-col-more" data-menu="${id}" aria-expanded="${open}" title="more options for column ${c.k + 1}">⋯</button>${open ? `<span class="pdf-col-menu" role="group" aria-label="column ${c.k + 1}">${al}</span>` : ''}` : '';
+          const more = kin ? `<button type="button" class="pdf-col-more" data-menu="${id}" aria-expanded="${open}" aria-haspopup="menu" title="the alignments of column ${c.k + 1}: ${[...kin].map((a) => `${a} ${ALIGNS[a]}`).join(', ')}">⋯</button>` : '';
           const head = `<span class="pdf-col-name">${escape(d ? d.label : col.width ? `${col.align}{${shown}}` : `${col.align} ${c.approx ? '≈' : ''}${cm}`)}</span>${more}`;
           box(c.page, `pdf-col${can ? '' : ' pdf-col-fixed'}${d ? ' pdf-col-drag' : ''}${open ? ' pdf-col-open' : ''}`, c.x, tops.get(c.page) - 1, c.x + w, c.d + 1, c.approx ? `${why} (place approximate)` : why, `<b>${head}</b>${can ? `<i class="pdf-col-grip" data-t="${i}" data-k="${c.k}" data-w="${c.w}" role="slider" tabindex="0" aria-label="width of column ${c.k + 1}" aria-valuenow="${+(w * 2.54 / 72).toFixed(2)}" aria-valuetext="${escape(shown)}"></i>` : ''}`);
         }
@@ -7292,7 +7342,7 @@
   /* Editing in the PDF (pdfedit.ts): a column's width dragged at its edge, plain text typed at a caret. Both write
    * through the snapshot printer (src/lsp/snapshot.rs) onto the text they were printed for; a drag is one undo step. */
   /** The open file's tables with the widths a drag rewrites (src/lsp/dialogs.rs `columns`), `\linewidth` in pt. */
-  /** The column chip whose ⋯ menu is open (`table:column`), kept while the layer redraws. */
+  /** The column chip whose ⋯ menu (the page actions' `table-column`) is open (`table:column`), kept while the layer redraws. */
   var pdfColMenu = null;
   var pdfCols = null, pdfDrag = null, pdfTyping = true, pdfCaret = null, pdfKeep = null; // var: a run may end before these lines ran
   /** The last build's round trip, from Compile to its first page shown: live typing needs it short. */
@@ -7387,8 +7437,6 @@
   var pdfGripFocus = null;
   pdfBody.addEventListener('pointerdown', (e) => {
     pdfGripFocus = null;
-    const al = e.button === 0 && e.target.closest('.pdf-col-al');
-    if (al) { e.preventDefault(); e.stopPropagation(); pdfColMenu = null; pdfColAlign(al); return; }
     const g = e.target.closest('.pdf-col-grip');
     if (!g || e.button !== 0) return;
     e.preventDefault(); e.stopPropagation();
@@ -7421,7 +7469,7 @@
    * under the pointer. Outside Type mode the whole node drags; in Type mode its text takes the caret and the drag starts
    * at its frame (a few px around the outline), its grip, or anywhere with Alt. A ghost shows where it lands and what is
    * written; it snaps to the picture's other nodes (centres, edges, equal gaps; Shift: no snapping). A right click opens
-   * the node's shapes, frame and fill, and its text; on a path, a new label and the arrow tips. Every write goes
+   * its page actions' menu (actions.ts), its handle above turns it. Every write goes
    * through the snapshot printer, one undo step. Ctrl: a placed node (`right=of a`) gets `at (x,y)` instead of shifts. */
   const TM = self.satexTikzMove, CM = 72 / 2.54, TIKZ_SEP = 3.3, TIKZ_SNAP = 2 * CM / 10;
   let tikzSeen = null, tikzMoving = null;
@@ -7467,7 +7515,8 @@
     const [w, h] = pageSize(img), el = Object.assign(document.createElement('span'), { className: cls });
     el.style.cssText = pdfPlace((p.l - 2 + dx) / w, (p.t - 2 + dy) / h, (p.r - p.l + 4) / w, (p.d - p.t + 4) / h);
     const what = p.n.name ? `node ${p.n.name}` : 'this node';
-    el.innerHTML = cls.includes('ghost') ? `<b>${escape(label)}</b>` : `<i class="pdf-tikz-grip" title="Drag to move ${escape(what)}${p.n.kind === 'label' ? ' along its path' : ''}: it snaps to the other nodes (Shift: no snapping${p.n.placed ? ', Ctrl: to a fixed place' : ''}). Right click: its shape, frame, fill, text"></i>`;
+    el.innerHTML = cls.includes('ghost') ? `<b>${escape(label)}</b>` : `<i class="pdf-tikz-grip" title="Drag to move ${escape(what)}${p.n.kind === 'label' ? ' along its path' : ''}: it snaps to the other nodes (Shift: no snapping${p.n.placed ? ', Ctrl: to a fixed place' : ''}). Right click: its shape, style, text, rotation and new edges"></i>` +
+      (p.n.kind === 'node' ? `<i class="pdf-tikz-rot" title="Drag to rotate ${escape(what)} in 15° steps (Shift: 1°)"></i>` : '');
     el.dataset.k = String(tikzSeen.list.indexOf(p));
     host.append(el);
   }
@@ -7495,7 +7544,7 @@
     if (tikzFrame || tikzMoving || pdfDrag) return;
     tikzFrame = requestAnimationFrame(() => {
       tikzFrame = 0;
-      if (e.target.closest?.('.pdf-tikz, .tikz-menu, .tikz-input')) return;
+      if (e.target.closest?.('.pdf-tikz, .pa-menu, .tikz-input')) return;
       tikzClear('.pdf-tikz');
       for (const el of pdfBody.querySelectorAll('.pdf-tikz-hot')) el.classList.remove('pdf-tikz-hot');
       const pt = tikzPoint(e), hit = tikzHit(pt);
@@ -7524,8 +7573,24 @@
       const r = TM.move(stmt, p.n.i, p.n.pic, { to: [(p.c[0] + dx - p.origin[0]) / CM, (p.origin[1] - p.c[1] - dy) / CM], grid });
       return r && { ...r, stmt, snap: s, d: [p.origin[0] + r.by[0] * k - p.c[0], p.origin[1] - r.by[1] * k - p.c[1]] };
     }
+    // relative by default: positioning's `right=of a` beside the nearest node set before it; Ctrl: a fixed place
+    const rel = !(e.ctrlKey || e.metaKey) && tikzRel(p, dx, dy, text);
+    if (rel) return { ...rel, stmt, snap: s, d: [dx, dy] };
     const r = TM.move(stmt, p.n.i, p.n.pic, { by: [dx / CM, -dy / CM], grid });
     return r && { ...r, stmt, snap: s, d: [r.by[0] * k, -r.by[1] * k] };
+  }
+  /** Node `p` moved by `dx`, `dy` bp written beside the nearest named node set before it (a node lined up with it first):
+   * its statement, the key as the ghost's caption, positioning's load when the file lacks it; null where none can be the
+   * reference or the file cannot load positioning (then it keeps its `at` or shifts). */
+  function tikzRel(p, dx, dy, text) {
+    const refs = tikzSeen.list.filter((q) => q !== p && q.n.kind === 'node' && q.n.name && q.n.pic === p.n.pic && q.page === p.page && q.n.from < p.n.from);
+    const lib = refs.length && PA.libEdit(text, Object.values(state.texts).join('\n'), [], 'positioning');
+    if (!lib || 'line' in lib) return null;
+    const frame = (q, x = 0, y = 0) => ({ l: q.l - TIKZ_SEP + x, r: q.r + TIKZ_SEP + x, t: q.t - TIKZ_SEP + y, d: q.d + TIKZ_SEP + y }), c = [p.c[0] + dx, p.c[1] + dy];
+    const lined = (q) => +(Math.abs(q.c[0] - c[0]) < 0.5 || Math.abs(q.c[1] - c[1]) < 0.5), far = (q) => Math.hypot(q.c[0] - c[0], q.c[1] - c[1]);
+    const ref = refs.sort((a, b) => lined(b) - lined(a) || far(a) - far(b))[0], label = TM.relation(frame(p, dx, dy), frame(ref), 0.5, p.n.pic.dist, ref.n.name);
+    const now = label && TM.place(text.slice(p.n.from, p.n.to), p.n.i, label);
+    return now && { text: now, label, pre: 'edit' in lib ? [lib.edit] : [] };
   }
   /** The snap's guide lines and equal gaps on page `page`. */
   function tikzGuides(page, s) {
@@ -7543,17 +7608,10 @@
   }
   /** The line and character of offset `i` in `text`. */
   const tikzPos = (text, i) => { const before = text.slice(0, i), nl = before.lastIndexOf('\n'); return { line: before.split('\n').length - 1, character: i - nl - 1 }; };
-  /** Statement `from`..`to` (as `was`) becomes `now` through the snapshot printer; `pre`: a line put before `at` too (a library's load). */
-  async function tikzWrite(from, to, was, now, pre = null) {
-    const text = editor.text(), target = uri();
-    if (text.slice(from, to) !== was) { toast('The text changed meanwhile: nothing was written'); return false; }
-    const a = pre ? Math.min(pre.at, from) : from, old = text.slice(a, to), body = pre ? text.slice(a, pre.at) + pre.text + text.slice(pre.at, from) + now : now;
-    const ok = await pdfWrite(target, self.satexSnapshot.span({ start: tikzPos(text, a), end: tikzPos(text, to) }, old, body), body);
-    if (ok) pdfRebuild(true);
-    return ok;
-  }
   pdfBody.addEventListener('pointerdown', (e) => {
-    if (e.button !== 0 || pdfDrag || tikzMoving || e.target.closest?.('.tikz-menu, .tikz-input')) return;
+    if (e.button !== 0 || pdfDrag || tikzMoving || tikzLink || e.target.closest?.('.pa-menu, .tikz-input')) return;
+    const rot = e.target.closest?.('.pdf-tikz-rot');
+    if (rot) { e.preventDefault(); e.stopPropagation(); tikzRotate(e, tikzSeen?.list[+rot.closest('.pdf-tikz').dataset.k]); return; }
     const grip = e.target.closest?.('.pdf-tikz-grip'), hit = grip ? { p: tikzSeen?.list[+grip.closest('.pdf-tikz').dataset.k] } : tikzHit(tikzPoint(e));
     if (!hit?.p || !(grip || tikzDrags(hit, e))) return;
     const p = hit.p, img = pdfBody.querySelector(`.pdf-page[data-page="${p.page}"] img`);
@@ -7583,13 +7641,12 @@
       if (moved) pdfSelEnd = performance.now();
       if (u.type === 'pointercancel' || !last || last.text === last.stmt) return;
       const text = editor.text();
-      if (version !== v || text.slice(p.n.from, p.n.to) !== last.stmt) { toast('The text changed meanwhile: the node was not moved'); return; }
-      const node = self.satexSnapshot.span({ start: tikzPos(text, p.n.from), end: tikzPos(text, p.n.to) }, last.stmt, last.text);
-      if (await pdfWrite(target, node, last.text)) pdfRebuild(true);
+      if (version !== v || uri() !== target || text.slice(p.n.from, p.n.to) !== last.stmt) { toast('The text changed meanwhile: the node was not moved'); return; }
+      paWrite(text, [...last.pre ?? [], { from: p.n.from, to: p.n.to, now: last.text }]);
     };
     for (const [t, f] of [['pointermove', move], ['pointerup', end], ['pointercancel', end], ['keydown', key]]) addEventListener(t, f);
   }, true);
-  /** The path segment near a page point: its path, segment index, ends in bp. */
+  /** The path segment near a page point: its path, segment index, ends in bp; a corner or a bend as the segment draws it. */
   function tikzEdgeAt(pt) {
     if (!pt) return null;
     const [page, x, y, px] = pt, all = tikzPlaced(), near = Math.max(3, 6 * px);
@@ -7597,90 +7654,183 @@
     for (const e of TM.edges(editor.text())) e.segs.forEach((g, k) => {
       const cut = tikzCut(e.pic, g.a, g.b, all);
       if (!cut || cut[2] !== page) return;
-      const [a, b] = cut, t = Math.min(1, Math.max(0, TM.posOn(a, b, [x, y]))), dist = Math.hypot(a[0] + t * (b[0] - a[0]) - x, a[1] + t * (b[1] - a[1]) - y);
-      if (dist < near && (!best || dist < best.dist)) best = { e, k, a, b, dist };
+      const dist = tikzNear(TM.segPath(cut[0], cut[1], g), [x, y]);
+      if (dist < near && (!best || dist < best.dist)) best = { e, k, a: cut[0], b: cut[1], dist };
     });
     return best;
   }
-  const tikzMenuClose = () => { for (const el of document.querySelectorAll('.tikz-menu, .tikz-input')) el.remove(); };
-  /** A one-line input at screen point `x`, `y` for a node's text: Enter writes `done(text)`, Escape leaves it. */
-  function tikzInput(x, y, value, what, done) {
-    tikzMenuClose();
-    const box = Object.assign(document.createElement('div'), { className: 'tikz-input' });
-    box.innerHTML = `<input type="text" aria-label="${escape(what)}" placeholder="${escape(what)}"><small>Enter writes it, Escape leaves it</small>`;
-    box.style.left = `${Math.max(8, Math.min(x - 120, innerWidth - 260))}px`;
-    box.style.top = `${Math.max(8, Math.min(y - 16, innerHeight - 60))}px`;
-    document.body.append(box);
-    const input = box.querySelector('input');
-    input.value = value;
-    input.focus(); input.select();
-    input.onkeydown = (k) => {
-      k.stopPropagation();
-      if (k.key === 'Escape') { k.preventDefault(); tikzMenuClose(); }
-      if (k.key === 'Enter') { k.preventDefault(); const t = input.value; tikzMenuClose(); if (t !== value) done(t); }
-    };
+  /** The distance from `p` to the polyline `pts`. */
+  const tikzNear = (pts, p) => Math.min(...pts.slice(1).map((b, j) => { const a = pts[j], t = Math.min(1, Math.max(0, TM.posOn(a, b, p))); return Math.hypot(a[0] + t * (b[0] - a[0]) - p[0], a[1] + t * (b[1] - a[1]) - p[1]); }));
+  /* Page actions (actions.ts `satexPageActions`): a right click on the PDF or the Typeset view finds the thing under the
+   * pointer (a TikZ node, label or path, a forest node, a table column) and opens the menu its plugins give. A plugin
+   * writes through `paWrite`: its edits of the text the menu opened on, one undo step through the snapshot printer. */
+  const PA = self.satexPageActions, FOREST = self.satexViews.forest;
+  /** Edits `{from, to, now}` of `base` (the text the menu opened on) as one span through the snapshot printer. */
+  async function paWrite(base, edits) {
+    const text = editor.text(), list = edits.filter(Boolean).sort((a, b) => a.from - b.from);
+    if (text !== base) { toast('The text changed meanwhile: nothing was written'); return false; }
+    if (!list.length) return false;
+    const a = list[0].from, b = Math.max(...list.map((e) => e.to));
+    let body = '', at = a;
+    for (const e of list) { body += text.slice(at, e.from) + e.now; at = Math.max(at, e.to); }
+    body += text.slice(at, b);
+    if (body === text.slice(a, b)) return false;
+    const ok = await pdfWrite(uri(), self.satexSnapshot.span({ start: tikzPos(text, a), end: tikzPos(text, b) }, text.slice(a, b), body), body);
+    if (ok) pdfRebuild(true);
+    return ok;
   }
-  const SHAPE_NAMES = [['rectangle', 'Rectangle'], ['rounded', 'Rounded rectangle'], ['circle', 'Circle'], ['ellipse', 'Ellipse'], ['diamond', 'Diamond']];
-  const TIP_NAMES = [['->', 'Arrow →'], ['<->', 'Both ↔'], ['', 'No tip']];
-  const FOREST = self.satexViews.forest, FOREST_SHAPES = [['', 'Rectangle'], ['rounded corners', 'Rounded rectangle'], ['circle', 'Circle']];
-  /** The menu of node `p`, path segment `g` or forest node `f` (forestAt) at a right click. */
-  function tikzMenu(e, p, g, f = null) {
-    tikzMenuClose();
-    const menu = Object.assign(document.createElement('div'), { className: 'tikz-menu' }), text = editor.text(), items = [];
-    menu.setAttribute('role', 'menu');
-    const item = (label, run, on = null) => { items.push(run); return `<button role="${on == null ? 'menuitem' : 'menuitemradio'}"${on == null ? '' : ` aria-checked="${on}"`} data-i="${items.length - 1}">${escape(label)}</button>`; };
-    let html;
-    if (f) {
-      // a forest node: its own options (`draw`, a shape key) and its place in the tree, written as the widget writes
-      const { t, n } = f, key = (o) => o.split('=')[0].trim(), has = (k) => n.opts.some((o) => key(o) === k), sx = e.clientX, sy = e.clientY;
-      const write = (change) => { if (change() === false) return; n.dirty = true; FOREST.settle(t); tikzWrite(f.from, f.to, f.body, FOREST.emit(t)); };
-      const shape = FOREST_SHAPES.find(([k]) => k && has(k))?.[0] ?? '', parent = FOREST.parentOf(t, n);
-      html = `<b>${escape(`Node ${n.content || '(empty)'}`)}</b>` +
-        FOREST_SHAPES.map(([k, l]) => item(l, () => write(() => { n.opts = n.opts.filter((o) => !FOREST_SHAPES.some(([s]) => s && key(o) === s)); if (k) n.opts.push(k); }), shape === k)).join('') + '<hr>' +
-        item('Frame', () => write(() => { n.opts = has('draw') ? n.opts.filter((o) => key(o) !== 'draw') : [...n.opts, 'draw']; }), has('draw')) + '<hr>' +
-        item('Add child', () => write(() => { FOREST.addChild(n); })) +
-        (parent ? item('Add sibling', () => write(() => { FOREST.addSibling(t, n); })) + item(n.children.length ? 'Delete with its subtree' : 'Delete', () => write(() => { FOREST.remove(t, n); })) : '') + '<hr>' +
-        item('Edit text…', () => tikzInput(sx, sy, n.content, 'the text of the node', (v) => write(() => { n.content = v; })));
-    } else if (p) {
-      const n = p.n, stmt = text.slice(n.from, n.to), now = TM.shapeOf(n), looks = TM.looks(n), sx = e.clientX, sy = e.clientY;
-      html = `<b>${escape(n.name ? `Node ${n.name}` : n.kind === 'label' ? 'Label' : 'Node')}</b>` +
-        SHAPE_NAMES.map(([k, l]) => item(l, () => {
-          const r = TM.shape(stmt, n.i, n.pic, k);
-          if (!r) return;
-          const all = Object.values(state.texts).join('\n'), lib = r.library, has = lib && new RegExp(`\\\\usetikzlibrary\\s*\\{[^}]*\\b${lib.replace('.', '\\.')}\\b`).test(all);
-          // the library's load goes after tikz's in this file's preamble, else a hint says where
-          const anchor = lib && !has && [...text.matchAll(/\\(?:usetikzlibrary\s*\{[^}]*\}|usepackage\s*(?:\[[^\]]*\])?\s*\{[^}]*\btikz\b[^}]*\})[^\n]*\n/g)].at(-1);
-          if (lib && !has && !anchor) toast(`${l} needs \\usetikzlibrary{${lib}} in the preamble: add it where tikz is loaded`);
-          tikzWrite(n.from, n.to, stmt, r.text, anchor ? { at: anchor.index + anchor[0].length, text: `\\usetikzlibrary{${lib}}\n` } : null);
-        }, now === k)).join('') + '<hr>' +
-        item('Frame', () => tikzWrite(n.from, n.to, stmt, TM.flip(stmt, n.i, n.pic, 'draw')), looks.draw) +
-        item('Fill', () => tikzWrite(n.from, n.to, stmt, TM.flip(stmt, n.i, n.pic, 'fill')), looks.fill) + '<hr>' +
-        item('Edit text…', () => tikzInput(sx, sy, n.text, `the text of ${n.name ? `node ${n.name}` : 'the node'}`, (t) => tikzWrite(n.from, n.to, stmt, TM.retext(stmt, n.i, t))));
-    } else {
-      const ed = g.e, stmt = text.slice(ed.from, ed.to), now = TM.tipOf(ed), mid = [(g.a[0] + g.b[0]) / 2, (g.a[1] + g.b[1]) / 2], seg = ed.segs[g.k];
-      const img = pdfBody.querySelector(`.pdf-page[data-page="${g.page}"] img`), r = img.getBoundingClientRect(), [w, h] = pageSize(img), sx = r.left + mid[0] / w * r.width, sy = r.top + mid[1] / h * r.height;
-      html = `<b>${escape(`Path ${seg.a} → ${seg.b}`)}</b>` +
-        item('Add label…', () => tikzInput(sx, sy, '', 'the new label', (t) => tikzWrite(ed.from, ed.to, stmt, TM.label(stmt, g.k, t).text))) + '<hr>' +
-        TIP_NAMES.map(([k, l]) => item(l, () => tikzWrite(ed.from, ed.to, stmt, TM.tip(stmt, k)), k === now || (!k && !now))).join('');
+  /** The run's facts of the picture at offset `at` (its shapes and their libraries, colors, arrow tips: the tikz plugin's `run`), asked once per text. */
+  let paFacts = { key: null, got: null };
+  function paFactsOf(at) {
+    const key = `${uri()}@${version}@${at}`;
+    if (paFacts.key !== key) paFacts = { key, got: lsp('satex/view', { textDocument: { uri: uri() }, position: tikzPos(editor.text(), at) }).then((vs) => (vs ?? []).find((v) => v.plugin === 'tikz')?.sections?.find((s) => s.kind === 'drawing')?.run ?? null).catch(() => null) };
+    return paFacts.got;
+  }
+  /** A node picked for a new edge: the next click on a node of the pages or the Typeset view goes to `tikzLink.done`. */
+  let tikzLink = null;
+  const tikzLinkEnd = () => { tikzLink = null; document.body.classList.remove('tikz-linking'); };
+  function tikzPick(prompt, done) {
+    tikzLink = { done };
+    document.body.classList.add('tikz-linking');
+    toast(prompt, 10000);
+  }
+  // before any other press handler: the pages' and the Typeset view's own
+  addEventListener('pointerdown', (e) => {
+    if (!tikzLink || e.button !== 0) return;
+    e.preventDefault(); e.stopPropagation();
+    const n = pdfBody.contains(e.target) ? tikzHit(tikzPoint(e))?.p.n : typesetBody.contains(e.target) ? tsTikzAt(e)?.n : null, done = tikzLink.done;
+    tikzLinkEnd();
+    toast.off?.();
+    if (n?.kind === 'node') done(n); else toast('No node there: no edge written');
+  }, true);
+  addEventListener('keydown', (e) => { if (tikzLink && e.key === 'Escape') { tikzLinkEnd(); toast('No edge written'); } }, true);
+  /** The title of a target's menu. */
+  const paTitle = (t) => t.kind === 'tikz-edge' ? `Path ${t.e.segs[t.k].a} → ${t.e.segs[t.k].b}` : t.kind === 'tikz-label' ? `Label ${t.n.text}`.trim()
+    : t.kind === 'tikz-node' ? (t.n.name ? `Node ${t.n.name}` : 'Node') : t.kind === 'forest-node' ? `Node ${t.f.n.content || '(empty)'}` : `Column ${t.k + 1}`;
+  /** The menu of target `t` at screen point (x, y): the run's facts of a picture waited for a moment, then the plugins' groups. */
+  async function paOpen(x, y, t) {
+    const text = editor.text(), at = t.n?.from ?? t.e?.from;
+    const ctx = { text, all: Object.values(state.texts).join('\n'), x, y, facts: null, write: (edits) => paWrite(text, edits), toast, pick: tikzPick,
+      colAlign: (i, k, a) => { pdfColMenu = null; pdfColAlign({ dataset: { t: i, k, a } }); } };
+    if (at != null) ctx.facts = await Promise.race([paFactsOf(at), new Promise((ok) => setTimeout(() => ok(null), 400))]);
+    if (editor.text() !== text) return null;
+    return PA.open(x, y, paTitle(t), PA.groups(t, ctx, configSet));
+  }
+  /** The target of the PDF at page point `pt`: a node or label, a path, a forest node, a table column. */
+  function pdfTarget(pt) {
+    const hit = tikzHit(pt);
+    if (hit) {
+      const p = hit.p, fixed = p.n.kind === 'node' && p.origin && tikzAt(p, 0, 0, { ctrlKey: true, shiftKey: true }), rel = p.n.kind === 'node' && tikzRel(p, 0, 0, editor.text());
+      return { kind: p.n.kind === 'label' ? 'tikz-label' : 'tikz-node', n: p.n, fixed: fixed && fixed.text !== fixed.stmt ? fixed.text : null, rel: rel && rel.text !== editor.text().slice(p.n.from, p.n.to) ? rel : null };
     }
-    menu.innerHTML = html;
-    menu.style.left = `${Math.max(8, Math.min(e.clientX, innerWidth - 220))}px`;
-    menu.style.top = `${Math.max(8, Math.min(e.clientY, innerHeight - 320))}px`;
-    document.body.append(menu);
-    menu.querySelector('button')?.focus();
-    menu.onclick = (c) => { const b = c.target.closest('button[data-i]'); if (b) { tikzMenuClose(); items[+b.dataset.i](); } };
-    menu.onkeydown = (k) => {
-      const bs = [...menu.querySelectorAll('button')], i = bs.indexOf(document.activeElement);
-      if (k.key === 'Escape') { k.preventDefault(); tikzMenuClose(); }
-      else if (k.key === 'ArrowDown' || k.key === 'ArrowUp') { k.preventDefault(); bs[(i + (k.key === 'ArrowDown' ? 1 : bs.length - 1)) % bs.length].focus(); }
-    };
+    const g = tikzEdgeAt(pt);
+    if (g) return { kind: 'tikz-edge', e: g.e, k: g.k };
+    const f = pt && forestAt(pt);
+    if (f) return { kind: 'forest-node', f };
+    return pt && pdfColAt(pt);
+  }
+  /** The table column at page point `pt` (its chip's band down to the table's foot). */
+  function pdfColAt([page, x, y]) {
+    if (pdfCols?.file !== state.file || !pdf?.boxes) return null;
+    for (const [i, t] of pdfCols.tables.entries()) {
+      const b = PE.extent(pdf.boxes, state.file, t);
+      if (!b || b.page !== page || y < b.y - b.h - 14 || y > b.y + b.d) continue;
+      const c = PE.columns(pdf.boxes, state.file, t, pdfCols.tables, pdf.wordList ?? []).find((c) => c.page === page && x >= c.x && x <= c.x + c.w);
+      if (c && t.cols[c.k]?.spec) return { kind: 'table-column', t: i, k: c.k, col: t.cols[c.k] };
+    }
+    return null;
   }
   pdfBody.addEventListener('contextmenu', (e) => {
-    const pt = tikzPoint(e), hit = tikzHit(pt), g = !hit && tikzEdgeAt(pt), f = !hit && !g && pt && forestAt(pt);
-    if (!hit && !g && !f) return;
+    const t = pdfTarget(tikzPoint(e));
+    if (!t) return;
     e.preventDefault();
-    tikzMenu(e, hit?.p, g && { ...g, page: pt[0] }, f);
+    paOpen(e.clientX, e.clientY, t);
   });
+  /** A column chip's ⋯: its menu under the chip, the chip marked open while it shows. */
+  async function pdfColMenuOpen(b) {
+    const [i, k] = b.dataset.menu.split(':').map(Number), col = pdfCols?.tables[i]?.cols[k], r = b.getBoundingClientRect();
+    if (!col) return;
+    pdfColMenu = b.dataset.menu;
+    pdfOverlay();
+    const m = await paOpen(r.left, r.bottom + 2, { kind: 'table-column', t: i, k, col });
+    const done = () => { if (pdfColMenu === b.dataset.menu) { pdfColMenu = null; pdfOverlay(); } };
+    if (!m) return done();
+    new MutationObserver((_, ob) => { if (!m.isConnected) { ob.disconnect(); done(); } }).observe(document.body, { childList: true });
+  }
+  /** The picture node or label a Typeset sketch shows under event `e`, or the path near it: the sketch's texts matched to
+   * the open file's pictures (the one whose node texts it sets, in order), a path by its ends' places in the sketch. */
+  function tsTikzAt(e) {
+    const svg = e.target.closest?.('.ts-sketch'), g = svg?.querySelector('g');
+    if (!g) return null;
+    const texts = [...svg.querySelectorAll('text')], text = editor.text(), norm = (s, keep) => s.replace(/\\([A-Za-z@]+)/g, keep ? '$1' : '').replace(/[^\p{L}\p{N}]/gu, '').toLowerCase();
+    const shown = texts.map((t) => norm(t.textContent, false)), same = (n, k) => [false, true].some((keep) => norm(n.text, keep) === shown[k]);
+    const pics = [...Map.groupBy(TM.nodes(text).filter((n) => n.text.trim()), (n) => n.pic.at).values()];
+    const score = (ns) => (ns.length === texts.length ? texts.length : 0) + ns.filter((n, k) => same(n, k)).length;
+    const ns = pics.sort((a, b) => score(b) - score(a))[0];
+    if (!ns || !score(ns)) return null;
+    const of = (k) => ns.length === texts.length ? ns[k] : ns.find((n, j) => j === k && same(n, k)) ?? null;
+    const k = texts.indexOf(e.target.closest('text'));
+    if (k >= 0) { const n = of(k); return n && { kind: n.kind === 'label' ? 'tikz-label' : 'tikz-node', n }; }
+    // a path: the sketch's place of each named node, the click in the sketch's frame (pt, y down)
+    const where = new Map(texts.map((t, j) => [of(j)?.name, [+t.getAttribute('x'), +t.getAttribute('y')]]).filter(([n]) => n));
+    let p;
+    try { const q = svg.createSVGPoint(); q.x = e.clientX; q.y = e.clientY; const m = q.matrixTransform(g.getScreenCTM().inverse()); p = [m.x, m.y]; } catch { return null; }
+    let best = null;
+    for (const ed of TM.edges(text).filter((x) => x.pic.at === ns[0].pic.at)) ed.segs.forEach((s, j) => {
+      const a = where.get(s.a.split('.')[0].trim()), b = where.get(s.b.split('.')[0].trim());
+      const d = a && b ? tikzNear(TM.segPath(a, b, s), p) : Infinity;
+      if (d < 5 && (!best || d < best.d)) best = { kind: 'tikz-edge', e: ed, k: j, d };
+    });
+    return best;
+  }
+  /** A forest node a Typeset sketch shows under event `e`: its text's place among the sketch's, the tree's nodes in bracket order. */
+  function tsForestAt(e) {
+    const t = e.target.closest?.('.ts-sketch text'), texts = t && [...t.closest('svg').querySelectorAll('text')], text = editor.text();
+    if (!t) return null;
+    for (const m of text.matchAll(/\\begin\{forest\}/g)) {
+      const from = m.index + 14, to = text.indexOf('\\end{forest}', from);
+      let tree = null;
+      try { tree = FOREST.parse(text.slice(from, to)); } catch {}
+      const order = (n) => [n, ...n.children.flatMap(order)], ns = tree ? order(tree.root).filter((n) => n.content.trim()) : [];
+      if (ns.length === texts.length) {
+        const n = ns[texts.indexOf(t)];
+        if (n) return { kind: 'forest-node', f: { from, to, body: text.slice(from, to), t: tree, n } };
+      }
+    }
+    return null;
+  }
+  typesetBody.addEventListener('contextmenu', (e) => {
+    const t = tsTikzAt(e) ?? tsForestAt(e);
+    if (!t) return;
+    e.preventDefault();
+    paOpen(e.clientX, e.clientY, t);
+  });
+  /** A node turned by its handle: the angle from its centre to the pointer, on 15° steps (Shift: 1°), written as `rotate=` on release. */
+  function tikzRotate(e, p) {
+    const img = p && pdfImg(p.page), el = pdfBody.querySelector('.pdf-tikz');
+    if (!img?.naturalWidth || !el) return;
+    const r = img.getBoundingClientRect(), k = r.width / pageSize(img)[0], cx = r.left + p.c[0] * k, cy = r.top + p.c[1] * k;
+    const text = editor.text(), stmt = text.slice(p.n.from, p.n.to), id = e.pointerId;
+    let deg = TM.angle(stmt, p.n.i);
+    tikzMoving = p;
+    el.classList.add('pdf-tikz-turning');
+    const move = (m) => {
+      if (m.pointerId !== id) return;
+      deg = TM.snapAngle(Math.atan2(cy - m.clientY, m.clientX - cx) * 180 / Math.PI - 90, m.shiftKey ? 1 : 15);
+      el.style.rotate = `${-deg}deg`;
+      el.dataset.deg = `rotate=${deg}`;
+    };
+    const end = (u) => {
+      if (u.pointerId !== id) return;
+      for (const [t, f] of [['pointermove', move], ['pointerup', end], ['pointercancel', end]]) removeEventListener(t, f);
+      tikzMoving = null;
+      pdfSelEnd = performance.now();
+      tikzClear('.pdf-tikz');
+      if (u.type === 'pointercancel') return;
+      paWrite(text, [{ from: p.n.from, to: p.n.to, now: TM.set(stmt, p.n.i, 'rotate', deg ? [`rotate=${deg}`] : []) }]);
+    };
+    for (const [t, f] of [['pointermove', move], ['pointerup', end], ['pointercancel', end]]) addEventListener(t, f);
+  }
   /** The forest node page point `pt` sets, in the open file: the tree's body `from`..`to` (after `\begin{forest}`),
    * the tree as the forest widget reads it and the node, the n-th in bracket order as the `[`s before it count. */
   function forestAt(pt) {
@@ -7696,7 +7846,6 @@
     const order = (n) => [n, ...n.children.flatMap(order)], n = t && order(t.root)[k];
     return n ? { from, to, body: text.slice(from, to), t, n } : null;
   }
-  addEventListener('pointerdown', (e) => { if (!e.target.closest?.('.tikz-menu, .tikz-input')) tikzMenuClose(); }, true);
   /* References switched from the pages (pdfedit.ts `satexRefPick`): in Type mode a reference's printed number, a
    * citation's label, is no text to type into. Hovering one outlines it, a click opens the keys the editor completes
    * in its braces, searched as typed. A choice writes the new key through the snapshot printer. */
@@ -7725,7 +7874,7 @@
     document.body.append(box);
     const input = box.querySelector('input'), list = box.querySelector('ul');
     input.focus();
-    const raw = await Promise.resolve(completions({ line: o.line - 1, character: span[0] }, span[0], null, uri(file))).catch(() => []);
+    const raw = await Promise.resolve(completions({ line: o.line - 1, character: span[0] }, span[0], placeAt(line.slice(0, span[0])), uri(file))).catch(() => []);
     const doc = (i) => (typeof i.documentation === 'string' ? i.documentation : i.documentation?.value ?? '').replace(/\s+/g, ' ').slice(0, 140);
     const items = (raw ?? []).map((i) => ({ key: i.insertText ?? i.label, label: i.label, detail: i.detail ?? '', doc: doc(i) }));
     let shown = [], at = 0;
@@ -8333,6 +8482,48 @@
     pdfHyphOf = { rows: typesetRows, map };
     return map;
   }
+  /** A typed word's hyphenation points from the server's own hyphenation (`satex/hyphenate`: the last run's patterns,
+   * as it marks a set paragraph's words), asked once per word, null until the answer came: the next echo uses it. */
+  const pdfHyphAsked = new Map();
+  let pdfHyphWant = new Set(), pdfHyphTimer = 0;
+  function pdfHyphenate(word) {
+    if (pdfHyphAsked.has(word)) return pdfHyphAsked.get(word);
+    pdfHyphWant.add(word);
+    pdfHyphTimer ||= setTimeout(() => {
+      const words = [...pdfHyphWant];
+      pdfHyphWant = new Set(); pdfHyphTimer = 0;
+      for (const w of words) pdfHyphAsked.set(w, null);
+      lsp('satex/hyphenate', { textDocument: { uri: uri(state.root ?? state.file) }, words })
+        .then((r) => { if (Array.isArray(r)) words.forEach((w, i) => pdfHyphAsked.set(w, r[i])); else for (const w of words) pdfHyphAsked.delete(w); })
+        .catch(() => { for (const w of words) pdfHyphAsked.delete(w); });
+    }, 60);
+    return null;
+  }
+  /** TeX's own lines for the echo (`satex/break`: the run's breaker over its TFM widths, ligatures, kerns, parameters
+   * and patterns) as PE.reflow's `breaks` over the pieces `tagged` and the rows `later`: `words` the words from the
+   * row's start (`indent` bp right of the margin, at source line `line`). Asked once per paragraph text, null until
+   * the answer came (the echo is drawn again then) or where TeX breaks where the echo has no piece. */
+  const pdfBreakAsked = new Map();
+  function pdfTexBreaks(words, tagged, later, indent, line) {
+    const params = { textDocument: { uri: uri(state.root ?? state.file) }, path: uri(state.file), line, words, indent: Math.abs(indent) < 0.5 ? 0 : Math.round(indent * 65536 * 72.27 / 72) };
+    const key = JSON.stringify([params.path, line, params.indent, words]);
+    if (!pdfBreakAsked.has(key)) {
+      if (pdfBreakAsked.size > 64) pdfBreakAsked.clear();
+      pdfBreakAsked.set(key, null);
+      const at = version;
+      lsp('satex/break', params).then((r) => { pdfBreakAsked.set(key, r?.lines ?? false); if (r?.lines && version === at) pdfCaretDrawNow(); }).catch(() => pdfBreakAsked.set(key, false));
+    }
+    const lines = pdfBreakAsked.get(key);
+    if (!lines) return null;
+    // each line's end as the piece the next line starts with; the words before A are no pieces: TeX must keep A's row
+    const all = [...tagged, ...later.flatMap((r) => r.pieces)], breaks = [];
+    for (const l of lines.slice(0, -1)) {
+      const j = all.findIndex((q) => q.wi === l.word && (q.wc ?? q.wc0 ?? 0) === l.at && (l.at > 0 || q.gap > 0));
+      if (j <= 0) return null;
+      breaks.push(j);
+    }
+    return { breaks, ratios: lines.map((l, i) => (i === lines.length - 1 || l.order > 0 ? 0 : l.ratio)) };
+  }
   /** The font's natural interword space on page image `img`, in bp: the common gap of the rows that end short of the
    * right edge `right` (a paragraph's last row: TeX sets its spaces unstretched), punctuation's wider ones aside;
    * else a third of `em`. */
@@ -8532,22 +8723,32 @@
       });
       // words at TeX's hyphenation points (the run's, pdfHyphens): a line may break inside one, as TeX did; the page's
       // words split by their glyphs' places, typed ones by their measure (never the word the caret is in)
+      // the words TeX breaks (`satex/break`): A's row up to A as the page set it, then the pieces' words, each piece
+      // tagged with its word (`wi`) and where in it it starts (`wc0`); a formula or paragraph break typed: none
+      const rowWords = fits ? line.filter((v) => v[3] <= w[3] + 0.5).map((v) => v[5]?.normalize('NFKC')) : [];
+      let texWords = fits && rowWords.length && rowWords.every(Boolean) ? [...rowWords] : null;
+      for (const q of texWords ? seq : []) {
+        const t = (q.t ?? q.w?.[5])?.normalize('NFKC');
+        if (!t || q.par || q.disp != null) { texWords = null; break; }
+        if (q.gap > 0) texWords.push(t); else texWords[texWords.length - 1] += t;
+        Object.assign(q, { wi: texWords.length - 1, wc0: texWords.at(-1).length - t.length });
+      }
       const tagged = pieces.map((q, ix) => ({ ...q, ix }));
       if (fits) {
         const H = pdfHyphens(), hw = width('-');
         const split = (q) => {
-          const t = q.ix === into ? null : q.t ?? q.w?.[5]?.normalize('NFKC'), cuts = t && H.get(t);
+          const t = q.ix === into ? null : q.t ?? q.w?.[5]?.normalize('NFKC'), cuts = t && (H.get(t) ?? pdfHyphenate(t));
           if (!cuts?.length) return [q];
           const xs = q.t == null ? pdfBounds(page(q.w[0]), q.w) : null, at = [0, ...cuts, t.length];
           return at.slice(0, -1).map((a, i) => {
-            const b = at[i + 1], part = { ...q, gap: i ? 0 : q.gap, st: i ? 0 : q.st, sh: i ? 0 : q.sh, hy: i < at.length - 2, hw };
+            const b = at[i + 1], part = { ...q, gap: i ? 0 : q.gap, st: i ? 0 : q.st, sh: i ? 0 : q.sh, hy: i < at.length - 2, hw, wc: (q.wc0 ?? 0) + a };
             return xs ? { ...part, n: xs[b] - xs[a], w: [q.w[0], xs[a], q.w[2], xs[b], q.w[4], t.slice(a, b)] } : { ...part, n: width(t.slice(a, b)), t: t.slice(a, b) };
           });
         };
         tagged.splice(0, tagged.length, ...tagged.flatMap(split));
         for (const r of later) r.pieces = r.pieces.flatMap(split);
       }
-      const flow = PE.reflow(tagged, w[3], { right, left, indent, skip, parskip, rows: later, pull: dl < 0, fit: fits });
+      const flow = PE.reflow(tagged, w[3], { right, left, indent, skip, parskip, rows: later, pull: dl < 0, fit: fits, breaks: texWords && pdfTexBreaks(texWords, tagged, later, line[0][1] - left, pdfPos(g.text, A.s).line) });
       const rows = [];
       for (const fr of flow.rows) {
         const prev = rows.at(-1), L = later[fr.from];
@@ -8754,8 +8955,7 @@
     const caret = document.querySelector('.pdf-caret')?.getBoundingClientRect(), pts = [ovAt && [...ovAt, true], caret && [caret.left, caret.top + caret.height / 2, false]].filter(Boolean);
     for (const el of document.querySelectorAll(OV_LABELS)) {
       const r = el.getBoundingClientRect(), d = (x, y) => Math.hypot(Math.max(r.left - x, 0, x - r.right), Math.max(r.top - y, 0, y - r.bottom));
-      // a chip's open menu reaches past the chip: the pointer on it is on the chip
-      const m = el.querySelector('.pdf-col-menu')?.getBoundingClientRect(), on = (x, y) => d(x, y) === 0 || !!m && x >= m.left && x <= m.right && y >= m.top && y <= m.bottom;
+      const on = (x, y) => d(x, y) === 0;
       el.classList.toggle('ov-near', !!r.width && pts.some(([x, y, pointer]) => d(x, y) < OV_REACH && !(pointer && on(x, y))));
     }
   }
@@ -8965,17 +9165,15 @@
     if (!pdfCaret || e.isComposing) return;
     const step = { ArrowLeft: -1, ArrowRight: 1 }[e.key];
     // the completion list: Up and Down choose, Enter or Tab takes, Escape closes
-    // Tab or Enter right after `\\name` while its list is on the way: the pick waits for the list, the keys after it wait too
+    // Tab or Enter right after `\\name` while its list is on the way: the pick takes its first item, the keys after it wait
+    // for that only (a run under way answers from the kept items at once, a free worker within 2 s)
     const g0 = pdfSeen();
     if (!pdfMenu && pdfMenuAsk && /^(Enter|Tab)$/.test(e.key) && !e.shiftKey && /^\\[A-Za-z@]*$/.test(g0.text.slice(pdfMenuAsk.from, g0.at))) {
       e.preventDefault();
       const { from, ask, p } = pdfMenuAsk;
       pdfQueue(async () => {
-        // the server's own list: the names standing in for it carry no snippet (`\\emph` without its braces)
-        let all = (await pdfWithin(ask)) ?? [];
-        // no snippets yet (a run under way holds the server): the commands the last list gave, else the server's after the run
-        if (!all.some((i) => i.insertText)) all = commandItems.get('\\')?.some((i) => i.insertText) ? commandItems.get('\\') : (await pdfRunEnd(), (await pdfWithin(completions(p, p.character, '\\', uri(), true))) ?? []);
-        const c = pdfCaretNow(), n = c && /^\\([A-Za-z@]*)$/.exec(editor.text().slice(from, c.at)), item = n && pdfMenuItems(all, n[1])[0];
+        const all = pdfOrKept(await pdfWithin(ask));
+        const c = pdfCaretNow(), n = c && /^\\([A-Za-z@]*)$/.exec(editor.text().slice(from, c.at)), item = n && all.length && pdfMenuItems(all, n[1])[0];
         pdfMenuOff();
         if (item) pdfMenuApply(item, from, true);
       });
@@ -8989,9 +9187,8 @@
         const c = pdfCaretNow(), t = editor.text(), m = c && /\\([A-Za-z@]+)$/.exec(t.slice(Math.max(0, c.at - 64), c.at));
         if (!m) return;
         const from = c.at - m[0].length, p = pdfPos(t, from + 1);
-        let all = (await pdfWithin(completions(p, p.character, '\\', uri(), true))) ?? [];
-        if (!all.some((i) => i.insertText)) all = commandItems.get('\\')?.some((i) => i.insertText) ? commandItems.get('\\') : (await pdfRunEnd(), (await pdfWithin(completions(p, p.character, '\\', uri(), true))) ?? []);
-        const item = pdfMenuItems(all, m[1])[0];
+        const all = pdfOrKept(await pdfWithin(completions(p, p.character, '\\', uri())));
+        const item = all.length && pdfMenuItems(all, m[1])[0];
         pdfMenuOff();
         if (item) pdfMenuApply(item, from, true);
       });
@@ -9060,6 +9257,8 @@
   let pdfMenuAsk = null;
   /** `pr`, or null after `ms`: a completion the busy server does not answer never holds the keys queued after it. */
   const pdfWithin = (pr, ms = 2000) => Promise.race([pr, new Promise((ok) => setTimeout(() => ok(null), ms))]);
+  /** The items an answer gave, else the kept ones: a Tab takes the list's first item without the worker. */
+  const pdfOrKept = (got) => got?.length ? got : keptFor('\\') ?? [];
   /** Once the run under way ends (5 s at most): the server answers a completion then. */
   const pdfRunEnd = async () => { for (let t = 0; running && t < 100; t++) await new Promise((ok) => setTimeout(ok, 50)); };
   /** The items of the server's list `all` for `\\name`: a macro's call clicked, every command with its own first. */
@@ -9068,13 +9267,15 @@
     const made = pdfCaret?.made && `\\${name}` === pdfCaret.made, own = made && (all.find((i) => i.label === name) ?? { label: name, detail: 'the command clicked' });
     return made ? [own, ...rank(all, '').filter((i) => i.label !== name)].slice(0, 60) : rank([...all.filter((i) => i.label !== 'textbackslash'), back], name).slice(0, 60);
   }
-  async function pdfMenuShow(again = true) {
+  /** `fresh`: the open list takes the free worker's items, its selection kept on its item (`refreshKept`). */
+  async function pdfMenuShow(again = true, fresh = false) {
     const g = pdfSeen(), m = /\\([A-Za-z@]*)$/.exec(g.text.slice(Math.max(0, g.at - 64), g.at));
     // verbatim names no command
     if (!m || !pdfCaret || PE.verbatimAt(g.text, g.at)) return pdfMenuOff();
-    const from = g.at - m[0].length, p = pdfPos(g.text, from + 1), ask = completions(p, p.character, '\\', uri(), !again);
+    const from = g.at - m[0].length, p = pdfPos(g.text, from + 1), ask = completions(p, p.character, '\\', uri(), !again || fresh);
     pdfMenuAsk = { from, ask, p };
     const all = await ask;
+    if (fresh && (!all.length || !pdfMenu)) { if (pdfMenuAsk?.ask === ask) pdfMenuAsk = null; return; }
     // an early empty answer (a run went on, the server was slow): none shown (a lone \\textbackslash would take Tab),
     // asked once more after the run, which the server's answer then gives; a Tab meanwhile waits for that
     if (!all.length && again) { pdfMenuOff(); await pdfRunEnd(); if (pdfMenuAsk?.ask === ask) pdfMenuShow(false); return; }
@@ -9085,7 +9286,7 @@
     const items = pdfMenuItems(all, n[1]);
     if (!items.length) return pdfMenuOff();
     if (!pdfMenu) { pdfMenu = { el: Object.assign(document.createElement('ul'), { className: 'complete type-complete', role: 'listbox' }) }; document.body.append(pdfMenu.el); }
-    Object.assign(pdfMenu, { items, sel: 0, from });
+    Object.assign(pdfMenu, { items, sel: fresh ? reselect(items, pdfMenu.items?.[pdfMenu.sel]?.label) : 0, from });
     pdfMenu.el.onmousedown = (e) => { e.preventDefault(); const li = e.target.closest('li'); if (li) pdfMenuPick(+li.dataset.i); };
     pdfMenuDraw();
   }
@@ -10197,6 +10398,13 @@
     lastHeard = performance.now();
     // a notification of a run that ended while the message's other runs go on (`satex gui`)
     if (data.type === 'note') for (const m of data.out) notified(m, true);
+    // a mailed question's answer: no run's turn in the worker's order
+    if (data.type === 'mail') for (const m of data.out) {
+      const p = m.id !== undefined && pending.get(m.id);
+      if (!p) continue;
+      pending.delete(m.id);
+      if (m.error) p.reject(new Error(m.error.message)); else p.resolve(m.result ?? null);
+    }
     if (data.type === 'lsp') {
       running -= order.shift() ? 1 : 0;
       for (const m of data.out) {
@@ -10337,7 +10545,7 @@
       const [js, wasm, bundle] = await Promise.all([manifest.js, manifest.wasm, manifest.kernels[0].bundle].map(local));
       given = { js, wasm, bundle };
     }
-    const ready = await ask({ type: 'init', base, manifest, given, cancel: textsSent }, given ? Object.values(given).map((b) => b.buffer) : []);
+    const ready = await ask({ type: 'init', base, manifest, given, cancel: textsSent, mail: mailbox }, given ? Object.values(given).map((b) => b.buffer) : []);
     booted = true;
     try { sessionStorage.removeItem('satex-recovered'); } catch {}
     timing('t-init', secs(performance.now() - started), 'time to fetch SaTeX and the pdfTeX kernel and set them up');

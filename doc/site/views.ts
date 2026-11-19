@@ -3638,6 +3638,30 @@ button.tv-spec-value { cursor: pointer; } button.tv-spec-value:hover, button.tv-
    * the newest version whose final rows are shown): never older rows, never a preview of a text already final. */
   const rowsWin = (final: number | undefined, version: number | null | undefined, preview: boolean) =>
     version == null || final == null || (preview ? version > final : version >= final);
-  return { rowsWin, loads: { unlanded, lacked }, tipBag, yaml, history: { historyEvent }, render, RENDER, hue, passes, masterDetail, usesView, fold, SPEC, mix, colorBand, oklch, drawing: { expandStyles, STYLE_DEF, parse, emit, mermaidIn, mermaidOut, mermaidLoss, layout, importMermaid, tipsOf, toMatrix, cellPlaces, toLayer, picOptions, relocate, relPos, nearestAnchor, anchorAt, tipMarker, shapeSample, shapeList, cycle, STYLE }, forest: forestFns, circuit: { parse: cParse, body: cBody, emit: cEmit }, page: { pageOf, pageBox, textArea, pageNodes, numberNodes, numberInForce, headerOf, headerCalls, headerNodes, fmtRead, fmtWrite, styleNodes, styleSet, styleEdits }, dev: { traceCsv, stateHtml }, templates: { fill, filled, chosen } };
+  /** Completion lists the playground answers from while the worker is busy (playground.js `completions`). */
+  type Completion = { label: string; detail?: string; filterText?: string; sortText?: string; insertText?: string; textEdit?: { newText: string } };
+  /** Completion order: how well the item matches first (the exact name, a prefix of the label, a part of it, a part of
+   * what it is found by such as a citation's title, the label's characters in order: `m/f` finds `mode/fast`); then the
+   * project's own commands, documented ones, internals (`@`, `_`, `:`) last; then the server's order (its own ranking,
+   * typos forgiven) and shorter names. Items that match none are dropped. */
+  const tier = (i: Completion) => /\(document\)$/.test(i.detail ?? '') ? 0 : /[@_:]/.test(i.label) ? 2 : 1;
+  const subsequence = (text: string, typed: string) => { let k = 0; for (const c of text) if (c === typed[k]) k++; return k === typed.length; };
+  const closeness = (i: Completion, typed: string) => {
+    const label = i.label.toLowerCase(), found = (i.filterText ?? '').toLowerCase();
+    return label === typed ? -1 : label.startsWith(typed) ? 0 : label.includes(typed) ? 1 : found.includes(typed) ? 2 : subsequence(label, typed) ? 3 : null;
+  };
+  const rank = <T extends Completion>(items: T[], typed: string): T[] => items
+    .map((i) => [i, tier(i), closeness(i, typed.toLowerCase())] as const).filter((x) => x[2] !== null)
+    .sort((a, b) => a[2]! - b[2]! || a[1] - b[1] || (a[0].sortText ?? '').localeCompare(b[0].sortText ?? '') || a[0].label.length - b[0].label.length || a[0].label.localeCompare(b[0].label)).map((x) => x[0]);
+  /** The kept list of a kind of place: the server's last items there, then the names in force it lacks (no snippet, they
+   * add only names). An item asked elsewhere replaces no range here: its text goes in at the cursor's word, and the
+   * server's order there (`sortText`, for another word) ranks nothing here: `\\emp` takes `emph` before `empty`. */
+  const kept = (served: Completion[] | undefined, names: Completion[] | undefined) => {
+    const have = new Set((served ?? []).map((i) => i.label)), both = [...(served ?? []), ...(names ?? []).filter((n) => !have.has(n.label))];
+    return served || names ? both.map(({ textEdit, sortText: _, ...i }) => (textEdit ? { ...i, insertText: i.insertText ?? textEdit.newText } : i)) : null;
+  };
+  /** The selection of a list refreshed under the person's eyes: the item of the same label, else the first. */
+  const reselect = (items: Completion[], label: string | undefined) => Math.max(0, label == null ? 0 : items.findIndex((i) => i.label === label));
+  return { rowsWin, complete: { rank, kept, reselect }, loads: { unlanded, lacked }, tipBag, yaml, history: { historyEvent }, render, RENDER, hue, passes, masterDetail, usesView, fold, SPEC, mix, colorBand, oklch, drawing: { expandStyles, STYLE_DEF, parse, emit, mermaidIn, mermaidOut, mermaidLoss, layout, importMermaid, tipsOf, toMatrix, cellPlaces, toLayer, picOptions, relocate, relPos, nearestAnchor, anchorAt, tipMarker, shapeSample, shapeList, cycle, STYLE }, forest: forestFns, circuit: { parse: cParse, body: cBody, emit: cEmit }, page: { pageOf, pageBox, textArea, pageNodes, numberNodes, numberInForce, headerOf, headerCalls, headerNodes, fmtRead, fmtWrite, styleNodes, styleSet, styleEdits }, dev: { traceCsv, stateHtml }, templates: { fill, filled, chosen } };
 })();
 self.satexViews = satexViews;

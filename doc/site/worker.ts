@@ -29,6 +29,21 @@ interface Engine {
   caches(): { path: string; size: number }[]; uncache(paths: string[]): Promise<unknown>;
 }
 /** Debug pages only (playground.js `satexChaos`): the next `lsp` message aborts as a panic or an out-of-memory does. */
+/** The page's mailbox (a SharedArrayBuffer: sent and taken counts, a length, then the bytes): a cheap request
+ * written while a run keeps this thread, read at the run's pauses (src/lsp/wasm.rs `mail`). */
+let mailBuf: SharedArrayBuffer | null = null;
+/** Where a mailed request's answer goes: to the page as a `mail` message. */
+let mailReply: (json: string) => void = () => {};
+/** The request the mailbox holds, taken out of it; null when it holds none. */
+function mailTake(): string | null {
+  if (!mailBuf) return null;
+  const h = new Int32Array(mailBuf, 0, 4);
+  if (Atomics.load(h, 0) === Atomics.load(h, 1)) return null;
+  const n = Atomics.load(h, 2), bytes = new Uint8Array(n);
+  bytes.set(new Uint8Array(mailBuf, 16, n));
+  Atomics.store(h, 1, Atomics.load(h, 0));
+  return new TextDecoder().decode(bytes);
+}
 let chaosArmed = '';
 function chaosAbort(lines: [string, string][]) {
   const oom = chaosArmed === 'oom';
@@ -172,6 +187,8 @@ function SatexEngine(createSatex: (o: Rec) => Promise<Mod>, progress: (label: st
       onStatus,
       onNote,
       cancelled: () => stale(),
+      mail: mailTake,
+      onMail: (json: string) => mailReply(json),
       instantiateWasm(imports: WebAssembly.Imports, done: (i: WebAssembly.Instance, m: WebAssembly.Module) => void) {
         WebAssembly.instantiate(wasm!, imports).then((instance) => done(instance, wasm!));
         return {};
@@ -527,7 +544,7 @@ if (typeof cjs === 'object' && cjs.exports) {
     if (/^textDocument\/did(Open|Change)$/.test(m.method) || (m.method === 'satex/analyze' && m.params?.first !== shown)) texts++;
     if (m.method === 'satex/analyze') shown = m.params?.first ?? shown;
     data.texts = texts;
-    if (['init', 'bundle', 'bundles'].includes(data.type)) handle(data);
+    if (['init', 'bundle', 'bundles', 'mail'].includes(data.type)) handle(data);
     else serial = serial.then(turn).then(() => handle(data));
   };
   /** One turn of the event loop: the messages that came meanwhile are counted before the next is handled,
@@ -541,6 +558,8 @@ if (typeof cjs === 'object' && cjs.exports) {
       if (data.type === 'init') {
         const given = data.given ?? {};
         cancelFlag = data.cancel ?? null;
+        mailBuf = data.mail ?? null;
+        mailReply = (json) => self.postMessage({ type: 'mail', out: [JSON.parse(json)] });
         if (data.manifest.local) {
           engine = LocalEngine(data.base, (s) => self.postMessage({ type: 'status', ...s }), undefined, (m) => self.postMessage({ type: 'note', out: [m] }));
           self.postMessage({ type: 'ready', ...(await engine!.init()) });
@@ -556,6 +575,10 @@ if (typeof cjs === 'object' && cjs.exports) {
           self.postMessage({ type: 'progress', label, loaded, total });
         }, typeof indexedDB === 'object' ? idb() : null, (s) => self.postMessage({ type: 'status', ...s }), (m) => self.postMessage({ type: 'note', out: [m] }));
         self.postMessage({ type: 'ready', ...(await engine!.init(data.base, data.manifest, given)) });
+      } else if (data.type === 'mail') {
+        // the page's nudge: a request no run's pause took is answered now (no run holds the thread)
+        const m = mailTake();
+        if (m && engine) self.postMessage({ type: 'mail', out: await engine.lsp(JSON.parse(m)) });
       } else if (data.type === 'bundle') {
         self.postMessage({ type: 'bundle', id: data.entry.id, ...(await engine!.bundle(data.base, data.entry, data.given)) });
       } else if (data.type === 'bundles') {

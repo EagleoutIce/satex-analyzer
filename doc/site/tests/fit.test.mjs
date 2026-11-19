@@ -98,3 +98,16 @@ test('hyphenation points', () => {
   const wide = E.reflow(ps, 0, { right: 120, left: 0, indent: 0, skip: 12, parskip: 0, rows: [], fit: true });
   assert.deepEqual(wide.rows[0].out.map((q) => q.x), [0, 74, 86], 'unbroken: the parts flush, no hyphen');
 });
+// Intuition: TeX's own breaks (`satex/break`, playground.js pdfTexBreaks) replace the echo's total fit: reflow lays
+// the rows where they say, each justified by TeX's ratio, the last natural; breaks outside the pieces are no answer
+// and the echo's fit stands. Pins an echo that ignores the server's lines or trusts a stale one.
+test('reflow takes given breaks', () => {
+  const ps = [40, 40, 12, 40, 40, 40, 40].map((n, j) => ({ n, gap: j ? 4 : 0 }));
+  const line = { right: 100, left: 0, indent: 0, skip: 12, parskip: 0, rows: [], fit: true };
+  const own = E.reflow(ps, 0, line).rows.map((r) => r.out.length);
+  const given = E.reflow(ps, 0, { ...line, breaks: { breaks: [3, 5], ratios: [0, 0.5, 0] } });
+  assert.deepEqual(given.rows.map((r) => r.out.length), [3, 2, 2]);
+  assert.equal(given.rows[1].out[1].x, 40 + 4 + 0.5 * 2, 'the second row justified by the given ratio (stretch half the gap)');
+  const stale = E.reflow(ps, 0, { ...line, breaks: { breaks: [9], ratios: [0, 0] } }).rows.map((r) => r.out.length);
+  assert.deepEqual(stale, own, 'a break past the pieces: the echo fits itself');
+});

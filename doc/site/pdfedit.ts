@@ -23,7 +23,7 @@ type Form = { kind: 'len'; num: number; unit: string } | { kind: 'share'; num: n
 type Piece = { gap: number; n: number; par?: boolean; disp?: number; below?: number; st?: number; sh?: number; hy?: boolean; hw?: number };
 /** The lines a paragraph may take: its right edge, its left margin, the indent and gap of a new paragraph, the rows the
  * page set after the first (each its left edge and its own words, gaps set), whether a row may take words up (`pull`). */
-type Line<P> = { right: number; left: number; indent: number; skip: number; parskip: number; rows: { x: number; pieces: P[] }[]; pull?: boolean; shrink?: number; justify?: boolean; fit?: boolean };
+type Line<P> = { right: number; left: number; indent: number; skip: number; parskip: number; rows: { x: number; pieces: P[] }[]; pull?: boolean; shrink?: number; justify?: boolean; fit?: boolean; breaks?: { breaks: number[]; ratios: number[] } | null };
 /** Rows laid out: each its left edge, its pieces placed (`x`), the page row it takes (`from`: -2 the first, -1 a new
  * one) and a new row's baseline shift from the row before (`dy`); `freed` the page rows whose words all went up. */
 type Flow<P> = { rows: { x: number; from: number; dy: number; par: boolean; out: (P & { x: number })[] }[]; freed: number[] };
@@ -884,7 +884,8 @@ declare global {
     // `fit`: TeX's total fit over the typed pieces and every page row after them, each line but the last justified;
     // greedy below where nothing fits within the tolerance, or a new paragraph or display is typed
     const all = line.fit && !pieces.some((q) => q.par || q.disp != null) ? [...pieces, ...line.rows.flatMap((r) => r.pieces)] : null;
-    const k = all && fit(all, line.right - x0, line.right - line.left);
+    // `breaks`: the lines TeX's own breaker gave for these pieces (`satex/break`), else the echo's total fit
+    const k = all && (line.breaks && line.breaks.breaks.every((b) => b > 0 && b < all.length) ? line.breaks : fit(all, line.right - x0, line.right - line.left));
     if (all && k) {
       const starts = [0, ...k.breaks], rows: Flow<P>['rows'] = starts.map((a, li) => {
         const b = starts[li + 1] ?? all.length, r = k.ratios[li]!, slot = li ? line.rows[li - 1] : null, out: (P & { x: number })[] = [];
@@ -1327,9 +1328,11 @@ declare global {
     opts: string[];
   }
   /** A path (`\draw (a) -- (b);`): its statement, its options' place, each segment between two points and where a label goes in it. */
-  interface TikzEdge { from: number; to: number; line: number; opts: string[]; segs: { a: string; b: string; at: number }[]; pic: TikzPic }
+  interface TikzEdge { from: number; to: number; line: number; opts: string[]; segs: TikzSeg[]; pic: TikzPic }
+  /** A path's segment from point `a` to `b`: its operation (`--`, `to`, `|-`, `-|`) at `op`, the keys of a `to[…]`, and `at` where a label goes. */
+  type TikzSeg = { a: string; b: string; at: number; op: [number, number]; kind: string; keys: string[] };
   /** A picture's scale and units in cm, and the keys its `every node/.style` gives each node. */
-  type TikzPic = { scale: number; x: number; y: number; node?: string[]; at?: number };
+  type TikzPic = { scale: number; x: number; y: number; node?: string[]; at?: number; dist?: [number, number] };
   /** A move: by a distance (`by`), to a place (`to`, from the origin), or to `pos`. Lengths land on the 0.5 mm grid, `grid`
    * cm an axis where given (0: as is), off it with `free`. */
   type TikzMove = { by?: [number, number]; to?: [number, number]; pos?: number; free?: boolean; grid?: [number, number] };
@@ -1337,7 +1340,8 @@ declare global {
   type TikzBox = { l: number; t: number; r: number; d: number };
   /** A guide line at `at` across axis `ax` (0: a vertical line at x) from `from` to `to`; a gap: equal spacings along `ax`, each [from, to, cross]. */
   type TikzSnap = { d: [number, number]; guides: { ax: number; at: number; from: number; to: number }[]; gaps: { ax: number; segs: [number, number, number][] }[] };
-  type TikzShape = 'rectangle' | 'rounded' | 'circle' | 'ellipse' | 'diamond';
+  /** A shape's name as TikZ spells it (`regular polygon`), `rounded` for `rounded corners`. */
+  type TikzShape = string;
   interface Window {
     satexTikzMove: {
       nodes(text: string): TikzNode[]; move(stmt: string, i: number, pic: TikzPic, m: TikzMove): { text: string; label: string; by: [number, number] } | null;
@@ -1345,10 +1349,21 @@ declare global {
       clipped(a: [number, number], ah: [number, number], b: [number, number], bh: [number, number]): [[number, number], [number, number]];
       snap(b: TikzBox, d: [number, number], others: TikzBox[], tol: number): TikzSnap;
       edges(text: string): TikzEdge[];
-      shapeOf(n: TikzNode): TikzShape; shape(stmt: string, i: number, pic: TikzPic, to: TikzShape): { text: string; library: string | null } | null;
+      shapeOf(n: TikzNode): TikzShape; shape(stmt: string, i: number, pic: TikzPic, to: TikzShape, extra?: string[]): { text: string; library: string | null } | null;
       looks(n: TikzNode): { draw: boolean; fill: boolean }; flip(stmt: string, i: number, pic: TikzPic, key: 'draw' | 'fill'): string | null;
       retext(stmt: string, i: number, text: string): string | null;
-      tipOf(e: TikzEdge): string; tip(stmt: string, tip: string): string | null; label(stmt: string, seg: number, text: string): { text: string; at: number } | null;
+      tipOf(e: TikzEdge): string; tip(stmt: string, tip: string): string | null; label(stmt: string, seg: number, text: string, opts?: string[]): { text: string; at: number } | null;
+      SHAPES: [TikzShape, string][]; library(shape: TikzShape): string | null;
+      keysAt(stmt: string, i: number): string[] | null; current(stmt: string, i: number, group: string, names?: string[]): string[];
+      set(stmt: string, i: number, group: string, add: string[], names?: string[]): string | null;
+      segOf(stmt: string, seg: number): TikzSeg | null; route(stmt: string, seg: number, kind: string): string | null;
+      bend(stmt: string, seg: number, side: string | null, angle?: number): string | null; inout(stmt: string, seg: number, out: number, into: number): string | null;
+      looseness(stmt: string, seg: number, v: number): string | null; segPath(a: [number, number], b: [number, number], g: TikzSeg): [number, number][];
+      addEdge(text: string, picAt: number, a: string, b: string, opts?: string): { at: number; text: string } | null;
+      named(stmt: string, i: number, name: string): string | null; fresh(text: string, picAt: number, base: string): string;
+      picOpts(text: string, picAt: number): { from: number; to: number; keys: string[] } | null; picSet(text: string, picAt: number, group: RegExp, add: string[]): { from: number; to: number; was: string; now: string } | null;
+      relation(b: TikzBox, ref: TikzBox, tol: number, dist: [number, number] | undefined, name: string): string | null; place(stmt: string, i: number, rel: string): string | null;
+      snapAngle(deg: number, step: number): number; angle(stmt: string, i: number): number; unlabel(stmt: string, i: number): string | null;
     };
   }
 }
@@ -1421,7 +1436,7 @@ declare global {
     while (k > 0 && k < s.length) {
       ws();
       if (k >= s.length) break;
-      if (s.startsWith('--', k)) { op = true; k += 2; continue; }
+      if (s.startsWith('--', k) || s.startsWith('|-', k) || s.startsWith('-|', k)) { op = true; k += 2; continue; }
       if (s.startsWith('to', k) && !/[a-z]/i.test(s[k + 2] ?? '')) { op = true; k += 2; ws(); if (s[k] === '[') k = close(s, k) + 1; continue; }
       if (s.startsWith('node', k) && !/[a-z]/i.test(s[k + 4] ?? '')) {
         const oAt = k + 4; k = oAt;
@@ -1447,14 +1462,16 @@ declare global {
   }
   /** The picture options' scale and units. */
   function picOf(opts: string): TikzPic {
-    let scale = 1, x = 1, y = 1, node: string[] = [];
+    let scale = 1, x = 1, y = 1, node: string[] = [], dist: [number, number] = [1, 1];
     for (const kv of keys(opts)) {
       const [k, v = ''] = kv.split('=').map((t) => t.trim()), l = len(v);
       if (k === 'scale' && +v) scale = +v;
       if ((k === 'x' || k === 'y') && l) { if (k === 'x') x = cm(l, 1); else y = cm(l, 1); }
       if (k === 'every node/.style') node = keys(kv.slice(kv.indexOf('=') + 1).trim().replace(/^\{|\}$/g, ''));
+      // `1cm`, or `1cm and 2cm`: vertical, then horizontal
+      if (k === 'node distance') { const d = v.split(/\s+and\s+/).map(len); if (d.every(Boolean)) dist = [cm(d[0]!, 1), cm((d[1] ?? d[0])!, 1)]; }
     }
-    return { scale, x, y, node };
+    return { scale, x, y, node, dist };
   }
   /** Each statement of the text's pictures, comments blanked: its text `s` from offset `at`, its line, its picture. */
   function stmts(text: string): { s: string; at: number; line: (i: number) => number; pic: TikzPic }[] {
@@ -1591,14 +1608,19 @@ declare global {
   function edgeOf(s: string) {
     const head = /^\s*\\(draw|path|fill|filldraw)\b/.exec(s);
     if (!head) return null;
-    let k = head[0].length, o: [number, number] | null = null, last = '', op: number | null = null;
-    const oAt = k, segs: { a: string; b: string; at: number }[] = [], ws = () => { while (/\s/.test(s[k] ?? '')) k++; };
+    let k = head[0].length, o: [number, number] | null = null, last = '', op: number | null = null, opAt: [number, number] = [0, 0], kind = '', tkeys: string[] = [];
+    const oAt = k, segs: TikzSeg[] = [], ws = () => { while (/\s/.test(s[k] ?? '')) k++; };
     ws();
     if (s[k] === '[') { const e = close(s, k); if (e < 0) return null; o = [k, e]; k = e + 1; }
     while (k > 0 && k < s.length) {
       ws();
-      if (s.startsWith('--', k)) { k += 2; op = k; continue; }
-      if (s.startsWith('to', k) && !/[a-z]/i.test(s[k + 2] ?? '')) { k += 2; ws(); if (s[k] === '[') k = close(s, k) + 1; op = k; continue; }
+      const two = s.slice(k, k + 2);
+      if (two === '--' || two === '|-' || two === '-|') { opAt = [k, k + 2]; kind = two; tkeys = []; k += 2; op = k; continue; }
+      if (s.startsWith('to', k) && !/[a-z]/i.test(s[k + 2] ?? '')) {
+        const a = k; k += 2; ws(); tkeys = [];
+        if (s[k] === '[') { const e = close(s, k); if (e < 0) return null; tkeys = keys(s.slice(k + 1, e)); k = e + 1; }
+        opAt = [a, k]; kind = 'to'; op = k; continue;
+      }
       if (s.startsWith('node', k) && !/[a-z]/i.test(s[k + 4] ?? '')) {
         // past its options, name, `at` and text; a label on the segment goes after it
         k += 4;
@@ -1606,7 +1628,7 @@ declare global {
         if (op != null) op = k;
         continue;
       }
-      if (s[k] === '(') { const e = close(s, k), pt = s.slice(k + 1, e).trim(); if (e < 0) return null; if (op != null && last) segs.push({ a: last, b: pt, at: op }); last = pt; op = null; k = e + 1; continue; }
+      if (s[k] === '(') { const e = close(s, k), pt = s.slice(k + 1, e).trim(); if (e < 0) return null; if (op != null && last) segs.push({ a: last, b: pt, at: op, op: opAt, kind, keys: tkeys }); last = pt; op = null; k = e + 1; continue; }
       if (s[k] === ';') break;
       // `+(…)`, `|-`, `circle` …: no point known after it
       last = ''; op = null; k++;
@@ -1619,20 +1641,32 @@ declare global {
     const t = o.join(', ');
     return range ? stmt.slice(0, range[0]) + (t ? `[${t}]` : '') + stmt.slice(range[1] + 1) : t ? stmt.slice(0, oAt) + `[${t}]` + stmt.slice(oAt) : stmt;
   };
-  const SHAPES = /^(rectangle|circle|ellipse|diamond|shape\s*=.*|rounded corners(\s*=.*)?|sharp corners)$/;
+  /** The shapes the page menu offers, each with its label; `rounded` is `rounded corners` on a rectangle. */
+  const SHAPE_LIST: [TikzShape, string][] = [['rectangle', 'Rectangle'], ['rounded', 'Rounded rectangle'], ['circle', 'Circle'], ['ellipse', 'Ellipse'], ['diamond', 'Diamond'],
+    ['trapezium', 'Trapezium'], ['semicircle', 'Semicircle'], ['regular polygon', 'Regular polygon'], ['star', 'Star'], ['cylinder', 'Cylinder'], ['rectangle split', 'Rectangle split'],
+    ['cloud', 'Cloud'], ['signal', 'Signal'], ['single arrow', 'Single arrow'], ['double arrow', 'Double arrow']];
+  /** The TikZ library that declares a shape, when the run has not said (its `load` wins): pgf's manual, Part V. */
+  const SHAPE_LIB: Record<string, string> = { ellipse: 'shapes.geometric', diamond: 'shapes.geometric', trapezium: 'shapes.geometric', semicircle: 'shapes.geometric',
+    'regular polygon': 'shapes.geometric', star: 'shapes.geometric', cylinder: 'shapes.geometric', 'rectangle split': 'shapes.multipart', cloud: 'shapes.symbols',
+    signal: 'shapes.symbols', 'single arrow': 'shapes.arrows', 'double arrow': 'shapes.arrows' };
+  const library = (shape: TikzShape) => SHAPE_LIB[shape] ?? null;
+  const NAMED = SHAPE_LIST.map(([n]) => n).filter((n) => n !== 'rounded').sort((x, y) => y.length - x.length).join('|');
+  const SHAPES = new RegExp(`^(${NAMED}|shape\\s*=.*|rounded corners(\\s*=.*)?|sharp corners)$`);
+  /** The keys one shape reads (`regular polygon sides`): they go with it when the shape changes. */
+  const SHAPE_KEYS = /^(regular polygon sides|star points|star point (ratio|height)|rectangle split (parts|horizontal)|trapezium (left|right)? ?angle|trapezium stretches( body)?|cylinder uses custom fill|aspect|cloud puffs|cloud puff arc|signal (to|from|pointer angle)|single arrow (head extend|tip angle|head indent)|double arrow (head extend|tip angle|head indent)|shape border rotate)\s*(=|$)/;
   /** A node's shape as its keys and its picture's `every node` say: the last such key wins. */
   function shapeOf(n: TikzNode): TikzShape {
     const k = [...(n.pic.node ?? []), ...n.opts].filter((x) => SHAPES.test(x)).at(-1) ?? '', name = k.replace(/^shape\s*=\s*/, '');
-    return name === 'circle' || name === 'ellipse' || name === 'diamond' ? name : /^rounded/.test(k) ? 'rounded' : 'rectangle';
+    return name !== 'rectangle' && SHAPE_LIST.some(([s]) => s === name) ? name : /^rounded/.test(k) ? 'rounded' : 'rectangle';
   }
-  /** Statement `stmt` with node `i` in shape `to`, and the library it needs (`shapes.geometric`), else null. */
-  function shape(stmt: string, i: number, pic: TikzPic, to: TikzShape) {
+  /** Statement `stmt` with node `i` in shape `to` (`extra`: the keys it reads, `regular polygon sides=5`), and the library it needs, else null. */
+  function shape(stmt: string, i: number, pic: TikzPic, to: TikzShape, extra: string[] = []) {
     const p = parts(stmt)[i];
     if (!p) return null;
-    const own = (p.o ? keys(stmt.slice(p.o[0] + 1, p.o[1])) : []).filter((k) => !SHAPES.test(k)), round = (pic.node ?? []).some((k) => /^rounded corners/.test(k));
-    const add = { rectangle: round ? ['sharp corners'] : [], rounded: round ? [] : ['rounded corners'], circle: ['circle'], ellipse: ['ellipse'], diamond: ['diamond'] }[to];
+    const own = (p.o ? keys(stmt.slice(p.o[0] + 1, p.o[1])) : []).filter((k) => !SHAPES.test(k) && !SHAPE_KEYS.test(k)), round = (pic.node ?? []).some((k) => /^rounded corners/.test(k));
+    const add = to === 'rectangle' ? (round ? ['sharp corners'] : []) : to === 'rounded' ? (round ? [] : ['rounded corners']) : [to, ...extra];
     // a shape key goes first, as people write it
-    return { text: withOpts(stmt, p.o, p.oAt, to === 'rectangle' || to === 'rounded' ? [...own, ...add] : [...add, ...own]), library: to === 'ellipse' || to === 'diamond' ? 'shapes.geometric' : null };
+    return { text: withOpts(stmt, p.o, p.oAt, to === 'rectangle' || to === 'rounded' ? [...own, ...add] : [...add, ...own]), library: library(to) };
   }
   /** Whether a key list draws (`draw`) or fills (`fill`): the last say wins, `none` says no. */
   const says = (ks: string[], key: string) => ks.filter((k) => k.split('=')[0].trim() === key).map((k) => !/=\s*none\s*$/.test(k)).at(-1);
@@ -1662,13 +1696,158 @@ declare global {
     return withOpts(stmt, e.o, e.oAt, tip ? [tip, ...rest] : styled ? ['-', ...rest] : rest);
   }
   /** Path statement `stmt` with a label `text` on segment `seg` (`node[midway, above] {…}`): the text and the offset of the label's text in it. */
-  function label(stmt: string, seg: number, text: string) {
+  function label(stmt: string, seg: number, text: string, opts = ['midway', 'above']) {
     const g = edgeOf(stmt)?.segs[seg];
     if (!g) return null;
-    const put = ` node[midway, above] {${text}}`;
+    const put = ` node${opts.length ? `[${opts.join(', ')}]` : ''} {${text}}`;
     return { text: stmt.slice(0, g.at) + put + stmt.slice(g.at), at: g.at + put.length - 1 - text.length };
   }
-  self.satexTikzMove = { nodes, move, len, cm, posOn, clipped, snap, edges, shapeOf, shape, looks, flip, retext, tipOf, tip, label };
+  // ---- the page actions' rewrites (actions.ts): one option group of a node, a path or a segment at a time
+  /** The keys each option group owns: setting a group drops all of them first. `names`: bare color names (`red`), a color group's too. */
+  const GROUP: Record<string, RegExp> = {
+    draw: /^(draw|color)\s*=/, fill: /^fill\s*=/, text: /^text\s*=/, font: /^font\s*=/, rotate: /^rotate\s*=/, opacity: /^opacity\s*=/,
+    width: /^(ultra thin|very thin|thin|semithick|thick|very thick|ultra thick|line width\s*=.*)$/,
+    corners: /^(rounded corners(\s*=.*)?|sharp corners)$/,
+    dash: /^(solid|dashed|dotted|densely dashed|loosely dashed|densely dotted|loosely dotted|dash dot|dash dot dot|dash pattern\s*=.*)$/,
+    'inner sep': /^inner sep\s*=/, 'minimum width': /^minimum width\s*=/, 'minimum height': /^minimum height\s*=/,
+    pos: /^(midway|near start|near end|very near start|very near end|at start|at end|pos\s*=.*)$/,
+    // a side, never a placement (`right=of a`)
+    side: /^(above|below|left|right)( (left|right))?(\s*=(?!.*\bof\b).*)?$/, sloped: /^sloped$/, auto: /^(auto(\s*=.*)?|swap|')$/,
+  };
+  /** Groups that exclude each other: a side and `auto` both place a label. */
+  const EXCLUDES: Record<string, string[]> = { side: ['auto'], auto: ['side'] };
+  /** The option list of part `i` of `stmt` (a node or a label; -1: the path's own) as a range and where a new one goes. */
+  function optsOf(stmt: string, i: number): { o: [number, number] | null; oAt: number } | null {
+    if (i < 0) { const e = edgeOf(stmt); return e && { o: e.o, oAt: e.oAt }; }
+    const p = parts(stmt)[i];
+    return p ? { o: p.o, oAt: p.oAt } : null;
+  }
+  const keysAt = (stmt: string, i: number) => { const r = optsOf(stmt, i); return r ? (r.o ? keys(stmt.slice(r.o[0] + 1, r.o[1])) : []) : null; };
+  const inGroup = (k: string, group: string, names: string[] = []) => GROUP[group]?.test(k) || (group === 'draw' && names.includes(k));
+  /** The keys of part `i` that group `group` owns, as written. */
+  const current = (stmt: string, i: number, group: string, names: string[] = []) => (keysAt(stmt, i) ?? []).filter((k) => inGroup(k, group, names));
+  /** `stmt` with part `i`'s keys of `group` (and those it excludes) replaced by `add` (none: they go), else null. */
+  function set(stmt: string, i: number, group: string, add: string[], names: string[] = []) {
+    const r = optsOf(stmt, i), ks = keysAt(stmt, i);
+    if (!r || !ks) return null;
+    const drop = [group, ...(EXCLUDES[group] ?? [])], rest = ks.filter((k) => !drop.some((g) => inGroup(k, g, names)));
+    return withOpts(stmt, r.o, r.oAt, [...rest, ...add]);
+  }
+  /** Segment `seg` of path statement `stmt`. */
+  const segOf = (stmt: string, seg: number) => edgeOf(stmt)?.segs[seg] ?? null;
+  /** `stmt` with segment `seg`'s operation written `op`. */
+  const opSet = (stmt: string, g: TikzSeg, op: string) => stmt.slice(0, g.op[0]) + op + stmt.slice(g.op[1]);
+  /** `stmt` with segment `seg` as a straight line (`--`) or a right-angle one (`|-` up or down first, `-|` across first). */
+  function route(stmt: string, seg: number, kind: string) {
+    const g = segOf(stmt, seg);
+    return g && (g.kind === kind && !g.keys.length ? stmt : opSet(stmt, g, kind));
+  }
+  const CURVE = /^(bend (left|right)(\s*=.*)?|in\s*=.*|out\s*=.*|relative(\s*=.*)?)$/;
+  /** `stmt` with segment `seg`'s `to[…]` keys passed through `f`: none left is a straight `--`. */
+  function toKeys(stmt: string, seg: number, f: (ks: string[]) => string[]) {
+    const g = segOf(stmt, seg);
+    if (!g) return null;
+    const ks = f(g.kind === 'to' ? g.keys : []);
+    return opSet(stmt, g, ks.length ? `to[${ks.join(', ')}]` : g.kind === 'to' && g.keys.length ? '--' : g.kind);
+  }
+  /** `stmt` with segment `seg` bent to `side` (`left`, `right`; null: straight) by `angle` degrees (30, TikZ's default, unwritten). */
+  const bend = (stmt: string, seg: number, side: string | null, angle = 30) =>
+    toKeys(stmt, seg, (ks) => [...ks.filter((k) => !CURVE.test(k) && !(side == null && /^looseness\s*=/.test(k))), ...(side ? [angle === 30 ? `bend ${side}` : `bend ${side}=${angle}`] : [])]);
+  /** `stmt` with segment `seg` leaving at `out` and entering at `into` degrees. */
+  const inout = (stmt: string, seg: number, out: number, into: number) => toKeys(stmt, seg, (ks) => [...ks.filter((k) => !CURVE.test(k)), `out=${out}`, `in=${into}`]);
+  /** `stmt` with segment `seg`'s looseness `v` (1, the default, unwritten). */
+  const looseness = (stmt: string, seg: number, v: number) => toKeys(stmt, seg, (ks) => [...ks.filter((k) => !/^looseness\s*=/.test(k)), ...(v === 1 ? [] : [`looseness=${v}`])]);
+  /** The points segment `g` draws from `a` to `b` (page bp, y down), for a hit test: a corner for `|-`/`-|`, a curve sampled for a bend or angles. */
+  function segPath(a: [number, number], b: [number, number], g: TikzSeg): [number, number][] {
+    if (g.kind === '-|') return [a, [b[0], a[1]], b];
+    if (g.kind === '|-') return [a, [a[0], b[1]], b];
+    const kv = (n: string) => g.keys.map((k) => k.split('=').map((x) => x.trim())).find(([k]) => k === n), bent = g.keys.map((k) => /^bend (left|right)(?:\s*=\s*(.*))?$/.exec(k)).find(Boolean);
+    const out = kv('out'), into = kv('in');
+    if (!bent && !(out && into)) return [a, b];
+    // in TikZ's frame, y up: `to` leaves at `out`, enters at `in`, its controls 0.3915 × the distance × looseness away
+    const d = [b[0] - a[0], a[1] - b[1]], dir = Math.atan2(d[1], d[0]) * 180 / Math.PI, th = bent ? +(bent[2] ?? 30) : 0;
+    const o = bent ? dir + (bent[1] === 'left' ? th : -th) : +out![1], i = bent ? dir + 180 - (bent[1] === 'left' ? th : -th) : +into![1];
+    const L = 0.3915 * Math.hypot(d[0], d[1]) * (+(kv('looseness')?.[1] ?? 1) || 1), r = (deg: number) => deg * Math.PI / 180;
+    const c1 = [a[0] + L * Math.cos(r(o)), a[1] - L * Math.sin(r(o))], c2 = [b[0] + L * Math.cos(r(i)), b[1] - L * Math.sin(r(i))];
+    return Array.from({ length: 17 }, (_, k) => { const t = k / 16, u = 1 - t; return [0, 1].map((j) => u * u * u * a[j] + 3 * u * u * t * c1[j] + 3 * u * t * t * c2[j] + t * t * t * b[j]) as [number, number]; });
+  }
+  /** Where `\draw[opts] (a) -- (b);` goes in the picture at `picAt`: its own line before `\end{tikzpicture}`, indented as the statement before. */
+  function addEdge(text: string, picAt: number, a: string, b: string, opts = '->') {
+    const end = text.indexOf('\\end{tikzpicture}', picAt);
+    if (end < 0) return null;
+    const stmt = `\\draw${opts ? `[${opts}]` : ''} (${a}) -- (${b});`, ls = text.lastIndexOf('\n', end - 1) + 1;
+    if (text.slice(ls, end).trim()) return { at: end, text: `${stmt} ` };
+    const prev = text.slice(text.lastIndexOf('\n', ls - 2) + 1, ls - 1), lead = /^\s*/.exec(prev)![0];
+    return { at: ls, text: `${/\\begin\{tikzpicture\}/.test(prev) ? `${lead}  ` : lead}${stmt}\n` };
+  }
+  /** `stmt` with node `i` named `name` (a path end needs one), as it was when it has a name. */
+  function named(stmt: string, i: number, name: string) {
+    const p = parts(stmt)[i];
+    if (!p) return null;
+    if (p.name) return stmt;
+    const at = p.o ? p.o[1] + 1 : p.oAt;
+    return `${stmt.slice(0, at)} (${name})${stmt.slice(at)}`;
+  }
+  /** A node name from `base` (its text) not yet used in the picture at `picAt`. */
+  function fresh(text: string, picAt: number, base: string) {
+    const used = new Set(nodes(text).filter((n) => n.pic.at === picAt && n.name).map((n) => n.name)), stem = base.replace(/\\[A-Za-z@]+|[^A-Za-z]/g, '').toLowerCase().slice(0, 8) || 'n';
+    for (let k = 1; ; k++) { const n = k === 1 ? stem : `${stem}${k}`; if (!used.has(n)) return n; }
+  }
+  /** The options of the picture at `picAt`: their range (`[`..`]`, or the empty place after `\begin{tikzpicture}`) and keys. */
+  function picOpts(text: string, picAt: number) {
+    const m = /^\\begin\{tikzpicture\}\s*/.exec(text.slice(picAt));
+    if (!m) return null;
+    const k = picAt + m[0].length, at = picAt + '\\begin{tikzpicture}'.length;
+    if (text[k] !== '[') return { from: at, to: at, keys: [] };
+    const e = close(text, k);
+    return e < 0 ? null : { from: k, to: e + 1, keys: keys(text.slice(k + 1, e)) };
+  }
+  /** The picture's options with the keys `group` matches replaced by `add`: the edit `from`..`to` of `was` to `now`. */
+  function picSet(text: string, picAt: number, group: RegExp, add: string[]) {
+    const o = picOpts(text, picAt);
+    if (!o) return null;
+    const ks = [...o.keys.filter((k) => !group.test(k)), ...add];
+    return { from: o.from, to: o.to, was: text.slice(o.from, o.to), now: ks.length ? `[${ks.join(', ')}]` : '' };
+  }
+  /** `deg` on the nearest multiple of `step`, in -180..180. */
+  const snapAngle = (deg: number, step: number) => { const v = Math.round(deg / step) * step, w = ((v % 360) + 540) % 360 - 180; return w === -180 ? 180 : w || 0; };
+  /** Node `i`'s own rotation in degrees. */
+  const angle = (stmt: string, i: number) => +(current(stmt, i, 'rotate')[0]?.split('=')[1] ?? 0) || 0;
+  /** Where frame `b` stands beside frame `ref` (page bp, y down) as positioning writes it: a side when their centres line up
+   * within `tol`, else a corner (`above right=⟨vertical⟩ and ⟨horizontal⟩ of a`), each gap between their borders in cm on
+   * the 0.5 mm grid; gaps equal to the picture's node distance `dist` (vertical, horizontal) unwritten. Null: the same centre. */
+  function relation(b: TikzBox, ref: TikzBox, tol: number, dist: [number, number] = [1, 1], name: string) {
+    const bp = 72 / 2.54, mid = (o: TikzBox, ax: number) => (ax ? o.t + o.d : o.l + o.r) / 2;
+    const dx = mid(b, 0) - mid(ref, 0), dy = mid(b, 1) - mid(ref, 1);
+    const h = Math.abs(dx) <= tol ? '' : dx > 0 ? 'right' : 'left', v = Math.abs(dy) <= tol ? '' : dy > 0 ? 'below' : 'above';
+    if (!h && !v) return null;
+    const gx = (h === 'right' ? b.l - ref.r : ref.l - b.r) / bp, gy = (v === 'below' ? b.t - ref.d : ref.t - b.d) / bp;
+    const fmt = (c: number) => `${+(Math.round(c / GRID) * GRID).toFixed(2)}cm`, same = (g: number, d: number) => Math.abs(g - d) < GRID / 2;
+    const gaps: [number, number][] = [...(v ? [[gy, dist[0]] as [number, number]] : []), ...(h ? [[gx, dist[1]] as [number, number]] : [])];
+    const val = gaps.every(([g, d]) => same(g, d)) ? '' : `${gaps.map(([g]) => fmt(g)).join(' and ')} `;
+    return `${[v, h].filter(Boolean).join(' ')}=${val}of ${name}`;
+  }
+  /** `stmt` with node `i` placed by positioning key `rel` (`right=of a`): its placement, shifts and `at` before go. */
+  function place(stmt: string, i: number, rel: string) {
+    const p = parts(stmt)[i];
+    if (!p) return null;
+    const LEGACY = /^(above|below|left|right)( (left|right))? of\s*=/;
+    const ks = (p.o ? keys(stmt.slice(p.o[0] + 1, p.o[1])) : []).filter((k) => !PLACED.test(k) && !SHIFTS.test(k) && !LEGACY.test(k));
+    let s = withOpts(stmt, p.o, p.oAt, [...ks, rel]);
+    const q = parts(s)[i]!;
+    if (q.at) s = s.slice(0, q.at[0]).replace(/\s*\bat\s*$/, '') + s.slice(q.at[1] + 1);
+    return s;
+  }
+  /** `stmt` without its label `i` (`node[…] {…}` on a path). */
+  function unlabel(stmt: string, i: number) {
+    const p = parts(stmt)[i];
+    if (!p || p.kind !== 'label') return null;
+    let a = p.oAt - 4;
+    while (a > 0 && /\s/.test(stmt[a - 1]!)) a--;
+    return stmt.slice(0, a) + stmt.slice(p.t[1] + 1);
+  }
+  self.satexTikzMove = { nodes, move, len, cm, posOn, clipped, snap, edges, shapeOf, shape, looks, flip, retext, tipOf, tip, label,
+    SHAPES: SHAPE_LIST, library, keysAt, current, set, segOf, route, bend, inout, looseness, segPath, addEdge, named, fresh, picOpts, picSet, snapAngle, angle, unlabel, relation, place };
 })();
 
 // References switched from the pages: a reference's printed number is no text to type into. Where its key stands in
