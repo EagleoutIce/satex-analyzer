@@ -2724,7 +2724,7 @@
     const locs = (Array.isArray(r) ? r : r ? [r] : []).map((l) => /** @type {[URL, any]} */ ([new URL(l.uri ?? l.targetUri), (l.range ?? l.targetSelectionRange).start]));
     if (!locs.length) {
       // while packages download their commands are not defined yet: the answer comes with the next run
-      if (loadingFor) { toast('Packages are still loading: the definition opens once the check ran again', null); afterRun = () => { toast.off(); definition(x, y); }; return; }
+      if (loadingFor) { whenRun('Packages are still loading: the definition opens once the check ran again', () => definition(x, y)); return; }
       return toast('No definition found');
     }
     const open = ([url, start]) => url.protocol === 'file:' ? openPlace(decodeURIComponent(url.pathname), start) : window.open(url.href, '_blank', 'noopener');
@@ -4640,7 +4640,7 @@
     const [view] = (await lsp('satex/view', { textDocument: { uri: target }, plugin }).catch(() => [])) ?? [];
     if (!view) {
       // no finished run of this text yet: the manager opens once there is one
-      if (running > 0 || act.phase) { toast('Opening once the analysis is done…', null); afterRun = () => { toast.off(); manage(plugin, kept, target); }; return; }
+      if (running > 0 || act.phase) { whenRun('Opening once the analysis is done…', () => manage(plugin, kept, target)); return; }
       return toast(`No ${plugin} here`);
     }
     if (kept && view.sections?.[0]) Object.assign(view.sections[0], { query: kept.q, focus: kept.open ?? view.sections[0].focus });
@@ -5721,6 +5721,7 @@
           // the same PDF again (a kept build) opens once: its view is the one shown
           if (pdfViewer !== view) pdfClose(pdfViewer);
           pdfViewer = view;
+          if (!view && built.pdf && TEX) built.note = `The PDF <code>${escape(built.pdf)}</code> was built but did not open: ${escape(pdfOpening?.error || 'no answer')}.`;
           pdf = view ? { ...built, pagelabels: built.pagelabels ?? view.pagelabels } : built;
           pdfMarksOff();
           pdfShow(same);
@@ -5893,7 +5894,8 @@
     const src = d.pdf && TEX ? d.blobs?.[d.pdf] ?? `${COMPILE}/${d.base}${d.pdf}` : null;
     if (!src) return Promise.resolve(null);
     // a browser build's PDF opens while its SyncTeX data is read
-    if (pdfOpening?.src !== src) { const o = pdfOpening = { src, v: null, view: self.satexTex.open(TEX, src).then((v) => (o.v = v), () => null) }; }
+    // a PDF that does not open keeps why (a fetch refused, a damaged file): the pages say so, never a bare "No pages"
+    if (pdfOpening?.src !== src) { const o = pdfOpening = { src, v: null, error: '', view: self.satexTex.open(TEX, src).then((v) => (o.v = v), (e) => { o.error = String(e?.message ?? e); return null; }) }; }
     return pdfOpening.view;
   };
   /** A view closed: never handed out again for its PDF (a build from the cache has the same address), else its pages fail to draw. */
@@ -6778,8 +6780,7 @@
     if (i >= 0) return runTool(i);
     // no view yet (a file just shown, its run stopped for it): once the next run is in
     if (!tries) return toast(`No ${site.key} widget here: the analysis found none at this place`);
-    toast('Opening once the analysis is done…', null);
-    afterRun = () => { toast.off(); siteOpen(site, tries - 1); };
+    whenRun('Opening once the analysis is done…', () => siteOpen(site, tries - 1));
     if (!running && !act.phase) analyze();
   }
   /** The groups of a layer's sub-filters. */
@@ -8644,6 +8645,8 @@
    * row's start (`indent` bp right of the margin, at source line `line`). Asked once per paragraph text, null until
    * the answer came (the echo is drawn again then) or where TeX breaks where the echo has no piece. */
   const pdfBreakAsked = new Map();
+  /** `satex/break` questions asked, answered with lines, and of those answered while a run went on (`satexHealth`). */
+  const texBreakStats = { asked: 0, lines: 0, during: 0 };
   function pdfTexBreaks(words, tagged, later, indent, line) {
     if (self.__noTexBreaks) return null;//UI39
     const params = { textDocument: { uri: uri(state.root ?? state.file) }, path: uri(state.file), line, words, indent: Math.abs(indent) < 0.5 ? 0 : Math.round(indent * 65536 * 72.27 / 72) };
@@ -8652,9 +8655,11 @@
       if (pdfBreakAsked.size > 64) pdfBreakAsked.clear();
       pdfBreakAsked.set(key, null);
       const at = version;
+      const during = running > 0;
+      texBreakStats.asked++;
       lsp('satex/break', params).then((r) => {
+        if (r?.lines) { texBreakStats.lines++; texBreakStats.during += +during; }
         // no answer yet (no run finished, or it did not know): asked again at a later draw
-        if (self.__texDebug) (self.__texBreaks ??= []).push({ during: running > 0, lines: r?.lines?.length ?? null, r: r?.lines ? undefined : r });//UI39
         if (!r?.lines) return void pdfBreakAsked.delete(key);
         pdfBreakAsked.set(key, r.lines);
         if (version === at) pdfCaretDrawNow();
@@ -8882,16 +8887,19 @@
       // words at TeX's hyphenation points (the run's, pdfHyphens): a line may break inside one, as TeX did; the page's
       // words split by their glyphs' places, typed ones by their measure (never the word the caret is in)
       // the words TeX breaks (`satex/break`): A's row up to A as the page set it, then the pieces' words, each piece
-      // tagged with its word (`wi`) and where in it it starts (`wc0`); a formula or paragraph break typed: none
-      const rowWords = fits ? line.filter((v) => v[3] <= w[3] + 0.5).map((v) => v[5]?.normalize('NFKC')) : [];
+      // tagged with its word (`wi`) and where in it it starts (`wc0`); a formula or paragraph break typed: none. A word
+      // the page shows goes with its width there (bp, `texW`): macro output (`TEXbook`, `[2]`) is not its letters
+      const rowBoxes = fits ? line.filter((v) => v[3] <= w[3] + 0.5) : [], rowWords = rowBoxes.map((v) => v[5]?.normalize('NFKC'));
       let texWords = fits && rowWords.length && rowWords.every(Boolean) ? [...rowWords] : null;
+      const texW = rowBoxes.map((v) => v[3] - v[1]);
       // an empty piece (a space typed, the caret's empty word) is its gap only: it goes with the next word
       let spaced = [];
       for (const q of texWords ? seq : []) {
         const t = (q.t ?? q.w?.[5])?.normalize('NFKC');
         if (q.par || q.disp != null || t == null || !t && q.n > 0) { texWords = null; break; }
         if (!t) { if (q.gap > 0 || spaced.length) spaced.push(q); continue; }
-        if (q.gap > 0 || spaced.length) texWords.push(t); else texWords[texWords.length - 1] += t;
+        const qw = q.t == null && q.w ? q.n : null;
+        if (q.gap > 0 || spaced.length) { texWords.push(t); texW.push(qw); } else { texWords[texWords.length - 1] += t; texW[texW.length - 1] = qw != null && texW.at(-1) != null ? texW.at(-1) + qw : null; }
         for (const e of [...spaced, q]) Object.assign(e, { wi: texWords.length - 1, wc0: e === q ? texWords.at(-1).length - t.length : 0 });
         spaced = [];
       }
@@ -8910,7 +8918,7 @@
         tagged.splice(0, tagged.length, ...tagged.flatMap(split));
         for (const r of later) r.pieces = r.pieces.flatMap(split);
       }
-      const flow = PE.reflow(tagged, w[3], { right, left, indent, skip, parskip, rows: later, pull: dl < 0, fit: fits, breaks: texWords && pdfTexBreaks(texWords, tagged, later, line[0][1] - left, pdfPos(g.text, A.s).line) });
+      const flow = PE.reflow(tagged, w[3], { right, left, indent, skip, parskip, rows: later, pull: dl < 0, fit: fits, breaks: texWords && pdfTexBreaks(texWords.map((t, i) => (texW[i] != null ? [t, Math.round(texW[i] * 65536 * 72.27 / 72)] : t)), tagged, later, line[0][1] - left, pdfPos(g.text, A.s).line) });
       const rows = [];
       for (const fr of flow.rows) {
         const prev = rows.at(-1), L = later[fr.from];
@@ -10018,7 +10026,7 @@
     if (!v) {
       if (quiet) return;
       // the server has no finished run of this text yet (a start, a restart, an edit): the widget opens once it has
-      if (running > 0 || act.phase || !(target in diagnostics)) { toast('Opening once the analysis is done…', null); afterRun = () => { toast.off(); openDialog(position, true); }; if (!running && !act.phase) analyze(); return; }
+      if (running > 0 || act.phase || !(target in diagnostics)) { whenRun('Opening once the analysis is done…', () => openDialog(position, true)); if (!running && !act.phase) analyze(); return; }
       return toast('No table or figure here: the analysis found none at this place');
     }
     const was = textIn(editor.text(), v.range);
@@ -10054,6 +10062,21 @@
   }
   /** Called once with the next run's results of the open file. */
   let afterRun = null;
+  /** `then` after the open file's next run, `note` shown until it. While no run and no phase goes on for `ms`, none is
+   * coming (another file shown, a run cancelled): the wait ends and says so, never a note left up for good. A null
+   * `note` waits quietly. */
+  function whenRun(note, then, ms = 4000) {
+    if (note) toast(note, null);
+    let timer = 0;
+    const mine = afterRun = () => { clearTimeout(timer); if (note) toast.off(); then(); };
+    const check = () => {
+      if (afterRun !== mine) return;
+      if (running > 0 || act.phase) { timer = setTimeout(check, ms); return; }
+      afterRun = null;
+      if (note) toast('No analysis is running to wait for: ask again', 5000);
+    };
+    timer = setTimeout(check, ms);
+  }
   /** Opens a widget at a place (0-based) of the open file, a manager by its kind ('manager', 'glossary'): media.mjs and the tests drive the page through it. */
   self.satexWidget = (plugin, line = 0, character = 0) => ['table', 'image', 'float'].includes(plugin) ? openDialog({ line, character })
     : plugin === 'manager' ? manage(line || 'glossary') : openViews({ line, character }, plugin);
@@ -10087,11 +10110,9 @@
   /** Opens a link's widget after the open file's next run, again after the next while it finds none. */
   const widgetAsked = (want, tries = 4) => {
     // the link's widget needs the file's run: say so at once, until it opens
-    if (tries === 4 && want.widget !== 'panel') toast(`Opening the ${want.widget} editor once the file is analyzed…`, null);
-    afterRun = async () => {
-      if (await self.satexOpen(want).catch(() => false)) return toast.off();
-      if (--tries) widgetAsked(want, tries); else toast.off();
-    };
+    whenRun(want.widget !== 'panel' ? `Opening the ${want.widget} editor once the file is analyzed…` : null, async () => {
+      if (!await self.satexOpen(want).catch(() => false) && --tries) widgetAsked(want, tries);
+    });
   };
   // a hover's "Edit table…" link opens the dialog
   document.addEventListener('click', (e) => {
@@ -10538,6 +10559,9 @@
     if (act.phase && text === null && status.textContent === act.shown && act.rest) status.textContent = act.rest === READY ? restLine() : act.rest;
     if (text !== null) status.textContent = text;
     if (act.phase) act.ended = performance.now();
+    // a phase that ends with no run to come (the command list, a package fetch): what waited for a run goes now,
+    // a moment later, so a run's own results land first
+    if (act.phase && afterRun) { const then = afterRun; setTimeout(() => { if (afterRun === then && !running && !act.phase) { afterRun = null; then(); } }, 300); }
     act.phase = ''; act.text = '';
     delete status.dataset.busy;
     $('play-stop')?.toggleAttribute('hidden', true);
@@ -10824,7 +10848,7 @@
     boot: !!boot.open, example: state.example, file: state.file, root: state.root, dir: state.dir, version, text: editor?.text() ?? null, cursor: editor?.cursor?.() ?? null,
     list: shownOf.get(list)?.slice(0, 2) ?? null, listStale: list.classList.contains('stale'), sent: sentVersions.get(uri()) ?? null,
     shown: diagnosticVersions[uri()] ?? null, due: timer !== null || dirty, running, pending: pending.size, waiting: Object.keys(waiting), queued: analysisQueued, recovering,
-    pdf: pdf ? { dir: pdf.dir, root: pdf.root } : null, pdfOther: $('play-pdf').classList.contains('pdf-other'), pdfBusy, gap: maxGap, undimmed: [...shownOf].filter(([el, [t, , cls]]) => t !== uri() && !el.classList.contains(cls)).map(([el]) => el.id || el.className), loading: [...inFlight], held: held.length, recoveries, runs: act.run, step: act.steps.at(-1)?.label ?? '', since: Math.round(performance.now() - act.started),
+    texBreaks: { ...texBreakStats }, pdf: pdf ? { dir: pdf.dir, root: pdf.root } : null, pdfOther: $('play-pdf').classList.contains('pdf-other'), pdfBusy, gap: maxGap, undimmed: [...shownOf].filter(([el, [t, , cls]]) => t !== uri() && !el.classList.contains(cls)).map(([el]) => el.id || el.className), loading: [...inFlight], held: held.length, recoveries, runs: act.run, step: act.steps.at(-1)?.label ?? '', since: Math.round(performance.now() - act.started),
   });
   /** chaos.mjs: the worker crashes (an error event) or hangs (goes silent). */
   self.satexKill = (how) => { worker.terminate(); if (how === 'crash') onWorkerError({ message: 'the worker crashed' }); };
