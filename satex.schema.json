@@ -339,7 +339,7 @@
       "properties": {
         "explain": {
           "default": true,
-          "description": "explain the build's messages by a full analysis; false explains by rule and waits for none",
+          "description": "explain the build's messages by a full analysis. false explains by rule and waits for none",
           "type": "boolean",
           "x-affects": [
             "speed"
@@ -365,7 +365,7 @@
         },
         "viewer": {
           "default": "none",
-          "description": "a PDF viewer `satex compile --view` opens: none or auto (the system's opener) or a program; only your own config sets it",
+          "description": "a PDF viewer `satex compile --view` opens: none or auto (the system's opener) or a program. Only your own config sets it",
           "type": "string",
           "x-affects": [
             "output"
@@ -2655,7 +2655,7 @@
         },
         "call_memo_entries": {
           "default": 100000,
-          "description": "kept effects in all, past it none are added; also how many calls met once are remembered",
+          "description": "kept effects in all, past it none are added. Also how many calls met once are remembered",
           "minimum": 0,
           "type": "integer",
           "x-affects": [
@@ -2675,7 +2675,7 @@
         },
         "call_memo_probes": {
           "default": 8,
-          "description": "runs of a definition that may stay short or unclean before its calls are no longer recorded for call_memo_steps; probed again after probes << n such calls (n: times it ran out)",
+          "description": "runs of a definition that may stay short or unclean before its calls are no longer recorded for call_memo_steps. Probed again after probes << n such calls (n: times it ran out)",
           "minimum": 0,
           "type": "integer",
           "x-affects": [
@@ -2685,7 +2685,7 @@
         },
         "call_memo_steps": {
           "default": 200,
-          "description": "a call that ran this many steps cleanly keeps its effect; the same call reading the same values applies it. 0 = never",
+          "description": "a call that ran this many steps cleanly keeps its effect. The same call reading the same values applies it. 0 = never",
           "minimum": 0,
           "type": "integer",
           "x-affects": [

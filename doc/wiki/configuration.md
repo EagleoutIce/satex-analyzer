@@ -721,11 +721,11 @@ compile:  # what satex compile runs and shows
     #! affects: output
     #! example: `system: arara`: the `% arara:` directives of the main file build it
     #! example: `system: satex`: a body edit is one pdfTeX pass from the dumped preamble
-  explain: true  # explain the build's messages by a full analysis; false explains by rule and waits for none
+  explain: true  # explain the build's messages by a full analysis. false explains by rule and waits for none
     #! affects: speed
   passes: 4  # engine passes at most of the satex build, until the build files rest
     #! affects: output
-  # viewer: none  # a PDF viewer `satex compile --view` opens: none or auto (the system's opener) or a program; only your own config sets it
+  # viewer: none  # a PDF viewer `satex compile --view` opens: none or auto (the system's opener) or a program. Only your own config sets it
     #! affects: output
 
 lsp:  # how satex lsp serves an editor
@@ -1169,19 +1169,19 @@ limits:  # what bounds the analysis: reaching one stops that part of the run, so
   call_learn_forks: 2  # how many undecided choices a call with a learned effect may meet before it ends with that effect
     #! affects: precision, speed
     #! example: 1 ends `\pgfmathparse{\the\wd0}` at its first undecided digit
-  call_memo_steps: 200  # a call that ran this many steps cleanly keeps its effect; the same call reading the same values applies it. 0 = never
+  call_memo_steps: 200  # a call that ran this many steps cleanly keeps its effect. The same call reading the same values applies it. 0 = never
     #! affects: speed
     #! example: `\pgfmathparse{sin(30)*2}` met again costs one step
   call_memo_longest: 200000  # a run longer than this keeps no effect and stops being recorded, so its log costs nothing
     #! affects: speed
     #! example: a whole `tikzpicture` is not recorded, the point computations in it are
-  call_memo_probes: 8  # runs of a definition that may stay short or unclean before its calls are no longer recorded for call_memo_steps; probed again after probes << n such calls (n: times it ran out)
+  call_memo_probes: 8  # runs of a definition that may stay short or unclean before its calls are no longer recorded for call_memo_steps. Probed again after probes << n such calls (n: times it ran out)
     #! affects: speed
     #! example: 0 records every call, which costs on every call
   call_memo_variants: 4  # kept effects per code and arguments, one per state they met
     #! affects: speed
     #! example: `\pgfmathparse{\x+1}` for four values of `\x`
-  call_memo_entries: 100000  # kept effects in all, past it none are added; also how many calls met once are remembered
+  call_memo_entries: 100000  # kept effects in all, past it none are added. Also how many calls met once are remembered
     #! affects: speed
     #! example: bounds the memory a long tikz document spends on them
   call_memo_verify: 0  # debug: a call a kept effect stands for runs for real instead, and where its run differs from the kept effect is printed
