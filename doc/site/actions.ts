@@ -5,28 +5,42 @@
 // settings) and with its type plugin (`type_plugins.<name>.enabled`).
 export {};
 declare global {
-  /** A menu row: a choice (`run`), a submenu (`items`), radio state `on`, a color `swatch`. */
-  type PaItem = { label: string; run?: () => void; items?: PaItem[]; on?: boolean; swatch?: string; hint?: string };
+  /** A menu row: a choice (`run`), a submenu (`items`), radio state `on`, a color `swatch`, a picture `img` (SVG), a rule and caption `head` above it. */
+  type PaItem = { label: string; run?: () => void; items?: PaItem[]; on?: boolean; swatch?: string; hint?: string; img?: string | null; head?: string };
   /** A group of rows: a submenu row by its title, or its rows inline. */
   type PaGroup = { title: string; items: PaItem[]; inline?: boolean };
   type PaEdit = { from: number; to: number; now: string };
   /** What the playground hands a plugin: the text the menu opened on, writes, a prompt, the run's facts. */
   interface PaCtx {
     text: string; all: string; x: number; y: number; facts: Rec | null;
-    write(edits: (PaEdit | null)[]): void; toast(msg: string): void;
+    write(edits: (PaEdit | null)[]): Promise<boolean> | void; toast(msg: string): void; caret?(at: number): void;
     pick(prompt: string, done: (n: TikzNode) => void): void; colAlign(t: number, k: number, a: string): void;
+    scratch?(b: ScBlock): void;
   }
+  /** Lines `from`–`to` (1-based) of `file`: what a scratch document is sliced from; `what` names it in the menu. */
+  type ScBlock = { file: string; from: number; to: number; what: string };
+  /** A scratch document's marked region: the file and lines it came from, its text now. */
+  type ScRegion = { file: string; from: number; to: number; body: string };
+  /** Where a merge writes: `clean` at the lines it came from, `moved` where the original's lines now stand,
+   * `conflict` the original changed there (`theirs`), `same` nothing changed. */
+  type ScMerge = { status: 'clean' | 'moved' | 'conflict' | 'same'; from: number; to: number; theirs: string };
   type PaTarget = { kind: string; [k: string]: any };
-  interface PaPlugin { name: string; title: string; about: string; type: string; targets: string[]; groups(t: PaTarget, ctx: PaCtx): PaGroup[] }
+  /** `category`: the Settings → Plugins group it is listed in (`page actions` when none). */
+  interface PaPlugin { name: string; title: string; about: string; type: string; category?: string; targets: string[]; groups(t: PaTarget, ctx: PaCtx): PaGroup[] }
   interface Window {
     satexPageActions: {
       register(p: PaPlugin): void; plugins: PaPlugin[]; on(name: string, cfg?: Record<string, unknown>): boolean; setOn(name: string, on: boolean): void;
       groups(t: PaTarget, ctx: PaCtx, cfg?: Record<string, unknown>): PaGroup[]; open(x: number, y: number, title: string, groups: PaGroup[]): HTMLElement | null; close(): void;
-      ask(x: number, y: number, value: string, what: string, done: (v: string) => void): void;
+      ask(x: number, y: number, value: string, what: string, done: (v: string) => void, always?: boolean): void;
       libEdit(text: string, all: string, loaded: string[], lib: string): { have: true } | { edit: PaEdit } | { line: string };
       colors(all: string, facts: Rec | null): { doc: [string, string][]; base: [string, string][]; more: [string, string][] };
       mix(expr: string, known: Map<string, number[]>): number[] | null; fontSet(font: string | undefined, size: string | null): string | null;
       cut(text: string, from: number, to: number): PaEdit;
+    };
+    satexScratch: {
+      build(slice: string, file: string, text: string, from: number, to: number, isRoot: boolean): string | null;
+      extract(text: string): ScRegion | null; merge(base: string, mine: string, current: string, from: number, to: number, size: number): ScMerge;
+      apply(current: string, from: number, to: number, body: string): string; block(text: string, line: number): [number, number, string];
     };
   }
 }
@@ -45,7 +59,9 @@ declare global {
     if (yes) s.delete(name); else s.add(name);
     self.satexStore?.set(OFF, s.size ? [...s] : null);
   }
-  const groups = (t: PaTarget, ctx: PaCtx, cfg: Record<string, unknown> = {}) => plugins.filter((p) => p.targets.includes(t.kind) && on(p.name, cfg)).flatMap((p) => p.groups(t, ctx));
+  /** The groups of the plugins on for target `t`; groups of one title (Refactor from several plugins) are one. */
+  const groups = (t: PaTarget, ctx: PaCtx, cfg: Record<string, unknown> = {}) => plugins.filter((p) => p.targets.includes(t.kind) && on(p.name, cfg)).flatMap((p) => p.groups(t, ctx))
+    .reduce<PaGroup[]>((out, g) => { const o = out.find((x) => x.title === g.title && !x.inline && !g.inline); if (o) o.items = [...o.items, ...g.items]; else out.push(g); return out; }, []);
 
   // ---------------------------------------------------------------- the menu
   const close = () => { for (const el of document.querySelectorAll('.pa-menu, .tikz-input, .pa-mix')) el.remove(); };
@@ -54,13 +70,14 @@ declare global {
     const m = Object.assign(document.createElement('div'), { className: `pa-menu${parent ? ' pa-sub' : ''}` });
     m.setAttribute('role', 'menu');
     const acts: PaItem[] = [];
-    m.innerHTML = rows.map((r) => {
+    m.innerHTML = rows.map((r, k) => {
       if (r === 'hr') return '<hr>';
       if (typeof r === 'string') return `<b>${esc(r)}</b>`;
       acts.push(r);
+      const head = r.head ? `${k ? '<hr>' : ''}<b>${esc(r.head)}</b>` : '';
       const role = r.items ? 'menuitem' : r.on == null ? 'menuitem' : 'menuitemradio';
-      return `<button type="button" role="${role}"${r.on == null ? '' : ` aria-checked="${r.on}"`}${r.items ? ' aria-haspopup="menu" aria-expanded="false"' : ''} data-i="${acts.length - 1}">` +
-        `${r.swatch ? `<i class="pa-sw" style="background:${esc(r.swatch)}"></i>` : ''}<span>${esc(r.label)}</span>${r.items ? '<span class="pa-more">▸</span>' : r.hint ? `<small>${esc(r.hint)}</small>` : ''}</button>`;
+      return `${head}<button type="button" role="${role}"${r.on == null ? '' : ` aria-checked="${r.on}"`}${r.items ? ' aria-haspopup="menu" aria-expanded="false"' : ''} data-i="${acts.length - 1}">` +
+        `${r.swatch ? `<i class="pa-sw" style="background:${esc(r.swatch)}"></i>` : ''}${r.img ? `<img class="pa-img" alt="" src="data:image/svg+xml;charset=utf-8,${esc(encodeURIComponent(r.img))}">` : ''}<span>${esc(r.label)}</span>${r.items ? '<span class="pa-more">▸</span>' : r.hint ? `<small>${esc(r.hint)}</small>` : ''}</button>`;
     }).join('');
     document.body.append(m);
     const w = m.offsetWidth, h = m.offsetHeight;
@@ -135,8 +152,8 @@ declare global {
     (m.querySelector('button') as HTMLElement | null)?.focus();
     return m;
   }
-  /** A one-line input at (x, y): Enter writes `done(value)`, Escape leaves it. */
-  function ask(x: number, y: number, value: string, what: string, done: (v: string) => void) {
+  /** A one-line input at (x, y): Enter writes `done(value)` (a value unchanged only when `always`), Escape leaves it. */
+  function ask(x: number, y: number, value: string, what: string, done: (v: string) => void, always = false) {
     close();
     const b = Object.assign(document.createElement('div'), { className: 'tikz-input' });
     b.innerHTML = `<input type="text" aria-label="${esc(what)}" placeholder="${esc(what)}"><small>Enter writes it, Escape leaves it</small>`;
@@ -149,7 +166,7 @@ declare global {
     input.onkeydown = (k) => {
       k.stopPropagation();
       if (k.key === 'Escape') { k.preventDefault(); close(); }
-      if (k.key === 'Enter') { k.preventDefault(); const t = input.value; close(); if (t !== value) done(t); }
+      if (k.key === 'Enter') { k.preventDefault(); const t = input.value; close(); if (always || t !== value) done(t); }
     };
     const away = (e: PointerEvent) => { if (!(e.target as HTMLElement).closest?.('.tikz-input')) { b.remove(); removeEventListener('pointerdown', away, true); } };
     addEventListener('pointerdown', away, true);
@@ -464,6 +481,95 @@ declare global {
     groups(t, ctx) {
       const col = t.col, kin = col?.spec && ['lcr', 'pmb'].find((s) => s.includes(col.align));
       return kin ? [{ title: 'Align', inline: true, items: [...kin].map((a) => ({ label: `${a}: ${ALIGNS[a]}`, on: a === col.align, run: () => ctx.colAlign(t.t, t.k, a) })) }] : [];
+    },
+  });
+
+  // ---------------------------------------------------------------- scratch slices
+  // A scratch document is the slice (`satex slice`) of some lines, their own text between two marker lines in it, so the
+  // edits made there map back to the lines they came from. Pure: the playground runs the slice and writes the merge.
+  const MARK = '% satex-scratch';
+  const ownLines = (text: string) => text.replace(/\n$/, '').split('\n');
+  const region = (text: string, from: number, to: number) => text.split('\n').slice(from - 1, to).join('\n');
+  /** The scratch text: `slice` with its copy of lines `from`–`to` of `file` (`text`) replaced by those lines, whole, between
+   * the markers. Matched in order, the window with the most of the lines (then the shortest) wins, so a line that occurs
+   * twice (`\centering`) does not pull it apart. A file the slice reads whole by `\input` is written out in its place.
+   * Null when the slice holds none of the lines. */
+  function build(slice: string, file: string, text: string, from: number, to: number, isRoot: boolean): string | null {
+    const S = ownLines(slice), R = text.split('\n').slice(from - 1, to), head = `${MARK} begin ${file}:${from}-${to}: Merge back writes the lines up to the end marker there`;
+    const marked = [head, ...R, `${MARK} end`];
+    const own = R.map((l) => l.trim()).filter((l) => l && !l.startsWith('%'));
+    // the lines of `file` in the slice: after its `%% from` header, unless it is the root
+    const start = isRoot ? 0 : S.indexOf(`%% from ${file}`) + 1;
+    let best: [number, number, number] | null = null;
+    for (let c = isRoot || start ? start : S.length; c < S.length; c++) {
+      let k = own.indexOf(S[c]!.trim()) + 1, n = 1, last = c;
+      if (!k) continue;
+      for (let i = c + 1; i < S.length && k < own.length && i - last <= R.length + 1; i++) if (S[i]!.trim() === own[k]) { n++; k++; last = i; }
+      if (!best || n > best[2] || n === best[2] && last - c < best[1] - best[0]) best = [c, last, n];
+    }
+    if (best) return [...S.slice(0, best[0]), ...marked, ...S.slice(best[1] + 1)].join('\n') + '\n';
+    const stem = file.replace(/\.tex$/, '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), name = file.split('/').pop()!;
+    // a standalone slice's own copy of the file (`filecontents*`) goes: the file is written out where it is read
+    const fc = S.findIndex((l) => /^\\begin\{filecontents\*?\}/.test(l) && l.trimEnd().endsWith(`{${name}}`)), fe = S.findIndex((l, i) => fc >= 0 && i > fc && /^\\end\{filecontents\*?\}/.test(l));
+    if (fc >= 0 && fe > fc) S.splice(fc, fe - fc + 1);
+    const load = S.findIndex((l) => new RegExp(`\\\\(?:input|include)\\s*\\{\\s*${stem}(?:\\.tex)?\\s*\\}`).test(l.replace(/%.*/, '')));
+    if (load < 0) return null;
+    const all = text.split('\n');
+    return [...S.slice(0, load), `%% from ${file}`, ...all.slice(0, from - 1), ...marked, ...all.slice(to), ...S.slice(load + 1)].join('\n') + '\n';
+  }
+  /** The marked region of a scratch text, null when a marker is gone. */
+  function extract(text: string): ScRegion | null {
+    const L = text.split('\n'), a = L.findIndex((l) => l.startsWith(`${MARK} begin `)), b = L.findIndex((l, i) => i > a && l.startsWith(`${MARK} end`));
+    const m = a >= 0 && b > a && /^(.+):(\d+)-(\d+):/.exec(L[a]!.slice(MARK.length + 7));
+    return m ? { file: m[1]!, from: +m[2]!, to: +m[3]!, body: L.slice(a + 1, b).join('\n') } : null;
+  }
+  /** Where `mine` (the region's text, sliced from `base` at lines `from`–`to` of a file of `size` lines) goes in the file
+   * as it is now (`current`): the same lines when they still read `base`, else the one place they moved to, else a
+   * conflict on the lines that stand there now (shifted by what the file grew or shrank). */
+  function merge(base: string, mine: string, current: string, from: number, to: number, size: number): ScMerge {
+    const C = current.split('\n'), n = to - from + 1;
+    if (mine === base) return { status: 'same', from, to, theirs: region(current, from, to) };
+    if (region(current, from, to) === base) return { status: 'clean', from, to, theirs: base };
+    const at: number[] = [];
+    for (let i = 0; i + n <= C.length; i++) if (C.slice(i, i + n).join('\n') === base) at.push(i + 1);
+    if (at.length === 1) return { status: 'moved', from: at[0]!, to: at[0]! + n - 1, theirs: base };
+    const end = Math.max(from - 1, Math.min(C.length, to + C.length - size));
+    return { status: 'conflict', from, to: end, theirs: region(current, from, end) };
+  }
+  /** `current` with lines `from`–`to` (to = from - 1: none) replaced by `body`. */
+  const apply = (current: string, from: number, to: number, body: string) => { const C = current.split('\n'); return [...C.slice(0, from - 1), ...body.split('\n'), ...C.slice(to)].join('\n'); };
+  const FLOATS = /^(?:figure|table|wrapfigure|wraptable|sidewaysfigure|sidewaystable)\*?$/, MATH = /^(?:equation|align|gather|multline|flalign|eqnarray|displaymath)\*?$/;
+  /** The block around 1-based `line` of `text`: the outermost figure or table, else the outermost display, else the
+   * paragraph (to the blank lines around it). `[from, to, what]`. */
+  function block(text: string, line: number): [number, number, string] {
+    const L = text.split('\n'), open: [string, number][] = [], around: [string, number, number][] = [];
+    L.forEach((l, i) => {
+      for (const m of l.replace(/(?<!\\)%.*/, '').matchAll(/\\(begin|end)\s*\{([^}]*)\}/g)) {
+        if (m[1] === 'begin') { open.push([m[2]!, i + 1]); continue; }
+        const k = open.map(([e]) => e).lastIndexOf(m[2]!);
+        if (k < 0) continue;
+        const [e, b] = open.splice(k)[0]!;
+        if (b <= line && line <= i + 1) around.push([e, b, i + 1]);
+      }
+    });
+    for (const kind of [FLOATS, MATH]) {
+      const hit = around.filter(([e]) => kind.test(e)).sort((a, b) => a[1] - b[1])[0];
+      if (hit) return [hit[1], hit[2], kind === FLOATS ? hit[0].replace(/\*$/, '').replace(/^(?:wrap|sideways)/, '') : 'equation'];
+    }
+    const blank = (i: number) => !L[i - 1]?.trim() || /\\(?:begin|end)\s*\{document\}/.test(L[i - 1]!);
+    let a = Math.max(1, Math.min(line, L.length)), b = a;
+    if (blank(a)) return [a, a, 'line'];
+    while (a > 1 && !blank(a - 1)) a--;
+    while (b < L.length && !blank(b + 1)) b++;
+    return [a, b, 'paragraph'];
+  }
+  self.satexScratch = { build, extract, merge, apply, block };
+  self.satexPageActions.register({
+    name: 'slice', title: 'Scratch slices', about: 'Work on a paragraph, figure, table or equation in a scratch document: its slice, fast to check and build, merged back after', type: 'slice',
+    targets: ['block', 'tikz-node', 'tikz-label', 'tikz-edge', 'forest-node', 'table-column'],
+    groups(t, ctx) {
+      const b: ScBlock | undefined = t.block;
+      return b && ctx.scratch ? [{ title: 'Scratch', inline: true, items: [{ label: `Work on this ${b.what} in a scratch document`, hint: `${b.file.split('/').pop()}:${b.from}–${b.to}`, run: () => ctx.scratch!(b) }] }] : [];
     },
   });
 })();

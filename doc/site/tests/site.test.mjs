@@ -287,3 +287,42 @@ test("the console's hover (cli.js)", async () => {
   assert.equal(at(tree, 'satex query labels', 13).kind, 'query');
   assert.equal(at(tree, 'satex lint --nope', 12), null);
 });
+
+// Intuition: a sketch's view holds everything it draws: a node text centred at x=0 reaches left of the run's box and
+// one at the right edge past it. Pins `\node at (0,0) {Henlo}; \node[right=2cm] at (x.east) {Walter};` shown as "nlo", "Walt".
+test('sketchSvg: the view holds every text, the run\'s box smaller', async () => {
+  const { sketchSvg, sketchBounds } = self.satexCards;
+  assert.deepEqual(sketchBounds([0, 0, 10, 10], [[-5, 2, 3, 4], [8, -1, 20, 5]], 1), [-6, -2, 27, 12]);
+  assert.deepEqual(sketchBounds([0, 0, 10, 10], [[2, 2, 3, 3]], 1), [0, 0, 10, 10], 'inside: the box stays');
+  const pic = { box: [0, -4, 80, 8], paths: [], texts: [{ x: 0, y: 0, text: 'Henlo' }, { x: 80, y: 0, text: 'Walter' }] };
+  const svg = sketchSvg(pic), [, tx] = /translate\((-?[\d.]+) /.exec(svg.slice(svg.indexOf('scale(')));
+  const vb = +/width="(\d+)"/.exec(svg)[1], sc = +/scale\(([\d.]+)\)/.exec(svg)[1], pad = +/translate\(([\d.]+) /.exec(svg)[1];
+  const at = (x) => pad + (x + +tx) * sc;
+  // each text's estimated half width (.3 em per character at the sketch's size) stays inside the view
+  const size = +/font-size="([\d.]+)"/.exec(svg)[1];
+  assert.ok(at(0 - 5 * size * 0.3) >= 0, `Henlo's left end inside: ${svg}`);
+  assert.ok(at(80 + 6 * size * 0.3) <= vb, `Walter's right end inside: ${svg}`);
+});
+
+// Intuition: `\draw[-Kite] (x) -- (y)` between two nodes: the run wrote the line from x's east border to y's west one and
+// the tip as a filled and stroked closed path; the tip is solid ink, only a frame around a text is tinted, and the
+// line's ends stay between the texts. Pins the tip drawn as a faint tint (invisible) on row 19 of the user's screenshot.
+test('sketchSvg: an arrow tip is solid, a node frame tinted, rectangles and circles', async () => {
+  const { sketchSvg } = self.satexCards;
+  // the run's record of the user's picture (satex query typeset), rounded
+  const kite = { box: [-12.64, -3.53, 89.25, 7], paths: [
+    { d: 'M 16.11 -0.00 L 67.35 -0.00', fill: false, stroke: true, width: 0.4 },
+    { d: 'M 72.18 -0.00 L 68.56 -1.21 L 67.35 -0.00 L 68.56 1.21 Z', fill: true, stroke: true, width: 0.4 }],
+  texts: [{ base: true, text: 'Henlo', x: -12.64, y: 3.47 }, { base: true, text: 'Walter', x: 76.61, y: 3.47 }] };
+  const svg = sketchSvg(kite), tags = [...svg.matchAll(/<path [^>]*>/g)].map((m) => m[0]);
+  assert.doesNotMatch(tags[1], /ts-shape/, 'the tip is solid');
+  assert.equal((svg.match(/<text class="ts-base"/g) ?? []).length, 2, 'texts put by their box start at their point (style.css: no centring)');
+  assert.match(tags[1], /fill="currentColor"/);
+  const [a, b] = /M ([\d.-]+) [\d.-]+ L ([\d.-]+)/.exec(tags[0]).slice(1).map(Number);
+  assert.ok(a > -12.64 + 25 && b < 76.61, 'the line starts past Henlo and ends before Walter');
+  // a filled rectangle node and a filled circle node around their texts: tinted
+  const rect = { d: 'M -10 -5 L 10 -5 L 10 5 L -10 5 Z', fill: true, stroke: true, width: 0.4 };
+  const circle = { d: 'M 50 -8 C 54.4 -8 58 -4.4 58 0 C 58 4.4 54.4 8 50 8 C 45.6 8 42 4.4 42 0 C 42 -4.4 45.6 -8 50 -8 Z', fill: true, stroke: true, width: 0.4 };
+  const nodes = sketchSvg({ box: [-10, -8, 68, 16], paths: [rect, circle, { d: 'M 10 0 L 42 0', fill: false, stroke: true, width: 0.4 }], texts: [{ text: 'A', x: 0, y: 0 }, { text: 'B', x: 50, y: 0 }] });
+  assert.equal((nodes.match(/class="ts-shape"/g) ?? []).length, 2, 'both frames tinted');
+});

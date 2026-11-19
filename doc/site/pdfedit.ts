@@ -1384,7 +1384,8 @@ declare global {
       shapeOf(n: TikzNode): TikzShape; shape(stmt: string, i: number, pic: TikzPic, to: TikzShape, extra?: string[]): { text: string; library: string | null } | null;
       looks(n: TikzNode): { draw: boolean; fill: boolean }; flip(stmt: string, i: number, pic: TikzPic, key: 'draw' | 'fill'): string | null;
       retext(stmt: string, i: number, text: string): string | null;
-      tipOf(e: TikzEdge): string; tip(stmt: string, tip: string): string | null; label(stmt: string, seg: number, text: string, opts?: string[]): { text: string; at: number } | null;
+      tipOf(e: TikzEdge): string; tip(stmt: string, tip: string): string | null; tipEnds(spec: string): [string, string] | null; tipSpec(start: string, end: string): string;
+      tipVary(t: string, flag: string, on: boolean): string | null; tipParts(t: string): { name: string; opts: string[] } | null; label(stmt: string, seg: number, text: string, opts?: string[]): { text: string; at: number } | null;
       SHAPES: [TikzShape, string][]; library(shape: TikzShape): string | null;
       keysAt(stmt: string, i: number): string[] | null; current(stmt: string, i: number, group: string, names?: string[]): string[];
       set(stmt: string, i: number, group: string, add: string[], names?: string[]): string | null;
@@ -1741,7 +1742,7 @@ declare global {
     return p ? stmt.slice(0, p.t[0] + 1) + text + stmt.slice(p.t[1]) : null;
   }
   /** An arrow tip key: `->`, `<->`, `-Stealth`, `{Latex}-{Latex}`, never a key with a value. */
-  const TIP = /^[^=\s]*-[^=\s]*$/;
+  const TIP = { test: (k: string) => /^[^=\s]*-[^=\s]*$/.test(k.replace(/\{[^{}]*\}|\[[^\]]*\]/g, 'x')) };
   const tipOf = (e: TikzEdge) => e.opts.filter((k) => TIP.test(k)).at(-1) ?? '';
   /** Path statement `stmt` with arrow tip `tip` (`''`: none, written `-` where a style may give one). */
   function tip(stmt: string, tip: string) {
@@ -1751,6 +1752,36 @@ declare global {
     const styled = rest.some((k) => !/^(thick|thin|very thick|ultra thick|semithick|dashed|dotted|densely dashed|loosely dashed|draw|rounded corners)$/.test(k) && !k.includes('='));
     return withOpts(stmt, e.o, e.oAt, tip ? [tip, ...rest] : styled ? ['-', ...rest] : rest);
   }
+  /** `{x}` without its outer braces. */
+  const unbrace = (t: string) => { t = t.trim(); return /^\{[^{}]*\}$/.test(t) ? t.slice(1, -1).trim() : t; };
+  /** An arrow key's start and end tips, outer braces dropped (`<->`: `<`, `>`; `-{Stealth[open]}`: ``, `Stealth[open]`), null for no tip key. */
+  function tipEnds(spec: string): [string, string] | null {
+    if (!spec.trim()) return ['', ''];
+    let d = 0, cut = -1;
+    for (let i = 0; i < spec.length; i++) {
+      const c = spec[i]!;
+      if ('{['.includes(c)) d++;
+      else if ('}]'.includes(c)) d--;
+      else if (!d && c === '=') return null;
+      else if (!d && c === '-') { if (cut >= 0) return null; cut = i; }
+    }
+    return cut < 0 ? null : [unbrace(spec.slice(0, cut)), unbrace(spec.slice(cut + 1))];
+  }
+  /** The arrow key of tips `start` and `end`: braced where a name has spaces or options, `''` for none. */
+  function tipSpec(start: string, end: string) {
+    const w = (t: string) => (/[\s[\]\-,=]/.test(t.trim()) ? `{${t.trim()}}` : t.trim());
+    return start.trim() || end.trim() ? `${w(start)}-${w(end)}` : '';
+  }
+  /** Tip `t` (`Stealth[open, round]`) with option `flag` (open, round, reversed) on or off; null for a tip of several parts. */
+  function tipVary(t: string, flag: string, on: boolean) {
+    const m = /^([^[\]]+?)\s*(?:\[([^\]]*)\])?$/.exec(t.trim());
+    if (!m) return null;
+    const os = (m[2] ?? '').split(',').map((o) => o.trim()).filter((o) => o && o !== flag);
+    if (on) os.push(flag);
+    return os.length ? `${m[1]}[${os.join(', ')}]` : m[1]!;
+  }
+  /** Tip `t`'s name and options: `Stealth[open]` is `Stealth`, [`open`]. */
+  const tipParts = (t: string) => { const m = /^([^[\]]*?)\s*(?:\[([^\]]*)\])?$/.exec(t.trim()); return m ? { name: m[1]!, opts: (m[2] ?? '').split(',').map((o) => o.trim()).filter(Boolean) } : null; };
   /** Path statement `stmt` with a label `text` on segment `seg` (`node[midway, above] {…}`): the text and the offset of the label's text in it. */
   function label(stmt: string, seg: number, text: string, opts = ['midway', 'above']) {
     const g = edgeOf(stmt)?.segs[seg];
@@ -1943,7 +1974,7 @@ declare global {
     while (a > 0 && /\s/.test(stmt[a - 1]!)) a--;
     return stmt.slice(0, a) + stmt.slice(p.t[1] + 1);
   }
-  self.satexTikzMove = { nodes, move, len, cm, posOn, clipped, snap, edges, shapeOf, shape, looks, flip, retext, tipOf, tip, label,
+  self.satexTikzMove = { nodes, move, len, cm, posOn, clipped, snap, edges, shapeOf, shape, looks, flip, retext, tipOf, tip, tipEnds, tipSpec, tipVary, tipParts, label,
     SHAPES: SHAPE_LIST, library, keysAt, current, set, segOf, route, bend, inout, looseness, segPath, addEdge, named, fresh, picOpts, picSet, snapAngle, angle, unlabel, relation, placing, place, placeDelta, dependents, convention, setConvention, written };
 })();
 

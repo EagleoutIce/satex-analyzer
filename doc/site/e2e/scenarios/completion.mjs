@@ -16,10 +16,12 @@ export default [
     steps: 'thesis.tex; a run going on; type "\\textb", Tab, "Quokka": \\textbf{Quokka} from the kept list, the caret in its braces (was: \\textbfQuokka, the lean list had no argument shape)' },
   { kind: 'complete', name: 'tc-src-sum-math', keys: ['\\(x - \\sum', 'Tab', '_i \\)'], want: /\n\\\(x - \\sum ?_i \\\)\)?\n/,
     steps: 'thesis.tex; a run going on; type "\\(x - \\sum", Tab, "_i \\)": \\sum taken in math (was: \\NeedsDocumentMetadata first, \\sum missing from the kept list)' },
+  { kind: 'complete', name: 'tc-src-env-clean', keys: ['\\begin{itemi', 'Tab', 'x', 'ArrowDown', 'ArrowDown', 'ArrowDown'], want: /\\begin\{itemize\}/, clean: true,
+    steps: 'thesis.tex; a run going on; type "\\begin{itemi", Tab, "x", then leave by ArrowDown: no snippet field or linked \\begin/\\end box stays drawn (was: boxes around {tikzpicture}, {document} and whole lines stayed, user 2026-11-19)' },
   { name: 'tc-type-textbf', source: MARKUP, example: 'hello.tex', word: is('second'), src: /a second/, keys: [' \\textb', 'Tab', 'Quokka'], speed: 'burst', settle: true, expect: () => null, contains: [/a second \\textbf\{Quokka\}/],
     steps: 'MARKUP, Type mode; click the end of "second"; type " \\textb", Tab, "Quokka": \\textbf{Quokka} (was: \\textbfQuokka, its robust definition takes no argument itself)' },
   { name: 'tc-type-textbf-run', example: 'thesis.tex', word: is('Literate'), src: /Literate/, keys: [' ', 'Pause', '\\textb', 'Tab', 'Quokka'], pauseMs: 900, speed: 'burst', settle: true, expect: () => null, contains: [/Literate \\textbf\{Quokka\}/],
     steps: 'thesis.tex, Type mode; click the end of "Literate"; a space starts a run; during it "\\textb", Tab, "Quokka": \\textbf{Quokka} from the kept list' },
-  { name: 'tc-type-sum-math', source: KINDS, example: 'hello.tex', word: (`(t) => t === 'n' || t === 'n,'`), src: /of \$n/, keys: [' - \\sum', 'Tab', ' k'], speed: 'burst', settle: true, expect: () => null, contains: [/\$n - \\sum k\$/],
+  { name: 'tc-type-sum-math', source: KINDS, example: 'hello.tex', word: (`(t) => t === 'n' || t === 'n,'`), src: /of \$n/, keys: [' - \\sum', 'Tab', ' k'], speed: 'burst', settle: true, expect: () => null, contains: [/\$n - \\sum k ?\$/],
     steps: 'KINDS, Type mode; click the math "n" in "A run of $n$ lines"; type " - \\sum", Tab, " k": $n - \\sum k$ (was: Tab took \\NeedsDocumentMetadata)' },
 ];

@@ -481,6 +481,34 @@ function css(params: Partial<Params> = {}): Record<string, string> {
     '--m-sup2': em(P.sup2), '--m-stack': String(+((P.sup2 + P.sub2) / sc).toFixed(3)),
   };
 }
-self.satexMath = { layout, parse, css, PARAMS, spaceMu };
+/** Commands set from an argument, with the sample a completion item draws them on (`\\frac` as a/b). */
+const SAMPLE: [RegExp, string][] = [
+  [/^([dt]?frac|cfrac)$/, '{a}{b}'], [/^[dt]?binom$/, '{n}{k}'], [/^sqrt$/, '{x}'], [/^(overline|underline|overbrace|underbrace)$/, '{x}'],
+  [/^(mathbf|boldsymbol|bm|mathit|mathrm|mathsf|mathtt)$/, '{x}'], [/^(mathcal|mathscr|mathbb|mathfrak)$/, '{A}'],
+];
+/** The sample `\\name` is drawn on, null for a command the preview does not know as math. */
+const sampleOf = (name: string): string | null => {
+  if (sym(name) || OPNAME.test(name)) return `\\${name}`;
+  if (ACCENTS[name]) return `\\${name}{a}`;
+  const s = SAMPLE.find(([re]) => re.test(name));
+  return s ? `\\${name}${s[1]}` : null;
+};
+/** Whether the preview knows `name` as a math command: a symbol, an operator name, an accent, a fraction, a math alphabet. */
+const isMath = (name: string): boolean => sampleOf(name) != null;
+/** A rough metric: half an em a character (an operator's glyph wider), ascenders 0.7, descenders 0.2. */
+const roughMetric: Metric = (t, face) => [[...t].length * (face === 'ex' ? 0.9 : 0.55), face === 'ex' ? 0.75 : 0.7, face === 'ex' ? 0.25 : 0.2];
+const xml = (t: string) => t.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+/** Math command `name` drawn small as an SVG string, in `currentColor` so it follows the theme: `\\sum` as ∑, `\\frac`
+ * as a/b. Null for a command the preview does not know as math. */
+const preview = (name: string, metric: Metric = roughMetric): string | null => {
+  const src = sampleOf(name);
+  if (!src) return null;
+  const b = layout(src, metric, false), pad = 0.08, w = b.w + 2 * pad, h = b.h + b.d + 2 * pad, f = (x: number) => +x.toFixed(3);
+  const face = (k: string) => k === 'it' ? ' font-style="italic"' : k === 'bf' ? ' font-weight="bold"' : '';
+  const glyphs = b.g.map(([t, x, y, sc, k, sy]) => `<text x="${f(x + pad)}" y="${f((b.h + pad - y) / (sy ?? 1))}" font-size="${f(sc)}"${face(k)}${sy && sy !== 1 ? ` transform="scale(1 ${f(sy)})"` : ''}>${xml(t)}</text>`);
+  const rules = b.r.map(([x, y, rw, rh]) => `<rect x="${f(x + pad)}" y="${f(b.h + pad - y - rh)}" width="${f(rw)}" height="${f(rh)}"/>`);
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${f(w)} ${f(h)}" width="${f(w)}em" height="${f(h)}em" fill="currentColor" font-family="'Latin Modern Math','STIX Two Math','Cambria Math',serif" role="img" aria-label="${xml(name)}">${glyphs.join('')}${rules.join('')}</svg>`;
+};
+self.satexMath = { layout, parse, css, PARAMS, spaceMu, isMath, preview };
 // the Typeset view's math reads them (style.css falls back to the same values where this script is not loaded)
 if (self.document) for (const [k, v] of Object.entries(css())) document.documentElement.style.setProperty(k, v);

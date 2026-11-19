@@ -554,6 +554,12 @@ async function completeScenario(p, sc) {
   res.info.made = J(text.slice(Math.max(0, at - 10), at + 40));
   if (!got) res.fails.push(`text ${res.info.made}, want ${sc.want}`);
   if (!res.info.running) res.fails.push(`the run ended before the check (${res.info.ms} ms): no run was going on`);
+  // `clean`: once the caret has left what the completion wrote, no snippet field or linked \begin/\end box stays drawn
+  if (sc.clean) {
+    await sleep(600);
+    const left = await p.eval(`[...document.querySelectorAll('.cm-content .cm-linked, .cm-content .cm-snippetField')].map((e) => e.className + ' ' + JSON.stringify(e.textContent.slice(0, 30)))`);
+    if (left.length) res.fails.push(`boxes left after the caret moved on: ${J(left)}`);
+  }
   if (res.fails.length) res.shot = await p.shot(`${sc.name}.png`);
   return res;
 }

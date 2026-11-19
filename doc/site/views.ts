@@ -2637,8 +2637,10 @@ const satexViews = (() => {
     const left = ONE_IN + mid('hoffset') + mid('oddsidemargin'), top = ONE_IN + mid('voffset') + mid('topmargin') + mid('headheight') + mid('headsep');
     // a paper within a point of the run's (geometry's sizes in mm, the class's in pt), the one the source names first
     const fits = (s.papers ?? []).filter((p: Rec) => Math.abs(p.w - pw) < 65536 && Math.abs(p.h - ph) < 65536);
-    const written = [s.geometry?.global, s.koma].flatMap((n: SnapNode | undefined) => (n && self.satexSnapshot.list(n)) ?? []);
-    const paper = (fits.find((p: Rec) => written.some((k) => k.key === p.name || k.value === p.name)) ?? fits[0])?.name ?? '';
+    const written = [s.geometry?.global, s.koma, s.columns?.class].flatMap((n: SnapNode | undefined) => (n && self.satexSnapshot.list(n)) ?? []);
+    // else the server's names for the run's size (`paper`, the class's own options first)
+    const named = (s.paper ?? []).map((n: string) => fits.find((p: Rec) => p.name === n)).find(Boolean);
+    const paper = (fits.find((p: Rec) => written.some((k) => k.key === p.name || k.value === p.name)) ?? named ?? fits[0])?.name ?? '';
     const bcor = s.koma?.bcor ?? s.binding ?? 0;
     return {
       mode: s.koma ? 'koma' : 'geometry', paper, pw, ph, left, right: pw - left - tw, top, bottom: ph - top - th,
@@ -2869,6 +2871,29 @@ const satexViews = (() => {
   /** A call's snapshot as `{name, opt, args}`: its `[…]` and its `{…}` texts. */
   const callOf = (c: SnapNode) => ({ name: c.name, opt: self.satexSnapshot.text(c, '[') ?? null, args: c.args.filter((a) => a.open === '{').map((a) => a.text) });
   /** The fields the header's calls set, in order: `{package, head: {OL: text}, foot, rules, …}`. */
+  /** What the page style in force prints (the server's `styles`), in a sentence: each non-empty field of the header and
+   * footer, even pages only when two-sided and other than odd. '' when the run did not know. */
+  function styleNow(st: Rec | undefined, twoside: boolean) {
+    if (!st?.head || !st?.foot) return '';
+    const names: Record<string, string> = { left: 'left', center: 'centre', right: 'right' }, out: string[] = [];
+    let known = true;
+    for (const part of ['head', 'foot']) for (const side of twoside ? ['odd', 'even'] : ['odd']) {
+      const f = st[part]?.[side] ?? {};
+      if (side === 'even' && ['left', 'center', 'right'].every((k) => f[k] === st[part].odd?.[k])) continue;
+      for (const k of ['left', 'center', 'right']) {
+        if (f[k] == null) { known = false; continue; }
+        if (String(f[k]).trim()) out.push(`${part === 'head' ? 'header' : 'footer'} ${names[k]}${twoside ? ` (${side} pages)` : ''} \`${String(f[k]).trim()}\``);
+      }
+    }
+    if (out.length) return `The page style in force prints: ${out.join(', ')}.`;
+    return known ? 'The page style in force prints no header or footer.' : '';
+  }
+  /** A note for a package an edit would load (`name`) when `\DocumentMetadata` turned tagging on and the
+   * installation's status list says it is not compatible; '' otherwise (compatible or not known). */
+  const taggedNote = (tagging: Rec | undefined, name: string) => {
+    const t = tagging?.status?.[name], say: Record<string, string> = { partial: 'only partly compatible', incompatible: 'not compatible' };
+    return tagging?.active && say[t] ? ` For a tagged PDF, ${name} is ${say[t]} with tagging.` : '';
+  };
   function headerOf(h: Rec | undefined, twoside: boolean) {
     const m: Rec = { package: h?.package ?? null, head: {}, foot: {}, opt: {}, rules: { head: h?.rules?.head ?? null, foot: h?.rules?.foot ?? null }, ruled: {} };
     for (const c of (h?.calls ?? []).map(callOf) as ReturnType<typeof callOf>[]) {
@@ -2993,7 +3018,7 @@ const satexViews = (() => {
       return row;
     };
     /** A tagged PDF (\\DocumentMetadata): what the tagging project says of package `name`, when not compatible (`s.tagging`, the run's status per package). */
-    const tagged = (name: string) => { const t = s.tagging?.status?.[name]; return s.tagging?.active && t && t !== 'compatible' ? ` For a tagged PDF, ${name} is ${t}.` : ''; };
+    const tagged = (name: string) => taggedNote(s.tagging, name);
     const group = (title: string, ...rows: Node[]) => { const g = el('div', 'tv-form'); g.append(el('h4', 'tv-h', esc(title)), ...rows); return g; };
     function margins() {
       const out: HTMLElement[] = [];
@@ -3069,6 +3094,8 @@ const satexViews = (() => {
       // no package for headers: the fields stand ready, the first text typed loads fancyhdr, the last one cleared drops it
       if (!loaded) out.push(el('div', 'tv-text tv-start', ctx.markdown(`No package for headers is loaded. Type into a field: Apply loads fancyhdr for it.${tagged('fancyhdr')}`)));
       else if (tagged(m.package)) out.push(el('div', 'tv-text', ctx.markdown(tagged(m.package).trim())));
+      const now = styleNow(s.styles, two);
+      if (now) out.push(el('div', 'tv-text tv-now', ctx.markdown(now)));
       const used = () => ['head', 'foot'].some((part) => Object.values(m[part]).some((v) => String(v ?? '').trim()));
       const spots = SPOTS[m.package ?? 'fancyhdr']!, names: Record<string, string> = { L: 'Left', C: 'Center', R: 'Right', i: 'Inner', c: 'Center', o: 'Outer' };
       const sides = (m.package ?? 'fancyhdr') === 'fancyhdr' && two ? [['O', 'odd pages'], ['E', 'even pages']] : [['O', '']];
@@ -3316,7 +3343,7 @@ const satexViews = (() => {
     // what the page shows and what Apply adds, in short sentences
     const notes = el('div', 'tv-text', ctx.markdown([`The page as the last run left it${s.class ? ` (${s.class}${two ? ', two-sided' : ''})` : two ? ' (two-sided)' : ''}.`,
       st0.open.length ? `The run did not decide ${st0.open.map((k) => `\\${k}`).join(', ')}: the drawing uses the middle of each range.` : '',
-      FAMILY[s.family] ?? '', s.geometry.global.note && s.family !== 'koma' ? `Margin changes go through geometry, so Apply then ${s.geometry.global.note}.` : ''].filter(Boolean).join(' ')));
+      FAMILY[s.family] ?? '', s.geometry.global.note && s.family !== 'koma' ? `Margin changes go through geometry, so Apply then ${s.geometry.global.note}.${tagged('geometry')}` : ''].filter(Boolean).join(' ')));
     const main = el('div', 'tv-page-main');
     main.append(svg, side);
     root.append(bar, notes, main, foot);
@@ -3687,7 +3714,39 @@ button.tv-spec-value { cursor: pointer; } button.tv-spec-value:hover, button.tv-
   const rowsWin = (final: number | undefined, version: number | null | undefined, preview: boolean) =>
     version == null || final == null || (preview ? version > final : version >= final);
   /** Completion lists the playground answers from while the worker is busy (playground.js `completions`). */
-  type Completion = { label: string; detail?: string; filterText?: string; sortText?: string; insertText?: string; textEdit?: { newText: string } };
+  type Completion = { label: string; detail?: string; filterText?: string; sortText?: string; insertText?: string; insertTextFormat?: number; textEdit?: { newText: string };
+    args?: string; math?: boolean; doc?: string; data?: { math?: boolean; args?: string | null; doc?: string } };
+  /** A command's snippet from its argument letters (`m` mandatory, `o` optional, `s` star: the lean scope's `args`), as the
+   * server writes one: an optional argument a removable `[options]` field, a mandatory one `{}` with a field, the star left
+   * out. The caret takes the first field, Tab the next. Null without arguments. */
+  const snippet = (label: string, args: string | undefined | null): string | null => {
+    let k = 0, out = label;
+    for (const a of args ?? '') if (a === 'm') out += `{$${++k}}`; else if (a === 'o') out += `\${${++k}:[options]}`;
+    return k ? `${out}$0` : null;
+  };
+  /** Whether a completion item is a math command: the server's flag (lean `math`, an item's `data.math`), else the preview's own
+   * table of math symbols (mathlayout.ts), so a list the server never flagged still ranks `\\sum` first in math. */
+  const mathItem = (i: Completion): boolean => i.math ?? i.data?.math ?? !!self.satexMath?.isMath?.(i.label);
+  /** A snippet as plain text, each field its default text, and the caret's offset: the first field's (`$1`), else `$0`'s,
+   * else the end. For an item written together with other edits in one undo step (a package load), where the editor's
+   * snippet would make a step of its own. */
+  const plainSnippet = (snip: string): { text: string; caret: number } => {
+    let text = '', last = 0, first: number | null = null, zero: number | null = null;
+    for (const m of snip.matchAll(/\$\{(\d+)(?::([^}]*))?\}|\$(\d+)/g)) {
+      text += snip.slice(last, m.index);
+      const n = m[1] ?? m[3];
+      if (n === '0') zero ??= text.length; else first ??= text.length;
+      text += m[2] ?? '';
+      last = m.index! + m[0].length;
+    }
+    text += snip.slice(last);
+    return { text, caret: first ?? zero ?? text.length };
+  };
+  /** Whether taking item `i` leaves the caret in a braced first argument (`usepackage{$1}`, `textbf{${1:text}}`): its
+   * completion (packages, files, environments, labels) opens there at once, whatever the command. */
+  const opensArgument = (i: Completion): boolean => i.insertTextFormat === 2 && /^[^{[$\\]*\{\$(?:1|\{1[:}])/.test(i.insertText ?? i.textEdit?.newText ?? '');
+  /** The one-line description of an item: the lean record's `doc`, else the server item's. */
+  const docOf = (i: Completion): string => i.doc ?? i.data?.doc ?? '';
   /** Completion order: how well the item matches first (the exact name, a prefix of the label, a part of it, a part of
    * what it is found by such as a citation's title, the label's characters in order: `m/f` finds `mode/fast`); then the
    * project's own commands, documented ones, internals (`@`, `_`, `:`) last; then the server's order (its own ranking,
@@ -3698,15 +3757,18 @@ button.tv-spec-value { cursor: pointer; } button.tv-spec-value:hover, button.tv-
     const label = i.label.toLowerCase(), found = (i.filterText ?? '').toLowerCase();
     return label === typed ? -1 : label.startsWith(typed) ? 0 : label.includes(typed) ? 1 : found.includes(typed) ? 2 : subsequence(label, typed) ? 3 : null;
   };
-  const rank = <T extends Completion>(items: T[], typed: string): T[] => items
-    .map((i) => [i, tier(i), closeness(i, typed.toLowerCase())] as const).filter((x) => x[2] !== null)
+  /** `math`: the caret is in math, so math commands come first among equally close ones, text ones after them. */
+  const rank = <T extends Completion>(items: T[], typed: string, math = false): T[] => items
+    .map((i) => [i, tier(i) + (math ? (mathItem(i) ? -3 : 3) : 0), closeness(i, typed.toLowerCase())] as const).filter((x) => x[2] !== null)
     .sort((a, b) => a[2]! - b[2]! || a[1] - b[1] || (a[0].sortText ?? '').localeCompare(b[0].sortText ?? '') || a[0].label.length - b[0].label.length || a[0].label.localeCompare(b[0].label)).map((x) => x[0]);
   /** The kept list of a kind of place: the server's last items there, then the names in force it lacks (no snippet, they
    * add only names). An item asked elsewhere replaces no range here: its text goes in at the cursor's word, and the
    * server's order there (`sortText`, for another word) ranks nothing here: `\\emp` takes `emph` before `empty`. */
   const kept = (served: Completion[] | undefined, names: Completion[] | undefined) => {
     const have = new Set((served ?? []).map((i) => i.label)), both = [...(served ?? []), ...(names ?? []).filter((n) => !have.has(n.label))];
-    return served || names ? both.map(({ textEdit, sortText: _, ...i }) => (textEdit ? { ...i, insertText: i.insertText ?? textEdit.newText } : i)) : null;
+    // a name in force brings its arguments' snippet from its `args`
+    const filled = (i: Completion) => { const s = !i.insertText && snippet(i.label, i.args); return s ? { ...i, insertText: s, insertTextFormat: 2 } : i; };
+    return served || names ? both.map(({ textEdit, sortText: _, ...i }) => filled(textEdit ? { ...i, insertText: i.insertText ?? textEdit.newText } : i)) : null;
   };
   /** The selection of a list refreshed under the person's eyes: the item of the same label, else the first. */
   const reselect = (items: Completion[], label: string | undefined) => Math.max(0, label == null ? 0 : items.findIndex((i) => i.label === label));
@@ -3737,6 +3799,6 @@ button.tv-spec-value { cursor: pointer; } button.tv-spec-value:hover, button.tv-
     }
     return out;
   };
-  return { followRows, rowsWin, complete: { rank, kept, reselect }, loads: { unlanded, lacked }, tipBag, yaml, history: { historyEvent }, render, RENDER, hue, passes, masterDetail, usesView, fold, SPEC, mix, colorBand, oklch, drawing: { expandStyles, STYLE_DEF, parse, emit, mermaidIn, mermaidOut, mermaidLoss, layout, importMermaid, tipsOf, toMatrix, cellPlaces, toLayer, picOptions, relocate, relPos, nearestAnchor, anchorAt, tipMarker, shapeSample, shapeList, cycle, STYLE }, forest: forestFns, circuit: { parse: cParse, body: cBody, emit: cEmit }, page: { pageOf, pageBox, textArea, pageNodes, numberNodes, numberInForce, headerOf, headerCalls, headerNodes, footSetup, fmtRead, fmtWrite, styleNodes, styleSet, styleEdits }, dev: { traceCsv, stateHtml }, templates: { fill, filled, chosen } };
+  return { followRows, rowsWin, complete: { rank, kept, reselect, snippet, mathItem, docOf, plainSnippet, opensArgument }, loads: { unlanded, lacked }, tipBag, yaml, history: { historyEvent }, render, RENDER, hue, passes, masterDetail, usesView, fold, SPEC, mix, colorBand, oklch, drawing: { expandStyles, STYLE_DEF, parse, emit, mermaidIn, mermaidOut, mermaidLoss, layout, importMermaid, tipsOf, toMatrix, cellPlaces, toLayer, picOptions, relocate, relPos, nearestAnchor, anchorAt, tipMarker, shapeSample, shapeList, cycle, STYLE }, forest: forestFns, circuit: { parse: cParse, body: cBody, emit: cEmit }, page: { pageOf, pageBox, textArea, styleNow, taggedNote, pageNodes, numberNodes, numberInForce, headerOf, headerCalls, headerNodes, footSetup, fmtRead, fmtWrite, styleNodes, styleSet, styleEdits }, dev: { traceCsv, stateHtml }, templates: { fill, filled, chosen } };
 })();
 self.satexViews = satexViews;

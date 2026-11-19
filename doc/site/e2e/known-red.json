@@ -117,29 +117,29 @@
   "match": "^(caret jumped|caret stepped back|pages scrolled|echo [\\d.]+px past|echo font|final caret at|echo rows overlap|echo wrapped)",
   "why": "the echo's rows and font differ from the landed build: the caret jumps when the build lands, the echo runs past the margin, its font is not the page's width"
  },
- "fz-two-edits": {
-  "owner": "ui-51 (playground echo)",
-  "why": "pdfEcho lays out one change from PE.changed's common prefix/suffix: an unbuilt edit in an earlier paragraph plus typing in the next spans the paragraph break; the echo needs per-paragraph change spans (build offsets mapped through each edit)",
-  "since": "2026-11-19"
- },
  "fz-ts-end-keeps-typed": {
   "owner": "ui-51 (playground Type mode); fuzz/run.mjs --replay with the scenario's seq reproduces it",
-  "why": "End (caretLine in the Typeset view) redraws the pending typed row from a text that lacks the second word typed: arrows must never change what is shown (timing dependent: failed 1 of 2 runs, keep until --repeat 3 passes)",
+  "why": "a typeset of an older text (the first word typed only) lands between the second word and End and is drawn without the second word; tsTyped re-applies only one change, so the shown row loses it until the next run. Timing dependent (1 of 4 runs)",
   "since": "2026-11-19"
  },
  "fz-ts-footnote-row": {
-  "owner": "ui-51 (playground Type mode); fuzz/run.mjs --replay with the scenario's seq reproduces it",
-  "why": "typing in a footnote's text in the Typeset view adds a second footnote row (tsParaDraw: the footnote is no paragraph of its own) and leaves the caret on another row; another run: caret 7 px left of the typed word's end (caret-glyph)",
-  "since": "2026-11-19"
- },
- "fz-pdf-caret-after-end": {
-  "owner": "ui-51 (playground Type mode); fuzz/run.mjs --replay with the scenario's seq reproduces it",
-  "why": "after End and a landed build, typing in the footnote draws the caret 7 px right of the typed word's last glyph",
+  "owner": "server (Rust typeset rows); client side checked by ui-51",
+  "why": "after typing in a footnote's text the run's own satex/typeset rows (satexTypesetOrigins) hold the footnote twice: the new text (line 3) and the old `1A short note.` (line 8), also after the run lands; the client shows what it gets. Needs the server to drop the previous run's footnote insert. Timing dependent (1 of 3 runs)",
   "since": "2026-11-19"
  },
  "fz-ts-land-jump": {
-  "owner": "ui-51 (playground Type mode); fuzz/run.mjs --replay with the scenario's seq reproduces it",
-  "why": "two-column Typeset view: the caret jumps ~400 px when the typeset of two typed words lands; another run: ArrowUp changed the pending row's text (`is xqrakoc.` -> `is short. xqrakoc`), an arrow must never change what is shown",
+  "owner": "ui-51 (playground Typeset pending text)",
+  "why": "two-column Typeset view: text typed while the run lags is set unjustified in the pending row; the landed row sets TeX's stretched glue, so the caret moves 50+ px along its row as it lands. Shorter repro: c:word:0.789, w, End, wait, w, c:word:0.122, w, wait. Needs the pending row to keep the row's glue widths",
+  "since": "2026-11-19"
+ },
+ "sync-usetikzlibrary": {
+  "owner": "server (Rust rerun from a checkpoint); evidence by ui-51",
+  "why": "the client is in sync (last didChange text == editor text, findings version == sent version), but the wasm run of the final text reads `\\\\use`/`\\\\useti` (the name as an earlier run met it mid-typing) followed by `tikzlibrary…` as text: a rerun resumes inside line 3 with the old token; native `satex lint` of the final text is clean",
+  "since": "2026-11-19"
+ },
+ "sync-stray-brace": {
+  "owner": "server (wasm analysis); evidence by ui-51",
+  "why": "no finding at all after quiet, also with the brace in the text from the start (no resume), while native `satex lint` reports C013 `Too many }'s` at 8:18; client publish path not yet ruled out (no raw publishDiagnostics capture)",
   "since": "2026-11-19"
  }
 }

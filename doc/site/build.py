@@ -1903,6 +1903,7 @@ def main():
         "pdfeditjs": emit(out, "pdfedit.js", script("pdfedit.js")),
         "mathlayoutjs": emit(out, "mathlayout.js", script("mathlayout.js")),
         "actionsjs": emit(out, "actions.js", script("actions.js")),
+        "refactorjs": emit(out, "refactor.js", script("refactor.js")),
     }
     table = pages()
     nav = sidebar(table)
@@ -2170,7 +2171,7 @@ def showcase(out, live):
 
 
 # what a showcase capture shows: the playground's code and style, besides its example and its entry
-SHOT_SOURCES = ("tex.js", "playground.js", "lengths.js", "snapshot.js", "views.js", "bib.js", "dialogs.js", "layers.js", "pdfedit.js", "mathlayout.js", "actions.js", "draw.js", "site.js", "style.css", "play.html", "quiet.mjs", "showcase/capture.mjs")
+SHOT_SOURCES = ("tex.js", "playground.js", "lengths.js", "snapshot.js", "views.js", "bib.js", "dialogs.js", "layers.js", "pdfedit.js", "mathlayout.js", "actions.js", "refactor.js", "draw.js", "site.js", "style.css", "play.html", "quiet.mjs", "showcase/capture.mjs")
 
 
 def recapture(out):

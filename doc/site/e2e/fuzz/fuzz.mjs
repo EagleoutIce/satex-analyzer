@@ -52,7 +52,9 @@ async function key(p, k) {
 
 // What the view shows now, read in the page: the caret (relative to its page or the Typeset body), the PDF's echo
 // draws and uncovered page words, the Typeset rows with their words' font sizes
-const SNAP = `if (!self.__fzDI) { self.__fzDI = CanvasRenderingContext2D.prototype.drawImage; CanvasRenderingContext2D.prototype.drawImage = function (src, sx, ...r) { if (r.length === 7 && this.canvas.classList?.contains('pdf-echo')) (this.canvas.__imgs ??= []).push(sx); return self.__fzDI.call(this, src, sx, ...r); }; }
+const SNAP = `if (!self.__fzDI) { self.__fzDI = CanvasRenderingContext2D.prototype.drawImage; CanvasRenderingContext2D.prototype.drawImage = function (src, sx, ...r) { if (r.length === 7 && this.canvas.classList?.contains('pdf-echo')) (this.canvas.__imgs ??= []).push(sx); return self.__fzDI.call(this, src, sx, ...r); };
+  // each draw's horizontal scale (lib.mjs keeps its vertical one): a text stretched to its laid width
+  const ft = CanvasRenderingContext2D.prototype.fillText; CanvasRenderingContext2D.prototype.fillText = function (...a) { const r = ft.apply(this, a); const ts = this.canvas.__texts; if (ts?.length) ts.at(-1).sx = this.getTransform().a; return r; }; }
 self.__fzSnap = (view) => {
   const h = satexHealth(), root = document.getElementById(view === 'pdf' ? 'play-pdf' : 'play-typeset');
   const c = root.querySelector('.pdf-caret'), cr = c && c.checkVisibility() ? c.getBoundingClientRect() : null;
@@ -80,7 +82,10 @@ self.__fzSnap = (view) => {
     out.draws = []; out.boxes = [];
     for (const e of cans) {
       const r = e.getBoundingClientRect(), k = r.width / Math.max(1, e.width);
+      // the word echo (a span): each word an <i>, typed ones as text, moved ones the page's pixels (text hidden)
+      if (e.tagName !== 'CANVAS') e.__texts = [...e.querySelectorAll('i')].filter((i) => !i.querySelector('span[style*=hidden]')).map((i) => { const b = i.getBoundingClientRect(), cs = getComputedStyle(i); return { t: i.textContent, font: cs.fontSize + ' ' + cs.fontFamily, x: b.left - r.left, y: b.bottom - r.top, sy: 1, span: true }; });
       if (r.width * r.height > 1 && e.checkVisibility() && e.__texts?.length) out.boxes.push([+e.closest('.pdf-page')?.dataset.page, r.left, r.top, r.right, r.bottom]);
+      if (e.tagName !== 'CANVAS') { for (const q of e.__texts) out.draws.push({ ...q, x: r.left + q.x, y: r.top + q.y, k: 1, mixed: false, px: parseFloat(q.font) }); continue; }
       for (const q of e.__texts ?? []) { ctx.font = q.font; out.draws.push({ t: q.t, font: q.font, sy: q.sy, x: r.left + q.x * k, y: r.top + q.y * k, k, mixed: (e.__mixed ?? []).includes(q.t), px: parseFloat(/([\\d.]+)px/.exec(q.font)?.[1] ?? '0') * k * (q.sy ?? 1) }); }
     }
     const ws = satexPdfWords(); out.words = [];
@@ -93,7 +98,7 @@ self.__fzSnap = (view) => {
       // a page word under a text echo that the echo neither moved (its pixels) nor drew as text: gone from the row
       if (covered) { const cv = cans.find((e) => { const r = e.getBoundingClientRect(); return e.__texts?.length && e.closest('.pdf-page')?.dataset.page == w[0] && Math.min(b[2], r.right) - Math.max(b[0], r.left) > (b[2] - b[0]) / 2 && (b[1] + b[3]) / 2 >= r.top && (b[1] + b[3]) / 2 <= r.bottom; });
         // moved or drawn by any echo of the view (a word wraps to another row's echo)
-        const all = [...root.querySelectorAll('.pdf-echo')], kk = ws.dpi / 72, moved = all.some((e) => (e.__imgs ?? []).some((sx) => Math.abs((sx + 1) / kk - w[1]) < 1)), drawn = all.some((e) => (e.__texts ?? []).some((q) => q.t.includes(w[5]) || w[5].includes(q.t) && q.t.length > 1));
+        const all = [...root.querySelectorAll('.pdf-echo')], kk = ws.dpi / 72, moved = all.some((e) => (e.__imgs ?? []).some((sx) => Math.abs((sx + 1) / kk - w[1]) < 1) || e.tagName !== 'CANVAS' && [...e.querySelectorAll('i')].some((i) => i.textContent === w[5])), drawn = all.some((e) => (e.__texts ?? []).some((q) => q.t.includes(w[5]) || w[5].includes(q.t) && q.t.length > 1));
         if (cv && !moved && !drawn) (out.gone ??= []).push(w[5]); }
     }
   }
@@ -109,8 +114,10 @@ self.__fzEnd = (view, tok, mid, h) => {
   }
   const ctx = (self.__fzC ??= document.createElement('canvas').getContext('2d'));
   let best = null;
-  for (const e of root.querySelectorAll('.pdf-echo:not(.pdf-push, .pdf-erased)')) { const r = e.getBoundingClientRect(), k = r.width / Math.max(1, e.width);
-    for (const q of e.__texts ?? []) { const i = q.t.lastIndexOf(tok); if (i < 0) continue; const y = r.top + q.y * k; if (Math.abs(y - h * 0.3 - mid) > h) continue; ctx.font = q.font; best = r.left + q.x * k + ctx.measureText(q.t.slice(0, i + tok.length)).width * k * (q.sy ?? 1); } }
+  for (const i of root.querySelectorAll('span.pdf-echo i')) { if (i.querySelector('span[style*=hidden]')) continue; const tw = document.createTreeWalker(i, NodeFilter.SHOW_TEXT);
+    for (let n = tw.nextNode(); n; n = tw.nextNode()) { const j = n.data.lastIndexOf(tok); if (j < 0) continue; const g = document.createRange(); g.setStart(n, j + tok.length - 1); g.setEnd(n, j + tok.length); const b = g.getBoundingClientRect(); if (Math.abs(b.top + b.height / 2 - mid) < h) best = b.right; } }
+  for (const e of root.querySelectorAll('canvas.pdf-echo:not(.pdf-push, .pdf-erased)')) { const r = e.getBoundingClientRect(), k = r.width / Math.max(1, e.width);
+    for (const q of e.__texts ?? []) { const i = q.t.lastIndexOf(tok); if (i < 0) continue; const y = r.top + q.y * k; if (Math.abs(y - h * 0.3 - mid) > h) continue; ctx.font = q.font; best = r.left + q.x * k + ctx.measureText(q.t.slice(0, i + tok.length)).width * k * (q.sx ?? q.sy ?? 1); } }
   return best;
 };`;
 
@@ -239,10 +246,15 @@ export async function run(p, { doc, view, steps }) {
     // (6) a landing moves the caret by at most 3 px, keeps the Typeset rows' text
     if (kind === 'wait' && before.rel && s.rel && before.text === s.text && before.view === s.view && (Math.abs(before.rel[0] - s.rel[0]) > 3 || Math.abs(before.rel[1] - s.rel[1]) > 3))
       fail(i, 'land-jump', `the caret moved ${J(before.rel.map(Math.round))} -> ${J(s.rel.map(Math.round))} as the build landed`);
+    // after quiet the server has the editor's text and the findings shown are of its version
+    if (kind === 'wait') {
+      const q = await p.eval(`(() => { const h = satexHealth(), sent = self.__e2e.lsp.filter((m) => m.text != null && m.uri?.endsWith('/' + h.file)).at(-1); return { same: !sent || sent.text === h.text, sent: h.sent, shown: h.shown, due: h.due || h.running || h.busy }; })()`);
+      if (!q.due && (!q.same || q.sent !== q.shown)) fail(i, 'stale-findings', `after quiet: server text ${q.same ? 'is' : 'is not'} the editor's, findings of version ${q.shown}, sent ${q.sent}`);
+    }
     if (kind === 'wait') for (const t of typed) { const n = count(src, t); if (n && count(text, t) < n && !inMarkup(src, t)) fail(i, 'lost-word', `${J(t)} ${n}x in the source, ${count(text, t)}x shown after landing`); }
     for (const t of toks) seenText.add(t);
   }
-  return { fails, log, view, last: s };
+  return { fails, log, view, last: s, warn: p.consoleLog.slice(-5) };
 }
 /** Whether every occurrence of `t` in `src` sits in math or a command name: places the shown text spells otherwise. */
 const inMarkup = (src, t) => [...src.matchAll(new RegExp(t, 'g'))].every((m) => { const pre = src.slice(0, m.index); return /\\[a-zA-Z]*$/.test(pre) || (pre.split('$').length - 1) % 2 === 1 || pre.lastIndexOf('\\[') > pre.lastIndexOf('\\]') || /\\begin\{(equation|align|tikzpicture|lstlisting)\}(?![^]*\\end\{\1\})/.test(pre); });

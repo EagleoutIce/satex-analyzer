@@ -11,6 +11,8 @@ interface SiteFloat {
 interface SiteTex { language: any; bib: any; highlighter: any; unbreakable: RegExp }
 /** The cards the pages and the playground render with. */
 interface SiteCards {
+  sketchSvg(pic: Rec): string;
+  sketchBounds(box: number[], exts: number[][], margin: number): number[];
   keyTitle(k: Rec): string;
   chipList(names: string[], chip: (name: string) => string, shown?: number): string;
   explain(r: Rec, brief?: boolean): string;
@@ -813,31 +815,47 @@ interface Stream {
     put(Infinity);
     return out;
   }
+  /** The box `[x, y, w, h]` grown to hold every extent `[x0, y0, x1, y1]` with `margin` around the extents. */
+  const sketchBounds = (box: number[], exts: number[][], margin: number) => {
+    let [x0, y0] = box, x1 = box[0]! + box[2]!, y1 = box[1]! + box[3]!;
+    for (const e of exts) if (e.every(Number.isFinite)) { x0 = Math.min(x0!, e[0]! - margin); y0 = Math.min(y0!, e[1]! - margin); x1 = Math.max(x1, e[2]! + margin); y1 = Math.max(y1, e[3]! + margin); }
+    return [x0!, y0!, x1 - x0!, y1 - y0!];
+  };
   /** A picture as the run drew it (`satex typeset` records it in `sketches`): the paths pgf's driver wrote, in pt, and the node texts where the run set them. */
   const PICTURE_SCALE = 1.4, PICTURE_MAX = 560, PICTURE_PAD = 6;
   function sketchSvg(pic: Rec) {
-    const [x, y, w, h] = pic.box;
-    const scale = Math.min(PICTURE_SCALE, (PICTURE_MAX - 2 * PICTURE_PAD) / Math.max(w, 1));
-    const width = (w * scale + 2 * PICTURE_PAD).toFixed(0), height = (h * scale + 2 * PICTURE_PAD).toFixed(0);
-    // a shape both drawn and filled (a node's `fill=…`) gets a tint, its text stays readable on it; a fill alone (an arrow tip) is solid
     // the run's colours, black as the theme's text colour
     const ink = (c?: string) => !c || c === '#000000' ? 'currentColor' : esc(c);
-    const paths = pic.paths.map((p: Rec) => `<path d="${esc(p.d)}"${p.fill && p.stroke ? ' class="ts-shape"' : ''} fill="${p.fill ? ink(p.fillColor) : 'none'}" stroke="${p.stroke ? ink(p.strokeColor) : 'none'}" stroke-width="${Math.max(p.width, 0.6)}"/>`).join('');
+    const boxOf = (d: string) => { const v = (d.match(/-?\d+(?:\.\d+)?/g) ?? []).map(Number), xs = v.filter((_: number, i: number) => i % 2 === 0), ys = v.filter((_: number, i: number) => i % 2 === 1); return [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)]; };
+    const frames = pic.paths.filter((p: Rec) => /Z/.test(p.d)).map((p: Rec) => boxOf(p.d));
+    // a shape both drawn and filled around a text (a node's `fill=…`) is tinted; one around none (an arrow tip, `-Kite`) is solid
+    const holds = (b: number[]) => pic.texts.some((t: Rec) => { const [tx, ty] = t.base ? [t.x + 3, t.y - 3] : [t.x, t.y]; return b[0] <= tx && tx <= b[2] && b[1] <= ty && ty <= b[3]; });
+    const paths = pic.paths.map((p: Rec) => `<path d="${esc(p.d)}"${p.fill && p.stroke && /Z/.test(p.d) && holds(boxOf(p.d)) ? ' class="ts-shape"' : ''} fill="${p.fill ? ink(p.fillColor) : 'none'}" stroke="${p.stroke ? ink(p.strokeColor) : 'none'}" stroke-width="${Math.max(p.width, 0.6)}"/>`).join('');
     // each text centred in the closed path around its point (its node's frame), shrunk to fit it; a space between
-    // texts keeps each its own word for a click
-    const frames = pic.paths.filter((p: Rec) => /Z/.test(p.d)).map((p: Rec) => { const v = (p.d.match(/-?\d+(?:\.\d+)?/g) ?? []).map(Number), xs = v.filter((_: number, i: number) => i % 2 === 0), ys = v.filter((_: number, i: number) => i % 2 === 1); return [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)]; });
-    // a text the run put by its box (`base`) stands where it was put, its baseline's left end
+    // texts keeps each its own word for a click. A text the run put by its box (`base`) stands where it was put, its baseline's left end
     const framed = pic.texts.map((t: Rec) => t.base ? undefined : frames.filter((b: number[]) => b[0] <= t.x && t.x <= b[2] && b[1] <= t.y && t.y <= b[3]).sort((a: number[], b: number[]) => (a[2] - a[0]) * (a[3] - a[1]) - (b[2] - b[0]) * (b[3] - b[1]))[0]);
     // one size for the whole picture (its texts were set in one font): the median of the sizes each framed text fits
     // at (a monospace glyph .6 of the size wide), so one odd frame does not shrink them all; a text wider is squeezed
     const fits = pic.texts.map((t: Rec, k: number) => { const f = framed[k]; return f ? Math.min(f[3] - f[1] - 3, (f[2] - f[0] - 4) / (Math.max(1, String(t.text).length) * 0.6)) : 9; }).sort((a: number, b: number) => a - b);
     const size = Math.max(4, Math.min(9, fits[(fits.length - 1) >> 1] ?? 9));
     const texts = pic.texts.map((t: Rec, k: number) => {
-      if (t.base) return `<text data-k="${k}" x="${t.x}" y="${t.y}" font-size="10" fill="${ink(t.color)}">${esc(t.text)}</text>`;
+      if (t.base) return `<text class="ts-base" data-k="${k}" x="${t.x}" y="${t.y}" font-size="10" fill="${ink(t.color)}">${esc(t.text)}</text>`;
       const f = framed[k], x = f ? (f[0] + f[2]) / 2 : t.x, y = f ? (f[1] + f[3]) / 2 : t.y, room = f ? f[2] - f[0] - 4 : Infinity;
       const fit = String(t.text).length * size * 0.6 > room ? ` textLength="${room.toFixed(2)}" lengthAdjust="spacingAndGlyphs"` : '';
       return `<text data-k="${k}" x="${x}" y="${y}" font-size="${size}" text-anchor="middle" dominant-baseline="central"${fit}>${esc(t.text)}</text>`;
     }).join(' ');
+    // the drawn area: the run's box, every frame and every text's extent (a text centred at x=0 reaches left of 0), with a
+    // margin, so the sketch never clips what it draws (`Henlo` showed as `nlo`)
+    const ext = pic.texts.map((t: Rec, k: number) => {
+      const n = Math.max(1, String(t.text).length), f = framed[k];
+      if (t.base) return [t.x, t.y - 10, t.x + n * 6, t.y + 3];
+      if (f) return f;
+      const hw = n * size * 0.3;
+      return [t.x - hw, t.y - size / 2, t.x + hw, t.y + size / 2];
+    });
+    const [x, y, w, h] = sketchBounds(pic.box, [...frames, ...ext], 2);
+    const scale = Math.min(PICTURE_SCALE, (PICTURE_MAX - 2 * PICTURE_PAD) / Math.max(w, 1));
+    const width = (w * scale + 2 * PICTURE_PAD).toFixed(0), height = (h * scale + 2 * PICTURE_PAD).toFixed(0);
     const label = pic.approximate ? 'TikZ picture as the run drew it, approximate where it did not know a number' : 'TikZ picture as the run drew it';
     return `<svg class="ts-sketch${pic.approximate ? ' approximate' : ''}" role="img" aria-label="${label}" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">` +
       `<g transform="translate(${PICTURE_PAD} ${PICTURE_PAD}) scale(${scale}) translate(${-x} ${-y})">${paths}${texts}</g></svg>`;
@@ -1055,9 +1073,10 @@ interface Stream {
   const tsPara = (r: Rec, depth = 0, k: number | null | undefined = r.k) => {
     const d = (r.depth ?? 0) + depth;
     const last = Math.max(r.line ?? 0, ...[...(r.marked ?? '').matchAll(/\u0007(\d+)/g)].map((m) => +m[1]));
+    const ind = self.satexLayers?.indentOf(r);
     return `<p class="ts${r.heading ? ` ts-h ts-${esc(r.heading)}` : ''}${r.footnote ? ' ts-foot' : ''}${r.held ? ' ts-held' : ''}"${r.env ? ` data-env="${esc(r.env)}" title="set in ${esc(r.env)}"` : ''}${r.just && r.just !== 'justified' ? ` data-just="${esc(r.just)}"` : ''}` +
       `${k != null ? ` data-k="${k}"` : ''} data-path="${esc(r.path ?? '')}" data-line="${r.line}"${last > r.line ? ` data-last="${last}"` : ''} data-col="${r.col}" data-plain="${esc(r.detail ?? '')}"${r.lines?.length ? ` data-lines="${esc(JSON.stringify(r.lines))}"` : ''}` +
-      ` style="--depth: ${d}${typeof r.skip === 'number' && !r.heading ? `; --skip: ${Math.max(r.skip, 0)}pt` : ''}">` +
+      ` style="--depth: ${d}${typeof r.skip === 'number' && !r.heading ? `; --skip: ${Math.max(r.skip, 0)}pt` : ''}${ind != null && !r.heading ? `; --indent: ${Math.max(ind, 0)}pt` : ''}">` +
       `<span class="ts-at"${last > r.line ? ` title="lines ${r.line}–${last}"` : ''}>${r.line ?? ''}</span><span class="ts-rails" aria-hidden="true"></span>` +
       `<span class="ts-text">${switches(r)}${choiceSpaces((r.causes ?? []).filter((c: Rec) => c.on != null).reduce((h: string, c: Rec) => { const ref = splitKind(c.test || c.parted || c.mark); return h.replaceAll(`<span class="ts-choice" data-on="${esc(c.on)}">`, `<span class="ts-choice${ref ? ' ts-ref' : ''}" data-on="${esc(c.on)}" title="${esc(ref ? maybeTip(c) : choiceTip(c))}">`); },
         notation(withKeys(r.marked ?? r.detail ?? '', r.keys, r.fonts, r.align, r.ligatures, r.lines), r.sketches, r.sketch)))}</span></p>`;
@@ -1277,7 +1296,7 @@ interface Stream {
     return sections(main) + (more ? `<details class="more"><summary>More definitions</summary>${sections(more)}</details>` : '');
   };
 
-  self.satexCards = { keyTitle, chipList, explain, brief, signature, slots, usage, tex, inline, markdown, ruleCard, placeLink, upstream, csChip, csName, value, esc, notation, withKeys, typesetView, typesetWire, hover: hoverCard, useOf, duration };
+  self.satexCards = { sketchSvg, sketchBounds, keyTitle, chipList, explain, brief, signature, slots, usage, tex, inline, markdown, ruleCard, placeLink, upstream, csChip, csName, value, esc, notation, withKeys, typesetView, typesetWire, hover: hoverCard, useOf, duration };
   // A rule named anywhere on the site, as a link into the rules page or its code or number in a
   // code span, shows its card. The cards' data is the rules the build wrote, fetched once.
   const RULES_URL = new URL('rules.json', document.currentScript?.src ?? location.href);
@@ -1308,6 +1327,9 @@ interface Stream {
     lint: '<path d="M12 3 2 20h20z"/><path d="M12 10v4M12 17h0"/>',
     incremental: '<path d="M20 12a8 8 0 1 1-2.3-5.7"/><path d="M20 4v5h-5"/>',
     build: '<path d="M14.5 6.5a4 4 0 0 0-5.4 5.4L3 18l3 3 6.1-6.1a4 4 0 0 0 5.4-5.4l-2.4 2.4-2.6-.4-.4-2.6z"/>',
+    'page actions': '<path d="M5 3l6 15 2-6 6-2z"/><path d="m13 12 6 6"/>',
+    refactor: '<path d="M4 7h11l-3-3M20 17H9l3 3"/>',
+    typesetting: '<path d="M4 6h16M4 10h16M4 14h16M4 18h9"/>',
   };
   const SITE_ROOT = new URL('.', RULES_URL);
   const INTEGRATIONS: Record<string, string> = { playground: 'Playground', gui: 'gui', vscode: 'VS Code', intellij: 'IntelliJ', lsp: 'Neovim / LSP' };

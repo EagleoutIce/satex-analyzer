@@ -237,7 +237,7 @@ test('plugins switched per viewer and with their type plugin', withStore(() => {
   assert.equal(PA.groups(t, ctxOf(text)).length, 0);
   PA.setOn('tikz-node', true);
   assert.ok(PA.groups(t, ctxOf(text)).length);
-  assert.deepEqual(PA.plugins.map((p) => p.name), ['tikz-node', 'tikz-label', 'tikz-edge', 'forest-node', 'table-column']);
+  assert.deepEqual(PA.plugins.map((p) => p.name), ['tikz-node', 'tikz-label', 'tikz-edge', 'forest-node', 'table-column', 'slice', 'refactor-float', 'refactor-math', 'refactor-extract']);
 }));
 
 // Intuition: a dragged node is written beside its reference as positioning does: a side when the centres line up, a
@@ -368,4 +368,72 @@ test('the drawing canvas writes in the picture\'s convention', () => {
   assert.deepEqual(D.relocate(nc, 4.1, 0.1, env([na], null)).opts, ['right=3cm of a'], 'no convention: cm');
   assert.equal(T.written(1.25, { unit: 'in', dec: 2 }), '0.49in');
   assert.equal(T.convention('no lengths', false, true), null, 'strict: none');
+});
+
+// Scratch slices (actions.ts `satexScratch`): a slice's copy of the chosen lines is replaced by those lines between two
+// markers, and what stands between them after the edits maps back to the lines they came from.
+const SC = self.satexScratch;
+const CHAPTER = ['\\section{A}', 'Text.', '', '\\begin{figure}[ht]', '  \\centering', '  \\includegraphics{x}', '  \\caption{Old}\\label{f}', '\\end{figure}', '', 'More.'].join('\n');
+const sliceOf = (body) => ['\\documentclass{article}', '\\usepackage{graphicx}', '\\begin{document}', '%% from chapter.tex', ...body, '\\end{document}', ''].join('\n');
+
+// Intuition: the region is cut from the slice and read back whole, the slice's other lines around it untouched. Pins a
+// region matched at a `\centering` of another figure before it, and a comment line the slicer dropped that is lost.
+test('scratch: build puts the region between markers, extract reads it back', () => {
+  const slice = sliceOf(['\\begin{table}', '  \\centering', '\\end{table}', '\\begin{figure}[ht]', '  \\centering', '  \\includegraphics{x}', '  \\caption{Old}\\label{f}', '\\end{figure}']);
+  const text = SC.build(slice, 'chapter.tex', CHAPTER, 4, 8, false);
+  const r = SC.extract(text);
+  assert.deepEqual([r.file, r.from, r.to], ['chapter.tex', 4, 8]);
+  assert.equal(r.body, CHAPTER.split('\n').slice(3, 8).join('\n'));
+  assert.match(text, /\\begin\{table\}\n {2}\\centering\n\\end\{table\}\n% satex-scratch begin/, 'the table before stays whole');
+  assert.match(text, /% satex-scratch end\n\\end\{document\}\n$/);
+  assert.equal(text.match(/\\begin\{figure\}/g).length, 1, 'the slice\'s copy is gone');
+  // a dropped comment line of the region comes back with it
+  const commented = CHAPTER.replace('  \\centering', '  % keep\n  \\centering');
+  assert.match(SC.extract(SC.build(slice, 'chapter.tex', commented, 4, 9, false)).body, /% keep/);
+});
+
+// Intuition: a file the slice reads whole stays an `\input`; its lines are then written out in its place, so the region
+// can be marked. A slice with none of the lines and no load maps nowhere: null, never a guess.
+test('scratch: a whole input is written out; no lines, no scratch', () => {
+  const slice = ['\\documentclass{article}', '\\begin{document}', '\\input{chapter}', '\\end{document}'].join('\n');
+  const text = SC.build(slice, 'chapter.tex', CHAPTER, 7, 7, false);
+  assert.ok(!/\\input\{chapter\}/.test(text));
+  assert.equal(SC.extract(text).body, '  \\caption{Old}\\label{f}');
+  assert.ok(text.includes('More.'), 'the rest of the file runs too');
+  // a standalone slice carries the file as filecontents*: written out in place, that copy goes
+  const standalone = ['\\begin{filecontents*}[overwrite]{chapter.tex}', ...CHAPTER.split('\n'), '\\end{filecontents*}', slice].join('\n');
+  const s2 = SC.build(standalone, 'chapter.tex', CHAPTER, 7, 7, false);
+  assert.ok(!/filecontents/.test(s2), s2);
+  assert.equal(SC.extract(s2).body, '  \\caption{Old}\\label{f}');
+  assert.equal(SC.build(sliceOf(['Other.']), 'chapter.tex', CHAPTER, 7, 7, false), null);
+  // the root's own lines need no header
+  assert.equal(SC.extract(SC.build('\\documentclass{article}\nText.\n\\begin{document}\nText.\n\\end{document}\n', 'main.tex', 'x\nText.', 2, 2, true)).body, 'Text.');
+});
+
+// Intuition: three-way: base (the lines when sliced), mine (the scratch region), the file now. Unchanged there: clean;
+// moved by lines added above: written where they now stand; changed there: a conflict with the lines that stand there.
+test('scratch: merge maps the edit back, follows a move, reports a conflict', () => {
+  const base = SC.extract(SC.build(sliceOf(CHAPTER.split('\n').slice(3, 8)), 'chapter.tex', CHAPTER, 4, 8, false)).body, mine = base.replace('Old', 'New');
+  const size = CHAPTER.split('\n').length;
+  assert.equal(SC.merge(base, base, CHAPTER, 4, 8, size).status, 'same');
+  const m = SC.merge(base, mine, CHAPTER, 4, 8, size);
+  assert.deepEqual([m.status, m.from, m.to], ['clean', 4, 8]);
+  assert.equal(SC.apply(CHAPTER, m.from, m.to, mine), CHAPTER.replace('Old', 'New'));
+  const grown = `Intro.\n\n${CHAPTER}`, g = SC.merge(base, mine, grown, 4, 8, size);
+  assert.deepEqual([g.status, g.from, g.to], ['moved', 6, 10]);
+  assert.equal(SC.apply(grown, g.from, g.to, mine), grown.replace('Old', 'New'));
+  const theirs = CHAPTER.replace('Old', 'Theirs').replace('  \\centering', '  \\centering\n  \\small'), c = SC.merge(base, mine, theirs, 4, 8, size);
+  assert.deepEqual([c.status, c.from, c.to], ['conflict', 4, 9]);
+  assert.match(c.theirs, /Theirs/);
+  assert.equal(SC.apply(theirs, c.from, c.to, mine), CHAPTER.replace('Old', 'New'), 'taking the scratch writes over the lines that stand there');
+});
+
+// Intuition: a right click on the page names a block: the figure or table around the line, else the display, else the
+// paragraph. Pins a caption line that sliced only itself, and an equation inside a figure taken for the figure's.
+test('scratch: block finds the figure, the equation, the paragraph', () => {
+  assert.deepEqual(SC.block(CHAPTER, 7), [4, 8, 'figure']);
+  assert.deepEqual(SC.block(CHAPTER, 2), [1, 2, 'paragraph']);
+  assert.deepEqual(SC.block(CHAPTER, 10), [10, 10, 'paragraph']);
+  assert.deepEqual(SC.block('a\n\\begin{equation}\n x % \\end{equation}\n\\end{equation}\nb', 3), [2, 4, 'equation']);
+  assert.deepEqual(SC.block('\\begin{table*}\n\\begin{equation}\nx\n\\end{equation}\n\\end{table*}', 3), [1, 5, 'table']);
 });

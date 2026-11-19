@@ -1345,6 +1345,10 @@ ol.refs { font-size: .8rem; color: var(--muted); margin: var(--s16) 0 0; padding
 .cm-tooltip-autocomplete ul li { display: flex; align-items: center; gap: .6em; }
 .cm-tooltip-autocomplete .cm-completionDetail { margin-left: auto; font-style: normal; font-size: .85em; color: var(--muted); display: inline-flex; align-items: center; gap: .6em; }
 .cm-preview { flex: none; width: 3.4em; height: 1.1em; object-fit: contain; object-position: left center; filter: var(--preview-filter, none); }
+/* a math command's symbol before its name (mathlayout.ts `preview`, drawn in currentColor), its one-line description after the usage */
+.cm-math-symbol { flex: none; display: inline-flex; align-items: center; justify-content: center; min-width: 1.6em; height: 1.3em; margin-right: .35em; color: var(--fg, currentColor); }
+.cm-math-symbol svg { max-height: 1.3em; max-width: 2.6em; width: auto; height: auto; overflow: visible; }
+.cm-tooltip-autocomplete .cm-completionDetail .cm-doc, .type-complete .muted { font-style: italic; }
 :root[data-theme=dark] .cm-preview { --preview-filter: invert(.9); }
 .draw-px { flex: none; font: 600 .6rem ui-monospace, Menlo, monospace; color: var(--muted); border: 1px solid var(--border); border-radius: 3px; padding: 0 .2rem; margin-left: .3rem; }
 
@@ -1390,6 +1394,8 @@ ol.refs { font-size: .8rem; color: var(--muted); margin: var(--s16) 0 0; padding
 .typeset .ts-sketch path { stroke-linecap: round; stroke-linejoin: round; } .typeset .ts-sketch path.ts-shape { fill: color-mix(in srgb, currentColor 12%, transparent); }
 .typeset .ts-sketch.approximate { outline: 1px dashed var(--muted); outline-offset: 2px; }
 .typeset .ts-sketch text { fill: currentColor; text-anchor: middle; dominant-baseline: central; font-family: var(--mono, monospace); }
+/* a text the run put by its box stands on its baseline from its left end */
+.typeset .ts-sketch text.ts-base { text-anchor: start; dominant-baseline: alphabetic; }
 .ts-typing .ts-sketch text { cursor: text; }
 .typeset .ts[data-env="tikzpicture"] .ts-text { color: var(--muted); font-size: .85em; }
 /* the draw page and widget on narrow screens: the bar wraps, the pad sits above the results, rows wrap */
@@ -2595,6 +2601,8 @@ pre.out-block:hover .out-meta { opacity: .85; }
 /* the Typeset view's Show menu (layers.ts SHOW): a switch off renders that part plainly */
 .ts-show-list { min-width: 13rem; } .ts-show-list .layer-off { opacity: .5; }
 #typeset-body:not(.ts-show-parskip) p.ts[style*="--skip"] { margin-top: 0; }
+/* the first line's indent is the run's: \parindent, none after \noindent or a heading */
+#typeset-body.ts-show-indent p.ts[style*="--indent"] .ts-text { text-indent: var(--indent); }
 #typeset-body.ts-show-baselineskip .ts-text { line-height: 1.2; }
 #typeset-body:not(.ts-show-colors) .ts-text span[style*="color"] { color: inherit !important; }
 #typeset-body:not(.ts-show-fonts) :is(.ts-bf, .ts-it, .ts-sl, .ts-sc, .ts-sf, .ts-tt) { font: inherit; font-variant: normal; }
@@ -2602,3 +2610,19 @@ pre.out-block:hover .out-meta { opacity: .85; }
 #typeset-body:not(.ts-show-math) .ts-scripts { display: inline; vertical-align: baseline; }
 #typeset-body:not(.ts-show-pages) :is(.ts-page, .ts-hf) { display: none; }
 #typeset-body.ts-show-justify .ts:not([data-just]) .ts-text { text-align: justify; hyphens: auto; }
+/* Scratch slices: the banner over the editor while one is open, the selection's bubble, the merge preview */
+.scratch-bar { display: flex; align-items: center; gap: .5rem; flex-wrap: wrap; padding: .3rem .6rem; background: color-mix(in srgb, var(--accent) 10%, var(--bg)); border-bottom: 1px solid color-mix(in srgb, var(--accent) 35%, var(--border)); font-size: .8rem; }
+.scratch-bar[hidden] { display: none; }
+.scratch-bar > span { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.scratch-bar a { color: inherit; }
+.scratch-bubble { position: fixed; z-index: 40; box-shadow: var(--shadow); }
+.scratch-bubble[hidden] { display: none; }
+.scratch-dialog { width: min(46rem, calc(100vw - 32px)); }
+.scratch-dialog h4 { margin: .6rem 0 .2rem; font-size: .78rem; color: var(--muted); }
+.scratch-diff { margin: 0; border: 1px solid var(--border); border-radius: var(--r-ctl); padding: .35rem 0; max-height: 18rem; overflow: auto; font-size: .72rem; white-space: pre-wrap; overflow-wrap: anywhere; }
+.scratch-diff .wf-l { display: block; padding: 0 .6rem 0 1.3rem; position: relative; }
+.scratch-diff .wf-add { background: color-mix(in srgb, var(--safe) 14%, transparent); }
+.scratch-diff .wf-add::before { content: "+"; position: absolute; left: .45rem; color: var(--safe); }
+.scratch-diff .wf-del { background: color-mix(in srgb, var(--error) 12%, transparent); }
+.scratch-diff .wf-del::before { content: "−"; position: absolute; left: .45rem; color: var(--error); }
+.scratch-conflict { color: var(--warning); }

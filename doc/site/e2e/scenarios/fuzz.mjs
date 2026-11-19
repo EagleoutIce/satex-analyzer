@@ -12,7 +12,9 @@ export default [
   { kind: 'fuzz', name: 'fz-ts-footnote-row', doc: 'markup', view: 'ts', seq: ['c:word:0.083', 'c:word:0.789', 'w:xqtotoa'],
     steps: 'Typeset view; click the end of "A" in the footnote text, type a word: the footnote row shows it once, the caret on that row (it showed a second footnote row, the caret on another) (fuzz seed 6)' },
   { kind: 'fuzz', name: 'fz-pdf-caret-after-end', doc: 'markup', view: 'pdf', seq: ['c:word:0.083', 'c:word:0.789', 'w:xqtotoa', 'k:ArrowRight', 'w:xqpepeb', 'k:End', 'wait', 'w:xqrakoc'],
-    steps: 'PDF; type in the footnote, End, wait for the build, type a word: the caret stands at the word\'s last glyph (7 px past it) (fuzz seed 6)' },
-  { kind: 'fuzz', name: 'fz-ts-land-jump', doc: 'twocol', view: 'ts', seq: ['c:word:0.083', 'c:word:0.789', 'w:xqtotoa', 'k:ArrowRight', 'w:xqpepeb', 'k:End', 'wait', 'w:xqrakoc', 'k:ArrowUp', 'w:xqqazud', 'c:word:0.122', 'w:xqnibae', 'w:xqtojof', 'wait'],
+    steps: 'PDF; type in the footnote, End, wait for the build, type a word: the caret stands at the word\'s last glyph (the oracle had missed the echo\'s horizontal stretch) (fuzz seed 6)' },
+  { kind: 'fuzz', name: 'fz-ts-land-jump', doc: 'twocol', view: 'ts', seq: ['c:word:0.789', 'w:xqtotoa', 'k:End', 'wait', 'w:xqrakoc', 'c:word:0.122', 'w:xqnibae', 'wait'],
     steps: 'Typeset view of a two-column doc; type in two places, wait: the caret stays where it was as the typeset lands (it jumped 400 px) (fuzz seed 6)' },
+  { kind: 'fuzz', name: 'fz-ts-enter-in-argument', doc: 'hello', view: 'ts', seq: ['c:word:0.083', 'w:xqjoqad', 'k:Enter'],
+    steps: 'Typeset view; click the end of "world!" (in `\\greet{world}`), type a word, Enter: a caret stays on screen (faded where it was) though no row sets the break typed into the argument (fuzz seed 3)' },
 ];

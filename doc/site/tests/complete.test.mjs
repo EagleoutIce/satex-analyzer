@@ -78,3 +78,25 @@ test('rank: math commands first in math', () => {
   assert.equal(mathItem({ label: 'alpha', math: false }), false, 'the server\'s flag wins');
   assert.equal(docOf({ label: 'x', data: { doc: 'Sets bold.' } }), 'Sets bold.');
 });
+
+// Intuition: an item that brings a load (`\usetikzlibrary{arrows.meta}` for `-Kite`, `\usepackage{tikz}` for `tikzpicture`)
+// is written with it in one transaction, so its snippet goes in as plain text with the caret where its first field was.
+// Pins `-Kite` accepted without its library line (the client dropped `additionalTextEdits`, user 2026-11-19).
+test('plainSnippet: fields as their text, the caret at the first', () => {
+  const { plainSnippet } = self.satexViews.complete;
+  assert.deepEqual(plainSnippet('textbf{$1}$0'), { text: 'textbf{}', caret: 7 });
+  assert.deepEqual(plainSnippet('tikzpicture}\n\t$0\n\\end{tikzpicture}'), { text: 'tikzpicture}\n\t\n\\end{tikzpicture}', caret: 14 });
+  assert.deepEqual(plainSnippet('section${1:[options]}{${2:title}}$0'), { text: 'section[options]{title}', caret: 7 });
+  assert.deepEqual(plainSnippet('-Kite'), { text: '-Kite', caret: 5 });
+});
+
+// Intuition: after taking a command whose caret lands in its braced first argument, that argument's completion opens at once
+// (packages after `\usepackage{`, environments after `\begin{`), one rule for every command; an optional first field or
+// none opens nothing. Pins `\usepackage` accepted with no package list (user 2026-11-19).
+test('opensArgument: a braced first field opens its completion', () => {
+  const { opensArgument } = self.satexViews.complete;
+  assert.equal(opensArgument({ label: 'usepackage', insertText: 'usepackage{$1}', insertTextFormat: 2 }), true);
+  assert.equal(opensArgument({ label: 'textbf', insertText: 'textbf{${1:text}}$0', insertTextFormat: 2 }), true);
+  assert.equal(opensArgument({ label: 'section', insertText: 'section${1:[options]}{$2}$0', insertTextFormat: 2 }), false);
+  assert.equal(opensArgument({ label: 'relax', insertText: 'relax' }), false);
+});

@@ -22,6 +22,7 @@
           <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6"/><path d="M8 4.8v3.9M8 11v.1"/></svg><span class="label">Report an issue</span></button>
       </span>
     </div>
+    <div id="play-scratch" class="scratch-bar" role="status" hidden><span id="scratch-what"></span><button type="button" class="small" id="scratch-merge" title="Write the scratch document's region back where it came from: a preview first, one undo step">Merge back</button><button type="button" class="small ghost" id="scratch-discard" title="Close the scratch document, nothing written back">Discard</button></div>
     <div class="work">
       <nav id="play-tree" class="tree" aria-label="project files">
         <div class="treehead"><span>Project</span>
@@ -128,6 +129,10 @@
       <header><h3 id="replace-title">Replace the open project?</h3></header>
       <p class="cache-note" id="replace-text"></p>
       <form method="dialog" class="ask-foot"><button value="tab" class="small ghost">Open in a new tab</button><button value="cancel" class="small ghost">Cancel</button><button value="replace" class="small">Replace</button></form></dialog>
+    <dialog id="play-scratch-merge" class="cache-dialog ask-dialog scratch-dialog" aria-labelledby="scratch-title">
+      <header><h3 id="scratch-title">Merge back</h3></header>
+      <div id="scratch-diff"></div>
+      <form method="dialog" class="ask-foot"><button value="cancel" class="small ghost">Cancel</button><button value="theirs" class="small ghost" id="scratch-theirs" hidden>Keep the original</button><button value="mine" class="small" id="scratch-mine">Merge</button></form></dialog>
     <dialog id="play-draw" class="cache-dialog draw-dialog" aria-labelledby="draw-title">
       <header><h3 id="draw-title">Draw a symbol</h3><button type="button" class="ghost small" id="draw-close" aria-label="close">✕</button></header>
       <div class="draw-top">
@@ -185,5 +190,6 @@
 <script src="{{root}}{{pdfeditjs}}" defer></script>
 <script src="{{root}}{{mathlayoutjs}}" defer></script>
 <script src="{{root}}{{actionsjs}}" defer></script>
+<script src="{{root}}{{refactorjs}}" defer></script>
 <script src="{{root}}{{texjs}}" defer></script>
 <script src="{{root}}{{playjs}}" defer></script>

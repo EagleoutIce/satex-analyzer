@@ -13,6 +13,7 @@ declare global {
       count(root: ParentNode, id: string, n: number | boolean | undefined): void;
       menu(details: HTMLElement, list: HTMLElement, on: On, onFold?: () => void): () => void;
       length(text: unknown, font?: Record<string, number>): { pt: number; num: number; unit: string } | null;
+      indentOf(r: { indented?: boolean; indent?: number; parindent?: number }): number | null;
     };
   }
 }
@@ -39,7 +40,7 @@ declare global {
   /** The Typeset view's Show menu: what it renders as TeX does, each [label, title, on by default, ready]. A switch on
    * puts `ts-show-<id>` on the view (style.css draws it); one the run does not report yet (`ready` false) is shown off. */
   const SHOW: Record<string, [string, string, boolean, boolean]> = {
-    indent: ['paragraph indent', '\\parindent before a paragraph\'s first line, none after a heading', true, false],
+    indent: ['paragraph indent', '\\parindent before a paragraph\'s first line, none after a heading', true, true],
     parskip: ['paragraph spacing', '\\parskip between paragraphs, as the run set it', true, true],
     baselineskip: ['line spacing', '\\baselineskip between lines, 1.2 times the font size as LaTeX\'s sizes set it', true, true],
     colors: ['text colors', '\\color and \\textcolor', true, true],
@@ -59,6 +60,10 @@ declare global {
   const showDefaults = (): On => Object.fromEntries(Object.entries(SHOW).map(([k, v]) => [k, v[2] && v[3]]));
   /** The Show menu's switches as HTML: one per item, one not ready disabled. */
   const showHtml = (on: On) => Object.entries(SHOW).map(([k, [label, title, , ready]]) => `<label class="layer${ready ? '' : ' layer-off'}" title="${esc(title)}${ready ? '' : ' (the run does not report it yet)'}"><input type="checkbox" role="switch" id="typeset-show-${k}" data-layer="${k}"${on[k] && ready ? ' checked' : ''}${ready ? '' : ' disabled'}><span>${esc(label)}</span></label>`).join('');
+  /** A typeset row's first-line indent in pt, from the run's facts: the width it set before the first character
+   * (`indent`, else `\parindent` when `indented`), 0 when it set none (`\noindent`, after a heading), null when not known. */
+  const indentOf = (r: { indented?: boolean; indent?: number; parindent?: number }) =>
+    r.indented === false ? 0 : r.indented === true ? (typeof r.indent === 'number' ? r.indent : typeof r.parindent === 'number' ? r.parindent : null) : null;
   /** `ids` by group, in catalogue order: [[group, label, ids]], empty groups left out. */
   const groups = (ids: string[]) => GROUPS.map(([g, label]) => [g, label, Object.keys(LAYERS).filter((k) => ids.includes(k) && LAYERS[k][1] === g)]).filter((x) => x[2].length) as [string, string, string[]][];
   /** The chips of `about` (id → title) as HTML: a labelled segmented group each. Each switch is
@@ -125,5 +130,5 @@ declare global {
     const unit = m?.[2].toLowerCase(), per = unit && (PT[unit] ?? font[unit]);
     return m && unit && per && +m[1] > 0 ? { pt: +m[1] * per, num: +m[1], unit } : null;
   }
-  self.satexLayers = { GROUPS, LAYERS, groups, html, state, wire, count, menu, length, SHOW, showClasses, showDefaults, showHtml };
+  self.satexLayers = { GROUPS, LAYERS, groups, html, state, wire, count, menu, length, SHOW, showClasses, showDefaults, showHtml, indentOf };
 })();

@@ -27,7 +27,7 @@ for (const job of jobs) {
   try { r = await run(p, job); } catch (e) { r = { fails: [{ step: -1, cls: 'error', msg: String(e?.message ?? e).slice(0, 300) }], log: [] }; }
   const f = r.fails[0];
   console.log(`${f ? 'FAIL' : 'ok  '} seed ${job.seed ?? '-'} ${job.doc}/${job.view} ${((Date.now() - t0) / 1000).toFixed(0)} s${f ? ` step ${f.step} ${job.steps[f.step]} [${f.cls}] ${f.msg}` : ''}`);
-  if (process.argv.includes("--log")) console.log("  " + r.log.join("\n  "));
+  if (process.argv.includes('--log')) console.log('  ' + [...r.log, ...(r.warn ?? [])].join('\n  '));
   if (f) {
     await p.shot(`fz-${job.seed}-${job.doc}-${job.view}.png`).catch(() => {});
     const rec = { ...job, steps: f.step >= 0 ? job.steps.slice(0, f.step + 1) : job.steps, fail: f, log: r.log };
