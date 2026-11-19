@@ -370,7 +370,7 @@ fn scope_carried_over_an_edit_equals_a_fresh_runs() {
     let run_part = |rows: Vec<satex::queries::query::Record>| -> Vec<_> {
         rows.into_iter()
             .map(|mut r| {
-                for k in ["does", "does_from", "manual"] {
+                for k in ["does", "does_from", "manual", "tried", "via"] {
                     r.remove(k);
                 }
                 r

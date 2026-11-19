@@ -976,7 +976,7 @@ fn set_macro<'r, 'a>(run: &RefCell<Run<'r, 'a>>, lua: &State, args: MultiValue) 
     let def = crate::engine::tex::MacroDef {
         parameter_text: Default::default(),
         arg_spec: None,
-        replacement_text: Rc::from(crate::engine::tex::parameterize(body, |sym| run.m.means_align_mark(sym))),
+        replacement_text: Rc::from(crate::engine::tex::parameterize(body, 9, |sym| run.m.means_align_mark(sym))),
         long: flags.iter().any(|f| f == "long"),
         outer: flags.iter().any(|f| f == "outer"),
         protected: flags.iter().any(|f| f == "protected"),

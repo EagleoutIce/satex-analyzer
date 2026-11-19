@@ -211,6 +211,11 @@ pub struct Limits {
     /// (`512M`, `4GiB`); zero lifts the limit.  Only the `satex` binary counts
     /// allocations, so a library user gets no limit.
     pub memory: bytesize::ByteSize,
+    /// What the checkpoints a run keeps for its reruns may copy together;
+    /// past it every other one goes, as past their number.  Zero: only
+    /// their number bounds them.  Results never depend on it, only how far
+    /// back a rerun resumes.
+    pub checkpoint_memory: bytesize::ByteSize,
     /// Threads any parallel work may use; 0 lets satex choose.  The
     /// interpreter runs on one thread because TeX's state is one machine, so
     /// this bounds the file walks around it.
@@ -282,6 +287,7 @@ impl Limits {
             "trace_state" => self.trace_state as u64,
             "save_stack" => self.save_stack as u64,
             "memory" => self.memory.as_u64(),
+            "checkpoint_memory" => self.checkpoint_memory.as_u64(),
             _ => return None,
         })
     }
@@ -385,6 +391,7 @@ impl Default for Limits {
             // and small enough that a runaway run dies before the machine
             // starts swapping.
             memory: bytesize::ByteSize::gib(8),
+            checkpoint_memory: bytesize::ByteSize::gib(1),
             threads: 0,
             cache_size: bytesize::ByteSize::gib(2),
         }

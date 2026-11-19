@@ -1649,3 +1649,25 @@ fn work_on_waiting_paths_counts_against_the_line_budget() {
     assert!(!cut(&run(u64::MAX, free.steps)), "steps alone stay within the budget");
     assert!(cut(&run(1, free.steps)), "the walks of the waiting paths are charged to the line");
 }
+
+/// A `#` with no parameter after it stays a `#` character (tex.web § 479):
+/// `\def\b{#1}` in a macro of no parameters holds `#` and `1`, and the `#`
+/// means "macro parameter character #". satex stored it as a reference to
+/// parameter 1, which no call fills, so the reference itself leaked into the
+/// input and `\meaning` printed nothing. KOMA's `\scr@ifiscount` recursion
+/// (expand the first token while its meaning starts with `macro:`) took the
+/// empty text for a macro and expanded the same token forever on one path,
+/// 500M steps per line on a thesis whose toc entry ran into `\Ifstr{#1}`.
+#[test]
+fn a_hash_with_no_parameter_stays_a_character() {
+    let source = "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\def\\empty{}
+\\def\\a{\\def\\b{#1}}\\a
+\\def\\first#1#2\\end{\\edef\\m{\\meaning#1}}\\expandafter\\first\\b\\end
+\\def\\loop#1{\\edef\\n{\\meaning#1}\\ifx\\n\\empty\\expandafter\\loop\\fi#1}\\expandafter\\loop\\b
+";
+    let analysis = Machine::analyze(source, None, &cfg(20_000_000));
+    let cut: Vec<_> = analysis.facts.diagnostics.iter().map(|d| d.code).filter(|c| c.contains("budget")).collect();
+    assert!(cut.is_empty(), "{cut:?}");
+    let m = satex::analysis::machine::macro_text(&analysis, "m");
+    assert_eq!(m.as_deref(), Some("macro parameter character #"));
+}

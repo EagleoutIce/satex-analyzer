@@ -500,3 +500,41 @@ fn a_lax_page_model_reuses_the_rest_of_the_last_run() {
     }
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// Every checkpoint copies what grows along the document (graph, facts,
+/// sites), so a long document's checkpoints took several times the run's own
+/// memory.  `limits.checkpoint_memory` bounds what they copy together, and a
+/// rerun from the fewer that stay says what a full run says.
+#[test]
+fn checkpoints_stay_within_their_memory() {
+    if !installed() {
+        return;
+    }
+    let dir = crate::support::tmp_root().join("incremental-memory");
+    std::fs::create_dir_all(&dir).unwrap();
+    let body: String = (0..120)
+        .map(|i| format!("\\section{{S{i}}}\\label{{s{i}}}\\newcommand\\m{i}{{x{i}}}\\m{i} see \\ref{{s{i}}}.\n\n"))
+        .collect();
+    let text = format!("\\documentclass{{article}}\n\\begin{{document}}\n{body}\\end{{document}}\n");
+    let main = dir.join("main.tex");
+    std::fs::write(&main, &text).unwrap();
+    let mut cfg = crate::support::config();
+    cfg.limits.checkpoint_memory = bytesize::ByteSize::b(0);
+    let mut unbounded = Checkpoints::new(&cfg).every(64);
+    unbounded.analyze(&text, &main);
+    let (count, bytes) = unbounded.kept();
+    assert!(count > 2 && bytes > 0, "{count} checkpoints of {bytes} bytes");
+    let budget = bytes / 3;
+    cfg.limits.checkpoint_memory = bytesize::ByteSize::b(budget as u64);
+    let mut bounded = Checkpoints::new(&cfg).every(64);
+    bounded.analyze(&text, &main);
+    let (kept, held) = bounded.kept();
+    assert!(kept >= 1 && kept < count, "{kept} of {count} kept");
+    assert!(held <= budget || kept == 1, "{held} bytes held, {budget} allowed");
+    let edited = text.replacen("x100", "y100", 1);
+    std::fs::write(&main, &edited).unwrap();
+    let incremental = bounded.analyze(&edited, &main);
+    assert!(bounded.resumed.is_some(), "the rerun resumed");
+    let full = Machine::analyze_once(&edited, Some(&main), &cfg);
+    assert_eq!(first_difference(&said(&incremental), &said(&full)), None);
+}

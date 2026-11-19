@@ -31,6 +31,8 @@ struct Checkpoint<'a> {
     pinned: bool,
     /// The latest checkpoint on the way to the edit's line. The next one on the way replaces it.
     toward: bool,
+    /// What copying the state allocated: the parts it does not share with the run.
+    bytes: usize,
 }
 
 /// The checkpoints a run takes, and the drive it resumes with.
@@ -197,7 +199,10 @@ impl Machine<'_> {
 
     /// Saves the run's state and `drive` as a checkpoint.
     pub(super) fn take_checkpoint(&mut self, drive: Drive) {
+        let before = crate::analysis::budget::in_use();
         let machine = self.clone();
+        let bytes = crate::analysis::budget::in_use().saturating_sub(before);
+        let budget = self.cfg.limits.checkpoint_memory.as_u64() as usize;
         let (steps, document) = (self.out.steps, self.out.document_depth.is_some());
         let gap = match (&self.checkpoints.on, reading_file_after(&self.input, 1)) {
             (Some(taking), Some((mouth, _))) => self.edit_gap(taking, mouth),
@@ -228,15 +233,21 @@ impl Machine<'_> {
         } else {
             taking.list.iter_mut().for_each(|c| c.toward = false);
         }
-        taking.list.push(Checkpoint { machine, drive, reads: taking.log.len(), pinned, toward });
-        if taking.list.len() > KEPT {
+        taking.list.push(Checkpoint { machine, drive, reads: taking.log.len(), pinned, toward, bytes });
+        // Each copy holds what grows along the document (graph, facts, sites)
+        // anew, so their bytes are bounded too, not only their number.
+        let over = |list: &[Checkpoint]| budget > 0 && list.iter().map(|c| c.bytes).sum::<usize>() > budget;
+        while taking.list.len() > KEPT || (over(&taking.list) && taking.list.iter().filter(|c| !c.pinned).count() > 1) {
             // Drop every other one. The last and the pinned ones stay.
-            let mut n = taking.list.len();
+            let (mut n, len) = (taking.list.len(), taking.list.len());
             taking.list.retain(|c| {
                 n -= 1;
                 c.pinned || n % 2 == 0
             });
             taking.every *= 2;
+            if taking.list.len() == len {
+                break;
+            }
         }
         (taking.next, taking.last, taking.document) = (steps + taking.every, steps, document);
     }
@@ -577,6 +588,11 @@ impl<'a> Checkpoints<'a> {
     /// The files the last run read or looked for.
     pub fn looked(&self) -> Vec<PathBuf> {
         self.log.iter().map(|r| r.path.clone()).collect()
+    }
+
+    /// How many checkpoints the last run kept, and what copying them allocated.
+    pub fn kept(&self) -> (usize, usize) {
+        (self.list.len(), self.list.iter().map(|c| c.bytes).sum())
     }
 
     /// Use `steps` instead of [`EVERY`] as the initial spacing.

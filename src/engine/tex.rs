@@ -1251,10 +1251,21 @@ pub fn text_of(toks: &[Token], it: &Interner) -> String {
     out.trim().to_string()
 }
 
+/// The parameter a `#` followed by `next` names in a body of `arity`
+/// parameters. tex.web § 479: only an other-character digit `1`..=`arity`
+/// names one. Any other `#` stays a `#` character, the token after it is read
+/// again, and TeX says the number is illegal.
+pub fn param_ref(next: &Token, arity: u8) -> Option<u8> {
+    match next.tok {
+        Tok::Chr(d @ '1'..='9', Catcode::Other) if d as u8 - b'0' <= arity => Some(d as u8 - b'0'),
+        _ => None,
+    }
+}
+
 /// Turn `#1` into placeholder and `##` into literal `#` (The TeXbook, ch. 20).
 /// `mark` says which control sequences stand for `#` here: none but the
 /// character in TeX, a token meaning `\alignmark` as well in LuaTeX.
-pub fn parameterize(tokens: Vec<Token>, mark: impl Fn(Sym) -> bool) -> Vec<Token> {
+pub fn parameterize(tokens: Vec<Token>, arity: u8, mark: impl Fn(Sym) -> bool) -> Vec<Token> {
     let param = |t: &Token| t.is_cat(Catcode::Param) || t.cs().is_some_and(&mark);
     if !tokens.iter().any(param) {
         return tokens;
@@ -1270,8 +1281,8 @@ pub fn parameterize(tokens: Vec<Token>, mark: impl Fn(Sym) -> bool) -> Vec<Token
                     i += 2;
                     continue;
                 }
-                Some(Token { tok: Tok::Chr(d, _), .. }) if d.is_ascii_digit() && *d != '0' => {
-                    out.push(Token::new(Tok::Param(*d as u8 - b'0'), token.span));
+                Some(next) if let Some(n) = param_ref(next, arity) => {
+                    out.push(Token::new(Tok::Param(n), token.span));
                     i += 2;
                     continue;
                 }

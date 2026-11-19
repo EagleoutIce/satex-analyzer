@@ -162,6 +162,7 @@ stubs:
 | Key | Default | Effect |
 | --- | --- | --- |
 | `limits.memory` | `8GiB` | stops the run with `budget-exhausted` (`--max-memory`), library users get no limit |
+| `limits.checkpoint_memory` | `1GiB` | what the saved states for reruns may copy together, past it every other one goes. Results stay the same, reruns resume further back |
 | `limits.seconds` | `300` | stops the run, lints after it share the same budget |
 | `limits.degrade_at_percent` | `100` (off) | past that share of `limits.steps`, halves the time-only limits, reported as `precision-degraded` |
 | `limits.threads` | `0` (`min(4, cores)`) | file scans only, the interpreter is one thread |

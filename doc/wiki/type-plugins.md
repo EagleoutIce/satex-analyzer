@@ -246,7 +246,7 @@ A plugin works *fully* in an integration that renders all its features, *partial
 | `forest` | lens, actions, view | full | full | full | partial | partial |
 | `savebox` | hover, actions | full | full | full | full | full |
 | `history` | actions, view | full | full | full | partial | partial |
-| `glossary` | view, manage | full | full | full | partial | partial |
+| `glossary` | complete, view, manage | full | full | full | partial | partial |
 | `bibliography` | view, manage, lens, hover | full | full | full | partial | partial |
 | `index` | view, manage, lens, hover | full | full | full | partial | partial |
 | `theorem` | view, manage | full | full | full | partial | partial |

@@ -1061,6 +1061,9 @@ limits:  # what bounds the analysis: reaching one stops that part of the run, so
   memory: 8GiB  # most memory one run may use. It stops cleanly beyond it. 0 lifts the limit
     #! affects: memory
     #! example: `memory: 2GiB` stops a runaway run before it slows the machine
+  checkpoint_memory: 1GiB  # most memory the saved states for reruns may copy together. Past it every other one goes. 0 = only their number bounds them
+    #! affects: memory, speed
+    #! example: `checkpoint_memory: 256MiB` for a long document on a small machine, reruns then resume further back
   threads: 0  # threads for walking the project's files, 0 lets satex choose. The analysis itself uses one
     #! affects: speed
     #! example: `threads: 1` keeps the walk on one core
@@ -1463,6 +1466,7 @@ stubs:
 | Key | Default | Effect |
 | --- | --- | --- |
 | `limits.memory` | `8GiB` | stops the run with `budget-exhausted` (`--max-memory`), library users get no limit |
+| `limits.checkpoint_memory` | `1GiB` | what the saved states for reruns may copy together, past it every other one goes. Results stay the same, reruns resume further back |
 | `limits.seconds` | `300` | stops the run, lints after it share the same budget |
 | `limits.degrade_at_percent` | `100` (off) | past that share of `limits.steps`, halves the time-only limits, reported as `precision-degraded` |
 | `limits.threads` | `0` (`min(4, cores)`) | file scans only, the interpreter is one thread |

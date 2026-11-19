@@ -631,13 +631,9 @@ impl Machine<'_> {
         let mut i = 0;
         while i < body.len() {
             if param(self, &body[i]) {
-                let ok = match body.get(i + 1) {
-                    Some(next) if param(self, next) => true,
-                    Some(Token { tok: Tok::Chr(d, _), .. }) => {
-                        d.to_digit(10).is_some_and(|n| n >= 1 && n <= u32::from(arity))
-                    }
-                    _ => false,
-                };
+                let ok = body
+                    .get(i + 1)
+                    .is_some_and(|next| param(self, next) || crate::engine::tex::param_ref(next, arity).is_some());
                 if !ok {
                     let text = format!("Illegal parameter number in definition of \\{}", self.name(name));
                     self.diagnose(Severity::Warning, "illegal-parameter-number", body[i].span, text);
@@ -650,7 +646,8 @@ impl Machine<'_> {
     }
 
     pub fn make_macro(&self, parameter_text: ParameterText, body: Vec<Token>) -> Meaning {
-        let mut replacement = crate::engine::tex::parameterize(body, |sym| self.means_align_mark(sym));
+        let mut replacement =
+            crate::engine::tex::parameterize(body, parameter_text.arity, |sym| self.means_align_mark(sym));
         // `\def\a#1#{…}`: the `{` that ended the parameter text belongs to the
         // replacement text as well (tex.web § 476).
         if parameter_text.brace_end {
