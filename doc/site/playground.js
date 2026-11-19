@@ -10540,8 +10540,13 @@
     // the name as typed now: keys typed while the list came on extend it
     const now = pdfSeen(), n = /^\\([A-Za-z@]*)$/.exec(now.text.slice(from, now.at));
     if (!pdfCaret || !n) return;
-    const full = await pdfFull(all, from, n[1]);
+    let full = await pdfFull(all, from, n[1]);
     if (!pdfCaret || pdfSeen().text.slice(from, pdfSeen().at) !== n[0]) return;
+    // a refresh adds to the open list, never drops what it showed (a cut answer lost `\sum` from `\su`)
+    if (fresh && pdfMenu?.from === from && pdfMenu.items?.length) {
+      const have = new Set(full.map((i) => i.label));
+      full = [...full, ...pdfMenu.items.filter((i) => i.label !== 'textbackslash' && !have.has(i.label))];
+    }
     const items = pdfMenuItems(full, n[1]);
     if (!items.length) return pdfMenuOff();
     if (!pdfMenu) { pdfMenu = { el: Object.assign(document.createElement('ul'), { className: 'complete type-complete', role: 'listbox' }) }; document.body.append(pdfMenu.el); }
