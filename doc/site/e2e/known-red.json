@@ -147,5 +147,11 @@
   "why": "the completion is taken and the source is right; the caret jumps 37 px when the build lands after the leading space (the same in fz-complete-fast, before any completion), a Type-mode echo landing issue",
   "since": "2026-11-19",
   "match": "^caret jumped"
+ },
+ "tc-type-begin-arg": {
+  "owner": "Type-mode echo (typing landing)",
+  "why": "the source and the build are right (\\begin{center} Quokka \\end{center}); the caret jumps 51 px when the build lands because the echo draws the new environment's lines as one prose row (`center Quokka center`)",
+  "since": "2026-11-19",
+  "match": "^caret jumped"
  }
 }

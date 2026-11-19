@@ -908,7 +908,7 @@
   function checking() { phase(`Analyzing ${state.file}…`); checkStart = performance.now(); }
 
   /** Completion order and the lists kept for a busy worker (views.ts `complete`). */
-  const { rank, kept: keptList, reselect, mathItem, docOf, plainSnippet, opensArgument, stepsOver } = self.satexViews.complete;
+  const { rank, kept: keptList, reselect, mathItem, docOf, plainSnippet, opensArgument, stepsOver, previewOf, tikzTarget } = self.satexViews.complete;
   /** Whether offset `at` of `text` is in math (`$…$`, `\\(…\\)`, `\\[…\\]`, a math environment), read from the paragraph's start
    * as pdfedit.ts `scan` reads it: math commands rank first there. */
   const inMath = (text, at) => !!self.satexPdfEdit.scan(text, Math.max(0, text.lastIndexOf('\n\n', at - 1)), at, self.satexPdfEdit.start()).math;
@@ -1072,7 +1072,9 @@
       const open = [...line.text.slice(0, key.from - line.from)].reduce((d, c) => d + +'{['.includes(c) - +'}]'.includes(c), 0) > 0;
       const item = open && /[{[,=!]\s*$/.test(line.text.slice(0, key.from - line.from));
       // `(` opens a node name or coordinate (`\\draw (a) -- (`)
-      if (!ctx.explicit && before !== '\\' && before !== '{' && before !== '(' && !item) return null;
+      // a TikZ path's next target opens the list too: after `--`, `-|`, `|-` or a positioning `of ` (the node names)
+      const path = tikzTarget(ctx.state.sliceDoc(Math.max(0, key.from - 4000), key.from));
+      if (!ctx.explicit && before !== '\\' && before !== '{' && before !== '(' && !item && !path) return null;
       push();
       const start = before === '\\' ? word.from : key.from;
       // the kind of place: a command name, or the argument of the command whose brace is open
@@ -1092,12 +1094,15 @@
       const letters = before === '\\' ? /^[A-Za-z@*_:]*$/ : /^[\w@*:./-]*$/;
       const update = (r, from, to, c) => {
         const now = c.state.sliceDoc(from, c.pos);
-        return items.length && !items.incomplete && now.startsWith(typed) && letters.test(now.slice(typed.length)) ? { ...r, to: Math.max(to, c.pos), options: options(now) } : null;
+        // a `.` typed after a node's name (`(x.`) asks again: its anchors, not the names
+        const anchor = before === '(' && now.slice(typed.length).includes('.');
+        return items.length && !items.incomplete && !anchor && now.startsWith(typed) && letters.test(now.slice(typed.length)) ? { ...r, to: Math.max(to, c.pos), options: options(now) } : null;
       };
       const option = (i) => ({
         // what the item is (a package's description, a citation's title, what a label points at), else its detail
         label: i.label, detail: (!i.labelDetails?.detail && i.labelDetails?.description) || (i.documentation ? i.detail : undefined), usage: colorOf(i) || i.documentation ? null : i.labelDetails?.detail ? `${i.labelDetails.detail}${i.labelDetails.description ? ` (${i.labelDetails.description})` : ''}` : i.detail,
-        hex: colorOf(i), preview: i.data?.preview, color: colorOf(i), type: KIND[i.kind] ?? 'text',
+        // TeX's own picture of a tip or shape the run has not drawn (a library not loaded yet), from previews.json
+        hex: colorOf(i), preview: i.data?.preview ?? sheetPreview(i.label), color: colorOf(i), type: KIND[i.kind] ?? 'text',
         // a command's one-line description and, for a math one, its symbol
         doc: before === '\\' ? docOf(i) : '', symbol: before === '\\' ? symbolOf(i) : '',
         // the side panel: a command's card, the one hover and Explain show; else the server's documentation
@@ -1106,6 +1111,9 @@
       });
       return { from, to: edit ? Math.max(at(ctx.state.doc, edit.range.end), ctx.pos) : ctx.pos, filter: false, options: options(typed), update };
     }
+    /** previews.json's pictures once read (`paPreviews`): the list shows them where the server sent none. */
+    let sheet = null;
+    const sheetPreview = (label) => { if (sheet === null) { sheet = false; paPreviews().then((got) => { sheet = got ?? false; }); } return sheet ? previewOf(sheet, label) : undefined; };
     /** A completion item's side panel: the shared macro card (not for a `key`), else its resolved documentation. */
     async function itemInfo(i, key) {
       const name = `\\${i.label}`, rs = key ? [] : await explainRecords(name).catch(() => []);
@@ -10401,6 +10409,15 @@
       e.preventDefault();
       pdfQueue(async () => {
         const c = pdfCaretNow(), t = editor.text(), m = c && /\\([A-Za-z@]+)$/.exec(t.slice(Math.max(0, c.at - 64), c.at));
+        // in an argument with a list (`\\begin{cent`): its first item, before the list showed
+        if (!m && c) {
+          const before = t.slice(Math.max(0, c.at - 200), c.at), word = /[\w@*:./-]*$/.exec(before)[0], place = placeAt(before.slice(0, before.length - word.length));
+          if (!place || !word) return;
+          const p = pdfPos(t, c.at), all = (await pdfWithin(completions(p, p.character - word.length, place, uri(), true))) ?? [], item = rank(all, word)[0];
+          pdfMenuOff();
+          if (item) pdfArgApply(item, c.at - word.length, true);
+          return;
+        }
         if (!m) return;
         const from = c.at - m[0].length, p = pdfPos(t, from + 1);
         const all = await pdfFull(pdfOrKept(await pdfWithin(completions(p, p.character, '\\', uri()))), from, m[1]);
@@ -10501,6 +10518,8 @@
   /** `fresh`: the open list takes the free worker's items, its selection kept on its item (`refreshKept`). */
   async function pdfMenuShow(again = true, fresh = false) {
     const g = pdfSeen(), m = /\\([A-Za-z@]*)$/.exec(g.text.slice(Math.max(0, g.at - 64), g.at));
+    // no `\\name` before the caret: the argument it is in may have a list (`\\usepackage{|}`)
+    if (!m && pdfCaret && !PE.verbatimAt(g.text, g.at)) return pdfArgShow();
     // verbatim names no command
     if (!m || !pdfCaret || PE.verbatimAt(g.text, g.at)) return pdfMenuOff();
     const from = g.at - m[0].length, p = pdfPos(g.text, from + 1), ask = completions(p, p.character, '\\', uri(), !again || fresh);
@@ -10523,11 +10542,35 @@
     pdfMenu.el.onmousedown = (e) => { e.preventDefault(); const li = e.target.closest('li'); if (li) pdfMenuPick(+li.dataset.i); };
     pdfMenuDraw();
   }
+  /** The list of the argument the caret stands in (`\\usepackage{|}` packages, `\\begin{` environments, `\\ref{` labels), asked
+   * where the caret is: what the editor's list offers there, written over the word typed, without a `\\`. */
+  async function pdfArgShow() {
+    const g = pdfSeen(), before = g.text.slice(Math.max(0, g.at - 200), g.at), word = /[\w@*:./-]*$/.exec(before)[0];
+    const place = placeAt(before.slice(0, before.length - word.length));
+    if (!place) return pdfMenuOff();
+    const from = g.at - word.length, p = pdfPos(g.text, g.at);
+    const all = (await pdfWithin(completions(p, p.character - word.length, place, uri(), true))) ?? [];
+    const now = pdfSeen();
+    if (!pdfCaret || now.text.slice(from, now.at) !== word) return;
+    const items = rank(all, word).slice(0, 60);
+    if (!items.length) return pdfMenuOff();
+    if (!pdfMenu) { pdfMenu = { el: Object.assign(document.createElement('ul'), { className: 'complete type-complete', role: 'listbox' }) }; document.body.append(pdfMenu.el); }
+    Object.assign(pdfMenu, { items, sel: 0, from, arg: true });
+    pdfMenu.el.onmousedown = (e) => { e.preventDefault(); const li = e.target.closest('li'); if (li) pdfMenuPick(+li.dataset.i); };
+    pdfMenuDraw();
+  }
+  /** An argument's item written over the word from `from`: its snippet as plain text (an environment's `}` and `\\end`), the
+   * caret in its first field, a `}` already after the caret taken along. */
+  function pdfArgApply(item, from, now = false) {
+    const raw = String(item.textEdit?.newText ?? item.insertText ?? item.label), { text, caret } = plainSnippet(raw);
+    (now ? pdfWritten : pdfEdit)((t, at) => [from, at + (t[at] === '}' && text.startsWith(`${item.label}}`) ? 1 : 0), text, caret], { free: true });
+    if (opensArgument(item)) pdfQueue(() => pdfMenuShow());
+  }
   function pdfMenuDraw() {
     const { el, items, sel } = pdfMenu, caret = document.querySelector('.pdf-caret')?.getBoundingClientRect() ?? pdfCaret?.pt;
     // each name with its symbol (a math one), its one-line description, else its detail's first line
     const said = (i) => docOf(i) || (i.detail && i.detail !== `\\${i.label}` ? String(i.detail).split('\n')[0] : '');
-    el.innerHTML = items.map((i, k) => `<li role="option" aria-selected="${k === sel}" data-i="${k}">${symbolOf(i) ? `<span class="cm-math-symbol">${symbolOf(i)}</span>` : ''}<code>\\${escape(i.label)}</code>${said(i) ? ` <span class="muted">${escape(said(i))}</span>` : ''}</li>`).join('');
+    el.innerHTML = items.map((i, k) => `<li role="option" aria-selected="${k === sel}" data-i="${k}">${symbolOf(i) ? `<span class="cm-math-symbol">${symbolOf(i)}</span>` : ''}<code>${pdfMenu.arg ? '' : '\\'}${escape(i.label)}</code>${said(i) ? ` <span class="muted">${escape(said(i))}</span>` : ''}</li>`).join('');
     // kept on screen: shifted left at the right edge, above the caret where it does not fit below
     const w = el.offsetWidth, h = el.offsetHeight, top = caret && (caret.top ?? caret.bottom - 20) - h - 4, above = caret && caret.bottom + 4 + h > innerHeight && top > 0;
     if (caret) Object.assign(el.style, { left: `${Math.max(4, Math.min(caret.left, innerWidth - w - 8))}px`, top: `${above ? top : caret.bottom + 4}px` });
@@ -10535,9 +10578,9 @@
   }
   /** The chosen item replaces the typed `\name`; a snippet's first field takes the caret, its default text kept. */
   function pdfMenuPick(k) {
-    const item = pdfMenu?.items[k], from = pdfMenu?.from;
+    const item = pdfMenu?.items[k], from = pdfMenu?.from, arg = pdfMenu?.arg;
     pdfMenuOff();
-    if (item) pdfMenuApply(item, from);
+    if (item) (arg ? pdfArgApply : pdfMenuApply)(item, from);
   }
   /** `item` written over `\\name` from `from`; `now`: in the typing queue's turn already (pdfWritten, not pdfEdit). */
   function pdfMenuApply(item, from, now = false) {
@@ -10556,6 +10599,8 @@
     // the load its name needs (`\\usetikzlibrary{arrows.meta}`, a package), above the caret: written once, unless the text has it
     const loads = () => { const t = editor.text(), more = (item.additionalTextEdits ?? []).filter((e) => !t.includes(e.newText.trim())); if (more.length) editor.apply(more, { userEvent: 'input.complete' }); };
     if (item.additionalTextEdits?.length) { if (now) loads(); else pdfQueue(loads); }
+    // the caret in a braced first argument (`\\usepackage{|}`): that argument's list opens, as in the editor
+    if (opensArgument(item)) pdfQueue(() => pdfMenuShow());
     // a macro's call renamed: its text is the new command's, the caret has no word left to stand in
     const c = pdfCaret;
     if (c?.made) pdfQueue(() => { if (pdfCaret === c) { pdfCaretOff(); pdfTypeIn.blur(); } if (c.view === 'pdf') pdfRebuild(true); });

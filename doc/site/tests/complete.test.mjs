@@ -113,3 +113,26 @@ test('stepsOver: a closing brace typed before one that closes the line steps ove
   assert.equal(stepsOver('\\{x}', 3), true, 'an escaped brace counts for nothing');
   assert.equal(stepsOver('a} % {', 1), true, 'a comment counts for nothing');
 });
+
+// Intuition: a tip of a library not loaded yet (`-Kite`) has no picture from the run, so the list takes TeX's own from
+// previews.json, cropped to the tip's end as the TikZ menu shows it; a shape or pattern comes whole, an unknown name has
+// none. Pins "-Kite arrow tip of \usetikzlibrary{arrows.meta}" listed without a preview (user 2026-11-19).
+test('previewOf: TeX pictures from previews.json, a tip cropped to its end', () => {
+  const { previewOf } = self.satexViews.complete;
+  const sheet = { 'arrow:-Kite': "<svg viewBox='0 -3 30 6'><path d='M0 0H30'/></svg>", 'shape:circle': '<svg>c</svg>' };
+  assert.equal(previewOf(sheet, '-Kite'), "<svg viewBox='18 -3 12 6'><path d='M0 0H30'/></svg>");
+  assert.equal(previewOf(sheet, 'circle'), '<svg>c</svg>');
+  assert.equal(previewOf(sheet, 'nothing'), undefined);
+});
+
+// Intuition: in a TikZ path the next target's list opens by itself after `--`, `-|`, `|-` and a positioning `of `, as after
+// `(`; outside a picture `--` is a dash and opens nothing. Pins having to press Ctrl+Space for node names (user 2026-11-19).
+test('tikzTarget: a path operator in a picture opens the node names', () => {
+  const { tikzTarget } = self.satexViews.complete;
+  assert.equal(tikzTarget('\\begin{tikzpicture}\n\\draw (a) -- '), true);
+  assert.equal(tikzTarget('\\begin{tikzpicture}\n\\draw (a) -|'), true);
+  assert.equal(tikzTarget('\\begin{tikzpicture}\n\\node[below=of '), true);
+  assert.equal(tikzTarget('\\tikz \\draw (0,0) |- '), true);
+  assert.equal(tikzTarget('pages 3--'), false, 'a dash in prose');
+  assert.equal(tikzTarget('\\begin{tikzpicture}\\end{tikzpicture}\nsome --'), false, 'after the picture');
+});

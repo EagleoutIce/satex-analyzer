@@ -3758,6 +3758,23 @@ button.tv-spec-value { cursor: pointer; } button.tv-spec-value:hover, button.tv-
     }
     return depth <= 0;
   };
+  /** TeX's picture for a completion label from previews.json's `sheet` (`arrow:-Kite`, `shape:circle`, `pattern:dots`), an arrow
+   * tip cropped to its end (12pt of the sample, as the TikZ menu draws it), else undefined. */
+  const previewOf = (sheet: Record<string, string>, label: string): string | undefined => {
+    const tip = sheet[`arrow:${label}`];
+    if (!tip) return sheet[`shape:${label}`] ?? sheet[`pattern:${label}`];
+    const box = tip.match(/viewBox=['"]([^'"]*)['"]/)?.[1]!.trim().split(/\s+/).map(Number);
+    if (box?.length !== 4) return tip;
+    const cut = Math.min(box[2]!, 12), start = /^[^-]+-$/.test(label);
+    return tip.replace(/viewBox=['"][^'"]*['"]/, `viewBox='${start ? box[0] : box[0]! + box[2]! - cut} ${box[1]} ${cut} ${box[3]}'`);
+  };
+  /** Whether a TikZ path's next target is being typed after `text` (what precedes the caret, a few thousand characters): after
+   * `--`, `-|`, `|-` or a positioning `of `, inside a `tikzpicture` or on a `\\draw`-like line. Its node names open there. */
+  const tikzTarget = (text: string): boolean => {
+    if (!/(?:--|-\||\|-|\bof)\s*$/.test(text)) return false;
+    const open = text.lastIndexOf('\\begin{tikzpicture}'), close = text.lastIndexOf('\\end{tikzpicture}');
+    return open > close || /\\(?:tikz|draw|path|node|fill|filldraw)\b[^;\n]*$/.test(text);
+  };
   /** The one-line description of an item: the lean record's `doc`, else the server item's. */
   const docOf = (i: Completion): string => i.doc ?? i.data?.doc ?? '';
   /** Completion order: how well the item matches first (the exact name, a prefix of the label, a part of it, a part of
@@ -3812,6 +3829,6 @@ button.tv-spec-value { cursor: pointer; } button.tv-spec-value:hover, button.tv-
     }
     return out;
   };
-  return { followRows, rowsWin, complete: { rank, kept, reselect, snippet, mathItem, docOf, plainSnippet, opensArgument, stepsOver }, loads: { unlanded, lacked }, tipBag, yaml, history: { historyEvent }, render, RENDER, hue, passes, masterDetail, usesView, fold, SPEC, mix, colorBand, oklch, drawing: { expandStyles, STYLE_DEF, parse, emit, mermaidIn, mermaidOut, mermaidLoss, layout, importMermaid, tipsOf, toMatrix, cellPlaces, toLayer, picOptions, relocate, relPos, nearestAnchor, anchorAt, tipMarker, shapeSample, shapeList, cycle, STYLE }, forest: forestFns, circuit: { parse: cParse, body: cBody, emit: cEmit }, page: { pageOf, pageBox, textArea, styleNow, taggedNote, pageNodes, numberNodes, numberInForce, headerOf, headerCalls, headerNodes, footSetup, fmtRead, fmtWrite, styleNodes, styleSet, styleEdits }, dev: { traceCsv, stateHtml }, templates: { fill, filled, chosen } };
+  return { followRows, rowsWin, complete: { rank, kept, reselect, snippet, mathItem, docOf, plainSnippet, opensArgument, stepsOver, previewOf, tikzTarget }, loads: { unlanded, lacked }, tipBag, yaml, history: { historyEvent }, render, RENDER, hue, passes, masterDetail, usesView, fold, SPEC, mix, colorBand, oklch, drawing: { expandStyles, STYLE_DEF, parse, emit, mermaidIn, mermaidOut, mermaidLoss, layout, importMermaid, tipsOf, toMatrix, cellPlaces, toLayer, picOptions, relocate, relPos, nearestAnchor, anchorAt, tipMarker, shapeSample, shapeList, cycle, STYLE }, forest: forestFns, circuit: { parse: cParse, body: cBody, emit: cEmit }, page: { pageOf, pageBox, textArea, styleNow, taggedNote, pageNodes, numberNodes, numberInForce, headerOf, headerCalls, headerNodes, footSetup, fmtRead, fmtWrite, styleNodes, styleSet, styleEdits }, dev: { traceCsv, stateHtml }, templates: { fill, filled, chosen } };
 })();
 self.satexViews = satexViews;

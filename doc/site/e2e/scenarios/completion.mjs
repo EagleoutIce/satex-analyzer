@@ -22,6 +22,8 @@ export default [
     steps: 'thesis.tex; a run going on; type "\\end{tabu", Tab, "}": one } after tabular (was: \\end{tabular}}, user 2026-11-19)' },
   { kind: 'complete', name: 'tc-src-begin-brace', keys: ['\\begin{center', '}'], want: /\n\\begin\{center\}\n\\end\{center\}\n/,
     steps: 'thesis.tex; a run going on; type "\\begin{center", "}" (the editor closed the brace): \\begin{center} and its \\end, one } each (was: \\begin{center}} or \\end{center}})' },
+  { name: 'tc-type-begin-arg', source: MARKUP, example: 'hello.tex', word: is('second'), src: /a second/, keys: [' \\beg', 'Tab', 'cent', 'Tab', 'Quokka'], speed: 'human', settle: true, expect: () => null, contains: [/\\begin\{center\}\s*Quokka\s*\\end\{center\}/],
+    steps: 'MARKUP, Type mode; click the end of "second"; type " \\beg", Tab (\\begin{|}: the environments open at once), "cent", Tab, "Quokka": a center environment around Quokka (was: no list in the braces, user 2026-11-19)' },
   { name: 'tc-type-textbf', source: MARKUP, example: 'hello.tex', word: is('second'), src: /a second/, keys: [' \\textb', 'Tab', 'Quokka'], speed: 'burst', settle: true, expect: () => null, contains: [/a second \\textbf\{Quokka\}/],
     steps: 'MARKUP, Type mode; click the end of "second"; type " \\textb", Tab, "Quokka": \\textbf{Quokka} (was: \\textbfQuokka, its robust definition takes no argument itself)' },
   { name: 'tc-type-textbf-run', example: 'thesis.tex', word: is('Literate'), src: /Literate/, keys: [' ', 'Pause', '\\textb', 'Tab', 'Quokka'], pauseMs: 900, speed: 'burst', settle: true, expect: () => null, contains: [/Literate \\textbf\{Quokka\}/],
