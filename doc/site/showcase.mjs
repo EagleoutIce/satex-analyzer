@@ -6,6 +6,7 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, writeFileSync } from '
 import { spawn } from 'node:child_process';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { QUIET } from './quiet.mjs';
 
 const base = process.argv[2] ?? 'http://localhost:8000/';
 let failed = false;
@@ -52,7 +53,6 @@ const shot = async (name) => {
 
 /** The whole text of the open editor (playground.js keeps its view on the editor element). */
 const TEXT = `document.querySelector('.cm-editor').satexView.state.doc.toString()`;
-const QUIET = `document.getElementById('lsp-status').textContent !== 'checking…' && !document.getElementById('play-status').classList.contains('busy')`;
 /** The example `file` open, analysed. */
 async function open(file) {
   await raw('Page.navigate', { url: `${base}play/index.html#${file}` });

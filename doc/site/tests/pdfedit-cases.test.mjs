@@ -350,6 +350,18 @@ test("Typing in the PDF", async () => {
   // a footnote's call glues its first word to the word before (`here.\footnote{A` is `here.A`): it pairs with the
   // page's `here.`, the footnote's words with the footnote row. Pins its last `here.` taken for the text's `here.`.
   assert.deepEqual(E.aligned(['words', 'here.A', 'footnote', 'text', 'goes', 'here.'], ['words', 'here.', '1', 'A', 'footnote', 'text', 'goes', 'here.']), [0, 1, 4, 5, 6, 7], 'a footnote call');
+  // the thesis' first row as pdfTeX set it (bp): \TeX's lowered E puts `TEXbook` 2.1 bp below the row's baseline. It is
+  // on the row, so the echo's run of kept words goes on past it. Pins the typing echo dropping "TEXbook [2] come
+  // first. Section 1 says why," (row 2 then started at its first source word paired, `and`).
+  {
+    const W = (x0, x1, base, t, top = base - 8.82) => [3, x0, top, x1, base, t];
+    const row = [W(266.9, 325, 158.52, 'programming'), W(327.8, 338.3, 158.52, '[1]'), W(341.1, 357.2, 158.52, 'and'), W(360, 373.8, 158.52, 'the'), W(376.6, 416.4, 160.66, 'TEXbook', 149.7), W(419.2, 429.8, 158.52, '[2]'), W(432.5, 454.7, 158.52, 'come')];
+    assert.ok(E.onRow(row[4], row[0]) && !E.onRow(W(133.8, 165.3, 170.47, 'Section'), row[0]), 'a dipped logo on its row, the next row not');
+    assert.deepEqual(E.run(row.filter((v) => E.onRow(v, row[0])), row[0]).map((v) => v[5]), ['programming', '[1]', 'and', 'the', 'TEXbook', '[2]', 'come']);
+    const row2 = [W(133.8, 150, 170.47, 'tion'), W(152, 157, 170.47, '1'), W(160, 178, 170.47, 'says')];
+    assert.deepEqual(E.run(row2, row2[2], true).map((v) => v[5]), ['tion', '1', 'says'], 'back: from the row\'s first word');
+    assert.deepEqual(E.run(row2, row2[2]).map((v) => v[5]), ['says']);
+  }
   // a display's glyphs are more page words than the source has: the word after it still pairs, from the end. Pins
   // "ok" after `\[\int…\] ok` pairing with nothing, the caret after a landed build 231 px off at the word before.
   assert.equal(E.aligned(['paragraph.', 'so[01f(x),dx', '=', 'n', 'ab', ']', 'ok'], ['paragraph.', 'so', 'a', 'Z', '1', 'f', '(x)', 'dx', '=', 'lim', 'n→∞', 'b', '0', 'ok']).at(-1), 13, 'the word after a display');
@@ -359,6 +371,9 @@ test("Typing in the PDF", async () => {
     const t = 'cost $x_1$ and \\(a+b\\) or \\[y=2\\] \\begin{equation}z\\end{equation} and $op';
     assert.deepEqual(E.mathRuns(t, 0, t.length).map((r) => [r.kind, t.slice(r.b, r.be)]), [['', 'cost '], ['inline', 'x_1'], ['', ' and '], ['inline', 'a+b'], ['', ' or '], ['display', 'y=2'], ['', ' '], ['display', 'z'], ['', ' and '], ['inline', 'op']]);
     assert.deepEqual(E.mathRuns('$x$ y', 1, 5).map((r) => r.kind), ['inline', ''], 'from inside a formula');
+    // right after a display's closer the caret takes the display's box (display-math: it jumped 96 px to a word the
+    // display's glyphs paired with); not after inline math or a `math` environment
+    assert.deepEqual(['so\n\n\\[y=2\\]', 'a $$x$$ ', '\\end{align*}', '\\(x\\)', '\\end{math}', '$x$'].map((t) => E.displayEnd(t, t.length)), [true, true, true, false, false, false]);
   }
   // The echo's line breaking (PE.reflow), pure: pieces of width `n` after a space `gap`, rows of the page after.
   {

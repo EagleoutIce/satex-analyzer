@@ -2913,7 +2913,7 @@ const satexViews = (() => {
    * page number kept (fancyhdr's head rule off, KOMA's plain style numbered too); then an empty call for a cell none
    * sets (fancyhdr's own page number where it fills it). `{package, letter, nodes}`, the nodes one snapshot write. */
   function footSetup(s: Rec, spot: number, has: boolean) {
-    const S = self.satexSnapshot, h0: Rec = s.header ?? {}, fresh = !h0.package, koma = fresh ? s.family === 'koma' || !!s.koma || /^scr/.test(s.class ?? '') : h0.package === 'scrlayer-scrpage';
+    const S = self.satexSnapshot, h0: Rec = s.header ?? {}, fresh = !h0.package, koma = fresh ? s.family === 'koma' : h0.package === 'scrlayer-scrpage';
     const h: Rec = fresh && koma ? { ...h0, load: { name: 'scrlayer-scrpage' } } : h0, two = !!s.twoside, m = headerOf(h, two);
     if (fresh) {
       m.package = koma ? 'scrlayer-scrpage' : 'fancyhdr';
@@ -3685,15 +3685,31 @@ button.tv-spec-value { cursor: pointer; } button.tv-spec-value:hover, button.tv-
   /** The selection of a list refreshed under the person's eyes: the item of the same label, else the first. */
   const reselect = (items: Completion[], label: string | undefined) => Math.max(0, label == null ? 0 : items.findIndex((i) => i.label === label));
   /** The PDF's "you are here" rows of a source line: each SyncTeX row (`{page, l, t, r, d}` in bp, which reaches to the
-   * glue at the line's end) shrunk to the page words in it (`[page, l, t, r, d, text]`), so the tint hugs the glyphs, not
-   * the line box to the margin. A row without words goes. When some rows hold a word the line spells (`spelled`), only
-   * those count: a page number the output routine set while the line's box closed (the footer) drops out. */
+   * glue at the line's end and the word after it) shrunk to the page words in it (`[page, l, t, r, d, text]`), so the
+   * tint hugs the glyphs, not the line box to the margin. A row without words goes. When some rows hold a word the line
+   * spells (`spelled`), only those count: a page number the output routine set while the line's box closed (the footer)
+   * drops out, and so do the words the line does not spell standing apart at a row's ends (a picture's other node).
+   * Rows that overlap become one, so no place is tinted twice. */
   type FollowRow = { page: number; l: number; t: number; r: number; d: number };
   type PageWord = [number, number, number, number, number, string];
+  const APART = 6; // bp: wider than an interword space
   const followRows = (rows: FollowRow[], words: PageWord[], spelled: (word: string) => boolean): FollowRow[] => {
-    const hugged = rows.map((r) => words.filter((w) => w[0] === r.page && w[4] >= r.t && w[2] <= r.d && w[3] > r.l && w[1] < r.r)).filter((ws) => ws.length);
+    const hugged = rows.map((r) => words.filter((w) => w[0] === r.page && w[4] >= r.t && w[2] <= r.d && w[3] > r.l && w[1] < r.r).sort((a, b) => a[1] - b[1])).filter((ws) => ws.length);
     const own = hugged.filter((ws) => ws.some((w) => spelled(w[5])));
-    return (own.length ? own : hugged).map((ws) => ({ page: ws[0]![0], l: Math.min(...ws.map((w) => w[1])), t: Math.min(...ws.map((w) => w[2])), r: Math.max(...ws.map((w) => w[3])), d: Math.max(...ws.map((w) => w[4])) }));
+    for (const ws of own) {
+      // the unspelled words before the first spelled one and after the last go when a gap sets them apart
+      const first = ws.findIndex((w) => spelled(w[5])), last = ws.findLastIndex((w) => spelled(w[5]));
+      if (last < ws.length - 1 && ws[last + 1]![1] - ws[last]![3] > APART) ws.splice(last + 1);
+      if (first > 0 && ws[first]![1] - ws[first - 1]![3] > APART) ws.splice(0, first);
+    }
+    const boxes = (own.length ? own : hugged).map((ws) => ({ page: ws[0]![0], l: Math.min(...ws.map((w) => w[1])), t: Math.min(...ws.map((w) => w[2])), r: Math.max(...ws.map((w) => w[3])), d: Math.max(...ws.map((w) => w[4])) }));
+    const out: FollowRow[] = [];
+    for (const b of boxes) {
+      const o = out.find((o) => o.page === b.page && o.l < b.r && b.l < o.r && o.t < b.d && b.t < o.d);
+      if (o) Object.assign(o, { l: Math.min(o.l, b.l), t: Math.min(o.t, b.t), r: Math.max(o.r, b.r), d: Math.max(o.d, b.d) });
+      else out.push(b);
+    }
+    return out;
   };
   return { followRows, rowsWin, complete: { rank, kept, reselect }, loads: { unlanded, lacked }, tipBag, yaml, history: { historyEvent }, render, RENDER, hue, passes, masterDetail, usesView, fold, SPEC, mix, colorBand, oklch, drawing: { expandStyles, STYLE_DEF, parse, emit, mermaidIn, mermaidOut, mermaidLoss, layout, importMermaid, tipsOf, toMatrix, cellPlaces, toLayer, picOptions, relocate, relPos, nearestAnchor, anchorAt, tipMarker, shapeSample, shapeList, cycle, STYLE }, forest: forestFns, circuit: { parse: cParse, body: cBody, emit: cEmit }, page: { pageOf, pageBox, textArea, pageNodes, numberNodes, numberInForce, headerOf, headerCalls, headerNodes, footSetup, fmtRead, fmtWrite, styleNodes, styleSet, styleEdits }, dev: { traceCsv, stateHtml }, templates: { fill, filled, chosen } };
 })();

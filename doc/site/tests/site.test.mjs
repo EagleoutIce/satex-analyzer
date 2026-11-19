@@ -223,7 +223,7 @@ test("numbers in coordinates and specs are whole tokens", async () => {
 
 // The PDF's "you are here" rows hug the glyphs: a SyncTeX row reaching the right margin (its line-end glue) shrinks to
 // its words, and a footer page number the line's box closed with drops out while a row the line spells is there. Pins
-// the tint from "world!" to the margin and the lit footer "1" for a body line.
+// the tint from "world!" to the margin, the lit footer "1" for a body line, and a picture's word tinted with the line before.
 test("the PDF follow rows hug the line's words", () => {
   const { followRows } = self.satexViews;
   const words = [[1, 72, 90, 100, 100, 'Hello,'], [1, 103, 90, 130, 100, 'world!'], [1, 300, 700, 305, 710, '1'], [1, 72, 110, 90, 120, 'Next']];
@@ -234,6 +234,12 @@ test("the PDF follow rows hug the line's words", () => {
   assert.deepEqual(followRows(rows, words, () => false).map((r) => [r.l, r.r]), [[72, 130], [300, 305]]);
   // a row without words (a rule) goes
   assert.deepEqual(followRows([{ page: 1, l: 0, t: 400, r: 10, d: 410 }], words, spelled), []);
+  // a word the line does not spell, apart at the row's end (the next line's picture), drops out; overlapping rows join
+  const pic = [[1, 72, 90, 100, 100, 'See'], [1, 103, 90, 130, 100, 'files.'], [1, 140, 88, 160, 100, 'TEX']];
+  assert.deepEqual(followRows([{ page: 1, l: 72, t: 90, r: 160, d: 100 }, { page: 1, l: 100, t: 89, r: 130, d: 100 }], pic, (w) => 'See files.'.includes(w)), [{ page: 1, l: 72, t: 90, r: 130, d: 100 }]);
+  // a TikZ node's line: the other node's words before an arrow drop out together
+  const nodes = [[1, 375, 120, 392, 132, 'TEX'], [1, 394, 120, 410, 132, 'file'], [1, 440, 120, 480, 132, 'findings']];
+  assert.deepEqual(followRows([{ page: 1, l: 375, t: 118, r: 480, d: 133 }], nodes, (w) => w === 'findings'), [{ page: 1, l: 440, t: 120, r: 480, d: 132 }]);
 });
 
 // array's column injections: the text inside `>{…}` and `<{…}`, several joined

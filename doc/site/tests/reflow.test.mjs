@@ -30,6 +30,13 @@ spec('overflow runs into the next page row', () => {
   assert.deepEqual(f.freed, []);
 });
 // Intuition: Enter starts a new paragraph: indented, a line plus the paragraph skip lower, whatever room was left.
+// Intuition: a display after a row that ends left of it (an empty row after Enter) gets TeX's short skip above it, after
+// a full row the display skip. Pins display-math: the echoed display 9 bp below where the build set it (a 10 px caret jump).
+spec('display: the short skip after a short row', () => {
+  const d = (x) => ({ n: 20, gap: 0, disp: 8, dshort: 0, ...x });
+  assert.deepEqual(shape(E.reflow([p(10, 0), d()], 0, LINE)), ['-2@0:0', '-1@40:40 dy12']);
+  assert.deepEqual(shape(E.reflow([p(95, 0), d()], 0, LINE)), ['-2@0:0', '-1@40:40 dy20']);
+});
 spec('Enter: a new indented paragraph', () => {
   const f = E.reflow([p(10, 0), p(10, 3, { par: true }), p(10)], 0, { ...LINE, parskip: 4 });
   assert.deepEqual(shape(f), ['-2@0:0', '-1@15:15,28 par dy16']);

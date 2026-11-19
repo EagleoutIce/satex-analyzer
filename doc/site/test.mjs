@@ -11,6 +11,7 @@ import { spawn } from 'node:child_process';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { QUIET } from './quiet.mjs';
 
 const base = process.argv[2] ?? 'http://localhost:8000/';
 const bytes = async (url) => base.startsWith('file:') ? readFileSync(fileURLToPath(base + url)) : new Uint8Array(await (await fetch(base + url)).arrayBuffer());
@@ -306,6 +307,8 @@ async function browser() {
     };
     await send('Runtime.enable');
     await send('DOM.enable');
+    // a dev server's reload stream held: an edit to the sources meanwhile never reloads the page under test
+    await send('Fetch.enable', { patterns: [{ urlPattern: '*/__dev/events*' }] });
 
     // the landing page: the examples are colored by the editor's tokenizer and keep their indentation
     await send('Page.navigate', { url: base + 'index.html' });
@@ -372,7 +375,7 @@ async function browser() {
     const wishes = async () => {
       const root = mkdtempSync(join(tmpdir(), 'satex-fresh-'));
       const editorText = `document.querySelector('.cm-content').textContent`;
-      const quiet = `document.getElementById('lsp-status').textContent !== 'checking…' && !document.getElementById('play-status').classList.contains('busy')`;
+      const quiet = QUIET;
       /** A folder with one main.tex becomes the project; resolves once its first analysis is shown. */
       const open = async (name, text) => {
         const d = join(root, name);
@@ -393,6 +396,22 @@ async function browser() {
       const pgf = await until(`return /pgfmath/.test(document.getElementById('play-status').dataset.packages ?? '') && ${quiet} && ${unresolved()}.length === 0`, 120000);
       check('pgfmath is fetched on demand and resolves', pgf, await js(`return (document.getElementById('play-status').dataset.packages ?? '') + ' | ' + ${findings}.join(' / ').slice(0, 300)`));
       await shot('w2-pgfmath');
+      // a KOMA class names its family: uploaded, its bundle is in before the first run; typed, the run again once
+      // the bundle landed (same text version) is the one the page widget reads, never the run that lacked the class
+      await section('koma', async () => {
+        const page = `const s = await satexPageSection(); return JSON.stringify([s?.class ?? null, s?.family ?? null, !!s?.koma])`;
+        await open('koma', '\\documentclass{scrbook}\n\\begin{document}\nHello\n\\end{document}\n');
+        check('an uploaded scrbook: the page widget reads a KOMA class', await until(`const s = await satexPageSection(); return s?.class === 'scrbook' && s?.family === 'koma' && !!s?.koma`, 60000), await js(page));
+        await js(`document.querySelector('.cm-content').focus()`);
+        for (const type of ['keyDown', 'keyUp']) await send('Input.dispatchKeyEvent', { type, key: 'a', code: 'KeyA', modifiers: 2, windowsVirtualKeyCode: 65 });
+        await send('Input.insertText', { text: '\\documentclass{scrreprt}\n\\begin{document}\nHello\n\\end{document}\n' });
+        // asked while scrreprt's bundle is still on its way: that answer is of the run lacking it
+        for (let i = 0; i < 20 && !/Loading|Fetching/.test(await js(`return document.getElementById('play-status').textContent`)); i++) await sleep(150);
+        await js(page);
+        await until(`return ${quiet} && /^Ready/.test(document.getElementById('play-status').textContent)`, 120000);
+        const typed = await until(`const s = await satexPageSection(); return s?.class === 'scrreprt' && s?.family === 'koma'`, 30000);
+        check('typed scrreprt: the page widget reads the run that has the class', typed, await js(page));
+      });
       // 3: the written files: a card per file, its runs, the second run's .aux against the first's
       await open('written', '\\documentclass{article}\n\\makeatletter\n\\AtBeginDocument{\\immediate\\write\\@mainaux{\\@percentchar\\space seen \\@ifundefined{r@sec:a}{no}{yes}}}\n\\makeatother\n\\begin{document}\n\\tableofcontents\n\\section{Intro}\\label{sec:a}\nSee \\ref{sec:a}.\n\\end{document}\n');
       await js(`document.querySelector('.side-tabs [data-panel=play-written]').click()`);
@@ -877,7 +896,7 @@ async function browser() {
       await send('Page.navigate', { url: base + 'play/index.html?managers#thesis.tex' });
       await until(`return document.getElementById('play-status').dataset.done === 'ready'`, 180000);
       for (const kind of ['bibliography', 'glossary', 'index']) {
-        await until(`return document.getElementById('lsp-status').textContent !== 'checking…' && await self.satexOpen({ widget: 'manager', at: '${kind}' })`, 180000);
+        await until(`return ${QUIET} && await self.satexOpen({ widget: 'manager', at: '${kind}' })`, 180000);
         await until(`return !!document.querySelector('#play-view[open] .tv-md')`, 30000);
         await sleep(400);
         const f = await js(`const md = document.querySelector('#play-view .tv-md'); if (!md) return null;
@@ -1281,7 +1300,7 @@ async function browser() {
     mkdirSync(micro);
     writeFileSync(join(micro, 'main.tex'), '\\documentclass{article}\n\\usepackage{microtype}\n\\begin{document}\nText.\n\\end{document}\n');
     await upload('play-folder', [micro]);
-    check('a package loads on demand', await until(`return /\\bmicrotype\\b/.test(document.getElementById('play-status').dataset.packages ?? '') && document.getElementById('lsp-status').textContent !== 'checking…'
+    check('a package loads on demand', await until(`return /\\bmicrotype\\b/.test(document.getElementById('play-status').dataset.packages ?? '') && ${QUIET}
       && ![...document.querySelectorAll('#lsp-diagnostics li code')].some((c) => c.textContent === 'unresolved-file')`, 90000),
       await js(`return document.getElementById('play-status').textContent + ' | ' + document.getElementById('lsp-diagnostics').textContent.slice(0, 200)`));
     await shot('play-package');
@@ -1319,7 +1338,7 @@ async function browser() {
     await upload('play-folder', [many]);
     const unresolvedNames = `[...document.querySelectorAll('#lsp-diagnostics li')].filter((li) => /unresolved-file/.test(li.textContent)).map((li) => li.textContent)`;
     check('packages load on demand in one batch', await until(`const p = document.getElementById('play-status').dataset.packages ?? '';
-      return ['siunitx', 'booktabs', 'tcolorbox', 'tikz'].every((n) => new RegExp('/' + n + '\\\\b').test(p)) && document.getElementById('lsp-status').textContent !== 'checking…'
+      return ['siunitx', 'booktabs', 'tcolorbox', 'tikz'].every((n) => new RegExp('/' + n + '\\\\b').test(p)) && ${QUIET}
       && ${unresolvedNames}.length > 0 && ${unresolvedNames}.every((t) => t.includes('nosuchpackage'))`, 180000),
       await js(`return document.getElementById('play-status').dataset.packages + ' | ' + ${unresolvedNames}.join(' / ').slice(0, 300)`));
     // a switch in a section header flips when the switch itself is clicked, not only its text

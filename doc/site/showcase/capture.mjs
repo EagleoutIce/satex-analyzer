@@ -12,6 +12,7 @@ import { execFileSync, spawn } from 'node:child_process';
 import { cpus, homedir, loadavg } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { QUIET } from '../quiet.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const base = process.argv[2] ?? 'http://127.0.0.1:8000/';
@@ -49,8 +50,6 @@ const js = async (expr) => {
 };
 let deadline = Infinity;
 const until = async (expr, ms = 60000) => { for (const end = Math.min(Date.now() + ms * scale, deadline); Date.now() < end; await sleep(200)) if (await js(expr).catch(() => false)) return true; return false; };
-/** The page at rest: no run going, due or queued, no work in the status line (playground.js `satexHealth`). shots.json says `__quiet()`. */
-const QUIET = `(() => { const h = self.satexHealth?.(); return h ? !h.busy && !h.running && !h.due && !h.queued : !document.getElementById('play-status').hasAttribute('data-busy'); })()`;
 /** What the page is doing, for a wait that failed: a run count that grows with no edit is an analysis that never settles. */
 const STATE = `const h = self.satexHealth?.(); return h ? \`status "\${h.status.slice(0, 60)}", \${h.running} running, \${h.runs} runs\${h.queued ? ', one queued' : ''}\` : document.getElementById('play-status')?.textContent.slice(0, 60);`;
 /** In the page: `__at(needle, k)` is the editor position k characters into needle, `__xy` its screen point. */

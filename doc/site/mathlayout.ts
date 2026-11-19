@@ -12,12 +12,12 @@ type Metric = (t: string, face: string) => number | [number, number, number];
 /** The font parameters TeX's math reads, in em: cmsy10's σ5..σ22, cmex10's ξ8..ξ13 (`\fontdimen`), and what the
  * preview adds: a math italic letter's italic correction, a script's space, how much wider the script fonts set
  * (cmr7 and cmmi7 over cmr10 and cmmi10 scaled down: `1` is 0.57 em against 0.5), and the width of cmex10's ∑ in text
- * and display (a fallback font's ∑ is narrower). */
+ * and display and of its `=`, `+`, `≤` (cmr10, cmsy10; a fallback font's are narrower). */
 const PARAMS = {
   xHeight: 0.430555, quad: 1, num1: 0.676508, num2: 0.393732, num3: 0.443731, denom1: 0.685951, denom2: 0.344841,
   sup1: 0.412892, sup2: 0.362892, sup3: 0.288889, sub1: 0.15, sub2: 0.247217, supDrop: 0.386108, subDrop: 0.05,
   delim1: 2.39, delim2: 1.01, axis: 0.25, rule: 0.04, bigOp1: 0.111112, bigOp2: 0.166667, bigOp3: 0.2, bigOp4: 0.6, bigOp5: 0.1,
-  italic: 0.05, scriptSpace: 0.05, script: 1.12, scriptScript: 1.3, opText: 1.05556, opDisplay: 1.44445,
+  italic: 0.05, scriptSpace: 0.05, script: 1.12, scriptScript: 1.3, opText: 1.05556, opDisplay: 1.44445, sign: 0.77778,
 };
 type Params = typeof PARAMS;
 /** Styles: 0 display, 1 text, 2 script, 3 scriptscript; their sizes. */
@@ -321,7 +321,10 @@ function layout(src: string, metric: Metric, display = false, params: Partial<Pa
           // after it is centered it counts as a box, not a character (its scripts drop from its top and bottom)
           return { b: out, char: false, ic: integral ? 0.1 * (out.h + out.d) : 0 };
         }
-        return { b: glyph(n.c, n.f, s), char: true, ic: n.f === 'it' ? P.italic * s : 0 };
+        // a relation or operator sign as wide as Computer Modern sets it at least (a fallback's `=` is narrower)
+        const g = glyph(n.c, n.f, s), sign = /^[=+−<>×±∓≤≥≡∼≈]$/.test(n.c) ? P.sign * s : 0;
+        if (sign > g.w) { const out = empty(); put(out, g, (sign - g.w) / 2, 0); out.w = sign; return { b: out, char: true, ic: 0 }; }
+        return { b: g, char: true, ic: n.f === 'it' ? P.italic * s : 0 };
       }
       case 'text': return { b: glyph(n.c, n.f, s), char: false, ic: 0 };
       case 'list': return { b: mlist(n.l, st), char: false, ic: 0 };

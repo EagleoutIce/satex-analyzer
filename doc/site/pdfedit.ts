@@ -19,8 +19,9 @@ type Flat = { page: number; l: number; t: number; r: number; d: number };
 type Form = { kind: 'len'; num: number; unit: string } | { kind: 'share'; num: number; name: string; lead: boolean };
 /** A piece of a paragraph for the echo's line breaking: its width `n` and the space before it `gap` (bp); `par` starts
  * a new paragraph (Enter). Anything else it carries (its text, the page word it is) rides along. */
-/** `disp`: display math, centered on a row of its own, that much more space above it (bp), `below` after it. */
-type Piece = { gap: number; n: number; par?: boolean; disp?: number; below?: number; st?: number; sh?: number; hy?: boolean; hw?: number };
+/** `disp`: display math, centered on a row of its own, that much more space above it (bp), `dshort` when the row
+ * before ends left of it, `below` after it. */
+type Piece = { gap: number; n: number; par?: boolean; disp?: number; dshort?: number; below?: number; st?: number; sh?: number; hy?: boolean; hw?: number };
 /** The lines a paragraph may take: its right edge, its left margin, the indent and gap of a new paragraph, the rows the
  * page set after the first (each its left edge and its own words, gaps set), whether a row may take words up (`pull`). */
 type Line<P> = { right: number; left: number; indent: number; skip: number; parskip: number; rows: { x: number; pieces: P[] }[]; pull?: boolean; shrink?: number; justify?: boolean; fit?: boolean; breaks?: { breaks: number[]; ratios: number[] } | null };
@@ -56,6 +57,9 @@ declare global {
       scan(text: string, from: number, to: number, st: object, out?: { s: number; e: number; t: string }[]): { math: string; groups: [number, string][] };
       start(): object;
       mathAt(text: string, at: number, kind: string, inline?: string): [number, number, string, number];
+      displayEnd(text: string, at: number): boolean;
+      onRow(v: Word, r: Word): boolean;
+      run(line: Word[], w: Word, back?: boolean): Word[];
       boundaries(text: string, l: number, r: number, width: (s: string) => number): number[];
       boundaryAt(xs: number[], x: number): number;
       inkSnap(x: number, ink: number[], reach: number): number;
@@ -939,7 +943,10 @@ declare global {
         if (own || r.out.length && (q.par || q.n > 0 && x + q.gap + q.n - shrink * (gaps + q.gap) > line.right + 0.5)) {
           sunk ||= own;
           const s = !q.par && !sunk && (slots.shift() ?? (ri < line.rows.length ? take() : null));
-          const dy = line.skip + (q.disp ?? after ?? (q.par ? line.parskip : 0)), at = q.disp != null ? (line.left + line.right - q.n) / 2 : line.left + (q.par ? line.indent : 0);
+          const at = q.disp != null ? (line.left + line.right - q.n) / 2 : line.left + (q.par ? line.indent : 0);
+          // TeX's short skip above a display whose row before ends left of it (an empty row after Enter): no
+          // \abovedisplayskip, only what a tall formula adds
+          const dy = line.skip + (q.disp != null && r.out.every((o) => o.x + o.n <= at) ? q.dshort ?? q.disp : q.disp ?? after ?? (q.par ? line.parskip : 0));
           rows.push(r = s ? { x: s.x, from: s.from, dy: 0, par: false, out: [] } : { x: at, from: -1, dy, par: !!q.par, out: [] });
           x = r.x - (own ? 0 : q.gap);
           gaps = own ? 0 : -q.gap;
@@ -1270,7 +1277,29 @@ declare global {
     const next = /^\n([^\n]*)/.exec(text.slice(end))?.[1] ?? '', body = next.trim() && !/^\s*\\end\b/.test(next) ? '\n\n\n' : '\n\n';
     return { kind: 'new', at: end, body, caret: end + 2, ghost: { x: left + (heading(above) ? 0 : indent), base: above.base + skip, h: above.d - above.t } };
   }
-  self.satexPdfEdit = { offsetAt, units, treeNodes, naming, entries, shortTitle, bothTitles, renamed, leaders, checked, grow, key, broken, scan, start, cells, cellStep, rowAfter, verbatim, verbatimAt, nearest, bands, joined, place, extent, room, form, measure, respec, widthBp, snapWidth, resized, stepped, plain, editable, spans, sender, typed, erased, mathAt, boundaries, boundaryAt, inkSnap, locate, columns, wordAt, argAt, defining, relaid, reflow, fit, glue, centered, apart, tokens, unset, aligned, changed, paragraph, mathRuns, footArg, footBack, footShown, blankPlace };
+  /** Whether page word `v` stands on the row of word `r`: its baseline; raised within its height and narrower than it
+   * is tall (a \\thanks ∗, a footnote's number); or dipped below it by less than a third of the row's height, its top
+   * above the baseline (the \\TeX logo's lowered E: `TEXbook` stood on no row and the echo dropped the row's rest). */
+  function onRow(v: Word, r: Word): boolean {
+    const h = r[4] - r[2];
+    return Math.abs(v[4] - r[4]) < 1 || v[4] < r[4] && v[4] > r[2] && v[3] - v[1] < h || v[4] > r[4] && v[4] - r[4] < h / 3 && v[2] < r[4] - h / 2;
+  }
+  /** The words of row `line` (in order) from word `w` on, while they follow each other (a gap under 3 em of their
+   * height: never another column's or node's words on the same baseline); `back`: from the first of them before `w`. */
+  function run(line: Word[], w: Word, back = false): Word[] {
+    let i = line.findIndex((v) => v[1] >= w[1] - 0.5);
+    const em = 3 * (w[4] - w[2]);
+    while (back && i > 0 && line[i]![1] - line[i - 1]![3] < em) i--;
+    const out = i < 0 ? [] : [line[i]!];
+    for (let j = i + 1; i >= 0 && j < line.length && line[j]![1] - line[j - 1]![3] < em; j++) out.push(line[j]!);
+    return out;
+  }
+  /** Whether `at` stands right after a display formula's closer (`\\]`, `$$`, `\\end{equation*}` and the like). */
+  function displayEnd(text: string, at: number): boolean {
+    const m = /(\\\]|\$\$|\\end\{([A-Za-z]+)\*?\})[ \t]*$/.exec(text.slice(Math.max(0, at - 40), at));
+    return !!m && (!m[2] || MATH.test(m[2]) && m[2] !== 'math');
+  }
+  self.satexPdfEdit = { onRow, run, displayEnd, offsetAt, units, treeNodes, naming, entries, shortTitle, bothTitles, renamed, leaders, checked, grow, key, broken, scan, start, cells, cellStep, rowAfter, verbatim, verbatimAt, nearest, bands, joined, place, extent, room, form, measure, respec, widthBp, snapWidth, resized, stepped, plain, editable, spans, sender, typed, erased, mathAt, boundaries, boundaryAt, inkSnap, locate, columns, wordAt, argAt, defining, relaid, reflow, fit, glue, centered, apart, tokens, unset, aligned, changed, paragraph, mathRuns, footArg, footBack, footShown, blankPlace };
 })();
 
 // TikZ nodes moved by drag: where each `\node` and path label stands in the source, and the statement a drag

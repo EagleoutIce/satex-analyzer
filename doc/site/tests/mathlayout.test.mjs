@@ -45,10 +45,10 @@ test('scripts: raised and lowered by the font parameters', () => {
 // a binary operator with no left operand is ordinary (a unary minus).
 test('spacing classes', () => {
   const sum = lay('a+b'), rel = lay('a=b'), neg = lay('-x');
-  assert.ok(Math.abs(at(sum, '+')[1] - (0.5 + 4 / 18)) < 1e-9 && Math.abs(at(sum, 'b')[1] - (1 + 8 / 18)) < 1e-9, 'medium about +');
-  assert.ok(Math.abs(at(rel, 'b')[1] - (1 + 10 / 18)) < 1e-9, 'thick about =');
-  assert.deepEqual([at(neg, '−')[1], at(neg, 'x')[1]], [0, 0.5], 'a unary minus: no space');
-  assert.ok(Math.abs(at(lay('x_{a+b}'), 'b')[1] - at(lay('x_{a+b}'), '+')[1] - 0.35 * P.script) < 1e-9, 'no medium space in a script');
+  assert.ok(Math.abs(at(sum, '+')[1] - (0.5 + 4 / 18 + (P.sign - 0.5) / 2)) < 1e-9 && Math.abs(at(sum, 'b')[1] - (0.5 + P.sign + 8 / 18)) < 1e-9, 'medium about +, the sign as wide as cmr10 sets it');
+  assert.ok(Math.abs(at(rel, 'b')[1] - (0.5 + P.sign + 10 / 18)) < 1e-9, 'thick about =');
+  assert.ok(Math.abs(at(neg, 'x')[1] - P.sign) < 1e-9, 'a unary minus: no space');
+  assert.ok(Math.abs(at(lay('x_{a+b}'), 'b')[1] - at(lay('x_{a+b}'), '+')[1] - (P.sign * 0.7 + 0.35 * P.script) / 2) < 1e-9, 'no medium space in a script');
   assert.ok(Math.abs(at(lay('\\sin x'), 'x')[1] - (1.5 + 3 / 18)) < 1e-9, 'thin between an operator and an ordinary');
   assert.ok(Math.abs(at(lay('a,b'), 'b')[1] - (1 + 3 / 18)) < 1e-9, 'thin after punctuation');
   for (const [cmd, mu] of [['\\,', 3], ['\\:', 4], ['\\;', 5], ['\\!', -3], ['\\quad', 18], ['\\qquad', 36]]) assert.ok(Math.abs(at(lay(`a${cmd} b`), 'b')[1] - (0.5 + mu / 18)) < 1e-9, cmd);

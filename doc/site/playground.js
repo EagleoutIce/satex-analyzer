@@ -1963,14 +1963,17 @@
   let tsHf = { key: null, fields: null };
   /** The page widget's section of the open file's run (its lengths, header, numbering): asked once per run. */
   let pageAsk = { key: null, got: null };
+  /** The runs of the open file published so far: a run again of the same version (a bundle landed) is another run. */
+  var runsOf = 0; // var: a render may run before publish's line
+  const runKey = () => `${uri()}@${version}@${runsOf}`;
   function pageSection() {
-    const key = `${uri()}@${version}`;
+    const key = runKey();
     if (pageAsk.key !== key) pageAsk = { key, got: lsp('satex/view', { textDocument: { uri: uri() }, position: { line: 0, character: 0 } }).catch(() => null)
       .then((views) => (views ?? []).find((v) => v.plugin === 'page')?.sections?.find((x) => x.kind === 'page') ?? null) };
     return pageAsk.got;
   }
   async function tsHeadFoot() {
-    const key = `${uri()}@${version}`;
+    const key = runKey();
     if (tsHf.key !== key) {
       tsHf = { key, fields: null };
       const s = await pageSection();
@@ -7718,7 +7721,7 @@
   /** The run's facts of the picture at offset `at` (its shapes and their libraries, colors, arrow tips: the tikz plugin's `run`), asked once per text. */
   let paFacts = { key: null, got: null };
   function paFactsOf(at) {
-    const key = `${uri()}@${version}@${at}`;
+    const key = `${runKey()}@${at}`;
     if (paFacts.key !== key) paFacts = { key, got: lsp('satex/view', { textDocument: { uri: uri() }, position: tikzPos(editor.text(), at) }).then((vs) => (vs ?? []).find((v) => v.plugin === 'tikz')?.sections?.find((s) => s.kind === 'drawing')?.run ?? null).catch(() => null) };
     return paFacts.got;
   }
@@ -8228,9 +8231,7 @@
     if (!ref) return;
     const num = band.map((w) => w[5].trim()).find((t) => /^(\d+|[ivxlcdm]+|[IVXLCDM]+)$/.test(t)) ?? String(page), font = pdfFontOf(img, ref);
     const pkg0 = s.header?.package ?? null, letterOf = (p) => (p === 'scrlayer-scrpage' ? 'ico' : 'LCR')[spot], text = editor.text();
-    // the class as written where the run names none (a KOMA class the run could not load still wants scrlayer-scrpage)
-    const cls = s.class ?? /\\documentclass\s*(?:\[[^\]]*\])?\s*\{([^}]*)\}/.exec(text)?.[1]?.trim() ?? null;
-    const setup = self.satexViews.page.footSetup({ ...s, class: cls }, spot, !!pkg0 && !!PE.footArg(text, pkg0, letterOf(pkg0)));
+    const setup = self.satexViews.page.footSetup(s, spot, !!pkg0 && !!PE.footArg(text, pkg0, letterOf(pkg0)));
     // the number clicked: the caret before or after its command, else at the cell's end
     const onNum = word && cell.includes(word) && word[5].trim() === num, after = onNum && pdfK(page, x, word) > 0;
     const place = (t) => {
@@ -8602,16 +8603,10 @@
   }
   /** What the page shows of source text `t`: commands, braces, math shifts and comments left out, spaces as one. */
   const pdfPlainOf = (t, verb) => verb ? t : t.replace(/(?<!\\)%[^\n]*/g, '').replace(/\\[A-Za-z@]+\*?|\\(?=[^A-Za-z@\s])|[{}$^_]/g, '').replace(/[\s~]+/g, ' ');
-  /** Whether page word `v` stands on the row of word `r`: its baseline, or raised within its height and narrower than
-   * it is tall (a \\thanks ∗, a footnote's number). */
-  const pdfOnRow = (v, r) => Math.abs(v[4] - r[4]) < 1 || v[4] < r[4] && v[4] > r[2] && v[3] - v[1] < r[4] - r[2];
-  /** The words of row `line` (in order) from word `w` on, while they follow each other (a gap under 3 em of their
-   * height: never another column's or node's words on the same baseline). */
-  function pdfRun(line, w) {
-    const i = line.findIndex((v) => v[1] >= w[1] - 0.5), out = i < 0 ? [] : [line[i]], em = 3 * (w[4] - w[2]);
-    for (let j = i + 1; i >= 0 && j < line.length && line[j][1] - line[j - 1][3] < em; j++) out.push(line[j]);
-    return out;
-  }
+  /** Whether page word `v` stands on the row of word `r` (pdfedit.ts `onRow`). */
+  const pdfOnRow = (v, r) => PE.onRow(v, r);
+  /** The words of row `line` from word `w` on while they follow each other (pdfedit.ts `run`). */
+  const pdfRun = (line, w, back = false) => PE.run(line, w, back);
   /** TeX's hyphenation points of the run's words, as the typeset rows mark them (a `·` before each): word → the
    * offsets of its points. A word typed since the run has none until the next one lands. */
   let pdfHyphOf = null;
@@ -8650,15 +8645,20 @@
    * the answer came (the echo is drawn again then) or where TeX breaks where the echo has no piece. */
   const pdfBreakAsked = new Map();
   function pdfTexBreaks(words, tagged, later, indent, line) {
-    if (self.__noTexBreaks) return null;
+    if (self.__noTexBreaks) return null;//UI39
     const params = { textDocument: { uri: uri(state.root ?? state.file) }, path: uri(state.file), line, words, indent: Math.abs(indent) < 0.5 ? 0 : Math.round(indent * 65536 * 72.27 / 72) };
     const key = JSON.stringify([params.path, line, params.indent, words]);
     if (!pdfBreakAsked.has(key)) {
       if (pdfBreakAsked.size > 64) pdfBreakAsked.clear();
       pdfBreakAsked.set(key, null);
       const at = version;
-      const t0 = performance.now(), during = running > 0;
-      lsp('satex/break', params).then((r) => { (self.__texBreaks ??= []).push({ ms: Math.round(performance.now() - t0), during, lines: r?.lines?.length ?? null, ...(self.__texDebug && !r?.lines ? { params, r } : {}) }); pdfBreakAsked.set(key, r?.lines ?? false); if (r?.lines && version === at) pdfCaretDrawNow(); }).catch(() => pdfBreakAsked.set(key, false));
+      lsp('satex/break', params).then((r) => {
+        // no answer yet (no run finished, or it did not know): asked again at a later draw
+        if (self.__texDebug) (self.__texBreaks ??= []).push({ during: running > 0, lines: r?.lines?.length ?? null, r: r?.lines ? undefined : r });//UI39
+        if (!r?.lines) return void pdfBreakAsked.delete(key);
+        pdfBreakAsked.set(key, r.lines);
+        if (version === at) pdfCaretDrawNow();
+      }).catch(() => pdfBreakAsked.set(key, false));
     }
     const lines = pdfBreakAsked.get(key);
     if (!lines) return null;
@@ -8776,7 +8776,8 @@
     // the change starts at the caret at the latest, the text after it alike in both stays out of it (a build that
     // holds the text has no change: never the rest of the file, echoed as prose)
     if (open) { para = words(back); [P, S] = PE.changed(B, g.text, g.at); }
-    if (!para.length) return false;
+    // a display alone in its paragraph pairs no word: right after its closer the caret still takes its box (below)
+    if (!para.length && !(B === g.text && PE.displayEnd(g.text, g.at))) return false;
     const edit = B.length - S;
     const verb = !!PE.verbatimAt(g.text, g.at);
     let w, cx, mathBox;
@@ -8790,11 +8791,20 @@
       // another word spelled alike (`2000` … `2004` set from one macro line)
       // verbatim the build's words did not pair with (`\twice{ab}` read as `ab`): the column-based caret places it
       if (verb && !t) return false;
+      // right after a display's closer (`\\]`, `$$`, `\\end{equation}`), or in it: the end of the box SyncTeX gives its
+      // line, never a word the display's glyphs paired with (`y=2]` with the row above's word)
+      const shut = PE.displayEnd(g.text, g.at), inMath = shut || PE.scan(g.text, 0, g.at, PE.start()).math;
       if (c.x != null && c.build === b && g.at === c.clicked && B === g.text) { w = c.word; cx = c.x; }
+      else if (shut && (mathBox = pdfRects(state.file, pdfPos(g.text, g.at).line + 1, true).at(-1))) {
+        // after its last glyph's ink (the box's right edge is a point's guess, 4 bp past it)
+        w = [mathBox.page, mathBox.l, mathBox.t, mathBox.r, mathBox.d, ''];
+        const ink = pdfImgWords(page(w[0])).filter((v) => pdfOnRow(v, w) && v[1] < mathBox.r && v[3] > mathBox.l).map((v) => v[3]);
+        cx = ink.length ? Math.max(...ink) : mathBox.r;
+      }
       else if (t) { w = t.w; cx = pdfBounds(page(w[0]), w)[Math.min(w[5].length, pdfPlainOf(B.slice(t.s, g.at), verb).length)]; }
       // in a formula the page sets apart (a display: its glyphs pair with no source word), the end of the box SyncTeX
       // gives its line, never the word before the display
-      else if (PE.scan(g.text, 0, g.at, PE.start()).math && (mathBox = pdfRects(state.file, pdfPos(g.text, g.at).line + 1, true).at(-1))) { w = [mathBox.page, mathBox.l, mathBox.t, mathBox.r, mathBox.d, '']; cx = mathBox.r; }
+      else if (inMath && (mathBox = pdfRects(state.file, pdfPos(g.text, g.at).line + 1, true).at(-1))) { w = [mathBox.page, mathBox.l, mathBox.t, mathBox.r, mathBox.d, '']; cx = mathBox.r; }
       else if (next) { w = next.w; cx = w[1]; }
       else if (prev) { w = prev.w; cx = w[3] + 3; }
       else return false;
@@ -8851,7 +8861,8 @@
       for (let t = para.find((u) => u.s >= A.e && (u.w[0] !== w[0] || u.w[4] > w[4] + 1)), prev = row.at(-1) ?? A; t && !forced(prev.s, t.s);) {
         const n = t.w, s0 = t.s, nrow = para.filter((u) => u.w[0] === n[0] && Math.abs(u.w[4] - n[4]) < 1 && u.s >= s0), last = nrow.at(-1);
         // the row's page words from its first source word on (`TeXbook [2]`, `1.1`: macro output kept)
-        const ws = pdfRun(pdfImgWords(page(n[0])).filter((v) => pdfOnRow(v, n)).sort((a, b) => a[1] - b[1]), n);
+        // the words before it on its row too (a hyphenated word's tail, a reference's number: `tion 1 says`)
+        const ws = pdfRun(pdfImgWords(page(n[0])).filter((v) => pdfOnRow(v, n)).sort((a, b) => a[1] - b[1]), n, true);
         later.push({ x: n[1], n, row: ws.map((v) => ({ w: v })), pieces: ws.map((v, j) => ({ gap: j ? v[1] - ws[j - 1][3] : gap, n: v[3] - v[1], w: v, ride: n[4] })) });
         prev = last ?? prev;
         t = last && para.find((u) => u.s > last.s && (u.w[0] !== n[0] || u.w[4] > n[4] + 1));
@@ -8884,7 +8895,6 @@
         for (const e of [...spaced, q]) Object.assign(e, { wi: texWords.length - 1, wc0: e === q ? texWords.at(-1).length - t.length : 0 });
         spaced = [];
       }
-      if (self.__texDebug) (self.__texBreaks ??= []).push({ fits, row: rowWords.length, words: texWords?.length ?? null, bad: JSON.stringify(seq.filter((q) => !(q.t ?? q.w?.[5]) || q.par || q.disp != null).slice(0, 3).map((q) => ({ ...q, w: q.w && q.w.slice(0, 6) }))) });//UI39
       const tagged = pieces.map((q, ix) => ({ ...q, ix }));
       if (fits) {
         const H = pdfHyphens(), hw = width('-');
@@ -9152,7 +9162,7 @@
       if (r.kind) {
         // TeX's space about a display (about an em at 10pt), more for a formula taller or deeper than a line
         const box = self.satexMath.layout(text.slice(r.b, r.be), M.metric, r.kind === 'display'), em = M.em;
-        out.push({ gap: 0, n: box.w * em, math: box, M, ...(r.kind === 'display' ? { disp: (0.8 + Math.max(0, box.h - 0.7)) * em, below: (0.8 + Math.max(0, box.d - 0.25)) * em } : {}) });
+        out.push({ gap: 0, n: box.w * em, math: box, M, ...(r.kind === 'display' ? { disp: (0.8 + Math.max(0, box.h - 0.7)) * em, dshort: Math.max(0, box.h - 0.7) * em, below: (0.8 + Math.max(0, box.d - 0.25)) * em } : {}) });
         continue;
       }
       // a blank line typed (Enter) starts a paragraph: the piece after it opens an indented row of its own
@@ -10613,6 +10623,7 @@
     const seq = (published.get(p.uri) ?? 0) + 1, saw = ranWith;
     published.set(p.uri, seq);
     const current = p.uri === uri();
+    if (current) runsOf++;
     // the root's run reads for every file it publishes
     const absent = final ? [] : await absentBundles();
     if (seq !== published.get(p.uri) || outdated(p)) return;
@@ -10805,8 +10816,9 @@
   self.satexPdfCaret = () => pdfCaret && { at: pdfSeen().at, page: pdfCaret.page, builds: pdfGen };
   /** The run's explain records of `names` (`\\contentsname`): what the rename tests read. Read-only. */
   self.satexExplain = (names) => explainMany(names);
+  /** The page widget's section of the open file's current run (pageSection): what the KOMA tests read. Read-only. */
+  self.satexPageSection = () => pageSection();
   /** What doc/site/chaos.mjs reads of the page: what it shows and for which text. Read-only. */
-  self.__satexLsp = (m, p) => lsp(m, p);//UI39
   self.satexHealth = () => ({
     busy: 'busy' in status.dataset, phase: act.phase, status: status.textContent, quiet: Math.round(performance.now() - act.changed), heard: Math.round(performance.now() - lastHeard),
     boot: !!boot.open, example: state.example, file: state.file, root: state.root, dir: state.dir, version, text: editor?.text() ?? null, cursor: editor?.cursor?.() ?? null,

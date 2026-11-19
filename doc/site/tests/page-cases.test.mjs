@@ -116,7 +116,7 @@ test('footSetup: the footer written for typing into a cell', () => {
   const k = P.footSetup({ ...none, family: 'koma' }, 2, false);
   assert.deepEqual([k.package, k.letter, k.nodes.map(shown)], ['scrlayer-scrpage', 'o', ['pagestyle{scrheadings', 'clearpairofpagestyles', 'cfoot[\\pagemark{\\pagemark', 'ofoot{']]);
   assert.ok(k.nodes.every((n) => n.package?.name === 'scrlayer-scrpage'), 'KOMA: scrlayer-scrpage, never fancyhdr');
-  assert.equal(P.footSetup({ ...none, class: 'scrreprt' }, 1, false).package, 'scrlayer-scrpage', 'a KOMA class by name (the run met no typearea)');
+  assert.equal(P.footSetup({ ...none, class: 'scrreprt' }, 1, false).package, 'fancyhdr', 'the run\'s family decides, never the class\'s name');
   // a package loaded: a cell a call sets is typed in, nothing written; another cell gets its call after the last one
   const call = (name, opt, args, line) => ({ kind: 'call', name, range: { start: at(line), end: { line, character: 20 } }, text: '', args: [...(opt == null ? [] : [{ open: '[', text: opt }]), ...args.map((t) => ({ open: '{', text: t }))] });
   const fancy = { header: { package: 'fancyhdr', insert: at(3), calls: [call('fancyhf', null, [''], 3), call('fancyfoot', 'C', ['\\thepage'], 4)] } };
