@@ -437,6 +437,8 @@ interface Stream {
     let titled: HTMLElement | null = null;
     const untitle = () => { if (titled) { titled.title = titled.dataset.title!; delete titled.dataset.title; titled = null; } };
     document.addEventListener('mouseover', (e) => {
+      // a context menu open (actions.ts): no note over or beside it
+      if (document.querySelector('.pa-menu')) { untitle(); note.hide(); return; }
       // inside an open note (a card with links): leave it as it is, so its links can be clicked
       if ((e.target as Element).closest?.('.tip-note') && !note.el.hidden) return;
       const a = (e.target as Element).closest?.('a.ty[data-ty]'), chip = (e.target as Element).closest?.('.arg[data-tip]');
@@ -466,6 +468,8 @@ interface Stream {
       e.preventDefault();
       note.el.innerHTML = tyCard(chip.dataset.ty);
     });
+    // a context menu closes the note a hover opened or is about to open
+    document.addEventListener('contextmenu', () => { untitle(); note.hide(); }, true);
     // a press inside an open note or card (its links, its chips) keeps it: hiding it first would swallow the click
     document.addEventListener('pointerdown', (e) => { if ((e.target as Element).closest?.('.tip-note, .tip-card')) return; untitle(); note.hide(); if (!(e.target as Element).closest?.('.tip-card')) tips.card.hide(); }, true);
   }

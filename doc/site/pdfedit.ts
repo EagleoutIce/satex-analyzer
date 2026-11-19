@@ -1868,6 +1868,21 @@ declare global {
     const fix: [number, number] = [h ? atX(plain ? dist[1] : grid(gx)) : mid(ref, 0) - mid(b, 0), v ? atY(plain ? dist[0] : grid(gy)) : mid(ref, 1) - mid(b, 1)];
     return { text: `${[v, h].filter(Boolean).join(' ')}=${val}of ${name}`, fix };
   }
+  /** How far (page bp, y down) a node moves from positioning keys `was` to `now` (`right=2cm of a, xshift=1mm`) beside the
+   * same node on the same side: exact, as TikZ measures both from the same borders; null when they differ. */
+  function placeDelta(was: string[], now: string, dist: [number, number] = [1, 1]) {
+    const read = (ks: string[]) => {
+      const m = ks.map((k) => /^(above|below)?\s*(left|right)?\s*=\s*(.*?)\s*\bof\s+(.+)$/.exec(k)).find((x) => x && (x[1] || x[2]));
+      if (!m) return null;
+      const vals = m[3] ? m[3].split(/\s+and\s+/).map((x) => len(x)) : [];
+      if (vals.some((x) => !x)) return null;
+      const g = (j: number, d: number) => (vals.length ? cm(vals[Math.min(j, vals.length - 1)]!, 1) : d);
+      const gv = m[1] ? g(0, dist[0]) : 0, gh = m[2] ? g(m[1] ? 1 : 0, dist[1]) : 0, sh = (n: string) => { const k = ks.find((x) => x.split('=')[0]!.trim() === n); const l = k && len(k.split('=')[1]!); return l ? cm(l, UNIT.pt) : 0; };
+      return { side: `${m[1] ?? ''} ${m[2] ?? ''}`, of: m[4]!.trim(), x: (m[2] === 'right' ? gh : -gh) + sh('xshift'), y: (m[1] === 'below' ? gv : m[1] ? -gv : 0) - sh('yshift') };
+    };
+    const a = read(was), b = read(keys(now)), bp = 72 / 2.54;
+    return a && b && a.side === b.side && a.of === b.of ? [(b.x - a.x) * bp, (b.y - a.y) * bp] : null;
+  }
   /** `stmt` with node `i` placed by positioning keys `rel` (`right=of a`, a shift after it): its placement, shifts and `at` before go. */
   function place(stmt: string, i: number, rel: string) {
     const p = parts(stmt)[i];
@@ -1901,7 +1916,7 @@ declare global {
     return stmt.slice(0, a) + stmt.slice(p.t[1] + 1);
   }
   self.satexTikzMove = { nodes, move, len, cm, posOn, clipped, snap, edges, shapeOf, shape, looks, flip, retext, tipOf, tip, label,
-    SHAPES: SHAPE_LIST, library, keysAt, current, set, segOf, route, bend, inout, looseness, segPath, addEdge, named, fresh, picOpts, picSet, snapAngle, angle, unlabel, relation, placing, place, dependents };
+    SHAPES: SHAPE_LIST, library, keysAt, current, set, segOf, route, bend, inout, looseness, segPath, addEdge, named, fresh, picOpts, picSet, snapAngle, angle, unlabel, relation, placing, place, placeDelta, dependents };
 })();
 
 // References switched from the pages: a reference's printed number is no text to type into. Where its key stands in

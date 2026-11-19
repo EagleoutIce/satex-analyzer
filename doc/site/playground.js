@@ -7708,7 +7708,9 @@
     const ref = refs.sort((a, b) => lined(b) - lined(a) || far(a) - far(b))[0], at = TM.placing(frame(p, dx, dy), frame(ref), 0.5, p.n.pic.dist, ref.n.name);
     const now = at && TM.place(text.slice(p.n.from, p.n.to), p.n.i, at.text);
     // `d`: where it lands, the gaps on the grid (the ghost shows it, the dependents left behind are shifted by it)
-    return now && { text: now, label: at.text, pre: 'edit' in lib ? [lib.edit] : [], d: [dx + at.fix[0], dy + at.fix[1]] };
+    // beside the same node on the same side the move is exact from the keys alone (no frame guessed)
+    const exact = now && TM.placeDelta(TM.keysAt(text.slice(p.n.from, p.n.to), p.n.i) ?? [], at.text, p.n.pic.dist);
+    return now && { text: now, label: at.text, pre: 'edit' in lib ? [lib.edit] : [], d: exact ?? [dx + at.fix[0], dy + at.fix[1]] };
   }
   /** The nodes placed straight from a node moved by `d` bp kept where they stand: each shifted back by as much (the
    * chains placed from them follow them, so they stay too); one edit per statement. */
@@ -8755,6 +8757,8 @@
    * row's start (`indent` bp right of the margin, at source line `line`). Asked once per paragraph text, null until
    * the answer came (the echo is drawn again then) or where TeX breaks where the echo has no piece. */
   const pdfBreakAsked = new Map();
+  /** Words' widths as TeX sets them, by font and text (bp), from `satex/break`'s answers. */
+  const pdfTexWidth = new Map();
   /** `satex/break` questions asked, answered with lines, and of those answered while a run went on (`satexHealth`). */
   const texBreakStats = { asked: 0, lines: 0, during: 0 };
   /** The question the next send asks (the newest text's), its timer, and the analysis that last knew nothing: no
@@ -8774,16 +8778,19 @@
       if (!r?.lines) { pdfBreakCold = seen; return void pdfBreakAsked.delete(w.key); }
       texBreakStats.lines++; texBreakStats.during += +during;
       pdfBreakAsked.set(w.key, r.lines);
+      // the typed words' widths as TeX sets them (bp), for every later echo in this font
+      if (pdfTexWidth.size > 4096) pdfTexWidth.clear();
+      w.params.words.forEach((t, i) => { if (typeof t === 'string' && r.widths?.[i] > 0) pdfTexWidth.set(w.fkey + t, r.widths[i] / 65536 * 72 / 72.27); });
       // drawn again once the keys rest: a redraw between two keys would flip the rows between TeX's and the echo's fit
       setTimeout(() => { if (version === w.at) pdfCaretDrawNow(); }, 300);
     }).catch(() => pdfBreakAsked.set(w.key, false));
   }
-  function pdfTexBreaks(words, tagged, later, indent, line) {
+  function pdfTexBreaks(fkey, words, tagged, later, indent, line) {
     if (!texReady || self.__noTexBreaks) return null;
     const params = { textDocument: { uri: uri(state.root ?? state.file) }, path: uri(state.file), line, words, indent: Math.abs(indent) < 0.5 ? 0 : Math.round(indent * 65536 * 72.27 / 72) };
     const key = JSON.stringify([params.path, line, params.indent, words]);
     if (!pdfBreakAsked.has(key)) {
-      pdfBreakWant = { key, params, at: version };
+      pdfBreakWant = { key, params, at: version, fkey };
       pdfBreakTimer ||= setTimeout(pdfBreakSend, 80);
       return null;
     }
@@ -8824,6 +8831,7 @@
    * position: the run on its baseline overlapping it most, never by spelling), its size and baseline in bp. A run
    * whose PDF was closed for a newer build has its face added back (pdfFaces). No run: the echo font as wide as the word. */
   function pdfFontOf(img, w) {
+    pdfLmLoad();
     const over = (r) => Math.min(r.x + r.w, w[3]) - Math.max(r.x, w[1]);
     const run = (img.__runs ?? []).filter((r) => r.y >= w[2] - 0.5 && r.y <= w[4] + 0.5 && over(r) > 0).sort((p, q) => over(q) - over(p))[0];
     const ctx = pdfEchoCtx ??= document.createElement('canvas').getContext('2d'), h = (w[4] - w[2]) * 0.8;
@@ -8840,7 +8848,9 @@
       const r = own ? at(face) / at(PDF_ECHO_FONT) : 1;
       // the fallback's size for the face's x-height (a letter of x-height the subset holds, else none)
       const xc = [...'xzvwunmoaecrs'].find((c) => pdfHas(ctx, face, c)), xh = (fam) => { ctx.font = `100px ${fam}`; return ctx.measureText(xc).actualBoundingBoxAscent; }, xs = xc ? xh(face) / xh(PDF_ECHO_FONT) : 1;
-      return { family: `${face}, ${PDF_ECHO_FONT}`, face, r: r > 0.5 && r < 2 ? r : 1, xs: xs > 0.7 && xs < 1.4 ? xs : 1, size: fit(`${face}, ${PDF_ECHO_FONT}`, run.size), base: run.y, own: true };
+      // the fallback as bold or italic as the face (a heading's CMBX12, an \\emph's CMTI10)
+      const fb = `${/BX|Bold|CMB|bx/.test(run.name ?? '') ? 'bold ' : ''}${/TI|Ital|SL|Obl/.test(run.name ?? '') ? 'italic ' : ''}`;
+      return { family: `${face}, ${PDF_ECHO_FONT}`, face, fb, r: r > 0.5 && r < 2 ? r : 1, xs: xs > 0.7 && xs < 1.4 ? xs : 1, size: fit(`${face}, ${PDF_ECHO_FONT}`, run.size), base: run.y, own: true };
     }
     return { family: PDF_ECHO_FONT, size: fit(PDF_ECHO_FONT, run?.size ?? h), base: run?.y ?? w[2] + (w[4] - w[2]) * 0.78, own: false };
   }
@@ -8862,16 +8872,19 @@
    * a fallback's `s`). The page's face where its subset holds the whole word, else the fallback (Latin Modern, pdfLm)
    * at the face's x-height. */
   function pdfWordFont(ctx, f, whole, px) {
-    if (f.own && !pdfOwns(ctx, f, whole)) pdfLmLoad();
-    return pdfOwns(ctx, f, whole) ? `${px}px ${f.family}` : `${px * (f.xs ?? 1)}px ${PDF_ECHO_FONT}`;
+    return pdfOwns(ctx, f, whole) ? `${px}px ${f.family}` : `${f.fb ?? ''}${px * (f.xs ?? 1)}px ${PDF_ECHO_FONT}`;
   }
-  /** The width of `t` (a part of word `whole`) in echo font `f` with `ctx.font` set to it at `px` px: a word its face
-   * lacks a glyph of is the fallback's width times `f.r`, as TeX sets it in the page's font, not the fallback's. */
-  function pdfTextWidth(ctx, f, t, px, whole = t) {
-    if (pdfOwns(ctx, f, whole)) return ctx.measureText(t).width;
+  /** The width of `t` in echo font `f` with `ctx.font` set to it at `px` px: a character its face lacks counts at the
+   * fallback's width times `f.r`, as TeX sets it in the page's font, not the fallback's (the word is drawn in one
+   * face, stretched to this width: pdfWordFont). */
+  function pdfTextWidth(ctx, f, t, px) {
+    if (pdfOwns(ctx, f, t)) return ctx.measureText(t).width;
     const font = ctx.font;
-    ctx.font = `${px}px ${PDF_ECHO_FONT}`;
-    const n = ctx.measureText(t).width * f.r;
+    let n = 0;
+    for (const c of t) {
+      if (pdfHas(ctx, f.face, c)) { ctx.font = font; n += ctx.measureText(c).width; }
+      else { ctx.font = `${px}px ${PDF_ECHO_FONT}`; n += ctx.measureText(c).width * f.r; }
+    }
     ctx.font = font;
     return n;
   }
@@ -8915,7 +8928,9 @@
     const B = pdfBuiltText(b), dl = g.text.length - B.length;
     let [P, S] = PE.changed(B, g.text);
     const p = Math.min(P, g.at, B.length);
-    const words = (at) => pdfParaWords(b, at).filter((t) => t.w && pdfImg(t.w[0])?.naturalWidth && (pdfImg(t.w[0]).__build ?? pdf) === b);
+    // a TikZ picture's node texts are no rows of a paragraph: a reflow would pull the picture up over the text
+    const pics = [...B.matchAll(/\\begin\{tikzpicture\}[\s\S]*?\\end\{tikzpicture\}/g)].map((m) => [m.index, m.index + m[0].length]);
+    const words = (at) => pdfParaWords(b, at).filter((t) => t.w && pdfImg(t.w[0])?.naturalWidth && (pdfImg(t.w[0]).__build ?? pdf) === b && !pics.some(([x, y]) => t.s >= x && t.s < y));
     let para = words(p);
     // a new paragraph the build sets no word of yet (Enter at a paragraph's end, built before the next key): the
     // paragraph before goes on with the break typed, as before that build landed, the change at the caret
@@ -8983,7 +8998,9 @@
       const gaps = line.slice(1).map((v, i) => v[1] - line[i][3]).filter((d) => d > 0 && d < f.size), gap = gaps.length ? gaps.sort((x, y) => x - y)[gaps.length >> 1] : f.size / 3;
       // the row after `A` as pieces: the text typed, in the page's font, then the words the change left as drawn,
       // each with the gap before it
-      const width = (t, whole) => pdfTextWidth(ctx, f, t, f.size * k, whole) / k, pieces = [];
+      // a word TeX set before (`satex/break`'s widths: its letters with the font's ligatures and kerns) as wide as TeX
+      // sets it, else as the canvas measures it
+      const fkey = `${f.family}|${f.size}|`, width = (t) => pdfTexWidth.get(fkey + t) ?? pdfTextWidth(ctx, f, t, f.size * k) / k, pieces = [];
       // the text typed as pieces, its formulas laid out as math; the caret in the last piece of the text up to it
       const M = pdfMathOf(img, f), typed = (to) => pdfPieces(g.text, A.e, to, verb, width, gap, M);
       pieces.push(...typed(upto));
@@ -9064,13 +9081,15 @@
           const xs = q.t == null ? pdfBounds(page(q.w[0]), q.w) : null, at = [0, ...cuts, t.length];
           return at.slice(0, -1).map((a, i) => {
             const b = at[i + 1], part = { ...q, gap: i ? 0 : q.gap, st: i ? 0 : q.st, sh: i ? 0 : q.sh, hy: i < at.length - 2, hw, wc: (q.wc0 ?? 0) + a };
-            return xs ? { ...part, n: xs[b] - xs[a], w: [q.w[0], xs[a], q.w[2], xs[b], q.w[4], t.slice(a, b)] } : { ...part, n: width(t.slice(a, b), t), t: t.slice(a, b), word: t };
+            // a typed word's parts share its width as TeX sets it (a ligature spans a part's end)
+            const whole = !xs && pdfTexWidth.get(fkey + t), scale = whole ? whole / at.slice(0, -1).reduce((m, c, j) => m + width(t.slice(c, at[j + 1])), 0) : 1;
+            return xs ? { ...part, n: xs[b] - xs[a], w: [q.w[0], xs[a], q.w[2], xs[b], q.w[4], t.slice(a, b)] } : { ...part, n: width(t.slice(a, b)) * scale, t: t.slice(a, b), word: t };
           });
         };
         tagged.splice(0, tagged.length, ...tagged.flatMap(split));
         for (const r of later) r.pieces = r.pieces.flatMap(split);
       }
-      const flow = PE.reflow(tagged, w[3], { right, left, indent, skip, parskip, rows: later, pull: dl < 0, fit: fits, breaks: texWords && pdfTexBreaks(texWords.map((t, i) => (texW[i] != null ? [t, Math.round(texW[i] * 65536 * 72.27 / 72)] : t)), tagged, later, line[0][1] - left, pdfPos(g.text, A.s).line) });
+      const flow = PE.reflow(tagged, w[3], { right, left, indent, skip, parskip, rows: later, pull: dl < 0, fit: fits, breaks: texWords && pdfTexBreaks(fkey, texWords.map((t, i) => (texW[i] != null ? [t, Math.round(texW[i] * 65536 * 72.27 / 72)] : t)), tagged, later, line[0][1] - left, pdfPos(g.text, A.s).line) });
       const rows = [];
       for (const fr of flow.rows) {
         const prev = rows.at(-1), L = later[fr.from];
@@ -9512,7 +9531,7 @@
     set.forEach(([a, b, t], j) => { const v = src(j); if (j !== ti && v && v !== row[k]) pdfMoved.push({ from: v, page: pg, dx: a - v[1], dy: 0 }); });
     if (set[ti]) pdfPainted.push({ page: pg, x0: set[ti][0], t: w[2], d: w[4], end: set[ti][1] });
     const words = set.map(([a, b, t], j) => { const v = src(j), moved = v && v !== row[k] && v[5] === t && Math.abs(v[3] - v[1] - (b - a)) < 0.01;
-      return `<i style="left:${(a - l) / (r - l) * 100}%;width:${(b - a) / (r - l) * 100}%${moved ? pix(v, a, b) : ''}">${moved ? `<span style="visibility:hidden">${escape(t)}</span>` : (() => { const own = pdfOwns(ctx, f, t), wf = pdfWordFont(ctx, f, t, size); ctx.font = wf; const m = ctx.measureText(t).width; ctx.font = `${size}px ${font}`; return `<span style="transform:scaleX(${(b - a) / Math.max(0.1, m)})${own ? '' : `;font:${size * (f.xs ?? 1) * px}px/1 ${PDF_ECHO_FONT}`}">${escape(t)}</span>`; })()}</i>`; }).join('');
+      return `<i style="left:${(a - l) / (r - l) * 100}%;width:${(b - a) / (r - l) * 100}%${moved ? pix(v, a, b) : ''}">${moved ? `<span style="visibility:hidden">${escape(t)}</span>` : (() => { const own = pdfOwns(ctx, f, t), wf = pdfWordFont(ctx, f, t, size); ctx.font = wf; const m = ctx.measureText(t).width; ctx.font = `${size}px ${font}`; return `<span style="transform:scaleX(${(b - a) / Math.max(0.1, m)})${own ? '' : `;font:${f.fb ?? ''}${size * (f.xs ?? 1) * px}px/1 ${PDF_ECHO_FONT}`}">${escape(t)}</span>`; })()}</i>`; }).join('');
     const hue = pdfColours(img, l - 12, w[2], r + 12, w[4]);
     pdfUnder(img.parentElement, `<span class="pdf-echo" style="left:${l / pw * 100}%;top:${w[2] / ph * 100}%;width:${(r - l + 1) / pw * 100}%;height:${(w[4] - w[2]) / ph * 100}%;font:${size * px}px/1 ${font};background:${pdfRgb(hue?.paper)};color:${pdfRgb(hue?.ink, '#000')}">${words}</span>`);
     const [a, b, t] = laid[k];

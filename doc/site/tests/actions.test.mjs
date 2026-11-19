@@ -311,3 +311,15 @@ test('relative placement: the landed place is the written one', () => {
     if (gv == null) assert.ok(near((m.t + m.d) / 2, (a.t + a.d) / 2 - (shift?.[1] === 'y' ? +shift[2] * cm : 0)), `${at.text}: centred across`);
   }
 });
+
+// Intuition: beside the same node on the same side, a node's move is the difference of the written gaps and shifts,
+// with no frame size guessed; the dependents left behind get exactly that back. Pins the ~1 bp drift of an estimated frame.
+test('relative placement: the move from the keys alone', () => {
+  const bp = 72 / 2.54, near = (u, v) => u && v && Math.abs(u[0] - v[0]) < 1e-9 && Math.abs(u[1] - v[1]) < 1e-9;
+  assert.ok(near(T.placeDelta(['box', 'right=of src'], 'right=2.15cm of src', [1.2, 1.2]), [0.95 * bp, 0]));
+  assert.ok(near(T.placeDelta(['below=of run'], 'below=1.5cm of run, xshift=-3mm', [1, 1]), [-0.3 * bp, 0.5 * bp]));
+  assert.ok(near(T.placeDelta(['above right=1cm and 2cm of a'], 'above right=1.5cm and 1cm of a'), [-1 * bp, -0.5 * bp]));
+  assert.equal(T.placeDelta(['right=of a'], 'right=of b'), null, 'another node');
+  assert.equal(T.placeDelta(['right=of a'], 'below=of a'), null, 'another side');
+  assert.equal(T.placeDelta(['draw'], 'right=of a'), null, 'not placed before');
+});
