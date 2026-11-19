@@ -139,7 +139,7 @@
  },
  "fz-demo-narrow-rows": {
   "owner": "ui-51 (playground echo layout)",
-  "why": "after Enter and builds landing mid-typing, the echo lays the new paragraph out one word or hyphen piece a row (`It`/`con`/`verges`/`more words`): the paragraph's right edge comes out at its short built row (pdfTypeDraw `right` from pdfLineBox/para words), and the landed `Itconvergesmore` shows beside the echo's `more` (duplicate); a lavender tint stood over empty space there too",
+  "why": "after Enter and builds landing mid-typing, the echo lays the new paragraph out one word or hyphen piece a row (`It`/`con`/`verges`/`more words`): the paragraph's right edge comes out at its short built row (pdfTypeDraw `right` from pdfLineBox/para words), and the landed `Itconvergesmore` shows beside the echo's `more` (duplicate); a lavender tint stood over empty space there too (timing dependent: red 1 of 2 runs)",
   "since": "2026-11-19"
  }
 }

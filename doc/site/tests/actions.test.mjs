@@ -300,13 +300,33 @@ test('named styles: found with their comment, applied, removed', withStore(() =>
   assert.match(edit(on, c2.writes[0]), /\\node\[red\] \(a\)/);
 }));
 
+// Intuition: a plain tree turned into a feature model gets the preset's key in `for tree` and its styles once above
+// `\begin{document}`; a tree already one is not offered it; a document that defines the styles keeps its own. Pins styles
+// written twice and a `for tree` whose other keys were lost.
+test('forest: transform to feature model', withStore(() => {
+  const F = self.satexViews.forest, body = '\nfor tree={draw}\n[Car [Engine] [Body]]\n';
+  const run = (text) => {
+    const from = text.indexOf('\\begin{forest}') + 14, to = text.indexOf('\\end{forest}'), t = F.parse(text.slice(from, to)), c = ctxOf(text);
+    const row = PA.groups({ kind: 'forest-node', f: { from, to, body: text.slice(from, to), t, n: t.root } }, c).flatMap((g) => g.items).find((i) => i.label === 'Transform to feature model');
+    row?.run();
+    return row && edit(text, c.writes[0]);
+  };
+  const doc = `\\documentclass{article}\n\\usepackage{forest}\n\\begin{document}\n\\begin{forest}${body}\\end{forest}\n\\end{document}\n`, now = run(doc);
+  assert.match(now, /for tree=\{draw, fm feature\}/);
+  assert.match(now, /\\forestset\{\n  fm feature\/\.style=\{draw, rounded corners=1pt[^\n]*\n[^]*\}\n\\begin\{document\}/);
+  assert.equal((now.match(/fm feature\/\.style/g) ?? []).length, 1);
+  assert.equal(run(now), undefined, 'a feature model is not offered it again');
+  const own = doc.replace('\\begin{document}', '\\forestset{fm feature/.style={draw}}\n\\begin{document}');
+  assert.equal((run(own).match(/fm feature\/\.style/g) ?? []).length, 1, 'the document\'s own styles kept');
+}));
+
 // Intuition: the forest plugin's rows rewrite the tree as the forest widget emits it; the table plugin's rows name
 // the column's letters. Pins the menus moved from the playground losing a row.
 test('forest and table rows', withStore(() => {
   const F = self.satexViews.forest, body = '\n[Car [Engine, circle] [Body]]\n', t = F.parse(body), n = t.root.children[0];
   const text = `\\begin{forest}${body}\\end{forest}`, f = { from: 14, to: 14 + body.length, body, t, n };
   const c = ctxOf(text), gs = PA.groups({ kind: 'forest-node', f }, c);
-  assert.deepEqual(gs.flatMap((g) => g.items.map((i) => i.label + (i.on ? '*' : ''))), ['Rectangle', 'Rounded rectangle', 'Circle*', 'Frame', 'Add child', 'Add sibling', 'Delete', 'Edit text…']);
+  assert.deepEqual(gs.flatMap((g) => g.items.map((i) => i.label + (i.on ? '*' : ''))), ['Rectangle', 'Rounded rectangle', 'Circle*', 'Frame', 'Add child', 'Add sibling', 'Delete', 'Edit text…', 'Transform to feature model']);
   gs[2].items[0].run();
   assert.match(edit(text, c.writes[0]), /\[Engine, circle\s*\[new\]\]/);
   const col = PA.groups({ kind: 'table-column', t: 0, k: 1, col: { spec: [1, 2], align: 'r' } }, c);

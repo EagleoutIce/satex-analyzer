@@ -2409,9 +2409,10 @@
     // (only for an edit: a caret moved onto a word the view does not show rewrites nothing)
     const edited = c.tsSeen !== g.text;
     c.tsSeen = g.text;
-    // only the clicked word's own edit (its source start `c.s0`): a word typed after its punctuation (`measure,|`) is
-    // another word, never written over it
-    const old = edited && !near && m && (c.s0 == null || lo === c.s0) && g.text[w[0] - 1] !== '\\' && words.find((x) => x.index <= c.idx && c.idx <= x.index + x[0].length);
+    // only an edit of that word (it keeps its first or last letter): a word typed after its punctuation (`measure,|`)
+    // is another word, never written over it
+    const at0 = edited && !near && m && g.text[w[0] - 1] !== '\\' && words.find((x) => x.index <= c.idx && c.idx <= x.index + x[0].length);
+    const old = at0 && (m[0][0] === at0[0][0] || m[0].at(-1) === at0[0].at(-1)) ? at0 : null;
     if (old && tsSplice(box, old.index, old[0].length, m[0])) near = { index: old.index };
     // a word typed after the clicked one's punctuation goes in at the click, where the view spells the source as it is
     const d = c.clicked - c.s0;
@@ -4739,8 +4740,9 @@
       : set.map((r) => `<p class="ts${r.heading ? ` ts-h ts-${escape(r.heading)}` : ''}"><span class="ts-text">${notation(withKeys(r.marked ?? r.detail ?? '', [], r.fonts, r.align, r.ligatures, r.lines), r.sketches, r.sketch)}</span></p>`).join('')
         || '<p class="muted">The slice sets no text.</p>';
   }
-  /* Scratch slices (actions.ts `satexScratch`): lines sliced (`satex slice`) into a scratch document of their own, the
-   * root while it is open, so its checks and builds are of the small document. Merge back writes its marked region
+  /* Scratch slices (actions.ts `satexScratch`): lines sliced into a scratch document of their own (the root's preamble,
+   * the definitions the slice of the page's run says they need, the lines), the root while it is open, so its checks
+   * and builds are of the small document. The server keeps its main: the scratch document runs as an open document. Merge back writes its marked region
    * where the lines came from through the snapshot printer, one undo step; Discard drops it. One at a time. */
   const SCR = self.satexScratch;
   /** The open scratch document: its name, the file and lines it was sliced from, their text then, the file's length then, the root before. */
@@ -4761,10 +4763,8 @@
     toast(`Slicing ${file}:${from}–${to}…`, 10000);
     const at = `${file === root ? '' : `${file}:`}${from}:1-${to}`;
     // the slice of the run the page has (warm): the definitions in the document's own files the region depends on
-    let dbgErr = null; const raw = await lsp('workspace/executeCommand', { command: 'satex/query', arguments: [{ file: path(root), queries: [{ type: 'slice', at }] }] }).catch((e) => { dbgErr = String(e?.message ?? e); return null; });
-    const [got] = raw ?? [];
+    const [got] = (await lsp('workspace/executeCommand', { command: 'satex/query', arguments: [{ file: path(root), queries: [{ type: 'slice', at }] }] }).catch(() => null)) ?? [];
     const names = new Map(state.files.map((n) => [path(n), n]));
-    self.__scratchDbg = { dbgErr, raw: raw === null ? 'null' : typeof raw, got: got && { error: got.error, n: got.records?.length, first: got.records?.slice(0, 3), own: got.records?.filter((r) => r.tag === 'macro-definition' && names.has(r.path)).length }, root, at };
     const defs = (got?.records ?? []).filter((r) => r.tag === 'macro-definition' && names.has(r.path)).map((r) => ({ file: names.get(r.path), line: r.line, name: r.name }));
     let body = got?.records?.length ? SCR.local(state.texts, root, file, from, to, defs) : null;
     if (!body) {
@@ -7003,6 +7003,8 @@
     findings: 'The findings of the check and of the build, on the characters they are about',
     bad: 'Overfull and underfull boxes of the log, an overfull one by how much it sticks out',
     origins: 'Words not written where they are set, tinted by where typing goes: a macro\'s definition (every use changes), a macro\'s argument (this use), or elsewhere in your files',
+    math: 'Inline math, where SyncTeX records the formula\'s start and end',
+    macros: 'The text a macro set, outlined: hover it for the macro\'s name',
   };
   const FIGURE_ENV = /^(figure|table|sidewaysfigure|sidewaystable|wrapfigure|wraptable|subfigure|tikzpicture|picture|minipage|lstlisting|tabular|center)\*?$/;
   /** Sub-filters per layer, from the data: [group, title, rows of [key, label, count]]. What the viewer switched off is kept as `layer|group|key`. */
@@ -7395,7 +7397,11 @@
   };
   const MADE_TIP = "a macro's text from code outside your files: a click opens the macro's completion";
   /** The origin kinds' names, as the layer's filter lists them; the kinds of the tints drawn last. */
-  const ORIGIN_NAMES = { macro: 'macro', arg: 'argument', moved: 'elsewhere' };
+  const ORIGIN_NAMES = { macro: 'your macros', made: 'package and class macros', arg: 'arguments', moved: 'elsewhere in your files' };
+  /** A tint's origins filter: a macro's text by where the macro is defined (your files or not), else its kind. */
+  const originKey = (q) => q.kind === 'macro' && q.made ? 'made' : q.kind;
+  /** The macro whose text set character `ch` (rowOrigins'): the run's definition, else the call written where it was set. */
+  const macroOf = (ch) => ch.from?.def ?? callEnding(srcLine(ch.path, ch.line), ch.col)?.name ?? (ch.call && callEnding(srcLine(ch.call.path, ch.call.line), ch.call.col)?.name) ?? null;
   var pdfOriginKinds = []; // var: a check may render before this line ran
   const ORIGIN_TIPS = { macro: "a macro's definition: typing there changes every use", arg: "a macro's argument: typing there edits this use", moved: 'read elsewhere in your files: typing goes there' };
   /** The characters of row `r` whose source site (the run's `sites`: where the user's file was read when it was set)
@@ -7520,7 +7526,7 @@
     pdfFacetsDraw();
     pdfOverlayDraw();
     tikzGridDraw();
-    for (const [k, cls] of [['envs', 'pdf-env'], ['figures', 'pdf-fig'], ['widths', 'pdf-col'], ['findings', 'pdf-finding'], ['glue', 'pdf-glue']]) {
+    for (const [k, cls] of [['envs', 'pdf-env'], ['figures', 'pdf-fig'], ['widths', 'pdf-col'], ['findings', 'pdf-finding'], ['glue', 'pdf-glue'], ['math', 'pdf-math'], ['macros', 'pdf-macro']]) {
       self.satexLayers.count($('pdf-layer-list'), k, pdfOverlayOn[k] && pdfBody.querySelectorAll(`.pdf-ov.${cls}`).length);
     }
     pdfLabelsFit();
@@ -7623,8 +7629,9 @@
         }
       }
     }
-    // the words not written where they are set, tinted by where typing would go (the origins layer)
-    if (pdfOverlayOn.origins) {
+    // the words not written where they are set, tinted by where typing would go (the origins layer); the macros layer
+    // outlines those a macro's text set, named by the run's definition or the call written at their place
+    if (pdfOverlayOn.origins || pdfOverlayOn.macros) {
       // while the pages lag the text (typing, the echo shows) the tints stay those of the text they were built from,
       // moved with the echo (pdfRelay): the new text's runs found among the old page's words would land astray
       const lag = pdfBuiltText(pdf) != null && pdfBuiltText(pdf) !== editor.text(), kept = lag && pdfTintsOf?.pdf === pdf;
@@ -7642,6 +7649,7 @@
         chars.forEach((ch, i) => { at[i] = solid.length; if (ch.c.trim()) solid.push(ch.c); });
         for (const [kind, a, b] of runs) {
           const text = chars.slice(a, b + 1).map((ch) => ch.c).join(''), title = `${text}: ${chars[a].made ? MADE_TIP : ORIGIN_TIPS[kind]}${chars[a].from?.def ? ` (${chars[a].from.def}, line ${chars[a].from.defLine})` : ''}`;
+          const made = !!chars[a].made, macro = kind === 'macro' ? macroOf(chars[a]) : null;
           const sa = chars.findIndex((ch, i) => i >= a && ch.c.trim()), sb = chars.findLastIndex((ch, i) => i <= b && ch.c.trim());
           const same = (p, q) => p && q && p[0] === q[0] && Math.abs(p[4] - q[4]) < 1;
           // one band per row the run covers: its words and the spaces between them, an edge space up to the next word
@@ -7649,15 +7657,16 @@
           for (const [k, from, to] of PE.locate(texts, solid.join(''), at[sa], at[sb]) ?? []) {
             const w = words[k], img = pdfImg(w[0]), xs = img?.naturalWidth ? pdfBounds(img, w) : null, l = (xs?.[from] ?? w[1]) - 0.5, r = (xs?.[to] ?? w[3]) + 0.5;
             if (band && same(band.w, w)) Object.assign(band, { r, d: Math.max(band.d, w[4] + 1), t: Math.min(band.t, w[2] - 0.5), w, k });
-            else tints.push(band = { page: w[0], l: a < sa && from === 0 && same(words[k - 1], w) ? words[k - 1][3] : l, t: w[2] - 0.5, r, d: w[4] + 1, kind, title, w, k });
+            else tints.push(band = { page: w[0], l: a < sa && from === 0 && same(words[k - 1], w) ? words[k - 1][3] : l, t: w[2] - 0.5, r, d: w[4] + 1, kind, made, macro, title, w, k });
             if (b > sb && to === texts[k].length && same(words[k + 1], w)) band.r = words[k + 1][1];
           }
         }
       }
       if (!lag) pdfTintsOf = { pdf, tints };
       // one tint per spot: a word set inside a wider run (an argument in its macro's text) keeps its own
-      pdfOriginKinds = tints.map((q) => q.kind);
-      for (const q of PE.apart(tints)) if (pdfShown('origins', 'kind', q.kind)) box(q.page, `pdf-orig pdf-orig-${q.kind}`, q.l, q.t, q.r, q.d, q.title);
+      pdfOriginKinds = tints.map(originKey);
+      if (pdfOverlayOn.origins) for (const q of PE.apart(tints)) if (pdfShown('origins', 'kind', originKey(q))) box(q.page, `pdf-orig pdf-orig-${q.kind}${q.made ? ' pdf-orig-made' : ''}`, q.l, q.t, q.r, q.d, q.title);
+      if (pdfOverlayOn.macros) for (const q of tints) if (q.macro) box(q.page, 'pdf-macro', q.l, q.t, q.r, q.d, `${q.macro} set this text${q.made ? ' (defined outside your files)' : ''}`, `<b>${escape(q.macro)}</b>`);
     }
     if (pdfOverlayOn.geometry) {
       for (const [page, g] of blocks) {
@@ -7668,10 +7677,11 @@
         box(page, 'pdf-block', g.l, g.t, g.r, g.d, `text block: ${lengths((g.r - g.l) * 72.27 / 72)} wide, its lines from ${pt(g.t)}pt to ${pt(g.d)}pt from the top`, `<b data-pt="${(g.r - g.l) * 72.27 / 72}">${pt(g.r - g.l)}pt</b>`);
       }
     }
+    if (pdfOverlayOn.math) for (const m of self.satexLayers.mathSpans(pdf?.boxes ?? [])) box(m.page, 'pdf-math', m.l, m.t, m.r, m.d, `math · ${m.file}:${m.line}`);
     if (pdfOverlayOn.glue) {
       // glue drawn over glyphs (a box SyncTeX placed off its text) is left out: a label never covers the text
       const inked = (g) => pdfWordsOn(g.page).some((w) => w[1] < g.r - 0.5 && w[3] > g.l + 0.5 && w[2] < g.d && w[4] > g.t);
-      for (const g of pdfGlue().filter((g) => pdfShown('glue', 'kind', g.kind) && !inked(g))) box(g.page, `pdf-glue g-${g.kind}`, g.l, g.t, g.r, g.d, `${g.kind === 'fill' ? 'infinite glue' : 'glue'} ${g.spec} · ${g.file}:${g.line}`, `<span class="pdf-glue-spec">${escape(g.spec)}</span>`);
+      for (const g of pdfGlue().filter((g) => pdfShown('glue', 'kind', g.kind) && !inked(g))) box(g.page, `pdf-glue g-${g.kind}`, g.l, g.t, g.r, g.d, `${g.kind === 'fill' ? 'infinite glue' : 'glue'} ${g.spec} · ${g.file}:${g.line}`, `<span class="pdf-glue-spec">${escape(self.satexLayers.glueShort(g.spec))}</span>`);
     }
     if (pdfOverlayOn.grid) {
       // lines every step from the top left corner, stronger and labelled every `every` steps; fewer when they would crowd
@@ -7724,6 +7734,14 @@
         if (top !== r.top) el.style.transform = `translateY(calc(-100% + ${top - r.top}px))`;
         placed.push({ left: r.left, right: r.right, top, bottom: top + r.height });
       }
+      // glue labels, widest glue first: off the chips and each other, over the least ink, else elided (the spec stays on hover)
+      const specs = [...page.querySelectorAll('.pdf-glue-spec')].map((el) => { el.style.transform = ''; el.hidden = false; return [el, el.getBoundingClientRect(), el.parentElement.getBoundingClientRect().width]; })
+        .filter(([, r]) => r.width).sort((a, b) => b[2] - a[2]);
+      if (!specs.length) continue;
+      const img = page.querySelector('img'), at = img?.getBoundingClientRect(), wh = img?.naturalWidth && pageSize(img), R = (r) => ({ l: r.left, t: r.top, r: r.right, b: r.bottom });
+      const ink = wh ? pdfWordsOn(+page.dataset.page).map((w) => ({ l: at.left + w[1] / wh[0] * at.width, r: at.left + w[3] / wh[0] * at.width, t: at.top + w[2] / wh[1] * at.height, b: at.top + w[4] / wh[1] * at.height })) : [];
+      const fixed = placed.map((p) => ({ l: p.left, r: p.right, t: p.top, b: p.bottom }));
+      self.satexLayers.fitLabels(specs.map(([, r]) => R(r)), fixed, ink).forEach((dy, i) => { const el = specs[i][0]; if (dy == null) el.hidden = true; else if (dy) el.style.transform = `translateY(${dy}px)`; });
     }
   }
   /* Editing in the PDF (pdfedit.ts): a column's width dragged at its edge, plain text typed at a caret. Both write
@@ -7946,8 +7964,8 @@
     tikzFrame = requestAnimationFrame(() => {
       tikzFrame = 0;
       if (e.target.closest?.('.pdf-tikz, .pa-menu, .tikz-input')) return;
-      if (e.target.closest?.('.pdf-tikz-bend, .pdf-size')) return;
-      tikzClear('.pdf-tikz, .pdf-tikz-path, .pdf-tikz-bend, .pdf-size');
+      if (e.target.closest?.('.pdf-tikz-bend, .pdf-size, .pdf-forest-add')) return;
+      tikzClear('.pdf-tikz, .pdf-tikz-path, .pdf-tikz-bend, .pdf-size, .pdf-forest-add');
       for (const el of pdfBody.querySelectorAll('.pdf-tikz-hot')) el.classList.remove('pdf-tikz-hot');
       const pt = tikzPoint(e), hit = tikzHit(pt);
       if (!hit) {
@@ -7955,6 +7973,7 @@
         if (g) { tikzPathMark(g.e); pt[4].parentElement.classList.add('pdf-tikz-hot'); return; }
         const q = pdfSizerAt(pt);
         if (q) pdfSizerMark(q);
+        else forestAdds(pt);
         return;
       }
       tikzMark(hit.p, 'pdf-tikz');
@@ -8297,7 +8316,6 @@
     };
     for (const [t, f] of [['pointermove', move], ['pointerup', end], ['pointercancel', end], ['keydown', key]]) addEventListener(t, f);
   }
-  self.__tkDbg = (cx, cy) => { const img = pdfBody.querySelector('.pdf-page img'); const pt = tikzPoint({ target: img, clientX: cx, clientY: cy }); const all = tikzPlaced(); return { pt: pt?.slice(0, 4), placed: all.map((q) => [q.n.name, q.page, q.origin, q.c]), boxes: pdf?.boxes?.length, edges: TM.edges(editor.text()).map((e) => tikzSegs(e).map((s) => [s.k, s.page, s.a, s.b, s.bend])) }; }; // DEBUG-REMOVE
   /** The segment of a path at page point `pt` with its ends' centres, when no node is there. */
   const tikzSegAt = (pt) => { if (!pt || tikzHit(pt)) return null; const h = tikzEdgeAt(pt), s = h && tikzSegs(h.e).find((x) => x.k === h.k); return s && { e: h.e, k: h.k, a: s.a, b: s.b }; };
   pdfBody.addEventListener('pointerdown', (e) => {
@@ -8538,6 +8556,32 @@
     const order = (n) => [n, ...n.children.flatMap(order)], n = t && order(t.root)[k];
     return n ? { from, to, body: text.slice(from, to), t, n } : null;
   }
+  /* A forest node on the pages: hovered, small + buttons beside its text add a child (below) or a sibling (after it),
+   * written as the forest widget emits the tree, one undo step. */
+  let forestHover = null;
+  function forestAdds(pt) {
+    forestHover = null;
+    if (!pt || !editor.text().includes('\\begin{forest}')) return;
+    const f = forestAt(pt), w = f && pdfWordUnder(pt[0], pt[1], pt[2]), img = pt[4];
+    if (!w) return;
+    const [pw, ph] = pageSize(img), el = Object.assign(document.createElement('span'), { className: 'pdf-forest-add' });
+    el.style.cssText = `left:${(w[3] + 2) / pw * 100}%;top:${w[2] / ph * 100}%`;
+    el.innerHTML = `<button type="button" data-add="child" title="Add a child below ${escape(f.n.content || 'this node')}">+↓</button>${FOREST.parentOf(f.t, f.n) ? `<button type="button" data-add="sibling" title="Add a sibling after ${escape(f.n.content || 'this node')}">+→</button>` : ''}`;
+    img.parentElement.append(el);
+    forestHover = f;
+  }
+  pdfBody.addEventListener('pointerdown', (e) => {
+    const b = e.target.closest?.('.pdf-forest-add button'), f = forestHover;
+    if (!b || !f || e.button !== 0) return;
+    e.preventDefault(); e.stopPropagation();
+    const text = editor.text();
+    if (text.slice(f.from, f.to) !== f.body) return;
+    if (b.dataset.add === 'child') FOREST.addChild(f.n); else FOREST.addSibling(f.t, f.n);
+    f.n.dirty = true;
+    FOREST.settle(f.t);
+    tikzClear('.pdf-forest-add');
+    paWrite(text, [{ from: f.from, to: f.to, now: FOREST.emit(f.t) }]);
+  }, true);
   /* References switched from the pages (pdfedit.ts `satexRefPick`): in Type mode a reference's printed number, a
    * citation's label, is no text to type into. Hovering one outlines it, a click opens the keys the editor completes
    * in its braces, searched as typed. A choice writes the new key through the snapshot printer. */

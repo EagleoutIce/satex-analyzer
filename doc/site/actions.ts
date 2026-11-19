@@ -574,9 +574,23 @@ declare global {
         { title: 'Tree', inline: true, items: [{ label: 'Add child', run: () => write(() => { FOREST.addChild(n); }) },
           ...(parent ? [{ label: 'Add sibling', run: () => write(() => { FOREST.addSibling(tree, n); }) }, { label: n.children.length ? 'Delete with its subtree' : 'Delete', run: () => write(() => { FOREST.remove(tree, n); }) }] : [])] },
         { title: 'Text', inline: true, items: [{ label: 'Edit text…', run: () => ask(ctx.x, ctx.y, n.content, 'the text of the node', (v) => write(() => { n.content = v; })) }] },
+        ...(FOREST.presetOf(tree) ? [] : [{ title: 'Preset', inline: true, items: [{ label: 'Transform to feature model', run: () => toPreset(ctx, t.f, 'feature model') }] }]),
       ];
     },
   });
+  /** Tree `f` with preset `p` on (its key in `for tree`) and the preset's styles in a `\forestset` above `\begin{document}`
+   * once, as the forest widget writes them; one undo step. A file without `\begin{document}` is told the styles it lacks. */
+  function toPreset(ctx: PaCtx, f: Rec, p: string) {
+    const FOREST = self.satexViews.forest, P = FOREST.PRESETS[p], t = f.t, ft = FOREST.forTree(t.pre), now = ft ? FOREST.splitTop(t.pre.slice(...ft)) : [];
+    FOREST.setForTree(t, [...now.filter((k: string) => k !== P.every), P.every].join(', '));
+    FOREST.settle(t);
+    const edits: PaEdit[] = [{ from: f.from, to: f.to, now: FOREST.emit(t) }], begin = ctx.text.search(/^[ \t]*\\begin\s*\{document\}/m);
+    if (!ctx.all.includes(`${P.every}/.style`)) {
+      if (begin < 0) ctx.toast(`The ${p} needs its styles: the forest widget writes them where \\begin{document} is`);
+      else edits.push({ from: begin, to: begin, now: `\\forestset{\n${(P.styles as [string, string][]).map(([k, v]) => `  ${k}=${v},`).join('\n')}\n}\n` });
+    }
+    ctx.write(edits);
+  }
   const ALIGNS: Record<string, string> = { l: 'left', c: 'centered', r: 'right', p: 'top (paragraph)', m: 'middle (paragraph)', b: 'bottom (paragraph)' };
   self.satexPageActions.register({
     name: 'table-column', title: 'Table columns', about: 'A column\'s alignment, its letter rewritten in the column spec', type: 'table', targets: ['table-column'],

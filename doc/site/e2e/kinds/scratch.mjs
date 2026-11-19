@@ -19,6 +19,7 @@ export async function scratch(p, sc) {
   const before = await p.eval(`satexHealth().text`);
   // the root analyzed first, as when a person works on it: the slice reads that run
   await p.until(`(() => { const h = satexHealth(); return !h.running && !h.busy && !h.due && !h.queued && h.shown != null; })()`, 240000);
+  res.info.rootRun = await p.eval(`document.getElementById('t-time')?.textContent ?? ''`);
   // the caret on the caption line, a right click there: the menu's top-level row
   const at = await p.eval(`(() => { const v = ${view}, l = v.state.doc.line(v.state.doc.toString().split('\\n').findIndex((x) => x.includes(${J(sc.at)})) + 1);
     v.dispatch({ selection: { anchor: l.from + 4 }, scrollIntoView: true }); v.focus(); return true; })()`);
@@ -34,7 +35,6 @@ export async function scratch(p, sc) {
     fail(`no scratch document: ${J(await p.eval(`document.getElementById('play-toast')?.textContent ?? ''`))}`); return res;
   }
   res.info.sliceMs = Date.now() - t0;
-  res.info.dbg = await p.eval(`self.__scratchDbg ?? null`);
   res.info.banner = await p.eval(`document.getElementById('play-scratch').hidden ? null : document.getElementById('scratch-what').textContent`);
   if (res.info.banner !== `Scratch slice of chapter.tex:${sc.lines}`) fail(`the banner says ${J(res.info.banner)}`);
   // the scratch document's own check, then the edit there
@@ -44,6 +44,7 @@ export async function scratch(p, sc) {
   // the point of a scratch document: a fast cycle (timing bounds, failures in the perf tier only)
   if (res.info.sliceMs > (sc.sliceMs ?? 3000)) res.perf.push(`slice ${res.info.sliceMs} ms, want <= ${sc.sliceMs ?? 3000}`);
   if (res.info.checkMs > (sc.checkMs ?? 5000)) res.perf.push(`first check of the scratch document ${res.info.checkMs} ms, want <= ${sc.checkMs ?? 5000}`);
+  res.info.run = await p.eval(`document.getElementById('t-time')?.textContent ?? ''`);
   res.info.lines = await p.eval(`satexHealth().text.split('\\n').length`);
   const edited = await p.eval(`(() => { const v = ${view}, t = v.state.doc.toString(), i = t.indexOf(${J(sc.from)}); if (i < 0) return false; v.dispatch({ changes: { from: i, to: i + ${sc.from.length}, insert: ${J(sc.to)} } }); return true; })()`);
   if (!edited) { fail('the scratch document lacks the caption'); return res; }

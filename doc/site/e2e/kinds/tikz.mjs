@@ -178,18 +178,19 @@ export async function tikz(p, sc) {
         if (!/\\draw\[flow\] \(src\) -- \(-?[\d.]+cm,[\d.]+cm\) -- \(run\);/.test(t1 || '')) r.fails.push(`text: ${J(r.info.wrote)}`);
         const b = await build(p);
         if (!b.ok || /error|failed|stopped/i.test(b.status)) r.fails.push(`build: ${b.status.slice(0, 120)}`);
-        // the run after the build places the boxes again: wait for its words, then hover away and back
+        // the run after the build places the boxes again: wait for its words; the page may have moved, so the bend
+        // point is found again from the words (30 px above the middle between them, where it was dropped)
         await p.until(`satexPdfWords().length > 3`, 20000);
         await sleep(1500);
-        await p.s('Input.dispatchMouseEvent', { type: 'mouseMoved', x: x + 200, y: y + 200 });
+        const bendAt = async () => { const [bx, by] = await between('source', 'run')(); return [bx, by - 30]; }, [bx, by] = await bendAt();
+        await p.s('Input.dispatchMouseEvent', { type: 'mouseMoved', x: bx + 200, y: by + 200 });
         await sleep(100);
-        await p.s('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y: y - 30 });
-        if (!await p.until(`document.querySelector('#play-pdf .pdf-tikz-bend')`, 3000)) r.fails.push(`no grip on the bend point (words ${await p.eval('satexPdfWords().length')})`);
-        if (r.fails.length) r.fails.push(`DBG ${await p.eval(`JSON.stringify(self.__tkDbg?.(${x}, ${y - 30}))`)}`); // DEBUG-REMOVE
+        await p.s('Input.dispatchMouseEvent', { type: 'mouseMoved', x: bx, y: by });
+        if (!await p.until(`document.querySelector('#play-pdf .pdf-tikz-bend')`, 3000)) r.fails.push('no grip on the bend point');
         await p.shot('bend-drag-after.png');
         if (t1) {
-          await act(p, 'bend-remove', async () => [x, y - 30], ['Remove bend point'], /\\draw\[flow\] \(src\) -- \(run\);/, { compile: false });
-          await act(p, 'bend-curve', async () => [x, y - 30], ['Convert to curve'], /\\draw\[flow\] \(src\) to\[out=\d+, in=\d+\] \(run\);/, { shot: true });
+          await act(p, 'bend-remove', bendAt, ['Remove bend point'], /\\draw\[flow\] \(src\) -- \(run\);/, { compile: false });
+          await act(p, 'bend-curve', bendAt, ['Convert to curve'], /\\draw\[flow\] \(src\) to\[out=\d+, in=\d+\] \(run\);/, { shot: true });
           await undo(p);
           if (await text(p) !== t0) r.fails.push('one Ctrl+Z did not take the bend point back');
           await build(p);

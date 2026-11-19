@@ -1681,12 +1681,14 @@ p.ts.ts-foot::before { content: ""; position: absolute; top: 0; left: 0; width: 
 .pdf .k-bibitem { --k: #0f6b3a; } .pdf .k-key, .pdf .k-key-use { --k: #6f42a8; } .pdf .k-entry { --k: #5c636a; }
 .pdf .k-def { border-radius: 1px; box-shadow: inset 3px 0 0 #0006; } .pdf .k-use { border-radius: 999px; }
 .pdf .pdf-ov:not(.pdf-keys) { position: absolute; pointer-events: auto; }
-.pdf .pdf-env { z-index: 1; border: 1px solid #7c3aed99; border-left: 3px solid #7c3aed; border-radius: 3px; pointer-events: none !important; }
-.pdf .pdf-env b { position: absolute; right: 0; top: 0; transform: translateY(-100%); font: 600 .55rem/1.2 ui-monospace, Menlo, monospace; color: #fff; background: #7c3aed; padding: 0 .2rem; border-radius: 2px 2px 0 0; white-space: nowrap; }
-.pdf .pdf-fig { z-index: 1; border: 1px dashed #c2410c; background: #c2410c0d; pointer-events: none !important; }
-.pdf .pdf-fig b { position: absolute; left: 0; bottom: 0; font: 600 .55rem/1.2 ui-monospace, Menlo, monospace; color: #fff; background: #c2410c; padding: 0 .2rem; }
-.pdf .pdf-col { z-index: 2; border-inline: 1px solid #0e7490; background: #0e74900a; pointer-events: none !important; }
-.pdf .pdf-col b { position: absolute; left: 0; top: 0; transform: translateY(-100%); display: flex; align-items: stretch; max-width: 100%; box-sizing: border-box; font: 600 .55rem/1.3 ui-monospace, Menlo, monospace; color: #fff; background: #0e7490; padding: 0 0 0 .25rem; border-radius: 3px 3px 0 0; white-space: nowrap; pointer-events: auto; }
+/* one colour per layer, light and dark (a PDF page's paper sets its scheme): its overlay and its swatch in the layers menu read it */
+:root { --ly-envs: light-dark(#7c3aed, #a78bfa); --ly-figures: light-dark(#c2410c, #fb923c); --ly-geometry: light-dark(#0e7490, #22d3ee); --ly-glue: var(--c6); --ly-bad: light-dark(#d92d20, #ff8a7a); --ly-under: light-dark(#b07400, #f2c14e); --ly-math: light-dark(#be185d, #f472b6); --ly-macros: light-dark(#4d7c0f, #a3e635); --ly-chip-ink: light-dark(#fff, #111); }
+.pdf .pdf-env { z-index: 1; border: 1px solid color-mix(in srgb, var(--ly-envs) 60%, transparent); border-left: 3px solid var(--ly-envs); border-radius: 3px; pointer-events: none !important; }
+.pdf .pdf-env b { position: absolute; right: 0; top: 0; transform: translateY(-100%); font: 600 .55rem/1.2 ui-monospace, Menlo, monospace; color: var(--ly-chip-ink); background: var(--ly-envs); padding: 0 .2rem; border-radius: 2px 2px 0 0; white-space: nowrap; }
+.pdf .pdf-fig { z-index: 1; border: 1px dashed var(--ly-figures); background: color-mix(in srgb, var(--ly-figures) 5%, transparent); pointer-events: none !important; }
+.pdf .pdf-fig b { position: absolute; left: 0; bottom: 0; font: 600 .55rem/1.2 ui-monospace, Menlo, monospace; color: var(--ly-chip-ink); background: var(--ly-figures); padding: 0 .2rem; }
+.pdf .pdf-col { z-index: 2; border-inline: 1px solid var(--ly-geometry); background: color-mix(in srgb, var(--ly-geometry) 4%, transparent); pointer-events: none !important; }
+.pdf .pdf-col b { position: absolute; left: 0; top: 0; transform: translateY(-100%); display: flex; align-items: stretch; max-width: 100%; box-sizing: border-box; font: 600 .55rem/1.3 ui-monospace, Menlo, monospace; color: var(--ly-chip-ink); background: var(--ly-geometry); padding: 0 0 0 .25rem; border-radius: 3px 3px 0 0; white-space: nowrap; pointer-events: auto; }
 /* one chip per column, never wider than it: the name shortens, the ⋯ stays; its menu opens below the chip */
 .pdf .pdf-col-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; padding-right: .2rem; }
 .pdf .pdf-col-more { flex: none; font: inherit; color: inherit; background: transparent; border: 0; border-left: 1px solid #ffffff55; padding: 0 .25rem; cursor: pointer; border-radius: 0 3px 0 0; }
@@ -1715,6 +1717,7 @@ body.type-sync #play-pdf .pdf-pages { box-shadow: inset 0 0 0 2px color-mix(in s
 .ts-orig-macro, .pdf .pdf-orig-macro { background: var(--orig-macro); box-shadow: inset 0 -2px var(--orig-macro-line); }
 .ts-orig-arg, .pdf .pdf-orig-arg { background: var(--orig-arg); box-shadow: inset 0 -2px var(--orig-arg-line); }
 .ts-orig-moved, .pdf .pdf-orig-moved { background: var(--orig-moved); }
+.pdf .pdf-orig-made { box-shadow: none; background: var(--orig-macro) linear-gradient(90deg, var(--orig-macro-line) 50%, transparent 0) 0 100% / 4px 2px repeat-x; }
 /* a band per origin run, one underline: no rounded ends between words */
 .ts-orig, .pdf .pdf-orig { border-radius: 1px; }
 canvas.pdf-echo { display: block; }
@@ -1751,9 +1754,9 @@ canvas.pdf-echo { display: block; }
 /* typing goes into a definition: said below the view, with a way back */
 .type-note { position: sticky; bottom: 0; z-index: 4; display: flex; flex-wrap: wrap; align-items: center; gap: .4rem; margin: 0; padding: .35rem .6rem; font-size: .8rem; background: color-mix(in srgb, var(--orig-macro) 100%, var(--bg, #fff)); border-top: 1px solid var(--line, #8884); }
 .type-note span { flex: 1 1 16rem; }
-.pdf .pdf-block { z-index: 1; outline: 1px dashed #0e7490; pointer-events: none !important; }
-.pdf .pdf-block b { position: absolute; right: 0; top: 0; transform: translateY(-100%); font: 600 .55rem/1.2 ui-monospace, Menlo, monospace; color: #0e7490; }
-.pdf .pdf-margin { background: #0e749014; pointer-events: none !important; }
+.pdf .pdf-block { z-index: 1; outline: 1px dashed var(--ly-geometry); pointer-events: none !important; }
+.pdf .pdf-block b { position: absolute; right: 0; top: 0; transform: translateY(-100%); font: 600 .55rem/1.2 ui-monospace, Menlo, monospace; color: var(--ly-geometry); }
+.pdf .pdf-margin { background: color-mix(in srgb, var(--ly-geometry) 8%, transparent); pointer-events: none !important; }
 /* the grid over a page: thin lines every step, stronger ones labelled along the top and left edges */
 .pdf .pdf-grid { --g: color-mix(in srgb, var(--c4) 14%, transparent); --G: color-mix(in srgb, var(--c4) 40%, transparent); inset: 0; z-index: 0; pointer-events: none !important;
   background: linear-gradient(to right, var(--G) 1px, transparent 1px) 0 0 / var(--Gx) 100%, linear-gradient(to bottom, var(--G) 1px, transparent 1px) 0 0 / 100% var(--Gy),
@@ -1769,7 +1772,7 @@ canvas.pdf-echo { display: block; }
 .sw-grid { background: linear-gradient(to right, var(--c4) 1px, transparent 1px) 0 0 / 4px 100%, linear-gradient(to bottom, var(--c4) 1px, transparent 1px) 0 0 / 100% 4px; }
 .sw-origins { background: linear-gradient(90deg, var(--orig-macro-line) 33%, var(--orig-arg-line) 33% 66%, var(--orig-moved-line) 66%); }
 .pdf .pdf-bad { z-index: 1; border-radius: 2px; }
-.pdf .pdf-bad.b-over { outline: 1px solid #d92d20; background: #d92d2014; } .pdf .pdf-bad.b-under { outline: 1px dashed #b07400; background: #b0740014; }
+.pdf .pdf-bad.b-over { outline: 1px solid var(--ly-bad); background: color-mix(in srgb, var(--ly-bad) 8%, transparent); } .pdf .pdf-bad.b-under { outline: 1px dashed var(--ly-under); background: color-mix(in srgb, var(--ly-under) 8%, transparent); }
 .pdf .pdf-bar-out { z-index: 2; background: #d92d20; }
 .pdf .pdf-bar-out b { position: absolute; left: 100%; top: 50%; transform: translateY(-50%); margin-left: 2px; font: 600 .55rem/1.2 ui-monospace, Menlo, monospace; color: #fff; background: #d92d20; padding: 0 .2rem; border-radius: 2px; white-space: nowrap; }
 .pdf .pdf-bar-v b { left: auto; right: 0; top: 100%; transform: none; margin: 1px 0 0; }
@@ -2425,11 +2428,12 @@ header .hd-feedback:hover:not(:disabled) { background: var(--sunk); color: var(-
 /* in the PDF's menu the groups stack, each label over its switches */
 .pdf-layer-list.layers { display: grid; justify-items: stretch; gap: .6rem; }
 .pdf-layer-list .layer-group { display: grid; justify-items: start; gap: .3rem; }
-.sw-envs { border: 1px solid #7c3aed; border-left-width: 3px; } .sw-keys { background: linear-gradient(90deg, #1a7f37 50%, #1d5fb8 50%); }
+.sw-envs { border: 1px solid var(--ly-envs); border-left-width: 3px; } .sw-keys { background: linear-gradient(90deg, var(--safe) 50%, var(--info) 50%); }
 .sw-boxes { border: 1px dashed var(--c3); } .sw-ligs { background: color-mix(in srgb, var(--accent) 35%, transparent); box-shadow: inset 0 -2px 0 var(--accent); }
-.sw-glue { border: 1.5px solid var(--c6); border-top: 0; }
-.sw-geometry { border: 1px dashed #0e7490; background: #0e749018; } .sw-figures { border: 1px dashed #c2410c; background: #c2410c18; } .sw-widths { border-inline: 2px solid #0e7490; background: #0e74900f; }
-.sw-findings { border-bottom: 2px solid #b07400; background: #b0740022; } .sw-maybe { border: 1px dotted var(--muted); background: repeating-linear-gradient(135deg, var(--sunk) 0 2px, transparent 2px 4px); } .sw-bad { background: #d92d20; }
+.sw-glue { border: 1.5px solid var(--ly-glue); border-top: 0; }
+.sw-math { background: color-mix(in srgb, var(--ly-math) 22%, transparent); box-shadow: inset 0 -2px var(--ly-math); } .sw-macros { border: 1px solid var(--ly-macros); border-radius: 2px; }
+.sw-geometry { border: 1px dashed var(--ly-geometry); background: color-mix(in srgb, var(--ly-geometry) 10%, transparent); } .sw-figures { border: 1px dashed var(--ly-figures); background: color-mix(in srgb, var(--ly-figures) 10%, transparent); } .sw-widths { border-inline: 2px solid var(--ly-geometry); background: color-mix(in srgb, var(--ly-geometry) 6%, transparent); }
+.sw-findings { border-bottom: 2px solid var(--ly-under); background: color-mix(in srgb, var(--ly-under) 14%, transparent); } .sw-maybe { border: 1px dotted var(--muted); background: repeating-linear-gradient(135deg, var(--sunk) 0 2px, transparent 2px 4px); } .sw-bad { background: var(--ly-bad); }
 /* glue that may stretch or shrink (`.show-glue`): a thin bracket as big as its natural size, its spec on hover; glue
    that stretches without bound dotted. Glue between lines stands in the gutter and takes no room from the text. */
 .typeset .ts-glue { display: none; }
@@ -2443,10 +2447,15 @@ header .hd-feedback:hover:not(:disabled) { background: var(--sunk); color: var(-
 .typeset.show-glue .ts-glue.ts-inf, .typeset.show-glue .ts-glue.ts-inf::before { border-style: dotted; }
 /* infinite glue in a line shows where it fills: a dotted base line in the room it takes, none where it takes none (a cell) */
 .typeset.show-glue .ts-fill { display: inline-block; height: .3em; cursor: help; background: repeating-linear-gradient(90deg, color-mix(in srgb, var(--c6) 70%, transparent) 0 1.5px, transparent 1.5px 4px) bottom / 100% 1px no-repeat; }
-.pdf .pdf-glue { z-index: 1; box-sizing: border-box; border: 1px solid #0e7c86b0; border-top: 0; cursor: help; }
+.pdf .pdf-math { z-index: 1; border-radius: 2px; background: color-mix(in srgb, var(--ly-math) 14%, transparent); box-shadow: inset 0 -1.5px var(--ly-math); pointer-events: auto; cursor: help; }
+/* a macro's text: a light outline, its name on hover */
+.pdf .pdf-macro { z-index: 2; box-sizing: border-box; border: 1px solid color-mix(in srgb, var(--ly-macros) 55%, transparent); border-radius: 2px; pointer-events: auto; cursor: help; }
+.pdf .pdf-macro b { display: none; position: absolute; left: 0; top: 0; transform: translateY(-100%); font: 600 .55rem/1.2 ui-monospace, Menlo, monospace; color: var(--ly-chip-ink); background: var(--ly-macros); padding: 0 .2rem; border-radius: 2px 2px 0 0; white-space: nowrap; pointer-events: none; }
+.pdf .pdf-macro:hover { border-color: var(--ly-macros); } .pdf .pdf-macro:hover b { display: block; }
+.pdf .pdf-glue { z-index: 1; box-sizing: border-box; border: 1px solid color-mix(in srgb, var(--ly-glue) 70%, transparent); border-top: 0; cursor: help; }
 .pdf .pdf-glue.g-fill { border-style: dotted; }
 /* the glue's spec in small text over it, where it fits; the full one on hover */
-.pdf .pdf-glue { container-type: inline-size; } .pdf .pdf-glue-spec { position: absolute; left: 50%; bottom: 1px; translate: -50% 0; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 500 .55rem/1 system-ui, sans-serif; color: #0e7c86; pointer-events: none; }
+.pdf .pdf-glue { container-type: inline-size; } .pdf .pdf-glue-spec { position: absolute; left: 50%; bottom: 1px; translate: -50% 0; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 500 .55rem/1 system-ui, sans-serif; color: var(--ly-glue); pointer-events: none; }
 @container (max-width: 3rem) { .pdf .pdf-glue-spec { display: none; } }
 /* a macro's parameters, each its own tint, the same wherever it stands */
 .tok-p1 { color: var(--c1); } .tok-p2 { color: var(--c2); } .tok-p3 { color: var(--c3); } .tok-p4 { color: var(--c4); } .tok-p5 { color: var(--c5); } .tok-p6, .tok-p7, .tok-p8, .tok-p9 { color: var(--c6); }
@@ -2580,6 +2589,9 @@ pre.out-block:hover .out-meta { opacity: .85; }
 .pdf .pdf-size-ghost { border-style: solid; background: #0e74901a; }
 .pdf .pdf-size-ghost > b { position: absolute; right: 0; bottom: 100%; margin-bottom: 3px; white-space: nowrap; font: 600 11px/1.3 var(--mono, monospace); color: #fff; background: #0e7490; padding: 1px 5px; border-radius: 3px; }
 .pdf .pdf-size-grip { position: absolute; right: -4px; top: calc(50% - 9px); width: 6px; height: 18px; border-radius: 3px; background: #0e7490; pointer-events: auto; cursor: ew-resize; touch-action: none; box-shadow: 0 0 0 2px var(--bg, #fff); }
+.pdf .pdf-forest-add { position: absolute; display: flex; gap: 2px; z-index: 4; pointer-events: auto; }
+.pdf .pdf-forest-add button { all: unset; cursor: pointer; font: 600 10px/1 var(--mono, monospace); color: #fff; background: #15803d; border-radius: 3px; padding: 2px 3px; }
+.pdf .pdf-forest-add button:hover, .pdf .pdf-forest-add button:focus-visible { background: #166534; }
 .pdf .pdf-tikz-bend { position: absolute; width: 10px; height: 10px; margin: -5px 0 0 -5px; border-radius: 2px; transform: rotate(45deg); background: var(--panel, #fff); border: 2px solid #7c3aed; box-sizing: border-box; pointer-events: auto; cursor: move; touch-action: none; z-index: 4; }
 .pdf .pdf-tikz-tag { position: absolute; transform: translate(8px, -130%); white-space: nowrap; pointer-events: none; z-index: 5; font: 600 11px/1.3 var(--mono, monospace); color: #fff; background: #7c3aed; padding: 1px 5px; border-radius: 3px; }
 .pdf .pdf-tikz-ghost { border-style: solid; background: #7c3aed1f; }

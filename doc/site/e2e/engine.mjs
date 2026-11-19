@@ -553,7 +553,8 @@ async function completeScenario(p, sc) {
   const text = got || await p.eval(`satexHealth().text`), at = [...before].findIndex((c, i) => c !== text[i]);
   res.info.made = J(text.slice(Math.max(0, at - 10), at + 40));
   if (!got) res.fails.push(`text ${res.info.made}, want ${sc.want}`);
-  if (!res.info.running) res.fails.push(`the run ended before the check (${res.info.ms} ms): no run was going on`);
+  // `idle`: what is checked holds with or without a run (the boxes a completion leaves)
+  if (!res.info.running && !sc.idle) res.fails.push(`the run ended before the check (${res.info.ms} ms): no run was going on`);
   // `clean`: once the caret has left what the completion wrote, no snippet field or linked \begin/\end box stays drawn
   if (sc.clean) {
     await sleep(600);
@@ -666,6 +667,19 @@ async function forestScenario(p, sc) {
   if (!w) { res.fails.push('setup: no node word'); return res; }
   const x = (w[0] + w[2]) / 2, y = (w[1] + w[3]) / 2;
   await p.s('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y });
+  // `plus`: the hover's + button of that kind (child, sibling) instead of the menu
+  if (sc.plus) {
+    const b = await p.until(`(() => { const b = document.querySelector('#play-pdf .pdf-forest-add [data-add=${sc.plus}]'); if (!b) return null; const r = b.getBoundingClientRect(); return [r.x + r.width / 2, r.y + r.height / 2]; })()`, 4000);
+    if (!b) { res.fails.push(`no + ${sc.plus} button on hover`); await shot(p, res, 'noplus'); return res; }
+    const text0 = await p.eval(`satexHealth().text`);
+    await p.s('Input.dispatchMouseEvent', { type: 'mouseMoved', x: b[0], y: b[1] });
+    await sleep(80);
+    await p.mouse(b[0], b[1]);
+    const text1 = await p.until(`satexHealth().text !== ${J(text0)} && satexHealth().text`, 8000);
+    if (!text1) { res.fails.push('source unchanged'); return res; }
+    if (!sc.want.test(text1)) res.fails.push(`source: ${J(text1.match(/\\begin\{forest\}[^]*?\\end\{forest\}/)?.[0]?.slice(0, 300))}, want ${sc.want}`);
+    return res;
+  }
   for (const type of ['mousePressed', 'mouseReleased']) await p.s('Input.dispatchMouseEvent', { type, x, y, button: 'right', clickCount: 1 });
   // the page actions' menu (actions.ts): a forest node's groups are inline, their rows at the menu's root
   const label = `(b) => b.querySelector('span')?.textContent ?? b.textContent`;

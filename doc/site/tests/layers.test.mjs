@@ -72,3 +72,41 @@ test('the Typeset indent comes from the row facts', async () => {
   assert.equal(L.indentOf({ indented: false, parindent: 15 }), 0, '\\noindent and after a heading: none');
   assert.equal(L.indentOf({ parindent: 15 }), null, 'not known: no indent drawn');
 });
+// The glue labels (user 2026-11-19, a screenshot of `3.33333pt plus 1.66667pt minus 1.11111pt` drawn over `end · 253.6pt`):
+// the spec shortened, two decimals at most, the unit once; other labels keep their words (pins glueShort).
+test('glue labels: short form', async () => {
+  const L = self.satexLayers;
+  assert.equal(L.glueShort('3.33333pt plus 1.66667pt minus 1.11111pt'), '3.33+1.67−1.11pt');
+  assert.equal(L.glueShort('0pt plus 1fil'), '0pt+1fil', 'units differ: each said');
+  assert.equal(L.glueShort('12.0pt'), '12pt');
+  assert.equal(L.glueShort('2pt minus 1pt'), '2−1pt');
+  assert.equal(L.glueShort('end · 253.6pt'), 'end · 253.6pt');
+  assert.equal(L.glueShort('centred · 12.345pt each side'), 'centred · 12.35pt each side');
+});
+// Overlapping labels (same bug): a label moves off one placed before or a fixed chip, prefers a spot over no ink, and
+// is elided (null) when no spot is free (pins fitLabels' order: in place, below, above, two below).
+test('glue labels: collisions moved or elided', async () => {
+  const L = self.satexLayers, R = (l, t, r, b) => ({ l, t, r, b });
+  assert.deepEqual(L.fitLabels([R(0, 10, 50, 20), R(40, 10, 90, 20)], [], []), [0, 10], 'the second moves a height down');
+  assert.deepEqual(L.fitLabels([R(0, 10, 50, 20)], [], [R(0, 10, 50, 20), R(0, 20, 50, 30)]), [-10], 'above: the spot over no ink');
+  assert.deepEqual(L.fitLabels([R(0, 10, 50, 20)], [R(0, 0, 50, 40)], []), [null], 'no free spot: elided');
+  assert.deepEqual(L.fitLabels([R(0, 10, 50, 20), R(0, 10, 50, 20), R(0, 10, 50, 20), R(0, 10, 50, 20), R(0, 10, 50, 20)], [], []), [0, 10, -10, 20, null]);
+});
+// The math layer (user 2026-11-19) tints inline math where SyncTeX's `$` records put its start and end: one span per
+// pair, a formula broken over two lines in two parts (pins mathSpans' pairing and the line box heights).
+test('math layer: spans from the SyncTeX math records', async () => {
+  const L = self.satexLayers, B = (kind, x, y, w = 0, h = 0, d = 0) => ({ page: 1, file: 'a.tex', line: 3, kind, x, y, w, h, d });
+  const boxes = [B('(', 70, 100, 300, 7, 2), B('(', 70, 112, 300, 7, 2), B('$', 100, 100), B('$', 130, 100), B('$', 340, 100), B('$', 90, 112)];
+  assert.deepEqual(L.mathSpans(boxes).map((s) => [s.l, s.r, s.t, s.d]), [[100, 130, 93, 102], [340, 370, 93, 102], [70, 90, 105, 114]]);
+  assert.deepEqual(L.mathSpans([B('$', 10, 50)]), [], 'an unpaired record: no span');
+});
+// The legend (user 2026-11-19): every layer's switch shows a swatch in its colour, read from a theme token so it follows
+// light and dark as its overlay does (pins: no layer without a `.sw-<id>` rule, no swatch with a bare hex colour).
+test('every layer has a themed swatch', async () => {
+  const css = readFileSync(new URL('style.css', SITE), 'utf8');
+  for (const k of Object.keys(self.satexLayers.LAYERS)) {
+    const rule = new RegExp(`\\.sw-${k} \\{([^}]*)\\}`).exec(css);
+    assert.ok(rule, `.sw-${k} missing`);
+    assert.doesNotMatch(rule[1], /#[0-9a-f]{3,8}\b/i, `.sw-${k} names a bare colour, not a token`);
+  }
+});

@@ -3,6 +3,8 @@
 export {};
 type Store = { get(k: string): any; set(k: string, v: unknown): void } | undefined;
 type On = Record<string, boolean>;
+type Box = { page: number; file: string; line: number; kind: string; x: number; y: number; w: number; h: number; d: number };
+type Rect = { l: number; t: number; r: number; b: number };
 declare global {
   interface Window {
     satexLayers: {
@@ -14,6 +16,9 @@ declare global {
       menu(details: HTMLElement, list: HTMLElement, on: On, onFold?: () => void): () => void;
       length(text: unknown, font?: Record<string, number>): { pt: number; num: number; unit: string } | null;
       indentOf(r: { indented?: boolean; indent?: number; parindent?: number }): number | null;
+      glueShort(spec: string): string;
+      mathSpans(boxes: Box[]): { page: number; l: number; t: number; r: number; d: number; file: string; line: number }[];
+      fitLabels(labels: Rect[], fixed: Rect[], ink: Rect[]): (number | null)[];
     };
   }
 }
@@ -34,6 +39,8 @@ declare global {
     grid: ['grid', 'layout'],
     findings: ['findings', 'analysis'],
     maybe: ['maybe', 'analysis'],
+    math: ['math', 'structure'],
+    macros: ['macros', 'analysis'],
     origins: ['origins', 'analysis'],
     bad: ['bad boxes', 'analysis'],
   };
@@ -130,5 +137,55 @@ declare global {
     const unit = m?.[2].toLowerCase(), per = unit && (PT[unit] ?? font[unit]);
     return m && unit && per && +m[1] > 0 ? { pt: +m[1] * per, num: +m[1], unit } : null;
   }
-  self.satexLayers = { GROUPS, LAYERS, groups, html, state, wire, count, menu, length, SHOW, showClasses, showDefaults, showHtml, indentOf };
+  /** A number as a label shows it: at most two decimals, no trailing zeros. */
+  const num = (x: string) => String(+(+x).toFixed(2));
+  /** A glue spec as its label: `3.33333pt plus 1.66667pt minus 1.11111pt` as `3.33+1.67−1.11pt`, the unit said once when
+   * all parts share it; any other text (`end · 253.6pt`) keeps its words, its numbers trimmed. The full spec stays on hover. */
+  function glueShort(spec: string) {
+    const m = /^\s*(-?[\d.]+)(\w+)(?:\s+plus\s+(-?[\d.]+)(\w+))?(?:\s+minus\s+(-?[\d.]+)(\w+))?\s*$/.exec(spec);
+    if (!m) return spec.replace(/-?\d+\.\d+/g, num);
+    const parts = [[m[1], m[2], ''], [m[3], m[4], '+'], [m[5], m[6], '\u2212']].filter((p) => p[0] != null) as string[][];
+    const one = parts.every((p) => p[1] === parts.at(-1)![1]);
+    return parts.map(([n, u, sign], i) => sign + num(n) + (one && i < parts.length - 1 ? '' : u)).join('');
+  }
+  const meets = (a: Rect, b: Rect) => a.l < b.r && a.r > b.l && a.t < b.b && a.b > b.t;
+  const area = (a: Rect, b: Rect) => Math.max(0, Math.min(a.r, b.r) - Math.max(a.l, b.l)) * Math.max(0, Math.min(a.b, b.b) - Math.max(a.t, b.t));
+  /** Labels placed in order (the first wins its spot): each its vertical shift, null when elided. A label never overlaps a
+   * `fixed` one or one placed before; of its spots (in place, a height below, above, two below) it takes the one covering
+   * the least `ink`, the first on a tie. One with no free spot is elided: its value stays on hover. */
+  function fitLabels(labels: Rect[], fixed: Rect[], ink: Rect[]) {
+    const placed = [...fixed];
+    return labels.map((a) => {
+      const h = a.b - a.t;
+      let best: number | null = null, cost = Infinity;
+      for (const dy of [0, h, -h, 2 * h]) {
+        const q = { l: a.l, r: a.r, t: a.t + dy, b: a.b + dy };
+        if (placed.some((p) => meets(p, q))) continue;
+        const c = ink.reduce((s, w) => s + area(w, q), 0);
+        if (c < cost) { cost = c; best = dy; }
+        if (!c) break;
+      }
+      if (best != null) placed.push({ l: a.l, r: a.r, t: a.t + best, b: a.b + best });
+      return best;
+    });
+  }
+  /** Inline math as SyncTeX records it: a `$` record where math begins and one where it ends, in the order TeX shipped
+   * them. One span per pair on a line, from the first to the second; math broken over lines runs to the first line's end
+   * and from the next line's start. Its height is the line box's, a 7bp ascent and 2bp descent where none is found. */
+  function mathSpans(boxes: Box[]) {
+    const lines = boxes.filter((b) => b.kind === '(' && b.w > 0), out: ReturnType<Window['satexLayers']['mathSpans']> = [];
+    const lineOf = (b: Box) => lines.find((o) => o.page === b.page && Math.abs(o.y - b.y) < 0.5 && o.x - 0.5 <= b.x && b.x <= o.x + o.w + 0.5);
+    const put = (b: Box, l: number, r: number) => { const o = lineOf(b); if (r > l) out.push({ page: b.page, l, r, t: b.y - (o?.h || 7), d: b.y + (o?.d || 2), file: b.file, line: b.line }); };
+    const marks = boxes.filter((b) => b.kind === '$');
+    for (let i = 0; i + 1 < marks.length; i += 2) {
+      const [a, b] = [marks[i]!, marks[i + 1]!];
+      if (a.page !== b.page) continue;
+      if (Math.abs(a.y - b.y) < 0.5) { put(a, a.x, b.x); continue; }
+      const la = lineOf(a), lb = lineOf(b);
+      put(a, a.x, la ? la.x + la.w : a.x);
+      put(b, lb ? lb.x : b.x, b.x);
+    }
+    return out;
+  }
+  self.satexLayers = { GROUPS, LAYERS, groups, html, state, wire, count, menu, length, SHOW, showClasses, showDefaults, showHtml, indentOf, glueShort, fitLabels, mathSpans };
 })();
