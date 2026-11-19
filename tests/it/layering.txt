@@ -32,9 +32,6 @@ engine/source.rs project
 engine/tfm.rs project
 lsp/handlers.rs cli
 lsp/mod.rs cli
-lsp/plugins/bibliography.rs cli
-lsp/plugins/glossary.rs cli
-lsp/plugins/index.rs cli
 plugins/docs/texdoc.rs queries
 plugins/format/mod.rs cli
 plugins/format/mod.rs queries

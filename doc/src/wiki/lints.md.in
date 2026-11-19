@@ -66,6 +66,12 @@ A finding's `fix` says what to do. Where that is mechanical it carries the edits
 
 `--fix` applies the safe fixes, `--unsafe-fixes` adds the unsafe ones, `--diff` prints the edits instead of writing them. Only project files change. Overlapping fixes wait for the next round. The document is re-analyzed after each round, up to eight.
 
+Errors that stop LaTeX get fixes too. A package a letter off an installed one is respelled (`graphix` to `graphicx`), one no installed name is near is deleted. A command only a package defines (`\toprule`, `\SI`, `\mathbb`) loads that package, an arrow tip or shape loads its TikZ library. A second load with new options moves them to the first, a load after `\begin{document}` moves into the preamble, `\DocumentMetadata` moves above `\documentclass`. A `\ref` or `\cite` key one typo off a label or entry is respelled. A duplicate label is renamed, and no reference with it. Citations without any bibliography get `\bibliography` (or biblatex's `\addbibresource`) for the `.bib` files beside the document.
+
+<a href="https://github.com/EagleoutIce/satex-analyzer/blob/main/doc/site/showcase/img/quickfix-light.webm" title="Play the clip"><picture><source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/EagleoutIce/satex-analyzer/main/doc/site/showcase/img/quickfix-dark.png"><img src="https://raw.githubusercontent.com/EagleoutIce/satex-analyzer/main/doc/site/showcase/img/quickfix-light.png" alt="Fix an error: the hover card's fix closes an unclosed \textbf and the PDF builds" width="640"></picture></a>
+
+Some findings can be repaired in more than one way: a runaway argument may end at its line or at its paragraph. The first fix is the one `--fix` applies, the others come as `alternatives`, each its own code action in an editor, never part of a fix-all.
+
 `--format json` gives each fix as `applicability` and `edits` (`path`, 1-based `start`/`end`, `replacement`), `--format sarif` as `fixes`, `--format lsp` as diagnostics with `quickfix` code actions.
 
 In the rule list below, `S` marks a rule with a safe fix and `U` one with an unsafe fix. A rule with both is safe where its fix cannot change what the document means and unsafe where it might. Each finding names its own kind.

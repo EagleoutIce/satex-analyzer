@@ -161,7 +161,7 @@ pub fn xn_over_d(x: i64, n: i64, d: i64) -> (i64, i64) {
 /// `attach_sign`, which gives `\maxdimen` before the sign is attached —
 /// so `20000` times a negative unit is `+\maxdimen`.
 fn scale_unit(n: i64, v: i64, f: i64) -> Scaled {
-    mult_and_add(n, v, xn_over_d(v, f, UNIT).0, MAX_DIMEN).unwrap_or(MAX_DIMEN)
+    mult_and_add(n, v, xn_over_d(v, f, UNIT).0, MAX_DIMEN).unwrap_or(DIMEN_LIMIT)
 }
 
 /// The glue a value holds. A number or dimension widens to glue without
@@ -782,6 +782,7 @@ impl Machine<'_> {
         let mut hull = Some((0i64, 0i64));
         // tex.web § 445: past the largest number TeX says so and reads on at it.
         let cap = |v: i64| v.min(MAX_INT);
+        let mut big = None;
         let owner = self.spell_owner.0;
         // Its spelling while it is known digits, then one whole typed number.
         let mut spell: Option<(i64, Option<Sym>)> = (radix == 10).then_some((0, None));
@@ -858,9 +859,15 @@ impl Machine<'_> {
             last = Some(d);
             spell = spell.filter(|(_, typed)| typed.is_none()).map(|(lead, _)| (cap(lead * 10 + d), None));
             hull = hull.map(|(lo, hi)| (cap(lo.saturating_mul(radix) + d), cap(hi.saturating_mul(radix) + d)));
-            value = (value * radix + d).min(MAX_INT);
+            value = value * radix + d;
+            if value > MAX_INT {
+                (value, big) = (MAX_INT, Some(token.span));
+            }
             next = self.next_x_token();
         };
+        if let Some(span) = big.filter(|_| !unknown) {
+            self.diagnose(crate::analysis::facts::Severity::Warning, "number-too-big", span, "Number too big".into());
+        }
         // Radixes are even: the last digit's parity is the number's.
         self.abs_odd = last.map(|d| d % 2 != 0);
         if unknown {
@@ -1529,9 +1536,18 @@ impl Machine<'_> {
 
     /// tex.web § 448 (`attach_sign`): a value of 2^30 or more is "Dimension
     /// too large" and becomes `\maxdimen`.
-    fn attach_sign(&self, value: Scaled, negative: bool) -> Scaled {
-        let value = if value.abs() >= DIMEN_LIMIT { MAX_DIMEN } else { value };
-        if negative { -value } else { value }
+    fn attach_sign(&mut self, value: Scaled, negative: bool) -> Scaled {
+        if value.abs() < DIMEN_LIMIT {
+            return if negative { -value } else { value };
+        }
+        let span = self.position_span();
+        self.diagnose(
+            crate::analysis::facts::Severity::Warning,
+            "dimension-too-large",
+            span,
+            "Dimension too large".into(),
+        );
+        if negative { -MAX_DIMEN } else { MAX_DIMEN }
     }
 
     /// ⟨glue⟩ or, with `mu`, ⟨muglue⟩ (tex.web § 461, `scan_glue`): one
@@ -1641,7 +1657,7 @@ fn clamp_dimen(num: &Num) -> Num {
 /// tex.web § 453 (`attach_fraction`): an integer part of 2^14 points or
 /// more is "Dimension too large".
 fn attach_fraction(integer: i64, fraction: i64) -> Scaled {
-    if integer >= MAX_POINTS { MAX_DIMEN } else { integer * UNIT + fraction }
+    if integer >= MAX_POINTS { DIMEN_LIMIT } else { integer * UNIT + fraction }
 }
 
 /// What a `scan_expr` term is in terms of one unknown operand `x` (a
@@ -2102,11 +2118,12 @@ impl Machine<'_> {
             _ => None,
         };
         if arith && !unknown {
+            let span = self.position_span();
             self.diagnose(
                 crate::analysis::facts::Severity::Warning,
                 "arithmetic-overflow",
-                Span::default(),
-                "arithmetic overflow".into(),
+                span,
+                "Arithmetic overflow".into(),
             );
         }
         let quantity = match kind {

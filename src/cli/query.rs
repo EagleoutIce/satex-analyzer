@@ -8,6 +8,27 @@ use crate::analysis::machine::Machine;
 use crate::project::config::Config;
 use crate::queries::query::{self, Query, Record};
 
+/// The query `name` names, with the flags only some queries take checked against it: what
+/// `satex query` tells before any analysis runs.
+pub fn known(name: &str, text: bool, prefix: bool, for_: Option<&str>) -> Result<Query, String> {
+    let query =
+        Query::parse(name).ok_or_else(|| format!("unknown query `{name}`. `satex query --list` names them all"))?;
+    match (query, text, for_) {
+        (Query::Produces, false, _) => Err("the `produces` query needs the text to look for: --text TEXT".into()),
+        (Query::Options, _, None) => Err("the `options` query needs a name: --for NAME".into()),
+        (q, true, _) if q != Query::Produces => {
+            Err(format!("`--text` is what the `produces` query looks for, not `{name}`"))
+        }
+        (q, _, Some(for_)) if q != Query::Options => {
+            Err(format!("`--for {for_}` is what the `options` query takes, not `{name}`"))
+        }
+        (q, _, _) if prefix && q != Query::Pgfkeys => {
+            Err(format!("`--prefix` narrows the `pgfkeys` query, not `{name}`"))
+        }
+        _ => Ok(query),
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 pub fn run(
     context: &Context,
@@ -30,28 +51,14 @@ pub fn run(
         return Ok(Output::Records(names.collect()));
     }
     let name = name.ok_or("expected a query name. Try --list")?;
-    let query = Query::parse(name).ok_or_else(|| format!("unknown query `{name}`"))?;
+    let query = known(name, text.is_some(), prefix.is_some(), for_)?;
     let filter = parse_filter(filter)?;
     let kept = |found: Vec<Record>| Ok(Output::Records(found.into_iter().filter(|r| filter.accepts(r)).collect()));
-    if query == Query::Produces {
-        let text = text.ok_or("the `produces` query needs the text to look for: --text TEXT")?;
-        return kept(query::produces(context.analysis, context.source, text));
-    }
-    if text.is_some() {
-        return Err(format!("`--text` is what the `produces` query looks for, not `{name}`"));
-    }
-    if query == Query::Pgfkeys {
-        return kept(query::pgfkeys(context.analysis, prefix));
-    }
-    if query == Query::Options {
-        let for_ = for_.ok_or("the `options` query needs a name: --for NAME")?;
-        return kept(query::options(context.analysis, for_));
-    }
-    if let Some(for_) = for_ {
-        return Err(format!("`--for {for_}` is what the `options` query takes, not `{name}`"));
-    }
-    if prefix.is_some() {
-        return Err(format!("`--prefix` narrows the `pgfkeys` query, not `{name}`"));
+    match (query, text, for_) {
+        (Query::Produces, Some(text), _) => return kept(query::produces(context.analysis, context.source, text)),
+        (Query::Pgfkeys, ..) => return kept(query::pgfkeys(context.analysis, prefix)),
+        (Query::Options, _, Some(for_)) => return kept(query::options(context.analysis, for_)),
+        _ => {}
     }
     let records = query::run(context.analysis, query, &filter);
     if query == Query::Typeset && context.format.is_text() {

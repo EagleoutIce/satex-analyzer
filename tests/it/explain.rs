@@ -1132,3 +1132,15 @@ fn pretty_prints_edge_cases() {
     // a long body: one call with its two arguments per line
     assert_eq!(pretty(&analysis, "many", 40).lines().count(), 7);
 }
+
+/// A name the run gave no meaning still gets an answer.
+/// Bug pinned: `satex explain \nosuch` printed nothing at all and exited 0,
+/// the same as a run that never got to look.
+#[test]
+fn explaining_a_name_nothing_defines_says_so() {
+    let analysis = crate::support::analyze_plain("\\def\\known{1}");
+    let (records, hints) =
+        satex::queries::query::explain(&analysis, &["\\nosuch".into(), "known".into()], false).unwrap();
+    assert!(records.iter().any(|r| r["name"] == "\\known"), "{records:?}");
+    assert_eq!(hints, ["`\\nosuch` has no meaning the run gave it"], "{records:?}");
+}

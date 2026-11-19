@@ -515,8 +515,9 @@ pub struct Analysis {
 
 /// Collection sizes change slowly. Checking them on every token would
 /// cost more than it saves.
-/// Steps between two pauses in which a language server answers requests: a few milliseconds.
-const PAUSE_MASK: u64 = (1 << 15) - 1;
+/// Steps between two looks at the clock: a language server answers requests in a pause
+/// once [`crate::util::progress::pause_if_due`] finds the last one long enough ago.
+const PAUSE_MASK: u64 = (1 << 10) - 1;
 const CHECK_INTERVAL: u64 = 256;
 
 /// How many tokens of an input list a call's shape hashes: an identity
@@ -1015,7 +1016,7 @@ impl std::ops::IndexMut<usize> for Input {
 /// The `\global`, `\long`, `\outer` and `\protected` prefixes waiting to
 /// apply to the next definition or assignment. [`Machine::define`] consumes
 /// and resets them.
-#[derive(Debug, Default, Clone, Copy)]
+#[derive(Debug, Default, Clone, Copy, PartialEq)]
 pub struct Prefixes {
     pub global: bool,
     pub long: bool,
@@ -1080,6 +1081,8 @@ pub enum Runaway {
     Outer,
     FileEnded,
     Cut,
+    /// tex.web § 398: a token that is not the parameter text's.
+    Mismatch,
 }
 
 /// One run of [`Machine::drive`]: a main-loop command, or one token of
@@ -2188,6 +2191,8 @@ pub struct Machine<'a> {
     /// The last control sequence taken straight from a file, and where it
     /// stood: the call everything its expansion does is part of.
     pub file_call: Option<(Sym, Span)>,
+    /// `\XC@definec@lor` calls by color name ([`crate::analysis::observe::ColorSpecs`]).
+    pub(crate) color_specs: crate::analysis::observe::ColorSpecs,
     /// The last control sequence run whose token stands in a project file,
     /// a macro body of the project's included: where its own text put what
     /// the call `file_call` does.
@@ -2687,7 +2692,7 @@ const CUT_IMPRECISE: [&str; 1] = ["argument-ends-in-unknown"];
 /// run goes on exactly as TeX does, and never widens for them. Each is
 /// raised as the error TeX prints (`raised-error`) and counts toward
 /// [`MAX_ERRORS`] (tex.web § 82).
-pub(crate) const TEX_ERRORS: [(&str, Option<&str>); 16] = [
+pub(crate) const TEX_ERRORS: [(&str, Option<&str>); 17] = [
     ("missing-endcsname", Some("Missing \\endcsname inserted")),
     ("missing-sharp", Some("Missing # inserted in alignment preamble")),
     ("extra-sharp", Some("Only one # is allowed per tab")),
@@ -2698,6 +2703,8 @@ pub(crate) const TEX_ERRORS: [(&str, Option<&str>); 16] = [
     ("extra-fi", Some("Extra \\fi")),
     ("too-many-braces", Some("Too many }'s")),
     ("script-outside-math", Some("Missing $ inserted")),
+    // tex.web § 1177: the message names the kind of script
+    ("double-script", None),
     ("illegal-unit", None),
     ("missing-number", Some("Missing number, treated as zero")),
     // Named after the macro in the message itself.
@@ -2726,12 +2733,26 @@ pub(crate) const BREAKING: [&str; 6] =
 
 /// Errors and stops of the engine that satex reports as warnings of its
 /// own, not through [`TEX_ERRORS`].
-const ENGINE_WARNINGS: [&str; 6] =
-    ["mismatched-group", "file-ended", "wrong-mode", "arithmetic-overflow", "endless-loop", "terminal-read-fatal"];
+const ENGINE_WARNINGS: [&str; 8] = [
+    "mismatched-group",
+    "file-ended",
+    "wrong-mode",
+    "arithmetic-overflow",
+    "number-too-big",
+    "dimension-too-large",
+    "endless-loop",
+    "terminal-read-fatal",
+];
 
 /// Errors of the engine that keep TeX's recovery but carry satex's wording:
 /// raised like [`TEX_ERRORS`] where the path is TeX's, a note otherwise.
-const ENGINE_ERRORS: [&str; 6] = [
+/// The arithmetic ones (tex.web §§ 445, 448, 1236, 1240 and e-TeX's
+/// expressions) leave the limit, or the register as it was.
+const ENGINE_ERRORS: [&str; 10] = [
+    "wrong-mode",
+    "arithmetic-overflow",
+    "number-too-big",
+    "dimension-too-large",
     "mismatched-group",
     "missing-box",
     "missing-left-brace",
@@ -3028,6 +3049,7 @@ impl<'a> Machine<'a> {
             may_have_ended: HashSet::default(),
             recent_file_spans: Vec::new(),
             file_call: None,
+            color_specs: Default::default(),
             project_site: None,
             project_call: None,
             typed_at: None,
@@ -4556,6 +4578,7 @@ will look undefined",
         self.region = Region::default();
         self.out.facts.defs.clear();
         self.out.facts.expansions.clear();
+        self.color_specs = Default::default();
         self.out.facts.occurrences.clear();
         self.out.facts.loads.clear();
         self.out.facts.shapes.clear();
@@ -4772,6 +4795,9 @@ will look undefined",
     /// tex.web § 1374: a shipout runs the whatsits deferred to it, in order,
     /// in the environment then (§ 1370). Alternatives run apart.
     pub(crate) fn ship_pending(&mut self) {
+        // tex.web § 638: a page shipped, no output is dead.
+        let dead = self.intern("deadcycles");
+        self.env.set_value(dead, crate::engine::value::Value::Int(0), true);
         let alts = std::mem::take(&mut self.pending);
         let maybe = alts.len() > 1;
         self.apart(alts.iter(), |m, alt| alt.iter().for_each(|w| m.run_whatsit(w, maybe)));
@@ -5096,7 +5122,7 @@ will look undefined",
         self.read += 1;
         // a language server answers from its last analysis meanwhile, even inside one long command
         if self.out.steps & PAUSE_MASK == 0 {
-            crate::util::progress::pause_now();
+            crate::util::progress::pause_if_due();
         }
         if self.out.timings.is_enabled() {
             self.out.timings.count_token();
@@ -8321,8 +8347,12 @@ will look undefined",
                     ),
                 };
             match self.category_of(token) {
-                Some(Catcode::Sup) => self.math_script(true),
-                Some(Catcode::Sub) => self.math_script(false),
+                Some(c @ (Catcode::Sup | Catcode::Sub)) => {
+                    if self.math_script(c == Catcode::Sup) {
+                        let kind = if c == Catcode::Sup { "superscript" } else { "subscript" };
+                        self.diagnose(Severity::Warning, "double-script", token.span, format!("Double {kind}"));
+                    }
+                }
                 _ if !plain || script => self.natural = None,
                 _ => {}
             }
@@ -9921,9 +9951,8 @@ will look undefined",
                 out.push(text);
             }
             Meaning::Undefined if self.may_be_defined(sym) => out.push(self.unknown_text(Unk::Any, token.span)),
-            // tex.web § 370: an undefined name is an error and expands to
-            // nothing. Kept, `\edef\x{\x}` would make `\x` its own text.
-            Meaning::Undefined => {}
+            // Kept, `\edef\x{\x}` would make `\x` its own text.
+            Meaning::Undefined => self.undefined(sym, token.span, false),
             // `\unexpanded{…}` contributes its group to the result with
             // nothing expanded, which is what `\edef` stores (eTeX manual
             // § 3.4).
@@ -10259,14 +10288,7 @@ will look undefined",
                         self.note_expansion(sym, span, MeaningKind::Unknown, node, Vec::new());
                         self.read_call_arguments(sym, arity as usize, span);
                     }
-                    None => {
-                        let node = self.reference(sym, span);
-                        let kind = self.undefined_kind();
-                        self.note_expansion(sym, span, kind, node, Vec::new());
-                        self.record(Step::Undefined, sym, span);
-                        let text = format!("Undefined control sequence \\{}", self.name(sym));
-                        self.certain_error(&text, true, span);
-                    }
+                    None => self.undefined(sym, span, true),
                 }
             }
             Meaning::Register(kind, _) => {
@@ -10364,6 +10386,20 @@ will look undefined",
                 // `\let` to (tex.web § 1063): `\bgroup` opens a group.
                 self.do_character(Token::new(Tok::Cs(sym), span));
             }
+        }
+    }
+
+    /// tex.web § 370: expanding an undefined name, in the stomach or in any
+    /// expanding scan, is an error, and the name expands to nothing. `raise`
+    /// where the run's own path ends on it: a scan of text reads on.
+    pub(crate) fn undefined(&mut self, sym: Sym, span: Span, raise: bool) {
+        let node = self.reference(sym, span);
+        let kind = self.undefined_kind();
+        self.note_expansion(sym, span, kind, node, Vec::new());
+        self.record(Step::Undefined, sym, span);
+        if raise {
+            let text = format!("Undefined control sequence \\{}", self.name(sym));
+            self.certain_error(&text, true, span);
         }
     }
 
@@ -10883,7 +10919,10 @@ will look undefined",
             return;
         }
         if self.runaway != Runaway::No {
-            let text = format!("Paragraph ended before \\{} was complete", self.name(sym));
+            let text = match self.runaway {
+                Runaway::Mismatch => format!("Use of \\{} doesn't match its definition", self.name(sym)),
+                _ => format!("Paragraph ended before \\{} was complete", self.name(sym)),
+            };
             let unknown_arm = self.blind || self.took_unknown_arm();
             self.refute_if(unknown_arm, &text, span);
         }
@@ -10926,6 +10965,7 @@ will look undefined",
             let message = match runaway {
                 Runaway::Par => format!("Paragraph ended before \\{name} was complete; the call is abandoned"),
                 Runaway::FileEnded => format!("File ended while scanning use of \\{name}: its argument never closes"),
+                Runaway::Mismatch => format!("Use of \\{name} doesn't match its definition; the call is abandoned"),
                 _ => return,
             };
             self.diagnose(Severity::Warning, "runaway-argument", span, message);
@@ -13110,7 +13150,8 @@ will look undefined",
                             })
                             .collect();
                         self.probe_wants(&[t], &wanted, crate::analysis::probe::Want::Literal);
-                        self.unread(t);
+                        // The token is gone and the call is dropped.
+                        self.runaway = Runaway::Mismatch;
                         return args;
                     }
                     i += 1;

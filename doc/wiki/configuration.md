@@ -169,7 +169,7 @@ conventions:  # how TeX is usually written, where the text alone does not say
     decimals: 1  # the decimals such a length is written with
       #! affects: output
   lines:  # how long a source line is
-    length: 0  # where smart wrap breaks a typed line, in characters; 0 takes the document's own habit, else 80
+    length: 0  # where smart wrap breaks a typed line, in characters. 0 takes the document's own habit, else 80
       #! affects: output
       #! example: `length: 100`
   units:  # how a quantity is written with siunitx
@@ -759,6 +759,9 @@ lsp:  # how satex lsp serves an editor
   debounce_ms: 100  # how long to wait after an edit before analyzing again. Lower answers sooner but runs more often
     #! affects: speed
     #! example: `1000`: fast typing triggers one run per pause, not per keystroke
+  pause_ms: 10  # how long a run goes on at most before it answers hover, completion and widgets from the last run. Lower answers sooner, the run takes a little longer
+    #! affects: speed
+    #! example: `50`: requests during a run wait up to 50 ms
   # port: 2087  # a TCP port to serve on instead of stdio
     #! affects: output
 
@@ -1290,7 +1293,7 @@ A plugin picks a default from the machine, the installation and the build files.
 - **l3build.** A `build.lua` runs in a sandboxed `texlua` (else its plain assignments are read). Its source dirs are searched, `.ins`/`.dtx` pairs read through docstrip, and `typesetexe`/`stdengine` pick the engine. `l3build:` in `satex.yaml` says which build files to look for (`files`), which `--config` files to read after it (`config`), and overrides the `module`, the test patterns (`tests`) and the check engines (`engines`). `checks: true` analyzes the regression tests as documents too. Empty values keep what the bundle says.
 - **depp.** Every file read maps to its TeX Live package by TDS path. With depp loaded or its file present, `missing-dependency` and `unused-dependency` compare against it. Rules: `depp.rules`, `depp.renames`, `depp.file`.
 - **Package augmentations.** What SaTeX knows about one package lives in one module, not in the lint rules. A rule asks the module, which can veto a finding or rewrite its message and fix. It reads the package's state from the run. siunitx is the first: an `S` column that rounds keeps `inconsistent-precision` quiet, and the fix names `\sisetup{round-mode = ...}`. `plugins.augment` lists the modules that are on.
-- **Typesetting.** `plugins.typeset` holds plugins that run TeX's own algorithms again on text the last run did not set, for the playground's echo of typed text. Each reads only the run's end state: fonts, parameters, codes and hyphenation tables. `hyphenate` answers `satex/hyphenate`: where each word may take a hyphen, from the patterns, exceptions, hyphen mins and `\lccode`s in force. `linebreak` answers `satex/break`: the lines a paragraph's words break into, by the run's own Knuth–Plass breaker ([tex.web §§ 813](https://github.com/TeX-Live/texlive-source/blob/b4e37b58bfc6352cc3223ed26384cae01a28b234/texk/web2c/tex.web#L15997)–[890](https://github.com/TeX-Live/texlive-source/blob/b4e37b58bfc6352cc3223ed26384cae01a28b234/texk/web2c/tex.web#L17438)). It builds the list as TeX's main loop does: TFM widths, ligatures and kerns, interword glue by space factor. Fonts come from the run's paragraph at the line given, and the parameters from where the run broke that paragraph. Anything not known gives `null`. Both are on by default.
+- **Typesetting.** `plugins.typeset` holds plugins that run TeX's own algorithms again on text the last run did not set, for the playground's echo of typed text. Each reads only the run's end state: fonts, parameters, codes and hyphenation tables. `hyphenate` answers `satex/hyphenate`: where each word may take a hyphen, from the patterns, exceptions, hyphen mins and `\lccode`s in force. `linebreak` answers `satex/break`: the lines a paragraph's words break into, by the run's own Knuth–Plass breaker ([tex.web §§ 813](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L15997)–[890](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L17438)). It builds the list as TeX's main loop does: TFM widths, ligatures and kerns, interword glue by space factor. Fonts come from the run's paragraph at the line given, and the parameters from where the run broke that paragraph. Anything not known gives `null`. Both are on by default.
 - **Preloaded format.** A `%&fmt` line, `-fmt=` or `preload:` names a dumped preamble. SaTeX interprets that preamble instead (up to `\endofdump`). `pretex:` is code read before the first line (latexmk's `-usepretex`).
 
 ### Format and package caches
@@ -1438,7 +1441,7 @@ A rule's own settings live under `lints.⟨code⟩`.
 
 ## The clock
 
-`clock` sets `\year`, `\month`, `\day`, `\time` and `\pdfcreationdate` ([tex.web § 241](https://github.com/TeX-Live/texlive-source/blob/b4e37b58bfc6352cc3223ed26384cae01a28b234/texk/web2c/tex.web#L5240)).
+`clock` sets `\year`, `\month`, `\day`, `\time` and `\pdfcreationdate` ([tex.web § 241](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L5240)).
 
 | Value | Meaning |
 | --- | --- |

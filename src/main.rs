@@ -340,6 +340,10 @@ fn run() -> Result<(), String> {
     {
         command.check_format(cli.format)?;
     }
+    if let Some(Command::Query { name: Some(name), list: false, request: None, text, prefix, for_, .. }) = &cli.command
+    {
+        satex::cli::query::known(name, text.is_some(), prefix.is_some(), for_.as_deref())?;
+    }
     if let Some(Command::Completions { shell, target }) = &cli.command {
         return completions(shell, target.as_deref());
     }

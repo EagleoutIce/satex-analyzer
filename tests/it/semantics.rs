@@ -1561,9 +1561,12 @@ fn unknown_text_may_hold_a_delimiter() {
 \expandafter\g\u\stop
 \def\R{done}",
     );
-    for code in ["unbalanced-argument", "extra-right-brace", "runaway-argument", "file-ended"] {
+    for code in ["unbalanced-argument", "extra-right-brace", "file-ended"] {
         assert!(diagnosed(&analysis, code).is_empty(), "{code}");
     }
+    // No scan runs away. `\g` on `a b` is pdfTeX's "Use of \g doesn't match its definition".
+    let dropped = diagnosed(&analysis, "runaway-argument");
+    assert!(dropped.iter().all(|d| d.contains("doesn't match")), "{dropped:?}");
     for name in ["one", "two", "three", "R"] {
         assert!(definition(&analysis, name).is_some(), "{name}");
     }

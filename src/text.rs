@@ -105,6 +105,13 @@ impl Text {
         self.line_range(line).map_or("", |(start, end)| &self.body[start..end])
     }
 
+    /// The line as the engine reads it, one `char` per column: under an
+    /// 8-bit engine each byte ([`crate::engine::source`]).  Index it with
+    /// a [`Pos`]'s column, never [`Self::line`]'s characters.
+    pub fn columns(&self, line: u32) -> Vec<char> {
+        crate::engine::source::recode(self.line(line)).chars().collect()
+    }
+
     /// The byte offset of a position.  One column past the last character
     /// is the end of the line, and a position on the line after the last is
     /// the end of the file.  A column counts what the engine reads, so under
@@ -165,6 +172,14 @@ impl Text {
         let (start, _) = self.line_range(pos.line)?;
         let offset = self.offset(pos)?;
         Some((pos.line - 1, self.body[start..offset].encode_utf16().count() as u32))
+    }
+
+    /// The column of `pos` (1-based) in Unicode code points, as editors,
+    /// GitHub and SARIF's `unicodeCodePoints` count it: under an 8-bit
+    /// engine a satex column counts bytes.
+    pub fn code_point_col(&self, pos: Pos) -> Option<u32> {
+        let (start, _) = self.line_range(pos.line)?;
+        Some(self.body[start..self.offset(pos)?].chars().count() as u32 + 1)
     }
 
     /// The satex column of an LSP column (UTF-16 code units) on `line`.

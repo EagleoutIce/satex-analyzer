@@ -523,7 +523,7 @@ fn checkpoints_stay_within_their_memory() {
     let mut unbounded = Checkpoints::new(&cfg).every(64);
     unbounded.analyze(&text, &main);
     let (count, bytes) = unbounded.kept();
-    assert!(count > 2 && bytes > 0, "{count} checkpoints of {bytes} bytes");
+    assert!(count >= 2 && bytes > 0, "{count} checkpoints of {bytes} bytes");
     let budget = bytes / 3;
     cfg.limits.checkpoint_memory = bytesize::ByteSize::b(budget as u64);
     let mut bounded = Checkpoints::new(&cfg).every(64);
@@ -537,4 +537,183 @@ fn checkpoints_stay_within_their_memory() {
     assert!(bounded.resumed.is_some(), "the rerun resumed");
     let full = Machine::analyze_once(&edited, Some(&main), &cfg);
     assert_eq!(first_difference(&said(&incremental), &said(&full)), None);
+}
+
+/// A small deterministic generator, so a failing sequence is replayed by its seed.
+struct Lcg(u64);
+
+impl Lcg {
+    fn below(&mut self, n: usize) -> usize {
+        self.0 = self.0.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        ((self.0 >> 33) as usize) % n.max(1)
+    }
+}
+
+/// One random edit of `text` as typed in the editor: a word inserted, a character appended,
+/// a word deleted, a line doubled or a blank line added. Only body lines change, after `\begin{document}`
+/// (or anywhere in a file without one), never the last one, so the document still ends.
+fn random_edit(text: &str, rng: &mut Lcg, n: usize) -> String {
+    let mut lines: Vec<String> = text.split('\n').map(String::from).collect();
+    let body = lines.iter().position(|l| l.starts_with("\\begin{document}")).map_or(0, |i| i + 1);
+    let last = lines.iter().rposition(|l| l.starts_with("\\end{document}") || !l.trim().is_empty()).unwrap_or(0);
+    let i = body + rng.below(last.saturating_sub(body));
+    let line = &mut lines[i];
+    match rng.below(5) {
+        0 => *line = line.replacen(' ', &format!(" word{n} "), 1),
+        1 => line.push('x'),
+        2 => {
+            let words: Vec<&str> = line.split(' ').collect();
+            let plain: Vec<usize> = (0..words.len()).filter(|&w| words[w].chars().all(char::is_alphabetic)).collect();
+            if let Some(&w) = plain.get(rng.below(plain.len())) {
+                *line =
+                    words.iter().enumerate().filter(|&(k, _)| k != w).map(|(_, s)| *s).collect::<Vec<_>>().join(" ");
+            }
+        }
+        3 => {
+            let copy = line.clone();
+            lines.insert(i, copy);
+        }
+        _ => lines.insert(i, String::new()),
+    }
+    lines.join("\n")
+}
+
+/// Random edit sequences, each built as the editor builds it (checkpoints kept across edits, the
+/// build's files left for the next build), say what a fresh build of the same files says, step
+/// for step. The model of the LSP test `typing_a_command_ends_with_the_fresh_run_s_findings`, over
+/// every kind of incremental reuse at once: a resume before the edit, a splice of the last run's
+/// rest where the states meet, a rerun after the `.aux` changed. Pins any reuse that is not exact.
+#[test]
+fn random_edit_sequences_build_what_a_fresh_build_does() {
+    if !installed() {
+        return;
+    }
+    /// Edits per sequence, and sequences per fixture (one seed each).
+    const EDITS: usize = 6;
+    const SEEDS: u64 = 2;
+    let dir = crate::support::tmp_root().join("incremental-random");
+    let fixtures: [&[(&str, &str)]; 2] =
+        [&[("main.tex", MAIN), ("chapter.tex", CHAPTER), ("appendix.tex", APPENDIX)], &[("main.tex", PARAGRAPHS)]];
+    let cfg = crate::support::config();
+    for (k, files) in fixtures.iter().enumerate() {
+        for seed in 0..SEEDS {
+            let _ = std::fs::remove_dir_all(&dir);
+            std::fs::create_dir_all(&dir).unwrap();
+            for (name, text) in files.iter() {
+                std::fs::write(dir.join(name), text).unwrap();
+            }
+            let main = dir.join("main.tex");
+            let read = |p: &Path| std::fs::read_to_string(p).unwrap();
+            let mut checkpoints = Checkpoints::new(&cfg).every(64);
+            Machine::build(&mut checkpoints, &read(&main), &main, &cfg, true);
+            let mut rng = Lcg(seed * 7919 + k as u64);
+            for n in 1..=EDITS {
+                let (name, _) = files[rng.below(files.len())];
+                let path = dir.join(name);
+                let edited = random_edit(&read(&path), &mut rng, n);
+                std::fs::write(&path, &edited).unwrap();
+                let incremental = Machine::build(&mut checkpoints, &read(&main), &main, &cfg, true);
+                let at = (checkpoints.resumed.clone(), checkpoints.converged.clone());
+                let full = Machine::build(&mut Checkpoints::new(&cfg), &read(&main), &main, &cfg, true);
+                let differs = first_difference(&said(&incremental), &said(&full));
+                assert_eq!(
+                    differs, None,
+                    "fixture {k}, seed {seed}, edit {n} in {name} (resumed, met: {at:?}):\n{edited}"
+                );
+            }
+        }
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A run after an edit keeps a checkpoint at the first line past each of the next pages it
+/// ships (`AFTER_EDIT`): the page holding the edited paragraph is where the states meet again,
+/// the page builder holds that paragraph until then (a chapter's `\clearpage` here). So the
+/// next edit there meets this run one page on and splices the rest, a small share of the
+/// document's steps, with the full run's result. Pins: the next stale checkpoint was an eighth of the step spacing away, and
+/// on a long thesis (few checkpoints within the memory budget) a typed word ran the rest of the
+/// document again.
+#[test]
+fn a_second_edit_meets_the_last_run_a_page_on() {
+    if !installed() {
+        return;
+    }
+    /// The edit's run takes at most this share of a full run's steps.
+    const SHARE: u64 = 4;
+    let dir = crate::support::tmp_root().join("incremental-page-on");
+    std::fs::create_dir_all(&dir).unwrap();
+    let main = dir.join("main.tex");
+    let words = "Some words that fill a paragraph of text across a few lines on the page here";
+    /// Paragraphs per chapter, each chapter ends its page.
+    const CHAPTER: usize = 10;
+    let body: String = (0..60)
+        .map(|i| {
+            let end = if (i + 1) % CHAPTER == 0 { "\\clearpage\n" } else { "" };
+            format!("Paragraph {i}. {words}, {words}, {words}.\n{end}\n")
+        })
+        .collect();
+    let text = |typed: &str| {
+        format!(
+            "\\documentclass{{article}}\n\\begin{{document}}\n{}\\end{{document}}\n",
+            body.replacen("Paragraph 3.", typed, 1)
+        )
+    };
+    std::fs::write(&main, text("Paragraph 3.")).unwrap();
+    let cfg = crate::support::config();
+    let mut checkpoints = Checkpoints::new(&cfg);
+    checkpoints.analyze(&text("Paragraph 3."), &main);
+    // As long as the text replaced: the line breaks stay.
+    for typed in ["Paragraph 3!", "Paragraph 3?"] {
+        std::fs::write(&main, text(typed)).unwrap();
+        let incremental = checkpoints.analyze(&text(typed), &main);
+        let full = Machine::analyze_once(&text(typed), Some(&main), &cfg);
+        assert_eq!(first_difference(&said(&incremental), &said(&full)), None, "typed {typed}");
+        let (ran, all) = checkpoints.ran;
+        if typed.ends_with('?') {
+            assert!(checkpoints.converged.is_some(), "typed {typed}: the runs never met");
+            assert!(ran * SHARE <= all, "typed {typed}: ran {ran} of {all} steps");
+        }
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// An edit in a file read by `\include` resumes where that file is included, or inside it, with
+/// the full run's result. `\include` tests the file (`\IfFileExists` reads its size) before it
+/// reads it, so no checkpoint inside it holds after an edit there. Red (tests/known-red.txt): a
+/// thesis of included chapters runs from `\begin{document}` again for every typed word.
+#[test]
+fn an_edit_in_an_included_file_resumes_where_it_is_included() {
+    if !installed() {
+        return;
+    }
+    let dir = crate::support::tmp_root().join("incremental-include");
+    std::fs::create_dir_all(&dir).unwrap();
+    let main = dir.join("main.tex");
+    let chapter = dir.join("chapter.tex");
+    let main_text =
+        "\\documentclass{article}\n\\begin{document}\nBefore.\n\\include{chapter}\nAfter.\n\\end{document}\n";
+    std::fs::write(&main, main_text).unwrap();
+    let paragraphs: Vec<String> = (0..30).map(|i| format!("Paragraph {i} of the chapter.\n")).collect();
+    std::fs::write(&chapter, paragraphs.join("\n")).unwrap();
+    let cfg = crate::support::config();
+    let mut checkpoints = Checkpoints::new(&cfg).every(64);
+    Machine::build(&mut checkpoints, main_text, &main, &cfg, true);
+    // The first edit's run keeps checkpoints on the way to the edited line, the second resumes from one.
+    for edit in ["edited", "edited again"] {
+        let edited = paragraphs.join("\n").replacen("Paragraph 20 of", &format!("Paragraph 20, {edit}, of"), 1);
+        std::fs::write(&chapter, &edited).unwrap();
+        let incremental = Machine::build(&mut checkpoints, main_text, &main, &cfg, true);
+        let at = checkpoints.resumed.clone();
+        let full = Machine::build(&mut Checkpoints::new(&cfg), main_text, &main, &cfg, true);
+        assert_eq!(first_difference(&said(&incremental), &said(&full)), None, "{edit}: resumed at {at:?}");
+        let includes = 1 + main_text.lines().position(|l| l.starts_with("\\include")).unwrap() as u32;
+        let near = |(path, line): &(String, u32)| path.ends_with("chapter.tex") || *line >= includes;
+        if edit != "edited" {
+            assert!(
+                at.as_ref().is_some_and(near),
+                "{edit}: resumed at {at:?}, the chapter is included on line {includes}"
+            );
+        }
+    }
+    let _ = std::fs::remove_dir_all(&dir);
 }

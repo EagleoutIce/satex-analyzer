@@ -3143,6 +3143,62 @@ fn completion_answers_while_a_run_goes_on() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// A request the engine holds until the run ends (a code action: its edits are of the new text)
+/// never holds the requests sent after it. A widget list and a completion asked during the
+/// run are answered from the last finished run, before the code action. The bug it pins: the
+/// connection thread waited for each answer in turn, so "Open widget" and every completion
+/// waited for the whole run behind the code action VS Code asks on each cursor move.
+#[test]
+fn a_held_request_does_not_hold_the_ones_after_it() {
+    if !crate::support::installed() {
+        return;
+    }
+    // a long body: an edit at its start reruns all of it
+    let body: String = (0..400).map(|i| format!("\\section{{S{i}}}Text \\textbf{{b}} \\color{{accent}}x.\n")).collect();
+    let text = format!(
+        "\\documentclass{{article}}\n\\usepackage{{xcolor}}\n\\definecolor{{accent}}{{HTML}}{{0B3D91}}\n\\begin{{document}}\nStart\n{body}\\end{{document}}\n"
+    );
+    let dir = crate::support::tmp_root().join(format!("satex-lsp-held-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("main.tex"), &text).unwrap();
+    let mut server = serve(&dir, true);
+    let uri = fixture_uri(&dir.join("main.tex"));
+    server.notify(
+        "textDocument/didOpen",
+        json!({ "textDocument": { "uri": uri, "languageId": "tex", "version": 1, "text": text } }),
+    );
+    server.published();
+    let edited = text.replacen("Start", "Started", 1);
+    server.notify(
+        "textDocument/didChange",
+        json!({ "textDocument": { "uri": uri, "version": 2 }, "contentChanges": [{ "text": edited }] }),
+    );
+    let at = |line: u32, character: u32| json!({ "line": line, "character": character });
+    let zero = json!({ "start": at(5, 0), "end": at(5, 0) });
+    let held = server.request(
+        "textDocument/codeAction",
+        json!({ "textDocument": { "uri": uri }, "range": zero, "context": { "diagnostics": [] } }),
+    );
+    // on the `accent` of the first section line
+    let column = edited.lines().nth(5).unwrap().find("accent").unwrap() as u32 + 1;
+    let view = server.request("satex/view", json!({ "textDocument": { "uri": uri }, "position": at(5, column) }));
+    let completion =
+        server.request("textDocument/completion", json!({ "textDocument": { "uri": uri }, "position": at(5, 2) }));
+    let mut answered = Vec::new();
+    while answered.len() < 3 {
+        let msg = server.read();
+        if let Some(id) = msg.get("id").and_then(Value::as_i64).filter(|id| [held, view, completion].contains(id)) {
+            answered.push(id);
+            if id == view {
+                assert!(msg["result"].as_array().is_some_and(|v| v.iter().any(|v| v["plugin"] == "color")), "{msg}");
+            }
+        }
+    }
+    assert_eq!(answered.last(), Some(&held), "the code action waits for the run, the others do not: {answered:?}");
+    server.shutdown();
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// A document with one site of each type of name, for [`completion_follows_the_type_at_the_cursor`].
 const TYPED_SITES: &str = r"\documentclass{article}
 \usepackage{xcolor}

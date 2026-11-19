@@ -566,6 +566,7 @@ impl Machine<'_> {
                     // -1 an empty list, 1 an hlist.
                     crate::engine::mode::Last::Empty => int(-1),
                     crate::engine::mode::Last::Box | crate::engine::mode::Last::HBox(None) => int(1),
+                    crate::engine::mode::Last::VBox => int(2),
                     // A row: unset (14) while its alignment is open.
                     crate::engine::mode::Last::HBox(Some(_)) => Some(Value::Num {
                         quantity: crate::engine::value::Quantity::Int,

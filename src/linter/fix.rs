@@ -282,7 +282,8 @@ fn list_items(group: &Group) -> Option<Vec<(Pos, Pos, String)>> {
         match lexeme.tok {
             Tok::Chr(',', Catcode::Other) => items.extend(current.take()),
             Tok::Chr(_, SPACE) => {}
-            Tok::Chr(c, Catcode::Letter | Catcode::Other) => {
+            // `_` stands in keys: `\label{fig_a}`
+            Tok::Chr(c, Catcode::Letter | Catcode::Other | Catcode::Sub) => {
                 let item = current.get_or_insert_with(|| (lexeme.start, lexeme.end, String::new()));
                 item.1 = lexeme.end;
                 item.2.push(c);
@@ -379,11 +380,18 @@ impl<'a> Edits<'a> {
     /// Delete `\usepackage[…]{name}`, or only `name` when the command loads
     /// others too.
     pub fn delete_load(&self, load: &Load) -> Option<Vec<Edit>> {
-        let (path, text, mut scan, cs) = self.command(load.span)?;
+        self.delete_load_at(load.span, &load.name)
+    }
+
+    /// [`Edits::delete_load`] of the name `name` of the call at `span`: a load not found is
+    /// named by its file, `zz.sty` for `\usepackage{zz}`.
+    pub fn delete_load_at(&self, span: Span, name: &str) -> Option<Vec<Edit>> {
+        let (path, text, mut scan, cs) = self.command(span)?;
         scan.optional();
         let list = scan.group()?;
         let items = list_items(&list)?;
-        let index = items.iter().position(|(_, _, name)| *name == load.name)?;
+        let stem = name.strip_suffix(".sty").or_else(|| name.strip_suffix(".cls")).unwrap_or(name);
+        let index = items.iter().position(|(_, _, item)| item == name || item == stem)?;
         let edit = match (index.checked_sub(1), items.get(index + 1)) {
             (_, _) if items.len() == 1 => return Some(vec![removal(&text, &path, cs.start, list.end)]),
             (_, Some(next)) => Edit { path, start: items[index].0, end: next.0, replacement: String::new() },
@@ -476,7 +484,7 @@ impl<'a> Edits<'a> {
         scan.name(&cs).filter(|n| *n == "usepackage")?;
         scan.optional();
         let end = scan.group()?.end;
-        let at = Pos::new(end.line, text.line(end.line).chars().count() as u32 + 1);
+        let at = Pos::new(end.line, text.columns(end.line).len() as u32 + 1);
         Some(vec![Edit { path, start: at, end: at, replacement: format!("\n{line}") }])
     }
 
@@ -710,6 +718,17 @@ impl<'a> Edits<'a> {
             return None;
         }
         Some(vec![Edit { path, start: group.inner_start, end: group.inner_end, replacement: new.to_string() }])
+    }
+
+    /// Replace the item `old` of the call's key list by `new`: `\cite[p.~3]{a,b}`,
+    /// `\ref{a}`, `\label{a}`.  The list is the first `{…}` after the star and
+    /// the optional arguments.
+    pub fn replace_item(&self, span: Span, old: &str, new: &str) -> Option<Vec<Edit>> {
+        let (path, _, mut scan, _) = self.command(span)?;
+        scan.star();
+        while scan.optional().is_some() {}
+        let (start, end, _) = list_items(&scan.group()?)?.into_iter().find(|(_, _, item)| item == old)?;
+        Some(vec![Edit { path, start, end, replacement: new.to_string() }])
     }
 
     /// Delete a definition that has lines of its own.  `\def` reads a name,

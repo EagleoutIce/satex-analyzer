@@ -202,6 +202,22 @@ fn keys_guesses_the_run_disagrees_with_are_retracted() {
     assert!(!last.iter().any(|m| m.contains("nofile")), "{last:#?}");
 }
 
+/// Intuition: graphics finds a name through `\IfFileExists`, which searches TeX's input path,
+/// so a graphic the installation has (`example-image` of mwe) is no missing file early either.
+/// Bug pinned: the sketch looked only beside the document and in `\graphicspath`, so every MWE
+/// with `example-image` opened with an early error the run then dropped without a word.
+#[test]
+fn an_installed_graphic_is_not_missing_early() {
+    let installed = std::process::Command::new("kpsewhich").arg("example-image.pdf").output();
+    if !installed.is_ok_and(|o| o.status.success()) {
+        return;
+    }
+    let body = "\\section{A}\n\\includegraphics{example-image}\n";
+    let Some((early, last)) = of_codes("keys-installed", body, &[], &KEYS) else { return };
+    assert!(!early.iter().any(|m| m.contains("example-image")), "{early:#?}");
+    assert_eq!(early, last);
+}
+
 /// Intuition: a verdict of `complete` is a claim, so a run that gave up on a conditional or lost an
 /// argument to unknown text says where, in the file:line it happened, not that it reached the end.
 /// Bug pinned: `satex lint` said "complete: the run reached the end" while the run raised

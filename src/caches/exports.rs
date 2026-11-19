@@ -18,6 +18,12 @@ pub struct Exports {
     /// Name (no backslash) to defining files.
     defines: HashMap<String, Vec<u32>>,
     loads: Vec<Vec<u32>>,
+    /// Per file, the files that load it: `loads` reversed, made once.
+    #[serde(skip)]
+    loaded_by: std::sync::OnceLock<Vec<Vec<u32>>>,
+    /// Each file's place in `files`, made once.
+    #[serde(skip)]
+    position: std::sync::OnceLock<HashMap<String, u32>>,
 }
 
 /// The commands whose next name is the one they define, as `defs` were
@@ -189,12 +195,7 @@ impl Exports {
             .iter()
             .map(|n| self.defines.get(n).map(|f| f.iter().copied().collect()).unwrap_or_default())
             .collect();
-        let mut loaded_by: Vec<Vec<u32>> = vec![Vec::new(); self.files.len()];
-        for (from, to) in self.loads.iter().enumerate() {
-            for &t in to {
-                loaded_by[t as usize].push(from as u32);
-            }
-        }
+        let loaded_by = self.loaded_by();
         let mut candidates: HashSet<u32> = HashSet::default();
         let mut queue: Vec<u32> = wanted.iter().flatten().copied().collect();
         while let Some(f) = queue.pop() {
@@ -234,15 +235,72 @@ impl Exports {
         count
     }
 
-    /// The package that defines `name` itself, the one loaded most often
-    /// when several do: the provider a document most likely means.
+    /// The package that defines `name` itself, the one most files load, directly or through
+    /// others, when several do: the provider a document most likely means (`graphics` for
+    /// `\includegraphics`, which graphicx and tikz load, not adjustbox, which redefines it).
     pub fn provider(&self, name: &str) -> Option<String> {
-        let count = self.load_counts();
         let files = self.defines.get(name)?;
-        let best = files.iter().filter(|&&f| self.files[f as usize].ends_with(".sty")).max_by(|&&a, &&b| {
-            count[a as usize].cmp(&count[b as usize]).then(self.files[b as usize].cmp(&self.files[a as usize]))
-        })?;
-        Some(self.files[*best as usize].clone())
+        let loaded_by = self.loaded_by();
+        // the files whose loads reach `file`
+        let users = |file: u32| {
+            let (mut seen, mut queue) = (HashSet::default(), vec![file]);
+            while let Some(f) = queue.pop() {
+                if seen.insert(f) {
+                    queue.extend(loaded_by[f as usize].iter().copied());
+                }
+            }
+            seen.len()
+        };
+        let best = (files.iter().copied())
+            .filter(|&f| self.files[f as usize].ends_with(".sty"))
+            .map(|f| (users(f), std::cmp::Reverse(&self.files[f as usize]), f))
+            .max()?;
+        Some(self.files[best.2 as usize].clone())
+    }
+
+    fn position(&self) -> &HashMap<String, u32> {
+        self.position.get_or_init(|| self.files.iter().enumerate().map(|(i, f)| (f.clone(), i as u32)).collect())
+    }
+
+    fn loaded_by(&self) -> &[Vec<u32>] {
+        self.loaded_by.get_or_init(|| {
+            let mut by = vec![Vec::new(); self.files.len()];
+            for (from, to) in self.loads.iter().enumerate() {
+                to.iter().for_each(|&t| by[t as usize].push(from as u32));
+            }
+            by
+        })
+    }
+
+    /// The names a document can write (no `@` or `_`: no internals), each with the file to load
+    /// for it: [`Exports::package_for`]'s package, else the library that declares it. This is
+    /// what the playground ships ([`Exports::of_names`]): the browser has no installation to read.
+    pub fn names(&self) -> Vec<(String, String)> {
+        let mut out: Vec<(String, String)> = (self.defines.iter())
+            .filter(|(name, _)| !name.contains(['@', '_']))
+            .filter_map(|(name, files)| {
+                let library =
+                    || files.iter().map(|&f| &self.files[f as usize]).find(|f| f.ends_with(".code.tex")).cloned();
+                Some((name.clone(), self.package_for(name).map(|p| format!("{p}.sty")).or_else(library)?))
+            })
+            .collect();
+        out.sort();
+        out
+    }
+
+    /// The index of [`Exports::names`] written one file a line, its names after it:
+    /// `file<TAB>name<TAB>name…`. Each name is defined by its one file.
+    pub fn of_names(text: &str) -> Exports {
+        let mut exports = Exports { version: VERSION, ..Exports::default() };
+        for line in text.lines() {
+            let mut fields = line.split('\t');
+            let Some(file) = fields.next() else { continue };
+            let i = exports.files.len() as u32;
+            exports.files.push(file.to_string());
+            exports.loads.push(Vec::new());
+            fields.for_each(|name| _ = exports.defines.insert(name.to_string(), vec![i]));
+        }
+        exports
     }
 
     /// The names `keep` takes; `pair` asks for `end⟨name⟩` too, so the name is an environment's.
@@ -254,18 +312,24 @@ impl Exports {
     }
 
     /// The package (`.sty`) to load for `name`: of those that define it with what they load
-    /// ([`Exports::providers`]), the one other files load most, the one loading least on a tie, and a
-    /// code file's own package before them: `tikzpicture` is tikz's (`tikz.code.tex`), not that of
-    /// forest (which patches it) or of a pgfplots shim.
+    /// ([`Exports::providers`]), the one other files load most, the one loading least on a tie. Before
+    /// them a code file's own package, then the most loaded package that defines it itself
+    /// ([`Exports::provider`]): `tikzpicture` is tikz's (`tikz.code.tex`), not that of forest (which
+    /// patches it) or of a pgfplots shim.
     pub fn package_for(&self, name: &str) -> Option<String> {
         // a code file a package of its name inputs (pgf's `tikz.code.tex`, read by `tikz.sty`) is that package's
         let code = self.defines.get(name)?.iter().map(|&f| self.files[f as usize].as_str());
         let own = code.filter(|f| !f.ends_with(".sty")).filter_map(|f| Some(format!("{}.sty", f.split('.').next()?)));
-        if let Some(own) = own.into_iter().find(|s| self.files.contains(s)) {
+        if let Some(own) = own.into_iter().find(|s| self.position().contains_key(s)) {
+            return Some(own.trim_end_matches(".sty").to_string());
+        }
+        // a package that defines it itself before one that only loads it: `\includegraphics` is
+        // graphics', not tikz's, which loads it through graphicx and is loaded more
+        if let Some(own) = self.provider(name) {
             return Some(own.trim_end_matches(".sty").to_string());
         }
         let count = self.load_counts();
-        let at = |f: &str| self.files.iter().position(|g| g == f).map_or(0, |i| count[i]);
+        let at = |f: &str| self.position().get(f).map_or(0, |&i| count[i as usize]);
         let stys = self.providers(&[name.to_string()]).into_iter().filter(|(f, _)| f.ends_with(".sty"));
         // `providers` puts files that load fewer first: the first of the most loaded wins a tie
         let best = stys.enumerate().max_by_key(|(i, (f, _))| (at(f), std::cmp::Reverse(*i)))?;

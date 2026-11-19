@@ -221,9 +221,11 @@ fn file_name(load: &Load) -> Option<String> {
 /// Each of `exprs` expanded (`\edef`) in the run's `state`, after `prelude` (a file the
 /// installation has) ran there; `None` when no sandbox can be made.
 fn evaluate(analysis: &Analysis, state: State, prelude: Option<&str>, exprs: &[String]) -> Option<Vec<Val>> {
-    // a sandbox that loads nothing but the prelude, with the probes' step budget per line
+    // a sandbox that loads nothing but the prelude, with the probes' step budget per line; the
+    // cache stays on: with nothing loaded it only serves the installation's roots, which a fresh
+    // `kpsewhich` probe takes 0.3 s for
     let mut cfg = analysis.settings.clone();
-    (cfg.load.packages, cfg.load.classes, cfg.load.format, cfg.cache.enabled) = (false, false, false, false);
+    (cfg.load.packages, cfg.load.classes, cfg.load.format) = (false, false, false);
     (cfg.record_arguments, cfg.verbose, cfg.trace, cfg.timings) = (false, 0, false, false);
     (cfg.limits.steps, cfg.limits.replay_steps) = (cfg.limits.probe_steps, cfg.limits.probe_steps);
     let mut m = Machine::sandbox(&cfg, analysis, state)?;

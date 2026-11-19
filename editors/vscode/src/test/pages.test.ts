@@ -1,6 +1,7 @@
 import { strict as assert } from 'node:assert';
 import { test } from 'node:test';
 import * as vscode from 'vscode';
+import { openDialog } from '../dialogs';
 import { library } from '../library';
 import { settings } from '../settings';
 import { openView } from '../views';
@@ -43,4 +44,15 @@ test('a view renders its markdown through the editor and applies its edits', asy
     assert.ok(html.includes('"**red**":"\\u003cp>**red**\\u003c/p>"'), html);
     await seen.handler!({ edits: [{ range: { start: { line: 0, character: 0 }, end: { line: 0, character: 1 } }, newText: 'x' }] });
     assert.deepEqual(seen.edits.at(-1), ['/p/main.tex', 'x']);
+});
+
+/**
+ * Intuition: a dialog asked while the server is busy or gone must say so. Bug pinned: "Open
+ * widget" and the dialog commands awaited the server's answer and, when the request failed,
+ * stopped on an unhandled rejection: the command did nothing, without a word.
+ */
+test('a dialog whose request fails says the server did not answer', async () => {
+    const failing = { sendRequest: async () => { throw new Error('busy'); } } as any;
+    await openDialog(context, failing, { uri: 'file:///p/main.tex', position: { line: 0, character: 0 } });
+    assert.match(seen.messages.at(-1) ?? '', /did not answer/);
 });

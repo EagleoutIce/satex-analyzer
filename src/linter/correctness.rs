@@ -154,9 +154,22 @@ stops there.  A more specific rule that explains the same error reports it
 instead.  An error reached only on a path satex could not decide, or after it
 lost track of the mode, is not one a real run need reach, and is not reported.
 A runaway in package code over an argument the document leaves open is the
-document's error too: it is shown at the call that opens it.",
+document's error too: it is shown at the call that opens it.
+
+The common errors come with a fix read off the source.  Safe ones write out
+what TeX's recovery does: a `}` that closes no group is deleted, a `\\\\` with
+no line to end too, a bare length gets its `pt`, `\\csname` its `\\endcsname`
+before the first command that does not expand.  The others guess the intent
+and need a review: an argument that never closes is closed at the end of its
+line (or of its paragraph, offered too), a math-only token is set as a
+formula, an `&` past the last column repeats the last column of the table's
+preamble, an `&` in text becomes
+`\\&`, text before a `\\begin{document}` the file lacks gets one, `\\item`
+outside a list gets an `itemize`, a second script of one kind on a nucleus
+braces the first scripted nucleus (`{x^2}^3`).  A `{` still open at `\\right`
+is closed right before it (safe), at `\\end` too (a review).",
         references: &[],
-        fixes: &[],
+        fixes: &[Applicability::Safe, Applicability::Unsafe],
         engines: &[],
         run: raised_errors,
     },
@@ -236,9 +249,10 @@ which fetches packages as they are named, it stays a warning.
 
 Fix by installing the package, adding its directory to `search_paths` in
 `satex.yaml`, pointing `texmf.roots` at the right installation, or
-(for case mismatches) renaming the file to match the requested name.",
+(for case mismatches) renaming the file to match the requested name. The
+quick fix deletes the load of a package not installed.",
         references: &[Ref { source: Source::Chktex, at: "27" }],
-        fixes: &[],
+        fixes: &[Applicability::Unsafe],
         engines: &[],
         run: unresolved_files,
     },
@@ -329,9 +343,10 @@ No `\\label` in the document or its inputs declares this key, so the reference
 prints `??`.  When the run left a project file unread, the label may stand
 there: the finding is then a precision note.
 
-Fix by adding the `\\label`, or by correcting the key.",
+Fix by adding the `\\label`, or by correcting the key: a key near a known
+label's is offered respelled.",
         references: &[Ref { source: Source::Source2e, at: "ltxref.dtx" }],
-        fixes: &[],
+        fixes: &[Applicability::Unsafe],
         engines: &[],
         run: undefined_reference,
     },
@@ -348,9 +363,10 @@ text that writes the label: the `\\begin` inside a `\\sbox` argument, not the
 `\\sbox`. Only the kernel's `\\newlabel` (and zref's) warn: a name another
 package writes to the `.aux` file twice, such as a tikzmark, is not checked.
 
-Fix by renaming one of them.",
+Fix by renaming one of them. The fix renames the later one and no reference:
+those that resolved to it then resolve to the first, so it needs a check.",
         references: &[Ref { source: Source::Source2e, at: "ltxref.dtx" }],
-        fixes: &[],
+        fixes: &[Applicability::Unsafe],
         engines: &[],
         run: duplicate_label,
     },
@@ -578,7 +594,12 @@ fn undefined_control_sequences(report: &mut Report) {
                     });
                 let help = match near.flatten() {
                     _ if elsewhere.is_some() => format!("use `{name}` where it is defined"),
-                    Some(other) => format!("did you mean `\\{other}`?"),
+                    Some(other) => {
+                        let edits = report.edits().rename_command(expansion.span, |_| Some(other.clone()));
+                        let fix = Fix::new(format!("did you mean `\\{other}`?"), LOAD_FIX, edits);
+                        report.add_fix_as(severity, expansion.span, &name, message, fix);
+                        continue;
+                    }
                     None => format!("define `{name}` or load the package that provides it"),
                 };
                 report.add_as(severity, expansion.span, &name, message, Some(help))
@@ -621,7 +642,11 @@ fn defined_elsewhere(analysis: &crate::analysis::machine::Analysis, name: crate:
 
 /// The names that are defined at the end of the run.
 fn scope_names(analysis: &crate::analysis::machine::Analysis) -> Vec<String> {
-    crate::queries::query::scope_names(analysis).into_iter().filter(|n| n.chars().count() > 1).collect()
+    // A name with a space (LaTeX's robust inner `\\textbf `) cannot be typed.
+    crate::queries::query::scope_names(analysis)
+        .into_iter()
+        .filter(|n| n.chars().count() > 1 && !n.contains(' '))
+        .collect()
 }
 
 /// The known name nearest to a misspelled one: a typo, a swapped or missing
@@ -741,11 +766,15 @@ fn raised_errors(report: &mut Report) {
                 let fix = Fix::new(format!("add `{load}`, which declares it"), Applicability::Safe, edits);
                 report.add_fix(span, "", format!("{message} `{load}` declares it"), fix);
             }
-            (None, None) => report.add(span, "", message, None),
+            (None, None) => {
+                let fixes = super::repair::repairs(&report.edits(), span, &message);
+                report.add_fixes(span, "", message, fixes);
+            }
         }
     }
     for (span, message) in own {
-        report.add(span, "", message, None);
+        let fixes = super::repair::repairs(&report.edits(), span, &message);
+        report.add_fixes(span, "", message, fixes);
     }
 }
 
@@ -874,7 +903,7 @@ fn unresolved_files(report: &mut Report) {
         // `\include` and `\IfFileExists` go on without the file: only a load stops.
         let severity =
             if load.status == LoadStatus::NotFound && load.kind.is_package() { absent } else { report.rule.severity };
-        report.add_as(severity, load.span, &load.name, message, fix);
+        missing_file(report, severity, load.span, &load.name, message, fix);
     }
     // The kernel's own error when `\IfFileExists` finds nothing (latex.ltx
     // `\@missingfileerror`): `LaTeX Error: File `⟨name⟩' not found.`
@@ -892,7 +921,38 @@ fn unresolved_files(report: &mut Report) {
         }
         let message = format!("`{name}` is not in this installation ({distribution})");
         let fix = Some(format!("install `{name}`, or add its directory to search_paths"));
-        report.add_as(absent, span, &name, message, fix);
+        missing_file(report, absent, span, &name, message, fix);
+    }
+}
+
+/// An `unresolved-file` finding. When it is an error at a package load (no installed name is
+/// near it), deleting the load is offered too: LaTeX then goes on, and what the package would
+/// have defined is reported where it is used.
+fn missing_file(
+    report: &mut Report,
+    severity: Severity,
+    span: Span,
+    name: &str,
+    message: String,
+    hint: Option<String>,
+) {
+    // the request stands at `span` even where the run recorded no load: `\usepackage`, not `\input`
+    let package = name.ends_with(".sty") || !name.contains('.');
+    let edits = report.edits();
+    let analysis = report.analysis;
+    let loads = |(_, _, scan, cs): (_, _, crate::linter::fix::Scan, _)| {
+        let name = scan.name(&cs).and_then(|n| analysis.interner.lookup(n));
+        name.is_some_and(|n| crate::linter::shared::requests_packages(analysis, n))
+    };
+    let request = edits.command(span).is_some_and(loads);
+    let delete =
+        (severity == Severity::Error && package && request).then(|| edits.delete_load_at(span, name)).flatten();
+    match (delete, hint) {
+        (Some(edits), Some(hint)) => {
+            let fix = Fix::new(format!("{hint}; or delete the load"), Applicability::Unsafe, Some(edits));
+            report.add_fix_as(severity, span, name, message, fix)
+        }
+        (_, hint) => report.add_as(severity, span, name, message, hint),
     }
 }
 
@@ -1118,10 +1178,29 @@ fn undefined_reference(report: &mut Report) {
             (span, via, o.key.clone())
         })
         .collect();
+    let keys: Vec<String> = known.keys().map(|k| k.to_string()).collect();
     for (span, via, key) in missing {
         let message = format!("no `\\label{{{key}}}` anywhere in the document{}", via.unwrap_or_default());
-        report.add_absent("defined", span, &key, message, Some(format!("add `\\label{{{key}}}` where it belongs")));
+        let fix = respell_fix(report, span, &key, &keys);
+        match fix.filter(|_| report.unread("defined").is_none()) {
+            Some(fix) => report.add_fix(span, &key, message, fix),
+            None => report.add_absent(
+                "defined",
+                span,
+                &key,
+                message,
+                Some(format!("add `\\label{{{key}}}` where it belongs")),
+            ),
+        }
     }
+}
+
+/// The key a typo misspells, among the `known` ones, written at the call at `span`:
+/// a reference or citation then points at an existing target, which may not be the meant one.
+pub(crate) fn respell_fix(report: &Report, span: Span, key: &str, known: &[String]) -> Option<Fix> {
+    let near = closest(key, known).filter(|near| *near != key)?;
+    let edits = report.edits().replace_item(span, key, near)?;
+    Some(Fix::new(format!("did you mean `{near}`?"), Applicability::Unsafe, Some(edits)))
 }
 
 fn duplicate_label(report: &mut Report) {
@@ -1154,12 +1233,24 @@ fn duplicate_label(report: &mut Report) {
     for (span, labels) in sites {
         let each: Vec<String> =
             labels.iter().map(|(key, at)| format!("`{key}` is already defined at {}", report.place(*at))).collect();
-        report.add(
-            span,
-            &labels[0].0,
-            format!("label {}", each.join(", and ")),
-            Some("rename one of the two labels".into()),
-        );
+        let message = format!("label {}", each.join(", and "));
+        // This label renamed to a free name: references that resolved to it,
+        // the later one, now resolve to the first, so a reader checks them.
+        let renamed = match labels.as_slice() {
+            [(key, at)] => {
+                (2..).map(|n| format!("{key}-{n}")).find(|k| !first.contains_key(k.as_str())).and_then(|fresh| {
+                    let edits = report.edits().replace_item(span, key, &fresh)?;
+                    let how =
+                        format!("rename it `{fresh}`: references to `{key}` then resolve to {}", report.place(*at));
+                    Some(Fix::new(how, Applicability::Unsafe, Some(edits)))
+                })
+            }
+            _ => None,
+        };
+        match renamed {
+            Some(fix) => report.add_fix(span, &labels[0].0, message, fix),
+            None => report.add(span, &labels[0].0, message, Some("rename one of the two labels".into())),
+        }
     }
 }
 

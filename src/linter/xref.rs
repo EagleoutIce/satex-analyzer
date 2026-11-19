@@ -363,9 +363,9 @@ fn hand_written_reference(report: &mut Report) {
                     s.file == first.file && s.line == first.line && s.col == first.col + (k - start) as u32
                 })
         });
-        let gap = edits
-            .text(first.file)
-            .and_then(|(_, source)| source.line(first.line).chars().nth((first.col as usize - 1) + word_end - start));
+        let gap = edits.text(first.file).and_then(|(_, source)| {
+            source.columns(first.line).get((first.col as usize - 1) + word_end - start).copied()
+        });
         if !typed || !matches!(gap, Some(' ' | '~')) {
             continue;
         }

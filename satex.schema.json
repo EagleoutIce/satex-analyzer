@@ -922,7 +922,7 @@
           "properties": {
             "length": {
               "default": 0,
-              "description": "where smart wrap breaks a typed line, in characters; 0 takes the document's own habit, else 80",
+              "description": "where smart wrap breaks a typed line, in characters. 0 takes the document's own habit, else 80",
               "minimum": 0,
               "type": "integer",
               "x-affects": [
@@ -4344,6 +4344,16 @@
           "x-affects": [
             "output"
           ]
+        },
+        "pause_ms": {
+          "default": 10,
+          "description": "how long a run goes on at most before it answers hover, completion and widgets from the last run. Lower answers sooner, the run takes a little longer",
+          "minimum": 0,
+          "type": "integer",
+          "x-affects": [
+            "speed"
+          ],
+          "x-example": "`50`: requests during a run wait up to 50 ms"
         },
         "port": {
           "description": "a TCP port to serve on instead of stdio",

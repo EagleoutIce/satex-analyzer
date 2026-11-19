@@ -443,12 +443,11 @@ pub fn own_runaway(analysis: &Analysis, d: &crate::analysis::facts::Diagnostic) 
 /// The installed package that, with what it loads, defines `name` (no
 /// backslash), by the cached index of what each file defines
 /// ([`crate::caches::exports`]): a proposal for a fix the user accepts, never applied
-/// on its own. The index is built once per process and kept in the cache.
+/// on its own. The index is built once per process and kept in the cache. It is the
+/// package completion offers ([`crate::caches::exports::Exports::package_for`]): of
+/// several, the one most loaded, so `\includegraphics` is graphicx's.
 pub fn providing_package(analysis: &Analysis, name: &str) -> Option<String> {
-    exports(analysis)?
-        .providers(&[name.to_string()])
-        .into_iter()
-        .find_map(|(file, _)| file.strip_suffix(".sty").map(str::to_string))
+    exports(analysis)?.package_for(name)
 }
 
 /// The installed package that defines `name` itself, the most loaded of several
@@ -470,6 +469,22 @@ pub fn offered<K: Ord>(
     let mut names = index.named(keep, env);
     names.sort_by_cached_key(|n| (rank(n), n.clone()));
     names.into_iter().take(n).filter_map(|n| Some((index.package_for(&n)?, n)).map(|(p, n)| (n, p))).collect()
+}
+
+/// Whether a meaning of `name` requests packages: its replacement text names the kernel's
+/// `\@pkgextension`, as `\usepackage` and `\RequirePackage` do (latex.ltx, ltclass.dtx).
+pub fn requests_packages(analysis: &Analysis, name: Sym) -> bool {
+    let Some(extension) = analysis.interner.lookup("@pkgextension") else { return false };
+    analysis.facts.defs.iter().any(|def| {
+        def.name == name
+            && def.mac.as_ref().is_some_and(|m| m.replacement_text.iter().any(|t| t.cs() == Some(extension)))
+    })
+}
+
+/// The names a document can write, each with the file to load for it
+/// ([`crate::caches::exports::Exports::names`]): `satex query exports`, which the site build ships.
+pub fn export_names(analysis: &Analysis) -> Vec<(String, String)> {
+    exports(analysis).map(|e| e.names()).unwrap_or_default()
 }
 
 /// Whether package `name` is installed: the installation's index lists `name.sty`.
@@ -512,7 +527,9 @@ fn library_load(file: &str, tikz: bool) -> Option<String> {
     Some(format!("\\use{}library{{{lib}}}", if pgf { "pgf" } else { "tikz" }))
 }
 
-/// The installation's index of what each file defines, built once and cached.
+/// The installation's index of what each file defines, built once and cached. The playground's
+/// bundle holds a few packages only: it reads the names of every installed one from its
+/// `exports.tsv`, which the site build ships beside `ls-R`.
 fn exports(analysis: &Analysis) -> Option<std::sync::Arc<crate::caches::exports::Exports>> {
     static INDEX: std::sync::Mutex<Option<(Vec<std::path::PathBuf>, std::sync::Arc<crate::caches::exports::Exports>)>> =
         std::sync::Mutex::new(None);
@@ -522,9 +539,16 @@ fn exports(analysis: &Analysis) -> Option<std::sync::Arc<crate::caches::exports:
         return Some(exports.clone());
     }
     let cfg = &analysis.settings;
-    let definers = crate::caches::exports::definers(analysis, &cfg.conventions.definers);
     let cache = crate::caches::format::enabled_cache_dir(cfg);
-    let exports = std::sync::Arc::new(crate::caches::exports::Exports::of(roots, cache.as_deref(), &definers));
+    let shipped = (analysis.distribution.bundle.as_ref())
+        .and_then(|bundle| crate::project::overlay::read_to_string(&bundle.join("exports.tsv")).ok());
+    let exports = std::sync::Arc::new(match shipped {
+        Some(text) => crate::caches::exports::Exports::of_names(&text),
+        None => {
+            let definers = crate::caches::exports::definers(analysis, &cfg.conventions.definers);
+            crate::caches::exports::Exports::of(roots, cache.as_deref(), &definers)
+        }
+    });
     *held = Some((roots.clone(), exports.clone()));
     Some(exports)
 }

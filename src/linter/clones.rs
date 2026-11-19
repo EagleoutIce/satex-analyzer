@@ -799,7 +799,11 @@ fn macro_fix(
         .find(free)
         .unwrap_or_else(|| format!("{base}blockzz"));
     taken.insert(name.clone());
-    let advice = format!("define `\\{name}` with {n} parameters and use it at all {} places", places.len());
+    let advice = format!(
+        "define `\\{name}` with {} and use it at all {} places",
+        crate::util::plural(n, "parameter"),
+        places.len()
+    );
     let none = || Fix::new(advice.clone(), Applicability::Unsafe, None);
     let slice = |(file, from, to): (FileId, Pos, Pos)| -> Option<String> {
         texts.get(&file).and_then(|t| t.slice(from, to)).map(str::to_string)

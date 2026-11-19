@@ -152,7 +152,7 @@ conventions:  # how TeX is usually written, where the text alone does not say
     decimals: 1  # the decimals such a length is written with
       #! affects: output
   lines:  # how long a source line is
-    length: 0  # where smart wrap breaks a typed line, in characters; 0 takes the document's own habit, else 80
+    length: 0  # where smart wrap breaks a typed line, in characters. 0 takes the document's own habit, else 80
       #! affects: output
       #! example: `length: 100`
   units:  # how a quantity is written with siunitx
@@ -742,6 +742,9 @@ lsp:  # how satex lsp serves an editor
   debounce_ms: 100  # how long to wait after an edit before analyzing again. Lower answers sooner but runs more often
     #! affects: speed
     #! example: `1000`: fast typing triggers one run per pause, not per keystroke
+  pause_ms: 10  # how long a run goes on at most before it answers hover, completion and widgets from the last run. Lower answers sooner, the run takes a little longer
+    #! affects: speed
+    #! example: `50`: requests during a run wait up to 50 ms
   # port: 2087  # a TCP port to serve on instead of stdio
     #! affects: output
 

@@ -11,10 +11,10 @@ use satex::linter::apply;
 use satex::project::config::{Config, Load};
 use satex::queries::query::Record;
 
-struct Fixed {
+pub(crate) struct Fixed {
     dir: PathBuf,
-    text: String,
-    remaining: Vec<Record>,
+    pub(crate) text: String,
+    pub(crate) remaining: Vec<Record>,
 }
 
 impl Drop for Fixed {
@@ -39,7 +39,7 @@ fn select(code: &str, all: bool) -> impl Fn(&Record) -> bool + '_ {
 
 /// Fix the findings of one rule in `doc.tex` of a fresh project, the way
 /// `satex lint --fix` does, and read the file back.
-fn fix_files(name: &str, files: &[(&str, &str)], code: &str, unsafe_fixes: bool, all: bool) -> Fixed {
+pub(crate) fn fix_files(name: &str, files: &[(&str, &str)], code: &str, unsafe_fixes: bool, all: bool) -> Fixed {
     let dir = project(name, files);
     let path = dir.join("doc.tex");
     let source = std::fs::read_to_string(&path).unwrap();
@@ -56,7 +56,7 @@ fn fix_files(name: &str, files: &[(&str, &str)], code: &str, unsafe_fixes: bool,
     Fixed { dir, text, remaining: outcome.remaining }
 }
 
-fn fix(name: &str, source: &str, code: &str, unsafe_fixes: bool) -> Fixed {
+pub(crate) fn fix(name: &str, source: &str, code: &str, unsafe_fixes: bool) -> Fixed {
     fix_files(name, &[("doc.tex", source)], code, unsafe_fixes, false)
 }
 
@@ -79,7 +79,7 @@ fn compiles(dir: &Path) {
     );
 }
 
-fn check(fixed: &Fixed, expected: &str) {
+pub(crate) fn check(fixed: &Fixed, expected: &str) {
     assert_eq!(fixed.text, expected);
     assert!(fixed.remaining.is_empty(), "still reported: {:?}", fixed.remaining);
     compiles(&fixed.dir);
@@ -102,7 +102,7 @@ macro_rules! fix_cases {
     )*};
 }
 
-const BODY: &str = "\\begin{document}\nx\n\\end{document}\n";
+pub(crate) const BODY: &str = "\\begin{document}\nx\n\\end{document}\n";
 const PROSE: &str = "Running text that fills the line. ";
 
 fix_cases! {
@@ -341,7 +341,7 @@ fn lsp_offers_one_action_for_all_fixes_of_a_rule() {
 
 /// `satex::linter::lint`'s findings of one `code`, against a fresh project
 /// holding `doc.tex`.  The caller removes the returned directory.
-fn lint_codes(name: &str, source: &str, code: &str) -> (Vec<Record>, PathBuf) {
+pub(crate) fn lint_codes(name: &str, source: &str, code: &str) -> (Vec<Record>, PathBuf) {
     let cfg = Config { load: Load { classes: true, ..Default::default() }, ..crate::support::config() };
     let dir = project(name, &[("doc.tex", source)]);
     let analysis = Machine::analyze(source, Some(&dir.join("doc.tex")), &cfg);
@@ -651,4 +651,123 @@ fn a_package_s_command_is_named_with_its_package() {
     let message = record["message"].as_str().unwrap_or_default();
     assert!(message.starts_with("\\text is already defined by amstext (amstext.sty:"), "{message}");
     assert!(record["fix"].as_str().unwrap_or_default().contains("pick another name"), "{record:?}");
+}
+
+/// An article whose body is `body`.
+fn article(body: &str) -> String {
+    format!("\\documentclass{{article}}\n\\begin{{document}}\n{body}\\end{{document}}\n")
+}
+
+// TeX's own errors, each with the edit that repairs it (`raised-error`): the
+// fixed text runs without the error and pdflatex accepts it.
+fix_cases! {
+    /// An argument that never closes is closed where its paragraph ends,
+    /// before the `\end` that ends it here.
+    runaway_argument_closes_at_the_paragraph_end("err-runaway", article("\\textbf{Note: the cache is warm.\n"), "raised-error", true, &article("\\textbf{Note: the cache is warm.}\n"));
+    /// The argument is closed at its line's end first; the paragraph's end is the alternative.
+    paragraph_ended_closes_at_the_line_end("err-par", article("\\textbf{Note: the cache\nis warm.\n\nNext.\n"), "raised-error", true, &article("\\textbf{Note: the cache}\nis warm.\n\nNext.\n"));
+    /// Every group still open there closes, and a `}` in a comment is none.
+    runaway_closes_every_open_group("err-nested", article("\\textbf{a \\emph{b % c}\n"), "raised-error", true, &article("\\textbf{a \\emph{b}} % c}\n"));
+    /// TeX ignores a `}` that closes no group: deleting it is safe.
+    extra_brace_is_deleted("err-brace", article("Some text} more.\n"), "raised-error", false, &article("Some text more.\n"));
+    /// A script in text sets its nucleus and argument as a formula, one at a time.
+    math_only_tokens_become_formulas("err-dollar", article("Let x^{10}_i be and \\alpha too.\n"), "raised-error", true, &article("Let $x^{10}_i$ be and $\\alpha$ too.\n"));
+    /// The file's own spelling of formulas wins.
+    math_follows_the_files_delimiters("err-paren", article("\\(a\\) and \\(b\\), then x_1.\n"), "raised-error", true, &article("\\(a\\) and \\(b\\), then \\(x_1\\).\n"));
+    /// An `&` past the last column adds a column of the last one's kind.
+    extra_tab_adds_a_column("err-tab", article("\\begin{tabular}{|l|c|}\na & b & c \\\\\n\\end{tabular}\n"), "raised-error", true, &article("\\begin{tabular}{|l|cc|}\na & b & c \\\\\n\\end{tabular}\n"));
+    /// An `&` in running text is the character.
+    misplaced_tab_is_escaped("err-amp", article("Text & here.\n"), "raised-error", true, &article("Text \\& here.\n"));
+    /// Text after the preamble, with no `\begin{document}` anywhere, starts the document.
+    missing_begin_document_is_inserted("err-begin", "\\documentclass{article}\nHello.\n\\end{document}\n", "raised-error", true, "\\documentclass{article}\n\\begin{document}\nHello.\n\\end{document}\n");
+    /// Items outside a list go in an `itemize`, up to the `\end` after them.
+    lonely_items_get_a_list("err-item", article("\\item a\n\n\\item b\n"), "raised-error", true, &article("\\begin{itemize}\n\\item a\n\n\\item b\n\\end{itemize}\n"));
+    /// `\\` with no line to end: TeX drops it, and so does the fix.
+    no_line_to_end_is_deleted("err-newline", article("\\\\ Start.\n"), "raised-error", false, &article("Start.\n"));
+    /// The space it asks for is `\vspace`'s.
+    no_line_to_end_with_space_becomes_vspace("err-newline-space", article("\\\\[1em] Start.\n"), "raised-error", true, &article("\\vspace{1em} Start.\n"));
+    /// A length without a unit gets the `pt` TeX assumes.
+    illegal_unit_gets_pt("err-unit", article("A\\vspace{3}\n\nB\n"), "raised-error", false, &article("A\\vspace{3pt}\n\nB\n"));
+    /// `\csname` ends where TeX ends it, before the first command that does not expand.
+    missing_endcsname_is_inserted("err-csname", article("\\csname foo\\relax\n"), "raised-error", false, &article("\\csname foo\\endcsname\\relax\n"));
+    /// An undefined command one edit from a known one is respelled.
+    undefined_command_is_respelled("err-undefined", article("\\textbff{x}\n"), "undefined-control-sequence", true, &article("\\textbf{x}\n"));
+}
+
+/// An argument that may end at its line or its paragraph gets both fixes:
+/// the line's first, which `--fix` applies, the paragraph's as an
+/// alternative, its own code action that no fix-all takes.
+#[test]
+fn runaway_offers_the_line_end_as_an_alternative() {
+    if !installed() {
+        return;
+    }
+    let (records, dir) = lint_codes("err-alt", &article("\\textbf{a\nb.\n\nc\n"), "raised-error");
+    let record = records.first().expect("a raised error");
+    assert!(record["fix"].as_str().unwrap().ends_with("line"), "{record:?}");
+    let alternatives = record["alternatives"].as_array().expect("an alternative");
+    assert_eq!(alternatives[0]["edits"][0]["start"], serde_json::json!({ "line": 4, "col": 3 }));
+    let out: serde_json::Value = serde_json::from_str(&satex::cli::render::lsp(&records)).unwrap();
+    let actions = out[0]["codeActions"].as_array().unwrap();
+    assert_eq!(actions.iter().filter(|a| a["data"]["alternative"] == true).count(), 1);
+    // a fix-all takes the first fix only
+    let changes = |a: &serde_json::Value| {
+        a["edit"]["changes"].as_object().unwrap().values().next().unwrap().as_array().unwrap().len()
+    };
+    assert!(actions.iter().filter(|a| !a["data"]["scope"].is_null()).all(|a| changes(a) == 1));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A `}` that closes an argument is no runaway, and a verbatim `}` is not stray.
+#[test]
+fn balanced_and_verbatim_braces_get_no_brace_fix() {
+    if !installed() {
+        return;
+    }
+    let (records, dir) = lint_codes("err-verb", &article("\\textbf{a} \\verb|}| and \\texttt{\\}}\n"), "raised-error");
+    assert!(records.is_empty(), "{records:?}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+fix_cases! {
+    /// A second script of one kind on a nucleus is TeX's `Double superscript`:
+    /// the first scripted nucleus is braced, one reading of the formula.
+    double_superscript_braces_the_first("err-double-sup", article("$x^{a}^3$ and $\\alpha_1 _2$\n"), "raised-error", true, &article("${x^{a}}^3$ and ${\\alpha_1} _2$\n"));
+    /// The last column is copied with its argument.
+    extra_tab_copies_a_column_with_its_width("err-tab-p", article("\\begin{tabular}{lp{2cm}}\na & b & c \\\\\n\\end{tabular}\n"), "raised-error", true, &article("\\begin{tabular}{lp{2cm}p{2cm}}\na & b & c \\\\\n\\end{tabular}\n"));
+    /// `\right` inside an open `{`: TeX closes the group right before it.
+    missing_brace_before_right_closes_the_group("err-right", article("$\\left( {a \\right)$\n"), "raised-error", false, &article("$\\left( {a }\\right)$\n"));
+    /// `\end` inside an open `{`: closed before the `\end`, which runs the
+    /// environment's end code outside the group, so a review.
+    missing_brace_before_end_closes_the_group("err-end-group", article("\\begin{center}\n{\\bfseries x\n\\end{center}\n"), "raised-error", true, &article("\\begin{center}\n{\\bfseries x\n}\\end{center}\n"));
+}
+
+/// Scripts of both kinds, a script after `{}`, or after a space-separated
+/// atom are no double script.
+#[test]
+fn single_scripts_per_nucleus_are_no_error() {
+    if !installed() {
+        return;
+    }
+    let (records, dir) =
+        lint_codes("err-double-none", &article("$x^2_3$ $x_3^2$ $x^2{}^3$ $x^2 y^3$ ${x^2}^3$\n"), "raised-error");
+    assert!(records.is_empty(), "{records:?}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The paragraph-end fix of a runaway stops before a command that ends a
+/// paragraph through its own code (`\section`, whose `\@startsection` runs
+/// `\par`): the bold text must not take the next heading. Red: the scan sees
+/// only `\par`, unmatched `\end` and `}` (tests/known-red.txt).
+#[test]
+fn runaway_paragraph_fix_stops_before_a_heading() {
+    if !installed() {
+        return;
+    }
+    let (records, dir) =
+        lint_codes("err-heading", &article("\\section{A}\n\\textbf{a\nb\n\\section{B}\nc\n"), "raised-error");
+    let record = records.first().expect("a raised error");
+    let paragraph = &record["alternatives"][0]["edits"][0]["start"];
+    let _ = std::fs::remove_dir_all(&dir);
+    assert_eq!(paragraph, &serde_json::json!({ "line": 5, "col": 2 }), "{record:?}");
 }

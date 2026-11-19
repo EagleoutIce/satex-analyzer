@@ -257,6 +257,7 @@ warning   correctness  C028    expl3-signature-mismatch          expl3 argument 
 warning   correctness  C057    graphic-without-alt               graphic without alternative text            
 warning   correctness  C029    ignored-verbatim-tail             text lost after verbatim end                
 warning   correctness  C030    math-script-braces                script needs braces                         
+warning   correctness  C065    missing-bibliography              citations without a bibliography            
 warning   correctness  C031    missing-dependency                package missing from the dependency file    
 warning   correctness  C063    misspelled-magic-comment          misspelled magic comment                    
 warning   correctness  C064    package-call-error                a package command fails on some call        
@@ -613,30 +614,31 @@ macro   \WeirdMore   super #1\;                                       #1       p
 
 ```text
 $ satex query --list
-name              
-calls             
-catcodes          
-definitions       
-dependencies      
-dependency-graph  
-diagnostics       
-distribution      
-expansions        
-files             
-gaps              
-occurrences       
-options           
-pgfkeys           
-plugins           
-previews          
-produces          
-project           
-recursion         
-side-effects      
-tagging           
-trace             
-type-plugins      
-typeset           
+name              about                                                                                   
+calls             which control sequences each macro's body invokes                                       
+catcodes          explicit \catcode assignments the document makes                                        
+definitions       every macro, environment and register the document or its packages define               
+dependencies      files, packages and classes read, and what loaded each                                  
+dependency-graph  the dependency graph between files and packages as records                              
+diagnostics       what satex noticed while interpreting, apart from lint rules                            
+distribution      the detected TeX installation, version and searched trees                               
+expansions        how often each macro was expanded during the run                                        
+exports           the names installed packages define, each with the package or library to load           
+files             every file read, in the order it was opened                                             
+gaps              constructs the run could not interpret, grouped by cause                                
+occurrences       package banners, passed options and other one-off events                                
+options           the keys an environment or command's optional argument accepts                          
+pgfkeys           pgfkeys defined at the end of the run and what each does                                
+plugins           what each plugin chose for this run, and why                                            
+previews          arrow tips and patterns the run declared, drawn by TeX                                  
+produces          where a given text can come from, expanded or not                                       
+project           document class, engine and build settings detected or assumed                           
+recursion         macros that call themselves, directly or through others                                 
+side-effects      definitions and assignments a macro makes when called                                   
+tagging           PDF tagging: whether it is on, the standard, language, title and each package's status  
+trace             every step: macro expansions, primitives run, changes made                              
+type-plugins      the editor's type plugins: the types each triggers on and its features                  
+typeset           the text the document typesets, one row per paragraph                                   
 ```
 
 </details>

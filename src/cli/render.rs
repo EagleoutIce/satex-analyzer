@@ -139,11 +139,11 @@ fn location(record: &Record) -> String {
 }
 
 #[rustfmt::skip]
-const COLUMNS: [&str; 54] = [
+const COLUMNS: [&str; 55] = [
     "index", "warning", "covered", "rules", "id", "step", "severity", "category", "number", "code", "kind", "status",
     "tag", "name", "callee", "key", "subject", "for", "means", "when", "context", "redefined", "effective", "error",
     "signature", "roles", "types", "parameters", "arity", "takes", "uses", "count", "value", "default", "governs", "package",
-    "class", "by", "detail", "fix", "message", "does", "comment", "arguments", "documentation", "expands", "may_expand", "creates", "creates_internal", "body", "reference", "root",
+    "class", "by", "detail", "fix", "message", "does", "about", "comment", "arguments", "documentation", "expands", "may_expand", "creates", "creates_internal", "body", "reference", "root",
     "file", "state",
 ];
 
@@ -269,8 +269,18 @@ fn shown_columns(records: &[Record], links: Links) -> Vec<&'static str> {
 
 /// RFC 4180: a field with a comma, a quote or a newline is quoted, and a
 /// quote inside it is doubled.
+/// The columns a CSV or Markdown table carries: the text table's, and the
+/// line and column it shows beside the file as `@ file:line:col`.
+fn data_columns(records: &[Record]) -> Vec<&'static str> {
+    let mut present = present_columns(records);
+    let at = present.iter().position(|c| *c == "file").map_or(present.len(), |i| i + 1);
+    let place = ["line", "col"].into_iter().filter(|c| records.iter().any(|r| r.get(*c).is_some_and(Json::is_u64)));
+    present.splice(at..at, place);
+    present
+}
+
 pub fn csv(records: &[Record]) -> String {
-    let present = present_columns(records);
+    let present = data_columns(records);
     let escape = |text: &str| {
         if text.contains([',', '"', '\n']) { format!("\"{}\"", text.replace('"', "\"\"")) } else { text.to_string() }
     };
@@ -286,7 +296,7 @@ pub fn csv(records: &[Record]) -> String {
 
 /// A GitHub-flavoured Markdown table.
 pub fn markdown(records: &[Record]) -> String {
-    let present = present_columns(records);
+    let present = data_columns(records);
     if present.is_empty() {
         return String::new();
     }
@@ -578,9 +588,7 @@ fn place_key(record: &Record) -> (String, u64, u64) {
     )
 }
 
-pub(crate) fn plural(count: usize, word: &str) -> String {
-    format!("{count} {word}{}", if count == 1 { "" } else { "s" })
-}
+pub(crate) use crate::util::plural;
 
 /// One finding, never cut: `place  severity  code  message`, wrapped at the
 /// terminal width rather than elided, with `fix: ...` indented below it when
@@ -599,16 +607,28 @@ fn severity_symbol(severity: &str) -> &'static str {
 /// stands on is shown under it.
 #[derive(Default)]
 struct Sources {
-    files: std::collections::HashMap<String, Option<Vec<String>>>,
+    files: std::collections::HashMap<String, Option<Vec<Vec<u8>>>>,
 }
 
 impl Sources {
-    fn line(&mut self, path: &str, line: u64) -> Option<&str> {
+    /// Line `line` of `path` as shown, and the character a satex column
+    /// stands on (0-based): an 8-bit engine counts bytes, the terminal
+    /// shows characters.
+    fn line(&mut self, path: &str, line: u64, col: u64) -> Option<(String, usize)> {
         let lines = self.files.entry(path.to_string()).or_insert_with(|| {
             let text = std::fs::read(path).ok()?;
-            Some(String::from_utf8_lossy(&text).lines().map(|l| l.replace('\t', " ")).collect())
+            Some(text.split(|b| *b == b'\n').map(|l| l.strip_suffix(b"\r").unwrap_or(l).to_vec()).collect())
         });
-        lines.as_ref()?.get(usize::try_from(line).ok()?.checked_sub(1)?).map(String::as_str)
+        let raw = lines.as_ref()?.get(usize::try_from(line).ok()?.checked_sub(1)?)?;
+        let text = String::from_utf8_lossy(raw).replace('\t', " ");
+        let skip = col.saturating_sub(1) as usize;
+        let at = match crate::engine::source::encoding() {
+            crate::project::config::Encoding::Bytes => {
+                String::from_utf8_lossy(&raw[..skip.min(raw.len())]).chars().count()
+            }
+            crate::project::config::Encoding::Utf8 => skip,
+        };
+        Some((text, at))
     }
 }
 
@@ -637,9 +657,9 @@ fn marked(line: &[char], col: usize, name: &str) -> usize {
 fn snippet(out: &mut String, sources: &mut Sources, record: &Record, style: Style) -> Option<usize> {
     let path = record.get("path").and_then(Json::as_str)?;
     let number = record.get("line").and_then(Json::as_u64).filter(|n| *n > 0)?;
-    let text = sources.line(path, number)?;
+    let (text, col) = sources.line(path, number, record.get("col").and_then(Json::as_u64).unwrap_or(1))?;
     let chars: Vec<char> = text.trim_end().chars().collect();
-    let col = record.get("col").and_then(Json::as_u64).map_or(0, |c| c.saturating_sub(1) as usize).min(chars.len());
+    let col = col.min(chars.len());
     let len = marked(&chars, col, &record.get("name").map(plain).unwrap_or_default());
     let gutter = number.to_string().len();
     let room = terminal_width().saturating_sub(SNIPPET + gutter + 3).max(MIN_COLUMN * 4);
@@ -689,8 +709,10 @@ fn finding(out: &mut String, sources: &mut Sources, record: &Record, links: Link
         Some("unsafe") => "= unsafe fix",
         _ => "= hint",
     };
+    let others = record.get("alternatives").and_then(Json::as_array).into_iter().flatten();
+    let fix = others.filter_map(|a| a["fix"].as_str()).fold(fix.to_string(), |all, f| format!("{all}, or {f}"));
     let fix_room = terminal_width().saturating_sub(bar + width(tag) + 2).max(MIN_COLUMN);
-    for (i, line) in wrap(fix, fix_room).into_iter().enumerate() {
+    for (i, line) in wrap(&fix, fix_room).into_iter().enumerate() {
         let head = if i == 0 { format!("{tag}: ") } else { " ".repeat(width(tag) + 2) };
         let _ = writeln!(out, "{:bar$}{DIM}{head}{line}{DIM:#}", "");
     }
@@ -1437,8 +1459,16 @@ pub(crate) fn file_url(path: &str) -> String {
     crate::project::paths::file_url(&absolute)
 }
 
+/// A record's column in code points, for formats read outside satex; the
+/// satex column where the file cannot be read.
+fn code_point_col(sources: &crate::linter::fix::Sources, path: &str, line: u64, col: u64) -> u64 {
+    let pos = crate::text::Pos::new(line.max(1) as u32, col.max(1) as u32);
+    sources.get(path).and_then(|text| text.code_point_col(pos)).map_or(col, u64::from)
+}
+
 pub fn github(records: &[Record]) -> String {
     let mut out = String::new();
+    let sources = crate::linter::fix::Sources::default();
     for record in records {
         let level = match record.get("severity").and_then(Json::as_str) {
             Some("error") => "error",
@@ -1449,7 +1479,7 @@ pub fn github(records: &[Record]) -> String {
         let title = crate::linter::label(&plain(record.get("code").unwrap_or(&Json::Null)));
         let file = plain(record.get("path").unwrap_or(&Json::Null));
         let line = record.get("line").and_then(Json::as_u64).unwrap_or(1);
-        let column = record.get("col").and_then(Json::as_u64).unwrap_or(1);
+        let column = code_point_col(&sources, &file, line, record.get("col").and_then(Json::as_u64).unwrap_or(1));
         let _ = writeln!(
             out,
             "::{level} file={file},line={line},col={column},title={title}::{}",
@@ -1485,9 +1515,13 @@ pub fn sarif(records: &[Record], version: &str) -> String {
         codes.dedup();
         codes.into_iter().map(|code| sarif_rule(&code)).collect()
     };
+    let sources = crate::linter::fix::Sources::default();
     let results: Vec<serde_json::Value> = records
         .iter()
         .map(|record| {
+            let path = plain(record.get("path").unwrap_or(&Json::Null));
+            let line = record.get("line").and_then(Json::as_u64).unwrap_or(1);
+            let column = code_point_col(&sources, &path, line, record.get("col").and_then(Json::as_u64).unwrap_or(1));
             serde_json::json!({
                 "ruleId": rule_id(&plain(record.get("code").unwrap_or(&Json::Null))),
                 "level": match record.get("severity").and_then(Json::as_str) {
@@ -1498,14 +1532,11 @@ pub fn sarif(records: &[Record], version: &str) -> String {
                 "message": { "text": plain(record.get("message").unwrap_or(&Json::Null)) },
                 "locations": [{
                     "physicalLocation": {
-                        "artifactLocation": { "uri": plain(record.get("path").unwrap_or(&Json::Null)) },
-                        "region": {
-                            "startLine": record.get("line").and_then(Json::as_u64).unwrap_or(1),
-                            "startColumn": record.get("col").and_then(Json::as_u64).unwrap_or(1),
-                        }
+                        "artifactLocation": { "uri": path },
+                        "region": { "startLine": line, "startColumn": column }
                     }
                 }],
-                "fixes": sarif_fixes(record),
+                "fixes": sarif_fixes(record, &sources),
                 "properties": { "fix": record.get("fix") },
             })
         })
@@ -1537,19 +1568,20 @@ fn edits_by_file(record: &Record) -> Vec<(String, Vec<crate::text::Edit>)> {
 
 /// SARIF 2.1.0 § 3.55: a fix is the changes it makes, so a finding whose
 /// fix is prose only has none; its prose is under `properties.fix`.
-fn sarif_fixes(record: &Record) -> Json {
+fn sarif_fixes(record: &Record, sources: &crate::linter::fix::Sources) -> Json {
     let changes: Vec<Json> = edits_by_file(record)
         .into_iter()
         .map(|(path, edits)| {
+            let col = |at: crate::text::Pos| code_point_col(sources, &path, at.line.into(), at.col.into());
             let replacements: Vec<Json> = edits
                 .iter()
                 .map(|edit| {
                     serde_json::json!({
                         "deletedRegion": {
                             "startLine": edit.start.line,
-                            "startColumn": edit.start.col,
+                            "startColumn": col(edit.start),
                             "endLine": edit.end.line,
-                            "endColumn": edit.end.col,
+                            "endColumn": col(edit.end),
                         },
                         "insertedContent": { "text": edit.replacement },
                     })
@@ -1686,33 +1718,51 @@ pub fn lsp_with(records: &[Record], uri: impl Fn(&str) -> String) -> String {
             };
             diagnostic["relatedInformation"] = related.iter().map(place).collect();
         }
-        let changes: serde_json::Map<String, Json> = edits_by_file(record)
-            .into_iter()
-            .map(|(file, edits)| {
-                let edits: Vec<Json> = edits
-                    .iter()
-                    .map(|edit| {
-                        serde_json::json!({
-                            "range": {
-                                "start": position(&file, edit.start.line.into(), edit.start.col.into()),
-                                "end": position(&file, edit.end.line.into(), edit.end.col.into()),
-                            },
-                            "newText": edit.replacement,
+        // The finding's fix, and each other way to repair it (never in a fix-all).
+        let fixes = std::iter::once((record, false)).chain(
+            record
+                .get("alternatives")
+                .and_then(Json::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(Json::as_object)
+                .map(|a| (a, true)),
+        );
+        let mut actions = Vec::new();
+        for (fix, alternative) in fixes {
+            let changes: serde_json::Map<String, Json> = edits_by_file(fix)
+                .into_iter()
+                .map(|(file, edits)| {
+                    let edits: Vec<Json> = edits
+                        .iter()
+                        .map(|edit| {
+                            serde_json::json!({
+                                "range": {
+                                    "start": position(&file, edit.start.line.into(), edit.start.col.into()),
+                                    "end": position(&file, edit.end.line.into(), edit.end.col.into()),
+                                },
+                                "newText": edit.replacement,
+                            })
                         })
-                    })
-                    .collect();
-                (uri(&file), Json::Array(edits))
-            })
-            .collect();
-        let action = (!changes.is_empty()).then(|| {
-            serde_json::json!({
-                "title": plain(record.get("fix").unwrap_or(&Json::Null)),
+                        .collect();
+                    (uri(&file), Json::Array(edits))
+                })
+                .collect();
+            if changes.is_empty() {
+                continue;
+            }
+            let mut action = serde_json::json!({
+                "title": plain(fix.get("fix").unwrap_or(&Json::Null)),
                 "kind": "quickfix",
                 "diagnostics": [diagnostic.clone()],
-                "isPreferred": record.get("applicability").and_then(Json::as_str) == Some("safe"),
+                "isPreferred": !alternative && fix.get("applicability").and_then(Json::as_str) == Some("safe"),
                 "edit": { "changes": changes },
-            })
-        });
+            });
+            if alternative {
+                action["data"] = serde_json::json!({ "alternative": true, "applicability": fix.get("applicability") });
+            }
+            actions.push(action);
+        }
         let slot = match files.iter().position(|(p, _, _)| *p == path) {
             Some(index) => index,
             None => {
@@ -1721,7 +1771,7 @@ pub fn lsp_with(records: &[Record], uri: impl Fn(&str) -> String) -> String {
             }
         };
         files[slot].1.push(diagnostic);
-        files[slot].2.extend(action);
+        files[slot].2.extend(actions);
     }
     let out: Vec<Json> = files
         .into_iter()
@@ -1751,7 +1801,7 @@ fn fix_all(actions: &[Json]) -> Vec<Json> {
     }
     let mut out = Vec::new();
     for (scope, key) in scopes {
-        let within = |a: &&Json| scope == "all" || field(a, scope) == key;
+        let within = |a: &&Json| (scope == "all" || field(a, scope) == key) && a["data"]["alternative"] != true;
         let safe: Vec<&Json> = actions.iter().filter(within).filter(|a| a["isPreferred"] == true).collect();
         let all: Vec<&Json> = actions.iter().filter(within).collect();
         for (unsafe_, mine) in [(false, safe), (true, all)] {

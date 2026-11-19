@@ -91,3 +91,82 @@ fn explain_and_slice_take_a_file_without_its_extension() {
     let rows = run(&dir, &["slice", "--at", "child:2:1", "--list"]);
     assert!(rows.is_ok(), "{rows:?}");
 }
+
+/// `satex lint` on a file whose line 1 is `Grüße \foo`, with `args` after it.
+fn lint_after_umlaut(tag: &str, args: &[&str]) -> String {
+    let dir = crate::support::tmp_root().join(format!("satex-positions-{tag}-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("main.tex"), "Grüße \\foo\n").unwrap();
+    let out = crate::support::satex()
+        .args(["--no-config", "--no-classes", "--no-packages", "--set", "limits.seconds=0", "--color", "never"])
+        .args(["lint", "-f"])
+        .arg(dir.join("main.tex"))
+        .args(args)
+        .output()
+        .unwrap();
+    String::from_utf8_lossy(&out.stdout).into_owned()
+}
+
+/// The terminal view marks a finding's source under its column.  Under
+/// pdfTeX a column counts bytes, so after `ü` the column is one past the
+/// character it names; the renderer counted characters with it and put the
+/// carets under `oo` instead of under `\foo`.
+#[test]
+fn the_text_view_marks_a_command_after_a_non_ascii_letter() {
+    let text = lint_after_umlaut("caret", &[]);
+    let lines: Vec<&str> = text.lines().collect();
+    let at = lines.iter().position(|l| l.ends_with("Grüße \\foo")).unwrap_or_else(|| panic!("{text}"));
+    let (shown, marks) = (lines[at], lines[at + 1]);
+    let column = |l: &str, s: &str| l.find(s).map(|b| l[..b].chars().count());
+    assert_eq!(column(marks, "^^^^"), column(shown, "\\foo"), "{text}");
+}
+
+/// GitHub annotations and SARIF (`columnKind: unicodeCodePoints`) count a
+/// column in characters, as editors do.
+/// Bug pinned: they carried pdfTeX's byte column, two past `\foo`.
+#[test]
+fn github_and_sarif_count_columns_in_characters() {
+    let column = "Grüße ".chars().count() + 1;
+    let github = lint_after_umlaut("github", &["--format", "github"]);
+    assert!(github.contains(&format!("line=1,col={column},")), "{github}");
+    let sarif: serde_json::Value = serde_json::from_str(&lint_after_umlaut("sarif", &["--format", "sarif"])).unwrap();
+    let region = &sarif["runs"][0]["results"][0]["locations"][0]["physicalLocation"]["region"];
+    assert_eq!(region["startColumn"], column, "{sarif}");
+}
+
+/// A query's name and the flags only some queries take are checked before
+/// the document is read, as `--format` is.
+/// Bug pinned: `satex query nosuch` and `query options` without `--for` ran
+/// the whole analysis first and only then said what was wrong.
+#[test]
+fn a_query_s_arguments_are_checked_before_the_document_is_read() {
+    let missing = crate::support::tmp_root().join("no-such-document.tex");
+    for (args, says) in [
+        (&["query", "nosuch"][..], "`satex query --list`"),
+        (&["query", "options"][..], "--for NAME"),
+        (&["query", "files", "--text", "x"][..], "`--text`"),
+    ] {
+        let out = crate::support::satex().args(args).arg("-f").arg(&missing).output().unwrap();
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(
+            !out.status.success() && stderr.contains(says) && !stderr.contains("No such file"),
+            "{args:?}: {stderr}"
+        );
+    }
+}
+
+/// A CSV or Markdown table names where each row stands, as the text table's
+/// `@ file:line:col` does.
+/// Bug pinned: both kept the text table's columns only, so a CSV of
+/// findings named the file but not the line.
+#[test]
+fn csv_and_markdown_findings_carry_their_line_and_column() {
+    let csv = lint_after_umlaut("csv", &["--format", "csv"]);
+    // `file,line,col` close the header; a quoted cell before them may hold commas.
+    assert!(csv.lines().next().is_some_and(|h| h.ends_with(",file,line,col")), "{csv}");
+    let row: Vec<&str> = csv.lines().nth(1).unwrap_or_default().rsplit(',').take(2).collect();
+    assert_eq!(row.get(1), Some(&"1"), "{csv}");
+    assert!(row.first().is_some_and(|c| c.parse::<u32>().is_ok_and(|c| c > 1)), "{csv}");
+    let markdown = lint_after_umlaut("markdown", &["--format", "markdown"]);
+    assert!(markdown.lines().next().is_some_and(|h| h.contains("| file | line | col |")), "{markdown}");
+}

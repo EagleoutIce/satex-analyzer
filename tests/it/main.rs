@@ -77,6 +77,7 @@ mod primitives;
 mod produces;
 mod profiles;
 mod progressive;
+mod quick_fixes;
 mod rename;
 mod roots;
 mod semantics;

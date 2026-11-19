@@ -25,6 +25,7 @@ pub mod pdf;
 pub mod performance;
 pub mod precision;
 pub mod quotes;
+pub mod repair;
 pub(crate) mod shared;
 pub mod sourcetext;
 pub mod spacing;
@@ -418,6 +419,23 @@ impl<'a> Report<'a> {
     pub fn add_fix_as(&mut self, severity: Severity, span: Span, name: &str, message: String, fix: fix::Fix) {
         let edits = (!fix.edits.is_empty()).then_some((fix.applicability, fix.edits));
         self.push(severity, span, name, message, Some(fix.description), edits);
+    }
+
+    /// [`Report::add_fix`] with the other ways to repair the finding: an
+    /// editor offers each (`alternatives`), `--fix` applies the first only.
+    pub fn add_fixes(&mut self, span: Span, name: &str, message: String, fixes: Vec<fix::Fix>) {
+        let mut fixes = fixes.into_iter();
+        let Some(first) = fixes.next() else { return self.add(span, name, message, None) };
+        let before = self.out.len();
+        self.add_fix(span, name, message, first);
+        let editable = |f: &fix::Fix| f.edits.iter().all(|e| self.sources.editable(self.analysis, &e.path));
+        let others: Vec<serde_json::Value> = fixes
+            .filter(|f| !f.edits.is_empty() && editable(f))
+            .map(|f| json!({ "fix": f.description, "applicability": f.applicability.as_str(), "edits": f.edits.iter().map(fix::Edit::to_json).collect::<Vec<_>>() }))
+            .collect();
+        if let Some(record) = self.out.get_mut(before).filter(|_| !others.is_empty()) {
+            record.insert("alternatives".into(), others.into());
+        }
     }
 
     /// [`Report::add_fix`] for a finding that stands at `related` too: the

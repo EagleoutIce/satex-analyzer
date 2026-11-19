@@ -135,6 +135,8 @@ impl Spent {
 
     /// What `run` watched, unless the question has read its tokens.
     fn run(&self, run: impl FnOnce() -> Option<Watch>) -> Option<Watch> {
+        // many short runs read few tokens each: a server answers between them
+        crate::util::progress::pause_if_due();
         if self.read.get() >= self.budget || preempted() {
             return None;
         }

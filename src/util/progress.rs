@@ -399,6 +399,32 @@ pub fn pause_now() {
     if let Some(mut pause) = PAUSE.take() {
         pause();
         PAUSE.set(Some(pause));
+        PAUSED_AT.set(Some(std::time::Instant::now()));
+    }
+}
+
+/// How long work goes on between two pauses at most, in ms: what a request waits during a run
+/// (`lsp.pause_ms`, set by the server; until then at every look).
+static PAUSE_EVERY: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Sets [`PAUSE_EVERY`].
+pub fn pause_every(ms: u64) {
+    PAUSE_EVERY.store(ms, std::sync::atomic::Ordering::Relaxed);
+}
+
+thread_local! {
+    static PAUSED_AT: std::cell::Cell<Option<std::time::Instant>> = const { std::cell::Cell::new(None) };
+}
+
+/// Inside a long command, asked every so many steps: the pause runs once [`PAUSE_EVERY`]
+/// passed since the last one. A step count alone waits as long as the steps are slow.
+pub fn pause_if_due() {
+    if PAUSE.with_borrow(Option::is_none) {
+        return;
+    }
+    let every = std::time::Duration::from_millis(PAUSE_EVERY.load(std::sync::atomic::Ordering::Relaxed));
+    if PAUSED_AT.get().is_none_or(|t| t.elapsed() >= every) {
+        pause_now();
     }
 }
 

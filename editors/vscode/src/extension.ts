@@ -257,9 +257,15 @@ async function harmonize(context: vscode.ExtensionContext): Promise<void> {
 async function showCaches(): Promise<void> {
     const editor = vscode.window.activeTextEditor;
     if (!client || !editor) { return; }
-    const lines = await client.sendRequest<string[]>('satex/caches', { textDocument: { uri: editor.document.uri.toString() } });
-    await vscode.window.showQuickPick(lines.length ? lines : ['No analysis of this document yet.'],
-        { title: `satex caches: ${path.basename(editor.document.uri.fsPath)}`, placeHolder: 'reused caches load in milliseconds; rebuilt ones are kept for the next run' });
+    // the list shows at once and fills when the server answers
+    const qp = vscode.window.createQuickPick();
+    Object.assign(qp, { title: `satex caches: ${path.basename(editor.document.uri.fsPath)}`, placeholder: 'reused caches load in milliseconds; rebuilt ones are kept for the next run', busy: true });
+    qp.show();
+    const lines = await client.sendRequest<string[]>('satex/caches', { textDocument: { uri: editor.document.uri.toString() } })
+        .then(l => l.length ? l : ['No analysis of this document yet.'], (e: Error) => [`The server did not answer: ${e.message}`]);
+    Object.assign(qp, { items: lines.map(label => ({ label })), busy: false });
+    await new Promise<void>(done => qp.onDidHide(() => done()));
+    qp.dispose();
 }
 
 /** A command; one another copy of SaTeX holds already stays its, and this activation goes on. */

@@ -31,7 +31,7 @@ Every rule, with a link to its explanation below. The shape gives the severity: 
 | C010 | [`new-redefines`](#new-redefines) | <span class="sev sev-error" title="default: error">◆</span> <span class="cat cat-correctness">correctness</span> | — | — | declaration redefines a command | 0.2.0 | — |
 | C011 | [`not-defined`](#not-defined) | <span class="sev sev-error" title="default: error">◆</span> <span class="cat cat-correctness">correctness</span> | — | <span class="fix fix-safe" title="safe: the fix keeps the document's meaning, --fix applies it">S</span> | renewing an undefined command | 0.1.0 | — |
 | C012 | [`option-clash`](#option-clash) | <span class="sev sev-error" title="default: error">◆</span> <span class="cat cat-correctness">correctness</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix may change the meaning, only --unsafe-fixes applies it">U</span> | package loaded with clashing options | 0.1.0 | — |
-| C013 | [`raised-error`](#raised-error) | <span class="sev sev-error" title="default: error">◆</span> <span class="cat cat-correctness">correctness</span> | — | — | TeX error in the document | 0.1.0 | — |
+| C013 | [`raised-error`](#raised-error) | <span class="sev sev-error" title="default: error">◆</span> <span class="cat cat-correctness">correctness</span> | — | <span class="fix fix-safe" title="safe: the fix keeps the document's meaning, --fix applies it">S</span> <span class="fix fix-unsafe" title="unsafe: the fix may change the meaning, only --unsafe-fixes applies it">U</span> | TeX error in the document | 0.1.0 | — |
 | C014 | [`undefined-color`](#undefined-color) | <span class="sev sev-error" title="default: error">◆</span> <span class="cat cat-correctness">correctness</span> | — | — | color used before it is defined | 0.2.0 | — |
 | C015 | [`undefined-control-sequence`](#undefined-control-sequence) | <span class="sev sev-error" title="default: error">◆</span> <span class="cat cat-correctness">correctness</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix may change the meaning, only --unsafe-fixes applies it">U</span> | undefined command | 0.1.0 | — |
 | C016 | [`undefined-environment`](#undefined-environment) | <span class="sev sev-error" title="default: error">◆</span> <span class="cat cat-correctness">correctness</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix may change the meaning, only --unsafe-fixes applies it">U</span> | undefined environment | 0.1.0 | — |
@@ -45,13 +45,14 @@ Every rule, with a link to its explanation below. The shape gives the severity: 
 | C023 | [`duplicate-bibliography-entry`](#duplicate-bibliography-entry) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | — | — | key declared twice | 0.1.0 | — |
 | C050 | [`duplicate-bibliography-load`](#duplicate-bibliography-load) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | — | <span class="fix fix-safe" title="safe: the fix keeps the document's meaning, --fix applies it">S</span> | database loaded twice | 0.2.0 | — |
 | C051 | [`duplicate-bibliography-work`](#duplicate-bibliography-work) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix may change the meaning, only --unsafe-fixes applies it">U</span> | one work under two keys | 0.2.0 | — |
-| C024 | [`duplicate-label`](#duplicate-label) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | — | — | label defined twice | 0.1.0 | — |
+| C024 | [`duplicate-label`](#duplicate-label) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix may change the meaning, only --unsafe-fixes applies it">U</span> | label defined twice | 0.1.0 | — |
 | C026 | [`expl-syntax-left-on`](#expl-syntax-left-on) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | — | — | ExplSyntaxOn never turned off | 0.1.0 | — |
 | C027 | [`expl3-constant-set`](#expl3-constant-set) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | — | — | expl3 constant set again | 0.2.0 | — |
 | C028 | [`expl3-signature-mismatch`](#expl3-signature-mismatch) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | — | — | expl3 argument signature mismatch | 0.1.0 | — |
 | C057 | [`graphic-without-alt`](#graphic-without-alt) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | — | — | graphic without alternative text | 0.2.5 | — |
 | C029 | [`ignored-verbatim-tail`](#ignored-verbatim-tail) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix may change the meaning, only --unsafe-fixes applies it">U</span> | text lost after verbatim end | 0.2.0 | <a class="from" href="Chktex-Coverage" title="follows chktex warning 31">chktex 31</a> |
 | C030 | [`math-script-braces`](#math-script-braces) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | — | <span class="fix fix-safe" title="safe: the fix keeps the document's meaning, --fix applies it">S</span> | script needs braces | 0.2.0 | <a class="from" href="Chktex-Coverage" title="follows chktex warning 3, 25">chktex 3, 25</a> |
+| C065 | [`missing-bibliography`](#missing-bibliography) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix may change the meaning, only --unsafe-fixes applies it">U</span> | citations without a bibliography | 0.2.5 | — |
 | C031 | [`missing-dependency`](#missing-dependency) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | — | <span class="fix fix-safe" title="safe: the fix keeps the document's meaning, --fix applies it">S</span> | package missing from the dependency file | 0.1.0 | — |
 | C063 | [`misspelled-magic-comment`](#misspelled-magic-comment) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix may change the meaning, only --unsafe-fixes applies it">U</span> | misspelled magic comment | 0.2.5 | — |
 | C064 | [`package-call-error`](#package-call-error) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | — | — | a package command fails on some call | 0.2.5 | — |
@@ -68,11 +69,11 @@ Every rule, with a link to its explanation below. The shape gives the severity: 
 | C035 | [`undefined-citation`](#undefined-citation) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix may change the meaning, only --unsafe-fixes applies it">U</span> | citation key not in the bibliography | 0.1.0 | — |
 | C048 | [`undefined-cref-format`](#undefined-cref-format) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix may change the meaning, only --unsafe-fixes applies it">U</span> | cleveref has no name for this label | 0.2.0 | — |
 | C036 | [`undefined-optional-content`](#undefined-optional-content) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | — | — | unknown optional content group | 0.1.0 | — |
-| C037 | [`undefined-reference`](#undefined-reference) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | — | — | reference to an undefined label | 0.1.0 | — |
+| C037 | [`undefined-reference`](#undefined-reference) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix may change the meaning, only --unsafe-fixes applies it">U</span> | reference to an undefined label | 0.1.0 | — |
 | C038 | [`uninstalled-package`](#uninstalled-package) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | — | — | package not installed | 0.2.0 | — |
 | C049 | [`unknown-code-language`](#unknown-code-language) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | — | — | unknown listings language | 0.2.0 | — |
 | C062 | [`unknown-package-name`](#unknown-package-name) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix may change the meaning, only --unsafe-fixes applies it">U</span> | package name misspelled | 0.2.5 | — |
-| C039 | [`unresolved-file`](#unresolved-file) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | — | — | file not installed | 0.1.0 | <a class="from" href="Chktex-Coverage" title="follows chktex warning 27">chktex 27</a> |
+| C039 | [`unresolved-file`](#unresolved-file) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix may change the meaning, only --unsafe-fixes applies it">U</span> | file not installed | 0.1.0 | <a class="from" href="Chktex-Coverage" title="follows chktex warning 27">chktex 27</a> |
 | C045 | [`assumption-made`](#assumption-made) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-correctness">correctness</span> | — | — | document assumes a condition | 0.2.0 | — |
 | C040 | [`expected-load`](#expected-load) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-correctness">correctness</span> | — | — | file read before a package it expects | 0.2.0 | — |
 | C041 | [`math-mode-mismatch`](#math-mode-mismatch) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-correctness">correctness</span> | — | — | math delimiter in the wrong mode | 0.2.0 | <a class="from" href="Chktex-Coverage" title="follows chktex warning 49">chktex 49</a> |
@@ -223,6 +224,12 @@ A finding's `fix` says what to do. Where that is mechanical it carries the edits
 
 `--fix` applies the safe fixes, `--unsafe-fixes` adds the unsafe ones, `--diff` prints the edits instead of writing them. Only project files change. Overlapping fixes wait for the next round. The document is re-analyzed after each round, up to eight.
 
+Errors that stop LaTeX get fixes too. A package a letter off an installed one is respelled (`graphix` to `graphicx`), one no installed name is near is deleted. A command only a package defines (`\toprule`, `\SI`, `\mathbb`) loads that package, an arrow tip or shape loads its TikZ library. A second load with new options moves them to the first, a load after `\begin{document}` moves into the preamble, `\DocumentMetadata` moves above `\documentclass`. A `\ref` or `\cite` key one typo off a label or entry is respelled. A duplicate label is renamed, and no reference with it. Citations without any bibliography get `\bibliography` (or biblatex's `\addbibresource`) for the `.bib` files beside the document.
+
+<a href="https://github.com/EagleoutIce/satex-analyzer/blob/main/doc/site/showcase/img/quickfix-light.webm" title="Play the clip"><picture><source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/EagleoutIce/satex-analyzer/main/doc/site/showcase/img/quickfix-dark.png"><img src="https://raw.githubusercontent.com/EagleoutIce/satex-analyzer/main/doc/site/showcase/img/quickfix-light.png" alt="Fix an error: the hover card's fix closes an unclosed \textbf and the PDF builds" width="640"></picture></a>
+
+Some findings can be repaired in more than one way: a runaway argument may end at its line or at its paragraph. The first fix is the one `--fix` applies, the others come as `alternatives`, each its own code action in an editor, never part of a fix-all.
+
 `--format json` gives each fix as `applicability` and `edits` (`path`, 1-based `start`/`end`, `replacement`), `--format sarif` as `fixes`, `--format lsp` as diagnostics with `quickfix` code actions.
 
 In the rule list below, `S` marks a rule with a safe fix and `U` one with an unsafe fix. A rule with both is safe where its fix cannot change what the document means and unsafe where it might. Each finding names its own kind.
@@ -232,7 +239,7 @@ In the rule list below, `S` marks a rule with a safe fix and `U` one with an uns
 One group per category, each with its first rules. A group's button shows the rest.
 
 <div class="fold" id="category-correctness">
-<h3 class="fold-head"><b>correctness</b> (64 rules)</h3>
+<h3 class="fold-head"><b>correctness</b> (65 rules)</h3>
 
 ### already-defined
 
@@ -442,11 +449,13 @@ See [source2e § ltclass.dtx](https://ctan.org/pkg/source2e).
 
 ### raised-error
 
-<p class="badges"><code class="num" title="rule number">C013</code> <span class="sev sev-error" title="default: error">default: error</span> <span class="cat cat-correctness">correctness</span> <span class="since" title="first release">since 0.1.0</span></p>
+<p class="badges"><code class="num" title="rule number">C013</code> <span class="sev sev-error" title="default: error">default: error</span> <span class="cat cat-correctness">correctness</span> <span class="fix fix-safe" title="safe: the fix keeps the document's meaning, --fix applies it">S</span> <span class="fix fix-unsafe" title="unsafe: the fix may change the meaning, only --unsafe-fixes applies it">U</span> <span class="since" title="first release">since 0.1.0</span></p>
 
 **TeX error in the document**
 
 Running the document reaches `\errmessage`, which every LaTeX error (`\PackageError`, `\msg_error:nn`, the kernel's own) ends in: a real run stops there. A more specific rule that explains the same error reports it instead. An error reached only on a path satex could not decide, or after it lost track of the mode, is not one a real run need reach, and is not reported. A runaway in package code over an argument the document leaves open is the document's error too: it is shown at the call that opens it.
+
+The common errors come with a fix read off the source. Safe ones write out what TeX's recovery does: a `}` that closes no group is deleted, a `\\` with no line to end too, a bare length gets its `pt`, `\csname` its `\endcsname` before the first command that does not expand. The others guess the intent and need a review: an argument that never closes is closed at the end of its line (or of its paragraph, offered too), a math-only token is set as a formula, an `&` past the last column repeats the last column of the table's preamble, an `&` in text becomes `\&`, text before a `\begin{document}` the file lacks gets one, `\item` outside a list gets an `itemize`, a second script of one kind on a nucleus braces the first scripted nucleus (`{x^2}^3`). A `{` still open at `\right` is closed right before it (safe), at `\end` too (a review).
 
 ### undefined-color
 
@@ -609,13 +618,13 @@ See [btxdoc § Using BibTeX](https://ctan.org/pkg/bibtex).
 
 ### duplicate-label
 
-<p class="badges"><code class="num" title="rule number">C024</code> <span class="sev sev-warning" title="default: warning">default: warning</span> <span class="cat cat-correctness">correctness</span> <span class="since" title="first release">since 0.1.0</span></p>
+<p class="badges"><code class="num" title="rule number">C024</code> <span class="sev sev-warning" title="default: warning">default: warning</span> <span class="cat cat-correctness">correctness</span> <span class="fix fix-unsafe" title="unsafe: the fix may change the meaning, only --unsafe-fixes applies it">U</span> <span class="since" title="first release">since 0.1.0</span></p>
 
 **label defined twice**
 
 LaTeX warns `Label … multiply defined` and every reference resolves to the later one. The finding stands at the innermost command of the document's text that writes the label: the `\begin` inside a `\sbox` argument, not the `\sbox`. Only the kernel's `\newlabel` (and zref's) warn: a name another package writes to the `.aux` file twice, such as a tikzmark, is not checked.
 
-Fix by renaming one of them.
+Fix by renaming one of them. The fix renames the later one and no reference: those that resolved to it then resolve to the first, so it needs a check.
 
 See [source2e § ltxref.dtx](https://ctan.org/pkg/source2e).
 
@@ -696,6 +705,18 @@ The rule lexes the source with TeX's own mouth where the run really was in math 
 Fix by putting the script between `{` and `}`.
 
 See [chktex 3](https://www.nongnu.org/chktex/), [chktex 25](https://www.nongnu.org/chktex/), [The TeXbook, chapter 16](https://ctan.org/pkg/texbook).
+
+### missing-bibliography
+
+<p class="badges"><code class="num" title="rule number">C065</code> <span class="sev sev-warning" title="default: warning">default: warning</span> <span class="cat cat-correctness">correctness</span> <span class="fix fix-unsafe" title="unsafe: the fix may change the meaning, only --unsafe-fixes applies it">U</span> <span class="since" title="first release">since 0.2.5</span></p>
+
+**citations without a bibliography**
+
+The document cites, but no `\bibliography`, `\addbibresource` or `thebibliography` says where the entries stand: every citation prints `?`, and BibTeX stops with `I found no \bibdata command`.
+
+The quick fix names the `.bib` files beside the main file: with biblatex `\addbibresource` in the preamble and `\printbibliography` at the end, else `\bibliographystyle{plain}` and `\bibliography` at the end.
+
+See [btxdoc § Using BibTeX](https://ctan.org/pkg/bibtex).
 
 ### missing-dependency
 
@@ -859,7 +880,7 @@ See [btxdoc § The database files](https://ctan.org/pkg/bibtex).
 
 No `\bibitem` and no entry of the `.bib` databases `\bibliography` names declares this key, so LaTeX prints `?` and warns `Citation … undefined`. Citations are observed rather than listed: a citation command writes its key to the `.aux` for the bibliography program (`\citation{⟨key⟩}`) and reads the name the entry defines when the file is read back (`\b@⟨key⟩`). Any line written so is a citation. Without any bibliography every citation is undefined. Nothing is reported while a named database cannot be found, or while a file of the document was not read.
 
-Fix by adding the entry, or by correcting the key. The quick fix adds a stub entry to the first database, to fill in.
+Fix by adding the entry, or by correcting the key. The quick fix respells a key near a declared one's, else adds a stub entry to the first database, to fill in.
 
 See [source2e § ltbibl.dtx](https://ctan.org/pkg/source2e).
 
@@ -891,13 +912,13 @@ See [PDF 32000 § 8.11.3.2](https://opensource.adobe.com/dc-acrobat-sdk-docs/pdf
 
 ### undefined-reference
 
-<p class="badges"><code class="num" title="rule number">C037</code> <span class="sev sev-warning" title="default: warning">default: warning</span> <span class="cat cat-correctness">correctness</span> <span class="since" title="first release">since 0.1.0</span></p>
+<p class="badges"><code class="num" title="rule number">C037</code> <span class="sev sev-warning" title="default: warning">default: warning</span> <span class="cat cat-correctness">correctness</span> <span class="fix fix-unsafe" title="unsafe: the fix may change the meaning, only --unsafe-fixes applies it">U</span> <span class="since" title="first release">since 0.1.0</span></p>
 
 **reference to an undefined label**
 
 No `\label` in the document or its inputs declares this key, so the reference prints `??`. When the run left a project file unread, the label may stand there: the finding is then a precision note.
 
-Fix by adding the `\label`, or by correcting the key.
+Fix by adding the `\label`, or by correcting the key: a key near a known label's is offered respelled.
 
 See [source2e § ltxref.dtx](https://ctan.org/pkg/source2e).
 
@@ -939,13 +960,13 @@ See [source2e § ltclass.dtx](https://ctan.org/pkg/source2e).
 
 ### unresolved-file
 
-<p class="badges"><code class="num" title="rule number">C039</code> <span class="sev sev-warning" title="default: warning">default: warning</span> <span class="cat cat-correctness">correctness</span> <a class="from" href="Chktex-Coverage" title="follows chktex warning 27">chktex 27</a> <span class="since" title="first release">since 0.1.0</span></p>
+<p class="badges"><code class="num" title="rule number">C039</code> <span class="sev sev-warning" title="default: warning">default: warning</span> <span class="cat cat-correctness">correctness</span> <span class="fix fix-unsafe" title="unsafe: the fix may change the meaning, only --unsafe-fixes applies it">U</span> <a class="from" href="Chktex-Coverage" title="follows chktex warning 27">chktex 27</a> <span class="since" title="first release">since 0.1.0</span></p>
 
 **file not installed**
 
 The file was searched for in the document's directory, the configured search paths and the TEXMF trees, and not found. Case mismatches on case-insensitive filesystems are also reported: they work on Windows or macOS but break on Linux. `satex query distribution` shows which installation was searched. Where every installed file is listed, a class or package not found stops LaTeX (`File … not found`) and the finding is an error. In the playground, which fetches packages as they are named, it stays a warning.
 
-Fix by installing the package, adding its directory to `search_paths` in `satex.yaml`, pointing `texmf.roots` at the right installation, or (for case mismatches) renaming the file to match the requested name.
+Fix by installing the package, adding its directory to `search_paths` in `satex.yaml`, pointing `texmf.roots` at the right installation, or (for case mismatches) renaming the file to match the requested name. The quick fix deletes the load of a package not installed.
 
 See [chktex 27](https://www.nongnu.org/chktex/).
 

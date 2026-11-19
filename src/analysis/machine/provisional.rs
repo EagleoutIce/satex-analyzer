@@ -20,7 +20,9 @@ impl Machine<'_> {
         if self.mode != crate::engine::mode::Modes::VERTICAL || self.differs_from(old, true).is_some() {
             return;
         }
-        let Some(window) = edited_lines(&self.input, &old.input, &self.out.files, edit) else { return };
+        let Some(window) = edited_lines(&self.input, &old.input, &self.out.files, edit, taking.prior.window) else {
+            return;
+        };
         let since = taking.since;
         let (mine, theirs) = (comparable_path(self, true), comparable_path(old, true));
         let traces = [&mine, &self.env.trace((since.0, since.1)), &theirs, &old.env.trace((since.0, since.1))];

@@ -29,9 +29,11 @@ export async function openDialog(context: vscode.ExtensionContext, client: Langu
     const uri = arg?.uri ?? editor?.document.uri.toString();
     const position = arg?.position ?? (editor ? { line: editor.selection.active.line, character: editor.selection.active.character } : undefined);
     if (!client || !uri || !position) { return; }
-    const view = await client.sendRequest<View | null>('satex/dialog', { textDocument: { uri }, position });
+    // a failed request says so: the command never ends without a word
+    let failed = false;
+    const view = await client.sendRequest<View | null>('satex/dialog', { textDocument: { uri }, position }).then(v => v, () => { failed = true; return null; });
     if (!view) {
-        void vscode.window.showInformationMessage('No table or figure here that the analysis met.');
+        void vscode.window.showInformationMessage(failed ? 'satex: the server did not answer; try again once the analysis ends.' : 'No table or figure here that the analysis met.');
         return;
     }
     const file = view.context.path;

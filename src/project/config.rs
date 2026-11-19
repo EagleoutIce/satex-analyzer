@@ -213,8 +213,9 @@ pub struct Limits {
     pub memory: bytesize::ByteSize,
     /// What the checkpoints a run keeps for its reruns may copy together;
     /// past it every other one goes, as past their number.  Zero: only
-    /// their number bounds them.  Results never depend on it, only how far
-    /// back a rerun resumes.
+    /// their number bounds them.  The ones where the document begins stay
+    /// outside it.  Results never depend on it, only how far back a rerun
+    /// resumes.
     pub checkpoint_memory: bytesize::ByteSize,
     /// Threads any parallel work may use; 0 lets satex choose.  The
     /// interpreter runs on one thread because TeX's state is one machine, so
@@ -680,11 +681,14 @@ pub struct LspConfig {
     /// How long an edit waits with no further edits before it is
     /// re-analyzed, so fast typing coalesces into one run.
     pub debounce_ms: u64,
+    /// How long a run goes on at most before it pauses to answer the editor's requests
+    /// from the last finished run.
+    pub pause_ms: u64,
 }
 
 impl Default for LspConfig {
     fn default() -> LspConfig {
-        LspConfig { port: None, host: "127.0.0.1".into(), debounce_ms: 100 }
+        LspConfig { port: None, host: "127.0.0.1".into(), debounce_ms: 100, pause_ms: 10 }
     }
 }
 

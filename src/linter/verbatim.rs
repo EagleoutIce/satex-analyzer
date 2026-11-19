@@ -92,7 +92,7 @@ pub fn verbatims(analysis: &Analysis, files: &[File]) -> Verbatims {
         .filter(|e| {
             texts
                 .get(&e.span.file)
-                .is_some_and(|t| t.line(e.span.line).chars().nth((e.span.col as usize).saturating_sub(1)) == Some('\\'))
+                .is_some_and(|t| t.columns(e.span.line).get((e.span.col as usize).saturating_sub(1)) == Some(&'\\'))
         })
         .map(|e| (e.span.file, e.span.line))
         .collect();

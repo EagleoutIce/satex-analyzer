@@ -738,7 +738,7 @@ fn operator(analysis: &Analysis, view: &View, edits: &Edits, range: std::ops::Ra
 /// The character standing right before a span in its own source line.
 fn source_char_before(edits: &Edits, span: Span) -> Option<char> {
     let (_, text) = edits.text(span.file)?;
-    text.line(span.line).chars().nth(span.col.checked_sub(2)? as usize)
+    text.columns(span.line).get(span.col.checked_sub(2)? as usize).copied()
 }
 
 /// Whether `\word` is defined here and its body sets exactly those letters,

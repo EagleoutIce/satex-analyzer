@@ -243,12 +243,12 @@ fn record(cx: &Cx, uses: &[Use], path: &[String]) -> Json {
     if editable {
         let what = if n > 1 { "subentry" } else { "term" };
         forms.push(json!({ "title": "Save", "fields": fields, "edit": edit_of(cx.path, edits),
-                           "note": format!("Writes the {what} in its {} below it.", crate::cli::render::plural(below.len(), "call")) }));
+                           "note": format!("Writes the {what} in its {} below it.", crate::util::plural(below.len(), "call")) }));
     }
     let mut actions = Vec::new();
     if !own.is_empty() && own.iter().all(|u| u.call.is_some()) {
         let cuts = own.iter().filter_map(|u| u.call.clone()).map(|c| put(cx.doc, c.start, c.end, "")).collect();
-        let title = format!("Delete {}", crate::cli::render::plural(own.len(), "call"));
+        let title = format!("Delete {}", crate::util::plural(own.len(), "call"));
         let sub = (below.len() > own.len()).then(|| format!("its subentries keep {} calls", below.len() - own.len()));
         actions.push(json!({ "title": title, "edit": edit_of(cx.path, cuts), "danger": true, "note": sub }));
     }
@@ -275,7 +275,7 @@ fn record(cx: &Cx, uses: &[Use], path: &[String]) -> Json {
     let subs = below.len() - own.len();
     json!({
         "title": title,
-        "detail": format!("{}{}", crate::cli::render::plural(own.len(), "use"), if subs > 0 { format!(", {subs} below") } else { String::new() }),
+        "detail": format!("{}{}", crate::util::plural(own.len(), "use"), if subs > 0 { format!(", {subs} below") } else { String::new() }),
         "search": format!("{} {} {}", path.join(" "), below.iter().map(|u| u.raw.as_str()).collect::<Vec<_>>().join(" "), places.join(" ")),
         "sort": { "term": path.iter().map(|l| sort_of(l).to_lowercase()).collect::<Vec<_>>().join("\u{1}"), "uses": format!("{:06}", 999_999 - below.len()) },
         "forms": forms,

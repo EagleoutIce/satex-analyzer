@@ -244,11 +244,26 @@ fn main_loop(
                             return Ok(());
                         }
                         let cards = rule_cards(&req, &findings);
-                        let response = match kept_hover(&req, &texts, hovers).or_else(|| linked(&req, |uri| texts.get(uri))) {
-                            Some(hover) => Response::new_ok(req.id, hover),
-                            None => respond(&mut |m| to_engine(engine_tx, m), req),
-                        };
-                        let _ = connection.sender.send(Message::Response(with_cards(response, cards)));
+                        if let Some(hover) = kept_hover(&req, &texts, hovers).or_else(|| linked(&req, |uri| texts.get(uri))) {
+                            let _ = connection.sender.send(Message::Response(with_cards(Response::new_ok(req.id, hover), cards)));
+                            continue;
+                        }
+                        // Each request waits for its answer on a thread of its own: one the engine holds
+                        // until its run ends (a code action) never holds the requests behind it.
+                        let (handed, reached) = crossbeam_channel::bounded::<()>(1);
+                        let (engine, out) = (engine_tx.clone(), connection.sender.clone());
+                        std::thread::spawn(move || {
+                            let mut handed = Some(handed);
+                            let mut send = |m| {
+                                let sent = to_engine(&engine, m);
+                                handed.take().map(|h| h.send(()));
+                                sent
+                            };
+                            let response = respond(&mut send, req);
+                            let _ = out.send(Message::Response(with_cards(response, cards)));
+                        });
+                        // The request reaches the engine before the next edit does: it is of the text it saw.
+                        let _ = reached.recv();
                     }
                     Ok(Message::Notification(not)) => {
                         if let Some(m) = notification(not, |uri| texts.get(uri).map(String::as_str)) {
@@ -892,6 +907,8 @@ struct Engine {
     published: HashMap<Uri, (std::rc::Weak<Analysis>, PublishDiagnosticsParams)>,
     /// When each document was last edited: typing pauses after it.
     edited: HashMap<Uri, std::time::Instant>,
+    /// When the engine last took a message: the hovers computed ahead wait for a pause after it.
+    heard: Option<std::time::Instant>,
 }
 
 impl EngineMsg {
@@ -918,6 +935,7 @@ impl Engine {
     fn new(mut cfg: Config, root: PathBuf, main: Option<PathBuf>, outbox: Sender<Notification>) -> Self {
         // Completion reads the key family an argument feeds off the calls.
         cfg.record_arguments = true;
+        crate::util::progress::pause_every(cfg.lsp.pause_ms);
         // One spelling per file: a run cached under a canonical key keeps the
         // name it was started with, so a relative `-f` would leave the open
         // document's own file unmatched by every per-file feature.
@@ -951,6 +969,7 @@ impl Engine {
             blank: None,
             published: HashMap::default(),
             edited: HashMap::default(),
+            heard: None,
         }
     }
 
@@ -1563,6 +1582,14 @@ impl Engine {
         }
     }
 
+    /// How long the queued hovers still wait: until the editor was quiet for the typing pause.
+    /// One in progress stops only at its probes, so a request asked meanwhile would wait for it.
+    fn prefill_waits(&self) -> Option<Duration> {
+        let pause = Duration::from_millis(self.cfg.type_plugins.typing.pause_ms);
+        let rest = pause.checked_sub(self.heard?.elapsed())?;
+        (!self.prefill.is_empty() && !rest.is_zero()).then_some(rest)
+    }
+
     /// One queued hover, computed and kept; once the queue of a document is
     /// done, its hovers are stored for the next session.
     fn prefill_one(&mut self) {
@@ -1652,6 +1679,7 @@ impl Engine {
     }
 
     fn step(&mut self, msg: EngineMsg) {
+        self.heard = Some(std::time::Instant::now());
         if matches!(msg, EngineMsg::Open(..) | EngineMsg::Change(..)) {
             self.taken += 1;
         }
@@ -1704,10 +1732,26 @@ impl Engine {
             | EngineMsg::Written(..)
             | EngineMsg::Caches(..)
             | EngineMsg::Dialog(..)
+            | EngineMsg::View(..)
+            | EngineMsg::Colors(..)
+            | EngineMsg::Inlays(..)
+            | EngineMsg::Lenses(..)
+            | EngineMsg::Links(..)
+            | EngineMsg::Presentation(..)
             | EngineMsg::WorkspaceSymbol(..)) => {
-                // A completion never waits for a run: it answers from the last one.
-                if !matches!(msg, EngineMsg::Completion(..) | EngineMsg::Typesetting(..))
-                    && let Some(uri) = msg.uri().or_else(|| self.docs.keys().next()).cloned()
+                // A completion never waits for a run: it answers from the last one. Nor do the
+                // views and decorations, which had none before a first run either.
+                if !matches!(
+                    msg,
+                    EngineMsg::Completion(..)
+                        | EngineMsg::Typesetting(..)
+                        | EngineMsg::View(..)
+                        | EngineMsg::Colors(..)
+                        | EngineMsg::Inlays(..)
+                        | EngineMsg::Lenses(..)
+                        | EngineMsg::Links(..)
+                        | EngineMsg::Presentation(..)
+                ) && let Some(uri) = msg.uri().or_else(|| self.docs.keys().next()).cloned()
                 {
                     self.ensure(&uri);
                 }
@@ -1719,42 +1763,6 @@ impl Engine {
                 let result =
                     with_doc(&self.docs, &uri, |analysis, text| handlers::highlights(analysis, text, &path, pos));
                 let _ = reply.send(result.flatten());
-            }
-            EngineMsg::Colors(uri, reply) => {
-                let path = self.docs.get(&uri).map(|d| d.path.display().to_string()).unwrap_or_default();
-                let result = with_doc_moved(&self.docs, &uri, |analysis, text| plugins::colors(analysis, text, &path));
-                let _ = reply.send(result.unwrap_or_default());
-            }
-            EngineMsg::Inlays(uri, reply) => {
-                let path = self.docs.get(&uri).map(|d| d.path.display().to_string()).unwrap_or_default();
-                let result = with_doc_moved(&self.docs, &uri, |analysis, text| plugins::inlays(analysis, text, &path));
-                let _ = reply.send(result.unwrap_or_default());
-            }
-            EngineMsg::Lenses(uri, reply) => {
-                let path = self.docs.get(&uri).map(|d| d.path.display().to_string()).unwrap_or_default();
-                let result = with_doc_moved(&self.docs, &uri, |analysis, text| plugins::lenses(analysis, text, &path));
-                let _ = reply.send(result.unwrap_or_default());
-            }
-            EngineMsg::Presentation(uri, range, color, reply) => {
-                let path = self.docs.get(&uri).map(|d| d.path.display().to_string()).unwrap_or_default();
-                let result = with_doc(&self.docs, &uri, |analysis, text| {
-                    plugins::color_presentations(analysis, text, &path, range, color)
-                });
-                let _ = reply.send(result.unwrap_or_default());
-            }
-            EngineMsg::View(uri, pos, plugin, reply) => {
-                let path = self.docs.get(&uri).map(|d| d.path.display().to_string()).unwrap_or_default();
-                let result = with_doc(&self.docs, &uri, |analysis, text| match (pos, plugin) {
-                    (None, Some(name)) => plugins::manager(analysis, text, &path, &name).into_iter().collect(),
-                    (pos, _) => plugins::views(analysis, text, &path, handlers::to_pos(text, pos.unwrap_or_default())),
-                });
-                let _ = reply.send(result.unwrap_or_default());
-            }
-            EngineMsg::Links(uri, reply) => {
-                let path = self.docs.get(&uri).map(|d| d.path.display().to_string()).unwrap_or_default();
-                let result =
-                    with_doc(&self.docs, &uri, |analysis, text| handlers::document_links(analysis, text, &path));
-                let _ = reply.send(result.unwrap_or_default());
             }
             EngineMsg::PrepareRename(uri, pos, reply) => {
                 self.fresh(&uri);
@@ -2051,6 +2059,41 @@ fn answer(docs: &HashMap<Uri, Doc>, hovers: &Hovers, blank: Option<&Analysis>, m
             });
             let _ = reply.send(result.unwrap_or(Ok(Json::Null)));
         }
+        EngineMsg::Colors(uri, reply) => {
+            let path = docs.get(&uri).map(|d| d.path.display().to_string()).unwrap_or_default();
+            let result = with_doc_moved(docs, &uri, |analysis, text| plugins::colors(analysis, text, &path));
+            let _ = reply.send(result.unwrap_or_default());
+        }
+        EngineMsg::Inlays(uri, reply) => {
+            let path = docs.get(&uri).map(|d| d.path.display().to_string()).unwrap_or_default();
+            let result = with_doc_moved(docs, &uri, |analysis, text| plugins::inlays(analysis, text, &path));
+            let _ = reply.send(result.unwrap_or_default());
+        }
+        EngineMsg::Lenses(uri, reply) => {
+            let path = docs.get(&uri).map(|d| d.path.display().to_string()).unwrap_or_default();
+            let result = with_doc_moved(docs, &uri, |analysis, text| plugins::lenses(analysis, text, &path));
+            let _ = reply.send(result.unwrap_or_default());
+        }
+        EngineMsg::Presentation(uri, range, color, reply) => {
+            let path = docs.get(&uri).map(|d| d.path.display().to_string()).unwrap_or_default();
+            let result = with_doc(docs, &uri, |analysis, text| {
+                plugins::color_presentations(analysis, text, &path, range, color)
+            });
+            let _ = reply.send(result.unwrap_or_default());
+        }
+        EngineMsg::View(uri, pos, plugin, reply) => {
+            let path = docs.get(&uri).map(|d| d.path.display().to_string()).unwrap_or_default();
+            let result = with_doc(docs, &uri, |analysis, text| match (pos, plugin) {
+                (None, Some(name)) => plugins::manager(analysis, text, &path, &name).into_iter().collect(),
+                (pos, _) => plugins::views(analysis, text, &path, handlers::to_pos(text, pos.unwrap_or_default())),
+            });
+            let _ = reply.send(result.unwrap_or_default());
+        }
+        EngineMsg::Links(uri, reply) => {
+            let path = docs.get(&uri).map(|d| d.path.display().to_string()).unwrap_or_default();
+            let result = with_doc(docs, &uri, |analysis, text| handlers::document_links(analysis, text, &path));
+            let _ = reply.send(result.unwrap_or_default());
+        }
         msg => return Some(msg),
     }
     None
@@ -2071,6 +2114,12 @@ fn engine_loop(rx: Receiver<EngineMsg>, mut engine: Engine, debounce: Duration) 
         } else if !engine.dirty.is_empty() {
             // Only the rest of the window since the last run: typing after a pause runs at once.
             rx.recv_timeout(debounce.saturating_sub(engine.flushed.map_or(debounce, |t| t.elapsed())))
+        } else if let Some(rest) = engine.prefill_waits() {
+            // Typing or asking: a hover computed ahead would hold the next request.
+            match rx.recv_timeout(rest) {
+                Err(RecvTimeoutError::Timeout) => continue,
+                other => other,
+            }
         } else if !engine.prefill.is_empty() {
             // Idle: one more hover, unless a message waits.
             crate::analysis::probe::WANTED.store(false, std::sync::atomic::Ordering::Relaxed);

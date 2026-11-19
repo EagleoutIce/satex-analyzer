@@ -546,7 +546,8 @@ fn prevdepth_set_outside_vertical_mode_does_nothing() {
     for engine in ENGINES {
         let source = in_hbox("\\prevdepth=7pt \\edef\\zR{\\the\\prevdepth}");
         assert_eq!(body(&analyze(engine, &source), "zR"), "0", "{engine:?}");
-        assert_eq!(raised(engine, &source, "wrong-mode"), 1, "{engine:?}");
+        // The write and the read ("Improper \prevdepth") are an error each.
+        assert_eq!(raised(engine, &source, "wrong-mode"), 2, "{engine:?}");
         // In vertical mode the same write is no error at all.
         assert_eq!(raised(engine, "\\prevdepth=7pt ", "wrong-mode"), 0, "{engine:?}");
     }

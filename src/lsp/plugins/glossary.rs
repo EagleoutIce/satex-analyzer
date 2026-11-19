@@ -268,7 +268,7 @@ fn record(cx: &Cx, e: &Entry, all: &[Entry], keys: &[&str], family: &[String]) -
         let (from, to) = lines_of(text, e.at, e.end);
         let delete = edit_of(cx.path, vec![put(cx.doc, from, to, "")]);
         let reason = (!e.uses.is_empty())
-            .then(|| format!("Used {}. Replace its uses first", crate::cli::render::plural(e.uses.len(), "time")));
+            .then(|| format!("Used {}. Replace its uses first", crate::util::plural(e.uses.len(), "time")));
         actions
             .push(json!({ "title": format!("Delete {}", e.key), "edit": delete, "disabled": reason, "danger": true }));
         let others: Vec<&str> = keys.iter().copied().filter(|k| *k != e.key).collect();

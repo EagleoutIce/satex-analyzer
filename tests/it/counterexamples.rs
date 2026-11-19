@@ -1097,3 +1097,142 @@ fn join_after_closing_the_fork_group_keeps_the_save_stack() {
     );
     assert_eq!(last_body(&a, "R"), "U");
 }
+
+/// Whether the last `\name` may be `value`: one of its texts, a number in
+/// its interval, or text of no known shape.
+fn covers(analysis: &Analysis, name: &str, value: &str) -> bool {
+    let within = |b: &str| {
+        let (lo, rest) = b.split_once("unknown digits:")?.1.split_once("..")?;
+        // a dimension by its whole points
+        let v = value.split('.').next()?.parse::<i64>().ok()?;
+        Some((lo.parse::<i64>().ok()?..=rest.split('#').next()?.parse::<i64>().ok()?).contains(&v))
+    };
+    let Some(d) = crate::support::last_definition(analysis, name) else { return false };
+    crate::support::site_bodies(analysis, d)
+        .iter()
+        .any(|b| b == value || within(b).unwrap_or(b.contains('\u{2}') && !b.contains("digits:")))
+}
+
+/// tex.web § 1211: a prefix waits for the next assignment. An arm of an
+/// undecided conditional that leaves `\global`, `\long` or `\protected`
+/// waiting stands at another point than the arm without it: joined at the
+/// `\fi`, one arm's prefix applied to both, and `\count2` was 5 for certain
+/// where pdfTeX gives 1 on half its runs (the local assignment ends with
+/// its group). Each row: what pdfTeX gives over its random seeds.
+#[test]
+fn a_prefix_on_one_arm_only_keeps_both_assignments() {
+    let rows: [(&str, &[&str]); 5] = [
+        (r"\count2=1 {\ifnum\pdfuniformdeviate 2=0 \global\fi \count2=5 }\edef\v{\the\count2}", &["1", "5"]),
+        (r"\def\x{1}{\ifnum\pdfuniformdeviate 2=0 \global\fi \def\x{5}}\edef\v{\x}", &["1", "5"]),
+        (r"\count2=1 {\ifnum\pdfuniformdeviate 2=0 \global\fi \advance\count2 by 4 }\edef\v{\the\count2}", &["1", "5"]),
+        (r"\ifnum\pdfuniformdeviate 2=0 \long\fi \def\x{5}\edef\v{\meaning\x}", &[r"\long macro:->5", "macro:->5"]),
+        (
+            r"\ifnum\pdfuniformdeviate 2=0 \protected\fi \def\x{5}\edef\v{\meaning\x}",
+            &[r"\protected macro:->5", "macro:->5"],
+        ),
+    ];
+    for (source, values) in rows {
+        let analysis = analyze(source);
+        for value in values {
+            assert!(
+                covers(&analysis, "v", value),
+                "{source}: \\v is {:?}, pdfTeX also gives {value:?}",
+                body(&analysis, "v")
+            );
+        }
+    }
+}
+
+/// tex.web §§ 216, 1244: `\prevgraf` is the enclosing vertical list's own.
+/// A `\vbox` (an insertion, an alignment) starts a list at 0 and gives the
+/// outer count back at its end. Kept as one global number, a box's
+/// paragraph left its line count behind: `\prevgraf` after the box was the
+/// box's 3 where pdflatex gives the paragraph's 1 before it, and 1 inside
+/// a fresh box where pdflatex gives 0.
+#[test]
+fn prevgraf_is_the_vertical_list_s_own() {
+    if !installed() {
+        return;
+    }
+    let analysis = document(
+        r"\documentclass{article}
+\begin{document}
+A B\par
+\setbox0\vbox{\xdef\fresh{\the\prevgraf}\hsize=40pt \noindent a b c d e f g h i j k l m\par\xdef\inner{\the\prevgraf}}
+\xdef\after{\the\prevgraf}
+\setbox0\vbox{\halign{#\cr\xdef\row{\the\prevgraf}\cr}\prevgraf=9 }
+\xdef\kept{\the\prevgraf}
+\setbox0\hbox{\prevgraf=7 }\xdef\set{\the\prevgraf}
+\end{document}",
+    );
+    for (name, lines) in [("fresh", "0"), ("inner", "3"), ("after", "1"), ("row", "0"), ("kept", "1"), ("set", "7")] {
+        assert_eq!(last_body(&analysis, name), lines, "\\{name}");
+    }
+}
+
+/// tex.web §§ 638, 1024: `\deadcycles` counts the output routine's runs
+/// since the last `\shipout`. LaTeX fires `\output` for every float and
+/// `\clearpage` without shipping a page. It read 0 for certain everywhere;
+/// pdflatex gives 1, 3 and 1 here. Not counted: a run of `\output` leaves
+/// it between 1 and `\maxdeadcycles`.
+#[test]
+fn deadcycles_is_not_zero_after_an_output_run() {
+    if !installed() {
+        return;
+    }
+    let analysis = document(
+        r"\documentclass{article}
+\begin{document}
+A\par\xdef\one{\the\deadcycles}
+\begin{figure}[t]x\end{figure}\xdef\two{\the\deadcycles}
+\clearpage\xdef\three{\the\deadcycles}
+\end{document}",
+    );
+    for (name, cycles) in [("one", "1"), ("two", "3"), ("three", "1")] {
+        assert!(
+            covers(&analysis, name, cycles),
+            "\\{name} is {:?}, pdflatex gives {cycles}",
+            last_body(&analysis, name)
+        );
+    }
+}
+
+/// tex.web §§ 1056, 1060: a rule, glue or kern in vertical mode only joins
+/// the contribution list. `build_page` runs after a box, a penalty or a
+/// paragraph, so `\pagetotal` right after `\hrule` is still the page before
+/// it. `pdflatex`: `10.0pt` (one line of `\topskip`). The rule counted at
+/// once: `13.94444pt`.
+#[test]
+fn a_rule_waits_on_the_contribution_list() {
+    if !installed() {
+        return;
+    }
+    let analysis = document(
+        r"\documentclass{article}
+\begin{document}
+g\par\hrule height 2pt depth 30pt \xdef\total{\the\pagetotal}
+\end{document}",
+    );
+    assert!(covers(&analysis, "total", "10.0pt"), "\\total is {:?}", last_body(&analysis, "total"));
+}
+
+/// latex.ltx sets the control characters' category codes in loops
+/// (`\catcode0=15`, 1 to 31 active on pdfTeX, tab a space, `^^J` other,
+/// `^^L` active). A fixed table replaces the kernel run's own, so they
+/// read INITEX's: `9,12,12,12` where `pdflatex` gives `15,13,13,13`.
+/// Taking the run's ASCII half is not enough: with the control characters
+/// active, later definitions of the document read as undefined (the
+/// characters satex marks unknown text with are control characters).
+#[test]
+fn control_characters_have_the_kernel_s_category_codes() {
+    if !installed() {
+        return;
+    }
+    let analysis = document(
+        r"\documentclass{article}
+\begin{document}
+\edef\v{\the\catcode0,\the\catcode1,\the\catcode12,\the\catcode31,\the\catcode9,\the\catcode10,\the\catcode13,\the\catcode127}
+\end{document}",
+    );
+    assert_eq!(last_body(&analysis, "v"), "15,13,13,13,10,12,5,15");
+}

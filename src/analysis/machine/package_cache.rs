@@ -1675,6 +1675,8 @@ impl Machine<'_> {
             stub_said: _,
             // Recorded (facts, graph, names, files, bindings).
             out: _,
+            // An index of `out`'s expansions.
+            color_specs: _,
             env,
             definition_sites: _,
             expansion_sites: _,

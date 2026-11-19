@@ -222,19 +222,34 @@ fn parse_stored_color(m: &Machine, body: &[Token]) -> Option<crate::engine::valu
     Some(crate::engine::value::Colors::exact(color))
 }
 
+/// The `\XC@definec@lor` expansions with all five arguments, by the color
+/// name each read, oldest first, and how many expansions were scanned for
+/// them: [`declared_spec`] reads only what came since, not every expansion
+/// once per color (quadratic under beamer's themes).
+#[derive(Clone, Default)]
+pub(crate) struct ColorSpecs {
+    scanned: usize,
+    by_name: Vec<(usize, String)>,
+}
+
 /// The model and spec text `\XC@definec@lor` read for `color_name`, from the
 /// kept argument capture. `None` when arguments aren't kept, so `declared`
 /// stays unclaimed rather than guessed.
-fn declared_spec(m: &Machine, color_name: &str) -> Option<(crate::engine::value::Model, String, Span)> {
+fn declared_spec(m: &mut Machine, color_name: &str) -> Option<(crate::engine::value::Model, String, Span)> {
     let target = m.out.interner.lookup("XC@definec@lor")?;
-    m.out.facts.expansions.iter().rev().find_map(|e| {
-        if e.name != target || e.arguments.len() < 5 {
-            return None;
+    let (expansions, index) = (&m.out.facts.expansions, &mut m.color_specs);
+    // Expansions only grow (a reset clears both), so a shorter list is another run's.
+    if index.scanned > expansions.len() {
+        *index = ColorSpecs::default();
+    }
+    for (at, e) in expansions.iter().enumerate().skip(index.scanned) {
+        if e.name == target && e.arguments.len() >= 5 {
+            index.by_name.push((at, crate::engine::tex::text_of(&e.arguments[1], &m.out.interner)));
         }
-        let read_name = crate::engine::tex::text_of(&e.arguments[1], &m.out.interner);
-        if read_name != color_name {
-            return None;
-        }
+    }
+    index.scanned = expansions.len();
+    index.by_name.iter().rev().filter(|(_, name)| name == color_name).find_map(|&(at, _)| {
+        let e = &expansions[at];
         let model_text = crate::engine::tex::text_of(&e.arguments[3], &m.out.interner);
         let spec = crate::engine::tex::text_of(&e.arguments[4], &m.out.interner);
         let model = crate::engine::value::Model::parse(model_text.trim())?;

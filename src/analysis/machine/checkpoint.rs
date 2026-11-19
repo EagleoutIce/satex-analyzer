@@ -20,6 +20,9 @@ const KEPT: usize = 8;
 /// In the document body, a checkpoint may also be taken between top-level
 /// lines (a frame, a paragraph) after this fraction of the spacing.
 const BODY_SHARE: u64 = 8;
+/// After the edit's line, one checkpoint at the first top-level line past each of this many
+/// pages shipped: the page holding the edited text is where the next edit's run may meet this one.
+const AFTER_EDIT: u32 = 2;
 
 /// The whole state of a run at the start of a line in a user's file, with all paths joined.
 struct Checkpoint<'a> {
@@ -31,6 +34,9 @@ struct Checkpoint<'a> {
     pinned: bool,
     /// The latest checkpoint on the way to the edit's line. The next one on the way replaces it.
     toward: bool,
+    /// Where the document begins, or just before: every body edit and every rerun after the
+    /// `.aux` changed resumes here at the latest. Never dropped. Copied early, so small.
+    anchor: bool,
     /// What copying the state allocated: the parts it does not share with the run.
     bytes: usize,
 }
@@ -89,6 +95,8 @@ pub(super) struct Taking<'a> {
     toward: u32,
     /// Whether `\begin{document}` had been read at the last checkpoint.
     document: bool,
+    /// Past the edit's line: the pages shipped at the last checkpoint, and how many more to take ([`AFTER_EDIT`]).
+    after: Option<(u64, u32)>,
     /// File and line where the last edit began. The next edit is likely
     /// nearby, so a checkpoint is taken there.
     edit: Option<Edit>,
@@ -118,6 +126,9 @@ pub(super) struct Prior<'a> {
     steps: u64,
     /// The file edited since.
     pub(super) edit: Option<PathBuf>,
+    /// Its edited lines, the old text from a stale checkpoint that had it open: where the
+    /// states meet after the file was read to its end ([`edited_lines`] needs it open).
+    pub(super) window: Option<Window>,
 }
 
 /// A file, and the line where it changed.
@@ -161,12 +172,19 @@ impl Machine<'_> {
         // The next edit is likely there again and resumes close to it.
         let toward = gap.is_some_and(|g| g > 0 && g.saturating_mul(2) <= taking.toward);
         // Top-level lines of the body (a frame, a paragraph), so an edit there resumes close by.
-        let top = || {
-            since >= taking.every / BODY_SHARE
-                && self.out.document_depth.is_some_and(|d| usize::from(d) == self.env.group_level())
-                && !self.env.many_groups()
+        let level = || {
+            self.out.document_depth.is_some_and(|d| usize::from(d) == self.env.group_level()) && !self.env.many_groups()
         };
-        let due = self.out.steps >= taking.next || document != taking.document || edit || opens || toward || top();
+        let top = || since >= taking.every / BODY_SHARE && level();
+        // A page shipped since the edit's line, or since the last checkpoint after it.
+        let shipped = || taking.after.is_some_and(|(pages, _)| self.pages > pages) && level();
+        let due = self.out.steps >= taking.next
+            || document != taking.document
+            || edit
+            || opens
+            || toward
+            || top()
+            || shipped();
         // Not while a path through an undecided conditional runs: resuming there would number its meanings anew.
         if self.halted || !due || self.env.forking() {
             return false;
@@ -204,13 +222,23 @@ impl Machine<'_> {
         let bytes = crate::analysis::budget::in_use().saturating_sub(before);
         let budget = self.cfg.limits.checkpoint_memory.as_u64() as usize;
         let (steps, document) = (self.out.steps, self.out.document_depth.is_some());
+        let opens = reading_file_after(&self.input, 1).is_some_and(|(mouth, _)| !document && opens_document(mouth));
         let gap = match (&self.checkpoints.on, reading_file_after(&self.input, 1)) {
             (Some(taking), Some((mouth, _))) => self.edit_gap(taking, mouth),
             _ => None,
         };
         let Some(taking) = self.checkpoints.on.as_mut() else { return };
         taking.log.extend(crate::project::overlay::log(true));
-        let (toward, pinned) = (gap.is_some_and(|g| g > 0), gap.is_some());
+        let (toward, mut pinned) = (gap.is_some_and(|g| g > 0), gap.is_some());
+        // The pages after the edit's line are kept as the edit's own checkpoints.
+        if let Some((pages, left)) = taking.after.filter(|&(pages, _)| self.pages > pages) {
+            taking.after = (left > 1).then_some((self.pages.max(pages), left - 1));
+            pinned = true;
+        }
+        // On the way to the edit's line or at it: the pages from here on count ([`AFTER_EDIT`]).
+        if gap.is_some() {
+            taking.after = Some((self.pages, AFTER_EDIT));
+        }
         match gap {
             Some(0) => taking.edit = None,
             Some(g) => taking.toward = g,
@@ -233,16 +261,20 @@ impl Machine<'_> {
         } else {
             taking.list.iter_mut().for_each(|c| c.toward = false);
         }
-        taking.list.push(Checkpoint { machine, drive, reads: taking.log.len(), pinned, toward, bytes });
+        let anchor = opens || document != taking.document;
+        taking.list.push(Checkpoint { machine, drive, reads: taking.log.len(), pinned, toward, anchor, bytes });
         // Each copy holds what grows along the document (graph, facts, sites)
         // anew, so their bytes are bounded too, not only their number.
-        let over = |list: &[Checkpoint]| budget > 0 && list.iter().map(|c| c.bytes).sum::<usize>() > budget;
-        while taking.list.len() > KEPT || (over(&taking.list) && taking.list.iter().filter(|c| !c.pinned).count() > 1) {
-            // Drop every other one. The last and the pinned ones stay.
-            let (mut n, len) = (taking.list.len(), taking.list.len());
+        let over = |list: &[Checkpoint]| budget > 0 && held(list) > budget;
+        let kept = |c: &Checkpoint| c.pinned || c.anchor;
+        while taking.list.len() > KEPT || (over(&taking.list) && taking.list.iter().filter(|c| !kept(c)).count() > 1) {
+            // Drop every other one. The last, the pinned and the anchors stay.
+            // Counted among the ones that may go, so the kept ones never shield their neighbours.
+            let len = taking.list.len();
+            let mut n = taking.list.iter().filter(|c| !kept(c)).count();
             taking.list.retain(|c| {
-                n -= 1;
-                c.pinned || n % 2 == 0
+                n -= usize::from(!kept(c));
+                kept(c) || n % 2 == 0
             });
             taking.every *= 2;
             if taking.list.len() == len {
@@ -282,6 +314,15 @@ impl Machine<'_> {
                 differs.unwrap_or("alike")
             );
         }
+        if self.cfg.verbose >= 2 && differs == Some("bindings") {
+            let (a, b) = (&self.env.slots, &old.env.slots);
+            let names: Vec<String> = (0..a.len().min(b.len()))
+                .filter(|&i| !crate::engine::env::same_slot(&a[i], &b[i]))
+                .take(12)
+                .map(|i| self.out.interner.name(crate::engine::tex::Sym(i as u32)).to_string())
+                .collect();
+            crate::util::progress::note!("satex:   bindings that differ: {names:?}");
+        }
         if differs.is_none()
             && let Some(taking) = self.checkpoints.on.as_mut()
         {
@@ -298,7 +339,8 @@ impl Machine<'_> {
         let (Some(edit), true) = (prior.edit.clone(), prior.end.is_some()) else {
             return Err("no end of the last run");
         };
-        let window = edited_lines(&self.input, &old.input, &self.out.files, &edit).ok_or("edit elsewhere")?;
+        let window = prior.window;
+        let window = edited_lines(&self.input, &old.input, &self.out.files, &edit, window).ok_or("edit elsewhere")?;
         // Between paragraphs: one going on would be broken into lines with the edited text.
         if self.mode != crate::engine::mode::Modes::VERTICAL {
             return Err("inside a paragraph");
@@ -367,6 +409,11 @@ impl Machine<'_> {
     }
 }
 
+/// What copying `list` allocated, without its anchors (kept whatever they cost).
+fn held(list: &[Checkpoint]) -> usize {
+    list.iter().filter(|c| !c.anchor).map(|c| c.bytes).sum()
+}
+
 /// The file being read and whether a lookahead put tokens back above it.
 /// Token lists already read to their end are skipped: TeX drops them at the next read.
 fn reading_file(input: &super::Input) -> Option<(&Mouth, bool)> {
@@ -405,12 +452,14 @@ fn files_at(input: &super::Input) -> Vec<(crate::engine::tex::FileId, (u32, u32)
 pub(super) type Window = (crate::engine::tex::FileId, u32, u32);
 
 /// The lines of `edit` that differ between the file `new` reads on top and
-/// the one `old` read, when every other open file is the same.
+/// the one `old` read, when every other open file is the same. With `edit` open in
+/// neither, its lines `closed` that differ, when every open file is the same.
 pub(super) fn edited_lines(
     new: &super::Input,
     old: &super::Input,
     files: &[crate::analysis::machine::FileInfo],
     edit: &Path,
+    closed: Option<Window>,
 ) -> Option<Window> {
     let mouths = |input: &super::Input| -> Vec<Rc<Mouth>> {
         (input.iter())
@@ -418,9 +467,14 @@ pub(super) fn edited_lines(
             .collect()
     };
     let (new, old) = (mouths(new), mouths(old));
+    let same = |a: &Rc<Mouth>, b: &Rc<Mouth>| Rc::ptr_eq(a.source(), b.source()) || a.source() == b.source();
+    let edited = |m: &Rc<Mouth>| files.get(usize::from(m.file)).is_some_and(|f| Path::new(&f.path) == edit);
+    if !new.iter().chain(&old).any(edited) {
+        let alike = new.len() == old.len() && new.iter().zip(&old).all(|(a, b)| a.file == b.file && same(a, b));
+        return closed.filter(|_| alike);
+    }
     let (top, below) = new.split_last()?;
     let (was, was_below) = old.split_last()?;
-    let same = |a: &Rc<Mouth>, b: &Rc<Mouth>| Rc::ptr_eq(a.source(), b.source()) || a.source() == b.source();
     if Path::new(&files.get(usize::from(top.file))?.path) != edit
         || below.len() != was_below.len()
         || !below.iter().zip(was_below).all(|(a, b)| same(a, b))
@@ -591,8 +645,9 @@ impl<'a> Checkpoints<'a> {
     }
 
     /// How many checkpoints the last run kept, and what copying them allocated.
+    /// Without the anchors, which stay outside the budget.
     pub fn kept(&self) -> (usize, usize) {
-        (self.list.len(), self.list.iter().map(|c| c.bytes).sum())
+        (self.list.iter().filter(|c| !c.anchor).count(), held(&self.list))
     }
 
     /// Use `steps` instead of [`EVERY`] as the initial spacing.
@@ -611,6 +666,15 @@ impl<'a> Checkpoints<'a> {
         }
         self.setup = setup;
         (self.resumed, self.converged) = (None, None);
+        // Nothing the last run read changed (another file opened in the editor): its end is this run's.
+        if let Some(end) = self.end.as_ref().filter(|e| !e.out.exhausted && self.source == source)
+            && self.log.iter().all(crate::project::overlay::Read::holds)
+        {
+            let m = (**end).clone();
+            let id = m.out.main_file;
+            self.ran = (0, m.out.steps);
+            return m.conclude(id, source);
+        }
         let clock = std::time::Instant::now();
         let log = self.log.clone();
         let (resumed, edit, old) = self.resume(source);
@@ -649,8 +713,16 @@ impl<'a> Checkpoints<'a> {
             pinned: false,
             toward: u32::MAX,
             document: m.out.document_depth.is_some(),
+            after: None,
             edit,
-            prior: Prior { stale: old, end: self.end.take(), log, steps: self.steps, edit: edited },
+            prior: Prior {
+                window: edited.as_ref().and_then(|p| closed_window(&old, p, source, id)),
+                stale: old,
+                end: self.end.take(),
+                log,
+                steps: self.steps,
+                edit: edited,
+            },
             converged: None,
             spliced: None,
             tail: Vec::new(),
@@ -859,6 +931,28 @@ fn reread(
         }
     }
     Ok(())
+}
+
+/// The lines of `path` that differ between a stale checkpoint's open copy and the file now,
+/// when both have as many lines.
+fn closed_window(stale: &[Checkpoint], path: &Path, source: &str, main: crate::engine::tex::FileId) -> Option<Window> {
+    let mouth = stale.iter().find_map(|c| {
+        c.machine.input.iter().find_map(|f| match f {
+            Frame::File { mouth, .. } if Path::new(&c.machine.out.files[usize::from(mouth.file)].path) == path => {
+                Some(mouth.clone())
+            }
+            _ => None,
+        })
+    })?;
+    let now = match mouth.file == main {
+        true => crate::engine::source::recode(source).into_owned(),
+        false => crate::engine::source::decode_counted(&crate::project::overlay::read_bytes(path).ok()?).0,
+    };
+    let now: Vec<char> = now.chars().collect();
+    let (a, b): (Vec<&[char]>, Vec<&[char]>) =
+        (mouth.source().split(|&c| c == '\n').collect(), now.split(|&c| c == '\n').collect());
+    let differ: Vec<u32> = (0..a.len()).filter(|&i| a.len() == b.len() && a[i] != b[i]).map(|i| i as u32 + 1).collect();
+    Some((mouth.file, *differ.first()?, *differ.last()?))
 }
 
 /// The first line `now` differs from `was` on, `None` when they are the same.

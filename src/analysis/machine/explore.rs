@@ -67,6 +67,7 @@ struct Tag {
     catcodes: CatcodeTable,
     end_line: EndLineChar,
     after_assignment: Option<Tok>,
+    prefixes: crate::analysis::machine::Prefixes,
     streams: Streams,
     after: Vec<Vec<Tok>>,
 }
@@ -91,6 +92,7 @@ impl Tag {
             catcodes: state.catcodes.clone(),
             end_line: state.end_line,
             after_assignment: state.after_assignment.map(|t| t.tok),
+            prefixes: state.prefixes,
             streams: state.streams.clone(),
             after: groups.into_iter().map(|g| g.2).collect(),
         }
@@ -3617,9 +3619,10 @@ pub(crate) fn text_meaning(text: Rc<[Token]>) -> Meaning {
 }
 
 /// Whether two paths will run the same code at their group ends and after
-/// the next assignment. If not, they are at different points.
+/// the next assignment, which takes the same prefixes (`\global` on one path
+/// only is another assignment). If not, they are at different points.
 fn same_code(a: &Tag, b: &Tag) -> bool {
-    (&a.after, a.after_assignment) == (&b.after, b.after_assignment)
+    (&a.after, a.after_assignment, a.prefixes) == (&b.after, b.after_assignment, b.prefixes)
 }
 
 /// The parked path that `config` joins at its place: one with the same tag,

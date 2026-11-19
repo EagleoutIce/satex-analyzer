@@ -26,12 +26,32 @@ written so is a citation.  Without any bibliography every citation is
 undefined.  Nothing is reported while a named database cannot be found, or
 while a file of the document was not read.
 
-Fix by adding the entry, or by correcting the key. The quick fix adds a stub
-entry to the first database, to fill in.",
+Fix by adding the entry, or by correcting the key. The quick fix respells a
+key near a declared one's, else adds a stub entry to the first database, to
+fill in.",
         references: &[Ref { source: Source::Source2e, at: "ltbibl.dtx" }],
         fixes: &[Applicability::Unsafe],
         engines: &[],
         run: undefined_citation,
+    },
+    Rule {
+        code: "missing-bibliography",
+        since: "0.2.5",
+        category: Category::Correctness,
+        severity: Severity::Warning,
+        summary: "citations without a bibliography",
+        explanation: "\
+The document cites, but no `\\bibliography`, `\\addbibresource` or
+`thebibliography` says where the entries stand: every citation prints `?`,
+and BibTeX stops with `I found no \\bibdata command`.
+
+The quick fix names the `.bib` files beside the main file: with biblatex
+`\\addbibresource` in the preamble and `\\printbibliography` at the end,
+else `\\bibliographystyle{plain}` and `\\bibliography` at the end.",
+        references: &[Ref { source: Source::Bibtex, at: "Using BibTeX" }],
+        fixes: &[Applicability::Unsafe],
+        engines: &[],
+        run: missing_bibliography,
     },
     Rule {
         code: "duplicate-bibliography-entry",
@@ -209,6 +229,7 @@ fn undefined_citation(report: &mut Report) {
             keys.push(o.key.clone());
         }
     }
+    let declared: Vec<String> = bibliography.declared.keys().cloned().collect();
     // a stub per key at the end of the first database
     let sources = report.edits().sources;
     let first = crate::linter::bibdb::databases(analysis, sources).1.into_iter().next();
@@ -228,15 +249,63 @@ fn undefined_citation(report: &mut Report) {
                 replacement: format!("{lead}{text}"),
             }]
         });
-        match stub {
-            Some(edits) => report.add_fix(
-                span,
-                &keys.join(","),
-                message,
-                Fix::new(format!("{advice}: add a stub"), Applicability::Unsafe, Some(edits)),
-            ),
-            None => report.add(span, &keys.join(","), message, Some(advice)),
+        // every key a typo of a declared one: the respelled keys first, the stubs the other way
+        let respelled: Option<Vec<Fix>> =
+            keys.iter().map(|k| crate::linter::correctness::respell_fix(report, span, k, &declared)).collect();
+        let respelled = respelled.map(|fixes| {
+            let description = fixes.iter().map(|f| f.description.as_str()).collect::<Vec<_>>().join(" ");
+            let edits = fixes.into_iter().flat_map(|f| f.edits).collect();
+            Fix::new(description, Applicability::Unsafe, Some(edits))
+        });
+        let stub = stub.map(|edits| Fix::new(format!("{advice}: add a stub"), Applicability::Unsafe, Some(edits)));
+        let fixes: Vec<Fix> = respelled.into_iter().chain(stub).collect();
+        match fixes.is_empty() {
+            true => report.add(span, &keys.join(","), message, Some(advice)),
+            false => report.add_fixes(span, &keys.join(","), message, fixes),
         }
+    }
+}
+
+fn missing_bibliography(report: &mut Report) {
+    let analysis = report.analysis;
+    let occurrences = &analysis.facts.occurrences;
+    let Some(cite) = occurrences.iter().find(|o| o.kind == OccKind::Cite) else { return };
+    if occurrences.iter().any(|o| matches!(o.kind, OccKind::BibItem | OccKind::Bibliography))
+        || !crate::linter::bibdb::databases(analysis, report.edits().sources).0.is_empty()
+    {
+        return;
+    }
+    let span = report.site(cite).0;
+    let main = std::path::Path::new(analysis.file_name(analysis.main_file));
+    let dir = crate::project::paths::dir_of(main);
+    let mut bases: Vec<String> = std::fs::read_dir(&dir)
+        .into_iter()
+        .flatten()
+        .filter_map(|e| e.ok()?.file_name().into_string().ok()?.strip_suffix(".bib").map(str::to_string))
+        .collect();
+    bases.sort();
+    let message = format!("`{}` is cited, but no bibliography is named", cite.key);
+    let edits = report.edits();
+    let end = occurrences.iter().find(|o| o.kind == OccKind::EndEnvironment && o.key == "document").map(|o| o.span);
+    let start = crate::linter::shared::document_start(analysis);
+    let changes = (!bases.is_empty()).then_some(()).and(end).and_then(|end| {
+        match crate::linter::shared::loaded(analysis, "biblatex") {
+            true => {
+                let lines: Vec<String> = bases.iter().map(|b| format!("\\addbibresource{{{b}.bib}}")).collect();
+                let mut changes = edits.insert_before(start?, &lines.join("\n"))?;
+                changes.extend(edits.insert_before(end, "\\printbibliography")?);
+                Some(changes)
+            }
+            false => edits
+                .insert_before(end, &format!("\\bibliographystyle{{plain}}\n\\bibliography{{{}}}", bases.join(","))),
+        }
+    });
+    match changes {
+        Some(changes) => {
+            let fix = Fix::new(format!("name `{}.bib`", bases.join(".bib`, `")), Applicability::Unsafe, Some(changes));
+            report.add_fix(span, &cite.key, message, fix)
+        }
+        None => report.add(span, &cite.key, message, Some("add `\\bibliography{…}` with the `.bib` file".into())),
     }
 }
 

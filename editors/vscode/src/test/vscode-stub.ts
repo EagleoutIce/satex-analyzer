@@ -12,7 +12,7 @@ export class Position { constructor(readonly line: number, readonly character: n
 export class Range { constructor(readonly startLine: number, readonly startCharacter: number, readonly endLine: number, readonly endCharacter: number) {} }
 export enum ViewColumn { Beside = -2 }
 /** What the test sees: pages, posts, edits, files. */
-export const seen = { html: [] as string[], posts: [] as any[], edits: [] as [string, string][], files: new Map<string, string>(), handler: undefined as undefined | ((m: any) => Promise<void>) };
+export const seen = { html: [] as string[], posts: [] as any[], edits: [] as [string, string][], files: new Map<string, string>(), handler: undefined as undefined | ((m: any) => Promise<void>), messages: [] as string[] };
 export class WorkspaceEdit {
     readonly list: [string, string][] = [];
     replace(uri: Uri, _r: unknown, text: string) { this.list.push([uri.fsPath, text]); }
@@ -27,7 +27,7 @@ export const window = {
     activeTextEditor: { document: doc, selection: new Range(0, 0, 0, 0) },
     visibleTextEditors: [] as unknown[],
     createWebviewPanel: () => ({ webview, dispose: () => undefined }),
-    showInformationMessage: async () => undefined,
+    showInformationMessage: async (m: string) => { seen.messages.push(m); return undefined; },
 };
 export const commands = { executeCommand: async (_c: string, md: string) => `<p>${md}</p>` };
 export const workspace = {

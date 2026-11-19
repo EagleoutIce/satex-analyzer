@@ -5198,3 +5198,84 @@ fn a_document_error_on_one_path_is_reported_as_possible() {
     );
     assert_eq!(raised(&analysis), ["warning"]);
 }
+
+/// An error TeX raises while it only expands or computes is an error
+/// finding too, as pdflatex stops on each (its `!` line in the comment).
+/// Pins three classes no rule reported: an undefined name inside an
+/// expanding scan (`\edef`, `\message`: only the stomach reported them), a
+/// call whose text does not match the parameter text (the call ran on with
+/// the arguments read so far, and so did every expandable expl3 error,
+/// which is raised this way), arithmetic past TeX's limits and a list's
+/// own quantity read in another mode (the value was right, the error
+/// silent).
+#[test]
+fn errors_met_while_expanding_or_computing_are_error_findings() {
+    if !installed() {
+        return;
+    }
+    let cases = [
+        r"\edef\x{\undefinedzz}",                                      // Undefined control sequence.
+        r"\message{\undefinedzz}",                                     // Undefined control sequence.
+        r"\def\a.#1{}\a x",                                            // Use of \a doesn't match its definition.
+        r"\def\a.#1{}\edef\x{\a y}",                                   // Use of \a doesn't match its definition.
+        r"\ExplSyntaxOn\edef\y{\fp_eval:n{(-8)^(1/3)}}\ExplSyntaxOff", // Use of \??? doesn't match its definition.
+        r"\edef\x{\the\numexpr 2147483647+1\relax}",                   // Arithmetic overflow.
+        r"\edef\x{\the\dimexpr 8192pt*2\relax}",                       // Arithmetic overflow.
+        r"\count1=5 \divide\count1 by 0 ",                             // Arithmetic overflow.
+        r"\count1=2147483647 \multiply\count1 by 2 ",                  // Arithmetic overflow.
+        r"\dimen0=10000pt \multiply\dimen0 by 2 ",                     // Arithmetic overflow.
+        r"\count1=2147483648 ",                                        // Number too big.
+        r"\dimen0=16384pt ",                                           // Dimension too large.
+        r"\dimen0=6000mm ",                                            // Dimension too large.
+        r"\par\count1=\spacefactor ",                                  // Improper \spacefactor.
+        r"x\dimen0=\prevdepth ",                                       // Improper \prevdepth.
+    ];
+    for body in cases {
+        let analysis =
+            analyze(&format!("\\documentclass{{article}}\n\\begin{{document}}\n{body}\n\\end{{document}}\n"));
+        let errors = satex::linter::lint(&analysis).into_iter().filter(|f| f["severity"] == "error" && f["line"] == 3);
+        assert!(errors.count() > 0, "{body}: no error, {:?}", codes(&analysis));
+    }
+}
+
+/// tex.web § 398: a call that does not match its parameter text is dropped
+/// with the token that did not match. `pdflatex`: `\v` is `Z`. The call ran
+/// on with no argument and the token stayed: `XyZ`.
+#[test]
+fn a_call_that_does_not_match_is_dropped_with_its_token() {
+    if !installed() {
+        return;
+    }
+    let source = "\\documentclass{article}\n\\begin{document}\n\\def\\a.#1{X}\\edef\\v{\\a yZ}\n\\end{document}\n";
+    assert_eq!(body(&analyze(source), "v"), "Z");
+}
+
+/// `%&own` names a format mylatexformat dumped from the document's own
+/// preamble (`pdftex -ini -jobname=own "&pdflatex" mylatexformat.ltx own.tex`,
+/// what `preamble-cost` suggests). Started from it, the document's
+/// `\documentclass` is mylatexformat's, which skips the dumped preamble.
+/// Bug pinned: satex read the dumped part as the format and then the whole
+/// file again, so the second `\documentclass` raised "Two \documentclass"
+/// on a document pdflatex builds.
+#[test]
+fn a_document_started_from_its_own_dumped_preamble_has_one_documentclass() {
+    if !crate::support::installed() {
+        return;
+    }
+    let dir = crate::support::tmp_root().join(format!("satex-latex-own-format-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let source = "%&own\n\\documentclass{article}\n\\begin{document}\nx\n\\end{document}\n";
+    let path = dir.join("own.tex");
+    std::fs::write(&path, source).unwrap();
+    let cfg = satex::project::config::Config {
+        load: satex::project::config::Load { classes: true, ..Default::default() },
+        ..crate::support::config()
+    };
+    let analysis = satex::analysis::machine::Machine::analyze(source, Some(&path), &cfg);
+    let errors: Vec<String> = satex::linter::lint(&analysis)
+        .iter()
+        .filter(|r| r["code"] == "raised-error")
+        .map(|r| r["message"].to_string())
+        .collect();
+    assert!(errors.is_empty(), "{errors:?}");
+}

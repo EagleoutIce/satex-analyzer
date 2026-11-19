@@ -348,7 +348,7 @@ fn bibitem(cx: &Cx, l: &List, i: &Item) -> Json {
                 "edit": edit_of(cx.path, vec![put(cx.doc, i.text.start, i.text.end, "${value}")]) }),
     ];
     let (from, to) = lines_of(text, i.at, i.text.end);
-    let reason = (!cited.is_empty()).then(|| format!("cited {}", crate::cli::render::plural(cited.len(), "time")));
+    let reason = (!cited.is_empty()).then(|| format!("cited {}", crate::util::plural(cited.len(), "time")));
     let year = year_of(&shown).unwrap_or_default();
     json!({
         "title": i.key,
@@ -790,7 +790,7 @@ fn constant(
                     });
                 }
             }
-            notes.push(format!("{} uses renamed", users.len()));
+            notes.push(format!("{} renamed", crate::util::plural(users.len(), "use")));
         }
     }
     for (path, ns) in nodes {

@@ -1873,3 +1873,44 @@ fn a_package_loaded_in_a_paragraph_stays_out_of_the_cache() {
     assert_eq!(served(&run(&dir, &preamble("text")), "outer"), None);
     assert_eq!(served(&run(&dir, &preamble("")), "outer"), Some(true));
 }
+
+/// A `.cfg` in the document's folder overrides the installed one: a package
+/// served from its cache must read it, not replay the installed file's effect.
+/// `color.cfg` is what `color.sty` loads with `\InputIfFileExists`.
+#[test]
+fn a_cfg_the_document_s_folder_overrides_is_not_served_stale() {
+    if !installed() {
+        return;
+    }
+    let dir = project("local-cfg");
+    let document = "\\documentclass{article}\n\\usepackage{color}\n\\begin{document}\nx\n\\end{document}\n";
+    let first = run(&dir, document);
+    assert!(!defined(&first, "localcfgmark"));
+    std::fs::write(dir.join("color.cfg"), "\\def\\localcfgmark{}\n").expect("color.cfg");
+    let second = run(&dir, document);
+    assert!(defined(&second, "localcfgmark"), "{:?}", second.package_caches);
+}
+
+/// `\begin{document}` loads `l3backend-pdftex.def` (latex.ltx `\document`,
+/// `\@expl@sys@load@backend@@`), about a quarter of the line's steps on a
+/// minimal article. A second run should serve it from a cache, as a package.
+/// RED: a `.def` is no package or class (`cacheable_at_push` takes only those),
+/// and `\begin` opened a group first (latex.ltx `\begin`: `\begingroup`), which
+/// the cache refuses as well: a replay inside a group needs local effects kept
+/// apart from global ones.
+#[test]
+fn the_backend_loaded_by_begin_document_is_served_from_a_cache() {
+    if !installed() {
+        return;
+    }
+    let dir = project("backend");
+    let document = "\\documentclass{article}\n\\begin{document}\nx\n\\end{document}\n";
+    run(&dir, document);
+    let second = run(&dir, document);
+    let backend = second.package_caches.iter().find(|(name, ..)| name.contains("l3backend"));
+    assert!(
+        backend.is_some_and(|(.., state)| satex::analysis::machine::cache_served(state)),
+        "{:?}",
+        second.package_caches
+    );
+}

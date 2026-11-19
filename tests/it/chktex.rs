@@ -787,6 +787,19 @@ fn a_space_in_front_of_a_reference_is_reported() {
     assert!(found[0].contains("the reference"), "{found:?}");
 }
 
+/// Under pdfTeX a column counts bytes, so `ü` is two columns.  The rule read
+/// the source line by characters with that column, looked one character too
+/// far left, saw the space instead of the word and stayed silent on every
+/// line with a non-ASCII letter before the reference.
+#[test]
+fn a_space_in_front_of_a_reference_after_a_non_ascii_letter_is_reported() {
+    let source =
+        "\\documentclass{article}\n\\begin{document}\nGrüße \\ref{a} und x ü x \\ref{a}.\\label{a}\n\\end{document}\n";
+    let Some(doc) = on_disk("tie-utf8", source, true) else { return };
+    let found = findings(&doc.analysis, "missing-nonbreaking-space");
+    assert_eq!(found.len(), 2, "{found:?}");
+}
+
 /// `\Cref` and `\autoref` typeset the name themselves, so the space is right.
 #[test]
 fn a_space_in_front_of_a_naming_reference_is_not_reported() {

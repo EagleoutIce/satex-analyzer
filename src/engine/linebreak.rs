@@ -108,6 +108,13 @@ const DEPLORABLE: i64 = 100000;
 pub(crate) const UNFIT: u8 = 4;
 
 impl Machine<'_> {
+    /// The last item of the recorded list `items` and the list before it.
+    pub(crate) fn kp_last(&self, items: Option<u32>) -> Option<(Kp, u32)> {
+        let id = items.filter(|&i| i > 0)?;
+        let (item, prev, _) = self.kp.nodes[id as usize - 1];
+        Some((item, prev))
+    }
+
     /// `item` goes onto the paragraph's recorded list `items`.
     pub(crate) fn kp_push(&mut self, items: &mut Option<u32>, item: Kp) {
         let Some(prev) = *items else { return };
@@ -147,8 +154,7 @@ impl Machine<'_> {
         last: crate::engine::mode::Last,
     ) {
         use crate::engine::mode::{Last, Removed};
-        let Some(id) = items.filter(|&i| i > 0) else { return };
-        let (k, prev, _) = self.kp.nodes[id as usize - 1];
+        let Some((k, prev)) = self.kp_last(*items) else { return };
         let hit = matches!(
             (removed, last),
             (Removed::Glue, Last::Glue(..))

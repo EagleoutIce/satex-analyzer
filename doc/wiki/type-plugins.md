@@ -10,32 +10,32 @@ The tiles above group the plugins by category, each with its section below and, 
 
 ```text
 $ satex query type-plugins -f samples/paper.tex
-category     name             types                                       
-widget       color            color name                                  
-widget       environment      environment name                            
-widget       table            environment the run met                     
-widget       image            graphic file                                
-widget       float            environment the run met                     
-widget       tikz             environment the run met                     
-widget       forest           environment the run met                     
-widget       savebox          environment name                            
-widget       history          control sequence                            
-widget       glossary         declared key                                
-widget       bibliography     citation key                                
-widget       index            index entry                                 
-widget       theorem          environment name                            
-widget       page             environment the run met                     
-widget       tagging          environment the run met                     
-hover        units            dimen, glue, dimen register, skip register  
-hover        overlay          overlay specification                       
-completion   keys             options, option key, pgf key, declared key  
-completion   language         code language                               
-completion   listing          environment the run met                     
-incremental  comment_edit                                                 
-incremental  whitespace_edit                                              
-incremental  typing                                                       
-build        frame            environment the run met                     
-build        l3build                                                      
+category     name             types                                       about                                         
+widget       color            color name                                  swatches, colors defined at the position, c…  
+widget       environment      environment name                            change one environment to another, both end…  
+widget       table            environment the run met                     a grid dialog for each tabular, booktabs an…  
+widget       image            graphic file                                a crop, rotate and size dialog for each fig…  
+widget       float            environment the run met                     a float's placement: what each letter lets …  
+widget       tikz             environment the run met                     a canvas for a tikzpicture's nodes and arro…  
+widget       forest           environment the run met                     a tree dialog for a forest environment, ind…  
+widget       savebox          environment name                            store an environment in a saved box in the …  
+widget       history          control sequence                            each redefinition and augment of a command,…  
+widget       glossary         declared key                                manage declared keys (glossary entries, acr…  
+widget       bibliography     citation key                                a reference manager: entries filtered by ty…  
+widget       index            index entry                                 manage index terms: edit levels, sort keys,…  
+widget       theorem          environment name                            manage theorem-like environments: kinds, co…  
+widget       page             environment the run met                     the page geometry to scale: margins, paper,…  
+widget       tagging          environment the run met                     PDF tagging: on or off, the standard, langu…  
+hover        units            dimen, glue, dimen register, skip register  a length in every unit, each value a click …  
+hover        overlay          overlay specification                       the slides of its frame the material shows …  
+completion   keys             options, option key, pgf key, declared key  key list completion, family continuation an…  
+completion   language         code language                               listings languages and Pygments lexers, whe…  
+completion   listing          environment the run met                     a listing's literate sequences outside its …  
+incremental  comment_edit                                                 an edit inside text every read of its line …  
+incremental  whitespace_edit                                              spaces added beside a space every read skip…  
+incremental  typing                                                       letters typed into a control word the run m…  
+build        frame            environment the run met                     compile only this frame: \includeonlyframes…  
+build        l3build                                                      the bundle's build.lua: module, test files …  
 ```
 
 ## What each editor gets
@@ -91,7 +91,7 @@ On the name of a `\begin` or `\end` the run met. Its view, "Change environment�
 
 ## table
 
-<picture><source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/EagleoutIce/satex-analyzer/main/doc/site/showcase/img/table-dark.png"><img src="https://raw.githubusercontent.com/EagleoutIce/satex-analyzer/main/doc/site/showcase/img/table-light.png" alt="Tables: the table plugin in the playground" width="640"></picture>
+<a href="https://github.com/EagleoutIce/satex-analyzer/blob/main/doc/site/showcase/img/table-light.webm" title="Play the clip"><picture><source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/EagleoutIce/satex-analyzer/main/doc/site/showcase/img/table-dark.png"><img src="https://raw.githubusercontent.com/EagleoutIce/satex-analyzer/main/doc/site/showcase/img/table-light.png" alt="Tables: the table plugin in the playground" width="640"></picture></a>
 
 A table is an environment whose code reaches `\@array`: `tabular`, `tabular*`, `tabularx`, `array` and the ones a document defines on them. A code lens above its `\begin` and a link in the hover open a grid dialog (`satex/dialog`). The dialog edits cells, adds, removes and moves rows and columns, sets each column's alignment (`l`, `c`, `r`, `p{…}`, siunitx `S`), the vertical rules and the rule before each row, and merges cells into a `\multicolumn`. `satex/dialogApply` writes it back. A row the dialog left as it was keeps its text, comments included. A new or edited row follows the table's style: indentation, spaces around `&`, padded columns, rules on the row's line.
 
@@ -106,14 +106,14 @@ A command or environment the edit adds that the run does not define loads its pa
 
 ## image
 
-<picture><source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/EagleoutIce/satex-analyzer/main/doc/site/showcase/img/image-dark.png"><img src="https://raw.githubusercontent.com/EagleoutIce/satex-analyzer/main/doc/site/showcase/img/image-light.png" alt="Images: the image plugin in the playground" width="640"></picture>
+<a href="https://github.com/EagleoutIce/satex-analyzer/blob/main/doc/site/showcase/img/image-light.webm" title="Play the clip"><picture><source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/EagleoutIce/satex-analyzer/main/doc/site/showcase/img/image-dark.png"><img src="https://raw.githubusercontent.com/EagleoutIce/satex-analyzer/main/doc/site/showcase/img/image-light.png" alt="Images: the image plugin in the playground" width="640"></picture></a>
 
 A figure is a file `\includegraphics` read. Its code lens and hover link open a dialog with the figure: a PNG or JPEG as it is, a PDF's first page as `pdftocairo` renders it where one is installed (the playground's server, VS Code), else its box. The engine's own size of the file (`natural`, in bp) scales the crop. The dialog crops with drag handles, rotates in 90° steps or by any angle, and sizes by `width`, `height`, `scale` and `keepaspectratio`. It writes graphicx options:
 
 - `trim=l b r t` in bp with `clip`, or `viewport=llx lly urx ury` where the figure had one
 - `angle` counterclockwise
 - graphicx reads the keys in order: `angle=90,width=3cm` makes the rotated figure 3cm wide, `width=3cm,angle=90` makes it 3cm high. The dialog's *size applies to* chooses the order.
-- `decodearray` for a tint, an inversion, or an array of its own. A PDF image maps each sample of a raster channel from [0, 1] to [Dmin, Dmax] (PDF reference [§§ 8](https://github.com/TeX-Live/texlive-source/blob/b4e37b58bfc6352cc3223ed26384cae01a28b234/texk/web2c/tex.web#L316), [9](https://github.com/TeX-Live/texlive-source/blob/b4e37b58bfc6352cc3223ed26384cae01a28b234/texk/web2c/tex.web#L333), [5](https://github.com/TeX-Live/texlive-source/blob/b4e37b58bfc6352cc3223ed26384cae01a28b234/texk/web2c/tex.web#L268), [2](https://github.com/TeX-Live/texlive-source/blob/b4e37b58bfc6352cc3223ed26384cae01a28b234/texk/web2c/tex.web#L131)). pdftex.def, luatex.def, xetex.def and dvipdfmx.def write it for PNG and JPEG files, and drop it for PDF and EPS figures, which are drawn, not sampled. The dialog offers it only where it applies: the run's driver defines `\Gin@decode`, and the file is a gray or RGB raster (a palette PNG would remap its indices). Grayscale cannot be written: each channel maps on its own. The preview applies the same map.
+- `decodearray` for a tint, an inversion, or an array of its own. A PDF image maps each sample of a raster channel from [0, 1] to [Dmin, Dmax] (PDF reference [§§ 8](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L316), [9](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L333), [5](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L268), [2](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L131)). pdftex.def, luatex.def, xetex.def and dvipdfmx.def write it for PNG and JPEG files, and drop it for PDF and EPS figures, which are drawn, not sampled. The dialog offers it only where it applies: the run's driver defines `\Gin@decode`, and the file is a gray or RGB raster (a palette PNG would remap its indices). Grayscale cannot be written: each channel maps on its own. The preview applies the same map.
 
 *Crop to content* trims the margins of the rendered figure that look like its corners' background. Its padding may be negative, cutting into the content, as long as some is left. *Replace…* puts a new PNG, JPEG, PDF or EPS next to the figure (next to the document when the figure is the installation's) and writes its name. *Download* saves the figure's file.
 
@@ -127,7 +127,7 @@ A float is an environment whose code reaches `\@float`: `figure`, `table` and th
 
 ## tikz
 
-<picture><source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/EagleoutIce/satex-analyzer/main/doc/site/showcase/img/tikz-dark.png"><img src="https://raw.githubusercontent.com/EagleoutIce/satex-analyzer/main/doc/site/showcase/img/tikz-light.png" alt="TikZ drawings: the tikz plugin in the playground" width="640"></picture>
+<a href="https://github.com/EagleoutIce/satex-analyzer/blob/main/doc/site/showcase/img/tikz-light.webm" title="Play the clip"><picture><source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/EagleoutIce/satex-analyzer/main/doc/site/showcase/img/tikz-dark.png"><img src="https://raw.githubusercontent.com/EagleoutIce/satex-analyzer/main/doc/site/showcase/img/tikz-light.png" alt="TikZ drawings: the tikz plugin in the playground" width="640"></picture></a>
 
 A `tikzpicture` the run met: a lens "Edit drawing…" on its `\begin` line and the view anywhere inside. The canvas shows the nodes the run made, where pgf put each, with its shape and size (`\pgf@sh@ns@⟨node⟩` and its saved anchors). Plain paths between coordinates show too.
 
@@ -221,7 +221,7 @@ On a blank line of the document body, "Insert forest tree" writes a small tree a
 
 An incremental plugin decides for one edit whether the last run still holds. It compares the text the run read with the new one, finds the one stretch they differ in, and asks the run's facts about it, never the text alone. Each mouth read of a line records where its comment began and which spaces it skipped (`Facts::lines`), merged over every read on every path. A plugin that says yes keeps the run: the rules run again, the diagnostics and their fixes, the outline, the lenses, inlays and colors are moved by the edit's offsets and published for the new version. Anything no plugin takes is analyzed again. `satex/caches` counts each reuse (`reused comment_edit 3`), the status bar shows it, and the server's log names it.
 
-- `comment_edit`: every read of the line had its comment begin before the edit, and the edit adds or removes no line end. TeX drops a comment's characters unread ([tex.web § 347](https://github.com/TeX-Live/texlive-source/blob/b4e37b58bfc6352cc3223ed26384cae01a28b234/texk/web2c/tex.web#L7326)), so no read sees them. A `%` of category 12 (verbatim, `\catcode`) is no comment there and is not taken. A `%\satex@` directive and a magic comment (`% !TeX`) change a run, so an edit that makes, changes or removes one is not taken either. The rules read the new text, so a `satex-disable` comment or a comment marker counts at once.
+- `comment_edit`: every read of the line had its comment begin before the edit, and the edit adds or removes no line end. TeX drops a comment's characters unread ([tex.web § 347](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L7326)), so no read sees them. A `%` of category 12 (verbatim, `\catcode`) is no comment there and is not taken. A `%\satex@` directive and a magic comment (`% !TeX`) change a run, so an edit that makes, changes or removes one is not taken either. The rules read the new text, so a `satex-disable` comment or a comment marker counts at once.
 - `whitespace_edit`: copies of a space put into a run of it where every read skipped one in state N or S. The copies are read at the same moment under the same categories, so they are skipped too, and the line gets no new line end, so no `\par`. Or white space where no read got to: the line before it was never read to its end, and the run stopped at no limit. A user pattern (`lints.user-pattern`) may match spaces, so with one set only the second case is taken. A new line in the middle of the text is never taken: it moves every line after it.
 - `typing`: letters typed into a control word the run met undefined on every path, while the new name has no meaning or definition in the run. Its results stand, marked provisional, until typing pauses for `pause_ms`, then the run follows. This one is not claimed sound, only likely. The playground asks for its runs itself, so there it runs at once.
 

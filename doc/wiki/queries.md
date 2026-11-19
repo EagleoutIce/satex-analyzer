@@ -14,6 +14,7 @@
 - [diagnostics](#diagnostics): what satex noticed while interpreting, apart from lint rules (since 0.1.0)
 - [distribution](#distribution): the detected TeX installation, version and searched trees (since 0.1.0)
 - [expansions](#expansions): how often each macro was expanded during the run (since 0.1.0)
+- [exports](#exports): the names installed packages define, each with the package or library to load (since 0.2.5)
 - [files](#files): every file read, in the order it was opened (since 0.1.0)
 - [gaps](#gaps): constructs the run could not interpret, grouped by cause (since 0.1.0)
 - [occurrences](#occurrences): package banners, passed options and other one-off events (since 0.1.0)
@@ -97,7 +98,7 @@ variable-definition  \pkgcls@targetdate                                         
 use                  @                                                             paper.tex  @ paper.tex:1:1
 use                  11pt                                                          paper.tex  @ paper.tex:1:1
 macro-call           \value                                                        paper.tex  @ paper.tex:0:0
-… 528 more lines omitted
+… 527 more lines omitted
 ```
 
 ## diagnostics
@@ -107,10 +108,12 @@ Everything SaTeX noticed while interpreting the document: widened conditionals, 
 ```text
 $ satex query diagnostics -f samples/paper.tex
 severity    code                count  message                         file            
-assumption  forced-page-breaks  1      the page may fill here, and p…  paper.tex       @ paper.tex:76:23
+assumption  page-one-arm        2      an undecided choice while a p…  latex.ltx       @ latex.ltx:21194:8
+assumption  page-one-arm        2      an undecided choice while a p…  latex.ltx       @ latex.ltx:9338:7
+assumption  forced-page-breaks  1      the page may fill here, and p…  paper.tex       @ paper.tex:58:9
 assumption  page-one-arm        1      an undecided choice while a p…  latex.ltx       @ latex.ltx:20715:3
 assumption  page-one-arm        1      an undecided choice while a p…  latex.ltx       @ latex.ltx:20717:7
-assumption  clock-assumed       1      the document is assumed to be…  expl3-code.tex  @ expl3-code.tex:8203:38
+… 1 more line omitted
 ```
 
 ## distribution
@@ -155,7 +158,7 @@ id   kind     file
 2    input    texsys.cfg                                
 3    input    texsys.aux                                
 4    input    expl3.ltx                                 
-… 307 more lines omitted
+… 295 more lines omitted
 ```
 
 ## gaps
@@ -376,6 +379,10 @@ index  step    name         detail                        file
 
 A `value` names its type in the [`Ty` lattice](Domains#argument-types-the-ty-lattice) (`number`, `dimen`, `glue`, `muglue`, `quantity`, `text`, `any`) and what satex knows about its value: `exact`, an `interval` `[lo, hi]`, a `set`, or `unknown`. Typed unknown text appears as its own names (`unknown digits:0..1439`). `limits.trace_state` caps each list. In the playground, *dev mode* in the settings turns this on: the trace shows the domains of the selected step, the editor menu offers *Inspect state here*, and the trace exports as JSON or CSV.
 
+## exports
+
+The names the installed packages define, read off their text, each with the file to load for it: the package most files use that defines the name itself, or the TikZ library that declares an arrow tip, shape or key. Names with `@` or `_` are internals and left out. The site build ships this list to the playground, whose bundle holds only a few packages, so its fixes and completion still name `booktabs` for `\toprule`.
+
 ## tagging
 
 PDF tagging as `\DocumentMetadata` set it up, read from the run with the kernel's own `\GetDocumentProperties`: whether tagging is on and under which engine, the PDF standards claimed (`UA-2`, `A-4F`), the language (and, under `set`, the one the preamble wrote, before LaTeX guesses one), the title the XMP gets, and the PDF version. Then each loaded package and class with its status in TeX Live's `latex-tagging-status.ltx`, which satex runs as TeX. Nothing without `\DocumentMetadata`. The tagging lints read the same facts.
@@ -386,12 +393,12 @@ The editor's type plugins this run would offer: each plugin, its category, the t
 
 ```text
 $ satex query type-plugins -f samples/paper.tex
-category     name             types                                       
-widget       color            color name                                  
-widget       environment      environment name                            
-widget       table            environment the run met                     
-widget       image            graphic file                                
-widget       float            environment the run met                     
+category     name             types                                       about                                         
+widget       color            color name                                  swatches, colors defined at the position, c…  
+widget       environment      environment name                            change one environment to another, both end…  
+widget       table            environment the run met                     a grid dialog for each tabular, booktabs an…  
+widget       image            graphic file                                a crop, rotate and size dialog for each fig…  
+widget       float            environment the run met                     a float's placement: what each letter lets …  
 … 20 more lines omitted
 ```
 

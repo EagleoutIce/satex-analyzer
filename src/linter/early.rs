@@ -178,16 +178,28 @@ impl Guess {
 
     /// The graphics no file is found for, in the main file's directory or `\graphicspath`'s, with
     /// one of `lints.early.graphic-extensions` when the name has none: graphics' own error.
-    fn missing_graphics(&mut self, dir: &Path, early: &Early) {
+    /// `\Gin@getbase` asks `\IfFileExists`, which searches TeX's input path too (kpathsea), so a
+    /// name no folder holds is looked up there, as the run would (`example-image` of mwe).
+    fn missing_graphics(&mut self, dir: &Path, early: &Early, cfg: &Config) {
         let dirs: Vec<PathBuf> =
             std::iter::once(dir.to_path_buf()).chain(self.graphics_path.iter().map(|d| dir.join(d))).collect();
+        let mut resolver = None;
         for (span, name) in std::mem::take(&mut self.graphics) {
             let named = Path::new(&name).extension().is_some();
-            let tried = |d: &PathBuf| {
-                let base = d.join(&name);
-                (named && base.is_file()) || early.graphic_extensions.iter().any(|e| base.with_extension(e).is_file())
+            let files: Vec<String> = named
+                .then(|| name.clone())
+                .into_iter()
+                .chain(early.graphic_extensions.iter().map(|e| format!("{name}.{e}")))
+                .collect();
+            let tried = |d: &PathBuf| files.iter().any(|f| d.join(f).is_file());
+            let mut installed = |files: &[String]| {
+                let resolver = resolver.get_or_insert_with(|| {
+                    let project = crate::project::build_files::Project::discover(dir);
+                    crate::engine::loader::Resolver::for_project(cfg, &project)
+                });
+                files.iter().any(|f| resolver.resolve(f, LoadKind::Input, dir).is_some())
             };
-            if !dirs.iter().any(tried) {
+            if !dirs.iter().any(tried) && !installed(&files) {
                 let message = format!("Package graphics Error: File `{name}' not found.");
                 self.occurrences.push(occurrence(OccKind::Message, &message, None, span));
             }
@@ -207,7 +219,7 @@ pub fn sketch(source: &str, main: &Path, cfg: &Config) -> Analysis {
         guess.read(at as FileId, &dir, early);
         at += 1;
     }
-    guess.missing_graphics(&dir, early);
+    guess.missing_graphics(&dir, early, cfg);
     let paths: Vec<PathBuf> = guess.files.iter().map(|(p, _)| p.clone()).collect();
     let mut analysis = Analysis::sketch(source, &paths, cfg, guess.loads);
     analysis.facts.occurrences = guess.occurrences;

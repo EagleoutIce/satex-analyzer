@@ -196,7 +196,7 @@ fn move_before(report: &Report, span: Span, to: Span) -> Option<Vec<Edit>> {
     let (path, text, mut scan, _) = edits.command(span)?;
     let end = scan.group()?.end;
     let lead = &text.line(span.line)[..crate::engine::source::byte_of_col(text.line(span.line), span.col)];
-    let tail = text.line(end.line).chars().skip(end.col as usize - 1).collect::<String>();
+    let tail = text.columns(end.line).into_iter().skip(end.col as usize - 1).collect::<String>();
     if !lead.trim().is_empty() || !tail.trim().is_empty() {
         return None;
     }

@@ -238,7 +238,7 @@ fn glue(modes: Modes) -> bool {
 /// of it, or the end of the line above, with the modes it was read in and
 /// how many columns it covers.
 fn space_before(analysis: &Analysis, source: &Text, span: Span) -> Option<(Span, u32, Modes)> {
-    let line: Vec<char> = source.line(span.line).chars().collect();
+    let line = source.columns(span.line);
     let mut start = span.col;
     while start > 1 && line.get(start as usize - 2) == Some(&' ') {
         start -= 1;
@@ -251,7 +251,7 @@ fn space_before(analysis: &Analysis, source: &Text, span: Span) -> Option<(Span,
     // tex.web § 348: leading spaces give no token, so the end of the line
     // above is the space in front.
     let above = span.line.checked_sub(1).filter(|line| *line > 0)?;
-    let at = Span { file: span.file, line: above, col: source.line(above).chars().count() as u32 + 1 };
+    let at = Span { file: span.file, line: above, col: source.columns(above).len() as u32 + 1 };
     analysis.facts.spaces.get(&at).map(|modes| (at, 1, *modes))
 }
 
@@ -295,7 +295,7 @@ fn command_terminated_space(report: &mut Report) {
             continue;
         }
         let Some((path, source)) = edits.text(span.file) else { continue };
-        let line: Vec<char> = source.line(span.line).chars().collect();
+        let line = source.columns(span.line);
         if line.get(span.col as usize - 1) != Some(&'\\') {
             continue;
         }
@@ -416,7 +416,7 @@ fn missing_nonbreaking_space(report: &mut Report) {
         }
         let Some((path, source, at, width)) = glue_before(report, span) else { continue };
         // A tie only helps where a word stands in front of the space.
-        let line: Vec<char> = source.line(at.line).chars().collect();
+        let line = source.columns(at.line);
         let word = at.col.checked_sub(2).and_then(|k| line.get(k as usize)).copied();
         if !word.is_some_and(char::is_alphanumeric) {
             continue;
@@ -570,7 +570,7 @@ fn sentence_capital(report: &mut Report) {
         // A library set the word: a `\cref` typed after the space sets its name in lowercase.
         let Some(space) = view.span(at - 1) else { continue };
         let Some((path, text)) = edits.text(space.file) else { continue };
-        let typed: String = text.line(space.line).chars().skip(space.col as usize).take(5).collect();
+        let typed: String = text.columns(space.line).into_iter().skip(space.col as usize).take(5).collect();
         if typed == r"\cref" {
             let c = Pos::new(space.line, space.col + 2);
             let edit = Edit { path, start: c, end: Pos::new(space.line, space.col + 3), replacement: "C".into() };
@@ -647,7 +647,7 @@ fn double_space(report: &mut Report) {
             continue;
         }
         let Some((path, source)) = edits.text(span.file) else { continue };
-        let line: Vec<char> = source.line(span.line).chars().collect();
+        let line = source.columns(span.line);
         let mut found = space_before(analysis, &source, span).filter(|(_, _, modes)| glue(*modes));
         if found.is_none() {
             let end = command_end(&line, span.col);
@@ -680,7 +680,7 @@ fn double_space(report: &mut Report) {
         }
         let (Some(first), Some(second)) = (view.span(i - 1), view.span(i)) else { continue };
         let Some((_, source)) = edits.text(first.file) else { continue };
-        let line: Vec<char> = source.line(first.line).chars().collect();
+        let line = source.columns(first.line);
         // Only a group stands between them: a tie is the other rule's, and
         // a command may have taken the glue back with \unskip.
         let between = line.get(first.col as usize..second.col as usize - 1);

@@ -576,13 +576,19 @@ impl Interner {
     /// Rebuild an interner from a stored name list, so that symbols recorded
     /// against it stay valid.
     pub fn from_names(names: Vec<String>) -> Interner {
-        let mut interner = Interner::default();
-        interner.map.reserve(names.len());
-        interner.names.reserve(names.len());
+        // Straight into the base: one table, one hash per name, no folds on the way.
+        let mut base = NameTable::default();
+        base.map.reserve(names.len());
+        base.names.reserve(names.len());
         for name in names {
-            interner.intern(&name);
+            let rc: Rc<str> = Rc::from(name);
+            // A repeated name keeps its first symbol, as `intern` would.
+            if let std::collections::hash_map::Entry::Vacant(slot) = base.map.entry(rc.clone()) {
+                slot.insert(Sym(base.names.len() as u32));
+                base.names.push(rc);
+            }
         }
-        interner
+        Interner { base: Rc::new(base), ..Interner::default() }
     }
 
     pub fn intern(&mut self, s: &str) -> Sym {
@@ -2516,5 +2522,27 @@ mod quiet_marks {
             mouth.next_with(&cats, &mut it, EndLineChar(13)).expect("a token");
         }
         assert!(mouth.quiet_line_mark(&cats).is_some_and(|m| m.ended));
+    }
+}
+
+#[cfg(test)]
+mod from_names {
+    use super::*;
+
+    /// A stored name list numbers its names as interning them one by one
+    /// does, a repeat keeping its first symbol, and new names go on after
+    /// them: the kernel cache's interner is built in one table, not folded
+    /// name by name.
+    #[test]
+    fn a_stored_name_list_numbers_like_interning_it() {
+        let names: Vec<String> = (0..3000).map(|i| format!("n{}", i % 2500)).collect();
+        let mut one_by_one = Interner::default();
+        names.iter().for_each(|n| _ = one_by_one.intern(n));
+        let mut stored = Interner::from_names(names.clone());
+        assert!(stored == one_by_one);
+        assert_eq!(stored.len(), 2500);
+        assert_eq!(stored.lookup("n7"), Some(Sym(7)));
+        assert_eq!(stored.intern("new"), one_by_one.intern("new"));
+        assert_eq!(stored.name(Sym(2500)), "new");
     }
 }

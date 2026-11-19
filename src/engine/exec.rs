@@ -968,10 +968,8 @@ impl Machine<'_> {
                 let unknown = self.unknown_text(Unk::Any, token.span);
                 self.unread(unknown);
             }
-            // tex.web § 370: an undefined name is an error and expands to nothing.
             Some(sym) if matches!(self.env.meaning(sym), Meaning::Undefined) && !self.may_be_defined(sym) => {
-                let text = format!("Undefined control sequence \\{}", self.name(sym));
-                self.certain_error(&text, true, token.span);
+                self.undefined(sym, token.span, true)
             }
             _ => self.unread(token),
         }
@@ -1978,13 +1976,9 @@ impl Machine<'_> {
                 .unknown_part(class, number);
             return false;
         }
-        // tex.web § 370: expanding an undefined control sequence reports
-        // it and removes it, so the name goes on after it.
+        // The name goes on after it.
         if matches!(self.env.meaning(sym), Meaning::Undefined) {
-            let node = self.reference(sym, t.span);
-            let kind = self.undefined_kind();
-            self.note_expansion(sym, t.span, kind, node, Vec::new());
-            self.record(Step::Undefined, sym, t.span);
+            self.undefined(sym, t.span, false);
             return false;
         }
         self.unread(t);
@@ -3655,7 +3649,11 @@ impl Machine<'_> {
             Owned::List { modes, .. } => match self.mode.test(modes) {
                 // tex.web § 418: "Improper \spacefactor" and "Improper
                 // \prevdepth" read as zero, and as an integer under `\the`.
-                Some(false) => Some(Value::Int(0)),
+                Some(false) => {
+                    let (message, span) = (format!("Improper \\{}", self.name(named)), self.position_span());
+                    self.diagnose(Severity::Warning, "wrong-mode", span, message);
+                    Some(Value::Int(0))
+                }
                 // The horizontal list carries its own space factor as it
                 // sets characters.
                 Some(true) if modes == Modes::ANY_HORIZONTAL => {
@@ -5566,6 +5564,10 @@ impl Machine<'_> {
                 }
             }
             if any_err {
+                // Every member erred: TeX's error on every run.
+                if out.is_empty() {
+                    self.diagnose(Severity::Warning, "arithmetic-overflow", span, "Arithmetic overflow".into());
+                }
                 for &x in xs {
                     if !out.contains(&x) {
                         out.push(x);
@@ -5611,12 +5613,7 @@ impl Machine<'_> {
             Some(num) if err => num.join(&current),
             Some(num) => num,
             None => {
-                self.diagnose(
-                    Severity::Warning,
-                    "arithmetic-overflow",
-                    span,
-                    "arithmetic overflow, the register keeps its value".into(),
-                );
+                self.diagnose(Severity::Warning, "arithmetic-overflow", span, "Arithmetic overflow".into());
                 current
             }
         };

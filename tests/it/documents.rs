@@ -605,6 +605,16 @@ fn cut_inside_include_reads_the_later_chapters() {
         .map(|d| format!("{} {}", d.code, d.message))
         .collect();
     assert!(bad.is_empty(), "{bad:#?}");
+    // The build's second run reads the chapters' `.aux` the cut left unknown,
+    // so `\include{ch2}` walks a file name of unknown text. An arm over it on
+    // which expl3 errs is satex's split: no certain error of the document.
+    let build = Machine::analyze_build(&source, Some(&path), &crate::support::discover(&root));
+    let errors: Vec<_> = satex::linter::lint(&build)
+        .into_iter()
+        .filter(|f| f.get("severity").and_then(|s| s.as_str()) == Some("error"))
+        .map(|f| format!("{:?} {:?}", f.get("code"), f.get("message")))
+        .collect();
+    assert!(errors.is_empty(), "{errors:#?}");
 }
 
 /// A line of 300 `\fp_set:Nn` runs past the line budget inside a figure,

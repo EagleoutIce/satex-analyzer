@@ -296,11 +296,14 @@ pub enum Query {
     TypePlugins,
     /// PDF tagging as `\DocumentMetadata` set it up ([`crate::analysis::tagging`]).
     Tagging,
+    /// The names installed packages define, each with the file to load for it
+    /// ([`crate::linter::shared::export_names`]).
+    Exports,
 }
 
 impl Query {
     /// Sorted by name: `--list`, the wiki and the playground show this order.
-    pub const ALL: [(&'static str, Query); 23] = [
+    pub const ALL: [(&'static str, Query); 24] = [
         ("calls", Query::Calls),
         ("catcodes", Query::Catcodes),
         ("definitions", Query::Definitions),
@@ -309,6 +312,7 @@ impl Query {
         ("diagnostics", Query::Diagnostics),
         ("distribution", Query::Distribution),
         ("expansions", Query::Expansions),
+        ("exports", Query::Exports),
         ("files", Query::Files),
         ("gaps", Query::Gaps),
         ("occurrences", Query::Occurrences),
@@ -357,7 +361,7 @@ impl Query {
             | Query::SideEffects
             | Query::Trace => "0.1.0",
             Query::Previews | Query::TypePlugins | Query::Typeset => "0.2.0",
-            Query::Tagging => "0.2.5",
+            Query::Tagging | Query::Exports => "0.2.5",
         }
     }
 
@@ -387,6 +391,7 @@ impl Query {
             Query::Previews => "arrow tips and patterns the run declared, drawn by TeX",
             Query::TypePlugins => "the editor's type plugins: the types each triggers on and its features",
             Query::Tagging => "PDF tagging: whether it is on, the standard, language, title and each package's status",
+            Query::Exports => "the names installed packages define, each with the package or library to load",
         }
     }
 }
@@ -2187,6 +2192,12 @@ pub fn run(analysis: &Analysis, query: Query, filter: &Filter) -> Vec<Record> {
         Query::Options => Vec::new(),
         Query::Typeset => typeset(analysis),
         Query::Tagging => tagging(analysis),
+        Query::Exports => crate::linter::shared::export_names(analysis)
+            .into_iter()
+            .map(|(name, file)| {
+                Record::from_iter([("name".to_string(), json!(name)), ("file".to_string(), json!(file))])
+            })
+            .collect(),
         Query::Previews => crate::queries::preview::sheet(analysis)
             .into_iter()
             .map(|(name, svg)| Record::from_iter([("name".to_string(), json!(name)), ("svg".to_string(), json!(svg))]))
@@ -6681,6 +6692,15 @@ pub fn explain_at(
                 first.insert("redefined".into(), json!(redefinitions(analysis, sym, total)));
             }
             hints.push(format!("`\\{name}` has {total} definitions. `--all` lists every one"));
+        }
+    }
+    // A name nothing answers for would otherwise print nothing at all.
+    for raw in names {
+        let bare = crate::engine::tex::bare_name(raw);
+        let name = format!("\\{bare}");
+        let named = |r: &Record| r.get("name").and_then(|n| n.as_str()).is_some_and(|n| n == name || n == bare);
+        if !out.iter().any(named) {
+            hints.push(format!("`{name}` has no meaning the run gave it"));
         }
     }
     Ok((out, hints))

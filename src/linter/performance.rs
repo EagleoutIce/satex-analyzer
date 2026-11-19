@@ -360,17 +360,9 @@ fn refused_loads(report: &Report, begin: crate::engine::tex::Span) -> Vec<crate:
     let analysis = report.analysis();
     let index = report.index();
     let edits = report.edits();
-    let interner = &analysis.interner;
-    let Some(extension) = interner.lookup("@pkgextension") else { return Vec::new() };
     let mut asks: BTreeMap<Sym, bool> = BTreeMap::new();
-    let mut requests = |name: Sym| {
-        *asks.entry(name).or_insert_with(|| {
-            analysis.facts.defs.iter().any(|def| {
-                def.name == name
-                    && def.mac.as_ref().is_some_and(|m| m.replacement_text.iter().any(|t| t.cs() == Some(extension)))
-            })
-        })
-    };
+    let mut requests =
+        |name: Sym| *asks.entry(name).or_insert_with(|| crate::linter::shared::requests_packages(analysis, name));
     let mut out = Vec::new();
     let mut seen = BTreeSet::new();
     for expansion in &analysis.facts.expansions {
@@ -469,7 +461,9 @@ fn preamble_cost(report: &mut Report) {
     }
     let span = report.index().document_start().unwrap_or_default();
     let message = format!(
-        "{direct} packages requested directly, {files} files read, {}% of the tokens the build takes",
+        "{} requested directly, {} read, {}% of the tokens the build takes",
+        crate::util::plural(direct, "package"),
+        crate::util::plural(files, "file"),
         steps * 100 / analysis.tex_steps().max(1)
     );
     // A format the build already starts from leaves nothing to suggest.
