@@ -1631,11 +1631,14 @@ p.ts.ts-foot::before { content: ""; position: absolute; top: 0; left: 0; width: 
 @keyframes pdf-stale { to { opacity: .45; } }
 /* typing: the last pages stay at full strength until the new ones are decoded and swapped in, no dim frame */
 :is(.type-sync, .pdf-hold) .pdf .pdf-page.pdf-stale img { animation: none; } :is(.type-sync, .pdf-hold) .ov-stale .pdf-ov { opacity: 1; }
-.pdf .pdf-mark { position: absolute; pointer-events: none; background: color-mix(in srgb, var(--accent) 22%, transparent); outline: 1px solid var(--accent); border-radius: 2px; }
-.pdf .pdf-mark.coarse { background: none; outline-style: dashed; }
+/* "you are here": a faint tint behind the line's glyphs, no frame; blended so the ink stays on top; fades when the cursor rests */
+.pdf .pdf-mark { position: absolute; pointer-events: none; background: color-mix(in srgb, var(--accent) 12%, transparent); border-radius: 3px; mix-blend-mode: multiply; transition: opacity .4s; }
+#play-pdf:is([data-pdf-mode=invert], [data-pdf-mode=dark]) .pdf-mark { mix-blend-mode: screen; background: color-mix(in srgb, var(--accent) 22%, transparent); }
+.pdf .pdf-mark.coarse { background: color-mix(in srgb, var(--accent) 6%, transparent); }
+.pdf .pdf-mark.fade { opacity: 0; }
 /* words selected by a drag on the page */
 .pdf .pdf-sel { position: absolute; z-index: 2; pointer-events: none; background: color-mix(in srgb, var(--accent) 32%, transparent); border-radius: 1px; }
-.pdf .pdf-mark.word { background: color-mix(in srgb, var(--accent) 40%, transparent); outline-width: 2px; }
+.pdf .pdf-mark.word { background: color-mix(in srgb, var(--accent) 14%, transparent); }
 .pdf .pdf-pages { user-select: none; -webkit-user-select: none; } .pdf .pdf-pages ::selection { background: transparent; }
 /* dragging a drawing's node never selects its label */
 .tv-node { user-select: none; -webkit-user-select: none; }

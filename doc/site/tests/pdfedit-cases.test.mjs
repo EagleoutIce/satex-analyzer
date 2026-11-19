@@ -350,6 +350,9 @@ test("Typing in the PDF", async () => {
   // a footnote's call glues its first word to the word before (`here.\footnote{A` is `here.A`): it pairs with the
   // page's `here.`, the footnote's words with the footnote row. Pins its last `here.` taken for the text's `here.`.
   assert.deepEqual(E.aligned(['words', 'here.A', 'footnote', 'text', 'goes', 'here.'], ['words', 'here.', '1', 'A', 'footnote', 'text', 'goes', 'here.']), [0, 1, 4, 5, 6, 7], 'a footnote call');
+  // a display's glyphs are more page words than the source has: the word after it still pairs, from the end. Pins
+  // "ok" after `\[\int…\] ok` pairing with nothing, the caret after a landed build 231 px off at the word before.
+  assert.equal(E.aligned(['paragraph.', 'so[01f(x),dx', '=', 'n', 'ab', ']', 'ok'], ['paragraph.', 'so', 'a', 'Z', '1', 'f', '(x)', 'dx', '=', 'lim', 'n→∞', 'b', '0', 'ok']).at(-1), 13, 'the word after a display');
   // The live math preview (PE.mathRuns): typed text cut into prose and formulas (one still open runs to the end);
   // tests/mathlayout.test.mjs lays them out. Pins "(x1)" echoed in roman for `\(x_1\)` (user 2026-11-18).
   {

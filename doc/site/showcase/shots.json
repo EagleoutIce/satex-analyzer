@@ -27,7 +27,7 @@
      "wait": 1500
     },
     {
-     "until": "document.querySelector('.cm-editor').satexView.state.doc.toString().includes('{dusk.png}') && document.getElementById('lsp-status').textContent !== 'checking…'"
+     "until": "document.querySelector('.cm-editor').satexView.state.doc.toString().includes('{dusk.png}') && __quiet()"
     },
     {
      "wait": 2500
@@ -105,7 +105,7 @@
      "ms": 120000
     },
     {
-     "until": "/^Ready/.test(document.getElementById('play-status').textContent) && document.getElementById('lsp-status').textContent !== 'checking…'",
+     "until": "/^Ready/.test(document.getElementById('play-status').textContent) && __quiet()",
      "ms": 400000,
      "wait": 500
     },
@@ -155,7 +155,7 @@
      "wait": 300
     },
     {
-     "until": "!document.getElementById('play-pdf').classList.contains('pdf-running') && document.getElementById('lsp-status').textContent !== 'checking…' && !document.getElementById('play-status').classList.contains('busy')",
+     "until": "!document.getElementById('play-pdf').classList.contains('pdf-running') && __quiet()",
      "wait": 600,
      "ms": 120000
     },
@@ -782,7 +782,7 @@
    "caption": "Hover a length to see it in every unit and as a share of the text width.",
    "steps": [
     {
-     "wait": 4000
+     "until": "__quiet()"
     },
     {
      "hover": "__xy('\\\\vspace{12pt}', 9)"

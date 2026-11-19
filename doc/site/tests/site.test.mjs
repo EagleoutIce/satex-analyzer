@@ -221,6 +221,21 @@ test("numbers in coordinates and specs are whole tokens", async () => {
   assert.deepEqual(nums('\\count3 by 400, $x^2$ and 1em'), ['3', '400', '2', '1em']);
 });
 
+// The PDF's "you are here" rows hug the glyphs: a SyncTeX row reaching the right margin (its line-end glue) shrinks to
+// its words, and a footer page number the line's box closed with drops out while a row the line spells is there. Pins
+// the tint from "world!" to the margin and the lit footer "1" for a body line.
+test("the PDF follow rows hug the line's words", () => {
+  const { followRows } = self.satexViews;
+  const words = [[1, 72, 90, 100, 100, 'Hello,'], [1, 103, 90, 130, 100, 'world!'], [1, 300, 700, 305, 710, '1'], [1, 72, 110, 90, 120, 'Next']];
+  const rows = [{ page: 1, l: 72, t: 90, r: 540, d: 100 }, { page: 1, l: 300, t: 700, r: 540, d: 710 }];
+  const spelled = (w) => 'Hello, world!'.includes(w);
+  assert.deepEqual(followRows(rows, words, spelled), [{ page: 1, l: 72, t: 90, r: 130, d: 100 }]);
+  // a line of macros only (no word spelled): every row with words stays, still hugged
+  assert.deepEqual(followRows(rows, words, () => false).map((r) => [r.l, r.r]), [[72, 130], [300, 305]]);
+  // a row without words (a rule) goes
+  assert.deepEqual(followRows([{ page: 1, l: 0, t: 400, r: 10, d: 410 }], words, spelled), []);
+});
+
 // array's column injections: the text inside `>{…}` and `<{…}`, several joined
 test("array's column injections", async () => {
   const T = self.satexDialogs.table;

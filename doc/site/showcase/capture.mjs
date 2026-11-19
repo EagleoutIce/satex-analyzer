@@ -49,9 +49,12 @@ const js = async (expr) => {
 };
 let deadline = Infinity;
 const until = async (expr, ms = 60000) => { for (const end = Math.min(Date.now() + ms * scale, deadline); Date.now() < end; await sleep(200)) if (await js(expr).catch(() => false)) return true; return false; };
-const QUIET = `document.getElementById('lsp-status').textContent !== 'checking…' && !document.getElementById('play-status').classList.contains('busy')`;
+/** The page at rest: no run going, due or queued, no work in the status line (playground.js `satexHealth`). shots.json says `__quiet()`. */
+const QUIET = `(() => { const h = self.satexHealth?.(); return h ? !h.busy && !h.running && !h.due && !h.queued : !document.getElementById('play-status').hasAttribute('data-busy'); })()`;
+/** What the page is doing, for a wait that failed: a run count that grows with no edit is an analysis that never settles. */
+const STATE = `const h = self.satexHealth?.(); return h ? \`status "\${h.status.slice(0, 60)}", \${h.running} running, \${h.runs} runs\${h.queued ? ', one queued' : ''}\` : document.getElementById('play-status')?.textContent.slice(0, 60);`;
 /** In the page: `__at(needle, k)` is the editor position k characters into needle, `__xy` its screen point. */
-const HELPERS = `const v = () => document.querySelector('.cm-editor').satexView;
+const HELPERS = `const v = () => document.querySelector('.cm-editor').satexView; self.__quiet = () => ${QUIET};
   self.__at = (n, k = 0) => { const t = v().state.doc.toString(), i = t.indexOf(n) + k, before = t.slice(0, i).split('\\n'); return [before.length - 1, before.at(-1).length, i]; };
   self.__xy = (n, k = 0) => { const i = __at(n, k)[2]; v().dispatch({ selection: { anchor: i }, scrollIntoView: true }); const c = v().coordsAtPos(i); return [c.left + 2, (c.top + c.bottom) / 2]; };`;
 
@@ -63,14 +66,14 @@ async function open(file, config = null) {
   await raw('Storage.clearDataForOrigin', { origin: new URL(base).origin, storageTypes: 'local_storage,indexeddb' });
   const ready = () => until(`return document.getElementById('play-status').dataset.done === 'ready'`, 240000);
   await raw('Page.navigate', { url: `${base}play/index.html#${file}` });
-  await ready();
+  if (!await ready()) throw Object.assign(new Error(`the playground never started; the page: ${await js(STATE).catch((e) => e.message.slice(0, 80))}`), { wait: true });
   // the settings go in as the Settings dialog keeps them, read when the page starts: once more from the top
   if (config) { await js(`localStorage.setItem('satex-config', ${JSON.stringify(JSON.stringify(config))}); setTimeout(() => location.reload(), 50);`); await sleep(1500); await ready(); }
   const replace = `[...document.querySelectorAll('dialog[open] button')].find((b) => b.textContent === 'Replace')`;
   const shown = `document.querySelector('#play-tabs [aria-selected=true]')?.textContent.includes(${JSON.stringify(file)})`;
   await until(`return ${shown} || !!${replace}`, 60000);
   await js(`${replace}?.click()`);
-  await until(`return ${shown} && ${QUIET}`, 120000);
+  if (!await until(`return ${shown} && ${QUIET}`, 120000)) throw Object.assign(new Error(`${file} never came to rest after it opened; the page: ${await js(STATE).catch((e) => e.message.slice(0, 80))}`), { wait: true });
   await js(HELPERS);
   await js(LINES);
   // a view the last entry left open comes back with the page
@@ -143,7 +146,7 @@ async function step(s, shot) {
   }
   if (!s.until && s.eval) await js(s.eval);
   if (s.wait) await sleep(s.wait);
-  if (!ok) throw Object.assign(new Error(`no ${s.until}`), { wait: true });
+  if (!ok) throw Object.assign(new Error(`never held: ${s.until.slice(0, 120)}; the page: ${await js(STATE).catch((e) => e.message.slice(0, 80))}`), { wait: true });
   const target = s.hover ?? s.click;
   if (target) {
     const p = await point(target);
@@ -294,7 +297,7 @@ try {
   for (const [s, scheme, e] of failures) {
     failed = true;
     const t = Math.round((s.budget ?? BUDGET) * scale / 1000);
-    console.log(`FAIL ${s.name} ${scheme}: ${e.wait ? `${e.message.slice(0, 250)}: never held, not in ${t} s at load ${load().toFixed(1)}/core` : e.message.slice(0, 300)}`);
+    console.log(`FAIL ${s.name} ${scheme}: ${e.wait ? `${e.message.slice(0, 300)}; steps budget ${t} s at load ${load().toFixed(1)}/core` : e.message.slice(0, 300)}`);
   }
 } finally {
   proc.stdio[3].end();

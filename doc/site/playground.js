@@ -10806,6 +10806,7 @@
   /** The run's explain records of `names` (`\\contentsname`): what the rename tests read. Read-only. */
   self.satexExplain = (names) => explainMany(names);
   /** What doc/site/chaos.mjs reads of the page: what it shows and for which text. Read-only. */
+  self.__satexLsp = (m, p) => lsp(m, p);//UI39
   self.satexHealth = () => ({
     busy: 'busy' in status.dataset, phase: act.phase, status: status.textContent, quiet: Math.round(performance.now() - act.changed), heard: Math.round(performance.now() - lastHeard),
     boot: !!boot.open, example: state.example, file: state.file, root: state.root, dir: state.dir, version, text: editor?.text() ?? null, cursor: editor?.cursor?.() ?? null,
