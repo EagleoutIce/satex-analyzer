@@ -2314,7 +2314,14 @@
     typesetBody.insertAdjacentHTML('beforeend', html.join(''));
   }
   /** The caret over the Typeset view: in its word as the last run set it, the word as now written beside it while the view lags. */
+  /** The caret drawn again; where no row places it (a paragraph break typed into a macro's argument, `\\greet{world⏎⏎}`)
+   * it stays where it was, faded, until the run sets the text. */
   function tsCaretDraw() {
+    const was = typesetBody.querySelector('.pdf-caret')?.style.cssText;
+    tsCaretSet();
+    if (was && pdfCaret?.view === 'ts' && !typesetBody.querySelector('.pdf-caret')) typesetBody.insertAdjacentHTML('beforeend', `<span class="pdf-caret pdf-caret-stale" style="${was}"></span>`);
+  }
+  function tsCaretSet() {
     const c = pdfCaret, q = (v) => CSS.escape(v);
     document.querySelectorAll('.pdf-caret, .ts-typed').forEach((x) => x.remove());
     // the caret in a paragraph after the clicked one (Enter typed): its own row, never the clicked row's words

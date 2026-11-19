@@ -48,3 +48,33 @@ test('reselect: the same item after a refresh, else the first', () => {
   assert.equal(reselect(now, undefined), 0);
   assert.equal(reselect([], 'empty'), 0);
 });
+
+// Intuition: a name from the lean scope list carries its argument letters (`args`), so the kept list writes its snippet:
+// `\textbf` with `m` takes `{}` with the caret in it, an optional argument a removable `[options]` field, a star nothing.
+// Pins `\emph` taken from the kept list during a run without its braces (the lean records had no argument shape).
+test('snippet: from argument letters, the caret in the first field', () => {
+  const { snippet } = self.satexViews.complete;
+  assert.equal(snippet('textbf', 'm'), 'textbf{$1}$0');
+  assert.equal(snippet('frac', 'mm'), 'frac{$1}{$2}$0');
+  assert.equal(snippet('section', 'som'), 'section${1:[options]}{$2}$0');
+  assert.equal(snippet('relax', ''), null);
+  assert.equal(snippet('relax', undefined), null);
+  const k = kept(undefined, [{ label: 'emph', args: 'm' }, { label: 'today' }]);
+  assert.deepEqual([k[0].insertText, k[0].insertTextFormat], ['emph{$1}$0', 2]);
+  assert.equal(k[1].insertText, undefined, 'no arguments: the name alone');
+});
+
+// Intuition: in math (`\( x - \su`) the math commands come first among equally close names, text ones after, by the
+// server's flag (`math`, `data.math`) or the preview's own symbol table; outside math nothing changes. Pins `\sum` typed
+// in `\(…\)` offering `\NeedsDocumentMetadata` first (user 2026-11-19).
+test('rank: math commands first in math', () => {
+  const items = [{ label: 'NeedsDocumentMetadata' }, { label: 'sum', math: true }, { label: 'subsection' }, { label: 'subset' }, { label: 'sumlimits', data: { math: true } }, { label: 'sub' }];
+  assert.deepEqual(labels(rank(items, 'su', true)), ['sum', 'subset', 'sumlimits', 'sub', 'subsection', 'NeedsDocumentMetadata']);
+  assert.deepEqual(labels(rank(items, 'sum', true)), ['sum', 'sumlimits', 'NeedsDocumentMetadata']);
+  assert.deepEqual(labels(rank(items, 'su')), ['sub', 'sum', 'subset', 'sumlimits', 'subsection', 'NeedsDocumentMetadata'], 'in text: shorter first, as before');
+  const { mathItem, docOf } = self.satexViews.complete;
+  assert.equal(mathItem({ label: 'alpha' }), true, 'the symbol table knows \\alpha without a flag');
+  assert.equal(mathItem({ label: 'textbf' }), false);
+  assert.equal(mathItem({ label: 'alpha', math: false }), false, 'the server\'s flag wins');
+  assert.equal(docOf({ label: 'x', data: { doc: 'Sets bold.' } }), 'Sets bold.');
+});

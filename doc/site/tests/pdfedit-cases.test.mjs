@@ -479,3 +479,12 @@ test('afterCall: the end of the call whose argument closes there', async () => {
   assert.equal(E.afterCall(t, at('} \\cmd')), null, 'a group no macro opens');
   assert.equal(E.afterCall(t, at('world')), null, 'no brace');
 });
+// A caret right after a display formula's closer takes the display's row, not the paragraph's (pdfedit.ts
+// `displayEnd`). Pins the caret 231 px off after `\[…\]` typed in the PDF (user 2026-11-19): only math displays
+// count, `\end{itemize}` or inline `\end{math}` keep the paragraph's row.
+test('displayEnd: math display closers, nothing else', () => {
+  const E = self.satexPdfEdit, end = (t) => E.displayEnd(t, t.length);
+  for (const t of ['so \\[y=2\\]', 'so $$y$$', 'a\\begin{equation}x\\end{equation}', 'x\\end{align*}', 'x\\end{gather} \t']) assert.ok(end(t), t);
+  for (const t of ['so \\(y\\)', 'x\\end{itemize}', 'x\\end{math}', 'so \\[y=2\\] ok', 'plain']) assert.ok(!end(t), t);
+  assert.ok(E.displayEnd('\\[y\\] ok', 5) && !E.displayEnd('\\[y\\] ok', 3), 'at the offset given, not the text\'s end');
+});

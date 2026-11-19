@@ -52,13 +52,23 @@ test('the Typeset Show menu: switches to classes', async () => {
   const L = self.satexLayers, d = L.showDefaults();
   assert.deepEqual(Object.keys(d), Object.keys(L.SHOW));
   assert.equal(d.parskip, true, 'on by default');
-  assert.equal(d.indent, false, 'not reported by the run yet: off');
+  assert.equal(d.indent, true, 'the run reports each paragraph\'s indent: on');
+  assert.equal(d.index, false, 'not reported by the run yet: off');
   assert.deepEqual(L.showClasses(d), Object.keys(L.SHOW).filter((k) => L.SHOW[k][2] && L.SHOW[k][3]).map((k) => `ts-show-${k}`));
-  assert.deepEqual(L.showClasses({ ...d, parskip: false, justify: true, indent: true }).filter((c) => /parskip|justify|indent/.test(c)), ['ts-show-justify'], 'off drops its class, a switch not ready never adds one');
+  assert.deepEqual(L.showClasses({ ...d, parskip: false, justify: true, numbers: true }).filter((c) => /parskip|justify|numbers/.test(c)), ['ts-show-justify'], 'off drops its class, a switch not ready never adds one');
   const store = new Map(), S = { get: (k) => store.get(k), set: (k, v) => store.set(k, v) };
   store.set('layers-typeset-show', { colors: false });
   assert.equal(L.state('typeset-show', d, S).colors, false, 'kept per viewer');
   const h = L.showHtml(d);
   assert.equal((h.match(/role="switch"/g) ?? []).length, Object.keys(L.SHOW).length);
-  assert.ok(/id="typeset-show-indent"[^>]*disabled/.test(h), 'a switch not ready is disabled');
+  assert.ok(/id="typeset-show-numbers"[^>]*disabled/.test(h), 'a switch not ready is disabled');
+});
+// The paragraph indent switch (user 2026-11-19) draws the run's facts: the width set before the first character,
+// none after \noindent or a heading, nothing where the run did not know (pins indentOf's reading of the rows).
+test('the Typeset indent comes from the row facts', async () => {
+  const L = self.satexLayers;
+  assert.equal(L.indentOf({ indented: true, indent: 12, parindent: 15 }), 12, 'what was set wins');
+  assert.equal(L.indentOf({ indented: true, parindent: 15 }), 15, 'else \\parindent');
+  assert.equal(L.indentOf({ indented: false, parindent: 15 }), 0, '\\noindent and after a heading: none');
+  assert.equal(L.indentOf({ parindent: 15 }), null, 'not known: no indent drawn');
 });

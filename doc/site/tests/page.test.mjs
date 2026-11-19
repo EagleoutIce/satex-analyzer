@@ -93,3 +93,36 @@ test('numberNodes: one node per change', () => {
     for (const n of nodes.filter((x) => !x.drop && x.name === 'pagenumbering')) assert.ok(STY.includes(n.args.find((a) => a.open === '{').text));
   }
 });
+
+// Intuition: the paper is the one the run's size is, named as the class names it: letter paper is `letterpaper`,
+// not "custom" nor geometry's `ansiapaper` of the same size. Pins the browser build showing "custom" without geometry.sty.
+test('pageOf: the paper by the server\'s names for the run\'s size', () => {
+  const W = 40258437, H = 52099153, run = { paperwidth: [W, W], paperheight: [H, H] };
+  const papers = [{ name: 'a4paper', w: 39158276, h: 55380990 }, { name: 'ansiapaper', w: W, h: H }, { name: 'letterpaper', w: W, h: H, class: true }];
+  const s = { run, papers, paper: ['letterpaper', 'ansiapaper'], geometry: { global: null } };
+  assert.equal(P.pageOf(s).paper, 'letterpaper');
+  assert.equal(P.pageOf({ ...s, papers: [], paper: [] }).paper, '', 'no list: custom');
+});
+
+// Intuition: the header tab says what the style in force prints, each non-empty field once; an unknown field says
+// nothing rather than "empty". Pins plain's page number in the foot's centre.
+test('styleNow: the page style in force as a sentence', () => {
+  const side = (l, c, r) => ({ left: l, center: c, right: r });
+  const plain = { head: { odd: side('', '', ''), even: side('', '', '') }, foot: { odd: side('', '\\thepage', ''), even: side('', '\\thepage', '') } };
+  assert.equal(P.styleNow(plain, false), 'The page style in force prints: footer centre `\\thepage`.');
+  assert.equal(P.styleNow(plain, true), 'The page style in force prints: footer centre (odd pages) `\\thepage`.', 'even pages alike: once');
+  const empty = { head: { odd: side('', '', '') }, foot: { odd: side('', '', '') } };
+  assert.equal(P.styleNow(empty, false), 'The page style in force prints no header or footer.');
+  assert.equal(P.styleNow({ head: { odd: side(null, null, null) }, foot: { odd: side(null, null, null) } }, false), '', 'not known: nothing');
+  assert.equal(P.styleNow(undefined, false), '');
+});
+
+// Intuition: a note only where it matters: tagging on and a package the list does not call compatible.
+test('taggedNote: only for tagging on and a package not compatible', () => {
+  const t = { active: true, status: { geometry: 'compatible', typearea: 'unknown', fancyhdr: 'partial', 'scrlayer-scrpage': 'incompatible' } };
+  assert.equal(P.taggedNote(t, 'geometry'), '');
+  assert.equal(P.taggedNote(t, 'typearea'), '', 'not known: no claim');
+  assert.match(P.taggedNote(t, 'fancyhdr'), /fancyhdr is only partly compatible/);
+  assert.match(P.taggedNote(t, 'scrlayer-scrpage'), /not compatible/);
+  assert.equal(P.taggedNote({ ...t, active: false }, 'fancyhdr'), '', 'tagging off: nothing');
+});

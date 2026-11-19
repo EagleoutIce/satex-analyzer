@@ -167,3 +167,17 @@ test('the Typeset view takes the same parameters', () => {
   assert.ok(Math.abs(parseFloat(c['--m-sup']) * parseFloat(c['--m-script']) - P.sup2) < 1e-3, 'sup2 in em of the script');
   assert.equal(c['--m-bin'], `${+(4 / 18).toFixed(3)}em`);
 });
+
+// Intuition: a math completion item shows its symbol: `\sum` draws ∑, `\alpha` α, `\frac` a and b with a rule between,
+// all in currentColor so the theme picks the color; a text command draws nothing. Pins the list without symbols.
+test('preview: a math command drawn small as SVG', () => {
+  const sum = M.preview('sum'), frac = M.preview('frac');
+  assert.match(sum, /^<svg[^>]*fill="currentColor"/);
+  assert.match(sum, />∑<\/text>/);
+  assert.match(M.preview('alpha'), /font-style="italic"[^>]*>α</);
+  assert.match(frac, />a<\/text>.*>b<\/text>.*<rect/);
+  assert.match(M.preview('leq'), />≤</);
+  assert.equal(M.preview('textbf'), null);
+  assert.equal(M.isMath('sqrt') && M.isMath('mathbb') && M.isMath('lim'), true);
+  assert.equal(M.isMath('section'), false);
+});
