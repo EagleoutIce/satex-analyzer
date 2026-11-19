@@ -9,6 +9,7 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 ### Compile
 
 - `feat` **`satex compile` picks the build system.** `% arara:` runs arara, a `Tectonic.toml` Tectonic, else latexmk or the engine. `--system` or `compile.system` names one (latexmk, arara, tectonic, make, l3build, engine). `--view` opens the PDF in `compile.viewer`.
+- `perf` **Playground PDF: no build where pdfTeX reads no edit, unchanged pages kept.** An edit inside a comment or of spaces TeX skips keeps the PDF shown, proven by the analysis (`satex/holds`): last key to page 1.77 s → 0.35 s on the rerun example. A page whose content and resources did not change keeps its image: a word typed in the thesis example redraws 1 page, not 5.
 - `perf` **`satex compile --system satex`: incremental build.** The preamble is dumped once as a format and reused, the engine, BibTeX, Biber and makeindex rerun only on changed input. A body edit of the thesis example in the browser takes 0.57 s → 0.19 s (−67%). The playground's Compile uses it on `satex gui`.
 
 ### Caches

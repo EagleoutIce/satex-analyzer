@@ -504,7 +504,13 @@ pub struct Interner {
     touched: Option<(Vec<u64>, Vec<Sym>)>,
     /// Numbered register names already interned, so a hot read formats none.
     registers: std::collections::HashMap<(&'static str, i64), Sym, NameHash>,
+    /// A bit per name that begins with [`OWN_NAME`]: hot tests of satex's
+    /// own names look here before they read the text.
+    own: Rc<Vec<u64>>,
 }
+
+/// What satex's own names (registers, unknown text) begin with.
+pub const OWN_NAME: char = '\u{2}';
 
 /// Names and their symbols: one layer of an [`Interner`].
 #[derive(Default, Clone)]
@@ -588,7 +594,17 @@ impl Interner {
                 base.names.push(rc);
             }
         }
-        Interner { base: Rc::new(base), ..Interner::default() }
+        let mut own = vec![0u64; base.names.len().div_ceil(64)];
+        for (i, name) in base.names.iter().enumerate() {
+            own[i / 64] |= u64::from(name.starts_with(OWN_NAME)) << (i % 64);
+        }
+        Interner { base: Rc::new(base), own: Rc::new(own), ..Interner::default() }
+    }
+
+    /// Whether `sym`'s name begins with [`OWN_NAME`].
+    #[inline]
+    pub fn own(&self, sym: Sym) -> bool {
+        self.own.get(sym.0 as usize / 64).is_some_and(|w| w >> (sym.0 % 64) & 1 == 1)
     }
 
     pub fn intern(&mut self, s: &str) -> Sym {
@@ -597,6 +613,11 @@ impl Interner {
             None => {
                 let rc: Rc<str> = Rc::from(s);
                 let sym = Sym(self.len() as u32);
+                if s.starts_with(OWN_NAME) {
+                    let (own, i) = (Rc::make_mut(&mut self.own), sym.0 as usize);
+                    own.resize(own.len().max(i / 64 + 1), 0);
+                    own[i / 64] |= 1 << (i % 64);
+                }
                 self.names.push(rc.clone());
                 self.map.insert(rc, sym);
                 if self.names.len() > FOLD_AFTER + self.base.names.len() / 16 {

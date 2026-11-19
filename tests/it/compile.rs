@@ -209,3 +209,55 @@ fn the_satex_build_reports_what_the_preamble_says() {
         assert!(found, "build {build}: {rows:?}\n{said}");
     }
 }
+
+/// The playground keeps a page's image across builds when its key (`pagekeys`) is the one the
+/// image was drawn from. Pins that equal keys draw equal pixels (pdftocairo) and that a changed
+/// page gets another key: two pages of rules (INITEX has no font map), the second widened.
+#[test]
+fn a_page_keeps_its_key_only_while_it_draws_alike() {
+    let tools = ["pdftex", "qpdf", "pdftocairo"];
+    if tools.iter().any(|t| satex::project::paths::which(t).is_err()) {
+        return;
+    }
+    let dir = crate::support::tmp_root().join(format!("satex-pagekeys-{}", std::process::id()));
+    let build = |name: &str, second: &str| {
+        let at = dir.join(name);
+        std::fs::create_dir_all(&at).unwrap();
+        let page = |text: &str| format!("\\shipout\\hbox{{{text}}}\n");
+        let text = format!(
+            "\\catcode`\\{{=1 \\catcode`\\}}=2 \\pdfoutput=1 \\pdfpagewidth=200pt \\pdfpageheight=200pt\n{}{}\\end\n",
+            page("\\vrule width 30pt height 20pt"),
+            page(second)
+        );
+        std::fs::write(at.join("p.tex"), text).unwrap();
+        let status = std::process::Command::new("pdftex")
+            .args(["-ini", "-interaction=nonstopmode", "p.tex"])
+            .current_dir(&at)
+            .stdout(std::process::Stdio::null())
+            .status()
+            .unwrap();
+        assert!(status.success());
+        let pdf = at.join("p.pdf");
+        let png = |n: u32| {
+            let out = std::process::Command::new("pdftocairo")
+                .args(["-png", "-singlefile", "-f", &n.to_string(), "-l", &n.to_string()])
+                .arg(&pdf)
+                .arg(at.join(format!("page{n}")))
+                .status()
+                .unwrap();
+            assert!(out.success());
+            std::fs::read(at.join(format!("page{n}.png"))).unwrap()
+        };
+        (satex::cli::gui::compile::pagekeys(&pdf), png(1), png(2))
+    };
+    let (a, a1, a2) = build("a", "\\vrule width 10pt height 20pt");
+    let (b, b1, b2) = build("b", "\\vrule width 40pt height 20pt");
+    assert_eq!((a.len(), b.len()), (2, 2), "{a:?} {b:?}");
+    // the first page draws alike: one key
+    assert_eq!(a[0], b[0]);
+    assert_eq!(a1, b1);
+    // the second does not: another key
+    assert_ne!(a2, b2);
+    assert_ne!(a[1], b[1]);
+    let _ = std::fs::remove_dir_all(&dir);
+}

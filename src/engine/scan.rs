@@ -1200,12 +1200,13 @@ impl Machine<'_> {
     /// Whether `sym` stands for digits that are not known: the plain
     /// markers, or digits typed with the interval they lie in.
     pub(crate) fn is_unknown_digits(&self, sym: Sym) -> bool {
-        sym == self.unknown_digits || self.is_more_digits(sym) || self.name(sym).starts_with(TYPED_DIGITS)
+        sym == self.unknown_digits
+            || self.out.interner.own(sym) && (self.is_more_digits(sym) || self.name(sym).starts_with(TYPED_DIGITS))
     }
 
     /// The interval typed unknown digits lie in.
     pub(crate) fn typed_digits_of(&self, sym: Sym) -> Option<Num> {
-        if !self.name(sym).starts_with(TYPED_DIGITS) {
+        if !self.out.interner.own(sym) || !self.name(sym).starts_with(TYPED_DIGITS) {
             return None;
         }
         // A test may have narrowed it on this path, to one value or few.

@@ -670,7 +670,7 @@
   /** What a question asks, as the status line names it while the worker is on it. */
   const QUERY = { scope: 'listing the commands in force', files: 'listing the files', dependencies: 'listing the packages', occurrences: 'finding the occurrences' };
   const METHOD = { 'textDocument/completion': 'completing', 'textDocument/codeAction': 'finding fixes', 'textDocument/codeLens': 'finding the widgets', 'textDocument/documentColor': 'finding the colors',
-    'textDocument/hover': 'reading the hover', 'satex/typeset': 'typesetting the text', 'satex/view': 'opening the widget', 'satex/dialog': 'opening the dialog', 'satex/dialogApply': 'applying the change', 'satex/caches': 'listing the caches', 'satex/written': 'listing the written files' };
+    'textDocument/hover': 'reading the hover', 'satex/typeset': 'typesetting the text', 'satex/view': 'opening the widget', 'satex/dialog': 'opening the dialog', 'satex/dialogApply': 'applying the change', 'satex/caches': 'listing the caches', 'satex/holds': 'comparing with the build shown', 'satex/written': 'listing the written files' };
   const questionOf = (method, params) => method === 'workspace/executeCommand' && params?.command === 'satex/query'
     ? params.arguments?.[0]?.queries?.map((q) => q.type === 'explain' ? `explaining ${q.names?.join(' ') ?? ''}` : QUERY[q.type] ?? q.type).join(', ') ?? 'answering'
     : METHOD[method] ?? method.replace(/^.*\//, '');
@@ -6038,6 +6038,21 @@
     const at = `${state.file === root ? '' : `${state.file}:`}${p.line + 1}:${p.character + 1}`;
     pdfWorker ??= new Worker(URL.createObjectURL(new Blob([`(${compileWorkerMain})()`], { type: 'text/javascript' })));
     const what = slice ? `slice at ${at}` : root;
+    // an edit no read of the analysis tokenized (a comment, skipped spaces) builds the PDF shown: none runs
+    const held = !slice && !cached && alone === null ? await pdfHolds(root) : null;
+    if (held && !pdfBusy) {
+      pdf.texts = { ...pdf.texts, [held.name]: held.text };
+      if (held.name === state.file) pdf.text = held.text;
+      [pdfSent, pdfSentAll] = [pdf.text, pdf.texts];
+      pdfSummary = `${what}: the same PDF (${held.plugin.replace('_', ' ')})`;
+      pdfStatus.textContent = pdfSummary;
+      $('play-pdf').classList.remove('pdf-running');
+      pdfWait(null);
+      pdfHoldEnd();
+      pdfLoaded(true);
+      return;
+    }
+    if (pdfBusy) { if (!cached) pdfQueued = [slice, false, alone, true]; return; }
     pdfRound.start = cached ? 0 : start;
     // the browser's first build fetches and starts its engine: said once, beside the phases
     const first = !onServer && !self.satexTex.ready();
@@ -6056,7 +6071,7 @@
     $('play-pdf').classList.toggle('pdf-running', !cached);
     // the zip is of the build shown: none while the next one runs
     $('pdf-zip').setAttribute('aria-disabled', String(!cached));
-    const dir = state.dir;
+    const dir = state.dir, sets = pdfSets();
     pdfWorker.onmessage = ({ data }) => {
       clearInterval(tick);
       pdfWait(null);
@@ -6069,7 +6084,7 @@
       if (data.none || cached && pdf?.slice) pdfStatus.textContent = pdfSummary;
       else {
         pdfSummary = data.error ? '' : `${what} in ${data.cached ? 'cache' : secs(performance.now() - start)}`;
-        const gen = ++pdfGen, built = { ...data, slice, root, dir, text: pdfSent, texts: pdfSentAll };
+        const gen = ++pdfGen, built = { ...data, slice, root, dir, text: pdfSent, texts: pdfSentAll, sets: sets.join('\n') };
         pdfOpen(built).then((view) => {
           // a newer build came first: this one is never shown; its view stays open while a newer build of the same PDF
           // (from the cache) is handed it too
@@ -6105,6 +6120,22 @@
     const files = alone === null ? pdfFiles() : { [root]: alone };
     pdfSent = files[state.file]; pdfSentAll = files;
     pdfWorker.postMessage({ url: COMPILE, timeout: COMPILE_MS, request: { main: root, files, sets: pdfSets(), ...(TEX ? { pages: false } : {}), ...(slice ? { at } : {}), ...(cached ? { cached } : {}), ...(supersedes ? { supersedes } : {}) } });
+  }
+  /** How long a build waits for `satex/holds`. */
+  const HOLDS_MS = 300;
+  /** Whether the PDF shown is what a build of the texts now gives (`satex/holds`, src/lsp/mod.rs): its build's
+   * texts but one, edited where no read of the analysis tokenized it. `{plugin, name, text}`, else null. */
+  async function pdfHolds(root) {
+    if (!pdf?.texts || pdf.error || pdf.slice || pdf.root !== root || pdf.dir !== state.dir || pdf.sets !== pdfSets().join('\n')) return null;
+    const now = pdfFiles((d) => d), was = pdf.texts, text = (v) => typeof v === 'string';
+    const key = (v) => text(v) ? v : v instanceof Uint8Array ? base64(v) : v?.b64;
+    const names = [...new Set([...Object.keys(now), ...Object.keys(was)])], changed = names.filter((n) => key(now[n]) !== key(was[n]));
+    if (changed.length !== 1 || !text(now[changed[0]]) || !text(was[changed[0]])) return null;
+    const [name] = changed, others = Object.fromEntries(names.filter((n) => n !== name && text(now[n])).map((n) => [path(n), now[n]]));
+    // a run under way answers late: the build goes ahead then
+    const asked = lsp('satex/holds', { textDocument: { uri: uri(name) }, built: was[name], now: now[name], others }).catch(() => null);
+    const plugin = await Promise.race([asked, new Promise((ok) => setTimeout(() => ok(null), HOLDS_MS))]);
+    return typeof plugin === 'string' ? { plugin, name, text: now[name] } : null;
   }
   /** The files query of the root's last run: `{file, records}`. */
   var rootFiles = null; // var: a run may publish before this line
@@ -6304,7 +6335,8 @@
       // nor while an echo shows: the redraw below removes it, the old page fading on top would show the old words alone)
       if (old && typed(el) < 0 && pdfPushed?.page !== +el.dataset.page && !el.querySelector('.pdf-echo')) { old.replaceWith(img); old.classList.add('pdf-fade'); img.after(old); setTimeout(() => old.remove(), 130); }
       else if (old) old.replaceWith(img); else el.prepend(img);
-      pdfRastersDraw(el, img, view.images?.(n) ?? []);
+      img.__rasters = view.images?.(n) ?? [];
+      pdfRastersDraw(el, img, img.__rasters);
       pdfPaperMark(el);
       if (pdfCaret?.view === 'pdf') pdfCaretDraw();
       pdfFacesPrune();
@@ -6383,11 +6415,25 @@
     // the caret at once on the swapped pages, no frame without it
     const caretNow = () => { if (pdfCaret?.view === 'pdf') pdfCaretDraw(); };
     if (!pdfViewer) { pdfBody.querySelectorAll('.pdf-page img').forEach((img) => img.addEventListener('load', () => { if (img.naturalWidth) img.classList.add('pdf-drawn'); pdfLoaded_(); }, { once: true })); caretNow(); return; }
+    let kept = 0;
     for (const el of pdfBody.querySelectorAll('.pdf-page')) {
       const img = el.querySelector('img'), was = old.get(el.dataset.page);
-      if (was && `${was.naturalWidth}x${was.naturalHeight}` === `${img.getAttribute('width')}x${img.getAttribute('height')}`) { img.replaceWith(was); old.delete(el.dataset.page); }
-      else img.addEventListener('load', pdfSettle, { once: true });
+      if (was && `${was.naturalWidth}x${was.naturalHeight}` === `${img.getAttribute('width')}x${img.getAttribute('height')}`) {
+        img.replaceWith(was);
+        old.delete(el.dataset.page);
+        // a page whose key (compile.rs `pagekeys`) is the one its image was drawn from draws alike: it stays, not redrawn
+        const key = pdf.pagekeys?.[+el.dataset.page - 1];
+        if (key && key === was.__build?.pagekeys?.[+el.dataset.page - 1]) {
+          was.__build = pdf;
+          el.dataset.shown = String(pdfGen);
+          el.classList.remove('pdf-stale');
+          pdfRastersDraw(el, was, was.__rasters ?? []);
+          pdfPaperMark(el);
+          kept++;
+        }
+      } else img.addEventListener('load', pdfSettle, { once: true });
     }
+    if (kept) pdfLoaded_();
     for (const img of old.values()) if (img?.__url) URL.revokeObjectURL(img.__url);
     if (scroll && keep) [pagesNow.scrollLeft, pagesNow.scrollTop] = scroll;
     caretNow();

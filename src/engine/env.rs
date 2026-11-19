@@ -267,6 +267,9 @@ pub struct Env {
 #[derive(Clone, Default)]
 struct MemoLog {
     reads: Vec<u32>,
+    /// Parts of `reads` an ended record took each name of once, by start:
+    /// their end and those names, so a record around it sorts no part twice.
+    parts: std::collections::BTreeMap<usize, (usize, Rc<[u32]>)>,
     pre: Vec<(u32, Option<Binding>)>,
     at: LookupMap<u32, usize>,
     floor: usize,
@@ -764,6 +767,7 @@ impl Env {
             if memo.reads.len() >= READ_LOG {
                 memo.full = true;
                 memo.reads.clear();
+                memo.parts.clear();
             } else if !memo.full {
                 memo.reads.push(sym | u32::from(value) << 31);
             }
@@ -853,22 +857,32 @@ impl Env {
     pub fn memo_since(
         &self,
         from: MemoMark,
-    ) -> Option<(Vec<(u32, bool)>, crate::fixed::HashMap<u32, Option<Binding>>, [Vec<u32>; 2])> {
-        let memo = self.memo.borrow();
+    ) -> Option<(Vec<(u32, bool)>, LookupMap<u32, Option<Binding>>, [Vec<u32>; 2])> {
+        let mut memo = self.memo.borrow_mut();
         if memo.full {
             return None;
         }
         // Each name once: read whole if any read took more than its meaning.
-        let mut logged = memo.reads.get(from.reads..)?.to_vec();
-        logged.sort_unstable_by_key(|r| (r & !(1 << 31), std::cmp::Reverse(r >> 31)));
-        let mut reads: Vec<(u32, bool)> = Vec::new();
-        for r in logged {
-            let sym = r & !(1 << 31);
-            if reads.last().is_none_or(|l| l.0 != sym) {
-                reads.push((sym, r >> 31 == 1));
+        let end = memo.reads.len();
+        memo.reads.get(from.reads..)?;
+        let (mut logged, mut at) = (Vec::new(), from.reads);
+        // A part that overlaps the last one is skipped: the log has its reads.
+        for (&start, (stop, names)) in memo.parts.range(from.reads..) {
+            if start < at {
+                continue;
             }
+            logged.extend_from_slice(&memo.reads[at..start]);
+            logged.extend_from_slice(names);
+            at = *stop;
         }
-        let mut pre = crate::fixed::HashMap::default();
+        logged.extend_from_slice(&memo.reads[at..end]);
+        logged.sort_unstable_by_key(|r| (r & !(1 << 31), std::cmp::Reverse(r >> 31)));
+        logged.dedup_by_key(|r| *r & !(1 << 31));
+        let reads: Vec<(u32, bool)> = logged.iter().map(|r| (r & !(1 << 31), r >> 31 == 1)).collect();
+        // The parts inside this one are in it.
+        drop(memo.parts.split_off(&from.reads));
+        memo.parts.insert(from.reads, (end, logged.into()));
+        let mut pre = LookupMap::default();
         for (sym, b) in memo.pre.get(from.pre..).unwrap_or_default() {
             pre.entry(*sym).or_insert_with(|| b.clone());
         }
@@ -3913,6 +3927,29 @@ mod tests {
         assert_eq!((value(&env, 1), value(&env, 2), value(&env, 3)), (Some(1), None, None));
         env.unfork(outer);
         assert!(env.trail.is_empty());
+    }
+
+    /// Intuition: each record keeps every name it read once, a whole read
+    /// over a meaning read. An ended record's part of the log is kept
+    /// reduced, and the record around it merges that part instead of
+    /// sorting it again. Pins that the merge gives what a sort of the whole
+    /// part gives, and that the inner record still sees only its own reads.
+    #[test]
+    fn a_record_around_an_ended_one_reads_what_both_read() {
+        let mut env = Env::with_capacity(8);
+        let outer = env.memo_open();
+        for _ in 0..1000 {
+            env.memo_read(1, false);
+            env.memo_read(2, true);
+            env.memo_read(2, false);
+        }
+        let inner = env.memo_open();
+        env.memo_read(1, true);
+        env.memo_read(2, false);
+        let reads = |m| env.memo_since(m).expect("log").0;
+        assert_eq!(reads(inner), [(1, true), (2, false)], "the inner record logs its own reads");
+        env.memo_read(3, false);
+        assert_eq!(reads(outer), [(1, true), (2, true), (3, false)]);
     }
 
     /// A path rebased onto where the running path stands resumes from a

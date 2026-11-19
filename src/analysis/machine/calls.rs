@@ -347,11 +347,13 @@ impl Machine<'_> {
         if !memo {
             self.memo_verify = None;
         }
-        let runs = Rc::make_mut(self.call_runs.entry(key).or_default());
-        let site = !runs.leaky && runs.runs.len() + runs.active < needed;
-        if site {
-            runs.active += 1;
-        }
+        // No entry where none can be recorded: a missing one reads as empty.
+        let site = needed > 0 && {
+            let runs = Rc::make_mut(self.call_runs.entry(key).or_default());
+            let site = !runs.leaky && runs.runs.len() + runs.active < needed;
+            runs.active += usize::from(site);
+            site
+        };
         // Nested recordings are capped: every call pays for the length of this stack.
         if (site || learn || memo) && self.call_recs.len() < usize::from(self.limits.call_rec_depth) {
             if self.call_recs.is_empty() {
@@ -618,6 +620,12 @@ impl Machine<'_> {
     /// call recording that started above that frame.
     pub(crate) fn end_call_recs(&mut self) {
         self.end_calls(false);
+    }
+
+    /// Whether the innermost recording ends before the next read: checked per token.
+    #[inline]
+    pub(crate) fn call_rec_ends(&self) -> bool {
+        self.call_recs.last().is_some_and(|rec| self.input.len() <= rec.base)
     }
 
     /// Called before `\\ignorespaces` reads on. A call that ends in it is
@@ -1406,11 +1414,11 @@ impl Machine<'_> {
             }
             writes.push((sym, now, global));
         }
-        let held = |sym: u32| pre.get(&sym).cloned().unwrap_or_else(|| self.env.peek(sym).cloned());
-        let reads: Vec<_> = reads.into_iter().map(|(sym, value)| (sym, value, held(sym))).collect();
-        if strict && reads.iter().any(|(sym, value, b)| b.as_ref().is_some_and(|b| self.vague(Sym(*sym), *value, b))) {
+        let held = |sym: u32| pre.get(&sym).map_or_else(|| self.env.peek(sym), Option::as_ref);
+        if strict && reads.iter().any(|&(sym, value)| held(sym).is_some_and(|b| self.vague(Sym(sym), value, b))) {
             return Err("vague read");
         }
+        let reads: Vec<_> = reads.into_iter().map(|(sym, value)| (sym, value, held(sym).cloned())).collect();
         // The user's tokens of its arguments that what it wrote carries:
         // such a call is the same only at the same place.
         let mut spans: Vec<Span> = Vec::new();

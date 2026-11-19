@@ -246,7 +246,7 @@ fn build(root: &Path, body: &[u8], base: Option<&Path>, runs: &mut Vec<Value>) -
     }
     let stem = Path::new(main).with_extension("");
     let pdf = work.join(stem.with_extension("pdf"));
-    let labels = if pdf.is_file() {
+    let (labels, keys) = if pdf.is_file() {
         // A page with pdf.js draws the pages itself, as they come into view (`pages: false`)
         if request["pages"].as_bool() != Some(false) {
             run(
@@ -282,15 +282,16 @@ fn build(root: &Path, body: &[u8], base: Option<&Path>, runs: &mut Vec<Value>) -
                 r
             });
             let labels = scope.spawn(|| pagelabels(&pdf));
-            (words.join(), links.join(), labels.join())
+            let keys = scope.spawn(|| pagekeys(&pdf));
+            (words.join(), links.join(), (labels.join(), keys.join()))
         });
         let (mut r, out) = words.map_err(|_| "pdftotext panicked".to_string())?;
         runs.append(&mut r);
         out?;
         runs.extend(links.unwrap_or_default());
-        labels.unwrap_or_else(|_| json!([]))
+        (labels.0.unwrap_or_else(|_| json!([])), labels.1.unwrap_or_default())
     } else {
-        pagelabels(&pdf)
+        (pagelabels(&pdf), Vec::new())
     };
     let mut pages: Vec<String> = std::fs::read_dir(&work)
         .map_err(|e| e.to_string())?
@@ -328,6 +329,7 @@ fn build(root: &Path, body: &[u8], base: Option<&Path>, runs: &mut Vec<Value>) -
         "synctex": work.join(stem.with_extension("synctex.gz")).is_file().then(|| stem.with_extension("synctex.gz")),
         "pages": pages,
         "pagelabels": labels,
+        "pagekeys": keys,
         "words": work.join("words.html").is_file().then_some("words.html"),
         "links": work.join("links.json").is_file().then_some("links.json"),
         "dpi": 144,
@@ -568,6 +570,62 @@ fn prune(root: &Path) {
     for old in builds.iter().rev().skip(KEEP - 1) {
         let _ = std::fs::remove_dir_all(old);
     }
+}
+
+/// Each page's key: a hash of all a renderer draws it from, its dictionary and every object it
+/// reaches (contents, resources, fonts, forms, annotations), not its `/Parent`, the attributes it
+/// inherits from the page tree included (ISO 32000-1 § 7.7.3.4). Two pages with one key draw
+/// alike, so the page keeps its image across builds. A font's new subset changes the key of every
+/// page using it, which only redraws. Empty where qpdf cannot read the PDF.
+pub fn pagekeys(pdf: &Path) -> Vec<String> {
+    use std::collections::{HashSet, hash_map::DefaultHasher};
+    use std::hash::{Hash, Hasher};
+    let out = Command::new("qpdf")
+        .args(["--json=2", "--json-key=qpdf", "--json-key=pages", "--json-stream-data=inline"])
+        .arg(pdf)
+        .arg("-")
+        .output();
+    let Some(json) = out.ok().and_then(|o| serde_json::from_slice::<Value>(&o.stdout).ok()) else { return Vec::new() };
+    let objects = &json["qpdf"][1];
+    /// `N G R`: an indirect object's reference, as qpdf's JSON writes it.
+    fn reference(v: &Value) -> Option<&str> {
+        let s = v.as_str()?.strip_suffix(" R")?;
+        s.split(' ').all(|n| n.parse::<u64>().is_ok()).then_some(v.as_str()?)
+    }
+    fn walk<'a>(v: &'a Value, objects: &'a Value, seen: &mut HashSet<&'a str>, h: &mut DefaultHasher) {
+        if let Some(r) = reference(v) {
+            r.hash(h);
+            if seen.insert(r) {
+                walk(&objects[format!("obj:{r}")], objects, seen, h);
+            }
+            return;
+        }
+        match v {
+            Value::Object(map) => map.iter().filter(|(k, _)| *k != "/Parent").for_each(|(k, v)| {
+                k.hash(h);
+                walk(v, objects, seen, h);
+            }),
+            Value::Array(items) => items.iter().for_each(|v| walk(v, objects, seen, h)),
+            other => other.to_string().hash(h),
+        }
+    }
+    let pages = json["pages"].as_array().into_iter().flatten();
+    pages
+        .map(|page| {
+            let (mut h, mut seen) = (DefaultHasher::new(), HashSet::new());
+            walk(&page["object"], objects, &mut seen, &mut h);
+            // what the page inherits: the nearest ancestor's, as a reader takes it
+            for key in ["/Resources", "/MediaBox", "/CropBox", "/Rotate"] {
+                let mut node = reference(&page["object"]).map(|r| &objects[format!("obj:{r}")]["value"]);
+                while let Some(n) = node.filter(|n| n.get(key).is_none()) {
+                    node = n.get("/Parent").and_then(reference).map(|r| &objects[format!("obj:{r}")]["value"]);
+                }
+                key.hash(&mut h);
+                walk(node.and_then(|n| n.get(key)).unwrap_or(&Value::Null), objects, &mut seen, &mut h);
+            }
+            format!("{:016x}", h.finish())
+        })
+        .collect()
 }
 
 /// The PDF's own page labels (beamer gives the overlay steps of a frame one range, so one label).

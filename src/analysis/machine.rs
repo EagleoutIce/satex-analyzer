@@ -2055,10 +2055,10 @@ pub struct Machine<'a> {
     /// Recorded runs per call ([`calls`]).
     call_runs: crate::fixed::LookupMap<calls::CallKey, Rc<calls::CallRuns>>,
     /// Kept effects of calls, by code and arguments ([`calls`]).
-    memos: HashMap<u64, Vec<Rc<calls::Memo>>>,
-    memo_codes: HashMap<usize, calls::MemoCode>,
+    memos: LookupMap<u64, Vec<Rc<calls::Memo>>>,
+    memo_codes: LookupMap<usize, calls::MemoCode>,
     /// Keys of calls met once ([`calls`]).
-    memo_seen: HashSet<u64>,
+    memo_seen: crate::fixed::LookupSet<u64>,
     memo_count: usize,
     /// A hit that `limits.call_memo_verify` runs for real, compared at its end.
     memo_verify: Option<(Rc<calls::Memo>, Sym)>,
@@ -2999,9 +2999,9 @@ impl<'a> Machine<'a> {
             dont_expand,
             unknown,
             call_runs: Default::default(),
-            memos: HashMap::default(),
-            memo_codes: HashMap::default(),
-            memo_seen: HashSet::default(),
+            memos: Default::default(),
+            memo_codes: Default::default(),
+            memo_seen: Default::default(),
             memo_count: 0,
             memo_verify: None,
             memo_said: Vec::new(),
@@ -5149,7 +5149,9 @@ will look undefined",
                 }
             }
             if !self.call_recs.is_empty() {
-                self.end_call_recs();
+                if self.call_rec_ends() {
+                    self.end_call_recs();
+                }
                 if matches!(self.input.last(), Some(Frame::File { .. } | Frame::Pseudo { .. })) {
                     self.leak_call_recs();
                 }
@@ -7299,7 +7301,11 @@ will look undefined",
     /// text, not handed to it as an argument: its expansion reached this one.
     fn observe_call(&mut self, sym: Sym, span: Span) {
         let Some(source) = self.source.filter(|_| span != Span::default()) else { return };
-        let written = match self.env.meaning(source) {
+        let meaning = self.env.meaning(source);
+        if self.out.observed.has(source, sym) {
+            return;
+        }
+        let written = match meaning {
             Meaning::Macro(m) => m.replacement_text.iter().any(|t| t.span == span && t.cs() == Some(sym)),
             _ => false,
         };
@@ -10425,11 +10431,12 @@ will look undefined",
         let progress = self.site_progress();
         // The macro whose text held the call, as its vertex was made: a list
         // used up by the call's last token has ended since (tex.web § 390).
-        let graph = &self.out.graph;
-        let within = match node.and_then(|n| graph.vertex(n)) {
-            Some(v) => v.within.and_then(|w| graph.vertex(w)).map(|w| w.name),
-            None => self.within.last().map(|(sym, _)| *sym),
+        // Only a new fact needs it: a site met again keeps its first.
+        let within = |m: &Self| match node.and_then(|n| m.out.graph.vertex(n)) {
+            Some(v) => v.within.and_then(|w| m.out.graph.vertex(w)).map(|w| w.name),
+            None => m.within.last().map(|(sym, _)| *sym),
         };
+        let captured = self.package_capture.is_some().then(|| within(self)).flatten();
         // A site this run already had before a package being cached reached
         // it: the package records the fact it would have made, for a run
         // that does not have the site.
@@ -10443,7 +10450,7 @@ will look undefined",
                 package: self.packages.last().map(|(sym, _)| *sym),
                 node,
                 meaning,
-                within,
+                within: captured,
                 arguments: arguments.clone(),
                 cds: self.cds.to_vec(),
                 count: 0,
@@ -10480,7 +10487,7 @@ will look undefined",
             previous.mode = previous.mode.union(mode);
             return repeats;
         }
-        let package = self.package();
+        let (package, within) = (self.package(), within(self));
         let fact = self.out.facts.expansions.len();
         let site = Site {
             repeats: 1,
@@ -15850,7 +15857,7 @@ impl Machine<'_> {
 
     /// Whether `sym` is unknown digits that may be none.
     pub(crate) fn is_more_digits(&self, sym: Sym) -> bool {
-        sym == self.unknown_more || self.name(sym).starts_with(MORE_DIGITS)
+        sym == self.unknown_more || self.out.interner.own(sym) && self.name(sym).starts_with(MORE_DIGITS)
     }
 
     /// The class of unknown text `t` stands for, whether it holds at least
@@ -15990,6 +15997,9 @@ impl Machine<'_> {
     /// A number's own name that holds a definition is not one: it is that
     /// definition's ([`Machine::unknown_name_token`]).
     pub(crate) fn is_unknown_name(&self, sym: Sym) -> bool {
+        if !self.out.interner.own(sym) {
+            return false;
+        }
         let name = self.out.interner.name(sym);
         name.starts_with(UNKNOWN_NAME)
             && !(name.contains(NAME_NUMBER) && self.env.slot(sym).is_some_and(|b| !b.defs.is_empty()))

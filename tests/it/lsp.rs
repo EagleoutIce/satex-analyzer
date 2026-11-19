@@ -5640,6 +5640,81 @@ fn incremental_edits_keep_the_run_and_equal_a_fresh_one() {
     }
 }
 
+/// INITEX that ships one page: a comment after text, a comment line, skipped spaces and a `%` of
+/// category 12, each a place `satex/holds` judges an edit at.
+const SHIP: &str = "\\catcode`\\{=1 \\catcode`\\}=2 \\pdfoutput=1 \\pdfpagewidth=200pt \\pdfpageheight=50pt\n\\font\\f=cmr10 \\f\n\\shipout\\hbox{Hello  world % a note\n% a comment line\n  again {\\catcode`\\%=12 y % not a comment}}\n\\end\n";
+
+/// What `satex/holds` answers for a build of `built` once the editor holds `new`.
+fn holds_after(tag: &str, built: &str, new: &str) -> Value {
+    let (mut server, uri, _, dir) = open_unsaved(tag, built);
+    server.notify(
+        "textDocument/didChange",
+        json!({ "textDocument": { "uri": uri, "version": 2 }, "contentChanges": [{ "text": new }] }),
+    );
+    while server.published()["params"]["version"] != 2 {}
+    let id = server.request("satex/holds", json!({ "textDocument": { "uri": uri }, "built": built, "now": new }));
+    let answer = server.response(id)["result"].clone();
+    server.shutdown();
+    let _ = std::fs::remove_dir_all(&dir);
+    answer
+}
+
+/// pdfTeX's PDF of `text` (INITEX), dated alike so two builds of one text are equal bytes.
+fn ship(dir: &std::path::Path, text: &str) -> Vec<u8> {
+    std::fs::create_dir_all(dir).unwrap();
+    std::fs::write(dir.join("ship.tex"), text).unwrap();
+    let status = std::process::Command::new("pdftex")
+        .args(["-ini", "-interaction=nonstopmode", "ship.tex"])
+        .current_dir(dir)
+        .env("SOURCE_DATE_EPOCH", "1")
+        .env("FORCE_SOURCE_DATE", "1")
+        .stdout(Stdio::null())
+        .status()
+        .unwrap();
+    assert!(status.success(), "{text}");
+    std::fs::read(dir.join("ship.pdf")).unwrap()
+}
+
+/// The playground skips a build when `satex/holds` names a plugin: the edit lies where no read of
+/// the run tokenized it. Pins that each such edit gives pdfTeX's very PDF, and that the edits it
+/// refuses (a `%` of category 12, a changed word, a new paragraph, a file read by `\openin`) are refused, two of them
+/// changing the PDF, so the comparison bites.
+#[test]
+fn a_build_is_skipped_only_where_pdftex_gives_the_same_pdf() {
+    let skipped = [
+        ("note", SHIP.replace("% a note", "% a notebook"), "comment_edit"),
+        ("comment-line", SHIP.replace("% a comment line", "% a longer comment line"), "comment_edit"),
+        ("skipped-space", SHIP.replace("Hello  world", "Hello   world"), "whitespace_edit"),
+        ("indent", SHIP.replace("  again", "    again"), "whitespace_edit"),
+    ];
+    let built = [
+        ("catcode", SHIP.replace("y % not a comment", "y % not a comment!"), true),
+        ("word", SHIP.replace("world", "earth"), true),
+        ("blank-line", SHIP.replace("Hello  world", "Hello\n\n world"), false),
+    ];
+    for (tag, new, plugin) in &skipped {
+        assert_eq!(holds_after(&format!("holds-{tag}"), SHIP, new), json!(plugin), "{tag}");
+    }
+    for (tag, new, _) in &built {
+        assert_eq!(holds_after(&format!("holds-no-{tag}"), SHIP, new), Value::Null, "{tag}");
+    }
+    // a file the run opened with `\openin` may be read past the mouth, its comments too: no skip
+    let raw = SHIP.replace("\\end", "\\openin1=main.tex \\end");
+    assert_eq!(holds_after("holds-no-openin", &raw, &raw.replace("% a note", "% a notebook")), Value::Null);
+    if !crate::support::installed() || satex::project::paths::which("pdftex").is_err() {
+        return;
+    }
+    let dir = crate::support::tmp_root().join(format!("satex-holds-pdf-{}", std::process::id()));
+    let base = ship(&dir.join("base"), SHIP);
+    for (tag, new, _) in &skipped {
+        assert!(ship(&dir.join(tag), new) == base, "{tag}: the skipped build would show another PDF");
+    }
+    for (tag, new, differs) in &built {
+        assert_eq!(ship(&dir.join(tag), new) != base, *differs, "{tag}");
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// Edits no plugin may take run again: a `%` of category 12, a new blank
 /// line, a directive, a name typed into a defined one.
 #[test]

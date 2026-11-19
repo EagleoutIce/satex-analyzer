@@ -553,6 +553,13 @@ fn dispatch(engine_tx: Send<'_>, req: Request) -> Result<Json, String> {
             let uri: Uri = serde_json::from_value(params["textDocument"]["uri"].clone()).map_err(|e| e.to_string())?;
             Ok(Json::Array(ask(engine_tx, |reply| EngineMsg::Written(uri, reply))?))
         }
+        // Whether a build of the document as it was built (`built`, its text now `now`) gives what a build of
+        // its text now gives: the incremental plugin that proves it, `null` where none does.
+        "satex/holds" => {
+            let uri: Uri = serde_json::from_value(params["textDocument"]["uri"].clone()).map_err(|e| e.to_string())?;
+            let texts = serde_json::from_value(params.clone()).map_err(|e| e.to_string())?;
+            Ok(ask(engine_tx, |reply| EngineMsg::Holds(uri, texts, reply))?)
+        }
         "satex/caches" => {
             let uri: Uri = serde_json::from_value(params["textDocument"]["uri"].clone()).map_err(|e| e.to_string())?;
             Ok(serde_json::to_value(ask(engine_tx, |reply| EngineMsg::Caches(uri, reply))?).unwrap())
@@ -799,6 +806,8 @@ enum EngineMsg {
     Typesetting(Uri, String, Json, Sender<Json>),
     Written(Uri, Sender<Vec<Json>>),
     Caches(Uri, Sender<Vec<String>>),
+    /// A build's texts against the document's: `satex/holds`.
+    Holds(Uri, Holds, Sender<Json>),
     Shutdown,
 }
 
@@ -822,6 +831,21 @@ struct Doc {
     /// How an edit the run was kept for moved the edited line: whole-document
     /// results are made from `analyzed` and moved by it.
     shift: Option<plugins::incremental::Shift>,
+}
+
+/// What `satex/holds` compares: a document's text as built and now, every other file by path.
+#[derive(serde::Deserialize)]
+struct Holds {
+    built: String,
+    now: String,
+    #[serde(default)]
+    others: std::collections::BTreeMap<String, String>,
+}
+
+/// What picks the run a text is read by: an edit that changes it is no edit of one run.
+fn route(path: &Path, text: &str) -> String {
+    let profile = crate::project::config::Profile::of_name(Some(path), text);
+    format!("{:?}", (discovery::is_document(text), discovery::declared_root(path, text), profile))
 }
 
 /// One run of a root: the open buffers' texts it read, by hash, and the
@@ -1146,12 +1170,7 @@ impl Engine {
         let Some(doc) = self.docs.get(uri) else { return false };
         let (Some(analysis), Some(old)) = (doc.analysis.clone(), doc.analyzed.clone()) else { return false };
         let (path, new) = (doc.path.clone(), doc.text.clone());
-        // What picks the run a text is read by must not change.
-        let route = |t: &str| {
-            let profile = crate::project::config::Profile::of_name(Some(&path), t);
-            format!("{:?}", (discovery::is_document(t), discovery::declared_root(&path, t), profile))
-        };
-        if route(&old) != route(&new) {
+        if route(&path, &old) != route(&path, &new) {
             return false;
         }
         let name = path.display().to_string();
@@ -1195,6 +1214,62 @@ impl Engine {
         eprintln!("satex: {text}");
         crate::util::progress::tell(crate::util::progress::Status { text, ..Default::default() });
         true
+    }
+
+    /// The incremental plugin by which a build of `texts.built` gives the output a build of `texts.now`
+    /// gives, `uri`'s two texts, every other file as the client sent it (alike in both builds). Both
+    /// must be edits the last run holds for ([`Reuse::Fresh`] or [`Reuse::Shifted`]): no read of the
+    /// run tokenized what they change (tex.web § 347), so pdfTeX runs alike on both. The project
+    /// files the run read must be the client's, and nothing may wait for a run.
+    fn holds(&self, uri: &Uri, texts: &Holds) -> Option<&'static str> {
+        use plugins::incremental::{Edit, Reuse, decide};
+        let doc = self.docs.get(uri)?;
+        let (analysis, read) = (doc.analysis.as_deref()?, doc.analyzed.as_deref()?);
+        if !self.dirty.is_empty() || doc.text != texts.now {
+            return None;
+        }
+        // A file read past the mouth (`\openin`, `\pdfmdfivesum file`: `Facts::found`, every one noted while
+        // under the limit) may show any byte of it in the PDF, comments too. LaTeX's `\IfFileExists` opens
+        // each `\input` file so: coarse, only the main file's edits skip then.
+        let raw = &analysis.facts.found;
+        if raw.len() >= analysis.settings.limits.facts
+            || raw.iter().any(|p| Path::new(p).file_name() == doc.path.file_name())
+        {
+            return None;
+        }
+        // Every other project file the run read, as it read it, is the client's (the same in both builds,
+        // which the client checks). Matched by base name: two files of one name must both be alike.
+        let base = |p: &str| Path::new(p).file_name().map(|n| n.to_os_string());
+        for file in analysis.files.iter().filter(|f| Path::new(&f.path) != doc.path) {
+            let sent: Vec<&String> =
+                texts.others.iter().filter(|(k, _)| base(k) == base(&file.path)).map(|(_, t)| t).collect();
+            if sent.is_empty() {
+                continue;
+            }
+            let read = match self.docs.values().find(|d| d.path == Path::new(&file.path)) {
+                Some(d) if d.analyzed.as_ref() == Some(&d.text) => Some(d.text.clone()),
+                Some(_) => None,
+                None => crate::project::overlay::read_to_string(Path::new(&file.path)).ok(),
+            };
+            if read.is_none_or(|r| sent.iter().any(|t| **t != r)) {
+                return None;
+            }
+        }
+        let name = doc.path.display().to_string();
+        let mut by = "same";
+        for text in [&texts.built, &texts.now] {
+            if text == read {
+                continue;
+            }
+            if route(&doc.path, read) != route(&doc.path, text) {
+                return None;
+            }
+            match decide(&Edit::new(analysis, &name, read, text)?)? {
+                (_, Reuse::Provisional) => return None,
+                (plugin, _) => by = plugin,
+            }
+        }
+        Some(by)
     }
 
     /// What a build tells the editor between its runs ([`SETTLED_NOTIFICATION`]).
@@ -1756,6 +1831,10 @@ impl Engine {
                     self.ensure(&uri);
                 }
                 answer(&self.docs, &self.hovers, self.blank.as_deref(), msg);
+            }
+            EngineMsg::Holds(uri, texts, reply) => {
+                self.ensure(&uri);
+                let _ = reply.send(Json::from(self.holds(&uri, &texts)));
             }
             EngineMsg::Highlight(uri, pos, reply) => {
                 self.fresh(&uri);

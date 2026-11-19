@@ -710,6 +710,12 @@ impl CallGraph {
         i
     }
 
+    /// Whether `from` calls `to` already and no log waits for the edge.
+    pub fn has(&self, from: Sym, to: Sym) -> bool {
+        let at = |s| self.index.get(&s).copied();
+        self.log.is_none() && at(from).zip(at(to)).is_some_and(|(a, b)| self.edges[a].contains(&b))
+    }
+
     pub fn add(&mut self, from: Sym, to: Sym) {
         self.note(CallEvent::Edge(from, to));
         let (a, b) = (self.node(from), self.node(to));
