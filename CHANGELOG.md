@@ -107,6 +107,8 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 - `fix` **Text colors after an early character.** Later text and page colors reach the Typeset view and color lints.
 - `fix` **Sizes in math and on the page.** Big operators, delimiters, accents and scripts pick the right variant and size (the sample paper breaks its pages where pdflatex does). Displays add skips, so a here-float after one lands on its page.
 
+<!-- commits these entries cover: c947497 ed42dee 1671235 d91cdeb 3bb8228 f3ce73c 47d3cf4 7cea9ae e23e18a 210d521 df9d406 bc11c9c 786db3a 6cf59e6 ac4bd57 ce94e86 ed11b4e 2115877 33de090 a6f754c d6cb8b7 2c11140 de48638 e640c7a 3cd2b1e 547bcce e733c52 cebacfc 2c7d50d 238accb dffd669 3bbbea5 55c09b6 309ab6f c2f544f 7c10eeb 2f55127 19032cc 51c1d85 e1c265a 7268850 62bb038 f59a76a e3369f7 9eab749 c374b22 f794064 539e930 b3848c7 61feb6e 673f41f aa9bb9e 1917e4d 7b94d67 90d90ba 947a9c6 f632f9b ede3ae3 d97e37f 45852e2 1ba9035 26358de abc792b 890e39d 9af936e 9439c69 6bd86d1 e8f7eaa cd82747 edd51ea b11e6a5 5efcde6 ddd3d3d 4a72784 123ffb2 ad1201f 4ba421f 256cf69 d38f763 71c2a6f 966d945 4b74f2d b91fd4e 18b59dc 5c36b7d 368f184 efc1a6a 3c2b775 -->
+
 ## v0.2.4 (2026-11-15)
 
 ### Lints
