@@ -132,8 +132,8 @@
     },
     {
      "click": "(() => { const p = self.__pw('fast.'); return [p[0] + 1, p[1]]; })()",
-     "glide": 520,
-     "after": 220
+     "glide": 470,
+     "after": 180
     },
     {
      "until": "document.querySelector('.pdf-caret')"
@@ -142,57 +142,58 @@
      "type": " It drops by $\\su"
     },
     {
-     "until": "document.querySelector('.type-complete li[aria-selected=true]')?.querySelector('code')?.textContent === '\\\\sum' && document.querySelector('.type-complete li[aria-selected=true]').querySelector('.cm-math-symbol')",
+     "until": "[...document.querySelectorAll('.type-complete li')].find((l) => l.querySelector('code')?.textContent === '\\\\sum')?.querySelector('.cm-math-symbol')",
      "ms": 15000,
      "wait": 1200
     },
     {
-     "type": "\t",
-     "wait": 110
+     "click": "[...document.querySelectorAll('.type-complete li')].find((l) => l.querySelector('code')?.textContent === '\\\\sum')",
+     "glide": 300,
+     "after": 120
     },
     {
      "type": "_{i} x_42$ per",
-     "wait": 80
+     "wait": 60
     },
     {
      "type": " step.",
-     "wait": 220
+     "wait": 180
     },
     {
      "type": "\n",
-     "wait": 300
+     "wait": 240
     },
     {
      "type": "It converges.",
-     "wait": 150
+     "wait": 120
     },
     {
      "until": "!document.getElementById('play-pdf').classList.contains('pdf-running') && __quiet()",
-     "wait": 220,
+     "wait": 180,
      "ms": 120000
     },
     {
      "click": "(() => { const p = self.__pw('TinyNet,', .95); return [p[0] - 1, p[1]]; })()",
-     "glide": 450,
-     "after": 300
+     "glide": 400,
+     "after": 240
     },
     {
      "until": "document.querySelector('.pdf-caret') && document.querySelector('.type-note')"
     },
     {
      "type": "2",
-     "wait": 150
+     "wait": 120
     },
     {
      "until": "self.satexPdfWords().some((w) => w[5] === 'TinyNet2') && !document.getElementById('play-pdf').classList.contains('pdf-running')",
      "ms": 60000,
-     "wait": 380
+     "wait": 300
     },
     {
      "hover": "self.__pw('TinyNet2', .5)",
-     "glide": 380,
+     "glide": 340,
      "wait": 0,
-     "after": 110
+     "after": 90
     },
     {
      "drag": [
@@ -200,87 +201,87 @@
       "(() => { const g = document.querySelector('#pdf-body .pdf-tikz-grip').getBoundingClientRect(), a = self.__pw('data', .5), b = self.__pw('TinyNet2', .5); return [g.x + g.width / 2 + 8, g.y + g.height / 2 + a[1] - b[1] + 2]; })()"
      ],
      "over": 980,
-     "wait": 300
+     "wait": 240
     },
     {
      "until": "!document.getElementById('play-pdf').classList.contains('pdf-running')",
      "ms": 60000,
-     "wait": 380
+     "wait": 300
     },
     {
      "click": "self.__pw('loss', .92, .5, 1)",
      "double": true,
-     "glide": 450,
-     "after": 380
+     "glide": 400,
+     "after": 300
     },
     {
      "until": "document.querySelector('.pdf-caret')"
     },
     {
      "type": "es",
-     "wait": 220
+     "wait": 180
     },
     {
      "until": "self.satexPdfWords().some((w) => w[5] === 'losses') && !document.getElementById('play-pdf').classList.contains('pdf-running')",
      "ms": 60000,
-     "wait": 300
+     "wait": 240
     },
     {
      "click": "self.__pw('TinyNet2', .5)",
      "right": true,
-     "glide": 520,
-     "after": 300
+     "glide": 470,
+     "after": 240
     },
     {
      "eval": "if (!document.querySelector('.pa-root')) { const [x, y] = self.__pw('TinyNet2', .5); document.elementFromPoint(x, y).dispatchEvent(new MouseEvent('contextmenu', { clientX: x, clientY: y, bubbles: true, cancelable: true, button: 2 })); }",
      "until": "document.querySelector('.pa-root')",
      "ms": 20000,
-     "wait": 380
+     "wait": 300
     },
     {
      "hover": "(() => { const r = [...document.querySelectorAll('.pa-root > button')].find((b) => b.querySelector('span')?.textContent === 'Shape').getBoundingClientRect(); return [r.left + 16, r.y + r.height / 2]; })()",
-     "glide": 520,
-     "after": 380
+     "glide": 470,
+     "after": 300
     },
     {
      "until": "document.querySelector('.pa-sub')"
     },
     {
      "click": "[...document.querySelectorAll('.pa-sub > button')].find((b) => b.querySelector('span')?.textContent === 'Circle')",
-     "glide": 340,
-     "after": 220
+     "glide": 310,
+     "after": 180
     },
     {
-     "until": "!document.getElementById('play-pdf').classList.contains('pdf-running')",
+     "until": "self.satexHealth().text.includes('circle, box') && !document.getElementById('play-pdf').classList.contains('pdf-running') && !self.satexHealth().pdfBusy && __quiet()",
      "ms": 60000,
-     "wait": 300
+     "wait": 400
     },
     {
      "click": "self.__pw('base', .97)",
-     "glide": 450,
-     "after": 150
+     "glide": 400,
+     "after": 120
     },
     {
      "until": "document.querySelector('.pdf-caret')"
     },
     {
      "hover": "(() => { const a = self.__pw('losses', .5), b = self.__pw('95', .5); return [a[0], b[1]]; })()",
-     "glide": 300,
+     "glide": 270,
      "after": 0
     },
     {
      "type": "line",
-     "wait": 300
+     "wait": 240
     },
     {
      "until": "self.satexPdfWords().some((w) => w[5] === 'baseline') && !document.getElementById('play-pdf').classList.contains('pdf-running')",
      "ms": 60000,
-     "wait": 220
+     "wait": 180
     },
     {
      "hover": "self.__pw('small', .5)",
-     "glide": 450,
-     "after": 110
+     "glide": 400,
+     "after": 90
     },
     {
      "until": "document.querySelector('#play-pdf .pdf-col-grip[data-k=\"0\"]')",
@@ -292,39 +293,45 @@
       "(() => { const r = document.querySelector('#play-pdf .pdf-col-grip[data-k=\"0\"]').getBoundingClientRect(); return [r.x + r.width / 2 + 45, r.y + r.height / 2]; })()"
      ],
      "over": 680,
-     "wait": 150
+     "wait": 120
     },
     {
      "until": "/\\\\begin\\{tabular\\}\\{p\\{[^}]*\\}r\\}/.test(self.satexHealth().text) && !document.getElementById('play-pdf').classList.contains('pdf-running')",
      "ms": 30000,
-     "wait": 380
+     "wait": 300
     },
     {
      "until": "document.querySelector('#play-pdf .pdf-col-more[data-menu$=\":1\"]')",
      "ms": 15000
     },
     {
-     "click": "document.querySelector('#play-pdf .pdf-col-more[data-menu$=\":1\"]')",
-     "glide": 300,
-     "after": 300
+     "hover": "document.querySelector('#play-pdf .pdf-col-more[data-menu$=\":1\"]')",
+     "glide": 270,
+     "after": 200
     },
     {
+     "click": "document.querySelector('#play-pdf .pdf-col-more[data-menu$=\":1\"]')",
+     "after": 240
+    },
+    {
+     "eval": "if (![...document.querySelectorAll('.pa-root > button')].find((b) => b.textContent.startsWith('c:'))) document.querySelector('#play-pdf .pdf-col-more[data-menu$=\":1\"]')?.click();",
      "until": "[...document.querySelectorAll('.pa-root > button')].find((b) => b.textContent.startsWith('c:'))",
-     "ms": 5000
+     "ms": 8000,
+     "wait": 80
     },
     {
      "click": "[...document.querySelectorAll('.pa-root > button')].find((b) => b.textContent.startsWith('c:'))",
-     "glide": 300,
-     "after": 220
+     "glide": 270,
+     "after": 180
     },
     {
      "until": "/\\\\begin\\{tabular\\}\\{p\\{[^}]*\\}c\\}/.test(self.satexHealth().text) && !document.getElementById('play-pdf').classList.contains('pdf-running')",
      "ms": 60000,
-     "wait": 520
+     "wait": 420
     },
     {
      "hover": "(() => { const a = self.__pw('losses', .5), b = self.__pw('95', .5); return [a[0], b[1]]; })()",
-     "glide": 300,
+     "glide": 270,
      "after": 0
     }
    ],
@@ -332,7 +339,7 @@
     ".cm-editor",
     "#play-pdf"
    ],
-   "hold": 600,
+   "hold": 500,
    "keepMouse": true,
    "keepFocus": true,
    "config": {
