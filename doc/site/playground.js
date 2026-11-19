@@ -908,7 +908,12 @@
   function checking() { phase(`Analyzing ${state.file}…`); checkStart = performance.now(); }
 
   /** Completion order and the lists kept for a busy worker (views.ts `complete`). */
-  const { rank, kept: keptList, reselect } = self.satexViews.complete;
+  const { rank, kept: keptList, reselect, mathItem, docOf } = self.satexViews.complete;
+  /** Whether offset `at` of `text` is in math (`$…$`, `\\(…\\)`, `\\[…\\]`, a math environment), read from the paragraph's start
+   * as pdfedit.ts `scan` reads it: math commands rank first there. */
+  const inMath = (text, at) => !!self.satexPdfEdit.scan(text, Math.max(0, text.lastIndexOf('\n\n', at - 1)), at, self.satexPdfEdit.start()).math;
+  /** A math item's symbol drawn small (mathlayout.ts `preview`, `currentColor`), else ''. */
+  const symbolOf = (i) => mathItem(i) ? self.satexMath?.preview?.(i.label) ?? '' : '';
   /** The `#rrggbb` of a Color item (kind 16) whose documentation is one, else null. */
   const colorOf = (item) => {
     const doc = typeof item.documentation === 'string' ? item.documentation : item.documentation?.value;
@@ -932,7 +937,7 @@
   function primeScope(file) {
     if (!scopeItems.has(file)) scopeItems.set(file, []);
     const t = performance.now();
-    namesInForce(false, true).then((records) => { scopeMs = performance.now() - t; scopeItems.set(file, records.map((r) => ({ label: r.name.replace(/^\\/, ''), detail: r.effective ?? r.name, kind: 3 }))); });
+    namesInForce(false, true).then((records) => { scopeMs = performance.now() - t; scopeItems.set(file, records.map((r) => ({ label: r.name.replace(/^\\/, ''), detail: r.effective ?? r.name, kind: 3, args: r.args, math: r.math, doc: r.doc }))); });
   }
   /** The names in force at the end of the root's last run (`scope`), asked once per analysis;
    * `lean`: name, tag, shape and package only, what a completion list shows. */
@@ -949,7 +954,7 @@
   /** The commands a `\\` completed last visit, per project: the first `\\` of a visit answers before the first run ends. */
   const seedKey = () => `satex-complete:${state.root ?? state.file}`;
   function keepSeed(items) {
-    const slim = items.slice(0, 400).map(({ label, detail, kind, insertText, insertTextFormat }) => ({ label, detail, kind, insertText, insertTextFormat }));
+    const slim = items.slice(0, 400).map(({ label, detail, kind, insertText, insertTextFormat, data }) => ({ label, detail, kind, insertText, insertTextFormat, data: data && { math: data.math, doc: data.doc } }));
     try { localStorage.setItem(seedKey(), JSON.stringify(slim)); } catch {}
   }
   function loadSeed() {
@@ -1022,7 +1027,7 @@
       // the word at the caret in its kind of place (a command's name, an argument's item: `\\ref{eq:jo`): the kept
       // list's first item that holds the word replaces it at once, the worker never waited for (a run may hold it)
       const cmd = /\\([A-Za-z@]+)$/.exec(before), word = cmd?.[1] ?? /[\w@*:./-]*$/.exec(before)[0];
-      const place = cmd ? '\\' : placeAt(before.slice(0, before.length - word.length)), item = place && word && rank(keptFor(place) ?? [], word).find((i) => i.label.toLowerCase().includes(word.toLowerCase()));
+      const place = cmd ? '\\' : placeAt(before.slice(0, before.length - word.length)), item = place && word && rank(keptFor(place) ?? [], word, !!cmd && inMath(v.state.sliceDoc(Math.max(0, head - 20000), head), Math.min(head, 20000) - word.length - 1)).find((i) => i.label.toLowerCase().includes(word.toLowerCase()));
       if (item) {
         const from = head - word.length, a = itemApply(item);
         if (typeof a === 'function') a(v, null, from, head); else v.dispatch({ changes: { from, to: head, insert: a }, selection: { anchor: from + a.length }, userEvent: 'input.complete' });
@@ -1079,7 +1084,9 @@
       const edit = items.find((i) => i.textEdit)?.textEdit;
       const from = edit ? at(ctx.state.doc, edit.range.start) : before === '\\' ? word.from : key.from;
       const typed = ctx.state.sliceDoc(from, ctx.pos), made = new Map();
-      const options = (typed) => rank(items, typed).slice(0, 200).map((i) => made.get(i) ?? made.set(i, option(i)).get(i));
+      // in math (`\\(x - \\su`) math commands first; the text before the caret's paragraph is all that is read
+      const lead = Math.max(0, ctx.pos - 20000), math = before === '\\' && inMath(ctx.state.sliceDoc(lead, ctx.pos), ctx.pos - lead);
+      const options = (typed) => rank(items, typed, math).slice(0, 200).map((i) => made.get(i) ?? made.set(i, option(i)).get(i));
       // typing on in the same word filters these items here, at once: the server is asked again only in a new
       // place or where its list was cut short (`isIncomplete`)
       const letters = before === '\\' ? /^[A-Za-z@*_:]*$/ : /^[\w@*:./-]*$/;
@@ -1091,6 +1098,8 @@
         // what the item is (a package's description, a citation's title, what a label points at), else its detail
         label: i.label, detail: (!i.labelDetails?.detail && i.labelDetails?.description) || (i.documentation ? i.detail : undefined), usage: colorOf(i) || i.documentation ? null : i.labelDetails?.detail ? `${i.labelDetails.detail}${i.labelDetails.description ? ` (${i.labelDetails.description})` : ''}` : i.detail,
         hex: colorOf(i), preview: i.data?.preview, color: colorOf(i), type: KIND[i.kind] ?? 'text',
+        // a command's one-line description and, for a math one, its symbol
+        doc: before === '\\' ? docOf(i) : '', symbol: before === '\\' ? symbolOf(i) : '',
         // the side panel: a command's card, the one hover and Explain show; else the server's documentation
         info: before === '\\' ? () => itemInfo(i) : i.documentation ? () => Object.assign(document.createElement('div'), { className: 'hover cm-item-card', innerHTML: card(i.documentation.value ?? i.documentation) }) : i.data?.key ? () => itemInfo(i, true) : undefined,
         apply: itemApply(i),
@@ -1369,8 +1378,9 @@
           span.replaceChildren(swatch, Object.assign(document.createElement('code'), { className: 'cm-hex', textContent: c.hex }));
         }
         if (c.preview) span.prepend(Object.assign(document.createElement('img'), { className: 'cm-preview', src: `data:image/svg+xml;utf8,${encodeURIComponent(c.preview)}`, alt: '' }));
+        if (c.doc) span.append(Object.assign(document.createElement('span'), { className: 'cm-doc', textContent: c.doc }));
         return span;
-      } }] }),
+      } }, { position: 20, render: (c) => c.symbol ? Object.assign(document.createElement('span'), { className: 'cm-math-symbol', innerHTML: c.symbol }) : null }] }),
         linkField, markField, flashField, swatchField, lensField, linkedField, heatField, mirror, st.Prec.high(closeEnvironment), view.keymap.of([{ key: 'Tab', run: tabCompletes }, { key: 'F2', run: () => { renameBox(); return true; } }, { key: 'Shift-F10', run: () => { const c = editor.coords() ?? { left: 40, bottom: 80 }; menuAt(c.left, c.bottom); return true; } }]),
         EditorView.updateListener.of((u) => { if (u.docChanged) { resolves.clear(); changed(); } else if (u.selectionSet) explainSoon(); if (u.docChanged || u.selectionSet) linkAround(u.view); }), theme.of([]), lock.of([]), prefs.of(prefsOf())],
     });
@@ -8792,7 +8802,8 @@
     }).catch(() => pdfBreakAsked.set(w.key, false));
   }
   function pdfTexBreaks(fkey, words, tagged, later, indent, line) {
-    if (!texReady || self.__noTexBreaks) return null;
+    // `playground.tex_breaks`: off, the echo breaks by its own fit only
+    if (!texReady || play.tex_breaks === false || self.__noTexBreaks) return null;
     const params = { textDocument: { uri: uri(state.root ?? state.file) }, path: uri(state.file), line, words, indent: Math.abs(indent) < 0.5 ? 0 : Math.round(indent * 65536 * 72.27 / 72) };
     const key = JSON.stringify([params.path, line, params.indent, words]);
     if (!pdfBreakAsked.has(key)) {
@@ -9183,9 +9194,13 @@
   let pdfPushWas = null;
   function pdfEchoPush(img, top, dy) {
     // the same push as the key before: its canvases again (a page-sized repaint a key was most of the echo's cost)
-    const page = +img.parentElement.dataset.page, next = pdfImg(page + 1), key = `${img.currentSrc}|${next?.currentSrc}|${top}|${dy}`;
+    // (keyed by the text areas too: one known only later, the run's \\textheight, makes another push; a push made
+    // while the foot stood above `top` drew nothing, and kept drawing nothing, the picture under the new rows)
+    const page = +img.parentElement.dataset.page, next = pdfImg(page + 1), areas = JSON.stringify([pdfBlock(page), next?.naturalWidth ? pdfBlock(page + 1) : null]);
+    const key = `${img.currentSrc}|${next?.currentSrc}|${top}|${dy}|${areas}`;
     pdfPushed = { page, top, dy, foot: (pdfBlock(page)?.d ?? pageSize(img)[1]) + 1 };
-    if (pdfPushWas?.key === key) { for (const [host, cv] of pdfPushWas.cvs) pdfUnder(host, cv); return; }
+    // (under the page's element as it is now: one drawn again since holds the same image, the old one is detached)
+    if (pdfPushWas?.key === key) { for (const [im, cv] of pdfPushWas.cvs) pdfUnder((im === 0 ? img : next).parentElement, cv); return; }
     const cvs = [], band = (im, from, to, paint) => {
       const [pw, ph] = pageSize(im), k = im.naturalWidth / pw, W = im.naturalWidth, H = Math.ceil((to - from) * k);
       if (H <= 0) return;
@@ -9196,7 +9211,7 @@
       paint((src, a, b, y) => { const kk = src.naturalWidth / pageSize(src)[0]; if (b > a) g.drawImage(src, 0, a * kk, src.naturalWidth, (b - a) * kk, 0, (y - from) * k, W, (b - a) * k); });
       cv.style.cssText = `left:0;top:${from / ph * 100}%;width:100%;height:${(to - from) / ph * 100}%`;
       pdfUnder(im.parentElement, cv);
-      cvs.push([im.parentElement, cv]);
+      cvs.push([im === img ? 0 : 1, cv]);
     };
     const blk = pdfBlock(page), foot = blk ? blk.d + 1 : pageSize(img)[1];
     const nb = next?.naturalWidth ? pdfBlock(page + 1) : null, head = nb ? nb.t - 1 : 0, nfoot = nb ? nb.d + 1 : 0;
@@ -9744,7 +9759,9 @@
   function pdfMenuItems(all, name) {
     const back = { label: 'textbackslash', detail: 'a backslash in the text: \\textbackslash{}', insertText: 'textbackslash{}' };
     const made = pdfCaret?.made && `\\${name}` === pdfCaret.made, own = made && (all.find((i) => i.label === name) ?? { label: name, detail: 'the command clicked' });
-    return made ? [own, ...rank(all, '').filter((i) => i.label !== name)].slice(0, 60) : rank([...all.filter((i) => i.label !== 'textbackslash'), back], name).slice(0, 60);
+    // in math (the `\\` typed inside `\\( … \\)`) math commands first
+    const g = pdfSeen(), at = g.at - name.length - 1, math = at >= 0 && inMath(g.text, at);
+    return made ? [own, ...rank(all, '', math).filter((i) => i.label !== name)].slice(0, 60) : rank([...all.filter((i) => i.label !== 'textbackslash'), back], name, math).slice(0, 60);
   }
   /** `fresh`: the open list takes the free worker's items, its selection kept on its item (`refreshKept`). */
   async function pdfMenuShow(again = true, fresh = false) {
@@ -9771,7 +9788,9 @@
   }
   function pdfMenuDraw() {
     const { el, items, sel } = pdfMenu, caret = document.querySelector('.pdf-caret')?.getBoundingClientRect() ?? pdfCaret?.pt;
-    el.innerHTML = items.map((i, k) => `<li role="option" aria-selected="${k === sel}" data-i="${k}"><code>\\${escape(i.label)}</code>${i.detail && i.detail !== `\\${i.label}` ? ` <span class="muted">${escape(String(i.detail).split('\n')[0])}</span>` : ''}</li>`).join('');
+    // each name with its symbol (a math one), its one-line description, else its detail's first line
+    const said = (i) => docOf(i) || (i.detail && i.detail !== `\\${i.label}` ? String(i.detail).split('\n')[0] : '');
+    el.innerHTML = items.map((i, k) => `<li role="option" aria-selected="${k === sel}" data-i="${k}">${symbolOf(i) ? `<span class="cm-math-symbol">${symbolOf(i)}</span>` : ''}<code>\\${escape(i.label)}</code>${said(i) ? ` <span class="muted">${escape(said(i))}</span>` : ''}</li>`).join('');
     // kept on screen: shifted left at the right edge, above the caret where it does not fit below
     const w = el.offsetWidth, h = el.offsetHeight, top = caret && (caret.top ?? caret.bottom - 20) - h - 4, above = caret && caret.bottom + 4 + h > innerHeight && top > 0;
     if (caret) Object.assign(el.style, { left: `${Math.max(4, Math.min(caret.left, innerWidth - w - 8))}px`, top: `${above ? top : caret.bottom + 4}px` });
