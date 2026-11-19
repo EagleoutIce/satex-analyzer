@@ -2211,7 +2211,11 @@ def recapture(out):
         return False
     import http.server, functools
     http.server.SimpleHTTPRequestHandler.extensions_map[".wasm"] = "application/wasm"
-    quiet = type("Quiet", (http.server.SimpleHTTPRequestHandler,), {"log_message": lambda *a: None})
+    # cross-origin isolated from the first load, as `cargo playground` serves it (src/cli/gui/http.rs): every take sees
+    # the page alike, not the first one without and the next ones with the isolation the service worker adds
+    isolate = lambda self: (self.send_header("Cross-Origin-Opener-Policy", "same-origin"), self.send_header("Cross-Origin-Embedder-Policy", "credentialless"),
+                            http.server.SimpleHTTPRequestHandler.end_headers(self))
+    quiet = type("Quiet", (http.server.SimpleHTTPRequestHandler,), {"log_message": lambda *a: None, "end_headers": isolate})
     server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), functools.partial(quiet, directory=str(out)))
     threading.Thread(target=server.serve_forever, daemon=True).start()
     began = time.monotonic()
