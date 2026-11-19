@@ -198,8 +198,8 @@ async function record(s, stem, [w, h]) {
     await raw('Page.stopScreencast');
     events.delete('Page.screencastFrame');
     const clip = union(before, await box(s.crop, s.pad ?? 0));
-    // the timeline: each frame as long as it stood, the last one a beat longer
-    const list = frames.map(([f, t], i) => `file '${f}'\nduration ${Math.max(0.02, ((frames[i + 1]?.[1] ?? t + .5) - t)).toFixed(3)}`).join('\n') + `\nfile '${frames.at(-1)[0]}'\n`;
+    // the timeline: each frame as long as it stood (shorter by the entry's `speed`), the last one a beat longer
+    const list = frames.map(([f, t], i) => `file '${f}'\nduration ${Math.max(0.02 / (s.speed ?? 1), ((frames[i + 1]?.[1] ?? t + .5) - t) / (s.speed ?? 1)).toFixed(3)}`).join('\n') + `\nfile '${frames.at(-1)[0]}'\n`;
     writeFileSync(join(dir, 'list.txt'), list);
     // frames of either source to one size first, then cut
     const crop = `scale=${w * 2}:${h * 2},crop=${Math.round(clip.width * 2)}:${Math.round(clip.height * 2)}:${Math.round(clip.x * 2)}:${Math.round(clip.y * 2)}`, wide = Math.min(VIDEO, Math.round(clip.width * 2)) & ~1;
@@ -211,6 +211,8 @@ async function record(s, stem, [w, h]) {
     execFileSync('ffmpeg', ['-y', '-loglevel', 'error', '-i', frames[0][0], '-vf', crop, still]);
     return [readFileSync(still), clip];
   } finally {
+    // a failed take must not leave the screencast on: the retake would start on a running one
+    await raw('Page.stopScreencast').catch(() => {});
     events.delete('Page.screencastFrame');
     rmSync(dir, { recursive: true, force: true });
   }
