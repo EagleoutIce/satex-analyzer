@@ -6198,6 +6198,8 @@
   }
   function pdfAutoNow() {
     clearTimeout(pdfAuto.timer);
+    if (pdfNaming() && (pdfAuto.held ??= performance.now()) > performance.now() - 1500) { pdfAuto.timer = setTimeout(pdfAutoNow, TYPE_MS); return; }
+    pdfAuto.held = null;
     if (!pdfAuto.want) return;
     pdfAuto.want = false;
     if (pdfAuto.on && !pdfButtons[0].disabled) compile(false, false, null, true);
@@ -6409,6 +6411,8 @@
     const status = runs.find((r) => r.status)?.status, rec = records.find((r) => r.severity === 'error');
     // a TeX error after a Type edit counts though pages came out: TeX went on past it
     if (!pdf.error && !status && pdf.pdf && !(rec && pdfLastType)) { if (!rec) pdfLastType = null; return ''; }
+    // a build that ran while a command name was half typed: its error is the half name, gone once the name ends
+    if (pdf.pdf && pdfNaming()) return '';
     const text = `${pdf.log ?? Object.values(pdf.logs ?? {}).join('\n')}\n${pdf.stderr ?? ''}`;
     const bang = /^! (.+)$/m.exec(text), at = bang && /^l\.(\d+)/m.exec(text.slice(bang.index));
     const what = rec ? `${rec.message} (${rec.line ? `${rec.path}:${rec.line}` : rec.path})` : bang ? `${bang[1]}${at ? ` (line ${at[1]})` : ''}` : pdf.error ?? `the build stopped (exit ${status})`;
@@ -7858,7 +7862,15 @@
   }
   /** A build for a live edit: at once (`now`), else once edits rest for the auto-compile delay (TYPE_MS without one). */
   const TYPE_MS = 30;
-  const pdfRebuild = (now) => { clearTimeout(pdfAuto.timer); if (now) compile(false, false, null, true); else pdfAuto.timer = setTimeout(() => compile(false, false, null, true), pdfAuto.on ? pdfAuto.delay : TYPE_MS); };
+  /** A command name half typed at the Type caret (`\\su`): a build of it would only stop at an undefined command. */
+  const pdfNaming = () => !!pdfCaret && PE.naming(editor.text(), pdfCaret.at, pdfCaret.fresh);
+  const pdfRebuild = (now) => {
+    clearTimeout(pdfAuto.timer);
+    // a build due while a name is typed waits for the name to end, 1.5 s at most (`\\LaTeX` typed last stays a name)
+    const until = performance.now() + 1500;
+    const go = () => { if (pdfNaming() && performance.now() < until) pdfAuto.timer = setTimeout(go, TYPE_MS); else compile(false, false, null, true); };
+    if (now) go(); else pdfAuto.timer = setTimeout(go, pdfAuto.on ? pdfAuto.delay : TYPE_MS);
+  };
   const pdfImg = (page) => pdfBody.querySelector(`.pdf-page[data-page="${page}"] img`);
   /** A drag (or a key) on the handle `g` begins: the column's width as written, the room the table has on its line. */
   function pdfGrab(g) {
