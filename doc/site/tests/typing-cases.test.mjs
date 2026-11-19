@@ -200,3 +200,50 @@ test("Type mode's rules at the spots that broke", async () => {
   assert.equal(ed(pre, E.leaders(pre, 'lot', 'nopage', false)).split('\n')[1], '\\cftpagenumbersoff{tab}', 'page numbers: tocloft, in the preamble');
   assert.equal(E.leaders(pre, 'lof', 'wide', false), null);
 });
+
+// Intuition: a footer cell typed in the PDF is the argument of the last call setting it on odd pages; Backspace next to
+// the page number takes its command whole, never one letter of `\thepage`. Pins typing after the number renaming it.
+test('footer cells: the call typed into, the page number taken whole', () => {
+  const E = self.satexPdfEdit;
+  const t = '\\usepackage{fancyhdr}\n\\fancyhf{}\n\\fancyfoot[LE,RO]{x}\n\\fancyfoot[C]{\\thepage}\n%\\cfoot{no}\n\\rfoot{r}\n';
+  const arg = (pkg, l) => { const a = E.footArg(t, pkg, l); return a && t.slice(...a); };
+  assert.deepEqual(['L', 'C', 'R'].map((l) => arg('fancyhdr', l)), [null, '\\thepage', 'r'], 'LE is even pages; a comment sets nothing; the last call wins');
+  const k = '\\cfoot[\\pagemark]{Page \\pagemark}\n\\ofoot*{o}\n';
+  assert.deepEqual(['i', 'c', 'o'].map((l) => { const a = E.footArg(k, 'scrlayer-scrpage', l); return a && k.slice(...a); }), [null, 'Page \\pagemark', 'o']);
+  const back = (s, at, b) => { const r = E.footBack(s, at, b); return r && s.slice(0, r[0]) + s.slice(r[1]); };
+  assert.equal(back('{a \\thepage}', 11, true), '{a }');
+  assert.equal(back('{\\thepage{} of}', 11, true), '{ of}');
+  assert.equal(back('{\\thepage}', 1, false), '{}');
+  assert.equal(back('{\\thepage x}', 1, false), '{x}');
+  assert.equal(back('{ab}', 3, true), null, 'plain text: the usual Backspace');
+  assert.equal(E.footShown('Page~\\thepage{} of \\textbf{2}', '7'), 'Page 7 of 2');
+  assert.equal(E.footShown('\\thepage\\ x', '3'), '3 x');
+});
+
+// Intuition: a click on empty page space is a place in the source: past a line's end that paragraph's end, between
+// paragraphs a new one after the one above (a heading's line, a float's \end), between two lines of one paragraph its
+// nearest line. Pins Type mode answering "No text here" for every click off the words.
+test('blankPlace: empty page space mapped to the source', () => {
+  const E = self.satexPdfEdit;
+  const t = ['\\begin{document}', '\\section{Intro}', 'First para line one', 'line two.', '', 'Second para.', '\\begin{figure}', '\\caption{Cap}', '\\end{figure}', 'Third.', '\\end{document}'].join('\n');
+  const row = (line, base, l = 72, r = 500) => ({ t: base - 8, d: base + 2, base, l, r, line });
+  const rows = [row(2, 100, 72, 200), row(3, 130, 87), row(4, 142, 72, 300), row(6, 160, 87, 250), row(8, 200, 200, 300), row(10, 230, 87, 120)];
+  const off = (s) => t.indexOf(s);
+  assert.deepEqual(E.blankPlace(t, rows, 400, 141), { kind: 'end', row: 2 }, 'right of a line: its end');
+  assert.deepEqual(E.blankPlace(t, rows, 50, 141), { kind: 'start', row: 2 });
+  assert.deepEqual(E.blankPlace(t, rows, 100, 136), { kind: 'near', row: 2 }, 'between lines of one paragraph: the nearer');
+  const a = E.blankPlace(t, rows, 100, 115);
+  assert.deepEqual([a.kind, a.at, a.caret], ['new', off('\nFirst'), off('\nFirst') + 2], 'under a heading: right after its line');
+  assert.equal(a.ghost.x, 72, 'no indent after a heading');
+  assert.equal(t.slice(0, a.at) + a.body.slice(0, 2) + 'Lead.' + a.body.slice(2) + t.slice(a.at), t.replace('Intro}\nFirst', 'Intro}\n\nLead.\n\nFirst'), 'a blank line before the next text too');
+  const b = E.blankPlace(t, rows, 100, 148);
+  assert.deepEqual([b.kind, b.at, b.ghost.x], ['new', off('.\n\nSecond') + 1, 87], 'between paragraphs: after the one above, indented');
+  assert.equal(E.blankPlace(t, rows, 100, 215).at, off('\\end{figure}') + '\\end{figure}'.length, "after a float: past its \\end");
+  assert.equal(E.blankPlace(t, rows, 100, 300).at, off('Third.') + 6, 'below the last line: after its paragraph');
+  const c = E.blankPlace(t, rows.slice(1), 100, 60);
+  assert.deepEqual([c.kind, c.at, c.caret], ['new', off('First'), off('First')], 'above an indented first line: before it');
+  assert.deepEqual(E.blankPlace(t, rows.slice(2), 100, 60), { kind: 'near', row: 0 }, 'above a continued paragraph: its line');
+  // written where shown: the text with the body in place keeps the paragraphs apart by blank lines
+  const w = t.slice(0, b.at) + b.body + 'New' + t.slice(b.at);
+  assert.ok(w.includes('line two.\n\nNew\n\nSecond'));
+});

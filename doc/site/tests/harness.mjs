@@ -3,7 +3,7 @@
 import { load } from '../load.mjs';
 
 globalThis.self = globalThis;
-for (const f of ['./lengths.js', './snapshot.js', './views.js', './layers.js', './pdfedit.js', './dialogs.js', './actions.js']) load(f);
+for (const f of ['./lengths.js', './snapshot.js', './views.js', './layers.js', './pdfedit.js', './mathlayout.js', './dialogs.js', './actions.js']) load(f);
 export { load };
 
 /** The tests registered so far: `[file, name, fn]`; the runner runs them in order. */

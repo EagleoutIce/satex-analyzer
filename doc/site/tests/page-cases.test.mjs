@@ -99,3 +99,29 @@ test("page numbering", async () => {
   // a page number clicked: the numbering in force at its line (1-based rows) is the last point at or before it
   assert.deepEqual([1, 3, 4, 5, 9].map((l) => P.numberInForce(s, l)), ['start', 'c0', 'c0', 'm0', 'm0']);
 });
+
+// Intuition: typing into a footer cell of the PDF writes the footer once, in one write: no header package means
+// fancyhdr (scrlayer-scrpage for a KOMA class) with the plain style's page number kept, and the clicked cell gets a
+// call of its own when none sets it. Pins the first key on hello.tex's page number wiping the number, and KOMA getting
+// \pagestyle{fancy}.
+test('footSetup: the footer written for typing into a cell', () => {
+  const P = self.satexViews.page, at = (line) => ({ line, character: 0 });
+  const shown = (n) => n.drop ? `-${n.name}` : `${n.name}${n.args.map((a) => a.open + a.text).join('')}`;
+  const none = { header: { package: null, insert: at(2), load: { name: 'fancyhdr' } } };
+  const c = P.footSetup(none, 1, false);
+  assert.deepEqual([c.package, c.letter, c.nodes.map(shown)], ['fancyhdr', 'C', ['pagestyle{fancy', 'fancyhf{', 'fancyfoot[C{\\thepage', 'renewcommand{\\headrulewidth{0pt']]);
+  assert.deepEqual(c.nodes.map((n) => n.package?.name), ['fancyhdr', 'fancyhdr', 'fancyhdr', 'fancyhdr'], 'fancyhdr loaded for them');
+  assert.deepEqual(P.footSetup(none, 0, false).nodes.map(shown).at(-1), 'fancyfoot[L{', 'a side cell: an empty call beside the number');
+  assert.deepEqual(P.footSetup({ ...none, twoside: true }, 1, false).nodes.map(shown)[2], 'fancyfoot[CE,CO{\\thepage', 'two-sided: both sides numbered');
+  const k = P.footSetup({ ...none, family: 'koma' }, 2, false);
+  assert.deepEqual([k.package, k.letter, k.nodes.map(shown)], ['scrlayer-scrpage', 'o', ['pagestyle{scrheadings', 'clearpairofpagestyles', 'cfoot[\\pagemark{\\pagemark', 'ofoot{']]);
+  assert.ok(k.nodes.every((n) => n.package?.name === 'scrlayer-scrpage'), 'KOMA: scrlayer-scrpage, never fancyhdr');
+  // a package loaded: a cell a call sets is typed in, nothing written; another cell gets its call after the last one
+  const call = (name, opt, args, line) => ({ kind: 'call', name, range: { start: at(line), end: { line, character: 20 } }, text: '', args: [...(opt == null ? [] : [{ open: '[', text: opt }]), ...args.map((t) => ({ open: '{', text: t }))] });
+  const fancy = { header: { package: 'fancyhdr', insert: at(3), calls: [call('fancyhf', null, [''], 3), call('fancyfoot', 'C', ['\\thepage'], 4)] } };
+  assert.deepEqual(P.footSetup(fancy, 1, true).nodes, []);
+  const r = P.footSetup(fancy, 2, false).nodes;
+  assert.deepEqual([r.map(shown), r[0].at], [['fancyfoot[R{'], at(5)]);
+  // fancyhdr without \fancyhf fills the center with the page number: a call for it keeps the number
+  assert.deepEqual(P.footSetup({ header: { package: 'fancyhdr', insert: at(3), calls: [] } }, 1, false).nodes.map(shown), ['fancyfoot[C{\\thepage']);
+});

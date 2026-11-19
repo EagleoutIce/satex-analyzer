@@ -199,6 +199,26 @@ test("The editor's TeX tokenizer (site.js `siteTex`)", async () => {
   assert.deepEqual(toks('$\\alpha_i: x$').slice(0, 2), ['$:keyword', '\\alpha:tag']);
 });
 
+// A number is one token wherever TeX or pgf reads one: after `(`, `,` and a sign, with a fraction or exponent, and
+// never a word's start. Pins `(2.75,0.0)` split into `(2` plain, `.75` number, `,0` plain, `.0` number, and the
+// `0` of the HTML spec `0B3D91` colored alone.
+test("numbers in coordinates and specs are whole tokens", async () => {
+  const cm = await import('../codemirror.js');
+  self.siteCM = () => Promise.resolve(cm);
+  const p = (await self.siteTex()).language.streamParser;
+  const nums = (line) => {
+    const st = p.startState(2), s = new cm.language.StringStream(line, 2, 2), out = [];
+    while (!s.eol()) { const t = p.token(s, st); if (t === 'number') out.push(s.current()); s.start = s.pos; }
+    return out;
+  };
+  assert.deepEqual(nums('\\draw (2.75,0.0) -- (5.2,-1.5) -- (.5,1e3);'), ['2.75', '0.0', '5.2', '-1.5', '.5', '1e3']);
+  assert.deepEqual(nums('\\node at (2.6,-0.6) {x};'), ['2.6', '-0.6']);
+  assert.deepEqual(nums('\\definecolor{accent}{HTML}{0B3D91}'), [], 'a hex spec is a word');
+  assert.deepEqual(nums('\\definecolor{soft}{rgb}{0.1,0.2,0.3}'), ['0.1', '0.2', '0.3']);
+  assert.deepEqual(nums('version v2.0 and 2.6.3'), [], 'inside a word or a version');
+  assert.deepEqual(nums('\\count3 by 400, $x^2$ and 1em'), ['3', '400', '2', '1em']);
+});
+
 // array's column injections: the text inside `>{…}` and `<{…}`, several joined
 test("array's column injections", async () => {
   const T = self.satexDialogs.table;

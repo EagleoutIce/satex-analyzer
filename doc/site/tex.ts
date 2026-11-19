@@ -16,13 +16,14 @@ interface TexRun {
 interface PdfPage {
   view: number[]; pageNumber: number; getViewport(o: { scale: number }): { width: number; height: number };
   render(o: Rec): { promise: Promise<void> }; getTextContent(): Promise<{ items: Rec[] }>; getAnnotations(o: Rec): Promise<Rec[]>; cleanup(): void;
+  getOperatorList(): Promise<{ fnArray: number[]; argsArray: any[] }>;
   commonObjs: { has(id: string): boolean; get(id: string): Rec | undefined };
 }
 interface PdfDoc {
   numPages: number; getPage(n: number): Promise<PdfPage>; getDestination(name: string): Promise<any[] | null>; getPageIndex(ref: unknown): Promise<number>;
   getPageLabels(): Promise<string[] | null>;
 }
-interface PdfLib { GlobalWorkerOptions: { workerSrc: string }; getDocument(o: Rec): { promise: Promise<PdfDoc>; destroy(): void }; PDFWorker: new () => unknown }
+interface PdfLib { GlobalWorkerOptions: { workerSrc: string }; OPS: Record<string, number>; getDocument(o: Rec): { promise: Promise<PdfDoc>; destroy(): void }; PDFWorker: new () => unknown }
 declare global { interface Window { satexTex: typeof satexTex } }
 const satexTex = (() => {
   const DPI = 144, BP_PER_INCH = 72;
@@ -107,6 +108,27 @@ const satexTex = (() => {
     await page.render({ canvas, canvasContext: canvas.getContext('2d'), viewport }).promise;
     return png(canvas);
   }
+  /** A page's raster images as `[l, t, r, d]` in bp from the top left: each image's unit square under the
+   * transformation in force where it is painted (forms nest theirs). Dark paper keeps their colours. */
+  async function rastersOf(lib: PdfLib, page: PdfPage) {
+    const [x0, , , y1] = page.view as [number, number, number, number], { fnArray, argsArray } = await page.getOperatorList(), O = lib.OPS, out: number[][] = [];
+    const mul = (a: number[], b: number[]) => [a[0] * b[0] + a[2] * b[1], a[1] * b[0] + a[3] * b[1], a[0] * b[2] + a[2] * b[3], a[1] * b[2] + a[3] * b[3], a[0] * b[4] + a[2] * b[5] + a[4], a[1] * b[4] + a[3] * b[5] + a[5]];
+    let m = [1, 0, 0, 1, 0, 0];
+    const stack: number[][] = [];
+    fnArray.forEach((fn, i) => {
+      const a = argsArray[i];
+      if (fn === O.save) stack.push(m);
+      else if (fn === O.restore) m = stack.pop() ?? m;
+      else if (fn === O.transform) m = mul(m, a);
+      else if (fn === O.paintFormXObjectBegin) { stack.push(m); if (a?.[0]) m = mul(m, [...a[0]]); }
+      else if (fn === O.paintFormXObjectEnd) m = stack.pop() ?? m;
+      else if (fn === O.paintImageXObject || fn === O.paintInlineImageXObject || fn === O.paintImageXObjectRepeat) {
+        const xs = [m[4], m[0] + m[4], m[2] + m[4], m[0] + m[2] + m[4]], ys = [m[5], m[1] + m[5], m[3] + m[5], m[1] + m[3] + m[5]];
+        out.push([Math.min(...xs) - x0, y1 - Math.max(...ys), Math.max(...xs) - x0, y1 - Math.min(...ys)]);
+      }
+    });
+    return out;
+  }
   /** A page's words as `pdftotext -bbox` gives them: `[page, x0, y0, x1, y1, text]` in bp from the top left. */
   async function wordsOf(page: PdfPage, number: number) {
     const [x0, , , y1] = page.view as [number, number, number, number], out: (string | number)[][] = [];
@@ -149,10 +171,13 @@ const satexTex = (() => {
     // a closed document (a newer build replaced it) is asked nothing: pdf.js would throw from its torn-down worker port
     let closed = false;
     const page = (n: number) => closed ? Promise.reject(new Error('the PDF was closed')) : doc.getPage(n);
+    const rasters = new Map<number, number[][]>();
     return {
       sizes, pagelabels: (labels ?? []).map((label, index) => ({ index, label: { '/P': label } })),
       /** Page `n` as a PNG URL at `DPI`. */
-      draw: async (n: number) => { const p = await page(n), blob = await draw(p); p.cleanup(); return URL.createObjectURL(blob); },
+      draw: async (n: number) => { const p = await page(n), blob = await draw(p); rasters.set(n, await rastersOf(lib, p).catch(() => [])); p.cleanup(); return URL.createObjectURL(blob); },
+      /** Page `n`'s raster images (rastersOf), once it was drawn. */
+      images: (n: number) => rasters.get(n) ?? [],
       /** Page `n`'s text runs in bp from the top left: baseline `y`, `size`, and `font`, the family pdf.js loaded the
        * embedded font as (in the page's document while this PDF is open): the echo of typed text is set in it. `name`:
        * the font's own name (`CMMI10`, pdf.js's extra font properties), once the page was drawn: typed math is

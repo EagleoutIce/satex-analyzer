@@ -2903,10 +2903,32 @@ const satexViews = (() => {
     if (JSON.stringify({ ...m, ruled: 0 }) === JSON.stringify({ ...first, ruled: 0 })) return [];
     const calls = h.calls ?? [];
     const at = calls.length ? { line: calls[0].range.start.line, character: 0 } : h.insert;
-    const style: [string, string | null, string[]][] = !h.package || h.style ? [['pagestyle', null, ['fancy']]] : [];
+    const style: [string, string | null, string[]][] = !h.package || h.style ? [['pagestyle', null, [m.package === 'scrlayer-scrpage' ? 'scrheadings' : 'fancy']]] : [];
     const all = [...style, ...headerCalls(m, twoside, calls.length), ...(m.package === 'fancyhdr' ? rules : [])];
     const nodes = all.map(([name, opt, args]) => S.call(name, [...(opt != null ? [S.arg('[', opt)] : []), ...args.map((t) => S.arg('{', t))], at, h.load ?? null));
     return [...calls.map(S.drop), ...nodes];
+  }
+  /** Typing into footer cell `spot` (0 left, 1 center, 2 right) of page section `s`; `has`: a call of the source sets
+   * that cell already. With no header package: fancyhdr (scrlayer-scrpage for a KOMA class) with the plain style's
+   * page number kept (fancyhdr's head rule off, KOMA's plain style numbered too); then an empty call for a cell none
+   * sets (fancyhdr's own page number where it fills it). `{package, letter, nodes}`, the nodes one snapshot write. */
+  function footSetup(s: Rec, spot: number, has: boolean) {
+    const S = self.satexSnapshot, h0: Rec = s.header ?? {}, fresh = !h0.package, koma = fresh ? s.family === 'koma' || !!s.koma || /^scr/.test(s.class ?? '') : h0.package === 'scrlayer-scrpage';
+    const h: Rec = fresh && koma ? { ...h0, load: { name: 'scrlayer-scrpage' } } : h0, two = !!s.twoside, m = headerOf(h, two);
+    if (fresh) {
+      m.package = koma ? 'scrlayer-scrpage' : 'fancyhdr';
+      if (koma) Object.assign(m.foot, { Oc: '\\pagemark' }), Object.assign(m.opt, { footc: '\\pagemark' });
+      else { m.foot.OC = '\\thepage'; if (two) m.foot.EC = '\\thepage'; m.rules.head = '0pt'; }
+    }
+    const letter = SPOTS[m.package]![spot]!, nodes = fresh ? headerNodes(h, m, two) : [];
+    if (fresh && koma) nodes.splice(1, 0, S.call('clearpairofpagestyles', [], h.insert, h.load));
+    if (!fresh && h.style && m.package === 'fancyhdr') nodes.push(S.call('pagestyle', [S.arg('{', 'fancy')], h.insert, null));
+    if (!has && !(fresh && (m.foot[`O${letter}`] ?? ''))) {
+      const calls = h.calls ?? [], end = calls.at(-1)?.range?.end, at = fresh || !end ? h.insert : { line: end.character ? end.line + 1 : end.line, character: 0 };
+      const dflt = m.package === 'fancyhdr' && letter === 'C' && !calls.some((c: Rec) => c.name === 'fancyhf') ? '\\thepage' : '';
+      nodes.push(m.package === 'fancyhdr' ? S.call('fancyfoot', [S.arg('[', letter), S.arg('{', dflt)], at, h.load ?? null) : S.call(`${letter}foot`, [S.arg('{', '')], at, h.load ?? null));
+    }
+    return { package: m.package as string, letter, nodes };
   }
 
   /** What the class family means for the dialog (the page plugin's `family`, from the run). */
@@ -3662,6 +3684,6 @@ button.tv-spec-value { cursor: pointer; } button.tv-spec-value:hover, button.tv-
   };
   /** The selection of a list refreshed under the person's eyes: the item of the same label, else the first. */
   const reselect = (items: Completion[], label: string | undefined) => Math.max(0, label == null ? 0 : items.findIndex((i) => i.label === label));
-  return { rowsWin, complete: { rank, kept, reselect }, loads: { unlanded, lacked }, tipBag, yaml, history: { historyEvent }, render, RENDER, hue, passes, masterDetail, usesView, fold, SPEC, mix, colorBand, oklch, drawing: { expandStyles, STYLE_DEF, parse, emit, mermaidIn, mermaidOut, mermaidLoss, layout, importMermaid, tipsOf, toMatrix, cellPlaces, toLayer, picOptions, relocate, relPos, nearestAnchor, anchorAt, tipMarker, shapeSample, shapeList, cycle, STYLE }, forest: forestFns, circuit: { parse: cParse, body: cBody, emit: cEmit }, page: { pageOf, pageBox, textArea, pageNodes, numberNodes, numberInForce, headerOf, headerCalls, headerNodes, fmtRead, fmtWrite, styleNodes, styleSet, styleEdits }, dev: { traceCsv, stateHtml }, templates: { fill, filled, chosen } };
+  return { rowsWin, complete: { rank, kept, reselect }, loads: { unlanded, lacked }, tipBag, yaml, history: { historyEvent }, render, RENDER, hue, passes, masterDetail, usesView, fold, SPEC, mix, colorBand, oklch, drawing: { expandStyles, STYLE_DEF, parse, emit, mermaidIn, mermaidOut, mermaidLoss, layout, importMermaid, tipsOf, toMatrix, cellPlaces, toLayer, picOptions, relocate, relPos, nearestAnchor, anchorAt, tipMarker, shapeSample, shapeList, cycle, STYLE }, forest: forestFns, circuit: { parse: cParse, body: cBody, emit: cEmit }, page: { pageOf, pageBox, textArea, pageNodes, numberNodes, numberInForce, headerOf, headerCalls, headerNodes, footSetup, fmtRead, fmtWrite, styleNodes, styleSet, styleEdits }, dev: { traceCsv, stateHtml }, templates: { fill, filled, chosen } };
 })();
 self.satexViews = satexViews;

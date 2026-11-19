@@ -1564,8 +1564,8 @@ button.draw-cat { border: 0; font: inherit; font-size: .68rem; cursor: pointer; 
 .claim-rot > span:has(.claim-draw)::after { display: none; }
 @media (prefers-reduced-motion: reduce) { .claim-draw path { stroke-dashoffset: 0; } .claim-draw .dr-sym, .claim-draw .dr-cmd { opacity: 1; translate: none; } }
 @media (prefers-reduced-motion: reduce) { .claim-rot *, .claim-rot *::before, .claim-rot *::after { transition: none !important; animation: none !important; } .claim-tag::after, .claim-fix::after { opacity: 1; } .claim-steps li:not(.st-head) { opacity: 1; } }
-/* math in the typeset view: TeX's italic letters and operator spacing (tex.web § 764: medium around a binary operator, thick around a relation, thin after punctuation) */
-.typeset .ts-mi { font-style: italic; } .typeset .ts-mbin { margin: 0 .222em; } .typeset .ts-mrel { margin: 0 .278em; } .typeset .ts-mpunct { margin-right: .167em; }
+/* math in the typeset view: TeX's italic letters and operator spacing (tex.web § 764: medium around a binary operator, thick around a relation, thin after punctuation); the --m-* values come from mathlayout.ts, shared with the PDF's math preview */
+.typeset .ts-mi { font-style: italic; } .typeset .ts-mbin { margin: 0 var(--m-bin, .222em); } .typeset .ts-mrel { margin: 0 var(--m-rel, .278em); } .typeset .ts-mpunct { margin-right: var(--m-punct, .167em); }
 /* the paragraph gap is the run's \parskip at that paragraph */
 .typeset .ts[style*="--skip"] { margin-top: var(--skip); margin-bottom: 0; }
 /* settings rows: the text takes the width, the value sits at the right edge, the reset icon keeps its place */
@@ -1693,9 +1693,7 @@ body.type-sync #play-pdf .pdf-pages { box-shadow: inset 0 0 0 2px color-mix(in s
 #typeset-body.ts-stale::before { content: ''; position: sticky; top: 0; z-index: 4; display: block; height: 2px; margin-bottom: -2px; background: linear-gradient(90deg, transparent, var(--accent), transparent) 0 0 / 40% 100% no-repeat; animation: ts-run 1.2s linear infinite; }
 @keyframes ts-run { from { background-position: -40% 0; } to { background-position: 140% 0; } }
 /* Type mode: where typing goes, a faint tint per origin (text written in place has none) */
-:root { --orig-macro: #7c3aed30; --orig-arg: #0891b230; --orig-moved: #d9770630; --orig-macro-line: #7c3aed; --orig-arg-line: #0891b2; --orig-moved-line: #d97706; }
-@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --orig-macro: #a78bfa40; --orig-arg: #22d3ee38; --orig-moved: #fbbf2438; --orig-macro-line: #a78bfa; --orig-arg-line: #22d3ee; --orig-moved-line: #fbbf24; } }
-:root[data-theme="dark"] { --orig-macro: #a78bfa40; --orig-arg: #22d3ee38; --orig-moved: #fbbf2438; --orig-macro-line: #a78bfa; --orig-arg-line: #22d3ee; --orig-moved-line: #fbbf24; }
+:root { --orig-macro: light-dark(#7c3aed30, #a78bfa40); --orig-arg: light-dark(#0891b230, #22d3ee38); --orig-moved: light-dark(#d9770630, #fbbf2438); --orig-macro-line: light-dark(#7c3aed, #a78bfa); --orig-arg-line: light-dark(#0891b2, #22d3ee); --orig-moved-line: light-dark(#d97706, #fbbf24); }
 .ts-orig, .pdf .pdf-orig { position: absolute; pointer-events: none; border-radius: 2px; }
 .pdf .pdf-orig { pointer-events: auto; z-index: 1; }
 /* a tint and an underline in its color: seen on light text and on dark */
@@ -1725,9 +1723,14 @@ canvas.pdf-echo { display: block; }
 .ts-typing .ts-text { cursor: text; }
 .pdf .pdf-caret, #typeset-body .pdf-caret, .live-ts .pdf-caret { position: absolute; z-index: 3; width: 1.5px; margin-left: -.75px; background: var(--accent, #2563eb); animation: pdf-blink 1s steps(1) infinite; pointer-events: none; }
 .pdf .pdf-caret b, #typeset-body .pdf-caret b, .live-ts .pdf-caret b { position: absolute; left: 3px; bottom: 100%; font: 600 .6rem/1.3 ui-monospace, Menlo, monospace; color: #fff; background: var(--accent, #2563eb); padding: 0 .25rem; border-radius: 3px; white-space: pre; animation: none; }
+/* a new paragraph's caret before its blank line is written: faint */
+.pdf .pdf-caret.pdf-ghost { opacity: .5; }
 @keyframes pdf-blink { 50% { opacity: 0; } } @media (prefers-reduced-motion: reduce) { .pdf .pdf-caret, #typeset-body .pdf-caret, .live-ts .pdf-caret { animation: none; } }
 /* typed text shown at once over the page, until the build sets it */
-.pdf .pdf-echo { position: absolute; z-index: 2; background: #fff; color: #000; pointer-events: none; white-space: pre; }
+/* the echo lies under the overlays (pdfUnder): tints and highlights stay over the typed row; its colours are the page's */
+.pdf .pdf-echo { position: absolute; background: #fff; color: #000; pointer-events: none; white-space: pre; }
+.pdf canvas.pdf-echo { background: none; }
+.pdf .pdf-relay-hid { visibility: hidden; }
 .pdf .pdf-echo i { position: absolute; top: 0; bottom: 0; font-style: normal; display: flex; align-items: flex-end; padding-bottom: .02em; }
 .pdf .pdf-echo span { transform-origin: left; display: inline-block; }
 /* typing goes into a definition: said below the view, with a way back */
@@ -1891,10 +1894,10 @@ canvas.pdf-echo { display: block; }
 .typeset .ts-fillrow { display: flex; flex-wrap: wrap; align-items: baseline; } .typeset .ts-fillrow > .ts-fill { flex: 1; }
 .typeset .ts-frame { display: inline-block; padding: 0 .25em; border: 1px solid currentColor; line-height: 1.2; }
 .typeset .ts-bar[style*="width"] { max-width: 100%; vertical-align: baseline; }
-.typeset .ts-sup, .typeset .ts-sub { font-size: .72em; line-height: 0; } .typeset .ts-sup { vertical-align: .55em; } .typeset .ts-sub { vertical-align: -.3em; }
+.typeset .ts-sup, .typeset .ts-sub { font-size: calc(var(--m-script, .7) * 1em); line-height: 0; } .typeset .ts-sup { vertical-align: var(--m-sup, .518em); } .typeset .ts-sub { vertical-align: var(--m-sub, -.214em); }
 /* an operator's limits stacked over and under it (display math, \limits) */
 .typeset .ts-limits { display: inline-grid; grid-template-areas: "over" "op" "under"; justify-items: center; vertical-align: middle; line-height: 1.05; margin: 0 .15em; }
-.typeset .ts-limits > .ts-op { grid-area: op; font-size: 1.45em; line-height: 1; } .typeset .ts-limits > .ts-over { grid-area: over; } .typeset .ts-limits > .ts-under { grid-area: under; }
+.typeset .ts-limits > .ts-op { grid-area: op; font-size: calc(var(--m-op, 1.4) * 1em); line-height: 1; } .typeset .ts-limits > .ts-over { grid-area: over; } .typeset .ts-limits > .ts-under { grid-area: under; }
 .typeset .ts-over, .typeset .ts-under { font-size: .72em; }
 /* an equation's number at the margin */
 .typeset .ts-eqno { float: right; margin-left: 1em; } .typeset .ts-leqno { float: left; margin-right: 1em; }
@@ -1979,10 +1982,18 @@ canvas.pdf-echo { display: block; }
 .pdf-bar #pdf-follow[aria-pressed=true] { background: color-mix(in srgb, var(--accent) 18%, var(--bg)); color: var(--accent); border-color: var(--accent); font-weight: 600; }
 .pdf-bar #pdf-follow[aria-pressed=false] { color: var(--muted); border-style: dashed; }
 .pdf-bar #pdf-follow { gap: .3rem; }
-:root { --pdf-night: invert(.88) hue-rotate(180deg); }
-#play-pdf.pdf-night :is(.pdf-page img, .pdf-echo, iframe, embed) { filter: var(--pdf-night); }
-:root[data-theme=dark] #play-pdf:not(.pdf-day) :is(.pdf-page img, .pdf-echo, iframe, embed) { filter: var(--pdf-night); }
-@media (prefers-color-scheme: dark) { :root:not([data-theme=light]) #play-pdf:not(.pdf-day) :is(.pdf-page img, .pdf-echo, iframe, embed) { filter: var(--pdf-night); } }
+/* The pages' colours (View, Pages): one filter over the page images and the echo alike. Dark paper flips lightness
+   and keeps hues, its raster images shown as they are; each page's overlays take the scheme of its paper as shown. */
+#play-pdf { --pdf-filter: none; }
+#play-pdf[data-pdf-mode=invert] { --pdf-filter: invert(.88) hue-rotate(180deg); }
+#play-pdf[data-pdf-mode=dark] { --pdf-filter: invert(.9) hue-rotate(180deg) saturate(1.4) contrast(.94); }
+#play-pdf[data-pdf-mode=dim] { --pdf-filter: brightness(.72) contrast(1.05); }
+#play-pdf[data-pdf-mode=sepia] { --pdf-filter: sepia(.55) brightness(.95) contrast(.95); }
+#play-pdf :is(.pdf-page img, .pdf-echo, iframe, embed) { filter: var(--pdf-filter); }
+.pdf .pdf-raster { display: none; position: absolute; pointer-events: none; }
+#play-pdf[data-pdf-mode=dark] .pdf-raster { display: block; filter: brightness(.88); }
+#play-pdf .pdf-page[data-paper=light] { color-scheme: light; } #play-pdf .pdf-page[data-paper=dark] { color-scheme: dark; }
+.pdf-mode { display: inline-flex; align-items: center; gap: .3rem; } .pdf-mode select { font: inherit; }
 .act-run { list-style: none; } .act-run summary { display: flex; justify-content: space-between; gap: .6rem; cursor: pointer; }
 .act-run .act-steps { margin: .1rem 0 .2rem .9rem; padding: 0; }
 .md-table { border-collapse: collapse; font-size: .82rem; margin: .3rem 0; }

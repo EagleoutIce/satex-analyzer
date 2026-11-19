@@ -564,6 +564,9 @@ declare global {
     if (cs >= 0 && c === '{' && own) return [at, at + (text[at] === ' ' && fr(at) ? 1 : 0), '{}', 1];
     if (cs >= 0 && c === ' ' && !own) return [at, at, '{} ', 3];
     if (c === '}' && text[at] === '}' && fr(at)) return [at, at, '', 1];
+    // past the commands' own spaces too (`\\to\\infty  }`): they go, the group closes after the name
+    const blanks = (/^( +)\}/.exec(text.slice(at, at + 64))?.[1].length ?? 0);
+    if (c === '}' && blanks && fr(at) && fr(at + blanks)) return [at, at + blanks, '', 1];
     const st = scan(text, 0, at, start());
     if (!st.math) {
       if (c !== '$') { const body = escaped(c); return [at, at, body, body.length]; }
@@ -571,12 +574,20 @@ declare global {
       // `$ $`, not `$$`: TeX reads `$$` as display math; the space goes with the first character typed
       return open === '$' ? [at, at, '$ $', 1] : [at, at, '\\(\\)', 2];
     }
-    // smart scripts: `_`/`^` open a group, a space, an operator or the formula's end typed at its end leave it
-    if (smart && (c === '_' || c === '^')) return [at, at, `${c}{}`, 2];
-    if (smart && text[at] === '}' && /[_^]\{[^{}]*$/.test(text.slice(Math.max(0, at - 64), at)) && /[\s$+\-=<>,;:|/*!?()[\]]/.test(c)) {
+    // smart scripts: `_`/`^` open a group, a space, an operator, the other script (`x_i^2`) or the formula's end typed
+    // at its end leave it; `script` the `_` or `^` of the group the caret ends, past groups closed in it (`_{{i=1}`)
+    let script = '';
+    for (let j = at - 1, n = 0; smart && text[at] === '}' && j >= Math.max(0, at - 200); j--) {
+      if (text[j - 1] === '\\') continue;
+      if (text[j] === '}') n++;
+      else if (text[j] === '{' && n) n--;
+      else if (text[j] === '{') { script = /[_^]/.test(text[j - 1] ?? '') ? text[j - 1]! : ''; break; }
+    }
+    if (script && (/[\s$+\-=<>,;:|/*!?()[\]]/.test(c) || /[_^]/.test(c) && c !== script)) {
       // past the `}` first, then the character as typed there (a space only leaves)
       return /\s/.test(c) ? [at, at, '', 1] : typed(text, at + 1, c, inline, smart, fresh);
     }
+    if (smart && (c === '_' || c === '^')) return [at, at, `${c}{}`, 2];
     const empty = st.math === '$' && text[at - 1] === '$' && text.startsWith(' $', at);
     if (c === '$') {
       if (empty) return [at, at, '', 2];
@@ -1165,153 +1176,75 @@ declare global {
     run(to, to);
     return out;
   }
-  /** Math laid out for the live preview of typed math: cosmetic only, the build sets the real formula. Glyphs
-   * `[text, x, y, scale, face]` in em of the formula's size (`y` up from the baseline; face 'it' math italic, 'rm'
-   * upright, 'sy' symbols, 'bf' bold), rules `[x, y, w, h]`, the width and the height and depth about the baseline.
-   * TeX's rules, simplified: scripts at 0.7 and 0.5, raised and lowered; a binary operator's medium space, a
-   * relation's thick one, none in scripts; fractions stacked about the axis, full size in display. `width(t, face)`
-   * measures `t` at 1 em. */
-  type MBox = { g: [string, number, number, number, string][]; r: [number, number, number, number][]; w: number; h: number; d: number };
-  function mathLaid(src: string, width: (t: string, face: string) => number, display = false): MBox {
-    const SC = [1, 0.7, 0.5], empty = (): MBox => ({ g: [], r: [], w: 0, h: 0, d: 0 });
-    type Atom = { k: string; b: MBox; lim?: boolean };
-    let i = 0, face: string | null = null, ds = display;
-    const put = (into: MBox, b: MBox, dx: number, dy: number) => {
-      for (const [t, x, y, s, f] of b.g) into.g.push([t, x + dx, y + dy, s, f]);
-      for (const [x, y, w, h] of b.r) into.r.push([x + dx, y + dy, w, h]);
-      into.h = Math.max(into.h, b.h + dy); into.d = Math.max(into.d, b.d - dy);
-    };
-    const glyph = (t: string, f: string, s: number): MBox => ({ g: [[t, 0, 0, s, f]], r: [], w: width(t, f) * s, h: 0.7 * s, d: /[gjpqy,;()[\]{}|∫∑∏⟨⟩]/.test(t) ? 0.22 * s : 0 });
-    const space = (w: number): Atom => ({ k: 'sp', b: { ...empty(), w } });
-    // TeX's spaces between atoms, in mu (1/18 em): thin after punctuation and about operators, medium about binary
-    // operators, thick about relations; in scripts only the thin ones about operators
-    const gap = (a: string, b: string, script: boolean) => a === 'sp' || b === 'sp' ? 0 : a === 'op' && /^(ord|op)$/.test(b) || b === 'op' && /^(ord|close)$/.test(a) ? 3
-      : script ? 0 : a === 'bin' || b === 'bin' ? 4 : (a === 'rel') !== (b === 'rel') ? 5 : a === 'punct' ? 3 : 0;
-    const hbox = (atoms: Atom[], lv: number): MBox => {
-      // a binary operator with no operand on one side is an ordinary atom (a unary minus)
-      atoms.forEach((a, j) => { if (a.k === 'bin' && (!j || /^(bin|op|rel|open|punct)$/.test(atoms[j - 1]!.k) || !atoms[j + 1] || /^(rel|close|punct)$/.test(atoms[j + 1]!.k))) a.k = 'ord'; });
-      const out = empty();
-      atoms.forEach((a, j) => { if (j) out.w += gap(atoms[j - 1]!.k, a.k, lv > 0) / 18 * SC[lv]!; put(out, a.b, out.w, 0); out.w += a.b.w; });
-      return out;
-    };
-    const skip = () => { while (/\s/.test(src[i] ?? '')) i++; };
-    const sub = (lv: number) => Math.min(2, lv + 1);
-    const arg = (lv: number): MBox => { skip(); if (i >= src.length) return empty(); if (src[i] === '{') { i++; return list(lv, '}'); } return atom(lv)?.b ?? empty(); };
-    const raw = (): string => {
-      skip();
-      if (src[i] !== '{') { const m = /^\\(?:[A-Za-z@]+|.?)|^[^]?/.exec(src.slice(i))![0]; i += m.length; return m; }
-      let n = 1, j = ++i;
-      for (; j < src.length && n; j++) n += src[j] === '{' ? 1 : src[j] === '}' ? -1 : 0;
-      const t = src.slice(i, n ? j : j - 1);
-      i = j;
-      return t;
-    };
-    const within = <T>(f: string | null, d: boolean, go: () => T): T => { const was = [face, ds] as const; face = f ?? face; ds = d; try { return go(); } finally { [face, ds] = was; } };
-    const list = (lv: number, close?: string): MBox => {
-      const atoms: Atom[] = [];
-      for (skip(); i < src.length; skip()) {
-        if (src[i] === close) { i++; break; }
-        if (src[i] === '}') { i++; continue; }
-        if (src[i] === '^' || src[i] === '_') { scripts(atoms, lv); continue; }
-        const a = atom(lv);
-        if (a) atoms.push(a);
-      }
-      return hbox(atoms, lv);
-    };
-    // `^` and `_` after the last atom: raised and lowered at the next size, or as limits above and below a display operator
-    const scripts = (atoms: Atom[], lv: number) => {
-      const s = SC[lv]!, base = atoms.at(-1) ?? { k: 'ord', b: empty() }, b = base.b;
-      let up: MBox | null = null, dn: MBox | null = null;
-      while (src[i] === '^' || src[i] === '_') { const c = src[i++]; const x = within(null, false, () => arg(sub(lv))); if (c === '^') up = x; else dn = x; skip(); }
-      const out = empty();
-      if (base.lim) {
-        const w = Math.max(b.w, up?.w ?? 0, dn?.w ?? 0);
-        put(out, b, (w - b.w) / 2, 0);
-        if (up) put(out, up, (w - up.w) / 2, b.h + 0.1 * s + up.d);
-        if (dn) put(out, dn, (w - dn.w) / 2, -(b.d + 0.1 * s + dn.h));
-        out.w = w;
-      } else {
-        put(out, b, 0, 0);
-        const ic = b.g.at(-1)?.[4] === 'it' ? 0.05 * s : 0;
-        if (up) put(out, up, b.w + ic, Math.max(0.4 * s, b.h - 0.25 * s));
-        if (dn) put(out, dn, b.w, -Math.max(up ? 0.25 * s : 0.15 * s, b.d - 0.1 * s));
-        out.w = b.w + Math.max(up ? up.w + ic : 0, dn?.w ?? 0) + 0.05 * s;
-      }
-      if (atoms.length) atoms[atoms.length - 1] = { k: base.k, b: out }; else atoms.push({ k: 'ord', b: out });
-    };
-    const atom = (lv: number): Atom | null => {
-      const s = SC[lv]!, c = src[i]!;
-      if (c === '{') { i++; return { k: 'ord', b: list(lv, '}') }; }
-      if (c === '\\') {
-        const n = /^\\([A-Za-z@]+|.?)/.exec(src.slice(i))![1]!;
-        i += n.length + 1;
-        const mu = ({ ',': 3, ':': 4, '>': 4, ';': 5, '!': -3, ' ': 6, quad: 18, qquad: 36, '\\': 18 } as Record<string, number>)[n];
-        if (mu != null) return space(mu / 18 * s);
-        if (/^([dt]?frac|binom)$/.test(n)) {
-          // the parts one size down, full size in display (`\dfrac` always, `\tfrac` never)
-          const pl = n === 'dfrac' || n !== 'tfrac' && ds && lv === 0 ? lv : sub(lv), [a, b] = within(null, false, () => [arg(pl), arg(pl)]);
-          const ax = 0.25 * s, th = n === 'binom' ? 0 : 0.04 * s, pad = 0.1 * s + th, w = Math.max(a.w, b.w) + 0.2 * s, out = empty();
-          put(out, a, (w - a.w) / 2, ax + pad + a.d);
-          put(out, b, (w - b.w) / 2, ax - pad - b.h);
-          if (th) out.r.push([0.05 * s, ax - th / 2, w - 0.1 * s, th]);
-          out.w = w;
-          return { k: 'ord', b: n === 'binom' ? hbox([{ k: 'open', b: glyph('(', 'rm', s) }, { k: 'ord', b: out }, { k: 'close', b: glyph(')', 'rm', s) }], lv) : out };
-        }
-        if (n === 'sqrt') {
-          if (src[i] === '[') { const e = src.indexOf(']', i); i = e < 0 ? src.length : e + 1; }
-          const a = arg(lv), r = glyph('√', 'sy', s), out = empty(), top = Math.max(a.h, 0.7 * s) + 0.08 * s;
-          put(out, r, 0, 0);
-          put(out, a, r.w, 0);
-          out.r.push([r.w, top, a.w, 0.04 * s]);
-          out.w = r.w + a.w;
-          out.h = top + 0.04 * s;
-          return { k: 'ord', b: out };
-        }
-        // text as written, upright (bold, italic)
-        if (/^(text(rm|bf|it|sf|tt|normal|up)?|mbox|operatorname|emph)$/.test(n)) return { k: n === 'operatorname' ? 'op' : 'ord', b: glyph(raw().replace(/\\[A-Za-z@]+\s*|[{}]/g, ''), n === 'textbf' ? 'bf' : 'rm', s) };
-        const f = /^(mathbf|boldsymbol|bm)$/.test(n) ? 'bf' : n === 'mathit' ? 'it' : /^math(rm|sf|tt|cal|bb|frak|scr)$/.test(n) ? 'rm' : null;
-        if (f) return { k: 'ord', b: within(f, ds, () => arg(lv)) };
-        // markup with no glyph of its own: sizes, styles, an equation's label
-        if (/^(left|right|middle|[bB]igg?[lrm]?|displaystyle|textstyle|scriptstyle|limits|nolimits|nonumber|notag)$/.test(n)) { skip(); if (src[i] === '.') i++; return null; }
-        if (/^(label|tag|begin|end)$/.test(n)) { raw(); return null; }
-        const sym = mathSym(n);
-        if (sym) {
-          const [t, sf, k] = sym, big = k === 'op' && ds && lv === 0;
-          const b = glyph(t, sf, big ? 1.4 * s : s);
-          if (big) { b.g[0]![2] = -0.3 * s; b.h = 0.75 * s; b.d = 0.55 * s; }
-          return { k, b, lim: big && !/^i*int$|^oint$/.test(n) };
-        }
-        if (/^(arc)?(sin|cos|tan|cot)h?$|^(sec|csc|log|ln|lg|exp|lim(inf|sup)?|max|min|sup|inf|det|dim|ker|deg|gcd|arg|Pr|hom)$/.test(n)) return { k: 'op', b: glyph(n, 'rm', s), lim: ds && lv === 0 && /^(lim|max|min|sup|inf|det|gcd|Pr)/.test(n) };
-        // any other command (a user's macro, a name half typed): its name, upright
-        return n ? { k: 'ord', b: glyph(n, 'rm', s) } : null;
-      }
-      i++;
-      if (c === '&' || c === '~') return space(c === '~' ? s / 3 : s);
-      if (/[A-Za-z]/.test(c)) return { k: 'ord', b: glyph(c, face ?? 'it', s) };
-      if (/[0-9.]/.test(c)) { const m = /^[0-9.]*/.exec(src.slice(i))![0]; i += m.length; return { k: 'ord', b: glyph(c + m, face === 'bf' ? 'bf' : 'rm', s) }; }
-      const k = '+-*'.includes(c) ? 'bin' : '=<>:'.includes(c) ? 'rel' : '(['.includes(c) ? 'open' : ')]!?'.includes(c) ? 'close' : ',;'.includes(c) ? 'punct' : 'ord';
-      const t = ({ '-': '−', '*': '∗', "'": '′' } as Record<string, string>)[c] ?? c;
-      return { k, b: glyph(t, t === c ? 'rm' : 'sy', s) };
-    };
-    return list(0);
+  // the footer typed in the PDF (playground `pdfFootAt`): the call that sets a cell, the page number in it
+  /** The text of the last call that sets footer cell `letter` on odd pages (fancyhdr's `\fancyfoot[C]{…}`, `\cfoot{…}`
+   * for L, C, R; scrlayer-scrpage's `\cfoot[…]{…}` for i, c, o): `[from, to]` inside its `{…}`, null where none does. */
+  function footArg(text: string, pkg: string, letter: string): [number, number] | null {
+    const koma = pkg === 'scrlayer-scrpage', re = koma ? new RegExp(`\\\\${letter}foot(?![A-Za-z@])\\*?\\s*(?:\\[[^\\]]*\\])?\\s*\\{`, 'g')
+      : /\\(?:fancyfoot|([lcr])foot)(?![A-Za-z@])\s*(?:\[([^\]]*)\])?\s*\{/g;
+    // a selector names the cell (or no column) and odd pages (or no side)
+    const sel = (t: string) => t.split(',').some((x) => { const u = x.trim().toUpperCase(); return (!/[LCR]/.test(u) || u.includes(letter)) && (!/[EO]/.test(u) || u.includes('O')); });
+    let got: [number, number] | null = null;
+    for (const m of text.matchAll(re)) {
+      if (commented(text, m.index) || !koma && (m[1] ? m[1] !== letter.toLowerCase() : m[2] != null && !sel(m[2]))) continue;
+      const open = m.index + m[0].length - 1, e = closing(text, open, '{', '}');
+      if (e >= 0) got = [open + 1, e];
+    }
+    return got;
   }
-  /** The display-only fallback of the math preview: a command's Unicode character, its face and its kind (TeX's
-   * atoms: ord, op, bin, rel, open, close). For drawing only; what a command means is the build's. */
-  let mathSyms: Map<string, [string, string, string]> | null = null;
-  function mathSym(name: string): [string, string, string] | undefined {
-    mathSyms ??= new Map(Object.entries({
-      'it ord': 'alpha α beta β gamma γ delta δ epsilon ϵ varepsilon ε zeta ζ eta η theta θ vartheta ϑ iota ι kappa κ lambda λ mu μ nu ν xi ξ pi π rho ρ sigma σ tau τ upsilon υ phi ϕ varphi φ chi χ psi ψ omega ω ell ℓ',
-      'rm ord': 'Gamma Γ Delta Δ Theta Θ Lambda Λ Xi Ξ Pi Π Sigma Σ Upsilon Υ Phi Φ Psi Ψ Omega Ω # # % % & & $ $ _ _',
-      'sy ord': 'infty ∞ partial ∂ nabla ∇ forall ∀ exists ∃ emptyset ∅ varnothing ∅ neg ¬ prime ′ ldots … dots … cdots ⋯ vdots ⋮ ddots ⋱ angle ∠ top ⊤ bot ⊥ hbar ℏ Re ℜ Im ℑ aleph ℵ | ‖',
-      'sy bin': 'pm ± mp ∓ times × cdot ⋅ div ÷ ast ∗ star ⋆ circ ∘ bullet ∙ cup ∪ cap ∩ setminus ∖ wedge ∧ land ∧ vee ∨ lor ∨ oplus ⊕ ominus ⊖ otimes ⊗ odot ⊙',
-      'sy rel': 'le ≤ leq ≤ ge ≥ geq ≥ ne ≠ neq ≠ ll ≪ gg ≫ approx ≈ equiv ≡ sim ∼ simeq ≃ cong ≅ propto ∝ in ∈ notin ∉ ni ∋ subset ⊂ subseteq ⊆ supset ⊃ supseteq ⊇ mid ∣ parallel ∥ perp ⊥ to → rightarrow → leftarrow ← gets ← leftrightarrow ↔ Rightarrow ⇒ Leftarrow ⇐ Leftrightarrow ⇔ implies ⟹ iff ⟺ mapsto ↦ vdash ⊢ models ⊨',
-      'sy op': 'sum ∑ prod ∏ coprod ∐ int ∫ iint ∬ oint ∮ bigcup ⋃ bigcap ⋂ bigvee ⋁ bigwedge ⋀ bigoplus ⨁ bigotimes ⨂',
-      'sy open': 'langle ⟨ lbrace { { { lceil ⌈ lfloor ⌊',
-      'sy close': 'rangle ⟩ rbrace } } } rceil ⌉ rfloor ⌋',
-    }).flatMap(([fk, list]) => { const [f, k] = fk.split(' ') as [string, string], xs = list.split(' '); return xs.flatMap((x, j) => j % 2 ? [] : [[x, [xs[j + 1]!, f, k]] as [string, [string, string, string]]]); }));
-    return mathSyms.get(name);
+  /** What Backspace (`back`) or Delete takes in a footer cell at `at`: the page number's command whole (`\thepage`,
+   * `\pagemark`, with its `{}` and the space after it), null where none is next to the caret. */
+  function footBack(text: string, at: number, back: boolean): [number, number] | null {
+    const m = back ? /\\(?:thepage|pagemark)(?:\{\}| ?)$/.exec(text.slice(Math.max(0, at - 16), at)) : /^ ?\\(?:thepage|pagemark)(?![A-Za-z@])(?:\{\}| ?)/.exec(text.slice(at, at + 16));
+    if (!m || back && /[A-Za-z@]/.test(text[at] ?? '') && !m[0].endsWith('}') && !m[0].endsWith(' ')) return null;
+    return back ? [at - m[0].length, at] : [at, at + m[0].length];
   }
-  self.satexPdfEdit = { offsetAt, units, treeNodes, naming, entries, shortTitle, bothTitles, renamed, leaders, checked, grow, key, broken, scan, start, cells, cellStep, rowAfter, verbatim, verbatimAt, nearest, bands, joined, place, extent, room, form, measure, respec, widthBp, snapWidth, resized, stepped, plain, editable, spans, sender, typed, erased, mathAt, boundaries, boundaryAt, inkSnap, locate, columns, wordAt, argAt, defining, relaid, reflow, fit, glue, centered, apart, tokens, unset, aligned, changed, paragraph, mathRuns, mathLaid };
+  /** A footer cell's text `t` as set on page `page`: the page number for `\thepage` (`\pagemark`), other commands dropped. */
+  const footShown = (t: string, page: string) => t.replace(/\\(?:thepage|pagemark)(?:\{\}|(?![A-Za-z@])\s*)/g, '\u0001').replace(/\\([^A-Za-z@])/g, '$1')
+    .replace(/\\[A-Za-z@]+\*?\s*/g, '').replace(/[{}]/g, '').replace(/~/g, ' ').replace(/\u0001/g, page);
+  /** Where a click on empty page space puts the caret: `rows` the page's lines (`t`, `d`, `base`, `l`, `r` in bp, `line`
+   * the 1-based line of `text` SyncTeX sets each from), `(x, y)` the click. `{kind: 'end' | 'start' | 'near', row}` on
+   * or between a paragraph's lines (its end, its start, the nearest word); `{kind: 'new', at, body, caret, ghost}` a
+   * new paragraph the first key writes (`body` at `at`, the caret at `caret`): after the paragraph above (a heading's
+   * line, a float's `\end`), before the page's first one; `ghost` where its first line starts (`x`, `base`, `h`). */
+  function blankPlace(text: string, rows: { t: number; d: number; base: number; l: number; r: number; line: number }[], x: number, y: number) {
+    const rs = [...rows].sort((a, b) => a.base - b.base);
+    if (!rs.length) return null;
+    const starts = [0];
+    for (let i = text.indexOf('\n'); i >= 0; i = text.indexOf('\n', i + 1)) starts.push(i + 1);
+    const off = (n: number) => starts[Math.min(Math.max(n, 1), starts.length) - 1]!, lineOf = (n: number) => text.slice(off(n), (starts[n] ?? text.length + 1) - 1);
+    const heading = (r: { line: number }) => /^\s*\\(part|chapter|(sub)*section|paragraph)\*?\s*[[{]/.test(lineOf(r.line));
+    // a float the row is set in: its `\end` line's end
+    const floatEnd = (r: { line: number }) => {
+      const at = off(r.line), re = /\\(begin|end)\s*\{(figure|table|wrapfigure|wraptable|algorithm)\*?\}/g, open: number[] = [];
+      for (const m of text.matchAll(re)) {
+        if (m[1] === 'begin') { if (m.index > at) break; open.push(m.index); continue; }
+        if (open.pop() != null && m.index >= at && !open.length) { const e = text.indexOf('\n', m.index); return e < 0 ? text.length : e; }
+      }
+      return -1;
+    };
+    const para = (r: { line: number }) => paragraph(text, off(r.line));
+    const med = (xs: number[], d: number) => xs.length ? xs.sort((p, q) => p - q)[xs.length >> 1]! : d;
+    const left = Math.min(...rs.map((r) => r.l)), skip = med(rs.slice(1).map((r, i) => r.base - rs[i]!.base).filter((d) => d > 4 && d < 30), 12);
+    const indent = med(rs.map((r) => r.l - left).filter((d) => d > 3 && d < 40), 15);
+    const on = rs.find((r) => y >= r.t && y <= r.d);
+    if (on) return { kind: x > on.r ? 'end' : x < on.l ? 'start' : 'near', row: rows.indexOf(on) };
+    const i = rs.findLastIndex((r) => r.d < y), above = rs[i], below = rs[i + 1];
+    const near = (r: typeof rs[0]) => ({ kind: 'near', row: rows.indexOf(r) });
+    if (!above) {
+      // above the page's first line: a new paragraph before it where one starts there (a heading, an indented line)
+      if (!(heading(below!) || below!.l - left > 3)) return near(below!);
+      const p0 = para(below!)[0];
+      return { kind: 'new', at: p0, body: '\n\n', caret: p0, ghost: { x: left + indent, base: below!.base - skip, h: below!.d - below!.t } };
+    }
+    // between two lines of one paragraph: its nearest line
+    const f = floatEnd(above), end = f >= 0 ? f : para(above)[1];
+    if (below && f < 0 && !heading(above) && para(below)[0] === para(above)[0]) return near(y - above.d < below.t - y ? above : below);
+    // a text line right after it gets a blank line of its own: the new paragraph never runs into it
+    const next = /^\n([^\n]*)/.exec(text.slice(end))?.[1] ?? '', body = next.trim() && !/^\s*\\end\b/.test(next) ? '\n\n\n' : '\n\n';
+    return { kind: 'new', at: end, body, caret: end + 2, ghost: { x: left + (heading(above) ? 0 : indent), base: above.base + skip, h: above.d - above.t } };
+  }
+  self.satexPdfEdit = { offsetAt, units, treeNodes, naming, entries, shortTitle, bothTitles, renamed, leaders, checked, grow, key, broken, scan, start, cells, cellStep, rowAfter, verbatim, verbatimAt, nearest, bands, joined, place, extent, room, form, measure, respec, widthBp, snapWidth, resized, stepped, plain, editable, spans, sender, typed, erased, mathAt, boundaries, boundaryAt, inkSnap, locate, columns, wordAt, argAt, defining, relaid, reflow, fit, glue, centered, apart, tokens, unset, aligned, changed, paragraph, mathRuns, footArg, footBack, footShown, blankPlace };
 })();
 
 // TikZ nodes moved by drag: where each `\node` and path label stands in the source, and the statement a drag

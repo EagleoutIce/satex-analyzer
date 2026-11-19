@@ -297,11 +297,13 @@ declare global {
   function textRows(ctx: PaCtx, stmt: string, n: TikzNode, put: (s: string | null) => void): PaItem[] {
     const T = TM(), ks = T.keysAt(stmt, n.i) ?? [], font = val(ks, 'font'), size = SIZES.find((s) => (font ?? '').includes(s)) ?? '';
     return [
-      { label: 'Edit text…', run: () => ask(ctx.x, ctx.y, n.text, `the text of ${n.name ? `node ${n.name}` : n.kind === 'label' ? 'the label' : 'the node'}`, (t) => put(T.retext(stmt, n.i, t))) },
       { label: 'Text color', items: colorRows(ctx, val(ks, 'text')?.trim() ?? null, (v) => put(T.set(stmt, n.i, 'text', v == null ? [] : [`text=${v}`]))) },
       { label: 'Font size', items: radio([['default', ''], ...SIZES.map((s): [string, string] => [s.slice(1), s])], size, (v) => { const f = fontSet(font, v || null); put(T.set(stmt, n.i, 'font', f ? [`font=${f}`] : [])); }) },
     ];
   }
+  /** The menu's first row: the text, edited in place. */
+  const editRow = (ctx: PaCtx, stmt: string, n: TikzNode, put: (s: string | null) => void): PaGroup =>
+    ({ title: 'Edit', inline: true, items: [{ label: 'Edit text…', hint: 'double click', run: () => ask(ctx.x, ctx.y, n.text, `the text of ${n.name ? `node ${n.name}` : n.kind === 'label' ? 'the label' : 'the node'}`, (t) => put(TM().retext(stmt, n.i, t))) }] });
   const ROT: [string, string][] = [['0°', '0'], ['15°', '15'], ['45°', '45'], ['90°', '90'], ['180°', '180'], ['-45°', '-45'], ['-90°', '-90']];
   /** The node's whole picture rotated (`rotate=` on it, or `rotate around` this node) and its nodes with it (`transform shape`). */
   function pictureRows(ctx: PaCtx, n: TikzNode): PaItem[] {
@@ -348,8 +350,10 @@ declare global {
       if (back && stmts.some((m) => m.from < n.from)) rows.push({ label: 'Send to back', hint: 'drawn first', run: () => { const at = bodyStart(text, n); ctx.write([{ from: at, to: at, now: line(stmt) }, cut(text, n.from, n.to)]); } });
       rows.push({ label: 'Duplicate', run: () => {
         const name = n.name ? T.fresh(text, n.pic.at!, n.name) : null, copy = name ? stmt.replace(new RegExp(`\\(\\s*${n.name!.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*\\)`), `(${name})`) : stmt;
-        const moved = T.move(copy, n.i, n.pic, { by: [0.5, -0.5] })?.text ?? copy, e = text.indexOf('\n', n.to);
-        ctx.write([{ from: e < 0 ? text.length : e + 1, to: e < 0 ? text.length : e + 1, now: line(moved) }]);
+        // a new node stands relative to the one it copies (`below=of a`), else shifted from it
+        const lib = n.name ? libEdit(text, ctx.all, ctx.facts?.libraries ?? [], 'positioning') : { line: '' }, e = text.indexOf('\n', n.to);
+        const moved = (!('line' in lib) && T.place(copy, n.i, `below=of ${n.name}`)) || (T.move(copy, n.i, n.pic, { by: [0.5, -0.5] })?.text ?? copy);
+        ctx.write([...('edit' in lib ? [lib.edit] : []), { from: e < 0 ? text.length : e + 1, to: e < 0 ? text.length : e + 1, now: line(moved) }]);
       } });
       if (!placedBy.length) rows.push({ label: n.name ? 'Delete with its paths' : 'Delete', run: () => {
         const gone = n.name ? T.edges(text).filter((p) => p.pic.at === n.pic.at && p.segs.some((g) => [g.a, g.b].some((x) => x.split('.')[0]!.trim() === n.name))) : [];
@@ -371,13 +375,16 @@ declare global {
         : k === 'star' ? { label, on: now === k, items: ['4', '5', '6', '8'].map((v) => ({ label: `${v} points`, on: now === k && (points ?? '5') === v, run: () => shapeTo(k, label, v === '5' ? [] : [`star points=${v}`]) })) }
         : { label, on: now === k, run: () => shapeTo(k, label) });
       const deg = String(T.angle(stmt, n.i));
+      const place: PaItem[] = [...(t.rel ? [{ label: `Relative to ${t.rel.label.replace(/^.* of /, '')}`, hint: t.rel.label, run: () => put(t.rel.text, t.rel.pre) }] : []),
+        ...(t.fixed ? [{ label: 'Fixed position', hint: 'at (x,y)', run: () => put(t.fixed) }] : [])];
       return [
+        editRow(ctx, stmt, n, put),
         { title: 'Shape', items: shapes },
         { title: 'Style', items: [{ label: 'Frame', on: looks.draw, run: () => put(T.flip(stmt, n.i, n.pic, 'draw')) }, { label: 'Fill', on: looks.fill, run: () => put(T.flip(stmt, n.i, n.pic, 'fill')) }, ...styleRows(ctx, stmt, n.i, put, false)] },
         { title: 'Text', items: textRows(ctx, stmt, n, put) },
-        { title: 'Rotate', items: [...radio(ROT, deg, (v) => put(T.set(stmt, n.i, 'rotate', +v ? [`rotate=${v}`] : []))),
+        { title: 'Position', items: [...place, { label: 'Rotate', items: [...radio(ROT, deg, (v) => put(T.set(stmt, n.i, 'rotate', +v ? [`rotate=${v}`] : []))),
           custom(ctx, 'Custom…', 'degrees, counterclockwise', deg, (v) => { if (Number.isFinite(+v)) put(T.set(stmt, n.i, 'rotate', +v ? [`rotate=${+v}`] : [])); }),
-          { label: 'Rotate the picture', items: pictureRows(ctx, n) }] },
+          { label: 'Rotate the picture', items: pictureRows(ctx, n) }] }] },
         { title: 'Arrange', items: arrangeRows(ctx, n, /^\s*\\node\b/.test(stmt)) },
       ];
     },
@@ -389,6 +396,7 @@ declare global {
       const put = (s: string | null) => { if (s != null && s !== stmt) ctx.write([{ from: n.from, to: n.to, now: s }]); };
       const pos = T.current(stmt, n.i, 'pos').at(-1) ?? '', side = T.current(stmt, n.i, 'side').at(-1) ?? '', auto = T.current(stmt, n.i, 'auto').at(-1) ?? '';
       return [
+        editRow(ctx, stmt, n, put),
         { title: 'Text', items: textRows(ctx, stmt, n, put) },
         { title: 'Position', items: [...radio([['at start', 'at start'], ['near start', 'near start'], ['midway', 'midway'], ['near end', 'near end'], ['at end', 'at end']], pos, (v) => put(T.set(stmt, n.i, 'pos', [v]))),
           custom(ctx, 'pos=…', 'a place along the path, 0 to 1', /^pos\s*=\s*(.*)$/.exec(pos)?.[1] ?? '0.5', (v) => { if (+v >= 0 && +v <= 1) put(T.set(stmt, n.i, 'pos', [`pos=${+v}`])); })] },

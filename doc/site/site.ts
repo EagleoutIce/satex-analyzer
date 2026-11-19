@@ -160,7 +160,10 @@ interface Stream {
     const EXPL = /^\\(?:__[A-Za-z@_]+:?[A-Za-z]*|[A-Za-z@]+(?:_[A-Za-z@]+)*_[A-Za-z@]{2,}:[A-Za-z]*|[lgcq]_[A-Za-z@_]*_[A-Za-z@]+)/;
     const EXPL_ON = /^\\(?:ExplSyntaxO(n|ff)|ProvidesExpl(?:Package|Class|File))(?![A-Za-z])/;
     // a number with its unit is one token: sign, digits, fraction, `true`, a unit (`fil`… after plus/minus)
-    const NUM = /^[-+]?(?:\d+\.?\d*|\.\d+)(?:(?:true)?(?:pt|pc|in|bp|cm|mm|dd|cc|sp|em|ex|mu|px|nd|nc)|fil{1,3})?/;
+    // (`1e3` with pgfmath's exponent), never followed by more of a word: `0B3D91` is a word, not `0` and `B3D91`
+    const NUM = /^[-+]?(?:\d+\.?\d*|\.\d+)(?:e[-+]?\d+)?(?:(?:true)?(?:pt|pc|in|bp|cm|mm|dd|cc|sp|em|ex|mu|px|nd|nc)|fil{1,3})?(?!\w|\.\d)/;
+    /** Where in a plain token (`(2`, `,-0`) a number starts after a delimiter: there the token ends, so the number is one token. */
+    const numberIn = (cur: string) => { for (let k = 1; k < cur.length; k++) if (!/[\w@.]/.test(cur[k - 1]!) && /^[-+]?\.?\d/.test(cur.slice(k))) return k; return -1; };
     // a verbatim body (lstlisting, minted, verbatim) is code in the language it names, not TeX:
     // its comments, strings and numbers by that language's comment marker, TeX by TeX's own rules
     const VERBATIM = /\\begin\{(lstlisting|verbatim\*?|Verbatim|BVerbatim|minted|comment)\}(?:\[([^\]]*)\])?(?:\{([^}]*)\})?/;
@@ -201,9 +204,13 @@ interface Stream {
         // a parameter `#1`…`#9` (`##1` inside a nested definition) keeps its number's tint wherever it stands
         const param = s.match(/^#+([1-9])/);
         if (param) return `param${(param as RegExpMatchArray)[1]}`;
-        // a number is a number wherever it stands: `\count3` and `by 400` alike
-        if (st.verb == null && s.match(NUM)) return 'number';
-        return s.match(/^\\[^A-Za-z@\xc0-\uffff]/) ? 'tag' : stex.token(s, st);
+        // a number is a number wherever it stands: `\count3`, `by 400`, `(2.75,-0.5)` alike, not inside a word (`v2.0`)
+        if (st.verb == null && !/[\d.]/.test(s.string.charAt(s.pos - 1)) && s.match(NUM)) return 'number';
+        if (s.match(/^\d\w*/)) return null;
+        if (s.match(/^\\[^A-Za-z@\xc0-\uffff]/)) return 'tag';
+        const style = stex.token(s, st), cut = style === 'tag' || style === 'comment' ? -1 : numberIn(s.current());
+        if (cut > 0) s.backUp(s.current().length - cut);
+        return style;
       },
     };
     return { language: StreamLanguage.define(tex), bib, highlighter };

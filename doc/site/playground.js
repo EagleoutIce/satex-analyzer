@@ -1191,7 +1191,8 @@
     const swatches = st.StateEffect.define();
     const swatchField = st.StateField.define({
       create: () => view.Decoration.none,
-      update: (deco, tr) => tr.effects.reduce((d, e) => e.is(swatches) ? view.Decoration.set(e.value.map(([at, css]) => view.Decoration.widget({ widget: new Swatch(css), side: -1 }).range(at)), true) : d, resetting(tr) ? view.Decoration.none : deco.map(tr.changes)),
+      // the swatch before the color's text, and the text (a name, `accent!8`, a spec `0B3D91`) marked as one color value
+      update: (deco, tr) => tr.effects.reduce((d, e) => e.is(swatches) ? view.Decoration.set(e.value.flatMap(([from, to, css]) => [view.Decoration.widget({ widget: new Swatch(css), side: -1 }).range(from), ...to > from ? [view.Decoration.mark({ class: 'cm-colorval' }).range(from, to)] : []]), true) : d, resetting(tr) ? view.Decoration.none : deco.map(tr.changes)),
       provide: (f) => view.EditorView.decorations.from(f),
     });
     // A code lens above each table, figure and drawing (`textDocument/codeLens`): the button that opens its dialog.
@@ -1315,7 +1316,7 @@
         const kind = c.command === 'satex.openView' ? c.arguments[2] : /table/i.test(c.title) ? 'table' : /placement/i.test(c.title) ? 'float' : 'image';
         add(from, { kind, title: c.title.replace('…', ''), key: `${kind}:${c.title}`, open: () => c.command === 'satex.openView' ? openViews(c.arguments[1], c.arguments[2]) : openDialog(c.arguments?.[0]?.position ?? { line, character: 0 }) });
       });
-      s.field(swatchField).between(0, s.doc.length, (from, _, d) => add(from, { kind: 'color', css: d.spec.widget.css, title: `Pick color ${d.spec.widget.css}`, key: `color:${from}`, open: (v) => openViews(position(v.state.doc, from), 'color') }));
+      s.field(swatchField).between(0, s.doc.length, (from, _, d) => d.spec.widget && add(from, { kind: 'color', css: d.spec.widget.css, title: `Pick color ${d.spec.widget.css}`, key: `color:${from}`, open: (v) => openViews(position(v.state.doc, from), 'color') }));
       const set = st.RangeSet.of([...lines].sort((a, b) => a[0] - b[0]).map(([n, items]) => new WidgetMark(items).range(s.doc.line(n).from)));
       widgetMemo = [s.field(lensField), s.field(swatchField), set];
       return set;
@@ -1536,7 +1537,7 @@
       },
       forget: () => resolves.clear(),
       lenses: (list) => ev.dispatch({ effects: lensSet.of(list.map((l) => [lineOf(doc(), l.range.start.line).from, l]).sort((a, b) => a[0] - b[0])) }),
-      colors: (list) => ev.dispatch({ effects: swatches.of(list.map(([p, css]) => [at(doc(), p), css]).filter(([a]) => a != null && a <= doc().length)) }),
+      colors: (list) => ev.dispatch({ effects: swatches.of(list.map(([p, q, css]) => [at(doc(), p), at(doc(), q) ?? at(doc(), p), css]).filter(([a, b]) => a != null && b <= doc().length)) }),
       heat: (lines) => ev.dispatch({ effects: heatSet.of(lines?.size ? { lines, most: Math.max(...lines.values()) } : null) }),
       cursor: () => [ev.state.selection.main.anchor, ev.state.selection.main.head],
       scroll: (top) => top == null ? ev.scrollDOM.scrollTop : (ev.scrollDOM.scrollTop = top),
@@ -5931,6 +5932,8 @@
       // the page typed on crossfades (120 ms): what the echo got slightly off settles, never jumps
       if (old && typed(el) < 0) { old.replaceWith(img); old.classList.add('pdf-fade'); img.after(old); setTimeout(() => old.remove(), 130); }
       else if (old) old.replaceWith(img); else el.prepend(img);
+      pdfRastersDraw(el, img, view.images?.(n) ?? []);
+      pdfPaperMark(el);
       if (pdfCaret?.view === 'pdf') pdfCaretDraw();
       pdfFacesPrune();
       if (old?.__url) URL.revokeObjectURL(old.__url);
@@ -6106,25 +6109,27 @@
     try { localStorage.setItem('satex-pdf-follow', pdfFollowOn ? 'on' : 'off'); } catch {}
     if (pdfFollowOn) pdfFollow(); else pdfBody.querySelectorAll('.pdf-mark').forEach((m) => m.remove());
   };
-  /** Dark PDF: unset follows the site theme, the button overrides it, remembered per viewer. */
-  const pdfDarkButton = document.createElement('button');
-  pdfDarkButton.type = 'button'; pdfDarkButton.id = 'pdf-dark'; pdfDarkButton.className = 'small ghost icon';
-  pdfDarkButton.setAttribute('aria-label', 'dark PDF');
-  pdfFollowButton.before(pdfDarkButton);
+  /** The pages' colours (PDF_MODES), remembered per viewer and site theme: unset, Dark paper in a dark theme, else
+   * Original (an older viewer's dark switch as Invert or Original). Each page's paper then reads as light or dark. */
+  const PDF_MODES = [['original', 'Original'], ['invert', 'Invert'], ['dark', 'Dark paper'], ['dim', 'Dim'], ['sepia', 'Sepia']];
+  const pdfModeLabel = Object.assign(document.createElement('label'), { className: 'pdf-mode', title: 'How the pages are coloured: Dark paper keeps the hues and the images, Invert flips them, Dim and Sepia soften them' });
+  pdfModeLabel.innerHTML = `<span class="muted">Colours</span> <select id="pdf-mode" class="small">${PDF_MODES.map(([k, t]) => `<option value="${k}">${t}</option>`).join('')}</select>`;
+  pdfFollowButton.before(pdfModeLabel);
+  const pdfModeSelect = $('pdf-mode');
   const siteDark = () => { const t = document.documentElement.dataset.theme; return t ? t === 'dark' : matchMedia('(prefers-color-scheme: dark)').matches; };
-  const darkState = () => {
+  const pdfModeKey = () => `satex-pdf-mode-${siteDark() ? 'dark' : 'light'}`;
+  var pdfMode = 'original';
+  const pdfModeState = () => {
     let v = null;
-    try { v = localStorage.getItem('satex-pdf-dark'); } catch {}
-    const dark = v ? v === 'on' : siteDark(), pane = $('play-pdf');
-    pane.classList.toggle('pdf-night', v === 'on'); pane.classList.toggle('pdf-day', v === 'off');
-    pdfDarkButton.setAttribute('aria-pressed', String(dark)); pdfDarkButton.textContent = dark ? '☾' : '☀'; pdfDarkButton.title = `Dark PDF: ${dark ? 'on' : 'off'}`;
+    try { v = localStorage.getItem(pdfModeKey()) ?? { on: 'invert', off: 'original' }[localStorage.getItem('satex-pdf-dark')]; } catch {}
+    pdfMode = PDF_MODES.some(([k]) => k === v) ? v : siteDark() ? 'dark' : 'original';
+    $('play-pdf').dataset.pdfMode = pdfModeSelect.value = pdfMode;
+    pdfBody.querySelectorAll('.pdf-page').forEach(pdfPaperMark);
   };
-  darkState();
-  pdfDarkButton.onclick = (e) => {
-    e.preventDefault();
-    try { localStorage.setItem('satex-pdf-dark', pdfDarkButton.getAttribute('aria-pressed') === 'true' ? 'off' : 'on'); } catch {}
-    darkState();
-  };
+  pdfModeSelect.onchange = () => { try { localStorage.setItem(pdfModeKey(), pdfModeSelect.value); } catch {} pdfModeState(); };
+  matchMedia('(prefers-color-scheme: dark)').addEventListener('change', pdfModeState);
+  new MutationObserver(pdfModeState).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+  pdfModeState();
   /** A build's download asks first, once: the answer stays with this viewer. */
   addEventListener('click', (e) => {
     const a = e.target instanceof Element ? e.target.closest('#play-pdf a[download]') : null;
@@ -6256,20 +6261,30 @@
     if (!img || pdf.slice) return;
     const [w, h] = pageSize(img), r = img.getBoundingClientRect(), page = +img.parentElement.dataset.page;
     const x = (e.clientX - r.left) / r.width * w, y = (e.clientY - r.top) / r.height * h;
-    const folio = pdfFolio(page, x, y, h);
-    if (folio) return pageNumbersAt(...folio);
     // the header or footer band: text the document writes there types as anywhere, the rest (empty space, a running
-    // title the class sets) opens the Page layout widget's header and footer at the field of the click's third
+    // title the class sets) opens the Page layout widget's header and footer at the field of the click's third; in
+    // Type mode the footer's generated text and empty space type into its cell (pdfFootAt)
     // an image or drawing above the first line of text is the page's body, not its header
-    const part = !pdfSiteAt(page, x, y) && pdfBand(page, y);
+    // a page number alone on its line is the band's (pdfBand misses a letter page's foot, above its last 16 %)
+    const folio = pdfFolio(page, x, y, h), fl = pdfFootLine(page), part = !pdfSiteAt(page, x, y) && (pdfBand(page, y) || fl && y > (fl[0] + fl[1]) / 2 && 'foot' || folio && (y > h / 2 ? 'foot' : 'head'));
+    if (folio && !(pdfTyping && part === 'foot')) return pageNumbersAt(...folio);
     if (part) {
       const word = pdfWordUnder(page, x, y), own = word && pdfHeadText(word[5]);
+      if (!own && pdfTyping && part === 'foot') return pdfFootAt(page, x, word);
       if (!own) return openViews({ line: 0, character: 0 }, 'page', { part, spot: Math.min(2, Math.floor(x / w * 3)) });
       if (pdfTyping) return caretPut({ view: 'pdf', page, word }, own.file, own.line, word[5].normalize('NFKC'), pdfK(page, x, word), () => 0, () => null);
       return openPlace(own.file, { line: own.line - 1, character: 0 });
     }
     if (pdfTyping) pdfCaretAt(page, x, y); else pdfGo(page, x, y, pdfWordUnder(page, x, y));
   });
+  /** The page's footer line: its last baseline when a gap of two lines parts it from the body, in the lower quarter
+   * (a letter page's foot is above its last 16 %, where pdfBand looks); `[last, prev]` baselines, null if none. */
+  function pdfFootLine(page) {
+    const ws = pdfWordsOn(page), im = pdfImg(page), h = im?.naturalWidth ? pageSize(im)[1] : Infinity;
+    if (ws.length < 2) return null;
+    const last = Math.max(...ws.map((w) => w[4])), prev = Math.max(...ws.filter((w) => w[4] < last - 1).map((w) => w[4]));
+    return prev > -Infinity && last - prev > 24 && last > h * 0.75 ? [last, prev] : null;
+  }
   /** 'head' or 'foot' when `y` is above the page's first line or below its last, or on that line when a gap wider
    * than two lines parts it from the body (headsep, footskip); null in the body. */
   function pdfBand(page, y) {
@@ -6296,10 +6311,10 @@
     }
     return null;
   }
-  /** A page's number clicked (a lone numeral in the head or foot of a page `h` high): the page's first source place, as [file, line]. */
+  /** A page's number clicked (a lone numeral in the top or bottom fifth of a page `h` high, a letter page's foot at 83 %): the page's first source place, as [file, line]. */
   function pdfFolio(page, x, y, h) {
     const word = pdfWordUnder(page, x, y), t = word?.[5].trim();
-    if (!t || !/^(\d+|[ivxlcdm]+|[IVXLCDM]+|[a-zA-Z])$/.test(t) || (word[2] > h * 0.15 && word[4] < h * 0.85)) return null;
+    if (!t || !/^(\d+|[ivxlcdm]+|[IVXLCDM]+|[a-zA-Z])$/.test(t) || (word[2] > h * 0.18 && word[4] < h * 0.8)) return null;
     if (pdfWordsOn(page).some((w) => w !== word && Math.abs(w[4] - word[4]) < 2)) return null;
     const b = (pdf.boxes ?? []).filter((b) => b.page === page && /\.tex$/.test(b.file)).sort((p, q) => p.y - q.y)[0];
     return b ? [b.file, b.line] : [null, Infinity];
@@ -6403,7 +6418,7 @@
     const e = pdfErased, img = e && pdfImg(e.page);
     if (!img?.naturalWidth || (img.__build ?? pdf) !== e.build) { pdfErased = null; return; }
     const [w, h] = pageSize(img);
-    img.parentElement.insertAdjacentHTML('beforeend', PE.bands(e.words).map((b) => `<span class="pdf-echo pdf-erased" style="${pdfPlace((b.l - 0.5) / w, (b.t - 0.5) / h, (b.r - b.l + 1) / w, (b.d - b.t + 2) / h)}"></span>`).join(''));
+    pdfUnder(img.parentElement, PE.bands(e.words).map((b) => `<span class="pdf-echo pdf-erased" style="${pdfPlace((b.l - 0.5) / w, (b.t - 0.5) / h, (b.r - b.l + 1) / w, (b.d - b.t + 2) / h)};background:${pdfRgb(pdfColours(img, b.l - 12, b.t, b.r + 12, b.d)?.paper)}"></span>`).join(''));
   }
   document.addEventListener('copy', (e) => {
     if (!pdfSel || pdfSel.of !== pdf?.wordList || getSelection()?.toString() || !(document.activeElement === pdfTypeIn || document.activeElement === document.body)) return;
@@ -7169,6 +7184,7 @@
       if (el) el.dataset.ovKey = key;
     }
   }
+  var pdfTintsOf = null;
   function pdfOverlayBuild(put) {
     const size = (page) => { const img = /** @type {HTMLImageElement | null} */ (pdfBody.querySelector(`.pdf-page[data-page="${page}"] img`)); return img?.naturalWidth ? pageSize(img) : null; };
     /** A box in bp on `page`, as an overlay element of class `cls`. */
@@ -7243,8 +7259,11 @@
     }
     // the words not written where they are set, tinted by where typing would go (the origins layer)
     if (pdfOverlayOn.origins) {
-      const tints = [];
-      for (const r of typesetRows ?? []) {
+      // while the pages lag the text (typing, the echo shows) the tints stay those of the text they were built from,
+      // moved with the echo (pdfRelay): the new text's runs found among the old page's words would land astray
+      const lag = pdfBuiltText(pdf) != null && pdfBuiltText(pdf) !== editor.text(), kept = lag && pdfTintsOf?.pdf === pdf;
+      const tints = kept ? [...pdfTintsOf.tints] : [];
+      for (const r of kept ? [] : typesetRows ?? []) {
         if (!r.sites) continue;
         const chars = rowOrigins(r), runs = originRuns(chars);
         if (!runs.length) continue;
@@ -7268,6 +7287,7 @@
           }
         }
       }
+      if (!lag) pdfTintsOf = { pdf, tints };
       // one tint per spot: a word set inside a wider run (an argument in its macro's text) keeps its own
       pdfOriginKinds = tints.map((q) => q.kind);
       for (const q of PE.apart(tints)) if (pdfShown('origins', 'kind', q.kind)) box(q.page, `pdf-orig pdf-orig-${q.kind}`, q.l, q.t, q.r, q.d, q.title);
@@ -7364,7 +7384,7 @@
   async function pdfWrite(target, node, body, how) {
     if (uri() !== target) return false;
     const v = version;
-    const r = await lsp('satex/dialogApply', { textDocument: { uri: target }, kind: 'snapshot', nodes: [{ ...node, body }] }).catch((e) => ({ notes: [String(e?.message ?? e)] }));
+    const r = await lsp('satex/dialogApply', { textDocument: { uri: target }, kind: 'snapshot', nodes: Array.isArray(node) ? node : [{ ...node, body }] }).catch((e) => ({ notes: [String(e?.message ?? e)] }));
     // the text moved on during the round trip: null, the caller may print again
     if (uri() !== target || version !== v) return uri() === target ? null : false;
     if (!r?.edits?.length) { if (r?.notes?.length) toast(r.notes.join('; ')); return false; }
@@ -8051,7 +8071,7 @@
       return;
     }
     // a click between lines or in the margin: say why no caret came
-    if (!word) return toast('No text here. Click a word to type', 1600);
+    if (!word) return pdfBlankAt(page, x, y);
     const hit = pdfSource(page, x, y, word);
     if (!hit) return typeHint();
     // the same words before it on the page set from line n
@@ -8171,6 +8191,107 @@
     pdfTypeIn.focus({ preventScroll: true });
     pdfCaretDraw();
     return true;
+  }
+  /** A click in the footer band of page `page` in Type mode (at `x`; `word` the one under it, generated text): a
+   * caret in the cell of the click's third of the text block. The call that sets the cell takes it (before or after
+   * its page number where that was clicked); with none, the first key writes the footer (views.ts `footSetup`) in one
+   * snapshot write, and a note names it with Undo. The cell's text is drawn as typed (pdfFootDraw). */
+  async function pdfFootAt(page, x, word) {
+    const img = pdfImg(page), root = pdf.root ?? state.root ?? state.file;
+    if (!img?.naturalWidth) return;
+    if (root !== state.file) await openPlace(root);
+    if (root !== state.file) return toast(`${root} cannot be opened here`);
+    const s = await pageSection();
+    if (!s) return toast('The analysis has not read the page layout yet: click again once it ran');
+    const [pw, ph] = pageSize(img), block = pdfBlocks().get(page), area = self.satexViews.page.textArea(s);
+    const l = block?.l ?? area?.left ?? pw * 0.2, r = block?.r ?? area?.right ?? pw * 0.8, third = (v) => (v < l + (r - l) / 3 ? 0 : v > r - (r - l) / 3 ? 2 : 1);
+    // the footer's line: the page's last baseline when two lines' gap parts it from the body (pdfBand's)
+    const ws = pdfWordsOn(page), fl = pdfFootLine(page), band = fl ? ws.filter((w) => Math.abs(w[4] - fl[0]) < 1) : [];
+    const spot = third(x), cell = band.filter((w) => third((w[1] + w[3]) / 2) === spot), ref = cell[0] ?? band[0] ?? word ?? ws.at(-1);
+    if (!ref) return;
+    const num = band.map((w) => w[5].trim()).find((t) => /^(\d+|[ivxlcdm]+|[IVXLCDM]+)$/.test(t)) ?? String(page), font = pdfFontOf(img, ref);
+    const pkg0 = s.header?.package ?? null, letterOf = (p) => (p === 'scrlayer-scrpage' ? 'ico' : 'LCR')[spot], text = editor.text();
+    const setup = self.satexViews.page.footSetup(s, spot, !!pkg0 && !!PE.footArg(text, pkg0, letterOf(pkg0)));
+    // the number clicked: the caret before or after its command, else at the cell's end
+    const onNum = word && cell.includes(word) && word[5].trim() === num, after = onNum && pdfK(page, x, word) > 0;
+    const place = (t) => {
+      const a = PE.footArg(t, setup.package, setup.letter), n = a && /\\(?:thepage|pagemark)(?![A-Za-z@])(?:\{\})?/.exec(t.slice(...a));
+      return !a ? null : onNum && n ? a[0] + n.index + (after ? n[0].length : 0) : a[1];
+    };
+    const home = $('play-pdf');
+    if (pdfTypeIn.parentElement !== home) home.append(pdfTypeIn);
+    const foot = { pkg: setup.package, letter: setup.letter, spot, l, r, base: band[0] ? font.base : area?.foot ?? ref[4], num, font, cover: cell, shown: cell.map((w) => w[5]).join(' '), k: after ? 99 : 0 };
+    const c = pdfCaret = { view: 'pdf', page, word: ref, foot, file: state.file, target: uri(), anchor: null, at: 0, v: version };
+    const say = (t, before) => { const a = PE.footArg(t, setup.package, setup.letter); typeNote(c, `Footer set with ${escape(setup.package)} (line ${a ? pdfPos(t, a[0]).line + 1 : '?'})`, [], before, () => {}); };
+    if (!setup.nodes.length) { c.at = place(text) ?? 0; pdfNote(null); }
+    else {
+      // nothing written yet: the first key writes the footer, then goes into its cell
+      c.blind = true;
+      typeNote(c, `Typing here sets the footer: the first key writes it with ${escape(setup.package)}${pkg0 ? '' : ' (loaded for it)'}.`, [], text, () => {});
+      c.pending = async () => {
+        const before = editor.text();
+        if (pdfCaret !== c) return;
+        const ok = await pdfWrite(uri(), setup.nodes, null, { userEvent: 'input.type' });
+        const at = ok && pdfCaret === c ? place(editor.text()) : null;
+        if (at == null) { if (pdfCaret === c) pdfCaretOff(); return; }
+        Object.assign(c, { blind: false, at, v: version });
+        say(editor.text(), before);
+      };
+    }
+    pdfTypeIn.focus({ preventScroll: true });
+    pdfCaretDraw();
+  }
+  /** The footer cell caret `c` types in (`c.foot`): its text as now written over the cell, in the page's font, aligned
+   * to the text block's left edge, middle or right edge as the cell is; the caret after the text up to it. */
+  function pdfFootDraw(c) {
+    const img = pdfImg(c.page), f = c.foot;
+    if (!img?.naturalWidth) return;
+    const [pw, ph] = pageSize(img), g = pdfSeen(), arg = !c.blind && PE.footArg(g.text, f.pkg, f.letter);
+    const all = arg ? PE.footShown(g.text.slice(...arg), f.num) : f.shown, upto = arg ? PE.footShown(g.text.slice(arg[0], Math.min(Math.max(g.at, arg[0]), arg[1])), f.num) : f.shown.slice(0, f.k);
+    const px = img.getBoundingClientRect().height / ph, ctx = pdfEchoCtx ??= document.createElement('canvas').getContext('2d'), size = f.font.size;
+    ctx.font = `${size}px ${f.font.family}`;
+    const width = (t) => pdfTextWidth(ctx, f.font, t, size), W = width(all), x0 = f.spot === 0 ? f.l : f.spot === 2 ? f.r - W : (f.l + f.r - W) / 2;
+    const top = f.base - 0.75 * size, cov = f.cover, a = Math.min(x0, ...cov.map((w) => w[1])) - 1, b = Math.max(x0 + W, ...cov.map((w) => w[3])) + 1;
+    // the cell as the page set it hidden while it differs, the text as written over it
+    if (arg && (all !== f.shown || cov.length)) img.parentElement.insertAdjacentHTML('beforeend', `<span class="pdf-echo" style="left:${a / pw * 100}%;top:${(top - 1) / ph * 100}%;width:${(b - a) / pw * 100}%;height:${(size + 2) / ph * 100}%;font:${size * px}px/1 ${f.font.family}"><i style="left:${(x0 - a) / (b - a) * 100}%;width:${W / (b - a) * 100}%">${escape(all)}</i></span>`);
+    img.parentElement.insertAdjacentHTML('beforeend', `<span class="pdf-caret" style="left:${(x0 + width(upto)) / pw * 100}%;top:${top / ph * 100}%;height:${size / ph * 100}%"></span>`);
+  }
+  /** A click on empty page space in Type mode (PE.blankPlace over the page's lines): a line's end or start, the
+   * nearest word, or a new paragraph the first key writes (a blank line), a ghost caret where its first line would
+   * start. A float's or an image's space is its widget's. */
+  async function pdfBlankAt(page, x, y) {
+    const site = pdfSiteAt(page, x, y);
+    if (site) return toast(`Inside ${site.kind === 'float' ? 'a float' : `this ${site.kind}`}: double-click to open its widget`, 2200);
+    const fl = pdfFootLine(page), ws = pdfWordsOn(page).filter((w) => !fl || Math.abs(w[4] - fl[0]) >= 1), block = pdfBlocks().get(page), rows = [];
+    // the page's lines: its words by baseline in the text block, each with the source line SyncTeX sets its first word from
+    for (const [, line] of Map.groupBy(ws.filter((w) => !block || w[4] >= block.t - 2 && w[2] <= block.d + 2), (w) => Math.round(w[4]))) {
+      const words = line.sort((p, q) => p[1] - q[1]), w0 = words[0], src = pdfSource(page, w0[1] + 1, w0[4] - 1, w0);
+      if (src) rows.push({ t: Math.min(...words.map((w) => w[2])), d: Math.max(...words.map((w) => w[4])), base: w0[4], l: w0[1], r: words.at(-1)[3], line: src.line, file: src.file, words });
+    }
+    if (!rows.length) return toast('No text here. Click a word to type', 1600);
+    const mid = (r) => Math.abs((r.t + r.d) / 2 - y), near = rows.reduce((m, r) => (mid(r) < mid(m) ? r : m)), mine = rows.filter((r) => r.file === near.file);
+    if (near.file !== state.file) await openPlace(near.file, { line: near.line - 1, character: 0 });
+    if (near.file !== state.file) return toast(`${near.file} cannot be opened here`);
+    const p = PE.blankPlace(editor.text(), mine, x, y);
+    if (!p) return toast('No text here. Click a word to type', 1600);
+    if (p.kind !== 'new') {
+      const ws2 = mine[p.row].words, w = p.kind === 'end' ? ws2.at(-1) : p.kind === 'start' ? ws2[0] : ws2.reduce((m, v) => (Math.abs((v[1] + v[3]) / 2 - x) < Math.abs((m[1] + m[3]) / 2 - x) ? v : m));
+      return pdfCaretAt(page, p.kind === 'end' ? w[3] - 0.05 : p.kind === 'start' ? w[1] + 0.2 : Math.min(Math.max(x, w[1] + 0.2), w[3] - 0.05), (w[2] + w[4]) / 2);
+    }
+    const home = $('play-pdf');
+    if (pdfTypeIn.parentElement !== home) home.append(pdfTypeIn);
+    // the line before the new paragraph carries the caret once it is written (pdfTypeDraw's new paragraph)
+    const prev = [...mine].sort((a, b) => a.base - b.base).findLast((r) => r.base < p.ghost.base) ?? mine[0];
+    const c = pdfCaret = { view: 'pdf', page, word: prev.words.at(-1), file: state.file, target: uri(), anchor: null, at: p.at, blind: true, ghost: p.ghost, v: version };
+    c.pending = async () => {
+      const now = editor.text();
+      if (pdfCaret !== c) return;
+      editor.apply([{ range: { start: pdfPos(now, p.at), end: pdfPos(now, p.at) }, newText: p.body }], { userEvent: 'input.type' });
+      Object.assign(c, { blind: false, ghost: null, at: p.caret, v: version });
+    };
+    pdfNote(null);
+    pdfTypeIn.focus({ preventScroll: true });
+    pdfCaretDraw();
   }
   /** The menu of a contents list's dot leaders (`kind`: toc, lof, lot) at a point of page `page`: no dots, wider or
    * closer dots, no page numbers. Each writes one line (PE.leaders) through the snapshot printer, tocloft's loaded
@@ -8505,13 +8626,15 @@
    * the answer came (the echo is drawn again then) or where TeX breaks where the echo has no piece. */
   const pdfBreakAsked = new Map();
   function pdfTexBreaks(words, tagged, later, indent, line) {
+    if (self.__noTexBreaks) return null;
     const params = { textDocument: { uri: uri(state.root ?? state.file) }, path: uri(state.file), line, words, indent: Math.abs(indent) < 0.5 ? 0 : Math.round(indent * 65536 * 72.27 / 72) };
     const key = JSON.stringify([params.path, line, params.indent, words]);
     if (!pdfBreakAsked.has(key)) {
       if (pdfBreakAsked.size > 64) pdfBreakAsked.clear();
       pdfBreakAsked.set(key, null);
       const at = version;
-      lsp('satex/break', params).then((r) => { pdfBreakAsked.set(key, r?.lines ?? false); if (r?.lines && version === at) pdfCaretDrawNow(); }).catch(() => pdfBreakAsked.set(key, false));
+      const t0 = performance.now(), during = running > 0;
+      lsp('satex/break', params).then((r) => { (self.__texBreaks ??= []).push({ ms: Math.round(performance.now() - t0), during, lines: r?.lines?.length ?? null }); pdfBreakAsked.set(key, r?.lines ?? false); if (r?.lines && version === at) pdfCaretDrawNow(); }).catch(() => pdfBreakAsked.set(key, false));
     }
     const lines = pdfBreakAsked.get(key);
     if (!lines) return null;
@@ -8790,6 +8913,7 @@
         }
       }
       for (const r of rows) pdfEchoPaint(r);
+      pdfRelay();
     }
     const img = page(w[0]), [pw, ph] = pageSize(img);
     c.page = w[0];
@@ -8832,17 +8956,18 @@
   function pdfEchoPush(img, top, dy) {
     // the same push as the key before: its canvases again (a page-sized repaint a key was most of the echo's cost)
     const page = +img.parentElement.dataset.page, next = pdfImg(page + 1), key = `${img.currentSrc}|${next?.currentSrc}|${top}|${dy}`;
-    if (pdfPushWas?.key === key) { for (const [host, cv] of pdfPushWas.cvs) host.append(cv); return; }
+    pdfPushed = { page, top, dy, foot: (pdfBlock(page)?.d ?? pageSize(img)[1]) + 1 };
+    if (pdfPushWas?.key === key) { for (const [host, cv] of pdfPushWas.cvs) pdfUnder(host, cv); return; }
     const cvs = [], band = (im, from, to, paint) => {
       const [pw, ph] = pageSize(im), k = im.naturalWidth / pw, W = im.naturalWidth, H = Math.ceil((to - from) * k);
       if (H <= 0) return;
       const cv = Object.assign(document.createElement('canvas'), { width: W, height: H, className: 'pdf-echo pdf-push' }), g = cv.getContext('2d');
-      g.fillStyle = '#fff';
+      g.fillStyle = pdfRgb(pdfColours(im, 0, from, pageSize(im)[0], Math.min(to, from + 40))?.paper);
       g.fillRect(0, 0, W, H);
       // `src` from y `a` to `b` (its page's bp) drawn at `y` of this band
       paint((src, a, b, y) => { const kk = src.naturalWidth / pageSize(src)[0]; if (b > a) g.drawImage(src, 0, a * kk, src.naturalWidth, (b - a) * kk, 0, (y - from) * k, W, (b - a) * k); });
       cv.style.cssText = `left:0;top:${from / ph * 100}%;width:100%;height:${(to - from) / ph * 100}%`;
-      im.parentElement.append(cv);
+      pdfUnder(im.parentElement, cv);
       cvs.push([im.parentElement, cv]);
     };
     const blk = pdfBlock(page), foot = blk ? blk.d + 1 : pageSize(img)[1];
@@ -8870,9 +8995,11 @@
     const x1 = Math.max(x0, ...out.map((q) => q.x + q.n), ...row.map((t) => t.w[3])) + 1;
     const cv = document.createElement('canvas'), W = Math.ceil((x1 - x0) * k), H = Math.ceil((bot - top) * k), cg = cv.getContext('2d');
     Object.assign(cv, { width: W, height: H, className: 'pdf-echo' });
-    cg.fillStyle = '#fff';
+    // the page's own paper and ink about the row (a coloured page, a \\colorbox, coloured text)
+    const hue = pdfColours(img, x0 - 12, band[0], x1 + 12, band[1]);
+    cg.fillStyle = pdfRgb(hue?.paper);
     cg.fillRect(0, (band[0] - top) * k, W, (band[1] - band[0]) * k);
-    cg.fillStyle = '#000';
+    cg.fillStyle = pdfRgb(hue?.ink, '#000');
     cg.font = `${f.size * k}px ${f.family}`;
     for (const q of out) {
       // text as wide as laid out (`n`): glyphs the face lacks are drawn in the fallback, stretched to the page's width
@@ -8884,19 +9011,118 @@
         const src = pdfImg(q.w[0]) ?? img, base = (w ?? n ?? q.w)[4], sx = q.w[1] * k - 1, sw = (q.w[3] - q.w[1]) * k + 2, sy = q.w[2] - 1, sh = (q.w[4] - q.w[2] + 2.5) * k;
         // a raised mark (a \\thanks ∗, a footnote's number) keeps its height over the baseline of the row it rode
         cg.drawImage(src, sx, sy * k, sw, sh, (q.x - x0) * k - 1, (sy + base - (q.ride ?? q.w[4]) - top) * k, sw, sh);
+        pdfMoved.push({ from: q.w, page: +img.parentElement.dataset.page, dx: q.x - q.w[1], dy: base - (q.ride ?? q.w[4]) });
       }
     }
+    const typed = out.filter((q) => q.w == null);
+    if (typed.length) pdfPainted.push({ page: +img.parentElement.dataset.page, x0, t: band[0], d: band[1], end: Math.max(...typed.map((q) => q.x + q.n)) });
     cv.style.cssText = `left:${x0 / pw * 100}%;top:${top / ph * 100}%;width:${(x1 - x0) / pw * 100}%;height:${(bot - top) / ph * 100}%`;
-    img.parentElement.append(cv);
+    pdfUnder(img.parentElement, cv);
+  }
+  /** Page image `img`'s colours over `l..r` x `t..d` (bp), each `[r, g, b]`: `paper` the commonest, `ink` the commonest
+   * of those far from it (the text's own colour). Colours bin by 16 a channel, a bin's colour its pixels' mean; a
+   * region larger than `max` px a side is scaled down first. Null where the page cannot be read. */
+  function pdfColours(img, l, t, r, d, max = 0) {
+    try {
+      const k = img.naturalWidth / pageSize(img)[0], sx = Math.max(0, Math.floor(l * k)), sy = Math.max(0, Math.floor(t * k));
+      const sw = Math.min(img.naturalWidth - sx, Math.ceil((r - l) * k)), sh = Math.min(img.naturalHeight - sy, Math.ceil((d - t) * k));
+      if (sw <= 0 || sh <= 0) return null;
+      const s = max && Math.max(sw, sh) > max ? max / Math.max(sw, sh) : 1, dw = Math.ceil(sw * s), dh = Math.ceil(sh * s);
+      const c = pdfInkCanvas ??= document.createElement('canvas'), g = c.getContext('2d', { willReadFrequently: true });
+      Object.assign(c, { width: dw, height: dh });
+      g.drawImage(img, sx, sy, sw, sh, 0, 0, dw, dh);
+      const px = g.getImageData(0, 0, dw, dh).data, bins = new Map();
+      for (let p = 0; p < px.length; p += 4) {
+        const key = (px[p] >> 4) << 8 | (px[p + 1] >> 4) << 4 | px[p + 2] >> 4, b = bins.get(key);
+        if (b) { b[0]++; b[1] += px[p]; b[2] += px[p + 1]; b[3] += px[p + 2]; } else bins.set(key, [1, px[p], px[p + 1], px[p + 2]]);
+      }
+      const all = [...bins.values()].map(([n, R, G, B]) => [n, [R / n, G / n, B / n].map(Math.round)]).sort((a, b) => b[0] - a[0]), paper = all[0][1];
+      const far = (q) => Math.hypot(q[0] - paper[0], q[1] - paper[1], q[2] - paper[2]), reach = Math.max(...all.map(([, q]) => far(q)));
+      return { paper, ink: reach > 60 ? all.find(([, q]) => far(q) >= 0.7 * reach)[1] : null };
+    } catch { return null; } // a page that cannot be read (tainted, not decoded): white paper, black ink
+  }
+  function pdfRgb(q, none = '#fff') { return q ? `rgb(${q.join(' ')})` : none; }
+  /** Echo `el` (an element or HTML) into page `host` under its overlays: after the page image, its rasters and the
+   * echo drawn before it, so tints, highlights and marks stay over the echoed row. */
+  function pdfUnder(host, el) {
+    const at = [...host.querySelectorAll(':scope > img, :scope > .pdf-raster, :scope > .pdf-echo')].at(-1);
+    if (typeof el !== 'string') return at ? at.after(el) : host.prepend(el);
+    if (at) at.insertAdjacentHTML('afterend', el); else host.insertAdjacentHTML('afterbegin', el);
+  }
+  /** What the echo moved this draw: page words (`from`, to `page` moved `dx`, `dy` bp), the rows it typed into (`x0`,
+   * band `t..d`, typed text up to `end`), the block it pushed (pdfEchoPush). */
+  var pdfMoved = [], pdfPainted = [], pdfPushed = null;
+  const PDF_RELAY = ':scope > :not(img, canvas, .pdf-caret, .pdf-echo, .pdf-raster, .pdf-relaid, .pdf-grid, .pdf-keys)';
+  /** The overlays on what the echo moved, laid where it set it: one over moved words goes with them (to their new
+   * row or page too, one copy per row), one reaching into the typed text ends where that text ends (or moves with the
+   * word it ends in), one below a pushed block moves with it (past the text's foot it hides). Taller ones (an
+   * environment, a figure) stay. The page's own hide until the next draw. */
+  function pdfRelay() {
+    const pages = new Set([...pdfMoved.map((m) => m.from[0]), ...pdfPainted.map((r) => r.page), ...(pdfPushed ? [pdfPushed.page] : [])]);
+    const put = (el, pg, l, t, r, d) => {
+      const img = pdfImg(pg), [pw, ph] = pageSize(img), c = el.cloneNode(true);
+      c.classList.add('pdf-relaid');
+      delete c.dataset.ovKey;
+      Object.assign(c.style, { left: `${l / pw * 100}%`, top: `${t / ph * 100}%`, width: `${Math.max(0.5, r - l) / pw * 100}%`, height: `${(d - t) / ph * 100}%` });
+      img.parentElement.append(c);
+    };
+    for (const pg of pages) {
+      const img = pdfImg(pg);
+      if (!img?.naturalWidth) continue;
+      const [pw, ph] = pageSize(img);
+      for (const el of img.parentElement.querySelectorAll(PDF_RELAY)) {
+        const st = el.style;
+        if (!st.left.endsWith('%') || !st.top.endsWith('%')) continue;
+        const l = parseFloat(st.left) / 100 * pw, t = parseFloat(st.top) / 100 * ph, r = l + (parseFloat(st.width) || 0) / 100 * pw, d = t + (parseFloat(st.height) || 0) / 100 * ph;
+        if (d - t > 30) continue;
+        const row = (m) => m.from[0] === pg && m.from[2] < d && m.from[4] > t, on = pdfMoved.filter((m) => row(m) && m.from[1] < r - 0.5 && m.from[3] > l + 0.5);
+        // reaching into the text typed: left of the first word the change kept on that row
+        const tr = pdfPainted.find((q) => q.page === pg && q.t < d && q.d > t && r > q.x0 + 0.5), P = pdfPushed, stays = (m) => m.page === pg && Math.abs(m.dy) < 1;
+        const typed = tr && l < Math.min(Infinity, ...pdfMoved.filter((m) => row(m) && m.from[1] >= tr.x0 - 0.5).map((m) => m.from[1])) - 0.5 ? tr : null;
+        if (on.length) {
+          const lo = Math.min(...on.map((m) => m.from[1])), hi = Math.max(...on.map((m) => m.from[3]));
+          for (const g of Map.groupBy(on, (m) => `${m.page} ${Math.round(m.dy * 4)}`).values()) {
+            const a = g.reduce((p, q) => q.from[1] < p.from[1] ? q : p), b = g.reduce((p, q) => q.from[3] > p.from[3] ? q : p);
+            put(el, a.page, a.from[1] !== lo ? a.from[1] + a.dx : typed && stays(a) ? l : l + a.dx, t + a.dy, (b.from[3] === hi ? r : b.from[3]) + b.dx, d + a.dy);
+          }
+          if (typed && !on.some(stays)) put(el, pg, l, t, typed.end + 0.5, d);
+        } else if (typed) {
+          // the word the overlay ends before, moved on its row: the overlay ends as far before it
+          const next = pdfMoved.filter((m) => row(m) && m.from[1] >= r - 0.5 && stays(m)).sort((p, q) => p.from[1] - q.from[1])[0];
+          put(el, pg, l, t, next ? r + next.dx : Math.max(r, typed.end + 0.5), d);
+        } else if (P && P.page === pg && t >= P.top - 0.5 && d <= P.foot) { if (d + P.dy <= P.foot) put(el, pg, l, t + P.dy, r, d + P.dy); }
+        else continue;
+        el.classList.add('pdf-relay-hid');
+      }
+    }
+  }
+  /** Page `el`'s raster images (tex.ts `rastersOf`, bp) as patches of its own pixels: Dark paper shows them unfiltered. */
+  function pdfRastersDraw(el, img, rects) {
+    el.querySelectorAll(':scope > .pdf-raster').forEach((r) => r.remove());
+    const [pw, ph] = pageSize(img);
+    img.after(...rects.map(([l, t, r, d]) => [Math.max(0, l), Math.max(0, t), Math.min(pw, r), Math.min(ph, d)]).filter(([l, t, r, d]) => r - l > 4 && d - t > 4).map(([l, t, r, d]) => {
+      const s = document.createElement('span');
+      s.className = 'pdf-raster';
+      s.style.cssText = `${pdfPlace(l / pw, t / ph, (r - l) / pw, (d - t) / ph)};background:url('${img.currentSrc || img.src}') ${l / Math.max(0.1, pw - (r - l)) * 100}% ${t / Math.max(0.1, ph - (d - t)) * 100}% / ${pw / (r - l) * 100}% ${ph / (d - t) * 100}% no-repeat`;
+      return s;
+    }));
+  }
+  /** Page `el`'s paper as the pane shows it, light or dark (`data-paper`): its overlays take the colours that read on it.
+   * The paper is the page image's commonest colour (a \\pagecolor's too), then as the mode turns it. */
+  function pdfPaperMark(el) {
+    const img = el.querySelector(':scope > img');
+    if (img?.naturalWidth && !img.__paper) { const [pw, ph] = pageSize(img); img.__paper = pdfColours(img, 0, 0, pw, ph, 96)?.paper ?? [255, 255, 255]; }
+    const [R, G, B] = img?.__paper ?? [255, 255, 255], L = (0.2126 * R + 0.7152 * G + 0.0722 * B) / 255;
+    el.dataset.paper = (pdfMode === 'invert' || pdfMode === 'dark' ? L > 0.5 : L * (pdfMode === 'dim' ? 0.72 : 1) < 0.45) ? 'dark' : 'light';
   }
   /** Typed text `from..to` as PE.reflow's pieces: its words in the page's font (`width`, word space `gap`), each formula
-   * one piece laid out as math (PE.mathLaid) in fonts `M`, a display one standing on a row of its own. */
+   * one piece laid out as math (mathlayout.ts) in fonts `M`, a display one standing on a row of its own. */
   function pdfPieces(text, from, to, verb, width, gap, M) {
     const out = [];
     for (const r of verb ? [{ s: from, e: to, kind: '' }] : PE.mathRuns(text, from, to)) {
       if (r.kind) {
         // TeX's space about a display (about an em at 10pt), more for a formula taller or deeper than a line
-        const box = PE.mathLaid(text.slice(r.b, r.be), M.width, r.kind === 'display'), em = M.em;
+        const box = self.satexMath.layout(text.slice(r.b, r.be), M.metric, r.kind === 'display'), em = M.em;
         out.push({ gap: 0, n: box.w * em, math: box, M, ...(r.kind === 'display' ? { disp: (0.8 + Math.max(0, box.h - 0.7)) * em, below: (0.8 + Math.max(0, box.d - 0.25)) * em } : {}) });
         continue;
       }
@@ -8910,7 +9136,8 @@
   /** The fonts typed math is previewed in over page image `img`, its text in font `f` (pdfFontOf): per glyph the page's
    * own face where a run of a shown page is set in it and its subset holds the glyph (math italic, symbols, bold:
    * CMMI, CMSY, CMBX by pdf.js's names, Latin Modern's), else a fallback scaled to the page font's x-height.
-   * `font(face, t, px)` the canvas font, `width(t, face)` at 1 em, `em` the text's size in bp. Once per image and font. */
+   * `font(face, t, px)` the canvas font, `metric(t, face)` its ink's width, height and depth at 1 em, `em` the text's
+   * size in bp. Once per image and font. */
   const PDF_ECHO_FONT = "'Latin Modern Roman', 'CMU Serif', 'Computer Modern', Georgia, serif";
   const PDF_MATH_FONT = `'Latin Modern Math', 'STIX Two Math', 'Cambria Math', 'STIXGeneral', ${PDF_ECHO_FONT}`, pdfMathFor = new WeakMap();
   let pdfMathCtx = null;
@@ -8926,14 +9153,15 @@
     const font = (face, t, px) => {
       const o = own[face];
       if (o && [...t].every((c) => pdfHas(ctx, o, c))) return `${px}px ${o}`;
-      return face === 'sy' ? `${px * fit.sy}px ${PDF_MATH_FONT}` : `${face === 'it' ? 'italic ' : face === 'bf' ? 'bold ' : ''}${px * fit.rm}px ${PDF_ECHO_FONT}`;
+      // the math font's alphabets (`ms`: \\mathbb, \\mathcal) only in the fallback
+      return face === 'sy' || face === 'ms' ? `${px * fit.sy}px ${PDF_MATH_FONT}` : `${face === 'it' ? 'italic ' : face === 'bf' ? 'bold ' : ''}${px * fit.rm}px ${PDF_ECHO_FONT}`;
     };
-    const width = (t, face) => {
+    const metric = (t, face) => {
       const m = `${face} ${t}`;
-      if (!memo.has(m)) { ctx.font = font(face, t, 100); memo.set(m, ctx.measureText(t).width / 100); }
+      if (!memo.has(m)) { ctx.font = font(face, t, 100); const v = ctx.measureText(t); memo.set(m, [v.width / 100, v.actualBoundingBoxAscent / 100, v.actualBoundingBoxDescent / 100]); }
       return memo.get(m);
     };
-    const M = { key, own, font, width, em: f.size };
+    const M = { key, own, font, metric, em: f.size };
     pdfMathFor.set(img, M);
     return M;
   }
@@ -8941,7 +9169,12 @@
   function pdfMathPaint(cg, q, x, y, k) {
     const em = q.M.em * k;
     cg.save();
-    for (const [t, gx, gy, s, face] of q.math.g) { cg.font = q.M.font(face, t, em * s); cg.fillText(t, x + gx * em, y - gy * em); }
+    // a delimiter or radical stretched (`sy`) about its baseline
+    for (const [t, gx, gy, s, face, sy] of q.math.g) {
+      cg.font = q.M.font(face, t, em * s);
+      if (sy == null) { cg.fillText(t, x + gx * em, y - gy * em); continue; }
+      cg.save(); cg.translate(x + gx * em, y - gy * em); cg.scale(1, sy); cg.fillText(t, 0, 0); cg.restore();
+    }
     for (const [rx, ry, rw, rh] of q.math.r) cg.fillRect(x + rx * em, y - (ry + rh) * em, rw * em, Math.max(1, rh * em));
     cg.restore();
   }
@@ -8987,13 +9220,16 @@
   }
   let pdfCursorTimer = 0;
   function pdfCaretDrawNow() {
-    pdfBody.querySelectorAll('.pdf-caret, .pdf-echo').forEach((c) => c.remove());
+    pdfBody.querySelectorAll('.pdf-caret, .pdf-echo, .pdf-relaid').forEach((c) => c.remove());
+    pdfBody.querySelectorAll('.pdf-relay-hid').forEach((c) => c.classList.remove('pdf-relay-hid'));
+    pdfMoved = []; pdfPainted = []; pdfPushed = null;
     pdfErasedDraw();
     // the source editor's cursor follows the caret, scrolled into view (its focus stays in the view typed in), once
     // the keys rest: a selection moved and scrolled each key cost the editor a layout per key (10-30 ms)
     document.body.classList.toggle('type-sync', !!pdfCaret);
     clearTimeout(pdfCursorTimer);
     if (pdfCaret) pdfCursorTimer = setTimeout(() => { const c = pdfCaret; if (c && state.file === c.file && !pdfGhost && editor.cursor?.()[1] !== c.at) editor.select?.([c.at, c.at]); }, 150);
+    if (pdfCaret?.foot) return pdfFootDraw(pdfCaret);
     if (pdfCaret?.blind) return pdfBlindDraw(pdfCaret);
     if (pdfCaret?.view === 'ts') return tsCaretDraw();
     if (pdfCaret && state.file === pdfCaret.file && !pdfCaret.entry && pdfTypeDraw(pdfCaret, pdfSeen())) return pdfCaretAnchor();
@@ -9023,7 +9259,7 @@
     const typed = g.text.slice(c.anchor, Math.max(g.at, m ? m[0] + m[1].length : g.at)), into = m ? g.at - m[0] : 0, col = Math.min(shown.length, (m ? Math.max(0, shown.indexOf(now)) : 0) + into);
     let cx = verb ? w[1] + (w[3] - w[1]) / Math.max(1, shown.length) * col : pdfBounds(img, w)[col];
     // the pages lag the text: the row is laid out again at once with the text as now written, until the build lands
-    if (!set && typed !== bare(w) && !(verb && pdf?.text === g.text) && (verb || !/\\[A-Za-z@]*$/.test(g.text.slice(c.anchor, g.at)))) cx = pdfEcho(img, w, plain(typed), plain(g.text.slice(c.anchor, g.at)).length, verb) ?? cx;
+    if (!set && typed !== bare(w) && !(verb && pdf?.text === g.text) && (verb || !/\\[A-Za-z@]*$/.test(g.text.slice(c.anchor, g.at)))) { cx = pdfEcho(img, w, plain(typed), plain(g.text.slice(c.anchor, g.at)).length, verb) ?? cx; pdfRelay(); }
     img.parentElement.insertAdjacentHTML('beforeend', `<span class="pdf-caret" style="left:${cx / pw * 100}%;top:${w[2] / ph * 100}%;height:${(w[4] - w[2]) / ph * 100}%"></span>`);
     pdfCaretAnchor();
   }
@@ -9031,7 +9267,10 @@
   function pdfBlindDraw(c) {
     const img = pdfImg(c.page);
     if (!img?.naturalWidth) return;
-    const [pw, ph] = pageSize(img), w = c.word, x = pdfBounds(img, w)[Math.max(0, c.k ?? 0)] ?? w[1];
+    const [pw, ph] = pageSize(img), g = c.ghost;
+    // a new paragraph's caret: where its first line would start
+    if (g) return img.parentElement.insertAdjacentHTML('beforeend', `<span class="pdf-caret pdf-ghost" style="left:${g.x / pw * 100}%;top:${(g.base - g.h) / ph * 100}%;height:${g.h / ph * 100}%"></span>`);
+    const w = c.word, x = pdfBounds(img, w)[Math.max(0, c.k ?? 0)] ?? w[1];
     img.parentElement.insertAdjacentHTML('beforeend', `<span class="pdf-caret" style="left:${x / pw * 100}%;top:${w[2] / ph * 100}%;height:${(w[4] - w[2]) / ph * 100}%"></span>`);
   }
   /** Draws word `w`'s row with `now` in its place (its edge punctuation kept): the row's words over a patch of the
@@ -9065,9 +9304,14 @@
     // text font); the word typed into is drawn as text
     const src = (j) => dots > 0 ? null : c ? (j < before.length ? before[j] : row[j - before.length]) : row[k + j], hh = w[4] - w[2];
     const pix = (v, a, b) => `;background:url('${img.currentSrc}') ${v[1] / Math.max(0.1, pw - (b - a)) * 100}% ${w[2] / Math.max(0.1, ph - hh) * 100}% / ${pw / (b - a) * 100}% ${ph / hh * 100}% no-repeat`;
+    // what moved and what was typed, for the overlays (pdfRelay)
+    const pg = +img.parentElement.dataset.page, ti = c ? before.length + k : 0;
+    set.forEach(([a, b, t], j) => { const v = src(j); if (j !== ti && v && v !== row[k]) pdfMoved.push({ from: v, page: pg, dx: a - v[1], dy: 0 }); });
+    if (set[ti]) pdfPainted.push({ page: pg, x0: set[ti][0], t: w[2], d: w[4], end: set[ti][1] });
     const words = set.map(([a, b, t], j) => { const v = src(j), moved = v && v !== row[k] && v[5] === t && Math.abs(v[3] - v[1] - (b - a)) < 0.01;
       return `<i style="left:${(a - l) / (r - l) * 100}%;width:${(b - a) / (r - l) * 100}%${moved ? pix(v, a, b) : ''}">${moved ? `<span style="visibility:hidden">${escape(t)}</span>` : `<span style="transform:scaleX(${(b - a) / Math.max(0.1, ctx.measureText(t).width)})">${escape(t)}</span>`}</i>`; }).join('');
-    img.parentElement.insertAdjacentHTML('beforeend', `<span class="pdf-echo" style="left:${l / pw * 100}%;top:${w[2] / ph * 100}%;width:${(r - l + 1) / pw * 100}%;height:${(w[4] - w[2]) / ph * 100}%;font:${size * px}px/1 ${font}">${words}</span>`);
+    const hue = pdfColours(img, l - 12, w[2], r + 12, w[4]);
+    pdfUnder(img.parentElement, `<span class="pdf-echo" style="left:${l / pw * 100}%;top:${w[2] / ph * 100}%;width:${(r - l + 1) / pw * 100}%;height:${(w[4] - w[2]) / ph * 100}%;font:${size * px}px/1 ${font};background:${pdfRgb(hue?.paper)};color:${pdfRgb(hue?.ink, '#000')}">${words}</span>`);
     const [a, b, t] = laid[k];
     return a - c + (b - a) * width(lead + now.slice(0, into)) / Math.max(0.1, width(t));
   }
@@ -9228,6 +9472,12 @@
         c.at += step;
         pdfCaretDraw();
       });
+    } else if ((e.key === 'Backspace' || e.key === 'Delete') && pdfCaret.foot && !e.ctrlKey && !e.altKey) {
+      // a footer cell: its page number's command goes whole
+      e.preventDefault();
+      // the check lets that command go (`fresh`: read after the plan ran)
+      let num = null;
+      pdfEdit((text, at, fresh) => { num = PE.footBack(text, at, e.key === 'Backspace'); return num ? [num[0], num[1], '', 0] : PE.key(text, at, e.key, { fresh }); }, { get fresh() { return num ?? pdfCaret?.fresh ?? null; } });
     } else if (e.key === 'Backspace' || e.key === 'Delete') { e.preventDefault(); const k = e.ctrlKey || e.altKey ? `Ctrl+${e.key}` : e.key; pdfEdit((text, at, fresh) => PE.key(text, at, k, { fresh })); }
   });
   /** Typed text: once a composition (an input method) ends, never its steps. */
@@ -9815,7 +10065,7 @@
     const asked = uri(), found = await lsp('textDocument/documentColor', { textDocument: { uri: asked } }).catch(() => null);
     const css = ({ red, green, blue, alpha }) => `rgba(${[red, green, blue].map((x) => Math.round(x * 255)).join(',')},${alpha})`;
     // an answer for a file no longer shown, or none (a run cancelled it), leaves the swatches as they are
-    if (Array.isArray(found) && asked === uri()) editor?.colors?.(found.map((c) => [c.range.start, css(c.color)]));
+    if (Array.isArray(found) && asked === uri()) editor?.colors?.(found.map((c) => [c.range.start, c.range.end, css(c.color)]));
   }
   /** The bundles holding files the run looked for and did not find (`\IfFileExists`, listings' language files). */
   /** The bundles a run of this root and kernel lacked, kept per browser: the next visit fetches them before its first run. */

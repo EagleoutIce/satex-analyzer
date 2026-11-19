@@ -1880,6 +1880,7 @@ def main():
         "dialogsjs": emit(out, "dialogs.js", script("dialogs.js")),
         "layersjs": emit(out, "layers.js", script("layers.js")),
         "pdfeditjs": emit(out, "pdfedit.js", script("pdfedit.js")),
+        "mathlayoutjs": emit(out, "mathlayout.js", script("mathlayout.js")),
         "actionsjs": emit(out, "actions.js", script("actions.js")),
     }
     table = pages()
@@ -2147,7 +2148,7 @@ def showcase(out, live):
 
 
 # what a showcase capture shows: the playground's code and style, besides its example and its entry
-SHOT_SOURCES = ("tex.js", "playground.js", "lengths.js", "snapshot.js", "views.js", "bib.js", "dialogs.js", "layers.js", "pdfedit.js", "actions.js", "draw.js", "site.js", "style.css", "play.html", "showcase/capture.mjs")
+SHOT_SOURCES = ("tex.js", "playground.js", "lengths.js", "snapshot.js", "views.js", "bib.js", "dialogs.js", "layers.js", "pdfedit.js", "mathlayout.js", "actions.js", "draw.js", "site.js", "style.css", "play.html", "showcase/capture.mjs")
 
 
 def recapture(out):

@@ -239,3 +239,37 @@ test('plugins switched per viewer and with their type plugin', withStore(() => {
   assert.ok(PA.groups(t, ctxOf(text)).length);
   assert.deepEqual(PA.plugins.map((p) => p.name), ['tikz-node', 'tikz-label', 'tikz-edge', 'forest-node', 'table-column']);
 }));
+
+// Intuition: a dragged node is written beside its reference as positioning does: a side when the centres line up, a
+// corner with its vertical then horizontal gap, a gap equal to the node distance unwritten; the placement, shifts and
+// `at` it had go. Pins a drag that wrote `at (x,y)` where `right=of a` was meant, and `above right` with its gaps swapped.
+test('relative placement: positioning keys from frames', () => {
+  const cm = 72 / 2.54, box = (l, t, w = cm, h = cm / 2) => ({ l, t, r: l + w, d: t + h }), a = box(0, 0);
+  assert.equal(T.relation(box(2 * cm, 0), a, 0.5, [1, 1], 'a'), 'right=of a', 'a 1 cm gap: the node distance');
+  assert.equal(T.relation(box(2.5 * cm, 0), a, 0.5, [1, 1], 'a'), 'right=1.5cm of a');
+  assert.equal(T.relation(box(-2 * cm, 0), a, 0.5, [1, 1.2], 'a'), 'left=1cm of a', 'the horizontal distance of `1cm and 1.2cm`');
+  assert.equal(T.relation(box(0, 2 * cm), a, 0.5, [1, 1], 'a'), 'below=1.5cm of a');
+  assert.equal(T.relation(box(3 * cm, -2 * cm), a, 0.5, [1, 1], 'a'), 'above right=1.5cm and 2cm of a', 'vertical, then horizontal');
+  assert.equal(T.relation(a, a, 0.5, [1, 1], 'a'), null);
+  assert.equal(T.place('\\node[box, right=of a, xshift=2mm] (b) {B};', 0, 'below=of a'), '\\node[box, below=of a] (b) {B};');
+  assert.equal(T.place('\\node[draw] (b) at (1,2) {B};', 0, 'right=of a'), '\\node[draw, right=of a] (b) {B};');
+  assert.equal(T.place('\\node (b) [right of=a] {B};', 0, 'right=of a'), '\\node (b) [right=of a] {B};', 'tikz\'s old `right of=` goes too');
+  assert.deepEqual(T.nodes(wrap('\\node (a) {A};'))[0].pic.dist, [1, 1]);
+  assert.deepEqual(T.nodes('\\begin{tikzpicture}[node distance=1cm and 2cm]\n\\node (a) {A};\n\\end{tikzpicture}')[0].pic.dist, [1, 2]);
+});
+
+// Intuition: Edit text is the menu's first row, the Position rows offer what the playground worked out (a fixed place, a
+// place beside the nearest node), and a duplicate stands below its original by positioning, loaded with it.
+test('node menu: edit first, fixed and relative places, a relative duplicate', withStore(() => {
+  const text = '\\documentclass{article}\n\\usepackage{tikz}\n\\begin{document}\n\\begin{tikzpicture}\n  \\node (a) at (0,0) {A};\n\\end{tikzpicture}\n\\end{document}\n';
+  const n = T.nodes(text)[0], c = ctxOf(text), gs = PA.groups({ kind: 'tikz-node', n, fixed: '\\node (a) at (1,0) {A};', rel: null }, c);
+  assert.equal(gs[0].items[0].label, 'Edit text…');
+  const pos = gs.find((g) => g.title === 'Position').items;
+  assert.deepEqual(pos.map((i) => i.label).slice(0, 2), ['Fixed position', 'Rotate']);
+  pos[0].run();
+  assert.match(edit(text, c.writes[0]), /\\node \(a\) at \(1,0\) \{A\};/);
+  gs.find((g) => g.title === 'Arrange').items.find((i) => i.label === 'Duplicate').run();
+  const dup = edit(text, c.writes[1]);
+  assert.match(dup, /\\usepackage\{tikz\}\n\\usetikzlibrary\{positioning\}\n/);
+  assert.match(dup, /\\node \(a\) at \(0,0\) \{A\};\n  \\node\[below=of a\] \(a2\) \{A\};/);
+}));

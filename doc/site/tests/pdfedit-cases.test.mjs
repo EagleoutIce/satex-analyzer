@@ -106,6 +106,15 @@ test("Editing in the PDF (pdfedit.ts)", async () => {
     assert.deepEqual(smart('ab', 1, '$x^2+y_i j'), ends('a$x^{2}+y_{i}j$b', 'a$x^{2}+y_{i}j'.length), 'an operator and a space leave it');
     assert.deepEqual(smart('a$x_{4}$b', 'a$x_{4'.length, '2'), ['a$x_{42}$b', 'a$x_{42'.length], 'moved back in, typing goes on in the group');
     assert.deepEqual(type('ab', 1, '$x_42$', '$'), ends('a$x_42$b'), 'off: as typed');
+    // Pins `$\sum_{i=1}^n x_i^2$` typed in the PDF writing `\sum_{{i=1}^{n}x_{i^{2}}}` (user 2026-11-19): the other
+    // script leaves the group, so does an operator after a group typed in it
+    assert.deepEqual(smart('ab', 1, '$x_i^2$'), ends('a$x_{i}^{2}$b'), 'a superscript after a subscript');
+    const typedAll = (text, at, keys) => { let t = text; for (const c of keys) { const [a, b, body, step] = E.typed(t, at, c, '$', true, [1, t.length - 1]); t = t.slice(0, a) + body + t.slice(b); at = a + step; } return [t, at]; };
+    assert.deepEqual(typedAll('ab', 1, '$s_{i=1}^n x$'), ends('a$s_{{i=1}}^{n}x$b'), 'braces typed in the group');
+    assert.deepEqual(smart('ab', 1, '$x_a_b$'), ends('a$x_{a_{b}}$b'), 'the same script nests');
+    // Pins `\lim_{n\to\infty}` typed writing `\infty \}`: a `}` after a command typed in a group closes the group
+    const cmdEnd = 'a$x_{{\\to\\infty  }}$b', at = cmdEnd.indexOf('  }');
+    assert.deepEqual(E.typed(cmdEnd, at, '}', '$', true, [1, cmdEnd.length - 2]), [at, at + 2, '', 1], 'the commands\' spaces go, the caret past the brace');
     // a brace after a command's name is its argument: pins `\emph` from the completion list, whose `{` came out `\{`
     assert.deepEqual(type('ab', 1, '\\emph{x}'), ends('a\\emph{x}b'), 'the argument opened and left');
     assert.deepEqual(type('a\\TeX b', 'a\\TeX'.length, 's{'), ['a\\TeX{}s\\{ b', 'a\\TeX{}s\\{'.length], 'an older command keeps its name: `{}` ends it');
@@ -337,28 +346,12 @@ test("Typing in the PDF", async () => {
   // a footnote's call glues its first word to the word before (`here.\footnote{A` is `here.A`): it pairs with the
   // page's `here.`, the footnote's words with the footnote row. Pins its last `here.` taken for the text's `here.`.
   assert.deepEqual(E.aligned(['words', 'here.A', 'footnote', 'text', 'goes', 'here.'], ['words', 'here.', '1', 'A', 'footnote', 'text', 'goes', 'here.']), [0, 1, 4, 5, 6, 7], 'a footnote call');
-  // The live math preview (PE.mathRuns, PE.mathLaid): typed text cut into prose and formulas (one still open runs to
-  // the end), each formula laid out the way TeX sets it, roughly: letters math italic, scripts at 0.7 and moved,
-  // a binary operator's medium space (none for a unary minus), a fraction stacked about the axis. Pins "(x1)" echoed
-  // in roman for `\(x_1\)` (user 2026-11-18).
+  // The live math preview (PE.mathRuns): typed text cut into prose and formulas (one still open runs to the end);
+  // tests/mathlayout.test.mjs lays them out. Pins "(x1)" echoed in roman for `\(x_1\)` (user 2026-11-18).
   {
     const t = 'cost $x_1$ and \\(a+b\\) or \\[y=2\\] \\begin{equation}z\\end{equation} and $op';
     assert.deepEqual(E.mathRuns(t, 0, t.length).map((r) => [r.kind, t.slice(r.b, r.be)]), [['', 'cost '], ['inline', 'x_1'], ['', ' and '], ['inline', 'a+b'], ['', ' or '], ['display', 'y=2'], ['', ' '], ['display', 'z'], ['', ' and '], ['inline', 'op']]);
     assert.deepEqual(E.mathRuns('$x$ y', 1, 5).map((r) => r.kind), ['inline', ''], 'from inside a formula');
-    const w = (s) => s.length * 0.5, lay = (s, d) => E.mathLaid(s, w, d), at = (b, t) => b.g.find((g) => g[0] === t);
-    const sub = lay('x_1');
-    assert.deepEqual([at(sub, 'x')[4], at(sub, '1')[4], at(sub, '1')[3]], ['it', 'rm', 0.7], 'x italic, 1 upright and smaller');
-    assert.ok(at(sub, '1')[2] < 0 && at(lay('x^2'), '2')[2] > 0.3, 'a subscript lowered, a superscript raised');
-    const sum = lay('a+b'), neg = lay('-x');
-    assert.ok(Math.abs(at(sum, '+')[1] - (0.5 + 4 / 18)) < 1e-9 && Math.abs(at(sum, 'b')[1] - (1 + 8 / 18)) < 1e-9, 'a medium space about +');
-    assert.deepEqual([at(neg, '−')[1], at(neg, 'x')[1]], [0, 0.5], 'a unary minus: no space');
-    assert.equal(at(lay('x_{a+b}'), 'b')[1], at(lay('x_{a+b}'), '+')[1] + 0.35, 'no medium space in a script');
-    const fr = lay('\\frac{a}{b}');
-    assert.ok(at(fr, 'a')[2] > 0.25 && at(fr, 'b')[2] < 0 && fr.r.length === 1 && at(fr, 'a')[3] === 0.7, 'a fraction stacked over its rule, one size down inline');
-    assert.equal(at(lay('\\frac{a}{b}', true), 'a')[3], 1, 'full size in display');
-    assert.deepEqual(at(lay('\\alpha'), 'α').slice(3), [1, 'it'], 'Greek lowercase in math italic');
-    assert.deepEqual(lay('x_').g.length, 1, 'a script still being typed: no fault');
-    assert.ok(at(lay('\\sum_{i=1}^n', true), 'n')[2] > 0.75, 'display limits above');
   }
   // The echo's line breaking (PE.reflow), pure: pieces of width `n` after a space `gap`, rows of the page after.
   {
