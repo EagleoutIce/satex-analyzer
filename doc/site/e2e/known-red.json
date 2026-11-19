@@ -111,11 +111,6 @@
   "match": "^(caret jumped|caret stepped back|pages scrolled|echo [\\d.]+px past|echo font|final caret at|echo rows overlap|echo wrapped)",
   "why": "the echo's rows and font differ from the landed build: the caret jumps when the build lands, the echo runs past the margin, its font is not the page's width"
  },
- "fz-ts-end-keeps-typed": {
-  "owner": "ui-51 (playground Type mode); fuzz/run.mjs --replay with the scenario's seq reproduces it",
-  "why": "a typeset of an older text (the first word typed only) lands between the second word and End and is drawn without the second word; tsTyped re-applies only one change, so the shown row loses it until the next run. Timing dependent (1 of 4 runs)",
-  "since": "2026-11-19"
- },
  "fz-ts-footnote-row": {
   "owner": "server (Rust typeset rows); client side checked by ui-51",
   "why": "after typing in a footnote's text the run's own satex/typeset rows (satexTypesetOrigins) hold the footnote twice: the new text (line 3) and the old `1A short note.` (line 8), also after the run lands; the client shows what it gets. Needs the server to drop the previous run's footnote insert. Timing dependent (1 of 3 runs)",
@@ -130,28 +125,5 @@
   "owner": "server (wasm analysis); evidence by ui-51",
   "why": "the wasm server publishes an empty diagnostics list for the text's version (raw publishDiagnostics captured: `diagnostics: []`), also with the brace there from the start (no resume), while native `satex lint` of the same text reports C013 `Too many }'s` at 8:18: the client shows what it gets",
   "since": "2026-11-19"
- },
- "fz-demo-narrow-rows": {
-  "owner": "ui-51 (playground echo layout)",
-  "why": "after Enter and builds landing mid-typing, the echo lays the new paragraph out one word or hyphen piece a row (`It`/`con`/`verges`/`more words`): the paragraph's right edge comes out at its short built row (pdfTypeDraw `right` from pdfLineBox/para words), and the landed `Itconvergesmore` shows beside the echo's `more` (duplicate); a lavender tint stood over empty space there too (timing dependent: red 1 of 2 runs)",
-  "since": "2026-11-19"
- },
- "tc-type-textbf": {
-  "owner": "Type-mode echo (typing landing)",
-  "why": "the completion is taken and the source is right; the caret jumps 37 px when the build lands after the leading space (the same in fz-complete-fast, before any completion), a Type-mode echo landing issue",
-  "since": "2026-11-19",
-  "match": "^caret jumped"
- },
- "fz-complete-fast": {
-  "owner": "Type-mode echo (typing landing)",
-  "why": "the completion is taken and the source is right; the caret jumps 37 px when the build lands after the leading space (the same in fz-complete-fast, before any completion), a Type-mode echo landing issue",
-  "since": "2026-11-19",
-  "match": "^caret jumped"
- },
- "tc-type-begin-arg": {
-  "owner": "Type-mode echo (typing landing)",
-  "why": "the source and the build are right (\\begin{center} Quokka \\end{center}); the caret jumps 51 px when the build lands because the echo draws the new environment's lines as one prose row (`center Quokka center`)",
-  "since": "2026-11-19",
-  "match": "^caret jumped"
  }
 }

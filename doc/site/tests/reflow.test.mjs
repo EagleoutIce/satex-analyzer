@@ -108,3 +108,48 @@ spec('justify sets a broken row to the edge, never the first or the last', () =>
   assert.equal(end(f.rows[2]), 50, 'the last row ragged');
   assert.equal(end(f.rows[0]), 60, 'the first row as laid');
 });
+/** Each piece of `prose` as `text`, `_` before it for a gap, `¶` a blank line, `|c` an alignment break, `:bf` a shape. */
+const prose = (raw) => E.prose(raw).map((q) => `${q.par ? '¶' : ''}${q.brk != null ? `|${q.brk}` : ''}${q.gap ? '_' : ''}${q.t}${q.shape ? `:${q.shape}` : ''}`).join(' ');
+// Intuition: typed prose reads as the page sets it: commands dropped, a space typed is the caret's empty word, the first
+// piece joins the word before. Pins the echo's words equal to the old plain-text split.
+test('prose: plain words, the empty first and last piece', () => {
+  assert.equal(prose(' Quokka'), ' _Quokka');
+  assert.equal(prose('a \\foo  b '), 'a _b _');
+  assert.equal(prose('x\n\ny'), 'x ¶_y');
+  assert.equal(prose('50\\% off % gone'), '50% _off _');
+});
+// Intuition: \textbf{…} and \emph{…} set their words in another face, wider than the row's: the echo measures them in
+// it. Pins tc-type-textbf: \textbf{Quokka} measured upright, the caret 4 px short of where the build set it.
+test('prose: shapes from \\textbf, \\emph and declarations', () => {
+  assert.equal(prose(' \\textbf{Quokka} x'), ' _Quokka:bf _x');
+  assert.equal(prose('\\emph{a \\emph{b}c}d'), 'a:it _b c:it d');
+  assert.equal(prose('{\\bfseries Big} small'), ' _Big:bf _small');
+  assert.equal(prose('Q\\textbf{uo}kka'), 'Q uo:bf kka');
+});
+// Intuition: an alignment environment's lines are rows of their own, never prose on the row before (`center Quokka
+// center`). Pins tc-type-begin-arg: the caret jumped 51 px when the build set Quokka centered on its own row.
+test('prose: center starts and ends rows of its own', () => {
+  assert.equal(prose(' \\begin{center}\nQuokka\n\\end{center} more'), ' |c_Quokka |_more');
+  assert.equal(prose('a \\begin{flushright}'), 'a |r_');
+});
+// Intuition: an alignment break starts a row at the margin, a skip apart, centered; the text after the environment's end
+// goes on at the margin, unindented, another skip down.
+test('reflow: an alignment break centers its row', () => {
+  const f = E.reflow([p(10, 0), p(20, 3, { brk: 'c' }), p(30, 3, { brk: '' })], 0, { ...LINE, envskip: 8 });
+  assert.deepEqual(shape(f), ['-2@0:0', '-1@0:40 dy20', '-1@0:0 dy20']);
+});
+// Intuition: two places typed since the shown run are two edits of whole words, the words between them untouched, so
+// the Typeset view shows both at once. Pins fz-ts-end-keeps-typed: one change over both lost the second word.
+test('hunks: each place typed is its own edit of whole words', () => {
+  const was = 'Another line of plain prose follows it.';
+  assert.deepEqual(E.hunks(was, 'Another line of plainxq prose follows it.'), [[16, 21, 'plainxq']]);
+  assert.deepEqual(E.hunks(was, 'Another line of plainxq prose fyy follows it.'), [[16, 21, 'plainxq'], [22, 27, 'prose fyy']]);
+  assert.deepEqual(E.hunks(was, 'Another line of plainxq xqprose follows it.'), [[16, 27, 'plainxq xqprose']]);
+  assert.deepEqual(E.hunks(was, 'Xx Another line of plain prose follows it.'), [[0, 7, 'Xx Another']]);
+  assert.deepEqual(E.hunks(was, was), []);
+  for (const [w, n] of [[was, 'Another plain prose it.'], ['a b c', 'x a y b z c w'], ['one two', 'one three two four']]) {
+    let out = w;
+    for (const [f, t, x] of [...E.hunks(w, n)].reverse()) out = out.slice(0, f) + x + out.slice(t);
+    assert.equal(out, n, `${w} -> ${n}`);
+  }
+});

@@ -21,12 +21,14 @@ type Form = { kind: 'len'; num: number; unit: string } | { kind: 'share'; num: n
  * a new paragraph (Enter). Anything else it carries (its text, the page word it is) rides along. */
 /** `disp`: display math, centered on a row of its own, that much more space above it (bp), `dshort` when the row
  * before ends left of it, `below` after it. */
-type Piece = { gap: number; n: number; par?: boolean; disp?: number; dshort?: number; below?: number; st?: number; sh?: number; hy?: boolean; hw?: number };
+type Piece = { gap: number; n: number; par?: boolean; brk?: string | null; disp?: number; dshort?: number; below?: number; st?: number; sh?: number; hy?: boolean; hw?: number };
 /** The lines a paragraph may take: its right edge, its left margin, the indent and gap of a new paragraph, the rows the
  * page set after the first (each its left edge and its own words, gaps set), whether a row may take words up (`pull`). */
-type Line<P> = { right: number; left: number; indent: number; skip: number; parskip: number; rows: { x: number; pieces: P[] }[]; pull?: boolean; shrink?: number; justify?: boolean; fit?: boolean; breaks?: { breaks: number[]; ratios: number[] } | null };
+type Line<P> = { right: number; left: number; indent: number; skip: number; parskip: number; envskip?: number; rows: { x: number; pieces: P[] }[]; pull?: boolean; shrink?: number; justify?: boolean; fit?: boolean; breaks?: { breaks: number[]; ratios: number[] } | null };
 /** Rows laid out: each its left edge, its pieces placed (`x`), the page row it takes (`from`: -2 the first, -1 a new
  * one) and a new row's baseline shift from the row before (`dy`); `freed` the page rows whose words all went up. */
+/** A piece of prose as typed (pdfedit.ts `prose`). */
+type Prose = { t: string; gap: boolean; par: boolean; brk: string | null; shape: string };
 type Flow<P> = { rows: { x: number; from: number; dy: number; par: boolean; out: (P & { x: number })[] }[]; freed: number[] };
 declare global {
   interface Window {
@@ -81,6 +83,8 @@ declare global {
       apart<B extends Flat>(boxes: B[]): B[];
       relaid(row: [number, number, string][], k: number, now: string, width: (s: string) => number): [number, number, string][];
       reflow<P extends Piece>(pieces: P[], x0: number, line: Line<P>): Flow<P>;
+      prose(raw: string): Prose[];
+      hunks(was: string, now: string, max?: number): [number, number, string][] | null;
       fit(pieces: Piece[], first: number, width: number, tolerance?: number): { breaks: number[]; ratios: number[] } | null;
       glue(before: string, space: number): { gap: number; st: number; sh: number };
       centered(box: [number, number], row: [number, number], growth: number): number;
@@ -960,7 +964,7 @@ declare global {
   function reflow<P extends Piece>(pieces: P[], x0: number, line: Line<P>): Flow<P> {
     // `fit`: TeX's total fit over the typed pieces and every page row after them, each line but the last justified;
     // greedy below where nothing fits within the tolerance, or a new paragraph or display is typed
-    const all = line.fit && !pieces.some((q) => q.par || q.disp != null) ? [...pieces, ...line.rows.flatMap((r) => r.pieces)] : null;
+    const all = line.fit && !pieces.some((q) => q.par || q.brk != null || q.disp != null) ? [...pieces, ...line.rows.flatMap((r) => r.pieces)] : null;
     // `breaks`: the lines TeX's own breaker gave for these pieces (`satex/break`), else the echo's total fit
     const given = !!all && !!line.breaks && line.breaks.breaks.every((b) => b > 0 && b < all.length);
     const k = all && (given ? line.breaks : fit(all, line.right - x0, line.right - line.left));
@@ -985,7 +989,9 @@ declare global {
       return { rows, freed: line.rows.map((_, i) => i).filter((i) => i >= starts.length - 1) };
     }
     const queue = [...pieces], rows: Flow<P>['rows'] = [{ x: x0, from: -2, dy: 0, par: false, out: [] }], slots: { x: number; from: number }[] = [];
-    let ri = 0, x = x0, i = 0, after: number | null = null, sunk = false, gaps = 0;
+    let ri = 0, x = x0, i = 0, after: number | null = null, sunk = false, gaps = 0, align = '';
+    // each row's alignment (an alignment environment's: pdfedit `prose`); spaces at a row's start after its break drop
+    const aligned = new Map<object, string>(), lead = new Set<object>();
     const shrink = line.shrink ?? 0;
     const take = () => { const r = line.rows[ri]!; queue.push(...r.pieces); return { x: r.x, from: ri++ }; };
     const lay = () => {
@@ -993,17 +999,20 @@ declare global {
         const q = queue[i]!;
         let r = rows.at(-1)!;
         const own = q.disp != null || after != null;
-        if (own || r.out.length && (q.par || q.n > 0 && x + q.gap + q.n - shrink * (gaps + q.gap) > line.right + 0.5)) {
-          sunk ||= own;
+        const brk = q.brk != null;
+        if (own || r.out.length && (q.par || brk || q.n > 0 && x + q.gap + q.n - shrink * (gaps + q.gap) > line.right + 0.5)) {
+          sunk ||= own || brk;
           const s = !q.par && !sunk && (slots.shift() ?? (ri < line.rows.length ? take() : null));
-          const at = q.disp != null ? (line.left + line.right - q.n) / 2 : line.left + (q.par ? line.indent : 0);
+          const at = q.disp != null ? (line.left + line.right - q.n) / 2 : line.left + (q.par && !brk && !align ? line.indent : 0);
           // TeX's short skip above a display whose row before ends left of it (an empty row after Enter): no
           // \abovedisplayskip, only what a tall formula adds
-          const dy = line.skip + (q.disp != null && r.out.every((o) => o.x + o.n <= at) ? q.dshort ?? q.disp : q.disp ?? after ?? (q.par ? line.parskip : 0));
-          rows.push(r = s ? { x: s.x, from: s.from, dy: 0, par: false, out: [] } : { x: at, from: -1, dy, par: !!q.par, out: [] });
+          const dy = line.skip + (q.disp != null && r.out.every((o) => o.x + o.n <= at) ? q.dshort ?? q.disp : q.disp ?? after ?? (q.par || brk ? line.parskip : 0) + (brk ? line.envskip ?? 0 : 0));
+          rows.push(r = s ? { x: s.x, from: s.from, dy: 0, par: false, out: [] } : { x: at, from: -1, dy, par: !!q.par && !brk, out: [] });
+          if (brk) { align = q.brk!; lead.add(r); }
+          if (align) aligned.set(r, align);
           x = r.x - (own ? 0 : q.gap);
           gaps = own ? 0 : -q.gap;
-        }
+        } else if (lead.has(r) && !r.out.some((o) => o.n > 0)) { x -= q.gap; gaps -= q.gap; }
         after = q.disp != null ? q.below ?? 0 : null;
         if (own) { r.out.push({ ...q, gap: 0, x }); x += q.n; continue; }
         x += q.gap;
@@ -1020,8 +1029,16 @@ declare global {
       slots.push(take());
       lay();
     }
+    // an aligned row (center, flushright) moves to its place between the margins
+    for (const [r, a] of aligned) {
+      const out = (r as Flow<P>['rows'][number]).out, last = out.at(-1);
+      if (!last || a === 'l') continue;
+      const d = (line.right - (last.x + last.n) - (out[0]!.x - line.left)) / (a === 'c' ? 2 : 1);
+      for (const o of out) o.x += d;
+    }
     // a row past the edge (its spaces shrunk) or broken for the next (justified) ends at the edge: its spaces share it
     rows.forEach((r, j) => {
+      if (aligned.has(r)) return;
       const last = r.out.at(-1), next = rows[j + 1];
       if (!last || r.out.length < 2) return;
       const d = line.right - (last.x + last.n), room = r.out.slice(1).reduce((n, q) => n + q.gap, 0);
@@ -1125,6 +1142,40 @@ declare global {
     while (p < m && p < by && was[p] === now[p]) p++;
     while (q < m - p && was[was.length - 1 - q] === now[now.length - 1 - q]) q++;
     return [p, q];
+  }
+  /** The edits that turn `was` into `now` as whole words, in order: `[from, to, text]` puts `text` for `was`'s
+   * `from..to`. The words both share in between (a word-level longest common subsequence of the changed span) stay out,
+   * so two places typed since a run are two edits, never one over the words between them. An edit that only inserts or
+   * only deletes takes the word before it along (else the one after): each replaces some old text with some new. Null
+   * past `max` words a side. */
+  function hunks(was: string, now: string, max = 400): [number, number, string][] | null {
+    if (was === now) return [];
+    const [p, q] = changed(was, now), W = /[\p{L}\p{N}]/u;
+    let a = p, e0 = was.length - q, e1 = now.length - q;
+    while (a > 0 && W.test(was[a - 1]!)) a--;
+    while (e0 < was.length && W.test(was[e0]!)) { e0++; e1++; }
+    const toks = (t: string, e: number) => [...t.slice(a, e).matchAll(/\S+/g)].map((m) => ({ s: a + m.index!, e: a + m.index! + m[0].length, t: m[0] }));
+    const A = toks(was, e0), B = toks(now, e1);
+    if (A.length > max || B.length > max) return null;
+    // L[i][j]: the common words of A[i..] and B[j..]
+    const L = Array.from({ length: A.length + 1 }, () => new Array<number>(B.length + 1).fill(0));
+    for (let i = A.length - 1; i >= 0; i--) for (let j = B.length - 1; j >= 0; j--) L[i]![j] = A[i]!.t === B[j]!.t ? L[i + 1]![j + 1]! + 1 : Math.max(L[i + 1]![j]!, L[i]![j + 1]!);
+    const pairs: [number, number][] = [[-1, -1]];
+    for (let i = 0, j = 0; i < A.length && j < B.length;) {
+      if (A[i]!.t === B[j]!.t) pairs.push([i++, j++]); else if (L[i + 1]![j]! >= L[i]![j + 1]!) i++; else j++;
+    }
+    pairs.push([A.length, B.length]);
+    const runs: number[][] = [];
+    for (let k = 1; k < pairs.length; k++) {
+      let [i0, j0] = pairs[k - 1]!, [i1, j1] = pairs[k]!;
+      i0++; j0++;
+      if (i0 === i1 && j0 === j1) continue;
+      // one side empty: the shared word before (else after) goes along; one that meets the edit before joins it
+      if (i0 === i1 || j0 === j1) { if (k > 1) { i0--; j0--; } else if (i1 < A.length) { i1++; j1++; } else return null; }
+      const last = runs.at(-1);
+      if (last && last[1]! > i0) { last[1] = i1; last[3] = j1; } else runs.push([i0, i1, j0, j1]);
+    }
+    return runs.map(([i0, i1, j0, j1]) => [A[i0]!.s, A[i1! - 1]!.e, now.slice(B[j0!]!.s, B[j1! - 1]!.e)]);
   }
   /** The paragraph around offset `at`: from after the blank line before it to the blank line after it, and within the
    * lines between environment edges (a line with `\\begin{` or `\\end{` other than `at`'s own): a float's caption is
@@ -1243,6 +1294,41 @@ declare global {
     }
     return out.map((n, k) => [n, k] as const).sort((p, q) => p[0][2] - q[0][2] || p[1] - q[1]).map(([n]) => [n[0], n[1]]);
   }
+  /** The pieces prose `raw` sets, as the echo lays them out: markup dropped, a word split where its shape changes. Each
+   * piece its text, whether a space stands before it (`gap`), a blank line (`par`), the shape `bf` or `it` of the
+   * \\textbf, \\textit, \\emph or declaration around it, and `brk` where an alignment environment (the kernel's center,
+   * flushleft, flushright) begins or ends before it: a row of its own, aligned `c`, `l` or `r` (`''` justified again).
+   * The first piece has no gap and may be empty, as may the last (the caret's empty word after a space). */
+  function prose(raw: string): Prose[] {
+    const re = /(?<!\\)(%[^\n]*)|\\(begin|end)\s*\{(center|flushleft|flushright)\}|\\(textbf|textit|emph)\s*\{|\\(bfseries|itshape|upshape|mdseries|normalfont)(?![A-Za-z@])|\\[A-Za-z@]+\*?|\\(?=[^A-Za-z@\s])|[{}$^_]|[\s~]+|[^]/gu;
+    const ALIGN: Record<string, string> = { center: 'c', flushleft: 'l', flushright: 'r' };
+    const shapes = [''], aligns = [''], out: Prose[] = [];
+    let cur: Prose = { t: '', gap: false, par: false, brk: null, shape: '' };
+    const next = (gap: boolean) => { out.push(cur); cur = { t: '', gap, par: false, brk: null, shape: shapes.at(-1)! }; };
+    for (const m of raw.matchAll(re)) {
+      const [x, com, env, name, cmd, decl] = m;
+      if (com) continue;
+      if (env) {
+        if (env === 'begin') aligns.push(ALIGN[name!]!); else if (aligns.length > 1) aligns.pop();
+        if (cur.t || !out.length) next(true);
+        cur.brk = aligns.at(-1)!;
+      } else if (cmd) shapes.push(cmd === 'textbf' ? 'bf' : cmd === 'emph' && shapes.at(-1) === 'it' ? '' : 'it');
+      else if (decl) shapes[shapes.length - 1] = decl === 'bfseries' ? 'bf' : decl === 'itshape' ? 'it' : '';
+      else if (x === '{') shapes.push(shapes.at(-1)!);
+      else if (x === '}') { if (shapes.length > 1) shapes.pop(); }
+      else if (/^[\s~]/.test(x)) {
+        if (cur.t || !out.length) next(true);
+        else cur.gap = true;
+        if (/\n[ \t]*\n/.test(x)) cur.par = true;
+      } else if (x[0] !== '\\' && !/^[{}$^_]$/.test(x)) {
+        if (cur.t && cur.shape !== shapes.at(-1)) next(false);
+        if (!cur.t) cur.shape = shapes.at(-1)!;
+        cur.t += x;
+      }
+    }
+    out.push(cur);
+    return out;
+  }
   /** `text`'s characters `from..to` as runs of prose and math: `kind` '' (prose), 'inline' or 'display', the math's
    * body `b..be` inside its delimiters (to `to` while its closer is not typed yet). Read as scan reads it, from the
    * paragraph's start (no formula spans a blank line): per key, never the whole file. */
@@ -1352,7 +1438,7 @@ declare global {
     const m = /(\\\]|\$\$|\\end\{([A-Za-z]+)\*?\})[ \t]*$/.exec(text.slice(Math.max(0, at - 40), at));
     return !!m && (!m[2] || MATH.test(m[2]) && m[2] !== 'math');
   }
-  self.satexPdfEdit = { onRow, run, displayEnd, offsetAt, units, treeNodes, naming, entries, shortTitle, bothTitles, renamed, leaders, checked, grow, key, broken, scan, start, cells, cellStep, rowAfter, verbatim, verbatimAt, nearest, bands, joined, place, extent, failNote, room, form, measure, respec, widthBp, snapWidth, resized, stepped, plain, editable, spans, sender, typed, erased, mathAt, boundaries, boundaryAt, inkSnap, locate, columns, wordAt, argAt, afterCall, defining, relaid, reflow, fit, glue, centered, apart, tokens, unset, aligned, changed, paragraph, mathRuns, footArg, footBack, footShown, blankPlace };
+  self.satexPdfEdit = { onRow, run, displayEnd, offsetAt, units, treeNodes, naming, entries, shortTitle, bothTitles, renamed, leaders, checked, grow, key, broken, scan, start, cells, cellStep, rowAfter, verbatim, verbatimAt, nearest, bands, joined, place, extent, failNote, room, form, measure, respec, widthBp, snapWidth, resized, stepped, plain, editable, spans, sender, typed, erased, mathAt, boundaries, boundaryAt, inkSnap, locate, columns, wordAt, argAt, afterCall, defining, relaid, reflow, prose, hunks, fit, glue, centered, apart, tokens, unset, aligned, changed, paragraph, mathRuns, footArg, footBack, footShown, blankPlace };
 })();
 
 // TikZ nodes moved by drag: where each `\node` and path label stands in the source, and the statement a drag

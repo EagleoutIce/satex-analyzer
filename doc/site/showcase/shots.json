@@ -699,6 +699,68 @@
    "beforeCrop": "=lines('\\\\begin{lemma}', '\\\\end{document}')"
   },
   {
+   "name": "quickfix",
+   "server": true,
+   "file": "booktabs.tex",
+   "title": "Fix an error",
+   "wide": true,
+   "caption": "pdflatex stops at \\toprule. SaTeX knows booktabs defines it: the fix in the hover card loads it, and the PDF builds.",
+   "open": [
+    "panel",
+    "play-pdf"
+   ],
+   "viewport": [
+    1100,
+    760
+   ],
+   "text": "\\documentclass{article}\n\\begin{document}\n\\section{Results}\n\\begin{tabular}{lr}\n  \\toprule\n  Run & Time \\\\\n  \\midrule\n  cold & 12 s \\\\\n  warm & 3 s \\\\\n  \\bottomrule\n\\end{tabular}\n\\end{document}\n",
+   "steps": [
+    {
+     "until": "[...document.querySelectorAll('#lsp-diagnostics li')].some((l) => /undefined-control-sequence/.test(l.textContent))",
+     "ms": 90000
+    },
+    {
+     "eval": "document.querySelector('[data-panel=play-pdf]').click(); document.getElementById('pdf-compile').click()",
+     "until": "document.querySelector('#pdf-views [role=tab]') && !document.getElementById('play-pdf').classList.contains('pdf-running')",
+     "ms": 120000,
+     "wait": 1500
+    },
+    {
+     "hover": "__xy('\\\\toprule', 3)"
+    },
+    {
+     "until": "[...document.querySelectorAll('.tip-card:not([hidden]) button[data-fix]')].some((b) => /booktabs/.test(b.textContent))",
+     "ms": 60000,
+     "wait": 900
+    }
+   ],
+   "video": [
+    {
+     "eval": "0",
+     "wait": 1500
+    },
+    {
+     "click": "[...document.querySelectorAll('.tip-card:not([hidden]) button[data-fix]')].find((b) => /booktabs/.test(b.textContent))"
+    },
+    {
+     "until": "/\\\\usepackage\\{booktabs\\}/.test(document.querySelector('.cm-editor').satexView.state.doc.toString())",
+     "wait": 1200
+    },
+    {
+     "eval": "document.getElementById('pdf-compile').click()",
+     "until": "!document.getElementById('play-pdf').classList.contains('pdf-running') && document.querySelector('#pdf-body .pdf-page img')?.complete",
+     "ms": 120000,
+     "wait": 2500
+    }
+   ],
+   "crop": [
+    ".cm-editor",
+    "#play-pdf"
+   ],
+   "pad": 8,
+   "keepMouse": true
+  },
+  {
    "name": "runaway",
    "server": true,
    "file": "runaway.tex",

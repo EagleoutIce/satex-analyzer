@@ -120,8 +120,9 @@ function analyse(frames, keyTimes, sc, ins, marker) {
       if (prev.caret && f.caret) {
         const dx = f.caret[0] - prev.caret[0], dy = f.caret[1] - prev.caret[1], dScroll = (f.scroll ?? 0) - (prev.scroll ?? 0);
         // the caret moved on screen with no key in between (a rebuild, a late draw): a jump. Scrolling moves it too: subtract.
+        // (a caret whose source offset moved went with its text: keys held for a completion list and applied with it)
         const mdy = dy + dScroll;
-        if (f.keys === prev.keys && (Math.abs(dx) > 4 || Math.abs(mdy) > 3)) { r.jumps++; const m = Math.max(Math.abs(dx), Math.abs(mdy)); if (m > r.maxJump) { r.maxJump = Math.round(m); r.jumpFrame = { from: prev.caret, to: f.caret, t: Math.round(f.t), keys: f.keys, echoes: prev.echoes.map((e) => [e.kind, e.text.slice(0, 50), e.r, e.at, e.fonts.map((f) => f.slice(0, 40))]) }; } }
+        if (f.keys === prev.keys && f.at === prev.at && (Math.abs(dx) > 4 || Math.abs(mdy) > 3)) { r.jumps++; const m = Math.max(Math.abs(dx), Math.abs(mdy)); if (m > r.maxJump) { r.maxJump = Math.round(m); r.jumpFrame = { from: prev.caret, to: f.caret, t: Math.round(f.t), keys: f.keys, echoes: prev.echoes.map((e) => [e.kind, e.text.slice(0, 50), e.r, e.at, e.fonts.map((f) => f.slice(0, 40))]) }; } }
         // typing forward on one row: the caret never steps back
         if (f.keys > prev.keys && sc.forward && Math.abs(mdy) < 3 && dx < -4) r.back++;
       }

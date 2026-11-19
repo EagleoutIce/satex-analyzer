@@ -2149,58 +2149,62 @@
     tsPend = null;
   }
   /** Typing in plain paragraph text shows at once in the Typeset view, marked pending until the run's row replaces it.
-   * Only a change within one line's words, whose old characters the run set from those source columns, read in place,
-   * at a single place of one paragraph; anything else waits for the run. */
+   * Each change within one line's words, whose old characters the run set from those source columns, read in place,
+   * all in one paragraph; anything else waits for the run. */
   function tsTyped() {
     tsUnpend();
     if (!typesetRows) return;
     const [file, was] = tsText, now = editor?.text();
     if (was == null || now == null || file !== state.file || was === now) return;
-    let a = 0, b = 0;
-    while (a < was.length && a < now.length && was[a] === now[a]) a++;
-    while (b < was.length - a && b < now.length - a && was[was.length - 1 - b] === now[now.length - 1 - b]) b++;
-    // whole words on both sides
-    const w = /[\p{L}\p{N}]/u;
-    while (a > 0 && w.test(was[a - 1])) a--;
-    while (b > 0 && w.test(was[was.length - b])) b--;
-    const old = was.slice(a, was.length - b), typed = now.slice(a, now.length - b);
-    if (!old.trim() || !typed.trim() || /[^\p{L}\p{N} .,;:!?'()-]/u.test(old + typed)) return;
-    const line = was.slice(0, a).split('\n').length, col = a - was.lastIndexOf('\n', a - 1); // both 1-based, as the run's sites
-    // the run's characters of these columns, once in the whole view
-    const hits = [];
-    typesetRows.forEach((r, k) => {
-      if (r.kind !== 'paragraph' || !String(r.path ?? '').endsWith(`/${file}`)) return;
-      const chars = rowChars(r);
-      // a site may name the character TeX looked ahead to (a ligature or kern test): one column off; a macro's
-      // argument is read at the call's end, all its characters at one site past the typed column
-      chars.forEach((ch, i) => {
-        if (ch.line !== line || ch.from || !ch.path.endsWith(`/${file}`)) return;
-        const run = chars.slice(i, i + old.length), arg = ch.col >= col && run.every((x) => x.col === ch.col);
-        if (Math.abs(ch.col - col) > 1 && !arg) return;
-        if (run.length === old.length && run.every((x, j) => x.c === old[j] && x.line === line && !x.from)) hits.push([k, chars.slice(0, i).map((x) => x.c).join(''), chars.map((x) => x.c).join('')]);
+    // every place typed since the run, each as whole words, in order: two words typed apart are two edits, never one
+    // over the words between (which a row may set apart: a footnote mark, a line's end)
+    const edits = PE.hunks(was, now), marks = [];
+    if (!edits?.length) return;
+    for (const [a, e, typed] of edits) {
+      const old = was.slice(a, e);
+      if (!old.trim() || !typed.trim() || /[^\p{L}\p{N} .,;:!?'()-]/u.test(old + typed)) return;
+      const line = was.slice(0, a).split('\n').length, col = a - was.lastIndexOf('\n', a - 1); // both 1-based, as the run's sites
+      // the run's characters of these columns, once in the whole view
+      const hits = [];
+      typesetRows.forEach((r, k) => {
+        if (r.kind !== 'paragraph' || !String(r.path ?? '').endsWith(`/${file}`)) return;
+        const chars = rowChars(r);
+        // a site may name the character TeX looked ahead to (a ligature or kern test): one column off; a macro's
+        // argument is read at the call's end, all its characters at one site past the typed column
+        chars.forEach((ch, i) => {
+          if (ch.line !== line || ch.from || !ch.path.endsWith(`/${file}`)) return;
+          const run = chars.slice(i, i + old.length), arg = ch.col >= col && run.every((x) => x.col === ch.col);
+          if (Math.abs(ch.col - col) > 1 && !arg) return;
+          if (run.length === old.length && run.every((x, j) => x.c === old[j] && x.line === line && !x.from)) hits.push([k, chars.slice(0, i).map((x) => x.c).join(''), chars.map((x) => x.c).join('')]);
+        });
       });
-    });
-    if (hits.length !== 1) return;
-    const [k, before, all] = hits[0], p = typesetBody.querySelector(`p.ts[data-k="${k}"]`), box = p?.querySelector('.ts-text');
-    if (!box || p.querySelector('.ts-switch')) return;
-    // the same occurrence of the old text in the view as in the row, where the view shows the row's text as it is
-    const count = (t) => t.split(old).length - 1, j = count(before), text = box.textContent;
-    if (count(text) !== count(all)) return;
-    let at = -1;
-    for (let n = 0; n <= j; n++) at = text.indexOf(old, at + 1);
-    // the start in the node of the old text's first character, never the end of the one before (a footnote's mark
-    // `<sup>1</sup>`: the typed text would go into the superscript)
-    const f = at >= 0 && tsNodeAt(box, at + 1), from = f && [f[0], f[1] - 1], to = tsNodeAt(box, at + old.length);
-    if (at < 0 || !from || !to) return;
-    tsPend = [p, p.cloneNode(true)];
-    const r = document.createRange();
-    r.setStart(...from); r.setEnd(...to);
-    r.deleteContents();
-    const mark = document.createElement('span');
-    mark.className = 'ts-pending';
-    mark.title = 'as typed: the analysis has not set it yet';
-    mark.textContent = typed;
-    r.insertNode(mark);
+      if (hits.length !== 1) return;
+      const [k, before, all] = hits[0], p = typesetBody.querySelector(`p.ts[data-k="${k}"]`), box = p?.querySelector('.ts-text');
+      // all in one paragraph (the one kept to restore)
+      if (!box || p.querySelector('.ts-switch') || marks.length && marks[0].p !== p) return;
+      // the same occurrence of the old text in the view as in the row, where the view shows the row's text as it is
+      const count = (t) => t.split(old).length - 1, j = count(before), text = box.textContent;
+      if (count(text) !== count(all)) return;
+      let at = -1;
+      for (let n = 0; n <= j; n++) at = text.indexOf(old, at + 1);
+      // the start in the node of the old text's first character, never the end of the one before (a footnote's mark
+      // `<sup>1</sup>`: the typed text would go into the superscript)
+      const f = at >= 0 && tsNodeAt(box, at + 1), from = f && [f[0], f[1] - 1], to = tsNodeAt(box, at + old.length);
+      if (at < 0 || !from || !to) return;
+      const r = document.createRange();
+      r.setStart(...from); r.setEnd(...to);
+      marks.push({ p, r, typed });
+    }
+    // placed on the view as the run set it, then each written from the last (the ranges before it keep their places)
+    tsPend = [marks[0].p, marks[0].p.cloneNode(true)];
+    for (const { r, typed } of marks.reverse()) {
+      r.deleteContents();
+      const mark = document.createElement('span');
+      mark.className = 'ts-pending';
+      mark.title = 'as typed: the analysis has not set it yet';
+      mark.textContent = typed;
+      r.insertNode(mark);
+    }
   }
   cards.typesetWire(typesetBody);
   typesetBody.addEventListener('click', (e) => {
@@ -2525,7 +2529,7 @@
     const by = new Map();
     fixAlls[target] = (actions ?? []).filter((a) => a.data?.scope);
     for (const a of (actions ?? []).filter((x) => !x.data?.scope)) for (const d of a.diagnostics ?? []) {
-      const safety = d.data?.applicability ?? (a.isPreferred ? 'safe' : 'unsafe');
+      const safety = a.data?.applicability ?? d.data?.applicability ?? (a.isPreferred ? 'safe' : 'unsafe');
       by.set(key(d), [...(by.get(key(d)) ?? []), { ...a, safety }]);
     }
     // A finding on the word under the cursor while it is typed (`\dra` on the way to `\draw`)
@@ -9581,6 +9585,8 @@
   /** The font page image `img` sets word `w` in: pdf.js's embedded font of the text run under the word's glyphs (by
    * position: the run on its baseline overlapping it most, never by spelling), its size and baseline in bp. A run
    * whose PDF was closed for a newer build has its face added back (pdfFaces). No run: the echo font as wide as the word. */
+  /** A run's font name without the subset tag (`BXLKFT+CMR10` is CMR10, no bold face). */
+  const pdfFaceName = (r) => (r.name ?? '').replace(/^[A-Z]{6}\+/, '');
   function pdfFontOf(img, w) {
     pdfLmLoad();
     const over = (r) => Math.min(r.x + r.w, w[3]) - Math.max(r.x, w[1]);
@@ -9600,7 +9606,7 @@
       // the fallback's size for the face's x-height (a letter of x-height the subset holds, else none)
       const xc = [...'xzvwunmoaecrs'].find((c) => pdfHas(ctx, face, c)), xh = (fam) => { ctx.font = `100px ${fam}`; return ctx.measureText(xc).actualBoundingBoxAscent; }, xs = xc ? xh(face) / xh(PDF_ECHO_FONT) : 1;
       // the fallback as bold or italic as the face (a heading's CMBX12, an \\emph's CMTI10)
-      const fb = `${/BX|Bold|CMB|bx/.test(run.name ?? '') ? 'bold ' : ''}${/TI|Ital|SL|Obl/.test(run.name ?? '') ? 'italic ' : ''}`;
+      const fb = `${/BX|Bold|CMB|bx/.test(pdfFaceName(run)) ? 'bold ' : ''}${/TI|Ital|SL|Obl/.test(pdfFaceName(run)) ? 'italic ' : ''}`;
       return { family: `${face}, ${PDF_ECHO_FONT}`, face, fb, r: r > 0.5 && r < 2 ? r : 1, xs: xs > 0.7 && xs < 1.4 ? xs : 1, size: fit(`${face}, ${PDF_ECHO_FONT}`, run.size), base: run.y, own: true };
     }
     return { family: PDF_ECHO_FONT, size: fit(PDF_ECHO_FONT, run?.size ?? h), base: run?.y ?? w[2] + (w[4] - w[2]) * 0.78, own: false };
@@ -9623,7 +9629,28 @@
    * a fallback's `s`). The page's face where its subset holds the whole word, else the fallback (Latin Modern, pdfLm)
    * at the face's x-height. */
   function pdfWordFont(ctx, f, whole, px) {
-    return pdfOwns(ctx, f, whole) ? `${px}px ${f.family}` : `${f.fb ?? ''}${px * (f.xs ?? 1)}px ${PDF_ECHO_FONT}`;
+    return pdfOwns(ctx, f, whole) ? `${f.own ? '' : f.fb ?? ''}${px}px ${f.family}` : `${f.fb ?? ''}${px * (f.xs ?? 1)}px ${PDF_ECHO_FONT}`;
+  }
+  /** The width of `t` in echo font `f` (bp) over an image `k` px a bp. */
+  let pdfShapeCtx = null;
+  const pdfWidthIn = (f, t, k) => { const ctx = pdfShapeCtx ??= document.createElement('canvas').getContext('2d'); ctx.font = `${f.own ? '' : f.fb ?? ''}${f.size * k}px ${f.family}`; return pdfTextWidth(ctx, f, t, f.size * k) / k; };
+  /** The echo font of shape `shape` (`bf`, `it`: pdfedit `prose`) beside row font `f` over page image `img`: the face of a
+   * run a shown page sets in that shape, at `f`'s size; else the fallback so shaped. Once per image and font. */
+  const pdfShapeOf = new WeakMap();
+  function pdfShapeFont(img, f, shape) {
+    const key = `${f.family}|${f.size}|${shape}`, memo = pdfShapeOf.get(img) ?? new Map();
+    pdfShapeOf.set(img, memo);
+    if (!memo.has(key)) {
+      const re = shape === 'bf' ? /BX|Bold|CMB(?!SY)/ : /CMTI|Ital|Obl/, math = /Math|CMMI|CMSY|CMEX/;
+      // the run nearest the row's size (CMBX10 beside CMR10, not a heading's CMBX12)
+      const hit = [img, ...pdfBody.querySelectorAll('.pdf-page img')].flatMap((i) => (i.__runs ?? []).map((r) => [i, r])).filter(([, r]) => re.test(pdfFaceName(r)) && !math.test(pdfFaceName(r)))
+        .sort((p, q) => Math.abs(p[1].size - f.size) - Math.abs(q[1].size - f.size)).find(([, r]) => pdfFaceUp(r));
+      // (pdfFontOf measures in the echo's canvas: its font as the caller set it, kept)
+      const was = pdfEchoCtx?.font, F = hit && pdfFontOf(hit[0], [0, hit[1].x, hit[1].y - hit[1].size * 0.7, hit[1].x + hit[1].w, hit[1].y + hit[1].size * 0.2, '']);
+      if (was) pdfEchoCtx.font = was;
+      memo.set(key, F?.own ? { ...F, size: f.size, base: f.base } : { family: PDF_ECHO_FONT, size: f.size, base: f.base, own: false, fb: shape === 'bf' ? 'bold ' : 'italic ' });
+    }
+    return memo.get(key);
   }
   /** The width of `t` in echo font `f` with `ctx.font` set to it at `px` px: a character its face lacks counts at the
    * fallback's width times `f.r`, as TeX sets it in the page's font, not the fallback's (the word is drawn in one
@@ -9736,8 +9763,9 @@
       // (by the change, not the caret: one moved back by an arrow key into the words before it leaves them as they are)
       let A = [...para].reverse().find((t) => te(t) <= Math.max(g.at, P) && (te(t) < P || te(t) === P && !/\S/.test(g.text[te(t)] ?? ' ')));
       if (A) A = { ...A, e: te(A) };
-      // typing at a paragraph's start (after Enter): the text stands before its first word, on that word's row
-      else if (para[0]?.s >= P) { const F = para[0].w; A = { s: P, e: P, w: [F[0], F[1], F[2], F[1], F[4], ''] }; }
+      // typing at a paragraph's start (after Enter), or into its first word (`Itconverges|more`): the text stands from
+      // there (that word's start), on that word's row
+      else if (para[0]) { const F = para[0].w, s0 = Math.min(P, para[0].s); A = { s: s0, e: s0, w: [F[0], F[1], F[2], F[1], F[4], ''] }; }
       // a command between A and the change (`about \\model{} here,|`) sets words no source word pairs with, which the
       // text from A drops, a display's closer (`\\]⏎and,|`) starts a row of its own: the echo starts at the first word
       // after it, the row before it as the page set it
@@ -9765,7 +9793,8 @@
       // each with the gap before it
       // a word TeX set before (`satex/break`'s widths: its letters with the font's ligatures and kerns) as wide as TeX
       // sets it, else as the canvas measures it
-      const fkey = `${f.family}|${f.size}|`, width = (t) => pdfTexWidth.get(fkey + t) ?? pdfTextWidth(ctx, f, t, f.size * k) / k, pieces = [];
+      const fkey = `${f.family}|${f.size}|`, pieces = [];
+      const width = (t, shape) => shape ? pdfWidthIn(pdfShapeFont(img, f, shape), t, k) : pdfTexWidth.get(fkey + t) ?? pdfTextWidth(ctx, f, t, f.size * k) / k;
       // the text typed as pieces, its formulas laid out as math; the caret in the last piece of the text up to it
       const M = pdfMathOf(img, f), typed = (to) => pdfPieces(g.text, A.e, to, verb, width, gap, M);
       pieces.push(...typed(upto));
@@ -9830,7 +9859,7 @@
       let spaced = [];
       for (const q of texWords ? seq : []) {
         const t = (q.t ?? q.w?.[5])?.normalize('NFKC');
-        if (q.par || q.disp != null || t == null || !t && q.n > 0) { texWords = null; break; }
+        if (q.par || q.brk != null || q.shape || q.disp != null || t == null || !t && q.n > 0) { texWords = null; break; }
         if (!t) { if (q.gap > 0 || spaced.length) spaced.push(q); continue; }
         const qw = q.t == null && q.w ? q.n : null;
         if (q.gap > 0 || spaced.length) { texWords.push(t); texW.push(qw); } else { texWords[texWords.length - 1] += t; texW[texW.length - 1] = qw != null && texW.at(-1) != null ? texW.at(-1) + qw : null; }
@@ -9847,14 +9876,15 @@
           return at.slice(0, -1).map((a, i) => {
             const b = at[i + 1], part = { ...q, gap: i ? 0 : q.gap, st: i ? 0 : q.st, sh: i ? 0 : q.sh, hy: i < at.length - 2, hw, wc: (q.wc0 ?? 0) + a };
             // a typed word's parts share its width as TeX sets it (a ligature spans a part's end)
-            const whole = !xs && pdfTexWidth.get(fkey + t), scale = whole ? whole / at.slice(0, -1).reduce((m, c, j) => m + width(t.slice(c, at[j + 1])), 0) : 1;
-            return xs ? { ...part, n: xs[b] - xs[a], w: [q.w[0], xs[a], q.w[2], xs[b], q.w[4], t.slice(a, b)] } : { ...part, n: width(t.slice(a, b)) * scale, t: t.slice(a, b), word: t };
+            const whole = !xs && !q.shape && pdfTexWidth.get(fkey + t), scale = whole ? whole / at.slice(0, -1).reduce((m, c, j) => m + width(t.slice(c, at[j + 1])), 0) : 1;
+            return xs ? { ...part, n: xs[b] - xs[a], w: [q.w[0], xs[a], q.w[2], xs[b], q.w[4], t.slice(a, b)] } : { ...part, n: width(t.slice(a, b), q.shape) * scale, t: t.slice(a, b), word: t };
           });
         };
         tagged.splice(0, tagged.length, ...tagged.flatMap(split));
         for (const r of later) r.pieces = r.pieces.flatMap(split);
       }
-      const flow = PE.reflow(tagged, w[3], { right, left, indent, skip, parskip, rows: later, pull: dl < 0, fit: fits, breaks: texWords && pdfTexBreaks(fkey, texWords.map((t, i) => (texW[i] != null ? [t, Math.round(texW[i] * 65536 * 72.27 / 72)] : t)), tagged, later, line[0][1] - left, pdfPos(g.text, A.s).line) });
+      // an alignment environment's rows are a \\topsep apart from the text (article's 8pt at 10pt)
+      const flow = PE.reflow(tagged, w[3], { right, left, indent, skip, parskip, envskip: 0.8 * f.size, rows: later, pull: dl < 0, fit: fits, breaks: texWords && pdfTexBreaks(fkey, texWords.map((t, i) => (texW[i] != null ? [t, Math.round(texW[i] * 65536 * 72.27 / 72)] : t)), tagged, later, line[0][1] - left, pdfPos(g.text, A.s).line) });
       const rows = [];
       for (const fr of flow.rows) {
         const prev = rows.at(-1), L = later[fr.from];
@@ -9996,7 +10026,7 @@
     cg.font = `${f.size * k}px ${f.family}`;
     for (const q of out) {
       // text as wide as laid out (`n`): glyphs the face lacks are drawn in the fallback, stretched to the page's width
-      if (q.t != null) { cg.font = pdfWordFont(cg, f, q.word ?? q.t, f.size * k); const m = cg.measureText(q.t).width, sx = m > 0 && q.n ? q.n * k / m : 1; cg.save(); cg.scale(sx, 1); cg.fillText(q.t, (q.x - x0) * k / sx, (f.base - top) * k); cg.restore(); }
+      if (q.t != null) { const F = q.shape ? pdfShapeFont(img, f, q.shape) : f; cg.font = pdfWordFont(cg, F, q.word ?? q.t, F.size * k); const m = cg.measureText(q.t).width, sx = m > 0 && q.n ? q.n * k / m : 1; cg.save(); cg.scale(sx, 1); cg.fillText(q.t, (q.x - x0) * k / sx, (f.base - top) * k); cg.restore(); }
       else if (q.math) pdfMathPaint(cg, q, (q.x - x0) * k, (f.base - top) * k, k);
       // no glyph of a word the change left redrawn: its pixels moved
       // a word moved from another row (wrapped down) comes from its own place, set on this row's baseline
@@ -10126,8 +10156,9 @@
       }
       // a blank line typed (Enter) starts a paragraph: the piece after it opens an indented row of its own
       const raw = out.at(-1)?.disp != null ? text.slice(r.s, r.e).replace(/^\s+/, '') : text.slice(r.s, r.e);
-      const pars = new Set(verb ? [] : [...raw.matchAll(/\n[ \t]*\n/g)].map((m) => pdfPlainOf(raw.slice(0, m.index) + ' ').split(' ').length - 1));
-      for (const [i, part] of pdfPlainOf(raw, verb).split(' ').entries()) out.push({ gap: i ? gap : 0, n: width(part), t: part, par: pars.has(i) });
+      if (verb) { for (const [i, part] of raw.split(' ').entries()) out.push({ gap: i ? gap : 0, n: width(part), t: part }); continue; }
+      // a word in \\textbf or \\emph measured in its own face; an alignment environment's lines rows of their own
+      for (const q of PE.prose(raw)) out.push({ gap: q.gap ? gap : 0, n: width(q.t, q.shape), t: q.t, par: q.par, ...(q.brk != null && { brk: q.brk }), ...(q.shape && { shape: q.shape }) });
     }
     return out.length ? out : [{ gap: 0, n: 0, t: '' }];
   }
@@ -10143,7 +10174,7 @@
     const key = `${f.family} ${f.size}`;
     if (pdfMathFor.get(img)?.key === key) return pdfMathFor.get(img);
     const ctx = pdfMathCtx ??= document.createElement('canvas').getContext('2d'), runs = [img, ...pdfBody.querySelectorAll('.pdf-page img')].flatMap((i) => i.__runs ?? []);
-    const faceOf = (re) => { const r = runs.find((r) => re.test(r.name ?? '') && pdfFaceUp(r)); return r ? `'${r.font}'` : null; };
+    const faceOf = (re) => { const r = runs.find((r) => re.test(pdfFaceName(r)) && pdfFaceUp(r)); return r ? `'${r.font}'` : null; };
     const own = { it: faceOf(/CMMI|LMMathItalic|MathItalic/i), sy: faceOf(/CMSY|LMMathSymbols|MathSymbols/i), ex: faceOf(/CMEX|LMMathExtension|MathExtension/i), bf: faceOf(/CMBX|LMRoman\d*-Bold\b/i), rm: f.own ? f.face : null };
     const xh = (font) => { ctx.font = `100px ${font}`; return ctx.measureText('x').actualBoundingBoxAscent; };
     const ratio = (fb) => { const r = own.rm && pdfHas(ctx, own.rm, 'x') ? xh(own.rm) / xh(fb) : 1; return r > 0.8 && r < 1.25 ? r : 1; };
