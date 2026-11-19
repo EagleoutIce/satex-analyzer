@@ -1410,7 +1410,7 @@ A rule's own settings live under `lints.⟨code⟩`.
 
 ## The clock
 
-`clock` sets `\year`, `\month`, `\day`, `\time` and `\pdfcreationdate` ([tex.web § 241](https://github.com/TeX-Live/texlive-source/blob/dce038dd1bd98fac739254da4a2066c8347cdf6c/texk/web2c/tex.web#L5240)).
+`clock` sets `\year`, `\month`, `\day`, `\time` and `\pdfcreationdate` ([tex.web § 241](https://github.com/TeX-Live/texlive-source/blob/b4e37b58bfc6352cc3223ed26384cae01a28b234/texk/web2c/tex.web#L5240)).
 
 | Value | Meaning |
 | --- | --- |
