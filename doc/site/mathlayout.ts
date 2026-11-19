@@ -3,20 +3,21 @@
 // TeX's rules (The TeXbook, Appendix G) over its noads, simplified where only a glyph's ink is known.
 export {};
 /** A glyph `[text, x, y, scale, face, sy]` in em of the formula's size (`y` up from the baseline; face 'it' math italic,
- * 'rm' upright, 'bf' bold, 'sy' symbols, 'ms' a math font's alphabets), `sy` its extra vertical stretch (delimiters);
+ * 'rm' upright, 'bf' bold, 'sy' symbols, 'ex' large operators, 'ms' a math font's alphabets), `sy` its extra vertical stretch (delimiters);
  * a rule `[x, y, w, h]`; the box's width, height and depth about the baseline. */
 type Glyph = [string, number, number, number, string, number?];
 type MBox = { g: Glyph[]; r: [number, number, number, number][]; w: number; h: number; d: number };
 /** Measures `t` in `face` at 1 em: its width, or `[width, height, depth]` of its ink. */
 type Metric = (t: string, face: string) => number | [number, number, number];
 /** The font parameters TeX's math reads, in em: cmsy10's σ5..σ22, cmex10's ξ8..ξ13 (`\fontdimen`), and what the
- * preview adds: a math italic letter's italic correction, a script's space, and how much wider the script fonts set
- * (cmr7 and cmr5 over cmr10 scaled down: `1` is 0.58 and 0.68 em against 0.5). */
+ * preview adds: a math italic letter's italic correction, a script's space, how much wider the script fonts set
+ * (cmr7 and cmmi7 over cmr10 and cmmi10 scaled down: `1` is 0.57 em against 0.5), and the width of cmex10's ∑ in text
+ * and display (a fallback font's ∑ is narrower). */
 const PARAMS = {
   xHeight: 0.430555, quad: 1, num1: 0.676508, num2: 0.393732, num3: 0.443731, denom1: 0.685951, denom2: 0.344841,
   sup1: 0.412892, sup2: 0.362892, sup3: 0.288889, sub1: 0.15, sub2: 0.247217, supDrop: 0.386108, subDrop: 0.05,
   delim1: 2.39, delim2: 1.01, axis: 0.25, rule: 0.04, bigOp1: 0.111112, bigOp2: 0.166667, bigOp3: 0.2, bigOp4: 0.6, bigOp5: 0.1,
-  italic: 0.05, scriptSpace: 0.05, script: 1.16, scriptScript: 1.36,
+  italic: 0.05, scriptSpace: 0.05, script: 1.12, scriptScript: 1.3, opText: 1.05556, opDisplay: 1.44445,
 };
 type Params = typeof PARAMS;
 /** Styles: 0 display, 1 text, 2 script, 3 scriptscript; their sizes. */
@@ -55,7 +56,7 @@ function sym(name: string): [string, string, string] | undefined {
     'sy ord': 'infty ∞ partial ∂ nabla ∇ forall ∀ exists ∃ nexists ∄ emptyset ∅ varnothing ∅ neg ¬ lnot ¬ prime ′ ldots … dots … cdots ⋯ vdots ⋮ ddots ⋱ angle ∠ top ⊤ bot ⊥ hbar ℏ Re ℜ Im ℑ aleph ℵ | ‖ Vert ‖ vert | backslash ∖ triangle △ Box □ Diamond ◇ clubsuit ♣ diamondsuit ♢ heartsuit ♡ spadesuit ♠ flat ♭ natural ♮ sharp ♯ surd √ mho ℧ complement ∁ dagger † ddagger ‡ checkmark ✓ colon :',
     'sy bin': 'pm ± mp ∓ times × cdot ⋅ div ÷ ast ∗ star ⋆ circ ∘ bullet ∙ cup ∪ cap ∩ setminus ∖ wedge ∧ land ∧ vee ∨ lor ∨ oplus ⊕ ominus ⊖ otimes ⊗ oslash ⊘ odot ⊙ uplus ⊎ sqcup ⊔ sqcap ⊓ amalg ⨿ wr ≀ diamond ⋄ bigtriangleup △ bigtriangledown ▽ triangleleft ◁ triangleright ▷ bigcirc ◯',
     'sy rel': 'le ≤ leq ≤ ge ≥ geq ≥ ne ≠ neq ≠ ll ≪ gg ≫ approx ≈ equiv ≡ sim ∼ simeq ≃ cong ≅ propto ∝ in ∈ notin ∉ ni ∋ subset ⊂ subseteq ⊆ supset ⊃ supseteq ⊇ sqsubseteq ⊑ sqsupseteq ⊒ prec ≺ succ ≻ preceq ⪯ succeq ⪰ asymp ≍ doteq ≐ triangleq ≜ coloneqq ≔ bowtie ⋈ smile ⌣ frown ⌢ mid ∣ parallel ∥ perp ⊥ to → rightarrow → leftarrow ← gets ← leftrightarrow ↔ Rightarrow ⇒ Leftarrow ⇐ Leftrightarrow ⇔ longrightarrow ⟶ longleftarrow ⟵ Longrightarrow ⟹ Longleftarrow ⟸ implies ⟹ iff ⟺ mapsto ↦ longmapsto ⟼ hookrightarrow ↪ hookleftarrow ↩ uparrow ↑ downarrow ↓ updownarrow ↕ Uparrow ⇑ Downarrow ⇓ nearrow ↗ searrow ↘ rightharpoonup ⇀ leftharpoonup ↼ rightleftharpoons ⇌ leadsto ⇝ vdash ⊢ dashv ⊣ models ⊨',
-    'sy op': 'sum ∑ prod ∏ coprod ∐ int ∫ iint ∬ iiint ∭ oint ∮ bigcup ⋃ bigcap ⋂ bigvee ⋁ bigwedge ⋀ bigoplus ⨁ bigotimes ⨂ bigodot ⨀ biguplus ⨄ bigsqcup ⨆',
+    'ex op': 'sum ∑ prod ∏ coprod ∐ int ∫ iint ∬ iiint ∭ oint ∮ bigcup ⋃ bigcap ⋂ bigvee ⋁ bigwedge ⋀ bigoplus ⨁ bigotimes ⨂ bigodot ⨀ biguplus ⨄ bigsqcup ⨆',
     'sy open': 'langle ⟨ lbrace { { { lceil ⌈ lfloor ⌊ lbrack [ lvert | lVert ‖',
     'sy close': 'rangle ⟩ rbrace } } } rceil ⌉ rfloor ⌋ rbrack ] rvert | rVert ‖',
   }).flatMap(([fk, list]) => { const [f, k] = fk.split(' ') as [string, string], xs = list.split(' '); return xs.flatMap((x, j) => j % 2 ? [] : [[x, [xs[j + 1]!, f, k]] as [string, [string, string, string]]]); }));
@@ -313,9 +314,10 @@ function layout(src: string, metric: Metric, display = false, params: Partial<Pa
         if (op) {
           // a large operator: bigger in display, centered on the axis (rule 13)
           const integral = /[∫∮∬∭]/.test(n.c), [, h, d] = box(n.c, n.f), want = (st.s === 0 ? integral ? 2.22 : 1.4 : integral ? 1.11 : 1) * s, k = Math.max(0.9, want / (h + d) / s);
-          const g = glyph(n.c, n.f, s * k), out = empty();
-          put(out, g, 0, P.axis * s - (g.h - g.d) / 2);
-          out.w = g.w;
+          // a sum or product as wide as TeX's summation sign at least, the glyph centered in it
+          const g = glyph(n.c, n.f, s * k), out = empty(), w = /[∑∏∐]/.test(n.c) ? Math.max(g.w, (st.s === 0 ? P.opDisplay : P.opText) * s) : g.w;
+          put(out, g, (w - g.w) / 2, P.axis * s - (g.h - g.d) / 2);
+          out.w = w;
           // after it is centered it counts as a box, not a character (its scripts drop from its top and bottom)
           return { b: out, char: false, ic: integral ? 0.1 * (out.h + out.d) : 0 };
         }
@@ -472,6 +474,8 @@ function css(params: Partial<Params> = {}): Record<string, string> {
   return {
     '--m-script': String(sc), '--m-sup': em(P.sup2 / sc), '--m-sub': em(-P.sub1 / sc),
     '--m-bin': em(4 / 18), '--m-rel': em(5 / 18), '--m-punct': em(3 / 18), '--m-op': String(1.4),
+    // stacked scripts: the column raised by sup2, its rows sup2 + sub2 apart (in lines of the script's size)
+    '--m-sup2': em(P.sup2), '--m-stack': String(+((P.sup2 + P.sub2) / sc).toFixed(3)),
   };
 }
 self.satexMath = { layout, parse, css, PARAMS, spaceMu };

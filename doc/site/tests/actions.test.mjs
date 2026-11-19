@@ -251,6 +251,8 @@ test('relative placement: positioning keys from frames', () => {
   assert.equal(T.relation(box(0, 2 * cm), a, 0.5, [1, 1], 'a'), 'below=1.5cm of a');
   assert.equal(T.relation(box(3 * cm, -2 * cm), a, 0.5, [1, 1], 'a'), 'above right=1.5cm and 2cm of a', 'vertical, then horizontal');
   assert.equal(T.relation(a, a, 0.5, [1, 1], 'a'), null);
+  assert.equal(T.relation(box(0.5 * cm, 2 * cm), a, 0.5, [1, 1], 'a'), 'below=1.5cm of a, xshift=0.5cm', 'overlapping across: a side and a shift');
+  assert.equal(T.place('\\node (b) {B};', 0, 'below=of a, xshift=5mm'), '\\node[below=of a, xshift=5mm] (b) {B};');
   assert.equal(T.place('\\node[box, right=of a, xshift=2mm] (b) {B};', 0, 'below=of a'), '\\node[box, below=of a] (b) {B};');
   assert.equal(T.place('\\node[draw] (b) at (1,2) {B};', 0, 'right=of a'), '\\node[draw, right=of a] (b) {B};');
   assert.equal(T.place('\\node (b) [right of=a] {B};', 0, 'right=of a'), '\\node (b) [right=of a] {B};', 'tikz\'s old `right of=` goes too');

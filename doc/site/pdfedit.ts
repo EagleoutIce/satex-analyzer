@@ -1213,17 +1213,19 @@ declare global {
     const starts = [0];
     for (let i = text.indexOf('\n'); i >= 0; i = text.indexOf('\n', i + 1)) starts.push(i + 1);
     const off = (n: number) => starts[Math.min(Math.max(n, 1), starts.length) - 1]!, lineOf = (n: number) => text.slice(off(n), (starts[n] ?? text.length + 1) - 1);
-    const heading = (r: { line: number }) => /^\s*\\(part|chapter|(sub)*section|paragraph)\*?\s*[[{]/.test(lineOf(r.line));
+    // SyncTeX names the line where TeX ended the paragraph: the blank line after it, `\end{document}`: the text's line before
+    const src = (n: number) => { while (n > 1 && (!lineOf(n).trim() || /^\s*\\end\s*\{document\}/.test(lineOf(n)))) n--; return n; };
+    const heading = (r: { line: number }) => /^\s*\\(part|chapter|(sub)*section|paragraph)\*?\s*[[{]/.test(lineOf(src(r.line)));
     // a float the row is set in: its `\end` line's end
     const floatEnd = (r: { line: number }) => {
-      const at = off(r.line), re = /\\(begin|end)\s*\{(figure|table|wrapfigure|wraptable|algorithm)\*?\}/g, open: number[] = [];
+      const at = off(src(r.line)), re = /\\(begin|end)\s*\{(figure|table|wrapfigure|wraptable|algorithm)\*?\}/g, open: number[] = [];
       for (const m of text.matchAll(re)) {
         if (m[1] === 'begin') { if (m.index > at) break; open.push(m.index); continue; }
         if (open.pop() != null && m.index >= at && !open.length) { const e = text.indexOf('\n', m.index); return e < 0 ? text.length : e; }
       }
       return -1;
     };
-    const para = (r: { line: number }) => paragraph(text, off(r.line));
+    const para = (r: { line: number }) => paragraph(text, off(src(r.line)));
     const med = (xs: number[], d: number) => xs.length ? xs.sort((p, q) => p - q)[xs.length >> 1]! : d;
     const left = Math.min(...rs.map((r) => r.l)), skip = med(rs.slice(1).map((r, i) => r.base - rs[i]!.base).filter((d) => d > 4 && d < 30), 12);
     const indent = med(rs.map((r) => r.l - left).filter((d) => d > 3 && d < 40), 15);
@@ -1756,17 +1758,22 @@ declare global {
     if (!h && !v) return null;
     const gx = (h === 'right' ? b.l - ref.r : ref.l - b.r) / bp, gy = (v === 'below' ? b.t - ref.d : ref.t - b.d) / bp;
     const fmt = (c: number) => `${+(Math.round(c / GRID) * GRID).toFixed(2)}cm`, same = (g: number, d: number) => Math.abs(g - d) < GRID / 2;
+    // frames overlapping across a corner: the side they stand apart on, shifted by the centres' offset along the other axis
+    if (h && v && (gx < 0 || gy < 0)) {
+      const vert = gy >= gx, d = vert ? dist[0] : dist[1], g = vert ? gy : gx;
+      return `${vert ? v : h}=${same(g, d) ? '' : `${fmt(g)} `}of ${name}, ${vert ? `xshift=${fmt(dx / bp)}` : `yshift=${fmt(-dy / bp)}`}`;
+    }
     const gaps: [number, number][] = [...(v ? [[gy, dist[0]] as [number, number]] : []), ...(h ? [[gx, dist[1]] as [number, number]] : [])];
     const val = gaps.every(([g, d]) => same(g, d)) ? '' : `${gaps.map(([g]) => fmt(g)).join(' and ')} `;
     return `${[v, h].filter(Boolean).join(' ')}=${val}of ${name}`;
   }
-  /** `stmt` with node `i` placed by positioning key `rel` (`right=of a`): its placement, shifts and `at` before go. */
+  /** `stmt` with node `i` placed by positioning keys `rel` (`right=of a`, a shift after it): its placement, shifts and `at` before go. */
   function place(stmt: string, i: number, rel: string) {
     const p = parts(stmt)[i];
     if (!p) return null;
     const LEGACY = /^(above|below|left|right)( (left|right))? of\s*=/;
     const ks = (p.o ? keys(stmt.slice(p.o[0] + 1, p.o[1])) : []).filter((k) => !PLACED.test(k) && !SHIFTS.test(k) && !LEGACY.test(k));
-    let s = withOpts(stmt, p.o, p.oAt, [...ks, rel]);
+    let s = withOpts(stmt, p.o, p.oAt, [...ks, ...keys(rel)]);
     const q = parts(s)[i]!;
     if (q.at) s = s.slice(0, q.at[0]).replace(/\s*\bat\s*$/, '') + s.slice(q.at[1] + 1);
     return s;

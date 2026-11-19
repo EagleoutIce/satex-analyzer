@@ -243,6 +243,9 @@ test('blankPlace: empty page space mapped to the source', () => {
   const c = E.blankPlace(t, rows.slice(1), 100, 60);
   assert.deepEqual([c.kind, c.at, c.caret], ['new', off('First'), off('First')], 'above an indented first line: before it');
   assert.deepEqual(E.blankPlace(t, rows.slice(2), 100, 60), { kind: 'near', row: 0 }, 'above a continued paragraph: its line');
+  // SyncTeX's line of a paragraph is often the blank line ending it, or \end{document}: the paragraph before
+  assert.equal(E.blankPlace(t, rows.map((r) => r.line === 6 ? { ...r, line: 5 } : r.line === 10 ? { ...r, line: 11 } : r), 100, 300).at, off('Third.') + 6);
+  assert.equal(E.blankPlace(t, [row(5, 130, 87), row(6, 160, 87)], 100, 150).at, off('line two.') + 9, 'the blank line after the first paragraph names it');
   // written where shown: the text with the body in place keeps the paragraphs apart by blank lines
   const w = t.slice(0, b.at) + b.body + 'New' + t.slice(b.at);
   assert.ok(w.includes('line two.\n\nNew\n\nSecond'));

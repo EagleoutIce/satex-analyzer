@@ -10,6 +10,8 @@ const w = (s) => [...s].length * 0.5;
 const ink = (t) => [[...t].length * 0.5, /[()[\]{}|∑∫√]/.test(t) ? 0.75 : /[A-Z0-9dfhkl]/.test(t) ? 0.7 : 0.43, /[()[\]{}|∑∫]/.test(t) ? 0.25 : /[gjpqy]/.test(t) ? 0.2 : 0];
 const lay = (s, d = false, m = w) => M.layout(s, m, d);
 const at = (b, t, k = 0) => b.g.filter((g) => g[0] === t)[k];
+/** A glyph's size: its height's scale (a script's is set wider, its height not). */
+const sz = (g) => +(g[3] * (g[5] ?? 1)).toFixed(9);
 /** A glyph's ink box `[left, right, bottom, top]` under `ink`, its stretch applied. */
 const inkBox = (g) => { const [gw, h, d] = ink(g[0]), sy = g[5] ?? 1; return [g[1], g[1] + gw * g[3], g[2] - d * g[3] * sy, g[2] + h * g[3] * sy]; };
 const apart = (p, q) => p[1] <= q[0] + 1e-9 || q[1] <= p[0] + 1e-9 || p[3] <= q[2] + 1e-9 || q[3] <= p[2] + 1e-9;
@@ -18,7 +20,8 @@ const apart = (p, q) => p[1] <= q[0] + 1e-9 || q[1] <= p[0] + 1e-9 || p[3] <= q[
 // for `\(x_1\)` (user 2026-11-18).
 test('faces and script sizes', () => {
   const b = lay('x_1^{a_2}');
-  assert.deepEqual([at(b, 'x')[4], at(b, '1')[4], at(b, '1')[3], at(b, 'a')[3], at(b, '2')[3]], ['it', 'rm', 0.7, 0.7, 0.5]);
+  assert.deepEqual([at(b, 'x')[4], at(b, '1')[4], sz(at(b, '1')), sz(at(b, 'a')), sz(at(b, '2'))], ['it', 'rm', 0.7, 0.7, 0.5]);
+  assert.equal(at(b, '1')[3], 0.7 * P.script, 'a script set wider, as cmr7 is');
   assert.deepEqual(at(lay('\\alpha'), 'α').slice(3, 5), [1, 'it'], 'Greek lowercase in math italic');
   assert.deepEqual(at(lay('\\Gamma'), 'Γ').slice(3, 5), [1, 'rm'], 'Greek capitals upright');
 });
@@ -45,7 +48,7 @@ test('spacing classes', () => {
   assert.ok(Math.abs(at(sum, '+')[1] - (0.5 + 4 / 18)) < 1e-9 && Math.abs(at(sum, 'b')[1] - (1 + 8 / 18)) < 1e-9, 'medium about +');
   assert.ok(Math.abs(at(rel, 'b')[1] - (1 + 10 / 18)) < 1e-9, 'thick about =');
   assert.deepEqual([at(neg, '−')[1], at(neg, 'x')[1]], [0, 0.5], 'a unary minus: no space');
-  assert.ok(Math.abs(at(lay('x_{a+b}'), 'b')[1] - at(lay('x_{a+b}'), '+')[1] - 0.35) < 1e-9, 'no medium space in a script');
+  assert.ok(Math.abs(at(lay('x_{a+b}'), 'b')[1] - at(lay('x_{a+b}'), '+')[1] - 0.35 * P.script) < 1e-9, 'no medium space in a script');
   assert.ok(Math.abs(at(lay('\\sin x'), 'x')[1] - (1.5 + 3 / 18)) < 1e-9, 'thin between an operator and an ordinary');
   assert.ok(Math.abs(at(lay('a,b'), 'b')[1] - (1 + 3 / 18)) < 1e-9, 'thin after punctuation');
   for (const [cmd, mu] of [['\\,', 3], ['\\:', 4], ['\\;', 5], ['\\!', -3], ['\\quad', 18], ['\\qquad', 36]]) assert.ok(Math.abs(at(lay(`a${cmd} b`), 'b')[1] - (0.5 + mu / 18)) < 1e-9, cmd);
@@ -56,14 +59,14 @@ test('spacing classes', () => {
 // parts are one size down, in display full size; \dfrac and \tfrac force the style, \binom has parentheses, no rule.
 test('fractions', () => {
   const fr = lay('\\frac{a}{b}');
-  assert.ok(at(fr, 'a')[2] > P.axis && at(fr, 'b')[2] < 0 && fr.r.length === 1 && at(fr, 'a')[3] === 0.7, 'stacked over its rule, one size down');
+  assert.ok(at(fr, 'a')[2] > P.axis && at(fr, 'b')[2] < 0 && fr.r.length === 1 && sz(at(fr, 'a')) === 0.7, 'stacked over its rule, one size down');
   assert.ok(Math.abs(fr.r[0][1] + fr.r[0][3] / 2 - P.axis) < 1e-9, 'the rule on the axis');
-  assert.equal(at(lay('\\frac{a}{b}', true), 'a')[3], 1, 'full size in display');
-  assert.equal(at(lay('\\dfrac{a}{b}'), 'a')[3], 1, '\\dfrac inline: full size');
-  assert.equal(at(lay('\\tfrac{a}{b}', true), 'a')[3], 0.7, '\\tfrac in display: one size down');
+  assert.equal(sz(at(lay('\\frac{a}{b}', true), 'a')), 1, 'full size in display');
+  assert.equal(sz(at(lay('\\dfrac{a}{b}'), 'a')), 1, '\\dfrac inline: full size');
+  assert.equal(sz(at(lay('\\tfrac{a}{b}', true), 'a')), 0.7, '\\tfrac in display: one size down');
   const bi = lay('\\binom{n}{k}');
   assert.ok(bi.r.length === 0 && at(bi, '(') && at(bi, ')') && at(bi, 'n')[2] > at(bi, 'k')[2], '\\binom: parentheses, no rule');
-  assert.equal(at(lay('\\frac12'), '1')[3], 0.7, '\\frac12 reads one digit an argument');
+  assert.equal(sz(at(lay('\\frac12'), '1')), 0.7, '\\frac12 reads one digit an argument');
   assert.ok(at(lay('a \\over b'), 'a')[2] > at(lay('a \\over b'), 'b')[2], '\\over');
 });
 
@@ -93,7 +96,7 @@ test('radicals and delimiters', () => {
   const r = lay('\\sqrt{\\frac{a}{b}}', false, ink), rule = r.r.at(-1), A = inkBox(at(r, 'a'));
   assert.ok(rule[1] > A[3] && at(r, '√')[5] > 1, 'the rule above the body, the sign stretched');
   const ix = lay('\\sqrt[3]{x}');
-  assert.ok(at(ix, '3')[3] === 0.5 && at(ix, '3')[1] < at(ix, 'x')[1] && at(ix, '3')[2] > 0.2, 'an index: scriptscript, raised, before');
+  assert.ok(sz(at(ix, '3')) === 0.5 && at(ix, '3')[1] < at(ix, 'x')[1] && at(ix, '3')[2] > 0.2, 'an index: scriptscript, raised, before');
   const f = lay('\\left( \\frac{\\frac{a}{b}}{c} \\right)', true, ink), L = inkBox(at(f, '(')), T = Math.max(...f.g.filter((g) => /[abc]/.test(g[0])).map((g) => inkBox(g)[3])), B = Math.min(...f.g.filter((g) => /[abc]/.test(g[0])).map((g) => inkBox(g)[2]));
   assert.ok(L[3] >= 0.9 * T && L[2] <= 0.9 * B, `the parenthesis covers the body (${L} vs ${B}..${T})`);
   assert.ok(Math.abs(inkBox(at(lay('\\left(x\\right)', false, ink), '('))[3] - 0.75) < 1e-9, 'a small body: the natural size');

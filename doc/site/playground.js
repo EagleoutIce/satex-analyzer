@@ -1302,7 +1302,7 @@
       toDOM() {
         const [first] = this.items, more = this.items.length > 1;
         const icon = first.css ? `<span class="cm-wdot" style="background:${first.css}"></span>` : `<svg viewBox="0 0 16 16">${WIDGET_ICON[MANAGERS.has(first.kind) ? 'list' : first.kind] ?? WIDGET_ICON.widget}</svg>`;
-        return Object.assign(document.createElement('span'), { className: 'cm-wmark' + (more ? ' more' : ''), innerHTML: icon, title: this.items.map((x) => MANAGERS.has(x.kind) ? `Open the ${x.kind}` : x.title).join('\n') + (more ? '\nclick: choose' : '') });
+        return Object.assign(document.createElement('span'), { className: 'cm-wmark' + (more ? ' cm-wmark-more' : ''), innerHTML: icon, title: this.items.map((x) => MANAGERS.has(x.kind) ? `Open the ${x.kind}` : x.title).join('\n') + (more ? '\nclick: choose' : '') });
       }
     }
     /** The widgets per line: `{kind, title, key, open}` from the lenses and the color swatches. */
@@ -1343,9 +1343,12 @@
         },
       },
     });
+    // soft wrapping breaks between TeX's tokens only: a control sequence and a short math run are kept on one row
+    const nowrap = new view.MatchDecorator({ regexp: tex.unbreakable, decoration: view.Decoration.mark({ class: 'cm-nowrap' }) });
+    const unbroken = view.ViewPlugin.define((v) => ({ marks: nowrap.createDeco(v), update(u) { this.marks = nowrap.updateDeco(u, this.marks); } }), { decorations: (p) => p.marks });
     const theme = new st.Compartment(), lock = new st.Compartment(), lang = new st.Compartment(), setup = new st.Compartment(), prefs = new st.Compartment();
     // `playground.font`, `font_size`, `wrap` and `line_numbers`
-    const prefsOf = () => [EditorView.theme({ '&.cm-editor': { fontSize: `${play.font_size}px` }, ...(play.font ? { '.cm-scroller': { fontFamily: play.font } } : {}), ...(play.line_numbers ? {} : { '.cm-lineNumbers': { display: 'none !important' } }) }), play.wrap ? EditorView.lineWrapping : []];
+    const prefsOf = () => [EditorView.theme({ '&.cm-editor': { fontSize: `${play.font_size}px` }, ...(play.font ? { '.cm-scroller': { fontFamily: play.font } } : {}), ...(play.line_numbers ? {} : { '.cm-lineNumbers': { display: 'none !important' } }) }), play.wrap ? [EditorView.lineWrapping, unbroken] : []];
     // typing in the PDF or Typeset view writes here too: its own list opens after `\`, the source's never for its prose
     const ev = new EditorView({
       parent, doc: text,
@@ -8211,7 +8214,9 @@
     if (!ref) return;
     const num = band.map((w) => w[5].trim()).find((t) => /^(\d+|[ivxlcdm]+|[IVXLCDM]+)$/.test(t)) ?? String(page), font = pdfFontOf(img, ref);
     const pkg0 = s.header?.package ?? null, letterOf = (p) => (p === 'scrlayer-scrpage' ? 'ico' : 'LCR')[spot], text = editor.text();
-    const setup = self.satexViews.page.footSetup(s, spot, !!pkg0 && !!PE.footArg(text, pkg0, letterOf(pkg0)));
+    // the class as written where the run names none (a KOMA class the run could not load still wants scrlayer-scrpage)
+    const cls = s.class ?? /\\documentclass\s*(?:\[[^\]]*\])?\s*\{([^}]*)\}/.exec(text)?.[1]?.trim() ?? null;
+    const setup = self.satexViews.page.footSetup({ ...s, class: cls }, spot, !!pkg0 && !!PE.footArg(text, pkg0, letterOf(pkg0)));
     // the number clicked: the caret before or after its command, else at the cell's end
     const onNum = word && cell.includes(word) && word[5].trim() === num, after = onNum && pdfK(page, x, word) > 0;
     const place = (t) => {
@@ -8634,7 +8639,7 @@
       pdfBreakAsked.set(key, null);
       const at = version;
       const t0 = performance.now(), during = running > 0;
-      lsp('satex/break', params).then((r) => { (self.__texBreaks ??= []).push({ ms: Math.round(performance.now() - t0), during, lines: r?.lines?.length ?? null }); pdfBreakAsked.set(key, r?.lines ?? false); if (r?.lines && version === at) pdfCaretDrawNow(); }).catch(() => pdfBreakAsked.set(key, false));
+      lsp('satex/break', params).then((r) => { (self.__texBreaks ??= []).push({ ms: Math.round(performance.now() - t0), during, lines: r?.lines?.length ?? null, ...(self.__texDebug && !r?.lines ? { params } : {}) }); pdfBreakAsked.set(key, r?.lines ?? false); if (r?.lines && version === at) pdfCaretDrawNow(); }).catch(() => pdfBreakAsked.set(key, false));
     }
     const lines = pdfBreakAsked.get(key);
     if (!lines) return null;
@@ -8850,12 +8855,17 @@
       // tagged with its word (`wi`) and where in it it starts (`wc0`); a formula or paragraph break typed: none
       const rowWords = fits ? line.filter((v) => v[3] <= w[3] + 0.5).map((v) => v[5]?.normalize('NFKC')) : [];
       let texWords = fits && rowWords.length && rowWords.every(Boolean) ? [...rowWords] : null;
+      // an empty piece (a space typed, the caret's empty word) is its gap only: it goes with the next word
+      let spaced = [];
       for (const q of texWords ? seq : []) {
         const t = (q.t ?? q.w?.[5])?.normalize('NFKC');
-        if (!t || q.par || q.disp != null) { texWords = null; break; }
-        if (q.gap > 0) texWords.push(t); else texWords[texWords.length - 1] += t;
-        Object.assign(q, { wi: texWords.length - 1, wc0: texWords.at(-1).length - t.length });
+        if (q.par || q.disp != null || t == null || !t && q.n > 0) { texWords = null; break; }
+        if (!t) { if (q.gap > 0 || spaced.length) spaced.push(q); continue; }
+        if (q.gap > 0 || spaced.length) texWords.push(t); else texWords[texWords.length - 1] += t;
+        for (const e of [...spaced, q]) Object.assign(e, { wi: texWords.length - 1, wc0: e === q ? texWords.at(-1).length - t.length : 0 });
+        spaced = [];
       }
+      if (self.__texDebug) (self.__texBreaks ??= []).push({ fits, row: rowWords.length, words: texWords?.length ?? null, bad: JSON.stringify(seq.filter((q) => !(q.t ?? q.w?.[5]) || q.par || q.disp != null).slice(0, 3).map((q) => ({ ...q, w: q.w && q.w.slice(0, 6) }))) });//UI39
       const tagged = pieces.map((q, ix) => ({ ...q, ix }));
       if (fits) {
         const H = pdfHyphens(), hw = width('-');
@@ -9134,8 +9144,8 @@
     return out.length ? out : [{ gap: 0, n: 0, t: '' }];
   }
   /** The fonts typed math is previewed in over page image `img`, its text in font `f` (pdfFontOf): per glyph the page's
-   * own face where a run of a shown page is set in it and its subset holds the glyph (math italic, symbols, bold:
-   * CMMI, CMSY, CMBX by pdf.js's names, Latin Modern's), else a fallback scaled to the page font's x-height.
+   * own face where a run of a shown page is set in it and its subset holds the glyph (math italic, symbols, large operators, bold:
+   * CMMI, CMSY, CMEX, CMBX by pdf.js's names, Latin Modern's), else a fallback scaled to the page font's x-height.
    * `font(face, t, px)` the canvas font, `metric(t, face)` its ink's width, height and depth at 1 em, `em` the text's
    * size in bp. Once per image and font. */
   const PDF_ECHO_FONT = "'Latin Modern Roman', 'CMU Serif', 'Computer Modern', Georgia, serif";
@@ -9146,7 +9156,7 @@
     if (pdfMathFor.get(img)?.key === key) return pdfMathFor.get(img);
     const ctx = pdfMathCtx ??= document.createElement('canvas').getContext('2d'), runs = [img, ...pdfBody.querySelectorAll('.pdf-page img')].flatMap((i) => i.__runs ?? []);
     const faceOf = (re) => { const r = runs.find((r) => re.test(r.name ?? '') && pdfFaceUp(r)); return r ? `'${r.font}'` : null; };
-    const own = { it: faceOf(/CMMI|LMMathItalic|MathItalic/i), sy: faceOf(/CMSY|LMMathSymbols|MathSymbols/i), bf: faceOf(/CMBX|LMRoman\d*-Bold\b/i), rm: f.own ? f.face : null };
+    const own = { it: faceOf(/CMMI|LMMathItalic|MathItalic/i), sy: faceOf(/CMSY|LMMathSymbols|MathSymbols/i), ex: faceOf(/CMEX|LMMathExtension|MathExtension/i), bf: faceOf(/CMBX|LMRoman\d*-Bold\b/i), rm: f.own ? f.face : null };
     const xh = (font) => { ctx.font = `100px ${font}`; return ctx.measureText('x').actualBoundingBoxAscent; };
     const ratio = (fb) => { const r = own.rm && pdfHas(ctx, own.rm, 'x') ? xh(own.rm) / xh(fb) : 1; return r > 0.8 && r < 1.25 ? r : 1; };
     const fit = { rm: ratio(PDF_ECHO_FONT), sy: ratio(PDF_MATH_FONT) }, memo = new Map();
@@ -9154,7 +9164,7 @@
       const o = own[face];
       if (o && [...t].every((c) => pdfHas(ctx, o, c))) return `${px}px ${o}`;
       // the math font's alphabets (`ms`: \\mathbb, \\mathcal) only in the fallback
-      return face === 'sy' || face === 'ms' ? `${px * fit.sy}px ${PDF_MATH_FONT}` : `${face === 'it' ? 'italic ' : face === 'bf' ? 'bold ' : ''}${px * fit.rm}px ${PDF_ECHO_FONT}`;
+      return face === 'sy' || face === 'ex' || face === 'ms' ? `${px * fit.sy}px ${PDF_MATH_FONT}` : `${face === 'it' ? 'italic ' : face === 'bf' ? 'bold ' : ''}${px * fit.rm}px ${PDF_ECHO_FONT}`;
     };
     const metric = (t, face) => {
       const m = `${face} ${t}`;

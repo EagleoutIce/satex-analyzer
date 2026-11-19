@@ -8,7 +8,7 @@ interface SiteFloat {
   el: HTMLDivElement; show(at: At, html: string, host?: Element | null): void; hide(ms?: number): void; later(f: () => void, ms: number): void;
 }
 /** The syntax highlighters built from the vendored CodeMirror (its modules are not typed here). */
-interface SiteTex { language: any; bib: any; highlighter: any }
+interface SiteTex { language: any; bib: any; highlighter: any; unbreakable: RegExp }
 /** The cards the pages and the playground render with. */
 interface SiteCards {
   keyTitle(k: Rec): string;
@@ -213,7 +213,9 @@ interface Stream {
         return style;
       },
     };
-    return { language: StreamLanguage.define(tex), bib, highlighter };
+    // what soft wrapping never breaks: a control sequence (`\(`, `\name*`, `\\`) and a short inline math run
+    const unbreakable = /\\\((?:(?!\\\))[^\n]){0,40}\\\)|\$(?:[^$\\\n]|\\.){1,40}\$|\\(?:[A-Za-z@]+\*?|[^\sA-Za-z@])/g;
+    return { language: StreamLanguage.define(tex), bib, highlighter, unbreakable };
   })());
 
   // One renderer for `satex explain --format json`: the landing page's cards, the
@@ -836,6 +838,20 @@ interface Stream {
     return `<svg class="ts-sketch${pic.approximate ? ' approximate' : ''}" role="img" aria-label="${label}" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">` +
       `<g transform="translate(${PICTURE_PAD} ${PICTURE_PAD}) scale(${scale}) translate(${-x} ${-y})">${paths}${texts}</g></svg>`;
   }
+  /** A subscript right next to a superscript (`x_i^2`) stacked in one column, as TeX sets them (rule 18), not one
+   * after the other. */
+  function stacked(html: string) {
+    const open: [string, number][] = [], spans: [string, number, number][] = [];
+    for (const m of html.matchAll(/<span\b[^>]*>|<\/span>/g)) {
+      if (m[0] !== '</span>') { open.push([/^<span class="ts-(sub|sup)">$/.exec(m[0])?.[1] ?? '', m.index!]); continue; }
+      const [kind, s] = open.pop() ?? [''];
+      if (kind) spans.push([kind, s!, m.index! + 7]);
+    }
+    const at = new Map(spans.map((x) => [x[1], x])), cuts: [number, string][] = [];
+    for (const [kind, s, e] of spans) { const next = at.get(e); if (next && next[0] !== kind) cuts.push([s, '<span class="ts-scripts">'], [next[2], '</span>']); }
+    for (const [i, t] of cuts.sort((a, b) => b[0] - a[0])) html = html.slice(0, i) + t + html.slice(i);
+    return html;
+  }
   function notation(marked: string, sketches: Rec[] = [], picture: Rec | null = null) {
     let drawn = 0;
     // row: false while a row waits for its first character, true if an \hline rules it, null when one is open
@@ -966,7 +982,7 @@ interface Stream {
     const aligned = bare.startsWith('<span class="ts-boxto"') && bare.endsWith('\u0000') || html.includes('ts-leaders');
     if (picture) return sketchSvg(picture);
     // infinite glue at both ends of a line (`\hbox to\hsize{\hfil …\hfil}`): the line is centred by it
-    const done = html.replaceAll('\u0000', '') + '</span>'.repeat(open + 2 * table + boxes + hidden + framed + scripts + limits + eqno + 2 * choices);
+    const done = stacked(html.replaceAll('\u0000', '') + '</span>'.repeat(open + 2 * table + boxes + hidden + framed + scripts + limits + eqno + 2 * choices));
     // a box the run did not show (a list's ▢) before the last fill: that fill ends the list, it centres nothing
     const ends = done.replace(/<i class="ts-glue ts-glue-(?:vskip|parskip)[^>]*><\/i>/g, '');
     if (/^<i class="ts-fill/.test(ends) && /<i class="ts-fill[^>]*><\/i>$/.test(ends) && !done.includes('class="ts-note"')) return `<span class="ts-fillrow">${done}</span>`;
