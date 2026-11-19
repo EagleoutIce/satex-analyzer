@@ -39,6 +39,8 @@ interface Parsed { items: Item[]; tail: string }
 /** What `relocate` reads: nodes by name, the ones before, sizes in cm, the node distance, the grid step and the two modes. */
 interface Env {
   by: Map<string, Item>; earlier: Item[]; size(n: Item): number[]; distance: (number | null)[]; onGrid: boolean; grid: number; keep?: boolean; exact?(n: Item): boolean;
+  /** The picture's length convention (unit, decimals) new lengths are written in; cm without. */
+  conv?: { unit: string; dec: number } | null;
 }
 /** The new options and place of a moved node. */
 interface Moved { opts: string[]; place: Place | null; at: boolean; x?: number; y?: number; hint: string }
@@ -654,6 +656,11 @@ const satexViews = (() => {
     return cuts.length === 1 ? [o.slice(0, cuts[0]).trim(), o.slice(cuts[0] + 1).trim()] : null;
   };
   const fmt = (v: number | string) => String(+(+v).toFixed(3));
+  /** The document's length convention (pdfedit.ts `convention`: its unit and decimals, `conventions.lengths` where it shows
+   * none; `strict`: null then), null where the resolver is not loaded (VS Code). */
+  const lenConv = (text: string, strict = false): { unit: string; dec: number } | null => (self as any).satexTikzMove?.convention(text, false, strict) ?? null;
+  /** `v` cm written in convention `c`, else in cm as the canvas writes it. */
+  const lenIn = (v: number, c: { unit: string; dec: number } | null) => (c?.unit ? (self as any).satexTikzMove.written(v, c) : `${fmt(v)}cm`);
   // a length in cm; a bare number is pt, as pgf reads a length
   const cm = (s?: string) => self.satexLengths.to(s ?? '', 'cm');
   const SIDES: Record<string, number[]> = { right: [1, 0], left: [-1, 0], above: [0, 1], below: [0, -1] };
@@ -1035,7 +1042,7 @@ const satexViews = (() => {
    * `{opts, place, at, x?, y?, hint}`.
    */
   function relocate(n: Item, x: number, y: number, env: Env): Moved {
-    const { by, earlier, size, distance, onGrid, grid } = env;
+    const { by, earlier, size, distance, onGrid, grid } = env, conv = () => env.conv ?? null;
     const sn = (v: number) => (grid ? Math.round(v / grid) * grid : v), tol = Math.max(grid, 0.2) / 2;
     const unshifted = n.opts.filter((o) => !SHIFTS.includes(kv(o)[0]));
     const bare = unshifted.filter((o) => kv(o)[0] !== 'node distance');
@@ -1052,14 +1059,14 @@ const satexViews = (() => {
       if (centers) {
         if (dir[0] && dir[1] && Math.abs(Math.abs(ox) - Math.abs(oy)) >= tol) return null;
         const d = sn(Math.hypot(dir[0] ? ox : 0, dir[1] ? oy : 0));
-        return d > 0 ? { p: { dir, of: r.name, centers: true }, extra: Math.abs(d - distance[1]!) < 1e-6 ? [] : [`node distance=${fmt(d)}cm`], d: fmt(d) } : null;
+        return d > 0 ? { p: { dir, of: r.name, centers: true }, extra: Math.abs(d - distance[1]!) < 1e-6 ? [] : [`node distance=${lenIn(d, conv())}`], d: fmt(d) } : null;
       }
       const [rw, rh] = size(r), [w, h] = size(n), gap = onGrid ? [0, 0] : [(rw + w) / 2, (rh + h) / 2];
       const hd = sn(Math.abs(ox) - gap[0]), vd = sn(Math.abs(oy) - gap[1]);
       if ((dir[0] && hd < 0) || (dir[1] && vd < 0)) return null;
-      const d = dir[0] && dir[1] ? `${fmt(vd)}cm and ${fmt(hd)}cm` : `${fmt(dir[0] ? hd : vd)}cm`;
+      const d = dir[0] && dir[1] ? `${lenIn(vd, conv())} and ${lenIn(hd, conv())}` : lenIn(dir[0] ? hd : vd, conv());
       const same = (!dir[0] || Math.abs(hd - distance[0]!) < 1e-6) && (!dir[1] || Math.abs(vd - distance[1]!) < 1e-6);
-      return { p: { dir, of: r.name, dist: same ? undefined : d }, extra: [], d: d.replace(/cm/g, '') };
+      return { p: { dir, of: r.name, dist: same ? undefined : d }, extra: [], d: dir[0] && dir[1] ? `${fmt(vd)} and ${fmt(hd)}` : fmt(dir[0] ? hd : vd) };
     };
     const hint = (q: { p: Place; d: string }) => `${words(q.p.dir)} of ${q.p.of}, ${q.d} cm`;
     // a node at `at` (or none) gets a relation of positioning's kind
@@ -1067,7 +1074,7 @@ const satexViews = (() => {
     // `at (r)` shifted: the shifts follow the pointer
     const shifted = (to: Item): Moved => {
       const sx = sn(x - to.x), sy = sn(y - to.y);
-      return { opts: [...bare.filter((o) => o !== n.place?.opt), ...(sx ? [`xshift=${fmt(sx)}cm`] : []), ...(sy ? [`yshift=${fmt(sy)}cm`] : [])], place: { dir: [0, 0], of: to.name, shift: true, opt: null }, at: false, hint: `at (${to.name}) shifted ${fmt(sx)}, ${fmt(sy)} cm` };
+      return { opts: [...bare.filter((o) => o !== n.place?.opt), ...(sx ? [`xshift=${lenIn(sx, conv())}`] : []), ...(sy ? [`yshift=${lenIn(sy, conv())}`] : [])], place: { dir: [0, 0], of: to.name, shift: true, opt: null }, at: false, hint: `at (${to.name}) shifted ${fmt(sx)}, ${fmt(sy)} cm` };
     };
     if (n.place?.shift && r) return shifted(r);
     // the same relation, a new distance
@@ -1078,7 +1085,7 @@ const satexViews = (() => {
     if (at0) {
       const sx = sn(x - at0[0]), sy = sn(y - at0[1]);
       if (Math.max(Math.abs(sx), Math.abs(sy)) <= NUDGE) {
-        const shift = [...(sx ? [`xshift=${fmt(sx)}cm`] : []), ...(sy ? [`yshift=${fmt(sy)}cm`] : [])];
+        const shift = [...(sx ? [`xshift=${lenIn(sx, conv())}`] : []), ...(sy ? [`yshift=${lenIn(sy, conv())}`] : [])];
         return { opts: [...unshifted, ...shift], place: n.place, at: false, hint: `${words(n.place!.dir)} of ${n.place!.of}${shift.length ? `, shifted ${fmt(sx)}, ${fmt(sy)} cm` : ''}` };
       }
     }
@@ -1261,7 +1268,7 @@ const satexViews = (() => {
       const t = Math.max(wh[0] / (a ?? 1), wh[1]);
       return [t * (a ?? 1), t];
     };
-    const env = () => ({ size, distance, onGrid, grid: snapping() ? step() : 0, exact });
+    const env = () => ({ size, distance, onGrid, grid: snapping() ? step() : 0, exact, conv: lenConv(s.body ?? '') });
     /** Relative nodes where TikZ puts them, from where their reference is now: they follow a drag. */
     const settle = () => {
       const by = new Map([...run].filter(([, r]) => r.x != null));
@@ -2939,10 +2946,13 @@ const satexViews = (() => {
     const root = el('div', 'tv-page');
     const st0 = pageOf(s), two = !!s.twoside;
     let st: PageState = structuredClone(st0), tab = ctx.focus?.numbers != null && s.numbering ? 'options' : ctx.focus?.part ? 'header' : 'margins', unit = s.unit ?? 'cm';
+    // the document's convention where it shows one (pdfedit.ts `convention`), else the run's
+    const docConv = lenConv(ctx.text?.() ?? '', true);
+    if (docConv && s.units.some((u: Rec) => u.name === docConv.unit)) unit = docConv.unit;
     // a page number clicked: the numbering in force at its row (the last point at or before it) is the one picked
     const inForce = tab === 'options' ? numberInForce(s, ctx.focus!.numbers!) : undefined;
     const per = Object.fromEntries(s.units.map((u: Rec) => [u.name, u.sp]));
-    const num = (sp: number, u = unit) => +(sp / per[u]).toFixed(s.decimals ?? 2);
+    const num = (sp: number, u = unit) => +(sp / per[u]).toFixed(docConv && u === docConv.unit ? Math.max(docConv.dec, 1) : s.decimals ?? 2);
     const len = (sp: number) => `${num(sp)}${unit}`;
     const H = self.satexDialogs?.history?.(() => st, (v: PageState) => { st = v; draw(); });
     const svg = svgEl('svg', { class: 'tv-canvas tv-sheet', role: 'img', 'aria-label': 'the page to scale' });

@@ -9,7 +9,7 @@ import { sleep } from '../lib.mjs';
 const J = JSON.stringify;
 async function open(p, example) {
   // the browser's pdfTeX: the machine's compile server blocked, the page loaded again
-  await p.s('Network.setBlockedURLs', { urls: ['*/__dev/events*', '*/__satex/compile*'] });
+  await p.block(['*/__satex/compile*']);
   await p.s('Page.reload', { ignoreCache: false });
   await sleep(500);
   await p.until(`document.readyState === 'complete'`, 30000);

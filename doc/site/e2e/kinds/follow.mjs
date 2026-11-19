@@ -9,7 +9,11 @@ export async function follow(p, sc) {
   const res = { name: sc.name, fails: [], perf: [], info: {} };
   // a boolean is a check, anything else a measurement kept for the report
   const ok = (k, v) => { if (v === false) res.fails.push(k); else if (v !== true) res.info[k] = v; };
-  await p.s('Network.setBlockedURLs', { urls: ['*/__dev/events*', '*/__satex/compile*'] });
+  await p.block(['*/__satex/compile*']);
+  // the page again, its workers started under the block
+  await p.s('Page.reload', { ignoreCache: false });
+  await sleep(500);
+  await p.until(`document.readyState === 'complete'`, 30000);
   if (sc.dark) await p.s('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-color-scheme', value: 'dark' }] });
   if (!await p.until(`document.querySelector('#play-status')?.dataset.done === 'ready'`, 120000)) throw new Error('the playground did not start');
   await p.eval(`document.querySelector('[data-example="spacing.tex"]').click()`);

@@ -44,7 +44,7 @@ export async function foot(p, sc) {
     await sleep(150);
   }
   await sleep(300);
-  res.info.echo = await p.eval(`[...document.querySelectorAll('#play-pdf .pdf-echo')].map((e) => e.textContent).join(' | ')`);
+  res.info.echo = await p.eval(`[...document.querySelectorAll('#play-pdf .pdf-echo')].map((e) => (e.__texts ?? []).map((q) => q.t).join(' ').replace(/\\s+/g, ' ').trim() || e.textContent).join(' | ')`);
   if (sc.echo && !sc.echo.test(res.info.echo)) fail(`echo ${J(res.info.echo)} lacks ${sc.echo}`);
   res.info.note = await p.eval(`document.querySelector('.type-note')?.textContent ?? ''`);
   if (sc.note && !sc.note.test(res.info.note)) fail(`note ${J(res.info.note)} lacks ${sc.note}`);

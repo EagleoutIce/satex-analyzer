@@ -325,7 +325,7 @@ test('relative placement: the move from the keys alone', () => {
 });
 
 // Intuition: a write follows the picture's own conventions: its unit and decimals, bare numbers in its x/y units, its
-// scale (and `transform shape` for distances); a text without any falls back to `conventions.units`. Pins a new `at`
+// scale (and `transform shape` for distances); a text without any falls back to `conventions.lengths`. Pins a new `at`
 // written in cm into an mm picture, a 2 cm drag of a `scale=2` picture written as 2 units, a table width in cm in an mm document.
 test('length conventions: the picture\'s units, scale and decimals; the document\'s for tables', () => {
   const pic = (opts, body) => T.nodes(`\\begin{tikzpicture}${opts}\n${body}\n\\end{tikzpicture}`);
@@ -334,7 +334,7 @@ test('length conventions: the picture\'s units, scale and decimals; the document
   assert.deepEqual(T.convention('\\setlength{\\parindent}{1.25cm} p{3.5cm}'), { unit: 'cm', dec: 2 });
   assert.deepEqual(T.convention('no lengths'), { unit: 'cm', dec: 1 }, 'the fallback');
   T.setConvention({ unit: 'mm', dec: 0 });
-  try { assert.deepEqual(T.convention('no lengths'), { unit: 'mm', dec: 0 }, 'conventions.units'); } finally { T.setConvention(null); }
+  try { assert.deepEqual(T.convention('no lengths'), { unit: 'mm', dec: 0 }, 'conventions.lengths'); } finally { T.setConvention(null); }
   // an mm picture: a node placed anew gets its `at` in mm; a new shift too
   const mm = pic('', '\\node (a) at (10mm,5mm) {A};\n\\node[right=of a] (b) {B};');
   assert.equal(T.move('\\node[right=of a] (b) {B};', 0, mm[1].pic, { to: [2, -1] }).text, '\\node (b) at (20mm,-10mm) {B};');
@@ -354,4 +354,18 @@ test('length conventions: the picture\'s units, scale and decimals; the document
   const E = self.satexPdfEdit;
   assert.equal(E.snapWidth(null, 50, 72 / 25.4 * 32, 0, false, { unit: 'mm', dec: 0 }), '32mm');
   assert.match(E.snapWidth(null, 50, 72 / 2.54 * 3.2, 0, false, { unit: 'cm', dec: 1 }), /^3\.2\d*cm$/);
+});
+
+// Intuition: the drawing canvas writes its distances and shifts in the picture's convention, the one resolver every
+// length-writing widget asks; without one it writes cm as before. Pins a canvas that wrote `3cm` into an mm picture.
+test('the drawing canvas writes in the picture\'s convention', () => {
+  const D = self.satexViews.drawing, size = () => [1, 0.6];
+  const env = (by, conv) => ({ by: new Map(by.map((n) => [n.name, n])), earlier: [], size, distance: [1, 1], onGrid: false, grid: 0.5, conv });
+  const [na, , nc] = D.parse('\n  \\node (a) at (0,0) {A};\n  \\node (b) at (0,-3) {B};\n  \\node (c) [right=of a] {C};\n').items;
+  const mm = T.convention('\\node (a) at (10mm,0mm) {A}; \\draw (0mm,0mm) -- (5mm,0mm);');
+  assert.deepEqual(D.relocate(nc, 4.1, 0.1, env([na], mm)).opts, ['right=30mm of a']);
+  assert.deepEqual(D.relocate(nc, 2, 0.5, env([na], mm)).opts, ['right=of a', 'yshift=5mm']);
+  assert.deepEqual(D.relocate(nc, 4.1, 0.1, env([na], null)).opts, ['right=3cm of a'], 'no convention: cm');
+  assert.equal(T.written(1.25, { unit: 'in', dec: 2 }), '0.49in');
+  assert.equal(T.convention('no lengths', false, true), null, 'strict: none');
 });

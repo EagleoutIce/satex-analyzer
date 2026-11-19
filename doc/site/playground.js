@@ -3430,7 +3430,7 @@
     editor?.prefs?.();
     if (pdfAuto) { pdfAuto.on = play.compile_after > 0; pdfAuto.delay = play.compile_after || pdfAuto.delay; pdfAutoKeep(); }
   }
-  const configKeep = (set) => { configSet = set; playApply(); try { localStorage.setItem('satex-config', JSON.stringify(set)); } catch {} };
+  const configKeep = (set) => { configSet = set; unitsConv(); playApply(); try { localStorage.setItem('satex-config', JSON.stringify(set)); } catch {} };
   playApply();
   /** Sets `playground.<k>`: its default drops the key. */
   const playSet = (k, v) => { const { [`playground.${k}`]: _, ...rest } = configSet; configApply(sameValue(v, manifest.playground?.[k]) ? rest : { ...rest, [`playground.${k}`]: v }); };
@@ -7697,8 +7697,9 @@
     const r = TM.move(stmt, p.n.i, p.n.pic, { by: [dx / CM, -dy / CM], grid });
     return r && { ...r, stmt, snap: s, d: [r.by[0] * k, -r.by[1] * k] };
   }
-  /** The length convention where a text shows none: `conventions.units` of satex.yaml (`cm`, or `{unit: mm, decimals: 1}`). */
-  const unitsConv = () => { const u = configSet['conventions.units'] ?? configSet['conventions.units.unit'], d = configSet['conventions.units.decimals'] ?? u?.decimals;
+  queueMicrotask(() => unitsConv());
+  /** The length convention where a text shows none: `conventions.lengths` of satex.yaml (`unit`, `decimals`). */
+  const unitsConv = () => { const u = configSet['conventions.lengths'] ?? configSet['conventions.lengths.unit'], d = configSet['conventions.lengths.decimals'] ?? u?.decimals;
     TM.setConvention(u ? { unit: typeof u === 'string' ? u : u.unit ?? 'cm', ...(Number.isInteger(+d) && d !== '' && d != null ? { dec: +d } : {}) } : null); };
   /** Node `p` moved by `dx`, `dy` bp written beside the nearest named node set before it (a node lined up with it first):
    * its statement, the key as the ghost's caption, positioning's load when the file lacks it; null where none can be the
@@ -8897,6 +8898,7 @@
    * fallback, loaded once on the first word the page's subset lacks a glyph of; the caret drawn again when in. */
   let pdfLm = null;
   function pdfLmLoad() {
+    if (!manifest.symbols) return;
     pdfLm ??= fetch(`${base}${manifest.symbols}`).then((r) => r.json()).then((t) => {
       const url = t.fonts?.find((u) => /latinmodern-math/i.test(u));
       return url && new FontFace('satex-lm', `url(${base}${url})`).load();

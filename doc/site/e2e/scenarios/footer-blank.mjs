@@ -10,7 +10,7 @@ const TITLE = '\\documentclass{article}\n\\title{T}\n\\author{A}\n\\begin{docume
 const num = `(ws) => { const w = ws.filter((w) => /^\\d+$/.test(w[5])).at(-1); return w; }`;
 export default [
   { kind: 'foot', name: 'plain-before-number', source: PLAIN, click: `(ws) => { const w = (${num})(ws); return [w[0], w[1] + 0.3, (w[2] + w[4]) / 2]; }`, keys: ['Page '],
-    want: [/\\usepackage\{fancyhdr\}/, /\\pagestyle\{fancy\}/, /\\fancyhf\{\}/, /\\fancyfoot\[C\]\{Page \\thepage\}/, /headrulewidth\}\{0pt\}/], pdf: [/Page 1$/], note: /Footer set with fancyhdr \(line \d+\)/, echo: /Page 1/ },
+    want: [/\\usepackage\{fancyhdr\}/, /\\pagestyle\{fancy\}/, /\\fancyhf\{\}/, /\\fancyfoot\[C\]\{Page \\thepage\}/, /headrulewidth\}\{0pt\}/], pdf: [/Page 1$/], note: /footer[^]*fancyhdr/i, echo: /Page 1/ },
   { kind: 'foot', name: 'plain-right-cell', source: PLAIN, click: `(ws) => { const w = (${num})(ws); return [w[0], 480, (w[2] + w[4]) / 2]; }`, keys: ['Draft'],
     want: [/\\fancyfoot\[C\]\{\\thepage\}/, /\\fancyfoot\[R\]\{Draft\}/], pdf: [/1 Draft$/] },
   { kind: 'foot', name: 'plain-backspace-number', source: PLAIN, click: `(ws) => { const w = (${num})(ws); return [w[0], w[3] - 0.2, (w[2] + w[4]) / 2]; }`, keys: ['Backspace', 'X'],

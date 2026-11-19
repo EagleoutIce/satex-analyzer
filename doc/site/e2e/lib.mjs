@@ -151,11 +151,13 @@ export async function page(cdp, url, outDir) {
   const consoleLog = [];
   cdp.on('Runtime.consoleAPICalled', (p, sid) => { if (sid === sessionId && /warn|error/.test(p.type)) consoleLog.push(p.args.map((x) => x.value ?? x.description ?? '').join(' ').slice(0, 200)); });
   // the page's workers (the language server's among them): their console and uncaught errors, timed
-  const workerLog = [], kids = new Set(), t0 = Date.now();
+  // `blocked`: URL patterns no request of the page or its workers reaches (the workers fetch on their own)
+  const workerLog = [], kids = new Set(), t0 = Date.now(), blocked = ['*/__dev/events*'];
   cdp.on('Target.attachedToTarget', (p, sid) => {
     if (sid !== sessionId) return;
     const k = p.sessionId;
     kids.add(k);
+    cdp.send('Network.enable', {}, k).then(() => cdp.send('Network.setBlockedURLs', { urls: blocked }, k)).catch(() => {});
     cdp.send('Runtime.enable', {}, k).catch(() => {});
     cdp.send('Runtime.runIfWaitingForDebugger', {}, k).catch(() => {});
   });
@@ -166,12 +168,18 @@ export async function page(cdp, url, outDir) {
   await s('Target.setAutoAttach', { autoAttach: true, waitForDebuggerOnStart: false, flatten: true });
   await s('Emulation.setDeviceMetricsOverride', { ...VIEW, deviceScaleFactor: 1, mobile: false });
   await s('Network.enable');
-  await s('Network.setBlockedURLs', { urls: ['*/__dev/events*'] });
+  await s('Network.setBlockedURLs', { urls: blocked });
   await s('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-color-scheme', value: 'light' }] });
   await s('Page.addScriptToEvaluateOnNewDocument', { source: PRELUDE + MIXED });
   await s('Page.navigate', { url });
   const api = {
     s, errors, consoleLog, workerLog, t0,
+    /** Blocks `urls` too, for the page and every worker, those running and those to come. */
+    block: async (urls) => {
+      blocked.push(...urls);
+      await s('Network.setBlockedURLs', { urls: blocked });
+      for (const k of kids) await cdp.send('Network.setBlockedURLs', { urls: blocked }, k).catch(() => {});
+    },
     eval: async (expression) => {
       const r = await s('Runtime.evaluate', { expression, awaitPromise: true, returnByValue: true });
       if (r.exceptionDetails) throw new Error(`${expression.slice(0, 120)}: ${r.exceptionDetails.exception?.description ?? r.exceptionDetails.text}`);

@@ -1247,7 +1247,9 @@ tr:hover > .sd-rh .sd-del, .sd-colh:hover .sd-del, .sd-del:focus-visible { opaci
       /** A handle on a column's right edge: a drag sets its width as the PDF's column layer does (pdfedit.ts `snapWidth`):
        * one screen pixel a CSS pixel of paper (0.75 bp), an l, c or r column starting at its longest cell (5 bp a character) and becoming a p column keeping its alignment. */
       const widthGrip = (c: TCol) => {
-        const PE = (self as unknown as { satexPdfEdit?: { snapWidth(t: string | null, was: number, now: number, line: number, fine: boolean): string | null; widthBp(t: string, line: number): number | null } }).satexPdfEdit;
+        const PE = (self as unknown as { satexPdfEdit?: { snapWidth(t: string | null, was: number, now: number, line: number, fine: boolean, conv?: { unit: string; dec: number }): string | null; widthBp(t: string, line: number): number | null } }).satexPdfEdit;
+        // a first width in the document's convention (pdfedit.ts `convention`, `conventions.lengths` where it shows none)
+        const conv = (self as any).satexTikzMove?.convention((self as any).satexHealth?.().text ?? '') ?? undefined;
         if (!PE || !(WIDTH.includes(c.align) || 'lcr'.includes(c.align) && c.align)) return null;
         const g = h('span', { class: 'sd-wgrip', role: 'slider', tabindex: '0', 'aria-label': 'column width', title: 'Drag to set the column width (Shift: finer)' });
         const out = h('span', { class: 'sd-wout', hidden: true });
@@ -1257,7 +1259,7 @@ tr:hover > .sd-rh .sd-del, .sd-colh:hover .sd-del, .sd-del:focus-visible { opaci
           const was = WIDTH.includes(c.align) ? c.arg : null, align = c.align, pre = c.pre;
           let text: string | null = null;
           g.setPointerCapture(e.pointerId);
-          g.onpointermove = (m: PointerEvent) => { text = PE.snapWidth(was, start, Math.max(2, start + (m.clientX - x0) * 0.75), line, m.shiftKey); if (text) { out.hidden = false; out.textContent = `${WIDTH.includes(align) ? align : 'p'}{${text}}`; } };
+          g.onpointermove = (m: PointerEvent) => { text = PE.snapWidth(was, start, Math.max(2, start + (m.clientX - x0) * 0.75), line, m.shiftKey, conv); if (text) { out.hidden = false; out.textContent = `${WIDTH.includes(align) ? align : 'p'}{${text}}`; } };
           g.onpointerup = () => {
             g.onpointermove = g.onpointerup = null; out.hidden = true;
             if (!text) return;

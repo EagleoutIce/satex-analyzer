@@ -203,7 +203,7 @@ declare global {
       if (share > 0 && share <= 1 && Math.abs(share * line - now) <= 0.5 * MM) return share === 1 ? '\\linewidth' : `${String(+share.toFixed(2)).replace(/^0\./, '.')}\\linewidth`;
     }
     if (f && !/^(cm|mm)$/i.test(f.unit)) return resized(text!, was, now, fine);
-    // a column given its first width: the document's unit and decimals (`conventions.units` where it shows none)
+    // a column given its first width: the document's unit and decimals (`conventions.lengths` where it shows none)
     if (!f && conv?.unit && conv.unit !== 'cm') { const per = ({ mm: MM, pt: 72 / 72.27, in: 72, bp: 1 } as Record<string, number>)[conv.unit]; if (per) { const st = 10 ** -Math.max(conv.dec, fine ? 1 : 0); return `${+(Math.max(st, Math.round(now / per / st) * st)).toFixed(Math.max(conv.dec, fine ? 1 : 0))}${conv.unit}`; } }
     const mm = Math.max(fine ? 0.1 : 0.5, Math.round(now / MM / (fine ? 0.1 : 0.5)) * (fine ? 0.1 : 0.5));
     return f?.unit.toLowerCase() === 'mm' ? `${+mm.toFixed(1)}mm` : `${+(mm / 10).toFixed(fine ? 2 : 3)}cm`;
@@ -1397,7 +1397,7 @@ declare global {
       dependents(text: string, n: TikzNode): { direct: TikzNode[]; all: TikzNode[] };
       relation(b: TikzBox, ref: TikzBox, tol: number, dist: [number, number] | undefined, name: string, conv?: TikzConv, k?: number): string | null;
       placing(b: TikzBox, ref: TikzBox, tol: number, dist: [number, number] | undefined, name: string, conv?: TikzConv, k?: number): { text: string; fix: [number, number] } | null; place(stmt: string, i: number, rel: string): string | null;
-      convention(text: string, own?: boolean): TikzConv; setConvention(c: Partial<TikzConv> | null): void; written(cmv: number, c: TikzConv): string;
+      convention(text: string, own?: boolean, strict?: boolean): TikzConv | null; setConvention(c: Partial<TikzConv> | null): void; written(cmv: number, c: TikzConv): string;
       snapAngle(deg: number, step: number): number; angle(stmt: string, i: number): number; unlabel(stmt: string, i: number): string | null;
     };
   }
@@ -1412,18 +1412,19 @@ declare global {
   /** A length in cm, `unit` the cm of a bare number. */
   const cm = (l: TikzLen, unit: number) => l.v * (l.unit ? UNIT[l.unit] : unit);
   const GRID = 0.05;
-  /** The convention where a text shows none (`conventions.units` in satex.yaml, set by the playground). */
+  /** The convention where a text shows none (`conventions.lengths` in satex.yaml, set by the playground). */
   let FALLBACK: TikzConv = { unit: 'cm', dec: 1 };
   const setConvention = (c: Partial<TikzConv> | null) => { FALLBACK = { unit: 'cm', dec: 1, ...(c ?? {}) }; };
   /** The length convention of `text` (a picture's body, a document): the unit most of its lengths carry, with the most
-   * decimals one of them has; `own`: bare coordinate pairs count for the picture's units (''). The fallback where none stands. */
-  function convention(text: string, own = false): TikzConv {
+   * decimals one of them has; `own`: bare coordinate pairs count for the picture's units (''). The fallback where none
+   * stands (`conventions.lengths`), null with `strict`. Every widget writing a length asks this one resolver. */
+  function convention(text: string, own = false, strict = false): TikzConv | null {
     const seen = new Map<string, { n: number; dec: number }>(), add = (u: string, num: string, n = 1) => { const e = seen.get(u) ?? { n: 0, dec: 0 }; seen.set(u, { n: e.n + n, dec: Math.max(e.dec, num.split('.')[1]?.length ?? 0) }); };
     const t = text.replace(/(?<!\\)%.*$/gm, '');
     for (const m of t.matchAll(/(?<![\w.\\])(-?\d*\.?\d+)\s*(cm|mm|pt|in|bp)(?![a-zA-Z])/g)) add(m[2]!, m[1]!);
     if (own) for (const m of t.matchAll(/\(\s*(-?\d*\.?\d+)\s*,\s*(-?\d*\.?\d+)\s*\)/g)) { add('', m[1]!); add('', m[2]!); }
     const best = [...seen].sort((a, b) => b[1].n - a[1].n)[0];
-    return best ? { unit: best[0], dec: Math.min(3, Math.max(best[1].dec, best[0] === 'mm' || best[0] === 'pt' ? 0 : 1)) } : own ? bare() : FALLBACK;
+    return best ? { unit: best[0], dec: Math.min(3, Math.max(best[1].dec, best[0] === 'mm' || best[0] === 'pt' ? 0 : 1)) } : strict ? null : own ? bare() : FALLBACK;
   }
   /** A picture without evidence: bare numbers where the fallback is cm (TikZ's unit), else the fallback. */
   const bare = (): TikzConv => (FALLBACK.unit === 'cm' ? { unit: '', dec: FALLBACK.dec } : FALLBACK);
@@ -1538,7 +1539,7 @@ declare global {
       while (/\s/.test(t[k])) k++;
       if (t[k] === '[') { const e = close(t, k); pic = picOf(t.slice(k + 1, e)); k = e + 1; }
       pic.at = m.index;
-      pic.conv = convention(t.slice(k, end), true);
+      pic.conv = convention(t.slice(k, end), true)!;
       // statements end at `;` outside groups; a loop's statements stand for many nodes, skipped whole
       while (k < end) {
         let e = k, depth = 0;
