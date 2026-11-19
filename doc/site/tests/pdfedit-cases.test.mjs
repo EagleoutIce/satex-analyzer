@@ -424,6 +424,11 @@ test("Typing in the PDF", async () => {
   assert.deepEqual(E.aligned(['ﬁne'], ['fine']), [0], 'a ligature as the page spells it');
   assert.deepEqual(E.changed('abcXdef', 'abcYYdef'), [3, 3]);
   assert.deepEqual(E.changed('aaa', 'aaaa'), [3, 0], 'the common end never overlaps the common start');
+  // a build that already holds Enter's empty paragraph: no change from the caret on (the echo drew the rest of the
+  // file, a TikZ picture, as prose)
+  const held = 'fast.\n\n\n\n\\begin{tikzpicture}\\end{tikzpicture}', caret = held.indexOf('\\begin') - 2;
+  assert.deepEqual(E.changed(held, held, caret), [caret, held.length - caret]);
+  assert.deepEqual(E.changed('abXcd', 'abYcd', 1), [1, 2], 'the change starts at `by` at the latest');
   const doc = 'one\n\ntwo three\nfour\n\nfive';
   assert.deepEqual(E.paragraph(doc, doc.indexOf('three')), [5, 19]);
   assert.deepEqual(E.paragraph(doc, 1), [0, 3]);

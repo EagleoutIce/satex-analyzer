@@ -5587,9 +5587,10 @@
     }
     return b64s.get(bytes);
   };
-  /** The project as it is built: its texts and the images it holds, these as the builder takes them. */
+  /** The project as it is built: its texts as `push` left them (the editor's text of one moment, never the text keys
+   * still queued would leave: a build of a text nobody saw) and the images it holds, these as the builder takes them. */
   const pdfFiles = (image = (d) => ({ b64: base64(d) })) => ({
-    ...Object.fromEntries(state.files.filter((n) => n in state.texts && !(n in state.ro)).map((n) => [n, n === state.file && pdfGhost ? pdfGhost.text : state.texts[n]])),
+    ...Object.fromEntries(state.files.filter((n) => n in state.texts && !(n in state.ro)).map((n) => [n, state.texts[n]])),
     ...Object.fromEntries(Object.entries(state.bins).map(([n, d]) => [n, image(d)])),
   });
   /** The settings of the playground's runs (the kernel's and Settings'), as the `KEY=VALUE` of each `--set`. */
@@ -8434,7 +8435,9 @@
     // a new paragraph the build sets no word of yet (Enter at a paragraph's end, built before the next key): the
     // paragraph before goes on with the break typed, as before that build landed, the change at the caret
     const back = B.slice(0, p).trimEnd().length, open = !para.length && /\n[ \t]*\n/.test(B.slice(back, p));
-    if (open) { para = words(back); P = Math.min(P, g.at); S = Math.min(S, B.length - P); }
+    // the change starts at the caret at the latest, the text after it alike in both stays out of it (a build that
+    // holds the text has no change: never the rest of the file, echoed as prose)
+    if (open) { para = words(back); [P, S] = PE.changed(B, g.text, g.at); }
     if (!para.length) return false;
     const edit = B.length - S;
     const verb = !!PE.verbatimAt(g.text, g.at);

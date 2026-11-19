@@ -247,6 +247,8 @@ try {
   for (let i = 0; i < 100 && !page; i++) { await sleep(100); page = (await raw('Target.getTargets', {}, null)).result?.targetInfos?.find((t) => t.type === 'page'); }
   session = (await raw('Target.attachToTarget', { targetId: page.targetId, flatten: true }, null)).result.sessionId;
   await raw('Runtime.enable');
+  // the script below runs in each new document only with the Page domain on
+  await raw('Page.enable');
   // `cargo playground --dev` reloads the page when a site file changes: a take keeps its page
   await raw('Page.addScriptToEvaluateOnNewDocument', { source: `const E = self.EventSource; if (E) self.EventSource = class extends E { constructor(u, o) { super(String(u).includes('/__dev/') ? 'data:,' : u, o); } };` });
   mkdirSync(out, { recursive: true });

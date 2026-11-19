@@ -81,7 +81,7 @@ declare global {
       tokens(text: string, from: number, to: number): Tok[];
       unset(text: string, from: number, to: number): string;
       aligned(toks: string[], words: string[]): number[];
-      changed(was: string, now: string): [number, number];
+      changed(was: string, now: string, by?: number): [number, number];
       offsetAt(text: string, p: { line: number; character: number }): number;
       units(text: string, math: (i: number) => boolean): (string[] & { index: number })[];
       paragraph(text: string, at: number): [number, number];
@@ -1021,11 +1021,12 @@ declare global {
       return out;
     });
   }
-  /** Where `now` differs from `was`: the length of their common start, and of their common end after it. */
-  function changed(was: string, now: string): [number, number] {
+  /** Where `now` differs from `was`: the length of their common start (`by` at most, where a change is known to start
+   * at the latest), and of their common end after it. */
+  function changed(was: string, now: string, by = Infinity): [number, number] {
     let p = 0, q = 0;
     const m = Math.min(was.length, now.length);
-    while (p < m && was[p] === now[p]) p++;
+    while (p < m && p < by && was[p] === now[p]) p++;
     while (q < m - p && was[was.length - 1 - q] === now[now.length - 1 - q]) q++;
     return [p, q];
   }
