@@ -1007,11 +1007,30 @@ def source_fallback():
     return card
 
 
-def mine(satex, work, names):
-    """The manuals' records for the packages `names`, mined from the installation (a `satex query`'s `docs` each)."""
+def folders(names):
+    """name -> the installation directory of its file, for the names the installation has."""
+    found = {}
+    for at in range(0, len(names), 400):
+        found |= {Path(p).name: Path(p).resolve().parent for p in subprocess.run(["kpsewhich", *map(file_of, names[at:at + 400])], capture_output=True, text=True).stdout.split()}
+    return {n: found[file_of(n)] for n in names if file_of(n) in found}
+
+
+def mine(satex, work, names, covered=()):
+    """The manuals' records for the packages `names`, mined from the installation (a `satex query`'s `docs` each).
+    The records are those of the documentation directory of each file a probe reads, and a directory's files share
+    it: one probe per directory of `names` not `covered`, of the package or class named like the directory
+    (`beamer.cls` for tex/latex/beamer, a real document) or else the shortest package. A class alone is no probe."""
     probes, flags = work / "manuals", KERNELS[0][2]
     probes.mkdir(exist_ok=True)
     env = dict(os.environ, SATEX_CACHE=str(work / "cache-install"))
+    groups = {}
+    for name, d in folders(sorted(names)).items():
+        if d not in covered:
+            groups.setdefault(d, []).append(name)
+    def pick(d, ns):
+        own = [n for n in ns if n.removesuffix(".cls") == d.name]
+        return own[0] if own else min((n for n in ns if not n.endswith(".cls")), key=lambda n: (len(n), n))
+    picks = sorted(pick(d, ns) for d, ns in groups.items() if any(not n.endswith(".cls") for n in ns))
 
     def mined(name):
         doc = probe_doc(probes, name)
@@ -1023,7 +1042,7 @@ def mine(satex, work, names):
         except (json.JSONDecodeError, IndexError, KeyError):
             return []
     # beside the bundle's own steps: half the workers each
-    return memo(work, "manuals", [names], lambda: [r for rs in parallel("[4/4] package manuals", names, mined) for r in rs], key=VIEW, later=[])
+    return memo(work, "manuals", [picks], lambda: [r for rs in parallel("[4/4] package manuals", picks, mined) for r in rs], key=VIEW, later=[])
 
 
 def manuals(satex, work, tables, packages, offered, records):
@@ -1033,8 +1052,9 @@ def manuals(satex, work, tables, packages, offered, records):
     were mined for the `offered` packages, the rest are mined now. Returns the stems of the packages with a manual."""
     dist = Path(run("kpsewhich", "-var-value", "TEXMFDIST").strip()).resolve()
     # the installation itself, not the bundle's tree: its packages' documented sources are beside them
-    rest = sorted({name for _, name, _, _ in packages if not name.endswith(".cls")} - set(offered))
-    records = records + (mine(satex, work, rest) if rest else [])
+    # a directory an offered package's probe read is mined already; an offered class may stand in for the rest of its directory
+    rest = sorted({name for _, name, _, _ in packages} - {n for n in offered if not n.endswith(".cls")})
+    records = records + (mine(satex, work, rest, {Path(r["package_file"]).resolve().parent for r in records}) if rest else [])
     real = functools.cache(lambda path: Path(path).resolve())  # many records name one file
     by_file = {}
     for r in records:
@@ -1048,8 +1068,9 @@ def manuals(satex, work, tables, packages, offered, records):
                 if real(d).is_relative_to(dist):
                     target = f"/texmf.bundle/{real(d).relative_to(dist).as_posix()}/{Path(native).stem}.satex-docs"
                     files[target] = json.dumps(list(rows.values()), ensure_ascii=False).encode()
-                    documented.add(Path(native).stem)
-    return documented
+                    documented.add(real(native).parent)
+    # a directory's packages share its manual
+    return {n.removesuffix(".cls") for n, d in folders(sorted({n for _, n, _, _ in packages} | set(offered))).items() if d in documented}
 
 
 def catalogue(dist, held):
@@ -1436,7 +1457,7 @@ def playground(satex, wasm, work, out):
     offered = package_names()
     # mining the manuals needs no bundle: it runs beside the caches and the rest
     side = concurrent.futures.ThreadPoolExecutor(1)
-    mining = side.submit(mine, satex, work, sorted(n for n in offered if not n.endswith(".cls")))
+    mining = side.submit(mine, satex, work, offered)
     sources_ = [(d.name, d.read_bytes()) for d in sources()] + [(c, (d.parent / c).read_bytes()) for d in sources() for c in projects()[d.name]]
     tables, packages, samples, project = memo(
         work, "bundle", [STAMP, offered, sources_, tree_digest(ROOT / "samples"), (SITE / "playground.yaml").read_text(),

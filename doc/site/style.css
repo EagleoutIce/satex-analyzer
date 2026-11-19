@@ -1903,7 +1903,7 @@ canvas.pdf-echo { display: block; }
 .typeset .ts-bar[style*="width"] { max-width: 100%; vertical-align: baseline; }
 .typeset .ts-sup, .typeset .ts-sub { font-size: calc(var(--m-script, .7) * 1em); line-height: 0; } .typeset .ts-sup { vertical-align: var(--m-sup, .518em); } .typeset .ts-sub { vertical-align: var(--m-sub, -.214em); }
 /* no medium or thick space in a script (tex.web § 764); a subscript and superscript stacked, the column's baseline the superscript's, its rows TeX's sup2 + sub2 apart */
-.typeset :is(.ts-sup, .ts-sub) :is(.ts-mbin, .ts-mrel) { margin: 0; }
+.typeset :is(.ts-sup, .ts-sub, .ts-over, .ts-under) :is(.ts-mbin, .ts-mrel) { margin: 0; }
 .typeset .ts-scripts { display: inline-grid; vertical-align: var(--m-sup2, .363em); } .typeset .ts-scripts > :is(.ts-sup, .ts-sub) { vertical-align: baseline; line-height: var(--m-stack, .871); } .typeset .ts-scripts > .ts-sup { grid-row: 1; } .typeset .ts-scripts > .ts-sub { grid-row: 2; }
 /* an operator's limits stacked over and under it (display math, \limits) */
 .typeset .ts-limits { display: inline-grid; grid-template-areas: "over" "op" "under"; justify-items: center; vertical-align: middle; line-height: 1.05; margin: 0 .15em; }

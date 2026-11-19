@@ -91,8 +91,10 @@ test("The typeset view's notation (site.js, loaded on a page with nothing on it"
   // display limits: one column of over, operator, under; a sub after them is a script again
   const sum = notation(`${N('\u0006L')}∑${N('\u0006')}${M('under')}i=1${M('scriptend')}${M('over')}N${M('scriptend')}x${M('sub')}i${M('scriptend')}`);
   assert.equal(sum, '<span class="ts-limits"><span class="ts-op">∑</span><span class="ts-under">i=1</span><span class="ts-over">N</span></span>x<span class="ts-sub">i</span>');
-  // text style keeps them at the side
-  assert.equal(notation(`∑${M('sub')}i${M('scriptend')}${M('sup')}n${M('scriptend')}`), '∑<span class="ts-sub">i</span><span class="ts-sup">n</span>');
+  // text style keeps them at the side, a subscript and a superscript stacked in one column (rule 18; they stood one
+  // after the other, `x_i^2` as x i 2)
+  assert.equal(notation(`∑${M('sub')}i${M('scriptend')}${M('sup')}n${M('scriptend')}`), '∑<span class="ts-scripts"><span class="ts-sub">i</span><span class="ts-sup">n</span></span>');
+  assert.equal(notation(`x${M('sup')}2${M('scriptend')}y${M('sub')}i${M('scriptend')}`).includes('ts-scripts'), false, 'apart: not stacked');
   // an equation's number at the margin, closed at the end
   assert.match(notation(`a${M('eqno')}(1)`), /^a<span class="ts-eqno"[^>]*>\(1\)<\/span>$/);
   assert.match(notation(`b${M('leqno')}(2)`), /<span class="ts-leqno"/);
