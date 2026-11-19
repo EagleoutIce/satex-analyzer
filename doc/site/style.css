@@ -1359,7 +1359,8 @@ ol.refs { font-size: .8rem; color: var(--muted); margin: var(--s16) 0 0; padding
   border: 1px solid var(--border); border-radius: 12px; box-shadow: 0 8px 24px rgb(0 0 0 / .22); pointer-events: none; animation: zoom-in .12s var(--ease); }
 .draw-zoom[hidden] { display: none; } .draw-zoom .draw-glyph { width: auto; font-size: 3.4rem; } .draw-zoom .draw-bmp { width: 4rem; height: 4rem; }
 @keyframes zoom-in { from { opacity: 0; scale: .7; } }
-.claim-rot > span:has(.claim-complete, .claim-steps, .claim-draw)::after { display: none; }
+/* an illustration below the sentence (cards, steps, a drawing) ends it: no caret under it */
+.claim-rot > span:has(.claim-complete, .claim-steps, .claim-draw, > div)::after { display: none; }
 .draw-solo .draw-box { flex: 1; min-height: 0; } .draw-results { overflow: hidden; } .draw-results .draw-list { flex: 1 1 auto; min-height: 0; overflow: auto; margin: 0; }
 /* text set in an environment of the document (a figure, a listing) stands apart from the running text */
 .typeset p.ts[data-env] { margin: .35rem 0 .35rem .8rem; padding: .1rem 0 .1rem .6rem; border-left: 2px solid color-mix(in srgb, var(--accent) 35%, transparent); }
@@ -1676,10 +1677,6 @@ p.ts.ts-foot::before { content: ""; position: absolute; top: 0; left: 0; width: 
 .pdf .pdf-col-more { flex: none; font: inherit; color: inherit; background: transparent; border: 0; border-left: 1px solid #ffffff55; padding: 0 .25rem; cursor: pointer; border-radius: 0 3px 0 0; }
 .pdf .pdf-col-more:hover, .pdf .pdf-col-more[aria-expanded="true"] { background: #ffffff40; }
 .pdf .pdf-col-open { z-index: 6; } .pdf .pdf-col-open b { max-width: none; overflow: visible; }
-.pdf .pdf-col-menu { position: absolute; left: 0; top: 100%; display: flex; background: #0e7490; border-radius: 0 0 3px 3px; box-shadow: 0 4px 10px -4px rgb(0 0 0 / .4); }
-.pdf .pdf-col-menu .pdf-col-al:first-child { border-left: 0; margin-left: 0; }
-.pdf .pdf-col-al { font: inherit; color: inherit; background: transparent; border: 0; border-left: 1px solid #ffffff55; margin-left: .2rem; padding: 0 .2rem; cursor: pointer; }
-.pdf .pdf-col-al[aria-pressed="true"] { background: #ffffff40; } .pdf .pdf-col-al:hover { background: #ffffff66; }
 .pdf .pdf-col-fixed { border-inline-style: dashed; } .pdf .pdf-col-fixed b { background: #475569; }
 .pdf .pdf-col-grip { position: absolute; right: -12px; top: 0; bottom: 0; width: 24px; min-height: 24px; cursor: col-resize; touch-action: none; pointer-events: auto; background: linear-gradient(90deg, transparent 11px, #0e7490 11px 13px, transparent 13px); opacity: .55; }
 .pdf .pdf-col-grip:focus-visible { opacity: 1; outline: 2px solid var(--accent); outline-offset: -2px; }
@@ -2509,12 +2506,26 @@ pre.out-block:hover .out-meta { opacity: .85; }
 .pdf .pdf-tikz-gap.pdf-tikz-gy::after { left: auto; right: 0; }
 .pdf .pdf-tikz-gap.pdf-tikz-gx::before, .pdf .pdf-tikz-gap.pdf-tikz-gx::after { left: -4px; height: 1px; width: 7px; top: 0; }
 .pdf .pdf-tikz-gap.pdf-tikz-gx::after { top: auto; bottom: 0; }
-.tikz-menu { position: fixed; z-index: 1000; min-width: 190px; padding: 4px 0; display: flex; flex-direction: column; background: var(--bg, #fff); color: var(--fg, inherit); border: 1px solid var(--border, #8884); border-radius: 6px; box-shadow: var(--shadow, 0 4px 16px #0004); font-size: 13px; }
-.tikz-menu > b { padding: 3px 10px; font-size: 11px; color: var(--muted, #888); font-weight: 600; }
-.tikz-menu hr { width: 100%; margin: 3px 0; border: 0; border-top: 1px solid var(--border, #8884); }
-.tikz-menu button { all: unset; padding: 3px 10px 3px 26px; cursor: pointer; position: relative; }
-.tikz-menu button:hover, .tikz-menu button:focus-visible { background: var(--accent-bg, #0e749033); }
-.tikz-menu button[aria-checked="true"]::before { content: '✓'; position: absolute; left: 9px; }
+.pa-menu { position: fixed; z-index: 1000; min-width: 200px; max-height: calc(100vh - 16px); overflow-y: auto; padding: 4px 0; display: flex; flex-direction: column; background: var(--panel, #fff); color: var(--fg, inherit); border: 1px solid var(--border, #8884); border-radius: 8px; box-shadow: var(--shadow, 0 4px 16px #0004); font-size: 13px; animation: fade .1s var(--ease); }
+.pa-menu.pa-sub { animation: none; z-index: 1001; }
+.pa-menu > b { padding: 3px 10px; font-size: 11px; color: var(--muted, #888); font-weight: 600; white-space: nowrap; }
+.pa-menu hr { width: 100%; margin: 3px 0; border: 0; border-top: 1px solid var(--border, #8884); }
+.pa-menu button { all: unset; display: flex; align-items: center; gap: 8px; padding: 3px 10px 3px 26px; cursor: pointer; position: relative; white-space: nowrap; }
+.pa-menu button > span:first-of-type { flex: 1; }
+.pa-menu button small, .pa-menu .pa-more { color: var(--muted, #888); font-size: 11px; }
+.pa-menu button:hover, .pa-menu button:focus, .pa-menu button[aria-expanded="true"] { background: color-mix(in srgb, var(--accent, #0e7490) 16%, transparent); }
+.pa-menu button[aria-checked="true"]::before { content: '✓'; position: absolute; left: 9px; }
+.pa-sw { flex: none; width: 13px; height: 13px; border-radius: 3px; border: 1px solid color-mix(in srgb, var(--fg, #000) 30%, transparent); background-clip: padding-box; }
+.pa-mix { position: fixed; z-index: 1000; display: grid; grid-template-columns: auto 1fr; align-items: center; gap: 6px 8px; padding: 8px 10px; width: 280px; background: var(--panel, #fff); color: var(--fg, inherit); border: 1px solid var(--border, #8884); border-radius: 8px; box-shadow: var(--shadow, 0 4px 16px #0004); font-size: 12px; }
+.pa-mix label { display: contents; }
+.pa-mix select, .pa-mix input { font: inherit; min-width: 0; }
+.pa-mix .pa-big { width: 28px; height: 28px; } .pa-mix code { font-size: 11px; overflow-wrap: anywhere; }
+.pa-mix button { grid-column: 1 / -1; justify-self: end; }
+.tikz-linking :is(.pdf-page img, .ts-sketch) { cursor: crosshair !important; }
+.pdf .pdf-tikz-rot { position: absolute; left: calc(50% - 6px); top: -22px; width: 12px; height: 12px; border-radius: 50%; pointer-events: auto; cursor: grab; touch-action: none; background: var(--panel, #fff); border: 2px solid #7c3aed; box-sizing: border-box; }
+.pdf .pdf-tikz-rot::after { content: ''; position: absolute; left: 3px; top: 10px; width: 2px; height: 10px; background: #7c3aed; }
+.pdf .pdf-tikz-turning { transform-origin: center; }
+.pdf .pdf-tikz-turning[data-deg]::after { content: attr(data-deg); position: absolute; left: 0; bottom: calc(100% + 26px); white-space: nowrap; font: 600 11px/1.3 var(--mono, monospace); color: #fff; background: #7c3aed; padding: 1px 5px; border-radius: 3px; }
 .tikz-input { position: fixed; z-index: 1000; width: 240px; padding: 6px; display: grid; gap: 3px; background: var(--bg, #fff); border: 1px solid #7c3aed; border-radius: 6px; box-shadow: var(--shadow, 0 4px 16px #0004); }
 .tikz-input input { font: inherit; padding: 3px 6px; }
 .tikz-input small { color: var(--muted, #888); font-size: 11px; }
@@ -2537,9 +2548,9 @@ pre.out-block:hover .out-meta { opacity: .85; }
 /* every chip over the pages alike: one height, font, radius; the column chip's buttons are text in it, not buttons of their own */
 .pdf :is(.pdf-env, .pdf-fig, .pdf-col) > b { font: 600 .55rem/1.3 ui-monospace, Menlo, monospace; padding: 0 .25rem; border-radius: 3px 3px 0 0; }
 .pdf .pdf-col > b { padding-right: 0; }
-.pdf :is(.pdf-col-al, .pdf-col-more) { all: unset; box-sizing: border-box; cursor: pointer; font: inherit; line-height: inherit; color: inherit; padding: 0 .25rem; border-left: 1px solid #ffffff55; }
-.pdf :is(.pdf-col-al, .pdf-col-more):hover, .pdf .pdf-col-al[aria-pressed="true"], .pdf .pdf-col-more[aria-expanded="true"] { background: #ffffff40; }
-.pdf :is(.pdf-col-al, .pdf-col-more):focus-visible { outline: 1px solid #fff; outline-offset: -1px; }
+.pdf .pdf-col-more { all: unset; box-sizing: border-box; cursor: pointer; font: inherit; line-height: inherit; color: inherit; padding: 0 .25rem; border-left: 1px solid #ffffff55; }
+.pdf .pdf-col-more:hover, .pdf .pdf-col-more[aria-expanded="true"] { background: #ffffff40; }
+.pdf .pdf-col-more:focus-visible { outline: 1px solid #fff; outline-offset: -1px; }
 /* References switched from the pages: the printed key outlined, its list of keys */
 .pdf .pdf-refpick { position: absolute; z-index: 3; cursor: pointer; border-radius: 2px; outline: 1.5px solid #0e7490; background: #0e74901f; }
 .ref-pick { position: fixed; z-index: 1000; width: 350px; max-height: 300px; display: flex; flex-direction: column; background: var(--bg, #fff); color: var(--fg, inherit); border: 1px solid var(--border, #8884); border-radius: 6px; box-shadow: var(--shadow, 0 4px 16px #0004); font-size: 13px; }
