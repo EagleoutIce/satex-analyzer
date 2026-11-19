@@ -110,7 +110,11 @@ test("Editing in the PDF (pdfedit.ts)", async () => {
     // script leaves the group, so does an operator after a group typed in it
     assert.deepEqual(smart('ab', 1, '$x_i^2$'), ends('a$x_{i}^{2}$b'), 'a superscript after a subscript');
     const typedAll = (text, at, keys) => { let t = text; for (const c of keys) { const [a, b, body, step] = E.typed(t, at, c, '$', true, [1, t.length - 1]); t = t.slice(0, a) + body + t.slice(b); at = a + step; } return [t, at]; };
-    assert.deepEqual(typedAll('ab', 1, '$s_{i=1}^n x$'), ends('a$s_{{i=1}}^{n}x$b'), 'braces typed in the group');
+    // a `{` typed after `_` is the group itself: minimal braces (`\sum_{{i=1}}` before, coordinator 2026-11-19)
+    assert.deepEqual(typedAll('ab', 1, '$s_{i=1}^n x$'), ends('a$s_{i=1}^{n}x$b'), 'braces typed: one group, an operator stays in it');
+    assert.deepEqual(typedAll('ab', 1, '$x_{12}+y$'), ends('a$x_{12}+y$b'), 'x_{12} as typed');
+    assert.deepEqual(typedAll('ab', 1, '$x_1+y$'), ends('a$x_{1}+y$b'), 'x_1 braced, left at the operator');
+    assert.deepEqual(typedAll('ab', 1, '$x_{a+b}^2$'), ends('a$x_{a+b}^{2}$b'), 'an explicit group then the other script');
     assert.deepEqual(smart('ab', 1, '$x_a_b$'), ends('a$x_{a_{b}}$b'), 'the same script nests');
     // Pins `\lim_{n\to\infty}` typed writing `\infty \}`: a `}` after a command typed in a group closes the group
     const cmdEnd = 'a$x_{{\\to\\infty  }}$b', at = cmdEnd.indexOf('  }');

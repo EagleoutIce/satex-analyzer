@@ -3684,6 +3684,17 @@ button.tv-spec-value { cursor: pointer; } button.tv-spec-value:hover, button.tv-
   };
   /** The selection of a list refreshed under the person's eyes: the item of the same label, else the first. */
   const reselect = (items: Completion[], label: string | undefined) => Math.max(0, label == null ? 0 : items.findIndex((i) => i.label === label));
-  return { rowsWin, complete: { rank, kept, reselect }, loads: { unlanded, lacked }, tipBag, yaml, history: { historyEvent }, render, RENDER, hue, passes, masterDetail, usesView, fold, SPEC, mix, colorBand, oklch, drawing: { expandStyles, STYLE_DEF, parse, emit, mermaidIn, mermaidOut, mermaidLoss, layout, importMermaid, tipsOf, toMatrix, cellPlaces, toLayer, picOptions, relocate, relPos, nearestAnchor, anchorAt, tipMarker, shapeSample, shapeList, cycle, STYLE }, forest: forestFns, circuit: { parse: cParse, body: cBody, emit: cEmit }, page: { pageOf, pageBox, textArea, pageNodes, numberNodes, numberInForce, headerOf, headerCalls, headerNodes, footSetup, fmtRead, fmtWrite, styleNodes, styleSet, styleEdits }, dev: { traceCsv, stateHtml }, templates: { fill, filled, chosen } };
+  /** The PDF's "you are here" rows of a source line: each SyncTeX row (`{page, l, t, r, d}` in bp, which reaches to the
+   * glue at the line's end) shrunk to the page words in it (`[page, l, t, r, d, text]`), so the tint hugs the glyphs, not
+   * the line box to the margin. A row without words goes. When some rows hold a word the line spells (`spelled`), only
+   * those count: a page number the output routine set while the line's box closed (the footer) drops out. */
+  type FollowRow = { page: number; l: number; t: number; r: number; d: number };
+  type PageWord = [number, number, number, number, number, string];
+  const followRows = (rows: FollowRow[], words: PageWord[], spelled: (word: string) => boolean): FollowRow[] => {
+    const hugged = rows.map((r) => words.filter((w) => w[0] === r.page && w[4] >= r.t && w[2] <= r.d && w[3] > r.l && w[1] < r.r)).filter((ws) => ws.length);
+    const own = hugged.filter((ws) => ws.some((w) => spelled(w[5])));
+    return (own.length ? own : hugged).map((ws) => ({ page: ws[0]![0], l: Math.min(...ws.map((w) => w[1])), t: Math.min(...ws.map((w) => w[2])), r: Math.max(...ws.map((w) => w[3])), d: Math.max(...ws.map((w) => w[4])) }));
+  };
+  return { followRows, rowsWin, complete: { rank, kept, reselect }, loads: { unlanded, lacked }, tipBag, yaml, history: { historyEvent }, render, RENDER, hue, passes, masterDetail, usesView, fold, SPEC, mix, colorBand, oklch, drawing: { expandStyles, STYLE_DEF, parse, emit, mermaidIn, mermaidOut, mermaidLoss, layout, importMermaid, tipsOf, toMatrix, cellPlaces, toLayer, picOptions, relocate, relPos, nearestAnchor, anchorAt, tipMarker, shapeSample, shapeList, cycle, STYLE }, forest: forestFns, circuit: { parse: cParse, body: cBody, emit: cEmit }, page: { pageOf, pageBox, textArea, pageNodes, numberNodes, numberInForce, headerOf, headerCalls, headerNodes, footSetup, fmtRead, fmtWrite, styleNodes, styleSet, styleEdits }, dev: { traceCsv, stateHtml }, templates: { fill, filled, chosen } };
 })();
 self.satexViews = satexViews;

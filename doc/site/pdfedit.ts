@@ -547,6 +547,8 @@ declare global {
    * character makes a control symbol (`\%`). After a command typed since the caret was put (`fresh`) `{` opens its
    * argument and `}` steps out of one; after an older one a letter or space gets a `{}` first, so the name stays.
    * `smart`: `x_42` writes `x_{42}`. */
+  /** The script groups whose `{` was typed (`_{`), each as the text up to its brace: typed's only memory. */
+  let explicitGroups: string[] = [];
   function typed(text: string, at: number, c: string, inline = '\\(', smart = false, fresh: [number, number] | null = null): [number, number, string, number] {
     // verbatim takes the character as it is; an inline body never its closer or a line break
     const v = verbatimAt(text, at);
@@ -576,18 +578,29 @@ declare global {
     }
     // smart scripts: `_`/`^` open a group, a space, an operator, the other script (`x_i^2`) or the formula's end typed
     // at its end leave it; `script` the `_` or `^` of the group the caret ends, past groups closed in it (`_{{i=1}`)
+    // a `{` typed into the empty group a script opened takes that group as its own (`_{i=1}` stays one group): it is
+    // remembered, by the text before it, as a group no space or operator leaves
+    if (smart && c === '{' && text[at] === '}' && text[at - 1] === '{' && /[_^]/.test(text[at - 2] ?? '') && fr(at)) {
+      explicitGroups = [...explicitGroups.slice(-7), text.slice(Math.max(0, at - 17), at)];
+      return [at, at, '', 0];
+    }
     let script = '';
     for (let j = at - 1, n = 0; smart && text[at] === '}' && j >= Math.max(0, at - 200); j--) {
       if (text[j - 1] === '\\') continue;
       if (text[j] === '}') n++;
       else if (text[j] === '{' && n) n--;
-      else if (text[j] === '{') { script = /[_^]/.test(text[j - 1] ?? '') ? text[j - 1]! : ''; break; }
+      else if (text[j] === '{') { script = /[_^]/.test(text[j - 1] ?? '') && !explicitGroups.includes(text.slice(Math.max(0, j - 16), j + 1)) ? text[j - 1]! : ''; break; }
     }
     if (script && (/[\s$+\-=<>,;:|/*!?()[\]]/.test(c) || /[_^]/.test(c) && c !== script)) {
       // past the `}` first, then the character as typed there (a space only leaves)
       return /\s/.test(c) ? [at, at, '', 1] : typed(text, at + 1, c, inline, smart, fresh);
     }
-    if (smart && (c === '_' || c === '^')) return [at, at, `${c}{}`, 2];
+    if (smart && (c === '_' || c === '^')) {
+      // a new group opened here is a script's own until a `{` is typed into it
+      const key = (text.slice(0, at) + c + '{').slice(-17);
+      explicitGroups = explicitGroups.filter((g) => g !== key);
+      return [at, at, `${c}{}`, 2];
+    }
     const empty = st.math === '$' && text[at - 1] === '$' && text.startsWith(' $', at);
     if (c === '$') {
       if (empty) return [at, at, '', 2];
@@ -1456,7 +1469,7 @@ declare global {
     const out = (o: string, at: string | null, label: string, by: [number, number]) => {
       let s = stmt;
       if (at != null) s = p.at ? s.slice(0, p.at[0]) + at + s.slice(p.at[1] + 1) : s.slice(0, p.t[0]) + `at ${at} ` + s.slice(p.t[0]);
-      s = p.o ? s.slice(0, p.o[0] + 1) + o + s.slice(p.o[1]) : o ? s.slice(0, p.oAt) + `[${o}]` + s.slice(p.oAt) : s;
+      s = p.o ? (o ? s.slice(0, p.o[0] + 1) + o + s.slice(p.o[1]) : s.slice(0, p.o[0]).trimEnd() + s.slice(p.o[1] + 1)) : o ? s.slice(0, p.oAt) + `[${o}]` + s.slice(p.oAt) : s;
       return { text: s, label, by };
     };
     if (m.pos != null) {

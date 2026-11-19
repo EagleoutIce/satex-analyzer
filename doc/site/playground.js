@@ -4972,6 +4972,7 @@
     // the shown file comes first: a run of another stops (it runs again after) and the analysis starts on this one
     if (running > 0 && textsSent) { Atomics.add(textsSent, 0, 1); analysisQueued = true; }
     state.file = name;
+    pdfMarksOff();
     redraw();
     editor.set(state.texts[name], name in state.ro);
     restoreAt();
@@ -5718,6 +5719,7 @@
           if (pdfViewer !== view) pdfClose(pdfViewer);
           pdfViewer = view;
           pdf = view ? { ...built, pagelabels: built.pagelabels ?? view.pagelabels } : built;
+          pdfMarksOff();
           pdfShow(same);
           pdfOwner();
           pdfLoaded(!data.error && !(data.records ?? []).some((r) => r.severity === 'error'));
@@ -6071,6 +6073,7 @@
   /** The view of the build shown: `pages`, `messages`, `log` or `commands`. */
   let pdfView = 'pages';
   function pdfViewShow() {
+    pdfMarksOff();
     for (const t of $('pdf-views').querySelectorAll('[data-view]')) t.setAttribute('aria-selected', String(t.dataset.view === pdfView));
     pdfViewsSel.value = pdfView;
     pdfViewsLabel();
@@ -6110,7 +6113,7 @@
     pdfFollowOn = !pdfFollowOn;
     followState();
     try { localStorage.setItem('satex-pdf-follow', pdfFollowOn ? 'on' : 'off'); } catch {}
-    if (pdfFollowOn) pdfFollow(); else pdfBody.querySelectorAll('.pdf-mark').forEach((m) => m.remove());
+    if (pdfFollowOn) pdfFollow(); else pdfMarksOff();
   };
   /** The pages' colours (PDF_MODES), remembered per viewer and site theme: unset, Dark paper in a dark theme, else
    * Original (an older viewer's dark switch as Invert or Original). Each page's paper then reads as light or dark. */
@@ -6156,39 +6159,49 @@
   };
   try { if (localStorage.getItem('satex-pdf-fold') === 'on') $('pdf-fold').click(); } catch {}
   /** The cursor's line marked on the pages, scrolled into view when it moved. */
+  /** The "you are here" tint: gone at once, and its fade timer with it. */
+  var pdfMarkTimer = 0; // var: a file switch may clear it before this line runs
+  function pdfMarksOff() {
+    clearTimeout(pdfMarkTimer);
+    document.querySelectorAll('#pdf-body .pdf-mark').forEach((m) => m.remove());
+  }
   function pdfFollow(again = false) {
     const pos = editor?.position();
+    // every call clears the last place first: a return below never leaves it drawn (a Type caret, another file, no build)
+    pdfMarksOff();
     // typing in the pages moves the editor's cursor: the caret keeps the view (pdfCaretAnchor), no follow
     if (!pdf?.boxes || pdf.slice || !pos || !again && (!pdfFollowOn || pdfCaret?.view === 'pdf') || $('play-pdf').classList.contains('pdf-other')) return;
-    const line = pos.line + 1, key = `${state.file}:${line}`;
-    if (key === pdfLine && !again) return;
+    const line = pos.line + 1, key = `${state.file}:${line}`, moved = key !== pdfLine;
     pdfLine = key;
-    pdfBody.querySelectorAll('.pdf-mark').forEach((m) => m.remove());
     // a line that sets nothing (a blank line, a comment) is marked by the nearest line above that does
     let rects = [];
     for (let l = line; l > 0 && l > line - 8 && !rects.length; l--) rects = pdfRects(state.file, l);
-    // a line that closes a frame or a float sets all of it: outlined, not filled
+    // a line that closes a frame or a float sets all of it: one lighter tint around all of it
     const coarse = rects.length > 8;
     // the word at the cursor, its n-th occurrence in the line the n-th among the marked rows' words
     const src = state.texts[state.file]?.split('\n')[line - 1] ?? '', at = wordAt(src, pos.character);
+    // the rows hug their glyphs; a row the line spells nothing of (the footer's page number) goes when others do
+    rects = self.satexViews.followRows(rects, pdf.wordList ?? [], (w) => !!wordInLine(src, w));
     const nth = at && !at[3] ? [...src.slice(0, at[0]).matchAll(new RegExp(`(?<![\\p{L}\\p{N}\\\\])${at[2].replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`, 'gu'))].length : -1;
     const same = nth < 0 || coarse ? [] : rects.flatMap((r) => (pdf.wordList ?? []).filter((w) => w[0] === r.page && w[4] >= r.t && w[2] <= r.d && w[3] > r.l && w[1] < r.r && wordInLine(w[5], at[2])));
     const mark = (page, cls, l, t, r, d) => {
       const el = pdfBody.querySelector(`.pdf-page[data-page="${page}"]`), img = el?.querySelector('img');
       if (!img?.naturalWidth) return;
-      const [w, h] = pageSize(img), pad = 1.5;
+      const [w, h] = pageSize(img), pad = 1;
       el.insertAdjacentHTML('beforeend', `<div class="pdf-mark${cls}" style="${pdfPlace((l - pad) / w, (t - pad) / h, (r - l + 2 * pad) / w, (d - t + 2 * pad) / h)}"></div>`);
     };
-    // a whole frame or float: one outline per page around all of it, not one per line
+    // a whole frame or float: one tint per page around all of it, not one per line
     const union = (rs) => Object.values(rs.reduce((u, r) => { const b = u[r.page]; u[r.page] = b ? { page: r.page, l: Math.min(b.l, r.l), t: Math.min(b.t, r.t), r: Math.max(b.r, r.r), d: Math.max(b.d, r.d) } : { ...r }; return u; }, {}));
     for (const r of coarse ? union(rects) : rects) mark(r.page, coarse ? ' coarse' : '', r.l, r.t, r.r, r.d);
     const word = same[Math.min(nth, same.length - 1)];
     if (word) mark(word[0], ' word', word[1], word[2], word[3], word[4]);
     const first = pdfBody.querySelector('.pdf-mark'), pages = pdfBody.querySelector('.pdf-pages');
-    if (first && !again) {
+    if (first && !again && moved) {
       const a = first.getBoundingClientRect(), b = pages.getBoundingClientRect();
       if (a.top < b.top || a.bottom > b.bottom) pages.scrollTop += a.top - b.top - b.height / 3;
     }
+    // shown a moment: it fades once the cursor rests, so no later change (a redrawn page, a new build) leaves it stale
+    if (first) pdfMarkTimer = setTimeout(() => { pdfBody.querySelectorAll('.pdf-mark').forEach((m) => m.classList.add('fade')); pdfMarkTimer = setTimeout(pdfMarksOff, 400); }, 1500);
   }
   /** The source of a point on a page: the nearest record of the project's files, one line above another counting more.
    * Boxes carry the line where they closed, so only the points TeX set count. Over a word, only those on its row. */
@@ -6231,7 +6244,7 @@
     const [w, h] = pageSize(img), r = img.getBoundingClientRect(), page = +img.parentElement.dataset.page, x = (e.clientX - r.left) / r.width * w, y = (e.clientY - r.top) / r.height * h;
     // a picture node's text: Type mode on, the caret in it (text a macro sets says where it is defined)
     const node = tikzHit([page, x, y, w / r.width, img]);
-    if (node && !node.frame) { e.preventDefault(); if (!pdfTyping) pdfTypeButton.click(); pdfCaretAt(page, x, y); return; }
+    if (node) { e.preventDefault(); if (!pdfTyping) pdfTypeButton.click(); pdfCaretAt(page, x, y); return; }
     const site = pdfSiteAt(page, x, y);
     if (!site) return;
     e.preventDefault();
@@ -8059,6 +8072,7 @@
   }
   /** The caret at a point of a page: the word under it, found in its source line where that is plain text. */
   async function pdfCaretAt(page, x, y) {
+    pdfMarksOff();
     const word = pdfWordUnder(page, x, y), list = word && pdfListBox(page, word);
     // between a contents line's words (its dot leaders draw no word): that list's leader menu
     const line = !word && (pdf.boxes ?? []).find((b) => b.page === page && /\.(toc|lof|lot)$/.test(b.file) && y <= b.y + 1 && y >= b.y - 9);
@@ -8568,6 +8582,11 @@
     if (memo.has(key)) return memo.get(key);
     const l0 = pdfPos(B, p0).line + 1, l1 = pdfPos(B, p1).line + 1, rows = new Map(), boxes = b.boxes ?? [];
     for (const x of boxes) if (x.file === state.file && x.line >= l0 && x.line <= l1 && setPoint(x)) rows.set(`${x.page}|${Math.round(x.y)}`, x);
+    // the row after a display ends the paragraph: SyncTeX gives it the line the paragraph ended on (the next one, an
+    // `\end`), so the page's next set row, when it is of that line, is the paragraph's too (`\] ok`: "ok" paired with no word)
+    const last = [...rows.values()].sort((p, q) => p.page - q.page || p.y - q.y).at(-1);
+    const after = last && boxes.filter((x) => setPoint(x) && x.page === last.page && x.y > last.y + 1).sort((p, q) => p.y - q.y)[0];
+    if (after?.file === state.file && after.line === l1 + 1) rows.set(`${after.page}|${Math.round(after.y)}`, after);
     const words = new Set();
     for (const x of rows.values()) {
       // the line's box: the hbox on its baseline around the point (SyncTeX's `(` record)
@@ -8639,7 +8658,7 @@
       pdfBreakAsked.set(key, null);
       const at = version;
       const t0 = performance.now(), during = running > 0;
-      lsp('satex/break', params).then((r) => { (self.__texBreaks ??= []).push({ ms: Math.round(performance.now() - t0), during, lines: r?.lines?.length ?? null, ...(self.__texDebug && !r?.lines ? { params } : {}) }); pdfBreakAsked.set(key, r?.lines ?? false); if (r?.lines && version === at) pdfCaretDrawNow(); }).catch(() => pdfBreakAsked.set(key, false));
+      lsp('satex/break', params).then((r) => { (self.__texBreaks ??= []).push({ ms: Math.round(performance.now() - t0), during, lines: r?.lines?.length ?? null, ...(self.__texDebug && !r?.lines ? { params, r } : {}) }); pdfBreakAsked.set(key, r?.lines ?? false); if (r?.lines && version === at) pdfCaretDrawNow(); }).catch(() => pdfBreakAsked.set(key, false));
     }
     const lines = pdfBreakAsked.get(key);
     if (!lines) return null;
@@ -9212,11 +9231,12 @@
     const key = el && `${el.style.top}|${el.parentElement?.dataset.page}|${pdfGen}`;
     if (c && pdfCaretWas?.c === c && pdfCaretWas.key === key) return;
     const top = el?.getBoundingClientRect().top;
-    if (c && top != null && pdfCaretWas?.c === c && Math.abs(top - pdfCaretWas.top) > 2) {
+    // only a new build moves it so: the echo's own rows (a display formula typed, a wrap) move the caret, not the pages
+    if (c && top != null && pdfCaretWas?.c === c && pdfCaretWas.gen !== pdfGen && Math.abs(top - pdfCaretWas.top) > 2) {
       const sc = pdfBody.querySelector('.pdf-pages'), dy = top - pdfCaretWas.top;
       if (sc) { sc.scrollTop += dy; if (pdfKeep) pdfKeep[1] += dy; }
     }
-    pdfCaretWas = c && el ? { c, top: el.getBoundingClientRect().top, key } : null;
+    pdfCaretWas = c && el ? { c, top: el.getBoundingClientRect().top, key, gen: pdfGen } : null;
     ovNearSoon();
   }
   /** The caret over the pages: in its word as the last build set it, the word as now written beside it while the pages lag. */
