@@ -2127,7 +2127,9 @@
     if (count(text) !== count(all)) return;
     let at = -1;
     for (let n = 0; n <= j; n++) at = text.indexOf(old, at + 1);
-    const from = tsNodeAt(box, at), to = tsNodeAt(box, at + old.length);
+    // the start in the node of the old text's first character, never the end of the one before (a footnote's mark
+    // `<sup>1</sup>`: the typed text would go into the superscript)
+    const f = at >= 0 && tsNodeAt(box, at + 1), from = f && [f[0], f[1] - 1], to = tsNodeAt(box, at + old.length);
     if (at < 0 || !from || !to) return;
     tsPend = [p, p.cloneNode(true)];
     const r = document.createRange();
@@ -8943,12 +8945,20 @@
     if (pic >= 0 && g.text.indexOf('\\end{tikzpicture}', pic) >= g.at) return false;
     const page = (n) => pdfImg(n), base = pdfImg(c.page), b = base?.__build ?? pdf;
     if (!pdfBuiltText(b) || b.slice || !b.wordList || !base?.naturalWidth) return false;
-    const B = pdfBuiltText(b), dl = g.text.length - B.length;
+    let B = pdfBuiltText(b), d1 = 0, qb = Infinity;
+    // edits the build lacks in paragraphs before the caret's: the build's text taken with them, its offsets from the
+    // caret's paragraph on moved by what they add, so the change laid out is the caret paragraph's own (one change
+    // from the first edit to the caret spans paragraph breaks and drops the words between)
+    {
+      const ends = (t) => [...t.matchAll(/\n[ \t]*\n/g)].map((m) => m.index + m[0].length), ge = ends(g.text), be = ends(B), n = ge.filter((e) => e <= g.at).length;
+      if (n && ge.length === be.length && PE.changed(B, g.text)[0] < ge[n - 1]) { qb = be[n - 1]; d1 = ge[n - 1] - qb; B = g.text.slice(0, ge[n - 1]) + B.slice(qb); }
+    }
+    const dl = g.text.length - B.length;
     let [P, S] = PE.changed(B, g.text);
     const p = Math.min(P, g.at, B.length);
     // a TikZ picture's node texts are no rows of a paragraph: a reflow would pull the picture up over the text
     const pics = [...B.matchAll(/\\begin\{tikzpicture\}[\s\S]*?\\end\{tikzpicture\}/g)].map((m) => [m.index, m.index + m[0].length]);
-    const words = (at) => pdfParaWords(b, at).filter((t) => t.w && pdfImg(t.w[0])?.naturalWidth && (pdfImg(t.w[0]).__build ?? pdf) === b && !pics.some(([x, y]) => t.s >= x && t.s < y));
+    const words = (at) => (at >= qb + d1 ? pdfParaWords(b, at - d1).map((t) => t.s >= qb ? { ...t, s: t.s + d1, e: t.e + d1 } : t) : pdfParaWords(b, at)).filter((t) => t.w && pdfImg(t.w[0])?.naturalWidth && (pdfImg(t.w[0]).__build ?? pdf) === b && !pics.some(([x, y]) => t.s >= x && t.s < y));
     let para = words(p);
     // a new paragraph the build sets no word of yet (Enter at a paragraph's end, built before the next key): the
     // paragraph before goes on with the break typed, as before that build landed, the change at the caret
@@ -9156,7 +9166,10 @@
           cx -= c;
         }
       }
-      for (const r of rows) pdfEchoPaint(r);
+      // a row the echo adds (Enter, a wrap past the paragraph) takes the paper and ink of the paragraph's own row: under
+      // it the page has what the push moves down (a picture's accent frames), not the text's colours
+      let hue0;
+      for (const r of rows) { const h = pdfEchoPaint(r.extra && hue0 ? { ...r, hue: hue0 } : r); hue0 ??= h; }
       pdfRelay();
     }
     const img = page(w[0]), [pw, ph] = pageSize(img);
@@ -9234,7 +9247,7 @@
   }
   /** Paints over page image `img` the rest of a row from `x` (bp): its words (`row`'s, and `w`'s height) covered,
    * then each piece of `out` at its `x`: a text `t` in font `f`, or a word `w` as the page drew it, moved. */
-  function pdfEchoPaint({ img, w, row, x: x0, f, k, out, n }) {
+  function pdfEchoPaint({ img, w, row, x: x0, f, k, out, n, hue: given = null }) {
     const [pw, ph] = pageSize(img), all = [...(w ? [w] : []), ...(n ? [n] : []), ...row.map((t) => t.w)];
     if (!all.length) return;
     // the row's band painted over; a formula taller than it reaches past, over the page
@@ -9244,7 +9257,7 @@
     const cv = document.createElement('canvas'), W = Math.ceil((x1 - x0) * k), H = Math.ceil((bot - top) * k), cg = cv.getContext('2d');
     Object.assign(cv, { width: W, height: H, className: 'pdf-echo' });
     // the page's own paper and ink about the row (a coloured page, a \\colorbox, coloured text)
-    const hue = pdfColours(img, x0 - 12, band[0], x1 + 12, band[1]);
+    const hue = given ?? pdfColours(img, x0 - 12, band[0], x1 + 12, band[1]);
     cg.fillStyle = pdfRgb(hue?.paper);
     cg.fillRect(0, (band[0] - top) * k, W, (band[1] - band[0]) * k);
     cg.fillStyle = pdfRgb(hue?.ink, '#000');
@@ -9266,6 +9279,7 @@
     if (typed.length) pdfPainted.push({ page: +img.parentElement.dataset.page, x0, t: band[0], d: band[1], end: Math.max(...typed.map((q) => q.x + q.n)) });
     cv.style.cssText = `left:${x0 / pw * 100}%;top:${top / ph * 100}%;width:${(x1 - x0) / pw * 100}%;height:${(bot - top) / ph * 100}%`;
     pdfUnder(img.parentElement, cv);
+    return hue;
   }
   /** Page image `img`'s colours over `l..r` x `t..d` (bp), each `[r, g, b]`: `paper` the commonest, `ink` the commonest
    * of those far from it (the text's own colour). Colours bin by 16 a channel, a bin's colour its pixels' mean; a
@@ -9665,8 +9679,8 @@
       e.preventDefault();
       const { from, ask, p } = pdfMenuAsk;
       pdfQueue(async () => {
-        const all = pdfOrKept(await pdfWithin(ask));
-        const c = pdfCaretNow(), n = c && /^\\([A-Za-z@]*)$/.exec(editor.text().slice(from, c.at)), item = n && all.length && pdfMenuItems(all, n[1])[0];
+        const got = pdfOrKept(await pdfWithin(ask)), c = pdfCaretNow(), n = c && /^\\([A-Za-z@]*)$/.exec(editor.text().slice(from, c.at));
+        const all = n ? await pdfFull(got, from, n[1]) : got, item = n && all.length && pdfMenuItems(all, n[1])[0];
         pdfMenuOff();
         if (item) pdfMenuApply(item, from, true);
       });
@@ -9680,7 +9694,7 @@
         const c = pdfCaretNow(), t = editor.text(), m = c && /\\([A-Za-z@]+)$/.exec(t.slice(Math.max(0, c.at - 64), c.at));
         if (!m) return;
         const from = c.at - m[0].length, p = pdfPos(t, from + 1);
-        const all = pdfOrKept(await pdfWithin(completions(p, p.character, '\\', uri())));
+        const all = await pdfFull(pdfOrKept(await pdfWithin(completions(p, p.character, '\\', uri()))), from, m[1]);
         const item = all.length && pdfMenuItems(all, m[1])[0];
         pdfMenuOff();
         if (item) pdfMenuApply(item, from, true);
@@ -9758,6 +9772,13 @@
   const pdfWithin = (pr, ms = 2000) => Promise.race([pr, new Promise((ok) => setTimeout(() => ok(null), ms))]);
   /** The items an answer gave, else the kept ones: a Tab takes the list's first item without the worker. */
   const pdfOrKept = (got) => got?.length ? got : keptFor('\\') ?? [];
+  /** The list for `\\name` typed from `from`: `all`, asked at the `\\`, holds the server's best few hundred only (`incomplete`),
+   * so a name typed on is asked again where it ends: `\\sum` found no `\\sum` among the best names for `\\`. */
+  async function pdfFull(all, from, name) {
+    if (!all.incomplete || !name) return all;
+    const p = pdfPos(editor.text(), from + 1 + name.length), more = pdfOrKept(await pdfWithin(completions(p, p.character - name.length, '\\', uri())));
+    return more.length ? more : all;
+  }
   /** Once the run under way ends (5 s at most): the server answers a completion then. */
   const pdfRunEnd = async () => { for (let t = 0; running && t < 100; t++) await new Promise((ok) => setTimeout(ok, 50)); };
   /** The items of the server's list `all` for `\\name`: a macro's call clicked, every command with its own first. */
@@ -9784,7 +9805,9 @@
     // the name as typed now: keys typed while the list came on extend it
     const now = pdfSeen(), n = /^\\([A-Za-z@]*)$/.exec(now.text.slice(from, now.at));
     if (!pdfCaret || !n) return;
-    const items = pdfMenuItems(all, n[1]);
+    const full = await pdfFull(all, from, n[1]);
+    if (!pdfCaret || pdfSeen().text.slice(from, pdfSeen().at) !== n[0]) return;
+    const items = pdfMenuItems(full, n[1]);
     if (!items.length) return pdfMenuOff();
     if (!pdfMenu) { pdfMenu = { el: Object.assign(document.createElement('ul'), { className: 'complete type-complete', role: 'listbox' }) }; document.body.append(pdfMenu.el); }
     Object.assign(pdfMenu, { items, sel: fresh ? reselect(items, pdfMenu.items?.[pdfMenu.sel]?.label) : 0, from });
