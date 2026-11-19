@@ -734,7 +734,7 @@ fn playground_slices_typeset_their_line_like_the_original() {
         (
             "thesis.tex",
             "chapter.tex",
-            &["Figure~\\ref{fig:flow} draws", "\\node (satex)", "Literate programming", "\\caption{"],
+            &["Figure~\\ref{fig:flow} draws", "\\node (satex)", "Literate programming", "\\caption["],
         ),
         ("slides.tex", "slides.tex", &["\\item<2->", "One \\pause"]),
         ("rerun.tex", "rerun.tex", &["See Section"]),
