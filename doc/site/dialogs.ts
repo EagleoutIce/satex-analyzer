@@ -147,6 +147,8 @@ dialog.pop.pop-peek::backdrop { opacity: 0; }
 .sd-grid tr:hover .sd-rsel.none, .sd .sd-rsel:focus { opacity: 1; border-color: var(--c-border); }
 .sd-grid tr.sd-rule td { height: 3px; border: 0; }
 .sd-grid tr.sd-rule td.sd-ruled { background: linear-gradient(var(--c-fg), var(--c-fg)) 0 50% / 100% var(--w, 1px) no-repeat; }
+/* the outer gutters hold the table's outer vertical rules at their middle: a rule runs from one to the other, never past them */
+.sd-grid tr.sd-rule td.sd-rh + td.sd-ruled { background-size: 50% var(--w, 1px); background-position: 100% 50%; } .sd-grid tr.sd-rule td.sd-ruled:last-child { background-size: 50% var(--w, 1px); background-position: 0 50%; }
 .sd-grid tr.sd-end td { height: 1.5rem; vertical-align: middle; }
 .sd-grid .sd-chips { white-space: nowrap; padding-left: .4rem !important; }
 .sd-grid td.sd-vcol, .sd-grid th.sd-vcol { width: 1.2rem; min-width: 1.2rem; padding: 0 !important; cursor: pointer; border: 0; position: relative; }

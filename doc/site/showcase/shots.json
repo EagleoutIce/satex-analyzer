@@ -701,10 +701,10 @@
   {
    "name": "quickfix",
    "server": true,
-   "file": "booktabs.tex",
+   "file": "hello.tex",
    "title": "Fix an error",
    "wide": true,
-   "caption": "pdflatex stops at \\toprule. SaTeX knows booktabs defines it: the fix in the hover card loads it, and the PDF builds.",
+   "caption": "A \\textbf whose brace never closes stops pdflatex at the end of the file. The fix in the hover card closes it, and the PDF builds.",
    "open": [
     "panel",
     "play-pdf"
@@ -713,10 +713,10 @@
     1100,
     760
    ],
-   "text": "\\documentclass{article}\n\\begin{document}\n\\section{Results}\n\\begin{tabular}{lr}\n  \\toprule\n  Run & Time \\\\\n  \\midrule\n  cold & 12 s \\\\\n  warm & 3 s \\\\\n  \\bottomrule\n\\end{tabular}\n\\end{document}\n",
+   "text": "\\documentclass{article}\n\\begin{document}\n\\section{Results}\n\\textbf{Note: the warm cache halves the time.\n\nRuns took 10--12 s when cold and 3 s when warm.\n\\end{document}\n",
    "steps": [
     {
-     "until": "[...document.querySelectorAll('#lsp-diagnostics li')].some((l) => /undefined-control-sequence/.test(l.textContent))",
+     "until": "[...document.querySelectorAll('#lsp-diagnostics li')].some((l) => /raised-error|runaway/.test(l.textContent))",
      "ms": 90000
     },
     {
@@ -726,10 +726,10 @@
      "wait": 1500
     },
     {
-     "hover": "__xy('\\\\toprule', 3)"
+     "hover": "__xy('\\\\textbf{Note', 2)"
     },
     {
-     "until": "[...document.querySelectorAll('.tip-card:not([hidden]) button[data-fix]')].some((b) => /booktabs/.test(b.textContent))",
+     "until": "[...document.querySelectorAll('.tip-card:not([hidden]) button[data-fix]')].length > 0",
      "ms": 60000,
      "wait": 900
     }
@@ -740,10 +740,10 @@
      "wait": 1500
     },
     {
-     "click": "[...document.querySelectorAll('.tip-card:not([hidden]) button[data-fix]')].find((b) => /booktabs/.test(b.textContent))"
+     "click": "[...document.querySelectorAll('.tip-card:not([hidden]) button[data-fix]')][0]"
     },
     {
-     "until": "/\\\\usepackage\\{booktabs\\}/.test(document.querySelector('.cm-editor').satexView.state.doc.toString())",
+     "until": "/time\\.\\}/.test(document.querySelector('.cm-editor').satexView.state.doc.toString())",
      "wait": 1200
     },
     {

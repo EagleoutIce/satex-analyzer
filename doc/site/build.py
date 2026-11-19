@@ -815,6 +815,7 @@ def bundle(satex, work):
         tables[0]["/texmf.bundle/release-texlive.txt"] = (tree / "release-texlive.txt").read_bytes()
     tables[0]["/work/satex.yaml"] = config.replace(str(tree), "/texmf.bundle").encode()
     tables[0]["/cache/previews.json"] = previews(satex, work, tree)
+    tables[0]["/texmf.bundle/exports.tsv"] = exports(satex, work, dist)
     return tables, packages, [p.name for p in docs], project
 
 
@@ -834,6 +835,24 @@ PREVIEWS = {}
 def PREVIEW_NAMES():
     """The names (without their kind) that have a picture."""
     return {k.split(":", 1)[1] for k in PREVIEWS}
+
+
+def exports(satex, work, dist):
+    """Every name the installed packages define, with the file to load for it (`satex query exports`), one
+    `file<TAB>name<TAB>name…` line per file: the bundle holds a few packages only, so the browser's fixes and
+    completion read the rest here (linter/shared.rs `exports`)."""
+    return memo(work, "exports", [str(dist)], lambda: exports_run(satex, work), key=KEY, later=b"")
+
+
+def exports_run(satex, work):
+    doc = work / "exports" / "exports.tex"
+    doc.parent.mkdir(parents=True, exist_ok=True)
+    doc.write_text("\\documentclass{article}\n\\begin{document}\n\\end{document}\n")
+    rows = json.loads(run(str(satex), "--format", "json", "query", "exports", "-f", str(doc), cwd=doc.parent))
+    by = {}
+    for r in rows:
+        by.setdefault(r["file"], []).append(r["name"])
+    return "".join("\t".join([f, *names]) + "\n" for f, names in sorted(by.items())).encode()
 
 
 def previews_run(satex, work, libs):

@@ -7,6 +7,8 @@
   --error: light-dark(#b42318, #ff8a7a); --warning: light-dark(#8a5a00, #f2c14e); --info: light-dark(#1d5fb8, #8fb3ff);
   --safe: light-dark(#1a7f37, #6fd08c); --unsafe: light-dark(#a1460a, #f0a35e);
   --shadow: 0 1px 2px #10141e10, 0 6px 18px #10141e10;
+  /* the outline of a neutral pill in a view's bar (layers, Show, Type, Insert, View, the view menu): the accent marks only what is on */
+  --pill-line: color-mix(in srgb, var(--fg) 35%, var(--border));
   /* one stacking order: a menu the user opened over a hover card over a note (site.js `floating` keeps them apart) */
   --z-note: 58; --z-card: 59; --z-menu: 70;
   /* the corner of a tag in a card (a kind, a breadcrumb, a name chip): a rounded rectangle, never a pill */
@@ -421,9 +423,9 @@ button.small { padding: .05rem .6rem; font-size: .78rem; border-radius: 999px; }
 .statusbar #play-status { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 /* the status keeps room for a few words with an ellipsis; the pills and the time give way first, the time with an ellipsis too */
 /* the status text's slot has a fixed basis: its length never moves the pills; digits keep one width */
-.statusbar .actbox { min-width: min(24ch, 35%); flex: 1 1 24ch; } .statusbar { font-variant-numeric: tabular-nums; } .statusbar .pills { flex: none; } .statusbar .pills > * { flex: none; white-space: nowrap; }
+.statusbar .actbox { min-width: min(24ch, 35%); flex: 1 1 40ch; } .statusbar { font-variant-numeric: tabular-nums; } .statusbar .pills { flex: none; } .statusbar .pills > * { flex: none; white-space: nowrap; }
 /* short of room the run's steps and time give way first: what is happening stays readable */
-.statusbar .statdetail { flex: 0 1000 auto; display: flex; min-width: 4ch; } .statusbar .stat-time { min-width: 0; } .statusbar #t-time-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.statusbar .statdetail { flex: 0 1000 auto; display: flex; min-width: 4ch; } .statusbar .stat-time { min-width: 0; } .statusbar #t-time-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; } .statusbar .stat-time svg { flex: none; }
 #play-status:has(.st-msg) { display: flex; align-items: center; gap: .5rem; } #play-status .st-msg { overflow: hidden; text-overflow: ellipsis; min-width: 4rem; flex: 1 1 auto; } #play-status button { flex: 0 1 auto; min-width: 3.5rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 #play-status:has(.st-msg) { flex: 1 1 9rem; }
 .pills { display: inline-flex; gap: .3rem; flex: none; margin-left: auto; }
@@ -1312,6 +1314,8 @@ ol.refs { font-size: .8rem; color: var(--muted); margin: var(--s16) 0 0; padding
 .tr-key b { color: var(--tk); font: 600 .72rem ui-monospace, Menlo, monospace; }
 .manual { font-size: .62rem; padding: 0 .3rem; border: 1px solid var(--border); border-radius: var(--r-tag); color: var(--muted); }
 .cfg-value input:invalid { border-color: var(--error) !important; }
+/* a dialog that takes the focus itself on opening (`autofocus`: the trace) shows no ring: its first control's would look like a stray outline */
+dialog[autofocus]:focus-visible { outline: none; }
 .statusbar #cache-open { margin-left: auto; }
 .statusbar #offline { flex: none; max-width: 14rem; }
 
@@ -1703,7 +1707,7 @@ p.ts.ts-foot::before { content: ""; position: absolute; top: 0; left: 0; width: 
 /* Type mode at a glance: the button pressed, "Typing" and the pages framed while a caret is in them (Esc ends it) */
 #pdf-type .type-label::after { content: "Type"; }
 body.type-sync #pdf-type .type-label::after { content: "Typing"; }
-#pdf-type[aria-pressed=true] { color: var(--accent); border-color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, var(--bg)); }
+:is(#pdf-type, #ts-type)[aria-pressed=true] { color: var(--accent); border-color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, var(--bg)); }
 body.type-sync #pdf-type[aria-pressed=true] { background: color-mix(in srgb, var(--accent) 24%, var(--bg)); }
 body.type-sync #play-pdf .pdf-pages { box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--accent) 45%, transparent); }
 #typeset-body { position: relative; }
@@ -1957,7 +1961,7 @@ canvas.pdf-echo { display: block; }
 .lib-list.lib-loading::before { content: ""; position: sticky; top: 0; display: block; height: 2px; margin-bottom: -2px; z-index: 2; background: linear-gradient(90deg, transparent, var(--accent), transparent) 0 0 / 40% 100% no-repeat; animation: lib-slide 1s linear infinite; }
 @keyframes lib-slide { from { background-position: -40% 0; } to { background-position: 140% 0; } }
 @media (prefers-reduced-motion: reduce) { .lib-list.lib-loading::before { animation: none; background-size: 100% 100%; opacity: .5; } }
-.pdf-bar .pdf-tools .ghost, :is(.pdf-bar, .ts-switches) .pdf-layers summary { color: var(--fg); border: 1px solid color-mix(in srgb, var(--fg) 35%, var(--border)); background: var(--bg); }
+.pdf-bar .pdf-tools .ghost, :is(.pdf-bar, .ts-switches) .pdf-layers summary { color: var(--fg); border: 1px solid var(--pill-line); background: var(--bg); }
 .pdf-bar .pdf-tools .ghost:hover, :is(.pdf-bar, .ts-switches) .pdf-layers summary:hover { border-color: var(--accent); color: var(--accent); }
 .pdf-bar .pdf-tools .icon[aria-pressed=true] { color: var(--accent); border-color: var(--accent); }
 .pdf-bar .pdf-menu summary { border: 1px solid var(--accent); }
@@ -2101,7 +2105,7 @@ a.cmd-edit:hover, a.cmd-edit:focus-visible { background: color-mix(in srgb, var(
 @media (max-width: 36rem) { body.play .top { flex-wrap: wrap; } body.play .top nav { flex-wrap: wrap; overflow: visible; mask-image: none; } }
 
 /* the views as tabs where they fit, else one menu */
-#pdf-views-sel { display: none; box-sizing: border-box; height: var(--bar-h, 1.6rem); max-width: 100%; font-size: .72rem; font-weight: 600; padding: 0 .4rem; border-radius: 999px; border: 1px solid var(--accent); background: var(--bg); color: var(--fg); cursor: pointer; }
+#pdf-views-sel { display: none; box-sizing: border-box; height: var(--bar-h, 1.6rem); max-width: 100%; font-size: .72rem; font-weight: 500; padding: 0 .4rem; border-radius: 999px; border: 1px solid var(--pill-line); background: var(--bg); color: var(--fg); cursor: pointer; }
 #pdf-views-sel.pdf-err { color: var(--error); border-color: var(--error); }
 #pdf-views-sel:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .pdf-bar.views-menu #pdf-views-sel { display: inline-block; }
@@ -2616,7 +2620,7 @@ pre.out-block:hover .out-meta { opacity: .85; }
 .math-group { border: 0; background: none; }
 .pdf-bar .view-menu { position: relative; }
 /* Type, Insert and View: one pill size */
-.type-group > button.small, .math-group .math-menu summary, .pdf-bar .view-menu summary { text-transform: none; letter-spacing: 0; height: auto; min-height: var(--btn-h-sm); box-sizing: border-box; display: inline-flex; align-items: center; gap: .25rem; padding: .02rem .55rem; border: 1px solid var(--border); border-radius: 999px; background: var(--bg); color: var(--accent); font-size: .72rem; font-weight: 500; line-height: 1.2; white-space: nowrap; }
+.type-group > button.small, .math-group .math-menu summary, .pdf-bar .view-menu summary { text-transform: none; letter-spacing: 0; height: auto; min-height: var(--btn-h-sm); box-sizing: border-box; display: inline-flex; align-items: center; gap: .25rem; padding: .02rem .55rem; border: 1px solid var(--pill-line); border-radius: 999px; background: var(--bg); color: var(--fg); font-size: .72rem; font-weight: 500; line-height: 1.2; white-space: nowrap; }
 .math-group .math-menu[open] summary, .pdf-bar .view-menu[open] summary { border-color: var(--accent); background: var(--sunk); }
 .pdf-bar .view-menu .view-list { left: auto; right: 0; display: flex; flex-wrap: wrap; align-items: center; gap: .3rem; min-width: 0; width: max-content; max-width: 16rem; }
 /* every chip over the pages alike: one height, font, radius; the column chip's buttons are text in it, not buttons of their own */

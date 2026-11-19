@@ -838,9 +838,17 @@ interface Stream {
     // at (a monospace glyph .6 of the size wide), so one odd frame does not shrink them all; a text wider is squeezed
     const fits = pic.texts.map((t: Rec, k: number) => { const f = framed[k]; return f ? Math.min(f[3] - f[1] - 3, (f[2] - f[0] - 4) / (Math.max(1, String(t.text).length) * 0.6)) : 9; }).sort((a: number, b: number) => a - b);
     const size = Math.max(4, Math.min(9, fits[(fits.length - 1) >> 1] ?? 9));
+    // the ends of the open paths (edges): an unframed text stays between those on its row, never drawn through an edge
+    const ends = pic.paths.filter((p: Rec) => !/Z/.test(p.d)).flatMap((p: Rec) => { const v = (p.d.match(/-?\d+(?:\.\d+)?/g) ?? []).map(Number); return v.length >= 4 ? [[v[0], v[1]], [v.at(-2), v.at(-1)]] : []; });
+    const gap = (t: Rec) => Math.min(Infinity, ...ends.filter(([ex, ey]: number[]) => Math.abs(ey! - t.y) <= size / 2 && Math.abs(ex! - t.x) >= size).map(([ex]: number[]) => 2 * (Math.abs(ex! - t.x) - 1)));
     const texts = pic.texts.map((t: Rec, k: number) => {
-      if (t.base) return `<text class="ts-base" data-k="${k}" x="${t.x}" y="${t.y}" font-size="10" fill="${ink(t.color)}">${esc(t.text)}</text>`;
-      const f = framed[k], x = f ? (f[0] + f[2]) / 2 : t.x, y = f ? (f[1] + f[3]) / 2 : t.y, room = f ? f[2] - f[0] - 4 : Infinity;
+      if (t.base) {
+        // from its left end up to the first edge end on its row
+        const room = Math.min(Infinity, ...ends.filter(([ex, ey]: number[]) => ey! <= t.y + 3 && ey! >= t.y - 10 && ex! - t.x >= 10).map(([ex]: number[]) => ex! - t.x - 1));
+        const fit = String(t.text).length * 6 > room ? ` textLength="${room.toFixed(2)}" lengthAdjust="spacingAndGlyphs"` : '';
+        return `<text class="ts-base" data-k="${k}" x="${t.x}" y="${t.y}" font-size="10"${fit} fill="${ink(t.color)}">${esc(t.text)}</text>`;
+      }
+      const f = framed[k], x = f ? (f[0] + f[2]) / 2 : t.x, y = f ? (f[1] + f[3]) / 2 : t.y, room = f ? f[2] - f[0] - 4 : gap(t);
       const fit = String(t.text).length * size * 0.6 > room ? ` textLength="${room.toFixed(2)}" lengthAdjust="spacingAndGlyphs"` : '';
       return `<text data-k="${k}" x="${x}" y="${y}" font-size="${size}" text-anchor="middle" dominant-baseline="central"${fit}>${esc(t.text)}</text>`;
     }).join(' ');

@@ -313,6 +313,10 @@ test('sketchSvg: an unframed node text stays clear of the edge beside it', async
     texts: [{ text: 'TEX file', x: 0, y: 0 }, { text: 'findings', x: 80, y: 0 }] });
   const [, len] = /<text data-k="0"[^>]*textLength="([\d.]+)"/.exec(svg) ?? [];
   assert.ok(len && +len / 2 <= 18.5, `squeezed to end before the edge (half width ${len / 2})`);
+  // a text the run put by its box (`base`, its left end) the same: it ends before the edge starts
+  const base = sketchSvg({ box: [0, -8, 110, 12], paths: [{ d: 'M 40 -3 L 70 -3', fill: false, stroke: true, width: 0.4 }], texts: [{ base: true, text: 'TEX file', x: 0, y: 0 }] });
+  const [, bl] = /<text class="ts-base"[^>]*textLength="([\d.]+)"/.exec(base) ?? [];
+  assert.ok(bl && +bl <= 40, `base text squeezed before the edge (${bl})`);
   // a text with no edge on its row keeps its own width
   assert.doesNotMatch(sketchSvg({ box: [0, 0, 40, 10], paths: [{ d: 'M 0 30 L 40 30', fill: false, stroke: true, width: 0.4 }], texts: [{ text: 'TEX file', x: 20, y: 0 }] }), /textLength/);
 });
