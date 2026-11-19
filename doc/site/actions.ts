@@ -14,7 +14,7 @@ declare global {
   interface PaCtx {
     text: string; all: string; x: number; y: number; facts: Rec | null;
     write(edits: (PaEdit | null)[]): Promise<boolean> | void; toast(msg: string): void; caret?(at: number): void;
-    pick(prompt: string, done: (n: TikzNode) => void): void; colAlign(t: number, k: number, a: string): void;
+    pick(prompt: string, done: (n: TikzNode) => void): void; colAlign(t: number, k: number, a: string, w?: string): void;
     scratch?(b: ScBlock): void;
     /** The open file's name, for where a style is defined. */
     file?: string;
@@ -663,7 +663,13 @@ declare global {
     name: 'table-column', title: 'Table columns', about: 'A column\'s alignment, its letter rewritten in the column spec', type: 'table', targets: ['table-column'],
     groups(t, ctx) {
       const col = t.col, kin = col?.spec && ['lcr', 'pmb'].find((s) => s.includes(col.align));
-      return kin ? [{ title: 'Align', inline: true, items: [...kin].map((a) => ({ label: `${a}: ${ALIGNS[a]}`, on: a === col.align, run: () => ctx.colAlign(t.t, t.k, a) })) }] : [];
+      if (!kin) return [];
+      // a width makes the column a paragraph (`p`, or its own `m`/`b`); natural width goes back to `l`
+      const para = kin === 'pmb' ? col.align : 'p';
+      const widths = ['2cm', '3cm', '4cm', '0.25\\linewidth', '0.33\\linewidth', '0.5\\linewidth'];
+      return [{ title: 'Align', inline: true, items: [...kin].map((a) => ({ label: `${a}: ${ALIGNS[a]}`, on: a === col.align, run: () => ctx.colAlign(t.t, t.k, a) })) },
+        { title: 'Width', items: [{ label: 'natural (as wide as its text)', on: kin === 'lcr', run: () => ctx.colAlign(t.t, t.k, kin === 'lcr' ? col.align : 'l', '') },
+          ...widths.map((w) => ({ label: w, on: col.width === w, run: () => ctx.colAlign(t.t, t.k, para, w) }))] }];
     },
   });
 

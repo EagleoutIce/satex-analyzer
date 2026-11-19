@@ -8480,7 +8480,7 @@
   async function paOpen(x, y, t) {
     const text = editor.text(), at = t.n?.from ?? t.e?.from;
     const ctx = { text, all: docTexts(), x, y, facts: null, write: (edits) => paWrite(text, edits), toast, pick: tikzPick, grid: tikzGrid, file: state.file, scratch: (b) => scratchOpen(b.file, b.from, b.to),
-      colAlign: (i, k, a) => { pdfColMenu = null; pdfColAlign({ dataset: { t: i, k, a } }); } };
+      colAlign: (i, k, a, w) => { pdfColMenu = null; pdfColAlign({ dataset: { t: i, k, a, ...(w != null ? { w } : {}) } }); } };
     // the block around what was clicked, for a scratch slice of it
     const from = at ?? t.f?.from;
     if (!t.block && from != null && scratchable()) { const [a, b, what] = SCR.block(text, text.slice(0, from).split('\n').length); t = { ...t, block: { file: state.file, from: a, to: b, what } }; }
@@ -8850,11 +8850,12 @@
   /** A column's letter rewritten from the layer: `l`, `c`, `r`, or `p`, `m`, `b` keeping its width. */
   async function pdfColAlign(b) {
     const t = pdfCols?.tables[+b.dataset.t], col = t?.cols[+b.dataset.k];
-    if (!col?.spec || col.align === b.dataset.a) return;
+    const w = b.dataset.w ?? col?.width ?? '';
+    if (!col?.spec || (col.align === b.dataset.a && w === (col.width ?? ''))) return;
     // applied like typing: the old pages and chips stay as they are (no dimming) until the new build is drawn and its findings are in
     document.body.classList.add('pdf-hold');
     setTimeout(() => document.body.classList.remove('pdf-hold'), 20000);
-    if (await pdfWrite(uri(), col.spec, `${b.dataset.a}${col.width ? `{${col.width}}` : ''}`, { userEvent: 'input.type' })) { pdfColsAsk(); pdfRebuild(true); }
+    if (await pdfWrite(uri(), col.spec, `${b.dataset.a}${w && 'pmb'.includes(b.dataset.a) ? `{${w}}` : ''}`, { userEvent: 'input.type' })) { pdfColsAsk(); pdfRebuild(true); }
     else document.body.classList.remove('pdf-hold');
   }
   /** Typing in the PDF: on, a click on a word puts the caret there; off, a click opens its source. */

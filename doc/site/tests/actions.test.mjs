@@ -156,7 +156,7 @@ function* leaves(items, path = []) {
 }
 /** A context over `text` that records each write and each toast; `pick` picks `other`. */
 const ctxOf = (text, other = null, facts = null) => {
-  const c = { text, all: text, x: 0, y: 0, facts, writes: [], toasts: [], write: (e) => c.writes.push(e), toast: (m) => c.toasts.push(m), pick: (_, done) => other && done(other), colAlign: (t, k, a) => c.writes.push([{ col: [t, k, a] }]) };
+  const c = { text, all: text, x: 0, y: 0, facts, writes: [], toasts: [], write: (e) => c.writes.push(e), toast: (m) => c.toasts.push(m), pick: (_, done) => other && done(other), colAlign: (t, k, a, w) => c.writes.push([{ col: w == null ? [t, k, a] : [t, k, a, w] }]) };
   return c;
 };
 
@@ -405,6 +405,10 @@ test('forest and table rows', withStore(() => {
   assert.deepEqual(col[0].items.map((i) => i.label[0] + (i.on ? '*' : '')), ['l', 'c', 'r*']);
   col[0].items[1].run();
   assert.deepEqual(c.writes.at(-1), [{ col: [0, 1, 'c'] }]);
+  // widths: a preset makes the column a paragraph `p{…}`, natural width keeps its letter
+  assert.deepEqual(col[1].items.map((i) => i.label + (i.on ? '*' : '')).slice(0, 2), ['natural (as wide as its text)*', '2cm']);
+  col[1].items[2].run();
+  assert.deepEqual(c.writes.at(-1), [{ col: [0, 1, 'p', '3cm'] }]);
   assert.deepEqual(PA.groups({ kind: 'table-column', t: 0, k: 0, col: { align: 'X' } }, c), [], 'no letter to rewrite: no menu');
 }));
 

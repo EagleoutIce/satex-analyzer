@@ -132,152 +132,181 @@
     },
     {
      "click": "(() => { const p = self.__pw('fast.'); return [p[0] + 1, p[1]]; })()",
-     "glide": 700,
-     "after": 300
+     "glide": 520,
+     "after": 220
     },
     {
      "until": "document.querySelector('.pdf-caret')"
     },
     {
-     "type": " It drops by $x_42$ per",
-     "wait": 100
+     "type": " It drops by $\\su"
+    },
+    {
+     "until": "document.querySelector('.type-complete li[aria-selected=true]')?.querySelector('code')?.textContent === '\\\\sum' && document.querySelector('.type-complete li[aria-selected=true]').querySelector('.cm-math-symbol')",
+     "ms": 15000,
+     "wait": 1200
+    },
+    {
+     "type": "\t",
+     "wait": 110
+    },
+    {
+     "type": "_{i} x_42$ per",
+     "wait": 80
     },
     {
      "type": " step.",
-     "wait": 300
+     "wait": 220
     },
     {
      "type": "\n",
-     "wait": 400
+     "wait": 300
     },
     {
      "type": "It converges.",
-     "wait": 200
+     "wait": 150
     },
     {
      "until": "!document.getElementById('play-pdf').classList.contains('pdf-running') && __quiet()",
-     "wait": 300,
+     "wait": 220,
      "ms": 120000
     },
     {
      "click": "(() => { const p = self.__pw('TinyNet,', .95); return [p[0] - 1, p[1]]; })()",
-     "glide": 600,
-     "after": 400
+     "glide": 450,
+     "after": 300
     },
     {
      "until": "document.querySelector('.pdf-caret') && document.querySelector('.type-note')"
     },
     {
      "type": "2",
-     "wait": 200
+     "wait": 150
     },
     {
      "until": "self.satexPdfWords().some((w) => w[5] === 'TinyNet2') && !document.getElementById('play-pdf').classList.contains('pdf-running')",
      "ms": 60000,
-     "wait": 500
+     "wait": 380
     },
     {
      "hover": "self.__pw('TinyNet2', .5)",
-     "glide": 500,
+     "glide": 380,
      "wait": 0,
-     "after": 150
+     "after": 110
     },
     {
      "drag": [
       "document.querySelector('#pdf-body .pdf-tikz-grip')",
       "(() => { const g = document.querySelector('#pdf-body .pdf-tikz-grip').getBoundingClientRect(), a = self.__pw('data', .5), b = self.__pw('TinyNet2', .5); return [g.x + g.width / 2 + 8, g.y + g.height / 2 + a[1] - b[1] + 2]; })()"
      ],
-     "over": 1300,
-     "wait": 400
+     "over": 980,
+     "wait": 300
     },
     {
      "until": "!document.getElementById('play-pdf').classList.contains('pdf-running')",
      "ms": 60000,
-     "wait": 500
+     "wait": 380
     },
     {
      "click": "self.__pw('loss', .92, .5, 1)",
      "double": true,
-     "glide": 600,
-     "after": 500
+     "glide": 450,
+     "after": 380
     },
     {
      "until": "document.querySelector('.pdf-caret')"
     },
     {
      "type": "es",
-     "wait": 300
+     "wait": 220
     },
     {
      "until": "self.satexPdfWords().some((w) => w[5] === 'losses') && !document.getElementById('play-pdf').classList.contains('pdf-running')",
      "ms": 60000,
-     "wait": 400
+     "wait": 300
     },
     {
      "click": "self.__pw('TinyNet2', .5)",
      "right": true,
-     "glide": 700,
-     "after": 400
+     "glide": 520,
+     "after": 300
     },
     {
      "eval": "if (!document.querySelector('.pa-root')) { const [x, y] = self.__pw('TinyNet2', .5); document.elementFromPoint(x, y).dispatchEvent(new MouseEvent('contextmenu', { clientX: x, clientY: y, bubbles: true, cancelable: true, button: 2 })); }",
      "until": "document.querySelector('.pa-root')",
      "ms": 20000,
-     "wait": 500
+     "wait": 380
     },
     {
      "hover": "(() => { const r = [...document.querySelectorAll('.pa-root > button')].find((b) => b.querySelector('span')?.textContent === 'Shape').getBoundingClientRect(); return [r.left + 16, r.y + r.height / 2]; })()",
-     "glide": 700,
-     "after": 500
+     "glide": 520,
+     "after": 380
     },
     {
      "until": "document.querySelector('.pa-sub')"
     },
     {
      "click": "[...document.querySelectorAll('.pa-sub > button')].find((b) => b.querySelector('span')?.textContent === 'Circle')",
-     "glide": 450,
-     "after": 300
+     "glide": 340,
+     "after": 220
     },
     {
      "until": "!document.getElementById('play-pdf').classList.contains('pdf-running')",
      "ms": 60000,
-     "wait": 400
+     "wait": 300
     },
     {
      "click": "self.__pw('base', .97)",
-     "glide": 600,
-     "after": 200
+     "glide": 450,
+     "after": 150
     },
     {
      "until": "document.querySelector('.pdf-caret')"
     },
     {
      "hover": "(() => { const a = self.__pw('losses', .5), b = self.__pw('95', .5); return [a[0], b[1]]; })()",
-     "glide": 400,
+     "glide": 300,
      "after": 0
     },
     {
      "type": "line",
-     "wait": 400
+     "wait": 300
     },
     {
      "until": "self.satexPdfWords().some((w) => w[5] === 'baseline') && !document.getElementById('play-pdf').classList.contains('pdf-running')",
      "ms": 60000,
-     "wait": 300
+     "wait": 220
     },
     {
      "hover": "self.__pw('small', .5)",
-     "glide": 600,
-     "after": 150
+     "glide": 450,
+     "after": 110
     },
     {
-     "until": "document.querySelector('#play-pdf .pdf-col-more[data-menu$=\":0\"]')",
+     "until": "document.querySelector('#play-pdf .pdf-col-grip[data-k=\"0\"]')",
      "ms": 15000
     },
     {
-     "click": "document.querySelector('#play-pdf .pdf-col-more[data-menu$=\":0\"]')",
-     "glide": 400,
-     "after": 400
+     "drag": [
+      "document.querySelector('#play-pdf .pdf-col-grip[data-k=\"0\"]')",
+      "(() => { const r = document.querySelector('#play-pdf .pdf-col-grip[data-k=\"0\"]').getBoundingClientRect(); return [r.x + r.width / 2 + 45, r.y + r.height / 2]; })()"
+     ],
+     "over": 680,
+     "wait": 150
+    },
+    {
+     "until": "/\\\\begin\\{tabular\\}\\{p\\{[^}]*\\}r\\}/.test(self.satexHealth().text) && !document.getElementById('play-pdf').classList.contains('pdf-running')",
+     "ms": 30000,
+     "wait": 380
+    },
+    {
+     "until": "document.querySelector('#play-pdf .pdf-col-more[data-menu$=\":1\"]')",
+     "ms": 15000
+    },
+    {
+     "click": "document.querySelector('#play-pdf .pdf-col-more[data-menu$=\":1\"]')",
+     "glide": 300,
+     "after": 300
     },
     {
      "until": "[...document.querySelectorAll('.pa-root > button')].find((b) => b.textContent.startsWith('c:'))",
@@ -285,17 +314,17 @@
     },
     {
      "click": "[...document.querySelectorAll('.pa-root > button')].find((b) => b.textContent.startsWith('c:'))",
-     "glide": 500,
-     "after": 300
+     "glide": 300,
+     "after": 220
     },
     {
-     "until": "/tabular\\}\\{cr\\}/.test(self.satexHealth().text) && !document.getElementById('play-pdf').classList.contains('pdf-running')",
+     "until": "/\\\\begin\\{tabular\\}\\{p\\{[^}]*\\}c\\}/.test(self.satexHealth().text) && !document.getElementById('play-pdf').classList.contains('pdf-running')",
      "ms": 60000,
-     "wait": 500
+     "wait": 520
     },
     {
      "hover": "(() => { const a = self.__pw('losses', .5), b = self.__pw('95', .5); return [a[0], b[1]]; })()",
-     "glide": 400,
+     "glide": 300,
      "after": 0
     }
    ],
@@ -303,7 +332,7 @@
     ".cm-editor",
     "#play-pdf"
    ],
-   "hold": 700,
+   "hold": 600,
    "keepMouse": true,
    "keepFocus": true,
    "config": {
