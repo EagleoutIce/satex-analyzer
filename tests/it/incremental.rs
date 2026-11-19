@@ -160,6 +160,35 @@ fn a_rerun_resumes_where_the_document_begins() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// Intuition: a build's second run reads the `.aux` the first wrote. When
+/// the project changes between the runs (a tool writes a `.tex` file next
+/// to the document), the checkpoints and the read log go, and with them the
+/// first run's end: an empty log says nothing changed, so that end was
+/// reused and the second run never read the `.aux`. The bug pinned: a
+/// reference stayed undefined in a document that defines its label.
+#[test]
+fn a_project_changed_between_build_runs_still_reads_the_aux() {
+    if !installed() {
+        return;
+    }
+    let dir = crate::support::tmp_root().join(format!("satex-setup-between-runs-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let main = dir.join("main.tex");
+    let text = "\\documentclass{article}\\begin{document}\\makeatletter\\@ifundefined{r@s}{\\gdef\\U{}}{\\gdef\\D{}}\\makeatother\\section{S}\\label{s}\\end{document}\n";
+    std::fs::write(&main, text).unwrap();
+    let cfg = crate::support::config();
+    let mut checkpoints = Checkpoints::new(&cfg);
+    let extra = dir.join("written-by-a-tool.tex");
+    checkpoints.between_runs = Some(Box::new(move |_| std::fs::write(&extra, "\\relax\n").unwrap()));
+    let analysis = Machine::build(&mut checkpoints, text, &main, &cfg, false);
+    let _ = std::fs::remove_dir_all(&dir);
+    assert_eq!(analysis.build_runs, 2);
+    assert!(
+        crate::support::defined(&analysis, "D") && crate::support::undefined(&analysis, "U"),
+        "the second run read no label"
+    );
+}
+
 /// A known document is one path however often the editor builds it: the
 /// second build reads the files the first left, which hold what it writes.
 #[test]

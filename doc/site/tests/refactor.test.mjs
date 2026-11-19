@@ -195,3 +195,103 @@ test('smart wrap: the document\'s own line length', () => {
   assert.equal(R.lineHabit(`${lines.join('\n')}\n`), 64);
   assert.equal(R.lineHabit('one paragraph per line '.repeat(30)), 80);
 });
+
+// ---------------------------------------------------------------- insert
+const DOC = '\\documentclass{article}\n\\usepackage{graphicx}\n\\begin{document}\n\\section{Intro}\nFirst paragraph\nruns on.\n\nSecond one.\n\\end{document}\n';
+/** Insert `kind` into `text` at target `t`: the text after, the plan. */
+const insert = (text, kind, t) => {
+  const it = R.inserts.find((k) => k.kind === kind), s = R.insertSpot(text, t, !!it.flow);
+  const p = s && R.insertPlan(text, text, kind, s.at, s.mode);
+  return p && { out: edit(text, p.edits), p };
+};
+
+// Intuition: a right click on a paragraph puts a new block after it, parted by blank lines, never inside it or glued
+// to the next paragraph. Pins a table written into the middle of the clicked paragraph or run into the next one.
+test('insert: a table after the clicked paragraph, in a float, caret in its caption, widget at the tabular', () => {
+  const { out, p } = insert(DOC, 'table', { block: { to: 6, what: 'paragraph' } });
+  assert.match(out, /runs on\.\n\n\\begin\{table\}\[htbp\]\n  \\centering\n  \\caption\{\}\n  \\label\{tab:name\}\n  \\begin\{tabular\}\{ll\}\n    Name & Value \\\\\n    \\hline\n    a & 1 \\\\\n  \\end\{tabular\}\n\\end\{table\}\n\nSecond one\./);
+  assert.equal(out.slice(p.caret - 9, p.caret + 1), '\\caption{}');
+  assert.ok(out.startsWith('\\begin{tabular}', p.open));
+  assert.equal(p.widget, 'table');
+  assert.equal(p.edits.length, 1);
+  assert.ok(paired(out));
+});
+
+// Intuition: a figure is its content in a float, the caret in the caption and the widget offset at the content; the
+// planner writes no \usepackage itself (the snapshot printer loads what the run lacks, else both load and overlap).
+// Pins a client-side load that the server's own load overlapped ("two edits overlap").
+test('insert: figures in a float, one edit, no load of their own', () => {
+  const img = insert(DOC, 'figure-image', { block: { to: 8, what: 'paragraph' } });
+  assert.equal(img.p.edits.length, 1);
+  assert.match(img.out, /Second one\.\n\n\\begin\{figure\}\[htbp\]\n  \\centering\n  \\includegraphics\[width=0\.8\\linewidth\]\{example-image\}\n  \\caption\{\}\n  \\label\{fig:example-image\}\n\\end\{figure\}\n\\end\{document\}/);
+  assert.equal(img.p.widget, 'image');
+  assert.ok(img.out.startsWith('\\includegraphics', img.p.open));
+  const pic = insert(DOC, 'figure-drawing', { block: { to: 8, what: 'paragraph' } });
+  assert.equal(pic.p.edits.length, 1);
+  assert.ok(!/usepackage\{tikz\}/.test(pic.out));
+  assert.ok(pic.out.startsWith('\\begin{tikzpicture}', pic.p.open));
+  assert.equal(pic.out.slice(pic.p.caret - 9, pic.p.caret + 1), '\\caption{}');
+  assert.ok(paired(pic.out));
+});
+
+// Intuition: a blank place between paragraphs (PE.blankPlace's offset) takes blocks only; a mark of the running text
+// (footnote, citation) needs a paragraph. Pins a footnote written into empty space between paragraphs.
+test('insert: blank place takes blocks, marks need a paragraph', () => {
+  const at = DOC.indexOf('runs on.') + 8;
+  assert.deepEqual(R.insertSpot(DOC, { place: at }, false), { at, mode: 'after' });
+  assert.equal(R.insertSpot(DOC, { place: at }, true), null);
+  assert.equal(R.insertSpot(DOC, { block: { to: 4, what: 'heading' } }, true), null);
+  const { out } = insert(DOC, 'itemize', { place: at });
+  assert.match(out, /runs on\.\n\n\\begin\{itemize\}\n  \\item \n\\end\{itemize\}\n\nSecond one\./);
+});
+
+// Intuition: a footnote goes after the paragraph's last character, a citation or reference before the sentence's
+// end with a tie; at the caret after a space no tie. Pins `.~\cite{}` and a footnote before the period.
+test('insert: footnote after the sentence, citation before it with a tie', () => {
+  const t = { block: { to: 6, what: 'paragraph' } };
+  const f = insert(DOC, 'footnote', t);
+  assert.match(f.out, /runs on\.\\footnote\{\}\n\nSecond/);
+  assert.equal(f.out.slice(f.p.caret - 10, f.p.caret + 1), '\\footnote{}');
+  assert.match(insert(DOC, 'cite', t).out, /runs on~\\cite\{\}\.\n/);
+  const c = DOC.indexOf('Second ') + 7;
+  assert.match(insert(DOC, 'ref', { caret: c }).out, /Second \\ref\{\}one\./);
+});
+
+// Intuition: at the caret a display (list, equation) splits the line onto its own lines without blank lines, so the
+// paragraph goes on; a heading or float stands apart by blank lines; a heading takes the level of the one before.
+// Pins a display glued into the middle of a line.
+test('insert: at the caret, displays on own lines, headings at the level before', () => {
+  const c = DOC.indexOf('paragraph') + 9;
+  const eq = insert(DOC, 'equation', { caret: c });
+  assert.match(eq.out, /First paragraph\n\\begin\{equation\}\n  \n\\end\{equation\}\nruns on\./);
+  const h = insert(DOC, 'heading', { caret: c });
+  assert.match(h.out, /First paragraph\n\n\\section\{\}\n\nruns on\./);
+  const sub = DOC.replace('\\section{Intro}', '\\subsection{Intro}');
+  assert.match(insert(sub, 'heading', { caret: sub.indexOf('Second') }).out, /\n\\subsection\{\}\n\nSecond one\./);
+  assert.ok(paired(insert(DOC, 'align', { caret: c }).out) && paired(h.out));
+});
+
+// Intuition: every insert, at every kind of place in a document, keeps the environments paired and writes one edit,
+// its caret and widget offsets inside the text. Pins a planner that breaks the
+// document's structure for some kind or place.
+test('insert: every kind at every place keeps the document paired', () => {
+  const lines = DOC.split('\n').length;
+  for (const it of R.inserts) for (let n = 4; n < lines - 1; n++) for (const t of [{ block: { to: n, what: 'paragraph' } }, { caret: DOC.split('\n').slice(0, n).join('\n').length }]) {
+    const r = insert(DOC, it.kind, t);
+    if (!r) continue;
+    assert.ok(paired(r.out), `${it.kind} at ${JSON.stringify(t)}`);
+    assert.ok(r.p.edits.length === 1 && r.p.caret >= 0 && r.p.caret <= r.out.length && r.p.open >= 0, it.kind);
+  }
+});
+
+// Intuition: the menu of a paragraph offers every insert, a blank place or a figure only blocks; off in Settings,
+// none. Pins marks offered between paragraphs and a switched-off plugin still offering rows.
+test('insert: the menu rows by target, switched by the viewer', () => {
+  const ctx = { text: DOC, all: DOC, x: 0, y: 0, facts: null, write() {}, toast() {}, pick() {}, colAlign() {}, insert() {} };
+  const rows = (t, cfg) => PA.groups(t, ctx, cfg).filter((g) => g.title === 'Insert').flatMap((g) => g.items.map((i) => i.label));
+  assert.equal(rows({ kind: 'block', block: { file: 'a.tex', from: 5, to: 6, what: 'paragraph' } }).length, R.inserts.length);
+  assert.ok(!rows({ kind: 'block', block: { file: 'a.tex', from: 5, to: 6, what: 'figure' } }).includes('Footnote'));
+  assert.ok(!rows({ kind: 'block', place: 10, block: { file: 'a.tex', from: 5, to: 6, what: 'paragraph' } }).includes('Citation'));
+  assert.ok(rows({ kind: 'caret', caret: 3 }).includes('Footnote'));
+  assert.equal(rows({ kind: 'caret', caret: 3 }, { 'type_plugins.insert.enabled': false }).length, 0);
+});

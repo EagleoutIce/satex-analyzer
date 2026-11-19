@@ -4313,6 +4313,9 @@ impl<'a> Machine<'a> {
         self.format_progress = None;
 
         let truncated = self.halted;
+        // Stopped by anything but its own step budget (a newer text, time, memory): no job without
+        // a loaded format (tex.web § 1337 `final_end`), else the document finds kernel names undefined.
+        let stopped = truncated && kernel_steps < self.cfg.limits.format_steps;
         let reached =
             self.out.facts.defs.iter().filter(|def| def.span.file == id).map(|def| def.span.line).max().unwrap_or(0);
         // latex.ltx makes the specials `other` while bootstrapping and restores them
@@ -4334,6 +4337,7 @@ impl<'a> Machine<'a> {
             })
         };
         self.forget_facts();
+        (self.halted, self.out.exhausted) = (stopped, stopped);
         let preload_key = self.preload_key();
 
         let format = FormatInfo {
@@ -7769,6 +7773,7 @@ will look undefined",
                     (String::new(), frame, phase)
                 }
             };
+            let caching = !label.is_empty();
             // The file read now, when it is another one than the bar's.
             let (file, line) = self.position();
             // A package's frame may be gone while its recording ends.
@@ -7783,7 +7788,28 @@ will look undefined",
                 (true, None) => format!("analyzing {own} ({})", self.phase()),
             };
             // A trial run reads no file of the document: no share of it is done.
-            let (read, all) = if probing.is_some() { (0, 0) } else { self.frame_read(frame).unwrap_or((1, 1)) };
+            let (read, all) = match probing {
+                Some(_) => (0, 0),
+                // A cache build reads files inside files and data by `\read`: the progress layer sums them.
+                None if caching => {
+                    let mut open: Vec<_> = (self.input.iter().skip(frame))
+                        .filter_map(|f| match f {
+                            Frame::File { mouth, .. } => {
+                                let (read, all) = mouth.read();
+                                Some((self.out.files.get(mouth.file as usize)?.path.clone(), read, all))
+                            }
+                            _ => None,
+                        })
+                        .collect();
+                    if let Some((stream, at, lines, _)) = self.carried.stream_read
+                        && let Some(path) = self.carried.stream_paths.get(&stream)
+                    {
+                        open.push((path.clone(), at, lines));
+                    }
+                    crate::util::progress::share(&open)
+                }
+                None => self.frame_read(frame).unwrap_or((1, 1)),
+            };
             // Past the last line there is no share left to show: the steps show it moving.
             let past = all > 0 && read >= all && probing.is_none();
             let (read, all) = if past { (0, 0) } else { (read, all) };

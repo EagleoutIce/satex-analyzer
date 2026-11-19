@@ -105,8 +105,6 @@ dialog.pop.pop-peek::backdrop { opacity: 0; }
 .sd-len { width: 9rem; }
 .sd-alt { width: 100%; box-sizing: border-box; resize: vertical; font: inherit; padding: .3rem .4rem; border: 1px solid var(--c-border); border-radius: 6px; background: var(--c-sunk); color: var(--c-fg); }
 .sd-injects { display: grid; grid-template-columns: 1fr 1fr; gap: .15rem; margin-top: .2rem; } .sd-grid th.sd-colh .sd-injects .sd-tex-in { margin-top: 0; } .sd-injects .sd-tex-in { font-size: .8em; }
-.sd-inj { display: inline-block; margin-right: .4rem; padding: 0 .25rem; border-radius: 3px; font-size: .75em; line-height: 1.4; vertical-align: .1em; color: var(--c-muted); background: var(--c-sunk); box-shadow: inset 0 0 0 1px var(--c-border); }
-.sd-inj.sd-inj-post { margin: 0 0 0 .4rem; }
 /* a TeX length field: the editor's token colours painted by a mirror over the input's transparent text */
 .sd-tex-in { position: relative; display: inline-block; max-width: 100%; overflow: hidden; vertical-align: middle; border-radius: 6px; }
 .sd-grid th.sd-colh .sd-tex-in { display: block; margin-top: .2rem; } .sd-grid th.sd-colh .sd-tex-in input { margin-top: 0; }
@@ -278,8 +276,20 @@ tr:hover > .sd-rh .sd-del, .sd-colh:hover .sd-del, .sd-del:focus-visible { opaci
     Object.defineProperty(input, 'value', { get: () => own.get!.call(input), set: (v) => { own.set!.call(input, v); paint(); } });
     input.addEventListener('input', paint);
     input.addEventListener('scroll', paint);
-    // a press on a name in the mirror edits the field at its end
-    hl.addEventListener('mousedown', (e) => { e.preventDefault(); input.focus(); });
+    // a press on a name in the mirror (a tooltip's target) puts the caret where it was pressed, the field and the page
+    // staying where they are
+    hl.addEventListener('mousedown', (e) => {
+      e.preventDefault();
+      const d = document as Document & { caretPositionFromPoint?(x: number, y: number): { offsetNode: Node; offset: number } | null };
+      const p = d.caretPositionFromPoint?.(e.clientX, e.clientY) ?? (() => { const r = document.caretRangeFromPoint?.(e.clientX, e.clientY); return r && { offsetNode: r.startContainer, offset: r.startOffset }; })();
+      let at = input.value.length;
+      if (p && hl.contains(p.offsetNode)) {
+        const walk = document.createTreeWalker(hl, NodeFilter.SHOW_TEXT);
+        for (let n = walk.nextNode(), o = 0; n; o += n.textContent!.length, n = walk.nextNode()) if (n === p.offsetNode) { at = o + p.offset; break; }
+      }
+      input.focus({ preventScroll: true });
+      input.setSelectionRange(at, at);
+    });
     paint();
     return box;
   };
@@ -1249,7 +1259,7 @@ tr:hover > .sd-rh .sd-del, .sd-colh:hover .sd-del, .sd-del:focus-visible { opaci
       /** A handle on a column's right edge: a drag sets its width as the PDF's column layer does (pdfedit.ts `snapWidth`):
        * one screen pixel a CSS pixel of paper (0.75 bp), an l, c or r column starting at its longest cell (5 bp a character) and becoming a p column keeping its alignment. */
       const widthGrip = (c: TCol) => {
-        const PE = (self as unknown as { satexPdfEdit?: { snapWidth(t: string | null, was: number, now: number, line: number, fine: boolean, conv?: { unit: string; dec: number }): string | null; widthBp(t: string, line: number): number | null } }).satexPdfEdit;
+        const PE = self.satexPdfEdit as Window['satexPdfEdit'] | undefined;
         // a first width in the document's convention (pdfedit.ts `convention`, `conventions.lengths` where it shows none)
         const conv = (self as any).satexTikzMove?.convention((self as any).satexHealth?.().text ?? '') ?? undefined;
         if (!PE || !(WIDTH.includes(c.align) || 'lcr'.includes(c.align) && c.align)) return null;
@@ -1266,12 +1276,14 @@ tr:hover > .sd-rh .sd-del, .sd-colh:hover .sd-del, .sd-del:focus-visible { opaci
             g.onpointermove = g.onpointerup = null; out.hidden = true;
             if (!text) return;
             const w = text;
+            // the one spec rewrite the PDF's columns use (pdfedit.ts respec): an l, c or r keeps its alignment
+            const r = PE.respec(align, w, pre + align);
             change(() => {
               c.arg = w;
-              if (!WIDTH.includes(align)) {
-                c.align = 'p';
-                const keep = ({ c: '>{\\centering\\arraybackslash}', r: '>{\\raggedleft\\arraybackslash}' } as Record<string, string>)[align];
-                if (keep && !pre) { c.pre = keep; if (!has('array')) c.package = 'array'; }
+              if (r && !WIDTH.includes(align)) {
+                c.align = r.letter[0];
+                c.pre = r.pre;
+                if (r.array && !has('array')) c.package = 'array';
               }
             });
           };
@@ -1292,9 +1304,10 @@ tr:hover > .sd-rh .sd-del, .sd-colh:hover .sd-del, .sd-del:focus-visible { opaci
         more.length ? h('optgroup', { label: 'adds a package' }, more.map(([a, nm, p]) => h('option', { value: a, selected: a === c.align }, `${nm} · ${p}`))) : null,
         known ? null : h('option', { value: c.align, selected: true }, c.align));
         const arg = WIDTH.includes(c.align) || c.align === 'S' ? h('input', { value: c.arg, 'aria-label': `column ${k + 1} ${c.align === 'S' ? 'options' : 'width'}`, placeholder: c.align === 'S' ? 'table-format=…' : 'width', oninput: (e: Event) => { c.arg = (e.target as HTMLInputElement).value; f.refresh(); } }) : null;
-        // array's injections: `>{…}` before and `<{…}` after each cell of the column
+        // array's injections: `>{…}` before and `<{…}` after each cell of the column, shown on the column alone (its
+        // header), so typing there redraws no cell and keeps the field
         const inject = (key: 'pre' | 'post', open: string, label: string) => texField(h('input', { value: T.injected(c[key]), class: 'sd-inject', 'aria-label': `column ${k + 1}: ${label.toLowerCase()}`, title: `${label}…${pkg('array')}`, placeholder: label === 'Insert before each cell' ? '>{…}' : '<{…}',
-          oninput: (e: Event) => { const v = (e.target as HTMLInputElement).value; c[key] = v ? `${open}{${v}}` : ''; draw(); f.refresh(); } }));
+          oninput: (e: Event) => { const v = (e.target as HTMLInputElement).value; c[key] = v ? `${open}{${v}}` : ''; f.refresh(); } }));
         const del = n > 1 ? h('button', { type: 'button', class: 'sd-del', title: `Remove column ${k + 1}`, 'aria-label': `remove column ${k + 1}`, onclick: () => { change((s) => T.deleteCols(s, k, k)); select([focus[0], Math.min(k, t().cols.length - 1)]); } }, '−') : null;
         return [vbar(k), h('th', { class: 'sd-colh' }, sel, arg && c.align !== 'S' ? texField(arg) : arg,
           h('div', { class: 'sd-injects' }, inject('pre', '>', 'Insert before each cell'), inject('post', '<', 'Insert after each cell')), del, widthGrip(c))];
@@ -1327,8 +1340,7 @@ tr:hover > .sd-rh .sd-del, .sd-colh:hover .sd-del, .sd-del:focus-visible { opaci
             class: 'sd-cell' + (sel ? ' sel' : '') + (k === focus[0] && at <= focus[1] && focus[1] < at + span ? ' cur' : '') + (merged ? ' merged' : ''),
             colspan: 2 * span, rowspan: n > 1 ? 2 * n - 1 : null, tabindex: -1, role: 'gridcell', 'aria-selected': String(sel),
             'data-r': k, 'data-c': at, 'data-align': align, title: merged ? `merged: ${span > 1 ? `\\multicolumn{${span}}{${c.spec}}` : ''}${T.rowsOf(c) > 1 ? ` \\multirow{${T.rowsOf(c)}}` : ''}` : null,
-          }, span === 1 && s.cols[at]?.pre ? h('span', { class: 'sd-inj', title: `set before each cell of this column: >{${T.injected(s.cols[at].pre)}}` }, T.injected(s.cols[at].pre)) : null, text ? text : h('span', { class: 'sd-ph' }, '·'),
-          span === 1 && s.cols[at]?.post ? h('span', { class: 'sd-inj sd-inj-post', title: `set after each cell of this column: <{${T.injected(s.cols[at].post)}}` }, T.injected(s.cols[at].post)) : null));
+          }, text ? text : h('span', { class: 'sd-ph' }, '·')));
         });
         const short = n - T.width(r);
         if (short > 0) tds.push(h('td', { colspan: 2 * short, class: 'sd-muted' }));
@@ -1356,7 +1368,10 @@ tr:hover > .sd-rh .sd-del, .sd-colh:hover .sd-del, .sd-del:focus-visible { opaci
     function placeBar() {
       const s = t(), [r0, c0, r1, c1] = rect(), one = r0 === r1 && c0 === c1;
       const first = cellEl([r0, c0]), last = cellEl([r1, c1]);
-      if (!first || !last || editing || !wrap.contains(document.activeElement) && !wrap.matches(':hover')) { bar.hidden = true; return; }
+      // the cells' bar: focus on a cell or the bar, or nothing of the grid focused and the pointer over it; a column's
+      // fields (type, width, `>{…}`) select no cell
+      const act = document.activeElement, mine = !!act?.closest('td.sd-cell') || bar.contains(act);
+      if (!first || !last || editing || !(mine || !wrap.contains(act) && wrap.matches(':hover'))) { bar.hidden = true; return; }
       const map = T.layout(s);
       let merged = false;
       for (let r = r0; r <= r1; r++) for (let c = c0; c <= c1; c++) { const o = map[r][c]; if (o && (o.span > 1 || o.rows > 1 || T.rowsOf(s.rows[o.r].cells[o.i]) > 1)) merged = true; }

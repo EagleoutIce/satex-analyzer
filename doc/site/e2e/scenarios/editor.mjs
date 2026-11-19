@@ -13,4 +13,11 @@ export default [
     steps: 'hello.tex; Page layout, top margin 3cm, X: the question; X again: closed, nothing written' },
   { kind: 'close', name: 'close-edited-esc', example: 'hello.tex', widget: 'page', at: '\\documentclass', k: 1, edit: ['top', '3cm'], how: 'escape',
     steps: 'hello.tex; Page layout, top margin 3cm, Esc: the question; Esc again: closed, nothing written' },
+  // user 2026-11-19: auto-compile on by default once Compile was pressed in the PDF tab; paused while the PDF is hidden
+  { kind: 'auto', name: 'auto-after-compile', steps: 'hello.tex, PDF tab; Compile once; type a line in the editor: its build lands without a second press' },
+  { kind: 'auto', name: 'auto-paused-hidden', hidden: true, steps: 'hello.tex; Compile once; Typeset tab; type a line: no build for 4 s; PDF tab: the build lands' },
+  // user 2026-11-19: "Environment align undefined (hello.tex:16)" stayed on the PDF while line 16 was a tabular and Findings said 0
+  { kind: 'dated', name: 'pdf-banner-dated', text: '\\documentclass{article}\n\\begin{document}\nIn the\n\\begin{align}\nx\n\\end{align}\n\\end{document}\n',
+    fixed: '\\documentclass{article}\n\\begin{document}\nIn the\n\\begin{tabular}{ll}\na & b \\\\\n\\end{tabular}\n\\end{document}\n',
+    steps: 'hello.tex, auto compile off; a build of an undefined align fails; the text becomes a tabular: the banner and bar say "of an older text"; Compile: no banner' },
 ];

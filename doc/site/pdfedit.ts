@@ -16,6 +16,13 @@ type Verb = { from: number; to: number; block: boolean; close: string };
 /** A source word: its offsets `s..e` in the text and what the page shows of it. */
 type Tok = { s: number; e: number; t: string };
 type Flat = { page: number; l: number; t: number; r: number; d: number };
+/** A column spec rewritten (`respec`): all of it, its `>{…}` groups and its letter with the width; `array`: the
+ * package it needs. */
+/** An edit of a text: `from..to` becomes `now`. */
+type Edit = { from: number; to: number; now: string };
+/** A table's own column padding (`padding`) or one gap's space (`gap`): as written, and the edits setting it. */
+type Spacing = { now: string | null; edits(v: string | null): Edit[] };
+type Respec = { body: string; pre: string; letter: string; array: boolean };
 type Form = { kind: 'len'; num: number; unit: string } | { kind: 'share'; num: number; name: string; lead: boolean };
 /** A piece of a paragraph for the echo's line breaking: its width `n` and the space before it `gap` (bp); `par` starts
  * a new paragraph (Enter). Anything else it carries (its text, the page word it is) rides along. */
@@ -73,10 +80,14 @@ declare global {
       rowAfter(text: string, at: number): [number, number, string, number] | null;
       verbatimAt(text: string, at: number): Verb | null;
       columns(boxes: Box[], file: string, table: Table, tables: Table[], words?: Word[]): (Placed & { approx?: boolean; measured?: boolean })[];
-      measure(words: Word[], box: Box, n: number): ([number, number] | null)[];
+      measure(words: Word[], box: Box, n: number, aligns?: string): ([number, number] | null)[];
       snapWidth(text: string | null, was: number, now: number, line: number, fine: boolean, conv?: { unit: string; dec: number }): string | null;
       widthBp(text: string, line: number): number | null;
-      respec(align: string, width: string): { body: string; array: boolean } | null;
+      respec(align: string, width: string | null, spec?: string, h?: string): Respec | null;
+      halign(spec: string): string;
+      padding(text: string, begin: number, env: string): Spacing & { name: string };
+      gap(text: string, prev: number, next: number): Spacing | null;
+      HALIGN: Record<string, string>;
       wordAt(text: string, at: number): [number, string] | null;
       argAt(text: string, name: string, line: number): number | null;
       afterCall(text: string, at: number): number | null;
@@ -148,7 +159,7 @@ declare global {
     const box = extent(boxes, file, table);
     if (!box) return [];
     const got = new Map(place(boxes, file, table, tables).map((g) => [g.k, g]));
-    const ink = measure(words, box, table.cols.length);
+    const ink = measure(words, box, table.cols.length, table.cols.map((c) => c.align[0] ?? 'l').join(''));
     const out: (Placed & { approx?: boolean; measured?: boolean })[] = [];
     for (let k = 0; k < table.cols.length;) {
       if (got.has(k)) { out.push(got.get(k)!); k++; continue; }
@@ -162,30 +173,127 @@ declare global {
     }
     return out;
   }
-  /** Each column's ink on the page, left and right in bp, from the words inside `box`: the rows (one baseline) whose
-   * words fall into exactly `n` runs apart by more than a word space give each run's extent to its column; a row with
-   * fewer runs (a `\multicolumn`, an empty cell) tells nothing. Null where no row tells. */
-  function measure(words: Word[], box: Box, n: number): ([number, number] | null)[] {
+  /** Each column's ink on the page, left and right in bp, from the words inside `box`. TeX sets every row with the
+   * columns' final widths, each the widest of its cells (tex.web § 801), so a row whose words fall into exactly `n` runs
+   * (apart by more than a word space) shows where each column's cells stand: its anchor, the left edge of an `l` cell,
+   * the right of an `r`, the middle of a `c` (`aligns`, one letter per column). Every row then counts: a run at a
+   * column's anchor that crosses no other column's anchor nor ink is a cell of it (a short row, an empty cell), one that does
+   * is a span (`\multicolumn`) and tells nothing. Null where no row tells. */
+  function measure(words: Word[], box: Box, n: number, aligns = ''): ([number, number] | null)[] {
     const out: ([number, number] | null)[] = Array.from({ length: n }, () => null), rows = new Map<number, Word[]>();
     const inside = words.filter((w) => w[0] === box.page && w[1] >= box.x - 1 && w[3] <= box.x + box.w + 1 && w[4] >= box.y - box.h - 1 && w[4] <= box.y + box.d + 1);
     for (const w of inside) { const key = [...rows.keys()].find((y) => Math.abs(y - w[4]) < 2) ?? w[4]; rows.set(key, [...(rows.get(key) ?? []), w]); }
     // a word space is some 3.3bp, the gap between two cells at least 2\tabcolsep less what the cells' alignment leaves
-    const GAP = 7;
-    for (const row of rows.values()) {
-      row.sort((a, b) => a[1] - b[1]);
+    const GAP = 7, NEAR = 1;
+    const split = (row: Word[]) => {
       const runs: [number, number][] = [];
-      for (const w of row) { const last = runs.at(-1); if (last && w[1] - last[1] <= GAP) last[1] = Math.max(last[1], w[3]); else runs.push([w[1], w[3]]); }
-      if (runs.length !== n) continue;
-      runs.forEach(([l, r], k) => { const o = out[k]; out[k] = o ? [Math.min(o[0], l), Math.max(o[1], r)] : [l, r]; });
+      for (const w of [...row].sort((a, b) => a[1] - b[1])) { const last = runs.at(-1); if (last && w[1] - last[1] <= GAP) last[1] = Math.max(last[1], w[3]); else runs.push([w[1], w[3]]); }
+      return runs;
+    };
+    const all = [...rows.values()].map(split), full = all.filter((r) => r.length === n);
+    const at = (k: number, [l, r]: [number, number]) => aligns[k] === 'r' ? r : aligns[k] === 'c' ? (l + r) / 2 : l;
+    const add = (k: number, [l, r]: [number, number]) => { const o = out[k]; out[k] = o ? [Math.min(o[0], l), Math.max(o[1], r)] : [l, r]; };
+    for (const r of full) r.forEach((run, k) => add(k, run));
+    const ink = out.slice();
+    // the anchors where the full rows agree; a column whose full rows disagree keeps their ink only
+    const anchor = out.map((_, k) => { const xs = full.map((r) => at(k, r[k])); return xs.length && Math.max(...xs) - Math.min(...xs) <= NEAR ? xs[0] : null; });
+    for (const r of all) {
+      if (r.length === n) continue;
+      for (const run of r) {
+        const k = anchor.findIndex((a, k) => a != null && Math.abs(at(k, run) - a) <= NEAR);
+        const apart = (j: number) => j === k || ((anchor[j] == null || anchor[j]! < run[0] - NEAR || anchor[j]! > run[1] + NEAR) && (!ink[j] || ink[j]![1] < run[0] || ink[j]![0] > run[1]));
+        if (k >= 0 && out.every((_, j) => apart(j))) add(k, run);
+      }
     }
     return out;
   }
-  /** A column's letter with a width: `p` keeps its own (`p`, `m`, `b`), `c` and `r` keep their alignment through
-   * array's `>{…}`; `array`: whether the text needs that package. Null for a letter that takes no width (`X`, `S`). */
-  function respec(align: string, width: string): { body: string; array: boolean } | null {
-    if ('pmb'.includes(align) && align) return { body: `${align}{${width}}`, array: align === 'm' || align === 'b' };
-    const pre = ({ l: '', c: '>{\\centering\\arraybackslash}', r: '>{\\raggedleft\\arraybackslash}' } as Record<string, string>)[align];
-    return pre == null ? null : { body: `${pre}p{${width}}`, array: !!pre };
+  /** A paragraph column's horizontal alignment and the declaration array's `>{…}` puts before each of its cells
+   * (`\arraybackslash` gives `\\` back its row end): `j` justified, a plain `p`. One table, read and written. */
+  const HALIGN: Record<string, string> = { j: '', l: '\\raggedright', c: '\\centering', r: '\\raggedleft' };
+  const DECL = /\\(raggedright|centering|raggedleft|arraybackslash)(?![A-Za-z@])\s*/g;
+  /** The `>{…}` groups a column's spec as written starts with (src/lsp/tabular.rs `spec_at`). */
+  function preOf(spec: string): string {
+    let i = 0;
+    for (;;) {
+      const m = /^\s*>\s*\{/.exec(spec.slice(i));
+      if (!m) return spec.slice(0, i);
+      let d = 1, j = i + m[0].length;
+      for (; j < spec.length && d; j++) d += spec[j] === '{' ? 1 : spec[j] === '}' ? -1 : 0;
+      if (d) return spec.slice(0, i);
+      i = j;
+    }
+  }
+  /** The horizontal alignment a column's `>{…}` sets: the last declaration wins, as in TeX; `j` without one. */
+  function halign(spec: string): string {
+    const last = [...preOf(spec).matchAll(DECL)].map((m) => m[1]).filter((n) => n !== 'arraybackslash').at(-1);
+    return Object.keys(HALIGN).find((k) => HALIGN[k] === `\\${last}`) ?? 'j';
+  }
+  /** A column's spec rewritten: letter `align`, `width` (null: natural, an `l`, `c` or `r` as wide as its cells),
+   * `spec` the column's spec as written (its other `>{…}` stay), `h` the paragraph's horizontal alignment (HALIGN;
+   * default: what `l`, `c`, `r` become, else the spec's own). `array`: whether the text needs that package. Null for
+   * a letter that takes no width (`X`, `S`) given one, or a paragraph none. The PDF's column layer and the table
+   * widget both write through it. */
+  function respec(align: string, width: string | null, spec = '', h?: string): Respec | null {
+    const lcr = 'lcr'.includes(align) && !!align, rest = preOf(spec).replace(DECL, '').replace(/>\s*\{\s*\}\s*/g, '');
+    if (lcr && width == null) return { body: rest + align, pre: rest, letter: align, array: rest.includes('>') };
+    const letter = 'pmb'.includes(align) && align && width != null ? `${align}{${width}}` : lcr ? `p{${width}}` : align === 'X' && width == null ? 'X' : null;
+    if (letter == null) return null;
+    const decl = HALIGN[h ?? (lcr ? { l: 'j', c: 'c', r: 'r' }[align]! : halign(spec))] ?? '';
+    const pre = (decl ? `>{${decl}\\arraybackslash}` : '') + rest;
+    return { body: pre + letter, pre, letter, array: !!pre || align === 'm' || align === 'b' };
+  }
+  /** A table's own column padding, `\setlength` of `\tabcolsep` (`\arraycolsep` for `array`) right before its
+   * `\begin` at `begin`: what it is (null: none, the document's), and the edits that set it to `v` (null: drop it).
+   * The setting stays local: inside the environment the table sits in, else in a `{…}` group written around the
+   * table, as a declaration inside a group is undone at its end (tex.web § 282). */
+  function padding(text: string, begin: number, env: string) {
+    const name = env === 'array' ? 'arraycolsep' : 'tabcolsep', head = text.slice(0, begin);
+    const indent = /[ \t]*$/.exec(head)![0], set = (v: string, open: string) => `${open}\\setlength{\\${name}}{${v}}${open && '%'}\n${indent}`;
+    const m = new RegExp(String.raw`(\{?)\\setlength\s*\{?\\${name}\}?\s*\{([^{}]*)\}[ \t]*%?[ \t]*\n?[ \t]*$`).exec(head);
+    // the environment the table sits in, `document` none of its own
+    const open: string[] = [];
+    for (const x of head.matchAll(/\\(begin|end)\s*\{([^{}]*)\}/g)) if (x[1] === 'begin') open.push(x[2]); else open.pop();
+    const grouped = open.length > 0 && open.at(-1) !== 'document';
+    // past the table's own `\end`, nested ones of the same name skipped
+    const re = new RegExp(String.raw`\\(begin|end)\s*\{${env.replace('*', '\\*')}\}`, 'g');
+    re.lastIndex = begin;
+    let close = -1;
+    for (let d = 0, x; close < 0 && (x = re.exec(text));) if (!(d += x[1] === 'begin' ? 1 : -1)) close = x.index + x[0].length;
+    const wrapped = !!m?.[1] && text[close] === '}', brace = close >= 0 && (m ? wrapped : !grouped);
+    return {
+      name, now: m ? m[2].trim() : null,
+      edits(v: string | null): Edit[] {
+        if (v == null && !m) return [];
+        const from = m ? m.index + (m[1] && !wrapped ? 1 : 0) : begin, own = v == null ? '' : set(v, brace ? '{' : '');
+        const tail: Edit[] = !brace ? [] : v == null ? [{ from: close, to: close + 1, now: '' }] : m ? [] : [{ from: close, to: close, now: '}' }];
+        return [{ from, to: begin, now: own }, ...tail];
+      },
+    };
+  }
+  /** The space of one gap between columns, written `@{\hspace{v}}` right before the next column's spec at `next`,
+   * `prev` the end of the column before's (its letter and width): `@{…}` takes the place of the two paddings there
+   * (array's `@`). What it is (null: the paddings), the edits that set it (null: drop it). Null where the gap holds
+   * more than that one `@{\hspace}` and the column's `<{…}` (a rule, `!{…}`, another `@{…}`): its width is not one length. */
+  function gap(text: string, prev: number, next: number) {
+    const between = text.slice(prev, next);
+    let i = 0, hs: [number, number, string] | null = null;
+    while (i < between.length) {
+      const rest = between.slice(i), ws = /^\s+/.exec(rest)?.[0].length, h = /^@\s*\{\s*\\hspace\*?\s*\{([^{}]*)\}\s*\}/.exec(rest);
+      if (ws) { i += ws; continue; }
+      if (h && !hs) { hs = [prev + i, prev + i + h[0].length, h[1].trim()]; i += h[0].length; continue; }
+      if (!/^<\s*\{/.test(rest)) return null;
+      let d = 0, j = rest.indexOf('{');
+      for (; j < rest.length; j++) if (!(d += rest[j] === '{' ? 1 : rest[j] === '}' ? -1 : 0)) break;
+      if (d) return null;
+      i += j + 1;
+    }
+    return {
+      now: hs?.[2] ?? null,
+      edits(v: string | null): Edit[] {
+        const put = v == null ? '' : `@{\\hspace{${v}}}`;
+        return hs ? [{ from: hs[0], to: hs[1], now: put }] : v == null ? [] : [{ from: next, to: next, now: put }];
+      },
+    };
   }
   /** The width in bp a width as written stands for, `line` the bp of `\linewidth`; null for a form not read. */
   function widthBp(text: string, line: number): number | null {
@@ -1422,7 +1530,7 @@ declare global {
     const m = /(\\\]|\$\$|\\end\{([A-Za-z]+)\*?\})[ \t]*$/.exec(text.slice(Math.max(0, at - 40), at));
     return !!m && (!m[2] || MATH.test(m[2]) && m[2] !== 'math');
   }
-  self.satexPdfEdit = { onRow, run, displayEnd, offsetAt, units, treeNodes, naming, entries, shortTitle, bothTitles, renamed, leaders, checked, grow, key, broken, scan, start, cells, cellStep, rowAfter, verbatim, verbatimAt, nearest, bands, joined, place, extent, failNote, room, form, measure, respec, widthBp, snapWidth, resized, stepped, plain, editable, spans, sender, typed, erased, mathAt, boundaries, boundaryAt, inkSnap, locate, columns, wordAt, argAt, afterCall, defining, relaid, reflow, prose, hunks, fit, glue, centered, apart, tokens, unset, aligned, changed, paragraph, mathRuns, footArg, footBack, footShown, blankPlace };
+  self.satexPdfEdit = { onRow, run, displayEnd, offsetAt, units, treeNodes, naming, entries, shortTitle, bothTitles, renamed, leaders, checked, grow, key, broken, scan, start, cells, cellStep, rowAfter, verbatim, verbatimAt, nearest, bands, joined, place, extent, failNote, room, form, measure, respec, halign, HALIGN, padding, gap, widthBp, snapWidth, resized, stepped, plain, editable, spans, sender, typed, erased, mathAt, boundaries, boundaryAt, inkSnap, locate, columns, wordAt, argAt, afterCall, defining, relaid, reflow, prose, hunks, fit, glue, centered, apart, tokens, unset, aligned, changed, paragraph, mathRuns, footArg, footBack, footShown, blankPlace };
 })();
 
 // TikZ nodes moved by drag: where each `\node` and path label stands in the source, and the statement a drag

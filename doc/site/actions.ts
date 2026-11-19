@@ -14,8 +14,10 @@ declare global {
   interface PaCtx {
     text: string; all: string; x: number; y: number; facts: Rec | null;
     write(edits: (PaEdit | null)[]): Promise<boolean> | void; toast(msg: string): void; caret?(at: number): void;
-    pick(prompt: string, done: (n: TikzNode) => void): void; colAlign(t: number, k: number, a: string, w?: string): void;
+    pick(prompt: string, done: (n: TikzNode) => void): void; colAlign(t: number, k: number, a: string, w?: string, h?: string): void;
     scratch?(b: ScBlock): void;
+    /** Writes Insert's `kind` (refactor.ts `inserts`) at target `t`'s place and opens its widget. */
+    insert?(kind: string, t: PaTarget): void;
     /** The open file's name, for where a style is defined. */
     file?: string;
     /** Whether the grid of the picture at offset `at` shows; with `on` it is switched (this session). */
@@ -659,24 +661,37 @@ declare global {
     ctx.write(edits);
   }
   const ALIGNS: Record<string, string> = { l: 'left', c: 'centered', r: 'right', p: 'top (paragraph)', m: 'middle (paragraph)', b: 'bottom (paragraph)' };
+  /** A paragraph's horizontal alignments (pdfedit.ts HALIGN), each with the letter it is as a natural-width column. */
+  const HALIGNS: [string, string, string][] = [['j', 'justified', 'l'], ['l', 'left (\\raggedright)', 'l'], ['c', 'centered (\\centering)', 'c'], ['r', 'right (\\raggedleft)', 'r']];
   self.satexPageActions.register({
-    name: 'table-column', title: 'Table columns', about: 'A column\'s alignment, its letter rewritten in the column spec', type: 'table', targets: ['table-column'],
+    name: 'table-column', title: 'Table columns', about: 'A column\'s alignment and width, rewritten in the column spec, and the table\'s column spacing', type: 'table', targets: ['table-column'],
     groups(t, ctx) {
-      const col = t.col, kin = col?.spec && ['lcr', 'pmb'].find((s) => s.includes(col.align));
+      const col = t.col, kin = col?.spec && ['lcr', 'pmb', 'X'].find((s) => s.includes(col.align));
       if (!kin) return [];
-      // a width makes the column a paragraph (`p`, or its own `m`/`b`); natural width goes back to `l`
-      const para = kin === 'pmb' ? col.align : 'p';
+      // a paragraph's alignment as its `>{…}` sets it; an l, c or r column given a width keeps its own (pdfedit.ts respec)
+      const h = self.satexPdfEdit.halign(col.spec.text ?? ''), para = kin !== 'lcr';
+      const horiz = { title: 'Paragraph', inline: true, items: HALIGNS.map(([a, label]) => ({ label, on: para && a === h, run: () => ctx.colAlign(t.t, t.k, col.align, col.width, a) })) };
+      // the padding each side of every cell (\tabcolsep, an array's \arraycolsep): the table's own, else the run's
+      const at = col.spec.range && t.env ? ctx.text.lastIndexOf(`\\begin{${t.env}}`, self.satexPdfEdit.offsetAt(ctx.text, col.spec.range.start)) : -1;
+      const pad = at >= 0 ? self.satexPdfEdit.padding(ctx.text, at, t.env) : null, doc = pad && t.seps?.[pad.name];
+      const space = pad ? [{ title: 'Spacing', items: [{ label: `default (${doc == null ? 'the document\'s' : `${+doc.toFixed(2)}pt`})`, on: pad.now == null, run: () => ctx.write(pad.edits(null)) },
+        ...['0pt', '2pt', '4pt', '6pt', '8pt', '12pt'].map((v) => ({ label: `\\${pad.name} ${v}`, on: pad.now === v, run: () => ctx.write(pad.edits(v)) }))] }] : [];
+      if (kin === 'X') return [horiz, ...space];
       const widths = ['2cm', '3cm', '4cm', '0.25\\linewidth', '0.33\\linewidth', '0.5\\linewidth'];
+      const natural = para ? HALIGNS.find(([a]) => a === h)![2] : col.align;
       return [{ title: 'Align', inline: true, items: [...kin].map((a) => ({ label: `${a}: ${ALIGNS[a]}`, on: a === col.align, run: () => ctx.colAlign(t.t, t.k, a) })) },
-        { title: 'Width', items: [{ label: 'natural (as wide as its text)', on: kin === 'lcr', run: () => ctx.colAlign(t.t, t.k, kin === 'lcr' ? col.align : 'l', '') },
-          ...widths.map((w) => ({ label: w, on: col.width === w, run: () => ctx.colAlign(t.t, t.k, para, w) }))] }];
+        ...(para ? [horiz] : []),
+        { title: 'Width', items: [{ label: 'natural (as wide as its text)', on: !para, run: () => ctx.colAlign(t.t, t.k, natural, '') },
+          ...widths.map((w) => ({ label: w, on: col.width === w, run: () => ctx.colAlign(t.t, t.k, col.align, w) }))] }, ...space];
     },
   });
 
   // ---------------------------------------------------------------- scratch slices
   // A scratch document is the slice (`satex slice`) of some lines, their own text between two marker lines in it, so the
   // edits made there map back to the lines they came from. Pure: the playground runs the slice and writes the merge.
-  const MARK = '% satex-scratch';
+  // The markers are a satex directive (`%\satex@scratch{…}`): TeX skips the comment, the editor shows it as one.
+  const MARK = '%\\satex@scratch', END = `${MARK}{end}`;
+  const head = (file: string, from: number, to: number) => `${MARK}{begin ${file}:${from}-${to}} Merge back writes the lines up to the end marker there`;
   const ownLines = (text: string) => text.replace(/\n$/, '').split('\n');
   const region = (text: string, from: number, to: number) => text.split('\n').slice(from - 1, to).join('\n');
   /** The scratch text: `slice` with its copy of lines `from`–`to` of `file` (`text`) replaced by those lines, whole, between
@@ -684,8 +699,8 @@ declare global {
    * twice (`\centering`) does not pull it apart. A file the slice reads whole by `\input` is written out in its place.
    * Null when the slice holds none of the lines. */
   function build(slice: string, file: string, text: string, from: number, to: number, isRoot: boolean): string | null {
-    const S = ownLines(slice), R = text.split('\n').slice(from - 1, to), head = `${MARK} begin ${file}:${from}-${to}: Merge back writes the lines up to the end marker there`;
-    const marked = [head, ...R, `${MARK} end`];
+    const S = ownLines(slice), R = text.split('\n').slice(from - 1, to);
+    const marked = [head(file, from, to), ...R, END];
     const own = R.map((l) => l.trim()).filter((l) => l && !l.startsWith('%'));
     // the lines of `file` in the slice: after its `%% from` header, unless it is the root
     const start = isRoot ? 0 : S.indexOf(`%% from ${file}`) + 1;
@@ -722,8 +737,8 @@ declare global {
   function local(texts: Record<string, string>, root: string, file: string, from: number, to: number, defs: { file: string; line: number; name: string }[]): string | null {
     const R = texts[root]!.split('\n'), begin = R.findIndex((l) => /^[^%]*\\begin\s*\{document\}/.test(l));
     if (begin < 0) return null;
-    const own = texts[file]!.split('\n'), region = own.slice(from - 1, to), head = `${MARK} begin ${file}:${from}-${to}: Merge back writes the lines up to the end marker there`;
-    if (file === root && from <= begin + 1) return [...R.slice(0, from - 1), head, ...region, `${MARK} end`, ...R.slice(to, begin + 1), '\\end{document}', ''].join('\n');
+    const own = texts[file]!.split('\n'), region = own.slice(from - 1, to);
+    if (file === root && from <= begin + 1) return [...R.slice(0, from - 1), head(file, from, to), ...region, END, ...R.slice(to, begin + 1), '\\end{document}', ''].join('\n');
     const inBody = (d: { file: string; line: number }) => d.file in texts && !(d.file === root && d.line <= begin + 1) && !(d.file === file && d.line >= from && d.line <= to);
     const named = (text: string, name: string) => new RegExp(`${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![A-Za-z])`).test(text);
     const kept = new Map<string, [string, number, number]>();
@@ -740,12 +755,12 @@ declare global {
       }
     }
     const body = [...kept.values()].sort((x, y) => x[0].localeCompare(y[0]) || x[1] - y[1]).flatMap(([f, a, b]) => [`%% from ${f}:${a}`, ...texts[f]!.split('\n').slice(a - 1, b)]);
-    return [...R.slice(0, begin + 1), ...body, ...(file === root ? [] : [`%% from ${file}`]), head, ...region, `${MARK} end`, '\\end{document}', ''].join('\n');
+    return [...R.slice(0, begin + 1), ...body, ...(file === root ? [] : [`%% from ${file}`]), head(file, from, to), ...region, END, '\\end{document}', ''].join('\n');
   }
   /** The marked region of a scratch text, null when a marker is gone. */
   function extract(text: string): ScRegion | null {
-    const L = text.split('\n'), a = L.findIndex((l) => l.startsWith(`${MARK} begin `)), b = L.findIndex((l, i) => i > a && l.startsWith(`${MARK} end`));
-    const m = a >= 0 && b > a && /^(.+):(\d+)-(\d+):/.exec(L[a]!.slice(MARK.length + 7));
+    const L = text.split('\n'), a = L.findIndex((l) => l.startsWith(`${MARK}{begin `)), b = L.findIndex((l, i) => i > a && l.startsWith(END));
+    const m = a >= 0 && b > a && /^(.+):(\d+)-(\d+)\}/.exec(L[a]!.slice(MARK.length + 7));
     return m ? { file: m[1]!, from: +m[2]!, to: +m[3]!, body: L.slice(a + 1, b).join('\n') } : null;
   }
   /** Where `mine` (the region's text, sliced from `base` at lines `from`–`to` of a file of `size` lines) goes in the file

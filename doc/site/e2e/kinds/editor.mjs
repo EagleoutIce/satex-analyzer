@@ -62,3 +62,60 @@ export async function close(p, sc) {
   if (res.info.closed.open || res.info.closed.ask) fail(`${sc.edit ? 'closing again' : 'closing untouched'} left ${J(res.info.closed)}`);
   return res;
 }
+
+/** `auto`: a fresh viewer presses Compile once with the PDF shown, then types a word in the editor: a new build of that
+ * text lands without another press (the first Compile turns the automatic one on). With the Typeset tab shown instead,
+ * no build runs until the PDF tab is back (`hidden`). */
+export async function auto(p, sc) {
+  const res = { name: sc.name, fails: [], perf: [], info: {} };
+  await example(p, 'hello.tex');
+  await started(p);
+  await p.eval(`document.querySelector('.side-tabs [data-panel=play-pdf]').click()`);
+  const built = () => p.eval(`document.querySelector('#play-pdf .pdf-page img')?.__build ?? null`).then((b) => b && JSON.stringify([b.text?.length, b.ms ?? 0]));
+  await p.eval(`document.getElementById('pdf-compile').click()`);
+  if (!await p.until(`document.querySelector('#play-pdf .pdf-page img')?.__build && !document.querySelector('#play-pdf.pdf-running')`, 90000)) { res.fails.push('setup: the first build never landed'); return res; }
+  const word = sc.word ?? 'Quokka';
+  if (sc.hidden) await p.eval(`document.querySelector('.side-tabs [data-panel=play-typeset]').click()`);
+  // the builds started from here on: each turns the pane's pdf-running on
+  await p.eval(`(() => { const el = document.getElementById('play-pdf'); let was = el.classList.contains('pdf-running'); self.__e2eRuns = 0; new MutationObserver(() => { const now = el.classList.contains('pdf-running'); if (now && !was) self.__e2eRuns++; was = now; }).observe(el, { attributes: true, attributeFilter: ['class'] }); })()`);
+  await p.eval(`document.querySelector('.cm-content').focus()`);
+  for (const [type, key, code, mod] of [['rawKeyDown', 'End', 35, 2], ['keyUp', 'End', 35, 2]]) await p.s('Input.dispatchKeyEvent', { type, key, code: key, windowsVirtualKeyCode: code, modifiers: mod });
+  await p.s('Input.insertText', { text: `\n${word}\n` });
+  const text = await p.eval(`satexHealth().text`);
+  const landed = (ms) => p.until(`[...document.querySelectorAll('#play-pdf .pdf-page img')].some((i) => i.__build?.text === ${J(text)})`, ms);
+  if (sc.hidden) {
+    await sleep(4000);
+    if (await landed(100) || await p.eval(`self.__e2eRuns`)) res.fails.push('a build ran while the PDF tab was hidden');
+    await p.eval(`document.querySelector('.side-tabs [data-panel=play-pdf]').click()`);
+  }
+  if (!await landed(45000)) res.fails.push(`no build of the typed text landed without a second press (auto: ${await p.eval(`document.getElementById('pdf-compile').title`)})`);
+  res.info.built = await built();
+  return res;
+}
+
+/** `dated`: automatic compile off; a build of `text` fails; the editor's text then becomes `fixed`: the bar's counts (and
+ * a failure banner, shown after Type edits) say they are of an older text; Compile replaces them with the build of the text shown. */
+export async function dated(p, sc) {
+  const res = { name: sc.name, fails: [], perf: [], info: {} };
+  await example(p, 'hello.tex');
+  await started(p);
+  const { setText } = await import('../engine.mjs');
+  await setText(p, sc.text);
+  await p.eval(`document.querySelector('.side-tabs [data-panel=play-pdf]').click()`);
+  await p.eval(`(() => { const i = document.querySelector('#pdf-auto-list input[value="0"]'); i.checked = true; i.dispatchEvent(new Event('change', { bubbles: true })); })()`);
+  const banner = () => p.eval(`document.querySelector('#play-pdf .pdf-fail')?.textContent ?? ''`);
+  const build = async () => { await p.eval(`(self.__e2eG = document.querySelector('#play-pdf .pdf-page img')?.__build ?? null, document.getElementById('pdf-compile').click())`); return p.until(`(() => { const i = document.querySelector('#play-pdf .pdf-page img'); return i?.__build && i.__build !== self.__e2eG && !document.querySelector('#play-pdf.pdf-running'); })()`, 90000); };
+  if (!await build()) { res.fails.push('setup: the first build never landed'); return res; }
+  const bar0 = await p.eval(`document.getElementById('pdf-status').textContent`);
+  if (!/error/.test(bar0)) { res.fails.push(`setup: the build did not fail: ${J(bar0)}`); return res; }
+  await setText(p, sc.fixed);
+  await sleep(1500);
+  const old = await banner(), bar = await p.eval(`document.getElementById('pdf-status').textContent`);
+  res.info.old = old; res.info.bar = bar;
+  if (old && !/older text/.test(old)) res.fails.push(`the old build's banner does not say it is of an older text: ${J(old)}`);
+  if (/error/.test(bar) && !/older text/.test(bar)) res.fails.push(`the bar counts the old build's errors as the text's: ${J(bar)}`);
+  if (!await build()) { res.fails.push('the second build never landed'); return res; }
+  const now = await banner(), bar1 = await p.eval(`document.getElementById('pdf-status').textContent`);
+  if (now || /error|older/.test(bar1)) res.fails.push(`the build of the fixed text still shows a failure: ${J(now || bar1)}`);
+  return res;
+}

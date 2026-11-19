@@ -5,6 +5,7 @@
 
 pub mod hyphenate;
 pub mod linebreak;
+pub mod lines;
 
 use crate::analysis::machine::Analysis;
 use crate::engine::builtins::CodeTable;

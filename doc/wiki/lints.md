@@ -201,6 +201,7 @@ A comment can state a property for satex to check. TeX skips the comment. satex 
 * `\satex@assert{⟨condition⟩}`: Checks a condition on every path that reaches it.
 * `\satex@assume{⟨condition⟩}`: Drops the paths where a condition fails.
 * `\satex@configure{⟨key⟩=⟨value⟩, …}`: Changes settings of `satex.yaml` until the group ends.
+* `\satex@scratch{begin ⟨file⟩:⟨from⟩-⟨to⟩} or {end}`: Marks the lines a scratch document merges back. The run reads past it.
 
 * `⟨condition⟩` is ⟨test⟩s joined by `or` and `and`, `and` binding tighter, each maybe after `not`.
 * `⟨test⟩` is ⟨operand⟩ ⟨relation⟩ ⟨operand⟩, or a TeX conditional such as `\ifdefined\x`.
@@ -367,13 +368,13 @@ See [Assertions](#assertions).
 
 **math mode left open**
 
-A `$` that is never closed leaves TeX in math mode. The next `\par` makes TeX report `Missing $ inserted` and close the formula itself ([tex.web § 1047](https://github.com/TeX-Live/texlive-source/blob/b4e37b58bfc6352cc3223ed26384cae01a28b234/texk/web2c/tex.web#L20410) `insert_dollar_sign`), and everything up to there is set as mathematics.
+A `$` that is never closed leaves TeX in math mode. The next `\par` makes TeX report `Missing $ inserted` and close the formula itself ([tex.web § 1047](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L20410) `insert_dollar_sign`), and everything up to there is set as mathematics.
 
 The rule reports what the interpreter already saw: the `missing-dollar` diagnostic it raised, or, where no `\par` followed, a last character still carrying a math mode (unless a limit stopped the run before the text's end). It reports one finding, never both.
 
 Fix by closing the formula.
 
-See [chktex 16](https://www.nongnu.org/chktex/), [tex.web § 1047](https://github.com/TeX-Live/texlive-source/blob/b4e37b58bfc6352cc3223ed26384cae01a28b234/texk/web2c/tex.web#L20410).
+See [chktex 16](https://www.nongnu.org/chktex/), [tex.web § 1047](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L20410).
 
 ### metadata-after-class
 
@@ -572,13 +573,13 @@ See [xcolor § 2.5](https://ctan.org/pkg/xcolor).
 
 **\left or \right before a brace**
 
-`\left`, `\right` and `\middle` scan a delimiter: one character with a `\delcode`, or one control sequence made by `\delimiter` ([tex.web § 1161](https://github.com/TeX-Live/texlive-source/blob/b4e37b58bfc6352cc3223ed26384cae01a28b234/texk/web2c/tex.web#L22057)). A `{`, a `}` or a `$` is none of those, so TeX reports `Missing delimiter (. inserted)` and sets nothing.
+`\left`, `\right` and `\middle` scan a delimiter: one character with a `\delcode`, or one control sequence made by `\delimiter` ([tex.web § 1161](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L22057)). A `{`, a `}` or a `$` is none of those, so TeX reports `Missing delimiter (. inserted)` and sets nothing.
 
 The rule asks what each command means rather than matching its name, so it covers `\middle` and any `\let` alias, which chktex's name list does not.
 
 Fix by writing `\{` and `\}` for brace delimiters, or `\left.` where no delimiter is wanted.
 
-See [chktex 43](https://www.nongnu.org/chktex/), [tex.web § 1161](https://github.com/TeX-Live/texlive-source/blob/b4e37b58bfc6352cc3223ed26384cae01a28b234/texk/web2c/tex.web#L22057).
+See [chktex 43](https://www.nongnu.org/chktex/), [tex.web § 1161](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L22057).
 
 ### duplicate-bibliography-entry
 
@@ -672,7 +673,7 @@ See [interface3 § Naming conventions](https://ctan.org/pkg/l3kernel).
 
 **graphic without alternative text**
 
-With tagging on, every `\includegraphics` becomes a `Figure` structure element, which needs alternative text (PDF/UA, ISO 14289-1 [§§ 7](https://github.com/TeX-Live/texlive-source/blob/b4e37b58bfc6352cc3223ed26384cae01a28b234/texk/web2c/tex.web#L290), [3](https://github.com/TeX-Live/texlive-source/blob/b4e37b58bfc6352cc3223ed26384cae01a28b234/texk/web2c/tex.web#L195)). Without `alt=`, latex-lab warns and uses the file name instead, which a screen reader then reads out. A purely decorative graphic is marked `artifact` instead, and `actualtext=` stands for a graphic that shows text.
+With tagging on, every `\includegraphics` becomes a `Figure` structure element, which needs alternative text (PDF/UA, ISO 14289-1 [§§ 7](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L290), [3](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L195)). Without `alt=`, latex-lab warns and uses the file name instead, which a screen reader then reads out. A purely decorative graphic is marked `artifact` instead, and `actualtext=` stands for a graphic that shows text.
 
 The rule reads the keys of the call as written. A call whose options come from a macro is left alone. There is no automatic fix: only the author knows what the graphic shows. The image dialog has a field for it.
 
@@ -814,7 +815,7 @@ See [LaTeX tagging project § usage-instructions](https://latex3.github.io/taggi
 
 **tagging without a language**
 
-A tagged PDF names its natural language in the catalog's `/Lang`, which screen readers use to pick a voice (PDF/UA, ISO 14289-1 [§§ 7](https://github.com/TeX-Live/texlive-source/blob/b4e37b58bfc6352cc3223ed26384cae01a28b234/texk/web2c/tex.web#L290), [2](https://github.com/TeX-Live/texlive-source/blob/b4e37b58bfc6352cc3223ed26384cae01a28b234/texk/web2c/tex.web#L131)). `\DocumentMetadata{lang=…}` sets it. Without the key, LaTeX guesses at `\begin{document}` from babel's main language, or `en` without babel, and warns (`lang-missing`). The guess is wrong for a document in another language that does not load babel.
+A tagged PDF names its natural language in the catalog's `/Lang`, which screen readers use to pick a voice (PDF/UA, ISO 14289-1 [§§ 7](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L290), [2](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L131)). `\DocumentMetadata{lang=…}` sets it. Without the key, LaTeX guesses at `\begin{document}` from babel's main language, or `en` without babel, and warns (`lang-missing`). The guess is wrong for a document in another language that does not load babel.
 
 The fix writes the language LaTeX guessed, which changes nothing in the PDF and silences the warning: check that it is the right one.
 
@@ -852,7 +853,7 @@ See [pdftex § 8.9.8](https://ctan.org/pkg/pdftex).
 
 **unclosed PDF literal**
 
-`\pdfliteral` and `\special{pdf:…}` (what ocgx2, ocg-p and pdfbase use to write raw PDF) drop `q`/`Q` and `BMC`/`BDC`/`EMC` straight into the page's content stream. `q`/`Q` save and restore the graphics state: color, line width, the current transform. `BMC`/`BDC`/`EMC` bracket marked content, an optional content group among them. Both have to nest within the page ([PDF 32000](https://opensource.adobe.com/dc-acrobat-sdk-docs/pdfstandards/PDF32000_2008.pdf), [§§ 8](https://github.com/TeX-Live/texlive-source/blob/b4e37b58bfc6352cc3223ed26384cae01a28b234/texk/web2c/tex.web#L316), [4](https://github.com/TeX-Live/texlive-source/blob/b4e37b58bfc6352cc3223ed26384cae01a28b234/texk/web2c/tex.web#L231), [2](https://github.com/TeX-Live/texlive-source/blob/b4e37b58bfc6352cc3223ed26384cae01a28b234/texk/web2c/tex.web#L131), [14](https://github.com/TeX-Live/texlive-source/blob/b4e37b58bfc6352cc3223ed26384cae01a28b234/texk/web2c/tex.web#L463), [6](https://github.com/TeX-Live/texlive-source/blob/b4e37b58bfc6352cc3223ed26384cae01a28b234/texk/web2c/tex.web#L279)). One left open leaks its state into everything typeset after it. A viewer may also just reject the page.
+`\pdfliteral` and `\special{pdf:…}` (what ocgx2, ocg-p and pdfbase use to write raw PDF) drop `q`/`Q` and `BMC`/`BDC`/`EMC` straight into the page's content stream. `q`/`Q` save and restore the graphics state: color, line width, the current transform. `BMC`/`BDC`/`EMC` bracket marked content, an optional content group among them. Both have to nest within the page ([PDF 32000](https://opensource.adobe.com/dc-acrobat-sdk-docs/pdfstandards/PDF32000_2008.pdf), [§§ 8](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L316), [4](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L231), [2](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L131), [14](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L463), [6](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L279)). One left open leaks its state into everything typeset after it. A viewer may also just reject the page.
 
 satex does not break pages into content streams itself, so it checks the order the run executes the literals in.
 
@@ -1230,7 +1231,7 @@ satex compares each character's `\f@shape` against the kernel's `\itdefault` and
 
 Fix by writing `\/` after the last slanted character.
 
-See [chktex 6](https://www.nongnu.org/chktex/), [The TeXbook, chapter 4](https://ctan.org/pkg/texbook), [tex.web § 1113](https://github.com/TeX-Live/texlive-source/blob/b4e37b58bfc6352cc3223ed26384cae01a28b234/texk/web2c/tex.web#L21365).
+See [chktex 6](https://www.nongnu.org/chktex/), [The TeXbook, chapter 4](https://ctan.org/pkg/texbook), [tex.web § 1113](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L21365).
 
 ### missing-nonbreaking-space
 
@@ -1240,11 +1241,11 @@ See [chktex 6](https://www.nongnu.org/chktex/), [The TeXbook, chapter 4](https:/
 
 A reference should not begin a line on its own, so a tie belongs in front of it. `~` is an interword space TeX may not break at ([The TeXbook, chapter 14](https://ctan.org/pkg/texbook)).
 
-The rule reads the reference and citation sites the run recorded, so it follows a `\ref` inside a macro of yours without a list of names, and it reports only where the space really became glue ([tex.web § 1043](https://github.com/TeX-Live/texlive-source/blob/b4e37b58bfc6352cc3223ed26384cae01a28b234/texk/web2c/tex.web#L20358)).
+The rule reads the reference and citation sites the run recorded, so it follows a `\ref` inside a macro of yours without a list of names, and it reports only where the space really became glue ([tex.web § 1043](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L20358)).
 
 Fix by writing `Figure~\ref{fig:one}`.
 
-See [chktex 2](https://www.nongnu.org/chktex/), [The TeXbook, chapter 14](https://ctan.org/pkg/texbook), [tex.web § 1043](https://github.com/TeX-Live/texlive-source/blob/b4e37b58bfc6352cc3223ed26384cae01a28b234/texk/web2c/tex.web#L20358).
+See [chktex 2](https://www.nongnu.org/chktex/), [The TeXbook, chapter 14](https://ctan.org/pkg/texbook), [tex.web § 1043](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L20358).
 
 ### overfull-box
 
@@ -1252,11 +1253,11 @@ See [chktex 2](https://www.nongnu.org/chktex/), [The TeXbook, chapter 14](https:
 
 **hbox too wide for its width**
 
-`\hbox to ⟨width⟩{…}`, and the LaTeX boxes built on it such as `\makebox[⟨width⟩][s]{…}`, pack their material to a given width ([tex.web § 649](https://github.com/TeX-Live/texlive-source/blob/b4e37b58bfc6352cc3223ed26384cae01a28b234/texk/web2c/tex.web#L12910)). Material wider than that, after all its glue shrank, sticks out of the box, and TeX writes `Overfull \hbox (…pt too wide) detected at line …` to the log ([§ 666](https://github.com/TeX-Live/texlive-source/blob/b4e37b58bfc6352cc3223ed26384cae01a28b234/texk/web2c/tex.web#L13130)). The rule reports that line's box by the same amount, only where its material and width were known on every visit.
+`\hbox to ⟨width⟩{…}`, and the LaTeX boxes built on it such as `\makebox[⟨width⟩][s]{…}`, pack their material to a given width ([tex.web § 649](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L12910)). Material wider than that, after all its glue shrank, sticks out of the box, and TeX writes `Overfull \hbox (…pt too wide) detected at line …` to the log ([§ 666](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L13130)). The rule reports that line's box by the same amount, only where its material and width were known on every visit.
 
 Fix by widening the box, shortening its material, or giving it infinitely shrinkable glue (`\hss`) where sticking out is meant.
 
-See [tex.web § 664](https://github.com/TeX-Live/texlive-source/blob/b4e37b58bfc6352cc3223ed26384cae01a28b234/texk/web2c/tex.web#L13104), [tex.web § 666](https://github.com/TeX-Live/texlive-source/blob/b4e37b58bfc6352cc3223ed26384cae01a28b234/texk/web2c/tex.web#L13130).
+See [tex.web § 664](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L13104), [tex.web § 666](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L13130).
 
 ### overfull-line
 
@@ -1264,13 +1265,13 @@ See [tex.web § 664](https://github.com/TeX-Live/texlive-source/blob/b4e37b58bfc
 
 **line wider than the text block**
 
-TeX breaks a paragraph into lines and packs each to the line width ([tex.web § 889](https://github.com/TeX-Live/texlive-source/blob/b4e37b58bfc6352cc3223ed26384cae01a28b234/texk/web2c/tex.web#L17420)). A line whose natural width, less all its glue can shrink, still passes the width sticks out into the right margin, and TeX writes `Overfull \hbox (…pt too wide) in paragraph` to the log ([§ 666](https://github.com/TeX-Live/texlive-source/blob/b4e37b58bfc6352cc3223ed26384cae01a28b234/texk/web2c/tex.web#L13130)).
+TeX breaks a paragraph into lines and packs each to the line width ([tex.web § 889](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L17420)). A line whose natural width, less all its glue can shrink, still passes the width sticks out into the right margin, and TeX writes `Overfull \hbox (…pt too wide) in paragraph` to the log ([§ 666](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L13130)).
 
-satex runs TeX's own line breaker ([§§ 813](https://github.com/TeX-Live/texlive-source/blob/b4e37b58bfc6352cc3223ed26384cae01a28b234/texk/web2c/tex.web#L15997)–[890](https://github.com/TeX-Live/texlive-source/blob/b4e37b58bfc6352cc3223ed26384cae01a28b234/texk/web2c/tex.web#L17438)) on the paragraph, so it reports exactly the lines TeX reports, at the user's line that ended the paragraph, by the same amount. It stays silent where any width, font or parameter is not known, where character protrusion or font expansion (microtype) is on, and where the paragraph may be set differently on another path.
+satex runs TeX's own line breaker ([§§ 813](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L15997)–[890](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L17438)) on the paragraph, so it reports exactly the lines TeX reports, at the user's line that ended the paragraph, by the same amount. It stays silent where any width, font or parameter is not known, where character protrusion or font expansion (microtype) is on, and where the paragraph may be set differently on another path.
 
 Fix the text, not the measure: allow a hyphenation point in the long word (`\-`, or `\hyphenation{…}`), let the paragraph space out (`\begin{sloppypar}` or `\emergencystretch`), or rephrase it. satex never rewrites the text itself.
 
-See [tex.web § 889](https://github.com/TeX-Live/texlive-source/blob/b4e37b58bfc6352cc3223ed26384cae01a28b234/texk/web2c/tex.web#L17420), [tex.web § 666](https://github.com/TeX-Live/texlive-source/blob/b4e37b58bfc6352cc3223ed26384cae01a28b234/texk/web2c/tex.web#L13130), [The TeXbook, chapter 14](https://ctan.org/pkg/texbook).
+See [tex.web § 889](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L17420), [tex.web § 666](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L13130), [The TeXbook, chapter 14](https://ctan.org/pkg/texbook).
 
 ### parenthesis-spacing
 
@@ -1318,13 +1319,13 @@ Fix by writing the capital, or `\Cref` for a `\cref`.
 
 **wrong space after a period**
 
-How wide a space TeX sets follows the space factor of the character before it ([tex.web § 1034](https://github.com/TeX-Live/texlive-source/blob/b4e37b58bfc6352cc3223ed26384cae01a28b234/texk/web2c/tex.web#L20114)). A period raises it to 3000, which asks for the wider space between sentences, but a period after an uppercase letter leaves it at 1000. Under `\frenchspacing` a period sets 1000 too, so nothing is reported.
+How wide a space TeX sets follows the space factor of the character before it ([tex.web § 1034](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L20114)). A period raises it to 3000, which asks for the wider space between sentences, but a period after an uppercase letter leaves it at 1000. Under `\frenchspacing` a period sets 1000 too, so nothing is reported.
 
 So `etc. and` gets a sentence space and `the ABC. Next` a word space, both the wrong way round. The rule reads the characters the run set and reports only where a real space token became glue. A lowercase word counts as the sentence running on only when the source writes it right after the space, in the same line and group, unless the word before the period is a listed abbreviation.
 
 Fix by writing `etc.\ and`, or `the ABC\@. Next`.
 
-See [chktex 12](https://www.nongnu.org/chktex/), [chktex 13](https://www.nongnu.org/chktex/), [tex.web § 1034](https://github.com/TeX-Live/texlive-source/blob/b4e37b58bfc6352cc3223ed26384cae01a28b234/texk/web2c/tex.web#L20114).
+See [chktex 12](https://www.nongnu.org/chktex/), [chktex 13](https://www.nongnu.org/chktex/), [tex.web § 1034](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L20114).
 
 ### space-before-command
 
@@ -1348,11 +1349,11 @@ See [chktex 24](https://www.nongnu.org/chktex/), [chktex 42](https://www.nongnu.
 
 Punctuation belongs against the word it follows. A space in front of a comma or a period is glue, and the reader sees it on the page.
 
-The rule reports only a real space token that became glue in horizontal mode ([tex.web § 1043](https://github.com/TeX-Live/texlive-source/blob/b4e37b58bfc6352cc3223ed26384cae01a28b234/texk/web2c/tex.web#L20358)). A thin space a language package inserts before `:` comes from that package's own code, which the run keeps out of the text, so French typography is not reported.
+The rule reports only a real space token that became glue in horizontal mode ([tex.web § 1043](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L20358)). A thin space a language package inserts before `:` comes from that package's own code, which the run keeps out of the text, so French typography is not reported.
 
 Fix by deleting the space.
 
-See [chktex 26](https://www.nongnu.org/chktex/), [tex.web § 1043](https://github.com/TeX-Live/texlive-source/blob/b4e37b58bfc6352cc3223ed26384cae01a28b234/texk/web2c/tex.web#L20358).
+See [chktex 26](https://www.nongnu.org/chktex/), [tex.web § 1043](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L20358).
 
 ### stray-italic-correction
 
@@ -1360,13 +1361,13 @@ See [chktex 26](https://www.nongnu.org/chktex/), [tex.web § 1043](https://githu
 
 **stray italic correction**
 
-`\/` appends a kern as wide as the italic correction of the last character on the current list ([The TeXbook, chapter 4](https://ctan.org/pkg/texbook)). The rule reports two places where that kern does not belong: a second `\/` with nothing typeset in between, which finds a kern rather than a character ([tex.web § 1113](https://github.com/TeX-Live/texlive-source/blob/b4e37b58bfc6352cc3223ed26384cae01a28b234/texk/web2c/tex.web#L21365)), and one in front of a period or a comma (chktex 28).
+`\/` appends a kern as wide as the italic correction of the last character on the current list ([The TeXbook, chapter 4](https://ctan.org/pkg/texbook)). The rule reports two places where that kern does not belong: a second `\/` with nothing typeset in between, which finds a kern rather than a character ([tex.web § 1113](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L21365)), and one in front of a period or a comma (chktex 28).
 
 satex reads the characters the document set, so it sees through a closing brace: in `\textit{word\/}.` the next character set is the period.
 
 Fix by deleting the `\/`.
 
-See [chktex 5](https://www.nongnu.org/chktex/), [chktex 28](https://www.nongnu.org/chktex/), [tex.web § 1113](https://github.com/TeX-Live/texlive-source/blob/b4e37b58bfc6352cc3223ed26384cae01a28b234/texk/web2c/tex.web#L21365).
+See [chktex 5](https://www.nongnu.org/chktex/), [chktex 28](https://www.nongnu.org/chktex/), [tex.web § 1113](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L21365).
 
 ### unknown-suppress-code
 
@@ -1398,11 +1399,11 @@ See [chktex 20](https://www.nongnu.org/chktex/), [chktex 44](https://www.nongnu.
 
 **box wider than its lines**
 
-A box or rule set in a paragraph, such as an `\includegraphics`, a `tabular` or a `tikzpicture`, that is wider than the line width (`\linewidth`) cannot fit on any line: it sticks out into the margin however the paragraph breaks ([tex.web § 889](https://github.com/TeX-Live/texlive-source/blob/b4e37b58bfc6352cc3223ed26384cae01a28b234/texk/web2c/tex.web#L17420)). The rule reports the call that set it, by how much it passes the line, where its width and the line width were known on every visit.
+A box or rule set in a paragraph, such as an `\includegraphics`, a `tabular` or a `tikzpicture`, that is wider than the line width (`\linewidth`) cannot fit on any line: it sticks out into the margin however the paragraph breaks ([tex.web § 889](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L17420)). The rule reports the call that set it, by how much it passes the line, where its width and the line width were known on every visit.
 
 An `\includegraphics` whose `width=` is the reason gets the fix `width=\linewidth`, where every other key leaves that its final width (no `height`, `scale`, `angle`, `bb` or a key satex does not know, no comment). It changes the picture's size, so it is unsafe. Otherwise scale the material down (`\resizebox`, a smaller font), or let it stick out on purpose (`\makebox[\linewidth]{…}`), which TeX does not report.
 
-See [tex.web § 889](https://github.com/TeX-Live/texlive-source/blob/b4e37b58bfc6352cc3223ed26384cae01a28b234/texk/web2c/tex.web#L17420), [graphics § 4.4](https://ctan.org/pkg/graphics).
+See [tex.web § 889](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L17420), [graphics § 4.4](https://ctan.org/pkg/graphics).
 
 ### wrong-dash
 
@@ -1438,13 +1439,13 @@ See [chktex 18](https://www.nongnu.org/chktex/), [chktex 19](https://www.nongnu.
 
 **useless italic correction**
 
-`\/` appends a kern as wide as the italic correction the font gives the last character on the current list ([tex.web § 1113](https://github.com/TeX-Live/texlive-source/blob/b4e37b58bfc6352cc3223ed26384cae01a28b234/texk/web2c/tex.web#L21365)). Where that correction is zero the `\/` does nothing.
+`\/` appends a kern as wide as the italic correction the font gives the last character on the current list ([tex.web § 1113](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L21365)). Where that correction is zero the `\/` does nothing.
 
 Every character carries the font it was set in ([fntguide § 2](https://ctan.org/pkg/fntguide)), and satex reads the correction out of that font's TFM. That is a measurement, where chktex decides from a list of command names. In math, and after a space, the kern is zero whatever the font.
 
 Fix by deleting the `\/`.
 
-See [chktex 4](https://www.nongnu.org/chktex/), [tex.web § 1113](https://github.com/TeX-Live/texlive-source/blob/b4e37b58bfc6352cc3223ed26384cae01a28b234/texk/web2c/tex.web#L21365), [The TeXbook, chapter 4](https://ctan.org/pkg/texbook).
+See [chktex 4](https://www.nongnu.org/chktex/), [tex.web § 1113](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L21365), [The TeXbook, chapter 4](https://ctan.org/pkg/texbook).
 
 ### bare-reference
 
@@ -1546,7 +1547,7 @@ See [lmodern § Latin Modern](https://ctan.org/pkg/lm), [fntguide § 5](https://
 
 **hand-set quotes, csquotes not loaded**
 
-`\enquote{…}` sets the marks the current language wants, nests an inner quotation inside an outer one, and keeps one spelling for the whole document ([csquotes](https://ctan.org/pkg/csquotes) [§§ 3](https://github.com/TeX-Live/texlive-source/blob/b4e37b58bfc6352cc3223ed26384cae01a28b234/texk/web2c/tex.web#L195), [1](https://github.com/TeX-Live/texlive-source/blob/b4e37b58bfc6352cc3223ed26384cae01a28b234/texk/web2c/tex.web#L95)).
+`\enquote{…}` sets the marks the current language wants, nests an inner quotation inside an outer one, and keeps one spelling for the whole document ([csquotes](https://ctan.org/pkg/csquotes) [§§ 3](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L195), [1](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L95)).
 
 The rule fires where the run set quotation marks itself and csquotes is not loaded. Apostrophes inside a word and primes in math do not count.
 
@@ -1594,7 +1595,7 @@ See [source2e § ltclass.dtx](https://ctan.org/pkg/source2e).
 
 **hand-set number and unit**
 
-`2ms` sets the number and the unit as one word, so the line may break between them and the unit is italic in math. The [SI brochure](https://www.bipm.org/en/publications/si-brochure) (9th ed., [§§ 5](https://github.com/TeX-Live/texlive-source/blob/b4e37b58bfc6352cc3223ed26384cae01a28b234/texk/web2c/tex.web#L268), [4](https://github.com/TeX-Live/texlive-source/blob/b4e37b58bfc6352cc3223ed26384cae01a28b234/texk/web2c/tex.web#L231), [3](https://github.com/TeX-Live/texlive-source/blob/b4e37b58bfc6352cc3223ed26384cae01a28b234/texk/web2c/tex.web#L195)) asks for a non-breaking space and an upright unit, and [siunitx](https://ctan.org/pkg/siunitx) does both.
+`2ms` sets the number and the unit as one word, so the line may break between them and the unit is italic in math. The [SI brochure](https://www.bipm.org/en/publications/si-brochure) (9th ed., [§§ 5](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L268), [4](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L231), [3](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L195)) asks for a non-breaking space and an upright unit, and [siunitx](https://ctan.org/pkg/siunitx) does both.
 
 The rule reads what the run typeset: a digit run followed by letters with no space token between them, where the unit is an SI symbol and the document set it itself.
 
@@ -1718,7 +1719,7 @@ See [microtype § 1](https://ctan.org/pkg/microtype), [pdftex § \pdfprotrudecha
 
 **numbers not aligned**
 
-A column of numbers is read by comparing them, which works when each digit stands under the digit of the same place: the units under the units, the decimal marks under each other. An `l` or `c` column sets numbers of different lengths ragged, and an `r` column lines up only numbers with as many decimals. [siunitx](https://ctan.org/pkg/siunitx)'s `S` column aligns them at the decimal mark ([§§ 7](https://github.com/TeX-Live/texlive-source/blob/b4e37b58bfc6352cc3223ed26384cae01a28b234/texk/web2c/tex.web#L290), [12](https://github.com/TeX-Live/texlive-source/blob/b4e37b58bfc6352cc3223ed26384cae01a28b234/texk/web2c/tex.web#L430) of its manual). Its header, not a number, goes in braces: `{Time}`.
+A column of numbers is read by comparing them, which works when each digit stands under the digit of the same place: the units under the units, the decimal marks under each other. An `l` or `c` column sets numbers of different lengths ragged, and an `r` column lines up only numbers with as many decimals. [siunitx](https://ctan.org/pkg/siunitx)'s `S` column aligns them at the decimal mark ([§§ 7](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L290), [12](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L430) of its manual). Its header, not a number, goes in braces: `{Time}`.
 
 The rule reads the table's source: a column whose cells below the header are all numbers, three or more, set in a column that does not align them.
 
@@ -1822,13 +1823,13 @@ See [source2e § ltclass.dtx](https://ctan.org/pkg/source2e).
 
 **space from a line end in a macro**
 
-Inside a macro's replacement text, TeX turns the end of a line into a space token unless a control word already skipped it or a `%` swallowed the rest of the line ([tex.web § 347](https://github.com/TeX-Live/texlive-source/blob/b4e37b58bfc6352cc3223ed26384cae01a28b234/texk/web2c/tex.web#L7326)).
+Inside a macro's replacement text, TeX turns the end of a line into a space token unless a control word already skipped it or a `%` swallowed the rest of the line ([tex.web § 347](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L7326)).
 
-The finding follows the modes the run read that space in ([§ 1043](https://github.com/TeX-Live/texlive-source/blob/b4e37b58bfc6352cc3223ed26384cae01a28b234/texk/web2c/tex.web#L20358): a space is glue only in horizontal mode). It says the macro *inserts* a space where every reading was horizontal, and that it *may* where some might have been. Only a space that a character, box or rule follows in its list is reported. The glue that ends a paragraph goes ([§ 816](https://github.com/TeX-Live/texlive-source/blob/b4e37b58bfc6352cc3223ed26384cae01a28b234/texk/web2c/tex.web#L16066)), and glue before it only widens the end of the last line. One an `\unskip` takes is gone too ([§ 1105](https://github.com/TeX-Live/texlive-source/blob/b4e37b58bfc6352cc3223ed26384cae01a28b234/texk/web2c/tex.web#L21264)), as at `\end{center}`.
+The finding follows the modes the run read that space in ([§ 1043](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L20358): a space is glue only in horizontal mode). It says the macro *inserts* a space where every reading was horizontal, and that it *may* where some might have been. Only a space that a character, box or rule follows in its list is reported. The glue that ends a paragraph goes ([§ 816](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L16066)), and glue before it only widens the end of the last line. One an `\unskip` takes is gone too ([§ 1105](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L21264)), as at `\end{center}`.
 
 Fix by writing `%` at the end of that line.
 
-See [tex.web § 347](https://github.com/TeX-Live/texlive-source/blob/b4e37b58bfc6352cc3223ed26384cae01a28b234/texk/web2c/tex.web#L7326), [tex.web § 816](https://github.com/TeX-Live/texlive-source/blob/b4e37b58bfc6352cc3223ed26384cae01a28b234/texk/web2c/tex.web#L16066), [tex.web § 1043](https://github.com/TeX-Live/texlive-source/blob/b4e37b58bfc6352cc3223ed26384cae01a28b234/texk/web2c/tex.web#L20358).
+See [tex.web § 347](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L7326), [tex.web § 816](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L16066), [tex.web § 1043](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L20358).
 
 ### table-rules
 
@@ -1836,7 +1837,7 @@ See [tex.web § 347](https://github.com/TeX-Live/texlive-source/blob/b4e37b58bfc
 
 **vertical rules or hline in a table**
 
-[booktabs](https://ctan.org/pkg/booktabs) gives a table three rules of different weights, `\toprule`, `\midrule` and `\bottomrule`, with space around them, and asks for no vertical rules at all ([§ 2](https://github.com/TeX-Live/texlive-source/blob/b4e37b58bfc6352cc3223ed26384cae01a28b234/texk/web2c/tex.web#L131) of its manual): the columns are separated by their space, and `\hline` sets every rule alike and too close to the text. A table of fewer rows than `lints.table-rules.rows` (3) is left alone.
+[booktabs](https://ctan.org/pkg/booktabs) gives a table three rules of different weights, `\toprule`, `\midrule` and `\bottomrule`, with space around them, and asks for no vertical rules at all ([§ 2](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L131) of its manual): the columns are separated by their space, and `\hline` sets every rule alike and too close to the text. A table of fewer rows than `lints.table-rules.rows` (3) is left alone.
 
 See [booktabs § 2](https://ctan.org/pkg/booktabs).
 
@@ -1870,7 +1871,7 @@ See [btxdoc § Using BibTeX](https://ctan.org/pkg/bibtex).
 
 **unit repeated in every cell**
 
-A unit repeated in every cell of a column says the same thing on each line and pushes the numbers out of alignment. The [SI brochure](https://www.bipm.org/en/publications/si-brochure) (9th ed., [§§ 5](https://github.com/TeX-Live/texlive-source/blob/b4e37b58bfc6352cc3223ed26384cae01a28b234/texk/web2c/tex.web#L268), [4](https://github.com/TeX-Live/texlive-source/blob/b4e37b58bfc6352cc3223ed26384cae01a28b234/texk/web2c/tex.web#L231), [1](https://github.com/TeX-Live/texlive-source/blob/b4e37b58bfc6352cc3223ed26384cae01a28b234/texk/web2c/tex.web#L95)) heads such a column with the quantity and its unit, as `Time / ms`. With [siunitx](https://ctan.org/pkg/siunitx), `{Time / \unit{ms}}` over an `S` column of bare numbers.
+A unit repeated in every cell of a column says the same thing on each line and pushes the numbers out of alignment. The [SI brochure](https://www.bipm.org/en/publications/si-brochure) (9th ed., [§§ 5](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L268), [4](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L231), [1](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L95)) heads such a column with the quantity and its unit, as `Time / ms`. With [siunitx](https://ctan.org/pkg/siunitx), `{Time / \unit{ms}}` over an `S` column of bare numbers.
 
 See [SI brochure § 5.4.1](https://www.bipm.org/en/publications/si-brochure), [siunitx § \unit](https://ctan.org/pkg/siunitx).
 

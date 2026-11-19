@@ -661,8 +661,9 @@ impl<'a> Checkpoints<'a> {
     pub fn analyze(&mut self, source: &str, path: &Path) -> Analysis {
         let (_run, _entered) = crate::analysis::budget::Run::start();
         let setup = Some((path.to_path_buf(), setup_key(self.cfg, source, path)));
+        // The last run's end depends on what its log saw: forgotten with the log.
         if setup != self.setup {
-            (self.list, self.log) = (Vec::new(), Vec::new());
+            (self.list, self.log, self.end) = (Vec::new(), Vec::new(), None);
         }
         self.setup = setup;
         (self.resumed, self.converged) = (None, None);

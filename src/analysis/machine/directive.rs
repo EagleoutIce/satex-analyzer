@@ -1,5 +1,5 @@
 //! Directives in the document's comments: `%\satex@assert{…}`,
-//! `%\satex@assume{…}` and `%\satex@configure{…}`. TeX skips them. The run
+//! `%\satex@assume{…}`, `%\satex@configure{…}` and `%\satex@scratch{…}`. TeX skips them. The run
 //! checks or assumes a condition, or changes a setting, where it reads them
 //! (doc/src/wiki/lints.md.in, "Assertions").
 
@@ -22,10 +22,15 @@ pub const CODES: &[&str] = &[HOLDS, FAILS, OPEN, ASSUMED, INVALID, SKIPPED];
 
 /// The directives: name, argument as a usage line, what it does. Hover,
 /// completion, the docs and the messages below read this table.
-pub const DIRECTIVES: [(&str, &str, &str); 3] = [
+pub const DIRECTIVES: [(&str, &str, &str); 4] = [
     ("assert", "{⟨condition⟩}", "Checks a condition on every path that reaches it."),
     ("assume", "{⟨condition⟩}", "Drops the paths where a condition fails."),
     ("configure", "{⟨key⟩=⟨value⟩, …}", "Changes settings of `satex.yaml` until the group ends."),
+    (
+        "scratch",
+        "{begin ⟨file⟩:⟨from⟩-⟨to⟩} or {end}",
+        "Marks the lines a scratch document merges back. The run reads past it.",
+    ),
 ];
 
 /// The forms an argument is written in, each with its grammar
@@ -175,6 +180,7 @@ impl Machine<'_> {
             "assert" => self.assert(d.span, arg),
             "assume" => self.assume(d.span, arg),
             "configure" => self.configure(d.span, arg),
+            "scratch" => {}
             _ => {
                 let names: Vec<String> = DIRECTIVES.iter().filter_map(|(n, ..)| usage(n)).collect();
                 invalid(self, format!("`\\satex@{kind}` is no directive: {}", names.join(", ")))

@@ -82,7 +82,7 @@
    "file": "spacing.tex",
    "title": "Type in the PDF",
    "big": true,
-   "caption": "Click a word on the page and type. The text goes to its place in the source, $x_42 becomes $x_{42}$, and the page follows each key. Typing into a macro's output edits its definition, so every use changes. A TikZ node moves with the mouse along guides and lands right of its neighbour, a double click edits its text, a right click opens its menu. A table cell takes typing too, and a column chip switches its alignment.",
+   "caption": "Click a word on the page and type. The text goes to its place in the source, $x_42 becomes $x_{42}$, and the page follows each key. Typing into a macro's output edits its definition, so every use changes. A TikZ node moves with the mouse along guides and lands right of its neighbour, a double click edits its text, a right click opens its menu. A table cell takes typing too, and a column chip switches its alignment. A right click inserts a table, a figure or a list where it was clicked, its widget open.",
    "open": [
     "panel",
     "play-pdf"
@@ -334,6 +334,39 @@
      "hover": "(() => { const a = self.__pw('losses', .5), b = self.__pw('95', .5); return [a[0], b[1]]; })()",
      "glide": 270,
      "after": 0
+    },
+    {
+     "click": "(() => { const p = self.__pw('converges.', 1); return [p[0] + 30, p[1]]; })()",
+     "right": true,
+     "glide": 340,
+     "after": 240
+    },
+    {
+     "until": "[...document.querySelectorAll('.pa-root > button')].find((b) => b.querySelector('span')?.textContent === 'Insert')",
+     "ms": 8000
+    },
+    {
+     "hover": "[...document.querySelectorAll('.pa-root > button')].find((b) => b.querySelector('span')?.textContent === 'Insert')",
+     "glide": 270,
+     "after": 260
+    },
+    {
+     "until": "[...document.querySelectorAll('.pa-sub button')].find((b) => b.querySelector('span')?.textContent === 'Table')",
+     "ms": 5000
+    },
+    {
+     "click": "[...document.querySelectorAll('.pa-sub button')].find((b) => b.querySelector('span')?.textContent === 'Table')",
+     "glide": 240,
+     "after": 200
+    },
+    {
+     "until": "document.querySelector('dialog.sd-dialog[open]')?.dataset.pop === 'table'",
+     "ms": 60000,
+     "wait": 1600
+    },
+    {
+     "eval": "document.querySelector('dialog.sd-dialog[open]')?.close()",
+     "wait": 300
     }
    ],
    "crop": [

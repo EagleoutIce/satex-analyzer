@@ -3775,6 +3775,13 @@ button.tv-spec-value { cursor: pointer; } button.tv-spec-value:hover, button.tv-
     const open = text.lastIndexOf('\\begin{tikzpicture}'), close = text.lastIndexOf('\\end{tikzpicture}');
     return open > close || /\\(?:tikz|draw|path|node|fill|filldraw)\b[^;\n]*$/.test(text);
   };
+  /** The control symbol the caret stands right after (`\\\\`, `\\,`), else null: a `\\` and one non-letter are a whole name
+   * (tex.web §354), so no longer name is being typed there. The `\\` must not be the second half of a `\\\\`. */
+  const controlSymbol = (before: string): string | null => {
+    const x = before.at(-1);
+    if (!x || /[A-Za-z@\s]/.test(x)) return null;
+    return /\\*$/.exec(before.slice(0, -1))![0].length % 2 ? x : null;
+  };
   /** The one-line description of an item: the lean record's `doc`, else the server item's. */
   const docOf = (i: Completion): string => i.doc ?? i.data?.doc ?? '';
   /** Completion order: how well the item matches first (the exact name, a prefix of the label, a part of it, a part of
@@ -3787,10 +3794,12 @@ button.tv-spec-value { cursor: pointer; } button.tv-spec-value:hover, button.tv-
     const label = i.label.toLowerCase(), found = (i.filterText ?? '').toLowerCase();
     return label === typed ? -1 : label.startsWith(typed) ? 0 : label.includes(typed) ? 1 : found.includes(typed) ? 2 : subsequence(label, typed) ? 3 : null;
   };
+  /** LSP's `sortText` order: by code point, as the server sorts (`~` after digits); `localeCompare` puts `~` first. */
+  const byCode = (a: string, b: string) => a < b ? -1 : a > b ? 1 : 0;
   /** `math`: the caret is in math, so math commands come first among equally close ones, text ones after them. */
   const rank = <T extends Completion>(items: T[], typed: string, math = false): T[] => items
     .map((i) => [i, tier(i) + (math ? (mathItem(i) ? -3 : 3) : 0), closeness(i, typed.toLowerCase())] as const).filter((x) => x[2] !== null)
-    .sort((a, b) => a[2]! - b[2]! || a[1] - b[1] || (a[0].sortText ?? '').localeCompare(b[0].sortText ?? '') || a[0].label.length - b[0].label.length || a[0].label.localeCompare(b[0].label)).map((x) => x[0]);
+    .sort((a, b) => a[2]! - b[2]! || a[1] - b[1] || byCode(a[0].sortText ?? '', b[0].sortText ?? '') || a[0].label.length - b[0].label.length || a[0].label.localeCompare(b[0].label)).map((x) => x[0]);
   /** The kept list of a kind of place: the server's last items there, then the names in force it lacks (no snippet, they
    * add only names). An item asked elsewhere replaces no range here: its text goes in at the cursor's word, and the
    * server's order there (`sortText`, for another word) ranks nothing here: `\\emp` takes `emph` before `empty`. */
@@ -3829,6 +3838,6 @@ button.tv-spec-value { cursor: pointer; } button.tv-spec-value:hover, button.tv-
     }
     return out;
   };
-  return { followRows, rowsWin, complete: { rank, kept, reselect, snippet, mathItem, docOf, plainSnippet, opensArgument, stepsOver, previewOf, tikzTarget }, loads: { unlanded, lacked }, tipBag, yaml, history: { historyEvent }, render, RENDER, hue, passes, masterDetail, usesView, fold, SPEC, mix, colorBand, oklch, drawing: { expandStyles, STYLE_DEF, parse, emit, mermaidIn, mermaidOut, mermaidLoss, layout, importMermaid, tipsOf, toMatrix, cellPlaces, toLayer, picOptions, relocate, relPos, nearestAnchor, anchorAt, tipMarker, shapeSample, shapeList, cycle, STYLE }, forest: forestFns, circuit: { parse: cParse, body: cBody, emit: cEmit }, page: { pageOf, pageBox, textArea, styleNow, taggedNote, pageNodes, numberNodes, numberInForce, headerOf, headerCalls, headerNodes, footSetup, fmtRead, fmtWrite, styleNodes, styleSet, styleEdits }, dev: { traceCsv, stateHtml }, templates: { fill, filled, chosen } };
+  return { followRows, rowsWin, complete: { rank, kept, reselect, controlSymbol, snippet, mathItem, docOf, plainSnippet, opensArgument, stepsOver, previewOf, tikzTarget }, loads: { unlanded, lacked }, tipBag, yaml, history: { historyEvent }, render, RENDER, hue, passes, masterDetail, usesView, fold, SPEC, mix, colorBand, oklch, drawing: { expandStyles, STYLE_DEF, parse, emit, mermaidIn, mermaidOut, mermaidLoss, layout, importMermaid, tipsOf, toMatrix, cellPlaces, toLayer, picOptions, relocate, relPos, nearestAnchor, anchorAt, tipMarker, shapeSample, shapeList, cycle, STYLE }, forest: forestFns, circuit: { parse: cParse, body: cBody, emit: cEmit }, page: { pageOf, pageBox, textArea, styleNow, taggedNote, pageNodes, numberNodes, numberInForce, headerOf, headerCalls, headerNodes, footSetup, fmtRead, fmtWrite, styleNodes, styleSet, styleEdits }, dev: { traceCsv, stateHtml }, templates: { fill, filled, chosen } };
 })();
 self.satexViews = satexViews;

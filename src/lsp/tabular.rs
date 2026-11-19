@@ -190,13 +190,15 @@ pub fn parse_spec(spec: &str) -> (Vec<Col>, Vec<String>) {
 
 /// The bytes `from..to` of a text.
 pub type Span = (usize, usize);
-/// A column with the bytes of its argument and of its letter with that argument.
+/// A column with the bytes of its argument and of its `>{…}` groups, letter and argument.
 pub type Spanned = (Col, Option<Span>, Span);
 
 /// As [`parse_spec`], each column with its argument's bytes in `spec`; a `*{n}{…}` repeats one.
 fn spec_at(spec: &str) -> (Vec<Spanned>, Vec<String>) {
     let (mut cols, mut seps) = (Vec::new(), vec![String::new()]);
     let mut pre = String::new();
+    // where the next column's `>{…}` groups begin: its spec is written from there
+    let mut pre_at = None;
     let mut i = 0;
     let s = spec;
     while i < s.len() {
@@ -215,6 +217,7 @@ fn spec_at(spec: &str) -> (Vec<Spanned>, Vec<String>) {
             }
             '>' => {
                 let Some((a, e)) = arg(i + 1) else { break };
+                pre_at.get_or_insert(i);
                 pre.push_str(&format!(">{{{a}}}"));
                 i = e;
             }
@@ -229,6 +232,7 @@ fn spec_at(spec: &str) -> (Vec<Spanned>, Vec<String>) {
                 let Some((n, e)) = arg(i + 1) else { break };
                 let Some((body, end)) = arg(e) else { break };
                 let (more, more_seps) = spec_at(&body);
+                pre_at = None;
                 for _ in 0..n.trim().parse::<usize>().unwrap_or(1) {
                     seps.last_mut().unwrap().push_str(&more_seps[0]);
                     for (k, (col, at, (x, y))) in more.iter().enumerate() {
@@ -239,7 +243,7 @@ fn spec_at(spec: &str) -> (Vec<Spanned>, Vec<String>) {
                 i = end;
             }
             _ => {
-                let start = i;
+                let start = pre_at.take().unwrap_or(i);
                 i += c.len_utf8();
                 let mut col = Col { align: c.to_string(), pre: std::mem::take(&mut pre), ..Default::default() };
                 let (open, wants) = (s[i..].chars().next(), matches!(c, 'p' | 'm' | 'b' | 'w' | 'W'));
@@ -834,9 +838,9 @@ mod tests {
         assert!(widths("\\begin{tabular}{p{1cm").is_none_or(|(_, c)| c.is_empty()));
     }
 
-    /// Each column's letter with its width, what an alignment change in the PDF rewrites: no `>{…}`,
-    /// `<{…}` or rule around it, a repeat's columns the one spec inside. Pins the spans the PDF's column
-    /// layer writes `l`/`c`/`r` or `p`/`m`/`b` into.
+    /// Each column's `>{…}` groups, letter and width, what an alignment change in the PDF rewrites
+    /// (a paragraph's `\raggedleft` lives in its `>{…}`): no `<{…}` or rule around it, a repeat's
+    /// columns the one spec inside. Pins the spans the PDF's column layer writes into.
     #[test]
     fn column_specs_are_the_bytes_an_alignment_change_rewrites() {
         let specs = |t: &str| -> Vec<String> {
@@ -844,7 +848,11 @@ mod tests {
         };
         assert_eq!(
             specs("\\begin{tabular}{|l|>{\\bfseries}c<{x}|p{2cm}@{}r}\\end{tabular}"),
-            ["l", "c", "p{2cm}", "r"]
+            ["l", ">{\\bfseries}c", "p{2cm}", "r"]
+        );
+        assert_eq!(
+            specs("\\begin{tabular}{>{\\raggedleft\\arraybackslash} >{x}p{1cm}l}\\end{tabular}"),
+            [">{\\raggedleft\\arraybackslash} >{x}p{1cm}", "l"]
         );
         assert_eq!(specs("\\begin{tabular}{*{2}{m{1cm}}l}\\end{tabular}"), ["m{1cm}", "m{1cm}", "l"]);
     }

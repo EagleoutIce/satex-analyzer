@@ -2,6 +2,7 @@
 //! whose items, metrics and parameters are all known. Anything else keeps
 //! the line-count interval of [`crate::engine::mode`].
 
+use crate::analysis::facts::LineEnd;
 use crate::analysis::machine::Machine;
 use crate::engine::builtins::CodeTable;
 use crate::engine::mode::Natural;
@@ -66,6 +67,9 @@ impl Kp {
 #[derive(Clone, Default)]
 pub(crate) struct Arena {
     nodes: Vec<(Kp, u32, u32)>,
+    /// Per node: the characters the run had set when it was last pushed, so where a line breaks
+    /// in the text. A note, not part of the node: lists stay shared.
+    chars: Vec<u32>,
     index: HashMap<(Kp, u32), u32>,
     pub(crate) texts: Vec<std::rc::Rc<[crate::engine::tex::Token]>>,
 }
@@ -118,6 +122,7 @@ impl Machine<'_> {
     /// `item` goes onto the paragraph's recorded list `items`.
     pub(crate) fn kp_push(&mut self, items: &mut Option<u32>, item: Kp) {
         let Some(prev) = *items else { return };
+        let chars = self.out.facts.text.at.len() as u32;
         let a = &mut self.kp;
         let len = if prev == 0 { 0 } else { a.nodes[prev as usize - 1].2 };
         if len >= MAX_ITEMS || a.nodes.len() >= MAX_NODES {
@@ -125,11 +130,14 @@ impl Machine<'_> {
             return;
         }
         let next = a.nodes.len() as u32 + 1;
-        let nodes = &mut a.nodes;
-        *items = Some(*a.index.entry((item, prev)).or_insert_with(|| {
+        let (nodes, at) = (&mut a.nodes, &mut a.chars);
+        let id = *a.index.entry((item, prev)).or_insert_with(|| {
             nodes.push((item, prev, len + 1));
+            at.push(0);
             next
-        }));
+        });
+        at[id as usize - 1] = chars;
+        *items = Some(id);
     }
 
     /// tex.web §§ 656-657: the stretch and the shrink of the recorded list
@@ -169,6 +177,17 @@ impl Machine<'_> {
                 _ => None,
             };
         }
+    }
+
+    /// The characters set when each item of list `id` was pushed.
+    fn kp_chars(&self, mut id: u32) -> Vec<u32> {
+        let mut out = Vec::new();
+        while id > 0 {
+            out.push(self.kp.chars[id as usize - 1]);
+            id = self.kp.nodes[id as usize - 1].1;
+        }
+        out.reverse();
+        out
     }
 
     pub(crate) fn kp_list(&self, mut id: u32) -> Vec<Kp> {
@@ -215,7 +234,28 @@ impl Machine<'_> {
             return None;
         }
         let fit0 = if p.fit == UNFIT { DECENT } else { p.fit };
-        line_break(items, start, fit0, last, &params, self).map(|b| (b.lines, b.fit))
+        let chars = self.kp_chars(p.items?);
+        let b = line_break(items.clone(), start, fit0, last, &params, self)?;
+        let text = &self.out.facts.text;
+        let base = if first { text.par_starts.last().map(|s| s.0) } else { text.lines.last().map(|l| l.0) };
+        let ends = base.and_then(|base| line_ends(&items, &chars, &b, base, at));
+        self.note_line_ends(ends);
+        Some((b.lines, b.fit))
+    }
+
+    /// The lines a paragraph on no enclosing horizontal list broke into go into
+    /// [`crate::analysis::facts::Text::lines`], `None` as one not known.
+    pub(crate) fn note_line_ends(&mut self, ends: Option<Vec<(u32, LineEnd)>>) {
+        if self.in_inner_list() {
+            return;
+        }
+        let at = self.out.facts.text.at.len() as u32;
+        let lines = &mut self.out.facts.text.lines;
+        match ends {
+            Some(ends) => lines.extend(ends),
+            None if lines.last() != Some(&(at, LineEnd::Unknown)) => lines.push((at, LineEnd::Unknown)),
+            None => {}
+        }
     }
 }
 
@@ -1004,4 +1044,58 @@ impl Machine<'_> {
     pub(crate) fn set_list_slot(&mut self, key: &str, list: Option<VList>) {
         self.set_engine(key, list_value(list), true);
     }
+}
+
+/// Where each line of `b` ends in the text: `items` is the list given to the breaker, `chars`
+/// the characters set when each item was pushed, `base` those before the segment, `now` at its
+/// end. Glue, boxes of no character, explicit kerns, penalties, whatsits and marks are pushed as
+/// they come, so they fix the count; a character box's count is its letters after the last such
+/// item (the main loop pushes it only when the next character comes, § 1034). `None` where the
+/// counts do not rise along the lines (a list copied from a box, `\unhbox`).
+pub(crate) fn line_ends(items: &[Kp], chars: &[u32], b: &Breaking, base: u32, now: u32) -> Option<Vec<(u32, LineEnd)>> {
+    use LineEnd as L;
+    let fixed = |k: &Kp| {
+        matches!(
+            k,
+            Kp::Glue { .. }
+                | Kp::Box { chr: None, .. }
+                | Kp::Kern { explicit: true, .. }
+                | Kp::Penalty(_)
+                | Kp::Whatsit
+                | Kp::Mark(..)
+        )
+    };
+    // the count after each item of a list whose fixed items, in order, have counts `anchors`
+    let after = |list: &[Kp], anchors: &mut dyn Iterator<Item = u32>| -> Option<Vec<u32>> {
+        let mut pos = base;
+        let mut out = vec![base];
+        for k in list {
+            match *k {
+                // `\parfillskip` and its penalty (§ 816) come after the given list
+                _ if fixed(k) => pos = anchors.next().unwrap_or(now),
+                Kp::Box { chr: Some((_, c)), lig, .. } => pos += letters(c, lig)?.len() as u32,
+                _ => {}
+            }
+            out.push(pos);
+        }
+        Some(out)
+    };
+    let anchor_chars = || items.iter().zip(chars).filter(|(k, _)| fixed(k)).map(|(_, &c)| c);
+    let given = after(items, &mut anchor_chars())?;
+    let broken = after(&b.items, &mut anchor_chars())?;
+    let mut out = Vec::with_capacity(b.lines.len());
+    for line in &b.lines {
+        let end = match b.items.get(line.at) {
+            None => (now, L::Line),
+            Some(Kp::Disc(..)) => match b.points.iter().find(|p| p.0 == line.at) {
+                Some(&(_, s, j)) => (given[s] + j as u32, L::Hyphen),
+                // after an explicit hyphen, a character of the text
+                None => (broken[line.at], L::Line),
+            },
+            Some(_) => (broken[line.at + 1], L::Line),
+        };
+        out.push(end);
+    }
+    let rising = out.iter().try_fold(base, |was, &(e, _)| (e > was && e <= now).then_some(e)).is_some();
+    (rising && out.last().is_some_and(|l| l.0 == now)).then_some(out)
 }

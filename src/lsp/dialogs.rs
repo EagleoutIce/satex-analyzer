@@ -399,7 +399,7 @@ pub fn dialog(analysis: &Analysis, doc: &Text, path: &str, pos: Position) -> Opt
 
 /// Each table of the file with the widths a view may drag (`satex/dialogApply`, kind `columns`):
 /// its lines, each column's width and the table's own (`tabularx`'s) as a text snapshot to
-/// rewrite, and `\linewidth` in pt when the run ended with one value of it.
+/// rewrite, and `\linewidth` and the column paddings in pt when the run ended with one value of each.
 pub fn widths(analysis: &Analysis, doc: &Text, path: &str) -> Json {
     let text = doc.body();
     let line = |o: usize| text[..o].matches('\n').count() + 1;
@@ -413,8 +413,12 @@ pub fn widths(analysis: &Analysis, doc: &Text, path: &str) -> Json {
             .collect();
         Some(json!({ "env": t.detail, "lines": [line(t.start), line(t.end)], "width": width.map(node), "cols": cols }))
     });
-    let lw = super::plugins::register_value(analysis, "linewidth").filter(|w| w.lo == w.hi);
-    json!({ "tables": tables.collect::<Vec<_>>(), "linewidth": lw.map(|w| w.lo as f64 / 65536.0) })
+    let pt = |name: &str| {
+        super::plugins::register_value(analysis, name).filter(|w| w.lo == w.hi).map(|w| w.lo as f64 / 65536.0)
+    };
+    // the column padding as the run ended, what a table without its own setting has (array's `\tabcolsep`, `\arraycolsep`)
+    let seps = json!({ "tabcolsep": pt("tabcolsep"), "arraycolsep": pt("arraycolsep") });
+    json!({ "tables": tables.collect::<Vec<_>>(), "linewidth": pt("linewidth"), "seps": seps })
 }
 
 /// What the table dialog writes beyond the kernel, with the package that defines it: the

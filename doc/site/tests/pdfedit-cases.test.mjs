@@ -271,10 +271,12 @@ test("One origin tint per spot", async () => {
 // Pins "≈1.6cm" for every column of an l/c/r table and a drag that could not widen a column without a width.
 test("Column widths by drag (pdfedit.ts)", async () => {
   const E = self.satexPdfEdit, MM = 72 / 25.4, line = 400;
-  assert.deepEqual(E.respec('l', '3cm'), { body: 'p{3cm}', array: false });
-  assert.deepEqual(E.respec('c', '3cm'), { body: '>{\\centering\\arraybackslash}p{3cm}', array: true }, 'c keeps its centering');
-  assert.deepEqual(E.respec('r', '2cm'), { body: '>{\\raggedleft\\arraybackslash}p{2cm}', array: true });
-  assert.deepEqual(E.respec('m', '2cm'), { body: 'm{2cm}', array: true }, 'm needs array');
+  // the whole spec and its package; its parts make it up
+  const rs = (...a) => { const r = E.respec(...a); assert.ok(!r || r.body === r.pre + r.letter); return r && { body: r.body, array: r.array }; };
+  assert.deepEqual(rs('l', '3cm'), { body: 'p{3cm}', array: false });
+  assert.deepEqual(rs('c', '3cm'), { body: '>{\\centering\\arraybackslash}p{3cm}', array: true }, 'c keeps its centering');
+  assert.deepEqual(rs('r', '2cm'), { body: '>{\\raggedleft\\arraybackslash}p{2cm}', array: true });
+  assert.deepEqual(rs('m', '2cm'), { body: 'm{2cm}', array: true }, 'm needs array');
   assert.equal(E.respec('X', '2cm'), null, 'tabularx computes X');
   // 0.5 mm steps in cm, a share near a twentieth of the line, a share kept a share, mm kept mm, Shift finer
   assert.equal(E.snapWidth(null, 40, 30.2 * MM, line, false), '3cm', '30.2 mm: 30 mm');
@@ -295,6 +297,26 @@ test("Column widths by drag (pdfedit.ts)", async () => {
   const cols = E.columns([box], 'a.tex', table, [table], words);
   assert.deepEqual(cols.map((c) => [c.x, c.w, !!c.measured, !!c.approx]), [[106, 24, true, false], [150, 40, true, false], [220, 40, true, false]]);
   assert.ok(E.columns([box], 'a.tex', table, [table]).every((c) => c.approx), 'without words: shared evenly, said approximate');
+});
+// A column is as wide as its widest cell (tex.web § 801), in every row, not only the rows filling every column: `{llr}`
+// with rows `a & b & walter alter`, `c & d`, `e & hallo` gives column 2 the width of `hallo`. A short row's run counts
+// where it stands at its column's anchor (l left, r right, c middle); a span crossing another column's anchor or ink
+// (`\multicolumn`) tells nothing. Pins column 2 sized to `b` alone, the handle inside `hallo`.
+test("Column widths over all rows (pdfedit.ts)", async () => {
+  const E = self.satexPdfEdit;
+  const box = { page: 1, file: 'a.tex', line: 9, kind: '(', x: 100, y: 200, w: 200, h: 60, d: 2 };
+  const w = (x, r, y) => [1, x, y - 7, r, y, 'a'];
+  const rows = [[w(106, 112, 160), w(150, 155.5, 160), w(200, 230, 160), w(233, 260, 160)], [w(106, 111, 172), w(150, 155, 172)], [w(106, 111, 184), w(150, 180, 184)]];
+  assert.deepEqual(E.measure(rows.flat(), box, 3, 'llr'), [[106, 112], [150, 180], [200, 260]], 'hallo in the third row widens column 2');
+  assert.deepEqual(E.measure([...rows[2], ...rows[0], ...rows[1]], box, 3, 'llr'), [[106, 112], [150, 180], [200, 260]], 'row order does not matter');
+  // mutations: a span over columns 1-2 crosses column 2's anchor, an r cell alone ends at column 3's anchor,
+  // a c cell alone centres on column 2's middle, and without aligns a short row counts at the left anchors
+  const span = [w(106, 170, 196)], right = [w(240, 260, 196)];
+  assert.deepEqual(E.measure([...rows.flat(), ...span], box, 3, 'llr'), [[106, 112], [150, 180], [200, 260]], 'a \\multicolumn span tells nothing');
+  assert.deepEqual(E.measure([...rows[0], ...right, w(190, 260, 200)], box, 3, 'llr'), [[106, 112], [150, 155.5], [190, 260]], 'a short r row widens its column leftwards');
+  const c = [[w(106, 112, 160), w(150, 160, 160), w(200, 260, 160)], [w(140, 170, 172)]];
+  assert.deepEqual(E.measure(c.flat(), box, 3, 'lcr'), [[106, 112], [140, 170], [200, 260]], 'a wider c cell alone, on the middle');
+  assert.deepEqual(E.measure(rows.flat(), box, 3), [[106, 112], [150, 180], [200, 260]], 'no aligns: left anchors');
 });
 // Typing in verbatim (pdfedit.ts): listings, verbatim, minted, \verb and \lstinline take every character as it is,
 // no escape, no math, no group; a `$` inside a listing opens no math for the text after it. Pins `\` typed into a
@@ -487,4 +509,21 @@ test('displayEnd: math display closers, nothing else', () => {
   for (const t of ['so \\[y=2\\]', 'so $$y$$', 'a\\begin{equation}x\\end{equation}', 'x\\end{align*}', 'x\\end{gather} \t']) assert.ok(end(t), t);
   for (const t of ['so \\(y\\)', 'x\\end{itemize}', 'x\\end{math}', 'so \\[y=2\\] ok', 'plain']) assert.ok(!end(t), t);
   assert.ok(E.displayEnd('\\[y\\] ok', 5) && !E.displayEnd('\\[y\\] ok', 3), 'at the offset given, not the text\'s end');
+});
+// One gap's space between two columns: `@{\hspace{v}}` before the next column's spec takes the place of the two paddings
+// there (array's `@`); the column before's `<{…}` stays, a gap with a rule, `!{…}` or another `@{…}` is no one length
+// and is left alone. Pins a Shift-drag on a gap that doubled an `@{}` or wrote over a `|`.
+test("Column gaps (pdfedit.ts)", async () => {
+  const E = self.satexPdfEdit;
+  const at = (text, a, b) => [text.indexOf(a) + a.length, text.indexOf(b, text.indexOf(a) + a.length)];
+  const apply = (text, edits) => edits.reduceRight((t, e) => t.slice(0, e.from) + e.now + t.slice(e.to), text);
+  const t = '\\begin{tabular}{lp{2cm}<{\\hfill} r}';
+  const g = E.gap(t, ...at(t, 'p{2cm}', 'r'));
+  assert.equal(g.now, null);
+  const set = apply(t, g.edits('4pt'));
+  assert.equal(set, '\\begin{tabular}{lp{2cm}<{\\hfill} @{\\hspace{4pt}}r}', "after the column's <{…}");
+  assert.equal(E.gap(set, ...at(set, 'p{2cm}', 'r')).now, '4pt', 'read back');
+  assert.equal(apply(set, E.gap(set, ...at(set, 'p{2cm}', 'r')).edits('1pt')), set.replace('4pt', '1pt'), 'rewritten in place');
+  assert.equal(apply(set, E.gap(set, ...at(set, 'p{2cm}', 'r')).edits(null)), t, 'dropped');
+  for (const sep of ['|', '!{x}', '@{}', '@{\\hspace{1pt}}@{\\hspace{1pt}}']) assert.equal(E.gap(`{l${sep}r}`, 2, 2 + sep.length), null, `${sep}: not one length`);
 });

@@ -30,7 +30,7 @@ function expectEdit(text, at, keys) {
 /** The keys of a scenario: strings split into characters, named keys kept. */
 // `Pause`: no key, a rest of `sc.pauseMs` (a build starts while the person thinks, then lands while they type on)
 // `MathDisplay`: the Type bar's display-math control (typing `\\[` is refused: it would change the source's structure)
-const NAMED = /^(Backspace|Enter|Escape|ArrowLeft|ArrowRight|ArrowUp|ArrowDown|Tab|Ctrl\+Backspace|Pause|MathDisplay)$/;
+const NAMED = /^(Backspace|Enter|Escape|ArrowLeft|ArrowRight|ArrowUp|ArrowDown|Tab|Ctrl\+Backspace|Ctrl\+Enter|Pause|MathDisplay)$/;
 const keysOf = (seq) => seq.flatMap((x) => (NAMED.test(x) ? [x] : [...x]));
 
 const J = JSON.stringify;

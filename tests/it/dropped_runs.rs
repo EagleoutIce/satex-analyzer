@@ -96,3 +96,23 @@ fn a_runaway_that_abandons_a_frame_end_leaves_no_exact_count_of_its_own() {
         assert!(count == "0" || count.contains("unknown"), "arms {clean:?} {runaway:?}: {count:?}");
     }
 }
+
+/// A run stopped while it builds the kernel (the playground's cancel when a newer text comes) reads no
+/// document. The stop was once cleared with the kernel's facts: the text ran on the cut kernel, found
+/// `\documentclass` undefined, ended unexhausted, and the next run of the same text took that end as its own.
+#[test]
+fn a_run_stopped_in_its_kernel_build_reads_no_document() {
+    let cfg = Config {
+        cache: satex::project::config::Cache { enabled: false, ..Default::default() },
+        ..crate::support::config()
+    };
+    let source = "\\documentclass{article}\n\\begin{document}\nHello.\n\\end{document}\n";
+    let (analysis, stopped) =
+        satex::analysis::probe::cancellable(Box::new(|| true), || Machine::analyze(source, None, &cfg));
+    let undefined: Vec<_> = (analysis.facts.expansions.iter())
+        .filter(|e| e.meaning == satex::analysis::facts::MeaningKind::Undefined)
+        .map(|e| analysis.interner.name(e.name).to_string())
+        .collect();
+    assert!(stopped && analysis.exhausted, "{:#?}", all(&analysis));
+    assert!(undefined.is_empty(), "{undefined:?}");
+}

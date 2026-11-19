@@ -1594,6 +1594,26 @@ fn an_archive_of_another_semantic_version_is_skipped() {
     assert!(report.iter().any(|l| l.contains("kernel pdftex: rebuilt")), "{report:?}");
 }
 
+/// An archive of another satex build (the same semantic version, another key: what a site build
+/// shipped from a last bundle after the interpreter changed) is skipped whole, never loaded; the
+/// kernel is built again. The bug: the playground built its kernel for minutes on a first visit.
+#[test]
+fn an_archive_of_another_key_is_skipped() {
+    let p = Portable::new("archive-key");
+    let cfg = p.built();
+    p.export(&cfg);
+    let mut bytes = std::fs::read(&p.archive).expect("archive");
+    let key = satex::caches::format::cache_key().as_bytes();
+    let at = bytes.windows(key.len()).position(|w| w == key).expect("key") + key.len() - 1;
+    bytes[at] = if bytes[at] == b'0' { b'1' } else { b'0' };
+    std::fs::write(&p.archive, bytes).expect("archive");
+    std::fs::remove_dir_all(&p.cache).expect("cache wiped");
+    let said = p.import(&cfg);
+    assert!(said.contains("(key ") && said.contains("imported 0 cache file(s)"), "{said}");
+    let report = p.run(&cfg).cache_report();
+    assert!(report.iter().any(|l| l.contains("kernel pdftex: rebuilt")), "{report:?}");
+}
+
 /// A bundle as the only root, with the imported caches: no installation needed.
 #[test]
 fn a_bundle_is_the_only_root_and_reuses_the_imported_caches() {

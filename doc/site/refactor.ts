@@ -1,12 +1,21 @@
 // Refactor plugins (actions.ts registry, category `refactor`): rewrites of the source a right click offers in the
 // editor, the PDF and the Typeset view. A float around a picture, a table or an image (and back), math from one
-// display to another, a selection to a `\newcommand`. Each rewrite is a pure function of the text here (unit-tested in
+// display to another, a selection to a `\newcommand`. Insert (plugin `insert`): new content at the place clicked or at the caret. Each rewrite is a pure function of the text here (unit-tested in
 // tests/refactor.test.mjs); a menu row writes its edits through `ctx.write`: one undo step through the snapshot printer.
 export {};
 declare global {
   /** A span of the source: `[from, to)` offsets; `env` an environment's name, `head` the end of its `\begin{..}[..]`. */
   type RfSpan = { kind: string; from: number; to: number; env?: string; head?: number; foot?: number };
   type RfMath = RfSpan & { open: string; close: string; body: string };
+  /** A thing Insert writes: its text (`\x01` the caret), the float it goes into, the widget opened on it; `flow` a mark in the running text, `tight` a display that may stand inside a paragraph, `before` a mark
+   * set before the sentence's end. */
+  type InsItem = { kind: string; label: string; hint?: string; body: string | ((text: string, at: number) => string); wrap?: boolean; widget?: string; flow?: boolean; tight?: boolean; before?: boolean };
+  /** Where Insert goes: the caret (`caret`), a blank place between paragraphs (`place`, PE.blankPlace), the block clicked (its last line `to`). */
+  type InsTarget = { caret?: number | null; place?: number | null; block?: { to: number; what: string } | null };
+  /** `caret` at the caret; `after` a block of its own after the line ending at `at`; `end` a mark at a paragraph's end. */
+  type InsMode = 'caret' | 'after' | 'end';
+  /** One undo step's edit; `caret` and `open` (the widget's place) are offsets in the text after it. */
+  type InsPlan = { edits: PaEdit[]; caret: number; open: number; widget: string | null };
   interface Window {
     satexRefactor: {
       blank(text: string): string; envs(text: string): RfSpan[]; group(text: string, at: number): number;
@@ -20,6 +29,9 @@ declare global {
       matrixAt(text: string, at: number, end?: number): (RfSpan & { grid: boolean; body: string }) | null; matrixTo(text: string, m: RfSpan & { grid: boolean; body: string }, to: string): string;
       extract(text: string, all: string, a: number, b: number, name: string, every: boolean): { edits: PaEdit[] } | { error: string };
       occurrences(text: string, body: string): number[];
+      inserts: InsItem[];
+      insertSpot(text: string, t: InsTarget, flow: boolean): { at: number; mode: InsMode } | null;
+      insertPlan(text: string, all: string, kind: string, at: number, mode: InsMode): InsPlan | null;
       lineHabit(text: string): number; wrapLine(text: string, at: number, max: number, indent?: boolean): PaEdit | null;
     };
   }
@@ -310,7 +322,74 @@ declare global {
     const best = spaces.filter(([i]) => i <= max).reduce<[number, number] | null>((x, y) => !x || y[1] > x[1] || y[1] === x[1] && y[0] > x[0] ? y : x, null) ?? spaces[0] ?? null;
     return best ? { from: a + best[0], to: a + best[0] + 1, now: `\n${indent ? ind : ''}` } : null;
   }
-  self.satexRefactor = { lineHabit, wrapLine, blank, envs, group, wrapTarget, wrap, unwrap, slug, firstWords, mathAt, rows, targets, mathTo, mathEdit, needsAms, pkgEdit, matrixAt, matrixTo, extract, occurrences };
+
+  // ---------------------------------------------------------------- insert
+  const TIKZ = '\\begin{tikzpicture}\n  \\node[draw] (a) at (0,0) {A};\n  \\node[draw] (b) at (3,0) {B};\n  \\draw[->] (a) -- (b);\n\\end{tikzpicture}';
+  /** The heading level of the last heading before `at` (a new one is its sibling), `section` when none. */
+  const level = (text: string, at: number) => [...blank(text.slice(0, at)).matchAll(/\\(part|chapter|(?:sub)*section|(?:sub)?paragraph)\*?\s*[[{]/g)].at(-1)?.[1] ?? 'section';
+  /** What Insert offers, in menu order. Figures and tables go into a float by `wrap` (caption, label, the caret in the caption). */
+  const inserts: InsItem[] = [
+    { kind: 'figure-image', label: 'Figure with an image', hint: 'alt text', body: '\\includegraphics[width=0.8\\linewidth]{example-image}', wrap: true, widget: 'image' },
+    { kind: 'figure-drawing', label: 'Figure with a drawing', hint: 'TikZ', body: TIKZ, wrap: true, widget: 'tikz' },
+    { kind: 'table', label: 'Table', hint: 'caption above', body: '\\begin{tabular}{ll}\n  Name & Value \\\\\n  \\hline\n  a & 1 \\\\\n\\end{tabular}', wrap: true, widget: 'table' },
+    { kind: 'itemize', label: 'Bulleted list', hint: 'itemize', body: '\\begin{itemize}\n  \\item \x01\n\\end{itemize}', tight: true },
+    { kind: 'enumerate', label: 'Numbered list', hint: 'enumerate', body: '\\begin{enumerate}\n  \\item \x01\n\\end{enumerate}', tight: true },
+    { kind: 'equation', label: 'Equation', hint: 'equation', body: '\\begin{equation}\n  \x01\n\\end{equation}', tight: true },
+    { kind: 'align', label: 'Aligned equations', hint: 'align', body: '\\begin{align}\n  \x01\n\\end{align}', tight: true },
+    { kind: 'heading', label: 'Section heading', hint: 'same level', body: (text, at) => `\\${level(text, at)}{\x01}` },
+    { kind: 'footnote', label: 'Footnote', hint: '\\footnote', body: '\\footnote{\x01}', flow: true },
+    { kind: 'cite', label: 'Citation', hint: '\\cite', body: '~\\cite{\x01}', flow: true, before: true },
+    { kind: 'ref', label: 'Reference', hint: '\\ref', body: '~\\ref{\x01}', flow: true, before: true },
+    { kind: 'tikz', label: 'TikZ picture', hint: 'tikzpicture', body: TIKZ, widget: 'tikz' },
+    { kind: 'forest', label: 'Forest tree', hint: 'forest', body: '\\begin{forest}\n  [Root\n    [Child]\n    [Child]\n  ]\n\\end{forest}', widget: 'forest' },
+  ];
+  /** Where an insert goes: at the caret; at a blank place between paragraphs; after the block clicked (a mark of the
+   * running text at its paragraph's last character). Null for a mark where no paragraph is. */
+  function insertSpot(text: string, t: InsTarget, flow: boolean): { at: number; mode: InsMode } | null {
+    if (t.caret != null) return { at: t.caret, mode: 'caret' };
+    if (t.place != null) return flow ? null : { at: t.place, mode: 'after' };
+    if (!t.block) return null;
+    let end = 0;
+    for (let n = 1; n < t.block.to && text.indexOf('\n', end) >= 0; n++) end = text.indexOf('\n', end) + 1;
+    end = lineEnd(text, end);
+    if (!flow) return { at: end, mode: 'after' };
+    if (t.block.what !== 'paragraph') return null;
+    while (end > 0 && /\s/.test(text[end - 1]!)) end--;
+    return { at: end, mode: 'end' };
+  }
+  /** The edits that write insert `kind` at `at`: a block on lines of its own (blank lines around it, a display inside a
+   * paragraph at the caret only on its own lines), a mark in the text (`~` after a word); a float by `wrap`. The
+   * package a new name needs is the snapshot printer's: it loads what the run does not define, in the same write. */
+  function insertPlan(text: string, all: string, kind: string, at: number, mode: InsMode): InsPlan | null {
+    const it = inserts.find((k) => k.kind === kind);
+    if (!it) return null;
+    let body = typeof it.body === 'function' ? it.body(text, at) : it.body, pre = '', post = '';
+    if (it.flow) {
+      if (it.before && mode === 'end') while (/[.,;:!?]/.test(text[at - 1] ?? '')) at--;
+      if (body[0] === '~' && (at === 0 || /\s/.test(text[at - 1]!))) body = body.slice(1);
+    } else {
+      const sep = it.tight && mode === 'caret' ? '\n' : '\n\n', a = lineStart(text, at), e = lineEnd(text, at), ind = indentAt(text, at);
+      const before = text.slice(a, at), next = e < text.length ? text.slice(e + 1, lineEnd(text, e + 1)) : '', prev = a ? text.slice(lineStart(text, a - 1), a - 1) : '';
+      pre = before.trim() ? sep + ind : before ? '' : prev.trim() ? sep.slice(1) : '';
+      post = text.slice(at, e).trim() ? sep + ind : next.trim() && !/^\s*\\end\b/.test(next) ? sep.slice(1) : '';
+      body = body.split('\n').map((l, i) => (i && l ? ind + l : l)).join('\n');
+    }
+    const k = body.indexOf('\x01'), clean = body.replace('\x01', ''), start = at + pre.length;
+    let now = text.slice(0, at) + pre + clean + post + text.slice(at), caret = k >= 0 ? start + k : start + clean.length, open = start;
+    if (it.wrap) {
+      const r = wrap(now, wrapTarget(now, start)!, all);
+      now = now.slice(0, r.edit.from) + r.edit.now + now.slice(r.edit.to);
+      caret = r.caret;
+      open = now.indexOf(clean.split('\n')[0]!, r.edit.from);
+    }
+    // one edit: what differs between the text and the text with the insert
+    let p = 0, s = 0;
+    while (p < text.length && text[p] === now[p]) p++;
+    while (s < text.length - p && text[text.length - 1 - s] === now[now.length - 1 - s]) s++;
+    const edits: PaEdit[] = [{ from: p, to: text.length - s, now: now.slice(p, now.length - s) }];
+    return { edits, caret, open, widget: it.widget ?? null };
+  }
+  self.satexRefactor = { inserts, insertSpot, insertPlan, lineHabit, wrapLine, blank, envs, group, wrapTarget, wrap, unwrap, slug, firstWords, mathAt, rows, targets, mathTo, mathEdit, needsAms, pkgEdit, matrixAt, matrixTo, extract, occurrences };
 
   // ---------------------------------------------------------------- the plugins
   const PA = self.satexPageActions, R = self.satexRefactor, TARGETS = ['source', 'block', 'tikz-node', 'tikz-label', 'tikz-edge', 'forest-node', 'table-column'];
@@ -373,6 +452,16 @@ declare global {
       }, true);
       return [{ title: 'Refactor', items: [{ label: 'Extract to \\newcommand…', hint: 'here', run: () => go(false) },
         ...(n > 1 ? [{ label: `Extract to \\newcommand, ${n} places…`, hint: 'each', run: () => go(true) }] : [])] }];
+    },
+  });
+  PA.register({
+    name: 'insert', title: 'Insert', type: 'insert', targets: ['block', 'place', 'caret'],
+    about: 'New content where the PDF or the Typeset view is right-clicked (after the paragraph, or between paragraphs) and at the caret from the Type bar\'s Insert menu: a figure with an image or a drawing, a table, a list, an equation, a heading, a footnote, a citation or reference, a TikZ picture, a forest tree. Its widget opens at once, the package it needs is loaded, one undo step',
+    groups(t, ctx) {
+      if (!ctx.insert) return [];
+      // a mark of the running text (a footnote, a citation) only where a paragraph is
+      const para = t.kind === 'caret' || t.place == null && t.block?.what === 'paragraph';
+      return [{ title: 'Insert', items: R.inserts.filter((k) => para || !k.flow).map((k) => ({ label: k.label, hint: k.hint, run: () => ctx.insert!(k.kind, t) })) }];
     },
   });
 })();

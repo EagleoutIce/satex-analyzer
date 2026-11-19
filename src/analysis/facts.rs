@@ -495,6 +495,21 @@ pub struct Text {
     /// characters set before and the parameters the breaker read there.
     #[serde(default)]
     pub breaks: Vec<(u32, crate::engine::linebreak::Params)>,
+    /// Where the lines of paragraphs on no enclosing horizontal list end, as the run's
+    /// breaker made them: the characters set before, and how ([`crate::plugins::typeset::lines`]).
+    #[serde(default)]
+    pub lines: Vec<(u32, LineEnd)>,
+}
+
+/// A record of [`Text::lines`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum LineEnd {
+    /// A line ends, at glue, a penalty or the paragraph's end.
+    Line,
+    /// A line ends at a discretionary hyphen (§ 1035 `pre_break`).
+    Hyphen,
+    /// A line ends where the run did not follow the breaker: the paragraph's lines are not known.
+    Unknown,
 }
 
 /// A paragraph's start: the width set before its first character (the indent box, \

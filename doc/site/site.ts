@@ -1087,7 +1087,9 @@ interface Stream {
       ` style="--depth: ${d}${typeof r.skip === 'number' && !r.heading ? `; --skip: ${Math.max(r.skip, 0)}pt` : ''}${ind != null && !r.heading ? `; --indent: ${Math.max(ind, 0)}pt` : ''}">` +
       `<span class="ts-at"${last > r.line ? ` title="lines ${r.line}–${last}"` : ''}>${r.line ?? ''}</span><span class="ts-rails" aria-hidden="true"></span>` +
       `<span class="ts-text">${switches(r)}${choiceSpaces((r.causes ?? []).filter((c: Rec) => c.on != null).reduce((h: string, c: Rec) => { const ref = splitKind(c.test || c.parted || c.mark); return h.replaceAll(`<span class="ts-choice" data-on="${esc(c.on)}">`, `<span class="ts-choice${ref ? ' ts-ref' : ''}" data-on="${esc(c.on)}" title="${esc(ref ? maybeTip(c) : choiceTip(c))}">`); },
-        notation(withKeys(r.marked ?? r.detail ?? '', r.keys, r.fonts, r.align, r.ligatures, r.lines), r.sketches, r.sketch)))}</span></p>`;
+        notation(withKeys(r.marked ?? r.detail ?? '', r.keys, r.fonts, r.align, r.ligatures, r.lines), r.sketches, r.sketch)))}</span>` +
+      // the run's own lines (`linebreaks`), shown instead by the Show switch
+      (r.linebreaks?.length ? `<span class="ts-linebreaks">${r.linebreaks.map((l: string) => `<span class="ts-tl">${esc(l)}</span>`).join('')}</span>` : '') + '</p>';
   };
   /** A page `\shipout` sent out, as a labelled line where the next one begins; a page the run did not
    * break though it filled (`filled`) as a dashed one: pdfTeX breaks it by there. */

@@ -156,7 +156,7 @@ function* leaves(items, path = []) {
 }
 /** A context over `text` that records each write and each toast; `pick` picks `other`. */
 const ctxOf = (text, other = null, facts = null) => {
-  const c = { text, all: text, x: 0, y: 0, facts, writes: [], toasts: [], write: (e) => c.writes.push(e), toast: (m) => c.toasts.push(m), pick: (_, done) => other && done(other), colAlign: (t, k, a, w) => c.writes.push([{ col: w == null ? [t, k, a] : [t, k, a, w] }]) };
+  const c = { text, all: text, x: 0, y: 0, facts, writes: [], toasts: [], write: (e) => c.writes.push(e), toast: (m) => c.toasts.push(m), pick: (_, done) => other && done(other), colAlign: (t, k, a, w, h) => c.writes.push([{ col: [t, k, a, ...(w == null && h == null ? [] : [w]), ...(h == null ? [] : [h])] }]) };
   return c;
 };
 
@@ -408,8 +408,36 @@ test('forest and table rows', withStore(() => {
   // widths: a preset makes the column a paragraph `p{…}`, natural width keeps its letter
   assert.deepEqual(col[1].items.map((i) => i.label + (i.on ? '*' : '')).slice(0, 2), ['natural (as wide as its text)*', '2cm']);
   col[1].items[2].run();
-  assert.deepEqual(c.writes.at(-1), [{ col: [0, 1, 'p', '3cm'] }]);
+  assert.deepEqual(c.writes.at(-1), [{ col: [0, 1, 'r', '3cm'] }], 'an r column given a width stays right (respec)');
   assert.deepEqual(PA.groups({ kind: 'table-column', t: 0, k: 0, col: { align: 'X' } }, c), [], 'no letter to rewrite: no menu');
+}));
+
+// Intuition: a paragraph column (p, m, b, X) is aligned horizontally by the declaration its `>{…}` puts first, one
+// table (pdfedit.ts HALIGN) read for the checked row and written by the one spec rewrite (respec) the width path uses,
+// other `>{…}` kept, array loaded. Pins the p column menu offering only top/middle/bottom.
+test('paragraph column alignment', withStore(() => {
+  const E = self.satexPdfEdit, c = ctxOf('x');
+  // the whole spec and its package; its parts make it up
+  const rs = (...a) => { const r = E.respec(...a); assert.ok(!r || r.body === r.pre + r.letter); return r && { body: r.body, array: r.array }; };
+  const menu = (text, align, width) => PA.groups({ kind: 'table-column', t: 0, k: 2, col: { spec: { text }, align, width } }, c);
+  const rows = (gs) => gs.map((g) => `${g.title}: ${g.items.filter((i) => i.on).map((i) => i.label).join()}`);
+  assert.deepEqual(rows(menu('p{3cm}', 'p', '3cm')), ['Align: p: top (paragraph)', 'Paragraph: justified', 'Width: 3cm']);
+  assert.deepEqual(rows(menu('>{\\raggedleft\\arraybackslash}p{3cm}', 'p', '3cm')).slice(1, 2), ['Paragraph: right (\\raggedleft)']);
+  assert.deepEqual(rows(menu('>{\\centering}X', 'X')), ['Paragraph: centered (\\centering)'], 'X: only the paragraph alignment');
+  menu('m{2cm}', 'm', '2cm')[1].items[1].run();
+  assert.deepEqual(c.writes.at(-1), [{ col: [0, 2, 'm', '2cm', 'l'] }]);
+  menu('>{\\raggedleft\\arraybackslash}p{3cm}', 'p', '3cm')[2].items[0].run();
+  assert.deepEqual(c.writes.at(-1), [{ col: [0, 2, 'r', ''] }], 'natural width: the letter of its alignment');
+  // the spec rewrite: each alignment, other `>{…}` kept, back to justified, to natural, array where `>` or m/b
+  assert.equal(E.halign('>{\\bfseries\\centering\\arraybackslash}p{1cm}'), 'c');
+  assert.equal(E.halign('>{\\centering}>{\\raggedright}p{1cm}'), 'l', 'the last declaration wins');
+  assert.deepEqual(rs('m', '2cm', 'm{2cm}', 'l'), { body: '>{\\raggedright\\arraybackslash}m{2cm}', array: true });
+  assert.deepEqual(rs('p', '3cm', '>{\\bfseries}>{\\raggedleft\\arraybackslash}p{3cm}', 'c'), { body: '>{\\centering\\arraybackslash}>{\\bfseries}p{3cm}', array: true });
+  assert.deepEqual(rs('p', '3cm', '>{\\raggedleft\\arraybackslash}p{3cm}', 'j'), { body: 'p{3cm}', array: false });
+  assert.deepEqual(rs('p', '3cm', '>{\\raggedleft\\arraybackslash} p{3cm}'), { body: '>{\\raggedleft\\arraybackslash}p{3cm}', array: true }, 'no h: kept');
+  assert.deepEqual(rs('r', null, '>{\\raggedleft\\arraybackslash}p{3cm}'), { body: 'r', array: false });
+  assert.deepEqual(rs('X', null, 'X', 'r'), { body: '>{\\raggedleft\\arraybackslash}X', array: true });
+  assert.equal(E.respec('p', null, 'p{1cm}'), null, 'a paragraph takes a width');
 }));
 
 // Intuition: TikZ knows a name only after its node: a node moves in the drawing order only where nothing then refers to a
@@ -435,7 +463,7 @@ test('plugins switched per viewer and with their type plugin', withStore(() => {
   assert.equal(PA.groups(t, ctxOf(text)).length, 0);
   PA.setOn('tikz-node', true);
   assert.ok(PA.groups(t, ctxOf(text)).length);
-  assert.deepEqual(PA.plugins.map((p) => p.name), ['tikz-node', 'tikz-label', 'tikz-edge', 'tikz-bend', 'tikz-grid', 'forest-node', 'table-column', 'slice', 'refactor-float', 'refactor-math', 'refactor-extract']);
+  assert.deepEqual(PA.plugins.map((p) => p.name), ['tikz-node', 'tikz-label', 'tikz-edge', 'tikz-bend', 'tikz-grid', 'forest-node', 'table-column', 'slice', 'refactor-float', 'refactor-math', 'refactor-extract', 'insert']);
 }));
 
 // Intuition: a dragged node is written beside its reference as positioning does: a side when the centres line up, a
@@ -582,8 +610,8 @@ test('scratch: build puts the region between markers, extract reads it back', ()
   const r = SC.extract(text);
   assert.deepEqual([r.file, r.from, r.to], ['chapter.tex', 4, 8]);
   assert.equal(r.body, CHAPTER.split('\n').slice(3, 8).join('\n'));
-  assert.match(text, /\\begin\{table\}\n {2}\\centering\n\\end\{table\}\n% satex-scratch begin/, 'the table before stays whole');
-  assert.match(text, /% satex-scratch end\n\\end\{document\}\n$/);
+  assert.match(text, /\\begin\{table\}\n {2}\\centering\n\\end\{table\}\n%\\satex@scratch\{begin/, 'the table before stays whole');
+  assert.match(text, /%\\satex@scratch\{end\}\n\\end\{document\}\n$/);
   assert.equal(text.match(/\\begin\{figure\}/g).length, 1, 'the slice\'s copy is gone');
   // a dropped comment line of the region comes back with it
   const commented = CHAPTER.replace('  \\centering', '  % keep\n  \\centering');
@@ -653,6 +681,36 @@ test('scratch: local keeps the preamble, the definitions the region needs, the r
   assert.match(text, /\\newcommand\\inner\{x\}/, 'what the kept definition names');
   assert.ok(!/unused|\\input|Text\.|More\./.test(text), text);
   assert.equal(SC.extract(text).body, texts['chapter.tex'].split('\n').slice(3, 8).join('\n'));
-  assert.match(text, /% satex-scratch end\n\\end\{document\}\n$/);
+  assert.match(text, /%\\satex@scratch\{end\}\n\\end\{document\}\n$/);
   assert.equal(SC.local({ 'a.tex': 'x' }, 'a.tex', 'a.tex', 1, 1, []), null, 'no document: no local scratch');
 });
+
+// Intuition: a table's column spacing is \tabcolsep (an array's \arraycolsep) set right before its \begin, kept local:
+// inside the environment around the table, else in a group written around it, as a group undoes a declaration at its
+// end (tex.web § 282). The current value reads back from that setting, else the run's; default drops it, giving the
+// text back as it was. Pins a spacing menu that leaks the setting into the rest of the document or reads a fixed 6pt.
+test('table column spacing', withStore(() => {
+  const pos = (text, o) => ({ line: text.slice(0, o).split('\n').length - 1, character: o - text.lastIndexOf('\n', o - 1) - 1 });
+  const menu = (text, env = 'tabular', seps = { tabcolsep: 5, arraycolsep: 2.5 }) => {
+    const c = ctxOf(text), o = text.indexOf('{ll}') + 1;
+    const gs = PA.groups({ kind: 'table-column', t: 0, k: 0, env, seps, col: { spec: { text: 'l', range: { start: pos(text, o) } }, align: 'l' } }, c);
+    const g = gs.find((g) => g.title === 'Spacing');
+    return { g, set: (label) => { g.items.find((i) => i.label.endsWith(label)).run(); return edit(text, c.writes.at(-1)); } };
+  };
+  const table = '\\begin{table}\n  \\centering\n  \\begin{tabular}{ll}\n  a & b \\\\\n  \\end{tabular}\n\\end{table}\n';
+  const set = menu(table).set('4pt');
+  assert.equal(set, table.replace('  \\begin{tabular}', '  \\setlength{\\tabcolsep}{4pt}\n  \\begin{tabular}'), 'inside the table environment: a line before');
+  assert.deepEqual(menu(set).g.items.filter((i) => i.on).map((i) => i.label), ['\\tabcolsep 4pt'], 'read back');
+  assert.equal(menu(set).set('8pt'), set.replace('{4pt}', '{8pt}'), 'rewritten in place');
+  assert.equal(menu(set).set(')'), table, 'default: as it was');
+  assert.equal(menu(table).g.items[0].label, 'default (5pt)', "the run's value");
+  // mutations: in the document body a group around the table, the outer \end past a nested table, an array's own
+  const body = '\\begin{document}\nx\n\\begin{tabular}{ll}\na & \\begin{tabular}{l}y\\end{tabular} \\\\\n\\end{tabular}\nz\n\\end{document}\n';
+  const wrapped = menu(body).set('0pt');
+  assert.equal(wrapped, body.replace('\\begin{tabular}{ll}', '{\\setlength{\\tabcolsep}{0pt}%\n\\begin{tabular}{ll}').replace('\\end{tabular}\nz', '\\end{tabular}}\nz'));
+  assert.equal(menu(wrapped).set('2pt'), wrapped.replace('{0pt}', '{2pt}'));
+  assert.equal(menu(wrapped).set(')'), body, 'default: the group goes too');
+  const arr = '\\[\\begin{array}{ll} a & b \\end{array}\\]';
+  assert.equal(menu(arr, 'array').g.items[0].label, 'default (2.5pt)');
+  assert.match(menu(arr, 'array').set('4pt'), /\{\\setlength\{\\arraycolsep\}\{4pt\}%\n\\begin\{array\}/);
+}));

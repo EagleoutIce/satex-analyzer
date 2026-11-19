@@ -57,6 +57,7 @@ declare global {
     pages: ['page breaks', 'page breaks, headers and footers', true, true],
     footnotes: ['footnotes at page end', 'footnotes at the page\'s end, else where their mark stands', true, false],
     hyphens: ['hyphenation points', 'where TeX may break a word', false, false],
+    linebreaks: ['TeX\'s lines', 'each paragraph broken into lines where the run\'s own line breaker (TeX\'s, with the fonts\' widths, kerns, ligatures and hyphenation) broke it, where all of it is known', false, true],
     justify: ['justified', 'lines set flush on both sides, as TeX justifies them (off: ragged right)', false, true],
     numbers: ['section numbers', 'the numbers of headings', true, false],
     refs: ['printed references', 'references and citations as printed (the keys layer shows their keys)', true, false],

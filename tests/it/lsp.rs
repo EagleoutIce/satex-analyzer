@@ -6955,6 +6955,32 @@ fn break_hyphenates_where_pdftex_did() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// The run's own lines: narrow.tex's paragraphs as the typeset rows' `linebreaks`, which the run's
+/// breaker made while it set them (no request rebuilds the list), against pdfTeX's rows (narrow.json,
+/// `pdftotext -layout` of pdfTeX's PDF). Intuition: a paragraph whose list, fonts and parameters the run
+/// knows is broken as pdfTeX breaks it, hyphens included, and the view reads those lines, not a fit of
+/// its own. Pins line ends mapped to the wrong characters (a ligature's letters, a hyphen point, the
+/// `\parfillskip` the breaker appends) and lines missing where all was known.
+#[test]
+fn typeset_rows_carry_the_lines_pdftex_set() {
+    let fixtures = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/linebreak");
+    let source = std::fs::read_to_string(fixtures.join("narrow.tex")).unwrap();
+    let fixture: Value = serde_json::from_str(&std::fs::read_to_string(fixtures.join("narrow.json")).unwrap()).unwrap();
+    let (mut server, uri, dir) = open_set("lines-narrow", &source, &[]);
+    let id = server.request("satex/typeset", json!({ "textDocument": { "uri": uri } }));
+    let rows = server.response(id)["result"].clone();
+    let rows = rows.as_array().unwrap_or_else(|| panic!("rows: {rows}"));
+    for p in fixture["paragraphs"].as_array().unwrap() {
+        // the fixture counts lines from 0, the rows from 1
+        let line = p["line"].as_u64().unwrap() + 1;
+        let row = rows.iter().find(|r| r["kind"] == "paragraph" && r["line"] == line);
+        let row = row.unwrap_or_else(|| panic!("a row at line {line}"));
+        assert_eq!(row["linebreaks"], p["rows"], "line {line}: {}", row["detail"]);
+    }
+    server.shutdown();
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// The lean scope a busy playground completes from: `\textbf` reads one braced argument
 /// (`args` `m`, through the robust partner it hands off to), `\frac` two, math commands carry
 /// `math` (`\sum`, `\alpha`, `\frac`) and text ones do not, and a math character constant is

@@ -582,6 +582,57 @@ def probe_doc(probes, name):
     return doc
 
 
+# Kernels: the sample's files and the cache entries of running it. A kernel's
+# cache directory stays from the last build: satex rebuilds what this binary cannot use, and
+# `cache export` writes only the valid entries.
+def kernel_caches(satex, work, project, kernel, flags):
+    # The kernel's archive holds the format and what the sample loads, nothing else: the shared
+    # directory gathers every package any run met, which would ship with the first download.
+    shared, alone = work / f"cache-{kernel}", work / f"cache-{kernel}-sample"
+    archive = work / f"satex-cache-{kernel}.bin"
+    stamp = archive.with_suffix(".key")
+    built = stamp.read_text() if stamp.is_file() else None
+    if archive.is_file() and built == KEY:
+        return archive
+    # A fast pass keeps another kernel's last archive (the page rebuilds what this binary cannot use),
+    # never pdfTeX's: its kernel is what the first visit analyzes with, minutes to build in the browser.
+    if FAST and archive.is_file() and kernel != "pdftex":
+        SKIPPED.append("kernel caches")
+        return archive
+    shutil.rmtree(alone, ignore_errors=True)
+    alone.mkdir(parents=True)
+    shared.mkdir(parents=True, exist_ok=True)
+    for f in shared.glob("format-*"):
+        shutil.copy2(f, alone / f.name)
+    kenv = dict(os.environ, SATEX_CACHE=str(alone))
+    proc([str(satex), *flags, "lint", "-f", SAMPLE], cwd=project, env=kenv, capture_output=True, check=False)
+    run(str(satex), "cache", "export", str(archive), env=kenv)
+    stamp.write_text(KEY)
+    # a format built here keeps the shared directory warm for the next build
+    for f in alone.glob("format-*"):
+        if not (shared / f.name).exists():
+            shutil.copy2(f, shared / f.name)
+    return archive
+
+
+def archive_key(data):
+    """The key a `satex cache export` archive was made under (src/cli/cache/archive.rs `Archive`, postcard:
+    each string a varint length, then the magic, the semantic version and the key)."""
+    def varint(at):
+        n = shift = 0
+        while True:
+            n, at, shift = n | (data[at] & 0x7F) << shift, at + 1, shift + 7
+            if not data[at - 1] & 0x80:
+                return n, at
+    try:
+        size, at = varint(0)
+        _, at = varint(at + size)
+        size, at = varint(at)
+        return data[at:at + size].decode()
+    except (IndexError, UnicodeDecodeError):
+        return None
+
+
 def bundle(satex, work):
     """What the browser downloads, by the same steps for every kernel and package.
     A kernel's bundle: the TeX files the default sample reads, laid out like texmf-dist,
@@ -685,38 +736,6 @@ def bundle(satex, work):
     if lacking:
         print(f"playground: warning: examples look for TeX Live files the bundle lacks: {', '.join(lacking)}", file=sys.stderr)
 
-    # Kernels: the sample's files and the cache entries of running it. A kernel's
-    # cache directory stays from the last build: satex rebuilds what this binary cannot use, and
-    # `cache export` writes only the valid entries.
-    def kernel_caches(kernel, flags):
-        # The kernel's archive holds the format and what the sample loads, nothing else: the shared
-        # directory gathers every package any run met, which would ship with the first download.
-        shared, alone = work / f"cache-{kernel}", work / f"cache-{kernel}-sample"
-        archive = work / f"satex-cache-{kernel}.bin"
-        stamp = archive.with_suffix(".key")
-        built = stamp.read_text() if stamp.is_file() else None
-        if archive.is_file() and built == KEY:
-            return archive
-        # A fast pass keeps another kernel's last archive (the page rebuilds what this binary cannot use),
-        # never pdfTeX's: its kernel is what the first visit analyzes with, minutes to build in the browser.
-        if FAST and archive.is_file() and kernel != "pdftex":
-            SKIPPED.append("kernel caches")
-            return archive
-        shutil.rmtree(alone, ignore_errors=True)
-        alone.mkdir(parents=True)
-        shared.mkdir(parents=True, exist_ok=True)
-        for f in shared.glob("format-*"):
-            shutil.copy2(f, alone / f.name)
-        kenv = dict(os.environ, SATEX_CACHE=str(alone))
-        proc([str(satex), *flags, "lint", "-f", SAMPLE], cwd=project, env=kenv, capture_output=True, check=False)
-        run(str(satex), "cache", "export", str(archive), env=kenv)
-        stamp.write_text(KEY)
-        # a format built here keeps the shared directory warm for the next build
-        for f in alone.glob("format-*"):
-            if not (shared / f.name).exists():
-                shutil.copy2(f, shared / f.name)
-        return archive
-
     # Packages: the files a probe document reads. The cache entries are those the examples' runs, from a
     # copy of the kernel's caches, made for a package, whichever document loaded it: a package's entry
     # holds the state of everything loaded before it, so a probe's own would rarely match a document's.
@@ -750,7 +769,7 @@ def bundle(satex, work):
         return archives
 
     # Per kernel, its caches and then the packages' from a copy of them: kernels need not wait for each other.
-    both = parallel("[4/4] kernel and package caches", KERNELS, lambda k: (kernel_caches(k[0], k[2]), fresh(k[0], k[2])))
+    both = parallel("[4/4] kernel and package caches", KERNELS, lambda k: (kernel_caches(satex, work, project, k[0], k[2]), fresh(k[0], k[2])))
     archives = [a for a, _ in both]
     ran = {k: r for (k, _, _), (_, r) in zip(KERNELS, both)}
     tables, have, names = [], set(), {d.name for d in docs}
@@ -1482,6 +1501,13 @@ def playground(satex, wasm, work, out):
         work, "bundle", [STAMP, offered, sources_, tree_digest(ROOT / "samples"), (SITE / "playground.yaml").read_text(),
                          inspect.getsource(bundle)],
         lambda: bundle(satex, work), key=VIEW, stale=True)  # VIEW: it holds the previews query
+    # A --fast build takes the last bundle, made under another key when the interpreter changed: a kernel
+    # cache of another key does not load, and the first visit would build the kernel in the browser for minutes.
+    # Each kernel's archive is this key's (kernel_caches), a package's of another key is no download.
+    for (kernel, _, flags), files in zip(KERNELS, tables):
+        files[f"/kernels/{kernel}/satex-cache.bin"] = kernel_caches(satex, work, project, kernel, flags).read_bytes()
+    packages = [(k, n, {p: d for p, d in files.items() if not p.endswith("/satex-cache.bin") or archive_key(d) == KEY}, needs)
+                for k, n, files, needs in packages]
     PREVIEWS.update(json.loads(tables[0].get("/cache/previews.json") or b"{}"))
     documented = manuals(satex, work, tables, packages, offered, mining.result())
     side.shutdown()

@@ -1749,9 +1749,13 @@ impl Machine<'_> {
         para.shape = shape;
         let Some(skips) = skips else {
             para.lost = true;
+            self.note_line_ends(None);
             return self.note_lines(None, false);
         };
         let broken = self.break_lines(n, last);
+        if broken.is_none() {
+            self.note_line_ends(None);
+        }
         self.note_lines(broken.as_ref().map(|b| &b.0[..]), n.para.wide);
         if let Some((lines, fit)) = broken {
             for b in lines {
@@ -1984,15 +1988,8 @@ impl Machine<'_> {
     /// alignment's rows. One inside a box or alignment that goes into an
     /// outer paragraph is part of that one; a `\setbox` box is set apart.
     fn block_ended(&mut self) {
-        let inner = self
-            .env
-            .nests()
-            .rev()
-            .flatten()
-            .take_while(|n| n.target.is_none())
-            .any(|n| n.mode.meets(Modes::HORIZONTAL));
         let exact = self.exact();
-        if inner {
+        if self.in_inner_list() {
             return;
         }
         let text = &mut self.out.facts.text;
@@ -2005,6 +2002,13 @@ impl Machine<'_> {
         } else if exact && text.open.last() == Some(&at) {
             text.open.pop();
         }
+    }
+
+    /// Whether the list being built goes into an outer paragraph (a box or alignment in it), not
+    /// set apart by `\setbox`.
+    pub(crate) fn in_inner_list(&self) -> bool {
+        let mut outer = self.env.nests().rev().flatten().take_while(|n| n.target.is_none());
+        outer.any(|n| n.mode.meets(Modes::HORIZONTAL))
     }
 
     /// tex.web § 1096 `end_graf`: horizontal mode goes back to the vertical
@@ -5755,6 +5759,8 @@ impl Machine<'_> {
                 n.para.lines.0 = before.para.lines.0;
             }
         }
+        // the lines after the display are not followed from its end
+        self.note_line_ends(None);
         self.set_prevgraf(Value::Unknown);
         let para = Para {
             breakpoints: 0,

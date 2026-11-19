@@ -136,3 +136,24 @@ test('tikzTarget: a path operator in a picture opens the node names', () => {
   assert.equal(tikzTarget('pages 3--'), false, 'a dash in prose');
   assert.equal(tikzTarget('\\begin{tikzpicture}\\end{tikzpicture}\nsome --'), false, 'after the picture');
 });
+
+// Intuition: `\` and one non-letter are a whole name (tex.web §354), so after `\\`, `\,` or `\;` no longer name is typed and
+// Enter is a new line, not the list's first item. Pins `\\` Enter at a row's end writing `\greet` (user 2026-11-19).
+test('controlSymbol: a whole control symbol before the caret', () => {
+  const { controlSymbol } = self.satexViews.complete;
+  assert.equal(controlSymbol('a & b \\\\'), '\\');
+  assert.equal(controlSymbol('x\\,'), ',');
+  assert.equal(controlSymbol('x\\\\,'), null, '`\\\\` then a comma: the comma is text');
+  assert.equal(controlSymbol('x\\\\\\'), null, '`\\\\` then `\\`: a name starts');
+  assert.equal(controlSymbol('x\\'), null);
+  assert.equal(controlSymbol('\\gre'), null);
+  assert.equal(controlSymbol('a, b'), null);
+});
+
+// Intuition: the server's `sortText` orders by code point, so its `~` (a package not loaded yet) sorts after the loaded
+// environments' digits. Pins `\begin{cent` Tab taking `centernss` (struktex, `~0000…`) over `center` (`00100…`):
+// `localeCompare` put `~` first.
+test('rank: sortText by code point, `~` last', () => {
+  const items = [{ label: 'centernss', sortText: '~0000centernss' }, { label: 'center', sortText: '00100center' }];
+  assert.deepEqual(labels(rank(items, 'cent')), ['center', 'centernss']);
+});

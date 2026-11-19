@@ -273,6 +273,38 @@ pub fn bar(
     }
 }
 
+/// What a cache build met so far on this thread: each file by path as (its size, the share read),
+/// a closed one read whole, and the share last shown.
+type Met = (std::collections::HashMap<String, (u64, f64)>, (usize, usize));
+thread_local! { static MET: std::cell::RefCell<Met> = Default::default(); }
+
+/// How much of a cache build is read, from the files `open` under it now as (path, read, all):
+/// latex.ltx inputs expl3-code.tex a few percent in, which reads UnicodeData.txt line by line
+/// with `\read` (expl3-code.tex:35859), so the first file's own share stands still for most of
+/// the build. Each file met counts by its size on disk, a closed one whole. The share only grows,
+/// though a file met later adds to all; a first file read less than before is a new build.
+pub fn share(open: &[(String, usize, usize)]) -> (usize, usize) {
+    let part = |read: usize, all: usize| if all == 0 { 1.0 } else { read as f64 / all as f64 };
+    MET.with_borrow_mut(|(met, last)| {
+        let Some((root, read, all)) = open.first() else { return (1, 1) };
+        if met.get(root).is_none_or(|&(_, was)| part(*read, *all) < was) {
+            (*met, *last) = Default::default();
+        }
+        for (_, share) in met.values_mut() {
+            *share = 1.0;
+        }
+        for (path, read, all) in open {
+            let size = met.get(path).map(|e| e.0).or_else(|| std::fs::metadata(path).ok().map(|m| m.len()));
+            met.insert(path.clone(), (size.unwrap_or(*all as u64), part(*read, *all)));
+        }
+        let (done, total) =
+            met.values().fold((0.0, 0u64), |(d, t), &(size, share)| (d + size as f64 * share, t + size));
+        let now = ((done / total.max(1) as f64 * 1000.0) as usize, 1000);
+        *last = if now.0 >= last.0 { now } else { *last };
+        *last
+    })
+}
+
 /// What the work is now, for the editor: `text` on its status bar, the
 /// rest in that item's hover.
 #[derive(Clone, Default, PartialEq, serde::Serialize)]
@@ -599,5 +631,23 @@ mod tests {
         let line = "\x1b[1mabc\x1b[0m \x1b]8;;file:///x\x1b\\defgh\x1b]8;;\x1b\\";
         assert_eq!(super::fit(line, 20), line);
         assert_eq!(super::fit(line, 6), "\x1b[1mabc\x1b[0m \x1b]8;;file:///x\x1b\\de\x1b[0m\x1b]8;;\x1b\\");
+    }
+
+    /// A cache build's share counts every file met, a data file read by `\read` too: the
+    /// kernel's first file stood at 5 % while expl3 read UnicodeData.txt for a minute. It never
+    /// goes back when a file is met, and a new build of the same first file starts at its share.
+    #[test]
+    fn a_cache_build_share_counts_the_files_met_and_only_grows() {
+        let f = |p: &str, r, a| (format!("/nonexistent/{p}"), r, a);
+        let share = |open: &[(String, usize, usize)]| super::share(open).0;
+        assert_eq!(share(&[f("latex.ltx", 50, 1000)]), 50);
+        // expl3 met: the share is held, not dropped to 50 / 11000
+        assert_eq!(share(&[f("latex.ltx", 50, 1000), f("expl3.tex", 0, 10000)]), 50);
+        let reading = share(&[f("latex.ltx", 50, 1000), f("expl3.tex", 9000, 10000), f("data.txt", 1000, 4000)]);
+        let read = share(&[f("latex.ltx", 50, 1000), f("expl3.tex", 9000, 10000), f("data.txt", 3000, 4000)]);
+        assert!(50 < reading && reading < read, "{reading} {read}");
+        // expl3 and the data file closed: read whole
+        assert!(share(&[f("latex.ltx", 900, 1000)]) > 950);
+        assert_eq!(share(&[f("latex.ltx", 10, 1000)]), 10, "a new build");
     }
 }

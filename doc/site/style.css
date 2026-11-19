@@ -1701,7 +1701,10 @@ p.ts.ts-foot::before { content: ""; position: absolute; top: 0; left: 0; width: 
 .pdf .pdf-col-fixed { border-inline-style: dashed; } .pdf .pdf-col-fixed b { background: #475569; }
 .pdf .pdf-col-grip { position: absolute; right: -12px; top: 0; bottom: 0; width: 24px; min-height: 24px; cursor: col-resize; touch-action: none; pointer-events: auto; background: linear-gradient(90deg, transparent 11px, #0e7490 11px 13px, transparent 13px); opacity: .55; }
 .pdf .pdf-col-grip:focus-visible { opacity: 1; outline: 2px solid var(--accent); outline-offset: -2px; }
-.pdf .pdf-col-grip:hover, .pdf .pdf-col-drag .pdf-col-grip { opacity: 1; } .pdf .pdf-col-drag, .ov-stale .pdf-ov.pdf-col-drag { opacity: 1; background: #0e74901f; }
+.pdf .pdf-col-grip:hover, .pdf .pdf-col-drag .pdf-col-grip { opacity: 1; }
+/* a gap's knob under the table: drags the column spacing; the value shows while it moves */
+.pdf .pdf-gap-grip { position: absolute; inset: 0; min-width: 10px; min-height: 10px; cursor: ew-resize; touch-action: none; pointer-events: auto; border-radius: 0 0 4px 4px; background: #0e749040; } .pdf .pdf-gap-grip:hover { background: #0e7490a0; }
+.pdf .pdf-col-gap[data-v]::after { content: attr(data-v); position: absolute; top: 100%; left: 50%; translate: -50% 2px; padding: 0 .3em; font: 11px ui-monospace, monospace; white-space: nowrap; color: #fff; background: #0e7490; border-radius: 3px; } .pdf .pdf-col-drag, .ov-stale .pdf-ov.pdf-col-drag { opacity: 1; background: #0e74901f; }
 .pdf-type-in { position: absolute; left: 0; top: 0; width: 1px; height: 1px; opacity: 0; pointer-events: none; resize: none; border: 0; padding: 0; }
 .pdf-typing .pdf-page img { cursor: text; }
 /* Type mode at a glance: the button pressed, "Typing" and the pages framed while a caret is in them (Esc ends it) */
@@ -2656,6 +2659,10 @@ pre.out-block:hover .out-meta { opacity: .85; }
 #typeset-body:not(.ts-show-math) .ts-scripts { display: inline; vertical-align: baseline; }
 #typeset-body:not(.ts-show-pages) :is(.ts-page, .ts-hf) { display: none; }
 #typeset-body.ts-show-justify .ts:not([data-just]) .ts-text { text-align: justify; hyphens: auto; }
+/* TeX's lines: a paragraph the run broke wholly shows its lines, each justified by the run's breaker (the last ragged) */
+.ts-linebreaks { display: none; } #typeset-body.ts-show-linebreaks .ts:has(> .ts-linebreaks) > .ts-text { display: none; }
+#typeset-body.ts-show-linebreaks .ts-linebreaks { display: block; grid-column: -2 / -1; overflow-x: auto; }
+.ts-tl { display: block; text-align: justify; text-align-last: justify; white-space: nowrap; } .ts-tl:last-child { text-align-last: auto; }
 /* Scratch slices: the banner over the editor while one is open, the selection's bubble, the merge preview */
 .scratch-bar { display: flex; align-items: center; gap: .5rem; flex-wrap: wrap; padding: .3rem .6rem; background: color-mix(in srgb, var(--accent) 10%, var(--bg)); border-bottom: 1px solid color-mix(in srgb, var(--accent) 35%, var(--border)); font-size: .8rem; }
 .scratch-bar[hidden] { display: none; }

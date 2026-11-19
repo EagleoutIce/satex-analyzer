@@ -205,7 +205,8 @@ offset_first!(
     (u32, crate::engine::env::NodeId, bool),
     (u32, bool, u32),
     (u32, Rule, Span, u32),
-    (u32, crate::engine::linebreak::Params)
+    (u32, crate::engine::linebreak::Params),
+    (u32, crate::analysis::facts::LineEnd)
 );
 
 /// `end` becomes `new`'s list and the rest's additions, moved by `by` (a
@@ -268,6 +269,7 @@ fn splice_text(
         backgrounds,
         page_drawn,
         breaks,
+        lines,
     } = end;
     let per_char = spots.len() >= k && site.len() >= k && spots[..k] == at.at[..] && site[..k] == at.site[..];
     if !per_char || new.open != at.open || new.open_pages != at.open_pages {
@@ -295,6 +297,7 @@ fn splice_text(
         (offsets(&new.fills, &at.fills, fills, lens), "text fills"), (offsets(&new.frames, &at.frames, frames, lens), "text frames"),
         (offsets(&new.backgrounds, &at.backgrounds, backgrounds, lens), "text backgrounds"),
         (offsets(&new.breaks, &at.breaks, breaks, lens), "text breaks"),
+        (offsets(&new.lines, &at.lines, lines, lens), "text lines"),
         (offsets(&new.indents, &at.indents, indents, lens), "text indents"),
     ];
     lists.into_iter().find(|(ok, _)| !ok).map_or(Ok(by), |(_, what)| Err(what))

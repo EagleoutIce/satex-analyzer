@@ -536,6 +536,7 @@ pub fn compact_trace(rows: &[Record], file: &str, source: &str) -> Vec<String> {
 /// every environment of the user's a paragraph stands in, `origins` where
 /// its characters were read when elsewhere than where they were set (a
 /// `\title`'s argument). Boxes lost unused (a measurement) set nothing.
+/// `linebreaks` lists a paragraph's lines as the run's breaker set them, where all are known.
 fn typeset(analysis: &Analysis) -> Vec<Record> {
     let text = &analysis.facts.text;
     let mut arms = text.arms.iter().peekable();
@@ -660,6 +661,13 @@ fn typeset(analysis: &Analysis) -> Vec<Record> {
             own.map(move |t| (t.span, (d.name, d.span.line, t.cs().is_some())))
         })
         .collect();
+    // the paragraph's lines as the run's breaker set them, where all are known
+    let linebreaks = |began: u32, end: u32, record: &mut Record| {
+        let off = |k: usize| lost[k] || text.inserts.iter().any(|&(a, b)| (a..b).contains(&(k as u32)));
+        if let Some(lines) = crate::plugins::typeset::lines::of_paragraph(text, &glyphs, off, began, end) {
+            record.insert("linebreaks".into(), json!(lines));
+        }
+    };
     // a paragraph's end at a character lost unused, carried to the next one kept
     let mut ended: Option<u32> = None;
     // where the paragraph being set began: its `\parskip` is the one in force there
@@ -936,6 +944,7 @@ fn typeset(analysis: &Analysis) -> Vec<Record> {
                 record.insert("open".into(), json!(true));
             }
             par_start(text, began as u32, &mut record);
+            linebreaks(began as u32, end, &mut record);
             attach_sketches(&mut record, &mut sketches);
             if let Some(k) = env {
                 tag_env(&mut record, k);
@@ -1053,6 +1062,7 @@ fn typeset(analysis: &Analysis) -> Vec<Record> {
             record.insert("placed".into(), json!(k));
         }
         par_start(text, began as u32, &mut record);
+        linebreaks(began as u32, text.at.len() as u32, &mut record);
         attach_sketches(&mut record, &mut sketches);
         if let Some(k) = env {
             tag_env(&mut record, k);
