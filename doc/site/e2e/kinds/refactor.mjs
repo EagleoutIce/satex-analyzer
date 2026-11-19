@@ -3,17 +3,44 @@
 // align from the editor's menu, a word extracted to a \newcommand. Each one checks the text, builds it and is undone
 // by one Ctrl+Z. The rewrites themselves are unit-tested (tests/refactor.test.mjs). Field: none.
 import { sleep } from '../lib.mjs';
-import { open, file, build, word, mid, act0, undo, text } from './tikz.mjs';
+import { open, file, build, word, mid, rclick, choose, undo, text } from './tikz.mjs';
 
 const J = JSON.stringify;
 const view = `document.querySelector('#play-editor .cm-editor').satexView`;
 /** The language server idle: a write waits behind a running analysis (6 s and more on the thesis). */
-const settle = (p) => p.until(`(() => { const h = satexHealth(); return !h.busy && !h.running && !h.due && !h.queued; })()`, 180000);
+const toastNow = (p) => p.eval(`document.getElementById('play-toast')?.textContent ?? ''`);
+/** The pages of the text now: the write's own rebuild, else Compile pressed; `{ ok, status }`. */
+async function built(p) {
+  const fresh = `(() => { const i = document.querySelector('#play-pdf .pdf-page img'); return i?.__build?.text === satexHealth().text && !document.querySelector('#play-pdf.pdf-running'); })()`;
+  if (await p.until(fresh, 60000)) return { ok: true, status: await p.eval(`document.getElementById('pdf-status')?.textContent ?? ''`) };
+  return build(p);
+}
+/** One PDF action: the menu at `at()`, `path`, `then`; the text checked (a write waits behind a running analysis),
+ * built unless `keep`, undone by one Ctrl+Z. */
+async function pdfAct(results, p, name, at, path, want, o = {}) {
+  const r = { name, fails: [], info: {} };
+  try {
+    const t0 = await text(p), xy = await at();
+    if (!xy) throw new Error('no target on the page');
+    if (!await rclick(p, xy)) throw new Error('no menu');
+    await choose(p, path);
+    const t1 = await p.until(`satexHealth().text !== ${J(t0)} && satexHealth().text`, 90000);
+    if (!t1) throw new Error(`text unchanged (toast: ${await toastNow(p)})`);
+    if (!want.test(t1)) r.fails.push(`text: want ${want}, got ${J(t1.slice(t1.indexOf('Pictures'), t1.indexOf('Cost}')))}`);
+    if (o.then) await o.then();
+    if (!o.keep) { const bd = await built(p); r.info.status = bd.status; if (!bd.ok || /error|failed|stopped/i.test(bd.status)) r.fails.push(`build: ${bd.status.slice(0, 160)}`); }
+    await undo(p);
+    if (await text(p) !== t0) r.fails.push('one Ctrl+Z did not give the text back');
+  } catch (e) { r.fails.push(String(e.message ?? e).slice(0, 300)); await p.shot(`${name}-fail.png`).catch(() => {}); }
+  await p.eval(`document.querySelectorAll('.pa-menu, .tikz-input').forEach((e) => e.remove())`);
+  console.log(`${r.fails.length ? 'FAIL' : 'pass'} ${name} ${r.fails.join(' / ').slice(0, 300)}`);
+  results.push(r);
+}
 /** The whole text replaced by `t` (one edit), built. */
 async function setText(p, t) {
   await p.eval(`(() => { const v = ${view}; v.dispatch({ changes: { from: 0, to: v.state.doc.length, insert: ${J(t)} } }); })()`);
   await sleep(300);
-  return build(p);
+  return built(p);
 }
 /** The editor's menu at selection `[a, b]`, then through `path` (a `?` label only when the menu has it). */
 async function editorMenu(p, a, b, path) {
@@ -38,14 +65,13 @@ async function editorMenu(p, a, b, path) {
 async function editorAct(results, p, name, sel, path, want, then = null) {
   const r = { name, fails: [], info: {} };
   try {
-    await settle(p);
     const t0 = await text(p), [a, b] = sel(t0);
     await editorMenu(p, a, b, path);
     if (then) await then();
-    const t1 = await p.until(`satexHealth().text !== ${J(t0)} && satexHealth().text`, 60000);
+    const t1 = await p.until(`satexHealth().text !== ${J(t0)} && satexHealth().text`, 90000);
     if (!t1) throw new Error(`text unchanged (toast: ${await p.eval(`document.getElementById('play-toast')?.textContent ?? ''`)})`);
     if (!want.test(t1)) r.fails.push(`text: want ${want}, got ${J(t1.slice(0, 1500))}`);
-    const bd = await build(p);
+    const bd = await built(p);
     r.info.status = bd.status.slice(0, 100);
     if (!bd.ok || /error|failed|stopped/i.test(bd.status)) r.fails.push(`build: ${bd.status.slice(0, 160)}`);
     await undo(p);
@@ -57,12 +83,13 @@ async function editorAct(results, p, name, sel, path, want, then = null) {
 }
 
 export async function refactor(p, sc) {
-  const results = [], act = (...a) => act0(results, ...a);
+  const results = [], act = (...a) => pdfAct(results, ...a);
   await open(p, 'thesis.tex');
   await file(p, 'chapter.tex');
   const first = await build(p, 300000);
+  console.log('first build', first.status);
   if (!first.ok) throw new Error(`no first build (${first.status.slice(0, 120)})`);
-  const original = await text(p), node = (w) => async () => { await settle(p); return mid(await word(p, w)); };
+  const original = await text(p), node = (w) => async () => mid(await word(p, w));
   // the figure unwrapped from the PDF: the picture stays where the float stood
   await act(p, 'rf-unwrap', node('SaTeX'), ['Refactor', 'Unwrap the figure'], /draws the pipeline\.\n\\begin\{tikzpicture\}\[node distance=2\.4cm[^]*\\end\{tikzpicture\}\n\n\\subsection\{Cost\}/);
   // the bare picture wrapped in a figure from the PDF, the caret in its caption
@@ -70,8 +97,7 @@ export async function refactor(p, sc) {
   const b = await setText(p, bare);
   if (!b.ok) results.push({ name: 'rf-wrap-setup', fails: [`the bare picture does not build: ${b.status.slice(0, 120)}`] });
   await act(p, 'rf-wrap', node('SaTeX'), ['Refactor', 'Wrap in a figure'], /draws the pipeline\.\n\\begin\{figure\}\[htbp\]\n  \\centering\n  \\begin\{tikzpicture\}[^]*  \\end\{tikzpicture\}\n  \\caption\{\}\n  \\label\{fig:file\}\n\\end\{figure\}\n/, {
-    keep: true, then: async () => {
-      await sleep(400);
+    then: async () => {
       const caret = await p.eval(`(() => { const v = ${view}, t = v.state.doc.toString(); return [v.state.selection.main.head, t.indexOf('\\\\caption{}') + 9]; })()`);
       if (caret[0] !== caret[1]) results.push({ name: 'rf-wrap-caret', fails: [`the caret at ${caret[0]}, the caption at ${caret[1]}`] });
     } });
@@ -86,7 +112,6 @@ export async function refactor(p, sc) {
       await p.eval(`(() => { const i = document.querySelector('.tikz-input input'); i.value = 'satex'; i.focus(); })()`);
       await p.key('Enter');
     });
-  for (const r of results) console.log(`${r.fails.length ? 'FAIL' : 'pass'} ${r.name} ${r.fails.join(' / ').slice(0, 400)}`);
   const fails = results.flatMap((r) => r.fails.map((f) => `${r.name}: ${f}`));
   return { name: sc.name, fails, perf: [], info: { actions: results.length, failed: results.filter((r) => r.fails.length).map((r) => r.name) } };
 }

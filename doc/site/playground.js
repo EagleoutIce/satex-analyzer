@@ -1673,13 +1673,14 @@
     findings: 'Mark the paragraphs with findings; hover a mark for them',
     maybe: 'Show text that may be typeset or not: where the run could not decide a conditional (\\ifdraft), both cases, with a switch per conditional to see one. Off: only text that is surely typeset',
     origins: 'Tint the words not written where they are set by where typing goes: a macro\'s definition, its argument, or elsewhere in your files',
+    math: 'Tint what the run set in math mode, inline and display',
   };
   const tsLegacy = {};
   try { for (const k of Object.keys(TS_LAYERS)) { const v = localStorage.getItem(`satex-typeset-${k}`); if (v != null) tsLegacy[k] = v === '1'; } } catch {}
   const tsOn = self.satexLayers.state('typeset', Object.fromEntries(Object.keys(TS_LAYERS).map((k) => [k, k === 'origins' || play.typeset_layers.includes(k)])), self.satexStore, tsLegacy);
   $('typeset-layers').innerHTML = self.satexLayers.html(TS_LAYERS, tsOn, { prefix: 'typeset', facets: new Set(['origins']) });
   // the preamble's findings sit on the document's begin mark only while the marks show
-  const tsApply = (k) => { typesetBody.classList.toggle(`show-${k}`, tsOn[k]); if (k === 'envs') typesetFindings(); if (k === 'origins') requestAnimationFrame(tsOriginsDraw); };
+  const tsApply = (k) => { typesetBody.classList.toggle(`show-${k}`, tsOn[k]); if (k === 'envs') typesetFindings(); if (k === 'origins' || k === 'math') requestAnimationFrame(tsOriginsDraw); };
   self.satexLayers.wire($('typeset-layers'), 'typeset', tsOn, self.satexStore, tsApply);
   self.satexLayers.menu($('typeset-layers-menu'), $('typeset-layers'), tsOn, () => tsOriginsFacets());
   // the origins' kinds switched as in the PDF's menu: one kept filter for both viewers
@@ -2348,23 +2349,27 @@
   /** In Type mode, the text not written where it is set, tinted by where typing would go (ORIGIN_TIPS). */
   function tsOriginsDraw() {
     typesetBody.querySelectorAll('.ts-orig').forEach((x) => x.remove());
-    if (!tsOn.origins) return;
+    if (!tsOn.origins && !tsOn.math) return;
     const base = typesetBody.getBoundingClientRect(), html = [];
     for (const p of typesetBody.querySelectorAll('p.ts[data-line]')) {
       const row = tsRowOf(p), box = p.querySelector('.ts-text');
       if (!row?.sites || !box) continue;
-      const chars = rowOrigins(row), runs = originRuns(chars), at = box.textContent.indexOf(chars.map((ch) => ch.c).join(''));
+      const chars = rowOrigins(row), at = box.textContent.indexOf(chars.map((ch) => ch.c).join(''));
+      // the origins' runs, then math as the run set it (its `math` marks): one class each
+      const runs = [...tsOn.origins ? originRuns(chars).filter(([, a]) => pdfShown('origins', 'kind', chars[a].key))
+        .map(([kind, a, b]) => [`ts-orig-${kind}${chars[a].key === 'generated' ? ' ts-orig-generated' : chars[a].made ? ' ts-orig-made' : ''}`, a, b]) : [],
+      ...tsOn.math ? self.satexLayers.runsBy(chars, (ch) => ch.mode).map(([mode, a, b]) => [`ts-math-band ts-math-${mode}`, a, b]) : []];
       // the view's text and the run's characters line up only where the view adds nothing between them
       if (!runs.length || at < 0) continue;
-      for (const [kind, a, b] of runs) {
-        const made = kind === 'macro' && chars[a].made, from = tsNodeAt(box, at + a), to = tsNodeAt(box, at + b + 1);
-        if (!from || !to || !pdfShown('origins', 'kind', made ? 'made' : kind)) continue;
+      for (const [cls, a, b] of runs) {
+        const from = tsNodeAt(box, at + a), to = tsNodeAt(box, at + b + 1);
+        if (!from || !to) continue;
         const r = document.createRange();
         r.setStart(...from); r.setEnd(...to);
         // one band per line: the run's boxes on a line joined
         const rects = [];
         for (const q of r.getClientRects()) { const o = rects.at(-1); if (o && Math.abs(o.top - q.top) < 2 && q.left <= o.right + 1) o.right = Math.max(o.right, q.right); else rects.push({ left: q.left, right: q.right, top: q.top, height: q.height }); }
-        for (const q of rects.map((o) => ({ ...o, width: o.right - o.left }))) html.push(`<span class="ts-orig ts-orig-${kind}${made ? ' ts-orig-made' : ''}" style="left:${q.left - base.left + typesetBody.scrollLeft}px;top:${q.top - base.top + typesetBody.scrollTop}px;width:${q.width}px;height:${q.height}px"></span>`);
+        for (const q of rects.map((o) => ({ ...o, width: o.right - o.left }))) html.push(`<span class="ts-orig ${cls}" style="left:${q.left - base.left + typesetBody.scrollLeft}px;top:${q.top - base.top + typesetBody.scrollTop}px;width:${q.width}px;height:${q.height}px"></span>`);
       }
     }
     typesetBody.insertAdjacentHTML('beforeend', html.join(''));
@@ -2378,7 +2383,7 @@
       const row = tsRowOf(p);
       if (!row?.sites) continue;
       const chars = rowOrigins(row);
-      for (const [kind, a] of originRuns(chars)) keys.push(kind === 'macro' && chars[a].made ? 'made' : kind);
+      for (const [, a] of originRuns(chars)) keys.push(chars[a].key);
     }
     const rows = facetTally(keys.map((k) => [k, ORIGIN_NAMES[k]]));
     list.innerHTML = rows.length ? `<div class="pdf-sub-group"><span class="muted">kind</span>${rows.map(([key, label, n]) => `<label><input type="checkbox" data-facet="origins|kind|${escape(key)}"${pdfShown('origins', 'kind', key) ? ' checked' : ''}><i class="layer-swatch sw-orig-${escape(key)}" aria-hidden="true"></i>${escape(label)} <b class="count">${n}</b></label>`).join('')}</div>`
@@ -3036,7 +3041,7 @@
   /** The refactor plugins' rows at the cursor (refactor.ts, target `source`: the cursor, the selection), as menu rows. */
   function refactorRows(x, y) {
     const text = editor.text(), [a, b] = editor.cursor().slice().sort((p, q) => p - q);
-    const ctx = { text, all: docTexts(), x, y, facts: null, write: (edits) => paWrite(text, edits), toast, pick: tikzPick, grid: tikzGrid, file: state.file, colAlign: () => {}, caret: (o) => { editor.select([o, o]); editor.refocus?.(); } };
+    const ctx = { text, all: docTexts(), x, y, facts: null, write: (edits) => paWrite(text, edits), toast, pick: tikzPick, colAlign: () => {}, caret: (o) => { editor.select([o, o]); editor.refocus?.(); } };
     const row = (it) => [it.label, it.hint ?? '', it.items ? it.items.map(row) : it.run];
     return self.satexPageActions.groups({ kind: 'source', at: a, end: b, sel: a < b ? [a, b] : null }, ctx, configSet).flatMap((g) => g.items.map(row));
   }
@@ -7284,7 +7289,8 @@
   function rowChars(r) {
     const chars = [], marked = [...(r.marked ?? r.detail ?? '')], sites = r.sites ?? [], origins = r.origins ?? [];
     // `atom`: a math note's class (`\u0006i`, `\u00060`…) opens a math atom, an empty one (`\u0006`) closes it
-    let k = 0, o = -1, i = 0, note = false, math = false, atom = '', inMath = false;
+    let k = 0, o = -1, i = 0, note = false, math = false, atom = '', inMath = false, mo = -1;
+    const modes = r.math ?? [];
     for (let j = 0; j < marked.length; j++) {
       const c = marked[j];
       if (c === '') { note = true; math = marked[j + 1] === '\u0006'; atom = ''; continue; }
@@ -7292,8 +7298,12 @@
       if (math) { atom += c; continue; }
       while (k + 1 < sites.length && sites[k + 1].at <= i) k++;
       while (o + 1 < origins.length && origins[o + 1].at <= i) o++;
+      while (mo + 1 < modes.length && modes[mo + 1].at <= i) mo++;
       const s = sites[k], g = origins[o];
-      if (!note && s && s.at <= i) chars.push({ c, path: String(s.path ?? r.path ?? ''), line: s.line, col: s.col + (s.same ? 0 : i - s.at), math: inMath, from: g?.line ? { path: g.path ?? r.path, line: g.line, col: g.col + i - g.at, def: g.def, defLine: g.def_line } : null });
+      if (!note && s && s.at <= i) chars.push({ c, path: String(s.path ?? r.path ?? ''), line: s.line, col: s.col + (s.same ? 0 : i - s.at), math: inMath, mode: modes[mo]?.mode || null, generated: !!g?.generated,
+        // read in the user's files (`source` document, or an older server's origin without one), else library code
+        from: g?.line && (g.source ?? 'document') === 'document' ? { path: g.path ?? r.path, line: g.line, col: g.col + i - g.at, def: g.def, defLine: g.def_line } : null,
+        lib: g?.line && (g.source ?? 'document') !== 'document' ? { source: g.source, file: g.path, line: g.line, def: g.def } : null });
       i++;
     }
     return chars;
@@ -7325,7 +7335,7 @@
     // a cell is set at its row's end, read in place: no move
     const cell = (a, b) => (pdfCols?.tables ?? []).some((t) => t.lines[0] <= Math.min(a, b) && Math.max(a, b) <= t.lines[1]);
     chars.forEach((ch, i) => {
-      ch.kind = ch.from?.def || shared.get(okeys[i]) ? 'macro' : ch.from && !cell(ch.line, ch.from.line) ? 'moved' : calls.has(keys[i]) ? 'arg' : 'text';
+      ch.kind = ch.from?.def || ch.lib || shared.get(okeys[i]) ? 'macro' : ch.from && !cell(ch.line, ch.from.line) ? 'moved' : calls.has(keys[i]) ? 'arg' : 'text';
       ch.made = ch.kind === 'macro' && !ch.from?.def;
     });
     caseMoved(chars);
@@ -7349,6 +7359,9 @@
       const m = line && /\\[A-Za-z@]+/.exec(line.slice(p.col, q.col - 1));
       if (m) ch.call = { path: p.path, line: p.line, col: p.col + m.index + m[0].length };
     });
+    // the origins filter's key: a macro's text by who wrote the macro (your files, a class, a package, the kernel) or
+    // made by expanding a primitive (`\\number`, `\\the`: a page number, a date), else where typing goes
+    for (const ch of chars) ch.key = ch.kind !== 'macro' ? ch.kind : ch.generated ? 'generated' : !ch.made ? 'macro' : ch.lib?.source ?? 'made';
     return chars;
   }
   /** Case-changed text (amsart's `\\MakeUppercase` of `\\author{Some Author}`): TeX makes new character tokens for the
@@ -7414,17 +7427,17 @@
    * belongs to the run of its origin (`Hello, #1!`'s space is the macro's), only the row's edge spaces are left out. */
   const originRuns = (chars) => {
     const runs = [];
-    chars.forEach((ch, i) => { if (ch.kind === 'text') return; const last = runs.at(-1); if (last && last[0] === ch.kind && last[2] === i - 1) last[2] = i; else runs.push([ch.kind, i, i]); });
+    chars.forEach((ch, i) => { if (ch.kind === 'text') return; const last = runs.at(-1); if (last && last[0] === ch.kind && chars[last[1]].key === ch.key && last[2] === i - 1) last[2] = i; else runs.push([ch.kind, i, i]); });
     const solid = chars.map((ch) => !!ch.c.trim()), lo = solid.indexOf(true), hi = solid.lastIndexOf(true);
     return runs.map(([k, a, b]) => [k, Math.max(a, lo), Math.min(b, hi)]).filter(([, a, b]) => a <= b && solid.slice(a, b + 1).includes(true));
   };
   const MADE_TIP = "a macro's text from code outside your files: a click opens the macro's completion";
   /** The origin kinds' names, as the layer's filter lists them; the kinds of the tints drawn last. */
-  const ORIGIN_NAMES = { macro: 'your macros', made: 'package and class macros', arg: 'arguments', moved: 'elsewhere in your files' };
-  /** A tint's origins filter: a macro's text by where the macro is defined (your files or not), else its kind. */
-  const originKey = (q) => q.kind === 'macro' && q.made ? 'made' : q.kind;
+  const ORIGIN_NAMES = { macro: 'your macros', class: 'class macros', package: 'package macros', kernel: 'kernel macros', generated: 'generated text (numbers, dates)', made: 'library macros', arg: 'arguments', moved: 'elsewhere in your files' };
+  /** A tint's origins filter: rowOrigins' `key`. */
+  const originKey = (q) => q.key;
   /** The macro whose text set character `ch` (rowOrigins'): the run's definition, else the call written where it was set. */
-  const macroOf = (ch) => ch.from?.def ?? callEnding(srcLine(ch.path, ch.line), ch.col)?.name ?? (ch.call && callEnding(srcLine(ch.call.path, ch.call.line), ch.call.col)?.name) ?? null;
+  const macroOf = (ch) => ch.from?.def ?? ch.lib?.def ?? callEnding(srcLine(ch.path, ch.line), ch.col)?.name ?? (ch.call && callEnding(srcLine(ch.call.path, ch.call.line), ch.call.col)?.name) ?? null;
   var pdfOriginKinds = []; // var: a check may render before this line ran
   const ORIGIN_TIPS = { macro: "a macro's definition: typing there changes every use", arg: "a macro's argument: typing there edits this use", moved: 'read elsewhere in your files: typing goes there' };
   /** The characters of row `r` whose source site (the run's `sites`: where the user's file was read when it was set)
@@ -7671,8 +7684,8 @@
         const texts = words.map((w) => w[5].normalize('NFKC').replace(/\s+/g, '')), solid = [], at = [];
         chars.forEach((ch, i) => { at[i] = solid.length; if (ch.c.trim()) solid.push(ch.c); });
         for (const [kind, a, b] of runs) {
-          const text = chars.slice(a, b + 1).map((ch) => ch.c).join(''), title = `${text}: ${chars[a].made ? MADE_TIP : ORIGIN_TIPS[kind]}${chars[a].from?.def ? ` (${chars[a].from.def}, line ${chars[a].from.defLine})` : ''}`;
-          const made = !!chars[a].made, macro = kind === 'macro' ? macroOf(chars[a]) : null;
+          const text = chars.slice(a, b + 1).map((ch) => ch.c).join(''), title = `${text}: ${chars[a].made ? MADE_TIP : ORIGIN_TIPS[kind]}${chars[a].from?.def ? ` (${chars[a].from.def}, line ${chars[a].from.defLine})` : ''}${chars[a].lib ? ` (${chars[a].generated ? 'generated, ' : ''}${chars[a].lib.def ? `${chars[a].lib.def} in ` : ''}${chars[a].lib.source} ${String(chars[a].lib.file ?? '').split('/').pop()}:${chars[a].lib.line})` : ''}`;
+          const made = !!chars[a].made, key = chars[a].key, macro = kind === 'macro' ? macroOf(chars[a]) : null;
           const sa = chars.findIndex((ch, i) => i >= a && ch.c.trim()), sb = chars.findLastIndex((ch, i) => i <= b && ch.c.trim());
           const same = (p, q) => p && q && p[0] === q[0] && Math.abs(p[4] - q[4]) < 1;
           // one band per row the run covers: its words and the spaces between them, an edge space up to the next word
@@ -7680,7 +7693,7 @@
           for (const [k, from, to] of PE.locate(texts, solid.join(''), at[sa], at[sb]) ?? []) {
             const w = words[k], img = pdfImg(w[0]), xs = img?.naturalWidth ? pdfBounds(img, w) : null, l = (xs?.[from] ?? w[1]) - 0.5, r = (xs?.[to] ?? w[3]) + 0.5;
             if (band && same(band.w, w)) Object.assign(band, { r, d: Math.max(band.d, w[4] + 1), t: Math.min(band.t, w[2] - 0.5), w, k });
-            else tints.push(band = { page: w[0], l: a < sa && from === 0 && same(words[k - 1], w) ? words[k - 1][3] : l, t: w[2] - 0.5, r, d: w[4] + 1, kind, made, macro, title, w, k });
+            else tints.push(band = { page: w[0], l: a < sa && from === 0 && same(words[k - 1], w) ? words[k - 1][3] : l, t: w[2] - 0.5, r, d: w[4] + 1, kind, made, key, macro, title, w, k });
             if (b > sb && to === texts[k].length && same(words[k + 1], w)) band.r = words[k + 1][1];
           }
         }
@@ -7688,7 +7701,7 @@
       if (!lag) pdfTintsOf = { pdf, tints };
       // one tint per spot: a word set inside a wider run (an argument in its macro's text) keeps its own
       pdfOriginKinds = tints.map(originKey);
-      if (pdfOverlayOn.origins) for (const q of PE.apart(tints)) if (pdfShown('origins', 'kind', originKey(q))) box(q.page, `pdf-orig pdf-orig-${q.kind}${q.made ? ' pdf-orig-made' : ''}`, q.l, q.t, q.r, q.d, q.title);
+      if (pdfOverlayOn.origins) for (const q of PE.apart(tints)) if (pdfShown('origins', 'kind', originKey(q))) box(q.page, `pdf-orig pdf-orig-${q.kind}${q.key === 'generated' ? ' pdf-orig-generated' : q.made ? ' pdf-orig-made' : ''}`, q.l, q.t, q.r, q.d, q.title);
       if (pdfOverlayOn.macros) for (const q of tints) if (q.macro) box(q.page, 'pdf-macro', q.l, q.t, q.r, q.d, `${q.macro} set this text${q.made ? ' (defined outside your files)' : ''}`, `<b>${escape(q.macro)}</b>`);
     }
     if (pdfOverlayOn.geometry) {
@@ -7700,7 +7713,17 @@
         box(page, 'pdf-block', g.l, g.t, g.r, g.d, `text block: ${lengths((g.r - g.l) * 72.27 / 72)} wide, its lines from ${pt(g.t)}pt to ${pt(g.d)}pt from the top`, `<b data-pt="${(g.r - g.l) * 72.27 / 72}">${pt(g.r - g.l)}pt</b>`);
       }
     }
-    if (pdfOverlayOn.math) for (const m of self.satexLayers.mathSpans(pdf?.boxes ?? [])) box(m.page, 'pdf-math', m.l, m.t, m.r, m.d, `math · ${m.file}:${m.line}`);
+    if (pdfOverlayOn.math) {
+      for (const m of self.satexLayers.mathSpans(pdf?.boxes ?? [])) box(m.page, 'pdf-math', m.l, m.t, m.r, m.d, `math · ${m.file}:${m.line}`);
+      // display math has no SyncTeX math records: the source lines the run set in display mode (its rows' `math` marks), where SyncTeX placed them
+      const shown = new Set();
+      for (const r of typesetRows ?? []) for (const ch of r.math?.some((m) => m.mode === 'display') ? rowChars(r) : []) {
+        const file = ch.mode === 'display' && Object.keys(state.texts).find((n) => ch.path.endsWith(n)), at = `${file}:${ch.line}`;
+        if (!file || shown.has(at)) continue;
+        shown.add(at);
+        for (const q of pdfRects(file, ch.line, true)) box(q.page, 'pdf-math pdf-math-display', q.l, q.t, q.r, q.d, `display math · ${at}`);
+      }
+    }
     if (pdfOverlayOn.glue) {
       // glue drawn over glyphs (a box SyncTeX placed off its text) is left out: a label never covers the text
       const inked = (g) => pdfWordsOn(g.page).some((w) => w[1] < g.r - 0.5 && w[3] > g.l + 0.5 && w[2] < g.d && w[4] > g.t);
@@ -8415,7 +8438,7 @@
   /** The menu of target `t` at screen point (x, y): the run's facts of a picture waited for a moment, then the plugins' groups. */
   async function paOpen(x, y, t) {
     const text = editor.text(), at = t.n?.from ?? t.e?.from;
-    const ctx = { text, all: docTexts(), x, y, facts: null, write: (edits) => paWrite(text, edits), toast, pick: tikzPick, scratch: (b) => scratchOpen(b.file, b.from, b.to),
+    const ctx = { text, all: docTexts(), x, y, facts: null, write: (edits) => paWrite(text, edits), toast, pick: tikzPick, grid: tikzGrid, file: state.file, scratch: (b) => scratchOpen(b.file, b.from, b.to),
       colAlign: (i, k, a) => { pdfColMenu = null; pdfColAlign({ dataset: { t: i, k, a } }); } };
     // the block around what was clicked, for a scratch slice of it
     const from = at ?? t.f?.from;

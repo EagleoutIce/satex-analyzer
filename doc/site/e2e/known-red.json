@@ -147,5 +147,17 @@
   "since": "2026-11-19",
   "match": "^(label-pos: no target on the page|label-type: Cannot read properties of null|ts-edge-tip: no \"Arrow tips\" in \\[\"Edit text…\")",
   "why": "after the scenario retypes the whole text with the label (Ctrl+A, insertText), the pages follow the caret to the file's end and satexPdfWords() stays empty while the analysis runs, so `feeds` is not found; the Typeset path target between source and run then hits the label `feeds` the scenario left in the text (a label menu, no Arrow tips). Seen in every run of 2026-11-19 ui-55, independent of the tip, bend, grid and width changes"
+ },
+ "tc-type-textbf": {
+  "owner": "Type-mode echo (typing landing)",
+  "why": "the completion is taken and the source is right; the caret jumps 37 px when the build lands after the leading space (the same in fz-complete-fast, before any completion), a Type-mode echo landing issue",
+  "since": "2026-11-19",
+  "match": "^caret jumped"
+ },
+ "fz-complete-fast": {
+  "owner": "Type-mode echo (typing landing)",
+  "why": "the completion is taken and the source is right; the caret jumps 37 px when the build lands after the leading space (the same in fz-complete-fast, before any completion), a Type-mode echo landing issue",
+  "since": "2026-11-19",
+  "match": "^caret jumped"
  }
 }

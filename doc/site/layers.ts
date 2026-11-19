@@ -17,6 +17,7 @@ declare global {
       length(text: unknown, font?: Record<string, number>): { pt: number; num: number; unit: string } | null;
       indentOf(r: { indented?: boolean; indent?: number; parindent?: number }): number | null;
       glueShort(spec: string): string;
+      runsBy<T>(items: T[], key: (x: T) => string | null | undefined): [string, number, number][];
       mathSpans(boxes: Box[]): { page: number; l: number; t: number; r: number; d: number; file: string; line: number }[];
       fitLabels(labels: Rect[], fixed: Rect[], ink: Rect[]): (number | null)[];
     };
@@ -187,5 +188,11 @@ declare global {
     }
     return out;
   }
-  self.satexLayers = { GROUPS, LAYERS, groups, html, state, wire, count, menu, length, SHOW, showClasses, showDefaults, showHtml, indentOf, glueShort, fitLabels, mathSpans };
+  /** Runs of `items` with one key: [key, first, last] for each stretch whose `key` is the same and set. */
+  function runsBy<T>(items: T[], key: (x: T) => string | null | undefined) {
+    const out: [string, number, number][] = [];
+    items.forEach((x, i) => { const k = key(x), o = out.at(-1); if (!k) return; if (o && o[0] === k && o[2] === i - 1) o[2] = i; else out.push([k, i, i]); });
+    return out;
+  }
+  self.satexLayers = { GROUPS, LAYERS, groups, html, state, wire, count, menu, length, SHOW, showClasses, showDefaults, showHtml, indentOf, glueShort, fitLabels, mathSpans, runsBy };
 })();
