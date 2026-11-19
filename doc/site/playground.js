@@ -1570,7 +1570,13 @@
         ev.dispatch({ effects: [setup.reconfigure([]), lang.reconfigure(/\.bib$/.test(state.file) ? tex.bib : tex.language)] }); ev.dispatch({ changes: { from: 0, to: doc().length, insert: t }, selection: { anchor: 0 }, effects: [reset.of(null), lock.reconfigure(readOnly ? [st.EditorState.readOnly.of(true)] : [])] }); ev.dispatch({ effects: setup.reconfigure(basicSetup) }); ev.scrollDOM.scrollTop = 0; ev.dispatch({ effects: lensSet.of(textLenses(t).map((l) => [doc().line(l.range.start.line + 1).from, l])) });
       },
       // `how`: off the undo history (a drag's steps), or as typing (`input.type` joins into one step)
-      apply: (edits, how = {}) => ev.dispatch({ changes: edits.map((e) => { const [from, to] = span(e.range); return { from, to, insert: e.newText }; }), ...(how.history === false ? { annotations: st.Transaction.addToHistory.of(false) } : {}), ...(how.userEvent ? { userEvent: how.userEvent } : {}) }),
+      apply: (edits, how = {}) => {
+        const changes = edits.map((e) => { const [from, to] = span(e.range); return { from, to, insert: e.newText }; });
+        // typing from the pages moves the editor's caret along: after the last written text
+        const typed = how.userEvent === 'input.type' && changes.length && !ev.hasFocus;
+        const at = typed ? ev.state.changes(changes).mapPos(changes[changes.length - 1].to, 1) : null;
+        ev.dispatch({ changes, ...(typed ? { selection: { anchor: at }, scrollIntoView: true } : {}), ...(how.history === false ? { annotations: st.Transaction.addToHistory.of(false) } : {}), ...(how.userEvent ? { userEvent: how.userEvent } : {}) });
+      },
       /** What changed since the text was `before`, as one undo step: back off the history, then forward on it. */
       squash: (before) => {
         const now = doc().toString();
