@@ -275,3 +275,17 @@ test('node menu: edit first, fixed and relative places, a relative duplicate', w
   assert.match(dup, /\\usepackage\{tikz\}\n\\usetikzlibrary\{positioning\}\n/);
   assert.match(dup, /\\node \(a\) at \(0,0\) \{A\};\n  \\node\[below=of a\] \(a2\) \{A\};/);
 }));
+
+// Intuition: a dragged node's dependents are those placed from it and the chains placed from them; unlocked, each one
+// placed straight from it is shifted back by the drag, so after the node moves every dependent stands where it stood.
+// Pins a dependent that followed an unlocked drag, and a chain member shifted twice (it follows its own parent).
+test('dependents of a dragged node and their stay rewrite', () => {
+  const text = wrap('\\node (a) {A};\n\\node[right=of a] (b) {B};\n\\node[below=1cm of b] (c) {C};\n\\node (d) at (a.east) {D};\n\\node (e) at (3,0) {E};\n\\draw (a) -- (e);\n\\node[draw] at (1,1) {(a)};');
+  const [a, , , , e] = T.nodes(text), r = T.dependents(text, a);
+  assert.deepEqual([r.direct.map((n) => n.name), r.all.map((n) => n.name)], [['b', 'd'], ['b', 'd', 'c']], 'a path is no dependent, nor a text that spells (a)');
+  assert.deepEqual(T.dependents(text, e).all, []);
+  // the playground's stay rewrite: each direct one moved back by the drag (here 1 cm right, 5 mm down)
+  const back = r.direct.map((n) => T.move(text.slice(n.from, n.to), n.i, n.pic, { by: [-1, 0.5], grid: [0.01, 0.01] }).text);
+  assert.deepEqual(back, ['\\node[right=of a, xshift=-10mm, yshift=5mm] (b) {B};', '\\node[xshift=-10mm, yshift=5mm] (d) at (a.east) {D};']);
+  for (const s of back) assert.ok(T.nodes(wrap(s))[0].placed || /at \(a\.east\)/.test(s), 'the relative form kept');
+});

@@ -1,0 +1,35 @@
+// Every scenario, by area (one file each), and the tiers. `quick` holds the behaviors a push must not break, within
+// about five minutes; `full` is every scenario; `perf` the typing scenarios whose timing bounds (echo draw p95, key to
+// source) count as failures there. A name is unique across areas.
+import typingPdf from './typing-pdf.mjs';
+import titles from './titles-footnotes.mjs';
+import math from './math.mjs';
+import clicks from './clicks.mjs';
+import select from './select.mjs';
+import tints from './tints-typeset.mjs';
+import widgets from './widgets.mjs';
+import completion from './completion.mjs';
+import dbl from './double-click.mjs';
+import foot from './footer-blank.mjs';
+import newpara from './echo-paragraphs.mjs';
+import follow from './follow-highlight.mjs';
+import dark from './dark-mode.mjs';
+import tikz from './tikz-actions.mjs';
+import crash from './crash-recovery.mjs';
+
+const AREAS = { 'typing-pdf': typingPdf, 'titles-footnotes': titles, math, clicks, select, 'tints-typeset': tints, widgets,
+  completion, 'double-click': dbl, 'footer-blank': foot, 'echo-paragraphs': newpara, 'follow-highlight': follow,
+  'dark-mode': dark, 'tikz-actions': tikz, 'crash-recovery': crash };
+
+export const SCENARIOS = Object.entries(AREAS).flatMap(([area, list]) => list.map((sc) => ({ area, ...sc })));
+
+export const TIERS = {
+  quick: ['title-human', 'prose-burst', 'caption', 'pagebreak', 'fz-thanks-mark', 'click-footnote', 'click-macro-start', 'math-preview',
+    'math-display-preview', 'select-backspace', 'tint-bang', 'col-align', 'forest-child', 'tc-src-ref', 'dbl-pdf-tikz',
+    'plain-before-number', 'blank-between', 'newpara-pdf', 'follow-light', 'crash-midrun'],
+  perf: ['prose-burst', 'title-human', 'caption', 'burst-3rows', 'math-burst', 'bold'],
+};
+
+const seen = new Set();
+for (const sc of SCENARIOS) { if (seen.has(sc.name)) throw new Error(`two scenarios named ${sc.name}`); seen.add(sc.name); }
+for (const [tier, names] of Object.entries(TIERS)) for (const n of names) if (!seen.has(n)) throw new Error(`tier ${tier}: no scenario ${n}`);

@@ -76,6 +76,7 @@ declare global {
       respec(align: string, width: string): { body: string; array: boolean } | null;
       wordAt(text: string, at: number): [number, string] | null;
       argAt(text: string, name: string, line: number): number | null;
+      afterCall(text: string, at: number): number | null;
       apart<B extends Flat>(boxes: B[]): B[];
       relaid(row: [number, number, string][], k: number, now: string, width: (s: string) => number): [number, number, string][];
       reflow<P extends Piece>(pieces: P[], x0: number, line: Line<P>): Flow<P>;
@@ -815,6 +816,28 @@ declare global {
     while (b < text.length && /[\p{L}\p{N}]/u.test(text[b]!)) b++;
     return a < b ? [a, text.slice(a, b)] : null;
   }
+  /** Where the call whose argument closes at `at` (a `}`) ends: past that `}` and the brace or bracket arguments right
+   * after it. A glyph set past an argument's last character and not spelled after it (`\\greet{world}` setting
+   * `world!`) is the macro body's: typing after it goes there, after the call. Null where `at` closes no argument
+   * (no `}`, or a group no `\\name` opens: `{\\bf world}`). */
+  function afterCall(text: string, at: number): number | null {
+    if (text[at] !== '}') return null;
+    // the `{` that `}` closes, then the arguments before it back to the macro's name
+    const open = (end: number, o: string, c: string) => { for (let d = 0, i = end; i >= 0; i--) { if (text[i] === c && text[i - 1] !== '\\') d++; else if (text[i] === o && text[i - 1] !== '\\' && --d === 0) return i; } return -1; };
+    let a = open(at, '{', '}');
+    while (a > 0 && /[}\]]/.test(text[a - 1]!)) a = text[a - 1] === '}' ? open(a - 1, '{', '}') : open(a - 1, '[', ']');
+    if (a <= 0 || !/\\[A-Za-z@]+\*?$/.test(text.slice(Math.max(0, a - 40), a))) return null;
+    // the arguments after it: `{…}` or `[…]` groups with no space between
+    let e = at + 1;
+    for (;;) {
+      const c = text[e] === '{' ? '}' : text[e] === '[' ? ']' : null;
+      if (!c) return e;
+      let d = 0, i = e;
+      for (; i < text.length; i++) { if (text[i] === text[e] && text[i - 1] !== '\\') d++; else if (text[i] === c && text[i - 1] !== '\\' && --d === 0) break; }
+      if (i >= text.length) return e;
+      e = i + 1;
+    }
+  }
   /** Where the first argument of a use of macro `name` (`\greet`) starts, on line `line` (1-based) or a neighbour.
    * None for a macro the text defines without parameters: the `{}` of `\model{}` is an empty group, no argument. */
   function argAt(text: string, name: string, line: number): number | null {
@@ -908,16 +931,33 @@ declare global {
     const sf = /[.?!]/.test(c) && /\p{Lu}/u.test(t.at(-2) ?? '') ? 999 : ({ '.': 3000, '?': 3000, '!': 3000, ':': 2000, ';': 1500, ',': 1250 } as Record<string, number>)[c] ?? 1000;
     return { gap: space + (sf >= 2000 ? space / 3 : 0), st: space / 2 * sf / 1000, sh: space / 3 * 1000 / sf };
   }
+  /** The glue ratio that sets pieces `a..b` (a line, the hyphen after a `hy` end) `L` wide: stretch below, shrink
+   * above, the last line (`last`) natural unless it is too wide. */
+  function setRatio(all: Piece[], a: number, b: number, L: number, last: boolean): number {
+    let w = 0, str = 0, shr = 0;
+    for (let j = a; j < b; j++) {
+      const q = all[j]!;
+      if (j > a) { w += q.gap; str += q.st ?? q.gap / 2; shr += q.sh ?? q.gap / 3; }
+      w += q.n;
+    }
+    if (!last && all[b - 1]?.hy) w += all[b - 1]!.hw ?? 0;
+    if (w > L) return shr > 0 ? (L - w) / shr : 0;
+    return last || str <= 0 ? 0 : (L - w) / str;
+  }
   function reflow<P extends Piece>(pieces: P[], x0: number, line: Line<P>): Flow<P> {
     // `fit`: TeX's total fit over the typed pieces and every page row after them, each line but the last justified;
     // greedy below where nothing fits within the tolerance, or a new paragraph or display is typed
     const all = line.fit && !pieces.some((q) => q.par || q.disp != null) ? [...pieces, ...line.rows.flatMap((r) => r.pieces)] : null;
     // `breaks`: the lines TeX's own breaker gave for these pieces (`satex/break`), else the echo's total fit
-    const k = all && (line.breaks && line.breaks.breaks.every((b) => b > 0 && b < all.length) ? line.breaks : fit(all, line.right - x0, line.right - line.left));
+    const given = !!all && !!line.breaks && line.breaks.breaks.every((b) => b > 0 && b < all.length);
+    const k = all && (given ? line.breaks : fit(all, line.right - x0, line.right - line.left));
     if (all && k) {
       const starts = [0, ...k.breaks], rows: Flow<P>['rows'] = starts.map((a, li) => {
-        const b = starts[li + 1] ?? all.length, r = k.ratios[li]!, slot = li ? line.rows[li - 1] : null, out: (P & { x: number })[] = [];
+        const b = starts[li + 1] ?? all.length, slot = li ? line.rows[li - 1] : null, out: (P & { x: number })[] = [];
         let x = li ? slot?.x ?? line.left : x0;
+        // given breaks (TeX's, from its own widths) set with these pieces' widths: each line but the last justified to
+        // the edge, so a piece measured wider than TeX's never runs past it
+        const r = given ? setRatio(all, a, b, line.right - x, b === all.length) : k.ratios[li]!;
         for (let j = a; j < b; j++) {
           const q = all[j] as P;
           if (j > a) x += q.gap + r * (r > 0 ? q.st ?? q.gap / 2 : q.sh ?? q.gap / 3);
@@ -1299,7 +1339,7 @@ declare global {
     const m = /(\\\]|\$\$|\\end\{([A-Za-z]+)\*?\})[ \t]*$/.exec(text.slice(Math.max(0, at - 40), at));
     return !!m && (!m[2] || MATH.test(m[2]) && m[2] !== 'math');
   }
-  self.satexPdfEdit = { onRow, run, displayEnd, offsetAt, units, treeNodes, naming, entries, shortTitle, bothTitles, renamed, leaders, checked, grow, key, broken, scan, start, cells, cellStep, rowAfter, verbatim, verbatimAt, nearest, bands, joined, place, extent, room, form, measure, respec, widthBp, snapWidth, resized, stepped, plain, editable, spans, sender, typed, erased, mathAt, boundaries, boundaryAt, inkSnap, locate, columns, wordAt, argAt, defining, relaid, reflow, fit, glue, centered, apart, tokens, unset, aligned, changed, paragraph, mathRuns, footArg, footBack, footShown, blankPlace };
+  self.satexPdfEdit = { onRow, run, displayEnd, offsetAt, units, treeNodes, naming, entries, shortTitle, bothTitles, renamed, leaders, checked, grow, key, broken, scan, start, cells, cellStep, rowAfter, verbatim, verbatimAt, nearest, bands, joined, place, extent, room, form, measure, respec, widthBp, snapWidth, resized, stepped, plain, editable, spans, sender, typed, erased, mathAt, boundaries, boundaryAt, inkSnap, locate, columns, wordAt, argAt, afterCall, defining, relaid, reflow, fit, glue, centered, apart, tokens, unset, aligned, changed, paragraph, mathRuns, footArg, footBack, footShown, blankPlace };
 })();
 
 // TikZ nodes moved by drag: where each `\node` and path label stands in the source, and the statement a drag
@@ -1350,6 +1390,7 @@ declare global {
       addEdge(text: string, picAt: number, a: string, b: string, opts?: string): { at: number; text: string } | null;
       named(stmt: string, i: number, name: string): string | null; fresh(text: string, picAt: number, base: string): string;
       picOpts(text: string, picAt: number): { from: number; to: number; keys: string[] } | null; picSet(text: string, picAt: number, group: RegExp, add: string[]): { from: number; to: number; was: string; now: string } | null;
+      dependents(text: string, n: TikzNode): { direct: TikzNode[]; all: TikzNode[] };
       relation(b: TikzBox, ref: TikzBox, tol: number, dist: [number, number] | undefined, name: string): string | null; place(stmt: string, i: number, rel: string): string | null;
       snapAngle(deg: number, step: number): number; angle(stmt: string, i: number): number; unlabel(stmt: string, i: number): string | null;
     };
@@ -1831,6 +1872,19 @@ declare global {
     if (q.at) s = s.slice(0, q.at[0]).replace(/\s*\bat\s*$/, '') + s.slice(q.at[1] + 1);
     return s;
   }
+  /** The nodes placed from node `n` (`right=of n`, `at (n.east)`), in its picture: `direct` those naming it, `all` with the
+   * chains placed from them. A node of a path statement counts by its own options only. */
+  function dependents(text: string, n: TikzNode) {
+    const ns = nodes(text).filter((m) => m.kind === 'node' && m.pic.at === n.pic.at && m.from > n.from);
+    const uses = (m: TikzNode, name: string) => {
+      const q = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), re = new RegExp(`\\(\\s*${q}\\s*(\\.[^)]*)?\\)|\\bof\\s*=?\\s*${q}(?![\\w])`);
+      const own = /^\s*\\node\b/.test(text.slice(m.from, m.to)) ? text.slice(m.from, m.to).replace(/\{[^{}]*\}\s*;?\s*$/, '') : m.opts.join(', ');
+      return re.test(m.name ? own.replace(new RegExp(`\\(\\s*${m.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*\\)`), '') : own);
+    };
+    const direct = n.name ? ns.filter((m) => uses(m, n.name!)) : [], all = [...direct];
+    for (let k = 0; k < all.length; k++) for (const m of ns) if (all[k]!.name && !all.includes(m) && uses(m, all[k]!.name!)) all.push(m);
+    return { direct, all };
+  }
   /** `stmt` without its label `i` (`node[…] {…}` on a path). */
   function unlabel(stmt: string, i: number) {
     const p = parts(stmt)[i];
@@ -1840,7 +1894,7 @@ declare global {
     return stmt.slice(0, a) + stmt.slice(p.t[1] + 1);
   }
   self.satexTikzMove = { nodes, move, len, cm, posOn, clipped, snap, edges, shapeOf, shape, looks, flip, retext, tipOf, tip, label,
-    SHAPES: SHAPE_LIST, library, keysAt, current, set, segOf, route, bend, inout, looseness, segPath, addEdge, named, fresh, picOpts, picSet, snapAngle, angle, unlabel, relation, place };
+    SHAPES: SHAPE_LIST, library, keysAt, current, set, segOf, route, bend, inout, looseness, segPath, addEdge, named, fresh, picOpts, picSet, snapAngle, angle, unlabel, relation, place, dependents };
 })();
 
 // References switched from the pages: a reference's printed number is no text to type into. Where its key stands in

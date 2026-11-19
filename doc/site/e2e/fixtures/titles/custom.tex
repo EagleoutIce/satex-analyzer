@@ -1,0 +1,10 @@
+\documentclass{article}
+\title{Plain Title Words}
+\author{Some Author}
+\makeatletter
+\renewcommand{\maketitle}{\begin{center}{\Large\bfseries \@title\par}\vspace{1em}{\large \@author\par}\end{center}}
+\makeatother
+\begin{document}
+\maketitle
+Body words after the title.
+\end{document}

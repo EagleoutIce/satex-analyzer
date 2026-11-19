@@ -29,7 +29,7 @@ interface ImgState {
 }
 /** The undo model of a widget. */
 interface History {
-  settle(): void; hold(on: boolean): void; undo(): boolean; redo(): boolean; reset(): void; readonly changed: boolean; readonly dirty: boolean;
+  settle(): void; hold(on: boolean): void; undo(): boolean; redo(): boolean; reset(): void; rebase(): void; readonly changed: boolean; readonly dirty: boolean;
   controls(): HTMLButtonElement[]; keys(root: HTMLElement): void;
 }
 /** The Apply lifecycle of a widget. */
@@ -69,6 +69,8 @@ dialog.pop.pop-peek { opacity: .06; pointer-events: none; transition: opacity .1
 dialog.pop.pop-peek::backdrop { opacity: 0; }
 .pop-tools { display: inline-flex; gap: .15rem; margin-left: auto; }
 .pop-tools + button { margin-left: .15rem; }
+.sd-foot-note > :empty + .sd-sep { display: none; }
+@media (max-width: 520px) { .sd-foot-note > .sd-hint, .sd-foot-note > .sd-sep { display: none; } }
 .pop-tools svg, .sd-icon svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
 .sd > header, .sd > footer { max-width: none; width: auto; margin: 0; box-sizing: border-box; display: flex; align-items: center; gap: .5rem; padding: .55rem .6rem .55rem 1rem; flex-wrap: wrap; }
 .sd > header { border-bottom: 1px solid var(--c-border); }
@@ -327,6 +329,8 @@ tr:hover > .sd-rh .sd-del, .sd-colh:hover .sd-del, .sd-del:focus-visible { opaci
     const tools = h('span', { class: 'pop-tools' }, peek, free, full);
     const close = [...header.querySelectorAll(':scope > button')].pop();
     header.insertBefore(tools, close ?? null);
+    // every dialog's close: the same icon, size and title
+    if (close?.getAttribute('aria-label') === 'close') { close.className = 'pop-close'; close.title = 'Close (Esc)'; close.innerHTML = '<svg viewBox="0 0 16 16"><path d="M4 4l8 8M12 4l-8 8"/></svg>'; }
     const setFull = (on: boolean) => {
       dlg.classList.toggle('pop-full', on);
       full.setAttribute('aria-pressed', String(on));
@@ -386,7 +390,12 @@ tr:hover > .sd-rh .sd-del, .sd-colh:hover .sd-del, .sd-del:focus-visible { opaci
       if (k.full && !dlg.classList.contains('pop-full')) setFull(true);
       if (k.free && !dlg.classList.contains('pop-free') && k.rect) setFree(true, k.rect);
     };
-    new MutationObserver(() => { if (dlg.open) restore(); }).observe(dlg, { attributes: true, attributeFilter: ['open'] });
+    // opened: the first field takes the focus, not a header tool (the browser's pick)
+    const first = () => {
+      if (!dlg.open || !(document.activeElement === dlg || header.contains(document.activeElement))) return;
+      dlg.querySelector<HTMLElement>(':is(input:not([type=hidden]), select, textarea):not(:disabled):not(header *, .tv-tools *)')?.focus({ preventScroll: true });
+    };
+    new MutationObserver(() => { if (dlg.open) { restore(); first(); } }).observe(dlg, { attributes: true, attributeFilter: ['open'] });
     if (dlg.open) restore();
     return dlg;
   }
@@ -403,7 +412,8 @@ tr:hover > .sd-rh .sd-del, .sd-colh:hover .sd-del, .sd-del:focus-visible { opaci
    * back to how the widget opened (undoable too). `controls()` gives the header's undo and redo buttons,
    * `keys(root)` binds Ctrl+Z, Ctrl+Shift+Z and Ctrl+Y at the root, before a focused child, outside text fields (those keep their own undo). */
   function history(get: () => unknown, set: (state: any) => void): History {
-    const json = () => JSON.stringify(get()), first = json(), undo: string[] = [], redo: string[] = [], subs: (() => void)[] = [];
+    let first = JSON.stringify(get());
+    const json = () => JSON.stringify(get()), undo: string[] = [], redo: string[] = [], subs: (() => void)[] = [];
     let last = first, held = false;
     const told = () => subs.forEach((f) => f());
     const go = (from: string[], to: string[]) => { api.settle(); if (!from.length) return false; to.push(last); last = from.pop()!; set(JSON.parse(last)); told(); return true; };
@@ -413,6 +423,8 @@ tr:hover > .sd-rh .sd-del, .sd-colh:hover .sd-del, .sd-del:focus-visible { opaci
       undo: () => go(undo, redo),
       redo: () => go(redo, undo),
       reset() { api.settle(); if (last === first) return; undo.push(last); redo.length = 0; last = first; set(JSON.parse(first)); told(); },
+      /** The state now becomes how the widget opened: its first draw or the server's first answer filled in fields, no edit. */
+      rebase() { if (!undo.length) first = last = json(); },
       get changed() { return last !== first; },
       /** Whether the state now (settled or not) differs from how the widget opened. */
       get dirty() { return json() !== first; },
@@ -435,29 +447,30 @@ tr:hover > .sd-rh .sd-del, .sd-colh:hover .sd-del, .sd-del:focus-visible { opaci
     return api;
   }
   /** What every widget's footer says about its keys. */
-  const HINT = 'Ctrl+Z undoes, Ctrl+Enter applies, Esc cancels.';
+  const HINT = 'Enter applies, Esc cancels, Ctrl+Z undoes.';
 
   /** The footer every dialog and view shares: a note and the keys, then Reset, Cancel and Apply (each only when given).
    * The classes fit both styles (dialogs.js `.sd`, views.js `.tv`). */
   function footer({ note = '', hint = HINT, extra = [], reset, cancel, apply, label = 'Apply', tag = 'footer', cls = '' }: { note?: string; hint?: string; extra?: Node[]; reset?: (() => void) | null; cancel?: (() => unknown) | null; apply?: (() => void) | null; label?: string; tag?: 'footer' | 'div'; cls?: string }) {
     const b = (text: string, kind: string, title: string, f?: (() => unknown) | null) => f ? h('button', { type: 'button', class: `tv-button tv-${kind} sd-${kind}`, title, onclick: () => f() }, text) : null;
     const ok = b(label, 'primary', 'Write into the document (Ctrl+Enter)', apply);
-    const el = h(tag, { class: cls }, h('span', { class: 'sd-muted tv-muted sd-foot-note', style: 'flex:1;min-width:10rem' }, note, note && hint ? h('span', { 'aria-hidden': 'true' }, ' · ') : null, hint), ...extra,
+    const el = h(tag, { class: cls }, h('span', { class: 'sd-muted tv-muted sd-foot-note', style: 'flex:1;min-width:10rem' }, note, note && hint ? h('span', { class: 'sd-sep', 'aria-hidden': 'true' }, ' · ') : null, hint ? h('span', { class: 'sd-hint' }, hint) : null), ...extra,
       b('Reset', 'ghost', 'Back to how the dialog opened', reset), b('Cancel', 'ghost', 'Close without writing (Esc)', cancel), ok);
     return { el, apply: ok as HTMLButtonElement };
   }
-  /** Asks in `root` (a dialog's or view's own element) whether to drop the changes: true to discard. One ask at a time; Esc keeps editing. */
+  /** Asks in `root` (a dialog's or view's own element) whether to drop the changes: true to discard. One ask at a time:
+   * closing again while it asks (the X, Esc) is Discard, the first ask closes; Keep editing goes back. */
   function discard(root: HTMLElement): Promise<boolean> {
     style();
-    if (root.satexAsk) return root.satexAsk;
+    if (root.satexAsk) { root.satexDrop!(); return Promise.resolve(false); }
     const done = (yes: boolean) => { bar.remove(); root.satexAsk = null; resolve(yes); };
-    root.satexKeep = () => done(false);
+    root.satexDrop = () => done(true);
     let resolve!: (yes: boolean) => void;
     const keep = h('button', { type: 'button', class: 'tv-button tv-ghost sd-ghost', onclick: () => done(false) }, 'Keep editing');
     const bar = h('div', { class: 'sd-row sd-confirm sd-discard', role: 'alertdialog', 'aria-label': 'unsaved changes' },
       h('span', { class: 'sd-muted' }, 'Your changes are not written yet.'),
       h('button', { type: 'button', class: 'tv-button tv-danger sd-danger', onclick: () => done(true) }, 'Discard'), keep);
-    bar.addEventListener('keydown', (e) => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); done(false); } });
+    bar.addEventListener('keydown', (e) => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); done(true); } });
     root.insertBefore(bar, root.querySelector(':scope > footer, :scope > .tv-foot'));
     keep.focus();
     return (root.satexAsk = new Promise<boolean>((r) => { resolve = r; }));
@@ -490,7 +503,7 @@ tr:hover > .sd-rh .sd-del, .sd-colh:hover .sd-del, .sd-del:focus-visible { opaci
       dlg = h('dialog', { class: 'sd-dialog', 'aria-label': opts.title }, root);
       document.body.append(dlg);
       enhance(dlg, opts.name ?? 'widget');
-      dlg.addEventListener('cancel', (e) => { e.preventDefault(); if (root.satexAsk) root.satexKeep!(); else close(); });
+      dlg.addEventListener('cancel', (e) => { e.preventDefault(); close(); });
       dlg.showModal();
     }
     return { root, close, dialog: dlg, apply: foot.apply };
@@ -551,7 +564,8 @@ tr:hover > .sd-rh .sd-del, .sd-colh:hover .sd-del, .sd-del:focus-visible { opaci
     const hist = history(() => view.state, (st: Rec) => { view.state = st; render.redraw(); refresh(); });
     const life = applier({
       get: () => view.state,
-      set: (st: Rec) => { view.state = st; render.redraw(); },
+      // the server's state for an untouched widget (fields filled in) is how it opened, no edit
+      set: (st: Rec) => { const clean = !hist.dirty; view.state = st; render.redraw(); if (clean) hist.rebase(); },
       ask: (op?: unknown) => host.apply(view.state, op),
       commit: (edits: unknown) => { host.commit(edits); p.close(true); },
       told: (l: Applier) => {
@@ -567,14 +581,25 @@ tr:hover > .sd-rh .sd-del, .sd-colh:hover .sd-del, .sd-del:focus-visible { opaci
     const p = popup({
       name: view.kind, title, sub: render.sub, main: render.main, side: [render.side, h('h4', {}, 'Written as'), tex, notes], foot: render.foot,
       tools: hist.controls(), feedback: host.feedback, reset: () => hist.reset(), apply: () => life.apply(), parent: host.parent,
-      dirty: () => hist.dirty, onClose: () => { life.cancel(); host.closed?.(); },
+      dirty: () => unwritten(hist, life), onClose: () => { life.cancel(); host.closed?.(); },
     });
     keys(p.root, hist, () => life.apply());
     return { refresh, history: hist, root: p.root, close: p.close, apply: () => life.apply() };
   }
-  /** The keys every widget routes at its root, before a focused child sees them: Ctrl+Enter applies, Ctrl+Z / Ctrl+Shift+Z undo and redo. */
+  /** Whether closing loses something: the state moved from how it opened and its answer, pending or in, writes edits. */
+  const unwritten = (hist: History, life: Applier) => hist.dirty && (life.waiting || !!(life.result?.edits as unknown[] | undefined)?.length);
+  /** The keys every widget routes at its root, before a focused child sees them: Ctrl+Enter applies, Ctrl+Z / Ctrl+Shift+Z undo and redo.
+   * Plain Enter in a one-line field applies too, after the field: a field that takes Enter itself (a list's pick, a new row) prevents it. */
   function keys(root: HTMLElement, hist: History | undefined, apply: () => void) {
     route(root, (e) => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); e.stopPropagation(); apply(); } });
+    root.addEventListener('keydown', (e) => {
+      const t = e.target as HTMLInputElement;
+      if (e.key !== 'Enter' || e.defaultPrevented || e.isComposing || e.ctrlKey || e.metaKey || e.altKey || e.shiftKey) return;
+      if (t.tagName !== 'INPUT' || /^(button|checkbox|radio|range|color|file|submit)$/.test(t.type) || t.hasAttribute('list')) return;
+      e.preventDefault();
+      t.dispatchEvent(new Event('change', { bubbles: true }));
+      apply();
+    });
     hist?.keys(root);
   }
   /** `on(keydown)` at `root` before its children, and for keys with no focus (a redrawn control drops it to the body)

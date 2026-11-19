@@ -9,7 +9,7 @@ files` says the samples and the offered packages read, and its caches from `sate
     build.py --satex target/release/satex --wasm target/wasm32-unknown-emscripten/release --out site-out
 """
 
-import argparse, contextlib, functools, io, tarfile, math, unicodedata, base64, concurrent.futures, datetime, gzip, hashlib, html, inspect, json, os, pickle, re, shutil, signal, subprocess, sys, tempfile, threading, time, tomllib, urllib.parse
+import argparse, contextlib, functools, io, tarfile, math, unicodedata, base64, concurrent.futures, datetime, gzip, hashlib, html, inspect, json, os, pickle, re, shutil, signal, subprocess, sys, tempfile, threading, time, tomllib, urllib.parse, urllib.request
 from pathlib import Path
 
 import semantics as sem
@@ -2135,13 +2135,14 @@ def showcase(out, live):
             # a live editor in the same frame: until site.js starts the engine in view, the build's run of
             # its text stands there, findings underlined and the typeset text beside
             lines, data = live[name]
-            demo = (f'<div class="live-demo" role="button" tabindex="0" aria-label="edit the document yourself">{pictures(s["demo"], "", loop=True)}'
-                    f'<span class="live-demo-hint">Click to type yourself</span></div>' if s.get("demo") in demos else "")
+            demo = f'<div class="live-demo">{pictures(s["demo"], "", loop=True)}</div>' if s.get("demo") in demos else ""
+            # the bar under the window: one slim row, the status and, while the demo plays, the button that ends it
+            go = '<button type="button" class="live-demo-hint">Click to type yourself</button>' if demo else ""
             # the window keeps the demo's aspect ratio while it plays: nothing below it moves
             ratio = ' style="--demo-ar: {} / {}"'.format(*size(src / f'{s["demo"]}-light.png')) if demo else ""
             figures.append(f'<figure class="shot shot-big shot-live" id="shot-{name}" data-name="{html.escape(s["file"])}"><div class="shot-stage"><div class="shot-win">'
                            f'<div class="live-grid"{ratio}><pre class="src live-src live-poster"><code>{lines}</code></pre><div class="ex-side typeset live-ts" aria-label="what SaTeX computes it typesets"></div>{demo}</div>'
-                           f'<p class="muted live-status" aria-live="polite">{html.escape(s["demo-status"] if demo else s["status"])}</p></div></div>'
+                           f'<div class="live-bar"><p class="muted live-status" aria-live="polite">{html.escape(s["demo-status"] if demo else s["status"])}</p>{go}</div></div></div>'
                            f'<script type="application/json" class="ex-data">{data}</script>'
                            f'<figcaption>{title(s)}<p>{tikz(html.escape(s["caption"]))}</p>'
                            f'<a class="shot-try" href="play/index.html">The full playground →</a></figcaption></figure>')
@@ -2187,9 +2188,12 @@ def recapture(out):
     key = lambda s: digest(ui + json.dumps(s, sort_keys=True).encode() + source(s).read_bytes())
     # an entry whose example is not there yet (a feature still to come) waits
     due = {s["name"]: key(s) for s in spec["shots"] if not s.get("live") and source(s)}
-    # entries that need the local compile server (`cargo playground`) keep their last images: the static server here has none
-    needs_server = [n for n, k in due.items() if keys.get(n) != k and next(s for s in spec["shots"] if s["name"] == n).get("server")]
-    due = {n: k for n, k in due.items() if next(s for s in spec["shots"] if s["name"] == n).get("server") is None}
+    # entries that need the local compile server are taken against `satex-playground --dev` on this build, when it is
+    # built beside the satex binary (`cargo playground`); else they keep their last images
+    play = SATEX.parent / "satex-playground" if SATEX else None
+    served = {s["name"] for s in spec["shots"] if s.get("server")}
+    needs_server = [] if play and play.is_file() else [n for n, k in due.items() if keys.get(n) != k and n in served]
+    due = {n: k for n, k in due.items() if n not in needs_server}
     # a capture that failed on these inputs waits for them to change: no retry on every build
     due = {n: k for n, k in due.items() if keys.get(n) not in (k, f"failed {k}") or keys[n] == k and not all((img / f"{n}-{c}.png").exists() for c in ("light", "dark"))}
     # `cargo playground --dev` reuses an old build: an example changed since is not in it, so its shot would wait for what never comes
@@ -2201,7 +2205,7 @@ def recapture(out):
     if stale:
         print(f"showcase: kept {', '.join(stale)}: the built site in {out} has an older example, rebuild it (no --dev, or delete the output) and build again", file=sys.stderr)
     if needs_server:
-        print(f"showcase: kept {', '.join(needs_server)}: they compile through the local playground server, which a build does not run; retake with ONLY={','.join(needs_server)} node doc/site/showcase/capture.mjs http://127.0.0.1:8000/ while cargo playground serves", file=sys.stderr)
+        print(f"showcase: kept {', '.join(needs_server)}: they compile through the local playground server, and no satex-playground stands beside {SATEX} (cargo playground builds it); retake with ONLY={','.join(needs_server)} node doc/site/showcase/capture.mjs http://127.0.0.1:8000/ while cargo playground serves", file=sys.stderr)
     if not due:
         return False
     chrome = os.environ.get("CHROME") or next(iter(sorted(Path.home().glob(".cache/ms-playwright/chromium-*/chrome-linux64/chrome"), reverse=True)), None)
@@ -2223,12 +2227,27 @@ def recapture(out):
     idle = (os.cpu_count() or 2) - os.getloadavg()[0]
     slots = max(1, min(6, available_memory() // (3 * 2**30), int(idle) // 2))
     names, url = list(due), f"http://127.0.0.1:{server.server_address[1]}/"
+    urls, playground = {}, None
+    if any(n in served for n in names):
+        # a free port, then the playground server on it, the build's pages with this checkout's scripts
+        import socket
+        with socket.socket() as sock:
+            sock.bind(("127.0.0.1", 0))
+            port = sock.getsockname()[1]
+        playground = subprocess.Popen([str(play), "--dev", "--port", str(port), "--out", str(out.resolve())], cwd=ROOT, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        for _ in range(600):
+            try:
+                urllib.request.urlopen(f"http://127.0.0.1:{port}/play/index.html", timeout=2).close()
+                break
+            except Exception:
+                time.sleep(0.5)
+        urls = {n: f"http://127.0.0.1:{port}/" for n in names if n in served}
     print(f"showcase: recording {len(names)} shots again in {slots} browsers (load {os.getloadavg()[0]:.1f}) because their example, settings or the page code changed: {', '.join(names)}", file=sys.stderr)
     finished = [0]
 
     def run(part):
         t0 = time.monotonic()
-        out = subprocess.run(["node", str(SITE / "showcase/capture.mjs"), url, str(img)],
+        out = subprocess.run(["node", str(SITE / "showcase/capture.mjs"), urls.get(part[0], url), str(img)],
                              env=dict(os.environ, ONLY=",".join(part), CHROME=str(chrome)), capture_output=True, text=True).stdout
         finished[0] += 1
         got = sorted(set(re.findall(r"^ok +\S+ (light|dark)", out, re.M)))
@@ -2239,6 +2258,9 @@ def recapture(out):
             outputs = list(pool.map(run, [[n] for n in names]))
     finally:
         server.shutdown()
+        if playground:
+            playground.terminate()
+            playground.wait()
     done = type("Done", (), {"stdout": "\n".join(outputs)})
     ok = re.findall(r"^ok +(\S+) (light|dark)", done.stdout, re.M)
     taken = [n for n in due if (n, "light") in ok and (n, "dark") in ok]

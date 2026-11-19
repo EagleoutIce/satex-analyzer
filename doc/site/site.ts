@@ -1817,11 +1817,12 @@ interface Stream {
     };
     const io = new IntersectionObserver(([e]) => { clearTimeout(timer); if (e!.isIntersecting) timer = setTimeout(go, 600); }, { threshold: .4 });
     // a demo plays in the window until a click or a key: then it gives way to the editor, which starts at once
-    const demo = fig.querySelector<HTMLElement>('.live-demo');
+    // (the clip or the bar's button)
+    const demo = fig.querySelector<HTMLElement>('.live-demo'), button = fig.querySelector<HTMLElement>('.live-demo-hint');
     if (demo) {
-      const take = (e: Event) => { if (e instanceof KeyboardEvent && e.key !== 'Enter' && e.key !== ' ') return; e.preventDefault(); demo.remove(); go(); };
+      const take = (e: Event) => { e.preventDefault(); demo.remove(); button?.remove(); go(); };
       demo.addEventListener('click', take);
-      demo.addEventListener('keydown', take);
+      button?.addEventListener('click', take);
     } else io.observe(fig);
     poster.addEventListener('pointerdown', go, { once: true });
     fig.querySelector<HTMLElement>('.live-ts')!.addEventListener('pointerdown', (e) => { if (!started) { typing = [e.clientX, e.clientY]; go(); } });

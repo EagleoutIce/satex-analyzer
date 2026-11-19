@@ -8,7 +8,7 @@
    "file": "results.tex",
    "title": "Try it here",
    "caption": "Edit this document. Hover a length or the [ht] to see what they mean. The typeset text on the right follows as you type.",
-   "demo-status": "A recording. Click to try it yourself (10 MB, loaded once).",
+   "demo-status": "A recording. Typing here yourself loads SaTeX once (10 MB).",
    "status": "Computed when this page was built. SaTeX starts in your browser when the window comes into view (about 10 MB, loaded once).",
    "text": "\\documentclass{article}\n\\begin{document}\n\\section{Results}\nRuns took 10-12 s when warm.\n\\vspace{12pt}\n\\begin{figure}[ht]\n  \\centering\n  \\rule{0.6\\linewidth}{2cm}\n  \\caption{The warm cache.}\n\\end{figure}\n\\end{document}\n"
   },
@@ -81,7 +81,7 @@
    "file": "spacing.tex",
    "title": "Type in the PDF",
    "big": true,
-   "caption": "Click a word on the page and type. The text goes to its place in the source, $x_42 becomes $x_{42}$, and the page follows each key. Typing into a macro's output edits its definition, so every use changes. A TikZ node moves with the mouse along guides to the other nodes and changes its shape on a right click.",
+   "caption": "Click a word on the page and type. The text goes to its place in the source, $x_42 becomes $x_{42}$, and the page follows each key. Typing into a macro's output edits its definition, so every use changes. A TikZ node moves with the mouse along guides and lands right of its neighbour, a double click edits its text, a right click opens its menu.",
    "open": [
     "panel",
     "play-pdf"
@@ -196,25 +196,52 @@
      "wait": 1000
     },
     {
+     "click": "self.__pw('loss', .92, .5, 1)",
+     "double": true,
+     "glide": 800,
+     "after": 500
+    },
+    {
+     "until": "document.querySelector('.pdf-caret')"
+    },
+    {
+     "type": "es",
+     "wait": 500
+    },
+    {
+     "until": "self.satexPdfWords().some((w) => w[5] === 'losses') && !document.getElementById('play-pdf').classList.contains('pdf-running')",
+     "ms": 60000,
+     "wait": 900
+    },
+    {
      "click": "self.__pw('TinyNet2', .5)",
      "right": true,
-     "glide": 600,
-     "after": 700
+     "glide": 700,
+     "after": 600
     },
     {
-     "eval": "if (!document.querySelector('.tikz-menu')) { const [x, y] = self.__pw('TinyNet2', .5); document.elementFromPoint(x, y).dispatchEvent(new MouseEvent('contextmenu', { clientX: x, clientY: y, bubbles: true, cancelable: true, button: 2 })); }",
-     "until": "document.querySelector('.tikz-menu')",
-     "ms": 20000
+     "eval": "if (!document.querySelector('.pa-root')) { const [x, y] = self.__pw('TinyNet2', .5); document.elementFromPoint(x, y).dispatchEvent(new MouseEvent('contextmenu', { clientX: x, clientY: y, bubbles: true, cancelable: true, button: 2 })); }",
+     "until": "document.querySelector('.pa-root')",
+     "ms": 20000,
+     "wait": 500
     },
     {
-     "click": "[...document.querySelectorAll('.tikz-menu button')].find((b) => b.textContent === 'Circle')",
-     "glide": 500,
-     "after": 200
+     "hover": "(() => { const r = [...document.querySelectorAll('.pa-root > button')].find((b) => b.querySelector('span')?.textContent === 'Shape').getBoundingClientRect(); return [r.left + 16, r.y + r.height / 2]; })()",
+     "glide": 700,
+     "after": 500
+    },
+    {
+     "until": "document.querySelector('.pa-sub')"
+    },
+    {
+     "click": "[...document.querySelectorAll('.pa-sub > button')].find((b) => b.querySelector('span')?.textContent === 'Circle')",
+     "glide": 450,
+     "after": 300
     },
     {
      "until": "!document.getElementById('play-pdf').classList.contains('pdf-running')",
      "ms": 60000,
-     "wait": 1200
+     "wait": 1500
     }
    ],
    "crop": [

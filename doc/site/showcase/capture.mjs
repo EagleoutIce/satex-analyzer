@@ -1,7 +1,7 @@
 // The landing page's showcase images, taken from a built playground: per entry of shots.json, its
 // example opened, its steps run, the widget cropped, in light and dark, encoded as AVIF, WebP and PNG.
 //   cargo playground --dev --port 8123 & node doc/site/showcase/capture.mjs http://127.0.0.1:8123/
-// Entries with `"server": true` need the compile server of `cargo playground`: build.py leaves them out.
+// Entries with `"server": true` need the compile server of `cargo playground`: build.py runs `satex-playground --dev` for them.
 // ONLY=a,b takes the entries of those names, SCHEMES=dark one theme. RAW=dir keeps a full screenshot per entry.
 // An entry's `open` is the widget its try-it link opens (playground.js `satexOpen`); a step `{ "open": true }` opens it
 // the same way. A step with `snap` keeps the crop at that point as `<name>-<snap>` (a refactoring's before), `video`
@@ -132,7 +132,7 @@ async function type(text) {
 const OPENED = `document.querySelector('dialog.sd-dialog[open]') || document.getElementById('play-view').open`;
 
 /** One step: `eval` runs, `until` waits for, `hover`/`click` point at an expression giving [x, y] or an element
- * (`glide` ms: the mouse moves there first, `right`: the right button), `drag` is [from, to], `open` opens the entry's widget. */
+ * (`glide` ms: the mouse moves there first, `right`: the right button, `double`: a double click), `drag` is [from, to], `open` opens the entry's widget. */
 async function step(s, shot) {
   if (s.open) s = { eval: `return await satexOpen(${JSON.stringify(Object.fromEntries(['widget', 'at', 'k'].map((k, i) => [k, shot.open[i]])))})`, until: OPENED, ...s, open: undefined };
   if (s.drag) { await drag(...s.drag, s.over); if (s.wait) await sleep(s.wait); return; }
@@ -151,7 +151,8 @@ async function step(s, shot) {
     const p = await point(target);
     if (s.glide) await glide(p, s.glide); else { await mouse('mouseMoved', [p[0] - 4, p[1]]); await mouse('mouseMoved', p); }
     const button = s.right ? 'right' : 'left';
-    if (s.click) for (const type of ['mousePressed', 'mouseReleased']) await mouse(type, p, { button, buttons: type === 'mousePressed' ? (s.right ? 2 : 1) : 0, clickCount: 1 });
+    // `double`: a second click on the same point, as a double click
+    if (s.click) for (const n of s.double ? [1, 2] : [1]) for (const type of ['mousePressed', 'mouseReleased']) await mouse(type, p, { button, buttons: type === 'mousePressed' ? (s.right ? 2 : 1) : 0, clickCount: n });
     if (s.after) await sleep(s.after);
   }
 }

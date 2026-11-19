@@ -366,13 +366,13 @@
     $('t-time').title = full ? 'The last run read the document from its start.' : `The last run resumed at line ${r.resumedLine} from a checkpoint of the run before and took ${r.ranSteps} of the ${r.steps} steps a full run takes.`;
     rpHead();
   }
-  /** The pop-up's first line: where the last run started, its own steps, its share of a full run, its time. */
+  /** The pop-up's first row: where the last run started, its own steps, its share of a full run, its time. */
   function rpHead() {
     const r = runInfo, el = $('t-head');
     if (!r) { el.textContent = ''; return; }
     const share = r.steps > 0 ? Math.max(1, Math.round(r.ranSteps / r.steps * 100)) : null;
-    el.textContent = r.resumedLine == null ? `full run · ${kSteps(r.ranSteps)} steps · ${secs(r.ms)}`
-      : `from line ${r.resumedLine} · ${kSteps(r.ranSteps)} own steps${share != null && share < 100 ? ` · ${share} % of full` : ''} · ${secs(r.ms)}`;
+    el.textContent = r.resumedLine == null ? `full · ${secs(r.ms)}`
+      : `from line ${r.resumedLine} · ${kSteps(r.ranSteps)} own${share != null && share < 100 ? ` (${share}\u00a0%)` : ''} · ${secs(r.ms)}`;
     el.title = $('t-time').title;
   }
   $('t-time').onclick = () => { const pop = $('t-detail'); pop.hidden = !pop.hidden; $('t-time').setAttribute('aria-expanded', String(!pop.hidden)); };
@@ -728,6 +728,8 @@
   // ---------------------------------------------------------------- editor
 
   let editor; // { text(), set(text), diagnostics(list), apply(edits), cursor(), select(c), word() }
+  /** Whether a whole run has ended, so `satex/break` has fonts to answer from. */
+  let texReady = false;
   let version = 0, synced = 0, saved = 0, analyzedVersion = 0, timer = null, checkStart = 0, retryCompletion = false;
   let typedAt = 0, syncedAt = 0;
   /** The satex.yaml settings of this viewer's runs, kept in the browser. */
@@ -895,6 +897,8 @@
     if (running === 0) hang = HANG_MS;
     if (running > 0) return;
     refreshKept();
+    // the first whole run has ended (no package still on its way): TeX's line breaks may be asked of it
+    if (!analysisQueued && !loadingFor && analyzedVersion > 0) texReady = true;
     if (!analysisQueued) { if (heldFindings) publish(heldFindings); markStale(); return; }
     analysisQueued = false;
     analyze();
@@ -2212,10 +2216,15 @@
     const range = document.createRange();
     range.setStart(box, 0);
     range.setEnd(pos.offsetNode, pos.offset);
-    const idx = range.toString().length, all = box.textContent, words = tsViewWords(all, row), w = words.find((m) => m.index <= idx && idx <= m.index + m[0].length);
+    const idx = range.toString().length, all = box.textContent, words = tsViewWords(all, row);
+    let w = words.find((m) => m.index <= idx && idx <= m.index + m[0].length);
+    // past a word's trailing punctuation (`world!|`): the word with it, the caret after it (caretPut: after a macro's call
+    // where its body set the punctuation)
+    const punct = !w && words.findLast((m) => m.index + m[0].length < idx && /^[^\p{L}\p{N}\s]+$/u.test(all.slice(m.index + m[0].length, idx)));
+    if (punct) w = Object.assign([all.slice(punct.index, idx)], { index: punct.index });
     if (!w) return typeHint();
     // the same word's occurrences before it in the view and in the run's row: the j-th is the one clicked
-    const chars = rowOrigins(row), whole = (ws) => ws.filter((m) => m[0] === w[0]).map((m) => m.index);
+    const chars = rowOrigins(row), whole = (ws) => ws.filter((m) => m[0] === (punct || w)[0]).map((m) => m.index);
     const j = whole(words).indexOf(w.index), seen = whole(tsUnits(chars.map((ch) => ch.c).join(''), (i) => !!chars[i]?.math));
     const at = seen[Math.min(j, seen.length - 1)];
     if (at == null) return toast(`“${w[0]}” has no source place in the run`);
@@ -2224,7 +2233,7 @@
     if (ch.made) return madeOpen(file, ch, { view: 'ts', pt: { left: e.clientX, bottom: e.clientY + 8 } });
     // on a line, the occurrences before it read there
     const nth = (n) => seen.filter((a) => a < at && chars[a].line === n && !chars[a].from).length;
-    const read = () => readOf(ch.from, chars[at + w[0].length - 1].from);
+    const read = () => readOf(ch.from, chars[at + (punct || w)[0].length - 1].from);
     caretPut({ view: 'ts', p: { path: p.dataset.path, line: p.dataset.line, col: p.dataset.col }, idx: w.index }, file, ch.line, w[0], idx - w.index, nth, read, !!ch.from);
   }
   // the tints and the caret are placed from the view's layout: one drawn while its tab was hidden (a run the PDF's
@@ -2271,7 +2280,9 @@
   /** The caret over the Typeset view: in its word as the last run set it, the word as now written beside it while the view lags. */
   function tsCaretDraw() {
     const c = pdfCaret, q = (v) => CSS.escape(v);
-    document.querySelectorAll('.pdf-caret').forEach((x) => x.remove());
+    document.querySelectorAll('.pdf-caret, .ts-typed').forEach((x) => x.remove());
+    // the caret in a paragraph after the clicked one (Enter typed): its own row, never the clicked row's words
+    if (c.p0 != null && state.file === c.file && tsParaDraw(c)) return;
     // a paragraph's column is where it ends: typing in it moves that, the nearest on its line is it
     const p = [...typesetBody.querySelectorAll(`p.ts[data-path="${q(c.p.path)}"][data-line="${q(c.p.line)}"]`)].sort((a, b) => Math.abs(a.dataset.col - c.p.col) - Math.abs(b.dataset.col - c.p.col))[0], box = p?.querySelector('.ts-text');
     if (!box || state.file !== c.file) return;
@@ -2283,10 +2294,14 @@
     const w = PE.wordAt(g.text, b), m = w && { index: 0, 0: w[1] }, lo = w ? w[0] : 0;
     // typed since the word was found: the source from its start to the caret's word end stands in its place, spaces
     // and all, until the view is drawn again (a word alone would drop the words typed before it)
+    // the span stands for the source `s0..e` as of text `src`: an edit in it moves its end by the length change, a
+    // caret move (an arrow, a click) changes nothing, the caret only moves in it (past its ends: found again below)
     const typed = () => {
-      const t = c.typed, now = g.text.slice(t.s0, Math.max(g.at, w ? lo + m[0].length : 0));
-      if (g.at >= t.s0 && /^[^\\{}$%&#^_~\n]*$/.test(now) && tsSplice(box, t.at, t.len, now)) {
-        Object.assign(t, { len: now.length, seen: box.textContent });
+      const t = c.typed, e = t.src === g.text ? t.e : t.e + g.text.length - (t.src ?? g.text).length;
+      if (t.src === g.text && (g.at < t.s0 || g.at > e)) { c.typed = null; return false; }
+      const now = g.text.slice(t.s0, Math.max(g.at, e));
+      if (g.at >= t.s0 && /^[^\\{}$%&#^_~\n]*$/.test(now) && (t.src === g.text && t.len === now.length || tsSplice(box, t.at, t.len, now))) {
+        Object.assign(t, { len: now.length, seen: box.textContent, e: t.s0 + now.length, src: g.text });
         tsCaretPut(box, t.at + g.at - t.s0, true, '');
         return true;
       }
@@ -2299,13 +2314,45 @@
     const words = tsViewWords(box.textContent, tsRowOf(p));
     let near = m && words.filter((x) => x[0] === m[0]).sort((a, b) => Math.abs(a.index - c.idx) - Math.abs(b.index - c.idx))[0];
     // the view lags the text: the word as now written goes in its place at once, until the next run sets it
-    const old = !near && m && g.text[w[0] - 1] !== '\\' && words.find((x) => x.index <= c.idx && c.idx <= x.index + x[0].length);
+    // (only for an edit: a caret moved onto a word the view does not show rewrites nothing)
+    const edited = c.tsSeen !== g.text;
+    c.tsSeen = g.text;
+    const old = edited && !near && m && g.text[w[0] - 1] !== '\\' && words.find((x) => x.index <= c.idx && c.idx <= x.index + x[0].length);
     if (old && tsSplice(box, old.index, old[0].length, m[0])) near = { index: old.index };
     if (near) {
       c.idx = near.index;
-      if (m) { c.typed = { box, s0: lo, at: near.index, len: m[0].length, seen: box.textContent }; if (typed()) return; }
+      if (m) { c.typed = { box, s0: lo, at: near.index, len: m[0].length, seen: box.textContent, e: lo + m[0].length, src: null }; if (typed()) return; }
     }
     tsCaretPut(box, c.idx + (near && m ? Math.min(g.at - lo, m[0].length) : 0), !!near, !near && m ? m[0] : '');
+  }
+  /** The caret in a source paragraph after the one clicked (`c.p0`), as TeX sets one: the run's row of that paragraph
+   * once a run set it (the caret then goes on from it), else a new row after the rows before it, the text typed in it
+   * (plain text only: markup waits for the run). False when the caret is in the clicked paragraph still. */
+  function tsParaDraw(c) {
+    const g = pdfSeen(), [q0, q1] = PE.paragraph(g.text, g.at);
+    if (q0 <= c.p0) return false;
+    // the run's lines to the text's: unchanged before the change, after it moved by the lines added
+    const run = tsText[0] === c.file ? tsText[1] : null, nl = (t) => t.split('\n').length - 1;
+    if (run == null) return false;
+    const [a] = PE.changed(run, g.text), cut = nl(run.slice(0, a)) + 1, shift = nl(g.text) - nl(run);
+    const lineOf = (p) => +p.dataset.line > cut ? +p.dataset.line + shift : +p.dataset.line, L0 = nl(g.text.slice(0, q0)) + 1, L1 = nl(g.text.slice(0, q1)) + 1;
+    const rows = [...typesetBody.querySelectorAll(`p.ts[data-line][data-path="${CSS.escape(c.p.path)}"]`)];
+    // a row the run set from the caret's paragraph: the caret takes it, as if clicked there
+    const own = rows.find((p) => lineOf(p) >= L0 && lineOf(p) <= L1 + 1);
+    if (own) { Object.assign(c, { p: { path: own.dataset.path, line: own.dataset.line, col: own.dataset.col }, p0: q0, idx: 0, typed: null }); return false; }
+    // else a row of its own after the last row before the paragraph, holding what is typed in it
+    const prev = rows.filter((p) => lineOf(p) < L0).at(-1);
+    if (!prev) return false;
+    const end = g.at + /^[^\s\\{}$%&#^_~]*/.exec(g.text.slice(g.at))[0].length, src = g.text.slice(q0, end);
+    const shown = /[\\{}$%&#^_~]/.test(src) ? '' : src.replace(/\s+/g, ' ').trimStart(), at = Math.max(0, shown.length - (end - g.at));
+    const row = prev.cloneNode(false);
+    row.className = 'ts ts-typed pdf-echo';
+    for (const k of ['k', 'line', 'last', 'col', 'plain', 'lines', 'env']) delete row.dataset[k];
+    row.removeAttribute('title');
+    row.innerHTML = `<span class="ts-at">${L0}</span><span class="ts-rails" aria-hidden="true"></span><span class="ts-text"><span class="ts-pending" title="as typed: the analysis has not set it yet">${escape(shown) || '\u200b'}</span></span>`;
+    prev.after(row);
+    tsCaretPut(row.querySelector('.ts-text'), Math.min(at, shown.length), true, '');
+    return true;
   }
   /** The caret at character `i` of `box`'s text; off the text as set (`set` false) it carries the word as written. */
   function tsCaretPut(box, i, set, word) {
@@ -2588,7 +2635,7 @@
     dialog.close();
     editor?.refocus?.();
   }
-  $('play-view').addEventListener('cancel', (e) => { e.preventDefault(); const d = $('play-view'); if (d.satexAsk) d.satexKeep(); else closeView(); });
+  $('play-view').addEventListener('cancel', (e) => { e.preventDefault(); closeView(); });
   /** The views at `p`, the one of `plugin` opened at once (`focus`: what it shows first). */
   var viewFocus = null;
   async function openViews(p, plugin, focus = null) {
@@ -7555,11 +7602,16 @@
     const [w, h] = pageSize(img), el = Object.assign(document.createElement('span'), { className: cls });
     el.style.cssText = pdfPlace((p.l - 2 + dx) / w, (p.t - 2 + dy) / h, (p.r - p.l + 4) / w, (p.d - p.t + 4) / h);
     const what = p.n.name ? `node ${p.n.name}` : 'this node';
-    el.innerHTML = cls.includes('ghost') ? `<b>${escape(label)}</b>` : `<i class="pdf-tikz-grip" title="Drag to move ${escape(what)}${p.n.kind === 'label' ? ' along its path' : ''}: it snaps to the other nodes (Shift: no snapping${p.n.placed ? ', Ctrl: to a fixed place' : ''}). Right click: its shape, style, text, rotation and new edges"></i>` +
+    // the grip's lock: locked, the nodes placed from this one move with it; a click unlocks it
+    const deps = p.n.kind === 'node' ? TM.dependents(editor.text(), p.n).all.length : 0, free = tikzFree.has(tikzKey(p.n));
+    const lock = deps ? ` ${free ? `Unlocked: a drag moves only ${what}, the ${plural(deps, 'node')} placed from it stay where they are` : `Locked: the ${plural(deps, 'node')} placed from it move along`}. Click to ${free ? 'lock' : 'unlock'}.` : '';
+    el.innerHTML = cls.includes('ghost') ? `<b>${escape(label)}</b>` : `<i class="pdf-tikz-grip${deps ? ` pdf-tikz-lock${free ? ' pdf-tikz-free' : ''}` : ''}" title="Drag to move ${escape(what)}${p.n.kind === 'label' ? ' along its path' : ''}: it snaps to the other nodes (Shift: no snapping, Ctrl: to a fixed place).${escape(lock)} Right click: its shape, style, text, rotation and new edges"></i>` +
       (p.n.kind === 'node' ? `<i class="pdf-tikz-rot" title="Drag to rotate ${escape(what)} in 15° steps (Shift: 1°)"></i>` : '');
     el.dataset.k = String(tikzSeen.list.indexOf(p));
     host.append(el);
   }
+  /** The nodes whose dependents stay put when they are dragged (their grip unlocked), by picture and name. */
+  const tikzFree = new Set(), tikzKey = (n) => `${n.pic.at}:${n.name}`;
   const tikzClear = (cls) => { for (const el of pdfBody.querySelectorAll(cls)) el.remove(); };
   /** The page point of a pointer event over a page: [page, x, y, bp per screen px, img]; null off the pages. */
   function tikzPoint(e) {
@@ -7624,7 +7676,7 @@
    * reference or the file cannot load positioning (then it keeps its `at` or shifts). */
   function tikzRel(p, dx, dy, text) {
     const refs = tikzSeen.list.filter((q) => q !== p && q.n.kind === 'node' && q.n.name && q.n.pic === p.n.pic && q.page === p.page && q.n.from < p.n.from);
-    const lib = refs.length && PA.libEdit(text, Object.values(state.texts).join('\n'), [], 'positioning');
+    const lib = refs.length && PA.libEdit(text, docTexts(), [], 'positioning');
     if (!lib || 'line' in lib) return null;
     const frame = (q, x = 0, y = 0) => ({ l: q.l - TIKZ_SEP + x, r: q.r + TIKZ_SEP + x, t: q.t - TIKZ_SEP + y, d: q.d + TIKZ_SEP + y }), c = [p.c[0] + dx, p.c[1] + dy];
     const lined = (q) => +(Math.abs(q.c[0] - c[0]) < 0.5 || Math.abs(q.c[1] - c[1]) < 0.5), far = (q) => Math.hypot(q.c[0] - c[0], q.c[1] - c[1]);
@@ -7632,6 +7684,12 @@
     const now = label && TM.place(text.slice(p.n.from, p.n.to), p.n.i, label);
     return now && { text: now, label, pre: 'edit' in lib ? [lib.edit] : [] };
   }
+  /** The nodes placed straight from a node moved by `d` bp kept where they stand: each shifted back by as much (the
+   * chains placed from them follow them, so they stay too); one edit per statement. */
+  const tikzStay = (text, direct, d) => direct.filter((n, k) => direct.findIndex((m) => m.from === n.from) === k).map((n) => {
+    const stmt = text.slice(n.from, n.to), r = TM.move(stmt, n.i, n.pic, { by: [-d[0] / CM, d[1] / CM], grid: [0.01, 0.01] });
+    return r && { from: n.from, to: n.to, now: r.text };
+  });
   /** The snap's guide lines and equal gaps on page `page`. */
   function tikzGuides(page, s) {
     tikzClear('.pdf-tikz-guide');
@@ -7662,6 +7720,9 @@
     const perBp = img.getBoundingClientRect().width / pageSize(img)[0], x0 = e.clientX, y0 = e.clientY, id = e.pointerId, target = uri(), v = version;
     let last = null, moved = false;
     tikzMoving = p;
+    // locked (the default), the nodes placed from it move along: their ghosts too; unlocked they stay
+    const free = tikzFree.has(tikzKey(p.n)), deps = p.n.kind === 'node' ? TM.dependents(editor.text(), p.n) : { direct: [], all: [] };
+    const placedOf = (n) => tikzSeen.list.find((q) => q.n.from === n.from && q.n.i === n.i);
     const show = (m) => {
       moved ||= Math.hypot(m.clientX - x0, m.clientY - y0) > 2;
       if (!moved) return;
@@ -7669,6 +7730,7 @@
       tikzClear('.pdf-tikz-ghost');
       tikzGuides(p.page, last?.snap);
       if (last) tikzMark(p, 'pdf-tikz-ghost', last.d[0], last.d[1], last.label);
+      if (last && !free) for (const n of deps.all) { const q = placedOf(n); if (q) tikzMark(q, 'pdf-tikz-ghost pdf-tikz-along', last.d[0], last.d[1], ''); }
     };
     const move = (m) => { if (m.pointerId === id) show(m); };
     const key = (k) => { if (k.key === 'Escape') { last = null; end({ pointerId: id }); } };
@@ -7679,10 +7741,16 @@
       tikzClear('.pdf-tikz-ghost'); tikzClear('.pdf-tikz'); tikzClear('.pdf-tikz-guide');
       // a drag is no click: no caret, no jump to the source
       if (moved) pdfSelEnd = performance.now();
+      // a click on the grip, no drag: its lock switched
+      if (!moved && grip && deps.all.length && u.type !== 'pointercancel') {
+        if (free) tikzFree.delete(tikzKey(p.n)); else tikzFree.add(tikzKey(p.n));
+        toast(free ? `Locked: the nodes placed from ${p.n.name} move along` : `Unlocked: a drag moves only ${p.n.name}, the nodes placed from it stay`);
+        return;
+      }
       if (u.type === 'pointercancel' || !last || last.text === last.stmt) return;
       const text = editor.text();
       if (version !== v || uri() !== target || text.slice(p.n.from, p.n.to) !== last.stmt) { toast('The text changed meanwhile: the node was not moved'); return; }
-      paWrite(text, [...last.pre ?? [], { from: p.n.from, to: p.n.to, now: last.text }]);
+      paWrite(text, [...last.pre ?? [], { from: p.n.from, to: p.n.to, now: last.text }, ...(free ? tikzStay(text, deps.direct, last.d) : [])]);
     };
     for (const [t, f] of [['pointermove', move], ['pointerup', end], ['pointercancel', end], ['keydown', key]]) addEventListener(t, f);
   }, true);
@@ -7715,6 +7783,8 @@
     for (const e of list) { body += text.slice(at, e.from) + e.now; at = Math.max(at, e.to); }
     body += text.slice(at, b);
     if (body === text.slice(a, b)) return false;
+    // a caret typing elsewhere holds an offset in the text before this write: it ends, never echoes the wrong span
+    if (pdfCaret) pdfCaretOff();
     const ok = await pdfWrite(uri(), self.satexSnapshot.span({ start: tikzPos(text, a), end: tikzPos(text, b) }, text.slice(a, b), body), body);
     if (ok) pdfRebuild(true);
     return ok;
@@ -7726,6 +7796,12 @@
     if (paFacts.key !== key) paFacts = { key, got: lsp('satex/view', { textDocument: { uri: uri() }, position: tikzPos(editor.text(), at) }).then((vs) => (vs ?? []).find((v) => v.plugin === 'tikz')?.sections?.find((s) => s.kind === 'drawing')?.run ?? null).catch(() => null) };
     return paFacts.got;
   }
+  /** The texts of the open file's document: the file and, when the root's last run read it, the other files that run read.
+   * Another example's `\usetikzlibrary` is not this document's. */
+  const docTexts = () => {
+    const read = new Set(rootFiles?.file === path(state.root ?? state.file) ? rootFiles.records.map((r) => r.file) : []), ours = read.has(path(state.file));
+    return Object.entries(state.texts).filter(([n]) => n === state.file || ours && read.has(path(n))).map(([, t]) => t).join('\n');
+  };
   /** A node picked for a new edge: the next click on a node of the pages or the Typeset view goes to `tikzLink.done`. */
   let tikzLink = null;
   const tikzLinkEnd = () => { tikzLink = null; document.body.classList.remove('tikz-linking'); };
@@ -7750,7 +7826,7 @@
   /** The menu of target `t` at screen point (x, y): the run's facts of a picture waited for a moment, then the plugins' groups. */
   async function paOpen(x, y, t) {
     const text = editor.text(), at = t.n?.from ?? t.e?.from;
-    const ctx = { text, all: Object.values(state.texts).join('\n'), x, y, facts: null, write: (edits) => paWrite(text, edits), toast, pick: tikzPick,
+    const ctx = { text, all: docTexts(), x, y, facts: null, write: (edits) => paWrite(text, edits), toast, pick: tikzPick,
       colAlign: (i, k, a) => { pdfColMenu = null; pdfColAlign({ dataset: { t: i, k, a } }); } };
     if (at != null) ctx.facts = await Promise.race([paFactsOf(at), new Promise((ok) => setTimeout(() => ok(null), 400))]);
     if (editor.text() !== text) return null;
@@ -8493,7 +8569,12 @@
     const tail = /[^\p{L}\p{N}]*$/u.exec(word)[0];
     let past = 0;
     while (past < tail.length && text[from + span[1] + past] === tail[past]) past++;
-    pdfCaret = { ...c, file: state.file, target: uri(), anchor: c.view === 'pdf' ? from + span[0] : null, at: from + span[0] + Math.min(Math.max(k, 0), span[1] - span[0] + past), v: version };
+    // past a glyph the source does not spell there (`world!` of `\\greet{world}`: the macro's body sets `!` after its
+    // argument): the caret after the call, never in the argument
+    const call = k > span[1] - span[0] + past && tail.length > past ? PE.afterCall(text, from + span[1] + past) : null;
+    pdfCaret = { ...c, file: state.file, target: uri(), anchor: c.view === 'pdf' ? from + span[0] : null, at: call ?? from + span[0] + Math.min(Math.max(k, 0), span[1] - span[0] + past), v: version };
+    // the clicked paragraph's start: a blank line typed after it (Enter) starts another (tsCaretDraw)
+    if (c.view === 'ts') pdfCaret.p0 = PE.paragraph(text, pdfCaret.at)[0];
     pdfCaret.clicked = pdfCaret.at;
     pdfTypeIn.focus({ preventScroll: true });
     pdfNote(def);
@@ -8647,23 +8728,35 @@
   const pdfBreakAsked = new Map();
   /** `satex/break` questions asked, answered with lines, and of those answered while a run went on (`satexHealth`). */
   const texBreakStats = { asked: 0, lines: 0, during: 0 };
+  /** The question the next send asks (the newest text's), its timer, and the analysis that last knew nothing: no
+   * question goes out on the key path, one per paragraph text at most, none before the first whole run (`texReady`)
+   * nor again of an analysis that answered nothing. */
+  let pdfBreakWant = null, pdfBreakTimer = 0, pdfBreakCold = -1;
+  function pdfBreakSend() {
+    pdfBreakTimer = 0;
+    const w = pdfBreakWant;
+    pdfBreakWant = null;
+    if (!w || pdfBreakAsked.has(w.key) || !texReady || analyzedVersion === pdfBreakCold) return;
+    if (pdfBreakAsked.size > 64) pdfBreakAsked.clear();
+    pdfBreakAsked.set(w.key, null);
+    const during = running > 0, seen = analyzedVersion;
+    texBreakStats.asked++;
+    lsp('satex/break', w.params).then((r) => {
+      if (!r?.lines) { pdfBreakCold = seen; return void pdfBreakAsked.delete(w.key); }
+      texBreakStats.lines++; texBreakStats.during += +during;
+      pdfBreakAsked.set(w.key, r.lines);
+      // drawn again once the keys rest: a redraw between two keys would flip the rows between TeX's and the echo's fit
+      setTimeout(() => { if (version === w.at) pdfCaretDrawNow(); }, 300);
+    }).catch(() => pdfBreakAsked.set(w.key, false));
+  }
   function pdfTexBreaks(words, tagged, later, indent, line) {
-    if (self.__noTexBreaks) return null;//UI39
+    if (!texReady || self.__noTexBreaks) return null;
     const params = { textDocument: { uri: uri(state.root ?? state.file) }, path: uri(state.file), line, words, indent: Math.abs(indent) < 0.5 ? 0 : Math.round(indent * 65536 * 72.27 / 72) };
     const key = JSON.stringify([params.path, line, params.indent, words]);
     if (!pdfBreakAsked.has(key)) {
-      if (pdfBreakAsked.size > 64) pdfBreakAsked.clear();
-      pdfBreakAsked.set(key, null);
-      const at = version;
-      const during = running > 0;
-      texBreakStats.asked++;
-      lsp('satex/break', params).then((r) => {
-        if (r?.lines) { texBreakStats.lines++; texBreakStats.during += +during; }
-        // no answer yet (no run finished, or it did not know): asked again at a later draw
-        if (!r?.lines) return void pdfBreakAsked.delete(key);
-        pdfBreakAsked.set(key, r.lines);
-        if (version === at) pdfCaretDrawNow();
-      }).catch(() => pdfBreakAsked.set(key, false));
+      pdfBreakWant = { key, params, at: version };
+      pdfBreakTimer ||= setTimeout(pdfBreakSend, 80);
+      return null;
     }
     const lines = pdfBreakAsked.get(key);
     if (!lines) return null;
@@ -8716,7 +8809,9 @@
       // (over the whole run's letters the face holds, not one word's: a few glyphs misjudge it)
       const face = `'${run.font}'`, own = [...new Set(run.str ?? w[5])].filter((c) => /\p{L}/u.test(c) && pdfHas(ctx, face, c)).join(''), at = (fam) => { ctx.font = `${run.size}px ${fam}`; return ctx.measureText(own).width; };
       const r = own ? at(face) / at(PDF_ECHO_FONT) : 1;
-      return { family: `${face}, ${PDF_ECHO_FONT}`, face, r: r > 0.5 && r < 2 ? r : 1, size: fit(`${face}, ${PDF_ECHO_FONT}`, run.size), base: run.y, own: true };
+      // the fallback's size for the face's x-height (a letter of x-height the subset holds, else none)
+      const xc = [...'xzvwunmoaecrs'].find((c) => pdfHas(ctx, face, c)), xh = (fam) => { ctx.font = `100px ${fam}`; return ctx.measureText(xc).actualBoundingBoxAscent; }, xs = xc ? xh(face) / xh(PDF_ECHO_FONT) : 1;
+      return { family: `${face}, ${PDF_ECHO_FONT}`, face, r: r > 0.5 && r < 2 ? r : 1, xs: xs > 0.7 && xs < 1.4 ? xs : 1, size: fit(`${face}, ${PDF_ECHO_FONT}`, run.size), base: run.y, own: true };
     }
     return { family: PDF_ECHO_FONT, size: fit(PDF_ECHO_FONT, run?.size ?? h), base: run?.y ?? w[2] + (w[4] - w[2]) * 0.78, own: false };
   }
@@ -8732,18 +8827,33 @@
     }
     return pdfHasOf.get(key);
   }
-  /** The width of `t` in echo font `f` with `ctx.font` set to it at `px` px: a character its face lacks counts at the
-   * fallback's width times `f.r`, as TeX sets it in the page's font, not the fallback's. */
-  function pdfTextWidth(ctx, f, t, px) {
-    if (!f.own || [...t].every((c) => pdfHas(ctx, f.face, c))) return ctx.measureText(t).width;
+  /** Whether echo font `f` sets all of `t` in the page's own face: its subset holds every character of it. */
+  const pdfOwns = (ctx, f, t) => !f.own || [...t].every((c) => !/\S/.test(c) || pdfHas(ctx, f.face, c));
+  /** The canvas font word `whole` is echoed in at `px` px: one face a word, never glyphs of two (the subset's `c` beside
+   * a fallback's `s`). The page's face where its subset holds the whole word, else the fallback (Latin Modern, pdfLm)
+   * at the face's x-height. */
+  function pdfWordFont(ctx, f, whole, px) {
+    if (f.own && !pdfOwns(ctx, f, whole)) pdfLmLoad();
+    return pdfOwns(ctx, f, whole) ? `${px}px ${f.family}` : `${px * (f.xs ?? 1)}px ${PDF_ECHO_FONT}`;
+  }
+  /** The width of `t` (a part of word `whole`) in echo font `f` with `ctx.font` set to it at `px` px: a word its face
+   * lacks a glyph of is the fallback's width times `f.r`, as TeX sets it in the page's font, not the fallback's. */
+  function pdfTextWidth(ctx, f, t, px, whole = t) {
+    if (pdfOwns(ctx, f, whole)) return ctx.measureText(t).width;
     const font = ctx.font;
-    let n = 0;
-    for (const c of t) {
-      if (pdfHas(ctx, f.face, c)) { ctx.font = font; n += ctx.measureText(c).width; }
-      else { ctx.font = `${px}px ${PDF_ECHO_FONT}`; n += ctx.measureText(c).width * f.r; }
-    }
+    ctx.font = `${px}px ${PDF_ECHO_FONT}`;
+    const n = ctx.measureText(t).width * f.r;
     ctx.font = font;
     return n;
+  }
+  /** Latin Modern (the symbols table's Latin Modern Math: its ASCII letters are Latin Modern Roman's) as the echo's
+   * fallback, loaded once on the first word the page's subset lacks a glyph of; the caret drawn again when in. */
+  let pdfLm = null;
+  function pdfLmLoad() {
+    pdfLm ??= fetch(`${base}${manifest.symbols}`).then((r) => r.json()).then((t) => {
+      const url = t.fonts?.find((u) => /latinmodern-math/i.test(u));
+      return url && new FontFace('satex-lm', `url(${base}${url})`).load();
+    }).then((face) => { if (!face) return; document.fonts.add(face); if (pdfCaret) pdfCaretDraw(); }).catch(() => {});
   }
   /** The faces of runs whose PDF closed, added back to the document while a shown page's runs use them. pdf.js names
    * each face per document (`g_d3_f1`), so one never stands for another build's. */
@@ -8768,6 +8878,9 @@
   /** The open file's text as build `b` had it: a build started in another file of the project knows it too. */
   const pdfBuiltText = (b) => typeof b?.texts?.[state.file] === 'string' ? b.texts[state.file] : b?.text;
   function pdfTypeDraw(c, g) {
+    // a TikZ picture is no paragraph: its node's text goes to the word echo (pdfEcho), which keeps the node's row
+    const pic = g.text.lastIndexOf('\\begin{tikzpicture}', g.at);
+    if (pic >= 0 && g.text.indexOf('\\end{tikzpicture}', pic) >= g.at) return false;
     const page = (n) => pdfImg(n), base = pdfImg(c.page), b = base?.__build ?? pdf;
     if (!pdfBuiltText(b) || b.slice || !b.wordList || !base?.naturalWidth) return false;
     const B = pdfBuiltText(b), dl = g.text.length - B.length;
@@ -8786,10 +8899,9 @@
     const edit = B.length - S;
     const verb = !!PE.verbatimAt(g.text, g.at);
     let w, cx, mathBox;
-    // the build is the text up to the caret's word end: else a key deleted there (Backspace at a word's end) and the
-    // page still shows the deleted glyphs, the row is echoed from the word before
-    const we = g.at + /^[^\s~]*/.exec(g.text.slice(g.at))[0].length;
-    if (!open && P >= g.at && (P > we || B === g.text)) {
+    // the build is the text: else the change is echoed (below), also one after the caret (an arrow key moved it back,
+    // a key deleted at a word's end: the page still shows the deleted glyphs)
+    if (!open && P >= g.at && B === g.text) {
       // the build is the text up to the caret: the caret in the word that holds it, else before the next one
       const t = para.find((t) => t.s <= g.at && g.at <= t.e), next = para.find((t) => t.s >= g.at), prev = para.findLast((t) => t.e <= g.at);
       // where the click put it, on the build it clicked, while no key moved it: the clicked glyph's own box, never
@@ -8817,7 +8929,8 @@
       // the last word the build and the text share, ending before the change, and the row after it
       // a word ends before the braces that close after it (`Heading}`): typing there goes before them
       const te = (t) => t.e - /\}*$/.exec(B.slice(t.s, t.e))[0].length;
-      let A = [...para].reverse().find((t) => te(t) <= g.at && (te(t) < P || te(t) === P && !/\S/.test(g.text[te(t)] ?? ' ')));
+      // (by the change, not the caret: one moved back by an arrow key into the words before it leaves them as they are)
+      let A = [...para].reverse().find((t) => te(t) <= Math.max(g.at, P) && (te(t) < P || te(t) === P && !/\S/.test(g.text[te(t)] ?? ' ')));
       if (A) A = { ...A, e: te(A) };
       // typing at a paragraph's start (after Enter): the text stands before its first word, on that word's row
       else if (para[0]?.s >= P) { const F = para[0].w; A = { s: P, e: P, w: [F[0], F[1], F[2], F[1], F[4], ''] }; }
@@ -8826,8 +8939,14 @@
       w = A.w;
       const img = page(w[0]), [pw, ph] = pageSize(img), k = img.naturalWidth / pw;
       const row = para.filter((t) => t.s >= A.e && t.w[0] === w[0] && Math.abs(t.w[4] - w[4]) < 1), kept = row.filter((t) => t.s >= edit), F = kept[0];
-      const end = (x) => x + /^[^\s~]*/.exec(g.text.slice(x))[0].length, last = row.at(-1);
-      const upto = Math.max(g.at, F ? F.s + dl : last && last.e > edit ? last.e + dl : end(Math.max(g.at, edit + dl)));
+      // the rest of the word the change ends in (never into markup: `is \\end{document}` stays out)
+      const end = (x) => x + /^[^\s~\\]*/.exec(g.text.slice(x))[0].length, last = row.at(-1);
+      // the change ends at the caret where the text after it is the build's end as it was: an insertion before a
+      // blank line or `\\end{…}` matches either side of it (`about⏎|⏎\\end` against `about|⏎⏎\\end`)
+      // (a caret past the change, moved there by an arrow key, leaves it as it is: the text after it is the page's)
+      const e1 = g.at < edit + dl && B.endsWith(g.text.slice(g.at)) ? g.at : edit + dl;
+      const upto0 = Math.max(A.e, F ? F.s + dl : last && last.e > edit ? last.e + dl : end(e1)), past = g.at > upto0;
+      const upto = past ? upto0 : Math.max(g.at, upto0);
       const f = pdfFontOf(img, w[5] ? w : para[0].w), ctx = pdfEchoCtx ??= document.createElement('canvas').getContext('2d');
       ctx.font = `${f.size * k}px ${f.family}`;
       // the row's word space as the page set it, else a third of an em (TeX's text fonts)
@@ -8835,14 +8954,18 @@
       const gaps = line.slice(1).map((v, i) => v[1] - line[i][3]).filter((d) => d > 0 && d < f.size), gap = gaps.length ? gaps.sort((x, y) => x - y)[gaps.length >> 1] : f.size / 3;
       // the row after `A` as pieces: the text typed, in the page's font, then the words the change left as drawn,
       // each with the gap before it
-      const width = (t) => pdfTextWidth(ctx, f, t, f.size * k) / k, pieces = [];
+      const width = (t, whole) => pdfTextWidth(ctx, f, t, f.size * k, whole) / k, pieces = [];
       // the text typed as pieces, its formulas laid out as math; the caret in the last piece of the text up to it
       const M = pdfMathOf(img, f), typed = (to) => pdfPieces(g.text, A.e, to, verb, width, gap, M);
       pieces.push(...typed(upto));
       // the words kept as the page set them, macro output among them (`[1]` of a \\cite), not only the source's words
       const keptW = F ? pdfRun(line, F.w) : [];
       keptW.forEach((v, i) => pieces.push({ gap: i ? v[1] - keptW[i - 1][3] : 0, n: v[3] - v[1], w: v, ride: w[4] }));
-      const before = typed(g.at), into = before.length - 1, tail = before.at(-1).n;
+      const pre = g.at < A.e, before = typed(past ? upto : Math.max(A.e, g.at)), into = before.length - 1, tail = before.at(-1).n;
+      // before or past the change the caret is in a word the page set: that word's character, where the page set it
+      // (before) or wherever the flow laid it (past)
+      const K = (past || pre) && para.find((t) => pre ? t.s <= g.at && g.at <= t.e && t.e <= A.e : t.s >= edit && t.s + dl <= g.at && g.at <= t.e + dl);
+      const xK = K && pdfBounds(page(K.w[0]), K.w)[Math.min(K.w[5].length, g.at - K.s - (pre ? 0 : dl))];
       // laid from A's end; what passes the text's right edge wraps: to the start of the paragraph's next row (the next
       // page's too), whose words move along, then to rows of its own a baseline skip apart (the paragraph's own, else
       // 1.2 em), from the paragraph's left edge, painted over what the page set there
@@ -8912,7 +9035,7 @@
           const xs = q.t == null ? pdfBounds(page(q.w[0]), q.w) : null, at = [0, ...cuts, t.length];
           return at.slice(0, -1).map((a, i) => {
             const b = at[i + 1], part = { ...q, gap: i ? 0 : q.gap, st: i ? 0 : q.st, sh: i ? 0 : q.sh, hy: i < at.length - 2, hw, wc: (q.wc0 ?? 0) + a };
-            return xs ? { ...part, n: xs[b] - xs[a], w: [q.w[0], xs[a], q.w[2], xs[b], q.w[4], t.slice(a, b)] } : { ...part, n: width(t.slice(a, b)), t: t.slice(a, b) };
+            return xs ? { ...part, n: xs[b] - xs[a], w: [q.w[0], xs[a], q.w[2], xs[b], q.w[4], t.slice(a, b)] } : { ...part, n: width(t.slice(a, b), t), t: t.slice(a, b), word: t };
           });
         };
         tagged.splice(0, tagged.length, ...tagged.flatMap(split));
@@ -8929,7 +9052,10 @@
         rows.push(r);
         // the caret after the typed piece it stands in
         const q = fr.out.find((u) => u.ix === into);
-        if (q) { cx = q.x + tail; if (r.n) w = r.n; }
+        if (q && !past && !pre) { cx = q.x + tail; if (r.n) w = r.n; }
+        const u = past && K && xK != null && fr.out.find((v) => v.w && v.w[0] === K.w[0] && Math.abs(v.w[4] - K.w[4]) < 1 && v.w[1] - 0.5 <= xK && xK <= v.w[3] + 0.5);
+        if (u) { cx = u.x + xK - u.w[1]; w = r.n ?? r.w ?? w; }
+        else if (pre && xK != null) { cx = xK; w = K.w; }
       }
       // a row whose words all went up is painted empty
       for (const ix of flow.freed) { const L = later[ix], nimg = page(L.n[0]); rows.push({ img: nimg, w: null, row: L.row, x: L.x, f: pdfFontOf(nimg, L.n), k: nimg.naturalWidth / pageSize(nimg)[0], out: [], n: L.n }); }
@@ -9050,7 +9176,7 @@
     cg.font = `${f.size * k}px ${f.family}`;
     for (const q of out) {
       // text as wide as laid out (`n`): glyphs the face lacks are drawn in the fallback, stretched to the page's width
-      if (q.t != null) { const m = cg.measureText(q.t).width, sx = m > 0 && q.n ? q.n * k / m : 1; cg.save(); cg.scale(sx, 1); cg.fillText(q.t, (q.x - x0) * k / sx, (f.base - top) * k); cg.restore(); }
+      if (q.t != null) { cg.font = pdfWordFont(cg, f, q.word ?? q.t, f.size * k); const m = cg.measureText(q.t).width, sx = m > 0 && q.n ? q.n * k / m : 1; cg.save(); cg.scale(sx, 1); cg.fillText(q.t, (q.x - x0) * k / sx, (f.base - top) * k); cg.restore(); }
       else if (q.math) pdfMathPaint(cg, q, (q.x - x0) * k, (f.base - top) * k, k);
       // no glyph of a word the change left redrawn: its pixels moved
       // a word moved from another row (wrapped down) comes from its own place, set on this row's baseline
@@ -9185,7 +9311,7 @@
    * CMMI, CMSY, CMEX, CMBX by pdf.js's names, Latin Modern's), else a fallback scaled to the page font's x-height.
    * `font(face, t, px)` the canvas font, `metric(t, face)` its ink's width, height and depth at 1 em, `em` the text's
    * size in bp. Once per image and font. */
-  const PDF_ECHO_FONT = "'Latin Modern Roman', 'CMU Serif', 'Computer Modern', Georgia, serif";
+  const PDF_ECHO_FONT = "'Latin Modern Roman', 'satex-lm', 'CMU Serif', 'Computer Modern', Georgia, serif";
   const PDF_MATH_FONT = `'Latin Modern Math', 'STIX Two Math', 'Cambria Math', 'STIXGeneral', ${PDF_ECHO_FONT}`, pdfMathFor = new WeakMap();
   let pdfMathCtx = null;
   function pdfMathOf(img, f) {
@@ -9357,7 +9483,7 @@
     set.forEach(([a, b, t], j) => { const v = src(j); if (j !== ti && v && v !== row[k]) pdfMoved.push({ from: v, page: pg, dx: a - v[1], dy: 0 }); });
     if (set[ti]) pdfPainted.push({ page: pg, x0: set[ti][0], t: w[2], d: w[4], end: set[ti][1] });
     const words = set.map(([a, b, t], j) => { const v = src(j), moved = v && v !== row[k] && v[5] === t && Math.abs(v[3] - v[1] - (b - a)) < 0.01;
-      return `<i style="left:${(a - l) / (r - l) * 100}%;width:${(b - a) / (r - l) * 100}%${moved ? pix(v, a, b) : ''}">${moved ? `<span style="visibility:hidden">${escape(t)}</span>` : `<span style="transform:scaleX(${(b - a) / Math.max(0.1, ctx.measureText(t).width)})">${escape(t)}</span>`}</i>`; }).join('');
+      return `<i style="left:${(a - l) / (r - l) * 100}%;width:${(b - a) / (r - l) * 100}%${moved ? pix(v, a, b) : ''}">${moved ? `<span style="visibility:hidden">${escape(t)}</span>` : (() => { const own = pdfOwns(ctx, f, t), wf = pdfWordFont(ctx, f, t, size); ctx.font = wf; const m = ctx.measureText(t).width; ctx.font = `${size}px ${font}`; return `<span style="transform:scaleX(${(b - a) / Math.max(0.1, m)})${own ? '' : `;font:${size * (f.xs ?? 1) * px}px/1 ${PDF_ECHO_FONT}`}">${escape(t)}</span>`; })()}</i>`; }).join('');
     const hue = pdfColours(img, l - 12, w[2], r + 12, w[4]);
     pdfUnder(img.parentElement, `<span class="pdf-echo" style="left:${l / pw * 100}%;top:${w[2] / ph * 100}%;width:${(r - l + 1) / pw * 100}%;height:${(w[4] - w[2]) / ph * 100}%;font:${size * px}px/1 ${font};background:${pdfRgb(hue?.paper)};color:${pdfRgb(hue?.ink, '#000')}">${words}</span>`);
     const [a, b, t] = laid[k];
@@ -9678,19 +9804,18 @@
     const run = texts.find((t) => t.startsWith('run '));
     // the language server's report has the run's size; a console run's output does not, and keeps it
     if (run) {
-      // equal tiles, short labels: the long label and what it means in the tile's title
-      const tiles = run.slice(4).split(', ').map((part) => {
+      // one row per count: label, value; the long label and what it means in the row's title
+      $('t-run').innerHTML = run.slice(4).split(', ').map((part) => {
         const [, n, label] = part.match(/^(\S+) (.*)$/) ?? [, part, ''], key = label.replace(/ \(.*\)$/, '').trim();
-        return `<span title="${escape(num(n))} ${escape(label.replace(/\d{5,}/g, short))}${RUN_MEANS[key] ? `: ${RUN_MEANS[key]}` : ''}"><b>${escape(Number(n) >= 1e4 ? short(n) : num(n))}</b>${escape(key === 'peak paths' ? 'peak' : key)}</span>`;
-      });
-      if (runInfo) tiles.push(`<span title="this run's own time${runInfo.resumedLine == null ? '' : `, from line ${runInfo.resumedLine}`}"><b>${escape(secs(runInfo.ms))}</b>time</span>`);
-      $('t-run').innerHTML = tiles.join('');
+        const title = `${escape(num(n))} ${escape(label.replace(/\d{5,}/g, short))}${RUN_MEANS[key] ? `: ${RUN_MEANS[key]}` : ''}`;
+        return `<span class="rp-k" title="${title}">${escape(key)}</span><span class="rp-v" title="${title}">${escape(Number(n) >= 1e4 ? short(n) : num(n))}</span>`;
+      }).join('');
       rpHead();
       // file times come with the checkpoint: after a resumed run they hold the cold first run's
       const slow = texts.map((t) => t.match(/^slow (\d+) (\d+) (.*)$/)).filter(Boolean), cold = runInfo?.resumedLine != null;
-      $('t-slow').innerHTML = rpBars(slow.map(([, ms, pct, name]) => [name, +ms, pct, ` title="${escape(name)}"`]), `slowest files${cold ? ' <span title="file times carry over from the cold first run through the checkpoints: a resumed run adds its own">· since cold run</span>' : ''}`,
+      $('t-slow').innerHTML = rpBars(slow.map(([, ms, pct, name]) => [name, +ms, pct, ` title="${escape(name)}"`]), `slowest files${cold ? '<small title="file times carry over from the cold first run through the checkpoints: a resumed run adds its own">since cold run</small>' : ''}`,
         ([name]) => escape(name.split('/').pop()), ([, ms, pct]) => `${secs(ms)} · ${pct}%`, 'slow');
-      $('t-limits').innerHTML = texts.filter((t) => t.startsWith('limit ')).map((t) => `<p>reached ${escape(t.slice(6))}</p>`).join('');
+      $('t-limits').innerHTML = texts.filter((t) => t.startsWith('limit ')).map((t) => `<span class="rp-k">limit</span><span class="rp-v">reached ${escape(t.slice(6))}</span>`).join('');
       heatShow(texts);
     }
     for (const [, text] of lines) {
@@ -9719,7 +9844,7 @@
     heat = { file, lines: new Map(lines) };
     heatDraw();
     const top = [...lines].sort((a, b) => b[1] - a[1]).map(([l, n]) => [l, n, 0, ` data-line="${l}" title="go to line ${l}"`]);
-    $('t-heat').innerHTML = rpBars(top, `busiest lines of ${escape(file.split('/').pop())}`, ([l]) => `line ${l}`, ([, n]) => `${short(n)} tokens`, 'heat',
+    $('t-heat').innerHTML = rpBars(top, `busiest lines<small>${escape(file.split('/').pop())}</small>`, ([l]) => `line ${l}`, ([, n]) => `${short(n)} tokens`, 'heat',
       `<label class="ts-toggle t-heatgutter"><span>heat in the gutter</span><input type="checkbox" role="switch"${heatShown ? ' checked' : ''}></label>`);
     // the rules that took time or found something, with their numbers
     // counts as the findings panel shows them: package code and switched-off rules leave none
@@ -9733,8 +9858,8 @@
       `<p class="muted rp-note">${plural(PLUGINS.length, 'plugin')}, ${enabled} on</p>`, `${plural(all.length, 'rule')} · ${secs(all.reduce((s, r) => s + r[1], 0) / 1000)}`);
   }
   let heatShown = false;
-  /** The pop-up's sections, each one line closed by default: a title, its top row, and every row as a bar
-   * when opened. A bar's share is of the largest one. `key` keeps a section open across runs. */
+  /** The pop-up's groups, each one row of its grid, closed by default: a label, its top row as the value, and every
+   * row as a bar when opened. A bar's share is of the largest one. `key` keeps a group open across runs. */
   const rpOpen = new Set();
   function rpBars(rows, title, label, value, key, after = '', sum = rows.length ? `${label(rows[0])} · ${value(rows[0])}` : '') {
     const most = Math.max(1, ...rows.map((r) => r[1]));
@@ -10848,7 +10973,7 @@
     boot: !!boot.open, example: state.example, file: state.file, root: state.root, dir: state.dir, version, text: editor?.text() ?? null, cursor: editor?.cursor?.() ?? null,
     list: shownOf.get(list)?.slice(0, 2) ?? null, listStale: list.classList.contains('stale'), sent: sentVersions.get(uri()) ?? null,
     shown: diagnosticVersions[uri()] ?? null, due: timer !== null || dirty, running, pending: pending.size, waiting: Object.keys(waiting), queued: analysisQueued, recovering,
-    texBreaks: { ...texBreakStats }, pdf: pdf ? { dir: pdf.dir, root: pdf.root } : null, pdfOther: $('play-pdf').classList.contains('pdf-other'), pdfBusy, gap: maxGap, undimmed: [...shownOf].filter(([el, [t, , cls]]) => t !== uri() && !el.classList.contains(cls)).map(([el]) => el.id || el.className), loading: [...inFlight], held: held.length, recoveries, runs: act.run, step: act.steps.at(-1)?.label ?? '', since: Math.round(performance.now() - act.started),
+    texBreaks: { ...texBreakStats, ready: texReady }, pdf: pdf ? { dir: pdf.dir, root: pdf.root } : null, pdfOther: $('play-pdf').classList.contains('pdf-other'), pdfBusy, gap: maxGap, undimmed: [...shownOf].filter(([el, [t, , cls]]) => t !== uri() && !el.classList.contains(cls)).map(([el]) => el.id || el.className), loading: [...inFlight], held: held.length, recoveries, runs: act.run, step: act.steps.at(-1)?.label ?? '', since: Math.round(performance.now() - act.started),
   });
   /** chaos.mjs: the worker crashes (an error event) or hangs (goes silent). */
   self.satexKill = (how) => { worker.terminate(); if (how === 'crash') onWorkerError({ message: 'the worker crashed' }); };

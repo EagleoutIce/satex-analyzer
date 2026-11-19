@@ -3,7 +3,7 @@
 interface Loose {
   [prop: string]: any; // form-field, dialog, media members and the fields the pages hang on elements
   closest(selector: string): HTMLElement | null;
-  satexAsk?: Promise<boolean> | null; satexKeep?: () => void; // a widget's open discard question (dialogs.js `discard`)
+  satexAsk?: Promise<boolean> | null; satexDrop?: () => void; // a widget's open discard question, answered Discard (dialogs.js `discard`)
 }
 interface EventTarget extends Loose {}
 interface Element extends Loose {}

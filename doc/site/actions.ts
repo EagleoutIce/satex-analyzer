@@ -74,7 +74,8 @@ declare global {
   function sub(b: HTMLElement, focus: boolean) {
     const m = b.closest('.pa-menu') as any, it: PaItem = m.acts[+b.dataset.i!];
     if (!it?.items) return;
-    for (const o of [...document.querySelectorAll('.pa-sub')] as any[]) if (!isAbove(o, m)) shut(o);
+    // the row's own open submenu stays: a pointer moving over its row does not build it anew
+    for (const o of [...document.querySelectorAll('.pa-sub')] as any[]) if (!isAbove(o, m) && !((b as any).sub && isAbove((b as any).sub, o))) shut(o);
     if (b.getAttribute('aria-expanded') !== 'true') {
       const r = b.getBoundingClientRect(), s = box(it.items, r.right + 2, r.top - 4, b);
       b.setAttribute('aria-expanded', 'true');

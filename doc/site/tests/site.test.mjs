@@ -180,6 +180,23 @@ test("the widgets' shared undo", async () => {
   assert.equal(hist.redo(), false, 'a new change drops the redo steps');
 });
 
+// Intuition: what a widget's first draw or the server's first answer fills in (a text width, a normalised option) is
+// how it opened, no edit: closing it untouched never asks to discard. Pins the Page layout widget whose first paint
+// added `tw` and `th` to the state, so `dirty` held and Close asked about changes that were never made.
+test('history.rebase: the first draw is the opening state', async () => {
+  let state = { a: 1 };
+  const hist = self.satexDialogs.history(() => state, (s) => { state = s; });
+  state = { a: 1, tw: 5 };
+  assert.ok(hist.dirty, 'filled in after the baseline: dirty before the rebase');
+  hist.rebase();
+  assert.equal(hist.dirty, false, 'the first draw is the baseline');
+  assert.equal(hist.undo(), false, 'no undo step for it');
+  state = { a: 2, tw: 5 }; hist.settle();
+  hist.rebase();
+  assert.ok(hist.dirty && hist.changed, 'after an edit a rebase keeps the edit');
+  hist.reset(); assert.deepEqual(state, { a: 1, tw: 5 }, 'reset goes back to the first draw');
+});
+
 // The editor's TeX tokenizer (site.js `siteTex`): a number with its unit is one token, sign and fraction included,
 // and an expl3 name with its `_` and `:` is one command. Pins `- 0.05pt` whose `0` stayed plain beside a colored
 // `.05pt`, and `\dim_eval:n` split into `\dim`, `_eval`, `:n`.

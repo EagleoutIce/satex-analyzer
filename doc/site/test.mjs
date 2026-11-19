@@ -908,6 +908,40 @@ async function browser() {
         await js(`document.getElementById('play-view').close()`);
       }
       });
+      await section('untouched close', async () => {
+      // Intuition: a widget opened and closed without an edit has nothing to write, so Close never asks to discard; with an edit
+      // the first Close asks and a second Close (the X again, or Esc twice) discards. Pins the Page layout widget whose first
+      // draw filled in the text size, so its state differed from the opening one and Close asked although the footer said "no changes".
+      const dlg = `[...document.querySelectorAll('dialog[open]')].pop()`;
+      const closeX = `const d = ${dlg}; (d.querySelector('#view-close') ?? d.querySelector('header [aria-label=close]')).click(); return true`;
+      const state = `const d = document.querySelector('#play-view[open], dialog.sd-dialog[open]') ?? null; return { open: !!d, ask: !!document.querySelector('dialog .sd-discard') }`;
+      for (const [file, widget, at, k] of [['hello.tex', 'page', '\\documentclass', 1], ['figure.tex', 'image', '\\includegraphics', 2], ['figure.tex', 'float', '\\begin{figure}', 2],
+        ['chapter.tex', 'table', '\\begin{tabular}', 2], ['colors.tex', 'color', '\\definecolor', 14], ['drawing.tex', 'tikz', '\\begin{tikzpicture}', 3], ['proofs.tex', 'forest', '\\begin{forest}', 3]]) {
+        await send('Page.navigate', { url: base + 'play/index.html#' + file });
+        await until(`return document.getElementById('play-status').dataset.done === 'ready'`, 180000);
+        const opened = await until(`return ${QUIET} && await self.satexOpen(${JSON.stringify({ widget, at, k })})`, 180000);
+        await sleep(1500);
+        await js(closeX);
+        await sleep(300);
+        const s = await js(state);
+        check(`${widget} in ${file}: opened and closed untouched without asking`, opened && !s.open && !s.ask, JSON.stringify({ opened, ...s }));
+      }
+      // an edit: Close asks, Close again discards; Esc, Esc the same
+      for (const how of ['close', 'escape']) {
+        await until(`return ${QUIET} && await self.satexOpen({ widget: 'page', at: '\\\\documentclass', k: 1 })`, 60000);
+        await sleep(800);
+        await js(`const i = document.querySelector('#play-view input[data-key=top]'); i.focus(); i.value = '3cm'; i.dispatchEvent(new Event('input', { bubbles: true })); i.dispatchEvent(new Event('change', { bubbles: true })); return true`);
+        await sleep(200);
+        const esc = async () => { await send('Input.dispatchKeyEvent', { type: 'rawKeyDown', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 }); await send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 }); };
+        if (how === 'close') await js(closeX); else await esc();
+        await sleep(300);
+        const asked = await js(state);
+        if (how === 'close') await js(closeX); else await esc();
+        await sleep(300);
+        const gone = await js(state);
+        check(`page with an edit: ${how} asks, ${how} again discards`, asked.open && asked.ask && !gone.open && !gone.ask, JSON.stringify({ asked, gone }));
+      }
+      });
       await section('settings', async () => {
       // a satex.yaml key set in the settings dialog reaches the run: `clock` fixes what \\year reads
       await open('clock', '\\documentclass{article}\n\\begin{document}\nYear \\the\\year.\n\\end{document}\n');

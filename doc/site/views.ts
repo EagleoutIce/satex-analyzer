@@ -71,11 +71,13 @@ const satexViews = (() => {
   const merge = (edits: WorkEdit[]): WorkEdit => ({ changes: edits.reduce((all: Record<string, Edit[]>, e) => { for (const [u, es] of Object.entries(e.changes)) (all[u] ??= []).push(...es); return all; }, {}) });
   // braces that close in order, as TeX reads a value (a `\{` is no group)
   /** The footer every view shares (dialogs.js `footer`): `status`, the undo tools, Reset, Cancel and Apply. Ctrl+Enter
-   * and the undo keys go to the root before a focused child; closing with unwritten changes asks first (`ctx.guard`). */
+   * and the undo keys go to the root before a focused child. Closing asks first only when Apply would write something:
+   * the state moved from its first draw (taken once the view is built) and Apply is enabled. */
   const footer = (root: HTMLElement, ctx: ViewCtx, { status, apply, label = 'Apply', H, tools = false }: Rec) => {
     const D = self.satexDialogs;
-    ctx.guard?.(() => !!H?.dirty);
     const f = D.footer({ note: status, tag: 'div', cls: 'tv-actions tv-foot', extra: tools ? H?.controls?.() ?? [] : [], reset: H?.reset && (() => H.reset()), cancel: ctx.close, apply, label });
+    ctx.guard?.(() => !!H?.dirty && !f.apply.disabled);
+    queueMicrotask(() => H?.rebase?.());
     D.keys(root, H, () => f.apply.click());
     return f;
   };
@@ -309,7 +311,7 @@ const satexViews = (() => {
         }));
       };
       input.oninput = draw;
-      input.onkeydown = (e) => { if (e.key === 'Enter') list.querySelector('button')?.click(); };
+      input.onkeydown = (e) => { if (e.key === 'Enter') { e.preventDefault(); list.querySelector('button')?.click(); } };
       draw();
       box.append(input, list);
       setTimeout(() => input.focus(), 0);
@@ -560,12 +562,12 @@ const satexViews = (() => {
         }
         box.append(el('h4', 'tv-h', 'Defined here'), list);
       }
-      const foot = el('div', 'tv-actions'), said = el('span', 'tv-muted');
-      if (hist) { foot.append(...hist.controls(), el('span', 'tv-muted tv-hint', esc(self.satexDialogs.HINT.replace(', Ctrl+Enter applies', '')))); hist.keys(box); ctx.guard?.(() => !!s.apply && hist.dirty); }
+      // the shared footer when the color is written somewhere (status, Cancel, the write button), else the undo tools alone
+      const said = el('span', 'tv-muted');
+      let foot = el('div', 'tv-actions');
+      if (hist && !s.apply) { foot.append(...hist.controls(), el('span', 'tv-muted tv-hint', esc(self.satexDialogs.HINT.replace('Enter applies, ', '')))); hist.keys(box); }
       if (s.apply) {
-        const write = el('button', 'tv-button tv-primary');
-        write.type = 'button';
-        write.onclick = () => {
+        const writeIt = () => {
           if (expr && s.pick) return writeName(expr);
           // a color some name already has: that name, never its value spelled out
           const same = model === 'name' ? closest(rgb(), s.defined) : named();
@@ -575,7 +577,7 @@ const satexViews = (() => {
           const args = (n: Rec, texts: Rec) => ({ ...n, args: n.args.map((a: Rec, i: number) => ({ ...a, text: texts[i] })) });
           print(own ? [args(own, [model, spec])] : [args(define, [s.apply.name, model, spec]), { ...s.apply.nodes.name, body: s.apply.name }]);
         };
-        foot.append(write, said);
+        foot = footer(box, ctx, { status: said, apply: writeIt, H: hist, tools: true }).el;
       }
       if (foot.children.length) box.append(foot);
       const print = (nodes: SnapNode[]) => self.satexSnapshot.write(ctx, nodes, (m) => { said.textContent = m; });
@@ -2932,7 +2934,7 @@ const satexViews = (() => {
   }
 
   /** What the class family means for the dialog (the page plugin's `family`, from the run). */
-  const FAMILY: Record<string, string> = { memoir: ' memoir lays out the page with its own commands: changes are written with geometry, which memoir accepts.' };
+  const FAMILY: Record<string, string> = { memoir: 'memoir has its own page commands. Changes are written with geometry, which memoir accepts.' };
   function page(s: Rec, view: Rec, ctx: ViewCtx) {
     const root = el('div', 'tv-page');
     const st0 = pageOf(s), two = !!s.twoside;
@@ -2980,6 +2982,8 @@ const satexViews = (() => {
       row.append(el('span', '', esc(label) + (open ? ' <i title="an interval: the run did not decide it">≈</i>' : '')), w);
       return row;
     };
+    /** A tagged PDF (\\DocumentMetadata): what the tagging project says of package `name`, when not compatible (`s.tagging`, the run's status per package). */
+    const tagged = (name: string) => { const t = s.tagging?.status?.[name]; return s.tagging?.active && t && t !== 'compatible' ? ` For a tagged PDF, ${name} is ${t}.` : ''; };
     const group = (title: string, ...rows: Node[]) => { const g = el('div', 'tv-form'); g.append(el('h4', 'tv-h', esc(title)), ...rows); return g; };
     function margins() {
       const out: HTMLElement[] = [];
@@ -2999,7 +3003,11 @@ const satexViews = (() => {
         div.oninput = () => { const v = Math.round(Number(div.value)); if (v >= 4) { st.div = v; paint(); } };
         div.onchange = touch;
         const row = el('label', 'tv-field'); row.append(el('span', '', 'DIV'), div);
-        out.push(group('Type area', row, field('BCOR', 'bcor', 'ta@bcor')));
+        // larger DIV: a wider text and narrower margins
+        const picks = el('div', 'tv-presets');
+        picks.role = 'group'; picks.ariaLabel = 'DIV presets';
+        for (const d of [8, 10, 12, 14]) { const b = el('button', 'tv-chip', `DIV ${d}`); b.type = 'button'; b.setAttribute('aria-pressed', String(st.div === d)); b.onclick = () => { st.div = d; touch(); draw(); }; picks.append(b); }
+        out.push(group('Type area', picks, row, field('BCOR', 'bcor', 'ta@bcor')));
       } else {
         const paper = el('select', 'tv-input', `<option value="">custom</option>${(s.papers ?? []).map((p: Rec) => `<option value="${esc(p.name)}"${p.name === st.paper ? ' selected' : ''}>${esc(p.name)}${(s.papers.filter((q: Rec) => q !== p && q.w === p.w && q.h === p.h).map((q: Rec) => ` = ${q.name}`).join(''))}</option>`).join('')}`);
         paper.ariaLabel = 'paper';
@@ -3008,7 +3016,13 @@ const satexViews = (() => {
         const custom = (k: 'pw' | 'ph') => (sp: number) => { st.paper = ''; st[k === 'pw' ? 'right' : 'bottom'] += sp - st[k]; st[k] = sp; };
         // \newgeometry keeps the paper
         if (st.scope !== 'part') out.push(group('Paper', prow, field('Width', 'pw', 'paperwidth', custom('pw')), field('Height', 'ph', 'paperheight', custom('ph'))));
-        out.push(group('Margins', field(two ? 'Inner' : 'Left', 'left', 'oddsidemargin'), field(two ? 'Outer' : 'Right', 'right', 'textwidth'),
+        // quick picks: every margin at one width (in cm), or the text centred across the page
+        const preset = (label: string, title: string, f: () => void) => { const b = el('button', 'tv-chip', esc(label)); b.type = 'button'; b.title = title; b.onclick = () => { f(); touch(); draw(); }; return b; };
+        const presets = el('div', 'tv-presets');
+        presets.role = 'group'; presets.ariaLabel = 'margin presets';
+        if (per.cm) for (const c of [2, 2.5, 3]) presets.append(preset(`${c} cm`, `Every margin ${c} cm`, () => { const v = Math.round(c * per.cm); Object.assign(st, { left: v + st.bcor, right: v, top: v, bottom: v }); }));
+        presets.append(preset('Centered', two ? 'Inner and outer margin alike' : 'Left and right margin alike', () => { const v = Math.round((st.left - st.bcor + st.right) / 2); st.left = v + st.bcor; st.right = v; }));
+        out.push(group('Margins', presets, field(two ? 'Inner' : 'Left', 'left', 'oddsidemargin'), field(two ? 'Outer' : 'Right', 'right', 'textwidth'),
           field('Top', 'top', 'topmargin'), field('Bottom', 'bottom', 'textheight'),
           field('Text width', 'tw', 'textwidth', (sp: number) => { st.right = st.pw - st.left - sp; }), field('Text height', 'th', 'textheight', (sp: number) => { st.bottom = st.ph - st.top - sp; }),
           // the binding takes its share of the inner margin's place: the text narrows
@@ -3041,26 +3055,25 @@ const satexViews = (() => {
       return out;
     }
     function header() {
-      const m = st.header, out: HTMLElement[] = [];
-      if (!m.package) {
-        const b = el('button', 'tv-button tv-start', 'Load fancyhdr'); b.type = 'button';
-        b.onclick = () => { m.package = 'fancyhdr'; touch(); draw(); };
-        out.push(el('div', 'tv-text', ctx.markdown('No package for headers is loaded. fancyhdr sets the header and footer in three fields each.')), b);
-        return out;
-      }
-      const spots = SPOTS[m.package]!, names: Record<string, string> = { L: 'Left', C: 'Center', R: 'Right', i: 'Inner', c: 'Center', o: 'Outer' };
-      const sides = m.package === 'fancyhdr' && two ? [['O', 'odd pages'], ['E', 'even pages']] : [['O', '']];
+      const m = st.header, out: HTMLElement[] = [], loaded = !!st0.header.package;
+      // no package for headers: the fields stand ready, the first text typed loads fancyhdr, the last one cleared drops it
+      if (!loaded) out.push(el('div', 'tv-text tv-start', ctx.markdown(`No package for headers is loaded. Type into a field: Apply loads fancyhdr for it.${tagged('fancyhdr')}`)));
+      else if (tagged(m.package)) out.push(el('div', 'tv-text', ctx.markdown(tagged(m.package).trim())));
+      const used = () => ['head', 'foot'].some((part) => Object.values(m[part]).some((v) => String(v ?? '').trim()));
+      const spots = SPOTS[m.package ?? 'fancyhdr']!, names: Record<string, string> = { L: 'Left', C: 'Center', R: 'Right', i: 'Inner', c: 'Center', o: 'Outer' };
+      const sides = (m.package ?? 'fancyhdr') === 'fancyhdr' && two ? [['O', 'odd pages'], ['E', 'even pages']] : [['O', '']];
       for (const part of ['head', 'foot']) for (const [side, on] of sides) {
         const rows = spots.map((spot) => {
           const row = el('label', 'tv-field');
           const input = Object.assign(el('input', 'tv-input'), { value: m[part][side + spot] ?? '', spellcheck: false, ariaLabel: `${part} ${names[spot]} ${on}`.trim() });
-          input.oninput = () => { m[part][side + spot] = input.value; paint(); };
+          input.oninput = () => { m[part][side + spot] = input.value; if (!loaded) m.package = used() ? 'fancyhdr' : null; paint(); };
           input.onchange = touch;
           row.append(el('span', '', names[spot]), input);
           return row;
         });
         out.push(group(`${part === 'head' ? 'Header' : 'Footer'}${on ? `, ${on}` : ''}`, ...rows));
       }
+      if (!m.package) return out;
       if (m.package === 'fancyhdr') {
         const rule = (k: string) => {
           const row = el('label', 'tv-field');
@@ -3290,7 +3303,10 @@ const satexViews = (() => {
     // the server prints the snapshots; its notes (a package loaded) stay in the status
     const print = () => self.satexSnapshot.write(ctx, nodes(), (m) => { status.textContent = m; });
     const { el: foot, apply: write } = footer(root, ctx, { status, apply: print, H, tools: true });
-    const notes = el('div', 'tv-text', ctx.markdown(`The run's page${s.class ? ` with ${s.class}` : ''}${two ? ', two-sided' : ''}: the lengths as it ended.${st0.open.length ? ` It left ${st0.open.map((k) => `\\${k}`).join(', ')} open: the middle of each interval is drawn.` : ''}${FAMILY[s.family] ?? ''}${s.geometry.global.note && s.family !== 'koma' ? ` geometry is not loaded: Apply ${s.geometry.global.note}, which sets each margin itself.` : ''}`));
+    // what the page shows and what Apply adds, in short sentences
+    const notes = el('div', 'tv-text', ctx.markdown([`The page as the last run left it${s.class ? ` (${s.class}${two ? ', two-sided' : ''})` : two ? ' (two-sided)' : ''}.`,
+      st0.open.length ? `The run did not decide ${st0.open.map((k) => `\\${k}`).join(', ')}: the drawing uses the middle of each range.` : '',
+      FAMILY[s.family] ?? '', s.geometry.global.note && s.family !== 'koma' ? `Margin changes go through geometry, so Apply then ${s.geometry.global.note}.` : ''].filter(Boolean).join(' ')));
     const main = el('div', 'tv-page-main');
     main.append(svg, side);
     root.append(bar, notes, main, foot);
@@ -3435,7 +3451,7 @@ button.tv-spec-value { cursor: pointer; } button.tv-spec-value:hover, button.tv-
 .tv-sheet { max-height: 62vh; } .tv-page-side { display: grid; gap: .6rem; max-height: 62vh; overflow: auto; padding-right: .2rem; } .tv-page-side .tv-field { grid-template-columns: 6.5rem minmax(0, 1fr); }
 .tv-page-grip { stroke: transparent; } .tv-page-grip:hover { stroke: color-mix(in srgb, var(--tv-accent) 35%, transparent); } .tv-grip-x { cursor: ew-resize; } .tv-grip-y { cursor: ns-resize; }
 .tv-page-paper { fill: var(--tv-bg); stroke: var(--tv-muted); stroke-width: .6; } .tv-page-body { fill: color-mix(in srgb, var(--tv-accent) 16%, transparent); stroke: var(--tv-accent); stroke-width: .8; }
-.tv-page-head, .tv-page-foot { fill: color-mix(in srgb, var(--tv-accent) 10%, transparent); stroke: var(--tv-accent); stroke-width: .8; stroke-dasharray: 3 2; } .tv-start { justify-self: start; }
+.tv-page-head, .tv-page-foot { fill: color-mix(in srgb, var(--tv-accent) 10%, transparent); stroke: var(--tv-accent); stroke-width: .8; stroke-dasharray: 3 2; } .tv-start { justify-self: start; } .tv-presets { display: flex; flex-wrap: wrap; gap: .3rem; margin: .1rem 0 .3rem; grid-column: 1 / -1; }
 .tv-sheet text.tv-page-field { fill: var(--tv-fg); font-style: italic; } .tv-page-mp { fill: none; stroke: var(--tv-muted); stroke-width: .5; stroke-dasharray: 2 2; }
 .tv-page-bind { fill: color-mix(in srgb, var(--tv-muted) 22%, transparent); stroke: none; } .tv-swatch { display: inline-block; width: 1.4rem; height: 1.4rem; border-radius: 4px; border: 1px solid var(--tv-border); margin-left: .4rem; vertical-align: middle; }
 .tv-page-main > * { min-width: 0; } .tv-page-side .tv-field > .tv-tabs { display: flex; flex-wrap: wrap; row-gap: .25rem; min-width: 0; }
