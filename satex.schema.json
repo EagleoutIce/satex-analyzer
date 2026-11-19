@@ -2735,6 +2735,16 @@
           ],
           "x-example": "`\\pgfmathparse{\\x}` with unknown `\\x` reuses what earlier calls did"
         },
+        "checkpoint_memory": {
+          "default": "1.0 GiB",
+          "description": "most memory the saved states for reruns may copy together. Past it every other one goes. 0 = only their number bounds them",
+          "type": "string",
+          "x-affects": [
+            "memory",
+            "speed"
+          ],
+          "x-example": "`checkpoint_memory: 256MiB` for a long document on a small machine, reruns then resume further back"
+        },
         "choices": {
           "default": 8,
           "description": "how many undecided \\if one command may split into paths. Past them its result is unknown text",
