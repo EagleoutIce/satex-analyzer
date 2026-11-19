@@ -29,7 +29,7 @@ async function open(text, panel) {
   await p.eval(`document.querySelector('.side-tabs [data-panel=${panel}]').click()`);
   return p;
 }
-const compiled = (p) => p.until(`(() => { const i = document.querySelector('#play-pdf .pdf-page img'); return satexPdfWords().some((w) => w[5] === 'about') && i?.naturalWidth > 100 && i.__build && !document.querySelector('#play-pdf.pdf-running'); })()`, 60000);
+const compiled = (p, word = 'about') => p.until(`(() => { const i = document.querySelector('#play-pdf .pdf-page img'); return satexPdfWords().some((w) => w[5] === ${J(word)}) && i?.naturalWidth > 100 && i.__build && !document.querySelector('#play-pdf.pdf-running'); })()`, 60000);
 /** A page word's client box: [x0, y0, x1, y1]. */
 const wordBox = (p, word, nth = 0) => p.eval(`(() => { const ws = satexPdfWords(), w = ws.filter((x) => x[5] === ${J(word)})[${nth}]; if (!w) return null; const img = document.querySelector('#play-pdf .pdf-page[data-page="' + w[0] + '"] img'), r = img.getBoundingClientRect(), k = r.width / (img.naturalWidth * 72 / ws.dpi); return [r.left + w[1] * k, r.top + w[2] * k, r.left + w[3] * k, r.top + w[4] * k]; })()`);
 /** The echo canvases' drawn texts: each fillText with its font and the context's scale. */
@@ -113,10 +113,76 @@ function tsCheck(name, st, keep, typed) {
     else if (st.caretRow !== hit[0][1]) fails.push(`${name}: caret on row ${st.caretRow}, typed text on row ${hit[0][1]}: ${J(st.rows)}`);
   }
 }
+const DEMO = "\\documentclass{article}\n\\usepackage[paperwidth=9cm,paperheight=6cm,margin=6mm]{geometry}\n\\usepackage{tikz}\n\\usetikzlibrary{arrows.meta}\n\\definecolor{accent}{HTML}{0B3D91}\n\\tikzset{>=Stealth, thick,\n  box/.style={draw=accent, fill=accent!8,\n  rounded corners=3pt, minimum width=10mm}}\n\\newcommand{\\model}{TinyNet}\n\\begin{document}\n\\section{Results}\nWith \\model, the loss falls fast.\n\n\\begin{tikzpicture}[draw=accent]\n  \\node[box] (d) at (0,0) {data};\n  \\node[box] (m) at (2.6,-0.6) {\\model};\n  \\node[box] (l) at (5.2,0) {loss};\n  \\draw[->] (d) -- node[above] {train} (m);\n  \\draw[->] (m) -- (l);\n\\end{tikzpicture}\n\\end{document}\n";
 const TS1 = HEAD + '\nsuch a thing this is\n\\end{document}\n';
 const KEEP = ['Hello, world!', 'What do you thing', 'about', 'such a thing this is'];
 
+async function paraPicture(name, ms) {
+  const p = await open(DEMO, 'play-pdf');
+  await p.eval(`document.getElementById('pdf-compile').click()`);
+  if (!await compiled(p, 'data')) { fails.push(name + ': no build'); return p.close(); }
+  await sleep(800);
+  if (await p.eval(`document.getElementById('pdf-type').getAttribute('aria-pressed')`) !== 'true') await p.eval(`document.getElementById('pdf-type').click()`);
+  await sleep(400);
+  const w = await wordBox(p, 'fast.');
+  if (!w) { fails.push(`${name}: no "fast." on the page: ${J(await p.eval('satexPdfWords().map((x) => x[5]).join(" ")'))}`); return p.close(); }
+  if (process.env.DBG) log('w', J(w));
+  await p.mouse(w[2] - 0.5, (w[1] + w[3]) / 2);
+  await p.until(`satexPdfCaret()`, 3000);
+  await sleep(300);
+  // each sample: the typed rows' canvases below the clicked row, the picture's top (its "data" node, as the page shows
+  // it now), whether a push is drawn
+  const sample = () => p.eval(`(() => { const ws = satexPdfWords(), img = document.querySelector('#play-pdf .pdf-page img'), r = img.getBoundingClientRect(), k = r.width / (img.naturalWidth * 72 / ws.dpi);
+    const d = ws.find((x) => x[5] === 'data'), f = ws.find((x) => x[5] === 'fast.' || x[5] === 'step.');
+    const built = img.__build?.text === satexHealth().text;
+    const rows = [...document.querySelectorAll('#play-pdf .pdf-echo:not(.pdf-push)')].filter((e) => (e.__texts ?? []).some((q) => /\\S/.test(q.t))).map((e) => e.getBoundingClientRect()).filter((b) => f && b.top > r.top + f[4] * k + 1);
+    return { blen: img.__build?.text?.length, built, push: !!document.querySelector('#play-pdf .pdf-push'), dataTop: d ? r.top + (d[2] - 3) * k : null, rows: rows.map((b) => [Math.round(b.top), Math.round(b.bottom)]) }; })()`);
+  const bad = [], builds = new Set();
+  const check = async (label) => {
+    const s = await sample();
+    builds.add(s.blen);
+    // a typed row reaching the picture's (unpushed) top with nothing pushed: drawn over it
+    if (!s.built && s.dataTop != null && s.rows.some(([t, b]) => b > s.dataTop) && !s.push) {
+      bad.push([label, s, await p.eval('[ document.querySelectorAll(".pdf-push").length, [...document.querySelectorAll("#play-pdf .pdf-echo")].map((e) => e.className + " " + e.tagName)]'), await p.eval(`(() => { const i = document.querySelector('#play-pdf .pdf-page img'), b = i.__build?.text ?? '', t = satexHealth().text, a = b.indexOf('per step') >= 0 ? b.slice(b.indexOf('fast.'), b.indexOf('\\begin{tikz')) : b.slice(b.indexOf('fast.'), b.indexOf('\\begin{tikz')); return a; })()`)]);
+      if (bad.length === 1) { const a = await wordBox(p, 'With'); if (a) await p.shot(name + '-bad.png', { x: a[0] - 20, y: a[1] - 30, width: 360, height: 220 }, 2); }
+    }
+  };
+  if (process.env.DBG) log('clicked');
+  for (const ch of ' It drops by $x_42$ per step.') { await key(p, ch, 100); await check(ch); }
+  await key(p, 'Enter', ms); await check('Enter');
+  for (const ch of 'It converges.') { await key(p, ch, ms); await check(ch); }
+  // and on, keys rested: the builds land one after another, every frame over 3 s
+  for (let i = 0; i < 30; i++) { await sleep(100); await check('rest'); }
+  { const a = await wordBox(p, 'With'); if (a) await p.shot(name + '.png', { x: a[0] - 20, y: a[1] - 30, width: 360, height: 220 }, 2); }
+  log(name, 'builds seen', builds.size, bad.length ? J(bad.slice(0, 3)) : 'no overlap', J((await p.eval('satexHealth().text')).split('\n').slice(11, 14)));
+  if (bad.length) fails.push(`${name}: a typed row over the unpushed picture ${bad.length}x: ${J(bad[0])}`);
+  await p.close();
+}
+
 export const CASES = {
+
+  // coordinator 13:00 (newpara-over-picture.txt): Enter after a paragraph right above a TikZ picture, type on: the
+  // new paragraph's row pushes the picture down (pdf-push) on every key until the build lands, never drawn over it
+  'pdf-para-picture': () => paraPicture('pdf-para-picture', 100),
+  // builds land between the keys after Enter: the build of the empty paragraph, then of its first letters
+  'pdf-para-picture-slow': () => paraPicture('pdf-para-picture-slow', 450),
+
+  // the Show menu: a pill beside layers; a switch toggles its class on the view and is kept after a reload
+  async 'ts-show'() {
+    const p = await tsOpen(TS1);
+    await p.eval(`document.querySelector('#typeset-show-menu > summary').click()`);
+    await sleep(300);
+    await p.shot('ts-show-menu.png', await p.eval(`(() => { const r = document.getElementById('play-typeset').getBoundingClientRect(); return { x: r.left, y: r.top, width: r.width, height: 420 }; })()`));
+    const cls = () => p.eval(`[...document.getElementById('typeset-body').classList].filter((c) => c.startsWith('ts-show-')).join(' ')`);
+    const c0 = await cls();
+    await p.eval(`document.getElementById('typeset-show-parskip').click()`);
+    const c1 = await cls();
+    log('ts-show', J(c0), '->', J(c1));
+    if (!c0.includes('ts-show-parskip') || c1.includes('ts-show-parskip')) fails.push(`ts-show: parskip switch ${J(c0)} -> ${J(c1)}`);
+    const h = await p.eval(`(() => { const a = document.querySelector('#typeset-show-menu > summary').getBoundingClientRect(), b = document.querySelector('#typeset-layers-menu > summary').getBoundingClientRect(); return [Math.round(a.height), Math.round(b.height), Math.round(a.top - b.top)]; })()`);
+    if (h[0] !== h[1] || h[2] !== 0) fails.push(`ts-show: the pill is not like the layers pill ${J(h)}`);
+    await p.close();
+  },
 
   // user 10:16: caret keys never change what is shown (an arrow re-spliced the span typed since the click)
   async 'ts-arrows'() {

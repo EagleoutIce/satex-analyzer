@@ -14,6 +14,7 @@ import { follow } from './kinds/follow.mjs';
 import { tikz } from './kinds/tikz.mjs';
 import { crash } from './kinds/crash.mjs';
 import { gutter, close } from './kinds/editor.mjs';
+import { fuzz } from './fuzz/fuzz.mjs';
 import { SCENARIOS, TIERS } from './scenarios/index.mjs';
 
 const ROOT = fileURLToPath(new URL('../../../', import.meta.url));
@@ -27,7 +28,7 @@ const OUT = arg('out', join(ROOT, 'target/e2e', `${tier}-${stamp}`));
 mkdirSync(OUT, { recursive: true });
 ctx.out = OUT;
 const KNOWN = JSON.parse(readFileSync(new URL('known-red.json', import.meta.url), 'utf8'));
-const RUN = { ...KINDS, foot, echo, paper, follow, tikz, crash, gutter, close };
+const RUN = { ...KINDS, foot, echo, paper, follow, tikz, crash, gutter, close, fuzz };
 
 const picked = SCENARIOS.filter((sc) => only.length ? only.includes(sc.name)
   : (!areas.length || areas.includes(sc.area)) && (tier === 'full' || TIERS[tier].includes(sc.name)));
@@ -37,8 +38,22 @@ for (const n of only) if (!SCENARIOS.some((s) => s.name === n)) throw new Error(
 // the server answers before a browser starts: a clear message instead of a timeout per scenario
 try { const r = await fetch(URL_); if (!r.ok) throw new Error(`HTTP ${r.status}`); }
 catch (e) { console.error(`no playground at ${URL_} (${e.message}): start one with scripts/e2e.sh or satex-playground --dev --port N`); process.exit(2); }
+// a fresh server builds its TeX caches first (`warming`): builds meanwhile say "setting up" and every typing
+// scenario would fail on them
+{
+  const t0 = Date.now(), status = () => fetch(new URL('/__satex/compile', URL_)).then((r) => r.json()).catch(() => ({}));
+  let said = false;
+  while ((await status()).warming) {
+    if (Date.now() - t0 > +(process.env.E2E_WARM_MS ?? 1800000)) { console.error('the server still builds its TeX caches: E2E_WARM_MS'); process.exit(2); }
+    if (!said) { console.log('waiting for the server to build its TeX caches…'); said = true; }
+    await new Promise((ok) => setTimeout(ok, 2000));
+  }
+  if (said) console.log(`server ready after ${Math.round((Date.now() - t0) / 1000)} s`);
+}
 
 const started = Date.now(), b = await browser(OUT), runs = new Map();
+// an interrupted run takes its browser along
+for (const sig of ['SIGINT', 'SIGTERM']) process.on(sig, () => { b.close(); process.exit(130); });
 ctx.cdp = b.cdp; ctx.url = URL_;
 let p;
 b.cdp.on('Page.javascriptDialogOpening', () => p?.s('Page.handleJavaScriptDialog', { accept: true }).catch(() => {}));
@@ -65,8 +80,10 @@ for (let round = 1; round <= repeat; round++) {
     p = null;
     // perf bounds are failures in the perf tier only: elsewhere a loaded machine would fail correct code
     const fails = tier === 'perf' ? [...r.fails, ...r.perf] : r.fails;
-    const known = KNOWN[sc.name];
-    r.status = !fails.length ? (known ? 'green-known' : 'pass') : known ? 'known-red' : 'FAIL';
+    // a known red covers the failures its `match` (the root's symptom) names, all when it has none: another
+    // failure of the same scenario is a FAIL still
+    const known = KNOWN[sc.name], covered = (f) => !known?.match || new RegExp(known.match).test(f);
+    r.status = !fails.length ? (known ? 'green-known' : 'pass') : known && fails.every(covered) ? 'known-red' : 'FAIL';
     r.ms = Date.now() - t0; r.area = sc.area; r.round = round;
     (runs.get(sc.name) ?? runs.set(sc.name, []).get(sc.name)).push(r);
     const note = r.status === 'known-red' ? ` (known red, ${known.owner}: ${known.why})` : r.status === 'green-known' ? ' (listed in known-red.json: remove it)' : '';

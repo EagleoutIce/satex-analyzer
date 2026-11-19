@@ -1,1 +1,120 @@
-{}
+{
+ "bold": {
+  "owner": "playground echo layout (ui-48 echo helper)",
+  "since": "2026-11-19",
+  "match": "^(caret jumped|caret stepped back|pages scrolled|echo [\\d.]+px past|echo font|final caret at|echo rows overlap|echo wrapped)",
+  "why": "the echo's rows and font differ from the landed build: the caret jumps when the build lands, the echo runs past the margin, its font is not the page's width"
+ },
+ "burst-3rows": {
+  "owner": "playground echo layout (ui-48 echo helper)",
+  "since": "2026-11-19",
+  "match": "^(caret jumped|caret stepped back|pages scrolled|echo [\\d.]+px past|echo font|final caret at|echo rows overlap|echo wrapped)",
+  "why": "the echo's rows and font differ from the landed build: the caret jumps when the build lands, the echo runs past the margin, its font is not the page's width"
+ },
+ "click-macro-start": {
+  "owner": "playground Type clicks (main session)",
+  "since": "2026-11-19",
+  "match": "^end \\(click",
+  "why": "as demo-macro-row: the end of a macro's output maps past the definition's closing brace"
+ },
+ "demo-garble": {
+  "owner": "playground echo layout (ui-48 echo helper)",
+  "since": "2026-11-19",
+  "match": "^(caret jumped|caret stepped back|pages scrolled|echo [\\d.]+px past|echo font|final caret at|echo rows overlap|echo wrapped)",
+  "why": "the echo's rows and font differ from the landed build: the caret jumps when the build lands, the echo runs past the margin, its font is not the page's width"
+ },
+ "demo-macro-row": {
+  "owner": "playground Type clicks (main session)",
+  "since": "2026-11-19",
+  "why": "a click at the end of a macro's output (`TinyNet,` of \\model) puts the caret after the definition's `}` (312, want 311): the key lands outside the definition and the build fails"
+ },
+ "emph": {
+  "owner": "playground echo layout (ui-48 echo helper)",
+  "since": "2026-11-19",
+  "match": "^(caret jumped|caret stepped back|pages scrolled|echo [\\d.]+px past|echo font|final caret at|echo rows overlap|echo wrapped)",
+  "why": "the echo's rows and font differ from the landed build: the caret jumps when the build lands, the echo runs past the margin, its font is not the page's width"
+ },
+ "enter-twice": {
+  "owner": "playground echo layout (ui-48 echo helper)",
+  "since": "2026-11-19",
+  "match": "^(caret jumped|caret stepped back|pages scrolled|echo [\\d.]+px past|echo font|final caret at|echo rows overlap|echo wrapped)",
+  "why": "the echo's rows and font differ from the landed build: the caret jumps when the build lands, the echo runs past the margin, its font is not the page's width"
+ },
+ "gap-before-command": {
+  "owner": "playground echo layout (ui-48 echo helper)",
+  "since": "2026-11-19",
+  "match": "^(caret jumped|caret stepped back|pages scrolled|echo [\\d.]+px past|echo font|final caret at|echo rows overlap|echo wrapped)",
+  "why": "the echo's rows and font differ from the landed build: the caret jumps when the build lands, the echo runs past the margin, its font is not the page's width"
+ },
+ "page-foot": {
+  "owner": "playground echo layout (ui-48 echo helper)",
+  "since": "2026-11-19",
+  "match": "^(caret jumped|caret stepped back|pages scrolled|echo [\\d.]+px past|echo font|final caret at|echo rows overlap|echo wrapped)",
+  "why": "the echo's rows and font differ from the landed build: the caret jumps when the build lands, the echo runs past the margin, its font is not the page's width"
+ },
+ "pagebreak": {
+  "owner": "playground echo layout (ui-48 echo helper)",
+  "since": "2026-11-19",
+  "match": "^(caret jumped|caret stepped back|pages scrolled|echo [\\d.]+px past|echo font|final caret at|echo rows overlap|echo wrapped)",
+  "why": "the echo's rows and font differ from the landed build: the caret jumps when the build lands, the echo runs past the margin, its font is not the page's width"
+ },
+ "prose-backspace": {
+  "owner": "playground echo layout (ui-48 echo helper)",
+  "since": "2026-11-19",
+  "match": "^(caret jumped|caret stepped back|pages scrolled|echo [\\d.]+px past|echo font|final caret at|echo rows overlap|echo wrapped)",
+  "why": "the echo's rows and font differ from the landed build: the caret jumps when the build lands, the echo runs past the margin, its font is not the page's width"
+ },
+ "prose-burst": {
+  "owner": "playground echo layout (ui-48 echo helper)",
+  "since": "2026-11-19",
+  "match": "^(caret jumped|caret stepped back|pages scrolled|echo [\\d.]+px past|echo font|final caret at|echo rows overlap|echo wrapped)",
+  "why": "the echo's rows and font differ from the landed build: the caret jumps when the build lands, the echo runs past the margin, its font is not the page's width"
+ },
+ "prose-dollar": {
+  "owner": "playground echo layout (ui-48 echo helper)",
+  "since": "2026-11-19",
+  "match": "^(caret jumped|caret stepped back|pages scrolled|echo [\\d.]+px past|echo font|final caret at|echo rows overlap|echo wrapped)",
+  "why": "the echo's rows and font differ from the landed build: the caret jumps when the build lands, the echo runs past the margin, its font is not the page's width"
+ },
+ "tex-hyphen-edge": {
+  "owner": "playground echo layout (ui-48 echo helper)",
+  "since": "2026-11-19",
+  "match": "^(caret jumped|caret stepped back|pages scrolled|echo [\\d.]+px past|echo font|final caret at|echo rows overlap|echo wrapped)",
+  "why": "the echo's rows and font differ from the landed build: the caret jumps when the build lands, the echo runs past the margin, its font is not the page's width"
+ },
+ "tex-ligatures": {
+  "owner": "playground echo layout (ui-48 echo helper)",
+  "since": "2026-11-19",
+  "why": "a click after a ligature (`fi` in `fine`) lands one character early, the typed word is not set where expected; the landing jump as the others"
+ },
+ "tex-second-pass": {
+  "owner": "playground echo layout (ui-48 echo helper)",
+  "since": "2026-11-19",
+  "match": "^(caret jumped|caret stepped back|pages scrolled|echo [\\d.]+px past|echo font|final caret at|echo rows overlap|echo wrapped)",
+  "why": "the echo's rows and font differ from the landed build: the caret jumps when the build lands, the echo runs past the margin, its font is not the page's width"
+ },
+ "tikz-node": {
+  "owner": "playground echo layout (ui-48 echo helper)",
+  "since": "2026-11-19",
+  "match": "^(caret jumped|caret stepped back|pages scrolled|echo [\\d.]+px past|echo font|final caret at|echo rows overlap|echo wrapped)",
+  "why": "the echo's rows and font differ from the landed build: the caret jumps when the build lands, the echo runs past the margin, its font is not the page's width"
+ },
+ "tikz-thesis": {
+  "owner": "playground TikZ menus (page actions)",
+  "since": "2026-11-19",
+  "match": "^thesis-(node-diamond|add-edge):",
+  "why": "in chapter.tex (an \\input file) Diamond is refused with a note instead of adding \\usetikzlibrary{shapes.geometric} to thesis.tex (decide which is wanted); the added edge's build reports an error in the browser pdfTeX"
+ },
+ "title-human": {
+  "owner": "playground echo layout (ui-48 echo helper)",
+  "since": "2026-11-19",
+  "match": "^(caret jumped|caret stepped back|pages scrolled|echo [\\d.]+px past|echo font|final caret at|echo rows overlap|echo wrapped)",
+  "why": "the echo's rows and font differ from the landed build: the caret jumps when the build lands, the echo runs past the margin, its font is not the page's width"
+ },
+ "type-through-builds": {
+  "owner": "playground echo layout (ui-48 echo helper)",
+  "since": "2026-11-19",
+  "match": "^(caret jumped|caret stepped back|pages scrolled|echo [\\d.]+px past|echo font|final caret at|echo rows overlap|echo wrapped)",
+  "why": "the echo's rows and font differ from the landed build: the caret jumps when the build lands, the echo runs past the margin, its font is not the page's width"
+ }
+}

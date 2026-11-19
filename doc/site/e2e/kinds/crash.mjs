@@ -20,6 +20,7 @@ export async function crash(p, sc) {
   if (!await p.until(`!!self.satexHealth && !satexHealth().boot && satexHealth().file === 'thesis.tex'`, 120000)) throw new Error('the playground did not start');
   if (!await rest(p, 240000)) throw new Error('the first run never ended');
   const recoveries0 = (await p.eval('satexHealth().recoveries')) ?? 0;
+  const crashes0 = await p.eval('self.satexCrashes?.().length ?? 0');
   const t0 = Date.now();
   let want = null;
   if (sc.how === 'midrun') {
@@ -48,8 +49,10 @@ export async function crash(p, sc) {
   const h = await rest(p, 180000);
   res.info.recoverMs = Date.now() - t0;
   if (!h) { res.fails.push(`never back at rest (status ${J(await p.eval(`document.getElementById('play-status')?.textContent?.slice(0, 120)`))})`); return res; }
+  // the crash took effect: logged for Report, or a restart counted (a panic may be caught in the worker)
   res.info.recoveries = h.recoveries - recoveries0;
-  if (!(h.recoveries > recoveries0)) res.fails.push('no recovery counted');
+  res.info.crashes = (await p.eval('self.satexCrashes?.().length ?? 0')) - crashes0;
+  if (!res.info.recoveries && !res.info.crashes) res.fails.push('no crash logged and no restart counted: the crash never happened');
   if (want && !(h.text ?? '').includes(want)) res.fails.push(`text lost: want ${J(want)} in the editor, got ${J((h.text ?? '').slice(-60))}`);
   if (!(h.text ?? '').includes('\\documentclass')) res.fails.push('the open file is gone after the restart');
   return res;

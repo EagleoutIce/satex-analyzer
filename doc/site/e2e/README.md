@@ -35,6 +35,7 @@ node doc/site/e2e/run.mjs --port 8472 --tier quick
 | `CHROME` | the browser binary, else `chromium`, `google-chrome` or rod's download |
 | `E2E_SERVER` | the server binary for `scripts/e2e.sh`, default `target/playground/satex-playground` |
 | `E2E_SETTLE=1` | typing scenarios wait for the first run to end before the click |
+| `E2E_WARM_MS` | how long to wait for a fresh server to build its TeX caches, default 30 min |
 | `E2E_DUMPFRAMES=1` | typing scenarios write their frames, boxes and words as JSON |
 
 Each run writes `results.md`, `results.json`, a screenshot per failure and, when the language server stopped, a crash repro (`crash/<scenario>/`: every text sent, the timeline, the worker log) into its own directory. Runs side by side never share a directory or a browser profile.
@@ -55,7 +56,7 @@ Each run writes `results.md`, `results.json`, a screenshot per failure and, when
 | `known-red` | failed and is listed in `known-red.json`; the run still exits 0 |
 | `green-known` | passed but is listed in `known-red.json`: remove the entry |
 
-`known-red.json` is the ledger of reds the suite knows: `{ "name": { "owner": "…", "why": "…", "since": "YYYY-MM-DD" } }`. A red scenario gets an entry with an owner, never a skip. The fix removes the entry in the same patch.
+`known-red.json` is the ledger of reds the suite knows: `{ "name": { "owner": "…", "why": "…", "since": "YYYY-MM-DD", "match": "regex" } }`. `match` names the root's symptom: only failures it matches are known, any other failure of that scenario is a `FAIL`. A red scenario gets an entry with an owner, never a skip. The fix removes the entry in the same patch.
 
 ## Layout
 

@@ -12,4 +12,9 @@ export default [
   { kind: 'echo', name: 'mid-word-ts', case: 'ts-mid' },
   { kind: 'echo', name: 'arrows-ts', case: 'ts-arrows' },
   { kind: 'echo', name: 'after-macro-ts', case: 'ts-after-macro' },
+  // a new paragraph right above a TikZ picture pushes it down on every key until the build lands, never over it
+  { kind: 'echo', name: 'para-over-picture', case: 'pdf-para-picture' },
+  { kind: 'echo', name: 'para-over-picture-slow', case: 'pdf-para-picture-slow' },
+  // the Typeset view's Show menu: a switch toggles its class and is kept after a reload
+  { kind: 'echo', name: 'ts-show-menu', case: 'ts-show' },
 ];
