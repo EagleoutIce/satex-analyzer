@@ -6012,7 +6012,8 @@
       img.__build = pdf;
       // a page with no image yet (a placeholder the overlay replaced) gets one
       // the page typed on crossfades (120 ms): what the echo got slightly off settles, never jumps
-      if (old && typed(el) < 0) { old.replaceWith(img); old.classList.add('pdf-fade'); img.after(old); setTimeout(() => old.remove(), 130); }
+      // (not when the echo pushed the text below: the old page fading on top would show it unpushed, under the echo's rows)
+      if (old && typed(el) < 0 && pdfPushed?.page !== +el.dataset.page) { old.replaceWith(img); old.classList.add('pdf-fade'); img.after(old); setTimeout(() => old.remove(), 130); }
       else if (old) old.replaceWith(img); else el.prepend(img);
       pdfRastersDraw(el, img, view.images?.(n) ?? []);
       pdfPaperMark(el);
@@ -7557,7 +7558,7 @@
     const x0 = e.clientX, id = e.pointerId;
     // a click on the handle writes nothing: a width only once the pointer moved 3 px
     let on = false;
-    const move = (m) => { if (m.pointerId === id && (on ||= Math.abs(m.clientX - x0) >= 3)) pdfDragSet(PE.snapWidth(d.col, d.was, Math.min(d.max, Math.max(2, d.was + (m.clientX - x0) / d.perBp)), d.line, m.shiftKey)); };
+    const move = (m) => { if (m.pointerId === id && (on ||= Math.abs(m.clientX - x0) >= 3)) pdfDragSet(PE.snapWidth(d.col, d.was, Math.min(d.max, Math.max(2, d.was + (m.clientX - x0) / d.perBp)), d.line, m.shiftKey, (unitsConv(), TM.convention(editor.text())))); };
     // every end (a release, a cancel by the browser or the system) ends the drag and its listeners
     const end = (u) => {
       if (u.pointerId !== id) return;
@@ -7574,7 +7575,7 @@
     const d = pdfGrab(g);
     if (!d) return;
     pdfGripFocus = [d.t, d.k];
-    pdfDragSet(d.col ? PE.stepped(d.col, dir, e.shiftKey) : PE.snapWidth(null, d.was, d.was + dir * (e.shiftKey ? 0.1 : 0.5) * 72 / 25.4, d.line, true));
+    pdfDragSet(d.col ? PE.stepped(d.col, dir, e.shiftKey) : PE.snapWidth(null, d.was, d.was + dir * (e.shiftKey ? 0.1 : 0.5) * 72 / 25.4, d.line, true, (unitsConv(), TM.convention(editor.text()))));
     pdfDragEnd();
   });
   /* TikZ nodes on the pages (pdfedit.ts `satexTikzMove`): the box SyncTeX records on a node's text line is outlined
@@ -7696,6 +7697,9 @@
     const r = TM.move(stmt, p.n.i, p.n.pic, { by: [dx / CM, -dy / CM], grid });
     return r && { ...r, stmt, snap: s, d: [r.by[0] * k, -r.by[1] * k] };
   }
+  /** The length convention where a text shows none: `conventions.units` of satex.yaml (`cm`, or `{unit: mm, decimals: 1}`). */
+  const unitsConv = () => { const u = configSet['conventions.units'] ?? configSet['conventions.units.unit'], d = configSet['conventions.units.decimals'] ?? u?.decimals;
+    TM.setConvention(u ? { unit: typeof u === 'string' ? u : u.unit ?? 'cm', ...(Number.isInteger(+d) && d !== '' && d != null ? { dec: +d } : {}) } : null); };
   /** Node `p` moved by `dx`, `dy` bp written beside the nearest named node set before it (a node lined up with it first):
    * its statement, the key as the ghost's caption, positioning's load when the file lacks it; null where none can be the
    * reference or the file cannot load positioning (then it keeps its `at` or shifts). */
@@ -7705,7 +7709,8 @@
     if (!lib || 'line' in lib) return null;
     const frame = (q, x = 0, y = 0) => ({ l: q.l - TIKZ_SEP + x, r: q.r + TIKZ_SEP + x, t: q.t - TIKZ_SEP + y, d: q.d + TIKZ_SEP + y }), c = [p.c[0] + dx, p.c[1] + dy];
     const lined = (q) => +(Math.abs(q.c[0] - c[0]) < 0.5 || Math.abs(q.c[1] - c[1]) < 0.5), far = (q) => Math.hypot(q.c[0] - c[0], q.c[1] - c[1]);
-    const ref = refs.sort((a, b) => lined(b) - lined(a) || far(a) - far(b))[0], at = TM.placing(frame(p, dx, dy), frame(ref), 0.5, p.n.pic.dist, ref.n.name);
+    unitsConv();
+    const ref = refs.sort((a, b) => lined(b) - lined(a) || far(a) - far(b))[0], at = TM.placing(frame(p, dx, dy), frame(ref), 0.5, p.n.pic.dist, ref.n.name, TM.convention(text.slice(p.n.pic.at, text.indexOf('\\end{tikzpicture}', p.n.pic.at))), p.n.pic.shape ? p.n.pic.scale : 1);
     const now = at && TM.place(text.slice(p.n.from, p.n.to), p.n.i, at.text);
     // `d`: where it lands, the gaps on the grid (the ghost shows it, the dependents left behind are shifted by it)
     // beside the same node on the same side the move is exact from the keys alone (no frame guessed)

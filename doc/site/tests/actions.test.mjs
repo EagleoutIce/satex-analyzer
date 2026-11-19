@@ -323,3 +323,35 @@ test('relative placement: the move from the keys alone', () => {
   assert.equal(T.placeDelta(['right=of a'], 'below=of a'), null, 'another side');
   assert.equal(T.placeDelta(['draw'], 'right=of a'), null, 'not placed before');
 });
+
+// Intuition: a write follows the picture's own conventions: its unit and decimals, bare numbers in its x/y units, its
+// scale (and `transform shape` for distances); a text without any falls back to `conventions.units`. Pins a new `at`
+// written in cm into an mm picture, a 2 cm drag of a `scale=2` picture written as 2 units, a table width in cm in an mm document.
+test('length conventions: the picture\'s units, scale and decimals; the document\'s for tables', () => {
+  const pic = (opts, body) => T.nodes(`\\begin{tikzpicture}${opts}\n${body}\n\\end{tikzpicture}`);
+  assert.deepEqual(T.convention('\\draw (0,0) -- (1.5,2); \\node at (3,1) {x};', true), { unit: '', dec: 1 });
+  assert.deepEqual(T.convention('\\node at (10mm,5mm) {a}; \\node[xshift=2mm] {b}; % 3cm', true), { unit: 'mm', dec: 0 });
+  assert.deepEqual(T.convention('\\setlength{\\parindent}{1.25cm} p{3.5cm}'), { unit: 'cm', dec: 2 });
+  assert.deepEqual(T.convention('no lengths'), { unit: 'cm', dec: 1 }, 'the fallback');
+  T.setConvention({ unit: 'mm', dec: 0 });
+  try { assert.deepEqual(T.convention('no lengths'), { unit: 'mm', dec: 0 }, 'conventions.units'); } finally { T.setConvention(null); }
+  // an mm picture: a node placed anew gets its `at` in mm; a new shift too
+  const mm = pic('', '\\node (a) at (10mm,5mm) {A};\n\\node[right=of a] (b) {B};');
+  assert.equal(T.move('\\node[right=of a] (b) {B};', 0, mm[1].pic, { to: [2, -1] }).text, '\\node (b) at (20mm,-10mm) {B};');
+  assert.equal(T.move('\\node[right=of a] (b) {B};', 0, mm[1].pic, { by: [0.5, 0] }).text, '\\node[right=of a, xshift=5mm] (b) {B};');
+  // bare coordinates with x=2cm: a node placed anew stays in the picture's units
+  const xy = pic('[x=2cm, y=2cm]', '\\node (a) at (1,1) {A};\n\\node[right=of a] (b) {B};');
+  assert.equal(T.move('\\node[right=of a] (b) {B};', 0, xy[1].pic, { to: [3, 1] }).text, '\\node (b) at (1.5,0.5) {B};');
+  // a scale=2 picture: a drag of 2 cm on the page is 1 unit of the picture
+  const sc = pic('[scale=2]', '\\node (a) at (1,1) {A};');
+  assert.equal(T.move('\\node (a) at (1,1) {A};', 0, sc[0].pic, { by: [2, 0] }).text, '\\node (a) at (2,1) {A};');
+  // positioning gaps: in the convention's unit and decimals, divided by the scale under `transform shape`
+  const cm = 72 / 2.54, box = (l, w = cm) => ({ l, t: 0, r: l + w, d: cm / 2 }), a = box(0);
+  assert.equal(T.relation(box(2.5 * cm), a, 0.5, [1, 1], 'a', { unit: 'mm', dec: 0 }), 'right=15mm of a');
+  assert.equal(T.relation(box(2.5 * cm), a, 0.5, [1, 1], 'a', { unit: 'cm', dec: 1 }, 2), 'right=0.8cm of a', '1.5 cm on the page at scale 2');
+  assert.deepEqual(pic('[scale=2, transform shape]', '\\node {A};')[0].pic.shape, true);
+  // a table column's first width: the document's unit
+  const E = self.satexPdfEdit;
+  assert.equal(E.snapWidth(null, 50, 72 / 25.4 * 32, 0, false, { unit: 'mm', dec: 0 }), '32mm');
+  assert.match(E.snapWidth(null, 50, 72 / 2.54 * 3.2, 0, false, { unit: 'cm', dec: 1 }), /^3\.2\d*cm$/);
+});

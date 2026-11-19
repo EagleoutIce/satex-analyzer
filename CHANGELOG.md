@@ -72,6 +72,7 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 - `fix` **Trace panes.** The input pane grows with its tokens instead of scrolling, and thin scroll bars keep the corners round.
 - `fix` **Explain and rename at `\begin`.** They take that command.
 - `fix` **Crash recovery.** A crashed, hung or out-of-memory analyzer restarts by itself with the open files, root, settings and typed text, its last findings dimmed until fresh ones arrive, and one line says how long the restart took (1.2–4 s). Three crashes in a minute stop it with Restart and Report (copies the crash log). A crashed browser pdfTeX restarts and builds once more. A failed start keeps drafts, settings and layout and clears caches only when one is the cause.
+- `test` **Browser tests of the playground in the repository.** The scenarios of typing, titles, math, clicks, widgets, completion, double clicks, the footer, the follow mark, page colours, TikZ menus and crash recovery live in `doc/site/e2e`, one per behavior. `scripts/e2e.sh quick` runs the push check in about five minutes, `full` every scenario, `perf` the timing bounds. Known reds are listed with an owner in `known-red.json`.
 
 ### CLI
 

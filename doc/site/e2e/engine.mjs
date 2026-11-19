@@ -661,12 +661,17 @@ async function forestScenario(p, sc) {
   const x = (w[0] + w[2]) / 2, y = (w[1] + w[3]) / 2;
   await p.s('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y });
   for (const type of ['mousePressed', 'mouseReleased']) await p.s('Input.dispatchMouseEvent', { type, x, y, button: 'right', clickCount: 1 });
-  const items = await p.until(`(() => { const m = document.querySelector('.tikz-menu'); return m && [...m.querySelectorAll('button')].map((b) => b.textContent + (b.getAttribute('aria-checked') === 'true' ? '*' : '')); })()`, 3000);
+  // the page actions' menu (actions.ts): a forest node's groups are inline, their rows at the menu's root
+  const label = `(b) => b.querySelector('span')?.textContent ?? b.textContent`;
+  const items = await p.until(`(() => { const m = document.querySelector('.pa-root'); return m && [...m.querySelectorAll(':scope > button')].map(${label}); })()`, 4000);
   if (!items) { res.fails.push('no node menu'); await shot(p, res, 'nomenu'); return res; }
   res.info.items = items.join(' | ');
-  if (!items.some((t) => t.replace(/\*$/, '') === sc.choose)) { res.fails.push(`no ${J(sc.choose)} in ${J(items)}`); return res; }
+  if (!items.includes(sc.choose)) { res.fails.push(`no ${J(sc.choose)} in ${J(items)}`); return res; }
   const text0 = await p.eval(`satexHealth().text`);
-  await p.eval(`[...document.querySelectorAll('.tikz-menu button')].find((b) => b.textContent === ${J(sc.choose)}).click()`);
+  const row = await p.eval(`(() => { const b = [...document.querySelectorAll('.pa-root > button')].find((b) => (${label})(b) === ${J(sc.choose)}), r = b.getBoundingClientRect(); return [r.x + r.width / 2, r.y + r.height / 2]; })()`);
+  await p.s('Input.dispatchMouseEvent', { type: 'mouseMoved', x: row[0], y: row[1] });
+  await sleep(120);
+  await p.mouse(row[0], row[1]);
   if (sc.input != null) {
     if (!await p.until(`document.querySelector('.tikz-input input')`, 2000)) { res.fails.push('no text input'); return res; }
     await p.eval(`(() => { const i = document.querySelector('.tikz-input input'); i.value = ${J(sc.input)}; })()`);

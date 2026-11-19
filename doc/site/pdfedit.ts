@@ -71,7 +71,7 @@ declare global {
       verbatimAt(text: string, at: number): Verb | null;
       columns(boxes: Box[], file: string, table: Table, tables: Table[], words?: Word[]): (Placed & { approx?: boolean; measured?: boolean })[];
       measure(words: Word[], box: Box, n: number): ([number, number] | null)[];
-      snapWidth(text: string | null, was: number, now: number, line: number, fine: boolean): string | null;
+      snapWidth(text: string | null, was: number, now: number, line: number, fine: boolean, conv?: { unit: string; dec: number }): string | null;
       widthBp(text: string, line: number): number | null;
       respec(align: string, width: string): { body: string; array: boolean } | null;
       wordAt(text: string, at: number): [number, string] | null;
@@ -193,7 +193,7 @@ declare global {
   /** The width a drag to `now` bp writes, `text` the width as written (null: a column with none yet, `was` bp wide on
    * the page) and `line` the bp of `\linewidth`. A share stays a share; near a twentieth of the line it becomes one
    * (`.25\linewidth`); else 0.5 mm steps (Shift: 0.1 mm) in cm, or mm where written so; another unit keeps its own. */
-  function snapWidth(text: string | null, was: number, now: number, line: number, fine: boolean): string | null {
+  function snapWidth(text: string | null, was: number, now: number, line: number, fine: boolean, conv?: { unit: string; dec: number }): string | null {
     const f = text ? form(text) : null;
     if (text && !f || now <= 0) return null;
     if (f?.kind === 'share') return resized(text!, was, now, fine);
@@ -203,6 +203,8 @@ declare global {
       if (share > 0 && share <= 1 && Math.abs(share * line - now) <= 0.5 * MM) return share === 1 ? '\\linewidth' : `${String(+share.toFixed(2)).replace(/^0\./, '.')}\\linewidth`;
     }
     if (f && !/^(cm|mm)$/i.test(f.unit)) return resized(text!, was, now, fine);
+    // a column given its first width: the document's unit and decimals (`conventions.units` where it shows none)
+    if (!f && conv?.unit && conv.unit !== 'cm') { const per = ({ mm: MM, pt: 72 / 72.27, in: 72, bp: 1 } as Record<string, number>)[conv.unit]; if (per) { const st = 10 ** -Math.max(conv.dec, fine ? 1 : 0); return `${+(Math.max(st, Math.round(now / per / st) * st)).toFixed(Math.max(conv.dec, fine ? 1 : 0))}${conv.unit}`; } }
     const mm = Math.max(fine ? 0.1 : 0.5, Math.round(now / MM / (fine ? 0.1 : 0.5)) * (fine ? 0.1 : 0.5));
     return f?.unit.toLowerCase() === 'mm' ? `${+mm.toFixed(1)}mm` : `${+(mm / 10).toFixed(fine ? 2 : 3)}cm`;
   }
@@ -1360,7 +1362,9 @@ declare global {
   /** A path's segment from point `a` to `b`: its operation (`--`, `to`, `|-`, `-|`) at `op`, the keys of a `to[…]`, and `at` where a label goes. */
   type TikzSeg = { a: string; b: string; at: number; op: [number, number]; kind: string; keys: string[] };
   /** A picture's scale and units in cm, and the keys its `every node/.style` gives each node. */
-  type TikzPic = { scale: number; x: number; y: number; node?: string[]; at?: number; dist?: [number, number] };
+  type TikzPic = { scale: number; x: number; y: number; node?: string[]; at?: number; dist?: [number, number]; shape?: boolean; conv?: TikzConv };
+  /** A length convention: the unit lengths are written in ('' : the picture's own units) and the decimals they carry. */
+  type TikzConv = { unit: string; dec: number };
   /** A move: by a distance (`by`), to a place (`to`, from the origin), or to `pos`. Lengths land on the 0.5 mm grid, `grid`
    * cm an axis where given (0: as is), off it with `free`. */
   type TikzMove = { by?: [number, number]; to?: [number, number]; pos?: number; free?: boolean; grid?: [number, number] };
@@ -1391,8 +1395,9 @@ declare global {
       named(stmt: string, i: number, name: string): string | null; fresh(text: string, picAt: number, base: string): string;
       picOpts(text: string, picAt: number): { from: number; to: number; keys: string[] } | null; picSet(text: string, picAt: number, group: RegExp, add: string[]): { from: number; to: number; was: string; now: string } | null;
       dependents(text: string, n: TikzNode): { direct: TikzNode[]; all: TikzNode[] };
-      relation(b: TikzBox, ref: TikzBox, tol: number, dist: [number, number] | undefined, name: string): string | null;
-      placing(b: TikzBox, ref: TikzBox, tol: number, dist: [number, number] | undefined, name: string): { text: string; fix: [number, number] } | null; place(stmt: string, i: number, rel: string): string | null;
+      relation(b: TikzBox, ref: TikzBox, tol: number, dist: [number, number] | undefined, name: string, conv?: TikzConv, k?: number): string | null;
+      placing(b: TikzBox, ref: TikzBox, tol: number, dist: [number, number] | undefined, name: string, conv?: TikzConv, k?: number): { text: string; fix: [number, number] } | null; place(stmt: string, i: number, rel: string): string | null;
+      convention(text: string, own?: boolean): TikzConv; setConvention(c: Partial<TikzConv> | null): void; written(cmv: number, c: TikzConv): string;
       snapAngle(deg: number, step: number): number; angle(stmt: string, i: number): number; unlabel(stmt: string, i: number): string | null;
     };
   }
@@ -1407,6 +1412,23 @@ declare global {
   /** A length in cm, `unit` the cm of a bare number. */
   const cm = (l: TikzLen, unit: number) => l.v * (l.unit ? UNIT[l.unit] : unit);
   const GRID = 0.05;
+  /** The convention where a text shows none (`conventions.units` in satex.yaml, set by the playground). */
+  let FALLBACK: TikzConv = { unit: 'cm', dec: 1 };
+  const setConvention = (c: Partial<TikzConv> | null) => { FALLBACK = { unit: 'cm', dec: 1, ...(c ?? {}) }; };
+  /** The length convention of `text` (a picture's body, a document): the unit most of its lengths carry, with the most
+   * decimals one of them has; `own`: bare coordinate pairs count for the picture's units (''). The fallback where none stands. */
+  function convention(text: string, own = false): TikzConv {
+    const seen = new Map<string, { n: number; dec: number }>(), add = (u: string, num: string, n = 1) => { const e = seen.get(u) ?? { n: 0, dec: 0 }; seen.set(u, { n: e.n + n, dec: Math.max(e.dec, num.split('.')[1]?.length ?? 0) }); };
+    const t = text.replace(/(?<!\\)%.*$/gm, '');
+    for (const m of t.matchAll(/(?<![\w.\\])(-?\d*\.?\d+)\s*(cm|mm|pt|in|bp)(?![a-zA-Z])/g)) add(m[2]!, m[1]!);
+    if (own) for (const m of t.matchAll(/\(\s*(-?\d*\.?\d+)\s*,\s*(-?\d*\.?\d+)\s*\)/g)) { add('', m[1]!); add('', m[2]!); }
+    const best = [...seen].sort((a, b) => b[1].n - a[1].n)[0];
+    return best ? { unit: best[0], dec: Math.min(3, Math.max(best[1].dec, best[0] === 'mm' || best[0] === 'pt' ? 0 : 1)) } : own ? bare() : FALLBACK;
+  }
+  /** A picture without evidence: bare numbers where the fallback is cm (TikZ's unit), else the fallback. */
+  const bare = (): TikzConv => (FALLBACK.unit === 'cm' ? { unit: '', dec: FALLBACK.dec } : FALLBACK);
+  /** `cmv` cm written in convention `c` (a picture's units are cm here: the caller passes a length). */
+  const written = (cmv: number, c: TikzConv) => { const u = c.unit || 'cm', v = +(cmv / UNIT[u]!).toFixed(c.dec); return `${Object.is(v, -0) ? 0 : v}${u}`; };
   /** `c` cm in the unit of `l` (bare: `unit` cm), on a grid of `step` cm (0: as is, to 0.01 mm), with the digits it needs, at least as written. */
   function write(l: TikzLen, c: number, unit: number, step: number): string {
     const per = l.unit ? UNIT[l.unit] : unit, mm = step ? Math.round(c / step) * step : c;
@@ -1492,16 +1514,17 @@ declare global {
   }
   /** The picture options' scale and units. */
   function picOf(opts: string): TikzPic {
-    let scale = 1, x = 1, y = 1, node: string[] = [], dist: [number, number] = [1, 1];
+    let scale = 1, x = 1, y = 1, node: string[] = [], dist: [number, number] = [1, 1], shape = false;
     for (const kv of keys(opts)) {
       const [k, v = ''] = kv.split('=').map((t) => t.trim()), l = len(v);
       if (k === 'scale' && +v) scale = +v;
       if ((k === 'x' || k === 'y') && l) { if (k === 'x') x = cm(l, 1); else y = cm(l, 1); }
       if (k === 'every node/.style') node = keys(kv.slice(kv.indexOf('=') + 1).trim().replace(/^\{|\}$/g, ''));
       // `1cm`, or `1cm and 2cm`: vertical, then horizontal
+      if (k === 'transform shape') shape = true;
       if (k === 'node distance') { const d = v.split(/\s+and\s+/).map(len); if (d.every(Boolean)) dist = [cm(d[0]!, 1), cm((d[1] ?? d[0])!, 1)]; }
     }
-    return { scale, x, y, node, dist };
+    return { scale, x, y, node, dist, shape };
   }
   /** Each statement of the text's pictures, comments blanked: its text `s` from offset `at`, its line, its picture. */
   function stmts(text: string): { s: string; at: number; line: (i: number) => number; pic: TikzPic }[] {
@@ -1515,6 +1538,7 @@ declare global {
       while (/\s/.test(t[k])) k++;
       if (t[k] === '[') { const e = close(t, k); pic = picOf(t.slice(k + 1, e)); k = e + 1; }
       pic.at = m.index;
+      pic.conv = convention(t.slice(k, end), true);
       // statements end at `;` outside groups; a loop's statements stand for many nodes, skipped whole
       while (k < end) {
         let e = k, depth = 0;
@@ -1562,7 +1586,8 @@ declare global {
     const at = xy.length === 2 && len(xy[0]) && len(xy[1]) ? [len(xy[0])!, len(xy[1])!] : null, units = [pic.x, pic.y];
     if (m.to) {
       // placed anew: the placement and its shifts dropped, `at` in the units written there, else cm
-      const l = at ?? [{ v: 0, unit: '', dec: 0 }, { v: 0, unit: '', dec: 0 }], u = at ? units : [1, 1];
+      // no `at` yet: the picture's convention (its own units for bare numbers)
+      const cv = pic.conv ?? bare(), z = { v: 0, unit: cv.unit, dec: cv.dec }, l = at ?? [z, z], u = at || !cv.unit ? units : [1, 1];
       const c = m.to.map((v, j) => write(l[j], v / pic.scale, u[j], step(j))), o = setOpts(ks.filter((k) => !PLACED.test(k) && !SHIFTS.test(k)).join(', '), /$^/, []);
       return out(o, `(${c.join(',')})`, `at (${c.join(',')})`, [len(c[0])!, len(c[1])!].map((a, j) => cm(a, u[j])) as [number, number]);
     }
@@ -1574,7 +1599,7 @@ declare global {
     // a shift as written (a bare one is in pt), else a new one in mm; a shift moved to nothing goes
     const set: [string, string][] = [], gone: string[] = [], said: string[] = [], moved: number[] = [];
     ['xshift', 'yshift'].forEach((n, j) => {
-      const k = ks.find((x) => x.split('=')[0].trim() === n), l = (k && len(k.split('=')[1])) || { v: 0, unit: 'mm', dec: 0 };
+      const k = ks.find((x) => x.split('=')[0].trim() === n), l = (k && len(k.split('=')[1])) || { v: 0, unit: pic.conv?.unit || 'mm', dec: pic.conv?.unit ? pic.conv.dec : 0 };
       const was = cm(l, UNIT.pt), now = was + by[j], v = write(l.unit ? l : { ...l, unit: 'pt' }, now, 1, step(j));
       moved.push(cm(len(v)!, 1) - was);
       if (cm(len(v)!, 1) === 0) gone.push(n); else { set.push([n, v]); said.push(`${n}=${v}`); }
@@ -1846,15 +1871,17 @@ declare global {
   /** Where frame `b` stands beside frame `ref` (page bp, y down) as positioning writes it: a side when their centres line up
    * within `tol`, else a corner (`above right=⟨vertical⟩ and ⟨horizontal⟩ of a`), each gap between their borders in cm on
    * the 0.5 mm grid; gaps equal to the picture's node distance `dist` (vertical, horizontal) unwritten. Null: the same centre. */
-  function relation(b: TikzBox, ref: TikzBox, tol: number, dist: [number, number] = [1, 1], name: string) { return placing(b, ref, tol, dist, name)?.text ?? null; }
+  function relation(b: TikzBox, ref: TikzBox, tol: number, dist: [number, number] = [1, 1], name: string, conv?: TikzConv, k = 1) { return placing(b, ref, tol, dist, name, conv, k)?.text ?? null; }
   /** `relation`'s keys and `fix`, what to add to `b`'s place (bp) for where TikZ sets it: the gaps as written, on the grid. */
-  function placing(b: TikzBox, ref: TikzBox, tol: number, dist: [number, number] = [1, 1], name: string) {
-    const bp = 72 / 2.54, mid = (o: TikzBox, ax: number) => (ax ? o.t + o.d : o.l + o.r) / 2;
+  function placing(b: TikzBox, ref: TikzBox, tol: number, dist: [number, number] = [1, 1], name: string, conv?: TikzConv, k = 1) {
+    // `k`: a length's scale on the page (`transform shape` with `scale`); gaps written in `conv`, on its last decimal
+    const bp = 72 / 2.54 * k, mid = (o: TikzBox, ax: number) => (ax ? o.t + o.d : o.l + o.r) / 2;
     const dx = mid(b, 0) - mid(ref, 0), dy = mid(b, 1) - mid(ref, 1);
     const h = Math.abs(dx) <= tol ? '' : dx > 0 ? 'right' : 'left', v = Math.abs(dy) <= tol ? '' : dy > 0 ? 'below' : 'above';
     if (!h && !v) return null;
     const gx = (h === 'right' ? b.l - ref.r : ref.l - b.r) / bp, gy = (v === 'below' ? b.t - ref.d : ref.t - b.d) / bp;
-    const grid = (c: number) => +(Math.round(c / GRID) * GRID).toFixed(2), fmt = (c: number) => `${grid(c)}cm`, same = (g: number, d: number) => Math.abs(g - d) < GRID / 2;
+    const cv = conv?.unit ? conv : null, step = cv ? UNIT[cv.unit]! / 10 ** cv.dec : GRID;
+    const grid = (c: number) => +(Math.round(c / step) * step).toFixed(6), fmt = (c: number) => (cv ? written(grid(c), cv) : `${+grid(c).toFixed(2)}cm`), same = (g: number, d: number) => Math.abs(g - d) < step / 2;
     // where a side puts `b` given the gap it lands at (cm): its near border that far from `ref`'s
     const atX = (g: number) => (h === 'right' ? ref.r + g * bp - b.l : ref.l - g * bp - b.r), atY = (g: number) => (v === 'below' ? ref.d + g * bp - b.t : ref.t - g * bp - b.d);
     // frames overlapping across a corner: the side they stand apart on, shifted by the centres' offset along the other axis
@@ -1916,7 +1943,7 @@ declare global {
     return stmt.slice(0, a) + stmt.slice(p.t[1] + 1);
   }
   self.satexTikzMove = { nodes, move, len, cm, posOn, clipped, snap, edges, shapeOf, shape, looks, flip, retext, tipOf, tip, label,
-    SHAPES: SHAPE_LIST, library, keysAt, current, set, segOf, route, bend, inout, looseness, segPath, addEdge, named, fresh, picOpts, picSet, snapAngle, angle, unlabel, relation, placing, place, placeDelta, dependents };
+    SHAPES: SHAPE_LIST, library, keysAt, current, set, segOf, route, bend, inout, looseness, segPath, addEdge, named, fresh, picOpts, picSet, snapAngle, angle, unlabel, relation, placing, place, placeDelta, dependents, convention, setConvention, written };
 })();
 
 // References switched from the pages: a reference's printed number is no text to type into. Where its key stands in
