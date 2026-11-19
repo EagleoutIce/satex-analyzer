@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::fixed::{HashMap, HashSet};
 
-const VERSION: u32 = 4;
+const VERSION: u32 = 5;
 
 #[derive(Serialize, Deserialize, Default)]
 pub struct Exports {
@@ -31,7 +31,10 @@ pub struct Exports {
 /// (`\\newcommand{\\x}`, `\\cs_new:Npn \\x`) on its line in at least half
 /// of its definitions. A command that defines a name it was not given there
 /// (`\\DeclareOption`, `\\@tfor`) is none. `path` gives a file's path, or
-/// none for a file not to look at.
+/// none for a file not to look at. A definer that also defines names made
+/// from the given one by a prefix (`\\newenvironment{x}` defines `\\x` and
+/// `\\endx`, ltdefns.dtx) is listed once more with it, after a space:
+/// `newenvironment end`.
 pub fn written(
     defs: &[crate::analysis::facts::Definition],
     interner: &crate::engine::tex::Interner,
@@ -39,24 +42,33 @@ pub fn written(
 ) -> Vec<String> {
     let mut named: HashMap<crate::engine::tex::FileId, HashSet<(u32, String, String)>> = HashMap::default();
     let mut seen: HashMap<String, (u32, u32)> = HashMap::default();
+    let mut prefixes: HashMap<(String, String), u32> = HashMap::default();
     for def in defs {
         let file = def.span.file;
         let pairs = named.entry(file).or_insert_with(|| {
             let text = path(file).and_then(|p| std::fs::read_to_string(p).ok()).unwrap_or_default();
             let (tokens, names) = tokenize(&text);
-            pairs(&tokens).map(|(line, cmd, name)| (line, names.name(cmd).into(), names.name(name).into())).collect()
+            pairs(&tokens, &names).map(|(line, cmd, name)| (line, names.name(cmd).into(), name)).collect()
         });
         if pairs.is_empty() {
             continue;
         }
-        let by = interner.name(def.by).to_string();
-        let next = pairs.contains(&(def.span.line, by.clone(), interner.name(def.name).to_string()));
+        let (by, name) = (interner.name(def.by).to_string(), interner.name(def.name));
+        let next = pairs.contains(&(def.span.line, by.clone(), name.to_string()));
+        // a name the call made from its given one: the prefix it put before it
+        let given = pairs.iter().filter(|(line, cmd, _)| *line == def.span.line && *cmd == by);
+        for (_, _, word) in given.filter(|(_, _, w)| !next && name.len() > w.len() && name.ends_with(w.as_str())) {
+            *prefixes.entry((by.clone(), name[..name.len() - word.len()].to_string())).or_default() += 1;
+        }
         let count = seen.entry(by).or_default();
         count.0 += u32::from(next);
         count.1 += 1;
     }
     let mut out: Vec<String> =
-        seen.into_iter().filter(|(_, (next, all))| *next > 0 && 2 * next >= *all).map(|(by, _)| by).collect();
+        seen.iter().filter(|(_, (next, all))| *next > 0 && 2 * next >= *all).map(|(by, _)| by.clone()).collect();
+    // a prefix the definer puts in at least half of its calls that name one
+    let prefixed = prefixes.into_iter().filter(|((by, _), n)| out.contains(by) && 2 * n >= seen[by].0);
+    out.extend(prefixed.map(|((by, prefix), _)| format!("{by} {prefix}")).collect::<Vec<_>>());
     out.sort();
     out
 }
@@ -87,18 +99,45 @@ fn tokenize(text: &str) -> (Vec<crate::engine::tex::Token>, crate::engine::tex::
 }
 
 /// Each control sequence with the name after it, past `{`, `*` and spaces
-/// (`\\newcommand*{\\x}`), and the line it stands on.
-fn pairs(
-    tokens: &[crate::engine::tex::Token],
-) -> impl Iterator<Item = (u32, crate::engine::tex::Sym, crate::engine::tex::Sym)> + '_ {
+/// (`\\newcommand*{\\x}`), or the word braced right after it
+/// (`\\newenvironment{align*}`, the name the call makes a control sequence
+/// of), and the line it stands on.
+fn pairs<'a>(
+    tokens: &'a [crate::engine::tex::Token],
+    names: &'a crate::engine::tex::Interner,
+) -> impl Iterator<Item = (u32, crate::engine::tex::Sym, String)> + 'a {
     use crate::engine::tex::{Catcode, Tok};
     tokens.iter().enumerate().filter_map(|(i, t)| {
         let Tok::Cs(cmd) = t.tok else { return None };
-        let skip = |t: &&crate::engine::tex::Token| {
-            matches!(t.tok, Tok::Chr('*', _) | Tok::Chr(_, Catcode::Begin | Catcode::Space))
+        let blank = |t: &crate::engine::tex::Token| matches!(t.tok, Tok::Chr('*', _) | Tok::Chr(_, Catcode::Space));
+        let mut k = i + 1;
+        let skip = |k: &mut usize| {
+            while tokens.get(*k).is_some_and(blank) {
+                *k += 1
+            }
         };
-        let Tok::Cs(name) = tokens[i + 1..].iter().find(|t| !skip(t))?.tok else { return None };
-        Some((t.span.line, cmd, name))
+        skip(&mut k);
+        let braced = tokens.get(k).is_some_and(|t| matches!(t.tok, Tok::Chr(_, Catcode::Begin)));
+        if braced {
+            k += 1;
+            skip(&mut k);
+        }
+        match tokens.get(k)?.tok {
+            Tok::Cs(name) => Some((t.span.line, cmd, names.name(name).to_string())),
+            // a word of letters and others closed right after it: no argument made of code
+            Tok::Chr(_, Catcode::Letter | Catcode::Other) if braced => {
+                let word: String = tokens[k..]
+                    .iter()
+                    .map_while(|t| match t.tok {
+                        Tok::Chr(c, Catcode::Letter | Catcode::Other) => Some(c),
+                        _ => None,
+                    })
+                    .collect();
+                let after = tokens.get(k + word.chars().count())?;
+                matches!(after.tok, Tok::Chr(_, Catcode::End)).then(|| (t.span.line, cmd, word))
+            }
+            _ => None,
+        }
     })
 }
 
@@ -388,7 +427,19 @@ pub fn defined_in(file: &Path, definers: &HashSet<&str>, name: &str) -> bool {
 fn scan(text: &str, definers: &HashSet<&str>) -> (Vec<String>, Vec<String>) {
     use crate::engine::tex::Tok;
     let (tokens, names) = tokenize(text);
-    let defined = pairs(&tokens).filter(|(_, cmd, _)| definers.contains(names.name(*cmd)));
+    // `newenvironment end`: the definer also makes `end` + the name ([`written`])
+    let mut made: HashMap<&str, Vec<&str>> = HashMap::default();
+    for d in definers {
+        let (by, prefix) = d.split_once(' ').unwrap_or((d, ""));
+        made.entry(by).or_default().push(prefix);
+    }
+    made.values_mut().for_each(|p| p.sort_unstable());
+    let defined: Vec<String> = pairs(&tokens, &names)
+        .flat_map(|(_, cmd, name)| {
+            let prefixes = made.get(names.name(cmd)).map_or(&[][..], Vec::as_slice);
+            prefixes.iter().map(move |p| format!("{p}{name}")).collect::<Vec<_>>()
+        })
+        .collect();
     let mut loaded = Vec::new();
     for (i, t) in tokens.iter().enumerate() {
         let ext = match t.tok {
@@ -401,7 +452,7 @@ fn scan(text: &str, definers: &HashSet<&str>) -> (Vec<String>, Vec<String>) {
         };
         loaded.extend(group(&tokens[i + 1..]).split(',').map(|n| format!("{}{ext}", n.trim())));
     }
-    (defined.map(|(_, _, name)| names.name(name).to_string()).collect(), loaded)
+    (defined, loaded)
 }
 
 /// The names a pgf or TikZ library declares besides macros: arrow tips
@@ -453,5 +504,16 @@ mod tests {
         let (defined, loaded) = super::scan(text, &definers);
         assert_eq!(defined, ["one", "two", "three"]);
         assert_eq!(loaded, ["a.sty", "b.sty"]);
+    }
+
+    /// Intuition: `\\newenvironment{align}` defines `\\align` and `\\endalign` (ltdefns.dtx), learned from runs as
+    /// `newenvironment` and `newenvironment end`; a braced word that goes on in code (`{a\\x}`) is none. Pins the index knowing
+    /// amstex's `\\def\\align` only, so `align` was offered with `\\usepackage{amstex}`.
+    #[test]
+    fn braced_names_and_their_prefixed_partners_are_read_off_the_text() {
+        let definers = ["newenvironment", "newenvironment end"].into_iter().collect();
+        let text = "\\newenvironment{align*}{}{}\\newenvironment{a\\x}{}{}\\newenvironment {gather}";
+        let (defined, _) = super::scan(text, &definers);
+        assert_eq!(defined, ["align*", "endalign*", "gather", "endgather"]);
     }
 }

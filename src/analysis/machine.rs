@@ -541,7 +541,7 @@ const SHAPE_TOKENS: usize = 64;
 /// What [`Machine::lists_state`] returns.
 type ListsState = (
     crate::engine::mode::Modes,
-    Option<Span>,
+    Option<(Span, u32)>,
     crate::engine::mode::Modes,
     u8,
     bool,
@@ -2367,8 +2367,8 @@ pub struct Machine<'a> {
     /// paragraph belongs to (tex.web § 211).
     pub(crate) mode: crate::engine::mode::Modes,
     /// The vertical command a `\par` was last put in front of (tex.web
-    /// § 1094), while horizontal mode lasts.
-    pub(crate) par_inserted: Option<Span>,
+    /// § 1094) and how often in a row, while horizontal mode lasts.
+    pub(crate) par_inserted: Option<(Span, u32)>,
     pub(crate) list: crate::engine::mode::Modes,
     /// Whether anything may have been put on a list: until then e-TeX's
     /// `\lastnodetype` of the empty main vertical list is -1.
@@ -10252,16 +10252,11 @@ will look undefined",
     /// tex.web §§ 1046-1047 `insert_dollar_sign`: math material outside
     /// math, or `\\par`, `\\end` and vertical material inside it, puts the
     /// `$` TeX lacks before `token`, which is read again. Entering math only
-    /// outside alignments and in the document's own text, whose mode satex
-    /// follows surely.
+    /// outside alignments, in library text too (`\\sec` in text is `\\mathop`).
     fn insert_dollar(&mut self, token: Token) -> bool {
         use crate::engine::mode::Modes;
         // Neither arm can insert in no known mode: skip the name lookup.
         if self.mode.is_empty() {
-            return false;
-        }
-        // Library text outside math: neither arm inserts.
-        if !self.mode.within(Modes::ANY_MATH) && !self.own_file(token.span.file) {
             return false;
         }
         let math = match (token.tok, token.cs().map(|sym| self.env.meaning(sym))) {
@@ -10282,12 +10277,7 @@ will look undefined",
             _ => return false,
         };
         let insert = match math {
-            true => {
-                !self.mode.is_empty()
-                    && !self.mode.meets(Modes::ANY_MATH)
-                    && !self.env.in_alignment()
-                    && self.own_file(token.span.file)
-            }
+            true => !self.mode.is_empty() && !self.mode.meets(Modes::ANY_MATH) && !self.env.in_alignment(),
             false => self.mode.within(Modes::ANY_MATH) && !self.mode.is_empty(),
         };
         if !insert {
@@ -10296,8 +10286,9 @@ will look undefined",
         if self.own_file(token.span.file) {
             self.project_site = Some(token.span);
         }
+        // the primitive's own name: `\par`, not expl3's `\tex_par:D` for it
         let what = match token.tok {
-            Tok::Cs(sym) => format!("\\{}", self.name(sym)),
+            Tok::Cs(sym) => format!("\\{}", self.name(self.env.identity(sym))),
             _ => "a script".into(),
         };
         let code = if math { "script-outside-math" } else { "missing-dollar" };

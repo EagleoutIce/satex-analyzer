@@ -1945,10 +1945,17 @@ impl Machine<'_> {
             return false;
         }
         let par = self.intern("par");
-        // Back at the same command after its `\par`, still maybe horizontal: TeX
-        // would insert `\par` forever, so a run that compiles had it end the
-        // paragraph. Only an approximated `\par` gets here.
-        if self.par_inserted.replace(token.span) == Some(token.span) {
+        // Back at the same command after its `\par`, still horizontal: TeX puts
+        // `\par` there again, and a `\par` macro may end the loop after rounds
+        // (LaTeX's list `\par` counts `\par@deathcycles`). Past
+        // `limits.site_expansions` rounds it is TeX's endless loop, and a run that
+        // compiles had it end the paragraph.
+        let rounds = match self.par_inserted {
+            Some((span, n)) if span == token.span => n + 1,
+            _ => 0,
+        };
+        self.par_inserted = Some((token.span, rounds));
+        if rounds > self.cfg.limits.site_expansions {
             // Without `analysis.assume_compiles` it is TeX's endless loop, and
             // the path goes on as the one that ends would.
             let (severity, message) = match self.cfg.compiles() {
@@ -2741,6 +2748,8 @@ impl Machine<'_> {
                 self.build_page(span);
             }
         } else if nest.code == Some(group::INSERT) {
+            // the text after an insert stands apart from the insert's, as after a box
+            crate::analysis::observe::box_break(self);
             if nest.part != 1 {
                 let now = self.out.facts.text.at.len() as u32;
                 self.out.facts.text.inserts.push((nest.from, now));

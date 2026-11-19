@@ -1236,3 +1236,24 @@ fn control_characters_have_the_kernel_s_category_codes() {
     );
     assert_eq!(last_body(&analysis, "v"), "15,13,13,13,10,12,5,15");
 }
+
+/// tex.web § 339: a `\scantokens` file that ends inside an `\xdef` body gives
+/// "File ended while scanning definition" and inserts `}`, and reading goes
+/// on: here `\ifcat` takes that `}` as its second token, so the test is false.
+/// `pdftex`: `\R` is `O`. Pinned: the end of the file ended the scan, and `\R` was empty.
+#[test]
+fn a_brace_inserted_where_a_scantokens_file_ends_is_read_on() {
+    let analysis =
+        analyze(r"\endlinechar=-1 \def\x{\catcode`\Z=12 }\x\xdef\R{\expandafter\ifcat\scantokens{Z}a L\else O\fi}");
+    assert_eq!(body(&analysis, "R"), "O");
+}
+
+/// pdftex.web `\pdfprimitive`: for a primitive that does not expand, its
+/// expansion is a frozen `\pdfprimitive` followed by the token read, so
+/// `\string` prints `\pdfprimitive` and `\relax` stays. `pdftex`: `\R` is
+/// `\pdfprimitive\relax `. Pinned: satex's own name for the frozen token leaked.
+#[test]
+fn a_frozen_pdfprimitive_prints_as_pdfprimitive() {
+    let analysis = analyze(r"\xdef\R{\expandafter\string\pdfprimitive\relax}");
+    assert_eq!(body(&analysis, "R"), r"\pdfprimitive\relax ");
+}

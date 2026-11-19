@@ -421,7 +421,8 @@ fn scope_never_shows_an_empty_or_unprintable_name() {
     assert!(!visible.is_empty());
     for record in &visible {
         let name = record["name"].as_str().expect("name is a string");
-        assert!(!name.trim_start_matches('\\').is_empty(), "empty name: {record:?}");
+        // one `\` is the escape: `\\` (the forced line break) is the name `\`, not an empty one
+        assert!(!name.strip_prefix('\\').unwrap_or(name).is_empty(), "empty name: {record:?}");
         assert!(name.chars().all(|c| !c.is_control()), "unprintable name: {name:?}");
     }
 }

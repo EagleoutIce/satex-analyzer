@@ -1576,11 +1576,18 @@ fn a_package_error_the_document_causes_is_shown_at_the_cause() {
         .filter(|r| r["code"] == "caused-library-error" && r["origin"] == "document")
         .collect();
     // pdflatex: "! Missing number, treated as zero." at l.3, raised while
-    // expl3's integer expression reads `1 +`.
-    let missing = rows.iter().find(|r| r["message"].as_str().is_some_and(|m| m.contains("missing number")));
-    let missing = missing.unwrap_or_else(|| panic!("no missing-number row: {rows:?}"));
+    // expl3's integer expression reads `1 +`. TeX's own message is `raised-error`'s,
+    // so the library row is not repeated for it.
+    let all = satex::linter::lint(&analysis);
+    let missing = all.iter().find(|r| {
+        r["code"] == "raised-error" && r["message"].as_str().is_some_and(|m| m.starts_with("Missing number"))
+    });
+    let missing = missing.unwrap_or_else(|| panic!("no missing-number row: {all:?}"));
     assert_eq!(missing["line"], 3, "{missing:?}");
-    assert!(missing["message"].as_str().unwrap().starts_with("error in expl3-code.tex:"), "{missing:?}");
+    assert!(
+        !rows.iter().any(|r| r["line"] == 3 && r["message"].as_str().is_some_and(|m| m.contains("missing number"))),
+        "{rows:?}"
+    );
     // One row per origin line and code.
     let mut keys: Vec<_> = rows.iter().map(|r| (r["line"].to_string(), r["name"].to_string())).collect();
     let all = keys.len();

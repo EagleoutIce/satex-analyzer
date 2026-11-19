@@ -775,3 +775,70 @@ fn runaway_paragraph_fix_stops_before_a_heading() {
     let _ = std::fs::remove_dir_all(&dir);
     assert_eq!(paragraph, &serde_json::json!({ "line": 5, "col": 2 }), "{record:?}");
 }
+
+fix_cases! {
+    /// `\end{document}` while an `itemize` is open: the list lacks its end, so the fix
+    /// closes it before the line. Pinned: the fix renamed `\end{document}` to
+    /// `\end{itemize}`, and the document lost its end.
+    an_open_list_at_the_document_s_end_is_closed_before_it("env-close", "\\documentclass{article}\n\\begin{document}\nText.\n\\begin{itemize}\n\\item one\n\\end{document}\n", "environment-mismatch", true, "\\documentclass{article}\n\\begin{document}\nText.\n\\begin{itemize}\n\\item one\n\\end{itemize}\n\\end{document}\n");
+    /// A misspelled environment gets the defined one nearest to its name
+    /// (an environment is a pair `\X`/`\endX`). Pinned: no suggestion, and the
+    /// lonely `\item` in it was wrapped into a new `itemize`.
+    a_misspelled_environment_is_renamed("env-typo", "\\documentclass{article}\n\\begin{document}\n\\begin{itemze}\n\\item a\n\\end{itemize}\n\\end{document}\n", "undefined-environment", true, "\\documentclass{article}\n\\begin{document}\n\\begin{itemize}\n\\item a\n\\end{itemize}\n\\end{document}\n");
+}
+
+/// Every unsafe fix at once: deleting the unused `\label{s:a}` and turning
+/// `\ref{s:b}` into `\ref{s:a}` each hold alone, not together. Pinned: one
+/// round applied both and left a dangling reference; a round whose result
+/// has a finding none had before is undone and its gravest fix goes in alone.
+#[test]
+fn fixes_of_one_round_that_clash_go_in_one_at_a_time() {
+    if !installed() {
+        return;
+    }
+    let dir = project(
+        "clash",
+        &[(
+            "doc.tex",
+            "\\documentclass{article}\n\\begin{document}\n\\section{A}\\label{s:a} text \\ref{s:b}\n\\end{document}\n",
+        )],
+    );
+    let path = dir.join("doc.tex");
+    let source = std::fs::read_to_string(&path).unwrap();
+    let cfg = Config { load: Load { classes: true, ..Default::default() }, ..crate::support::config() };
+    let analysis = Machine::analyze(&source, Some(&path), &cfg);
+    let keep = |r: &Record| r["origin"] == "document";
+    let records: Vec<Record> = satex::linter::lint(&analysis).into_iter().filter(|r| keep(r)).collect();
+    let main = analysis.file_name(analysis.main_file).to_string();
+    let outcome = apply::fixpoint(&main, &cfg, records, &keep, true);
+    apply::write(&outcome).unwrap();
+    let text = std::fs::read_to_string(&path).unwrap();
+    assert!(text.contains("\\label{s:a}") && text.contains("\\ref{s:a}"), "{text}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The slow-preamble fix writes a `%&` format line only once the format is
+/// dumped: before, the line names a format TeX cannot find. Pinned: the
+/// line went in on every `--fix --unsafe-fixes`.
+#[test]
+fn a_format_line_waits_for_its_format() {
+    if !installed() {
+        return;
+    }
+    let dir = project(
+        "fmt",
+        &[(
+            "doc.tex",
+            "\\documentclass{article}\n\\usepackage{hyperref}\n\\usepackage{cleveref}\n\\begin{document}\nx\n\\end{document}\n",
+        )],
+    );
+    let path = dir.join("doc.tex");
+    let source = std::fs::read_to_string(&path).unwrap();
+    let cfg = Config { load: Load { classes: true, ..Default::default() }, ..crate::support::config() };
+    let analysis = Machine::analyze(&source, Some(&path), &cfg);
+    let cost: Vec<Record> =
+        satex::linter::lint(&analysis).into_iter().filter(|r| r["code"] == "preamble-cost").collect();
+    assert!(!cost.is_empty(), "no preamble-cost finding");
+    assert!(cost.iter().all(|r| r.get("edits").is_none_or(|e| e.as_array().is_none_or(Vec::is_empty))), "{cost:?}");
+    let _ = std::fs::remove_dir_all(&dir);
+}

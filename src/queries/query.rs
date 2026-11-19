@@ -4573,7 +4573,8 @@ fn internal_name(analysis: &Analysis, name: &str) -> bool {
     // a literal backslash as its first character; no document ever writes
     // that out by hand.
     // So does the robust partner `\X␣` of `\DeclareRobustCommand`.
-    analysis.settings.conventions.is_internal(name) || name.starts_with('\\') || name.ends_with(' ')
+    // `\\` itself (named `\`) is the forced line break, a whole control symbol: no internal
+    analysis.settings.conventions.is_internal(name) || (name.len() > 1 && name.starts_with('\\')) || name.ends_with(' ')
 }
 
 /// Where a name in scope came from, for `scope`'s ordering and its

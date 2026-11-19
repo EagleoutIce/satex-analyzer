@@ -1,0 +1,20 @@
+\documentclass{article}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{tabularx}
+\begin{document}
+Intro text.
+\begin{tabular}{l>{\bfseries}cr}
+\toprule
+Name & Value & Unit \\
+\midrule
+alpha & 1 & m \\
+\multicolumn{2}{c}{both} & s \\
+\bottomrule
+\end{tabular}
+
+\begin{tabularx}{\linewidth}{lX}
+a & some long text \\
+b & more text \\
+\end{tabularx}
+\end{document}

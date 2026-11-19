@@ -20,7 +20,10 @@ use crate::queries::query::Record;
 pub const MAX_ROUNDS: usize = 8;
 
 /// One finding's fix, as its record carries it.
+#[derive(Clone)]
 struct Planned {
+    /// Errors, then correctness warnings, then other warnings, then the rest: the gravest goes alone.
+    rank: u8,
     code: String,
     place: String,
     edits: Vec<Edit>,
@@ -51,7 +54,15 @@ fn planned(records: &[Record], unsafe_fixes: bool) -> Vec<Planned> {
         .filter(|record| applicable(record, unsafe_fixes))
         .filter_map(|record| {
             let edits: Option<Vec<Edit>> = record.get("edits")?.as_array()?.iter().map(Edit::from_json).collect();
+            let field = |k: &str| record.get(k).and_then(Json::as_str);
+            let rank = match field("severity") {
+                Some("error") => 0,
+                Some("warning") if field("category") == Some("correctness") => 1,
+                Some("warning") => 2,
+                _ => 3,
+            };
             Some(Planned {
+                rank,
                 code: record.get("code").and_then(Json::as_str).unwrap_or_default().to_string(),
                 place: place(record),
                 edits: edits.filter(|edits| !edits.is_empty())?,
@@ -136,6 +147,31 @@ fn apply_round(texts: &mut BTreeMap<String, String>, fixes: Vec<Planned>, skippe
     applied
 }
 
+/// The findings of the document with `texts` in place of the files.
+fn analyze(
+    main: &str,
+    cfg: &Config,
+    texts: &BTreeMap<String, String>,
+    select: &dyn Fn(&Record) -> bool,
+) -> Option<Vec<Record>> {
+    for (path, text) in texts {
+        crate::project::overlay::set(Path::new(path), text.clone());
+    }
+    let source = crate::project::overlay::read_to_string(Path::new(main)).ok()?;
+    let analysis = Machine::analyze(&source, Some(Path::new(main)), cfg);
+    Some(crate::linter::lint(&analysis).into_iter().filter(|r| select(r)).collect())
+}
+
+/// Whether `after` holds an error or warning, by rule and message, that `before` lacks.
+fn new_errors(before: &[Record], after: &[Record]) -> bool {
+    let key = |r: &Record| {
+        let field = |k: &str| r.get(k).and_then(Json::as_str).unwrap_or_default().to_string();
+        matches!(field("severity").as_str(), "error" | "warning").then(|| (field("code"), field("message")))
+    };
+    let old: std::collections::BTreeSet<_> = before.iter().filter_map(key).collect();
+    after.iter().filter_map(key).any(|k| !old.contains(&k))
+}
+
 /// What fixing the document came to.
 pub struct Outcome {
     /// Every file changed, with its text before and after.
@@ -168,26 +204,39 @@ pub fn fixpoint(
         if fixes.is_empty() {
             break;
         }
-        let before = texts.clone();
         for edit in fixes.iter().flat_map(|fix| &fix.edits) {
             if !originals.contains_key(&edit.path)
                 && let Ok(text) = crate::project::overlay::read_to_string(Path::new(&edit.path))
             {
-                originals.insert(edit.path.clone(), text);
+                originals.insert(edit.path.clone(), text.clone());
+                texts.insert(edit.path.clone(), text);
             }
         }
+        let before = texts.clone();
+        // The fix of the gravest finding alone, should the round's fixes clash.
+        let first = fixes.iter().min_by_key(|f| f.rank).cloned();
         let count = apply_round(&mut texts, fixes, &mut skipped);
         rounds += 1;
         if count == 0 || texts == before {
             break;
         }
-        applied += count;
-        for (path, text) in &texts {
-            crate::project::overlay::set(Path::new(path), text.clone());
+        let mut next = analyze(main, cfg, &texts, select);
+        // Fixes of one round each hold for the text before it, not for the others'
+        // results (one deletes a `\label` another's `\ref` now names): a finding
+        // none was there before undoes the round, and its gravest fix goes in alone.
+        if count > 1
+            && let Some(first) = first
+            && next.as_ref().is_some_and(|n| new_errors(&records, n))
+        {
+            texts = before;
+            apply_round(&mut texts, vec![first], &mut skipped);
+            next = analyze(main, cfg, &texts, select);
+            applied += 1;
+        } else {
+            applied += count;
         }
-        let Ok(source) = crate::project::overlay::read_to_string(Path::new(main)) else { break };
-        let analysis = Machine::analyze(&source, Some(Path::new(main)), cfg);
-        records = crate::linter::lint(&analysis).into_iter().filter(|r| select(r)).collect();
+        let Some(next) = next else { break };
+        records = next;
     }
     crate::project::overlay::clear();
     let changed = texts
@@ -348,9 +397,9 @@ mod tests {
         };
         let mut texts = BTreeMap::from([("virtual.tex".to_string(), "abcdef\n".to_string())]);
         let fixes = vec![
-            Planned { code: "one".into(), place: "1".into(), edits: vec![edit(2, 4, "X")] },
-            Planned { code: "two".into(), place: "2".into(), edits: vec![edit(3, 5, "Y")] },
-            Planned { code: "three".into(), place: "3".into(), edits: vec![edit(5, 5, "+")] },
+            Planned { rank: 0, code: "one".into(), place: "1".into(), edits: vec![edit(2, 4, "X")] },
+            Planned { rank: 0, code: "two".into(), place: "2".into(), edits: vec![edit(3, 5, "Y")] },
+            Planned { rank: 0, code: "three".into(), place: "3".into(), edits: vec![edit(5, 5, "+")] },
         ];
         let mut skipped = Vec::new();
         assert_eq!(apply_round(&mut texts, fixes, &mut skipped), 2);

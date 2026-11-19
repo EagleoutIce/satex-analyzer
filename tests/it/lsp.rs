@@ -7108,6 +7108,36 @@ fn names_of_packages_not_loaded_are_offered_with_their_load() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// An environment a package defines with `\newenvironment{align}` (amsmath) is in the installation's index: the
+/// index learns `newenvironment` and its `end` partner from runs, so `\begin{alig` offers `align` with
+/// `\usepackage{amsmath}`. Pins the index knowing only amstex's `\def\align`: align came with the obsolete amstex,
+/// whose load is an error (user 2026-11-19).
+#[test]
+fn an_environment_of_a_package_not_loaded_loads_the_package_that_defines_it() {
+    let text = "\\documentclass{article}\n\\begin{document}\n\\begin{alig}\n\\end{document}\n";
+    let (mut server, uri, _, dir) = open_loaded("unloaded-align", text);
+    let items = complete(&mut server, &uri, 2, 11);
+    let align = items.iter().find(|i| i["label"] == "align").unwrap_or_else(|| panic!("{:?}", labels(&items)));
+    assert_eq!(align["detail"], "(adds \\usepackage{amsmath})", "{align}");
+    server.shutdown();
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// After a whole control symbol the name typed is that symbol: `\\` at a row's end offers the forced line break
+/// `\\` (the kernel's, back in the scope list: its one-character name read as an internal one), replacing the
+/// character after its `\`, and no other command. Pins `\\` offering every command with `\greet` first.
+#[test]
+fn a_control_symbol_is_the_name_typed() {
+    let text = "\\documentclass{article}\n\\newcommand{\\greet}[1]{Hello, #1!}\n\\begin{document}\n\\begin{tabular}{ll}\na & b \\\\\n\\end{tabular}\n\\end{document}\n";
+    let (mut server, uri, _, dir) = open_loaded("control-symbol", text);
+    let items = complete(&mut server, &uri, 4, 8);
+    assert_eq!(labels(&items).first().copied(), Some("\\"), "{:?}", labels(&items));
+    assert!(items.iter().all(|i| i["label"].as_str().is_some_and(|l| l.starts_with('\\'))), "{:?}", labels(&items));
+    assert_eq!(items[0]["textEdit"]["range"]["start"]["character"], 7, "{}", items[0]);
+    server.shutdown();
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// A command typed char by char into the preamble, with runs in between:
 /// the run of the last version resumes from a checkpoint taken before the
 /// edit and must read the line as it is now. Pins a resume that kept the

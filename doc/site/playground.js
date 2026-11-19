@@ -3097,14 +3097,15 @@
   };
   /** The command's expansions as a run: where and how often it was used. */
   const expansions = (w) => execute(`query expansions --filter name=\\${w[2]}`);
+  /** Copies `text`, note `done` once the clipboard has it; a browser that refuses gets the text shown to copy by hand. */
+  async function copyNote(text, done) { try { await navigator.clipboard.writeText(text); toast(done); } catch { toast(`Copy it from here: ${text}`, 12000); } }
   /** A link that opens this file with the cursor's line selected. */
   async function lineLink() {
     const c = editor.cursor();
     editor.select(editor.line());
     const link = await permalink();
     editor.select(c);
-    try { await navigator.clipboard.writeText(link); } catch {}
-    toast(`Link to line ${editor.position().line + 1} copied`);
+    await copyNote(link, `Link to line ${editor.position().line + 1} copied`);
     return link;
   }
   /** `satex slice` on the cursor's line, or on the selected lines, backward and forward. */
@@ -3154,7 +3155,8 @@
       ...rows.filter((r) => r[3] && !history(r)).map(run),
       ...group('Navigate', [
         ...(w?.[3] ? [['Go to definition', 'Ctrl+click', () => definition(x, y)]] : []),
-        ...(w && editable ? [['Find references', '', references]] : []),
+        // a command, or a name the project defines (a label, a citation key): a plain word has none
+        ...(w && editable && (w[3] || renamable) ? [['Find references', '', references]] : []),
         ...rows.filter((r) => r[3] && history(r)).map(run),
       ]),
       ...(renamable ? [['Rename symbol', 'F2', renameBox]] : []),
@@ -4192,7 +4194,7 @@
     const b = e.target.closest('[data-perm]');
     if (!b) return;
     e.stopPropagation();
-    try { await navigator.clipboard.writeText(cfgLink(b.dataset.perm)); toast('Copied a link to this setting'); } catch { toast(cfgLink(b.dataset.perm)); }
+    await copyNote(cfgLink(b.dataset.perm), 'Copied a link to this setting');
   });
   /** Opens the settings at a key from a link's `setting` and `value`; the value is applied when satex accepts it. */
   async function cfgFromLink(q) {
@@ -9172,8 +9174,8 @@
       if (pdfCaret && entry.file === state.file && PE.shortTitle(editor.text(), entry.head, 0)) pdfCaret.pending = pdfShortTitle(pdfCaret, entry.head);
       return;
     }
-    // a click between lines or in the margin: say why no caret came
-    if (!word) return pdfBlankAt(page, x, y);
+    // a click between lines or in the margin: say why no caret came; an image's own glyphs are the image's
+    if (!word || pdfSiteAt(page, x, y)?.kind === 'image') return pdfBlankAt(page, x, y);
     const hit = pdfSource(page, x, y, word);
     if (!hit) return typeHint();
     // the same words before it on the page set from line n
@@ -11711,8 +11713,7 @@
   $('play-link').onclick = async () => {
     const link = await permalink();
     history.replaceState(null, '', link);
-    try { await navigator.clipboard.writeText(link); } catch {}
-    toast(state.upload ? 'Link copied. It holds the project\'s text files, not its images.' : 'Link copied');
+    await copyNote(link, state.upload ? 'Link copied. It holds the project\'s text files, not its images.' : 'Link copied');
   };
 
   // A link that opens GitHub's new-issue form, prefilled and short; it posts nothing.

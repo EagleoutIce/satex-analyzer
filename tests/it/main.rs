@@ -94,6 +94,7 @@ mod termination;
 mod tex_compliance;
 mod tex_semantics;
 mod trace_range;
+mod typed_mistakes;
 mod units;
 mod warm;
 mod write_set;

@@ -814,6 +814,17 @@ fn caused_library_errors(report: &mut Report) {
         if own || view.document(d.span.file) || !view.document(origin.file) {
             continue;
         }
+        // TeX's message printed for it on that line: `raised-error` reports it once.
+        let printed = crate::analysis::machine::TEX_ERRORS.iter().find(|(c, _)| *c == d.code).and_then(|(_, m)| *m);
+        let raised = |o: &crate::analysis::facts::Occurrence| {
+            o.certain
+                && o.span.file == origin.file
+                && o.span.line == origin.line
+                && printed.is_some_and(|m| o.key.starts_with(m))
+        };
+        if analysis.facts.occurrences.iter().any(|o| raised(o) && crate::linter::shared::is_error(analysis, o)) {
+            continue;
+        }
         let same = |(e, o, _, _): &&mut Row| e.code == d.code && o.file == origin.file && o.line == origin.line;
         match rows.iter_mut().find(same) {
             Some(row) => row.2 += d.count,
@@ -852,7 +863,17 @@ fn undefined_environments(report: &mut Report) {
             report.add_doubted(span, &name, message, &cause);
             continue;
         }
-        match load_fix(report, &name) {
+        // An environment is a pair `\X`/`\endX` (latex.ltx `\begin`): a near pair is a typo.
+        let near = || {
+            let names = scope_names(report.analysis);
+            let set: crate::fixed::HashSet<&str> = names.iter().map(String::as_str).collect();
+            let envs: Vec<String> =
+                names.iter().filter(|n| set.contains(format!("end{n}").as_str())).cloned().collect();
+            let other = closest(&name, &envs)?.to_string();
+            let edits = report.edits().replace_argument(span, &name, &other);
+            Some(Fix::new(format!("did you mean `{other}`?"), Applicability::Unsafe, edits))
+        };
+        match load_fix(report, &name).or_else(near) {
             Some(fix) => report.add_fix(span, &name, message, fix),
             None => report.add(span, &name, message, Some(format!("`\\newenvironment{{{name}}}{{…}}{{…}}`"))),
         }
@@ -1509,17 +1530,17 @@ fn environment_mismatch(report: &mut Report) {
             );
             continue;
         }
-        let edits = report.edits().replace_argument(span, &found, &open);
-        report.add_fix(
-            span,
-            &found,
-            message,
-            Fix::new(
-                format!("write `\\end{{{open}}}`, or close `\\begin{{{open}}}` first"),
-                Applicability::Unsafe,
-                edits,
+        // `\end{found}` of an environment still open around `open` (always so for
+        // `document`): `open` lacks its end, so the fix closes it first; renaming
+        // would leave `found` unclosed.
+        let (title, edits) = match begun(&found, span) {
+            true => (
+                format!("close `\\begin{{{open}}}` before this line"),
+                report.edits().insert_before(span, &format!("\\end{{{open}}}")),
             ),
-        );
+            false => (format!("write `\\end{{{open}}}`"), report.edits().replace_argument(span, &found, &open)),
+        };
+        report.add_fix(span, &found, message, Fix::new(title, Applicability::Unsafe, edits));
     }
 }
 

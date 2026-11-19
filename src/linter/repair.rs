@@ -297,6 +297,18 @@ fn begin_document(edits: &Edits, span: Span, _: &str) -> Option<Vec<Fix>> {
 /// after it, each to where its text reaches, in an `itemize`.
 fn wrap_list(edits: &Edits, span: Span, message: &str) -> Option<Vec<Fix>> {
     let (path, text) = edits.text(span.file)?;
+    // Inside `\begin{X}` of an undefined X (a misspelled list): the fix is X's name, not a new list.
+    // Its error is the last environment event before the item.
+    use crate::engine::builtins::OccKind;
+    let before = (edits.analysis.facts.occurrences.iter())
+        .filter(|o| o.span.file == span.file && o.span < span)
+        .filter(|o| {
+            matches!(o.kind, OccKind::BeginEnvironment | OccKind::EndEnvironment) || o.key.contains("undefined")
+        })
+        .max_by_key(|o| o.span);
+    if before.is_some_and(|o| o.key.starts_with("LaTeX Error: Environment ") && o.key.contains(" undefined")) {
+        return None;
+    }
     let head = message.split('.').next()?;
     let lonely: Vec<Pos> = (edits.analysis.facts.occurrences.iter())
         .filter(|o| o.span.file == span.file && o.key.starts_with(head))

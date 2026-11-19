@@ -4,6 +4,10 @@
 # a run cut by a budget, a false error from over-approximation.
 
 # == soundness ==
+# Open (2026-11-19, owner: cex3): likely as the `\xdef` body is read balanced before it expands (counterexamples.rs `par_is_forbidden…`), the `}` § 339 inserts where a `\scantokens` file ends closes the body instead of reaching `\ifcat` as its operand (pdftex: `O`, satex: empty). `\xdef\R{\scantokens{Z}}` alone is right.
+counterexamples::a_brace_inserted_where_a_scantokens_file_ends_is_read_on
+# Open (2026-11-19, owner: cex3): `\pdfprimitive` before a non-expandable primitive puts back one frozen token named `\u{4}primitive.relax`; pdftex.web inserts frozen `\pdfprimitive` before the token itself, so `\string` prints `\pdfprimitive` and `\relax` stays.
+counterexamples::a_frozen_pdfprimitive_prints_as_pdfprimitive
 
 # == precision ==
 # Open (2026-11-19, owner: speed): `\begin{document}` reads l3backend-pdftex.def anew every run (~25% of the line's steps): a `.def` is not cacheable by kind, and `\begin`'s group makes `cacheable_at_push` refuse it too. Needs caching by what a file does (pure function of its reads), with local effects inside a group replayed as locals.

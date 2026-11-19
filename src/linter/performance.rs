@@ -476,8 +476,10 @@ fn preamble_cost(report: &mut Report) {
     let job = name.file_stem().and_then(|s| s.to_str()).unwrap_or("preamble");
     let file = name.file_name().and_then(|s| s.to_str()).unwrap_or(&path);
     let command = dump_command(analysis.plugins.engine, job, file);
-    // TeX honors `%&` only as the very first line of the file.
-    let edits = report.edits().insert_first(analysis.main_file, &format!("%&{job}"));
+    // TeX honors `%&` only as the very first line of the file, and the line names a format
+    // that must exist: before the dump the fix is the advice alone.
+    let dumped = name.with_extension("fmt").is_file();
+    let edits = dumped.then(|| report.edits().insert_first(analysis.main_file, &format!("%&{job}"))).flatten();
     report.add_fix(
         span,
         "",

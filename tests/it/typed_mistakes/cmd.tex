@@ -1,0 +1,13 @@
+\documentclass{article}
+\newcommand{\vect}[1]{\mathbf{#1}}
+\newcommand{\greet}[2][World]{Hello, #2 and #1!}
+\newcommand*{\note}[1]{\textit{(#1)}}
+\newenvironment{boxed}{\begin{center}\bfseries}{\end{center}}
+\begin{document}
+\greet{Alice} \greet[Bob]{Carol}.
+A vector $\vect{v}$ and \note{remark}.
+\begin{boxed}
+Inside.
+\end{boxed}
+\textbf{bold \textit{both}} and \texttt{mono}.
+\end{document}

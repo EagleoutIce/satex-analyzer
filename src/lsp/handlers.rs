@@ -1666,16 +1666,20 @@ fn completion_at(analysis: &Analysis, doc: &Text, path: &str, position: Position
         _ => {
             // the name typed, with the letters of that place (`_` and `:` under `\ExplSyntaxOn`)
             let letters = analysis.facts.letters_at(analysis.main_file, pos.line, pos.col);
-            // a command completes only where one is being typed: its `\` right before the letters
+            // a command completes only where one is being typed: its `\` right before the letters, or a whole
+            // control symbol (`\\`, `\,`: a `\` and one non-letter, tex.web §354) as the name typed
             let word = before.chars().rev().take_while(|c| c.is_alphabetic() || letters.contains(c)).count();
-            if before.chars().rev().nth(word) != Some('\\') {
+            let symbol = control_symbol(before, &letters).map(String::from);
+            if symbol.is_none() && before.chars().rev().nth(word) != Some('\\') {
                 return CompletionResponse::Array(Vec::new());
             }
-            let typed = before
-                .rfind('\\')
-                .map(|i| &before[i + 1..])
-                .filter(|t| t.chars().all(|c| c.is_alphabetic() || letters.contains(&c)))
-                .unwrap_or("");
+            let typed = symbol.as_deref().unwrap_or_else(|| {
+                before
+                    .rfind('\\')
+                    .map(|i| &before[i + 1..])
+                    .filter(|t| t.chars().all(|c| c.is_alphabetic() || letters.contains(&c)))
+                    .unwrap_or("")
+            });
             let math = in_math(doc, pos, &analysis.settings.conventions.completion.math_environments);
             let (mut items, more) = command_items(analysis, pos, typed, math);
             // what a package not loaded yet would define, last (`\\tikz` before tikz is loaded)
@@ -1694,9 +1698,26 @@ fn completion_at(analysis: &Analysis, doc: &Text, path: &str, position: Position
                     }
                 }
             }
+            // a symbol's items replace it from the character after its `\` (an editor's word would not hold it)
+            if symbol.is_some() {
+                items.retain(|i| i.label.starts_with(typed));
+                let range = Range { start: to_lsp(doc, Pos::new(pos.line, pos.col.saturating_sub(1))), end: position };
+                for it in &mut items {
+                    let new_text = it.insert_text.take().unwrap_or_else(|| it.label.clone());
+                    it.text_edit = Some(lsp_types::CompletionTextEdit::Edit(TextEdit { range, new_text }));
+                }
+            }
             CompletionResponse::List(lsp_types::CompletionList { is_incomplete: more, items })
         }
     }
+}
+
+/// The control symbol `before` ends with (`\\`, `\,`), else none: a `\` and one character that is no letter
+/// there (tex.web §354), the `\` not itself the second half of a `\\`.
+fn control_symbol(before: &str, letters: &[char]) -> Option<char> {
+    let mut back = before.chars().rev();
+    let x = back.next().filter(|c| !c.is_alphabetic() && !c.is_whitespace() && !letters.contains(c))?;
+    (back.take_while(|&c| c == '\\').count() % 2 == 1).then_some(x)
 }
 
 /// The quantity the braced argument `arg` is read as ([`crate::analysis::roles::Ty`]),
