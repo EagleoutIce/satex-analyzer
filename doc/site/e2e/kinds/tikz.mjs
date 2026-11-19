@@ -182,7 +182,7 @@ export async function tikz(p, sc) {
         // point is found again from the words (30 px above the middle between them, where it was dropped)
         await p.until(`satexPdfWords().length > 3`, 20000);
         await sleep(1500);
-        const bendAt = async () => { const [bx, by] = await between('source', 'run')(); return [bx, by - 30]; }, [bx, by] = await bendAt();
+        const bendAt = async () => { await p.until(`satexPdfWords().length > 3`, 20000); const [bx, by] = await between('source', 'run')(); return [bx, by - 30]; }, [bx, by] = await bendAt();
         await p.s('Input.dispatchMouseEvent', { type: 'mouseMoved', x: bx + 200, y: by + 200 });
         await sleep(100);
         await p.s('Input.dispatchMouseEvent', { type: 'mouseMoved', x: bx, y: by });
@@ -196,6 +196,27 @@ export async function tikz(p, sc) {
           await build(p);
         }
       } catch (e) { r.fails.push(String(e.message)); await p.shot('bend-drag-fail.png').catch(() => {}); }
+      results.push(r);
+    }
+    // the picture's grid from a node's menu: lines in its units, axes labelled at the origin; again it goes
+    {
+      const r = { name: 'picture-grid', fails: [], info: {} };
+      try {
+        await p.until(`satexPdfWords().length > 3`, 20000);
+        const t0 = await text(p), node = mid(await word(p, 'run'));
+        if (!await rclick(p, node)) throw new Error('no menu');
+        await choose(p, ['Show grid']);
+        const got = await p.until(`(() => { const g = document.querySelector('#play-pdf svg.pdf-tikz-grid'); return g && { lines: g.querySelectorAll('line').length, axes: g.querySelectorAll('.g-axis').length, labels: [...g.querySelectorAll('text')].map((t) => t.textContent) }; })()`, 3000);
+        await p.shot('picture-grid.png');
+        if (!got) throw new Error('no grid drawn');
+        r.info = got;
+        if (got.lines < 8 || got.axes !== 2 || !got.labels.includes('0')) r.fails.push(`grid ${JSON.stringify(got)}`);
+        if (await text(p) !== t0) r.fails.push('the grid wrote text');
+        await rclick(p, node);
+        await choose(p, ['Show grid']);
+        if (!await p.until(`!document.querySelector('#play-pdf svg.pdf-tikz-grid')`, 3000)) r.fails.push('the grid stayed after switching it off');
+      } catch (e) { r.fails.push(String(e.message)); await p.shot('picture-grid-fail.png').catch(() => {}); }
+      await p.eval(`document.querySelectorAll('.pa-menu').forEach((e) => e.remove())`);
       results.push(r);
     }
     await act(p, 'edge-bend', between('source', 'run'), ['Route', 'Bend right', '45°'], /\\draw\[flow\] \(src\) to\[bend right=45\] \(run\);/);
@@ -302,14 +323,16 @@ export async function tikz(p, sc) {
     // dark: the menu and a submenu
     await p.s('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-color-scheme', value: 'dark' }] });
     await sleep(400);
-    await rclick(p, mid(await word(p, 'run')));
-    await choose(p, ['Style', 'Fill color']);
+    // a word list a build has not given yet: wait for it (the shots need the node)
+    await p.until(`satexPdfWords().length > 3`, 20000);
+    await rclick(p, mid(await word(p, 'run')) ?? [0, 0]);
+    await choose(p, ['Style', 'Fill color']).catch(() => {});
     await sleep(200);
     await p.shot('dark-node-menu.png');
     await p.eval(`document.querySelectorAll('.pa-menu').forEach((e) => e.remove())`);
     await p.s('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-color-scheme', value: 'light' }] });
-    await rclick(p, mid(await word(p, 'run')));
-    await choose(p, ['Shape']);
+    await rclick(p, mid(await word(p, 'run')) ?? [0, 0]);
+    await choose(p, ['Shape']).catch(() => {});
     await sleep(200);
     await p.shot('light-node-shapes.png');
     await p.eval(`document.querySelectorAll('.pa-menu').forEach((e) => e.remove())`);

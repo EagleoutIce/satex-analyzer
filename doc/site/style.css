@@ -1717,7 +1717,7 @@ body.type-sync #play-pdf .pdf-pages { box-shadow: inset 0 0 0 2px color-mix(in s
 .ts-orig-macro, .pdf .pdf-orig-macro { background: var(--orig-macro); box-shadow: inset 0 -2px var(--orig-macro-line); }
 .ts-orig-arg, .pdf .pdf-orig-arg { background: var(--orig-arg); box-shadow: inset 0 -2px var(--orig-arg-line); }
 .ts-orig-moved, .pdf .pdf-orig-moved { background: var(--orig-moved); }
-.pdf .pdf-orig-made { box-shadow: none; background: var(--orig-macro) linear-gradient(90deg, var(--orig-macro-line) 50%, transparent 0) 0 100% / 4px 2px repeat-x; }
+.ts-orig-made, .pdf .pdf-orig-made { box-shadow: none; background: var(--orig-macro) linear-gradient(90deg, var(--orig-macro-line) 50%, transparent 0) 0 100% / 4px 2px repeat-x; }
 /* a band per origin run, one underline: no rounded ends between words */
 .ts-orig, .pdf .pdf-orig { border-radius: 1px; }
 canvas.pdf-echo { display: block; }
@@ -1770,6 +1770,7 @@ canvas.pdf-echo { display: block; }
 .layer-sub-list:has(> .pdf-grid-set) { max-height: none; overflow: visible; }
 .sw-near { background: radial-gradient(circle, var(--accent) 0 35%, transparent 70%); }
 .sw-grid { background: linear-gradient(to right, var(--c4) 1px, transparent 1px) 0 0 / 4px 100%, linear-gradient(to bottom, var(--c4) 1px, transparent 1px) 0 0 / 100% 4px; }
+.sw-orig-macro { background: var(--orig-macro); box-shadow: inset 0 -2px var(--orig-macro-line); } .sw-orig-made { background: var(--orig-macro) linear-gradient(90deg, var(--orig-macro-line) 50%, transparent 0) 0 100% / 4px 2px repeat-x; } .sw-orig-arg { background: var(--orig-arg); box-shadow: inset 0 -2px var(--orig-arg-line); } .sw-orig-moved { background: var(--orig-moved); box-shadow: inset 0 -2px var(--orig-moved-line); }
 .sw-origins { background: linear-gradient(90deg, var(--orig-macro-line) 33%, var(--orig-arg-line) 33% 66%, var(--orig-moved-line) 66%); }
 .pdf .pdf-bad { z-index: 1; border-radius: 2px; }
 .pdf .pdf-bad.b-over { outline: 1px solid var(--ly-bad); background: color-mix(in srgb, var(--ly-bad) 8%, transparent); } .pdf .pdf-bad.b-under { outline: 1px dashed var(--ly-under); background: color-mix(in srgb, var(--ly-under) 8%, transparent); }
@@ -1944,6 +1945,8 @@ canvas.pdf-echo { display: block; }
 .ts-slide-title { font-weight: 600; color: var(--fg); }
 /* a narrow bar (a phone, the PDF beside the editor) keeps the build's state readable: layers and Fold show their icons only */
 .pdf-bar { container-type: inline-size; }
+/* the bar's containment makes it a stacking context: raised, its menus (layers, view) open over the pages, not under them */
+.pdf-bar { position: relative; z-index: 5; }
 @container (max-width: 44rem) { .pdf-bar :is(.pdf-layers summary span, .fold-label) { display: none; } .pdf-bar .pdf-state { min-width: 4.5rem; } }
 .lib-list { position: relative; }
 .lib-list.lib-loading::before { content: ""; position: sticky; top: 0; display: block; height: 2px; margin-bottom: -2px; z-index: 2; background: linear-gradient(90deg, transparent, var(--accent), transparent) 0 0 / 40% 100% no-repeat; animation: lib-slide 1s linear infinite; }
@@ -2417,7 +2420,8 @@ header .hd-feedback:hover:not(:disabled) { background: var(--sunk); color: var(-
 .layer input { appearance: none; position: absolute; width: 1px; height: 1px; margin: 0; opacity: 0; }
 .layer:has(input:focus-visible), .layer-sub-toggle:focus-visible { z-index: 3; outline: 2px solid var(--accent); outline-offset: 1px; }
 .layer-swatch { flex: none; width: .8rem; height: .55rem; border-radius: 2px; opacity: .45; filter: grayscale(.6); transition: opacity var(--quick), filter var(--quick); }
-.layer:has(:checked) .layer-swatch { opacity: 1; filter: none; }
+.layer:has(:checked) .layer-swatch, .pdf-sub-group label:has(:checked) .layer-swatch { opacity: 1; filter: none; }
+.pdf-sub-group .layer-swatch { display: inline-block; margin-right: .3rem; vertical-align: -.05em; }
 .layer-n { font-size: .64rem; font-weight: 600; color: var(--muted); } .layer-n:empty { display: none; }
 .layer-sub-toggle { width: 2.1rem; padding: 0 .15rem 0 0; justify-content: center; }
 .layer-sub-toggle::before { content: ""; width: .28rem; height: .28rem; border: solid currentColor; border-width: 0 1.5px 1.5px 0; rotate: 45deg; translate: 0 -.08rem; transition: rotate .2s var(--ease); }

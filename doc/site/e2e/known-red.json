@@ -141,5 +141,11 @@
   "owner": "ui-51 (playground echo layout)",
   "why": "after Enter and builds landing mid-typing, the echo lays the new paragraph out one word or hyphen piece a row (`It`/`con`/`verges`/`more words`): the paragraph's right edge comes out at its short built row (pdfTypeDraw `right` from pdfLineBox/para words), and the landed `Itconvergesmore` shows beside the echo's `more` (duplicate); a lavender tint stood over empty space there too (timing dependent: red 1 of 2 runs)",
   "since": "2026-11-19"
+ },
+ "tikz-drawing": {
+  "owner": "playground TikZ menus (page actions); seen by ui-55",
+  "since": "2026-11-19",
+  "match": "^(label-pos: no target on the page|label-type: Cannot read properties of null|ts-edge-tip: no \"Arrow tips\" in \\[\"Edit text…\")",
+  "why": "after the scenario retypes the whole text with the label (Ctrl+A, insertText), the pages follow the caret to the file's end and satexPdfWords() stays empty while the analysis runs, so `feeds` is not found; the Typeset path target between source and run then hits the label `feeds` the scenario left in the text (a label menu, no Arrow tips). Seen in every run of 2026-11-19 ui-55, independent of the tip, bend, grid and width changes"
  }
 }

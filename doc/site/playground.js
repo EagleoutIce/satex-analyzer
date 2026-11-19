@@ -1677,11 +1677,19 @@
   const tsLegacy = {};
   try { for (const k of Object.keys(TS_LAYERS)) { const v = localStorage.getItem(`satex-typeset-${k}`); if (v != null) tsLegacy[k] = v === '1'; } } catch {}
   const tsOn = self.satexLayers.state('typeset', Object.fromEntries(Object.keys(TS_LAYERS).map((k) => [k, k === 'origins' || play.typeset_layers.includes(k)])), self.satexStore, tsLegacy);
-  $('typeset-layers').innerHTML = self.satexLayers.html(TS_LAYERS, tsOn, { prefix: 'typeset' });
+  $('typeset-layers').innerHTML = self.satexLayers.html(TS_LAYERS, tsOn, { prefix: 'typeset', facets: new Set(['origins']) });
   // the preamble's findings sit on the document's begin mark only while the marks show
   const tsApply = (k) => { typesetBody.classList.toggle(`show-${k}`, tsOn[k]); if (k === 'envs') typesetFindings(); if (k === 'origins') requestAnimationFrame(tsOriginsDraw); };
   self.satexLayers.wire($('typeset-layers'), 'typeset', tsOn, self.satexStore, tsApply);
-  self.satexLayers.menu($('typeset-layers-menu'), $('typeset-layers'), tsOn);
+  self.satexLayers.menu($('typeset-layers-menu'), $('typeset-layers'), tsOn, () => tsOriginsFacets());
+  // the origins' kinds switched as in the PDF's menu: one kept filter for both viewers
+  $('typeset-layers').addEventListener('change', (e) => {
+    const k = e.target.dataset?.facet;
+    if (!k) return;
+    pdfHide[e.target.checked ? 'delete' : 'add'](k);
+    try { localStorage.setItem('satex-pdf-facets', JSON.stringify([...pdfHide])); } catch {}
+    tsOriginsDraw();
+  });
   // the Show menu: what the view renders as TeX does, each switch a class on the view (kept per viewer)
   const tsShow = self.satexLayers.state('typeset-show', self.satexLayers.showDefaults(), self.satexStore);
   const tsShowApply = () => { for (const k of Object.keys(self.satexLayers.SHOW)) typesetBody.classList.remove(`ts-show-${k}`); typesetBody.classList.add(...self.satexLayers.showClasses(tsShow)); };
@@ -2349,17 +2357,32 @@
       // the view's text and the run's characters line up only where the view adds nothing between them
       if (!runs.length || at < 0) continue;
       for (const [kind, a, b] of runs) {
-        const from = tsNodeAt(box, at + a), to = tsNodeAt(box, at + b + 1);
-        if (!from || !to) continue;
+        const made = kind === 'macro' && chars[a].made, from = tsNodeAt(box, at + a), to = tsNodeAt(box, at + b + 1);
+        if (!from || !to || !pdfShown('origins', 'kind', made ? 'made' : kind)) continue;
         const r = document.createRange();
         r.setStart(...from); r.setEnd(...to);
         // one band per line: the run's boxes on a line joined
         const rects = [];
         for (const q of r.getClientRects()) { const o = rects.at(-1); if (o && Math.abs(o.top - q.top) < 2 && q.left <= o.right + 1) o.right = Math.max(o.right, q.right); else rects.push({ left: q.left, right: q.right, top: q.top, height: q.height }); }
-        for (const q of rects.map((o) => ({ ...o, width: o.right - o.left }))) html.push(`<span class="ts-orig ts-orig-${kind}" style="left:${q.left - base.left + typesetBody.scrollLeft}px;top:${q.top - base.top + typesetBody.scrollTop}px;width:${q.width}px;height:${q.height}px"></span>`);
+        for (const q of rects.map((o) => ({ ...o, width: o.right - o.left }))) html.push(`<span class="ts-orig ts-orig-${kind}${made ? ' ts-orig-made' : ''}" style="left:${q.left - base.left + typesetBody.scrollLeft}px;top:${q.top - base.top + typesetBody.scrollTop}px;width:${q.width}px;height:${q.height}px"></span>`);
       }
     }
     typesetBody.insertAdjacentHTML('beforeend', html.join(''));
+  }
+  /** The Typeset origins' fold: a switch per kind the shown rows hold, with its swatch and count. */
+  function tsOriginsFacets() {
+    const list = $('typeset-layers').querySelector('.layer-sub[data-sub="origins"] .layer-sub-list');
+    if (!list) return;
+    const keys = [];
+    for (const p of typesetBody.querySelectorAll('p.ts[data-line]')) {
+      const row = tsRowOf(p);
+      if (!row?.sites) continue;
+      const chars = rowOrigins(row);
+      for (const [kind, a] of originRuns(chars)) keys.push(kind === 'macro' && chars[a].made ? 'made' : kind);
+    }
+    const rows = facetTally(keys.map((k) => [k, ORIGIN_NAMES[k]]));
+    list.innerHTML = rows.length ? `<div class="pdf-sub-group"><span class="muted">kind</span>${rows.map(([key, label, n]) => `<label><input type="checkbox" data-facet="origins|kind|${escape(key)}"${pdfShown('origins', 'kind', key) ? ' checked' : ''}><i class="layer-swatch sw-orig-${escape(key)}" aria-hidden="true"></i>${escape(label)} <b class="count">${n}</b></label>`).join('')}</div>`
+      : '<div class="pdf-sub-group muted">No text set from elsewhere in the rows shown.</div>';
   }
   /** The caret over the Typeset view: in its word as the last run set it, the word as now written beside it while the view lags. */
   /** The caret drawn again; where no row places it (a paragraph break typed into a macro's argument, `\\greet{world⏎⏎}`)
@@ -7156,7 +7179,7 @@
         `<label title="what em and ex measure: the font size, and Computer Modern's x-height at it">font <input type="text" data-grid="font" value="${escape(pdfGrid.font ?? '10pt')}" list="pdf-grid-fonts" size="6" spellcheck="false"></label>` +
         `<datalist id="pdf-grid-fonts">${['5pt', '7pt', '8pt', '9pt', '10pt', '10.95pt', '12pt', '14.4pt', '17.28pt', '20.74pt', '24.88pt'].map((v) => `<option value="${v}">`).join('')}</datalist>` +
         `<label>label every <input type="number" data-grid="every" value="${escape(pdfGrid.every)}" min="1" max="50"> steps</label>` +
-        `<datalist id="pdf-grid-units">${['1cm', '5mm', '1mm', '10pt', '12pt', '1in', '.5in', '36bp', '1pc'].map((v) => `<option value="${v}">`).join('')}</datalist></div>` : pdfFacetGroups(layer).filter(([, , rows]) => rows.length).map(([g, title, rows]) => `<div class="pdf-sub-group"><span class="muted">${escape(title)}</span>${rows.map(([key, label, n]) => `<label><input type="checkbox" data-facet="${escape(`${layer}|${g}|${key}`)}"${pdfShown(layer, g, key) ? ' checked' : ''}>${escape(label)} <b class="count">${n}</b></label>`).join('')}</div>`).join('') + internal;
+        `<datalist id="pdf-grid-units">${['1cm', '5mm', '1mm', '10pt', '12pt', '1in', '.5in', '36bp', '1pc'].map((v) => `<option value="${v}">`).join('')}</datalist></div>` : pdfFacetGroups(layer).filter(([, , rows]) => rows.length).map(([g, title, rows]) => `<div class="pdf-sub-group"><span class="muted">${escape(title)}</span>${rows.map(([key, label, n]) => `<label><input type="checkbox" data-facet="${escape(`${layer}|${g}|${key}`)}"${pdfShown(layer, g, key) ? ' checked' : ''}>${layer === 'origins' ? `<i class="layer-swatch sw-orig-${escape(key)}" aria-hidden="true"></i>` : ''}${escape(label)} <b class="count">${n}</b></label>`).join('')}</div>`).join('') + internal;
       // the arrow always opens: with nothing to filter yet it says so, it never sits dead
       const shown = html || '<div class="pdf-sub-group muted">Nothing to filter yet: compile, then this lists what the layer found.</div>';
       if (list.dataset.html !== shown) { list.innerHTML = shown; list.dataset.html = shown; }
@@ -10020,7 +10043,7 @@
   }
   /** Overlay labels (chips; a glue's leader and spec as one) within reach of the pointer or the caret fade and let the pointer through,
    * so the text under them reads; one the pointer is on shows fully, to be clicked. One rAF per pointer move. */
-  const OV_LABELS = '.pdf .pdf-ov:not(.pdf-glue) b, .pdf .pdf-glue, #typeset-body .ts-env', OV_REACH = 24;
+  const OV_LABELS = '.pdf .pdf-ov:not(.pdf-glue, .pdf-macro) b, .pdf .pdf-glue, #typeset-body .ts-env', OV_REACH = 24;
   let ovAt = null, ovFrame = 0;
   const ovNearSoon = () => { ovFrame ||= requestAnimationFrame(ovNear); };
   function ovNear() {
