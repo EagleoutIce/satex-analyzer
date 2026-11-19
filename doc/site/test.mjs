@@ -70,7 +70,7 @@ for (const name of manifest.samples) {
   await fetchFor(engine, kernel, [name, ...(manifest.projects?.[name] ?? [])]);
   const run = await engine.run([...kernel.args, '-v', 'lint', '-f', name], { [`/work/${name}`]: new TextEncoder().encode(samples[name]) });
   const out = run.lines.filter((l) => l[0] === 'out').map((l) => l[1]);
-  const summary = out.find((l) => /\d+ errors?, \d+ warnings?/.test(l));
+  const summary = out.find((l) => /^(no findings|\d+ (errors?|warnings?|infos?|hints?|suggestions?)\b)/.test(l));
   // what the bundles hold must come from them; the project's own packages are analysed here
   const bundled = (l) => !/cache package /.test(l) || offered.some((p) => p.name === /cache package (\S+):/.exec(l)?.[1]);
   const rebuilt = run.lines.filter((l) => /building kernel cache|: rebuilt \(/.test(l[1]) && bundled(l[1])).map((l) => l[1].trim());
@@ -96,7 +96,7 @@ for (const entry of manifest.kernels.slice(1)) {
   t = performance.now();
   await engine.bundle(base, entry, base.startsWith('file:') ? await bytes(entry.bundle) : undefined);
   const run = await engine.run([...entry.args, 'lint', '-f', manifest.sample]);
-  const summary = run.lines.map((l) => l[1]).find((l) => /\d+ errors?, \d+ warnings?/.test(l));
+  const summary = run.lines.map((l) => l[1]).find((l) => /^(no findings|\d+ (errors?|warnings?|infos?|hints?|suggestions?)\b)/.test(l));
   check(`${entry.label} kernel`, typeof run.status === 'number' && run.status <= 1 && summary, `${Math.round(performance.now() - t)} ms with loading, ${summary ?? 'no summary'}`);
 }
 
