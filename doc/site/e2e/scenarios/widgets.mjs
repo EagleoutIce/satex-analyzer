@@ -21,6 +21,8 @@ export default [
   { kind: 'forest', name: 'forest-look-lsep', source: FM, example: 'hello.tex', word: is('Engine'), choose: ['Feature model look', 'Level distance (l sep)', '12mm'], outside: true,
     want: /fm feature\/\.style=\{[^}]*l sep=12mm, s sep=4mm\}[^]*\\begin\{forest\}\s*for tree=\{fm feature\}/,
     steps: 'feature-model.tex, PDF; right click the node Engine, Feature model look, Level distance, 12mm: the \\forestset style says l sep=12mm' },
+  { kind: 'forest', name: 'forest-plus-typeset', source: FM, example: 'hello.tex', ts: 'Engine', plus: 'child', want: /\[Engine, fm mandatory, fm alternative \[Electric\] \[Gas\]\s*\[new\]\]/,
+    steps: 'feature-model.tex, Typeset view; hover the node Engine in the sketch, its +↓ button: a [new] child after Gas' },
   { kind: 'forest', name: 'forest-frame', source: FM, example: 'hello.tex', word: is('Gas'), choose: 'Circle', want: /\[Gas, circle\]/,
     steps: 'feature-model.tex, PDF; right click the node Gas, Circle: [Gas, circle]' },
   { kind: 'forest', name: 'forest-text', source: FM, example: 'hello.tex', word: is('Body'), choose: 'Edit text…', input: 'Frame', want: /\[Frame, fm mandatory\]/,

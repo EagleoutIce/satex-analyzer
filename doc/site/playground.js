@@ -1419,6 +1419,7 @@
         return span;
       } }, { position: 20, render: (c) => c.symbol ? Object.assign(document.createElement('span'), { className: 'cm-math-symbol', innerHTML: c.symbol }) : null }] }),
         linkField, markField, flashField, swatchField, lensField, linkedField, heatField, mirror, st.Prec.high(closeEnvironment), view.keymap.of([{ key: 'Tab', run: tabCompletes }, { key: 'F2', run: () => { renameBox(); return true; } }, { key: 'Shift-F10', run: () => { const c = editor.coords() ?? { left: 40, bottom: 80 }; menuAt(c.left, c.bottom); return true; } }]),
+        EditorView.updateListener.of(smartWrap),
         EditorView.updateListener.of((u) => { if (u.docChanged) { resolves.clear(); changed(); } else if (u.selectionSet) explainSoon(); if (u.docChanged || u.selectionSet) { linkAround(u.view); scratchBubble(); } }), theme.of([]), lock.of([]), prefs.of(prefsOf())],
     });
     ev.dom.satexView = ev; // doc/site/showcase.mjs reads the text and the places through it
@@ -3038,6 +3039,19 @@
     return [['Backward', ''], ['Forward', ' --forward']].map(([way, flag]) =>
       [`${way} from this ${what}`, '', () => execute(`slice --at ${state.file === state.root ? '' : `${state.file}:`}${place}${flag}`)]);
   }
+  /** Smart wrap (`playground.smart_wrap`): a typed line past `conventions.lines.length` (0: the document's habit) breaks
+   * at its best space (refactor.ts `wrapLine`), in the editor and from Type mode's writes alike. A write from the pages
+   * gets no indentation, so the offsets its caret holds stay where they were. */
+  function smartWrap(u) {
+    if (!u.docChanged || play.smart_wrap !== true || !u.transactions.some((tr) => tr.isUserEvent('input.type'))) return;
+    let at = -1;
+    for (const tr of u.transactions) if (tr.isUserEvent('input.type')) tr.changes.iterChangedRanges((_a, _b, _f, to) => { at = Math.max(at, to); });
+    const v = u.view, text = v.state.doc.toString(), max = +(configSet['conventions.lines.length'] ?? 0) || self.satexRefactor.lineHabit(text);
+    // only typing past the length: an edit inside a long line written before stays as it is
+    const e = at - text.lastIndexOf('\n', at - 1) - 1 > max && self.satexRefactor.wrapLine(text, at, max, v.hasFocus);
+    // after this update: a listener may not dispatch inside one
+    if (e) queueMicrotask(() => { if (v.state.doc.toString() === text) v.dispatch({ changes: { from: e.from, to: e.to, insert: e.now }, userEvent: 'input.wrap' }); });
+  }
   /** The refactor plugins' rows at the cursor (refactor.ts, target `source`: the cursor, the selection), as menu rows. */
   function refactorRows(x, y) {
     const text = editor.text(), [a, b] = editor.cursor().slice().sort((p, q) => p - q);
@@ -3627,9 +3641,10 @@
     const pa = (cat) => self.satexPageActions.plugins.filter((p) => (p.category ?? 'page actions') === cat).map((p) => ({ name: p.name, key: p.name, about: p.about, pa: p }));
     const PLAY_GROUPS = [{ name: 'page actions', about: 'what a right click on a picture, tree or table in the PDF or the Typeset view offers', plugins: pa('page actions') },
       { name: 'refactor', about: 'rewrites of the source a right click offers in the editor, the PDF and the Typeset view', plugins: pa('refactor') },
-      { name: 'typesetting', about: 'how Type mode sets the text it echoes before the run', plugins: [
+      { name: 'typesetting', about: 'how Type mode sets the text it echoes, and where typed lines break', plugins: [
         { name: 'hyphenate', key: 'hyphenate', about: 'the echo breaks words at TeX\'s hyphenation points, from the last run\'s patterns' },
-        { name: 'linebreak', key: 'linebreak', about: 'the echo\'s lines broken by TeX\'s own line breaking, else by its fit', keys: ['playground.tex_breaks'] }] }];
+        { name: 'linebreak', key: 'linebreak', about: 'the echo\'s lines broken by TeX\'s own line breaking, else by its fit', keys: ['playground.tex_breaks'] },
+        { name: 'smart wrap', key: 'smart wrap', about: 'a line typed past its length breaks at the best space: a sentence\'s end, a closing brace, a comma, else the last', keys: ['playground.smart_wrap', 'conventions.lines.length'] }] }];
     const all = [...TILES, ...(own.length ? [{ name: 'analysis', about: 'how the analysis reads packages, builds, bibliographies and output', plugins: own }] : []), ...PLAY_GROUPS.filter((c) => c.plugins.length)];
     const named = (p) => configMatch({ key: p.name, about: p.about, affects: [] }, q);
     const shown = all.map((c) => ({ ...c, plugins: c.plugins.filter((p) => !q || hits.some((k) => pluginOf(k) === tileBase(p)) || named(p)) })).filter((c) => c.plugins.length);
@@ -8554,7 +8569,9 @@
       let tree = null;
       try { tree = FOREST.parse(text.slice(from, to)); } catch {}
       const order = (n) => [n, ...n.children.flatMap(order)], ns = tree ? order(tree.root).filter((n) => n.content.trim()) : [];
-      if (ns.length === texts.length) {
+      // the sketch may set more texts after the tree's (a feature model's constraints node): the tree's come first
+      const norm = (x) => x.replace(/\\[A-Za-z@]+/g, '').replace(/[^\p{L}\p{N}]/gu, '').toLowerCase();
+      if (ns.length === texts.length || ns.length < texts.length && ns.every((n, j) => norm(n.content) === norm(texts[j].textContent))) {
         const n = ns[texts.indexOf(t)];
         if (n) return { kind: 'forest-node', f: { from, to, body: text.slice(from, to), t: tree, n } };
       }
@@ -8624,12 +8641,15 @@
     if (!w) return;
     const [pw, ph] = pageSize(img), el = Object.assign(document.createElement('span'), { className: 'pdf-forest-add' });
     el.style.cssText = `left:${(w[3] + 2) / pw * 100}%;top:${w[2] / ph * 100}%`;
-    el.innerHTML = `<button type="button" data-add="child" title="Add a child below ${escape(f.n.content || 'this node')}">+↓</button>${FOREST.parentOf(f.t, f.n) ? `<button type="button" data-add="sibling" title="Add a sibling after ${escape(f.n.content || 'this node')}">+→</button><button type="button" data-add="drag" class="pdf-forest-drag" title="Drag ${escape(f.n.content || 'this node')} with its subtree onto another node: its left part puts it before, its right part after, its middle makes it a child">⠿</button>` : ''}`;
+    el.innerHTML = forestButtons(f, true);
     img.parentElement.append(el);
     forestHover = f;
   }
-  pdfBody.addEventListener('pointerdown', (e) => {
-    const b = e.target.closest?.('.pdf-forest-add button'), f = forestHover;
+  /** The + buttons of forest node `f`: a child, a sibling, the drag handle (`drag`: offered). */
+  const forestButtons = (f, drag) => `<button type="button" data-add="child" title="Add a child below ${escape(f.n.content || 'this node')}">+↓</button>${FOREST.parentOf(f.t, f.n) ? `<button type="button" data-add="sibling" title="Add a sibling after ${escape(f.n.content || 'this node')}">+→</button>${drag ? `<button type="button" data-add="drag" class="pdf-forest-drag" title="Drag ${escape(f.n.content || 'this node')} with its subtree onto another node: its left part puts it before, its right part after, its middle makes it a child">⠿</button>` : ''}` : ''}`;
+  // a press on a + button, on the pages or over the Typeset view: the tree written with the new node
+  addEventListener('pointerdown', (e) => {
+    const b = e.target.closest?.('.pdf-forest-add button, .ts-forest-add button'), f = forestHover;
     if (!b || !f || e.button !== 0) return;
     e.preventDefault(); e.stopPropagation();
     const text = editor.text();
@@ -8638,9 +8658,23 @@
     if (b.dataset.add === 'child') FOREST.addChild(f.n); else FOREST.addSibling(f.t, f.n);
     f.n.dirty = true;
     FOREST.settle(f.t);
-    tikzClear('.pdf-forest-add');
+    tikzClear('.pdf-forest-add'); for (const el of document.querySelectorAll('.ts-forest-add')) el.remove();
     paWrite(text, [{ from: f.from, to: f.to, now: FOREST.emit(f.t) }]);
   }, true);
+  // the Typeset view's sketch: the same + buttons beside a forest node's text
+  typesetBody.addEventListener('pointermove', (e) => {
+    if (e.target.closest?.('.ts-forest-add')) return;
+    const t = e.target.closest?.('.ts-sketch text'), f = t && tsForestAt(e)?.f;
+    for (const el of document.querySelectorAll('.ts-forest-add')) if (!f || el.dataset.key !== `${f.from}:${f.n.content}`) el.remove();
+    if (!f || document.querySelector('.ts-forest-add')) return;
+    forestHover = f;
+    const r = t.getBoundingClientRect(), el = Object.assign(document.createElement('span'), { className: 'ts-forest-add' });
+    el.dataset.key = `${f.from}:${f.n.content}`;
+    el.style.cssText = `left:${r.right + 3}px;top:${r.top - 2}px`;
+    el.innerHTML = forestButtons(f, false);
+    document.body.append(el);
+  });
+  typesetBody.addEventListener('pointerleave', (e) => { if (!e.relatedTarget?.closest?.('.ts-forest-add')) for (const el of document.querySelectorAll('.ts-forest-add')) el.remove(); });
   /** The nodes of a tree in the order they are written. */
   const forestOrder = (n) => [n, ...n.children.flatMap(forestOrder)];
   /** Where a drop at page point `pt` puts a dragged node: the node of tree `f` under it and `before`, `after` (the word's

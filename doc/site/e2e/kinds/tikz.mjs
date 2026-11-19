@@ -26,8 +26,9 @@ async function build(p, ms = 180000) {
   await p.eval(`document.querySelector('.side-tabs [data-panel=play-pdf]').click()`);
   await sleep(200);
   await p.until(`!document.querySelector('#play-pdf.pdf-running')`, ms);
-  await p.eval(`(self.__b0 = document.querySelector('#play-pdf .pdf-page img')?.__build ?? null, document.getElementById('pdf-compile').click())`);
-  const ok = await p.until(`(() => { const i = document.querySelector('#play-pdf .pdf-page img'); return i?.naturalWidth > 100 && i.__build && (i.__build !== self.__b0 || /in cache/.test(document.getElementById('pdf-status').textContent)) && satexPdfWords().length && !document.querySelector('#play-pdf.pdf-running'); })()`, ms);
+  // any page's image counts: an edit on page 3 redraws page 3 only, page 1 keeps the build it was drawn from
+  await p.eval(`(self.__b0 = new Set([...document.querySelectorAll('#play-pdf .pdf-page img')].map((i) => i.__build).filter(Boolean)), document.getElementById('pdf-compile').click())`);
+  const ok = await p.until(`(() => { const is = [...document.querySelectorAll('#play-pdf .pdf-page img')]; return is[0]?.naturalWidth > 100 && is.some((i) => i.__build && (!self.__b0.has(i.__build) || i.__build.text === satexHealth().text && /in cache/.test(document.getElementById('pdf-status').textContent))) && satexPdfWords().length && !document.querySelector('#play-pdf.pdf-running'); })()`, ms);
   await sleep(600);
   return { ok: !!ok, status: await p.eval(`document.getElementById('pdf-status')?.textContent ?? ''`) };
 }
@@ -74,6 +75,22 @@ async function undo(p) {
   await sleep(200);
 }
 const text = (p) => p.eval(`satexHealth().text`);
+/** The text after a write from `t0`: a write is the server's round trip and waits behind a running analysis, so the wait
+ * ends when the text changed, or when the server sat idle for `idle` ms without it (null). Then the written version's
+ * own analysis is waited for. */
+async function written(p, t0, idle = 8000, ms = 180000) {
+  const start = Date.now();
+  let calm = start, t1 = null;
+  while (Date.now() - start < ms) {
+    const h = await p.eval(`(() => { const h = satexHealth(); return { changed: h.text !== ${J(t0)}, text: h.text, idle: !h.busy && !h.running && !h.due && !h.queued && !h.pending }; })()`);
+    if (h.changed) { t1 = h.text; break; }
+    // idle for `idle` ms in a row since the action: the write is not coming
+    if (!h.idle) calm = Date.now(); else if (Date.now() - calm > idle) break;
+    await sleep(250);
+  }
+  if (t1) await p.until(`(() => { const h = satexHealth(); return h.shown != null && h.shown >= h.version && !h.running && !h.due; })()`, ms);
+  return t1 || null;
+}
 const toastNow = (p) => p.eval(`document.getElementById('play-toast')?.textContent ?? ''`);
 
 /** One action: open the menu at `at()`, follow `path` (`then`: the rest, an input), check the text, build it, undo. */
@@ -89,9 +106,10 @@ async function act0(results, p, name, at, path, want, o = {}) {
     await choose(p, path);
     if (o.shot) { await sleep(150); }
     if (o.then) await o.then();
-    const t1 = await p.until(`satexHealth().text !== ${J(t0)} && satexHealth().text`, 8000);
+    const t1 = await written(p, t0);
     if (!t1) throw new Error(`text unchanged (toast: ${await toastNow(p)})`);
-    if (!want.test(t1)) r.fails.push(`text: want ${want}, got ${J(t1.slice(Math.max(0, t1.search(/\\begin\{tikzpicture\}/)), t1.indexOf('\\end{tikzpicture}') + 17))}`);
+    if (!want.test(t1)) r.fails.push(`text: want ${want}, got ${J(o.excerpt ? o.excerpt(t1) : t1.slice(Math.max(0, t1.search(/\\begin\{tikzpicture\}/)), t1.indexOf('\\end{tikzpicture}') + 17))}`);
+    if (o.after) await o.after(t1);
     if (o.toast && !o.toast.test(await toastNow(p))) r.fails.push(`toast: want ${o.toast}, got ${J(await toastNow(p))}`);
     if (o.compile !== false) {
       const b = await build(p);
@@ -118,6 +136,9 @@ export async function tikz(p, sc) {
     const first = await build(p, 300000);
     if (!first.ok) throw new Error(`no first build (${first.status.slice(0, 120)})`);
     log('first build', first);
+    // the first analysis of a fresh page answers the language server's requests only once it ends: a menu's first
+    // write sent before then lands seconds later (after the check gave up, under the next action)
+    await p.until(`!satexHealth().busy`, 120000);
     const node = (w) => async () => mid(await word(p, w));
     // the path src -> run: between the two words; run -> out (bend left=30): above the chord's middle
     const between = (a, c, lift = 0) => async () => { const x = await word(p, a), y = await word(p, c); return [(x.r + y.l) / 2, (mid(x)[1] + mid(y)[1]) / 2 - lift * (y.l - x.r)]; };
@@ -193,7 +214,7 @@ export async function tikz(p, sc) {
         if (!await p.until(`document.querySelector('#play-pdf .pdf-tikz-bend')`, 3000)) r.fails.push('no grip on the bend point');
         await p.shot('bend-drag-after.png');
         if (t1) {
-          await act(p, 'bend-remove', bendAt, ['Remove bend point'], /\\draw\[flow\] \(src\) -- \(run\);/, { compile: false });
+          await act(p, 'bend-remove', bendAt, ['Remove bend point'], /\\draw\[flow\] \(src\) -- \(run\);/);
           await act(p, 'bend-curve', bendAt, ['Convert to curve'], /\\draw\[flow\] \(src\) to\[out=\d+, in=\d+\] \(run\);/, { shot: true });
           await undo(p);
           if (await text(p) !== t0) r.fails.push('one Ctrl+Z did not take the bend point back');
@@ -439,4 +460,4 @@ export async function tikz(p, sc) {
   const fails = results.flatMap((r) => r.fails.map((f) => `${r.name}: ${f}`));
   return { name: sc.name, fails, perf: [], info: { actions: results.length, failed: results.filter((r) => r.fails.length).map((r) => r.name) } };
 }
-export { open, file, build, word, mid, rclick, choose, undo, text, act0 };
+export { open, file, build, word, mid, rclick, choose, undo, text, written, act0 };

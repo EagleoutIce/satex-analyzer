@@ -154,3 +154,44 @@ test('plugins: one Refactor group per target', () => {
     assert.ok(PA.plugins.filter((p) => p.category === 'refactor').length === 3);
   } finally { self.satexStore = was; }
 });
+
+/** `text` with the smart wrap of the line around `at` at `max` applied, unchanged when none. */
+const wrapped = (text, max, at = text.length) => { const e = R.wrapLine(text, at, max); return e ? edit(text, [e]) : text; };
+
+// Intuition: a line typed past the length breaks at a sentence's end before any other space, else after an argument's
+// closing brace, else after a comma, else at the last space that fits. Pins a break at the last space when a sentence
+// ended earlier on the line, and an `A. Turing` initial read as a sentence end.
+test('smart wrap: sentence end, then brace, then comma, then the last space', () => {
+  assert.equal(wrapped('One idea. Two ideas more than that fit here', 30), 'One idea.\nTwo ideas more than that fit here');
+  assert.equal(wrapped('See \\cite{knuth} for long words and more', 30), 'See \\cite{knuth}\nfor long words and more');
+  assert.equal(wrapped('first, second and third and fourth', 30), 'first,\nsecond and third and fourth');
+  assert.equal(wrapped('a bb cc dd ee ff gg hh ii jj kk ll', 20), 'a bb cc dd ee ff gg\nhh ii jj kk ll');
+  assert.equal(wrapped('By A. Turing who wrote it all down once', 30), 'By A. Turing who wrote it all\ndown once');
+  // fits: nothing; the indentation goes with the break
+  assert.equal(wrapped('short line', 30), 'short line');
+  assert.equal(wrapped('  \\item one two three four five six', 21), '  \\item one two three\n  four five six');
+});
+
+// Intuition: a break inside `\textbf{…}` is only a space TeX reads the same; inside math, an option list, a `\verb`, a
+// comment or after `\` (a control space) it is not, and a verbatim environment is never touched. Pins a key list
+// `[width=3cm, alt=x]` broken, a comment's tail turned into text.
+test('smart wrap: inside braces fine; math, options, verb, comments, verbatim untouched', () => {
+  assert.equal(wrapped('xx \\textbf{bold words here and there}', 24), 'xx \\textbf{bold words\nhere and there}');
+  assert.equal(wrapped('aa $x + y = z + w + v$ bb', 12), 'aa\n$x + y = z + w + v$ bb');
+  assert.equal(wrapped('aa \\(x + y = z\\) bb', 10), 'aa\n\\(x + y = z\\) bb');
+  assert.equal(wrapped('\\includegraphics[width=3cm, alt={a b}]{f} z', 20), '\\includegraphics[width=3cm, alt={a b}]{f}\nz');
+  assert.equal(wrapped('aa \\verb|x y z w| bb', 12), 'aa\n\\verb|x y z w| bb');
+  // the comment moves whole: its own spaces never break
+  assert.equal(wrapped('aa % a comment that is long', 10), 'aa\n% a comment that is long');
+  assert.equal(wrapped('aaaa\\ bbbb', 6), 'aaaa\\ bbbb');
+  const v = '\\begin{verbatim}\nthis line is long and has many spaces\n\\end{verbatim}';
+  assert.equal(wrapped(v, 10, 20), v);
+});
+
+// Intuition: the length a document wraps at is read from its own wrapped lines, 80 when it keeps a paragraph per line.
+// Pins a habit read from one long unwrapped paragraph.
+test('smart wrap: the document\'s own line length', () => {
+  const lines = Array.from({ length: 20 }, (_, i) => 'x'.repeat(60 + (i % 5)));
+  assert.equal(R.lineHabit(`${lines.join('\n')}\n`), 64);
+  assert.equal(R.lineHabit('one paragraph per line '.repeat(30)), 80);
+});

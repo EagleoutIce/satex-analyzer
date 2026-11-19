@@ -20,6 +20,7 @@ declare global {
       matrixAt(text: string, at: number, end?: number): (RfSpan & { grid: boolean; body: string }) | null; matrixTo(text: string, m: RfSpan & { grid: boolean; body: string }, to: string): string;
       extract(text: string, all: string, a: number, b: number, name: string, every: boolean): { edits: PaEdit[] } | { error: string };
       occurrences(text: string, body: string): number[];
+      lineHabit(text: string): number; wrapLine(text: string, at: number, max: number, indent?: boolean): PaEdit | null;
     };
   }
 }
@@ -260,7 +261,56 @@ declare global {
     if (!sites.includes(a)) sites.push(a);
     return { edits: [{ from: top, to: top, now: `\\newcommand{\\${name}}{${body}}\n` }, ...sites.map((i) => ({ from: i, to: i + body.length, now: use(i + body.length) }))] };
   }
-  self.satexRefactor = { blank, envs, group, wrapTarget, wrap, unwrap, slug, firstWords, mathAt, rows, targets, mathTo, mathEdit, needsAms, pkgEdit, matrixAt, matrixTo, extract, occurrences };
+  // ---------------------------------------------------------------- smart wrap
+  /** The document's own line length: the 95th percentile of its wrapped lines (a line the next one continues), 80
+   * when it wraps too few lines to tell (one paragraph per line). */
+  function lineHabit(text: string) {
+    const L = text.split('\n'), wrapped = L.filter((l, i) => l.trim() && L[i + 1]?.trim() && !/^\s*[%\\]/.test(l)).map((l) => l.length).sort((a, b) => a - b);
+    if (wrapped.length < 8) return 80;
+    const p = wrapped[Math.floor(wrapped.length * 0.95)]!;
+    return p >= 40 && p <= 160 ? p : 80;
+  }
+  const VERB = /^(?:verbatim\*?|Verbatim\*?|lstlisting|minted|comment|filecontents\*?|alltt)$/;
+  /** The edit that breaks the line around `at` when it is longer than `max`: one space, at or before `max`, becomes a
+   * line break (with the line's indentation when `indent`), the first one past it when none fits. The best space first: after a sentence's end, after an
+   * argument's closing brace, after `,;:`, else the last. Never in math, an option list `[…]`, a `\verb`, a comment,
+   * after `\` (a control space) or in a verbatim environment. Null when the line fits or has no such space. */
+  function wrapLine(text: string, at: number, max: number, indent = true): PaEdit | null {
+    const a = lineStart(text, at), b = lineEnd(text, at), line = text.slice(a, b);
+    if (line.length <= max || envs(text).some((e) => VERB.test(e.env!) && e.head! <= a && b <= e.foot!)) return null;
+    const ind = /^[ \t]*/.exec(line)![0], spaces: [number, number][] = [];
+    let math: string | null = null, sq = 0, d = 0;
+    for (let i = 0; i < line.length; i++) {
+      const c = line[i]!;
+      if (c === '\\') {
+        const m = /^\\(?:verb\*?(.)|[A-Za-z@]+|.)/.exec(line.slice(i))!;
+        if (m[1]) { const e = line.indexOf(m[1], i + m[0].length); if (e < 0) break; i = e; continue; }
+        const s = m[0];
+        if (s === '\\(' || s === '\\[') math = s === '\\(' ? '\\)' : '\\]';
+        else if (s === math) math = null;
+        i += s.length - 1;
+        continue;
+      }
+      if (c === '%') break;
+      if (c === '$') { if (math === '$' || math === '$$') { math = null; if (line[i + 1] === '$') i++; } else if (!math) { math = line[i + 1] === '$' ? '$$' : '$'; if (math === '$$') i++; } continue; }
+      if (math) continue;
+      if (c === '{') d++;
+      else if (c === '}') d--;
+      else if (c === '[' && /[\]A-Za-z@*}]$/.test(line.slice(0, i))) sq++;
+      else if (c === ']' && sq) sq--;
+      else if (c === ' ' && !sq && i > ind.length && line[i - 1] !== ' ' && line[i + 1] && line[i + 1] !== ' ') {
+        const before = line.slice(0, i);
+        // a sentence ends at `.!?` (a closing quote or bracket after it), not after one capital (`A. Turing`)
+        const rank = /(?<![A-Z]|\b[a-z])[.!?]['")\]]*$/.test(before) && d === 0 ? 4 : /\}$/.test(before) && d === 0 ? 3 : /[,;:]$/.test(before) ? 2 : 1;
+        spaces.push([i, rank]);
+      }
+    }
+    // the best rank; within it the last, so the line stays as full as it can
+    // no space that fits: the first one past the length, so the line is as short as it can be
+    const best = spaces.filter(([i]) => i <= max).reduce<[number, number] | null>((x, y) => !x || y[1] > x[1] || y[1] === x[1] && y[0] > x[0] ? y : x, null) ?? spaces[0] ?? null;
+    return best ? { from: a + best[0], to: a + best[0] + 1, now: `\n${indent ? ind : ''}` } : null;
+  }
+  self.satexRefactor = { lineHabit, wrapLine, blank, envs, group, wrapTarget, wrap, unwrap, slug, firstWords, mathAt, rows, targets, mathTo, mathEdit, needsAms, pkgEdit, matrixAt, matrixTo, extract, occurrences };
 
   // ---------------------------------------------------------------- the plugins
   const PA = self.satexPageActions, R = self.satexRefactor, TARGETS = ['source', 'block', 'tikz-node', 'tikz-label', 'tikz-edge', 'forest-node', 'table-column'];

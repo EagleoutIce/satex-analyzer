@@ -663,14 +663,18 @@ async function forestScenario(p, sc) {
   const res = { name: sc.name, kind: 'forest', fails: [], perf: [], info: {} };
   await load(p, sc);
   await p.until(`!satexHealth().busy`, 60000);
-  const w = await wordAt(p, sc.word);
+  // `ts`: the node's text in the Typeset view's sketch instead of the page
+  if (sc.ts) await p.eval(`(self.__errs = [], addEventListener('error', (e) => self.__errs.push(String(e.error?.stack ?? e.message).slice(0, 600))), document.querySelector('.side-tabs [data-panel=play-typeset]').click())`);
+  const w = sc.ts
+    ? await p.until(`(() => { const t = [...document.querySelectorAll('#typeset-body .ts-sketch text')].find((t) => t.textContent.trim() === ${J(sc.ts)}); if (!t) return null; t.scrollIntoView({ block: 'center' }); const r = t.getBoundingClientRect(); return [r.left, r.top, r.right, r.bottom]; })()`, 150000)
+    : await wordAt(p, sc.word);
   if (!w) { res.fails.push('setup: no node word'); return res; }
   const x = (w[0] + w[2]) / 2, y = (w[1] + w[3]) / 2;
   await p.s('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y });
   // `plus`: the hover's + button of that kind (child, sibling) instead of the menu
   if (sc.plus) {
-    const b = await p.until(`(() => { const b = document.querySelector('#play-pdf .pdf-forest-add [data-add=${sc.plus}]'); if (!b) return null; const r = b.getBoundingClientRect(); return [r.x + r.width / 2, r.y + r.height / 2]; })()`, 4000);
-    if (!b) { res.fails.push(`no + ${sc.plus} button on hover`); await shot(p, res, 'noplus'); return res; }
+    const b = await p.until(`(() => { const b = document.querySelector('#play-pdf .pdf-forest-add [data-add=${sc.plus}], .ts-forest-add [data-add=${sc.plus}]'); if (!b) return null; const r = b.getBoundingClientRect(); return [r.x + r.width / 2, r.y + r.height / 2]; })()`, 4000);
+    if (!b) { res.fails.push(`no + ${sc.plus} button on hover${sc.ts ? ` (sketch texts ${await p.eval(`JSON.stringify([...document.querySelectorAll('#typeset-body .ts-sketch text')].map((t) => t.textContent))`)}, under the pointer ${await p.eval(`(() => { const e = document.elementFromPoint(${x}, ${y}); return e ? e.tagName + '.' + e.getAttribute('class') + ' in ' + e.parentElement?.tagName + '.' + e.parentElement?.getAttribute('class') : null; })()`)}, errors ${await p.eval('JSON.stringify(self.__errs ?? [])')})` : ''}`); await shot(p, res, 'noplus'); return res; }
     const text0 = await p.eval(`satexHealth().text`);
     await p.s('Input.dispatchMouseEvent', { type: 'mouseMoved', x: b[0], y: b[1] });
     await sleep(80);
