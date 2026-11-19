@@ -17,4 +17,8 @@ export default [
     steps: 'Typeset view of a two-column doc; type in two places, wait: the caret stays where it was as the typeset lands (it jumped 400 px) (fuzz seed 6)' },
   { kind: 'fuzz', name: 'fz-ts-enter-in-argument', doc: 'hello', view: 'ts', seq: ['c:word:0.083', 'w:xqjoqad', 'k:Enter'],
     steps: 'Typeset view; click the end of "world!" (in `\\greet{world}`), type a word, Enter: a caret stays on screen (faded where it was) though no row sets the break typed into the argument (fuzz seed 3)' },
+  { kind: 'fuzz', name: 'fz-land-no-flicker', doc: 'hello', view: 'pdf', seq: ['c:word:0.606', 'w:xqpezua', 'wait'],
+    steps: 'type a word after "Another", wait for the build: no frame shows the old page fading over the typed text with the echo gone (the 120 ms crossfade put the old page on top after the echo was removed: "base |" for frames in the landing demo)' },
+  { kind: 'fuzz', name: 'fz-demo-narrow-rows', doc: 'demo', view: 'pdf', seq: ['wait', 'c:word:0.42', 'w:Itdrops', 'p', 'k:Enter', 'p', 'w:Itconverges', 'p', 'w:more', 'p', 'k: ', 'w:words'],
+    steps: 'the landing demo; type after "fast.", Enter, a paragraph with pauses (builds land between): the echo sets the new paragraph at the text width, never one word (or hyphen piece) a row, and no word shows twice (fuzz)' },
 ];

@@ -198,6 +198,108 @@ test('every TikZ menu row writes text that parses', withStore(() => {
   }
 }));
 
+// Intuition: an arrow key splits into its two ends and joins back the same, braces where a name has spaces or options;
+// each end is picked on its own, the other kept; a variant toggles in the tip's options; arrows.meta is loaded once a
+// capitalized tip is new to the run. Pins `-{Arc Barb}` not read as a tip (a second one written beside it) and a start
+// pick that dropped the end.
+test('arrow tips: ends, join, variants, each end on its own', withStore(() => {
+  for (const [spec, ends] of [['->', ['', '>']], ['<->', ['<', '>']], ['-{Stealth[open]}', ['', 'Stealth[open]']], ['{Arc Barb}-Latex', ['Arc Barb', 'Latex']], ['-', ['', '']], ['', ['', '']], ['|->', ['|', '>']]]) {
+    assert.deepEqual(T.tipEnds(spec), ends, spec);
+    assert.deepEqual(T.tipEnds(T.tipSpec(...ends)), ends, `${spec} joins back`);
+  }
+  assert.equal(T.tipEnds('draw=red'), null);
+  assert.equal(T.tipSpec('', 'Stealth[open, round]'), '-{Stealth[open, round]}');
+  assert.equal(T.tipSpec('', ''), '');
+  assert.equal(T.tipVary('Stealth', 'open', true), 'Stealth[open]');
+  assert.equal(T.tipVary('Stealth[open, round]', 'open', false), 'Stealth[round]');
+  assert.equal(T.tipVary('Stealth[open]', 'open', true), 'Stealth[open]', 'idempotent');
+  assert.equal(T.tip('\\draw[-{Arc Barb}, red] (a) -- (b);', '->'), '\\draw[red, ->] (a) -- (b);', 'a braced tip is a tip key');
+  const text = '\\documentclass{article}\n\\usepackage{tikz}\n\\begin{document}\n\\begin{tikzpicture}\n\\node (a) {A}; \\node (b) at (2,0) {B};\n\\draw[->, red] (a) -- (b);\n\\end{tikzpicture}\n\\end{document}\n';
+  const e = T.edges(text)[0], tips = (c) => PA.groups({ kind: 'tikz-edge', e, k: 0 }, c).find((g) => g.title === 'Arrow tips').items;
+  const row = (items, ...path) => path.reduce((its, l, i) => { const r = its.find((x) => x.label === l); assert.ok(r, `${l} in ${its.map((x) => x.label)}`); return i === path.length - 1 ? r : r.items; }, items);
+  const c0 = ctxOf(text, null, { tips: [{ name: '>', svg: null }] });
+  c0.previews = { 'arrow:-Stealth': "<svg viewBox='0 0 1 1'><path d='M0 0H5'/><path d='M1 1L2 2Z'/></svg>" };
+  assert.equal(row(tips(c0), '→').on, true, 'the current pair ticked');
+  assert.equal(row(tips(c0), 'End', 'default (>)').on, true, 'the current end ticked');
+  assert.equal(row(tips(c0), 'Start', 'none').on, true);
+  assert.match(row(tips(c0), 'End', 'Stealth').img, /M1 1L2 2Z/, 'its picture from previews.json');
+  const pick = (facts, ...path) => { const c = ctxOf(text, null, facts); row(tips(c), ...path).run(); return edit(text, c.writes[0]); };
+  const s1 = pick({ tips: [] }, 'Start', 'Stealth');
+  assert.match(s1, /\\draw\[red, Stealth->\]/, 'the start picked, the end kept');
+  assert.match(s1, /\\usetikzlibrary\{arrows\.meta\}/, 'arrows.meta loaded for it');
+  assert.doesNotMatch(pick({ tips: [{ name: 'Stealth' }] }, 'End', 'Arc Barb'), /usetikzlibrary/, 'a run that declares capitalized tips has arrows.meta');
+  assert.match(pick({ tips: [{ name: 'Stealth' }] }, 'End', 'Arc Barb'), /\\draw\[red, -\{Arc Barb\}\]/);
+  assert.match(pick({ tips: [] }, 'Start', 'default (>)'), /\\draw\[red, <->\]/, 'the classic start is written <');
+  // a variant of the current tip
+  const t2 = text.replace('->', '-Stealth'), e2 = T.edges(t2)[0], c2 = ctxOf(t2, null, { tips: [{ name: 'Stealth' }] });
+  const items = PA.groups({ kind: 'tikz-edge', e: e2, k: 0 }, c2).find((g) => g.title === 'Arrow tips').items;
+  assert.deepEqual(row(items, 'End').items.filter((r) => r.head || /^(open|round|reversed)$/.test(r.label)).map((r) => r.label).slice(-3), ['open', 'round', 'reversed']);
+  row(items, 'End', 'open').run();
+  assert.match(edit(t2, c2.writes[0]), /\\draw\[red, -\{Stealth\[open\]\}\]/);
+  const c3 = ctxOf(text, null, { tips: [{ name: 'Stealth' }] });
+  assert.equal(row(tips(c3), 'End', 'Arc Barb').items, undefined);
+  assert.ok(!row(tips(c3), 'End').items.some((r) => r.label === 'open'), 'no variants for the classic >');
+}));
+
+// Intuition: a bend point is a coordinate between two segments: added it splits a segment (a `to[…]` one straight to it),
+// moved only its text changes, removed the two segments are one again with both labels, made a curve the path leaves and
+// enters at the given angles. Pins a removal that dropped a label and a bend point read in a node's name.
+test('bend points: add, move, remove, curve', withStore(() => {
+  const st = '\\draw[->] (a) -- (b);', a1 = T.bendAdd(st, 0, '1,2');
+  assert.equal(a1, '\\draw[->] (a) -- (1,2) -- (b);');
+  assert.ok(T.isBend(a1, 0) && !T.isBend(a1, 1) && !T.isBend(st, 0));
+  assert.equal(T.bendMove(a1, 0, '1.5,2'), '\\draw[->] (a) -- (1.5,2) -- (b);');
+  assert.equal(T.bendRemove(a1, 0), st, 'removed: the text before');
+  assert.equal(T.bendCurve(a1, 0, 45, 135), '\\draw[->] (a) to[out=45, in=135] (b);');
+  assert.equal(T.bendAdd('\\draw (a) to[bend left] node[above] {x} (b);', 0, '0,1'), '\\draw (a) -- node[above] {x} (0,1) -- (b);');
+  assert.equal(T.bendRemove('\\draw (a) -- node {l} (1,1) -- node {m} (b);', 0), '\\draw (a) -- node {l} node {m} (b);', 'both labels kept');
+  assert.equal(T.bendRemove('\\draw (a) -- (b) -- (c);', 0), null, 'a node is no bend point');
+  for (const p of ['0.5,-1', '2cm,3cm']) { const t = T.bendAdd(st, 0, p); assert.equal(T.edges(wrap(t))[0].segs.length, 2, t); }
+  const text = wrap('\\node (a) {A}; \\node (b) at (3,0) {B};\n\\draw (a) -- (1,1) -- (b);'), e = T.edges(text)[0];
+  const c = ctxOf(text), gs = PA.groups({ kind: 'tikz-bend', e, k: 0, curve: [45, 135] }, c);
+  assert.deepEqual(gs.flatMap((g) => g.items.map((i) => i.label)), ['Remove bend point', 'Convert to curve']);
+  gs[0].items[1].run();
+  assert.match(edit(text, c.writes[0]), /\\draw \(a\) to\[out=45, in=135\] \(b\);/);
+}));
+
+// Intuition: every width argument a box drag rewrites is found with its value's exact range and the lines its box spans;
+// a commented call, `\resizebox{!}` and a graphic without `width=` are none. Ctrl snaps to a share of the line or a width
+// the document uses when within 3 mm, else to the 5 mm grid. Pins a range off by the key's spaces (`width = 3cm`).
+test('box widths: found, ranged, snapped', () => {
+  const t = 'a\n\\begin{minipage}[t]{0.45\\linewidth}\nx\n\\end{minipage}\n\\parbox{3cm}{y}\\makebox[2cm]{z} % \\parbox{1cm}{q}\n\\resizebox{!}{1cm}{w}\\resizebox{.5\\textwidth}{!}{w}\n\\includegraphics[height=1cm, width = 3cm]{f}\\includegraphics{g}';
+  const got = T.sizers(t);
+  assert.deepEqual(got.map((s) => [s.kind, s.line, s.end, s.value]), [['minipage', 2, 4, '0.45\\linewidth'], ['parbox', 5, 5, '3cm'], ['makebox', 5, 5, '2cm'], ['resizebox', 6, 6, '.5\\textwidth'], ['includegraphics', 7, 7, '3cm']]);
+  for (const s of got) assert.equal(t.slice(s.from, s.to), s.value, s.kind);
+  const MM = 72 / 25.4, line = 100 * MM; // its quarter is 25 mm, apart from the 30 mm width below
+  assert.equal(T.snapSize(line / 2 + 2 * MM, line, 'linewidth', []), '.5\\linewidth');
+  assert.equal(T.snapSize(line / 3, line, 'textwidth', []), '.333\\textwidth');
+  assert.equal(T.snapSize(31 * MM, line, 'linewidth', [['3cm', 30 * MM]]), '3cm', 'a width the document uses');
+  assert.equal(T.snapSize(42 * MM, line, 'linewidth', []), '4cm', 'else the 5 mm grid');
+  assert.equal(T.snapSize(line, line, 'linewidth', []), '\\linewidth');
+});
+
+// Intuition: the document's named styles are offered where options are: each with where it is defined and the comment
+// above it, ticked where the part uses it, applied and removed as its one key. `every …` styles and commented definitions
+// are none. Pins a style offered twice (defined in the file and in the text of the document) and a toggle that dropped
+// another key.
+test('named styles: found with their comment, applied, removed', withStore(() => {
+  const head = '% a rounded box for steps\n\\tikzset{box/.style={draw, rounded corners}, every node/.style={font=\\small},\n  flow/.style={-Stealth, thick}}\n% \\tikzset{old/.style={red}}\n\\tikzstyle{legacy}=[blue]\n';
+  const got = PA.styles(head + '\\begin{tikzpicture}[hot/.style={fill=red!20}]\n\\end{tikzpicture}');
+  assert.deepEqual(got.map((x) => [x.name, x.body, x.line, x.note]), [['box', 'draw, rounded corners', 2, 'a rounded box for steps'], ['flow', '-Stealth, thick', 3, ''], ['legacy', 'blue', 5, ''], ['hot', 'fill=red!20', 6, '']]);
+  const text = `${head}\\begin{tikzpicture}\n\\node[red] (a) {A};\n\\end{tikzpicture}\n`, n = T.nodes(text)[0], c = ctxOf(text);
+  c.file = 'main.tex';
+  const rows = PA.groups({ kind: 'tikz-node', n }, c).find((g) => g.title === 'Style').items.find((r) => r.label === 'Document styles').items;
+  assert.deepEqual(rows.map((r) => [r.label, r.hint]), [['box', 'defined in main.tex:2'], ['flow', 'defined in main.tex:3'], ['legacy', 'defined in main.tex:5']]);
+  assert.match(rows[0].title, /^a rounded box for steps\nbox: draw, rounded corners$/);
+  rows[0].run();
+  const on = edit(text, c.writes[0]);
+  assert.match(on, /\\node\[red, box\] \(a\)/);
+  const c2 = ctxOf(on), n2 = T.nodes(on)[0], r2 = PA.groups({ kind: 'tikz-node', n: n2 }, c2).find((g) => g.title === 'Style').items.find((r) => r.label === 'Document styles').items[0];
+  assert.equal(r2.on, true);
+  r2.run();
+  assert.match(edit(on, c2.writes[0]), /\\node\[red\] \(a\)/);
+}));
+
 // Intuition: the forest plugin's rows rewrite the tree as the forest widget emits it; the table plugin's rows name
 // the column's letters. Pins the menus moved from the playground losing a row.
 test('forest and table rows', withStore(() => {
@@ -237,7 +339,7 @@ test('plugins switched per viewer and with their type plugin', withStore(() => {
   assert.equal(PA.groups(t, ctxOf(text)).length, 0);
   PA.setOn('tikz-node', true);
   assert.ok(PA.groups(t, ctxOf(text)).length);
-  assert.deepEqual(PA.plugins.map((p) => p.name), ['tikz-node', 'tikz-label', 'tikz-edge', 'forest-node', 'table-column', 'slice', 'refactor-float', 'refactor-math', 'refactor-extract']);
+  assert.deepEqual(PA.plugins.map((p) => p.name), ['tikz-node', 'tikz-label', 'tikz-edge', 'tikz-bend', 'tikz-grid', 'forest-node', 'table-column', 'slice', 'refactor-float', 'refactor-math', 'refactor-extract']);
 }));
 
 // Intuition: a dragged node is written beside its reference as positioning does: a side when the centres line up, a
@@ -429,11 +531,32 @@ test('scratch: merge maps the edit back, follows a move, reports a conflict', ()
 });
 
 // Intuition: a right click on the page names a block: the figure or table around the line, else the display, else the
-// paragraph. Pins a caption line that sliced only itself, and an equation inside a figure taken for the figure's.
+// paragraph, cut at blank lines, headings and page breaks. Pins a caption line that sliced only itself, an equation inside
+// a figure taken for the figure's, and a thesis body without blank lines sliced whole from one click.
 test('scratch: block finds the figure, the equation, the paragraph', () => {
   assert.deepEqual(SC.block(CHAPTER, 7), [4, 8, 'figure']);
-  assert.deepEqual(SC.block(CHAPTER, 2), [1, 2, 'paragraph']);
+  assert.deepEqual(SC.block(CHAPTER, 2), [2, 2, 'paragraph'], 'the heading above is no part of it');
+  assert.deepEqual(SC.block(CHAPTER, 1), [1, 1, 'heading']);
+  assert.deepEqual(SC.block('\\begin{document}\n\\maketitle\nA\nB\n\\clearpage\nC', 3), [3, 4, 'paragraph'], 'a body without blank lines is cut at its commands');
   assert.deepEqual(SC.block(CHAPTER, 10), [10, 10, 'paragraph']);
   assert.deepEqual(SC.block('a\n\\begin{equation}\n x % \\end{equation}\n\\end{equation}\nb', 3), [2, 4, 'equation']);
   assert.deepEqual(SC.block('\\begin{table*}\n\\begin{equation}\nx\n\\end{equation}\n\\end{table*}', 3), [1, 5, 'table']);
+});
+
+// Intuition: the local scratch keeps the root's preamble as written (the run resumes from its checkpoint), only the body
+// definitions the region names (and those they name in turn, whole over their lines), then the region. Pins a scratch
+// that carried the whole thesis (60 s first check) and a body `\newcommand` the region needs left out.
+test('scratch: local keeps the preamble, the definitions the region needs, the region', () => {
+  const root = ['\\documentclass{article}', '\\usepackage{tikz}', '\\begin{document}', '\\newcommand\\inner{x}', '\\newcommand\\outer{%', '  \\inner y}', '\\newcommand\\unused{z}', '\\input{chapter}', '\\end{document}'].join('\n');
+  const texts = { 'main.tex': root, 'chapter.tex': CHAPTER.replace('Old', 'Old \\outer') };
+  const defs = [{ file: 'main.tex', line: 4, name: '\\inner' }, { file: 'main.tex', line: 5, name: '\\outer' }, { file: 'main.tex', line: 7, name: '\\unused' },
+    { file: 'main.tex', line: 2, name: '\\tikz' }, { file: 'chapter.tex', line: 7, name: '\\caption@x' }];
+  const text = SC.local(texts, 'main.tex', 'chapter.tex', 4, 8, defs);
+  assert.ok(text.startsWith('\\documentclass{article}\n\\usepackage{tikz}\n\\begin{document}\n'), 'the preamble as written');
+  assert.match(text, /\\newcommand\\outer\{%\n {2}\\inner y\}/, 'the definition whole over its lines');
+  assert.match(text, /\\newcommand\\inner\{x\}/, 'what the kept definition names');
+  assert.ok(!/unused|\\input|Text\.|More\./.test(text), text);
+  assert.equal(SC.extract(text).body, texts['chapter.tex'].split('\n').slice(3, 8).join('\n'));
+  assert.match(text, /% satex-scratch end\n\\end\{document\}\n$/);
+  assert.equal(SC.local({ 'a.tex': 'x' }, 'a.tex', 'a.tex', 1, 1, []), null, 'no document: no local scratch');
 });

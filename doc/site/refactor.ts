@@ -15,7 +15,7 @@ declare global {
       unwrap(text: string, f: RfSpan): { edit: PaEdit; dropped: string[] };
       slug(s: string): string; firstWords(text: string, t: RfSpan): string;
       mathAt(text: string, at: number, end?: number): RfMath | null; rows(body: string): string[]; targets(m: RfMath): string[];
-      mathTo(text: string, m: RfMath, to: string): string; needsAms(to: string): boolean;
+      mathTo(text: string, m: RfMath, to: string): string; mathEdit(text: string, m: RfMath, to: string): PaEdit; needsAms(to: string): boolean;
       pkgEdit(text: string, all: string, pkg: string): { have: true } | { edit: PaEdit } | { line: string };
       matrixAt(text: string, at: number, end?: number): (RfSpan & { grid: boolean; body: string }) | null; matrixTo(text: string, m: RfSpan & { grid: boolean; body: string }, to: string): string;
       extract(text: string, all: string, a: number, b: number, name: string, every: boolean): { edits: PaEdit[] } | { error: string };
@@ -111,7 +111,9 @@ declare global {
     // a float that shares its line with text stands on lines of its own
     const pre = lines || !text.slice(lineStart(text, from), from).trim() ? '' : '\n', post = lines || !text.slice(to, lineEnd(text, to)).trim() ? '' : '\n';
     const out = `${pre}${now}${post}`;
-    return { edit: { from, to, now: out }, caret: from + out.indexOf(cap) + cap.length };
+    // the spaces at the line break go with it
+    const a = pre ? from - /[ \t]*$/.exec(text.slice(0, from))![0].length : from, b = post ? to + /^[ \t]*/.exec(text.slice(to))![0].length : to;
+    return { edit: { from: a, to: b, now: out }, caret: a + out.indexOf(cap) + cap.length };
   }
   /** Float `f` removed, its content kept one level out: its `\centering`, `\caption` and `\label` go (`dropped` names them). */
   function unwrap(text: string, f: RfSpan) {
@@ -179,6 +181,12 @@ declare global {
     const all = n > 1 ? ['align', 'align*', 'gather', 'gather*', 'multline', 'multline*'] : ['inline', 'display', 'equation', 'equation*', 'align', 'align*'];
     return all.filter((t) => t !== kindOf(m) && !(labelled && (t.endsWith('*') || t === 'inline' || t === 'display')) && !(t === 'inline' && /\n\s*\n/.test(m.body)));
   }
+  /** The edit that writes math `m` as form `to`: an environment out of a line of text takes the spaces around it. */
+  function mathEdit(text: string, m: RfMath, to: string): PaEdit {
+    const now = mathTo(text, m, to), a = now.startsWith('\n') ? m.from - /[ \t]*$/.exec(text.slice(0, m.from))![0].length : m.from;
+    const b = now.endsWith('\n' + indentAt(text, m.from)) && m.kind === 'inline' ? m.to + /^[ \t]*/.exec(text.slice(m.to))![0].length : m.to;
+    return { from: a, to: b, now };
+  }
   const needsAms = (to: string) => /^(?:align|gather|multline|flalign)\*?$|^equation\*$|^[pbBvV]matrix$|^cases$/.test(to);
   /** Math `m` as form `to`: the body kept, `&` before each row's first top-level relation into `align`, the `&` out of it. */
   function mathTo(text: string, m: RfMath, to: string) {
@@ -200,7 +208,7 @@ declare global {
     const ind = indentAt(text, m.from);
     if (to === 'inline') return `\\(${body.trim().replace(/\s+/g, ' ')}\\)`;
     if (to === 'display') return `\\[${body}\\]`;
-    const own = /^\s*\n/.test(body) ? body : `\n${ind}  ${body.trim()}\n${ind}`;
+    const own = /\n[ \t]*$/.test(body) ? body : `\n${ind}  ${body.trim()}\n${ind}`;
     const pre = m.kind === 'inline' && text.slice(lineStart(text, m.from), m.from).trim() ? `\n${ind}` : '';
     const post = m.kind === 'inline' && text.slice(m.to, lineEnd(text, m.to)).trim() ? `\n${ind}` : '';
     return `${pre}\\begin{${to}}${own}\\end{${to}}${post}`;
@@ -252,7 +260,7 @@ declare global {
     if (!sites.includes(a)) sites.push(a);
     return { edits: [{ from: top, to: top, now: `\\newcommand{\\${name}}{${body}}\n` }, ...sites.map((i) => ({ from: i, to: i + body.length, now: use(i + body.length) }))] };
   }
-  self.satexRefactor = { blank, envs, group, wrapTarget, wrap, unwrap, slug, firstWords, mathAt, rows, targets, mathTo, needsAms, pkgEdit, matrixAt, matrixTo, extract, occurrences };
+  self.satexRefactor = { blank, envs, group, wrapTarget, wrap, unwrap, slug, firstWords, mathAt, rows, targets, mathTo, mathEdit, needsAms, pkgEdit, matrixAt, matrixTo, extract, occurrences };
 
   // ---------------------------------------------------------------- the plugins
   const PA = self.satexPageActions, R = self.satexRefactor, TARGETS = ['source', 'block', 'tikz-node', 'tikz-label', 'tikz-edge', 'forest-node', 'table-column'];
@@ -293,7 +301,7 @@ declare global {
     groups(t, ctx) {
       if (t.at == null) return [];
       const m = R.mathAt(ctx.text, t.at, t.end ?? t.at), x = R.matrixAt(ctx.text, t.at, t.end ?? t.at), items: PaItem[] = [];
-      if (m) for (const to of R.targets(m)) items.push({ label: `To ${LABELS[to] ?? to}`, run: () => ctx.write([...ams(ctx, to), { from: m.from, to: m.to, now: R.mathTo(ctx.text, m, to) }]) });
+      if (m) for (const to of R.targets(m)) items.push({ label: `To ${LABELS[to] ?? to}`, run: () => ctx.write([...ams(ctx, to), R.mathEdit(ctx.text, m, to)]) });
       if (x) {
         const now = x.grid ? null : x.env, cols = Math.max(...R.rows(x.body).map((r) => r.split('&').length));
         const kinds = ['pmatrix', 'bmatrix', 'vmatrix', 'array', ...(cols <= 2 ? ['cases'] : [])].filter((k) => k !== now);

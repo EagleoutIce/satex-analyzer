@@ -6,7 +6,7 @@
 export {};
 declare global {
   /** A menu row: a choice (`run`), a submenu (`items`), radio state `on`, a color `swatch`, a picture `img` (SVG), a rule and caption `head` above it. */
-  type PaItem = { label: string; run?: () => void; items?: PaItem[]; on?: boolean; swatch?: string; hint?: string; img?: string | null; head?: string };
+  type PaItem = { label: string; run?: () => void; items?: PaItem[]; on?: boolean; swatch?: string; hint?: string; img?: string | null; head?: string; title?: string };
   /** A group of rows: a submenu row by its title, or its rows inline. */
   type PaGroup = { title: string; items: PaItem[]; inline?: boolean };
   type PaEdit = { from: number; to: number; now: string };
@@ -16,6 +16,12 @@ declare global {
     write(edits: (PaEdit | null)[]): Promise<boolean> | void; toast(msg: string): void; caret?(at: number): void;
     pick(prompt: string, done: (n: TikzNode) => void): void; colAlign(t: number, k: number, a: string): void;
     scratch?(b: ScBlock): void;
+    /** The open file's name, for where a style is defined. */
+    file?: string;
+    /** Whether the grid of the picture at offset `at` shows; with `on` it is switched (this session). */
+    grid?(at: number, on?: boolean): boolean;
+    /** TeX's pictures by `kind:name` (`arrow:-Stealth`), previews.json. */
+    previews?: Record<string, string> | null;
   }
   /** Lines `from`–`to` (1-based) of `file`: what a scratch document is sliced from; `what` names it in the menu. */
   type ScBlock = { file: string; from: number; to: number; what: string };
@@ -36,9 +42,11 @@ declare global {
       colors(all: string, facts: Rec | null): { doc: [string, string][]; base: [string, string][]; more: [string, string][] };
       mix(expr: string, known: Map<string, number[]>): number[] | null; fontSet(font: string | undefined, size: string | null): string | null;
       cut(text: string, from: number, to: number): PaEdit;
+      styles(text: string): { name: string; body: string; line: number; note: string }[];
     };
     satexScratch: {
       build(slice: string, file: string, text: string, from: number, to: number, isRoot: boolean): string | null;
+      local(texts: Record<string, string>, root: string, file: string, from: number, to: number, defs: { file: string; line: number; name: string }[]): string | null;
       extract(text: string): ScRegion | null; merge(base: string, mine: string, current: string, from: number, to: number, size: number): ScMerge;
       apply(current: string, from: number, to: number, body: string): string; block(text: string, line: number): [number, number, string];
     };
@@ -76,7 +84,7 @@ declare global {
       acts.push(r);
       const head = r.head ? `${k ? '<hr>' : ''}<b>${esc(r.head)}</b>` : '';
       const role = r.items ? 'menuitem' : r.on == null ? 'menuitem' : 'menuitemradio';
-      return `${head}<button type="button" role="${role}"${r.on == null ? '' : ` aria-checked="${r.on}"`}${r.items ? ' aria-haspopup="menu" aria-expanded="false"' : ''} data-i="${acts.length - 1}">` +
+      return `${head}<button type="button" role="${role}"${r.title ? ` title="${esc(r.title)}"` : ''}${r.on == null ? '' : ` aria-checked="${r.on}"`}${r.items ? ' aria-haspopup="menu" aria-expanded="false"' : ''} data-i="${acts.length - 1}">` +
         `${r.swatch ? `<i class="pa-sw" style="background:${esc(r.swatch)}"></i>` : ''}${r.img ? `<img class="pa-img" alt="" src="data:image/svg+xml;charset=utf-8,${esc(encodeURIComponent(r.img))}">` : ''}<span>${esc(r.label)}</span>${r.items ? '<span class="pa-more">▸</span>' : r.hint ? `<small>${esc(r.hint)}</small>` : ''}</button>`;
     }).join('');
     document.body.append(m);
@@ -237,7 +245,7 @@ declare global {
     const a = text.lastIndexOf('\n', from - 1) + 1, e = text.indexOf('\n', to), b = e < 0 ? text.length : e + 1;
     return text.slice(a, from).trim() || text.slice(to, b).trim() ? { from, to, now: '' } : { from: a, to: b, now: '' };
   }
-  self.satexPageActions = { register: (p) => { plugins.push(p); }, plugins, on, setOn, groups, open, close, ask, libEdit, colors, mix, fontSet, cut };
+  self.satexPageActions = { register: (p) => { plugins.push(p); }, plugins, on, setOn, groups, open, close, ask, libEdit, colors, mix, fontSet, cut, styles };
 
   // ---------------------------------------------------------------- the plugins
   const TM = () => self.satexTikzMove;
@@ -289,6 +297,42 @@ declare global {
     ctx.toast(`${what} needs ${r.line} in the preamble: add that line where tikz is loaded`);
     return [];
   }
+  /** The named styles `text` defines (`\tikzset{box/.style={…}}`, a picture's options, `\forestset`, `\tikzstyle{box}=[…]`):
+   * name, body, 1-based line, and the comment lines right above the definition. `every …` styles are no names to apply. */
+  function styles(text: string): { name: string; body: string; line: number; note: string }[] {
+    const out: { name: string; body: string; line: number; note: string }[] = [], lines = text.split('\n');
+    const lineOf = (i: number) => text.slice(0, i).split('\n').length;
+    // the prose comment above: commented-out code is no note
+    const note = (line: number) => { const c: string[] = []; for (let l = line - 2; l >= 0 && /^\s*%/.test(lines[l]!); l--) c.unshift(lines[l]!.replace(/^\s*%+\s?/, '')); return c.filter((x) => !/^\s*\\/.test(x)).join(' ').trim(); };
+    const group = (i: number, open: string, shut: string) => { for (let k = i, d = 0; k < text.length; k++) { if (text[k] === '\\') { k++; continue; } if (text[k] === open) d++; else if (text[k] === shut && !--d) return k; } return -1; };
+    const scan = (from: number, to: number) => {
+      let d = 0, start = from;
+      for (let k = from; k <= to; k++) {
+        const c = text[k];
+        if (c === '{') d++; else if (c === '}') d--;
+        if (k === to || (c === ',' && !d)) {
+          const kv = text.slice(start, k), m = /^\s*([^=/{}]+?)\s*\/\.(?:append\s+)?style(?:\s+n\s+args\s*=\s*\{?\d\}?)?\s*=\s*(.*)$/s.exec(kv);
+          if (m && !/^every\b/.test(m[1]!)) { const at = start + kv.length - kv.trimStart().length, line = lineOf(at); out.push({ name: m[1]!, body: m[2]!.trim().replace(/^\{([^]*)\}$/, '$1').trim(), line, note: note(line) }); }
+          start = k + 1;
+        }
+      }
+    };
+    for (const m of text.matchAll(/\\(tikzset|forestset|pgfkeys)\s*\{|\\begin\{tikzpicture\}\s*\[|\\tikzstyle\s*\{([^}]*)\}\s*=\s*\[/g)) {
+      if (/(?<!\\)%[^\n]*$/.test(text.slice(text.lastIndexOf('\n', m.index!) + 1, m.index))) continue;
+      const o = m.index! + m[0].length - 1, e = group(o, text[o]!, text[o] === '[' ? ']' : '}');
+      if (e < 0) continue;
+      if (m[2] != null) { const line = lineOf(m.index!); out.push({ name: m[2].trim(), body: text.slice(o + 1, e).trim(), line, note: note(line) }); } else scan(o + 1, e);
+    }
+    return out;
+  }
+  /** Rows applying the document's named styles to part `i` (-1: the path), each ticked where used, with where it is defined. */
+  function namedRows(ctx: PaCtx, stmt: string, i: number, put: (s: string | null) => void): PaItem[] {
+    const T = TM(), ks = T.keysAt(stmt, i) ?? [], own = styles(ctx.text), seen = new Set<string>();
+    const all = [...own.map((x) => ({ ...x, where: `${ctx.file ?? 'this file'}:${x.line}` })), ...styles(ctx.all).filter((x) => !own.some((o) => o.name === x.name)).map((x) => ({ ...x, where: 'another file' }))]
+      .filter((x) => !seen.has(x.name) && seen.add(x.name));
+    return all.map((x) => ({ label: x.name, on: ks.includes(x.name), hint: `defined in ${x.where}`, title: `${x.note ? `${x.note}\n` : ''}${x.name}: ${x.body}`,
+      run: () => put(T.set(stmt, i, `style:${x.name}`, ks.includes(x.name) ? [] : [x.name])) }));
+  }
   /** The style rows of part `i` of statement `stmt` (a node, a label; -1 the path): each group's rows writing through `put`. */
   function styleRows(ctx: PaCtx, stmt: string, i: number, put: (s: string | null) => void, path: boolean): PaItem[] {
     const T = TM(), c = colors(ctx.all, ctx.facts), names = [...c.doc, ...c.base, ...c.more].map(([n]) => n);
@@ -298,7 +342,9 @@ declare global {
     const width = cur('width').at(-1) ?? '', corners = cur('corners').at(-1) ?? '', dash = cur('dash').at(-1) ?? '', op = val(ks, 'opacity') ?? '';
     const len = (g: string, label: string, list: string[]): PaItem => ({ label, items: [...radio([['default', ''], ...list.map((v): [string, string] => [v, v])], val(ks, g) ?? '', (v) => setG(g, v ? [`${g}=${v}`] : [])),
       custom(ctx, 'Custom…', `${g}, e.g. 3mm`, val(ks, g) ?? '', (v) => setG(g, v.trim() ? [`${g}=${v.trim()}`] : []))] });
+    const named = namedRows(ctx, stmt, i, put);
     return [
+      ...(named.length ? [{ label: 'Document styles', items: named }] : []),
       { label: path ? 'Color' : 'Draw color', items: colorRows(ctx, colorNow('draw'), (v) => setG('draw', v == null ? [] : [path ? v : `draw=${v}`])) },
       ...(path ? [] : [{ label: 'Fill color', items: colorRows(ctx, colorNow('fill'), (v) => setG('fill', v == null ? [] : [`fill=${v}`]), 'None') }]),
       { label: 'Line width', items: [...radio([['default', ''], ...WIDTHS], width, (v) => setG('width', v ? [v] : [])),
@@ -427,19 +473,57 @@ declare global {
       ];
     },
   });
-  const TIPS: [string, string][] = [['→', '->'], ['←', '<-'], ['↔', '<->'], ['none', ''], ['Stealth', '-Stealth'], ['Latex', '-Latex'], ['To', '-To'], ['Stealth both', 'Stealth-Stealth']];
+  const TIPS: [string, string][] = [['→', '->'], ['←', '<-'], ['↔', '<->'], ['none', '']];
+  // the tips offered first, in this order (TikZ manual § 16.5: the classic ones, then arrows.meta's); the run's other declared tips follow
+  const TIP_SEED = ['>', 'to', 'latex', 'stealth', '|', 'Stealth', 'Latex', 'To', 'Kite', 'Triangle', 'Circle', 'Square', 'Diamond', 'Ellipse', 'Rectangle', 'Turned Square',
+    'Bar', 'Bracket', 'Parenthesis', 'Hooks', 'Rays', 'Straight Barb', 'Arc Barb', 'Tee Barb', 'Classical TikZ Rightarrow', 'Computer Modern Rightarrow', 'Implies'];
+  /** arrows.meta tips are capitalized; their variants are options (`Stealth[open]`), `open` only where the tip is filled. */
+  const META = /^[A-Z]/, OPENS = /^(Stealth|Latex|Kite|Triangle|Circle|Square|Diamond|Ellipse|Rectangle|Turned Square)$/;
+  /** The start tip of end tip `t` as written: the classic `>` starts as `<`. */
+  const startOf = (t: string) => (t === '>' ? '<' : t), endOf = (t: string) => (t === '<' ? '>' : t);
+  /** TeX's picture of one end (`-Stealth`, `Stealth-`) from previews.json or the run's tips, `open` drawn unfilled. */
+  function tipImg(ctx: PaCtx, name: string, start: boolean, opts: string[]) {
+    const T = TM(), spec = start ? T.tipSpec(startOf(name), '') : T.tipSpec('', name);
+    const svg = ctx.previews?.[`arrow:${spec}`] ?? (start ? null : (ctx.facts?.tips ?? []).find((x: Rec) => x.name === name)?.svg) ?? null;
+    if (!svg) return null;
+    // the tip's end of the sample, 12pt of it, so the tip shows large
+    const box = svg.match(/viewBox='([^']*)'/)?.[1]!.trim().split(/\s+/).map(Number), cut = box?.length === 4 ? Math.min(box[2]!, 12) : 0;
+    const crop = cut ? svg.replace(/viewBox='[^']*'/, `viewBox='${start ? box![0] : box![0]! + box![2]! - cut} ${box![1]} ${cut} ${box![3]}'`).replace(/(<svg[^>]*?) width='[^']*' height='[^']*'/, `$1 width='${cut * 2}' height='${box![3]! * 2}'`) : svg;
+    return opts.includes('open') ? crop.replace(/<path d='(?!M0 0H)/g, "<path fill='none' d='") : crop;
+  }
+  /** The rows of one end's submenu: none, the tips (current one ticked, each with its picture), then the current tip's variants. */
+  function tipRows(ctx: PaCtx, now: string, start: boolean, pick: (t: string) => void): PaItem[] {
+    const T = TM(), cur = T.tipParts(start ? endOf(now) : now), declared = (ctx.facts?.tips ?? []).map((x: Rec) => String(x.name));
+    const more = declared.filter((n: string) => !TIP_SEED.includes(n) && !/[@{}=,]/.test(n));
+    const row = (n: string, i: number, head?: string): PaItem => ({ label: n === '>' ? 'default (>)' : n, head: i ? undefined : head, on: cur?.name === n,
+      img: tipImg(ctx, n, start, []), run: () => pick(start ? startOf(n) : n) });
+    const vary = cur && META.test(cur.name) ? ['open', 'round', 'reversed'].filter((f) => f !== 'open' || OPENS.test(cur.name)) : [];
+    return [{ label: 'none', on: !now, run: () => pick('') },
+      ...TIP_SEED.filter((n) => !META.test(n)).map((n, i) => row(n, i, 'TikZ')), ...TIP_SEED.filter((n) => META.test(n)).map((n, i) => row(n, i, 'arrows.meta')),
+      ...(more.length ? [{ label: 'More of this document', items: more.map((n: string, i: number) => row(n, i)) }] : []),
+      ...vary.map((f, i) => ({ label: f, head: i ? undefined : `${cur!.name} variant`, on: cur!.opts.includes(f), run: () => { const v = T.tipVary(now, f, !cur!.opts.includes(f)); if (v != null) pick(v); } }))];
+  }
+  /** Tip rows of a path: the common pairs, then each end on its own. `now` the path's arrow key, `to` writes a new one. */
+  function tipGroup(ctx: PaCtx, now: string, to: (spec: string, metaNeeded: boolean) => void): PaItem[] {
+    const T = TM(), [s, e] = T.tipEnds(now) ?? ['', ''], declared = new Set((ctx.facts?.tips ?? []).map((x: Rec) => String(x.name)));
+    // a run that declared arrows.meta's tips has the library
+    const loaded = [...declared].some((d) => META.test(d)), meta = (t: string) => !loaded && META.test(T.tipParts(t)?.name ?? t);
+    const put = (a: string, b: string) => to(T.tipSpec(a, b), meta(a) || meta(b));
+    return [...TIPS.map(([label, v]) => ({ label, on: T.tipSpec(...(T.tipEnds(v) ?? ['', ''])) === T.tipSpec(s, e), run: () => put(...(T.tipEnds(v) ?? ['', ''])) })),
+      { label: 'Start', head: 'Each end', items: tipRows(ctx, s, true, (t) => put(t, e)) }, { label: 'End', items: tipRows(ctx, e, false, (t) => put(s, t)) }];
+  }
   self.satexPageActions.register({
     name: 'tikz-edge', title: 'TikZ paths', about: 'A path\'s arrow tips, color, width, dash, routing (straight, right angles, bends, angles) and a new label', type: 'tikz', targets: ['tikz-edge'],
     groups(t, ctx) {
       const T = TM(), e: TikzEdge = t.e, k: number = t.k, stmt = ctx.text.slice(e.from, e.to), tip = T.tipOf(e), g = T.segOf(stmt, k);
       const put = (s: string | null, pre: PaEdit[] = []) => { if (s != null && s !== stmt) ctx.write([...pre, { from: e.from, to: e.to, now: s }]); };
-      const tipTo = (v: string) => { const meta = /[A-Z]/.test(v) && !(ctx.facts?.tips ?? []).some((x: Rec) => v.includes(x.name)); const pre = needs(ctx, meta ? 'arrows.meta' : null, `The ${v} tip`); if (pre) put(T.tip(stmt, v), pre); };
+      const tipTo = (v: string, meta: boolean) => { const pre = needs(ctx, meta ? 'arrows.meta' : null, `The ${v} tip`); if (pre) put(T.tip(stmt, v), pre); };
       const bent = g?.keys.map((x) => /^bend (left|right)(?:\s*=\s*(.*))?$/.exec(x)).find(Boolean), angles = !!g?.keys.some((x) => /^(in|out)\s*=/.test(x));
       const bendRows = (side: string): PaItem[] => [...['15', '30', '45', '60'].map((a) => ({ label: `${a}°`, on: bent?.[1] === side && (bent[2] ?? '30') === a, run: () => put(T.bend(stmt, k, side, +a)) })),
         custom(ctx, 'Custom…', 'the bend angle in degrees', bent?.[2] ?? '30', (v) => { if (Number.isFinite(+v)) put(T.bend(stmt, k, side, +v)); })];
       const loose = /^looseness\s*=\s*(.*)$/.exec(g?.keys.find((x) => /^looseness/.test(x)) ?? '')?.[1] ?? '1';
       return [
-        { title: 'Arrow tips', items: TIPS.map(([label, v]) => ({ label, on: v === tip || (!v && !tip), run: () => tipTo(v) })) },
+        { title: 'Arrow tips', items: tipGroup(ctx, tip, tipTo) },
         { title: 'Style', items: styleRows(ctx, stmt, -1, put, true) },
         ...(g ? [{ title: 'Route', items: [
           { label: 'Straight', on: g.kind === '--' || (g.kind === 'to' && !bent && !angles), run: () => put(g.kind === 'to' ? T.bend(stmt, k, null) : T.route(stmt, k, '--')) },
@@ -457,6 +541,24 @@ declare global {
         ] },
         { title: 'Arrange', inline: true, items: [{ label: 'Delete path', run: () => ctx.write([cut(ctx.text, e.from, e.to)]) }] },
       ];
+    },
+  });
+  self.satexPageActions.register({
+    name: 'tikz-bend', title: 'TikZ bend points', about: 'A bend point of a path (a coordinate between two segments): removed, or the path a curve through it', type: 'tikz', targets: ['tikz-bend'],
+    groups(t, ctx) {
+      const T = TM(), e: TikzEdge = t.e, k: number = t.k, stmt = ctx.text.slice(e.from, e.to), c: [number, number] | null = t.curve;
+      const put = (s: string | null) => { if (s != null && s !== stmt) ctx.write([{ from: e.from, to: e.to, now: s }]); };
+      return [{ title: 'Bend point', inline: true, items: [{ label: 'Remove bend point', run: () => put(T.bendRemove(stmt, k)) },
+        ...(c ? [{ label: 'Convert to curve', hint: `out=${Math.round(c[0])}, in=${Math.round(c[1])}`, run: () => put(T.bendCurve(stmt, k, c[0], c[1])) }] : [])] }];
+    },
+  });
+  self.satexPageActions.register({
+    name: 'tikz-grid', title: 'TikZ picture grid', about: 'A grid over one picture in its own units, its axes labelled at the origin: switched per picture', type: 'tikz', targets: ['tikz-node', 'tikz-label', 'tikz-edge', 'tikz-bend'],
+    groups(t, ctx) {
+      const at: number | undefined = (t.n ?? t.e)?.pic?.at;
+      if (at == null || !ctx.grid) return [];
+      const on = ctx.grid(at);
+      return [{ title: 'Picture', inline: true, items: [{ label: 'Show grid', on, hint: 'Ctrl snaps to it', run: () => { ctx.grid!(at, !on); } }] }];
     },
   });
   self.satexPageActions.register({
@@ -517,6 +619,42 @@ declare global {
     const all = text.split('\n');
     return [...S.slice(0, load), `%% from ${file}`, ...all.slice(0, from - 1), ...marked, ...all.slice(to), ...S.slice(load + 1)].join('\n') + '\n';
   }
+  /** A brace-balanced run of lines from 1-based `line` of `L`: a definition over several lines comes whole. */
+  function balanced(L: string[], line: number): [number, number] {
+    let depth = 0, b = line;
+    for (; b <= L.length; b++) {
+      for (const m of (L[b - 1] ?? '').replace(/\\[\\{}%]|%.*$/g, '').matchAll(/[{}]/g)) depth += m[0] === '{' ? 1 : -1;
+      if (depth <= 0) break;
+    }
+    return [line, Math.min(b, L.length)];
+  }
+  /** The local scratch text: the root's preamble as it stands (the same prefix: its run resumes warm), the body's
+   * definitions the region needs, the region between the markers, the end. `defs` are the slice's definitions in the
+   * document's own files (`file`, 1-based `line`, `name`); one counts when the region or a kept line names it and it
+   * stands in the body outside the region. Null when the root has no `\begin{document}`. */
+  function local(texts: Record<string, string>, root: string, file: string, from: number, to: number, defs: { file: string; line: number; name: string }[]): string | null {
+    const R = texts[root]!.split('\n'), begin = R.findIndex((l) => /^[^%]*\\begin\s*\{document\}/.test(l));
+    if (begin < 0) return null;
+    const own = texts[file]!.split('\n'), region = own.slice(from - 1, to), head = `${MARK} begin ${file}:${from}-${to}: Merge back writes the lines up to the end marker there`;
+    if (file === root && from <= begin + 1) return [...R.slice(0, from - 1), head, ...region, `${MARK} end`, ...R.slice(to, begin + 1), '\\end{document}', ''].join('\n');
+    const inBody = (d: { file: string; line: number }) => d.file in texts && !(d.file === root && d.line <= begin + 1) && !(d.file === file && d.line >= from && d.line <= to);
+    const named = (text: string, name: string) => new RegExp(`${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![A-Za-z])`).test(text);
+    const kept = new Map<string, [string, number, number]>();
+    let text = region.join('\n'), grew = true;
+    while (grew) {
+      grew = false;
+      for (const d of defs) {
+        const key = `${d.file}:${d.line}`;
+        if (kept.has(key) || !inBody(d) || !/^\\[A-Za-z]+$/.test(d.name) || !named(text, d.name)) continue;
+        const L = texts[d.file]!.split('\n'), [a, b] = balanced(L, d.line);
+        kept.set(key, [d.file, a, b]);
+        text += `\n${L.slice(a - 1, b).join('\n')}`;
+        grew = true;
+      }
+    }
+    const body = [...kept.values()].sort((x, y) => x[0].localeCompare(y[0]) || x[1] - y[1]).flatMap(([f, a, b]) => [`%% from ${f}:${a}`, ...texts[f]!.split('\n').slice(a - 1, b)]);
+    return [...R.slice(0, begin + 1), ...body, ...(file === root ? [] : [`%% from ${file}`]), head, ...region, `${MARK} end`, '\\end{document}', ''].join('\n');
+  }
   /** The marked region of a scratch text, null when a marker is gone. */
   function extract(text: string): ScRegion | null {
     const L = text.split('\n'), a = L.findIndex((l) => l.startsWith(`${MARK} begin `)), b = L.findIndex((l, i) => i > a && l.startsWith(`${MARK} end`));
@@ -556,14 +694,16 @@ declare global {
       const hit = around.filter(([e]) => kind.test(e)).sort((a, b) => a[1] - b[1])[0];
       if (hit) return [hit[1], hit[2], kind === FLOATS ? hit[0].replace(/\*$/, '').replace(/^(?:wrap|sideways)/, '') : 'equation'];
     }
-    const blank = (i: number) => !L[i - 1]?.trim() || /\\(?:begin|end)\s*\{document\}/.test(L[i - 1]!);
+    // a paragraph ends at a blank line, the document's frame, a heading or a page break
+    const head = (i: number) => /^\s*\\(?:part|chapter|(?:sub)*section|(?:sub)?paragraph|clearpage|newpage|maketitle|tableofcontents)\b/.test(L[i - 1] ?? '');
+    const blank = (i: number) => !L[i - 1]?.trim() || /\\(?:begin|end)\s*\{document\}/.test(L[i - 1]!) || head(i);
     let a = Math.max(1, Math.min(line, L.length)), b = a;
-    if (blank(a)) return [a, a, 'line'];
+    if (blank(a)) return [a, a, head(a) ? 'heading' : 'line'];
     while (a > 1 && !blank(a - 1)) a--;
     while (b < L.length && !blank(b + 1)) b++;
     return [a, b, 'paragraph'];
   }
-  self.satexScratch = { build, extract, merge, apply, block };
+  self.satexScratch = { build, local, extract, merge, apply, block };
   self.satexPageActions.register({
     name: 'slice', title: 'Scratch slices', about: 'Work on a paragraph, figure, table or equation in a scratch document: its slice, fast to check and build, merged back after', type: 'slice',
     targets: ['block', 'tikz-node', 'tikz-label', 'tikz-edge', 'forest-node', 'table-column'],

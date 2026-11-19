@@ -61,6 +61,7 @@ test("TikZ nodes snapped, reshaped and labelled from the PDF (pdfedit.ts)", asyn
   assert.equal(T.tip(st, '<->'), '\\draw[<->, thick] (a) -- (b);');
   assert.equal(T.tip(st, ''), '\\draw[thick] (a) -- (b);');
   assert.equal(T.tip('\\draw[->] (a) -- (b);', ''), '\\draw (a) -- (b);');
-  assert.equal(T.tip('\\draw[flow] (a) -- (b);', ''), '\\draw[-, flow] (a) -- (b);', 'a style may give a tip: none written');
+  assert.equal(T.tip('\\draw[flow] (a) -- (b);', ''), '\\draw[flow, -] (a) -- (b);', 'a style may give a tip: none written after it, the later key wins');
+  assert.equal(T.tip('\\draw[flow] (a) -- (b);', '<->'), '\\draw[flow, <->] (a) -- (b);', 'a tip after the style that may give one');
   assert.equal(T.tip('\\draw (a) -- (b);', '->'), '\\draw[->] (a) -- (b);');
 });

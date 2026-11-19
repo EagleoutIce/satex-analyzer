@@ -908,7 +908,7 @@
   function checking() { phase(`Analyzing ${state.file}…`); checkStart = performance.now(); }
 
   /** Completion order and the lists kept for a busy worker (views.ts `complete`). */
-  const { rank, kept: keptList, reselect, mathItem, docOf, plainSnippet, opensArgument } = self.satexViews.complete;
+  const { rank, kept: keptList, reselect, mathItem, docOf, plainSnippet, opensArgument, stepsOver } = self.satexViews.complete;
   /** Whether offset `at` of `text` is in math (`$…$`, `\\(…\\)`, `\\[…\\]`, a math environment), read from the paragraph's start
    * as pdfedit.ts `scan` reads it: math commands rank first there. */
   const inMath = (text, at) => !!self.satexPdfEdit.scan(text, Math.max(0, text.lastIndexOf('\n\n', at - 1)), at, self.satexPdfEdit.start()).math;
@@ -1118,7 +1118,17 @@
       return html ? Object.assign(document.createElement('div'), { className: 'hover cm-item-card', innerHTML: html }) : null;
     }
     /** What taking `i` writes: its snippet (fields as CodeMirror's `#{n:text}`) or text. */
-    const itemApply = (i) => again(i, i.additionalTextEdits?.length ? withLoads(i) : i.insertTextFormat === 2 ? ac.snippet((i.insertText ?? i.textEdit?.newText ?? i.label).replace(/\$\{(\d+)(:[^}]*)?\}|\$(\d+)/g, (_, n, text, bare) => `#{${n ?? bare}${text ?? ''}}`)) : i.textEdit?.newText ?? i.insertText ?? i.label);
+    const itemApply = (i) => again(i, closing1(i, i.additionalTextEdits?.length ? withLoads(i) : i.insertTextFormat === 2 ? ac.snippet((i.insertText ?? i.textEdit?.newText ?? i.label).replace(/\$\{(\d+)(:[^}]*)?\}|\$(\d+)/g, (_, n, text, bare) => `#{${n ?? bare}${text ?? ''}}`)) : i.textEdit?.newText ?? i.insertText ?? i.label));
+    /** An item that writes its name's closing brace (`tabular}` after `\\end{tab`) takes the `}` already after the caret along, so
+     * the name never ends in two (`\\end{tabular}}`, a list kept from another place has no range that would cover it). */
+    function closing1(i, apply) {
+      if (!(i.textEdit?.newText ?? i.insertText ?? '').startsWith(`${i.label}}`)) return apply;
+      return (v, c, from, to) => {
+        const end = to + (v.state.sliceDoc(to, to + 1) === '}' ? 1 : 0);
+        if (typeof apply === 'function') apply(v, c, from, end);
+        else v.dispatch({ changes: { from, to: end, insert: apply }, selection: { anchor: from + apply.length }, userEvent: 'input.complete' });
+      };
+    }
     /** An item that brings other edits (`additionalTextEdits`: the `\\usepackage` or `\\usetikzlibrary` its name needs) written with
      * them in one transaction, so one undo takes both: its snippet as plain text, the caret in its first field. A load the text
      * has meanwhile is not written twice. */
@@ -1287,7 +1297,8 @@
       lsp('textDocument/linkedEditingRange', { textDocument: { uri: uri() }, position: position(doc, pos) }).catch(() => null).then((found) => {
         if (v.state.doc !== doc || !inEnvName(v.state, v.state.selection.main.head)) return;
         const ranges = found?.ranges?.map((x) => [at(doc, x.start), at(doc, x.end)]);
-        v.dispatch({ effects: linkedSet.of(ranges?.length === 2 ? ranges : null) });
+        // a `\begin` the server paired with another environment's `\end` (its own not written yet) links nothing
+        v.dispatch({ effects: linkedSet.of(ranges?.length === 2 ? linkedKept(ranges, v.state.doc) : null) });
       });
     }
     // The `}` of a `\begin{name}` the document does not close yet adds its
@@ -1295,13 +1306,15 @@
     const closeEnvironment = view.EditorView.inputHandler.of((v, from, to, text) => {
       if (text !== '}' || from !== to || state.file in state.ro) return false;
       const s = v.state, line = s.doc.lineAt(from);
+      // a `}` typed before the `}` a completion or the editor wrote, where the line's braces are closed, steps over it
+      const over = () => { if (!stepsOver(line.text, from - line.from)) return false; v.dispatch({ selection: { anchor: from + 1 }, userEvent: 'select' }); return true; };
       const name = line.text.slice(0, from - line.from).match(/\\begin\s*\{([^{}%]*)$/)?.[1].trim();
-      if (!name) return false;
+      if (!name) return over();
       const code = s.doc.toString().replace(/(^|[^\\])%.*$/gm, '$1'), quoted = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
       const count = (kind) => code.match(new RegExp(`\\\\${kind}\\s*\\{\\s*${quoted}\\s*\\}`, 'g'))?.length ?? 0;
       // an editor-closed `}` already completes this `\begin`
       const closed = s.sliceDoc(from, from + 1) === '}';
-      if (count('begin') + !closed <= count('end')) return false;
+      if (count('begin') + !closed <= count('end')) return over();
       const indent = line.text.match(/^\s*/)[0];
       v.dispatch({ changes: [{ from, to: from + closed, insert: '}' }, { from: line.to, insert: `\n${indent}\\end{${name}}` }],
         selection: { anchor: from + 1 }, userEvent: 'input.type' });
@@ -2999,7 +3012,7 @@
   /** The refactor plugins' rows at the cursor (refactor.ts, target `source`: the cursor, the selection), as menu rows. */
   function refactorRows(x, y) {
     const text = editor.text(), [a, b] = editor.cursor().slice().sort((p, q) => p - q);
-    const ctx = { text, all: docTexts(), x, y, facts: null, write: (edits) => paWrite(text, edits), toast, pick: tikzPick, colAlign: () => {}, caret: (o) => { editor.select([o, o]); editor.refocus?.(); } };
+    const ctx = { text, all: docTexts(), x, y, facts: null, write: (edits) => paWrite(text, edits), toast, pick: tikzPick, grid: tikzGrid, file: state.file, colAlign: () => {}, caret: (o) => { editor.select([o, o]); editor.refocus?.(); } };
     const row = (it) => [it.label, it.hint ?? '', it.items ? it.items.map(row) : it.run];
     return self.satexPageActions.groups({ kind: 'source', at: a, end: b, sel: a < b ? [a, b] : null }, ctx, configSet).flatMap((g) => g.items.map(row));
   }
@@ -4746,11 +4759,22 @@
     const root = state.root ?? state.file, text = state.texts[file];
     if (text == null || file in state.ro) return toast('Only a file of the project can be sliced');
     toast(`Slicing ${file}:${from}–${to}…`, 10000);
-    const need = unlanded(wanted_(named(projectTexts()), state.kernel, true));
-    if (need.length) await land(need);
-    const data = await runCommand({ type: 'run', args: [...flags(), 'slice', '--at', `${file === root ? '' : `${file}:`}${from}:1-${to}`, '-f', root], edits: edits(), cwd: state.dir }).catch(() => null);
-    const printed = (data?.lines ?? []).filter(([kind]) => kind === 'out').map(([, t]) => plain(t)).join('\n');
-    const body = printed.trim() ? SCR.build(printed, file, state.texts[file], from, to, file === root) : null;
+    const at = `${file === root ? '' : `${file}:`}${from}:1-${to}`;
+    // the slice of the run the page has (warm): the definitions in the document's own files the region depends on
+    let dbgErr = null; const raw = await lsp('workspace/executeCommand', { command: 'satex/query', arguments: [{ file: path(root), queries: [{ type: 'slice', at }] }] }).catch((e) => { dbgErr = String(e?.message ?? e); return null; });
+    const [got] = raw ?? [];
+    const names = new Map(state.files.map((n) => [path(n), n]));
+    self.__scratchDbg = { dbgErr, raw: raw === null ? 'null' : typeof raw, got: got && { error: got.error, n: got.records?.length, first: got.records?.slice(0, 3), own: got.records?.filter((r) => r.tag === 'macro-definition' && names.has(r.path)).length }, root, at };
+    const defs = (got?.records ?? []).filter((r) => r.tag === 'macro-definition' && names.has(r.path)).map((r) => ({ file: names.get(r.path), line: r.line, name: r.name }));
+    let body = got?.records?.length ? SCR.local(state.texts, root, file, from, to, defs) : null;
+    if (!body) {
+      // no run to slice from: the console's `satex slice`, whole
+      const need = unlanded(wanted_(named(projectTexts()), state.kernel, true));
+      if (need.length) await land(need);
+      const data = await runCommand({ type: 'run', args: [...flags(), 'slice', '--at', at, '-f', root], edits: edits(), cwd: state.dir }).catch(() => null);
+      const printed = (data?.lines ?? []).filter(([kind]) => kind === 'out').map(([, t]) => plain(t)).join('\n');
+      body = printed.trim() ? SCR.build(printed, file, state.texts[file], from, to, file === root) : null;
+    }
     toast.off?.();
     if (!body) return toast(`No slice of ${file}:${from}–${to}: the run reached none of its lines`);
     const dir = root.replace(/[^/]*$/, ''), stem = `${dir}scratch-${file.split('/').pop().replace(/\.\w+$/, '')}-${from}-${to}`;
@@ -4765,9 +4789,8 @@
     manualKernel = false;
     choose(name);
     scratchBar();
-    const at = body.split('\n').findIndex((l) => l.startsWith('% satex-scratch begin'));
-    if (at >= 0) editor.focus({ start: { line: at + 1, character: 0 }, end: { line: at + 1 + to - from, character: 0 } }, true);
-    await restart();
+    const mark = body.split('\n').findIndex((l) => l.startsWith('% satex-scratch begin'));
+    if (mark >= 0) editor.focus({ start: { line: mark + 1, character: 0 }, end: { line: mark + 1 + to - from, character: 0 } }, true);
   }
   /** The scratch document closed, the root before back; `say` the toast. */
   async function scratchDrop(say) {
@@ -4784,7 +4807,7 @@
     state.root = state.files.includes(root) ? root : state.files.find(rootable) ?? state.files[0];
     if (!state.open.includes(file)) state.open.push(file);
     if (state.file === name || !state.file) { state.file = null; choose(file); } else redraw();
-    await restart();
+    analyze();
     if (say) toast(say);
   }
   /** Merge back: the region's changes as a diff, written over the lines they came from, wherever those stand now; a
@@ -6210,8 +6233,9 @@
       img.__build = pdf;
       // a page with no image yet (a placeholder the overlay replaced) gets one
       // the page typed on crossfades (120 ms): what the echo got slightly off settles, never jumps
-      // (not when the echo pushed the text below: the old page fading on top would show it unpushed, under the echo's rows)
-      if (old && typed(el) < 0 && pdfPushed?.page !== +el.dataset.page) { old.replaceWith(img); old.classList.add('pdf-fade'); img.after(old); setTimeout(() => old.remove(), 130); }
+      // (not when the echo pushed the text below: the old page fading on top would show it unpushed, under the echo's rows;
+      // nor while an echo shows: the redraw below removes it, the old page fading on top would show the old words alone)
+      if (old && typed(el) < 0 && pdfPushed?.page !== +el.dataset.page && !el.querySelector('.pdf-echo')) { old.replaceWith(img); old.classList.add('pdf-fade'); img.after(old); setTimeout(() => old.remove(), 130); }
       else if (old) old.replaceWith(img); else el.prepend(img);
       pdfRastersDraw(el, img, view.images?.(n) ?? []);
       pdfPaperMark(el);
@@ -6263,7 +6287,9 @@
     pdfViewsLabel();
     pdfViewsSel.classList.toggle('pdf-err', !!errors);
     // a live edit keeps the pages where they stood
-    const was = (pdfCaret || pdfDrag) && pdfBody.querySelector('.pdf-pages');
+    // the builds after a drag (pdfHold: until the viewer scrolls or clicks, at most 15 s) too: the pages stay at the
+    // table, they do not follow the editor's cursor
+    const was = (pdfCaret || pdfDrag || pdfHeld()) && pdfBody.querySelector('.pdf-pages');
     // a restore still pending keeps its place: it is where the viewer looked
     if (!pdfKeep && was) pdfKeep = [was.scrollLeft, was.scrollTop];
     // the pages shown so far, kept in place until redrawn: no blank flash, the same scroll
@@ -6280,6 +6306,7 @@
       + `<ol class="pdf-cmds">${runs.map(pdfCommand).join('')}</ol>`
       + (shows.length ? `<details class="pdf-shows"><summary class="muted">How the playground shows the build (${shows.length})</summary><ol class="pdf-cmds">${shows.map(pdfCommand).join('')}</ol></details>` : '') + '</div>';
     pdfViewShow();
+    pdfWroteNote(records);
     const undo = pdfBody.querySelector('.pdf-fail [data-do="undo"]');
     if (undo) { undo.onmousedown = (e) => e.preventDefault(); undo.onclick = () => pdfTypeUndo(); }
     pdfBody.querySelectorAll('.pdf-frame').forEach((f) => pdfStep(f, +f.dataset.step));
@@ -6312,7 +6339,7 @@
   }
   function pdfSettle() {
     clearTimeout(pdfLoadTimer);
-    pdfLoadTimer = setTimeout(() => { if (pdfZoom.fit === 'page') pdfZoomTo(0, 'page'); if (pdfKeep) { const p = pdfBody.querySelector('.pdf-pages'); [p.scrollLeft, p.scrollTop] = pdfKeep; pdfKeep = null; } else if (pdfFollowOn && !pdfTyping && !pdfDrag) pdfFollow(true); pdfOverlay(); }, 50);
+    pdfLoadTimer = setTimeout(() => { if (pdfZoom.fit === 'page') pdfZoomTo(0, 'page'); if (pdfKeep) { const p = pdfBody.querySelector('.pdf-pages'); [p.scrollLeft, p.scrollTop] = pdfKeep; pdfKeep = null; } else if (pdfFollowOn && !pdfTyping && !pdfDrag && !pdfHeld()) pdfFollow(true); pdfOverlay(); pdfWroteDraw(); }, 50);
   }
   /** The commands of the build: the server's, the engine runs `satex compile` names on its console (`$ …`) after it. */
   const pdfRuns = () => (pdf.commands ?? []).flatMap((r) => [r, ...(/ compile( |$)/.test(r.command) ? String(pdf.stderr ?? '').split('\n').filter((l) => l.startsWith('$ ')).map((l) => ({ command: l.slice(2), inner: true })) : [])]);
@@ -6327,6 +6354,28 @@
     const what = rec ? `${rec.message} (${rec.line ? `${rec.path}:${rec.line}` : rec.path})` : bang ? `${bang[1]}${at ? ` (line ${at[1]})` : ''}` : pdf.error ?? `the build stopped (exit ${status})`;
     const undo = pdfLastType && state.file === pdfLastType.file && pdfLastType.after === editor.text() ? '<button type="button" class="small" data-do="undo">Undo typing since the last good build</button>' : '';
     return `<p class="pdf-head pdf-fail x-err" role="alert"><span>${pdf.error && rec ? `${escape(pdf.error)}: ` : status || !pdf.pdf ? 'The build failed: ' : 'TeX stopped at an error: '}${escape(what)}</span> ${undo}</p>`;
+  }
+  /** The builds after a widget wrote a table (pdfWrote): an error they end with shows at the table, saying whether
+   * the change broke it or it was there before; without its place on a page, at the head of the pages. Each build's
+   * records are kept as the next change's "before". */
+  function pdfWroteNote(records) {
+    const w = pdfWrote, note = w && w.file === state.file && PE.failNote(records, w.before);
+    // kept while the builds after the change fail (a drag's live builds, its last one); a good build ends it
+    if (!note) pdfWrote = null;
+    pdfShownRecords = records;
+    pdfWroteShown = note ? { ...w, note } : null;
+    pdfWroteDraw();
+  }
+  /** pdfWroteNote's note drawn: above the table once its page has its size, else at the head of the pages. */
+  var pdfWroteShown = null;
+  function pdfWroteDraw() {
+    pdfBody.querySelectorAll('.pdf-wrote-fail').forEach((n) => n.remove());
+    const w = pdfWroteShown;
+    if (!w) return;
+    const b = PE.extent(pdf?.boxes ?? [], w.file, w.table), el = b && pdfBody.querySelector(`.pdf-page[data-page="${b.page}"]`), img = el?.querySelector('img');
+    const p = Object.assign(document.createElement('p'), { className: 'pdf-wrote-fail x-err', role: 'alert', textContent: w.note });
+    if (el && img?.naturalWidth) { const [pw, ph] = pageSize(img); p.style.top = `${Math.max(0, (b.y - b.h) / ph * 100)}%`; p.style.left = `${b.x / pw * 100}%`; el.append(p); }
+    else { p.className = 'pdf-head pdf-wrote-fail x-err'; pdfBody.querySelector('.pdf-pages')?.before(p); }
   }
   /** The Type edits since the last good build: their file, the text before the first and after the last. Undo puts
    * the text back while nothing else changed since. */
@@ -6445,6 +6494,8 @@
     const pos = editor?.position();
     // every call clears the last place first: a return below never leaves it drawn (a Type caret, another file, no build)
     pdfMarksOff();
+    // a drag and the builds after it keep the pages at the table (pdfHeld)
+    if (pdfDrag || pdfHeld()) return;
     // typing in the pages moves the editor's cursor: the caret keeps the view (pdfCaretAnchor), no follow
     if (!pdf?.boxes || pdf.slice || !pos || !again && (!pdfFollowOn || pdfCaret?.view === 'pdf') || $('play-pdf').classList.contains('pdf-other')) return;
     const line = pos.line + 1, key = `${state.file}:${line}`, moved = key !== pdfLine;
@@ -7468,6 +7519,7 @@
     shownFor(pdfBody, uri(), diagnosticVersions[uri()], 'ov-stale');
     pdfFacetsDraw();
     pdfOverlayDraw();
+    tikzGridDraw();
     for (const [k, cls] of [['envs', 'pdf-env'], ['figures', 'pdf-fig'], ['widths', 'pdf-col'], ['findings', 'pdf-finding'], ['glue', 'pdf-glue']]) {
       self.satexLayers.count($('pdf-layer-list'), k, pdfOverlayOn[k] && pdfBody.querySelectorAll(`.pdf-ov.${cls}`).length);
     }
@@ -7576,8 +7628,9 @@
       // while the pages lag the text (typing, the echo shows) the tints stay those of the text they were built from,
       // moved with the echo (pdfRelay): the new text's runs found among the old page's words would land astray
       const lag = pdfBuiltText(pdf) != null && pdfBuiltText(pdf) !== editor.text(), kept = lag && pdfTintsOf?.pdf === pdf;
+      // (none kept: none until the build lands, the new text's lines matched against the old pages' would tint another row)
       const tints = kept ? [...pdfTintsOf.tints] : [];
-      for (const r of kept ? [] : typesetRows ?? []) {
+      for (const r of lag ? [] : typesetRows ?? []) {
         if (!r.sites) continue;
         const chars = rowOrigins(r), runs = originRuns(chars);
         if (!runs.length) continue;
@@ -7678,7 +7731,7 @@
   /** The open file's tables with the widths a drag rewrites (src/lsp/dialogs.rs `columns`), `\linewidth` in pt. */
   /** The column chip whose ⋯ menu (the page actions' `table-column`) is open (`table:column`), kept while the layer redraws. */
   var pdfColMenu = null;
-  var pdfCols = null, pdfDrag = null, pdfTyping = true, pdfCaret = null, pdfKeep = null; // var: a run may end before these lines ran
+  var pdfCols = null, pdfDrag = null, pdfTyping = true, pdfCaret = null, pdfKeep = null, pdfHold = 0, pdfWrote = null, pdfShownRecords = null; // var: a run may end before these lines ran
   /** The last build's round trip, from Compile to its first page shown: live typing needs it short. */
   var pdfRound = { start: 0, ms: Infinity };
   const LIVE_MS = 300;
@@ -7735,6 +7788,10 @@
       d.node = { ...d.node, text: body, body_at: [0, body.length], range: { start: at, end: { line: at.line, character: at.character + body.length } } };
       // written once: the package is loaded, later sends rewrite only the letter
       delete d.node.package;
+      // the next build says at the table when it fails (pdfWroteNote), against the build shown before the drag
+      d.shown ??= pdfShownRecords;
+      const tab = pdfCols?.tables[d.t];
+      if (tab) pdfWrote = { file: state.file, table: tab, before: d.shown };
       if (pdfLive()) pdfRebuild(true);
       return true;
     });
@@ -7763,10 +7820,14 @@
       editor.squash?.(d.before);
     } finally {
       pdfDrag = null;
+      pdfHold = performance.now();
       pdfColsAsk();
       pdfRebuild(true);
     }
   }
+  /** Whether the pages hold their place after a drag: until the viewer scrolls or clicks, at most 15 s. */
+  function pdfHeld() { return pdfHold > 0 && performance.now() - pdfHold < 15000; }
+  for (const t of ['wheel', 'pointerdown', 'keydown']) pdfBody.addEventListener(t, () => { if (!pdfDrag) pdfHold = 0; }, { passive: true });
   /** The handle keys step: focused again once the overlay redraws it. */
   var pdfGripFocus = null;
   pdfBody.addEventListener('pointerdown', (e) => {
@@ -7804,7 +7865,7 @@
    * at its frame (a few px around the outline), its grip, or anywhere with Alt. A ghost shows where it lands and what is
    * written; it snaps to the picture's other nodes (centres, edges, equal gaps; Shift: no snapping). A right click opens
    * its page actions' menu (actions.ts), its handle above turns it. Every write goes
-   * through the snapshot printer, one undo step. Ctrl: a placed node (`right=of a`) gets `at (x,y)` instead of shifts. */
+   * through the snapshot printer, one undo step. Ctrl: its centre on the picture's grid; Alt: a placed node (`right=of a`) gets `at (x,y)` instead of shifts. */
   const TM = self.satexTikzMove, CM = 72 / 2.54, TIKZ_SEP = 3.3, TIKZ_SNAP = 2 * CM / 10;
   let tikzSeen = null, tikzMoving = null;
   /** The open file's picture nodes with their boxes in bp and the picture's origin on the page, when a centred node shows it. */
@@ -7852,8 +7913,9 @@
     // the grip's lock: locked, the nodes placed from this one move with it; a click unlocks it
     const deps = p.n.kind === 'node' ? TM.dependents(editor.text(), p.n).all.length : 0, free = tikzFree.has(tikzKey(p.n));
     const lock = deps ? ` ${free ? `Unlocked: a drag moves only ${what}, the ${plural(deps, 'node')} placed from it stay where they are` : `Locked: the ${plural(deps, 'node')} placed from it move along`}. Click to ${free ? 'lock' : 'unlock'}.` : '';
-    el.innerHTML = cls.includes('ghost') ? `<b>${escape(label)}</b>` : `<i class="pdf-tikz-grip${deps ? ` pdf-tikz-lock${free ? ' pdf-tikz-free' : ''}` : ''}" title="Drag to move ${escape(what)}${p.n.kind === 'label' ? ' along its path' : ''}: it snaps to the other nodes (Shift: no snapping, Ctrl: to a fixed place).${escape(lock)} Right click: its shape, style, text, rotation and new edges"></i>` +
-      (p.n.kind === 'node' ? `<i class="pdf-tikz-rot" title="Drag to rotate ${escape(what)} in 15° steps (Shift: 1°)"></i>` : '');
+    el.innerHTML = cls.includes('ghost') ? `<b>${escape(label)}</b>` : `<i class="pdf-tikz-grip${deps ? ` pdf-tikz-lock${free ? ' pdf-tikz-free' : ''}` : ''}" title="Drag to move ${escape(what)}${p.n.kind === 'label' ? ' along its path' : ''}: it snaps to the other nodes (Shift: no snapping, Ctrl: on the picture's grid, Alt: to a fixed place).${escape(lock)} Right click: its shape, style, text, rotation and new edges"></i>` +
+      (p.n.kind === 'node' ? `<i class="pdf-tikz-rot" title="Drag to rotate ${escape(what)} in 15° steps (Shift: 1°)"></i>` : '') +
+      (cls.includes('ghost') ? '' : `<i class="pdf-tikz-gridbtn${tikzGridOn.has(p.n.pic.at) ? ' on' : ''}" role="button" title="The grid of this picture, in its units (Ctrl snaps to it)"></i>`);
     el.dataset.k = String(tikzSeen.list.indexOf(p));
     host.append(el);
   }
@@ -7884,10 +7946,17 @@
     tikzFrame = requestAnimationFrame(() => {
       tikzFrame = 0;
       if (e.target.closest?.('.pdf-tikz, .pa-menu, .tikz-input')) return;
-      tikzClear('.pdf-tikz');
+      if (e.target.closest?.('.pdf-tikz-bend, .pdf-size')) return;
+      tikzClear('.pdf-tikz, .pdf-tikz-path, .pdf-tikz-bend, .pdf-size');
       for (const el of pdfBody.querySelectorAll('.pdf-tikz-hot')) el.classList.remove('pdf-tikz-hot');
       const pt = tikzPoint(e), hit = tikzHit(pt);
-      if (!hit) return;
+      if (!hit) {
+        const g = pt && !pdf?.slice && (tikzBendAt(pt) ?? tikzEdgeAt(pt));
+        if (g) { tikzPathMark(g.e); pt[4].parentElement.classList.add('pdf-tikz-hot'); return; }
+        const q = pdfSizerAt(pt);
+        if (q) pdfSizerMark(q);
+        return;
+      }
       tikzMark(hit.p, 'pdf-tikz');
       // the move cursor where a press drags, the text cursor over a node's text in Type mode
       if (tikzDrags(hit, e)) pt[4].parentElement.classList.add('pdf-tikz-hot');
@@ -7904,16 +7973,20 @@
       const q = r && at(+r.label.slice(4));
       return r && { ...r, stmt, d: [q[0] + off[0] - p.c[0], q[1] + off[1] - p.c[1]] };
     }
-    // snapped to the picture's other nodes on the page: a snapped axis is written to 0.1 mm, else on the 0.5 mm grid
-    const others = e.shiftKey ? [] : tikzSeen.list.filter((q) => q !== p && q.n.kind === 'node' && q.n.pic === p.n.pic && q.page === p.page);
-    const s = TM.snap(p, [dx, dy], others, TIKZ_SNAP), grid = s.d.map((v, j) => (v !== [dx, dy][j] ? 0.01 : 0.05));
+    // Ctrl: its centre on the picture's grid (an `at`); else snapped to the picture's other nodes on the page: a snapped
+    // axis is written to 0.1 mm, else on the 0.5 mm grid
+    const onGrid = (e.ctrlKey || e.metaKey) && !!p.origin;
+    const others = e.shiftKey || onGrid ? [] : tikzSeen.list.filter((q) => q !== p && q.n.kind === 'node' && q.n.pic === p.n.pic && q.page === p.page);
+    const s = TM.snap(p, [dx, dy], others, TIKZ_SNAP);
+    let grid = s.d.map((v, j) => (v !== [dx, dy][j] ? 0.01 : 0.05));
+    if (onGrid) { const conv = TM.convention(text.slice(p.n.pic.at, text.indexOf('\\end{tikzpicture}', p.n.pic.at)), true); grid = [tikzStep(p.n.pic, conv), tikzStep({ x: p.n.pic.y }, conv)]; }
     [dx, dy] = s.d;
-    if (p.n.placed && (e.ctrlKey || e.metaKey) && p.origin) {
+    if ((p.n.placed && e.altKey || onGrid) && p.origin) {
       const r = TM.move(stmt, p.n.i, p.n.pic, { to: [(p.c[0] + dx - p.origin[0]) / CM, (p.origin[1] - p.c[1] - dy) / CM], grid });
       return r && { ...r, stmt, snap: s, d: [p.origin[0] + r.by[0] * k - p.c[0], p.origin[1] - r.by[1] * k - p.c[1]] };
     }
-    // relative by default: positioning's `right=of a` beside the nearest node set before it; Ctrl: a fixed place
-    const rel = !(e.ctrlKey || e.metaKey) && tikzRel(p, dx, dy, text);
+    // relative by default: positioning's `right=of a` beside the nearest node set before it; Alt: a fixed place
+    const rel = !e.altKey && tikzRel(p, dx, dy, text);
     if (rel) return { ...rel, stmt, snap: s };
     const r = TM.move(stmt, p.n.i, p.n.pic, { by: [dx / CM, -dy / CM], grid });
     return r && { ...r, stmt, snap: s, d: [r.by[0] * k, -r.by[1] * k] };
@@ -7963,6 +8036,8 @@
   const tikzPos = (text, i) => { const before = text.slice(0, i), nl = before.lastIndexOf('\n'); return { line: before.split('\n').length - 1, character: i - nl - 1 }; };
   pdfBody.addEventListener('pointerdown', (e) => {
     if (e.button !== 0 || pdfDrag || tikzMoving || tikzLink || e.target.closest?.('.pa-menu, .tikz-input')) return;
+    const gb = e.target.closest?.('.pdf-tikz-gridbtn');
+    if (gb) { e.preventDefault(); e.stopPropagation(); const p = tikzSeen?.list[+gb.closest('.pdf-tikz').dataset.k]; if (p) gb.classList.toggle('on', tikzGrid(p.n.pic.at, !tikzGridOn.has(p.n.pic.at))); return; }
     const rot = e.target.closest?.('.pdf-tikz-rot');
     if (rot) { e.preventDefault(); e.stopPropagation(); tikzRotate(e, tikzSeen?.list[+rot.closest('.pdf-tikz').dataset.k]); return; }
     const grip = e.target.closest?.('.pdf-tikz-grip'), hit = grip ? { p: tikzSeen?.list[+grip.closest('.pdf-tikz').dataset.k] } : tikzHit(tikzPoint(e));
@@ -8024,6 +8099,221 @@
   }
   /** The distance from `p` to the polyline `pts`. */
   const tikzNear = (pts, p) => Math.min(...pts.slice(1).map((b, j) => { const a = pts[j], t = Math.min(1, Math.max(0, TM.posOn(a, b, p))); return Math.hypot(a[0] + t * (b[0] - a[0]) - p[0], a[1] + t * (b[1] - a[1]) - p[1]); }));
+  /* Paths on the pages: the one under the pointer glows along its segments, with a grip on each bend point (a coordinate
+   * between two segments). A drag on a segment or a double click adds a bend point, `-- (x,y) --` in the picture's units
+   * (at a corner of the segment's ends: `|-` or `-|` instead); a grip drags its point; a right click on one removes it or
+   * makes the path a curve through it. The point aligns with the ends (Shift: free); Ctrl puts it on the picture's grid. */
+  /** The grid step of picture `pic` in cm: half its unit (bare coordinates), else half a centimetre. */
+  const tikzStep = (pic, conv) => (conv && !conv.unit ? pic.x : 1) / 2;
+  /** An SVG over page `page` in bp, class `cls`, for lines drawn on it; null when the page is not drawn. */
+  function tikzSvg(page, cls) {
+    const host = pdfBody.querySelector(`.pdf-page[data-page="${page}"]`), img = host?.querySelector('img');
+    if (!img?.naturalWidth) return null;
+    const [w, h] = pageSize(img), svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.setAttribute('class', cls);
+    svg.setAttribute('viewBox', `0 0 ${w} ${h}`);
+    svg.setAttribute('preserveAspectRatio', 'none');
+    host.append(svg);
+    return { svg, w, h, host };
+  }
+  /** A polyline of `pts` (bp) in `svg`, class `cls`. */
+  const tikzLine = (svg, pts, cls) => { const l = document.createElementNS('http://www.w3.org/2000/svg', 'polyline'); l.setAttribute('points', pts.map((q) => q.join(',')).join(' ')); l.setAttribute('class', cls); svg.append(l); };
+  /** Path `e`'s segments on the pages: each one's polyline in bp, its page, its ends' centres, whether it ends in a bend point. */
+  function tikzSegs(e) {
+    const all = tikzPlaced(), stmt = editor.text().slice(e.from, e.to);
+    return e.segs.map((g, k) => {
+      const c = tikzCut(e.pic, g.a, g.b, all), pa = tikzEnd(e.pic, g.a, all), pb = tikzEnd(e.pic, g.b, all);
+      return c && pa && pb ? { k, g, page: c[2], pts: TM.segPath(c[0], c[1], g), a: pa[0], b: pb[0], bend: TM.isBend(stmt, k) } : null;
+    }).filter(Boolean);
+  }
+  /** The glow along path `e` and a grip on each of its bend points. */
+  function tikzPathMark(e) {
+    tikzClear('.pdf-tikz-path, .pdf-tikz-bend');
+    const segs = tikzSegs(e);
+    for (const page of new Set(segs.map((s) => s.page))) {
+      const o = tikzSvg(page, 'pdf-tikz-path');
+      if (!o) continue;
+      for (const s of segs.filter((x) => x.page === page)) tikzLine(o.svg, s.pts, 'pdf-tikz-glow');
+      for (const s of segs.filter((x) => x.page === page && x.bend)) {
+        const el = Object.assign(document.createElement('span'), { className: 'pdf-tikz-bend', title: `Bend point (${s.g.b}): drag to move it (Ctrl: on the grid, Shift: not aligned to its neighbours). Right click: remove it, or a curve through it` });
+        el.style.cssText = `left:${s.b[0] / o.w * 100}%;top:${s.b[1] / o.h * 100}%`;
+        el.dataset.from = String(e.from); el.dataset.k = String(s.k);
+        o.host.append(el);
+      }
+    }
+  }
+  /** Page point `[x, y]` (bp) in path `e`'s picture as written: `1.5,2` in its convention, aligned with `near` (points
+   * within `tol` bp share their x or y; Shift: not), on the grid with Ctrl; and where that lands on the page. */
+  function tikzCoordOf(e, [x, y], near, tol, ev) {
+    const o = tikzPlaced().find((q) => q.n.pic.at === e.pic.at && q.origin);
+    if (!o) return null;
+    if (!ev.shiftKey) for (const q of near) { if (Math.abs(q[0] - x) < tol) x = q[0]; if (Math.abs(q[1] - y) < tol) y = q[1]; }
+    const text = editor.text(), k = e.pic.scale * CM;
+    unitsConv();
+    const conv = TM.convention(text.slice(e.pic.at, text.indexOf('\\end{tikzpicture}', e.pic.at)), true), step = [tikzStep(e.pic, conv), tikzStep({ x: e.pic.y }, conv)];
+    let cx = (x - o.origin[0]) / k, cy = (o.origin[1] - y) / k;
+    if (ev.ctrlKey || ev.metaKey) [cx, cy] = [cx, cy].map((v, j) => Math.round(v / step[j]) * step[j]);
+    const w = (v, u) => (conv.unit ? TM.written(v, conv) : String(+(v / u).toFixed(conv.dec) || 0));
+    return { text: `${w(cx, e.pic.x)},${w(cy, e.pic.y)}`, at: [o.origin[0] + cx * k, o.origin[1] - cy * k] };
+  }
+  /* Box widths on the pages: a minipage, \parbox, \makebox, \framebox, \resizebox or \includegraphics[width=] whose
+   * SyncTeX box shows its width gets an edge grip on hover; a drag writes the width as the column grips do (its form kept,
+   * the length convention), Ctrl snaps to a share of the line (¼ ⅓ ½ ⅔ ¾ 1), a width the document uses, or the 5 mm grid. */
+  let pdfSizerSeen = null;
+  /** The open file's width arguments with the box each one sets on the page (bp), `line` the text block's width there. */
+  function pdfSizers() {
+    const text = editor.text(), boxes = pdf?.boxes;
+    if (!boxes || pdf.slice) return [];
+    if (pdfSizerSeen?.text === text && pdfSizerSeen.boxes === boxes) return pdfSizerSeen.list;
+    const blocks = pdfBlocks(), list = [];
+    for (const s of TM.sizers(text)) {
+      let best = null;
+      for (const b of boxes) {
+        if (b.file !== state.file || b.line < s.line || b.line > s.end || !(b.w > 0) || !'[('.includes(b.kind)) continue;
+        const bl = blocks.get(b.page), line = bl ? bl.r - bl.l : 0, want = PE.widthBp(s.value, line), off = want == null ? Infinity : Math.abs(b.w - want);
+        if (off <= 3 && (!best || off < best.off)) best = { s, page: b.page, l: b.x, t: b.y - b.h, r: b.x + b.w, d: b.y + b.d, line, off };
+      }
+      if (best) list.push(best);
+    }
+    pdfSizerSeen = { text, boxes, list };
+    return list;
+  }
+  /** The sized box at page point `pt` (its right edge a few px out), the innermost first. */
+  const pdfSizerAt = (pt) => pt && pdfSizers().filter((q) => q.page === pt[0] && pt[1] >= q.l && pt[1] <= q.r + 6 * pt[3] && pt[2] >= q.t && pt[2] <= q.d).sort((a, b) => (a.r - a.l) - (b.r - b.l))[0];
+  /** The outline of sized box `q` with its grip, or its ghost `w` bp wide with caption `label`. */
+  function pdfSizerMark(q, w = null, label = '') {
+    const img = pdfImg(q.page);
+    if (!img?.naturalWidth) return;
+    const [pw, ph] = pageSize(img), el = Object.assign(document.createElement('span'), { className: w == null ? 'pdf-size' : 'pdf-size pdf-size-ghost' });
+    el.style.cssText = pdfPlace(q.l / pw, q.t / ph, (w ?? q.r - q.l) / pw, (q.d - q.t) / ph);
+    el.innerHTML = w == null ? `<i class="pdf-size-grip" title="Drag to set the width of this ${escape(q.s.kind)} (${escape(q.s.value)}); Ctrl: a share of the line, a width the document uses, or the 5 mm grid; Shift: finer"></i>` : `<b>${escape(label)}</b>`;
+    el.dataset.k = String(pdfSizerSeen.list.indexOf(q));
+    img.parentElement.append(el);
+  }
+  pdfBody.addEventListener('pointerdown', (e) => {
+    const g = e.target.closest?.('.pdf-size-grip');
+    if (!g || e.button !== 0) return;
+    const q = pdfSizerSeen?.list[+g.closest('.pdf-size').dataset.k], img = q && pdfImg(q.page);
+    if (!img?.naturalWidth) return;
+    e.preventDefault(); e.stopPropagation();
+    const perBp = img.getBoundingClientRect().width / pageSize(img)[0], x0 = e.clientX, id = e.pointerId, text0 = editor.text(), was = q.r - q.l;
+    const name = /\\(linewidth|textwidth|columnwidth|hsize)/.exec(q.s.value)?.[1] ?? 'linewidth';
+    const used = [...new Map(TM.sizers(text0).map((s) => s.value).filter((v) => !/\\/.test(v)).map((v) => [v, PE.widthBp(v, q.line)]).filter(([, w]) => w)).entries()];
+    let now = null;
+    tikzMoving = q;
+    const move = (m) => {
+      if (m.pointerId !== id || Math.abs(m.clientX - x0) < 3 && now == null) return;
+      const w = Math.max(2, was + (m.clientX - x0) / perBp);
+      now = m.ctrlKey || m.metaKey ? TM.snapSize(w, q.line, name, used) : PE.snapWidth(q.s.value, was, w, q.line, m.shiftKey, (unitsConv(), TM.convention(editor.text())));
+      tikzClear('.pdf-size');
+      const nw = now && PE.widthBp(now, q.line);
+      if (nw) pdfSizerMark(q, nw, now);
+    };
+    const key = (k) => { if (k.key === 'Escape') { now = null; end({ pointerId: id }); } };
+    const end = (u) => {
+      if (u.pointerId !== id) return;
+      for (const [t, f] of [['pointermove', move], ['pointerup', end], ['pointercancel', end], ['keydown', key]]) removeEventListener(t, f);
+      tikzMoving = null;
+      tikzClear('.pdf-size');
+      if (u.type === 'pointercancel' || !now || now === q.s.value) return;
+      pdfSelEnd = performance.now();
+      if (editor.text() !== text0) { toast('The text changed meanwhile: the width was not written'); return; }
+      paWrite(text0, [{ from: q.s.from, to: q.s.to, now }]);
+    };
+    for (const [t, f] of [['pointermove', move], ['pointerup', end], ['pointercancel', end], ['keydown', key]]) addEventListener(t, f);
+  }, true);
+  /** The pictures whose grid shows, by their offset in the text: switched per picture for this session. var: the overlay may draw before this line ran. */
+  var tikzGridOn = new Set();
+  const tikzGrid = (at, on) => { if (on != null) { if (on) tikzGridOn.add(at); else tikzGridOn.delete(at); tikzGridDraw(); } return tikzGridOn.has(at); };
+  /** The grid of each picture switched on: lines every half unit of its own units (whole units stronger), over its nodes and
+   * paths and a step around, the axes through its origin labelled. In bp over the page, as the picture's transform puts it. */
+  function tikzGridDraw() {
+    for (const el of pdfBody.querySelectorAll('.pdf-tikz-grid')) el.remove();
+    if (!tikzGridOn?.size || pdf?.slice) return;
+    const text = editor.text(), all = tikzPlaced(), NS = 'http://www.w3.org/2000/svg';
+    for (const at of tikzGridOn) {
+      const ns = all.filter((q) => q.n.pic.at === at), o = ns.find((q) => q.origin);
+      if (!o) continue;
+      const pic = o.n.pic, k = pic.scale * CM, end = text.indexOf('\\end{tikzpicture}', at);
+      unitsConv();
+      const conv = TM.convention(text.slice(at, end), true), sx = tikzStep(pic, conv) * k, sy = tikzStep({ x: pic.y }, conv) * k;
+      const pts = [o.origin, ...ns.filter((q) => q.page === o.page).flatMap((q) => [[q.l, q.t], [q.r, q.d]]),
+        ...TM.edges(text).filter((e) => e.pic.at === at).flatMap((e) => tikzSegs(e)).filter((g) => g.page === o.page).flatMap((g) => g.pts)];
+      const [l, r] = [Math.min(...pts.map((q) => q[0])) - sx, Math.max(...pts.map((q) => q[0])) + sx], [t, d] = [Math.min(...pts.map((q) => q[1])) - sy, Math.max(...pts.map((q) => q[1])) + sy];
+      const g = tikzSvg(o.page, 'pdf-tikz-grid');
+      if (!g) continue;
+      g.svg.dataset.pic = String(at);
+      const line = (x1, y1, x2, y2, cls) => { const e = document.createElementNS(NS, 'line'); for (const [a, v] of Object.entries({ x1, y1, x2, y2 })) e.setAttribute(a, String(v)); e.setAttribute('class', cls); g.svg.append(e); };
+      const label = (x, y, s, anchor) => { const e = document.createElementNS(NS, 'text'); e.setAttribute('x', String(x)); e.setAttribute('y', String(y)); e.setAttribute('text-anchor', anchor); e.textContent = s; g.svg.append(e); };
+      // a value along an axis as the picture writes it: half units
+      const val = (i, u) => (conv.unit ? TM.written(i * u / 2, conv) : String(i / 2));
+      const [ox, oy] = o.origin;
+      for (let i = Math.ceil((l - ox) / sx); ox + i * sx <= r; i++) { const x = ox + i * sx; line(x, t, x, d, i ? (i % 2 ? 'g-minor' : 'g-major') : 'g-axis'); if (i && !(i % 2)) label(x, oy + 7, val(i, 1), 'middle'); }
+      for (let j = Math.ceil((t - oy) / sy); oy + j * sy <= d; j++) { const y = oy + j * sy; line(l, y, r, y, j ? (j % 2 ? 'g-minor' : 'g-major') : 'g-axis'); if (j && !(j % 2)) label(ox - 2, y + 2, val(-j, 1), 'end'); }
+      label(ox - 2, oy + 7, '0', 'end');
+    }
+  }
+  /** The bend point of a path near page point `pt`: its path, segment (the one it ends), place in bp and neighbours. */
+  function tikzBendAt(pt) {
+    if (!pt) return null;
+    const [page, x, y, px] = pt;
+    for (const e of TM.edges(editor.text())) {
+      const segs = tikzSegs(e);
+      for (const s of segs) if (s.bend && s.page === page && Math.hypot(s.b[0] - x, s.b[1] - y) < Math.max(3, 7 * px)) return { e, k: s.k, at: s.b, prev: s.a, next: segs.find((t) => t.k === s.k + 1)?.b ?? null };
+    }
+    return null;
+  }
+  /** A drag from page point `pt`: a new bend point in segment `g.k` of `g.e` (`add`), else the bend point `g` moves. Writes on release. */
+  function tikzBendDrag(e0, pt, g, add) {
+    const img = pt[4], perBp = img.getBoundingClientRect().width / pageSize(img)[0], id = e0.pointerId, x0 = e0.clientX, y0 = e0.clientY, text0 = editor.text(), stmt = text0.slice(g.e.from, g.e.to);
+    const ends = add ? [g.a, g.b] : [g.prev, g.next].filter(Boolean), start = add ? [pt[1], pt[2]] : g.at;
+    let last = null, moved = false;
+    tikzMoving = g;
+    const move = (m) => {
+      if (m.pointerId !== id || !(moved ||= Math.hypot(m.clientX - x0, m.clientY - y0) > 3)) return;
+      const c = tikzCoordOf(g.e, [start[0] + (m.clientX - x0) / perBp, start[1] + (m.clientY - y0) / perBp], ends, 4 / perBp, m);
+      tikzClear('.pdf-tikz-path, .pdf-tikz-bend, .pdf-tikz-ghost, .pdf-tikz-tag');
+      if (!c) return;
+      const o = tikzSvg(pt[0], 'pdf-tikz-path pdf-tikz-pghost');
+      if (o) tikzLine(o.svg, [ends[0], c.at, ...ends.slice(1)], 'pdf-tikz-glow');
+      // at a corner of the two ends: a right-angle segment, no point
+      const corner = add && [['-|', [g.b[0], g.a[1]]], ['|-', [g.a[0], g.b[1]]]].find(([, q]) => Math.hypot(q[0] - c.at[0], q[1] - c.at[1]) < 0.5);
+      last = { ...c, now: add ? (corner ? TM.route(stmt, g.k, corner[0]) : TM.bendAdd(stmt, g.k, c.text)) : TM.bendMove(stmt, g.k, c.text) };
+      if (!o) return;
+      const tag = Object.assign(document.createElement('b'), { className: 'pdf-tikz-tag', textContent: corner ? corner[0] : `(${c.text})` });
+      tag.style.cssText = `left:${c.at[0] / o.w * 100}%;top:${c.at[1] / o.h * 100}%`;
+      o.host.append(tag);
+    };
+    const key = (k) => { if (k.key === 'Escape') { last = null; end({ pointerId: id }); } };
+    const end = (u) => {
+      if (u.pointerId !== id) return;
+      for (const [t, f] of [['pointermove', move], ['pointerup', end], ['pointercancel', end], ['keydown', key]]) removeEventListener(t, f);
+      tikzMoving = null;
+      tikzClear('.pdf-tikz-path, .pdf-tikz-bend, .pdf-tikz-ghost, .pdf-tikz-tag');
+      if (moved) pdfSelEnd = performance.now();
+      if (u.type === 'pointercancel' || !last?.now || last.now === stmt) return;
+      if (editor.text() !== text0) { toast('The text changed meanwhile: no bend point written'); return; }
+      paWrite(text0, [{ from: g.e.from, to: g.e.to, now: last.now }]);
+    };
+    for (const [t, f] of [['pointermove', move], ['pointerup', end], ['pointercancel', end], ['keydown', key]]) addEventListener(t, f);
+  }
+  self.__tkDbg = (cx, cy) => { const img = pdfBody.querySelector('.pdf-page img'); const pt = tikzPoint({ target: img, clientX: cx, clientY: cy }); const all = tikzPlaced(); return { pt: pt?.slice(0, 4), placed: all.map((q) => [q.n.name, q.page, q.origin, q.c]), boxes: pdf?.boxes?.length, edges: TM.edges(editor.text()).map((e) => tikzSegs(e).map((s) => [s.k, s.page, s.a, s.b, s.bend])) }; }; // DEBUG-REMOVE
+  /** The segment of a path at page point `pt` with its ends' centres, when no node is there. */
+  const tikzSegAt = (pt) => { if (!pt || tikzHit(pt)) return null; const h = tikzEdgeAt(pt), s = h && tikzSegs(h.e).find((x) => x.k === h.k); return s && { e: h.e, k: h.k, a: s.a, b: s.b }; };
+  pdfBody.addEventListener('pointerdown', (e) => {
+    if (e.button !== 0 || pdfDrag || tikzMoving || tikzLink || pdf?.slice || e.target.closest?.('.pa-menu, .tikz-input, .pdf-tikz-grip, .pdf-tikz-rot')) return;
+    const pt = tikzPoint(e), b = tikzBendAt(pt), s = !b && tikzSegAt(pt);
+    if (!b && !s) return;
+    e.preventDefault(); e.stopPropagation();
+    tikzBendDrag(e, pt, b ?? s, !b);
+  }, true);
+  pdfBody.addEventListener('dblclick', (e) => {
+    const pt = tikzPoint(e), s = !tikzBendAt(pt) && tikzSegAt(pt);
+    if (!s) return;
+    e.preventDefault(); e.stopPropagation();
+    const c = tikzCoordOf(s.e, [pt[1], pt[2]], [s.a, s.b], 4 * pt[3], e), text = editor.text(), stmt = text.slice(s.e.from, s.e.to), now = c && TM.bendAdd(stmt, s.k, c.text);
+    if (now) paWrite(text, [{ from: s.e.from, to: s.e.to, now }]);
+  }, true);
   /* Page actions (actions.ts `satexPageActions`): a right click on the PDF or the Typeset view finds the thing under the
    * pointer (a TikZ node, label or path, a forest node, a table column) and opens the menu its plugins give. A plugin
    * writes through `paWrite`: its edits of the text the menu opened on, one undo step through the snapshot printer. */
@@ -8075,8 +8365,11 @@
     if (n?.kind === 'node') done(n); else toast('No node there: no edge written');
   }, true);
   addEventListener('keydown', (e) => { if (tikzLink && e.key === 'Escape') { tikzLinkEnd(); toast('No edge written'); } }, true);
+  /** previews.json's pictures (`arrow:-Stealth`: TeX's drawing of the tip), read once; none when the worker has no such file. */
+  let paSheet = null;
+  const paPreviews = () => (paSheet ??= ask({ type: 'read', path: '/cache/previews.json' }).then((got) => JSON.parse(new TextDecoder().decode(got?.data))).catch(() => { paSheet = null; return null; }));
   /** The title of a target's menu. */
-  const paTitle = (t) => t.kind === 'block' ? `${t.block.what[0].toUpperCase()}${t.block.what.slice(1)} at ${t.block.file.split('/').pop()}:${t.block.from}` : t.kind === 'tikz-edge' ? `Path ${t.e.segs[t.k].a} → ${t.e.segs[t.k].b}` : t.kind === 'tikz-label' ? `Label ${t.n.text}`.trim()
+  const paTitle = (t) => t.kind === 'block' ? `${t.block.what[0].toUpperCase()}${t.block.what.slice(1)} at ${t.block.file.split('/').pop()}:${t.block.from}` : t.kind === 'tikz-edge' ? `Path ${t.e.segs[t.k].a} → ${t.e.segs[t.k].b}` : t.kind === 'tikz-bend' ? `Bend point (${t.e.segs[t.k].b})` : t.kind === 'tikz-label' ? `Label ${t.n.text}`.trim()
     : t.kind === 'tikz-node' ? (t.n.name ? `Node ${t.n.name}` : 'Node') : t.kind === 'forest-node' ? `Node ${t.f.n.content || '(empty)'}` : `Column ${t.k + 1}`;
   /** The menu of target `t` at screen point (x, y): the run's facts of a picture waited for a moment, then the plugins' groups. */
   async function paOpen(x, y, t) {
@@ -8091,15 +8384,18 @@
     if (from != null) t = { ...t, at: from, end: t.n?.to ?? t.e?.to ?? t.f?.to ?? from };
     else if (t.block?.file === state.file) t = { ...t, at: off(t.block.from), end: off(t.block.to) + (lines[t.block.to - 1]?.length ?? 0) };
     ctx.caret = (o) => { editor.select([o, o]); editor.refocus?.(); };
-    if (at != null) ctx.facts = await Promise.race([paFactsOf(at), new Promise((ok) => setTimeout(() => ok(null), 400))]);
+    if (at != null) { const late = new Promise((ok) => setTimeout(() => ok(null), 400)); [ctx.facts, ctx.previews] = await Promise.all([Promise.race([paFactsOf(at), late]), Promise.race([paPreviews(), late])]); }
     if (editor.text() !== text) return null;
     return PA.open(x, y, paTitle(t), PA.groups(t, ctx, configSet));
   }
   /** The target of the PDF at page point `pt`: a node or label, a path, a forest node, a table column. */
   function pdfTarget(pt) {
+    const bp = tikzBendAt(pt);
+    // TikZ's angles, y up: the curve leaves the point before toward the bend point and enters the next from it
+    if (bp) { const deg = (q, r) => Math.atan2(q[1] - r[1], r[0] - q[0]) * 180 / Math.PI; return { kind: 'tikz-bend', e: bp.e, k: bp.k, curve: bp.next ? [deg(bp.prev, bp.at), deg(bp.next, bp.at)] : null }; }
     const hit = tikzHit(pt);
     if (hit) {
-      const p = hit.p, fixed = p.n.kind === 'node' && p.origin && tikzAt(p, 0, 0, { ctrlKey: true, shiftKey: true }), rel = p.n.kind === 'node' && tikzRel(p, 0, 0, editor.text());
+      const p = hit.p, fixed = p.n.kind === 'node' && p.origin && tikzAt(p, 0, 0, { altKey: true, shiftKey: true }), rel = p.n.kind === 'node' && tikzRel(p, 0, 0, editor.text());
       return { kind: p.n.kind === 'label' ? 'tikz-label' : 'tikz-node', n: p.n, fixed: fixed && fixed.text !== fixed.stmt ? fixed.text : null, rel: rel && rel.text !== editor.text().slice(p.n.from, p.n.to) ? rel : null };
     }
     const g = tikzEdgeAt(pt);
@@ -9570,6 +9866,10 @@
         const st = el.style;
         if (!st.left.endsWith('%') || !st.top.endsWith('%')) continue;
         const l = parseFloat(st.left) / 100 * pw, t = parseFloat(st.top) / 100 * ph, r = l + (parseFloat(st.width) || 0) / 100 * pw, d = t + (parseFloat(st.height) || 0) / 100 * ph;
+        // one the push reaches but cannot move whole (a picture's or table's tint, one across the line pushed from):
+        // hidden until the build lands, never left on what the push moved away
+        const Q = pdfPushed;
+        if (Q && Q.page === pg && d > Q.top + 0.5 && (d - t > 30 || t < Q.top - 0.5)) { el.classList.add('pdf-relay-hid'); continue; }
         if (d - t > 30) continue;
         const row = (m) => m.from[0] === pg && m.from[2] < d && m.from[4] > t, on = pdfMoved.filter((m) => row(m) && m.from[1] < r - 0.5 && m.from[3] > l + 0.5);
         // reaching into the text typed: left of the first word the change kept on that row
@@ -10499,7 +10799,12 @@
       // the text the dialog edits is rechecked: a detached dialog leaves the editor free to change it
       commit: (edits) => target !== uri() ? toast('The file changed meanwhile: not written')
         : textIn(editor.text(), v.range) !== was ? toast('The text changed meanwhile: not written. Open the widget again')
-        : editor.apply(edits),
+        : (() => {
+          // a table written: the build after it says at the table when it fails (pdfWroteNote); a load above moves it down
+          const n0 = editor.text().split('\n').length, r = editor.apply(edits), dn = editor.text().split('\n').length - n0;
+          if (v.kind === 'table') pdfWrote = { file: state.file, table: { lines: [v.range.start.line + 1, v.range.end.line + 1 + dn] }, before: pdfShownRecords };
+          return r;
+        })(),
       closed: () => editor.refocus?.(),
       image: async (path) => {
         const b = await binaryOf(path);

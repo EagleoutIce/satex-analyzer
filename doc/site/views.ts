@@ -3745,6 +3745,19 @@ button.tv-spec-value { cursor: pointer; } button.tv-spec-value:hover, button.tv-
   /** Whether taking item `i` leaves the caret in a braced first argument (`usepackage{$1}`, `textbf{${1:text}}`): its
    * completion (packages, files, environments, labels) opens there at once, whatever the command. */
   const opensArgument = (i: Completion): boolean => i.insertTextFormat === 2 && /^[^{[$\\]*\{\$(?:1|\{1[:}])/.test(i.insertText ?? i.textEdit?.newText ?? '');
+  /** Whether a `}` typed at column `col` of `line` steps over the `}` standing there instead of adding one: the line's braces
+   * (outside a comment, `\\{` and `\\}` aside) are closed already, so another would be one too many (`\\end{tabular}}`). */
+  const stepsOver = (line: string, col: number): boolean => {
+    if (line[col] !== '}') return false;
+    let depth = 0;
+    for (let k = 0; k < line.length; k++) {
+      const c = line[k];
+      if (c === '\\') { k++; continue; }
+      if (c === '%') break;
+      depth += c === '{' ? 1 : c === '}' ? -1 : 0;
+    }
+    return depth <= 0;
+  };
   /** The one-line description of an item: the lean record's `doc`, else the server item's. */
   const docOf = (i: Completion): string => i.doc ?? i.data?.doc ?? '';
   /** Completion order: how well the item matches first (the exact name, a prefix of the label, a part of it, a part of
@@ -3799,6 +3812,6 @@ button.tv-spec-value { cursor: pointer; } button.tv-spec-value:hover, button.tv-
     }
     return out;
   };
-  return { followRows, rowsWin, complete: { rank, kept, reselect, snippet, mathItem, docOf, plainSnippet, opensArgument }, loads: { unlanded, lacked }, tipBag, yaml, history: { historyEvent }, render, RENDER, hue, passes, masterDetail, usesView, fold, SPEC, mix, colorBand, oklch, drawing: { expandStyles, STYLE_DEF, parse, emit, mermaidIn, mermaidOut, mermaidLoss, layout, importMermaid, tipsOf, toMatrix, cellPlaces, toLayer, picOptions, relocate, relPos, nearestAnchor, anchorAt, tipMarker, shapeSample, shapeList, cycle, STYLE }, forest: forestFns, circuit: { parse: cParse, body: cBody, emit: cEmit }, page: { pageOf, pageBox, textArea, styleNow, taggedNote, pageNodes, numberNodes, numberInForce, headerOf, headerCalls, headerNodes, footSetup, fmtRead, fmtWrite, styleNodes, styleSet, styleEdits }, dev: { traceCsv, stateHtml }, templates: { fill, filled, chosen } };
+  return { followRows, rowsWin, complete: { rank, kept, reselect, snippet, mathItem, docOf, plainSnippet, opensArgument, stepsOver }, loads: { unlanded, lacked }, tipBag, yaml, history: { historyEvent }, render, RENDER, hue, passes, masterDetail, usesView, fold, SPEC, mix, colorBand, oklch, drawing: { expandStyles, STYLE_DEF, parse, emit, mermaidIn, mermaidOut, mermaidLoss, layout, importMermaid, tipsOf, toMatrix, cellPlaces, toLayer, picOptions, relocate, relPos, nearestAnchor, anchorAt, tipMarker, shapeSample, shapeList, cycle, STYLE }, forest: forestFns, circuit: { parse: cParse, body: cBody, emit: cEmit }, page: { pageOf, pageBox, textArea, styleNow, taggedNote, pageNodes, numberNodes, numberInForce, headerOf, headerCalls, headerNodes, footSetup, fmtRead, fmtWrite, styleNodes, styleSet, styleEdits }, dev: { traceCsv, stateHtml }, templates: { fill, filled, chosen } };
 })();
 self.satexViews = satexViews;

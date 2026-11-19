@@ -15,6 +15,7 @@ import newpara from './echo-paragraphs.mjs';
 import follow from './follow-highlight.mjs';
 import dark from './dark-mode.mjs';
 import tikz from './tikz-actions.mjs';
+import refactor from './refactor.mjs';
 import crash from './crash-recovery.mjs';
 import editor from './editor.mjs';
 import fuzz from './fuzz.mjs';
@@ -23,7 +24,7 @@ import scratch from './scratch.mjs';
 
 const AREAS = { 'typing-pdf': typingPdf, 'titles-footnotes': titles, math, clicks, select, 'tints-typeset': tints, widgets,
   completion, 'double-click': dbl, 'footer-blank': foot, 'echo-paragraphs': newpara, 'follow-highlight': follow,
-  'dark-mode': dark, 'tikz-actions': tikz, 'crash-recovery': crash, editor, fuzz, sync, scratch };
+  'dark-mode': dark, 'tikz-actions': tikz, refactor, 'crash-recovery': crash, editor, fuzz, sync, scratch };
 
 export const SCENARIOS = Object.entries(AREAS).flatMap(([area, list]) => list.map((sc) => ({ area, ...sc })));
 

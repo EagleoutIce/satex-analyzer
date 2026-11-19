@@ -17,4 +17,10 @@ export default [
     { kind: 'dbl', view, name: `dbl-${view}-text`, text: 'Literate',
       steps: `thesis.tex, ${V} view; double-click the word "Literate": no widget opens (text keeps its clicks)` },
   ]),
+  // the Page layout widget opens only on a double click outside the text (user 2026-11-19): a single click in the left
+  // margin or the header band of page 1 opens nothing, a double click opens it on the margins or the header tab
+  { kind: 'dbl', view: 'pdf', name: 'dbl-pdf-margin', page: [0.05, 0.3], single: true, want: /view .*page layout/i,
+    steps: 'thesis.tex, PDF view; click the left margin of page 1: nothing opens; double-click it: the Page layout widget opens' },
+  { kind: 'dbl', view: 'pdf', name: 'dbl-pdf-head', page: [0.5, 0.04], single: true, want: /view .*page layout/i,
+    steps: 'thesis.tex, PDF view; click the header band of page 1: nothing opens; double-click it: the Page layout widget opens' },
 ];

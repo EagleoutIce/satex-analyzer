@@ -7,4 +7,6 @@ export default [
     steps: 'line 3 of a tikz document; type `\\use`, wait for its run, type `tikzlibrary{arrows.meta}`: after quiet no `\\use` finding and no `tikzlibraryarrows.meta` row (native `satex lint` of the final text reports neither)' },
   { kind: 'sync', name: 'sync-stray-brace', text: TIKZ, at: 8, keys: '}', want: [/Too many \}'s/],
     steps: 'type a `}` after `\\end{tikzpicture}`: after quiet the findings say "Too many }\'s" (native `satex lint` reports C013 there)' },
+  { kind: 'soak', name: 'soak-200-edits', text: '\\documentclass{article}\n\\newcommand{\\greet}[1]{Hello, #1!}\n\\begin{document}\n\\greet{world}\n\nWhat do you think about it.\n\\end{document}\n', line: 6, n: 200, every: 20, ratio: 1.5,
+    steps: '200 edits in the editor (a letter typed and taken back), a run waited for every 20th: the next edit reaches its findings within 1.5x (+200 ms) of the same edit in a fresh session (the user: "a reload makes it fast again")' },
 ];

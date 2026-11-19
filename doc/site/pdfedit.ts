@@ -33,6 +33,7 @@ declare global {
     satexPdfEdit: {
       place(boxes: Box[], file: string, table: Table, tables: Table[]): Placed[];
       extent(boxes: Box[], file: string, table: Table): Box | null;
+      failNote(now: Rec[], before: Rec[] | null): string | null;
       form(text: string): Form | null;
       resized(text: string, was: number, now: number, fine: boolean): string | null;
       stepped(text: string, dir: number, fine: boolean): string | null;
@@ -207,6 +208,16 @@ declare global {
     if (!f && conv?.unit && conv.unit !== 'cm') { const per = ({ mm: MM, pt: 72 / 72.27, in: 72, bp: 1 } as Record<string, number>)[conv.unit]; if (per) { const st = 10 ** -Math.max(conv.dec, fine ? 1 : 0); return `${+(Math.max(st, Math.round(now / per / st) * st)).toFixed(Math.max(conv.dec, fine ? 1 : 0))}${conv.unit}`; } }
     const mm = Math.max(fine ? 0.1 : 0.5, Math.round(now / MM / (fine ? 0.1 : 0.5)) * (fine ? 0.1 : 0.5));
     return f?.unit.toLowerCase() === 'mm' ? `${+mm.toFixed(1)}mm` : `${+(mm / 10).toFixed(fine ? 2 : 3)}cm`;
+  }
+  /** What to say at a table after a widget wrote it and the build came back with an error (`now`: its records, `before`:
+   * the build's before the change, null when none was shown): the change broke it, or the error predates it (the same
+   * message there). null without an error. */
+  function failNote(now: Rec[], before: Rec[] | null) {
+    const e = now.find((r) => r.severity === 'error');
+    if (!e) return null;
+    const what = `${String(e.message).replace(/\.$/, '')}${e.line ? ` at line ${e.line}` : ''}`;
+    const old = before?.some((r) => r.severity === 'error' && r.message === e.message);
+    return old ? `The build failed before this change too: ${what}` : `The build after this change failed: ${what}`;
   }
   /** The box of the whole table: the widest SyncTeX records on its `\end` line. */
   const extent = (boxes: Box[], file: string, table: Table) => boxes.filter((r) => r.file === file && r.line === table.lines[1] && '[('.includes(r.kind) && r.w > 0 && r.h + r.d > 0).sort((p, q) => q.w - p.w)[0] ?? null;
@@ -1341,7 +1352,7 @@ declare global {
     const m = /(\\\]|\$\$|\\end\{([A-Za-z]+)\*?\})[ \t]*$/.exec(text.slice(Math.max(0, at - 40), at));
     return !!m && (!m[2] || MATH.test(m[2]) && m[2] !== 'math');
   }
-  self.satexPdfEdit = { onRow, run, displayEnd, offsetAt, units, treeNodes, naming, entries, shortTitle, bothTitles, renamed, leaders, checked, grow, key, broken, scan, start, cells, cellStep, rowAfter, verbatim, verbatimAt, nearest, bands, joined, place, extent, room, form, measure, respec, widthBp, snapWidth, resized, stepped, plain, editable, spans, sender, typed, erased, mathAt, boundaries, boundaryAt, inkSnap, locate, columns, wordAt, argAt, afterCall, defining, relaid, reflow, fit, glue, centered, apart, tokens, unset, aligned, changed, paragraph, mathRuns, footArg, footBack, footShown, blankPlace };
+  self.satexPdfEdit = { onRow, run, displayEnd, offsetAt, units, treeNodes, naming, entries, shortTitle, bothTitles, renamed, leaders, checked, grow, key, broken, scan, start, cells, cellStep, rowAfter, verbatim, verbatimAt, nearest, bands, joined, place, extent, failNote, room, form, measure, respec, widthBp, snapWidth, resized, stepped, plain, editable, spans, sender, typed, erased, mathAt, boundaries, boundaryAt, inkSnap, locate, columns, wordAt, argAt, afterCall, defining, relaid, reflow, fit, glue, centered, apart, tokens, unset, aligned, changed, paragraph, mathRuns, footArg, footBack, footShown, blankPlace };
 })();
 
 // TikZ nodes moved by drag: where each `\node` and path label stands in the source, and the statement a drag
@@ -1359,6 +1370,9 @@ declare global {
   }
   /** A path (`\draw (a) -- (b);`): its statement, its options' place, each segment between two points and where a label goes in it. */
   interface TikzEdge { from: number; to: number; line: number; opts: string[]; segs: TikzSeg[]; pic: TikzPic }
+  /** A width argument a drag rewrites: the command (`minipage`, `includegraphics` …), its first line and the line its box
+   * ends on, the value's range in the text and the value. */
+  type TikzSizer = { kind: string; line: number; end: number; from: number; to: number; value: string };
   /** A path's segment from point `a` to `b`: its operation (`--`, `to`, `|-`, `-|`) at `op`, the keys of a `to[…]`, and `at` where a label goes. */
   type TikzSeg = { a: string; b: string; at: number; op: [number, number]; kind: string; keys: string[] };
   /** A picture's scale and units in cm, and the keys its `every node/.style` gives each node. */
@@ -1394,6 +1408,9 @@ declare global {
       looseness(stmt: string, seg: number, v: number): string | null; segPath(a: [number, number], b: [number, number], g: TikzSeg): [number, number][];
       addEdge(text: string, picAt: number, a: string, b: string, opts?: string): { at: number; text: string } | null;
       named(stmt: string, i: number, name: string): string | null; fresh(text: string, picAt: number, base: string): string;
+      bendAdd(stmt: string, seg: number, pt: string): string | null; bendMove(stmt: string, seg: number, pt: string): string | null; isBend(stmt: string, seg: number): boolean;
+      bendRemove(stmt: string, seg: number): string | null; bendCurve(stmt: string, seg: number, out: number, into: number): string | null;
+      sizers(text: string): TikzSizer[]; snapSize(now: number, line: number, name: string, used: [string, number][]): string;
       picOpts(text: string, picAt: number): { from: number; to: number; keys: string[] } | null; picSet(text: string, picAt: number, group: RegExp, add: string[]): { from: number; to: number; was: string; now: string } | null;
       dependents(text: string, n: TikzNode): { direct: TikzNode[]; all: TikzNode[] };
       relation(b: TikzBox, ref: TikzBox, tol: number, dist: [number, number] | undefined, name: string, conv?: TikzConv, k?: number): string | null;
@@ -1744,13 +1761,14 @@ declare global {
   /** An arrow tip key: `->`, `<->`, `-Stealth`, `{Latex}-{Latex}`, never a key with a value. */
   const TIP = { test: (k: string) => /^[^=\s]*-[^=\s]*$/.test(k.replace(/\{[^{}]*\}|\[[^\]]*\]/g, 'x')) };
   const tipOf = (e: TikzEdge) => e.opts.filter((k) => TIP.test(k)).at(-1) ?? '';
-  /** Path statement `stmt` with arrow tip `tip` (`''`: none, written `-` where a style may give one). */
+  /** Path statement `stmt` with arrow tip `tip` (`''`: none, written `-` where a style may give one), after any style. */
   function tip(stmt: string, tip: string) {
     const e = edgeOf(stmt);
     if (!e) return null;
     const ks = e.o ? keys(stmt.slice(e.o[0] + 1, e.o[1])) : [], rest = ks.filter((k) => !TIP.test(k));
     const styled = rest.some((k) => !/^(thick|thin|very thick|ultra thick|semithick|dashed|dotted|densely dashed|loosely dashed|draw|rounded corners)$/.test(k) && !k.includes('='));
-    return withOpts(stmt, e.o, e.oAt, tip ? [tip, ...rest] : styled ? ['-', ...rest] : rest);
+    // after a style, which may bring tips of its own (`flow/.style={-Stealth}`): the later key wins
+    return withOpts(stmt, e.o, e.oAt, tip ? (styled ? [...rest, tip] : [tip, ...rest]) : styled ? [...rest, '-'] : rest);
   }
   /** `{x}` without its outer braces. */
   const unbrace = (t: string) => { t = t.trim(); return /^\{[^{}]*\}$/.test(t) ? t.slice(1, -1).trim() : t; };
@@ -1810,7 +1828,8 @@ declare global {
     return p ? { o: p.o, oAt: p.oAt } : null;
   }
   const keysAt = (stmt: string, i: number) => { const r = optsOf(stmt, i); return r ? (r.o ? keys(stmt.slice(r.o[0] + 1, r.o[1])) : []) : null; };
-  const inGroup = (k: string, group: string, names: string[] = []) => GROUP[group]?.test(k) || (group === 'draw' && names.includes(k));
+  // `style:box`: the one key `box`, a named style
+  const inGroup = (k: string, group: string, names: string[] = []) => GROUP[group]?.test(k) || (group === 'draw' && names.includes(k)) || (group.startsWith('style:') && k === group.slice(6));
   /** The keys of part `i` that group `group` owns, as written. */
   const current = (stmt: string, i: number, group: string, names: string[] = []) => (keysAt(stmt, i) ?? []).filter((k) => inGroup(k, group, names));
   /** `stmt` with part `i`'s keys of `group` (and those it excludes) replaced by `add` (none: they go), else null. */
@@ -1844,6 +1863,71 @@ declare global {
   const inout = (stmt: string, seg: number, out: number, into: number) => toKeys(stmt, seg, (ks) => [...ks.filter((k) => !CURVE.test(k)), `out=${out}`, `in=${into}`]);
   /** `stmt` with segment `seg`'s looseness `v` (1, the default, unwritten). */
   const looseness = (stmt: string, seg: number, v: number) => toKeys(stmt, seg, (ks) => [...ks.filter((k) => !/^looseness\s*=/.test(k)), ...(v === 1 ? [] : [`looseness=${v}`])]);
+  // ---- box widths a drag on the pages rewrites
+  /** Each width argument of `\begin{minipage}{W}`, `\parbox{W}`, `\makebox[W]`, `\framebox[W]`, `\resizebox{W}`,
+   * `\includegraphics[width=W]` in `text`: the command, its lines (first to where the box ends), the value's range. */
+  function sizers(text: string): TikzSizer[] {
+    const out: TikzSizer[] = [], starts = [0];
+    for (let i = text.indexOf('\n'); i >= 0; i = text.indexOf('\n', i + 1)) starts.push(i + 1);
+    const lineOf = (i: number) => { let lo = 0, hi = starts.length - 1; while (lo < hi) { const m = (lo + hi + 1) >> 1; if (starts[m]! <= i) lo = m; else hi = m - 1; } return lo + 1; };
+    for (const m of text.matchAll(/\\(begin\{minipage\}|parbox|makebox|framebox|resizebox|includegraphics)(?![a-zA-Z])/g)) {
+      if (/(?<!\\)%[^\n]*$/.test(text.slice(starts[lineOf(m.index!) - 1]!, m.index))) continue;
+      let k = m.index! + m[0].length;
+      const group = (c: string) => { while (/\s/.test(text[k] ?? '')) k++; if (text[k] !== c) return null; const e = close(text, k); if (e < 0) return null; const r: [number, number] = [k + 1, e]; k = e + 1; return r; };
+      const kind = m[1]!.replace('begin{minipage}', 'minipage');
+      let a: [number, number] | null = null, end = m.index!;
+      if (kind === 'minipage' || kind === 'parbox') { group('['); group('['); group('['); a = group('{'); end = kind === 'parbox' ? (group('{')?.[1] ?? k) : Math.max(k, text.indexOf('\\end{minipage}', k)); }
+      else if (kind === 'makebox' || kind === 'framebox') { a = group('['); end = group('{')?.[1] ?? k; }
+      else if (kind === 'resizebox') { a = group('{'); group('{'); end = group('{')?.[1] ?? k; }
+      else { const o = group('['); end = k; const w = o && /(?:^|,)\s*width\s*=\s*([^,]*?)\s*(?=,|$)/.exec(text.slice(o[0], o[1])); if (o && w) { const at = o[0] + w.index! + w[0].length - w[1]!.length; a = [at, at + w[1]!.length]; } }
+      if (!a) continue;
+      const value = text.slice(a[0], a[1]).trim();
+      if (value && value !== '!') out.push({ kind, line: lineOf(m.index!), end: lineOf(end), from: a[0], to: a[1], value });
+    }
+    return out;
+  }
+  /** The width a Ctrl drag to `now` bp writes: a share of the line (¼ ⅓ ½ ⅔ ¾ 1, of `name`) or a width the document uses
+   * (`used`: written, bp) within 3 mm, else the 5 mm grid in cm. `line`: the bp of `\linewidth`. */
+  function snapSize(now: number, line: number, name: string, used: [string, number][]) {
+    const MM = 72 / 25.4, FR: [number, string][] = [[1 / 4, '.25'], [1 / 3, '.333'], [1 / 2, '.5'], [2 / 3, '.667'], [3 / 4, '.75'], [1, '']];
+    const cands: [string, number][] = [...(line > 0 ? FR.map(([f, t]): [string, number] => [`${t}\\${name}`, f * line]) : []), ...used];
+    const best = cands.sort((a, b) => Math.abs(a[1] - now) - Math.abs(b[1] - now))[0];
+    if (best && Math.abs(best[1] - now) <= 3 * MM) return best[0];
+    return `${+(Math.max(0.5, Math.round(now / MM / 5) * 0.5)).toFixed(1)}cm`;
+  }
+  // ---- bend points: a coordinate between two segments (`(a) -- (1,2) -- (b)`), added, moved, removed, made a curve
+  /** Where segment `seg`'s end point `(b)` stands in `stmt`: its parentheses. */
+  function endAt(stmt: string, seg: number): [number, number] | null {
+    const g = segOf(stmt, seg);
+    if (!g) return null;
+    let k = g.at;
+    while (/\s/.test(stmt[k] ?? '')) k++;
+    const e = stmt[k] === '(' ? close(stmt, k) : -1;
+    return e < 0 ? null : [k, e + 1];
+  }
+  /** `stmt` with bend point `(pt)` (`1.5,2`) in segment `seg`: `(a) -- (pt) -- (b)`; a `to[…]` or right-angle segment is straight to it. */
+  function bendAdd(stmt: string, seg: number, pt: string) {
+    const g = segOf(stmt, seg);
+    if (!g) return null;
+    const s = g.kind === '--' ? stmt : opSet(stmt, g, '--'), b = endAt(s, seg);
+    return b && `${s.slice(0, b[0])}(${pt}) -- ${s.slice(b[0])}`;
+  }
+  /** Whether segment `seg` ends in a bend point: a coordinate the next segment starts at. */
+  const isBend = (stmt: string, seg: number) => { const gs = edgeOf(stmt)?.segs ?? []; return !!gs[seg + 1] && gs[seg + 1]!.a === gs[seg]!.b && /^[^,]+,[^,]+$/.test(gs[seg]!.b) && !!len(gs[seg]!.b.split(',')[0]!); };
+  /** `stmt` with segment `seg`'s end point written `pt`. */
+  function bendMove(stmt: string, seg: number, pt: string) {
+    const b = endAt(stmt, seg);
+    return b && `${stmt.slice(0, b[0])}(${pt})${stmt.slice(b[1])}`;
+  }
+  /** `stmt` without the bend point ending segment `seg`: the two segments one, the first's operation kept, both labels. */
+  function bendRemove(stmt: string, seg: number) {
+    const b = endAt(stmt, seg), next = segOf(stmt, seg + 1);
+    if (!b || !next || !isBend(stmt, seg)) return null;
+    const keep = stmt.slice(next.op[1], next.at).trim();
+    return `${stmt.slice(0, b[0])}${keep ? `${keep} ` : ''}${stmt.slice(next.at).replace(/^\s*/, '')}`;
+  }
+  /** `stmt` with the bend point ending segment `seg` made a curve: one `to[out=…, in=…]` (degrees, TikZ's frame). */
+  const bendCurve = (stmt: string, seg: number, out: number, into: number) => { const r = bendRemove(stmt, seg); return r && inout(r, seg, Math.round(out), Math.round(into)); };
   /** The points segment `g` draws from `a` to `b` (page bp, y down), for a hit test: a corner for `|-`/`-|`, a curve sampled for a bend or angles. */
   function segPath(a: [number, number], b: [number, number], g: TikzSeg): [number, number][] {
     if (g.kind === '-|') return [a, [b[0], a[1]], b];
@@ -1975,7 +2059,7 @@ declare global {
     return stmt.slice(0, a) + stmt.slice(p.t[1] + 1);
   }
   self.satexTikzMove = { nodes, move, len, cm, posOn, clipped, snap, edges, shapeOf, shape, looks, flip, retext, tipOf, tip, tipEnds, tipSpec, tipVary, tipParts, label,
-    SHAPES: SHAPE_LIST, library, keysAt, current, set, segOf, route, bend, inout, looseness, segPath, addEdge, named, fresh, picOpts, picSet, snapAngle, angle, unlabel, relation, placing, place, placeDelta, dependents, convention, setConvention, written };
+    SHAPES: SHAPE_LIST, library, keysAt, current, set, segOf, route, bend, inout, looseness, segPath, addEdge, named, fresh, bendAdd, bendMove, isBend, bendRemove, bendCurve, sizers, snapSize, picOpts, picSet, snapAngle, angle, unlabel, relation, placing, place, placeDelta, dependents, convention, setConvention, written };
 })();
 
 // References switched from the pages: a reference's printed number is no text to type into. Where its key stands in

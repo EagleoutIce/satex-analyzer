@@ -100,3 +100,16 @@ test('opensArgument: a braced first field opens its completion', () => {
   assert.equal(opensArgument({ label: 'section', insertText: 'section${1:[options]}{$2}$0', insertTextFormat: 2 }), false);
   assert.equal(opensArgument({ label: 'relax', insertText: 'relax' }), false);
 });
+
+// Intuition: a `}` typed right before a `}` that already closes the line's braces steps over it, whoever wrote that one (the
+// editor's auto-close, a completion's `tabular}`): the name ends in exactly one `}`. Where the line still lacks a `}` the key
+// adds one. Pins `\end{tabular}}` and `\end{tikzpicture}}` after completing and typing `}` (user 2026-11-19, twice).
+test('stepsOver: a closing brace typed before one that closes the line steps over', () => {
+  const { stepsOver } = self.satexViews.complete;
+  assert.equal(stepsOver('\\end{tabular}', 12), true);
+  assert.equal(stepsOver('\\begin{tikzpicture}', 18), true);
+  assert.equal(stepsOver('\\textbf{\\emph{x}', 15), false, 'the outer group is still open: a second } is wanted');
+  assert.equal(stepsOver('\\end{tabular', 12), false, 'nothing to step over');
+  assert.equal(stepsOver('\\{x}', 3), true, 'an escaped brace counts for nothing');
+  assert.equal(stepsOver('a} % {', 1), true, 'a comment counts for nothing');
+});

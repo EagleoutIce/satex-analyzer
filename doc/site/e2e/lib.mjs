@@ -200,7 +200,7 @@ export async function page(cdp, url, outDir) {
     key: async (k) => {
       // `Ctrl+Backspace`: the named key with Ctrl held
       const ctrl = /^Ctrl\+/.test(k) ? 2 : 0; k = k.replace(/^Ctrl\+/, '');
-      const named = { Backspace: [8, 'Backspace'], Enter: [13, 'Enter'], Escape: [27, 'Escape'], ArrowLeft: [37, 'ArrowLeft'], ArrowRight: [39, 'ArrowRight'], Tab: [9, 'Tab'], Delete: [46, 'Delete'] }[k];
+      const named = { Backspace: [8, 'Backspace'], Enter: [13, 'Enter'], Escape: [27, 'Escape'], ArrowLeft: [37, 'ArrowLeft'], ArrowRight: [39, 'ArrowRight'], ArrowUp: [38, 'ArrowUp'], ArrowDown: [40, 'ArrowDown'], Tab: [9, 'Tab'], Delete: [46, 'Delete'] }[k];
       if (named) {
         await s('Input.dispatchKeyEvent', { type: 'rawKeyDown', key: k, code: named[1], windowsVirtualKeyCode: named[0], modifiers: ctrl });
         await s('Input.dispatchKeyEvent', { type: 'keyUp', key: k, code: named[1], windowsVirtualKeyCode: named[0], modifiers: ctrl });

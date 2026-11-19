@@ -14,6 +14,8 @@ export const DOCS = {
   markup: '\\documentclass{article}\n\\begin{document}\nSome \\textbf{bold words here} and \\emph{gentle emphasis} with $x^2 + y_1$ inline math.\nA display follows\n\\[ a = b + c \\]\nand the prose goes on after it\\footnote{A short note.}.\n\nA second paragraph with \\textbf{more} text.\n\\end{document}\n',
   twocol: '\\documentclass[twocolumn]{article}\n\\begin{document}\n' + Array.from({ length: 6 }, (_, i) => `Paragraph ${'one two three four five six'.split(' ')[i]} talks about columns and rows of text that wrap inside a narrow measure, so every line is short.\n\n`).join('') + '\\end{document}\n',
 };
+// the landing demo (showcase/shots.json): a TikZ picture with a macro's output in a node and a table under the paragraph typed in
+DOCS.demo = "\\documentclass{article}\n\\usepackage[paperwidth=9cm,paperheight=7.4cm,margin=6mm]{geometry}\n\\usepackage{tikz}\n\\usetikzlibrary{arrows.meta}\n\\definecolor{accent}{HTML}{0B3D91}\n\\tikzset{>=Stealth, thick,\n  box/.style={draw=accent, fill=accent!8,\n  rounded corners=3pt, minimum width=10mm}}\n\\newcommand{\\model}{TinyNet}\n\\begin{document}\n\\section{Results}\nWith \\model, the loss falls fast.\n\n\\begin{tikzpicture}[draw=accent]\n  \\node[box] (d) at (0,0) {data};\n  \\node[box] (m) at (2.6,-0.6) {\\model};\n  \\node[box] (l) at (5.2,0) {loss};\n  \\draw[->] (d) -- node[above] {train} (m);\n  \\draw[->] (m) -- (l);\n\\end{tikzpicture}\n\\begin{center}\n\\begin{tabular}{lr}\nRun & Steps\\\\ \\hline\nsmall & 120\\\\\nbase & 95\n\\end{tabular}\n\\end{center}\n\\end{document}\n";
 const EXAMPLE = { thesis: 'thesis.tex' };
 
 /** A seeded LCG: the same seed, the same list. */
@@ -88,7 +90,22 @@ self.__fzSnap = (view) => {
       if (e.tagName !== 'CANVAS') { for (const q of e.__texts) out.draws.push({ ...q, x: r.left + q.x, y: r.top + q.y, k: 1, mixed: false, px: parseFloat(q.font) }); continue; }
       for (const q of e.__texts ?? []) { ctx.font = q.font; out.draws.push({ t: q.t, font: q.font, sy: q.sy, x: r.left + q.x * k, y: r.top + q.y * k, k, mixed: (e.__mixed ?? []).includes(q.t), px: parseFloat(/([\\d.]+)px/.exec(q.font)?.[1] ?? '0') * k * (q.sy ?? 1) }); }
     }
+    // an overlay (a tint, a mark) still shown where a push moved the page away: over a pushed band, neither moved nor hidden
+    out.stale = [];
+    for (const pc of root.querySelectorAll('.pdf-echo.pdf-push')) { const pr = pc.getBoundingClientRect(), pg = pc.closest('.pdf-page');
+      for (const o of pg.querySelectorAll(':scope > :not(img, canvas, .pdf-caret, .pdf-echo, .pdf-raster, .pdf-relaid, .pdf-grid, .pdf-keys, .pdf-relay-hid, .pdf-link)')) { const r = o.getBoundingClientRect();
+        if (r.width * r.height > 4 && o.checkVisibility({ opacityProperty: true, visibilityProperty: true }) && Math.min(r.bottom, pr.bottom) - Math.max(r.top, pr.top) > 2 && Math.min(r.right, pr.right) - Math.max(r.left, pr.left) > 2) out.stale.push(o.className.slice(0, 40)); } }
     const ws = satexPdfWords(); out.words = [];
+    // an origin tint over no ink: no page word and no echo under it (a tint matched to another row of a lagging page)
+    out.tintsOff = [];
+    for (const o of root.querySelectorAll('.pdf-orig:not(.pdf-relay-hid)')) { const r = o.getBoundingClientRect(), pg = o.closest('.pdf-page'), img = pg?.querySelector('img');
+      if (!img?.naturalWidth || !o.checkVisibility({ opacityProperty: true }) || r.width * r.height < 4) continue;
+      const k = img.getBoundingClientRect().width / (img.naturalWidth * 72 / ws.dpi), ir = img.getBoundingClientRect();
+      const hit = (b) => Math.min(r.right, b[2]) - Math.max(r.left, b[0]) > 1 && Math.min(r.bottom, b[3]) - Math.max(r.top, b[1]) > 1;
+      // over a page word spelling part of what it tints (its title starts with that text); a copy the echo laid (pdf-relaid) goes with the echo
+      const what = (o.title || '').split(':')[0].replace(/\s+/g, ''), part = (t) => [...Array(Math.max(0, t.length - 2)).keys()].some((j) => what.includes(t.slice(j, j + 3))) || what.length < 3;
+      const inked = o.classList.contains('pdf-relaid') || ws.some((w) => w[0] === +pg.dataset.page && part(w[5]) && hit([ir.left + w[1] * k, ir.top + w[2] * k, ir.left + w[3] * k, ir.top + w[4] * k]));
+      if (!inked) out.tintsOff.push((o.title || o.className).slice(0, 40) + ' @' + Math.round(r.top)); }
     out.build = [...root.querySelectorAll('.pdf-page img')].map((i) => i.__build ? (i.__build.__fz ??= ++self.__fzN) : 0).join(',');
     for (const w of ws) {
       const img = root.querySelector('.pdf-page[data-page="' + w[0] + '"] img'); if (!img?.naturalWidth) continue;
@@ -99,7 +116,9 @@ self.__fzSnap = (view) => {
       if (covered) { const cv = cans.find((e) => { const r = e.getBoundingClientRect(); return e.__texts?.length && e.closest('.pdf-page')?.dataset.page == w[0] && Math.min(b[2], r.right) - Math.max(b[0], r.left) > (b[2] - b[0]) / 2 && (b[1] + b[3]) / 2 >= r.top && (b[1] + b[3]) / 2 <= r.bottom; });
         // moved or drawn by any echo of the view (a word wraps to another row's echo)
         const all = [...root.querySelectorAll('.pdf-echo')], kk = ws.dpi / 72, moved = all.some((e) => (e.__imgs ?? []).some((sx) => Math.abs((sx + 1) / kk - w[1]) < 1) || e.tagName !== 'CANVAS' && [...e.querySelectorAll('i')].some((i) => i.textContent === w[5])), drawn = all.some((e) => (e.__texts ?? []).some((q) => q.t.includes(w[5]) || w[5].includes(q.t) && q.t.length > 1));
-        if (cv && !moved && !drawn) (out.gone ??= []).push(w[5]); }
+        // a push (pdf-push) moves the page below the typed rows down as one band
+        const pushed = !!cv?.closest('.pdf-page')?.querySelector('.pdf-push') && (b[1] + b[3]) / 2 > cv.getBoundingClientRect().top;
+        if (cv && !moved && !drawn && !pushed) (out.gone ??= []).push(w[5]); }
     }
   }
   return out;
@@ -196,9 +215,15 @@ export async function run(p, { doc, view, steps }) {
     else if (kind === 'edit' || kind === 'move') await key(p, st.slice(2));
     else if (kind === 'click') { clicked = await click(p, view, st); placed = !!await p.until(`satexPdfCaret()`, 3000); }
     // a switch ends the caret (the other view's is placed by a click): keys until the next click type nowhere
+    // `p`: a person's pause (a build may land while the text runs ahead of it)
+    else if (kind === 'p') await sleep(1500);
     else if (kind === 'v') { view = view === 'pdf' ? 'ts' : 'pdf'; await toView(p, view); placed = false; }
     else if (kind === 'wait') {
+      // each frame while the build lands: an echo shown, then the old page fading on top with no echo (the typed text gone for frames)
+      await p.eval(`(() => { const F = self.__fzF = { n: 0, on: true }; let had = false; const tick = () => { const echo = !!document.querySelector('#play-pdf .pdf-echo:not(.pdf-push)'), fade = !!document.querySelector('#play-pdf .pdf-page img.pdf-fade'); if (had && fade && !echo) F.n++; had = echo || had && fade; if (F.on) requestAnimationFrame(tick); }; requestAnimationFrame(tick); })()`);
       await landed(p, view);
+      const flick = await p.eval(`(self.__fzF.on = false, self.__fzF.n)`);
+      if (flick) fail(i, 'land-flicker', `${flick} frames showed the old page fading over the typed text with no echo as the build landed`);
       await sleep(400);
     }
     await sleep(kind === 'wait' ? 0 : 180);
@@ -222,6 +247,8 @@ export async function run(p, { doc, view, steps }) {
         const known = (x) => page.has(x) || seenText.has(x) || [...typed, ...page, ...seenText].some((y) => y.includes(x)) || [...Array(x.length - 1).keys()].some((j) => [x.slice(0, j + 1), x.slice(j + 1)].every((h) => [...typed, ...page, ...seenText].some((y) => y.includes(h))));
         if (t.length > 2 && !known(t) && !src.includes(t)) fail(i, 'echo-foreign', `echo draws ${J(t)}, neither typed nor on the page`);
       }
+      if (s.tintsOff.length) fail(i, 'tint-astray', `origin tints over no ink: ${J(s.tintsOff.slice(0, 3))}`);
+      if (s.stale.length) fail(i, 'stale-overlay', `overlays left over the band the echo pushed down: ${J(s.stale.slice(0, 4))}`);
       const gone = (s.gone ?? []).filter((t) => src.includes(t));
       if (gone.length) fail(i, 'echo-lost', `page words under the echo neither moved nor drawn: ${J(gone)}`);
       // (4) one size a row's letters, no word in a face lacking its glyphs

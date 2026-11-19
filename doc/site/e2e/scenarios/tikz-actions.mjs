@@ -2,4 +2,5 @@
 export default [
   { kind: 'tikz', name: 'tikz-drawing', session: 'drawing' },
   { kind: 'tikz', name: 'tikz-thesis', session: 'thesis' },
+  { kind: 'tikz', name: 'box-width', session: 'figure' },
 ];

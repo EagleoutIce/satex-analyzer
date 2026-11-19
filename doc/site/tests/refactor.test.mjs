@@ -34,7 +34,7 @@ test('wrap: tabular into a table, image with alt text', () => {
   assert.match(out, /\\includegraphics\[width=3cm, alt=\{Run times per document\}\]\{img\/run_times\.pdf\}/);
   assert.match(out, /\\label\{fig:run-times\}/);
   const bare = 'x \\includegraphics{a.png} y', b = edit(bare, [R.wrap(bare, R.wrapTarget(bare, 4), '', 'A').edit]);
-  assert.match(b, /^x \n\\begin\{figure\}\[htbp\]\n  \\centering\n  \\includegraphics\[alt=\{A\}\]\{a\.png\}\n/);
+  assert.match(b, /^x\n\\begin\{figure\}\[htbp\]\n  \\centering\n  \\includegraphics\[alt=\{A\}\]\{a\.png\}\n/);
   assert.ok(paired(b));
 });
 
@@ -68,6 +68,8 @@ test('math: inline, display and equation into each other', () => {
   const back = R.mathAt(eq, 20);
   assert.equal(edit(eq, [{ from: back.from, to: back.to, now: R.mathTo(eq, back, 'display') }]), d);
   assert.equal(R.mathTo(d, dm, 'inline'), '\\(e = mc^2\\)');
+  // out of a line of text: the spaces at its line breaks go
+  assert.equal(edit(s, [R.mathEdit(s, m, 'equation')]), 'Cost\n\\begin{equation}\n  a + b\n\\end{equation}\nhere and \\$5.');
   assert.equal(R.mathAt('a \\\\[2pt] b $x$', 12).body, 'x');
   assert.equal(R.mathAt('price \\$5 and $y$', 15).body, 'y');
   // a label keeps the numbered forms only
@@ -87,6 +89,8 @@ test('math: rows into align at the relation, and back', () => {
   assert.equal(R.mathTo(a, am, 'gather'), '\\begin{gather}\n  f_{i=1} + x \\le y \\\\\n  a = b \\& c\\\\[2pt]\n  p = q\n\\end{gather}');
   const one = '\\[ T(n) = \\sum_i c_i \\le C \\]';
   assert.equal(R.mathTo(one, R.mathAt(one, 4), 'align*'), '\\begin{align*}\n  T(n) &= \\sum_i c_i \\le C\n\\end{align*}');
+  const eq = '\\begin{equation}\\label{eq:c}\n  T = c\n\\end{equation}';
+  assert.equal(R.mathTo(eq, R.mathAt(eq, 30), 'align'), '\\begin{align}\\label{eq:c}\n  T &= c\n\\end{align}');
   assert.ok(R.needsAms('align*') && R.needsAms('pmatrix') && !R.needsAms('equation') && !R.needsAms('display'));
 });
 

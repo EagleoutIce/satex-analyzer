@@ -30,7 +30,7 @@ function expectEdit(text, at, keys) {
 /** The keys of a scenario: strings split into characters, named keys kept. */
 // `Pause`: no key, a rest of `sc.pauseMs` (a build starts while the person thinks, then lands while they type on)
 // `MathDisplay`: the Type bar's display-math control (typing `\\[` is refused: it would change the source's structure)
-const NAMED = /^(Backspace|Enter|Escape|ArrowLeft|ArrowRight|Tab|Ctrl\+Backspace|Pause|MathDisplay)$/;
+const NAMED = /^(Backspace|Enter|Escape|ArrowLeft|ArrowRight|ArrowUp|ArrowDown|Tab|Ctrl\+Backspace|Pause|MathDisplay)$/;
 const keysOf = (seq) => seq.flatMap((x) => (NAMED.test(x) ? [x] : [...x]));
 
 const J = JSON.stringify;
@@ -810,6 +810,9 @@ async function dblScenario(p, sc) {
       if (n?.nodeType === 3) { const i = n.textContent.search(/\\S/); t.setStart(n, i); t.setEnd(n, i + 1); const b = t.getBoundingClientRect(); return [b.left + b.width / 2, b.top + b.height / 2]; }
       return [r.left + Math.min(20, r.width / 2), r.top + r.height / 2];
     })()`);
+  } else if (sc.page) {
+    // a place of page 1 by its share of the page (`page`: [x, y]): a margin, the header band
+    at = await p.eval(`(() => { const i = document.querySelector('#play-pdf .pdf-page[data-page="1"] img'); if (!i) return null; i.scrollIntoView({ block: 'start' }); const r = i.getBoundingClientRect(); return [r.left + r.width * ${sc.page[0]}, r.top + r.height * ${sc.page[1]}]; })()`);
   } else if (sc.text) {
     const w = await wordAt(p, `(t) => t === ${J(sc.text)}`);
     at = w && [(w[0] + w[2]) / 2, (w[1] + w[3]) / 2];
@@ -828,6 +831,9 @@ async function dblScenario(p, sc) {
   }
   if (!at) { res.fails.push('setup: no place to double-click'); await shot(p, res, 'noplace'); return res; }
   res.info.at = at.map(Math.round).join(',');
+  const shown = `!!document.querySelector('dialog.sd-dialog[open], #play-view[open]')`;
+  // `single`: a click alone opens nothing there (the Page layout widget opens on a double click only)
+  if (sc.single) { await p.mouse(at[0], at[1], 1); await sleep(1500); if (await p.eval(shown)) { res.fails.push('a single click opened a widget'); await shot(p, res, 'single'); return res; } await sleep(600); }
   await p.mouse(at[0], at[1], 1);
   await sleep(60);
   await p.mouse(at[0], at[1], 2);

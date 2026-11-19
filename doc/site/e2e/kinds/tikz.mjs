@@ -139,7 +139,64 @@ export async function tikz(p, sc) {
       await p.mouse(x, y);
     } });
     // paths
-    await act(p, 'edge-tip-both', between('source', 'run'), ['Arrow tips', '↔'], /\\draw\[<->, flow\] \(src\) -- \(run\);/, { shot: true });
+    await act(p, 'edge-tip-both', between('source', 'run'), ['Arrow tips', '↔'], /\\draw\[flow, <->\] \(src\) -- \(run\);/, { shot: true });
+    // each end on its own, the tips drawn by TeX beside their names
+    await act(p, 'edge-tip-start', between('source', 'run'), ['Arrow tips', 'Start', 'Kite'], /\\draw\[flow, Kite-\] \(src\) -- \(run\);/, { shot: true });
+    {
+      const r = { name: 'edge-tip-previews', fails: [], info: {} };
+      try {
+        if (!await rclick(p, await between('source', 'run')())) throw new Error('no menu');
+        for (const l of ['Arrow tips', 'End']) {
+          const at = await p.eval(`(() => { const b = [...document.querySelectorAll('.pa-menu')].at(-1).querySelectorAll(':scope > button'); const x = [...b].find((e) => e.querySelector('span').textContent === ${J(l)}); if (!x) return null; const q = x.getBoundingClientRect(); return [q.left + 30, q.top + q.height / 2]; })()`);
+          if (!at) throw new Error(`no ${l}`);
+          await p.s('Input.dispatchMouseEvent', { type: 'mouseMoved', x: at[0], y: at[1] });
+          await sleep(160);
+        }
+        const got = await p.eval(`(() => { const m = [...document.querySelectorAll('.pa-menu')].at(-1); return { rows: m.querySelectorAll(':scope > button').length, imgs: [...m.querySelectorAll('img.pa-img')].filter((i) => i.naturalWidth > 0).length, heads: [...m.querySelectorAll(':scope > b')].map((b) => b.textContent) }; })()`);
+        r.info = got;
+        await p.shot('edge-tip-previews.png');
+        if (got.rows < 25) r.fails.push(`only ${got.rows} tips`);
+        if (got.imgs < 15) r.fails.push(`only ${got.imgs} pictures`);
+        if (!got.heads.includes('arrows.meta')) r.fails.push(`heads ${J(got.heads)}`);
+      } catch (e) { r.fails.push(String(e.message)); }
+      await p.eval(`document.querySelectorAll('.pa-menu').forEach((e) => e.remove())`);
+      results.push(r);
+    }
+    // bend points: a drag on the path adds one (its glow and grip on hover), a right click on it removes it or makes a curve
+    {
+      const r = { name: 'bend-drag', fails: [], info: {} };
+      try {
+        const t0 = await text(p), [x, y] = await between('source', 'run')();
+        await p.s('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y });
+        if (!await p.until(`document.querySelector('#play-pdf svg.pdf-tikz-path polyline')`, 3000)) r.fails.push('no glow on hover');
+        await p.s('Input.dispatchMouseEvent', { type: 'mousePressed', x, y, button: 'left', clickCount: 1 });
+        for (let k = 1; k <= 6; k++) { await p.s('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y: y - 5 * k, button: 'left', buttons: 1 }); await sleep(30); }
+        await p.shot('bend-drag-ghost.png');
+        await p.s('Input.dispatchMouseEvent', { type: 'mouseReleased', x, y: y - 30, button: 'left', clickCount: 1 });
+        const t1 = await p.until(`satexHealth().text !== ${J(t0)} && satexHealth().text`, 5000);
+        r.info.wrote = (t1 || '').match(/\\draw\[flow\] \(src\)[^;]*;/)?.[0];
+        if (!/\\draw\[flow\] \(src\) -- \(-?[\d.]+cm,[\d.]+cm\) -- \(run\);/.test(t1 || '')) r.fails.push(`text: ${J(r.info.wrote)}`);
+        const b = await build(p);
+        if (!b.ok || /error|failed|stopped/i.test(b.status)) r.fails.push(`build: ${b.status.slice(0, 120)}`);
+        // the run after the build places the boxes again: wait for its words, then hover away and back
+        await p.until(`satexPdfWords().length > 3`, 20000);
+        await sleep(1500);
+        await p.s('Input.dispatchMouseEvent', { type: 'mouseMoved', x: x + 200, y: y + 200 });
+        await sleep(100);
+        await p.s('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y: y - 30 });
+        if (!await p.until(`document.querySelector('#play-pdf .pdf-tikz-bend')`, 3000)) r.fails.push(`no grip on the bend point (words ${await p.eval('satexPdfWords().length')})`);
+        if (r.fails.length) r.fails.push(`DBG ${await p.eval(`JSON.stringify(self.__tkDbg?.(${x}, ${y - 30}))`)}`); // DEBUG-REMOVE
+        await p.shot('bend-drag-after.png');
+        if (t1) {
+          await act(p, 'bend-remove', async () => [x, y - 30], ['Remove bend point'], /\\draw\[flow\] \(src\) -- \(run\);/, { compile: false });
+          await act(p, 'bend-curve', async () => [x, y - 30], ['Convert to curve'], /\\draw\[flow\] \(src\) to\[out=\d+, in=\d+\] \(run\);/, { shot: true });
+          await undo(p);
+          if (await text(p) !== t0) r.fails.push('one Ctrl+Z did not take the bend point back');
+          await build(p);
+        }
+      } catch (e) { r.fails.push(String(e.message)); await p.shot('bend-drag-fail.png').catch(() => {}); }
+      results.push(r);
+    }
     await act(p, 'edge-bend', between('source', 'run'), ['Route', 'Bend right', '45°'], /\\draw\[flow\] \(src\) to\[bend right=45\] \(run\);/);
     await act(p, 'edge-right-angle', between('run', 'findings', 0.147), ['Route', 'Right angle, vertical first (|-)'], /\\draw\[flow\] \(run\) \|- \(out\);/);
     await act(p, 'edge-inout', between('source', 'run'), ['Route', 'Out and in angles…'], /\\draw\[flow\] \(src\) to\[out=45, in=135\] \(run\);/, { then: () => typeIn(p, '45, 135') });
@@ -217,7 +274,9 @@ export async function tikz(p, sc) {
       results.push(r);
     };
     await drag('drag-relative', 'one', 60, 0, /\\node\[(below|below right|below left)=([-\d.]+cm( and [\d.]+cm)? )?of (run|out)(, xshift=[-\d.]+cm)?\] \(note\)/);
-    await drag('drag-fixed-ctrl', 'one', 60, 0, /\\node\[\] \(note\) at \(|\\node \(note\) at \([-\d.]+,[-\d.]+\) \{/, 2);
+    await drag('drag-fixed-alt', 'one', 60, 0, /\\node\[\] \(note\) at \(|\\node \(note\) at \([-\d.]+,[-\d.]+\) \{/, 1);
+    // Ctrl: the centre on the picture's grid, half units
+    await drag('drag-grid-ctrl', 'one', 60, 0, /\\node(\[\])? \(note\) at \(-?\d+(\.[05])?(cm)?,-?\d+(\.[05])?(cm)?\) \{/, 2);
     {
       const r = { name: 'dblclick-edit', fails: [], info: {} };
       try {
@@ -267,7 +326,7 @@ export async function tikz(p, sc) {
         return act(p, name, at, path, want, { ...o, compile: o.compile ?? true });
       };
       await tsAct('ts-node-ellipse', tsAt('source'), ['Shape', 'Ellipse'], /\\node\[ellipse, box\] \(src\)/, { shot: true });
-      await tsAct('ts-edge-tip', tsBetween('source', 'run'), ['Arrow tips', '←'], /\\draw\[<-, flow\] \(src\) -- \(run\);/, { shot: true });
+      await tsAct('ts-edge-tip', tsBetween('source', 'run'), ['Arrow tips', '←'], /\\draw\[flow, <-\] \(src\) -- \(run\);/, { shot: true });
     }
   }
   if (sc.session === 'thesis') {
@@ -287,6 +346,41 @@ export async function tikz(p, sc) {
     await act(p, 'thesis-node-diamond', node('SaTeX'), ['Shape', 'Diamond'], /\\node \(satex\) \[diamond, right of=tex\] \{SaTeX\};/, { toast: /\\usetikzlibrary\{shapes\.geometric\}/, compile: false, shot: true });
     await act(p, 'thesis-add-edge', node('findings'), ['Arrange', 'Add edge from this node…'], /\\draw\[->\] \(out\) -- \(tex\);\n  \\end\{tikzpicture\}/, { then: async () => { await sleep(200); const [x, y] = mid(await word(p, 'file')); await p.mouse(x, y); } });
   }
+  if (sc.session === 'figure') {
+    // a box's width dragged on the page: the graphic's `width=` share, Ctrl to half the line
+    await open(p, 'figure.tex');
+    const first = await build(p, 300000);
+    if (!first.ok) throw new Error(`no first build (${first.status.slice(0, 120)})`);
+    const r = { name: 'box-width-drag', fails: [], info: {} };
+    try {
+      const t0 = await text(p);
+      await p.until(`satexPdfWords().length > 3`, 20000);
+      await sleep(1000);
+      // the picture: above the caption's words, in the middle of the line
+      const cap = await word(p, 'example');
+      const [x, y] = [cap.l + 10, cap.t - 40];
+      await p.s('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y });
+      const g = await p.until(`(() => { const e = document.querySelector('#play-pdf .pdf-size-grip'); if (!e) return null; const q = e.getBoundingClientRect(), b = e.parentElement.getBoundingClientRect(); return [q.left + q.width / 2, q.top + q.height / 2, b.left, b.right]; })()`, 4000);
+      if (!g) throw new Error('no width grip on the graphic');
+      await p.shot('box-width-hover.png');
+      await p.s('Input.dispatchMouseEvent', { type: 'mouseMoved', x: g[0], y: g[1] });
+      await p.s('Input.dispatchMouseEvent', { type: 'mousePressed', x: g[0], y: g[1], button: 'left', clickCount: 1 });
+      // half the line: the box is 0.6 of it
+      const to = g[0] - (g[3] - g[2]) / 6;
+      for (let k = 1; k <= 6; k++) { await p.s('Input.dispatchMouseEvent', { type: 'mouseMoved', x: g[0] + (to - g[0]) * k / 6, y: g[1], button: 'left', buttons: 1, modifiers: 2 }); await sleep(30); }
+      await p.shot('box-width-ghost.png');
+      await p.s('Input.dispatchMouseEvent', { type: 'mouseReleased', x: to, y: g[1], button: 'left', clickCount: 1, modifiers: 2 });
+      const t1 = await p.until(`satexHealth().text !== ${J(t0)} && satexHealth().text`, 5000);
+      r.info.wrote = (t1 || '').match(/\\includegraphics\[[^\]]*\]/)?.[0];
+      if (!/\\includegraphics\[width=\.5\\linewidth\]/.test(t1 || '')) r.fails.push(`text: ${J(r.info.wrote)}`);
+      const b = await build(p);
+      if (!b.ok || /error|failed|stopped/i.test(b.status)) r.fails.push(`build: ${b.status.slice(0, 120)}`);
+      await undo(p);
+      if (await text(p) !== t0) r.fails.push('one Ctrl+Z did not give the text back');
+    } catch (e) { r.fails.push(String(e.message)); await p.shot('box-width-fail.png').catch(() => {}); }
+    results.push(r);
+  }
   const fails = results.flatMap((r) => r.fails.map((f) => `${r.name}: ${f}`));
   return { name: sc.name, fails, perf: [], info: { actions: results.length, failed: results.filter((r) => r.fails.length).map((r) => r.name) } };
 }
+export { open, file, build, word, mid, rclick, choose, undo, text, act0 };

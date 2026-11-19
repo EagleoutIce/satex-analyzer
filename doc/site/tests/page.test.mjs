@@ -126,3 +126,16 @@ test('taggedNote: only for tagging on and a package not compatible', () => {
   assert.match(P.taggedNote(t, 'scrlayer-scrpage'), /not compatible/);
   assert.equal(P.taggedNote({ ...t, active: false }, 'fancyhdr'), '', 'tagging off: nothing');
 });
+
+// Intuition: after a widget writes a table and the build fails, the note at the table says whether the change broke
+// the build or the error was there before. Pins the user's drag to 7.45cm with a stray `}` already in the file: the old
+// pages stayed and nothing said why.
+test('failNote: a failed build after a widget write, new or from before', () => {
+  const E = self.satexPdfEdit;
+  const err = { severity: 'error', message: 'Too many }\'s', line: 13 };
+  assert.equal(E.failNote([err], []), "The build after this change failed: Too many }'s at line 13");
+  assert.equal(E.failNote([err], [{ ...err, line: 12 }]), "The build failed before this change too: Too many }'s at line 13", 'the same error before (its line moved)');
+  assert.equal(E.failNote([{ severity: 'warning', message: 'w' }], []), null, 'no error: nothing');
+  assert.equal(E.failNote([{ ...err, message: 'Too many }\'s.' }], null), "The build after this change failed: Too many }'s at line 13", 'its full stop dropped');
+  assert.equal(E.failNote([err], null), "The build after this change failed: Too many }'s at line 13", 'no build shown before');
+});
