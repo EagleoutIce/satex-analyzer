@@ -238,6 +238,8 @@ pub(super) fn actions(analysis: &Analysis, doc: &Text, path: &str, pos: Pos) -> 
 
 /// `satex/view`: the views at `pos`, each `{plugin, title, range, sections}`.
 pub(super) fn views(analysis: &Analysis, doc: &Text, path: &str, pos: Pos) -> Vec<Json> {
+    // a color's spec opens the views of the color it defines (its swatch stands there)
+    let pos = color::named_at(analysis, doc, path, pos).unwrap_or(pos);
     let at = hover_types(analysis, doc, path, pos);
     let cx = context(analysis, doc, path, pos, &at);
     let mut seen = Vec::new();

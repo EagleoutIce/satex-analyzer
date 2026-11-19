@@ -73,6 +73,11 @@ fn differs_unordered(a: &Analysis, b: &Analysis) -> Option<&'static str> {
     if maps_a != maps_b {
         return Some("the maps of facts");
     }
+    // The bindings by value: a hash map serializes in the order its entries came in.
+    let env = |x: &Analysis| serde_json::to_value((&x.env, &x.catcodes, &x.preamble)).expect("encodable");
+    if env(&a) != env(&b) {
+        return Some("env");
+    }
     // The graph's and the calls' tables too: the same bytes, in the order each run filled them.
     let multiset = |(name, mut bytes): (&'static str, Vec<u8>)| {
         if matches!(name, "graph" | "calls") {
@@ -80,7 +85,9 @@ fn differs_unordered(a: &Analysis, b: &Analysis) -> Option<&'static str> {
         }
         (name, bytes)
     };
-    facts(&a).into_iter().map(multiset).zip(facts(&b).into_iter().map(multiset)).find(|(x, y)| x != y).map(|(x, _)| x.0)
+    let ordered =
+        |x: &Analysis| facts(x).into_iter().filter(|(name, _)| *name != "env").map(multiset).collect::<Vec<_>>();
+    ordered(&a).into_iter().zip(ordered(&b)).find(|(x, y)| x != y).map(|(x, _)| x.0)
 }
 
 /// Every site example, run twice: the second is served and agrees byte for byte.

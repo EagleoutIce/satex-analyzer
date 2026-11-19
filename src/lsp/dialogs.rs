@@ -417,6 +417,34 @@ pub fn widths(analysis: &Analysis, doc: &Text, path: &str) -> Json {
     json!({ "tables": tables.collect::<Vec<_>>(), "linewidth": lw.map(|w| w.lo as f64 / 65536.0) })
 }
 
+/// What the table dialog writes beyond the kernel, with the package that defines it: the
+/// installation's provider wins, the name here is the fallback where its index is missing (the
+/// browser), so a booktabs conversion or a merge never writes a command nothing loads.
+const WRITES: [(&str, &str); 8] = [
+    ("toprule", "booktabs"),
+    ("midrule", "booktabs"),
+    ("bottomrule", "booktabs"),
+    ("cmidrule", "booktabs"),
+    ("multirow", "multirow"),
+    ("cellcolor", "colortbl"),
+    ("rowcolor", "colortbl"),
+    ("tabularx", "tabularx"),
+];
+
+/// The package a command or environment the written table uses needs that the run lacks.
+fn writes(analysis: &Analysis, t: &tabular::Table, emitted: &str) -> Option<Package> {
+    let uses = |name: &str| {
+        let cs = format!("\\{name}");
+        t.env == name
+            || emitted
+                .match_indices(&cs)
+                .any(|(at, _)| !emitted[at + cs.len()..].starts_with(|c: char| c.is_ascii_alphabetic() || c == '@'))
+    };
+    let (name, hint) = WRITES.iter().find(|(name, _)| uses(name) && !analysis.defined(name))?;
+    let name = crate::linter::shared::provider(analysis, name).unwrap_or_else(|| hint.to_string());
+    Some(Package { name, options: String::new() })
+}
+
 /// The package a table's columns need that the run lacks: a letter (or `>`, `<`) neither its
 /// `\@testpach` tests nor a `\newcolumntype` made; the column's hint, else the installation's
 /// provider of `\@testpach`.
@@ -473,8 +501,9 @@ pub fn apply(
             if switched {
                 notes.push("X columns: written as tabularx, \\linewidth wide".to_string());
             }
-            let mut n = snapshot::retarget(&written(&[], false)?, &tabular::emit(&t)).ok_or("no table here")?;
-            n.package = columns(analysis, &t);
+            let emitted = tabular::emit(&t);
+            let mut n = snapshot::retarget(&written(&[], false)?, &emitted).ok_or("no table here")?;
+            n.package = columns(analysis, &t).or_else(|| writes(analysis, &t, &emitted));
             (n, (switched || op.is_some()).then_some(t))
         }
         "image" => {

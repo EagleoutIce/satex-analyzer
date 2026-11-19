@@ -2556,6 +2556,9 @@ fn a_tikz_path_completes_node_names() {
     let (mut server, uri, _, dir) = open_loaded("nodes", text);
     let items = complete(&mut server, &uri, 5, 9);
     assert!(labels(&items).contains(&"alpha"), "{:?}", labels(&items));
+    // what the node holds and where, never the name pgf keeps it under (`pgf@sh@ns@…`)
+    let alpha = items.iter().find(|i| i["label"] == "alpha").unwrap();
+    assert_eq!(alpha["detail"], "{a} · line 5", "{alpha}");
     server.shutdown();
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -2699,6 +2702,68 @@ fn document_colors_cover_named_and_defined_colors() {
     assert_eq!((red["color"]["red"].as_f64(), red["color"]["blue"].as_f64()), (Some(1.0), Some(0.0)), "{found}");
     let mine = at(4, "mine").unwrap_or_else(|| panic!("mine has a color: {found}"));
     assert_eq!((mine["color"]["red"].as_f64(), mine["color"]["blue"].as_f64()), (Some(0.0), Some(1.0)), "{found}");
+    server.shutdown();
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A swatch covers all the document wrote for a color: a definition's spec (`0B3D91`,
+/// `0.1,0.2,0.3`) with the color it defined, and a used expression (`accent!50`) with its
+/// mix, and the spec opens the color's widget. Pins the swatch only on the name, and the
+/// spec's `0` read as a number.
+#[test]
+fn document_colors_cover_specs_and_expressions() {
+    let lines = [
+        "\\documentclass{article}",
+        "\\usepackage{xcolor}",
+        "\\definecolor{accent}{HTML}{0B3D91}",
+        "\\definecolor{soft}{rgb}{0.1,0.2,0.3}",
+        "\\begin{document}",
+        "\\textcolor{accent!50}{x}",
+        "\\end{document}",
+        "",
+    ];
+    let text = lines.join("\n");
+    let dir = crate::support::tmp_root().join(format!("satex-lsp-colors3-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let main = dir.join("main.tex");
+    std::fs::write(&main, &text).unwrap();
+    let uri = fixture_uri(&main);
+    let mut server = Server::start_with(&dir, &dir, &["--set", "limits.seconds=0"]);
+    let id = server.request("initialize", json!({ "processId": null, "rootUri": null, "capabilities": {} }));
+    server.response(id);
+    server.notify("initialized", json!({}));
+    server.notify(
+        "textDocument/didOpen",
+        json!({ "textDocument": { "uri": uri, "languageId": "tex", "version": 1, "text": text } }),
+    );
+    server.published();
+    let id = server.request("textDocument/documentColor", json!({ "textDocument": { "uri": uri } }));
+    let found = server.response(id)["result"].clone();
+    // the color over exactly `word` on line `line`
+    let over = |line: usize, word: &str| {
+        let start = lines[line].find(word).unwrap() as u64;
+        let range = json!({ "start": { "line": line, "character": start }, "end": { "line": line, "character": start + word.len() as u64 } });
+        found.as_array().unwrap().iter().find(|c| c["range"] == range).map(|c| c["color"].clone())
+    };
+    let hex = over(2, "0B3D91").unwrap_or_else(|| panic!("the HTML spec has its swatch: {found}"));
+    assert_eq!(hex["blue"].as_f64().map(|b| (b * 255.0).round()), Some(f64::from(0x91)), "{found}");
+    let rgb = over(3, "0.1,0.2,0.3").unwrap_or_else(|| panic!("the rgb spec has its swatch: {found}"));
+    assert!((rgb["green"].as_f64().unwrap() - 0.2).abs() < 1e-3, "{found}");
+    let mix = over(5, "accent!50").unwrap_or_else(|| panic!("the mix has one swatch over it all: {found}"));
+    // half accent, half white
+    let half = (f64::from(0x91) / 255.0 + 1.0) / 2.0;
+    assert!((mix["blue"].as_f64().unwrap() - half).abs() < 1e-3, "{found}");
+    // the swatch on a spec opens the color's widget, as the one on its name does
+    let character = lines[2].find("0B3D91").unwrap() + 1;
+    let id = server.request(
+        "satex/view",
+        json!({ "textDocument": { "uri": uri }, "position": { "line": 2, "character": character } }),
+    );
+    let views = server.response(id)["result"].clone();
+    assert!(
+        views.as_array().is_some_and(|v| v.iter().any(|v| v["plugin"] == "color")),
+        "a color view on the spec: {views}"
+    );
     server.shutdown();
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -3464,6 +3529,82 @@ fn page_papers_without_geometry() {
     std::fs::remove_dir_all(dir).ok();
 }
 
+/// The paper is named from the class's own options (`\ds@letterpaper`), not only geometry's
+/// list: the browser has no geometry.sty. A class's own paper geometry does not know names it too.
+#[test]
+fn page_names_the_paper_from_class_options() {
+    let page = |server: &mut Server, uri: &str| {
+        let views = at(server, uri, "satex/view", 0, 2);
+        views.as_array().unwrap().iter().find(|v| v["plugin"] == "page").expect("a page view")["sections"][0].clone()
+    };
+    let text = "\\documentclass[letterpaper]{article}\n\\begin{document}\nText\n\\end{document}\n";
+    let (mut server, uri, dir) = open_set("page-letter", text, &[]);
+    let s = page(&mut server, &uri);
+    // ANSI A is the same size: both names stand
+    assert_eq!(s["paper"][0], "letterpaper", "the class's own name first: {} of {}", s["paper"], s["papers"]);
+    server.shutdown();
+    std::fs::remove_dir_all(dir).ok();
+    let cls = "\\LoadClass{article}\n\\DeclareOption{tallpaper}{\\setlength\\paperheight{30cm}\\setlength\\paperwidth{20cm}}\n\\ProcessOptions\n";
+    let text = "\\documentclass[tallpaper]{tall}\n\\begin{document}\nText\n\\end{document}\n";
+    let (mut server, uri, dir) = open_with("page-tall", text, &[("tall.cls", cls)], &[]);
+    let s = page(&mut server, &uri);
+    assert_eq!(s["paper"], json!(["tallpaper"]), "{}", s["papers"]);
+    server.shutdown();
+    std::fs::remove_dir_all(dir).ok();
+}
+
+/// The page view says whether tagging is on and the tagging status of each package its edits
+/// may load, from the installation's status file, loaded or not.
+#[test]
+fn page_tagging_statuses_of_its_packages() {
+    let text = "\\DocumentMetadata{tagging=on}\n\\documentclass{article}\n\\begin{document}\nText\n\\end{document}\n";
+    let (mut server, uri, dir) = open_set("page-tagging", text, &[]);
+    let views = at(&mut server, &uri, "satex/view", 1, 2);
+    let s =
+        views.as_array().unwrap().iter().find(|v| v["plugin"] == "page").expect("a page view")["sections"][0].clone();
+    let t = &s["tagging"];
+    assert_eq!(t["active"], true, "{t}");
+    for p in ["geometry", "fancyhdr", "scrlayer-scrpage", "typearea"] {
+        assert!(t["status"][p].is_string(), "{p} in {t}");
+    }
+    // the installation's list says geometry and fancyhdr are compatible
+    assert_eq!(
+        (t["status"]["geometry"].clone(), t["status"]["fancyhdr"].clone()),
+        (json!("compatible"), json!("compatible")),
+        "{t}"
+    );
+    server.shutdown();
+    std::fs::remove_dir_all(dir).ok();
+}
+
+/// What the page style in force prints: plain puts the page number in the foot's centre,
+/// fancyhdr's fields are its own.
+#[test]
+fn page_current_header_and_footer() {
+    let page = |server: &mut Server, uri: &str| {
+        let views = at(server, uri, "satex/view", 0, 2);
+        views.as_array().unwrap().iter().find(|v| v["plugin"] == "page").expect("a page view")["sections"][0].clone()
+    };
+    let text = "\\documentclass{article}\n\\pagestyle{plain}\n\\begin{document}\nText\n\\end{document}\n";
+    let (mut server, uri, dir) = open_set("page-plain", text, &[]);
+    let st = page(&mut server, &uri)["styles"].clone();
+    assert_eq!(st["foot"]["odd"]["center"], "\\thepage", "{st}");
+    assert_eq!((st["head"]["odd"]["left"].clone(), st["fancy"].clone()), (json!(""), json!(false)), "{st}");
+    server.shutdown();
+    std::fs::remove_dir_all(dir).ok();
+    let text = "\\documentclass{article}\n\\usepackage{fancyhdr}\n\\pagestyle{fancy}\n\\fancyhf{}\n\\fancyhead[L]{Left}\n\\fancyfoot[R]{\\thepage}\n\\begin{document}\nText\n\\end{document}\n";
+    let (mut server, uri, dir) = open_set("page-fancy", text, &[]);
+    let st = page(&mut server, &uri)["styles"].clone();
+    assert_eq!(st["fancy"], true, "{st}");
+    assert_eq!(
+        (st["head"]["odd"]["left"].clone(), st["foot"]["odd"]["right"].clone()),
+        (json!("Left"), json!("\\thepage")),
+        "{st}"
+    );
+    server.shutdown();
+    std::fs::remove_dir_all(dir).ok();
+}
+
 /// Page layout: the view gets the page geometry the run computed, geometry's options as written,
 /// and with a KOMA class typearea's `DIV` and `BCOR`; lenses on the class and geometry, a link on its keys.
 #[test]
@@ -3583,7 +3724,7 @@ fn page_snapshots_print_per_class_family() {
     let text = format!("\\documentclass[DIV=10,BCOR=5mm]{{scrartcl}}\n{body}");
     let (mut server, uri, dir) = open_set("page-scrartcl", &text, &[]);
     let s = page(&mut server, &uri);
-    assert_eq!(s["family"], "koma", "{s}");
+    assert_eq!((&s["class"], &s["family"]), (&json!("scrartcl"), &json!("koma")), "{s}");
     let koma = set(&s["koma"], json!([{ "key": "DIV", "value": "12" }, { "key": "BCOR", "value": "5mm" }]));
     let out = print(&mut server, &uri, json!([koma]));
     assert_eq!(out["edits"].as_array().map(Vec::len), Some(1), "only DIV's value: {out}");
@@ -4053,6 +4194,35 @@ fn a_table_column_keeps_and_writes_its_injections() {
     let loads: Vec<&Value> =
         out["edits"].as_array().unwrap().iter().filter(|e| e["newText"] == "\\usepackage{array}\n").collect();
     assert_eq!(loads.len(), 1, "array is added, the run's \\@testpach lacks `>`: {out}");
+}
+
+/// The dialog's booktabs conversion loads booktabs in the same edit when the run lacks it, once; a
+/// run that has it gets no second load. Pins the user's conversion that wrote `\toprule` with nothing
+/// loading it (the browser has no package index to ask: the dialog's own hint loads it).
+#[test]
+fn a_booktabs_conversion_loads_booktabs() {
+    for (tag, pre, loads) in [("bt-none", "", 1), ("bt-have", "\\usepackage{booktabs}\n", 0)] {
+        let text = format!(
+            "\\documentclass{{article}}\n{pre}\\begin{{document}}\n\\begin{{tabular}}{{ll}}\n\\hline\na & b \\\\\n\\hline\n\\end{{tabular}}\n\\end{{document}}\n"
+        );
+        let (mut server, uri, _, _) = open_loaded(tag, &text);
+        let mut ask = |method: &str, params: Value| {
+            let id = server.request(method, params);
+            server.response(id)["result"].clone()
+        };
+        let line = if pre.is_empty() { 2 } else { 3 };
+        let view = ask(
+            "satex/dialog",
+            json!({ "textDocument": { "uri": uri }, "position": { "line": line, "character": 2 } }),
+        );
+        let out = ask(
+            "satex/dialogApply",
+            json!({ "textDocument": { "uri": uri }, "kind": "table", "range": view["range"], "state": view["state"], "op": "booktabs" }),
+        );
+        assert!(out["text"].as_str().unwrap_or_default().contains("\\toprule"), "{out}");
+        let n = out["edits"].as_array().unwrap().iter().filter(|e| e["newText"] == "\\usepackage{booktabs}\n").count();
+        assert_eq!(n, loads, "{tag}: {out}");
+    }
 }
 
 /// A column made S however (the type menu, not the Numbers → S rewrite) braces its text cells, which
@@ -6509,6 +6679,320 @@ fn verbatim_text_is_neither_definition_nor_use() {
     let shown = lines.iter().position(|l| l.starts_with("\\def")).unwrap() as u32;
     let refs = ask_at(&mut server, "textDocument/references", &uri, shown, 6);
     assert!(refs.as_array().is_none_or(Vec::is_empty), "{refs}");
+    server.shutdown();
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// `satex/hyphenate` (the PDF echo's hyphenation of typed words): each word's points are the ones the run's own
+/// `mark_hyphens` marks for it in a set paragraph (the `·` of its typeset row), from the same patterns, exceptions
+/// and hyphen mins. Pins a client that hyphenates new words differently from pdfTeX: the build then lands with a jump.
+#[test]
+fn hyphenate_gives_the_points_the_run_marks() {
+    let words =
+        ["cassowary", "lyrebird,", "kookaburra", "Uncertainty", "associate", "emu", "dependencies", "(bandicoot)"];
+    let text = format!(
+        "\\documentclass{{article}}\n\\begin{{document}}\n\\hsize=1cm\n{}\n\\end{{document}}\n",
+        words.join(" ")
+    );
+    let (mut server, uri, dir) = open_set("hyphenate", &text, &[]);
+    let id = server.request("satex/typeset", json!({ "textDocument": { "uri": uri } }));
+    let rows = server.response(id)["result"].as_array().cloned().unwrap_or_default();
+    let detail =
+        rows.iter().filter_map(|r| r["detail"].as_str()).find(|d| d.contains("cas")).unwrap_or_default().to_string();
+    // a row's word with a `·` before each point: the offsets of its points
+    let marked: Vec<Vec<u64>> = detail
+        .split_whitespace()
+        .map(|t| {
+            t.split('·')
+                .scan(0, |at, p| {
+                    *at += p.chars().count() as u64;
+                    Some(*at)
+                })
+                .collect::<Vec<_>>()
+        })
+        .map(|mut cuts| {
+            cuts.pop();
+            cuts
+        })
+        .collect();
+    assert_eq!(marked.len(), words.len(), "{detail}");
+    assert!(!marked[0].is_empty(), "the run marks cassowary: {detail}");
+    let id = server.request("satex/hyphenate", json!({ "textDocument": { "uri": uri }, "words": words }));
+    let got: Vec<Vec<u64>> = serde_json::from_value(server.response(id)["result"].clone()).expect("points");
+    assert_eq!(got, marked, "{detail}");
+    server.shutdown();
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// `satex/break` (the PDF echo's line breaking): the thesis example's paragraphs, their words as the page shows
+/// them, break where pdfTeX broke them (doc/site/tests/fixtures/thesis-paragraphs.json holds pdfTeX's rows). The
+/// breaker is the run's own Knuth–Plass over a list of the run's TFM widths, ligatures and kerns, interword glue by
+/// space factor and the parameters the run broke that paragraph with. Pins a server breaker that drifts from TeX:
+/// the build then lands with a jump.
+#[test]
+fn break_puts_the_thesis_paragraphs_where_pdftex_did() {
+    let examples = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("doc/site/examples");
+    let read = |name: &str| std::fs::read_to_string(examples.join(name)).unwrap();
+    let chapter = read("chapter.tex");
+    let fixture: Value =
+        serde_json::from_str(&read("../tests/fixtures/thesis-paragraphs.json")).expect("the fixture is JSON");
+    let (mut server, uri, dir) =
+        open_with("break", &read("thesis.tex"), &[("chapter.tex", &chapter), ("refs.bib", &read("refs.bib"))], &[]);
+    let id = server.request("satex/typeset", json!({ "textDocument": { "uri": uri } }));
+    server.response(id);
+    let path = dir.join("chapter.tex").display().to_string();
+    let paragraphs = fixture["paragraphs"].as_array().expect("paragraphs");
+    assert!(paragraphs.len() >= 2, "the fixture holds paragraphs");
+    for p in paragraphs {
+        let rows: Vec<Vec<String>> = p["rows"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|r| r.as_array().unwrap().iter().map(|w| w[0].as_str().unwrap().to_string()).collect())
+            .collect();
+        let words: Vec<String> = rows.concat();
+        // the source line the paragraph's first word stands on
+        let line = chapter.lines().position(|l| l.split_whitespace().next() == Some(words[0].as_str())).expect("line");
+        let indent = ((p["width"].as_f64().unwrap() - p["first"].as_f64().unwrap()) * 65536.0 * 72.27 / 72.0) as i64;
+        let params =
+            json!({ "textDocument": { "uri": uri }, "path": path, "line": line, "words": words, "indent": indent });
+        let id = server.request("satex/break", params);
+        let got = server.response(id)["result"].clone();
+        let lines = got["lines"].as_array().unwrap_or_else(|| panic!("lines for {:?}: {got}", words[0]));
+        // pdfTeX's rows as line ends: the word each next row starts with, none hyphenated
+        let mut want: Vec<(u64, u64)> = Vec::new();
+        for r in &rows[..rows.len() - 1] {
+            want.push((want.last().map_or(0, |w| w.0) + r.len() as u64, 0));
+        }
+        want.push((words.len() as u64, 0));
+        let ends: Vec<(u64, u64)> =
+            lines.iter().map(|l| (l["word"].as_u64().unwrap(), l["at"].as_u64().unwrap())).collect();
+        assert_eq!(ends, want, "{:?}: {got}", words[0]);
+        // every line but the last justified within its glue, the last at its natural width
+        for l in &lines[..lines.len() - 1] {
+            assert!(l["ratio"].as_f64().unwrap().abs() <= 1.0 && l["order"] == 0, "{l}");
+        }
+        assert!(lines.last().unwrap()["order"].as_u64().unwrap() > 0, "the last line takes \\parfillskip's fil");
+    }
+    server.shutdown();
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// `satex/break` over paragraphs pdfTeX hyphenated: tests/fixtures/linebreak/narrow.tex at a 180pt text width,
+/// its rows as `pdftotext -layout` read them from pdfTeX's PDF (narrow.json; a row ending in `-` broke inside a
+/// word). Each paragraph's words, unhyphenated, must break at the same words and the same hyphens: the second pass
+/// with the run's patterns, ligatures (`fi`, `ff`, `ffl`) and kerns in the widths, the first line after
+/// `\parindent`. Pins a breaker whose hyphenation or widths drift from pdfTeX's.
+#[test]
+fn break_hyphenates_where_pdftex_did() {
+    let fixtures = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/linebreak");
+    let source = std::fs::read_to_string(fixtures.join("narrow.tex")).unwrap();
+    let fixture: Value = serde_json::from_str(&std::fs::read_to_string(fixtures.join("narrow.json")).unwrap()).unwrap();
+    let (mut server, uri, dir) = open_set("break-narrow", &source, &[]);
+    let id = server.request("satex/typeset", json!({ "textDocument": { "uri": uri } }));
+    server.response(id);
+    for p in fixture["paragraphs"].as_array().unwrap() {
+        let rows: Vec<&str> = p["rows"].as_array().unwrap().iter().map(|r| r.as_str().unwrap()).collect();
+        // the words as the source has them, and pdfTeX's line ends: (word, letters before the hyphen)
+        let (mut words, mut want): (Vec<String>, Vec<(u64, u64)>) = (Vec::new(), Vec::new());
+        let mut cut = String::new();
+        for r in &rows {
+            let mut ws: Vec<String> = r.split_whitespace().map(str::to_string).collect();
+            ws[0] = std::mem::take(&mut cut) + &ws[0];
+            if let Some(part) = ws.last().and_then(|w| w.strip_suffix('-')).map(str::to_string) {
+                ws.pop();
+                want.push(((words.len() + ws.len()) as u64, part.chars().count() as u64));
+                cut = part;
+            } else {
+                want.push(((words.len() + ws.len()) as u64, 0));
+            }
+            words.extend(ws);
+        }
+        let params = json!({ "textDocument": { "uri": uri }, "line": p["line"], "words": words, "indent": true });
+        let id = server.request("satex/break", params);
+        let got = server.response(id)["result"].clone();
+        let lines = got["lines"].as_array().unwrap_or_else(|| panic!("lines for {}: {got}", rows[0]));
+        let ends: Vec<(u64, u64)> =
+            lines.iter().map(|l| (l["word"].as_u64().unwrap(), l["at"].as_u64().unwrap())).collect();
+        assert_eq!(ends, want, "{}: {got}", rows[0]);
+        assert!(
+            lines.iter().all(|l| l["hyphen"] == (l["at"] != 0)),
+            "a line ends inside a word only at a hyphen: {got}"
+        );
+    }
+    server.shutdown();
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The lean scope a busy playground completes from: `\textbf` reads one braced argument
+/// (`args` `m`, through the robust partner it hands off to), `\frac` two, math commands carry
+/// `math` (`\sum`, `\alpha`, `\frac`) and text ones do not, and a math character constant is
+/// listed at all. A row whose full record was made carries its short `doc`. Pins `\emph` from
+/// the kept list inserted without braces and `\sum` missing from it (a `\mathchardef` is no
+/// macro), so `\sum` in math offered `\NeedsDocumentMetadata` first.
+#[test]
+fn lean_scope_records_carry_arguments_math_and_doc() {
+    let text = "\\documentclass{article}\n\\begin{document}\n\\(x \\su \\)\n\\tex\n\\end{document}\n";
+    let (mut server, uri, _, dir) = open_loaded("lean-fields", text);
+    // a completion makes the shown rows' full records: `\textbf` gets its doc
+    let _ = complete(&mut server, &uri, 3, 4);
+    let file = dir.join("main.tex").display().to_string();
+    let request = json!({ "file": file, "queries": [{ "type": "scope", "all": false, "lean": true }] });
+    let id = server.request("workspace/executeCommand", json!({ "command": "satex/query", "arguments": [request] }));
+    let records = server.response(id)["result"][0]["records"].as_array().cloned().unwrap_or_default();
+    let row =
+        |name: &str| records.iter().find(|r| r["name"] == name).cloned().unwrap_or_else(|| panic!("{name} listed"));
+    assert_eq!(row("\\textbf")["args"], "m", "{}", row("\\textbf"));
+    assert_eq!(row("\\emph")["args"], "m", "{}", row("\\emph"));
+    assert_eq!(row("\\frac")["args"], "mm", "{}", row("\\frac"));
+    for math in ["\\sum", "\\alpha", "\\frac", "\\leq"] {
+        assert_eq!(row(math)["math"], true, "{}", row(math));
+    }
+    for text in ["\\textbf", "\\section", "\\NeedsDocumentMetadata"] {
+        assert!(row(text).get("math").is_none(), "{}", row(text));
+    }
+    let doc = row("\\textbf")["doc"].as_str().map(str::to_string).unwrap_or_default();
+    assert!(!doc.is_empty() && doc.chars().count() <= satex::queries::query::DOC_CHARS + 1, "{}", row("\\textbf"));
+    server.shutdown();
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// In math the command items rank math commands first and carry `math`; `\textbf` brings its
+/// braces and a short `doc`. Pins `\sum` in `\( … \)` listing `\NeedsDocumentMetadata` first
+/// and `\textbf` accepted without its argument (its robust definition takes none itself).
+#[test]
+fn command_items_rank_math_first_in_math_and_carry_braces() {
+    let text = "\\documentclass{article}\n\\begin{document}\n\\(x - \\s \\)\n\\textb\n\\begin{equation}\n\\s\n\\end{equation}\n$x$ 50\\% $y - \\s$\n\\end{document}\n";
+    let (mut server, uri, _, dir) = open_loaded("math-rank", text);
+    // a math environment is math, an escaped `%` is no comment, text after a closed formula is text
+    let lead = |items: &[Value]| items[0]["sortText"].as_str().unwrap_or_default().starts_with('!');
+    assert!(lead(&complete(&mut server, &uri, 5, 2)), "in equation");
+    assert!(lead(&complete(&mut server, &uri, 7, 16)), "in $y - \\s$ after 50\\%");
+    assert!(!lead(&complete(&mut server, &uri, 3, 2)), "\\t in text");
+    let items = complete(&mut server, &uri, 2, 8);
+    let first = &items[0];
+    assert_eq!(first["data"]["math"], true, "{:?}", &labels(&items)[..10.min(items.len())]);
+    let sum = labels(&items).iter().position(|l| *l == "sum").expect("sum offered");
+    let section = labels(&items).iter().position(|l| *l == "section").unwrap_or(usize::MAX);
+    assert!(sum < section, "{:?}", &labels(&items)[..20.min(items.len())]);
+    let items = complete(&mut server, &uri, 3, 6);
+    let bf = items.iter().find(|i| i["label"] == "textbf").expect("textbf offered");
+    let snippet = bf["insertText"].as_str().unwrap_or_default();
+    assert!(snippet.starts_with("textbf{$") || snippet.starts_with("textbf${1:{"), "{bf}");
+    assert_eq!(bf["data"]["args"], "m", "{bf}");
+    assert!(bf["data"]["doc"].as_str().is_some_and(|d| !d.is_empty()), "{bf}");
+    // outside math a text command is not pushed down
+    assert_ne!(bf["data"]["math"], true, "{bf}");
+    server.shutdown();
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A name a package not loaded yet defines is offered below those in scope, says the package it
+/// adds and loads it when taken: `\begin{tikzpic` offers `tikzpicture` with `\usepackage{tikz}`
+/// before `\begin{document}`, from the installation's index of what each package defines. Pins
+/// `\begin{tikzpic}` in a document without tikz offering nothing (user 2026-11-19).
+#[test]
+fn names_of_packages_not_loaded_are_offered_with_their_load() {
+    let text = "\\documentclass{article}\n\\begin{document}\n\\begin{tikzpic}\n\\end{document}\n";
+    let (mut server, uri, _, dir) = open_loaded("unloaded", text);
+    let items = complete(&mut server, &uri, 2, 14);
+    let tikz = items.iter().find(|i| i["label"] == "tikzpicture").unwrap_or_else(|| panic!("{:?}", labels(&items)));
+    assert_eq!(tikz["detail"], "(adds \\usepackage{tikz})", "{tikz}");
+    let load = tikz["additionalTextEdits"][0].clone();
+    assert_eq!(load["newText"], "\\usepackage{tikz}\n", "{tikz}");
+    assert_eq!(load["range"]["start"]["line"], 1, "before \\begin{{document}}: {tikz}");
+    assert!(tikz["textEdit"]["newText"].as_str().is_some_and(|t| t.contains("\\end{tikzpicture}")), "{tikz}");
+    server.shutdown();
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A command typed char by char into the preamble, with runs in between:
+/// the run of the last version resumes from a checkpoint taken before the
+/// edit and must read the line as it is now. Pins a resume that kept the
+/// half-typed `\use` and set the rest as text.
+#[test]
+fn typing_a_command_ends_with_the_fresh_run_s_findings() {
+    let text = |line3: &str| {
+        format!(
+            "\\documentclass{{article}}\n\\usepackage{{tikz}}\n{line3}\n\\begin{{document}}\nSome text.\n\\begin{{tikzpicture}}\n  \\draw[->] (0,0) -- (1,0);\n\\end{{tikzpicture}}\n\\end{{document}}\n"
+        )
+    };
+    let typed = "\\usetikzlibrary{arrows.meta}";
+    let (mut server, uri, _, dir) = open_loaded("typing", &text(""));
+    let change = |server: &mut Server, version: i64, line3: &str| {
+        server.notify(
+            "textDocument/didChange",
+            json!({ "textDocument": { "uri": uri, "version": version }, "contentChanges": [{ "text": text(line3) }] }),
+        )
+    };
+    let settle = |server: &mut Server, version: i64| loop {
+        let msg = server.published();
+        if msg["params"]["version"] == version {
+            return msg["params"]["diagnostics"].clone();
+        }
+    };
+    let mut version = 1;
+    for n in 1..=typed.len() {
+        version += 1;
+        change(&mut server, version, &typed[..n]);
+        if matches!(n, 4 | 6 | 13) {
+            settle(&mut server, version);
+        }
+    }
+    let last = settle(&mut server, version);
+    server.shutdown();
+    let (_, _, fresh, dir2) = open_loaded("typing-fresh", &text(typed));
+    let messages = |d: &Value| d.as_array().unwrap().iter().map(|d| d["message"].clone()).collect::<Vec<_>>();
+    assert_eq!(messages(&last), messages(&fresh["params"]["diagnostics"]));
+    let _ = std::fs::remove_dir_all(&dir);
+    let _ = std::fs::remove_dir_all(&dir2);
+}
+
+/// A stray `}` after an environment raises TeX's "Too many }'s": the LSP
+/// publishes it as `satex lint` reports it, opened with it and typed in.
+/// Pins a publish that dropped it.
+#[test]
+fn a_stray_brace_is_published() {
+    let text = |brace: &str| {
+        format!(
+            "\\documentclass{{article}}\n\\usepackage{{tikz}}\n\n\\begin{{document}}\nSome text.\n\\begin{{tikzpicture}}\n  \\draw[->] (0,0) -- (1,0);\n\\end{{tikzpicture}}{brace}\n\\end{{document}}\n"
+        )
+    };
+    let (server, _, opened, dir) = open_loaded("stray", &text("}"));
+    server.shutdown();
+    assert!(opened.to_string().contains("Too many }'s"), "{opened}");
+    let (mut server, uri, _, dir2) = open_loaded("stray-typed", &text(""));
+    server.notify(
+        "textDocument/didChange",
+        json!({ "textDocument": { "uri": uri, "version": 2 }, "contentChanges": [{ "text": text("}") }] }),
+    );
+    let typed = loop {
+        let msg = server.published();
+        if msg["params"]["version"] == 2 {
+            break msg;
+        }
+    };
+    server.shutdown();
+    let _ = std::fs::remove_dir_all(&dir);
+    let _ = std::fs::remove_dir_all(&dir2);
+    assert!(typed.to_string().contains("Too many }'s"), "{typed}");
+}
+
+/// A TikZ option list offers the document's own styles first, saying where they are defined
+/// and with the comment above them. Pins `\draw[` listing the document's `myline` style among
+/// TikZ's hundreds of keys with no hint that it is the document's.
+#[test]
+fn own_tikz_styles_come_first_with_their_place_and_comment() {
+    if !crate::support::installed() {
+        return;
+    }
+    let text = "\\documentclass{article}\n\\usepackage{tikz}\n% A thick red line.\n\\tikzset{myline/.style={thick, red}}\n\\begin{document}\n\\tikz\\draw[my] (0,0) -- (1,0);\n\\end{document}\n";
+    let (mut server, uri, _, dir) = open_loaded("own-styles", text);
+    let items = complete(&mut server, &uri, 5, 13);
+    let own = items.iter().find(|i| i["label"] == "myline").unwrap_or_else(|| panic!("{:?}", labels(&items)));
+    assert_eq!(own["detail"], "style (defined in main.tex:4)", "{own}");
+    assert!(own["documentation"]["value"].as_str().is_some_and(|d| d.starts_with("A thick red line.")), "{own}");
+    assert_eq!(labels(&items)[0], "myline", "{:?}", &labels(&items)[..5.min(items.len())]);
     server.shutdown();
     let _ = std::fs::remove_dir_all(&dir);
 }

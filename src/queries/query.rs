@@ -641,15 +641,19 @@ fn typeset(analysis: &Analysis) -> Vec<Record> {
     };
     // where the paragraph's and its footnotes' characters stand, and which files the user wrote (no `.aux`)
     let (mut places, mut foot_places, mut foot_keys) = (Places::default(), Places::default(), Keys::new());
-    let mut documents: HashMap<FileId, bool> = HashMap::default();
-    // each replacement-text token of a definition in the user's files: the macro and its line
-    let bodies: HashMap<Span, (Sym, u32)> = analysis
+    let mut documents: HashMap<FileId, &'static str> = HashMap::default();
+    // each replacement-text token written in the definition's own file: the macro, its line and whether
+    // the token is a control sequence (a character read there was made by expanding it: `\number`,
+    // `\the`). A token from elsewhere (`\title`'s argument kept in `\@title`) is no text of the macro's.
+    let bodies: HashMap<Span, (Sym, u32, bool)> = analysis
         .facts
         .defs
         .iter()
-        .filter(|d| analysis.project_file(d.span.file))
         .filter_map(|d| d.mac.as_ref().map(|m| (d, m)))
-        .flat_map(|(d, m)| m.replacement_text.iter().map(move |t| (t.span, (d.name, d.span.line))))
+        .flat_map(|(d, m)| {
+            let own = m.replacement_text.iter().filter(move |t| t.span.file == d.span.file);
+            own.map(move |t| (t.span, (d.name, d.span.line, t.cs().is_some())))
+        })
         .collect();
     // a paragraph's end at a character lost unused, carried to the next one kept
     let mut ended: Option<u32> = None;
@@ -875,7 +879,7 @@ fn typeset(analysis: &Analysis) -> Vec<Record> {
         // an insert's text (a footnote) goes to the foot, after the paragraph that set it
         if text.inserts.iter().any(|&(a, b)| (a..b).contains(&(i as u32))) {
             if !piece.trim().is_empty() {
-                foot_places.mark(analysis, &mut documents, &bodies, site, spot.span, &piece, &mut foot, &mut foot_keys);
+                foot_places.mark(analysis, &mut documents, &bodies, site, spot, &piece, &mut foot, &mut foot_keys);
             }
             foot.push_str(&piece);
             put_keys(&named[cut..upto], &mut line, &mut choice, &mut keys);
@@ -926,12 +930,7 @@ fn typeset(analysis: &Analysis) -> Vec<Record> {
             if text.open.binary_search(&end).is_ok() {
                 record.insert("open".into(), json!(true));
             }
-            if let Ok(k) = text.just.binary_search_by_key(&(began as u32), |s| s.0) {
-                record.insert("just".into(), json!(text.just[k].1.name()));
-            }
-            if let Ok(k) = text.skips.binary_search_by_key(&(began as u32), |s| s.0) {
-                record.insert("skip".into(), json!(text.skips[k].1 as f64 / f64::from(1 << 16)));
-            }
+            par_start(text, began as u32, &mut record);
             attach_sketches(&mut record, &mut sketches);
             if let Some(k) = env {
                 tag_env(&mut record, k);
@@ -985,7 +984,7 @@ fn typeset(analysis: &Analysis) -> Vec<Record> {
                     None => piece,
                 };
                 if !piece.trim().is_empty() {
-                    places.mark(analysis, &mut documents, &bodies, site, spot.span, &piece, &mut line, &mut keys);
+                    places.mark(analysis, &mut documents, &bodies, site, spot, &piece, &mut line, &mut keys);
                     // a page that broke before the paragraph's first character stands before it
                     if fresh {
                         breaks(&mut out, i, site);
@@ -1048,12 +1047,7 @@ fn typeset(analysis: &Analysis) -> Vec<Record> {
         if let Some(k) = seg_from.and_then(rank) {
             record.insert("placed".into(), json!(k));
         }
-        if let Ok(k) = text.just.binary_search_by_key(&(began as u32), |s| s.0) {
-            record.insert("just".into(), json!(text.just[k].1.name()));
-        }
-        if let Ok(k) = text.skips.binary_search_by_key(&(began as u32), |s| s.0) {
-            record.insert("skip".into(), json!(text.skips[k].1 as f64 / f64::from(1 << 16)));
-        }
+        par_start(text, began as u32, &mut record);
         attach_sketches(&mut record, &mut sketches);
         if let Some(k) = env {
             tag_env(&mut record, k);
@@ -1392,7 +1386,7 @@ pub(crate) fn environments(analysis: &Analysis) -> Vec<(Span, Span, String)> {
 /// each ligature's first character, what the font joined and the glyph set.
 fn glyphs(analysis: &Analysis) -> (Vec<String>, Vec<Option<String>>) {
     let text = &analysis.facts.text;
-    let mut fonts = crate::linter::italics::Fonts::of(analysis);
+    let mut fonts = crate::plugins::typeset::Fonts::of(analysis);
     let slots = encoding_slots(analysis);
     let shown = |c: char, spot: &crate::analysis::facts::Spot| {
         let encoding = analysis.font_states.get(usize::from(spot.font_state)).map(|s| &*s.encoding);
@@ -1554,10 +1548,31 @@ const LINE: &str = "line";
 /// or with `:0` after the column (a piece of several characters) all stand there.
 const SITE: &str = "site";
 
-/// The kind of a [`KEY`] before a character read elsewhere in the user's files than where it was
-/// set: file, `\u{1}`, line and column, then `\u{1}`, macro and `\u{1}`, its definition's line when read
-/// from a definition's replacement text; empty where the characters are read where they are set again.
+/// The kind of a [`KEY`] before a character read elsewhere than where it was set: file, `\u{1}`,
+/// line and column, `\u{1}` and the file's [`source_kind`], then `\u{1}`, macro and `\u{1}`, its
+/// definition's line when read from a definition's replacement text, and `\u{1}g` when expanding a
+/// control sequence there made it (`\number`, `\the`); empty where the characters are read where
+/// they are set again.
 const ORIGIN: &str = "origin";
+
+/// The kind of a [`KEY`] where the math mode changes: `inline`, `display`, `math` (either), or
+/// empty where the text leaves math.
+const MATH_MODE: &str = "math";
+
+/// What wrote `file`: `document` (the project), `class`, `package` or `kernel` (the format's files).
+fn source_kind(analysis: &Analysis, file: FileId) -> &'static str {
+    if analysis.project_file(file) {
+        return "document";
+    }
+    let name = analysis.file_name(file);
+    let base = Path::new(name).file_name().map_or(name.into(), |f| f.to_string_lossy());
+    match Path::new(&*base).extension().and_then(|e| e.to_str()) {
+        Some("cls" | "clo") => "class",
+        Some("ltx") => "kernel",
+        _ if (base.starts_with("lt") && name.contains("/base/")) || base.starts_with("expl3") => "kernel",
+        _ => "package",
+    }
+}
 
 /// The marks waiting for their [`KEY`] in a paragraph's text: kind and value.
 type Keys<'a> = std::collections::VecDeque<(&'a str, std::borrow::Cow<'a, str>)>;
@@ -1572,6 +1587,8 @@ struct Places {
     last_site: Option<Span>,
     /// The same for where the last character was read.
     last_origin: Option<Span>,
+    /// The math mode of the last character: [`MATH_MODE`]'s value.
+    last_math: &'static str,
 }
 
 impl Places {
@@ -1581,14 +1598,27 @@ impl Places {
     fn mark<'a>(
         &mut self,
         analysis: &Analysis,
-        documents: &mut HashMap<FileId, bool>,
-        bodies: &HashMap<Span, (Sym, u32)>,
+        documents: &mut HashMap<FileId, &'static str>,
+        bodies: &HashMap<Span, (Sym, u32, bool)>,
         site: Span,
-        read: Span,
+        spot: &crate::analysis::facts::Spot,
         piece: &str,
         line: &mut String,
         keys: &mut Keys<'a>,
     ) {
+        use crate::engine::mode::Modes;
+        let read = spot.span;
+        let math = match spot.modes {
+            m if !m.meets(Modes::ANY_MATH) => "",
+            m if m.within(Modes::DISPLAY_MATH) => "display",
+            m if m.within(Modes::MATH) => "inline",
+            _ => "math",
+        };
+        if math != self.last_math {
+            line.push(KEY);
+            keys.push_back((MATH_MODE, math.into()));
+            self.last_math = math;
+        }
         let here = (site.file, site.line);
         if self.on_line.is_some_and(|at| at != here) {
             line.push(KEY);
@@ -1608,12 +1638,9 @@ impl Places {
             keys.push_back((SITE, format!("{file}\u{1}{}:{col}{step}", site.line).into()));
         }
         self.last_site = single.then_some(site);
-        // a character read in the user's files elsewhere than where it was set: where it was read,
-        // as long as the next ones follow on
-        let own = single
-            .then_some(read)
-            .filter(|o| (o.file, o.line) != (site.file, site.line))
-            .filter(|o| *documents.entry(o.file).or_insert_with(|| analysis.project_file(o.file)));
+        // a character read elsewhere than where it was set (the user's files or library code): where
+        // it was read, as long as the next ones follow on
+        let own = single.then_some(read).filter(|o| (o.file, o.line) != (site.file, site.line) && o.line > 0);
         let follows = match (own, self.last_origin) {
             (Some(o), Some(l)) => (l.file, l.line, l.col + 1) == (o.file, o.line, o.col),
             (None, None) => true,
@@ -1622,10 +1649,11 @@ impl Places {
         if !follows {
             line.push(KEY);
             let at = own.map(|o| {
-                let def = bodies
-                    .get(&o)
-                    .map_or(String::new(), |&(name, line)| format!("\u{1}{}\u{1}{line}", analysis.interner.cs(name)));
-                format!("{}\u{1}{}:{}{def}", analysis.file_name(o.file), o.line, o.col)
+                let kind = *documents.entry(o.file).or_insert_with(|| source_kind(analysis, o.file));
+                let def = bodies.get(&o).map_or(String::new(), |&(name, line, made)| {
+                    format!("\u{1}{}\u{1}{line}{}", analysis.interner.cs(name), if made { "\u{1}g" } else { "" })
+                });
+                format!("{}\u{1}{}:{}\u{1}{kind}{def}", analysis.file_name(o.file), o.line, o.col)
             });
             keys.push_back((ORIGIN, at.unwrap_or_default().into()));
         }
@@ -1834,6 +1862,30 @@ fn unmarked(s: &str) -> String {
 
 /// A paragraph record: `detail` is plain, `marked` wraps the notation in
 /// private-use characters, `causes` says why each choice or unknown is there.
+/// A paragraph's start as the run set it: its alignment, `\parskip` above it, `\parindent`
+/// and the indent it got (`indented`: `false` after `\noindent` or a heading, unset when not known).
+fn par_start(text: &crate::analysis::facts::Text, began: u32, record: &mut Record) {
+    let pt = |v: i64| v as f64 / f64::from(1 << 16);
+    if let Ok(k) = text.just.binary_search_by_key(&began, |s| s.0) {
+        record.insert("just".into(), json!(text.just[k].1.name()));
+    }
+    if let Ok(k) = text.skips.binary_search_by_key(&began, |s| s.0) {
+        record.insert("skip".into(), json!(pt(text.skips[k].1)));
+    }
+    if let Ok(k) = text.indents.binary_search_by_key(&began, |s| s.0) {
+        let i = text.indents[k].1;
+        if let Some(p) = i.parindent {
+            record.insert("parindent".into(), json!(pt(p)));
+        }
+        if let Some(w) = i.lead.known() {
+            record.insert("indent".into(), json!(pt(w)));
+        }
+        if i.lead.lo > 0 || i.lead.known() == Some(0) {
+            record.insert("indented".into(), json!(i.lead.lo > 0));
+        }
+    }
+}
+
 fn paragraph(analysis: &Analysis, at: Span, marked: &str, causes: Vec<Cause>, keys: &mut Keys<'_>) -> Record {
     // marks (keys, an alignment's or a box's end) at the ends hold no space before or after them
     let ends = |chars: &mut dyn Iterator<Item = char>| {
@@ -1844,7 +1896,7 @@ fn paragraph(analysis: &Analysis, at: Span, marked: &str, causes: Vec<Cause>, ke
     let marked = tidy(&format!("{}{core}{}", KEY.to_string().repeat(head), KEY.to_string().repeat(tail)));
     let (mut placed, mut fonts, mut aligned, mut ligatures, mut lines, mut sites, mut offset) =
         (Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new(), 0);
-    let mut origins = Vec::new();
+    let (mut origins, mut modes) = (Vec::new(), Vec::new());
     let at_file = at.file;
     for c in unmarked(&marked).chars() {
         if c != KEY {
@@ -1879,13 +1931,19 @@ fn paragraph(analysis: &Analysis, at: Span, marked: &str, causes: Vec<Cause>, ke
                     if file != analysis.file_name(at_file) {
                         origin["path"] = json!(file);
                     }
+                    origin["source"] = json!(parts.next().unwrap_or("document"));
                     // read from a macro's replacement text: that macro and the line it is defined on
                     if let (Some(name), Some(line)) = (parts.next(), parts.next()) {
                         origin["def"] = json!(name);
                         origin["def_line"] = json!(line.parse::<u32>().unwrap_or(0));
                     }
+                    if parts.next() == Some("g") {
+                        origin["generated"] = json!(true);
+                    }
                 }
                 origins.push(origin);
+            } else if kind == MATH_MODE {
+                modes.push(json!({ "mode": key, "at": offset }));
             } else if kind == LINE {
                 lines.push(json!({ "line": key.parse::<u32>().unwrap_or(0), "at": offset }));
             } else if kind == ALIGN {
@@ -1912,6 +1970,9 @@ fn paragraph(analysis: &Analysis, at: Span, marked: &str, causes: Vec<Cause>, ke
     }
     if !origins.is_empty() {
         record.insert("origins".into(), json!(origins));
+    }
+    if !modes.is_empty() {
+        record.insert("math".into(), json!(modes));
     }
     if fonts.iter().any(|f| f["style"] != "" || f.get("color").is_some()) {
         record.insert("fonts".into(), json!(fonts));
@@ -4529,8 +4590,23 @@ pub fn scope(analysis: &Analysis, before: Option<(FileId, u32, u32)>, all: bool)
 /// [`scope`] lean: each name with its tag, shape (`effective`) and package only, what a
 /// completion list shows; the rest (`usage`, `does`, the place) is what [`ScopeRow::full`] adds.
 pub fn scope_lean(analysis: &Analysis, all: bool) -> Vec<Record> {
-    scope_named(analysis, None, all, |_| true).into_iter().map(|row| row.record.clone()).collect()
+    scope_named(analysis, None, all, |_| true).into_iter().map(ScopeRow::lean_known).collect()
 }
+
+/// The first sentence of `does`, at most [`DOC_CHARS`] characters, its Markdown marks dropped:
+/// the line a completion item shows beside the name.
+pub fn short_doc(does: &str) -> String {
+    let plain: String =
+        does.lines().map(str::trim).take_while(|l| !l.is_empty()).collect::<Vec<_>>().join(" ").replace(['`', '*'], "");
+    let sentence = plain.split_inclusive(". ").next().unwrap_or(&plain).trim();
+    match sentence.char_indices().nth(DOC_CHARS) {
+        Some((cut, _)) => format!("{}…", sentence[..cut].trim_end()),
+        None => sentence.to_string(),
+    }
+}
+
+/// The longest line [`short_doc`] gives.
+pub const DOC_CHARS: usize = 80;
 
 /// The names [`scope`] shows with `all` at the run's end, without building their records:
 /// those the run defined and those its end state holds.
@@ -4627,6 +4703,15 @@ impl ScopeRow {
         &self.record
     }
 
+    /// The lean record with its short `doc` where the full row was made already: never made for it.
+    pub fn lean_known(&self) -> Record {
+        let mut record = self.record.clone();
+        if let Some(doc) = self.more.get().and_then(|m| m.get("doc")) {
+            record.insert("doc".into(), doc.clone());
+        }
+        record
+    }
+
     /// The whole record: the lean one with the place, `usage` and what the documentation says.
     pub fn full(&self, analysis: &Analysis) -> Record {
         let mut record = self.record.clone();
@@ -4660,6 +4745,9 @@ impl ScopeRow {
             let params = comment.as_ref().map_or(&[][..], |c| &c.params[..]);
             record.insert("usage".into(), json!(usage_of(analysis, sym, mac, None, said.usage.as_deref(), params)));
             super::said::insert(&mut record, &said);
+            if let Some(does) = record.get("does").and_then(Json::as_str) {
+                record.insert("doc".into(), json!(short_doc(does)));
+            }
             record
         })
     }
@@ -4687,6 +4775,9 @@ fn def_row(analysis: &Analysis, i: usize) -> Option<ScopeRow> {
     let (tier, origin) = origin_of(analysis, def.package, def.span.file);
     record.insert("package".into(), origin);
     let plain = !internal_name(analysis, name);
+    if plain {
+        completion_fields(analysis, def.name, def.mac.as_deref(), &mut record);
+    }
     Some(ScopeRow { name: name.to_string(), tier, record, plain, of: RowOf::Def(i), more: Default::default() })
 }
 
@@ -4774,7 +4865,12 @@ fn scope_rows_from(analysis: &Analysis, prior: Option<(&Analysis, &ScopeRows)>) 
         if unprintable_name(name) {
             continue;
         }
-        let plain = !internal_name(analysis, name) && matches!(tag, "primitive" | "macro");
+        // a math character constant (`\alpha`, `\sum`) is spelled like a command
+        let math_char = matches!(
+            meaning,
+            Meaning::Register(crate::engine::tex::RegKind::MathChar | crate::engine::tex::RegKind::UMathChar, _)
+        );
+        let plain = !internal_name(analysis, name) && (matches!(tag, "primitive" | "macro") || math_char);
         // `\X` and `\endX` both macros: an environment the format made
         let base = name.strip_prefix("end").filter(|b| !b.is_empty()).unwrap_or(name);
         let partner = if base.len() == name.len() { format!("end{name}") } else { base.to_string() };
@@ -4796,10 +4892,105 @@ fn scope_rows_from(analysis: &Analysis, prior: Option<(&Analysis, &ScopeRows)>) 
         record.insert("tag".into(), json!(tag));
         record.insert("effective".into(), json!(effective_of(analysis, sym, meaning.as_macro().map(|m| &**m), None)));
         record.insert("package".into(), json!("kernel"));
+        // only the names a document spells: the kernel's tens of thousands of internals are not followed
+        if plain {
+            completion_fields(analysis, sym, meaning.as_macro().map(|m| &**m), &mut record);
+        }
         let (of, more) = (RowOf::Held(sym), Default::default());
         rest.push(ScopeRow { name: name.to_string(), tier: 2, record, plain, of, more });
     }
     ScopeRows { defs, rest }
+}
+
+/// What a completion list needs of `sym` beyond its shape, cheap enough for every name in scope:
+/// `args`, the arguments a call reads as letters (`m` mandatory, `o` optional, `s` a star:
+/// `\\section` is `som`) when they are all of these, and `math` where its expansion reaches
+/// material only math mode takes (tex.web § 1046).
+fn completion_fields(analysis: &Analysis, sym: Sym, mac: Option<&crate::engine::tex::MacroDef>, record: &mut Record) {
+    if let Some(args) = arg_letters(analysis, sym, mac).filter(|a| !a.is_empty()) {
+        record.insert("args".into(), json!(args));
+    }
+    if math_only(analysis, sym, analysis.settings.conventions.completion.math_depth) {
+        record.insert("math".into(), json!(true));
+    }
+}
+
+/// The arguments a call of `sym` reads as `m`, `o` and `s` letters ([`completion_fields`]): the
+/// probe's when one already ran, else the definition's own spec, else what calls were seen to
+/// read, else its parameter text. A macro without parameters that ends in another command
+/// (`\\textbf` is `\\protect\\textbf␣`) reads what that one reads. `None` where an argument
+/// is of another kind (delimited, a keyword).
+pub fn arg_letters(analysis: &Analysis, sym: Sym, mac: Option<&crate::engine::tex::MacroDef>) -> Option<String> {
+    use crate::engine::tex::ArgType as A;
+    let letters = |items: &[A]| -> Option<String> {
+        items
+            .iter()
+            .map(|i| match i {
+                A::Mandatory => Some('m'),
+                A::Optional(_) | A::Delimited { open: '[', close: ']', required: false, .. } => Some('o'),
+                A::Star => Some('s'),
+                _ => None,
+            })
+            .collect()
+    };
+    let probed = analysis.probes.lock().ok().and_then(|p| p.get(&(sym, crate::analysis::probe::State::End)).cloned());
+    if let Some(Some(p)) = probed.filter(|p| p.as_ref().is_some_and(|p| p.complete)) {
+        return letters(&p.spec.items);
+    }
+    if let Some(spec) = mac.and_then(|m| m.arg_spec.as_ref()) {
+        return letters(&spec.items);
+    }
+    if let Some(shape) = analysis.facts.shapes.get(&sym).filter(|s| !s.is_empty()) {
+        return shape
+            .chars()
+            .filter(|c| !matches!(c, '}' | ']'))
+            .map(|c| match c {
+                '{' => Some('m'),
+                '[' => Some('o'),
+                '*' => Some('s'),
+                _ => None,
+            })
+            .collect();
+    }
+    let mac = mac?;
+    let text = &mac.parameter_text;
+    if text.arity > 0 {
+        return (!text.brace_end && text.items.iter().all(|i| matches!(i, crate::engine::tex::ParamItem::Param(..))))
+            .then(|| "m".repeat(text.arity as usize));
+    }
+    // a hand-off: the last token of a body without parameters, followed a few steps
+    let mut last = mac.replacement_text.last()?.tok;
+    for _ in 0..4 {
+        let crate::engine::tex::Tok::Cs(next) = last else { return None };
+        let next_mac = analysis.env.meaning(next).as_macro()?.clone();
+        if next == sym {
+            return None;
+        }
+        if next_mac.arg_spec.is_some() || next_mac.parameter_text.arity > 0 {
+            return arg_letters(analysis, next, Some(&next_mac));
+        }
+        last = next_mac.replacement_text.last()?.tok;
+    }
+    None
+}
+
+/// Whether `sym` sets material only math mode takes (tex.web § 1046): a math character
+/// constant, a math primitive, or a macro whose replacement text reaches one within `depth`
+/// expansions (`\\frac` holds `\\over`, amsmath's `\\sum` hands off to a `\\mathchardef`).
+pub fn math_only(analysis: &Analysis, sym: Sym, depth: u8) -> bool {
+    match analysis.env.meaning(sym) {
+        Meaning::Register(crate::engine::tex::RegKind::MathChar | crate::engine::tex::RegKind::UMathChar, _) => true,
+        Meaning::Primitive(p) => {
+            let name = analysis.interner.name(sym);
+            crate::engine::builtins::math_material(name) == Some(true)
+                && crate::engine::builtins::primitive_names(analysis.plugins.engine).get(name) == Some(&p)
+        }
+        Meaning::Macro(m) if depth > 0 => m.replacement_text.iter().take(24).any(|t| match t.tok {
+            crate::engine::tex::Tok::Cs(s) => s != sym && math_only(analysis, s, depth - 1),
+            _ => false,
+        }),
+        _ => false,
+    }
 }
 
 /// How many arguments a command consumes, as a range: what its parameter

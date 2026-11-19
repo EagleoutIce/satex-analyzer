@@ -190,7 +190,7 @@ macro_rules! offset_first {
         }
     )*};
 }
-use crate::analysis::facts::{Align, Just, Rule};
+use crate::analysis::facts::{Align, Indent, Just, Rule};
 use crate::engine::tex::Span;
 offset_first!(
     (u32, Span),
@@ -199,9 +199,11 @@ offset_first!(
     (u32, u16),
     (u32, crate::engine::value::Scaled),
     (u32, Just),
+    (u32, Indent),
     (u32, crate::engine::env::NodeId, bool),
     (u32, bool, u32),
-    (u32, Rule, Span, u32)
+    (u32, Rule, Span, u32),
+    (u32, crate::engine::linebreak::Params)
 );
 
 /// `end` becomes `new`'s list and the rest's additions, moved by `by` (a
@@ -256,12 +258,14 @@ fn splice_text(
         math,
         skips,
         just,
+        indents,
         pages,
         fills,
         open_pages: _,
         frames,
         backgrounds,
         page_drawn,
+        breaks,
     } = end;
     let per_char = spots.len() >= k && site.len() >= k && spots[..k] == at.at[..] && site[..k] == at.site[..];
     if !per_char || new.open != at.open || new.open_pages != at.open_pages {
@@ -288,6 +292,8 @@ fn splice_text(
         (offsets(&new.just, &at.just, just, lens), "text just"), (offsets(&new.pages, &at.pages, pages, lens), "text pages"),
         (offsets(&new.fills, &at.fills, fills, lens), "text fills"), (offsets(&new.frames, &at.frames, frames, lens), "text frames"),
         (offsets(&new.backgrounds, &at.backgrounds, backgrounds, lens), "text backgrounds"),
+        (offsets(&new.breaks, &at.breaks, breaks, lens), "text breaks"),
+        (offsets(&new.indents, &at.indents, indents, lens), "text indents"),
     ];
     lists.into_iter().find(|(ok, _)| !ok).map_or(Ok(by), |(_, what)| Err(what))
 }

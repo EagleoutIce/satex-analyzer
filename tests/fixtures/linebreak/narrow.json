@@ -1,0 +1,44 @@
+{
+ "note": "narrow.tex as pdfTeX set it (pdftotext -layout): each row as text, a row ending in - is hyphenated",
+ "paragraphs": [
+  {
+   "line": 4,
+   "rows": [
+    "The office staff found the fluffy waf-",
+    "fles first, and afterwards nobody could ex-",
+    "plain why the coffee machine refused to",
+    "cooperate. Consequently, the administra-",
+    "tion introduced extraordinary measures:",
+    "identification badges, temperature moni-",
+    "toring and an independent investigation",
+    "of the incident."
+   ]
+  },
+  {
+   "line": 9,
+   "rows": [
+    "Typesetting a paragraph is an opti-",
+    "mization problem. Knuth and Plass showed",
+    "that dynamic programming finds the break-",
+    "points minimizing total demerits, consid-",
+    "ering hyphenation, stretchability and shrink-",
+    "ability of interword glue. Nevertheless,",
+    "unexpected configurations occasionally pro-",
+    "duce underfull boxes."
+   ]
+  },
+  {
+   "line": 14,
+   "rows": [
+    "Characteristically, international orga-",
+    "nizations communicate responsibilities through",
+    "comprehensive documentation; their rep-",
+    "resentatives, unfortunately, misunderstand",
+    "approximately half of the recommenda-",
+    "tions. Quick brown foxes jump over lazy",
+    "dogs while efficient officials affirm difficult",
+    "conclusions."
+   ]
+  }
+ ]
+}

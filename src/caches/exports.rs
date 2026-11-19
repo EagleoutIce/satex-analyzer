@@ -245,6 +245,33 @@ impl Exports {
         Some(self.files[*best as usize].clone())
     }
 
+    /// The names `keep` takes; `pair` asks for `end⟨name⟩` too, so the name is an environment's.
+    pub fn named(&self, keep: impl Fn(&str) -> bool, pair: bool) -> Vec<String> {
+        (self.defines.keys())
+            .filter(|n| keep(n) && (!pair || self.defines.contains_key(&format!("end{n}"))))
+            .cloned()
+            .collect()
+    }
+
+    /// The package (`.sty`) to load for `name`: of those that define it with what they load
+    /// ([`Exports::providers`]), the one other files load most, the one loading least on a tie, and a
+    /// code file's own package before them: `tikzpicture` is tikz's (`tikz.code.tex`), not that of
+    /// forest (which patches it) or of a pgfplots shim.
+    pub fn package_for(&self, name: &str) -> Option<String> {
+        // a code file a package of its name inputs (pgf's `tikz.code.tex`, read by `tikz.sty`) is that package's
+        let code = self.defines.get(name)?.iter().map(|&f| self.files[f as usize].as_str());
+        let own = code.filter(|f| !f.ends_with(".sty")).filter_map(|f| Some(format!("{}.sty", f.split('.').next()?)));
+        if let Some(own) = own.into_iter().find(|s| self.files.contains(s)) {
+            return Some(own.trim_end_matches(".sty").to_string());
+        }
+        let count = self.load_counts();
+        let at = |f: &str| self.files.iter().position(|g| g == f).map_or(0, |i| count[i]);
+        let stys = self.providers(&[name.to_string()]).into_iter().filter(|(f, _)| f.ends_with(".sty"));
+        // `providers` puts files that load fewer first: the first of the most loaded wins a tie
+        let best = stys.enumerate().max_by_key(|(i, (f, _))| (at(f), std::cmp::Reverse(*i)))?;
+        Some(best.1.0.trim_end_matches(".sty").to_string())
+    }
+
     /// Whether `file` loads `other`, directly or through what it loads.
     pub fn reaches(&self, file: &str, other: &str) -> bool {
         let at = |n: &str| self.files.iter().position(|f| f == n).map(|i| i as u32);

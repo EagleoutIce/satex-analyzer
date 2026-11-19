@@ -278,42 +278,40 @@ fn model_spec(cx: &Cx, hit: &Hit) -> Option<(Range, String)> {
     let typed = hit.typed.as_deref().unwrap_or(&cx.at.item.typed);
     let end = crate::engine::source::byte_of_col(line, cx.at.item.col) + typed.len();
     let rest = line.get(end..)?.strip_prefix('}')?;
-    let mut groups = Vec::new();
-    let mut at = 0;
-    for _ in 0..2 {
-        let open = at + rest[at..].find(|c: char| !c.is_whitespace())?;
-        rest[open..].starts_with('{').then_some(())?;
-        let close = open + rest[open..].find('}')?;
-        groups.push(&rest[open + 1..close]);
-        at = close + 1;
-    }
+    let groups = groups(rest, 2)?;
+    let at = groups[1].end + 1;
     let col = |b: usize| crate::engine::source::col_of_byte(line, end + 1 + b);
-    Some((super::range(cx.doc, cx.pos.line, col(0), col(at)), groups[0].trim().to_string()))
+    Some((super::range(cx.doc, cx.pos.line, col(0), col(at)), rest[groups[0].clone()].trim().to_string()))
 }
 
-/// `textDocument/documentColor`: each color name a color command used in this file, with the
-/// value the run gave it.
+/// `textDocument/documentColor`: each color a color command read in this file, over all of
+/// what the document wrote for it: a used name or expression (`accent!8`) with its value at
+/// that place, and a definition's spec (`{HTML}{0B3D91}`) with the color it defined.
 pub(super) fn document_colors(analysis: &Analysis, doc: &Text, path: &str) -> Vec<ColorInformation> {
+    use crate::engine::source::col_of_byte;
     let own = super::super::type_at::file_of(analysis, path);
     let file = |i: u16| own == Some(i);
-    let value = |name: &str| {
-        analysis
-            .facts
-            .colors
-            .iter()
-            .rev()
-            .find(|c| c.name == name)
-            .and_then(|c| c.value.as_ref())
-            .and_then(super::super::handlers::rgba)
-    };
+    let rgba = |[r, g, b]: Rgb| lsp_types::Color { red: r as f32, green: g as f32, blue: b as f32, alpha: 1.0 };
     let mut out: Vec<ColorInformation> = Vec::new();
+    // one swatch per place: a range overlapping one taken already is the same color written once
+    let mut add = |line: u32, text: &str, from: usize, to: usize, color| {
+        let at = |b| Position::new(line - 1, col_of_byte(text, b) - 1);
+        let range = Range::new(at(from), at(to));
+        let overlaps = |r: &Range| r.start.line == range.start.line && r.start < range.end && range.start < r.end;
+        if from < to && !out.iter().any(|c| overlaps(&c.range)) {
+            out.push(ColorInformation { range, color });
+        }
+    };
+    for (c, line, _, spec) in written_specs(analysis, doc, path) {
+        if let Some(rgb) = value(c) {
+            add(line, doc.line(line), spec.start, spec.end, rgba(rgb));
+        }
+    }
     // A test (`\ifcsname color@.north\endcsname`) only asks whether a word is a color.
     let used = |u: &&crate::analysis::facts::ColorUse| {
         matches!(u.role, crate::analysis::facts::CsnameRole::Use | crate::analysis::facts::CsnameRole::LetTo)
     };
     for u in analysis.facts.color_uses.iter().filter(used).filter(|u| file(u.span.file)) {
-        let Some(color) = value(&u.name) else { continue };
-        let line = u.span.line.saturating_sub(1);
         let text = doc.line(u.span.line);
         let from = (u.span.col as usize).min(text.len());
         // the reader stands past the call's argument: the name is the last one before it, else the next
@@ -323,12 +321,88 @@ pub(super) fn document_colors(analysis: &Analysis, doc: &Text, path: &str) -> Ve
         else {
             continue;
         };
-        let range = Range::new(Position::new(line, at as u32), Position::new(line, (at + u.name.len()) as u32));
-        if !out.iter().any(|c| c.range == range) {
-            out.push(ColorInformation { range, color });
-        }
+        // the whole expression the name starts (`accent!8!black`) when it has a value, else the name
+        let pos = Pos::new(u.span.line, col_of_byte(text, at));
+        let end = at + expression_len(&text[at..]);
+        let whole = value_at(analysis, doc, path, pos, &text[at..end]).map(|rgb| (end, rgb));
+        let Some((end, rgb)) =
+            whole.or_else(|| Some((at + u.name.len(), value_at(analysis, doc, path, pos, &u.name)?)))
+        else {
+            continue;
+        };
+        add(u.span.line, text, at, end, rgba(rgb));
     }
     out
+}
+
+/// The specs this file's definitions wrote (the last of `{name}{model}{spec}` on the
+/// definition's line): each definition, its line, its name's start and the spec, trimmed, as
+/// byte offsets in the line.
+fn written_specs<'a>(
+    analysis: &'a Analysis,
+    doc: &'a Text,
+    path: &str,
+) -> impl Iterator<Item = (&'a ColorDef, u32, usize, std::ops::Range<usize>)> + 'a {
+    let own = super::super::type_at::file_of(analysis, path);
+    analysis.facts.colors.iter().filter(move |c| own == Some(c.span.file)).filter_map(|c| {
+        let text = doc.line(c.span.line);
+        // the span stands on the name or on its group's brace
+        let at = crate::engine::source::byte_of_col(text, c.span.col);
+        let from = text[..at].rfind('{').filter(|&b| text[b + 1..at].trim().is_empty()).unwrap_or(at);
+        let [name, _, spec] = <[_; 3]>::try_from(groups(&text[from..], 3)?).ok()?;
+        let inside = &text[from..][spec.clone()];
+        let start = from + spec.start + (inside.len() - inside.trim_start().len());
+        let name_at =
+            from + name.start + (text[from..][name.clone()].len() - text[from..][name.clone()].trim_start().len());
+        (text[from..][name].trim() == c.shown)
+            .then(|| (c, c.span.line, name_at, start..from + spec.start + inside.trim_end().len()))
+    })
+}
+
+/// A place on a definition's spec stands for the color it defines: the place of its name
+/// there, where the color's views and picker work. `None` off every spec.
+pub(super) fn named_at(analysis: &Analysis, doc: &Text, path: &str, pos: Pos) -> Option<Pos> {
+    let text = doc.line(pos.line);
+    let at = crate::engine::source::byte_of_col(text, pos.col);
+    written_specs(analysis, doc, path)
+        .find(|(_, line, _, spec)| *line == pos.line && spec.start <= at && at <= spec.end)
+        .map(|(_, line, name, _)| Pos::new(line, crate::engine::source::col_of_byte(text, name)))
+}
+
+/// The insides of the `n` brace groups `s` starts with, spaces between them allowed: byte ranges
+/// in `s`. `None` when fewer stand there on the line.
+fn groups(s: &str, n: usize) -> Option<Vec<std::ops::Range<usize>>> {
+    let mut out = Vec::with_capacity(n);
+    let mut at = 0;
+    for _ in 0..n {
+        let open = at + s[at..].find(|c: char| !c.is_whitespace())?;
+        s[open..].starts_with('{').then_some(())?;
+        let mut depth = 0usize;
+        let close = open
+            + 1
+            + s[open + 1..].char_indices().find_map(|(i, c)| match c {
+                '{' => {
+                    depth += 1;
+                    None
+                }
+                '}' if depth == 0 => Some(i),
+                '}' => {
+                    depth -= 1;
+                    None
+                }
+                _ => None,
+            })?;
+        out.push(open + 1..close);
+        at = close + 1;
+    }
+    Some(out)
+}
+
+/// The length of the xcolor expression `s` starts with: names, `!` and percentages, up to the
+/// argument's end (`}`, `]`, `,`, `;`, `=`) or a space before one.
+fn expression_len(s: &str) -> usize {
+    let end = s.find(['}', ']', ',', ';', '=', '{', '\\']).unwrap_or(s.len());
+    s[..end].trim_end().len()
 }
 
 /// `textDocument/colorPresentation`: what VS Code's picker writes for `color` over the name at

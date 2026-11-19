@@ -89,7 +89,7 @@ pub(crate) fn lig_letter(had: u32, c: u32) -> u32 {
 }
 
 /// The letters of character `c` with `lig`; `None` where not followed.
-fn letters(c: u32, lig: u32) -> Option<Vec<u32>> {
+pub(crate) fn letters(c: u32, lig: u32) -> Option<Vec<u32>> {
     match lig {
         LIG_NONE => Some(vec![c]),
         LIG_OPEN => None,
@@ -102,7 +102,7 @@ const MAX_NODES: usize = 1 << 21;
 const INF_BAD: i64 = 10000;
 const EJECT: i64 = -10000;
 const AWFUL: i64 = 0o7777777777;
-const DECENT: u8 = 2;
+pub(crate) const DECENT: u8 = 2;
 const DEPLORABLE: i64 = 100000;
 /// A line's fitness class is not known.
 pub(crate) const UNFIT: u8 = 4;
@@ -184,7 +184,15 @@ impl Machine<'_> {
         if p.lost || p.rough && p.lines.1 > 0 {
             return None;
         }
-        let mut items = self.kp_list(p.items?);
+        let width = self.line_width().known()?;
+        let emergency = self.dimen_parameter("emergencystretch").known();
+        let params = Params::read(width, emergency, self, |m, n| m.int_parameter(n), |m, n| m.glue_parameter(n))?;
+        let breaks = &mut self.out.facts.text.breaks;
+        let at = self.out.facts.text.at.len() as u32;
+        if breaks.last() != Some(&(at, params)) {
+            breaks.push((at, params));
+        }
+        let items = self.kp_list(p.items?);
         let first = p.lines == (0, 0);
         let start = if first { 0 } else { skip_discardable(&items, 0) };
         // The summary must agree with the recorded list.
@@ -197,263 +205,378 @@ impl Machine<'_> {
         {
             return None;
         }
-        let width = self.line_width().known()?;
-        let int = |m: &mut Self, name| m.int_parameter(name);
+        if p.fit == UNFIT && params.dem[1] != 0 {
+            return None;
+        }
+        let fit0 = if p.fit == UNFIT { DECENT } else { p.fit };
+        line_break(items, start, fit0, last, &params, self).map(|b| (b.lines, b.fit))
+    }
+}
+
+/// What `line_break` reads of the engine beyond the list: codes, fonts and the
+/// hyphenation tables in force. The machine answers from its state, a plugin
+/// from a finished run's.
+pub(crate) trait Tables {
+    /// `\lccode`, `None` unknown.
+    fn lower(&mut self, c: u32) -> Option<i64>;
+    /// `\hyphenchar` of a font, `None` unknown.
+    fn hyphen_char(&mut self, font: u32) -> Option<i64>;
+    /// A font's metrics and size.
+    fn metrics(&mut self, font: u32) -> Option<(Rc<crate::engine::tfm::Metrics>, Scaled)>;
+    /// The current language's patterns and exceptions.
+    fn patterns(&mut self) -> Option<(Rc<crate::engine::hyph::Patterns>, crate::engine::hyph::Patterns)>;
+    /// `\lefthyphenmin` and `\righthyphenmin` (§ 1091).
+    fn mins(&mut self) -> (usize, usize);
+}
+
+impl Tables for Machine<'_> {
+    fn lower(&mut self, c: u32) -> Option<i64> {
+        self.char_code_known(CodeTable::Lower, char::from_u32(c)?)
+    }
+    fn hyphen_char(&mut self, font: u32) -> Option<i64> {
+        self.font_field(font, "hyphenchar").as_int()
+    }
+    fn metrics(&mut self, font: u32) -> Option<(Rc<crate::engine::tfm::Metrics>, Scaled)> {
+        Some((self.font_metrics(font)?, self.font_size(font)?))
+    }
+    fn patterns(&mut self) -> Option<(Rc<crate::engine::hyph::Patterns>, crate::engine::hyph::Patterns)> {
+        self.hyph_tables()
+    }
+    fn mins(&mut self) -> (usize, usize) {
+        self.hyphen_mins()
+    }
+}
+
+/// The parameters `line_break` reads (tex.web §§ 236-247), all known, with
+/// `\looseness` 0 and `\lastlinefit` 0 or less: the breaker follows no other.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+pub struct Params {
+    /// The width of every line (`\hsize`, or a uniform `\parshape`).
+    pub width: Scaled,
+    /// `\linepenalty`, `\adjdemerits`, `\doublehyphendemerits`,
+    /// `\finalhyphendemerits`, `\hyphenpenalty`, `\exhyphenpenalty`.
+    pub dem: [i64; 6],
+    pub tolerance: i64,
+    pub pretolerance: i64,
+    pub uchyph: i64,
+    pub emergency: Scaled,
+    pub left: Glue,
+    pub right: Glue,
+    pub fill: Glue,
+}
+
+impl Params {
+    /// The parameters `cx` gives through `int` and `glue`; `None` where one is not known.
+    pub(crate) fn read<C>(
+        width: Scaled,
+        emergency: Option<Scaled>,
+        cx: &mut C,
+        int: impl Fn(&mut C, &str) -> Option<i64>,
+        glue: impl Fn(&mut C, &str) -> Option<Glue>,
+    ) -> Option<Params> {
         #[rustfmt::skip]
         let [loose, line, adj, double, fin, hyph, ex, tol, fit, pretol, uc] = [
             "looseness", "linepenalty", "adjdemerits", "doublehyphendemerits", "finalhyphendemerits",
             "hyphenpenalty", "exhyphenpenalty", "tolerance", "lastlinefit", "pretolerance", "uchyph",
         ]
-        .map(|name| int(self, name));
-        let (loose, fit, adj) = (loose?, fit?, adj?);
-        if loose != 0 || fit > 0 || p.fit == UNFIT && adj != 0 {
+        .map(|name| int(cx, name));
+        if loose? != 0 || fit? > 0 {
             return None;
         }
-        let emergency = self.dimen_parameter("emergencystretch").known()?;
-        let (left, right) = (self.glue_parameter("leftskip")?, self.glue_parameter("rightskip")?);
-        if last {
-            // § 816: a final glue becomes `\penalty10000`, then `\parfillskip`.
-            if matches!(items.last(), Some(Kp::Glue { .. })) {
-                items.pop();
-            }
-            items.push(Kp::Penalty(10000));
-            items.push(Kp::glue(self.glue_parameter("parfillskip")?));
-        }
-        // § 825: infinite shrink is an error TeX makes finite.
-        let infinite = |k: &Kp| matches!(*k, Kp::Glue { sho, sh, .. } if sho > 0 && sh != 0);
-        if items.iter().chain(&[Kp::glue(left), Kp::glue(right)]).any(infinite) {
-            return None;
-        }
-        let mut bg = [0i64; 6];
-        for g in [left, right] {
-            add(&mut bg, Kp::glue(g));
-        }
-        let pass = Pass {
+        Some(Params {
             width,
-            bg,
-            dem: [line?, adj, double?, fin?, hyph?, ex?],
-            start,
-            fit0: if p.fit == UNFIT { DECENT } else { p.fit },
-            end_hyphenated: last,
-        };
-        // § 863: a first pass without hyphenation, a second with, a third
-        // with `\emergencystretch`.
-        let pretol = pretol?;
-        if pretol >= 0
-            && let Some(r) = pass.run(&items, pretol, false)
-        {
-            return Some(r);
-        }
-        let hyphenated = self.hyphenate(&items, start, uc?)?;
-        let tol = tol?;
-        if let Some(r) = pass.run(&hyphenated, tol, emergency <= 0) {
-            return Some(r);
-        }
-        let mut third = pass;
-        third.bg[1] += emergency;
-        (emergency > 0).then(|| third.run(&hyphenated, tol, true)).flatten()
+            dem: [line?, adj?, double?, fin?, hyph?, ex?],
+            tolerance: tol?,
+            pretolerance: pretol?,
+            uchyph: uc?,
+            emergency: emergency?,
+            left: glue(cx, "leftskip")?,
+            right: glue(cx, "rightskip")?,
+            fill: glue(cx, "parfillskip")?,
+        })
     }
+}
 
-    /// §§ 894-918: the second pass's list, with a discretionary hyphen at
-    /// each hyphenation point of each word after glue. `None` where a word
-    /// is not followed exactly (ligatures not followed or with the hyphen,
-    /// boundary characters, unknown codes or patterns).
-    fn hyphenate(&mut self, items: &[Kp], start: usize, uc: i64) -> Option<Vec<Kp>> {
-        let (left, right) = self.hyphen_mins();
-        let tables = self.hyph_tables();
-        let mut out: Vec<Kp> = items[..start].to_vec();
-        let mut points: HashMap<usize, Dims> = HashMap::new();
-        // Discretionaries before an item: pre-break, replaced items, post-break.
-        let mut passed: HashMap<usize, (Dims, u8, Option<Dims>)> = HashMap::new();
-        let letters_at = |k: Option<&Kp>| match k {
-            Some(&Kp::Box { chr: Some((f, c)), lig, .. }) => Some((f, letters(c, lig))),
-            _ => None,
-        };
-        for i in start..items.len() {
-            if !matches!(items[i], Kp::Glue { .. }) {
-                continue;
-            }
-            // § 896: the first letter after the glue.
-            let mut s = i + 1;
-            let (hf, c) = loop {
-                match items.get(s) {
-                    k @ Some(Kp::Box { chr: Some(_), .. }) => {
-                        let (f, l) = letters_at(k).expect("a character");
-                        let c = l?[0];
-                        if self.lc(c)? == 0 {
-                            s += 1;
-                            continue;
-                        }
-                        break (f, c);
-                    }
-                    Some(Kp::Kern { explicit: false, .. } | Kp::Whatsit) => s += 1,
-                    _ => break (0, u32::MAX),
-                }
-            };
-            if c == u32::MAX || self.lc(c)? != i64::from(c) && uc <= 0 {
-                continue;
-            }
-            let hyf_char = match self.font_field(hf, "hyphenchar") {
-                Value::Int(h) if (0..=255).contains(&h) => h as u32,
-                Value::Int(_) => continue,
-                _ => return None,
-            };
-            // §§ 897-898: the letters, a ligature's all or none, font kerns between them.
-            let mut word = Vec::new();
-            let mut at = Vec::new();
-            let mut e = s;
-            'word: loop {
-                match items.get(e) {
-                    k @ Some(Kp::Box { chr: Some((f, _)), .. }) if *f == hf => {
-                        let l = letters_at(k).expect("a character").1?;
-                        let mut lcs = Vec::new();
-                        for &c in &l {
-                            match self.lc(c)? {
-                                0 => break 'word,
-                                lc => lcs.push(lc as u32),
-                            }
-                        }
-                        if word.len() + lcs.len() > 63 {
-                            break;
-                        }
-                        at.extend(std::iter::repeat_n(e, lcs.len()));
-                        word.extend(lcs);
-                    }
-                    Some(Kp::Kern { explicit: false, .. }) => {}
-                    _ => break,
-                }
-                e += 1;
-            }
-            if word.len() < left + right {
-                continue;
-            }
-            // § 899: what follows must permit hyphenation.
-            let ok = loop {
-                match items.get(e) {
-                    Some(Kp::Box { chr: Some(_), .. } | Kp::Kern { explicit: false, .. }) => e += 1,
-                    None | Some(Kp::Whatsit | Kp::Glue { .. } | Kp::Penalty(_) | Kp::Kern { .. }) => break true,
-                    _ => break false,
-                }
-            };
-            if !ok {
-                continue;
-            }
-            let hyf = self.hyf(tables.as_ref()?, &word);
-            let m = self.font_metrics(hf)?;
-            let z = self.font_size(hf)?;
-            if m.boundary_char().is_some() {
-                return None;
-            }
-            let b = m.char_box(hyf_char, z)?;
-            for j in left..=word.len() - right {
-                if hyf[j].is_multiple_of(2) {
-                    continue;
-                }
-                let (k, next) = (at[j - 1], at[j]);
-                let Some(&Kp::Box { w, h, d, chr: Some((_, prev)), .. }) = items.get(k) else {
-                    return None;
-                };
-                // § 916: a left boundary program puts its own material
-                // at the start of the post-break text.
-                let first = letters_at(items.get(next)).and_then(|(_, l)| l)?[0];
-                if m.left_boundary(first, z).is_some() {
-                    return None;
-                }
-                let disc = if k == next {
-                    // §§ 913-916, inside ligature `k`: its letters up to the
-                    // point and the hyphen before the break, the rest after
-                    // it, with its kern to the letter that follows.
-                    let l = letters_at(items.get(k)).and_then(|(_, l)| l)?;
-                    let cut = j - at.iter().position(|&x| x == k)?;
-                    let mut pre_letters = l[..cut].to_vec();
-                    pre_letters.push(hyf_char);
-                    let pre = reconstitute(&m, z, &pre_letters)?;
-                    let (kern, follow) = match items.get(k + 1) {
-                        Some(&Kp::Kern { explicit: false, .. }) => (1, items.get(k + 2)),
-                        n => (0, n),
-                    };
-                    let (mut post, last) = reconstitute(&m, z, &l[cut..])?;
-                    match letters_at(follow) {
-                        Some((f, l)) if f == hf => match m.lig_kern(last, l?[0], z) {
-                            None => {}
-                            Some(LigKern::Kern(x)) => post.0 += x,
-                            Some(LigKern::Lig { .. }) => return None,
-                        },
-                        Some(_) => return None,
-                        None => {}
-                    }
-                    (pre.0, 1 + kern, Some(post))
-                } else {
-                    // § 909: a kern with the hyphen, or one with the next
-                    // letter, passes the hyphen at this letter: the
-                    // discretionary goes before it and replaces it and its
-                    // kern (§§ 914-918), its pre-break text is the letter, the
-                    // kern with the hyphen and the hyphen (§ 915).
-                    let with_hyphen = match m.lig_kern(prev, hyf_char, z) {
-                        None => None,
-                        Some(LigKern::Kern(x)) => Some(x),
-                        Some(LigKern::Lig { .. }) => return None,
-                    };
-                    let between = match items.get(k + 1) {
-                        _ if k + 1 == next => None,
-                        Some(&Kp::Kern { w, explicit: false }) if k + 2 == next => Some(w),
-                        _ => return None,
-                    };
-                    if with_hyphen.is_none() && between.is_none() {
-                        points.insert(k, (b.width, b.height, b.depth));
+/// What [`line_break`] made: the lines, the last one's fitness class, the
+/// list it broke (hyphenated in the second pass), and where it put each
+/// discretionary hyphen: its index, the index of the word's first letter in
+/// the list it was given and the letters of the word before it.
+pub(crate) struct Breaking {
+    pub lines: Vec<Broken>,
+    pub fit: u8,
+    pub items: Vec<Kp>,
+    pub points: Vec<(usize, usize, usize)>,
+}
+
+/// tex.web §§ 813-890 `line_break` of `items` from `start` (past a forced
+/// break, the line before of fitness `fit0`), at `\par` when `last`.
+pub(crate) fn line_break(
+    mut items: Vec<Kp>,
+    start: usize,
+    fit0: u8,
+    last: bool,
+    p: &Params,
+    tables: &mut impl Tables,
+) -> Option<Breaking> {
+    if last {
+        // § 816: a final glue becomes `\penalty10000`, then `\parfillskip`.
+        if matches!(items.last(), Some(Kp::Glue { .. })) {
+            items.pop();
+        }
+        items.push(Kp::Penalty(10000));
+        items.push(Kp::glue(p.fill));
+    }
+    // § 825: infinite shrink is an error TeX makes finite.
+    let infinite = |k: &Kp| matches!(*k, Kp::Glue { sho, sh, .. } if sho > 0 && sh != 0);
+    if items.iter().chain(&[Kp::glue(p.left), Kp::glue(p.right)]).any(infinite) {
+        return None;
+    }
+    let mut bg = [0i64; 6];
+    for g in [p.left, p.right] {
+        add(&mut bg, Kp::glue(g));
+    }
+    let pass = Pass { width: p.width, bg, dem: p.dem, start, fit0, end_hyphenated: last };
+    let done = |items, points, (lines, fit)| Breaking { lines, fit, items, points };
+    // § 863: a first pass without hyphenation, a second with, a third
+    // with `\emergencystretch`.
+    if p.pretolerance >= 0
+        && let Some(r) = pass.run(&items, p.pretolerance, false)
+    {
+        return Some(done(items, Vec::new(), r));
+    }
+    let (hyphenated, points) = hyphenate(tables, &items, start, p.uchyph)?;
+    if let Some(r) = pass.run(&hyphenated, p.tolerance, p.emergency <= 0) {
+        return Some(done(hyphenated, points, r));
+    }
+    let mut third = pass;
+    third.bg[1] += p.emergency;
+    let r = (p.emergency > 0).then(|| third.run(&hyphenated, p.tolerance, true)).flatten()?;
+    Some(done(hyphenated, points, r))
+}
+
+/// Where a discretionary went: its item, its word's first letter, the letters before it.
+type Placed = (usize, usize, usize);
+/// A discretionary's pre-break width, replaced items and post-break width.
+type Passed = (Dims, u8, Option<Dims>);
+
+/// §§ 894-918: the second pass's list, with a discretionary hyphen at
+/// each hyphenation point of each word after glue. `None` where a word
+/// is not followed exactly (ligatures not followed or with the hyphen,
+/// boundary characters, unknown codes or patterns).
+fn hyphenate(t: &mut impl Tables, items: &[Kp], start: usize, uc: i64) -> Option<(Vec<Kp>, Vec<Placed>)> {
+    let (left, right) = t.mins();
+    let tables = t.patterns();
+    let mut out: Vec<Kp> = items[..start].to_vec();
+    // Discretionaries after an item, each with its word's first letter and the letters before it.
+    let mut points: HashMap<usize, (Dims, (usize, usize))> = HashMap::new();
+    // Discretionaries before an item: pre-break, replaced items, post-break.
+    let mut passed: HashMap<usize, (Passed, (usize, usize))> = HashMap::new();
+    let mut placed = Vec::new();
+    let letters_at = |k: Option<&Kp>| match k {
+        Some(&Kp::Box { chr: Some((f, c)), lig, .. }) => Some((f, letters(c, lig))),
+        _ => None,
+    };
+    for i in start..items.len() {
+        if !matches!(items[i], Kp::Glue { .. }) {
+            continue;
+        }
+        // § 896: the first letter after the glue.
+        let mut s = i + 1;
+        let (hf, c) = loop {
+            match items.get(s) {
+                k @ Some(Kp::Box { chr: Some(_), .. }) => {
+                    let (f, l) = letters_at(k).expect("a character");
+                    let c = l?[0];
+                    if t.lower(c)? == 0 {
+                        s += 1;
                         continue;
                     }
-                    let pre = (w + with_hyphen.unwrap_or(0) + b.width, h.max(b.height), d.max(b.depth));
-                    (pre, 1 + u8::from(between.is_some()), None)
-                };
-                // Two discretionaries at one item are not followed.
-                if passed.insert(k, disc).is_some() {
-                    return None;
+                    break (f, c);
                 }
+                Some(Kp::Kern { explicit: false, .. } | Kp::Whatsit) => s += 1,
+                _ => break (0, u32::MAX),
+            }
+        };
+        if c == u32::MAX || t.lower(c)? != i64::from(c) && uc <= 0 {
+            continue;
+        }
+        let hyf_char = match t.hyphen_char(hf)? {
+            h @ 0..=255 => h as u32,
+            _ => continue,
+        };
+        // §§ 897-898: the letters, a ligature's all or none, font kerns between them.
+        let mut word = Vec::new();
+        let mut at = Vec::new();
+        let mut e = s;
+        'word: loop {
+            match items.get(e) {
+                k @ Some(Kp::Box { chr: Some((f, _)), .. }) if *f == hf => {
+                    let l = letters_at(k).expect("a character").1?;
+                    let mut lcs = Vec::new();
+                    for &c in &l {
+                        match t.lower(c)? {
+                            0 => break 'word,
+                            lc => lcs.push(lc as u32),
+                        }
+                    }
+                    if word.len() + lcs.len() > 63 {
+                        break;
+                    }
+                    at.extend(std::iter::repeat_n(e, lcs.len()));
+                    word.extend(lcs);
+                }
+                Some(Kp::Kern { explicit: false, .. }) => {}
+                _ => break,
+            }
+            e += 1;
+        }
+        if word.len() < left + right {
+            continue;
+        }
+        // § 899: what follows must permit hyphenation.
+        let ok = loop {
+            match items.get(e) {
+                Some(Kp::Box { chr: Some(_), .. } | Kp::Kern { explicit: false, .. }) => e += 1,
+                None | Some(Kp::Whatsit | Kp::Glue { .. } | Kp::Penalty(_) | Kp::Kern { .. }) => break true,
+                _ => break false,
+            }
+        };
+        if !ok {
+            continue;
+        }
+        let hyf = crate::engine::hyph::hyf(tables.as_ref()?, &word);
+        let (m, z) = t.metrics(hf)?;
+        if m.boundary_char().is_some() {
+            return None;
+        }
+        let b = m.char_box(hyf_char, z)?;
+        for j in left..=word.len() - right {
+            if hyf[j].is_multiple_of(2) {
+                continue;
+            }
+            let (k, next) = (at[j - 1], at[j]);
+            let Some(&Kp::Box { w, h, d, chr: Some((_, prev)), .. }) = items.get(k) else {
+                return None;
+            };
+            // § 916: a left boundary program puts its own material
+            // at the start of the post-break text.
+            let first = letters_at(items.get(next)).and_then(|(_, l)| l)?[0];
+            if m.left_boundary(first, z).is_some() {
+                return None;
+            }
+            let disc = if k == next {
+                // §§ 913-916, inside ligature `k`: its letters up to the
+                // point and the hyphen before the break, the rest after
+                // it, with its kern to the letter that follows.
+                let l = letters_at(items.get(k)).and_then(|(_, l)| l)?;
+                let cut = j - at.iter().position(|&x| x == k)?;
+                let mut pre_letters = l[..cut].to_vec();
+                pre_letters.push(hyf_char);
+                let pre = reconstitute(&m, z, &pre_letters)?;
+                let (kern, follow) = match items.get(k + 1) {
+                    Some(&Kp::Kern { explicit: false, .. }) => (1, items.get(k + 2)),
+                    n => (0, n),
+                };
+                let (mut post, last) = reconstitute(&m, z, &l[cut..])?;
+                match letters_at(follow) {
+                    Some((f, l)) if f == hf => match m.lig_kern(last, l?[0], z) {
+                        None => {}
+                        Some(LigKern::Kern(x)) => post.0 += x,
+                        Some(LigKern::Lig { .. }) => return None,
+                    },
+                    Some(_) => return None,
+                    None => {}
+                }
+                (pre.0, 1 + kern, Some(post))
+            } else {
+                // § 909: a kern with the hyphen, or one with the next
+                // letter, passes the hyphen at this letter: the
+                // discretionary goes before it and replaces it and its
+                // kern (§§ 914-918), its pre-break text is the letter, the
+                // kern with the hyphen and the hyphen (§ 915).
+                let with_hyphen = match m.lig_kern(prev, hyf_char, z) {
+                    None => None,
+                    Some(LigKern::Kern(x)) => Some(x),
+                    Some(LigKern::Lig { .. }) => return None,
+                };
+                let between = match items.get(k + 1) {
+                    _ if k + 1 == next => None,
+                    Some(&Kp::Kern { w, explicit: false }) if k + 2 == next => Some(w),
+                    _ => return None,
+                };
+                if with_hyphen.is_none() && between.is_none() {
+                    points.insert(k, ((b.width, b.height, b.depth), (s, j)));
+                    continue;
+                }
+                let pre = (w + with_hyphen.unwrap_or(0) + b.width, h.max(b.height), d.max(b.depth));
+                (pre, 1 + u8::from(between.is_some()), None)
+            };
+            // Two discretionaries at one item are not followed.
+            if passed.insert(k, (disc, (s, j))).is_some() {
+                return None;
             }
         }
-        for (i, k) in items.iter().enumerate().skip(start) {
-            if let Some(&(pre, r, post)) = passed.get(&i) {
-                out.push(Kp::Disc(Some(pre), r, post));
-            }
-            out.push(*k);
-            if let Some(&pre) = points.get(&i) {
-                out.push(Kp::Disc(Some(pre), 0, None));
-            }
+    }
+    for (i, k) in items.iter().enumerate().skip(start) {
+        if let Some(&((pre, r, post), (s, j))) = passed.get(&i) {
+            placed.push((out.len(), s, j));
+            out.push(Kp::Disc(Some(pre), r, post));
         }
-        Some(out)
+        out.push(*k);
+        if let Some(&(pre, (s, j))) = points.get(&i) {
+            placed.push((out.len(), s, j));
+            out.push(Kp::Disc(Some(pre), 0, None));
+        }
     }
-
-    fn lc(&mut self, c: u32) -> Option<i64> {
-        self.char_code_known(CodeTable::Lower, char::from_u32(c)?)
-    }
+    Some((out, placed))
 }
 
 /// §§ 906-911 `reconstitute`: `letters` set with their ligatures and kerns
 /// (only `=:` ligatures followed), and the last character.
 fn reconstitute(m: &crate::engine::tfm::Metrics, z: Scaled, letters: &[u32]) -> Option<(Dims, u32)> {
-    let mut dims = (0, 0, 0);
-    let mut put = |c: u32, kern: Scaled| {
+    let (items, last) = set_letters(m, z, 0, letters)?;
+    let dims = items.iter().fold((0, 0, 0), |(w, h, d), k| match *k {
+        Kp::Box { w: bw, h: bh, d: bd, .. } => (w + bw, h.max(bh), d.max(bd)),
+        k => (w + k.width(), h, d),
+    });
+    Some((dims, last))
+}
+
+/// `letters` of `font` as the main loop sets them (§§ 1034-1040): a box per
+/// character or `=:` ligature, its letters in `lig`, font kerns between; the
+/// last character. `None` for another ligature or a missing character.
+pub(crate) fn set_letters(
+    m: &crate::engine::tfm::Metrics,
+    z: Scaled,
+    font: u32,
+    letters: &[u32],
+) -> Option<(Vec<Kp>, u32)> {
+    let mut items = Vec::new();
+    let mut put = |c: u32, lig: u32, kern: Option<Scaled>| {
         let b = m.char_box(c, z)?;
-        dims = (dims.0 + b.width + kern, dims.1.max(b.height), dims.2.max(b.depth));
+        items.push(Kp::Box { w: b.width, h: b.height, d: b.depth, chr: Some((font, c)), lig });
+        if let Some(w) = kern {
+            items.push(Kp::Kern { w, explicit: false });
+        }
         Some(())
     };
     let (&first, rest) = letters.split_first()?;
-    let mut cur = first;
+    let (mut cur, mut lig) = (first, LIG_NONE);
     for &next in rest {
         match m.lig_kern(cur, next, z) {
-            None => put(cur, 0)?,
-            Some(LigKern::Kern(x)) => put(cur, x)?,
+            None => put(cur, lig, None)?,
+            Some(LigKern::Kern(x)) => put(cur, lig, Some(x))?,
             Some(LigKern::Lig { op: 0, char }) => {
-                cur = char;
+                let had = if lig == LIG_NONE { lig_letter(LIG_NONE, cur) } else { lig };
+                (cur, lig) = (char, lig_letter(had, next));
                 continue;
             }
             Some(LigKern::Lig { .. }) => return None,
         }
-        cur = next;
+        (cur, lig) = (next, LIG_NONE);
     }
-    put(cur, 0)?;
-    Some((dims, cur))
+    put(cur, lig, None)?;
+    Some((items, cur))
 }
 
 fn add(sums: &mut [i64; 6], k: Kp) {
@@ -599,13 +722,17 @@ pub(crate) fn badness(t: i64, s: i64) -> i64 {
     if r > 1290 { INF_BAD } else { (r * r * r + 0o400000) / 0o1000000 }
 }
 
-/// One line `line_break` made: its height, depth, and by how much its
-/// natural width less its shrink passes the line width (§ 664).
+/// One line `line_break` made: its height, depth, by how much its natural
+/// width less its shrink passes the line width (§ 664), the item it ends at
+/// (the list's length at the end) and its glue set (§§ 658, 664): the ratio,
+/// negative when it shrinks, and the order it stretches.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct Broken {
     pub(crate) height: Scaled,
     pub(crate) depth: Scaled,
     pub(crate) excess: Scaled,
+    pub(crate) at: usize,
+    pub(crate) set: (f64, u8),
 }
 
 #[derive(Clone, Copy)]
@@ -807,7 +934,15 @@ impl Pass {
                             *x += b - y;
                         }
                         let ends = [brk, post].into_iter().flatten().map(|b| b.0).sum::<Scaled>();
-                        let excess = s[0] + ends - self.width - s[5];
+                        let (natural, width) = (s[0] + ends, self.width);
+                        let excess = natural - width - s[5];
+                        let set = match (1..=4).rev().find(|&o| s[o] != 0) {
+                            Some(o) if natural < width => ((width - natural) as f64 / s[o] as f64, o as u8 - 1),
+                            _ if natural > width && s[5] != 0 => {
+                                (-((natural - width) as f64 / s[5] as f64).min(1.0), 0)
+                            }
+                            _ => (0.0, 0),
+                        };
                         post = match items.get(to) {
                             Some(&Kp::Disc(Some(_), _, p)) => p,
                             _ => None,
@@ -816,7 +951,7 @@ impl Pass {
                         if post.is_none() {
                             from = skip_discardable(items, from);
                         }
-                        Broken { height: h, depth: d, excess }
+                        Broken { height: h, depth: d, excess, at: to, set }
                     })
                     .collect();
                 return Some((lines, r.fit));

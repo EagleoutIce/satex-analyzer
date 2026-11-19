@@ -545,6 +545,40 @@
               ],
               "x-example": "`key_depth: 1`"
             },
+            "math_depth": {
+              "default": 2,
+              "description": "expansions a command's body is followed to find math-only material (\\over, a \\mathchardef), which ranks it first in math",
+              "minimum": 0,
+              "type": "integer",
+              "x-affects": [
+                "output",
+                "speed"
+              ],
+              "x-example": "`math_depth: 0`: only math characters and primitives count"
+            },
+            "math_environments": {
+              "default": [
+                "equation",
+                "align",
+                "gather",
+                "multline",
+                "flalign",
+                "alignat",
+                "eqnarray",
+                "math",
+                "displaymath",
+                "dmath"
+              ],
+              "description": "environments whose body is math (starred too): completion ranks math commands first there",
+              "items": {
+                "type": "string"
+              },
+              "type": "array",
+              "x-affects": [
+                "output"
+              ],
+              "x-example": "`math_environments+: [IEEEeqnarray]`"
+            },
             "pick": {
               "default": [
                 "begin",
@@ -632,6 +666,50 @@
                 }
               },
               "type": "object"
+            },
+            "unloaded": {
+              "default": 20,
+              "description": "names of packages not loaded yet one completion offers (\\begin{tikzpic} offers tikzpicture), below those in scope, labelled with the package they add. Taking one loads the package",
+              "minimum": 0,
+              "type": "integer",
+              "x-affects": [
+                "output",
+                "speed"
+              ],
+              "x-example": "`unloaded: 0`: only names in scope"
+            },
+            "unloaded_min": {
+              "default": 3,
+              "description": "letters typed before names of packages not loaded are offered",
+              "minimum": 0,
+              "type": "integer",
+              "x-affects": [
+                "output",
+                "speed"
+              ],
+              "x-example": "`unloaded_min: 1`"
+            },
+            "unloaded_seed": {
+              "description": "names whose package the installation's index cannot tell (pgf defines with \\def in a .code.tex file), commands with their backslash. Used only where the package is installed",
+              "properties": {
+                "\\tikz": {
+                  "default": "tikz",
+                  "type": "string"
+                },
+                "\\usetikzlibrary": {
+                  "default": "tikz",
+                  "type": "string"
+                },
+                "tikzpicture": {
+                  "default": "tikz",
+                  "type": "string"
+                }
+              },
+              "type": "object",
+              "x-affects": [
+                "output"
+              ],
+              "x-example": "`unloaded_seed+: {\\pgfplotsset: pgfplots}`"
             }
           },
           "type": "object"
@@ -814,6 +892,46 @@
             "output"
           ],
           "x-example": "add `'^my@'` to hide your package's helper macros"
+        },
+        "lengths": {
+          "description": "how a written length looks where the text shows no convention of its own",
+          "properties": {
+            "decimals": {
+              "default": 1,
+              "description": "the decimals such a length is written with",
+              "minimum": 0,
+              "type": "integer",
+              "x-affects": [
+                "output"
+              ]
+            },
+            "unit": {
+              "default": "cm",
+              "description": "the unit of a new TikZ coordinate, column width or margin: cm, mm, pt, in or bp",
+              "type": "string",
+              "x-affects": [
+                "output"
+              ],
+              "x-example": "`unit: mm`"
+            }
+          },
+          "type": "object"
+        },
+        "lines": {
+          "description": "how long a source line is",
+          "properties": {
+            "length": {
+              "default": 0,
+              "description": "where smart wrap breaks a typed line, in characters; 0 takes the document's own habit, else 80",
+              "minimum": 0,
+              "type": "integer",
+              "x-affects": [
+                "output"
+              ],
+              "x-example": "`length: 100`"
+            }
+          },
+          "type": "object"
         },
         "math": {
           "description": "how math is written",
@@ -3210,7 +3328,7 @@
           "x-example": "`\\count0` is 1 or 5: kept as `{1, 5}`, not `1..5`"
         },
         "vertices": {
-          "default": 400000,
+          "default": 1000000,
           "description": "most steps the dependency graph records. Past it the graph stops growing, the analysis goes on",
           "minimum": 0,
           "type": "integer",
@@ -4545,6 +4663,18 @@
           ],
           "x-example": "`x_42` types `x_{42}`"
         },
+        "smart_wrap": {
+          "default": false,
+          "description": "a line typed past conventions.lines.length breaks at its best space: a sentence's end, after a closing brace, after a comma, else the last space",
+          "type": "boolean",
+          "x-affects": [
+            "output"
+          ]
+        },
+        "tex_breaks": {
+          "default": false,
+          "type": "boolean"
+        },
         "theme": {
           "default": "site",
           "description": "the editor's colors",
@@ -4729,6 +4859,19 @@
           ],
           "x-example": "off: a `.bbl` biber would write is not computed",
           "x-plugin": "tool"
+        },
+        "typeset": {
+          "properties": {
+            "hyphenate": {
+              "default": true,
+              "type": "boolean"
+            },
+            "linebreak": {
+              "default": true,
+              "type": "boolean"
+            }
+          },
+          "type": "object"
         }
       },
       "type": "object"

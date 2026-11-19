@@ -97,20 +97,7 @@ impl Machine<'_> {
                 i += 1;
                 continue;
             }
-            let n = word.len();
-            if n < left + right {
-                continue;
-            }
-            // Gap `j` lies after letter `j` (1-based), § 923.
-            let hyf = match (&tables, word.iter().copied().collect::<Option<Vec<u32>>>()) {
-                (Some(t), Some(w)) => self.hyf(t, &w),
-                _ => vec![1u8; n + 1],
-            };
-            for (j, h) in (left..).zip(&hyf[left..=n - right]) {
-                if h % 2 == 1 {
-                    marks.push((from + start + j) as u32);
-                }
-            }
+            marks.extend(points(tables.as_ref(), &word, (left, right)).map(|j| (from + start + j) as u32));
         }
         self.out.facts.text.hyphens.extend(marks);
     }
@@ -130,11 +117,6 @@ impl Machine<'_> {
         Some((self.parsed_patterns(lang)?, self.exceptions(lang)?))
     }
 
-    /// The gap values of a lowercased word (§ 923, § 931).
-    pub(crate) fn hyf(&self, (p, e): &(Rc<Patterns>, Patterns), w: &[u32]) -> Vec<u8> {
-        e.get(w).cloned().unwrap_or_else(|| apply(p, w))
-    }
-
     /// The language's patterns, parsed once per stored text.
     fn parsed_patterns(&mut self, lang: i64) -> Option<Rc<Patterns>> {
         let text = self.hyph_text(&format!("patterns.{lang}"))?;
@@ -143,50 +125,14 @@ impl Machine<'_> {
         {
             return Some(p.clone());
         }
-        let mut patterns = Patterns::new();
-        for word in text.split(|t| matches!(t.tok, Tok::Chr(' ', _))) {
-            let (mut letters, mut values) = (Vec::new(), vec![0u8]);
-            for t in word {
-                if let Tok::Chr(c, _) = t.tok {
-                    match c.to_digit(10) {
-                        Some(d) => *values.last_mut().unwrap() = d as u8,
-                        None => {
-                            letters.push(if c == '.' { 0 } else { c as u32 });
-                            values.push(0);
-                        }
-                    }
-                }
-            }
-            if !letters.is_empty() {
-                patterns.insert(letters, values);
-            }
-        }
-        let patterns = Rc::new(patterns);
+        let patterns = Rc::new(parse_patterns(&text));
         self.hyph_cache = Some((text, patterns.clone()));
         Some(patterns)
     }
 
     /// The language's `\hyphenation` words, each with its marked gaps.
     fn exceptions(&mut self, lang: i64) -> Option<Patterns> {
-        let text = self.hyph_text(&format!("hyphenation.{lang}"))?;
-        let mut out = HashMap::new();
-        for word in text.split(|t| matches!(t.tok, Tok::Chr(' ', _))) {
-            let (mut letters, mut gaps) = (Vec::new(), vec![0u8]);
-            for t in word {
-                if let Tok::Chr(c, _) = t.tok {
-                    if c == '-' {
-                        *gaps.last_mut().unwrap() = 1;
-                    } else {
-                        letters.push(c as u32);
-                        gaps.push(0);
-                    }
-                }
-            }
-            if !letters.is_empty() {
-                out.insert(letters, gaps);
-            }
-        }
-        Some(out)
+        Some(parse_exceptions(&self.hyph_text(&format!("hyphenation.{lang}"))?))
     }
 
     fn engine_value(&mut self, key: &str) -> Value {
@@ -207,6 +153,73 @@ impl Machine<'_> {
             _ => Some(Rc::from(Vec::new())),
         }
     }
+}
+
+/// The gap values of a lowercased word (§ 923, § 931).
+pub(crate) fn hyf((p, e): &(Rc<Patterns>, Patterns), w: &[u32]) -> Vec<u8> {
+    e.get(w).cloned().unwrap_or_else(|| apply(p, w))
+}
+
+/// Where a word of lowercased letters (`None` unknown) may take a discretionary hyphen: `j` is the gap
+/// after letter `j` (§ 923), from `left` to `n - right` (§ 902). Unknown tables or letters: every gap.
+pub(crate) fn points(
+    tables: Option<&(Rc<Patterns>, Patterns)>,
+    word: &[Option<u32>],
+    (left, right): (usize, usize),
+) -> impl Iterator<Item = usize> {
+    let n = word.len();
+    let hyf = match (tables, word.iter().copied().collect::<Option<Vec<u32>>>()) {
+        _ if n < left + right => Vec::new(),
+        (Some(t), Some(w)) => hyf(t, &w),
+        _ => vec![1u8; n + 1],
+    };
+    let gaps = if hyf.is_empty() { &[][..] } else { &hyf[left..=n - right] };
+    (left..).zip(gaps.to_vec()).filter(|(_, h)| h % 2 == 1).map(|(j, _)| j)
+}
+
+/// `\patterns` text as stored: letters (`.` the word's edge, 0) and the gap values between.
+pub(crate) fn parse_patterns(text: &[Token]) -> Patterns {
+    let mut patterns = Patterns::new();
+    for word in text.split(|t| matches!(t.tok, Tok::Chr(' ', _))) {
+        let (mut letters, mut values) = (Vec::new(), vec![0u8]);
+        for t in word {
+            if let Tok::Chr(c, _) = t.tok {
+                match c.to_digit(10) {
+                    Some(d) => *values.last_mut().unwrap() = d as u8,
+                    None => {
+                        letters.push(if c == '.' { 0 } else { c as u32 });
+                        values.push(0);
+                    }
+                }
+            }
+        }
+        if !letters.is_empty() {
+            patterns.insert(letters, values);
+        }
+    }
+    patterns
+}
+
+/// `\hyphenation` text as stored: each word's letters, 1 at a gap marked `-`.
+pub(crate) fn parse_exceptions(text: &[Token]) -> Patterns {
+    let mut out = HashMap::new();
+    for word in text.split(|t| matches!(t.tok, Tok::Chr(' ', _))) {
+        let (mut letters, mut gaps) = (Vec::new(), vec![0u8]);
+        for t in word {
+            if let Tok::Chr(c, _) = t.tok {
+                if c == '-' {
+                    *gaps.last_mut().unwrap() = 1;
+                } else {
+                    letters.push(c as u32);
+                    gaps.push(0);
+                }
+            }
+        }
+        if !letters.is_empty() {
+            out.insert(letters, gaps);
+        }
+    }
+    out
 }
 
 /// § 923: every pattern matching inside `.word.` raises the gaps it covers.

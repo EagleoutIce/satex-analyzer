@@ -18,6 +18,7 @@ pub mod platform;
 pub mod preload;
 pub mod provider;
 pub mod tool;
+pub mod typeset;
 
 pub use discovery::Discovery;
 pub use format::Format;

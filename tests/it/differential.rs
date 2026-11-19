@@ -1656,6 +1656,55 @@ fn title_text_knows_where_it_was_read() {
     assert!(paragraph(&rows, "Plain")["origins"].is_null(), "{rows:?}");
 }
 
+/// Text read in library code names who wrote it (`source`: article's `\\today`, the kernel's `\\TeX`,
+/// article's `\\abstractname`, amsthm's `\\proofname`) and is `generated` where expanding a primitive made it
+/// (`\\number\\year`); the row marks math mode where it starts and ends, inline and display. Pins the
+/// facts the playground's origins sub-switches and math layers read (they had none for library text).
+#[test]
+fn library_text_names_its_source_and_math_its_mode() {
+    if !crate::support::installed() {
+        return;
+    }
+    let source = "\\documentclass{article}\n\\usepackage{amsthm}\n\\begin{document}\n\\begin{abstract}Short.\\end{abstract}\nOn \\today{} \\TeX{} we add $a+b$ and\n\\[ x = y \\]\nafter.\n\\begin{proof}Done.\\end{proof}\n\\end{document}\n";
+    let rows = typeset_doc("library-origins", source, &[]);
+    // the origin in force at `at`
+    let origin_at = |row: &serde_json::Value, at: u64| {
+        row["origins"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .rfind(|o| o["at"].as_u64() <= Some(at))
+            .cloned()
+            .unwrap_or_default()
+    };
+    let at =
+        |row: &serde_json::Value, w: &str| row["detail"].as_str().and_then(|d| d.find(w)).expect("in detail") as u64;
+    let on = paragraph(&rows, "we add");
+    let year = on["detail"].as_str().and_then(|d| d.find("20")).expect("a year") as u64;
+    let o = origin_at(on, year);
+    assert_eq!((o["source"].as_str(), o["generated"].as_bool()), (Some("class"), Some(true)), "{on}");
+    let month = origin_at(on, at(on, "On ") + 3);
+    assert_eq!(month["source"], "class", "{on}");
+    let tex = origin_at(on, at(on, "TEX"));
+    assert_eq!(tex["source"], "kernel", "{on}");
+    assert!(month["generated"].is_null(), "a month name is the macro's own text: {on}");
+    let abs = paragraph(&rows, "Abstract");
+    assert_eq!(origin_at(abs, at(abs, "Abstract"))["source"], "class", "{abs}");
+    let proof = paragraph(&rows, "Proof");
+    assert_eq!(origin_at(proof, at(proof, "Proof"))["source"], "package", "{proof}");
+    // math: `a+b` inline, then out of math, the display's `x = y` display
+    let modes: Vec<&str> = rows
+        .iter()
+        .flat_map(|r| r["math"].as_array().into_iter().flatten())
+        .filter_map(|m| m["mode"].as_str())
+        .collect();
+    assert!(modes.windows(2).any(|w| w == ["inline", ""]), "{modes:?}");
+    assert!(modes.contains(&"display"), "{modes:?}");
+    // text written where it is set in the document: its origin is none or the document
+    let short = paragraph(&rows, "Short");
+    assert!(origin_at(short, at(short, "Short")).get("source").is_none_or(|s| s == "document"), "{short}");
+}
+
 /// amsart upper-cases its title block with `\\MakeUppercase`: expl3 keeps a letter already upper-case
 /// as the token read (`S` of `Some`) and makes a fresh one for each other (`OME`), read nowhere in the
 /// files, so only the kept letters name where they were read (the editor matches the rest up to case).

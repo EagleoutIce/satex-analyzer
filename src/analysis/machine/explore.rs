@@ -2600,6 +2600,8 @@ impl Machine<'_> {
         let (sym, may) = self.one_of_sym(members);
         let now = self.carried.passes_joined;
         self.carried.made.entry(sym).and_modify(|m| m.1 = true).or_insert((now, false));
+        let owner = self.scratch.owning.take();
+        self.carried.owners.entry(sym).and_modify(|o| *o = o.filter(|o| Some(*o) == owner)).or_insert(owner);
         match self.env.slot(sym).and_then(|b| b.may.clone()) {
             // Rebuilt on a path that had narrowed it: restore all its texts.
             Some(had) if had.len() != may.len() => self.env.refine_may(sym, &may, &[]),

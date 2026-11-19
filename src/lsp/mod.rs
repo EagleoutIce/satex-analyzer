@@ -526,6 +526,12 @@ fn dispatch(engine_tx: Send<'_>, req: Request) -> Result<Json, String> {
             let uri: Uri = serde_json::from_value(params["textDocument"]["uri"].clone()).map_err(|e| e.to_string())?;
             Ok(Json::Array(ask(engine_tx, |reply| EngineMsg::Typeset(uri, reply))?))
         }
+        // The typesetting plugins (`crate::plugins::typeset`), from the last finished run: never wait for a run.
+        "satex/hyphenate" | "satex/break" => {
+            let uri: Uri = serde_json::from_value(params["textDocument"]["uri"].clone()).map_err(|e| e.to_string())?;
+            let method = req.method.clone();
+            Ok(ask(engine_tx, |reply| EngineMsg::Typesetting(uri, method, params, reply))?)
+        }
         // The cache report of the last analysis: which kernel, class and package caches it reused or rebuilt.
         // What the build wrote to each file, `null` where not known.
         "satex/written" => {
@@ -774,6 +780,8 @@ enum EngineMsg {
     /// A style prompt's answer for a rule: the path of the `satex.yaml` written.
     Style(String, crate::project::config::StyleChoice, Sender<Result<Json, String>>),
     Typeset(Uri, Sender<Vec<Json>>),
+    /// A typesetting plugin's request and its params: `null` before a first run.
+    Typesetting(Uri, String, Json, Sender<Json>),
     Written(Uri, Sender<Vec<Json>>),
     Caches(Uri, Sender<Vec<String>>),
     Shutdown,
@@ -897,6 +905,7 @@ impl EngineMsg {
             | EngineMsg::Completion(uri, ..)
             | EngineMsg::DocumentSymbol(uri, ..)
             | EngineMsg::Typeset(uri, ..)
+            | EngineMsg::Typesetting(uri, ..)
             | EngineMsg::Written(uri, ..)
             | EngineMsg::Caches(uri, ..) => Some(uri),
             EngineMsg::Dialog(Ask::Actions(uri, _) | Ask::Open(uri, _) | Ask::Apply(uri, _), _) => Some(uri),
@@ -1420,6 +1429,29 @@ impl Engine {
     /// from the analyses there are (nothing yet before a document's first one,
     /// never a wait), and the others wait for its end.
     fn serving<T>(&mut self, f: impl FnOnce(&mut Self) -> T) -> T {
+        #[cfg(target_os = "emscripten")]
+        if self.inbox.is_none() {
+            // One thread: the page's mailbox is read at the run's pauses, its cheap requests answered there.
+            let (docs, hovers, blank) = (self.docs.clone(), self.hovers.clone(), self.blank.clone());
+            let pause = Box::new(move || {
+                while let Some(req) = wasm::mail() {
+                    if !matches!(req.method.as_str(), "satex/hyphenate" | "satex/break") {
+                        wasm::reply(&Response::new_err(
+                            req.id,
+                            ErrorCode::RequestCanceled as i32,
+                            "not during a run".into(),
+                        ));
+                        continue;
+                    }
+                    let mut send = |msg| {
+                        crate::analysis::probe::apart(|| answer(&docs, &hovers, blank.as_deref(), msg));
+                        true
+                    };
+                    wasm::reply(&respond(&mut send, req));
+                }
+            });
+            return crate::util::progress::pausing(pause, || f(self));
+        }
         let Some(inbox) = self.inbox.clone() else { return f(self) };
         let (mut docs, hovers, blank) = (self.docs.clone(), self.hovers.clone(), self.blank.clone());
         let deferred = Rc::new(std::cell::RefCell::new(Vec::new()));
@@ -1668,12 +1700,13 @@ impl Engine {
             | EngineMsg::Resolve(..)
             | EngineMsg::DocumentSymbol(..)
             | EngineMsg::Typeset(..)
+            | EngineMsg::Typesetting(..)
             | EngineMsg::Written(..)
             | EngineMsg::Caches(..)
             | EngineMsg::Dialog(..)
             | EngineMsg::WorkspaceSymbol(..)) => {
                 // A completion never waits for a run: it answers from the last one.
-                if !matches!(msg, EngineMsg::Completion(..))
+                if !matches!(msg, EngineMsg::Completion(..) | EngineMsg::Typesetting(..))
                     && let Some(uri) = msg.uri().or_else(|| self.docs.keys().next()).cloned()
                 {
                     self.ensure(&uri);
@@ -1938,6 +1971,11 @@ fn answer(docs: &HashMap<Uri, Doc>, hovers: &Hovers, blank: Option<&Analysis>, m
         EngineMsg::Typeset(uri, reply) => {
             let result = with_doc(docs, &uri, |analysis, _| handlers::typeset(analysis));
             let _ = reply.send(result.unwrap_or_default());
+        }
+        EngineMsg::Typesetting(uri, method, params, reply) => {
+            let path = handlers::uri_to_path(&uri).map(|p| p.display().to_string()).unwrap_or_default();
+            let out = with_doc(docs, &uri, |a, _| crate::plugins::typeset::answer(a, &method, &path, &params));
+            let _ = reply.send(out.unwrap_or_default());
         }
         EngineMsg::Written(uri, reply) => {
             let or = format!("{}\n", crate::engine::tex::TEXT_OR);

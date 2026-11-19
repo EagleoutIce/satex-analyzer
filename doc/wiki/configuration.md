@@ -162,6 +162,16 @@ conventions:  # how TeX is usually written, where the text alone does not say
       #! affects: output
       #! example: `ligature: 4`
       #! range: 2..10
+  lengths:  # how a written length looks where the text shows no convention of its own
+    unit: cm  # the unit of a new TikZ coordinate, column width or margin: cm, mm, pt, in or bp
+      #! affects: output
+      #! example: `unit: mm`
+    decimals: 1  # the decimals such a length is written with
+      #! affects: output
+  lines:  # how long a source line is
+    length: 0  # where smart wrap breaks a typed line, in characters; 0 takes the document's own habit, else 80
+      #! affects: output
+      #! example: `length: 100`
   units:  # how a quantity is written with siunitx
     quantity: qty  # the command a quantity is written with
       #! affects: output
@@ -258,6 +268,21 @@ conventions:  # how TeX is usually written, where the text alone does not say
     identified: 400  # installed files whose identification line is read for the list
       #! affects: output, speed
       #! example: `identified: 0` lists names only
+    unloaded: 20  # names of packages not loaded yet one completion offers (\begin{tikzpic} offers tikzpicture), below those in scope, labelled with the package they add. Taking one loads the package
+      #! affects: output, speed
+      #! example: `unloaded: 0`: only names in scope
+    unloaded_min: 3  # letters typed before names of packages not loaded are offered
+      #! affects: output, speed
+      #! example: `unloaded_min: 1`
+    unloaded_seed: {tikzpicture: tikz, \tikz: tikz, \usetikzlibrary: tikz}  # names whose package the installation's index cannot tell (pgf defines with \def in a .code.tex file), commands with their backslash. Used only where the package is installed
+      #! affects: output
+      #! example: `unloaded_seed+: {\pgfplotsset: pgfplots}`
+    math_depth: 2  # expansions a command's body is followed to find math-only material (\over, a \mathchardef), which ranks it first in math
+      #! affects: output, speed
+      #! example: `math_depth: 0`: only math characters and primitives count
+    math_environments: [equation, align, gather, multline, flalign, alignat, eqnarray, math, displaymath, dmath]  # environments whose body is math (starred too): completion ranks math commands first there
+      #! affects: output
+      #! example: `math_environments+: [IEEEeqnarray]`
     calls: 4  # calls of a command its hover shows
       #! affects: output
       #! example: `calls: 10`
@@ -964,6 +989,8 @@ playground:  # what only the web playground reads
   smart_scripts: true  # typing `_` or `^` into math in the PDF or Typeset view opens a group a space or operator closes
     #! affects: output
     #! example: `x_42` types `x_{42}`
+  smart_wrap: false  # a line typed past conventions.lines.length breaks at its best space: a sentence's end, after a closing brace, after a comma, else the last space
+    #! affects: output
 
 slice:  # what satex slice leaves out
   trim: true  # leave out the packages, libraries, labels and headings the criterion uses nothing of. Off also keeps what \begin{document} reads
@@ -1228,7 +1255,7 @@ limits:  # what bounds the analysis: reaching one stops that part of the run, so
   save_stack: 2000000  # most assignments one group may have to undo, about 200 MB
     #! affects: memory
     #! example: a group with millions of `\def` stops here
-  vertices: 400000  # most steps the dependency graph records. Past it the graph stops growing, the analysis goes on
+  vertices: 1000000  # most steps the dependency graph records. Past it the graph stops growing, the analysis goes on
     #! affects: memory, output
     #! example: satex slice on a long document sees only the first part
   facts: 2000000  # most definitions, uses and other facts recorded
@@ -1263,6 +1290,7 @@ A plugin picks a default from the machine, the installation and the build files.
 - **l3build.** A `build.lua` runs in a sandboxed `texlua` (else its plain assignments are read). Its source dirs are searched, `.ins`/`.dtx` pairs read through docstrip, and `typesetexe`/`stdengine` pick the engine. `l3build:` in `satex.yaml` says which build files to look for (`files`), which `--config` files to read after it (`config`), and overrides the `module`, the test patterns (`tests`) and the check engines (`engines`). `checks: true` analyzes the regression tests as documents too. Empty values keep what the bundle says.
 - **depp.** Every file read maps to its TeX Live package by TDS path. With depp loaded or its file present, `missing-dependency` and `unused-dependency` compare against it. Rules: `depp.rules`, `depp.renames`, `depp.file`.
 - **Package augmentations.** What SaTeX knows about one package lives in one module, not in the lint rules. A rule asks the module, which can veto a finding or rewrite its message and fix. It reads the package's state from the run. siunitx is the first: an `S` column that rounds keeps `inconsistent-precision` quiet, and the fix names `\sisetup{round-mode = ...}`. `plugins.augment` lists the modules that are on.
+- **Typesetting.** `plugins.typeset` holds plugins that run TeX's own algorithms again on text the last run did not set, for the playground's echo of typed text. Each reads only the run's end state: fonts, parameters, codes and hyphenation tables. `hyphenate` answers `satex/hyphenate`: where each word may take a hyphen, from the patterns, exceptions, hyphen mins and `\lccode`s in force. `linebreak` answers `satex/break`: the lines a paragraph's words break into, by the run's own Knuth–Plass breaker ([tex.web §§ 813](https://github.com/TeX-Live/texlive-source/blob/b4e37b58bfc6352cc3223ed26384cae01a28b234/texk/web2c/tex.web#L15997)–[890](https://github.com/TeX-Live/texlive-source/blob/b4e37b58bfc6352cc3223ed26384cae01a28b234/texk/web2c/tex.web#L17438)). It builds the list as TeX's main loop does: TFM widths, ligatures and kerns, interword glue by space factor. Fonts come from the run's paragraph at the line given, and the parameters from where the run broke that paragraph. Anything not known gives `null`. Both are on by default.
 - **Preloaded format.** A `%&fmt` line, `-fmt=` or `preload:` names a dumped preamble. SaTeX interprets that preamble instead (up to `\endofdump`). `pretex:` is code read before the first line (latexmk's `-usepretex`).
 
 ### Format and package caches

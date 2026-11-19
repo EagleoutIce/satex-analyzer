@@ -73,7 +73,7 @@ fn a_lean_scope_is_the_full_scope_cut_to_what_completion_shows() {
     let (lean, full) = (ask(true), ask(false));
     assert!(names(&lean).contains(&"\\a") && names(&lean).contains(&"\\relax"), "{:?}", names(&lean));
     assert_eq!(names(&lean), names(&full));
-    let keys = ["name", "tag", "effective", "package"];
+    let keys = ["name", "tag", "effective", "package", "args", "math"];
     for (l, f) in lean.iter().zip(&full) {
         let cut: serde_json::Map<_, _> =
             keys.iter().filter_map(|k| Some((k.to_string(), f.get(*k)?.clone()))).collect();

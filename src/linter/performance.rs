@@ -63,11 +63,11 @@ a conditional terminates it.",
         code: "package-after-preamble",
         since: "0.1.0",
         category: Category::Performance,
-        severity: Severity::Warning,
+        severity: Severity::Error,
         summary: "package loaded after the preamble",
         explanation: "\
-`\\usepackage` belongs in the preamble.  After `\\begin{document}` LaTeX raises
-`\\usepackage before \\begin{document}` and the package cannot set anything up.
+`\\usepackage` belongs in the preamble.  After `\\begin{document}` LaTeX stops
+with `Can be used only in preamble` and the package cannot set anything up.
 
 Fix by moving the load into the preamble.",
         references: &[Ref { source: Source::Source2e, at: "ltclass.dtx" }],

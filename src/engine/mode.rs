@@ -484,6 +484,10 @@ pub struct Natural {
     /// The font and character of the word being set that ligatures and
     /// kerns with what comes next, not yet counted (tex.web § 1034 `cur_l`).
     pub pending: Option<(u32, u32)>,
+    /// A native word's exact advances and kerns so far, in font units, and whether loose glyphs went onto `along` on their own: XeTeX rounds a word's
+    /// width once, as it ends (`native_word_node`).
+    #[serde(default)]
+    pub word: (i64, bool),
     /// A horizontal list's space factor (tex.web § 212), where known.
     pub space_factor: Option<i64>,
     /// Whether the character node `tail[0]` is a ligature (tex.web § 143),
@@ -781,6 +785,17 @@ impl Natural {
         self.held = u8::try_from(2 * u32::from(cols) + 1).unwrap_or(u8::MAX);
     }
 
+    /// The columns of the alignment row the list is, tabskip glue first
+    /// and last (what is left of a row after `\unskip` and `\lastbox`,
+    /// down to its first glue alone).
+    fn row_cols(&self) -> Option<u16> {
+        let shown = self.tail.iter().take_while(|l| **l != Last::Empty).count();
+        let total = self.below?.checked_add(u16::try_from(shown).ok()?)?;
+        let fits =
+            self.tail[..shown].iter().enumerate().all(|(i, l)| l.kind() == Some((total - 1 - i as u16) % 2 == 1));
+        (total % 2 == 1 && fits).then_some(total / 2)
+    }
+
     /// An item that may or may not have been appended: the tail is the one
     /// or the other.
     fn perhaps(&mut self, item: Last) {
@@ -913,6 +928,7 @@ impl Natural {
             below: if self.below == other.below { self.below } else { None },
             held: self.held.min(other.held),
             pending: self.pending,
+            word: self.word,
             space_factor: if self.space_factor == other.space_factor { self.space_factor } else { None },
             ligature: if self.ligature == other.ligature { self.ligature } else { None },
             no_boundary: self.no_boundary || other.no_boundary,
@@ -951,7 +967,11 @@ impl Natural {
         };
         // A character not yet counted differs between the paths: its own
         // size is not known, so the lengths it would add widen.
-        if self.pending != other.pending || self.style != other.style || self.display != other.display {
+        if self.pending != other.pending
+            || self.word != other.word
+            || self.style != other.style
+            || self.display != other.display
+        {
             joined.pending = None;
             joined.along = Dim::ANY;
             joined.height = joined.height.max(Dim::ANY);
@@ -987,6 +1007,11 @@ pub const TAIL: usize = 4;
 const NOAD: i8 = 15;
 /// etex.ch: the `\lastnodetype` of a rule.
 const RULE: i8 = 3;
+/// A box register's last item when no node type tells it: a character,
+/// another item, an hbox; a positive number is an alignment row of that many columns.
+const ITEM_CHAR: i64 = -1;
+const ITEM_OTHER: i64 = -2;
+const ITEM_HBOX: i64 = -3;
 
 /// The last item of a list, as far as `\lastskip`, `\lastkern` and
 /// `\lastpenalty` tell items apart.
@@ -1124,9 +1149,9 @@ pub(crate) const BOXED: u8 = 2;
 pub(crate) const BREAKS: u8 = 4;
 
 /// What a box register records beside its state, each reset when it changes.
-const BOX_SLOTS: [&str; 20] = [
+const BOX_SLOTS: [&str; 21] = [
     "wd", "ht", "dp", "first", "solid", "last", "one", "lw", "lh", "ld", "lmk", "ln", "lead", "calm", "held", "nh",
-    "nd", "node", "vl", "row",
+    "nd", "node", "vl", "row", "item",
 ];
 
 /// Which item `\unskip`, `\unkern` or `\unpenalty` takes away.
@@ -1423,6 +1448,7 @@ impl Machine<'_> {
             below: None,
             held: u8::from(indented),
             pending: None,
+            word: (0, false),
             space_factor: Some(1000),
             ligature: None,
             no_boundary: false,
@@ -2634,6 +2660,10 @@ impl Machine<'_> {
             // `\unvbox`, sees (§§ 1105, 1110).
             if matches!(kind, BoxState::HBox | BoxState::VBox) {
                 self.set_box_last(register, n.tail[0]);
+                // A row it still is: `\unhbox` gives back its cells.
+                if let (BoxState::HBox, Some(cols)) = (kind, n.row_cols()) {
+                    self.set_box_slot(register, "row", Value::Int(cols.into()));
+                }
                 if let Some(ligature) = n.ligature {
                     self.set_box_slot(register, "lig", Value::Int(ligature.into()));
                 }
@@ -2997,6 +3027,10 @@ impl Machine<'_> {
                 self.env.set_value(sym, depth, false);
                 self.normal_paragraph(false);
             }
+            // tex.web § 1129: outside every alignment it is "Misplaced \noalign", ignored.
+            ModeCmd::NoAlign if !self.env.nests().flatten().any(|n| n.code == Some(group::ALIGN)) => {
+                self.diagnose(Severity::Warning, "illegal-in-mode", span, "Misplaced \\noalign".into());
+            }
             ModeCmd::NoAlign => {
                 let modes = Modes::INTERNAL_VERTICAL.union(Modes::RESTRICTED_HORIZONTAL);
                 self.open_list(Some(group::NO_ALIGN), modes, 0, span);
@@ -3137,7 +3171,7 @@ impl Machine<'_> {
     /// What a horizontal or vertical command scans once the mode is right.
     fn scan_material(&mut self, material: Material, span: Span) {
         match material {
-            Material::Char => match self.scan_number() {
+            Material::Char => match self.scan_number().and_then(|c| self.char_num(Some(c), span)) {
                 Some(c) if c >= 0 => {
                     if let Some(ch) = u32::try_from(c).ok().and_then(char::from_u32) {
                         self.note_text(ch, span);
@@ -5207,23 +5241,7 @@ impl Machine<'_> {
         if normal == Glue::default() && extra == Scaled::default() && xspace_skip.is_none() {
             return (Some(normal.width), Some(normal));
         }
-        let spaced = |sf: i64| -> Glue {
-            if control || sf == 1000 {
-                return normal;
-            }
-            if sf >= 2000
-                && let Some(x) = xspace_skip
-            {
-                return x;
-            }
-            let mut g = normal;
-            if sf >= 2000 {
-                g.width += extra;
-            }
-            g.stretch.amount = crate::engine::scan::xn_over_d(g.stretch.amount, sf, 1000).0;
-            g.shrink.amount = crate::engine::scan::xn_over_d(g.shrink.amount, 1000, sf).0;
-            g
-        };
+        let spaced = |sf: i64| if control { normal } else { interword(normal, xspace_skip, extra, sf) };
         match factor {
             Some(sf) => {
                 let g = spaced(sf);
@@ -5304,7 +5322,9 @@ impl Machine<'_> {
             _ if self.appends_nothing(p) => return,
             // otherwise a file operation is a whatsit (tex.web §§ 1350-1352)
             Primitive::Write | Primitive::Command(Syntax::OpenOut | Syntax::CloseOut) => Item::Node(9),
-            Primitive::Pdf(PdfOp::Object | PdfOp::Resources) => Item::Zero,
+            // LuaTeX's `\pdfextension` (literal, colorstack, obj, …) adds a whatsit or nothing
+            // (LuaTeX manual, "PDF extensions"): no size either way.
+            Primitive::Pdf(PdfOp::Object | PdfOp::Resources | PdfOp::Extension) => Item::Zero,
             // What a command appends has no size, except for math material
             // and images and forms placed as boxes (tex.web § 1058, the
             // pdfTeX, XeTeX and LuaTeX manuals).
@@ -5352,6 +5372,9 @@ impl Machine<'_> {
             return;
         }
         let font = self.current_font();
+        if let Some((f, shaping)) = font.and_then(|f| Some((f, self.native_shaping(f)?))) {
+            return self.native_char(f, &shaping, c);
+        }
         let known = font.and_then(|f| Some((f, self.font_metrics(f)?, self.font_size(f)?)));
         let Some((font, metrics, size)) = known else { return self.unmetered_char(c) };
         if !metrics.has_char(c) {
@@ -5425,6 +5448,93 @@ impl Machine<'_> {
         }
         n.space_factor = self.space_factor_after(c, n.space_factor);
         self.natural = Some(n);
+    }
+
+    /// A character in a native font: it pends with the word, and each next one
+    /// kerns or ligates with it as [`crate::engine::native::Shaping::step`] says.
+    /// The word is one node to XeTeX, so line breaks in it are not followed.
+    fn native_char(&mut self, font: u32, shaping: &crate::engine::native::Shaping, c: u32) {
+        use crate::engine::native::{LOOSE, Step};
+        // tex.web § 1039: a character equal to `\hyphenchar` is followed by a discretionary.
+        if !matches!(self.font_field(font, "hyphenchar"), Value::Int(h) if h != i64::from(c))
+            && let Some(n) = self.natural.as_mut()
+        {
+            n.para.breakpoints = n.para.breakpoints.saturating_add(1);
+        }
+        let step = match self.natural.and_then(|n| n.pending) {
+            Some((f, left)) if f == font => Some(shaping.step(left, c)),
+            _ => None,
+        };
+        let next = match step {
+            Some(Step::Lig(glyph)) => {
+                let Some(n) = self.natural.as_mut() else { return };
+                n.pending = Some((font, glyph));
+                None
+            }
+            Some(Step::Next { left_loose, kern, next }) => {
+                if let Some((_, left)) = self.natural.as_mut().and_then(|n| n.pending.as_mut()) {
+                    *left |= if left_loose { LOOSE } else { 0 };
+                }
+                self.native_settle(false);
+                let size = self.font_size(font);
+                let Some(n) = self.natural.as_mut() else { return };
+                match size {
+                    Some(z) if shaping.per_glyph() => n.along = n.along.extended_by(shaping.item(kern, z)),
+                    Some(_) => n.word.0 += kern,
+                    None => n.along = Dim::ANY,
+                }
+                Some(next)
+            }
+            None => {
+                self.end_word();
+                Some(c)
+            }
+        };
+        let Some(mut n) = self.natural else { return };
+        if let Some(next) = next {
+            n.pending = Some((font, next));
+            n.pushed(Last::Char(None));
+        }
+        n.ligature = None;
+        n.para.items = None;
+        n.space_factor = self.space_factor_after(c, n.space_factor);
+        self.natural = Some(n);
+    }
+
+    /// The pending glyph of a native word goes onto the list; where the word ends
+    /// (`flush`), XeTeX's width of it too. `false` where the pending font is no native one.
+    fn native_settle(&mut self, flush: bool) -> bool {
+        let Some(mut n) = self.natural else { return false };
+        let Some((font, t)) = n.pending else { return false };
+        let Some(shaping) = self.native_shaping(font) else { return false };
+        n.pending = None;
+        let size = self.font_size(font);
+        let b = size.map(|z| shaping.glyph_box(t, z));
+        match (&b, size) {
+            (Some(b), Some(_)) => {
+                let width = match b.advance {
+                    Some(a) if !shaping.per_glyph() => {
+                        n.word.0 += a;
+                        Dim::exact(0)
+                    }
+                    _ => {
+                        n.word.1 |= b.advance.is_none();
+                        b.width
+                    }
+                };
+                n.character([width, b.height, b.depth]);
+            }
+            _ => n.character([Dim::ANY; 3]),
+        }
+        if flush {
+            if !shaping.per_glyph() {
+                n.along = n.along.extended_by(size.map_or(Dim::ANY, |z| shaping.word(n.word.0, z, n.word.1)));
+            }
+            n.word = (0, false);
+        }
+        n.para.items = None;
+        self.natural = Some(n);
+        true
     }
 
     /// tex.web §§ 1122-1125 `make_accent`: accent character `a` of the
@@ -6728,14 +6838,7 @@ impl Machine<'_> {
         // A `\sfcode` satex could not follow leaves the space factor unknown.
         let code =
             self.char_code_known(crate::engine::builtins::CodeTable::Space, char::from_u32(c).unwrap_or('\0'))?;
-        match (code, sf) {
-            (1000, _) => Some(1000),
-            (0, sf) => sf,
-            (code, _) if code < 1000 => Some(code),
-            (_, Some(sf)) if sf < 1000 => Some(1000),
-            (code, Some(_)) => Some(code),
-            (_, None) => None,
-        }
+        adjust_space_factor(code, sf)
     }
 
     /// A dimension parameter as an interval; unset it is zero (tex.web
@@ -6812,6 +6915,9 @@ impl Machine<'_> {
     /// The character not yet counted goes onto the list: its box is added
     /// and `\/` can read its italic correction.
     fn settle_char(&mut self) {
+        if self.native_settle(true) {
+            return;
+        }
         let Some(mut n) = self.natural else { return };
         let Some((font, c)) = n.pending.take() else { return };
         let size = self.font_size(font);
@@ -7421,6 +7527,15 @@ impl Machine<'_> {
         // The type of a node only `\lastnodetype` tells apart.
         let node = if let Last::Node(t) = last { Value::Int(t.into()) } else { Value::Unknown };
         self.set_box_slot(register, "node", node);
+        // Which of the others: `\lastbox` after `\unvbox` takes an hbox, a row with its columns.
+        let item = match last {
+            Last::Char(_) => Value::Int(ITEM_CHAR),
+            Last::Other => Value::Int(ITEM_OTHER),
+            Last::Box | Last::HBox(None) => Value::Int(ITEM_HBOX),
+            Last::HBox(Some(cols)) => Value::Int(cols.into()),
+            _ => Value::Unknown,
+        };
+        self.set_box_slot(register, "item", item);
         self.set_box_slot(register, "lig", Value::Unknown);
     }
 
@@ -7470,9 +7585,15 @@ impl Machine<'_> {
             Value::Int(p) => Last::Penalty(p),
             Value::Toks(t) if t.is_empty() => {
                 let key = self.intern(&format!("\u{4}box.node.{n}"));
-                match self.env.value(key) {
-                    Value::Int(t) => Last::Node(t as i8),
-                    _ => Last::Char(None),
+                let item = self.intern(&format!("\u{4}box.item.{n}"));
+                match (self.env.value(key), self.env.value(item)) {
+                    (Value::Int(t), _) => Last::Node(t as i8),
+                    (_, Value::Int(ITEM_CHAR)) => Last::Char(None),
+                    // As before: `Other` also stands for the boxes `Item::Box` pushes (open).
+                    (_, Value::Int(ITEM_OTHER)) => Last::Char(None),
+                    (_, Value::Int(ITEM_HBOX)) => Last::HBox(None),
+                    (_, Value::Int(cols)) => u16::try_from(cols).map_or(Last::UNKNOWN, |c| Last::HBox(Some(c))),
+                    _ => Last::UNKNOWN,
                 }
             }
             _ => Last::UNKNOWN,
@@ -7611,6 +7732,43 @@ fn kern_hull(metrics: &crate::engine::tfm::Metrics, c: u32, size: Scaled, before
         Some(LigKern::Kern(k)) => Some((a.min(k), b.max(k))),
         None => Some((a, b)),
     })
+}
+
+/// tex.web § 1034 `adjust_space_factor`: the space factor after a character of `\sfcode` `code`.
+pub(crate) fn adjust_space_factor(code: i64, sf: Option<i64>) -> Option<i64> {
+    match (code, sf) {
+        (1000, _) => Some(1000),
+        (0, sf) => sf,
+        (code, _) if code < 1000 => Some(code),
+        (_, Some(sf)) if sf < 1000 => Some(1000),
+        (code, Some(_)) => Some(code),
+        (_, None) => None,
+    }
+}
+
+/// tex.web §§ 1043-1044: interword glue at space factor `sf` from the normal glue, `\xspaceskip`
+/// (`None` when zero) and the font's extra space.
+pub(crate) fn interword(
+    normal: crate::engine::value::Glue,
+    xspace: Option<crate::engine::value::Glue>,
+    extra: Scaled,
+    sf: i64,
+) -> crate::engine::value::Glue {
+    if sf == 1000 {
+        return normal;
+    }
+    if sf >= 2000
+        && let Some(x) = xspace
+    {
+        return x;
+    }
+    let mut g = normal;
+    if sf >= 2000 {
+        g.width += extra;
+    }
+    g.stretch.amount = crate::engine::scan::xn_over_d(g.stretch.amount, sf, 1000).0;
+    g.shrink.amount = crate::engine::scan::xn_over_d(g.shrink.amount, 1000, sf).0;
+    g
 }
 
 #[cfg(test)]

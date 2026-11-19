@@ -1792,9 +1792,19 @@ fn set(m: &mut Machine, c: char, code: Option<i64>, span: Span) {
             _ => Just::Unknown,
         }
     });
+    // what the list holds before the first character: the indent box, or nothing. A space set as a
+    // character first (tagging's fake spaces) may stand before the indent box: then not known.
+    let indent =
+        (starts && !mathematical && !c.is_whitespace() && c != '\u{2423}').then(|| crate::analysis::facts::Indent {
+            lead: m.natural.map_or(crate::engine::mode::Dim::ANY, |n| n.along),
+            parindent: m.dimen_parameter("parindent").known(),
+        });
     let text = &mut m.out.facts.text;
     if let Some(skip) = skip {
         text.skips.push((text.at.len() as u32, skip));
+    }
+    if let Some(indent) = indent {
+        text.indents.push((text.at.len() as u32, indent));
     }
     if let Some(just) = just {
         text.just.push((text.at.len() as u32, just));

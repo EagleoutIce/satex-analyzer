@@ -17,7 +17,7 @@ use crate::engine::tex::{Catcode, Meaning, RegKind, Span, Sym, Tok, Token};
 use crate::engine::value::{Scaled, UNIT, Value};
 
 /// Keeps font tables and other engine state out of the control-sequence namespace.
-const ENGINE: char = '\u{4}';
+pub(crate) const ENGINE: char = '\u{4}';
 
 /// `ENGINE` and `font`: the slot `\the\font` reads. A constant so reading it per character costs no formatting.
 const FONT_SLOT: &str = "\u{4}font";
@@ -1030,7 +1030,7 @@ impl Machine<'_> {
         self.engine_int("fonts").and_then(|n| u32::try_from(n).ok()).unwrap_or(0)
     }
 
-    fn font_name(&mut self, font: u32) -> Option<String> {
+    pub(crate) fn font_name(&mut self, font: u32) -> Option<String> {
         if font == 0 {
             return Some("nullfont".into());
         }
@@ -1059,6 +1059,11 @@ impl Machine<'_> {
             return None;
         }
         let name = self.font_name(font)?;
+        self.native_file(&name)
+    }
+
+    /// The character map of the font file a `[file]:features` name gives.
+    pub(crate) fn native_file(&mut self, name: &str) -> Option<Rc<crate::engine::otf::CharMap>> {
         let file = name.strip_prefix('[')?.split(']').next()?.to_string();
         let base = self.base().to_path_buf();
         crate::project::overlay::probed(&base.join(&file));
@@ -1105,7 +1110,7 @@ impl Machine<'_> {
     pub(crate) fn font_may_be_null(&mut self, meaning: &Meaning) -> bool {
         match meaning {
             Meaning::Primitive(Primitive::FontIdent(font)) if *font > 0 => {
-                matches!(self.font_field(*font, "exists"), Value::Unknown)
+                matches!(self.font_field(*font, "exists"), Value::Unknown) && !self.luaotfload_font(*font)
             }
             _ => false,
         }
@@ -1333,10 +1338,44 @@ impl Machine<'_> {
         crate::engine::tfm::installed_font(family)
     }
 
+    /// LuaTeX with luaotfload's `define_font` callback, which LaTeX's format installs (and
+    /// then defines `\ver@luaotfload.sty`), and a `[file]` name of a font file it finds.
+    pub(crate) fn luaotfload_finds(&mut self, name: &str) -> bool {
+        let sym = self.intern("ver@luaotfload.sty");
+        self.out.plugins.engine == crate::project::config::Engine::LuaTeX
+            && name.starts_with('[')
+            && !matches!(self.env.meaning(sym), Meaning::Undefined)
+            && self.native_font_exists(name) == Some(true)
+    }
+
+    /// A LuaTeX font luaotfload loads: one loaded before LaTeX's `\everyjob` installed it
+    /// (the kernel's) is found once it has, and then known to exist.
+    pub(crate) fn luaotfload_font(&mut self, font: u32) -> bool {
+        if font == 0
+            || self.out.plugins.engine != crate::project::config::Engine::LuaTeX
+            || self.font_native(font) == Some(false)
+        {
+            return false;
+        }
+        match self.font_field(font, "exists") {
+            Value::Int(1) => true,
+            Value::Unknown => {
+                let found = self.font_name(font).is_some_and(|name| self.luaotfload_finds(&name));
+                if found {
+                    self.set_font_field(font, "exists", Value::Int(1));
+                }
+                found
+            }
+            _ => false,
+        }
+    }
+
     fn find_or_load_font(&mut self, name: &str, quoted: bool, requested: Option<Scaled>, span: Span) -> u32 {
         let (metrics, native, exists) = match self.find_font(name, quoted) {
             FontSource::Tfm(metrics) => (Some(metrics), Value::Int(0), Value::Int(1)),
             FontSource::Native => (None, Value::Int(1), Value::Int(1)),
+            // luaotfload loads a `[file]` it finds: which kind of font it makes is left open.
+            FontSource::Unknown if self.luaotfload_finds(name) => (None, Value::Unknown, Value::Int(1)),
             FontSource::Unknown => (None, Value::Unknown, Value::Unknown),
             FontSource::Missing => {
                 let suppress = self.intern("suppressfontnotfounderror");
@@ -1427,6 +1466,19 @@ impl Machine<'_> {
         // parameter out of reach (tex.web § 580).
         if self.font_field_set(font, &field) {
             return Some(Value::Unknown);
+        }
+        // luaotfload gives a text font seven parameters (`fontloader-font-otl.lua`).
+        if (1..=7).contains(&k)
+            && let Some(shaping) = self.native_shaping(font).filter(|s| s.per_glyph())
+        {
+            let d = shaping.lua_param(k, self.font_size(font)?)?;
+            return Some(match d.known() {
+                Some(v) => Value::Dimen(v),
+                None => Value::Num {
+                    quantity: crate::engine::value::Quantity::Dimen,
+                    num: crate::engine::value::Num::range(d.lo, d.hi),
+                },
+            });
         }
         let params = self.font_params(font)?;
         if k == 0 || k as i64 > params {
@@ -2632,5 +2684,59 @@ impl Machine<'_> {
         }
         let index = self.font_field(font, "cs").as_int()?;
         Some(Sym(u32::try_from(index).ok()?))
+    }
+}
+
+thread_local! {
+    static SHAPINGS: std::cell::RefCell<crate::fixed::HashMap<String, Option<Rc<crate::engine::native::Shaping>>>> = std::cell::RefCell::default();
+}
+
+impl Machine<'_> {
+    /// The shaping model of a native font loaded by file name, `None` where its sizes are not followed.
+    pub(crate) fn native_shaping(&mut self, font: u32) -> Option<Rc<crate::engine::native::Shaping>> {
+        let engine = self.out.plugins.engine;
+        // LuaTeX: a `[file]` name luaotfload's `define_font` callback reads, which LaTeX's
+        // format loads (it then sets `\ver@luaotfload.sty`).
+        let native = match engine {
+            crate::project::config::Engine::XeTeX => self.font_native(font) == Some(true),
+            crate::project::config::Engine::LuaTeX => self.luaotfload_font(font),
+            _ => false,
+        };
+        if font == 0 || !native {
+            return None;
+        }
+        let name = self.font_name(font)?;
+        let heights = engine != crate::project::config::Engine::XeTeX
+            || self.int_parameter("XeTeXuseglyphmetrics").is_some_and(|v| v > 0);
+        let key = format!("{}|{name}|{engine:?}|{heights}", self.base().display());
+        if let Some(found) = SHAPINGS.with(|s| s.borrow().get(&key).cloned()) {
+            return found;
+        }
+        let map = self.native_file(&name);
+        let (file, features) = name.split_once(']').unwrap_or((&name, ""));
+        // XeTeX's `/OT` renderer option is the default; other options are not followed.
+        let features = features.strip_prefix("/OT").unwrap_or(features);
+        let features = if features.is_empty() { Some("") } else { features.strip_prefix(':') };
+        let base = self.base().to_path_buf();
+        let roots = self.resolver_mut().distribution().roots.clone();
+        let mapping = |m: &str| {
+            let path = crate::engine::tfm::locate(&base, &roots, m, "map")?;
+            crate::engine::native::mapping_inputs(&std::fs::read_to_string(path).ok()?)
+        };
+        let shaping = map
+            .filter(|m| !m.graphite || !file.contains("/GR"))
+            .zip(features)
+            .and_then(|(m, f)| {
+                crate::engine::native::Shaping::new(
+                    m,
+                    f,
+                    engine == crate::project::config::Engine::LuaTeX,
+                    heights,
+                    mapping,
+                )
+            })
+            .map(Rc::new);
+        SHAPINGS.with(|s| s.borrow_mut().insert(key, shaping.clone()));
+        shaping
     }
 }

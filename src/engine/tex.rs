@@ -1687,10 +1687,17 @@ impl Mouth {
     }
 
     /// This mouth reading what `fresh` reads, which begins with what this
-    /// one has read so far; else the line where it differs first.
+    /// one has read so far; else the line where it differs first. A line
+    /// begun counts whole: TeX holds it in its buffer (tex.web § 31), and a
+    /// token read from it looked past its end (`\use` stops at a non-letter).
     pub fn retext(&self, fresh: &Mouth) -> Result<Self, u32> {
-        match self.src[..self.pos].iter().zip(fresh.src.iter()).position(|(a, b)| a != b) {
-            None if fresh.src.len() >= self.pos => Ok(Mouth { src: fresh.src.clone(), ..self.clone() }),
+        let begun = self.pos > 0 && self.src.get(self.pos - 1).is_some_and(|&c| c != '\n');
+        let held = match begun {
+            true => self.src[self.pos..].iter().position(|&c| c == '\n').map_or(self.src.len(), |i| self.pos + i + 1),
+            false => self.pos,
+        };
+        match self.src[..held].iter().zip(fresh.src.iter()).position(|(a, b)| a != b) {
+            None if fresh.src.len() >= held => Ok(Mouth { src: fresh.src.clone(), ..self.clone() }),
             at => {
                 let at = at.unwrap_or(fresh.src.len());
                 Err(1 + self.src[..at].iter().filter(|&&c| c == '\n').count() as u32)
@@ -2140,6 +2147,14 @@ impl ParameterText {
     /// `mark` says which control sequences stand for `#` here, as in
     /// [`parameterize`].
     pub fn from_tokens(toks: &[Token], mark: impl Fn(Sym) -> bool) -> ParameterText {
+        Self::parse(toks, mark).0
+    }
+
+    /// [`Self::from_tokens`], with the first `#` whose number is not the next
+    /// one (tex.web § 476: "Parameters must be numbered consecutively", or
+    /// past nine "You already have nine parameters").
+    pub fn parse(toks: &[Token], mark: impl Fn(Sym) -> bool) -> (ParameterText, Option<Span>) {
+        let mut misnumbered = None;
         let mut items = Vec::new();
         let mut arity = 0u8;
         let mut brace_end = false;
@@ -2170,6 +2185,7 @@ impl ParameterText {
                     // had. Past nine, "You already have nine parameters"
                     // drops the `#` and the token read with it.
                     Some(_) => {
+                        misnumbered = misnumbered.or(Some(t.span));
                         if arity < 9 {
                             arity += 1;
                             items.push(ParamItem::Param(arity, t.tok));
@@ -2184,7 +2200,7 @@ impl ParameterText {
             items.push(ParamItem::Lit(t.tok));
             i += 1;
         }
-        ParameterText { items, arity, brace_end }
+        (ParameterText { items, arity, brace_end }, misnumbered)
     }
     /// Render parameter text as it appears in source.
     pub fn render(&self, it: &Interner) -> String {

@@ -373,7 +373,7 @@ fn fonts_at(cx: &Cx, col: Option<u32>) -> Vec<(String, [Option<i64>; 2])> {
             .map(|s| vec![s.font_state])
             .unwrap_or_default(),
     };
-    let mut fonts = crate::linter::italics::Fonts::of(analysis);
+    let mut fonts = crate::plugins::typeset::Fonts::of(analysis);
     let mut out: Vec<(String, [Option<i64>; 2])> = Vec::new();
     for state in states.iter().filter_map(|s| analysis.font_states.get(usize::from(*s))) {
         let Some((metrics, size)) = fonts.metrics(state.font) else { continue };

@@ -53,7 +53,7 @@ fn group(t: &str, skip: usize) -> Option<&str> {
 }
 
 /// The text of the parameterless macro `\name` as `\show` prints it.
-fn macro_text(a: &Analysis, name: &str) -> Option<String> {
+pub(super) fn macro_text(a: &Analysis, name: &str) -> Option<String> {
     match a.env.meaning(a.interner.lookup(name)?) {
         crate::engine::tex::Meaning::Macro(m) if m.arity() == 0 => {
             Some(crate::engine::tex::detokenize(&m.replacement_text, &a.interner))

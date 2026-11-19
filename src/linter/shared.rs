@@ -457,6 +457,26 @@ pub fn provider(analysis: &Analysis, name: &str) -> Option<String> {
     exports(analysis)?.provider(name)?.strip_suffix(".sty").map(str::to_string)
 }
 
+/// Names the installed packages define that `keep` takes (`env`: environments only), the `n` best by `rank`
+/// (lowest first), each with the package to load for it ([`crate::caches::exports::Exports::package_for`]).
+pub fn offered<K: Ord>(
+    analysis: &Analysis,
+    keep: impl Fn(&str) -> bool,
+    env: bool,
+    rank: impl Fn(&str) -> K,
+    n: usize,
+) -> Vec<(String, String)> {
+    let Some(index) = exports(analysis) else { return Vec::new() };
+    let mut names = index.named(keep, env);
+    names.sort_by_cached_key(|n| (rank(n), n.clone()));
+    names.into_iter().take(n).filter_map(|n| Some((index.package_for(&n)?, n)).map(|(p, n)| (n, p))).collect()
+}
+
+/// Whether package `name` is installed: the installation's index lists `name.sty`.
+pub fn installed_package(analysis: &Analysis, name: &str) -> bool {
+    exports(analysis).is_some_and(|e| e.files.iter().any(|f| f == &format!("{name}.sty")))
+}
+
 /// Whether installed package `a` loads package `b`, itself or through what it loads.
 pub fn package_loads(analysis: &Analysis, a: &str, b: &str) -> bool {
     exports(analysis).is_some_and(|e| e.reaches(&format!("{a}.sty"), &format!("{b}.sty")))

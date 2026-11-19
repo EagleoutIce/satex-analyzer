@@ -259,7 +259,8 @@ thread_local! {
 /// The font directories of a TeX tree kpathsea searches for `\font`:
 /// TFM files, METAFONT sources mktextfm builds them from, and the
 /// OpenType and TrueType fonts XeTeX and LuaTeX load.
-const FONT_DIRECTORIES: [&str; 4] = ["fonts/tfm", "fonts/source", "fonts/opentype", "fonts/truetype"];
+const FONT_DIRECTORIES: [&str; 5] =
+    ["fonts/tfm", "fonts/source", "fonts/opentype", "fonts/truetype", "fonts/misc/xetex/fontmapping"];
 
 /// `name.ext` beside the document or under the font directories of the
 /// installation's trees, found the way kpathsea finds it: through each

@@ -474,6 +474,8 @@ pub struct Text {
     /// For the first character of a paragraph: how its lines are aligned,
     /// from `\leftskip` and `\rightskip` as the run had them there.
     pub just: Vec<(u32, Just)>,
+    /// For the first character of a paragraph: what stood before it and `\parindent` there.
+    pub indents: Vec<(u32, Indent)>,
     /// Where `\shipout` sent a page out: the number of characters set
     /// before it, ascending, the place in the user's files read then, and
     /// whether every path ships it (`false`: only some may).
@@ -489,6 +491,18 @@ pub struct Text {
     /// Character ranges of boxes used in a box that has rules on its sides
     /// and no text of its own (`\fbox`): one framed box around them.
     pub frames: Vec<(u32, u32)>,
+    /// Where a paragraph's lines broke with all known (tex.web § 815): the
+    /// characters set before and the parameters the breaker read there.
+    #[serde(default)]
+    pub breaks: Vec<(u32, crate::engine::linebreak::Params)>,
+}
+
+/// A paragraph's start: the width set before its first character (the indent box, \
+/// void after `\noindent` or a heading's `\lastbox`) and `\parindent`, when one value.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct Indent {
+    pub lead: crate::engine::mode::Dim,
+    pub parindent: Option<crate::engine::value::Scaled>,
 }
 
 /// How a paragraph's lines sit between the margins.

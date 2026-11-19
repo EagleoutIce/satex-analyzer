@@ -709,7 +709,15 @@ impl Machine<'_> {
                 Some(t) => pattern.push(t),
             }
         }
-        let parameter_text = ParameterText::from_tokens(&pattern, |sym| self.means_align_mark(sym));
+        let (parameter_text, misnumbered) = ParameterText::parse(&pattern, |sym| self.means_align_mark(sym));
+        if let Some(at) = misnumbered {
+            let text = if parameter_text.arity < 9 {
+                "Parameters must be numbered consecutively"
+            } else {
+                "You already have nine parameters"
+            };
+            self.diagnose(Severity::Warning, "misnumbered-parameter", at, text.into());
+        }
         // tex.web § 477: an `\edef` body is scanned while expanded, ending at
         // the `}` balancing what expansion leaves. A conditional satex can't
         // decide takes its true arm, as in any expanded text.
@@ -974,7 +982,12 @@ impl Machine<'_> {
     /// meanings. Otherwise unknown text.
     pub(crate) fn one_of_texts(&mut self, sym: Sym, span: Span) -> Token {
         match self.joined_texts(sym) {
-            Some(texts) => self.one_of(texts, span),
+            Some(texts) => {
+                self.scratch.owning = Some((sym, self.env.stamp_of(sym)));
+                let t = self.one_of(texts, span);
+                self.scratch.owning = None;
+                t
+            }
             None => self.unknown_text(Unk::Any, span),
         }
     }
@@ -4866,11 +4879,25 @@ impl Machine<'_> {
         self.push_tokens(Rc::from(shifted));
     }
 
+    /// tex.web § 434 `scan_char_num`: a character code past the engine's
+    /// last is "Bad character code" and reads as 0.
+    pub(crate) fn char_num(&mut self, code: Option<i64>, span: Span) -> Option<i64> {
+        let most = if self.out.plugins.engine.has_unicode_math() { 0x10_ffff } else { 255 };
+        match code {
+            Some(c) if !(0..=most).contains(&c) => {
+                self.diagnose(Severity::Warning, "invalid-code", span, format!("Bad character code ({c})"));
+                Some(0)
+            }
+            code => code,
+        }
+    }
+
     fn assign_catcode(&mut self, span: Span) {
         self.abs = None;
         self.abs_exact = None;
         let id = self.scan_begin();
         let code = self.scan_number();
+        let code = self.char_num(code, span);
         let parts = self.take_index();
         let abs = parts.as_deref().and_then(hull);
         let chars = self.scanned_chars(code, abs);

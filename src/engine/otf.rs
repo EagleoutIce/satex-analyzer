@@ -99,6 +99,11 @@ impl CharMap {
         face.and_then(|f| f.glyph_index_by_name(name)).map_or(0, |g| g.0.into())
     }
 
+    /// The font file's tables.
+    pub fn face(&self) -> Option<ttf_parser::Face<'_>> {
+        ttf_parser::Face::parse(&self.data, 0).ok()
+    }
+
     /// A character's advance in font units: `.notdef`'s for a character
     /// the font lacks, as XeTeX measures it.
     pub fn advance(&self, c: u32) -> Option<u32> {

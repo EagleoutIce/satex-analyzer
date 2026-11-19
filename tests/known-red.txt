@@ -4,7 +4,8 @@
 # a run cut by a budget, a false error from over-approximation.
 
 # == soundness ==
-# (none open)
+latex::lastbox_after_unvbox_takes_a_plain_box
+# Open (2026-11-19, owner: cex): Item::Box pushes Last::Other, which reads back from a box register as no box, so `\lastbox` after `\unvbox` is void where TeX takes the box; a box variant (target/scratch/cex/somebox-wip.patch) turns 4 differential page tests maybe until a stored box keeps its tail past the last item.
 
 # == precision ==
 # owner: lintv (2026-11-18), facts: no Ref occurrence for a \ref in a command argument, accent occurrence in a footnote missed
@@ -38,3 +39,9 @@ termination::convergence::tikz_nodes_of_unknown_width
 documents::pgfmath_signed_random_count_plus_a_constant_stays_in_range
 # Open (2026-11-18, owner: main, stack joins at loop heads): since call summaries keep no text of other arguments (u3gw), pgfmath's parser runs for real here and its operation stack (toks) is joined at a loop head as one-of {`{neg}…`, `…`}; a pop then takes `neg` or the empty operator (missing-number at pgfmathparser:803). stack_depth keeps such paths apart only at partner joins.
 documents::tikz_bend_to_a_point_of_unknown_width_closes_the_picture
+latex::a_file_a_shell_program_may_write_may_exist
+# Open (2026-11-19, owner: cex): latexminted writes its config under no -o/--outfile, so satex knows the file absent and minted's "executable is not installed" error is certain; a may-exist file that is not read must make the macros it may define unknown.
+latex::a_name_read_under_assumed_category_codes_is_no_certain_error
+# Open (2026-11-19, owner: cex): the test needs a line-budget cut inside `\spin`, but the loop is now summarized after a few passes and never reaches the budget; a fixed 400000 instead cut `\begin{document}` (877k steps now). Needs a cut that does not come from a loop (a big non-repeating expansion) or a test hook for a line cut.
+# Open (2026-11-19, owner: main): the loop-over-unknown-text cut (vague call shape, machine.rs expand_macro) cuts expl3's \__file_name_strip_quotes:nw on the include's unknown name; what follows raises a library "missing number" (expl3-code.tex:12517) reported as caused-library-error at \begin{document}. The cut must leave the path approximated so the library error is refuted, not certain.
+documents::cut_inside_include_reads_the_later_chapters

@@ -227,6 +227,7 @@ error     correctness  C004    build-command-placeholders        engine command 
 error     correctness  C005    build-engine-mismatch             build uses the wrong engine or output       
 error     correctness  C006    build-shell-escape-missing        build forbids needed shell escape           
 error     correctness  C007    caused-library-error              package error caused by the document        
+error     correctness  C025    environment-mismatch              wrong environment closed                    
 error     correctness  C046    invalid-directive                 unreadable satex directive                  
 error     correctness  C008    math-still-open                   math mode left open                         
 error     correctness  C055    metadata-after-class              DocumentMetadata after documentclass        
@@ -250,7 +251,6 @@ warning   correctness  C023    duplicate-bibliography-entry      key declared tw
 warning   correctness  C050    duplicate-bibliography-load       database loaded twice                       
 warning   correctness  C051    duplicate-bibliography-work       one work under two keys                     
 warning   correctness  C024    duplicate-label                   label defined twice                         
-warning   correctness  C025    environment-mismatch              wrong environment closed                    
 warning   correctness  C026    expl-syntax-left-on               ExplSyntaxOn never turned off               
 warning   correctness  C027    expl3-constant-set                expl3 constant set again                    
 warning   correctness  C028    expl3-signature-mismatch          expl3 argument signature mismatch           
@@ -353,7 +353,7 @@ info      style        S047    unused-bibitem                    bibitem never c
 info      style        S048    unused-color                      color never used                            
 info      style        S049    unused-definition                 macro never used                            
 info      style        S050    unused-label                      label never referenced                      
-warning   performance  P001    package-after-preamble            package loaded after the preamble           
+error     performance  P001    package-after-preamble            package loaded after the preamble           
 info      performance  P002    includeonly-available             parts built whole                           
 info      performance  P003    preamble-cost                     slow preamble                               
 info      performance  P004    recursive-macro                   recursive macro                             

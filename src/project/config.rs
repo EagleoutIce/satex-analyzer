@@ -382,7 +382,7 @@ impl Default for Limits {
             conditional_tokens: 1_048_576,
             held_tokens: 4_000_000,
             expansion_stack: 4_000,
-            vertices: 400_000,
+            vertices: 1_000_000,
             facts: 2_000_000,
             trace: 200_000,
             trace_state: 32,
@@ -425,12 +425,39 @@ pub struct PluginSwitches {
     /// The packages whose knowledge the lint rules consult
     /// ([`crate::plugins::augment`]): all by default.
     pub augment: Vec<String>,
+    /// TeX's typesetting run again on typed text ([`crate::plugins::typeset`]).
+    pub typeset: TypesetSwitches,
+}
+
+/// `plugins.typeset` in `satex.yaml`: the typesetting plugins, each on by default.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct TypesetSwitches {
+    /// `satex/hyphenate`: a word's hyphenation points from the run's patterns.
+    pub hyphenate: bool,
+    /// `satex/break`: a paragraph's lines from the run's fonts and parameters.
+    pub linebreak: bool,
+}
+
+impl Default for TypesetSwitches {
+    fn default() -> TypesetSwitches {
+        TypesetSwitches { hyphenate: true, linebreak: true }
+    }
 }
 
 impl Default for PluginSwitches {
     fn default() -> PluginSwitches {
         let augment = crate::plugins::augment::MODULES.iter().map(|m| m.package.to_string()).collect();
-        Self { magic: true, tools: true, preload: true, discovery: true, packages: false, docs: true, augment }
+        Self {
+            magic: true,
+            tools: true,
+            preload: true,
+            discovery: true,
+            packages: false,
+            docs: true,
+            augment,
+            typeset: Default::default(),
+        }
     }
 }
 
@@ -935,6 +962,14 @@ pub struct PlaygroundConfig {
     /// Typing `_` or `^` into math in the output opens a group, `x_{42}`, which a space, an
     /// operator or the math's end closes.
     pub smart_scripts: bool,
+    /// The echo of typed text breaks its lines and sizes its words as TeX does (`satex/break`: the
+    /// run's fonts, parameters and patterns) once the first run has ended. Off, the echo fits the
+    /// page's widths itself.
+    pub tex_breaks: bool,
+    /// A line typed past `conventions.lines.length` (in the editor, the PDF or the Typeset view)
+    /// breaks at its best space: a sentence's end, after an argument's closing brace, after a
+    /// clause's punctuation, else the last space. Never in math, an option list or a comment.
+    pub smart_wrap: bool,
 }
 
 impl Default for PlaygroundConfig {
@@ -959,6 +994,8 @@ impl Default for PlaygroundConfig {
             tips: true,
             math_inline: "\\(".into(),
             smart_scripts: true,
+            tex_breaks: false,
+            smart_wrap: false,
         }
     }
 }
@@ -1289,6 +1326,8 @@ pub struct Conventions {
     pub ties: Ties,
     pub quotes: Quotes,
     pub units: Units,
+    pub lengths: Lengths,
+    pub lines: Lines,
     pub tables: Tables,
     pub math: MathConventions,
     pub csname: Csname,
@@ -1355,6 +1394,25 @@ area! {
         languages: Vec<String> = strs(&["babel", "polyglossia"]),
         /// Quote characters in a row that make a ligature worth a thin space.
         ligature: usize = 3,
+    }
+}
+
+area! {
+    Lengths {
+        /// The unit a written length takes where the text shows no convention of its own
+        /// (a TikZ coordinate, a column width, a margin): cm, mm, pt, in or bp.
+        unit: String = "cm".into(),
+        /// The decimals such a length is written with.
+        decimals: u8 = 1,
+    }
+}
+
+area! {
+    /// How long a source line is: where the playground's smart wrap breaks a line typed past it.
+    Lines {
+        /// The longest line in characters; 0 takes the document's own habit (its wrapped lines),
+        /// else 80.
+        length: usize = 0,
     }
 }
 
@@ -1453,6 +1511,20 @@ area! {
         identified: usize = 400,
         /// Calls of a command its hover shows.
         calls: usize = 4,
+        /// Names of packages not loaded yet one completion offers, below those in scope, loading the package when taken.
+        unloaded: usize = 20,
+        /// Names whose package the installation's index cannot tell (pgf defines with `\def` in a `.code.tex`
+        /// file), with the package to load: commands with their `\`, environments without. A seed, used
+        /// only where that package is installed.
+        unloaded_seed: BTreeMap<String, String> = pairs(&[
+            ("tikzpicture", "tikz"), (r"\tikz", "tikz"), (r"\usetikzlibrary", "tikz"),
+        ].map(|(k, v)| (k, v.to_string()))),
+        /// Letters typed before names of packages not loaded are offered.
+        unloaded_min: usize = 3,
+        /// Expansions a command's body is followed to find math-only material, which ranks it first in math.
+        math_depth: u8 = 2,
+        /// Environments whose body is math, where completion ranks math commands first.
+        math_environments: Vec<String> = strs(&["equation", "align", "gather", "multline", "flalign", "alignat", "eqnarray", "math", "displaymath", "dmath"]),
         /// Characters of an undocumented body its hover shows as what it expands to.
         body: usize = 80,
         /// Commands whose argument is a name to pick from a list.
@@ -1642,6 +1714,8 @@ impl Default for Conventions {
             ties: Ties::default(),
             quotes: Quotes::default(),
             units: Units::default(),
+            lengths: Lengths::default(),
+            lines: Lines::default(),
             tables: Tables::default(),
             math: MathConventions::default(),
             csname: Csname::default(),

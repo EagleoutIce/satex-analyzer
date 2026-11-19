@@ -128,7 +128,6 @@ fn read(analysis: &Analysis) -> Option<Tagging> {
     // kernel guesses a language, and the loads to look up (every package is loaded by then);
     // the end's: what the PDF gets. A run without `\begin{document}` has only the end.
     let loads: Vec<(usize, String)> = files(analysis);
-    let status = |f: &str| format!("\\ifcsname t@status@{f}\\endcsname\\number\\csname t@status@{f}\\endcsname\\fi");
     let mut with_status = exprs.clone();
     with_status.extend(loads.iter().map(|(_, f)| status(f)));
     let pre = evaluate(analysis, State::Preamble, Some(STATUS_FILE), &with_status);
@@ -172,6 +171,30 @@ fn read(analysis: &Analysis) -> Option<Tagging> {
         })
         .collect();
     Some(Tagging { tagging, standards, lang, lang_set, title, pdfversion, statuses })
+}
+
+/// The status codes of `files` (`geometry.sty`), loaded or not, by the installation's status
+/// file: what loading one would bring. A loaded file's is the run's; `None` where unlisted,
+/// a part its package's entry covers, or no sandbox could be made.
+pub fn statuses(analysis: &Analysis, files: &[String]) -> Vec<Option<u8>> {
+    let known = of(analysis).map(|t| t.statuses.as_slice()).unwrap_or_default();
+    let exprs: Vec<String> = files.iter().map(|f| status(f)).collect();
+    let codes = evaluate(analysis, State::Preamble, Some(STATUS_FILE), &exprs)
+        .or_else(|| evaluate(analysis, State::End, Some(STATUS_FILE), &exprs))
+        .unwrap_or_default();
+    files
+        .iter()
+        .enumerate()
+        .map(|(i, f)| match known.iter().find(|s| s.file == *f) {
+            Some(s) => Some(s.code),
+            None => codes.get(i)?.text()?.parse().ok().filter(|c| *c <= 4),
+        })
+        .collect()
+}
+
+/// The expression that expands to a file's status code, empty where the status file lists none.
+fn status(file: &str) -> String {
+    format!("\\ifcsname t@status@{file}\\endcsname\\number\\csname t@status@{file}\\endcsname\\fi")
 }
 
 /// The packages and classes the run read, as `\@filelist` names them, once each.

@@ -22,6 +22,28 @@ unsafe extern "C" {
     fn satex_status(json: *const c_char);
     fn satex_note(json: *const c_char);
     fn satex_cancelled() -> i32;
+    fn satex_mail() -> *mut c_char;
+    fn satex_reply(json: *const c_char);
+    fn free(ptr: *mut std::ffi::c_void);
+}
+
+/// A request the page put in its mailbox while a run is under way (src/lsp/wasm-status.js).
+pub(super) fn mail() -> Option<lsp_server::Request> {
+    let ptr = unsafe { satex_mail() };
+    if ptr.is_null() {
+        return None;
+    }
+    // SAFETY: `satex_mail` hands a NUL-terminated string `stringToNewUTF8` allocated, freed here once read.
+    let text = unsafe { CStr::from_ptr(ptr) }.to_string_lossy().into_owned();
+    unsafe { free(ptr.cast()) };
+    serde_json::from_str(&text).ok()
+}
+
+/// The answer to a [`mail`], to the page now.
+pub(super) fn reply(response: &lsp_server::Response) {
+    if let Some(json) = serde_json::to_string(response).ok().and_then(|j| CString::new(j).ok()) {
+        unsafe { satex_reply(json.as_ptr()) }
+    }
 }
 
 /// `note` to the page now, while the message still runs.

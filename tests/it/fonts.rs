@@ -140,6 +140,90 @@ fn a_native_font_is_measured_from_its_tables() {
     assert!(meaning.starts_with("select font ") && meaning.contains("unknown"), "{meaning}");
 }
 
+/// A word in a native font measures as XeTeX's HarfBuzz shapes it: advances,
+/// `GPOS` kerns (`AV`, `Te`) and `liga` ligatures (`fi`), rounded once per word, and
+/// glyph bounding boxes for height and depth. Unknown sizes made TikZ nodes in XeTeX
+/// documents fork at every `\ifdim` (a two-node drawing took 109 s against 2 s in pdfTeX).
+/// Expected values: `xetex` (TeX Live 2026).
+#[test]
+fn xetex_measures_a_native_word_from_its_glyphs() {
+    if !installed() {
+        return;
+    }
+    let out = out_in(
+        Engine::XeTeX,
+        r#"\XeTeXuseglyphmetrics=1 \font\x="[lmroman10-regular]:mapping=tex-text;" at 10pt \x
+        \setbox0\hbox{source}\edef\a{\the\wd0,\the\ht0,\the\dp0}\setbox0\hbox{findings}\edef\b{\the\wd0,\the\ht0,\the\dp0}
+        \setbox0\hbox{AVATAR Te}\edef\out{\a|\b|\the\wd0}"#,
+    );
+    assert_eq!(out, "27.3pt,4.48pt,0.10999pt|33.96pt,7.05pt,2.05998pt|54.86pt");
+}
+
+/// A TikZ node's shift is `-.5\wd`, `-.5\ht+.5\dp` and `.3333em` of the native box,
+/// all exact. `\the` gives `pt` of catcode 12, so `\ifx` against a `\def`'d `-13.65pt`
+/// is false in XeTeX too: a probe comparing so once looked like a wrong node shift.
+/// Expected values: `xetex -ini '*…'` (TeX Live 2026).
+#[test]
+fn xetex_node_shift_arithmetic_on_a_native_box_is_exact() {
+    if !installed() {
+        return;
+    }
+    let out = out_in(
+        Engine::XeTeX,
+        r#"\XeTeXuseglyphmetrics=1 \font\x="[lmroman10-regular]:mapping=tex-text;" at 10pt \x
+        \setbox0\hbox{source}\dimen0=-.5\wd0 \dimen2=-.5\ht0 \advance\dimen2 by .5\dp0 \dimen4=.3333\fontdimen6\x
+        \def\e{-13.65pt}\edef\f{\the\dimen0}\edef\out{\the\dimen0,\the\dimen2,\the\dimen4|\ifx\e\f Y\else N\fi}"#,
+    );
+    assert_eq!(out, "-13.65pt,-2.185pt,3.33298pt|N");
+}
+
+/// LuaTeX under luaotfload (which LaTeX's format loads, and then defines
+/// `\ver@luaotfload.sty`) measures the same glyphs, each glyph and kern a node
+/// rounded on its own. Expected values: `lualatex` (TeX Live 2026).
+#[test]
+fn luatex_measures_a_native_word_from_its_glyphs() {
+    if !installed() {
+        return;
+    }
+    let out = out_in(
+        Engine::LuaTeX,
+        r#"\expandafter\def\csname ver@luaotfload.sty\endcsname{}\font\x="[lmroman10-regular]:+tlig;" at 10pt \x
+        \setbox0\hbox{findings}\edef\out{\the\wd0,\the\ht0,\the\dp0,\the\fontdimen6\x}"#,
+    );
+    assert_eq!(out, "33.95999pt,7.05pt,2.06pt,10.0pt");
+}
+
+/// LuaTeX's `\pdfextension` (pgf's `\pgfsys@invoke` is `\pdfextension literal`) adds a
+/// whatsit or nothing, so a box keeps its size. It made every TikZ node under LuaTeX
+/// of unknown size, and its anchors fork pgfmath (`drawing.tex` 300 s → 7 s).
+#[test]
+fn a_luatex_pdf_extension_adds_no_size() {
+    let out = out_in(
+        Engine::LuaTeX,
+        r"\setbox0\hbox{\pdfextension literal{q}\kern1pt\pdfextension literal{Q}}\edef\out{\the\wd0}",
+    );
+    assert_eq!(out, "1.0pt");
+}
+
+/// Shaping satex does not follow keeps a size unknown, never a wrong one: `ff`
+/// may start `ffi` (a ligature of three), and `mapping=tex-text` may join `--`
+/// into an en dash. XeTeX: `office` 22.21pt, `x--y` 15.56pt, each in the interval.
+#[test]
+fn a_native_word_shaping_may_change_is_an_interval() {
+    if !installed() {
+        return;
+    }
+    let out = out_in(
+        Engine::XeTeX,
+        r#"\XeTeXuseglyphmetrics=1 \font\x="[lmroman10-regular]:mapping=tex-text;" at 10pt \x
+        \setbox0\hbox{office}\edef\a{\the\wd0}\setbox1\hbox{x--y}
+        \edef\out{\ifdim\wd0<22.21pt N\fi\ifdim\wd0>22.21pt N\fi\ifdim\wd1<15.56pt N\fi\ifdim\wd1>15.56pt N\fi|\a}"#,
+    );
+    // No comparison with the real width holds for certain; the width is no one value.
+    let (tests, width) = out.split_once('|').expect("both parts");
+    assert!(!tests.contains('N') && width.contains("unknown"), "{out}");
+}
+
 #[test]
 fn a_font_dimension_coerces_to_a_number() {
     if !installed() {

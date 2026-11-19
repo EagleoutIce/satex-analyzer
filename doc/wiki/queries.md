@@ -407,6 +407,8 @@ assumption  page-one-arm
 assumption  clock-assumed
 ```
 
+In JSON each row also says where its characters came from. `sites` gives where each was set. `origins` gives where a character was read, when that is elsewhere. Its `source` names who wrote that text: `document`, `class`, `package` or `kernel`. `def` and `def_line` name the macro whose replacement text held it. `generated` marks text made by expanding a primitive there, such as `\number\year` in `\today` or the digits of `\thepage`. `math` marks where the math mode changes: `inline`, `display`, `math` when either may hold, and an empty mode where math ends. The playground's origins and math layers draw these.
+
 ## Several definitions
 
 If the preamble meaning differs from the one at the end of the run, both are shown. `--all` lists every definition with its place.
@@ -494,6 +496,18 @@ $ satex slice -f samples/paper.tex --where 'kind=begin-environment and key=figur
 ```
 
 `--out DIR` writes the slice as a standalone project: the main file plus the local packages, classes, graphics and bibliographies it needs, paths preserved.
+
+## Scratch documents in the playground
+
+*Work on this in a scratch document* slices some lines into a document of their own, for a faster cycle on one figure, table, equation or paragraph. The playground offers it in three places:
+
+- the editor's context menu: the selected lines, else the block around the cursor,
+- the bubble beside a selection of a line or more,
+- a right click on the PDF or the Typeset view: the paragraph, figure, table or equation there. The page action `slice` switches it in the playground's settings.
+
+The scratch document is the root's preamble as written, the body definitions the chosen lines need (from the slice of the run the page already has), and the chosen lines between two `% satex-scratch` marker lines. Without a finished run it falls back to the whole `satex slice`. It opens as a tab and is the root while it is open, so checks and builds run on the small document. The banner names where it came from, `Scratch slice of chapter.tex:17–27`, and offers *Merge back* and *Discard*.
+
+*Merge back* shows the region's changes as a diff, then writes the lines between the markers where they came from, as one undo step. Lines added or removed above them meanwhile are followed. When the original lines changed too, the preview shows both sides: *Merge* writes the scratch version over them, *Keep the original* drops it. *Discard* closes the scratch document and writes nothing. Either way the root before comes back.
 
 # Controls
 

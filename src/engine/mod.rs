@@ -6,6 +6,7 @@ pub mod hyph;
 pub mod linebreak;
 pub mod loader;
 pub mod mode;
+pub mod native;
 pub mod otf;
 pub mod pdfbox;
 pub mod scan;

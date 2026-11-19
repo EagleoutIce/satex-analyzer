@@ -230,6 +230,9 @@ The file was searched for in the document's directory, the configured search
 paths and the TEXMF trees, and not found. Case mismatches on case-insensitive
 filesystems are also reported: they work on Windows or macOS but break on Linux.
 `satex query distribution` shows which installation was searched.
+Where every installed file is listed, a class or package not found stops
+LaTeX (`File … not found`) and the finding is an error. In the playground,
+which fetches packages as they are named, it stays a warning.
 
 Fix by installing the package, adding its directory to `search_paths` in
 `satex.yaml`, pointing `texmf.roots` at the right installation, or
@@ -373,7 +376,7 @@ the old value explicitly.  `satex query catcodes` shows the current table.",
         code: "environment-mismatch",
         since: "0.1.0",
         category: Category::Correctness,
-        severity: Severity::Warning,
+        severity: Severity::Error,
         summary: "wrong environment closed",
         explanation: "\
 Environments nest like brackets: the name `\\end` gives has to match the one
@@ -387,6 +390,8 @@ An error raised inside the environment before the `\\end` may have ended it
 early, through TeX's recovery or the analysis's approximation of its input.
 The finding is then a note that names that error, as is one the analysis
 reached on only some of its paths.
+
+LaTeX stops with `\\begin{…} on input line … ended by \\end{…}`, an error.
 
 Fix by naming the environment that is actually open, or by closing the inner
 environments first.",
@@ -691,7 +696,9 @@ fn raised_errors(report: &mut Report) {
     let own: Vec<_> =
         analysis.facts.diagnostics.iter().filter(|d| exact(d)).filter_map(|d| own_runaway(analysis, d)).collect();
     for (i, o) in analysis.facts.occurrences.iter().enumerate() {
-        if !crate::linter::shared::is_error(analysis, o) || !o.certain || !seen.insert((o.span, o.key.as_str())) {
+        // A possible error of library code: library code is assumed to compile.
+        let library_maybe = !o.certain && !view.document(o.span.file);
+        if !crate::linter::shared::is_error(analysis, o) || library_maybe || !seen.insert((o.span, o.key.as_str())) {
             continue;
         }
         if own.iter().any(|(at, _)| at.file == o.span.file && at.line == o.span.line) {
@@ -718,6 +725,13 @@ fn raised_errors(report: &mut Report) {
         // a key `/tikz/x`): the library's load is the fix.
         let named = single_quoted(&message).map(|q| q.rsplit('/').next().unwrap_or(q).to_string());
         let library = named.as_deref().and_then(|n| crate::linter::shared::providing_library(analysis, n));
+        // Raised on one of several paths, or where the mode is unknown: a possible
+        // error, reported with less weight, never dropped.
+        if !o.certain {
+            let message = format!("{message} (on a path the run could not decide: TeX may raise it)");
+            report.add_as(Severity::Warning, span, "", message, None);
+            continue;
+        }
         match (crate::linter::shared::doubt(analysis, i), library) {
             (Some(cause), _) => report.add_doubted(span, "", message, &cause),
             (None, Some(load)) => {
@@ -819,6 +833,11 @@ fn undefined_environments(report: &mut Report) {
 fn unresolved_files(report: &mut Report) {
     let distribution = report.analysis.distribution.describe();
     let empty = report.analysis.distribution.indexed == 0;
+    // Every file the installation has is listed: one not found is absent, and
+    // LaTeX stops with "File … not found". A bundle (the playground) holds only
+    // what was fetched: there the file may exist.
+    let absent =
+        if empty || report.analysis.distribution.bundle.is_some() { report.rule.severity } else { Severity::Error };
     let analysis = report.analysis();
     for load in &analysis.facts.loads {
         let respelled = || {
@@ -852,7 +871,10 @@ fn unresolved_files(report: &mut Report) {
         } else {
             Some(format!("install `{}`, or add its directory to search_paths", load.name))
         };
-        report.add(load.span, &load.name, message, fix);
+        // `\include` and `\IfFileExists` go on without the file: only a load stops.
+        let severity =
+            if load.status == LoadStatus::NotFound && load.kind.is_package() { absent } else { report.rule.severity };
+        report.add_as(severity, load.span, &load.name, message, fix);
     }
     // The kernel's own error when `\IfFileExists` finds nothing (latex.ltx
     // `\@missingfileerror`): `LaTeX Error: File `⟨name⟩' not found.`
@@ -869,7 +891,8 @@ fn unresolved_files(report: &mut Report) {
             continue;
         }
         let message = format!("`{name}` is not in this installation ({distribution})");
-        report.add(span, &name, message, Some(format!("install `{name}`, or add its directory to search_paths")));
+        let fix = Some(format!("install `{name}`, or add its directory to search_paths"));
+        report.add_as(absent, span, &name, message, fix);
     }
 }
 

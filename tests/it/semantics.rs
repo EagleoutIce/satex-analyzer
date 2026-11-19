@@ -370,7 +370,7 @@ fn scope_carried_over_an_edit_equals_a_fresh_runs() {
     let run_part = |rows: Vec<satex::queries::query::Record>| -> Vec<_> {
         rows.into_iter()
             .map(|mut r| {
-                for k in ["does", "does_from", "manual", "tried", "via"] {
+                for k in ["does", "does_from", "doc", "manual", "tried", "via"] {
                     r.remove(k);
                 }
                 r
@@ -783,9 +783,11 @@ fn aftergroup_reinserts_its_tokens_when_the_group_ends() {
 #[test]
 fn a_closer_of_the_wrong_kind_is_reported() {
     // tex.web § 269 keeps the group kind, § 1069 complains about a `}` that
-    // meets a `\begingroup` group and § 1064 about the other way round.
+    // meets a `\begingroup` group and § 1064 about the other way round: it
+    // inserts the `}` and reads the `\endgroup` again, now at the bottom
+    // level. `tex` says both: "Missing } inserted", "Extra \endgroup".
     let simple = analyze(r"{\endgroup");
-    assert_eq!(diagnosed(&simple, "mismatched-group").len(), 1, "\\endgroup cannot close `{{`");
+    assert_eq!(diagnosed(&simple, "mismatched-group").len(), 2, "\\endgroup cannot close `{{`");
     let semi = analyze(r"\begingroup}");
     assert_eq!(diagnosed(&semi, "mismatched-group").len(), 1, "`}}` cannot close \\begingroup");
     let matched = analyze(r"{\def\a{1}}\begingroup\def\b{2}\endgroup");

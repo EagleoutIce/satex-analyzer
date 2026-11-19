@@ -3,11 +3,7 @@
 //! gives it, which characters stand around a `\/`, and which letter the
 //! `\accent` primitive really took.
 
-use crate::fixed::HashMap;
-use std::path::{Path, PathBuf};
-use std::rc::Rc;
-
-use crate::analysis::facts::{Expansion, FontState, MeaningKind};
+use crate::analysis::facts::{Expansion, MeaningKind};
 use crate::analysis::machine::Analysis;
 use crate::engine::builtins::OccKind;
 use crate::engine::mode::Modes;
@@ -16,6 +12,7 @@ use crate::engine::value::Scaled;
 use crate::linter::fix::{Applicability, Edit, Edits, Fix, Pos, Scan};
 use crate::linter::text::{self, Rewrite, View};
 use crate::linter::{Category, Ref, Report, Rule, Severity, Source};
+use crate::plugins::typeset::Fonts;
 
 pub static RULES: &[Rule] = &[
     Rule {
@@ -165,48 +162,6 @@ fn corrections<'a>(analysis: &'a Analysis, view: &View) -> Vec<&'a Expansion> {
         .collect();
     sites.sort_unstable_by_key(|e| key(e.span));
     sites
-}
-
-/// The metrics of the fonts the run set characters in, each TFM read once.
-pub(crate) struct Fonts<'a> {
-    analysis: &'a Analysis,
-    base: PathBuf,
-    read: HashMap<u16, Option<(Rc<crate::engine::tfm::Metrics>, Scaled)>>,
-}
-
-impl<'a> Fonts<'a> {
-    pub(crate) fn of(analysis: &'a Analysis) -> Fonts<'a> {
-        let base = crate::project::paths::dir_of(Path::new(analysis.file_name(analysis.main_file)));
-        Fonts { analysis, base, read: HashMap::default() }
-    }
-
-    /// The TFM the engine had loaded for a font state, and the size it was
-    /// loaded at.
-    pub(crate) fn metrics(&mut self, font: u16) -> Option<(Rc<crate::engine::tfm::Metrics>, Scaled)> {
-        let (analysis, base) = (self.analysis, &self.base);
-        self.read
-            .entry(font)
-            .or_insert_with(|| {
-                let used = analysis.fonts.get(usize::from(font))?.as_ref()?;
-                let path = crate::engine::tfm::locate(base, &analysis.distribution.roots, &used.name, "tfm")?;
-                Some((crate::engine::tfm::load(&path)?, used.size))
-            })
-            .clone()
-    }
-
-    /// The italic correction the font gives a character, which is the kern
-    /// `\/` appends after it (tex.web § 1113).
-    fn italic(&mut self, state: &FontState, c: char) -> Option<Scaled> {
-        let (metrics, size) = self.metrics(state.font)?;
-        Some(metrics.char_box(c as u32, size)?.italic)
-    }
-
-    fn name(&self, state: &FontState) -> String {
-        match self.analysis.fonts.get(usize::from(state.font)).and_then(Option::as_ref) {
-            Some(used) => format!("{} ({})", state.nfss(), used.name),
-            None => state.nfss(),
-        }
-    }
 }
 
 /// The shapes LaTeX's font selection gives a slanted face: `\itdefault` and

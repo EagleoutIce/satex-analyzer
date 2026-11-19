@@ -1676,7 +1676,11 @@ fn completion_at(analysis: &Analysis, doc: &Text, path: &str, position: Position
                 .map(|i| &before[i + 1..])
                 .filter(|t| t.chars().all(|c| c.is_alphabetic() || letters.contains(&c)))
                 .unwrap_or("");
-            let (mut items, more) = command_items(analysis, pos, typed);
+            let math = in_math(doc, pos, &analysis.settings.conventions.completion.math_environments);
+            let (mut items, more) = command_items(analysis, pos, typed, math);
+            // what a package not loaded yet would define, last (`\\tikz` before tikz is loaded)
+            let unloaded = unloaded_items(analysis, doc, typed, false);
+            items.extend(unloaded.into_iter().map(|(i, _)| i));
             // In an argument TeX reads as a quantity, the names holding one
             // that fits come first.
             if let Some(want) = argument_at(before).and_then(|arg| quantity_wanted(analysis, &arg)) {
@@ -1862,9 +1866,12 @@ fn typed_items(
                 files(analysis, file_exts(analysis, ty).into_iter(), typed.trim())
             }
             _ if !hit.prefix.is_empty() => {
-                let what = format!("named `{}…`", hit.prefix);
+                // what the source made it from (a node's `{content}` and line), never the internal name pgf keeps it as
                 (defined_with(analysis, &hit.prefix, typed).into_iter())
-                    .map(|n| item(n, CompletionItemKind::REFERENCE, Some(what.clone()), 0))
+                    .map(|n| {
+                        let what = made_at(analysis, &format!("{}{n}", hit.prefix), &n);
+                        item(n, CompletionItemKind::REFERENCE, what, 0)
+                    })
                     .collect()
             }
             _ => Vec::new(),
@@ -2036,6 +2043,27 @@ fn environment_items(analysis: &Analysis, doc: &Text, arg: &Arg, after: &str, po
         }
         out.push(it);
     }
+    // an environment a package not loaded yet defines (`tikzpicture` before tikz), last, loading it when taken
+    let typed: String = {
+        let line = doc.line(pos.line);
+        let before = &line[..crate::engine::source::byte_of_col(line, pos.col).min(line.len())];
+        before.rsplit('{').next().unwrap_or_default().to_string()
+    };
+    for (mut it, env) in unloaded_items(analysis, doc, &typed, true) {
+        if out.iter().any(|o| o.label == env) {
+            continue;
+        }
+        if snippet && fresh {
+            let range = Range {
+                start: to_lsp(doc, Pos::new(pos.line, pos.col - typed.chars().count() as u32)),
+                end: to_lsp(doc, Pos::new(pos.line, pos.col + close as u32)),
+            };
+            let new_text = format!("{env}}}\n\t$0\n\\end{{{env}}}");
+            it.text_edit = Some(lsp_types::CompletionTextEdit::Edit(TextEdit { range, new_text }));
+            it.insert_text_format = Some(InsertTextFormat::SNIPPET);
+        }
+        out.push(it);
+    }
     out
 }
 
@@ -2066,7 +2094,38 @@ fn key_item(analysis: &Analysis, mut it: CompletionItem, owner: &str, key: &str,
         it.insert_text = Some(format!("{}=$1", key.replace('$', "\\$")));
         it.insert_text_format = Some(InsertTextFormat::SNIPPET);
     }
+    // the document's own keys first (`\\tikzset{x/.style=…}`, `\\forestset`), saying where, with the comment above
+    if let Some((at, comment)) = path.and_then(|p| own_key(analysis, p)) {
+        let kind = r.get("kind").and_then(Json::as_str).filter(|k| !k.is_empty() && *k != "code").unwrap_or("key");
+        it.detail = Some(format!("{kind} (defined in {at})"));
+        it.sort_text = it.sort_text.take().map(|s| format!("!{s}"));
+        // the comment first, the picture of what the style draws after it
+        if let Some(text) = comment {
+            let below = match it.documentation.take() {
+                Some(lsp_types::Documentation::MarkupContent(m)) => format!("\n\n{}", m.value),
+                Some(lsp_types::Documentation::String(t)) => format!("\n\n{t}"),
+                None => String::new(),
+            };
+            it.documentation = Some(lsp_types::Documentation::MarkupContent(lsp_types::MarkupContent {
+                kind: lsp_types::MarkupKind::Markdown,
+                value: format!("{text}{below}"),
+            }));
+        }
+    }
     it
+}
+
+/// Where the project's files define pgf key `path` (`/tikz/x`): `file:line`, and the comment above it.
+fn own_key(analysis: &Analysis, path: &str) -> Option<(String, Option<String>)> {
+    let syms = [format!("pgfk@{path}/.@cmd"), format!("pgfk@{path}")];
+    let syms: Vec<_> = syms.iter().filter_map(|n| analysis.interner.lookup(n)).collect();
+    let def =
+        analysis.facts.defs.iter().rev().find(|d| syms.contains(&d.name) && analysis.project_file(d.span.file))?;
+    let file = &analysis.files.get(usize::from(def.span.file))?.path;
+    let name = Path::new(file).file_name().map_or(file.clone(), |n| n.to_string_lossy().into_owned());
+    let text = crate::project::overlay::read_to_string(Path::new(file)).ok();
+    let comment = text.and_then(|t| crate::knowledge::doccomment::above(&t, def.span.line as usize)).map(|c| c.text);
+    Some((format!("{name}:{}", def.span.line), comment))
 }
 
 /// `it` with its picture ([`crate::queries::preview`]): as documentation for an
@@ -2188,6 +2247,22 @@ fn statement_command(before: &[char]) -> Option<String> {
 }
 
 /// The defined names that start with `prefix`, without it, those that go on with `typed`.
+/// Where `full` (`pgf@sh@ns@x` for node `x`) was last made in the project's files: the braced text
+/// after `(name)` on that line (a node's content), else the line, and its number: `{Henlo} · line 18`.
+fn made_at(analysis: &Analysis, full: &str, name: &str) -> Option<String> {
+    let sym = analysis.interner.lookup(full)?;
+    let def = analysis.facts.defs.iter().rev().find(|d| d.name == sym && analysis.project_file(d.span.file))?;
+    let path = &analysis.files.get(usize::from(def.span.file))?.path;
+    let text = crate::project::overlay::read_to_string(Path::new(path)).ok()?;
+    let line = text.lines().nth((def.span.line as usize).checked_sub(1)?)?.trim();
+    let content = (line.split_once(&format!("({name})")))
+        .and_then(|(_, a)| a.split_once('{'))
+        .and_then(|(_, c)| c.split_once('}'))
+        .map(|(c, _)| format!("{{{}}}", c.trim()));
+    let what: String = content.unwrap_or_else(|| line.to_string()).chars().take(40).collect();
+    Some(format!("{what} · line {}", def.span.line))
+}
+
 fn defined_with(analysis: &Analysis, prefix: &str, typed: &str) -> BTreeSet<String> {
     (0..analysis.interner.len() as u32)
         .map(crate::engine::tex::Sym)
@@ -2957,7 +3032,7 @@ fn written_by(analysis: &Analysis, record: &crate::queries::query::Record) -> Op
 /// the best `conventions.completion.shown` of them, and whether there were more.
 /// The project's own first, then documented names from packages and the
 /// kernel (no `@`, `_` or `:`), more used ones first, internals last.
-fn command_items(analysis: &Analysis, pos: Pos, typed: &str) -> (Vec<CompletionItem>, bool) {
+fn command_items(analysis: &Analysis, pos: Pos, typed: &str, math: bool) -> (Vec<CompletionItem>, bool) {
     let takes = takes(analysis);
     let signature = signature_items(analysis, typed);
     let typed = typed.to_lowercase();
@@ -3005,7 +3080,10 @@ fn command_items(analysis: &Analysis, pos: Pos, typed: &str) -> (Vec<CompletionI
         let pick = analysis.settings.conventions.completion.pick.contains(&label);
         // a kernel or package command has no definition fact: its shape counts its `{…}`
         let braced = || shape.strip_prefix(label.as_str()).unwrap_or(shape).matches('{').count() as u8;
-        let (insert_text, format) = match takes.get(&name).copied().unwrap_or_else(braced) {
+        // the arguments the lean record knows (a robust `\\textbf` hands off to its partner) count too
+        let args = record.get("args").and_then(Json::as_str);
+        let mandatory = args.map_or(0, |a| a.matches('m').count() as u8);
+        let (insert_text, format) = match takes.get(&name).copied().unwrap_or_else(braced).max(mandatory) {
             _ if pick => (format!("{label}{{$1}}"), InsertTextFormat::SNIPPET),
             0 => (label.clone(), InsertTextFormat::PLAIN_TEXT),
             min => {
@@ -3013,8 +3091,11 @@ fn command_items(analysis: &Analysis, pos: Pos, typed: &str) -> (Vec<CompletionI
                 (format!("{label}{args}"), InsertTextFormat::SNIPPET)
             }
         };
+        let is_math = record.get("math").and_then(Json::as_bool).unwrap_or(false);
+        // in math, math commands first: `!` sorts before the tiers' digits
+        let lead = if math && is_math { "!" } else { "" };
         let it = CompletionItem {
-            sort_text: Some(format!("{tier}{:06}{label}", 999_999u32.saturating_sub(count))),
+            sort_text: Some(format!("{lead}{tier}{:06}{label}", 999_999u32.saturating_sub(count))),
             label: label.clone(),
             kind: Some(if tag == "primitive" { CompletionItemKind::KEYWORD } else { CompletionItemKind::FUNCTION }),
             detail: Some(package.to_string()),
@@ -3025,13 +3106,17 @@ fn command_items(analysis: &Analysis, pos: Pos, typed: &str) -> (Vec<CompletionI
                 command: "editor.action.triggerSuggest".into(),
                 arguments: None,
             }),
+            data: Some(serde_json::json!({ "math": is_math, "args": args })),
             ..Default::default()
         };
         Some((it, row))
     })
     .collect();
-    // A name that starts with what is typed before one that only holds it.
-    items.sort_by_cached_key(|(i, _)| (!i.label.to_lowercase().starts_with(&typed), i.sort_text.clone()));
+    // A name that starts with what is typed before one that only holds it, in math a math one first.
+    items.sort_by_cached_key(|(i, _)| {
+        let first = math && i.sort_text.as_deref().is_some_and(|s| s.starts_with('!'));
+        (!first, !i.label.to_lowercase().starts_with(&typed), i.sort_text.clone())
+    });
     let shown = analysis.settings.conventions.completion.shown;
     let more = items.len() > shown;
     items.truncate(shown);
@@ -3042,6 +3127,9 @@ fn command_items(analysis: &Analysis, pos: Pos, typed: &str) -> (Vec<CompletionI
             let effective = full.get("usage").or_else(|| full.get("effective")).and_then(Json::as_str).unwrap_or("");
             let by = written_by(analysis, &full).unwrap_or_else(|| item.detail.take().unwrap_or_default());
             item.detail = Some(format!("{effective}  ({by})"));
+            if let (Some(doc), Some(data)) = (full.get("doc"), item.data.as_mut()) {
+                data["doc"] = doc.clone();
+            }
             // the arguments a call reads: the effective usage after the name
             let args =
                 effective.strip_prefix('\\').unwrap_or(effective).strip_prefix(item.label.as_str()).unwrap_or("");
@@ -3093,6 +3181,127 @@ fn command_items(analysis: &Analysis, pos: Pos, typed: &str) -> (Vec<CompletionI
     let mut items: Vec<CompletionItem> = items.into_iter().map(|(i, _)| i).collect();
     items.extend(signature.into_iter().filter(|s| !items.iter().any(|i| i.label == s.label)).collect::<Vec<_>>());
     (items, more)
+}
+
+/// The names that hold `typed` which installed packages the run has not loaded define (commands, or
+/// with `env` environments), below every name in scope: each says the package it adds and loads it
+/// with the item taken (`additionalTextEdits`, `\\usepackage` before `\\begin{document}`). The
+/// installation's index of what each package defines is the source, never a table. Under active tagging a
+/// package the tagging status calls incompatible is left out. `None` of them for fewer than
+/// `completion.unloaded_min` letters typed.
+fn unloaded_items(analysis: &Analysis, doc: &Text, typed: &str, env: bool) -> Vec<(CompletionItem, String)> {
+    let cfg = &analysis.settings.conventions.completion;
+    if typed.chars().count() < cfg.unloaded_min || cfg.unloaded == 0 {
+        return Vec::new();
+    }
+    let typed = typed.to_lowercase();
+    let spelled = |n: &str| n.chars().all(|c| c.is_ascii_alphabetic()) && n.to_lowercase().contains(&typed);
+    let undefined = |n: &str| {
+        analysis
+            .interner
+            .lookup(n)
+            .is_none_or(|s| matches!(analysis.env.meaning(s), crate::engine::tex::Meaning::Undefined))
+    };
+    // a name that starts with what is typed first, shorter ones first
+    let rank = |n: &str| (!n.to_lowercase().starts_with(&typed), n.len());
+    let mut found: Vec<(String, String)> =
+        crate::linter::shared::offered(analysis, |n| spelled(n) && undefined(n), env, rank, cfg.unloaded)
+            .into_iter()
+            .filter(|(_, p)| !crate::linter::shared::loaded(analysis, p))
+            .collect();
+    // the seed's names first where the index cannot tell their package, each only with its package installed
+    let seeded = cfg.unloaded_seed.iter().filter_map(|(key, p)| {
+        let n = if env { (!key.starts_with('\\')).then_some(key.as_str())? } else { key.strip_prefix('\\')? };
+        let fits = spelled(n) && undefined(n) && !crate::linter::shared::loaded(analysis, p);
+        (fits && crate::linter::shared::installed_package(analysis, p)).then_some((n, p))
+    });
+    let seeded: Vec<(String, String)> = seeded.map(|(n, p)| (n.to_string(), p.clone())).collect();
+    found.retain(|(n, _)| !seeded.iter().any(|(m, _)| m == n));
+    found.splice(0..0, seeded);
+    if crate::analysis::tagging::of(analysis).is_some_and(|t| t.active()) {
+        let files: Vec<String> = found.iter().map(|(_, p)| format!("{p}.sty")).collect();
+        let codes = crate::analysis::tagging::statuses(analysis, &files);
+        found = found.into_iter().zip(codes).filter(|(_, c)| !matches!(c, Some(1 | 2))).map(|(f, _)| f).collect();
+    }
+    found
+        .into_iter()
+        .enumerate()
+        .filter_map(|(i, (name, package))| {
+            let load = super::plugins::ensure_package(analysis, doc, &package, "").ok()??;
+            let kind = if env { CompletionItemKind::MODULE } else { CompletionItemKind::FUNCTION };
+            let mut it = item(name.clone(), kind, Some(format!("(adds \\usepackage{{{package}}})")), 0);
+            it.sort_text = Some(format!("~{i:04}{name}"));
+            it.additional_text_edits = Some(vec![load]);
+            it.data = Some(serde_json::json!({ "package": package }));
+            Some((it, name))
+        })
+        .collect()
+}
+
+/// Whether `pos` of `doc` is in math: a `$`, `$$`, `\\(`, `\\[` or one of `environments` (starred
+/// too) opened since the paragraph began and not closed. Read from the text as typed, which
+/// the last run may not have seen.
+fn in_math(doc: &Text, pos: Pos, environments: &[String]) -> bool {
+    let mut lines = Vec::new();
+    for l in (pos.line.saturating_sub(200).max(1)..=pos.line).rev() {
+        let line = doc.line(l);
+        let line = if l == pos.line {
+            &line[..crate::engine::source::byte_of_col(line, pos.col).min(line.len())]
+        } else {
+            line
+        };
+        if l != pos.line && line.trim().is_empty() {
+            break;
+        }
+        lines.push(line);
+    }
+    // a comment ends its line: a `%` no `\\` escapes
+    let code =
+        |l: &str| -> usize { l.match_indices('%').find(|(i, _)| !l[..*i].ends_with('\\')).map_or(l.len(), |(i, _)| i) };
+    let text: String = lines.into_iter().rev().map(|l| &l[..code(l)]).collect::<Vec<_>>().join("\n");
+    let mut open: Option<String> = None;
+    let mut rest = text.as_str();
+    while let Some(c) = rest.chars().next() {
+        let mut step = c.len_utf8();
+        let close = |o: &Option<String>, t: &str| o.as_deref() == Some(t);
+        if c == '$' {
+            let mark = if rest.starts_with("$$") { "$$" } else { "$" };
+            step = mark.len();
+            open = match &open {
+                None => Some(mark.to_string()),
+                o if close(o, mark) => None,
+                o => o.clone(),
+            };
+        } else if c == '\\' {
+            let word = rest[1..].chars().take_while(|c| c.is_ascii_alphabetic()).count();
+            let name = if word == 0 {
+                rest[1..].chars().next().map_or("", |c| &rest[1..1 + c.len_utf8()])
+            } else {
+                &rest[1..1 + word]
+            };
+            step = 1 + name.len();
+            match name {
+                "(" | "[" if open.is_none() => open = Some(name.to_string()),
+                ")" if close(&open, "(") => open = None,
+                "]" if close(&open, "[") => open = None,
+                "begin" | "end" => {
+                    let arg = rest[step..].strip_prefix('{').and_then(|a| a.split_once('}')).map(|(e, _)| e);
+                    if let Some(env) = arg {
+                        step += env.len() + 2;
+                        let math = environments.iter().any(|m| m == env.trim_end_matches('*'));
+                        if name == "begin" && math && open.is_none() {
+                            open = Some(env.to_string());
+                        } else if name == "end" && open.as_deref() == Some(env) {
+                            open = None;
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        rest = &rest[step.min(rest.len())..];
+    }
+    open.is_some()
 }
 
 /// An expl3 name typed up to its signature (`tl_set:N`): each letter that may come next, with what

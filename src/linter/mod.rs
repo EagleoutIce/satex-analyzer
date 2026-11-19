@@ -721,9 +721,12 @@ pub(crate) fn lint_run(analysis: &Analysis, document: bool, wanted: impl Fn(&Rul
             skipped.join(", ")
         );
     }
-    // A raised error another rule explains at the same place is its.  The
-    // places a raised error stands at are few, so the line alone sieves the
-    // rest out before any place is built.
+    // A raised error another rule explains at the same place is its: that
+    // rule's error, or a correctness note that the error follows from an
+    // earlier one. Never a warning or a style note that happens to stand there
+    // (`\count` is plain TeX), which would hide TeX's error.  The places
+    // a raised error stands at are few, so the line alone sieves the rest out
+    // before any place is built.
     if !raised.is_empty() {
         fn place(r: &Record) -> (Option<&str>, Option<u64>, Option<u64>) {
             (
@@ -736,7 +739,11 @@ pub(crate) fn lint_run(analysis: &Analysis, document: bool, wanted: impl Fn(&Rul
         let lines: crate::fixed::HashSet<_> = raised.iter().map(|i| line(&out[*i])).collect();
         let mut explained: crate::fixed::HashSet<_> = crate::fixed::HashSet::default();
         for (i, record) in out.iter().enumerate() {
-            if !raised.contains(&i) && lines.contains(&line(record)) {
+            let severity = record.get("severity").and_then(|v| v.as_str());
+            let correctness = record.get("category").and_then(|v| v.as_str()) == Some("correctness")
+                && severity != Some("warning")
+                || severity == Some("error");
+            if correctness && !raised.contains(&i) && lines.contains(&line(record)) {
                 explained.insert(place(record));
             }
         }

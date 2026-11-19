@@ -259,6 +259,7 @@ fn view(cx: &Cx, parts: &Parts) -> Json {
     let end = span(doc, line_start(parts.end), line_start(parts.end)).start;
     // `\newgeometry` loads geometry with `pass` when the run has none: the layout elsewhere stays
     let package = (!geometry).then(|| Package { name: "geometry".into(), options: "pass".into() });
+    let papers = papers(a);
     let unit = ["cm", "mm"].into_iter().find(|u| cfg.units.iter().any(|c| c == u)).unwrap_or("pt");
     json!({ "title": "Page layout", "sections": [{
         "kind": "page",
@@ -266,7 +267,10 @@ fn view(cx: &Cx, parts: &Parts) -> Json {
         "twoside": twoside,
         "family": family(a),
         "class": a.facts.loads.iter().find(|l| l.kind == crate::engine::builtins::LoadKind::Class).map(|l| &l.name),
-        "papers": papers(a),
+        "papers": papers,
+        "paper": paper_names(a, &papers),
+        "tagging": tagging(a),
+        "styles": styles(a),
         "units": units,
         "unit": unit,
         "decimals": cfg.decimals,
@@ -363,7 +367,83 @@ fn papers(a: &Analysis) -> Vec<Json> {
             })
             .collect();
     }
+    // the class's own paper options (`\ds@letterpaper` sets `\paperheight` and `\paperwidth`):
+    // what a run without geometry, or a browser without its file, can still name
+    for p in class_papers(a) {
+        match out.iter_mut().find(|o| o["name"] == p["name"]) {
+            Some(o) => o["class"] = json!(true),
+            None => out.push(p),
+        }
+    }
     out.sort_by(|a, b| a["name"].as_str().cmp(&b["name"].as_str()));
+    out
+}
+
+/// The paper options the run's classes declare, read from the files the run read (the kernel
+/// sets each `\ds@⟨option⟩` to `\relax` once processed): each `\DeclareOption{⟨name⟩}{…}` whose
+/// code sets both `\paperwidth` and `\paperheight` to a length written out, in sp.
+fn class_papers(a: &Analysis) -> Vec<Json> {
+    let length = |body: &str, name: &str| {
+        let (_, rest) = body.split_once(&format!("\\{name}"))?;
+        let rest = rest.trim_start().trim_start_matches('=').trim_start();
+        let v = match rest.strip_prefix('{') {
+            Some(r) => r.split('}').next()?,
+            None => rest.split(|c: char| c == '\\' || c.is_whitespace()).next()?,
+        };
+        crate::engine::value::parse_dimen(&v.replace(' ', ""))
+    };
+    // the braced group at the start of `text` (after blanks and comments), and what follows it
+    let group = |text: &str| -> Option<(String, usize)> {
+        let start = text.len() - text.trim_start().len();
+        let rest = &text[start..];
+        let rest = rest.strip_prefix('{')?;
+        let mut depth = 1;
+        for (k, c) in rest.char_indices() {
+            match c {
+                '{' => depth += 1,
+                '}' => depth -= 1,
+                _ => {}
+            }
+            if depth == 0 {
+                return Some((rest[..k].to_string(), start + 1 + k + 1));
+            }
+        }
+        None
+    };
+    let mut out = Vec::new();
+    let classes = a.facts.loads.iter().filter(|l| l.kind == crate::engine::builtins::LoadKind::Class);
+    for path in classes.filter_map(|l| l.path.as_deref()) {
+        let Ok(bytes) = crate::project::overlay::read_bytes(std::path::Path::new(path)) else { continue };
+        let text = String::from_utf8_lossy(&bytes);
+        // comments out: a `%` ends the line's code
+        let code: String = text.lines().map(|l| l.split('%').next().unwrap_or("")).collect::<Vec<_>>().join("\n");
+        for (at, _) in code.match_indices("\\DeclareOption") {
+            let rest = &code[at + "\\DeclareOption".len()..];
+            let Some((name, used)) = group(rest) else { continue };
+            let Some((body, _)) = group(&rest[used..]) else { continue };
+            if let (Some(w), Some(h)) = (length(&body, "paperwidth"), length(&body, "paperheight")) {
+                out.push(json!({ "name": name.trim(), "w": w, "h": h, "class": true }));
+            }
+        }
+    }
+    out
+}
+
+/// The papers whose size is the run's `\paperwidth` × `\paperheight`, upright or turned.
+fn paper_names(a: &Analysis, papers: &[Json]) -> Vec<String> {
+    let (Some(w), Some(h)) = (count(a, "paperwidth"), count(a, "paperheight")) else { return Vec::new() };
+    let mut out: Vec<(bool, String)> = papers
+        .iter()
+        .filter(|p| {
+            let (pw, ph) = (p["w"].as_i64(), p["h"].as_i64());
+            (pw, ph) == (Some(w), Some(h)) || (pw, ph) == (Some(h), Some(w))
+        })
+        .filter_map(|p| Some((p["class"] != true, p["name"].as_str()?.to_string())))
+        .collect();
+    // the class's own options first: `letterpaper` before geometry's `ansiapaper` of the same size
+    out.sort();
+    let mut out: Vec<String> = out.into_iter().map(|(_, n)| n).collect();
+    out.dedup();
     out
 }
 
@@ -399,4 +479,95 @@ fn header(cx: &Cx, parts: &Parts) -> Json {
         "style": *package == "fancyhdr" && !fancy,
         "rules": { "head": macro_text(a, "headrulewidth"), "foot": macro_text(a, "footrulewidth") },
     })
+}
+
+/// The tagging state of the packages the dialog's edits may load: `active` when
+/// `\DocumentMetadata` turned tagging on, each package's status by the installation's
+/// `latex-tagging-status.ltx` (`unknown` where unlisted or not looked up: no `\DocumentMetadata`).
+fn tagging(a: &Analysis) -> Json {
+    use crate::analysis::tagging;
+    let t = tagging::of(a);
+    let names: Vec<&str> = ["geometry", "typearea"].into_iter().chain(HEADERS.iter().map(|(p, _)| *p)).collect();
+    let codes = t.map(|_| tagging::statuses(a, &names.iter().map(|n| format!("{n}.sty")).collect::<Vec<_>>()));
+    let word = |code: Option<u8>| match code {
+        Some(4) => "compatible",
+        Some(3) => "partial",
+        Some(1 | 2) => "incompatible",
+        _ => "unknown",
+    };
+    let status: serde_json::Map<String, Json> = names
+        .iter()
+        .enumerate()
+        .map(|(i, n)| (n.to_string(), json!(word(codes.as_ref().and_then(|c| c.get(i).copied().flatten())))))
+        .collect();
+    json!({ "active": t.is_some_and(|t| t.active()), "status": status })
+}
+
+/// What the page style in force at the run's end prints: `\@oddhead`, `\@evenhead`,
+/// `\@oddfoot` and `\@evenfoot` as written, and split into left, centre and right. The kernel's
+/// styles put the parts apart with `\hfil` (plain: `\hfil\thepage\hfil`); fancyhdr's are its
+/// fields. A part is `null` where the text is not known or is not made that way.
+fn styles(a: &Analysis) -> Json {
+    let fancy = super::styles::macro_text(a, "@oddhead").is_some_and(|t| t.contains("f@nch"));
+    let field = |side: char, part: char, at: char| {
+        // `\f@nch@def` appends a `\strut` to what the document wrote
+        super::styles::macro_text(a, &format!("f@nch@{side}{part}{at}"))
+            .map(|t| t.trim().trim_end_matches("\\strut").trim().to_string())
+    };
+    let one = |name: &str, side: char, at: char| {
+        let text = super::styles::macro_text(a, name);
+        let parts: [Option<String>; 3] = match fancy {
+            true => ['l', 'c', 'r'].map(|p| field(side, p, at)),
+            false => text.as_deref().map_or([None, None, None], apart),
+        };
+        json!({ "text": text, "left": parts[0], "center": parts[1], "right": parts[2] })
+    };
+    json!({
+        "fancy": fancy,
+        "head": { "odd": one("@oddhead", 'o', 'h'), "even": one("@evenhead", 'e', 'h') },
+        "foot": { "odd": one("@oddfoot", 'o', 'f'), "even": one("@evenfoot", 'e', 'f') },
+    })
+}
+
+/// A kernel style's line split at its top-level `\hfil`s: one part is the left, two left and
+/// right, three left, centre and right. A conditional or more parts: not known.
+fn apart(text: &str) -> [Option<String>; 3] {
+    let text = text.trim().trim_start_matches("\\reset@font").trim();
+    if text.contains("\\if") {
+        return [None, None, None];
+    }
+    let (mut parts, mut depth, mut from) = (Vec::new(), 0i32, 0);
+    let bytes = text.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'{' => depth += 1,
+            b'}' => depth -= 1,
+            b'\\' => {
+                let name =
+                    text[i + 1..].chars().take_while(|c| c.is_ascii_alphabetic() || *c == '@').collect::<String>();
+                if depth == 0 && name == "hfil" {
+                    parts.push(text[from..i].trim().to_string());
+                    from = i + 5;
+                }
+                // a control symbol is its one character, of any width
+                i += 1 + if name.is_empty() {
+                    text[i + 1..].chars().next().map_or(0, char::len_utf8)
+                } else {
+                    name.len()
+                };
+                continue;
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    parts.push(text[from..].trim().to_string());
+    let some = |s: &str| Some(s.to_string());
+    match parts.as_slice() {
+        [l] => [some(l), some(""), some("")],
+        [l, r] => [some(l), some(""), some(r)],
+        [l, c, r] => [some(l), some(c), some(r)],
+        _ => [None, None, None],
+    }
 }

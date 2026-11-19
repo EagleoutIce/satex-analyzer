@@ -541,8 +541,9 @@ const SHAPE_MEMO: usize = 1024;
 /// The most put-back tokens a spare frame keeps room for ([`Machine::push_returned`]).
 const SPARE_TOKENS: usize = 64;
 /// One slot of [`Machine::shape_memo`]: the list, the position in it, and
-/// the hash of what is pending there.
-type ShapeSlot = Option<(Rc<[Token]>, usize, u64)>;
+/// the hashes of what is pending there (exact, and with unknown text's
+/// serials dropped where it holds some).
+type ShapeSlot = Option<(Rc<[Token]>, usize, u64, Option<u64>)>;
 
 /// Peak resident set size in kibibytes, where the platform reports it.
 pub fn peak_memory() -> Option<u64> {
@@ -1595,6 +1596,11 @@ carried! {
     /// different choices, and a split narrows none
     /// ([`Machine::split_one_of_groups`]).
     pub(crate) made: HashMap<Sym, (u32, bool)>,
+    /// The name a one-of token was each time read from, with that name's
+    /// last write then; `None` once one make had another source. A path
+    /// that splits the token keeps the name at the texts it took
+    /// ([`Machine::narrow_owner`]).
+    pub(crate) owners: HashMap<Sym, Option<(Sym, u64)>>,
     /// How often passes of a loop or recursion were joined.
     pub(crate) passes_joined: u32,
     /// The files the `\read` streams are open on, by stream number.
@@ -1650,6 +1656,8 @@ pub(crate) struct Scratch {
     /// text ([`Machine::unread_rest`]): the same site meeting its own rest
     /// again (a recursion that peels it) forks as one loop head per pair.
     pub(crate) arg_site: Option<Span>,
+    /// The name the one-of token being made is read from ([`Carried::owners`]).
+    pub(crate) owning: Option<(Sym, u64)>,
     /// The macro being called goes by a name of unknown spelling.
     pub(crate) family_call: bool,
     /// The undelimited parameters of the macro whose arguments are read
@@ -2534,6 +2542,11 @@ struct Site {
     /// row met the same shape, nesting and bindings.
     effective: u64,
     cycled: u32,
+    /// The shape as [`Machine::vague_hash`] sees it, where the shape held
+    /// unknown text, and how many expansions in a row met it while only
+    /// fresh rests differed: a loop over unknown text.
+    vague: u64,
+    vagued: u32,
     /// [`Env::effective`] less its slot writes, [`Env::recent_len`] and
     /// [`Env::assignments`] at the last expansion here.
     other: u64,
@@ -2561,6 +2574,8 @@ impl Site {
             deeper: 0,
             effective: u64::MAX,
             cycled: 0,
+            vague: 0,
+            vagued: 0,
             other: u64::MAX,
             assigned: u64::MAX,
             recent: 0,
@@ -2713,6 +2728,17 @@ pub(crate) const BREAKING: [&str; 6] =
 /// own, not through [`TEX_ERRORS`].
 const ENGINE_WARNINGS: [&str; 6] =
     ["mismatched-group", "file-ended", "wrong-mode", "arithmetic-overflow", "endless-loop", "terminal-read-fatal"];
+
+/// Errors of the engine that keep TeX's recovery but carry satex's wording:
+/// raised like [`TEX_ERRORS`] where the path is TeX's, a note otherwise.
+const ENGINE_ERRORS: [&str; 6] = [
+    "mismatched-group",
+    "missing-box",
+    "missing-left-brace",
+    "illegal-in-mode",
+    "invalid-code",
+    "misnumbered-parameter",
+];
 
 /// tex.web § 82: after this many errors in one paragraph TeX gives up
 /// ("That makes 100 errors; please try again").
@@ -5774,6 +5800,14 @@ will look undefined",
                 }
                 self.diagnose(Severity::Warning, "too-many-braces", span, "`}` closes no group".into());
             }
+            // § 1066 `off_save`: so is an `\endgroup`, "Extra \endgroup". After
+            // a cut the group it closes may have opened in the text cut.
+            if closer == GroupKind::SemiSimple && !self.after_cut() && !self.approximated {
+                if self.own_file(span.file) {
+                    self.project_site = Some(span);
+                }
+                self.diagnose(Severity::Warning, "mismatched-group", span, "Extra \\endgroup".into());
+            }
             return;
         };
         if !closer.closes(kind) {
@@ -6400,6 +6434,18 @@ will look undefined",
             Some((_, text)) => {
                 let text = text.map_or_else(|| message.clone(), str::to_string);
                 self.certain_error(&text, false, span);
+                self.tex_error(&text, span);
+            }
+            // The engine's other errors, on a path TeX takes: raised as TeX prints them.
+            None if severity == Severity::Warning
+                && ENGINE_ERRORS.contains(&code)
+                && self.scratch.approximations == self.scratch.approximations_at_command
+                && !self.approximated =>
+            {
+                let mut text = message.clone();
+                if let Some(first) = text.get(..1) {
+                    text.replace_range(..1, &first.to_uppercase());
+                }
                 self.tex_error(&text, span);
             }
             None if matches!(severity, Severity::Unsupported | Severity::Imprecision) => {
@@ -10381,8 +10427,10 @@ will look undefined",
             // count starts over — the per-site bound only bites a loop.
             site.repeats = if site.progress == progress { site.repeats.saturating_add(1) } else { 1 };
             // A recursion begins where no expansion of this name is open
-            // and the site starts a new run of repeats.
-            if !active && site.repeats == 1 {
+            // and the site starts a new run of repeats, or where the site
+            // was forgotten ([`Site::fresh`]): a cut never widens what was
+            // written before it was met again.
+            if (!active || site.progress == u64::MAX) && site.repeats == 1 {
                 site.recent = written;
             }
             site.progress = progress;
@@ -10533,12 +10581,16 @@ will look undefined",
     /// A level is a list with tokens left, a file or a boundary; a used-up
     /// list holds nothing a later read could meet.
     /// A token list counts by its length and first [`SHAPE_TOKENS`] tokens.
-    fn call_shape_hash(&self, arguments: &[Vec<Token>], below: usize) -> (u64, usize, Option<u64>) {
+    /// Last, on an approximated path, the shape as [`Machine::vague_hash`]
+    /// sees it, if the arguments hold rests of unknown text: the call walks it.
+    fn call_shape_hash(&self, arguments: &[Vec<Token>], below: usize) -> (u64, usize, Option<u64>, Option<u64>) {
         use std::hash::{BuildHasher, Hash, Hasher};
         let mut h = crate::engine::tex::NameHash.build_hasher();
+        let (vague, mut v, mut walks) = (self.approximated, crate::engine::tex::NameHash.build_hasher(), false);
         for a in arguments {
             a.len().hash(&mut h);
             a.iter().for_each(|t| h.write_u64(t.tok.word()));
+            walks |= vague && self.vague_hash(a, &mut v);
         }
         let (mut levels, mut under) = (0, None);
         for frame in &self.input {
@@ -10561,27 +10613,65 @@ will look undefined",
                     // The memo holds the list, so its address names this content.
                     let slot = ((toks.as_ptr() as usize / 8) ^ pos.wrapping_mul(0x9e37)) % SHAPE_MEMO;
                     let mut memo = self.shape_memo.borrow_mut();
-                    let sub = match &memo[slot] {
-                        Some((list, at, sub)) if *at == *pos && Rc::ptr_eq(list, toks) => *sub,
+                    let rest = &toks[*pos..];
+                    let window = &rest[..rest.len().min(SHAPE_TOKENS)];
+                    let (sub, loose) = match &memo[slot] {
+                        Some((list, at, sub, loose)) if *at == *pos && Rc::ptr_eq(list, toks) => (*sub, *loose),
                         _ => {
                             let mut g = crate::engine::tex::NameHash.build_hasher();
-                            let rest = &toks[*pos..];
                             rest.len().hash(&mut g);
-                            rest.iter().take(SHAPE_TOKENS).for_each(|t| g.write_u64(t.tok.word()));
+                            window.iter().for_each(|t| g.write_u64(t.tok.word()));
                             let sub = g.finish();
-                            memo[slot] = Some((toks.clone(), *pos, sub));
-                            sub
+                            // Without the length: a pile of rests in front grows every round.
+                            let mut g = crate::engine::tex::NameHash.build_hasher();
+                            let loose = (vague && self.vague_hash(window, &mut g)).then(|| g.finish());
+                            memo[slot] = Some((toks.clone(), *pos, sub, loose));
+                            (sub, loose)
                         }
                     };
                     sub.hash(&mut h);
+                    loose.unwrap_or(sub).hash(&mut v);
                 }
-                Frame::Returned(t) => t.iter().for_each(|t| h.write_u64(t.tok.word())),
+                Frame::Returned(t) => {
+                    t.iter().for_each(|t| h.write_u64(t.tok.word()));
+                    if vague {
+                        self.vague_hash(t, &mut v);
+                    }
+                }
                 Frame::File { mouth, .. } => (mouth.file, mouth.offset()).hash(&mut h),
                 Frame::Pseudo { mouth, at, pos, .. } => (at, mouth.offset() + pos).hash(&mut h),
                 Frame::Boundary => 0u8.hash(&mut h),
             }
+            if let Frame::File { mouth, .. } | Frame::Pseudo { mouth, .. } = frame {
+                (mouth.file, mouth.offset()).hash(&mut v);
+            }
         }
-        (h.finish(), levels, under)
+        (h.finish(), levels, under, walks.then(|| v.finish()))
+    }
+
+    /// Hashes `toks` into `v` as a loop over unknown text sees them: a rest
+    /// of unknown text by its class, never its serial (each round splits
+    /// off a fresh one), and a run of rests of one class as one. Whether
+    /// `toks` held a rest.
+    fn vague_hash(&self, toks: &[Token], v: &mut impl std::hash::Hasher) -> bool {
+        let (mut last, mut any) = (None, false);
+        for t in toks {
+            let word = self.rest_word(t.tok);
+            if word.is_none() || word != last {
+                v.write_u64(word.unwrap_or_else(|| t.tok.word()));
+            }
+            any |= word.is_some();
+            last = word;
+        }
+        any
+    }
+
+    /// A rest of unknown text ([`REST_SERIAL`]) as its name without the serial.
+    fn rest_word(&self, tok: Tok) -> Option<u64> {
+        use std::hash::BuildHasher;
+        let Tok::Cs(sym) = tok else { return None };
+        let (class, tail) = self.out.interner.name(sym).strip_prefix('\u{2}')?.split_once(REST_SERIAL)?;
+        Some(crate::engine::tex::NameHash.hash_one((class, tail.trim_start_matches(|c: char| c.is_ascii_digit()))))
     }
 
     /// The one summary of a call: what it would expand to is unknown text,
@@ -10865,12 +10955,12 @@ will look undefined",
         // terminates if its arguments get smaller.
         let size: usize = arguments.iter().map(Vec::len).sum();
         let below = self.expansion_sites.get(&(span, sym)).map_or(usize::MAX, |site| site.levels);
-        let (shape, levels, under) = self.call_shape_hash(&arguments, below);
+        let (shape, levels, under, vague) = self.call_shape_hash(&arguments, below);
         let nest = (self.conds.len(), self.env.depth());
         let effective = self.env.effective;
         let rewritten = self.rewrites_last_round((span, sym), shape, nest);
         let (other, assigned) = (effective - self.env.slot_changes, self.env.assignments);
-        let (shrinking, unread, deeper, cycled, since) = match self.expansion_sites.get_mut(&(span, sym)) {
+        let (shrinking, unread, deeper, cycled, vagued, since) = match self.expansion_sites.get_mut(&(span, sym)) {
             Some(site) => {
                 let since = site.assigned;
                 self.undo.push(Undo::Site((span, sym), *site));
@@ -10900,14 +10990,22 @@ will look undefined",
                     && nest == site.nest
                     && (site.effective == effective || rewritten)
                     && site.scans == self.step_depth;
+                // Only fresh rests differ: the round split them off the text it walks.
+                let alike = vague.is_some_and(|v| v == site.vague)
+                    && shape != site.shape
+                    && nest == site.nest
+                    && site.scans == self.step_depth;
+                site.vagued = if alike { site.vagued + 1 } else { 0 };
+                site.vague = vague.unwrap_or(0);
                 site.scans = self.step_depth;
                 site.cycled = if same { site.cycled + 1 } else { 0 };
                 (site.shape, site.levels, site.nest, site.effective) = (shape, levels, nest, effective);
                 site.group = self.env.group_id();
                 (site.other, site.assigned) = (other, assigned);
-                (size < std::mem::replace(&mut site.size, size), site.unread, site.deeper, site.cycled, since)
+                let shrank = size < std::mem::replace(&mut site.size, size);
+                (shrank, site.unread, site.deeper, site.cycled, site.vagued, since)
             }
-            None => (true, 1, 0, 0, u64::MAX),
+            None => (true, 1, 0, 0, 0, u64::MAX),
         };
         if self.loop_cut.take_if(|s| *s == sym).is_some() {
             self.cut_call(
@@ -10953,6 +11051,15 @@ will look undefined",
                 }
                 (false, _) => return self.end_path(),
             }
+        }
+        // The state of the last round but for the rests of unknown text the
+        // call walks, `widen_after` rounds in a row: a loop over unknown text
+        // that need not fork. Cut like a loop (forced convergence), never an
+        // endless loop: TeX may end it.
+        // At least one repeat: `widen_after: 0` must not cut calls that never recurred.
+        if vagued >= u32::from(self.limits.widen_after).max(1) {
+            let reason = "re-entered in the state it was in but for which unknown text it walks".into();
+            return self.cut_call(sym, span, "widen_after", false, reason);
         }
         // Same arguments and input, only deeper in conditionals or groups each
         // time: every round repeats the last, so none ends it.
@@ -12082,6 +12189,12 @@ will look undefined",
                 false => vec![m.one_of(parts, t.span)],
             }
         };
+        // The text before and after the delimiter part as two tokens of their
+        // own, which lose which goes with which: a path per text instead
+        // where the token is a macro's value read again later.
+        if inside.len() > 1 && t.cs().is_some_and(|sym| self.one_of_owner(sym).is_some()) && self.code_apart(&texts) {
+            return if self.split_one_of(t) { OneOfScan::Again } else { OneOfScan::Unknown };
+        }
         let mut argument = out.to_vec();
         let mut prefixes = Vec::new();
         let mut rests = Vec::new();
@@ -13932,18 +14045,63 @@ will look undefined",
         enter: impl FnOnce(&mut Self, usize) -> bool,
     ) -> bool {
         let (Some(sym), Some(texts)) = (t.cs(), self.one_of_members(t)) else { return false };
+        let took = |m: &mut Self, arm: usize| {
+            let kept: Vec<Rc<[Token]>> = groups[arm].iter().map(|&i| texts[i].clone()).collect();
+            m.narrow_owner(sym, &kept);
+        };
         if self.carried.made.get(&sym) != Some(&(self.carried.passes_joined, false)) {
-            return self.split(sym, site, groups.len(), enter);
+            return self.split(sym, site, groups.len(), |m, arm| {
+                took(m, arm);
+                enter(m, arm)
+            });
         }
         self.split(sym, site, groups.len(), |m, arm| {
             if groups[arm].is_empty() {
                 return enter(m, arm);
             }
+            took(m, arm);
             let kept: Vec<Meaning> = groups[arm].iter().map(|&i| explore::text_meaning(texts[i].clone())).collect();
             m.refine_may(sym, &kept);
             m.note_took(sym, Narrowed::Texts(kept.into()));
             enter(m, arm)
         })
+    }
+
+    /// The name one-of token `sym` was read from, if every make of it read
+    /// that name and the name is unchanged since: each copy is its value.
+    pub(crate) fn one_of_owner(&self, sym: Sym) -> Option<Sym> {
+        let (owner, stamp) = (*self.carried.owners.get(&sym)?)?;
+        (self.env.stamp_of(owner) == stamp).then_some(owner)
+    }
+
+    /// Whether `texts` differ in the control sequences they run, not only in
+    /// data: a list's form (flat or linked), not a number's digits. Only
+    /// then does a path keep apart what it took, as loop heads keep apart
+    /// paths that differ in code ([`explore`]'s `data_apart`).
+    fn code_apart(&self, texts: &[Rc<[Token]>]) -> bool {
+        let code = |t: &Rc<[Token]>| -> Vec<Sym> {
+            t.iter().filter_map(|x| x.cs()).filter(|&s| !self.is_unknown_marker(s)).collect()
+        };
+        texts.split_first().is_some_and(|(first, rest)| rest.iter().any(|t| code(t) != code(first)))
+    }
+
+    /// A path took `texts` of one-of token `sym`: the name it was read
+    /// from holds the meanings with those texts, so a later read of the
+    /// name agrees (TeX reads one value twice).
+    fn narrow_owner(&mut self, sym: Sym, texts: &[Rc<[Token]>]) {
+        let Some(owner) = self.one_of_owner(sym) else { return };
+        let Some(may) = self.env.slot(owner).and_then(|b| b.may.clone()) else { return };
+        let all: Vec<Rc<[Token]>> = may.iter().filter_map(|m| Some(m.as_macro()?.replacement_text.clone())).collect();
+        if !self.code_apart(&all) {
+            return;
+        }
+        let has = |m: &Meaning| {
+            m.as_macro().is_some_and(|d| texts.iter().any(|t| explore::same_text(t, &d.replacement_text)))
+        };
+        let kept: Vec<Meaning> = may.iter().filter(|m| has(m)).cloned().collect();
+        if !kept.is_empty() && kept.len() < may.len() {
+            self.refine_to(owner, &kept);
+        }
     }
 
     /// The open name scans built on with `sym` narrowed so.
@@ -14194,6 +14352,7 @@ will look undefined",
         {
             status = LoadStatus::NotFollowed;
         }
+
         let mut invalid = 0;
         let source =
             resolved.as_ref().filter(|_| written.is_none()).and_then(|path| match crate::project::overlay::read_bytes(

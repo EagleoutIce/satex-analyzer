@@ -240,9 +240,14 @@ fn an_unknown_arrow_tip_names_its_library() {
     assert_eq!(found, ["add `\\usetikzlibrary{arrows.meta}`, which declares it"]);
 }
 
+/// Passes of the loop that the line budget cuts.
+const SPIN_PASSES: u64 = 5_000_000;
+
 /// A name read with `{` a letter is TeX's error where the category codes
 /// are known, but not where a cut made the analysis assume them back
-/// (`region-catcodes`): there it is reported as possible only.
+/// (`region-catcodes`): there it is reported as possible only. The budget is
+/// the plain run's cost, so the cut falls in the loop however much
+/// `\begin{document}` costs (a fixed 400000 began to cut `\begin{document}`).
 #[test]
 fn a_name_read_under_assumed_category_codes_is_no_certain_error() {
     if !installed() {
@@ -250,7 +255,7 @@ fn a_name_read_under_assumed_category_codes_is_no_certain_error() {
     }
     let severity = |spin: &str, line_steps: u64| {
         let source = format!(
-            "\\documentclass{{article}}\n\\begin{{document}}\n\\def\\spin{{\\advance\\count2 1 \\ifnum\\count2<5000000 \\expandafter\\spin\\fi}}\n{spin}\n\\catcode`\\{{=11 \\relax\\x{{y \\catcode`\\{{=1\n\\end{{document}}\n"
+            "\\documentclass{{article}}\n\\begin{{document}}\n\\def\\spin{{\\advance\\count2 1 \\ifnum\\count2<{SPIN_PASSES} \\expandafter\\spin\\fi}}\n{spin}\n\\catcode`\\{{=11 \\relax\\x{{y \\catcode`\\{{=1\n\\end{{document}}\n"
         );
         let mut cfg = crate::support::config();
         cfg.limits.line_steps = line_steps;
@@ -266,7 +271,15 @@ fn a_name_read_under_assumed_category_codes_is_no_certain_error() {
             .collect::<Vec<_>>()
     };
     assert_eq!(severity("", 0), ["error `\\x{y` is never defined in this run"]);
-    let assumed = severity("\\begingroup\\catcode`\\{=11 \\spin\\endgroup", 400_000);
+    // The budget: what the whole run without the loop takes, so only the loop's line is cut,
+    // whatever `\begin{document}` costs. The loop takes several steps per pass.
+    let plain = {
+        let source = "\\documentclass{article}\n\\begin{document}\nx\n\\end{document}\n";
+        let a = Machine::analyze(source, None, &crate::support::config());
+        a.steps - a.load_steps + 1
+    };
+    assert!(plain < SPIN_PASSES, "the loop's line must cost more than the plain run: {plain}");
+    let assumed = severity("\\begingroup\\catcode`\\{=11 \\spin\\endgroup", plain);
     assert_eq!(assumed, ["warning `\\x{y` is undefined where the analysis assumed category codes back after a cut"]);
 }
 
@@ -752,6 +765,107 @@ fn raised(analysis: &Analysis) -> Vec<String> {
         .filter(|f| f.get("code").and_then(|c| c.as_str()) == Some("raised-error"))
         .filter_map(|f| f.get("severity").and_then(|s| s.as_str()).map(str::to_string))
         .collect()
+}
+
+/// tex.web § 1080: `\lastbox` after `\unvbox` takes the box a vbox ended
+/// with, here a plain `\hbox`. Boxes on a list were the same item as marks
+/// and whatsits, read back as no box: `\lastbox` was void and the document's
+/// `\errmessage` for that case was raised although pdflatex takes the hbox.
+#[test]
+fn lastbox_after_unvbox_takes_a_plain_box() {
+    if !installed() {
+        return;
+    }
+    let analysis = analyze(
+        r"\documentclass{article}\begin{document}
+\setbox0\vbox{\hbox{a}}\setbox2\vbox{\unvbox0 \global\setbox1\lastbox}
+\ifvoid1 \errmessage{void}\fi \xdef\Sa{\ifvoid1 V\else B\fi}
+\end{document}",
+    );
+    assert_eq!(body(&analysis, "Sa"), "B");
+    assert!(raised(&analysis).is_empty(), "{:?}", raised(&analysis));
+}
+
+/// A program the shell runs may write files its command line does not
+/// name: minted runs `latexminted` (allowed under restricted shell escape)
+/// and reads back the configuration it wrote. That file may exist from then
+/// on, its text unknown. Before, it was absent for certain and minted's
+/// "executable is not installed" error was raised on a document pdflatex
+/// compiles.
+#[test]
+fn a_file_a_shell_program_may_write_may_exist() {
+    if !installed() {
+        return;
+    }
+    let analysis = analyze(
+        "\\documentclass{article}\n\\usepackage{minted}\n\\begin{document}\n\\begin{minted}{python}\nx = 1\n\\end{minted}\n\\end{document}\n",
+    );
+    let errors: Vec<_> = satex::linter::lint(&analysis).into_iter().filter(|f| f["severity"] == "error").collect();
+    assert!(errors.is_empty(), "{errors:?}");
+}
+
+/// LaTeX stops on a package it cannot find and on `\usepackage` after
+/// `\begin{document}`: with the installation's file list known each is one
+/// error finding. Before, a missing package was a warning, and a late
+/// `\usepackage` gave a warning beside TeX's raised error.
+#[test]
+fn a_missing_package_and_a_late_usepackage_are_one_error_each() {
+    if !installed() {
+        return;
+    }
+    let found = |src: &str, line: u64| {
+        let analysis = analyze(src);
+        satex::linter::lint(&analysis)
+            .into_iter()
+            .filter(|f| f["line"] == line && matches!(f["severity"].as_str(), Some("error" | "warning")))
+            .map(|f| {
+                format!("{} {}", f["severity"].as_str().unwrap_or_default(), f["code"].as_str().unwrap_or_default())
+            })
+            .collect::<Vec<_>>()
+    };
+    let missing =
+        found("\\documentclass{article}\n\\usepackage{nosuchpackagehere}\n\\begin{document}\nx\n\\end{document}\n", 2);
+    assert_eq!(missing, ["error unresolved-file"]);
+    let late = found("\\documentclass{article}\n\\begin{document}\n\\usepackage{amsmath}\n\\end{document}\n", 3);
+    // `satex lint` says package-after-preamble, an in-memory source TeX's own error
+    assert!(late.len() == 1 && late[0].starts_with("error "), "{late:?}");
+}
+
+/// Each TeX error the document's own line raises is an error finding, as
+/// pdflatex stops on each (its first `!` line in the comment). Pins errors
+/// lost two ways: one the engine raised under satex's own code (`A <box>
+/// was supposed to be here`, `Missing { inserted`, `Extra \endgroup`,
+/// `Missing \right. inserted`, `Parameters must be numbered consecutively`,
+/// `Bad character code`, `Misplaced \noalign`) that no rule reported, and a
+/// raised error hidden by a style or prose note at the same place
+/// (`\count` is plain TeX, `\a` is never used).
+#[test]
+fn every_tex_error_of_the_document_is_an_error_finding() {
+    if !installed() {
+        return;
+    }
+    let cases = [
+        r"\count1=x",                             // Missing number, treated as zero.
+        r"\hskip x",                              // Missing number, treated as zero.
+        r"\setbox0=x",                            // A <box> was supposed to be here.
+        r"\hbox x",                               // Missing { inserted.
+        r"\endgroup",                             // Extra \endgroup.
+        r"$\left($",                              // Missing \right. inserted.
+        r"\def\a#2{}",                            // Parameters must be numbered consecutively.
+        r"\char300",                              // Bad character code (300).
+        r"\hline",                                // Misplaced \noalign.
+        r"\begin{itemize}\item a\end{enumerate}", // \begin{itemize} ... ended by \end{enumerate}.
+    ];
+    for body in cases {
+        let analysis =
+            analyze(&format!("\\documentclass{{article}}\n\\begin{{document}}\n{body}\n\\end{{document}}\n"));
+        let errors: Vec<_> = satex::linter::lint(&analysis)
+            .into_iter()
+            .filter(|f| f["severity"] == "error" && f["line"] == 3)
+            .map(|f| f["code"].as_str().unwrap_or_default().to_string())
+            .collect();
+        assert!(!errors.is_empty(), "{body}: no error, {:?}", codes(&analysis));
+    }
 }
 
 /// An error any code raises reaches the lints, as pdflatex stops on it: the
@@ -2797,6 +2911,28 @@ fn a_lone_hbox_taken_by_lastbox_keeps_the_sizes_known() {
     }
 }
 
+/// tex.web §§ 1080, 1110: `\unvbox` makes the box's last item the list's
+/// tail, so `\lastbox` takes back the alignment row a box ended with, and
+/// what is left of the row keeps its cells for `\unhbox`. A stored row
+/// read back as a character gave a void `\lastbox`, so amsmath's `align`
+/// measured no column and every numbered `align` had "Missing number" gaps.
+#[test]
+fn lastbox_after_unvbox_takes_the_row_the_box_ended_with() {
+    if !installed() {
+        return;
+    }
+    let analysis = analyze(
+        r"\documentclass{article}\usepackage{amsmath}\begin{document}
+\setbox0\vbox{\halign{#&#\cr a&b\cr}}\setbox2\vbox{\unvbox0 \unpenalty \global\setbox1\lastbox}
+\setbox1\hbox{\unhbox1 \unskip \global\setbox3\lastbox}\xdef\Sb{\ifhbox3 Y\else N\fi}
+\begin{align}a &= b\\ c &= d\end{align}
+\end{document}",
+    );
+    assert_eq!(body(&analysis, "Sb"), "Y");
+    let gaps: Vec<_> = analysis.facts.diagnostics.iter().filter(|d| d.code == "missing-number").collect();
+    assert!(gaps.is_empty(), "{gaps:?}");
+}
+
 /// tex.web § 1080: a forced break starts a new line, but `\unpenalty`
 /// takes the penalty back and `\lastbox` the box before it, whose size the
 /// new line does not have: it is never read as an empty box's.
@@ -4431,6 +4567,36 @@ fn typeset_names_kernel_environments_and_alignment() {
     assert!(plain.get("env").is_none());
 }
 
+/// Each paragraph's record says `\parindent` in force and whether it got the indent box:
+/// a paragraph after `\section` has none (`\@afterheading` takes it with `\lastbox`), nor one
+/// after `\noindent`; the next one does, `\parindent` wide. Pins the Typeset "paragraph indent" switch.
+#[test]
+fn typeset_reports_paragraph_indent() {
+    if !installed() {
+        return;
+    }
+    let analysis = analyze(
+        "\\documentclass{article}\n\\setlength\\parindent{12pt}\n\\begin{document}\n\\section{One}\nfirst\n\nsecond\n\n\\noindent third\n\n\\indent fourth\n\\end{document}\n",
+    );
+    let rows = satex::queries::query::run(
+        &analysis,
+        satex::queries::query::Query::Typeset,
+        &satex::queries::query::Filter::Always,
+    );
+    let of = |text: &str| rows.iter().find(|r| r.get("detail").and_then(|d| d.as_str()) == Some(text)).cloned();
+    let indented = |text: &str| of(text).unwrap_or_else(|| panic!("{text} in {rows:?}")).get("indented").cloned();
+    assert_eq!(indented("first"), Some(serde_json::json!(false)), "{rows:?}");
+    assert_eq!(indented("second"), Some(serde_json::json!(true)), "{rows:?}");
+    assert_eq!(indented("third"), Some(serde_json::json!(false)), "{rows:?}");
+    assert_eq!(indented("fourth"), Some(serde_json::json!(true)), "{rows:?}");
+    let second = of("second").unwrap();
+    assert_eq!(
+        (second.get("parindent"), second.get("indent")),
+        (Some(&serde_json::json!(12.0)), Some(&serde_json::json!(12.0))),
+        "{second:?}"
+    );
+}
+
 /// A paragraph inside a box or alignment that goes into an outer paragraph
 /// is part of that one: `\vbox` and `\valign` do not end it.
 #[test]
@@ -5016,4 +5182,19 @@ fn split_rest_of_recorded_lines_and_unvboxed_lists_is_known() {
     );
     let got: Vec<String> = ["Ra", "Rb", "Rc", "Rd", "Re"].iter().map(|k| body(&analysis, k)).collect();
     assert_eq!(got, ["v", "n,10.0pt", "n,10.0pt", "10.0pt", "13.0pt,3.0pt"]);
+}
+
+/// A `}` the document closes nothing with on one of two paths (a random
+/// number decides): TeX may say "Too many }'s" there. Such an error is
+/// reported as possible, a warning, never dropped. Before, only an error on
+/// the one path the run followed exactly was reported.
+#[test]
+fn a_document_error_on_one_path_is_reported_as_possible() {
+    if !installed() {
+        return;
+    }
+    let analysis = analyze(
+        "\\documentclass{article}\n\\begin{document}\nText.\n\\ifnum\\pdfuniformdeviate 2=0 }\\fi\nMore.\n\\end{document}\n",
+    );
+    assert_eq!(raised(&analysis), ["warning"]);
 }

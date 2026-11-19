@@ -1671,3 +1671,83 @@ fn a_hash_with_no_parameter_stays_a_character() {
     let m = satex::analysis::machine::macro_text(&analysis, "m");
     assert_eq!(m.as_deref(), Some("macro parameter character #"));
 }
+
+/// The steps one source line may take: the goal for every line of a real
+/// document, far above what the lines below need.
+const LINE_GOAL: u64 = 10_000_000;
+
+/// An expl3 preamble `body` in an article, run with packages and
+/// `limits.line_steps` at [`LINE_GOAL`], caches under `scratch`.
+fn expl3_run(body: &str, scratch: &str) -> satex::analysis::machine::Analysis {
+    let source = format!(
+        "\\documentclass{{article}}\n\\ExplSyntaxOn\n{body}\n\\ExplSyntaxOff\n\\begin{{document}}\nText.\n\\end{{document}}"
+    );
+    let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/scratch/termination").join(scratch);
+    let mut cfg = Config {
+        cache: satex::project::config::Cache {
+            dir: Some(crate::support::scratch_dir(dir)),
+            document: false,
+            ..Default::default()
+        },
+        load: satex::project::config::Load { packages: true, classes: true, ..Default::default() },
+        ..crate::support::config()
+    };
+    cfg.limits.line_steps = LINE_GOAL;
+    crate::support::seed_kernel(&cfg);
+    Machine::analyze(&source, None, &cfg)
+}
+
+/// A property list that is linked on one path and flat on the other.
+const JOINED_PROP: &str =
+    r"\int_compare:nNnTF {\pdfuniformdeviate 2} = 0 { \prop_new_linked:N \g_x_prop } { \prop_new:N \g_x_prop }";
+
+/// A loop over unknown text that never forks: l3prop's `\__prop_clear_loop:Nw`
+/// walks the items of a property list whose paths joined a flat and a linked
+/// form, so its item names are unknown text. Each round splits a fresh rest
+/// (a new serial) off that text, so no round met the state of the last one
+/// exactly: no loop head, no cycle, no call summary (the round writes
+/// nothing). `\prop_gclear:N` ran 100M+ steps on its line, and lthooks did
+/// the same at `\begin{document}` after beamer's templates. Rounds equal but
+/// for the rests they walk are a loop, cut after `limits.widen_after`.
+#[test]
+fn a_loop_walking_unknown_text_ends_within_the_line_goal() {
+    if !crate::support::installed() {
+        return;
+    }
+    let body = format!(
+        "{JOINED_PROP}\n\\prop_gput:Nnn \\g_x_prop {{a}}{{1}}\n\\int_compare:nNnT {{\\pdfuniformdeviate 2}} = 0 {{ \\prop_gput:Nnn \\g_x_prop {{b}}{{2}} }}\n\\prop_gclear:N \\g_x_prop"
+    );
+    let analysis = expl3_run(&body, "unknown-walk");
+    let limits: Vec<String> = analysis
+        .facts
+        .diagnostics
+        .iter()
+        .filter(|d| ["budget-exhausted", "limit-reached", "analysis-ended-early"].contains(&d.code))
+        .map(|d| format!("{} {}", d.code, d.message))
+        .collect();
+    assert!(limits.is_empty(), "{limits:?}");
+}
+
+/// A put into that list reads its form twice: `\__prop_split:NnTFn` tests
+/// flat or linked, then `\__prop_put_linked:wnnN` takes the linked form
+/// apart. Each read of the joined macro was one of its texts on its own, so
+/// the linked arm met the flat text and raised "Paragraph ended before
+/// \__prop_pop_linked_prev:w" and "Argument has an extra }", errors no
+/// path of TeX raises. A path that took one text keeps the macro at it.
+#[test]
+fn a_put_into_a_joined_prop_raises_no_error() {
+    if !crate::support::installed() {
+        return;
+    }
+    let analysis = expl3_run(&format!("{JOINED_PROP}\n\\prop_gput:Nnn \\g_x_prop {{a}}{{1}}"), "joined-put");
+    let errors: Vec<String> = analysis
+        .facts
+        .diagnostics
+        .iter()
+        .filter(|d| {
+            ["runaway-argument", "extra-right-brace", "missing-number", "extra-fi", "extra-else"].contains(&d.code)
+        })
+        .map(|d| format!("{} {}", d.code, d.message))
+        .collect();
+    assert!(errors.is_empty(), "{errors:?}");
+}
