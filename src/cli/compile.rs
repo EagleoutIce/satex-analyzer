@@ -88,8 +88,8 @@ pub fn run(context: &Context, system: Option<&str>, view: bool) -> Result<Output
         }
         "satex" => {
             let at = out_dir.clone().unwrap_or_else(|| dir.clone());
-            let passes = analysis.settings.compile.passes;
-            let (status, dumped) = own(program, latex, context.source, file, &job, &dir, &at, passes)?;
+            let (passes, warm) = (analysis.settings.compile.passes, analysis.settings.compile.warm);
+            let (status, dumped) = own(program, latex, context.source, file, &job, &dir, &at, passes, warm)?;
             preamble = dumped;
             status
         }
@@ -145,7 +145,9 @@ pub const KEEP: &str = ".satex-build";
 
 /// satex's own build in `at`: the engine until the build files rest (at most `passes`), BibTeX,
 /// Biber and makeindex where their inputs changed, a LaTeX preamble read from a format dumped once
-/// per preamble. A fresh build's first pass writes no PDF. Gives the status and the dump's log.
+/// per preamble. A fresh build's first pass writes no PDF. With `warm`, a pass is fed to the engine
+/// the last build left waiting where it runs that pass's command (`warm.rs`), and the build leaves
+/// one for the next. Gives the status and the dump's log.
 #[allow(clippy::too_many_arguments)]
 fn own(
     program: &str,
@@ -156,6 +158,7 @@ fn own(
     dir: &Path,
     at: &Path,
     passes: u32,
+    warm: bool,
 ) -> Result<(std::process::ExitStatus, String), String> {
     let keep = at.join(KEEP);
     std::fs::create_dir_all(&keep).map_err(|e| format!("{}: {e}", keep.display()))?;
@@ -173,6 +176,7 @@ fn own(
     // LaTeX writes an .aux: a first pass without one is never the last
     let fresh = latex && read("aux").is_empty();
     let mut status = None;
+    let mut last = Vec::new();
     for pass in 0..passes.max(1) {
         let draft = fresh && pass == 0;
         let mut pass_args: Vec<&str> = args.iter().map(String::as_str).collect();
@@ -180,7 +184,14 @@ fn own(
             pass_args.retain(|a| *a != "-synctex=1");
             pass_args.push("-draftmode");
         }
-        status = Some(build(program, &pass_args, file, dir)?);
+        let command: Vec<String> = [program].iter().chain(&pass_args).chain([&file]).map(|a| a.to_string()).collect();
+        status = Some(match warmed(warm, &keep, dir, &command, file, &at.join(format!("{job}.log"))) {
+            Some(status) => status,
+            None => build(program, &pass_args, file, dir)?,
+        });
+        if !draft {
+            last = command;
+        }
         tools(job, dir, at, &keep)?;
         let now = rested();
         let log = String::from_utf8_lossy(&read("log")).into_owned();
@@ -189,9 +200,35 @@ fn own(
         }
         was = now;
     }
+    #[cfg(target_os = "linux")]
+    if warm && !last.is_empty() {
+        super::warm::start(&keep, dir, &last, file, &[(PRINT_LINE.0, PRINT_LINE.1)]);
+    }
     let dumped = fmt.map(|(_, log)| log).unwrap_or_default();
     Ok((status.ok_or("no pass ran")?, dumped))
 }
+
+/// The pass `command` by the warm engine (`warm.rs`), named on stderr as a run is.
+#[cfg_attr(not(target_os = "linux"), allow(unused_variables))]
+fn warmed(
+    warm: bool,
+    keep: &Path,
+    dir: &Path,
+    command: &[String],
+    file: &str,
+    log: &Path,
+) -> Option<std::process::ExitStatus> {
+    #[cfg(target_os = "linux")]
+    if warm {
+        let status = super::warm::take(keep, dir, command, file, log)?;
+        eprintln!("$ {} (warm)", command.join(" "));
+        return Some(status);
+    }
+    None
+}
+
+/// Unwrapped log lines keep paths and messages whole. BibTeX refuses 20000 and more ("3 is a bad bad").
+const PRINT_LINE: (&str, &str) = ("max_print_line", "10000");
 
 /// BibTeX, Biber and makeindex, each where its input changed since it last ran or its output is missing.
 fn tools(job: &str, dir: &Path, at: &Path, keep: &Path) -> Result<(), String> {
@@ -313,9 +350,7 @@ fn build(program: &str, args: &[&str], file: &str, dir: &Path) -> Result<std::pr
         .args(args)
         .args((!file.is_empty()).then_some(file))
         .current_dir(dir)
-        // Unwrapped log lines keep paths and messages whole. BibTeX
-        // refuses 20000 and more ("3 is a bad bad").
-        .env("max_print_line", "10000")
+        .env(PRINT_LINE.0, PRINT_LINE.1)
         .stdout(std::process::Stdio::from(std::io::stderr()))
         .status()
         .map_err(|e| format!("cannot run {program}: {e}"))

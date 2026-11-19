@@ -199,6 +199,45 @@ fn a_build_cut_between_runs_goes_on_in_the_next_process() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// A finished build is kept with the files it left. The next process builds an edited text
+/// from them: an edit that changes no build file settles in one run, one that adds a label
+/// takes the runs that change needs, and both end with the facts of a build from nothing.
+/// Before, every process built from nothing: three runs of the whole body for a typed word.
+#[test]
+fn an_edited_document_builds_from_the_last_builds_files() {
+    if !installed() {
+        return;
+    }
+    let dir = project("seed");
+    let cfg = config(&dir);
+    let doc = dir.join("doc.tex");
+    let text = |body: &str| {
+        format!(
+            "\\documentclass{{article}}\\begin{{document}}\\tableofcontents\\section{{A}}\\label{{a}}\
+            See \\ref{{a}} and \\pageref{{z}}. {body}\\newpage\\section{{B}}\\label{{z}}\\end{{document}}\n"
+        )
+    };
+    let fresh = Config { cache: Cache { document: false, ..cfg.cache.clone() }, ..cfg.clone() };
+    let first = analyze(&doc, &text(""), &cfg);
+    assert!(first.build_runs > 1, "the build needs a second run: {}", first.build_runs);
+    // A typed word: the build files stay what they were.
+    let word = analyze(&doc, &text("More."), &cfg);
+    assert!(!served(&word) && !word.stopped(), "{:?} {:?}", word.package_caches, word.limits);
+    assert_eq!(word.build_runs, 1, "a run that writes what it read ends the build");
+    assert_eq!(
+        differs_unordered(&analyze(&doc, &text("More."), &fresh), &word),
+        None,
+        "differs from a build from nothing"
+    );
+    // A new label that is referenced: the run that first writes it is not the last.
+    let label = text("\\section{C}\\label{c} See \\ref{c}.");
+    let more = analyze(&doc, &label, &cfg);
+    assert!(more.build_runs > 1 && !served(&more), "{} runs", more.build_runs);
+    assert_eq!(differs_unordered(&analyze(&doc, &label, &fresh), &more), None, "differs from a build from nothing");
+    assert!(served(&analyze(&doc, &label, &cfg)));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// A run a budget stopped is stored once it built no cache: the next run
 /// would stop at the same place, so it is served, and the limit's note says
 /// so. The run that built the class's cache is not stored, since the next

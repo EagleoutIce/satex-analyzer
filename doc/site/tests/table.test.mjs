@@ -107,3 +107,35 @@ test('alignOf: the letter past injects and arguments', () => {
   for (const [spec, want] of Object.entries(cases)) assert.equal(T.alignOf(spec), want, spec);
   assert.equal(T.injected('>{\\bf}>{\\it}l<{x}'), '\\bf\\itx');
 });
+
+// Intuition: a short row (`c & d \\` in a three-column table) has no cell where its missing columns stand; the widget
+// shows them empty and writing one pads the row with blank cells, an `&` each, left out again when the cell stays
+// empty. Mutations: a cell past the table, a column a \multirow from above covers, a \multicolumn before the gap.
+// Pins typing into a short row's missing cell doing nothing.
+test('missing cells of a short row take text', () => {
+  const s = grid(3, 3);
+  s.rows[1].cells.splice(2);
+  s.rows[2].cells.splice(1);
+  const got = T.reach(s, 2, 2);
+  assert.deepEqual([got.o.r, got.o.c, got.n, s.rows[2].cells.length], [2, 2, 1, 3], 'padded up to the column');
+  T.setInner(s.rows[2].cells[got.o.i], 'hallo');
+  T.unpad(s.rows[2], got.n);
+  assert.deepEqual(s.rows[2].cells.map((c) => T.inner(c)), ['w2x0', '', 'hallo'], 'written: its & stay');
+  const left = T.reach(s, 1, 2);
+  T.unpad(s.rows[1], left.n);
+  assert.equal(s.rows[1].cells.length, 2, 'left empty: no & written');
+  assert.equal(T.reach(s, 1, 3), null, 'no column there');
+  assert.equal(T.reach(s, 5, 0), null, 'no row there');
+  // a \multicolumn{2} then the gap: the cells count from past the span
+  const m = grid(1, 4);
+  m.rows[0].cells = [{ text: 'x', span: 2, spec: 'c' }];
+  assert.deepEqual(T.reach(m, 0, 3).o, { r: 0, i: 2, c: 3, span: 1, rows: 1 });
+  assert.equal(bad(m), '', 'a proper grid again');
+  // a cell a \multirow covers is that cell, nothing padded
+  const r = grid(2, 2);
+  r.rows[0].cells[1] = { text: '\\multirow{2}{*}{y}', span: 1, spec: '' };
+  r.rows[1].cells.splice(1);
+  const covered = T.reach(r, 1, 1);
+  assert.equal(T.layout(r)[1][1]?.r, 0, 'covered from above');
+  assert.deepEqual([covered.o.r, r.rows[1].cells.length], [0, 1]);
+});

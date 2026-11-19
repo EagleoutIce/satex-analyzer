@@ -1738,6 +1738,8 @@ impl Machine<'_> {
             keep_errors: _,
             approximated: _,
             blind: _,
+            enclosing_unknown_arm: _,
+            read_outside: _,
             cut_taint: _,
             gap_depth: _,
             // Part of tree root.

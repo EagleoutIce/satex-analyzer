@@ -240,22 +240,39 @@ impl Exports {
     /// `\includegraphics`, which graphicx and tikz load, not adjustbox, which redefines it).
     pub fn provider(&self, name: &str) -> Option<String> {
         let files = self.defines.get(name)?;
-        let loaded_by = self.loaded_by();
-        // the files whose loads reach `file`
-        let users = |file: u32| {
-            let (mut seen, mut queue) = (HashSet::default(), vec![file]);
-            while let Some(f) = queue.pop() {
-                if seen.insert(f) {
-                    queue.extend(loaded_by[f as usize].iter().copied());
-                }
-            }
-            seen.len()
-        };
         let best = (files.iter().copied())
             .filter(|&f| self.files[f as usize].ends_with(".sty"))
-            .map(|f| (users(f), std::cmp::Reverse(&self.files[f as usize]), f))
+            .map(|f| (self.users(f), std::cmp::Reverse(&self.files[f as usize]), f))
             .max()?;
         Some(self.files[best.2 as usize].clone())
+    }
+
+    /// The packages that may provide `name`, most loaded first: those that define it and those
+    /// that load one of them directly, which may change how its call reads its arguments
+    /// (graphicx loads graphics and gives its `\includegraphics` key=value options).
+    pub fn candidates(&self, name: &str) -> Vec<String> {
+        let Some(files) = self.defines.get(name) else { return Vec::new() };
+        let sty = |f: &u32| self.files[*f as usize].ends_with(".sty");
+        let definers: Vec<u32> = files.iter().copied().filter(sty).collect();
+        let mut all = definers.clone();
+        all.extend(definers.iter().flat_map(|&f| self.loaded_by()[f as usize].iter().copied()).filter(sty));
+        all.sort_unstable();
+        all.dedup();
+        let mut ranked: Vec<_> =
+            all.into_iter().map(|f| (std::cmp::Reverse(self.users(f)), &self.files[f as usize])).collect();
+        ranked.sort();
+        ranked.into_iter().map(|(_, f)| f.clone()).collect()
+    }
+
+    /// How many files load `file`, directly or through others.
+    fn users(&self, file: u32) -> usize {
+        let (loaded_by, mut seen, mut queue) = (self.loaded_by(), HashSet::default(), vec![file]);
+        while let Some(f) = queue.pop() {
+            if seen.insert(f) {
+                queue.extend(loaded_by[f as usize].iter().copied());
+            }
+        }
+        seen.len()
     }
 
     fn position(&self) -> &HashMap<String, u32> {

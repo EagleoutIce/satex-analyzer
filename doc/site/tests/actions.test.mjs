@@ -663,6 +663,9 @@ test('scratch: block finds the figure, the equation, the paragraph', () => {
   assert.deepEqual(SC.block(CHAPTER, 1), [1, 1, 'heading']);
   assert.deepEqual(SC.block('\\begin{document}\n\\maketitle\nA\nB\n\\clearpage\nC', 3), [3, 4, 'paragraph'], 'a body without blank lines is cut at its commands');
   assert.deepEqual(SC.block(CHAPTER, 10), [10, 10, 'paragraph']);
+  // sweep 2026-11-19: a picture on lines of its own was offered as "this paragraph"
+  assert.deepEqual(SC.block('A\n\n\\begin{tikzpicture}\n\\node {x};\n\\end{tikzpicture}\n\nB', 4), [3, 5, 'tikzpicture'], 'a paragraph that is one environment is named by it');
+  assert.deepEqual(SC.block('A\n\\begin{itemize}\n\\item x\n\\end{itemize}\n\nB', 3), [1, 4, 'paragraph'], 'text around it keeps it a paragraph');
   assert.deepEqual(SC.block('a\n\\begin{equation}\n x % \\end{equation}\n\\end{equation}\nb', 3), [2, 4, 'equation']);
   assert.deepEqual(SC.block('\\begin{table*}\n\\begin{equation}\nx\n\\end{equation}\n\\end{table*}', 3), [1, 5, 'table']);
 });

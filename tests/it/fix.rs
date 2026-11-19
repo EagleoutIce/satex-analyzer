@@ -676,6 +676,9 @@ fix_cases! {
     math_follows_the_files_delimiters("err-paren", article("\\(a\\) and \\(b\\), then x_1.\n"), "raised-error", true, &article("\\(a\\) and \\(b\\), then \\(x_1\\).\n"));
     /// An `&` past the last column adds a column of the last one's kind.
     extra_tab_adds_a_column("err-tab", article("\\begin{tabular}{|l|c|}\na & b & c \\\\\n\\end{tabular}\n"), "raised-error", true, &article("\\begin{tabular}{|l|cc|}\na & b & c \\\\\n\\end{tabular}\n"));
+    /// A row without its `\\` before a `\hline` puts the rule's `\noalign`
+    /// in a cell (tex.web § 1129): the row ends before it.
+    misplaced_noalign_ends_the_row("err-noalign", article("\\begin{tabular}{ll}\na & b \\\\\nc & d\n\\hline\n\\end{tabular}\n"), "raised-error", true, &article("\\begin{tabular}{ll}\na & b \\\\\nc & d\n\\\\ \\hline\n\\end{tabular}\n"));
     /// An `&` in running text is the character.
     misplaced_tab_is_escaped("err-amp", article("Text & here.\n"), "raised-error", true, &article("Text \\& here.\n"));
     /// Text after the preamble, with no `\begin{document}` anywhere, starts the document.
@@ -757,8 +760,9 @@ fn single_scripts_per_nucleus_are_no_error() {
 
 /// The paragraph-end fix of a runaway stops before a command that ends a
 /// paragraph through its own code (`\section`, whose `\@startsection` runs
-/// `\par`): the bold text must not take the next heading. Red: the scan sees
-/// only `\par`, unmatched `\end` and `}` (tests/known-red.txt).
+/// `\par`): the bold text must not take the next heading. Bug pinned: the
+/// scan saw only `\par`, unmatched `\end` and `}`. Now the run's
+/// `paragraph_enders` fact (the first `\section` ran `\par`) ends it.
 #[test]
 fn runaway_paragraph_fix_stops_before_a_heading() {
     if !installed() {

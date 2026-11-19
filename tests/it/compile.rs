@@ -261,3 +261,89 @@ fn a_page_keeps_its_key_only_while_it_draws_alike() {
     assert_ne!(a[1], b[1]);
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// What a warm engine (pre-started on its format, blocked opening the main file) needs: pdfTeX
+/// started on a named pipe in the main file's place, fed the text once a build asks, writes the PDF,
+/// SyncTeX and log a fresh run writes, byte for byte. Pins that the pipe leaves no trace: TeX opens
+/// the name it was given (tex.web § 537), and the real file is put in the pipe's place before TeX
+/// reads a line, for any later open by name.
+#[cfg(unix)]
+#[test]
+fn an_engine_fed_through_a_pipe_writes_what_a_fresh_one_writes() {
+    let tools = ["pdftex", "mkfifo"];
+    if tools.iter().any(|t| satex::project::paths::which(t).is_err()) {
+        return;
+    }
+    let dir = crate::support::tmp_root().join(format!("satex-warm-{}", std::process::id()));
+    let text = "\\catcode`\\{=1 \\catcode`\\}=2 \\pdfoutput=1 \\pdfpagewidth=200pt \\pdfpageheight=200pt\n\
+                \\shipout\\hbox{\\vrule width 30pt height 20pt}\n\\end\n";
+    let run = |at: &std::path::Path, warm: bool| {
+        std::fs::create_dir_all(at).unwrap();
+        let main = at.join("w.tex");
+        let mut engine = std::process::Command::new("pdftex");
+        engine
+            .args(["-ini", "-interaction=nonstopmode", "-synctex=-1", "w.tex"])
+            .current_dir(at)
+            .env("SOURCE_DATE_EPOCH", "1")
+            .env("FORCE_SOURCE_DATE", "1")
+            .stdout(std::process::Stdio::null());
+        if !warm {
+            std::fs::write(&main, text).unwrap();
+            assert!(engine.status().unwrap().success());
+        } else {
+            assert!(std::process::Command::new("mkfifo").arg(&main).status().unwrap().success());
+            let mut child = engine.spawn().unwrap();
+            // the engine waits in the open; the writer's open ends that wait
+            let mut pipe = std::fs::OpenOptions::new().write(true).open(&main).unwrap();
+            std::fs::write(at.join("w.next"), text).unwrap();
+            std::fs::rename(at.join("w.next"), &main).unwrap();
+            std::io::Write::write_all(&mut pipe, text.as_bytes()).unwrap();
+            drop(pipe);
+            assert!(child.wait().unwrap().success());
+        }
+        ["w.pdf", "w.synctex"].map(|f| std::fs::read(at.join(f)).unwrap())
+    };
+    let fresh = run(&dir.join("fresh"), false);
+    // the same directory name: SyncTeX names the input by its full path
+    let _ = std::fs::remove_dir_all(dir.join("fresh"));
+    let warm = run(&dir.join("fresh"), true);
+    assert!(fresh[0] == warm[0], "the PDF differs");
+    assert!(fresh[1] == warm[1], "the SyncTeX data differs");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A run by hand in a `satex gui` build directory finds the warm engine's pipe where the main file
+/// was (src/cli/warm.rs): it must not wait on it forever. Pins that the kept text goes back in
+/// place and the run reads it.
+#[cfg(target_os = "linux")]
+#[test]
+fn a_run_by_hand_never_waits_on_the_warm_engines_pipe() {
+    if satex::project::paths::which("mkfifo").is_err() {
+        return;
+    }
+    let dir = crate::support::tmp_root().join(format!("satex-warm-pipe-{}", std::process::id()));
+    let warm = dir.join(".satex-build").join("warm");
+    std::fs::create_dir_all(&warm).unwrap();
+    let text = "\\relax\n";
+    std::fs::write(warm.join("source"), text).unwrap();
+    assert!(std::process::Command::new("mkfifo").arg(dir.join("main.tex")).status().unwrap().success());
+    let mut run = crate::support::satex()
+        .args(["--format", "json", "tokens", "-f", "main.tex"])
+        .current_dir(&dir)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    // a run that waits on the pipe is stopped by the test, not left behind
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+    while run.try_wait().unwrap().is_none() && std::time::Instant::now() < deadline {
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    let done = run.try_wait().unwrap().is_some();
+    if !done {
+        let _ = run.kill();
+    }
+    assert!(done, "the run waited on the pipe");
+    assert_eq!(std::fs::read_to_string(dir.join("main.tex")).unwrap(), text);
+    let _ = std::fs::remove_dir_all(&dir);
+}

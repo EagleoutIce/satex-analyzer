@@ -147,3 +147,15 @@ test('hunks: each place typed is its own edit of whole words', () => {
     assert.equal(out, n, `${w} -> ${n}`);
   }
 });
+
+// Intuition: `\\` ends the row there, whatever room is left, and the next words start the next row of the same paragraph
+// at its margin: no indent, no \parskip (ltspace.dtx `\@normalcr`). `\\*` and `\\[2pt]` too. Pins Ctrl+Enter's `\\`
+// typed in Type mode echoing the next word on the same row, the caret jumping to the next row once the build landed.
+test('prose and reflow: a forced line break', () => {
+  const brk = (raw) => E.prose(raw).map((q) => `${q.brk ? '↵' : ''}${q.gap ? '_' : ''}${q.t}`).join(' ');
+  assert.equal(brk('second\\\\\nQuokka'), 'second ↵_Quokka');
+  assert.equal(brk('a\\\\*[2pt] b'), 'a ↵_b');
+  assert.equal(brk('a\\\\\\\\ b'), 'a ↵ ↵_b', 'two breaks: an empty row between');
+  assert.ok(!E.prose('a \\, b').some((q) => q.brk), 'a thin space is no break');
+  assert.deepEqual(shape(E.reflow([p(10, 0), p(10, 3, { brk: true })], 0, { ...LINE, parskip: 4 })), ['-2@0:0', '-1@0:0 dy12']);
+});

@@ -617,11 +617,17 @@ fn math_still_open(report: &mut Report) {
     }
     let view = report.text();
     let Some(last) = view.ours().next_back() else { return };
-    if !view.modes(last).meets(Modes::ANY_MATH) {
+    let modes = view.modes(last);
+    if !modes.meets(Modes::ANY_MATH) {
         return;
     }
     let Some(span) = view.span(last) else { return };
-    report.add(span, "unclosed", "math mode was still on where the document's text ended".into(), fix);
+    let message = "math mode was still on where the document's text ended";
+    // On a path where the mode may be another, TeX may not be in math there.
+    match modes.within(Modes::ANY_MATH) {
+        true => report.add(span, "unclosed", message.into(), fix),
+        false => report.add_as(Severity::Warning, span, "unclosed", format!("{message} (may not be)"), fix),
+    }
 }
 
 // chktex warning 49: `Expected math mode to be %s here.`

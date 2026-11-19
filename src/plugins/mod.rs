@@ -367,6 +367,16 @@ impl Plugins {
         }
         let command = project.setting(self.engine.program()).map(str::to_string);
         self.preload = Preload::detect(source, command.as_deref(), base, &self.discovery);
+        // A format dumped from this very file holds its own preamble: read whole, the file
+        // gives the state the format and mylatexformat's skip of that preamble give.
+        if let Some(p) = &mut self.preload
+            && p.source
+                .as_ref()
+                .and_then(|f| crate::project::overlay::read_bytes(f).ok())
+                .is_some_and(|b| crate::engine::source::decode(&b) == source)
+        {
+            p.source = None;
+        }
     }
 
     /// The auxiliary tools a build runs: what the packages imply, what the

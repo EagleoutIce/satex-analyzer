@@ -183,6 +183,50 @@ pub struct SliceBound {
 const SCRATCH_DEFS: u32 = 16;
 
 impl DependencyGraph {
+    /// After an edit: `self`, the last run's graph at its end, takes this run's vertices up
+    /// to where both runs met (`new`) for the ones the last run had there (`at`). The runs made
+    /// the same vertices and edges up to there, apart from where on the `edited` lines a vertex
+    /// sits, and the rest changed none of those. `false`, with `self` unchanged, otherwise.
+    pub(crate) fn splice(&mut self, new: &Self, at: &Self, edited: impl Fn(&Span) -> bool) -> bool {
+        let moved =
+            |a: &Vertex, b: &Vertex| edited(&a.span) && edited(&b.span) && Vertex { span: b.span, ..a.clone() } == *b;
+        let n = at.vertices.len();
+        let moves: Vec<usize> = (0..n.min(new.vertices.len())).filter(|&i| new.vertices[i] != at.vertices[i]).collect();
+        let keyed = |a: &LookupMap<(Span, Sym, VertexTag), NodeId>, b: &LookupMap<(Span, Sym, VertexTag), NodeId>| {
+            a.iter().all(|(k, v)| edited(&k.0) || b.get(k) == Some(v))
+        };
+        let extents =
+            |a: &HashMap<Span, u32>, b: &HashMap<Span, u32>| a.iter().all(|(k, v)| edited(k) || b.get(k) == Some(v));
+        let alike = new.vertices.len() == n
+            && self.vertices.len() >= n
+            && moves.iter().all(|&i| moved(&new.vertices[i], &at.vertices[i]) && self.vertices[i] == at.vertices[i])
+            && (new.cap, new.overflow, new.reader) == (at.cap, at.overflow, at.reader)
+            && new.out == at.out
+            && new.wide == at.wide
+            && new.made_by == at.made_by
+            && new.defs_of == at.defs_of
+            && new.ends == at.ends
+            && new.touched == at.touched
+            && new.touched_readers == at.touched_readers
+            && new.log == at.log
+            && (new.sites.len(), new.extents.len()) == (at.sites.len(), at.extents.len())
+            && keyed(&new.sites, &at.sites)
+            && keyed(&at.sites, &new.sites)
+            && extents(&new.extents, &at.extents)
+            && extents(&at.extents, &new.extents);
+        if !alike {
+            return false;
+        }
+        for i in moves {
+            self.vertices[i].span = new.vertices[i].span;
+        }
+        self.sites.retain(|k, _| !edited(&k.0));
+        self.sites.extend(new.sites.iter().filter(|(k, _)| edited(&k.0)).map(|(k, v)| (*k, *v)));
+        self.extents.retain(|k, _| !edited(k));
+        self.extents.extend(new.extents.iter().filter(|(k, _)| edited(k)).map(|(k, v)| (*k, *v)));
+        true
+    }
+
     pub fn push(
         &mut self,
         tag: VertexTag,

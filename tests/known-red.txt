@@ -5,15 +5,7 @@
 
 # == soundness ==
 
-# Open (2026-11-19, owner: fable): a LaTeX format hands on the fixed CatcodeTable::latex(), not the kernel run's table, so control characters read INITEX's codes (pdflatex: ^^@ 15, ^^L and 1-31 active). The run's own ASCII half made later definitions undefined: satex marks unknown text with control characters.
-counterexamples::control_characters_have_the_kernel_s_category_codes
-
-# Open (2026-11-19, owner: qfa): a runaway's paragraph-end fix runs past `\section`, which ends a paragraph only through `\@startsection`'s `\par`; the swallowed call never ran there. Needs the boundary from the run: commands seen ending a paragraph elsewhere. Line end is the first fix meanwhile.
-fix::runaway_paragraph_fix_stops_before_a_heading
-
 # == precision ==
-# Open (2026-11-19, owner: speed increments): an edit in an `\include`d file resumes at `\begin{document}`, not inside the file: l3file's `\file_full_name:n` (`\IfFileExists`) reads its `\pdffilesize` before `\@@input`, so the file is read twice and `reread` takes it as read to its end. Needs a size-only dependency for `\pdffilesize`; a pinned checkpoint on the line that includes the file was tried and broke a resumed run's result (incremental::a_resumed_run_says_what_a_full_run_says), not kept.
-incremental::an_edit_in_an_included_file_resumes_where_it_is_included
 # Open (2026-11-19, owner: speed): `\begin{document}` reads l3backend-pdftex.def anew every run (~25% of the line's steps): a `.def` is not cacheable by kind, and `\begin`'s group makes `cacheable_at_push` refuse it too. Needs caching by what a file does (pure function of its reads), with local effects inside a group replayed as locals.
 package_cache::the_backend_loaded_by_begin_document_is_served_from_a_cache
 # Open (2026-11-19, owner: next box round, from sound2): `\lastbox` now takes a plain box (was void, unsound). LaTeX's mark extraction (latex.ltx `\__mark_prepare_and_extract:nn`) takes the column's last vbox (a here float) and unpacks it; a box taken from a list keeps no facts of its own (calm, last item, `vl` record), so the `\vsplit` to `\maxdimen` after it is unknown and `\box_if_empty` loops "maybe". Needs per-item box facts in the vl record (Kp::Box with box kind and its register facts).
@@ -23,8 +15,6 @@ differential::a_here_figure_after_a_paragraph_stays_on_its_page
 differential::the_sample_paper_breaks_its_pages_where_pdflatex_does
 # owner: quick fixes B (2026-11-19), exports index reads definitions off the text with the definers the current run saw, so url's \DeclareUrlCommand\url and siunitx's \NewDocumentCommand \SI are missed; root fix: index what each package's own run defines (by effect), then key the cache by roots only
 quick_fixes::a_command_made_by_a_package_s_own_definer_loads_its_package
-# owner: explore-cli (2026-11-19), `%&own` whose source is the document itself: satex reads the dumped preamble as the format and then the whole file, not through mylatexformat.ltx (whose \documentclass skips the dumped part), so a second \documentclass raises a false error; `lint --fix --unsafe-fixes` on a preamble-cost document then also lets `clones` see the file twice (absolute and relative path) and wrap the whole document in a macro
-latex::a_document_started_from_its_own_dumped_preamble_has_one_documentclass
 # owner: lintv (2026-11-18), facts: no Ref occurrence for a \ref in a command argument, accent occurrence in a footnote missed
 lint_contexts::prose_rules_find_their_trigger_in_footnotes
 # owner: Root L (W2), 7 paths
@@ -56,9 +46,5 @@ termination::convergence::tikz_nodes_of_unknown_width
 documents::pgfmath_signed_random_count_plus_a_constant_stays_in_range
 # Open (2026-11-18, owner: main, stack joins at loop heads): since call summaries keep no text of other arguments (u3gw), pgfmath's parser runs for real here and its operation stack (toks) is joined at a loop head as one-of {`{neg}…`, `…`}; a pop then takes `neg` or the empty operator (missing-number at pgfmathparser:803). stack_depth keeps such paths apart only at partner joins.
 documents::tikz_bend_to_a_point_of_unknown_width_closes_the_picture
-latex::a_file_a_shell_program_may_write_may_exist
-# Open (2026-11-19, owner: cex): latexminted writes its config under no -o/--outfile, so satex knows the file absent and minted's "executable is not installed" error is certain; a may-exist file that is not read must make the macros it may define unknown.
 latex::a_name_read_under_assumed_category_codes_is_no_certain_error
 # Open (2026-11-19, owner: cex): the test needs a line-budget cut inside `\spin`, but the loop is now summarized after a few passes and never reaches the budget; a fixed 400000 instead cut `\begin{document}` (877k steps now). Needs a cut that does not come from a loop (a big non-repeating expansion) or a test hook for a line cut.
-# Open (2026-11-19, owner: sound2 / main): the build's second run walks `\include{ch2}` with a name of unknown text (the cut left the chapters' `.aux` unknown); expl3's `\__file_name_strip_quotes:nw` splits it at `"` in a nested drive, the `\if_meaning` tail arm feeds `{0+1}<unknown>` to `\int_if_odd:nT`, and that library "missing number" (expl3-code.tex:12517) is a certain C007 at `\include`. took_unknown_arm sees no choice there (made in another drive/command). A path flag set per choice by `\unknown` + no certain_error exemption on such arms makes it green but turned latex::an_error_in_the_document_is_recovered_like_tex and latex::a_package_stays_cacheable_past_a_line_that_joined_paths red; patch target/scratch/sound2/patch/arm-rule.patch.txt.
-documents::cut_inside_include_reads_the_later_chapters

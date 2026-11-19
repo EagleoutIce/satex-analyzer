@@ -2822,7 +2822,11 @@ fn convert_verdict(c: Convert) -> Judgment {
         C::StrCmp | C::EscapeHex | C::UnescapeHex | C::EscapeString | C::EscapeName => {
             at!(V::Exact, "the manual's own algorithm, run for real")
         }
-        C::FileSize | C::FileDump | C::MdFiveSum => at!(V::Exact, "reads the real file"),
+        C::FileDump | C::MdFiveSum => at!(V::Exact, "reads the real file"),
+        C::FileSize => at!(
+            V::Approximated,
+            "a project file's size: only whether it is empty, so an edit leaves what was read before standing"
+        ),
         C::FileModDate => {
             at!(V::Approximated, "the form of a date, its digits unknown: satex does not read file modification times")
         }

@@ -2274,6 +2274,17 @@ impl Machine<'_> {
         }
     }
 
+    /// A `\par` from the code of the document's command now running, not
+    /// from an argument read after it: that command ends a paragraph.
+    fn note_paragraph_end(&mut self, at: Span) {
+        let Some(call) = self.out.graph.reader.and_then(|r| self.out.graph.vertex(r)) else { return };
+        let (name, from) = (call.name, call.span);
+        if (at.file == from.file && at >= from) || !self.own_file(from.file) {
+            return;
+        }
+        self.out.facts.paragraph_enders.insert(name);
+    }
+
     /// `\par` (tex.web § 1094).
     fn par(&mut self) {
         let acting = self.mode.and(Modes::ANY_VERTICAL.union(Modes::HORIZONTAL));
@@ -2950,7 +2961,10 @@ impl Machine<'_> {
     pub(crate) fn mode_command(&mut self, cmd: ModeCmd, by: Sym, span: Span) {
         let token = Token::new(Tok::Cs(by), span);
         match cmd {
-            ModeCmd::Par => self.par(),
+            ModeCmd::Par => {
+                self.note_paragraph_end(span);
+                self.par()
+            }
             ModeCmd::StartPar { .. } | ModeCmd::QuitVMode => {
                 // tex.web § 1093: `\indent` in horizontal mode appends an
                 // empty box `\parindent` wide.
@@ -3061,10 +3075,11 @@ impl Machine<'_> {
                 self.env.set_value(sym, depth, false);
                 self.normal_paragraph(false);
             }
-            // tex.web § 1129: outside every alignment it is "Misplaced \noalign", ignored.
-            ModeCmd::NoAlign if !self.env.nests().flatten().any(|n| n.code == Some(group::ALIGN)) => {
+            // tex.web §§ 1126, 1129: anywhere but `align_peek` it is "Misplaced \noalign", ignored.
+            ModeCmd::NoAlign if !self.may_peek() => {
                 self.diagnose(Severity::Warning, "illegal-in-mode", span, "Misplaced \\noalign".into());
             }
+            // Joined paths, no known mode or a `\valign`: between rows or not.
             ModeCmd::NoAlign => {
                 let modes = Modes::INTERNAL_VERTICAL.union(Modes::RESTRICTED_HORIZONTAL);
                 self.open_list(Some(group::NO_ALIGN), modes, 0, span);
@@ -3852,6 +3867,17 @@ impl Machine<'_> {
     /// comes next (tex.web § 785 `align_peek`).
     pub(crate) fn between_rows(&self) -> bool {
         self.mode == ALIGN_MODES && self.list == Modes::RESTRICTED_HORIZONTAL && self.halign().is_some()
+    }
+
+    /// Whether the run may be at `align_peek` (tex.web § 785): between the
+    /// rows of the innermost alignment, or in no mode satex knows. A join
+    /// with a path between rows keeps its `\vmode` bit; a `\valign`'s rows
+    /// are not followed.
+    fn may_peek(&self) -> bool {
+        let rows = self.env.nest().filter(|n| n.code == Some(group::ALIGN));
+        self.env.in_alignment()
+            && (self.mode.is_empty()
+                || rows.is_some_and(|n| n.align.is_none() || self.mode.meets(Modes::INTERNAL_VERTICAL)))
     }
 
     /// tex.web § 785: what a primitive does between rows. Anything but
@@ -5342,7 +5368,7 @@ impl Machine<'_> {
         // nothing, so it may not be passed over as a zero-size command.
         if p == Primitive::Command(Syntax::Nothing) {
             let name = self.name(self.env.identity(by));
-            let (cr, crcr, span) = (name == "cr", name == "crcr", name == "span");
+            let (cr, crcr, span, omit) = (name == "cr", name == "crcr", name == "span", name == "omit");
             if name == "/" {
                 return self.italic_correction();
             }
@@ -5356,6 +5382,12 @@ impl Machine<'_> {
             if span {
                 self.align_cell(true);
                 self.template_next_cell(true, at);
+            }
+            // tex.web §§ 1126, 1129: an `\omit` a cell's start did not take
+            // (§ 788) is misplaced, where satex ran the cell's template.
+            if omit && (!self.env.in_alignment() || self.templated() && !self.may_peek()) {
+                let msg = "Misplaced \\omit".into();
+                return self.diagnose(Severity::Warning, "illegal-in-mode", at, msg);
             }
         }
         // `\pdfrefximage` adds its box once its number is read, and so do

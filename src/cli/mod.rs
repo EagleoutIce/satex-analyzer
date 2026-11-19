@@ -13,6 +13,8 @@ pub mod query;
 pub mod render;
 mod summary;
 mod tokens;
+#[cfg(target_os = "linux")]
+pub mod warm;
 
 use std::io::Write;
 

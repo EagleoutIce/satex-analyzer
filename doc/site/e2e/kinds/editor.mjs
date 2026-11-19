@@ -119,3 +119,121 @@ export async function dated(p, sc) {
   if (now || /error|older/.test(bar1)) res.fails.push(`the build of the fixed text still shows a failure: ${J(now || bar1)}`);
   return res;
 }
+
+/** `hoverlate`: `\toprul` Tab in a tabular writes `\toprule` and its `\usepackage{booktabs}`; the pointer rests on
+ * `\toprule` while the run of that text goes on. Once the runs end, the open card is the new text's (its macro card),
+ * never the last run's "not reached" or a "shows once the analysis ends" left standing. */
+export async function hoverlate(p, sc) {
+  const res = { name: sc.name, fails: [], perf: [], info: {} };
+  const { setText } = await import('../engine.mjs');
+  const quiet = () => p.until(`(() => { const h = satexHealth(); if (h.busy || h.due || h.running || h.queued || h.pending) { self.__q = null; return false; } self.__q ??= performance.now(); return performance.now() - self.__q > 1500; })()`, 240000);
+  await example(p, 'hello.tex');
+  await started(p);
+  await setText(p, sc.text);
+  await quiet();
+  const raw = (key, code, mod = 0) => ['rawKeyDown', 'keyUp'].reduce((q, type) => q.then(() => p.s('Input.dispatchKeyEvent', { type, key, code: key, windowsVirtualKeyCode: code, modifiers: mod })), Promise.resolve());
+  await raw('Home', 36, 2); for (let i = 1; i < sc.line; i++) await raw('ArrowDown', 40); await raw('End', 35);
+  for (const k of sc.keys) { await p.key(k); await sleep(150); }
+  await sleep(1500);
+  await p.key('Tab');
+  await sleep(500);
+  const at = await p.eval(`(() => { const l = [...document.querySelectorAll('.cm-line')].find((x) => x.textContent.includes(${J(sc.word)})); const w = l && document.createTreeWalker(l, NodeFilter.SHOW_TEXT); let n; while (w && (n = w.nextNode())) { const i = n.textContent.indexOf(${J(sc.word.slice(1))}); if (i >= 0) { const r = document.createRange(); r.setStart(n, i + 2); r.setEnd(n, i + 3); const b = r.getBoundingClientRect(); return [b.x + 1, b.y + b.height / 2]; } } return null; })()`);
+  if (!at) { res.fails.push(`setup: no ${sc.word} written: ${J(await p.eval(`satexHealth().text`))}`); return res; }
+  await p.s('Input.dispatchMouseEvent', { type: 'mouseMoved', x: at[0], y: at[1] });
+  await sleep(600);
+  await quiet();
+  await sleep(800);
+  const card = await p.eval(`[...document.querySelectorAll('.hover')].filter((t) => t.offsetParent).map((t) => t.textContent).join(' || ')`);
+  res.info.card = card.slice(0, 120);
+  if (!sc.want.test(card)) res.fails.push(`the card once the runs ended: ${J(card.slice(0, 160))}, want ${sc.want}`);
+  return res;
+}
+
+/** `heldback`: a key at a finding's place holds it back while typing goes on (the word is unfinished); once typing
+ * pauses it shows, with no new run. `line` (from 1) starts with `key`'s character typed and then erased. */
+export async function heldback(p, sc) {
+  const res = { name: sc.name, fails: [], perf: [], info: {} };
+  const count = () => p.eval(`document.getElementById('lsp-count').textContent`);
+  const quiet = () => p.until(`(() => { const h = satexHealth(); return !h.busy && !h.due && !h.running && !h.queued && !h.pending; })()`, 120000);
+  await example(p, 'hello.tex');
+  await started(p);
+  await quiet();
+  const before = await count();
+  const at = await p.eval(`(() => { const r = document.querySelectorAll('.cm-line')[${sc.line - 1}].getBoundingClientRect(); return [r.left + 1, r.top + r.height / 2]; })()`);
+  await p.mouse(...at);
+  await p.key(sc.key);
+  await sleep(500); await quiet();
+  await p.key('Backspace');
+  await sleep(500); await quiet();
+  // past the hold after the last key
+  await sleep(4500);
+  const after = await count();
+  res.info = { before, after };
+  if (after !== before) res.fails.push(`findings after the key was erased and typing paused: ${after}, before ${before}`);
+  return res;
+}
+
+/** `fixfile`: in example `example`, the Findings panel's Fix of the finding that reads `finding` edits only another
+ * file: that file is shown with the caret on the edited line (`line` in it), the note names the file. */
+export async function fixfile(p, sc) {
+  const res = { name: sc.name, fails: [], perf: [], info: {} };
+  await example(p, sc.example);
+  await started(p);
+  await p.until(`!satexHealth().busy && [...document.querySelectorAll('#lsp-diagnostics li[data-i]')].some((l) => l.textContent.includes(${J(sc.finding)}))`, 120000);
+  await p.eval(`document.querySelector('[data-panel=play-findings]').click()`);
+  await p.eval(`[...document.querySelectorAll('#lsp-diagnostics li[data-i]')].find((l) => l.textContent.includes(${J(sc.finding)})).querySelector('button.apply').click()`);
+  await sleep(1000);
+  const [file, row, toast] = await p.eval(`[satexHealth().file, document.querySelector('.cm-activeLine')?.textContent ?? '', document.getElementById('play-toast').textContent]`);
+  res.info = { file, row, toast };
+  if (file !== sc.file) res.fails.push(`shown after the fix: ${file}, want ${sc.file}`);
+  if (!row.includes(sc.line)) res.fails.push(`the caret's line after the fix: ${J(row)}, want one with ${J(sc.line)}`);
+  if (!toast.includes(sc.file)) res.fails.push(`the note does not name ${sc.file}: ${J(toast)}`);
+  return res;
+}
+
+/** `gutterkey`: a click on line number `line` of hello.tex, then a key: the key lands at that line's start. */
+export async function gutterkey(p, sc) {
+  const res = { name: sc.name, fails: [], perf: [], info: {} };
+  await example(p, 'hello.tex');
+  await started(p);
+  const at = await p.eval(`(() => { const g = [...document.querySelectorAll('.cm-lineNumbers .cm-gutterElement')].find((e) => e.textContent === ${J(String(sc.line))}); const r = g.getBoundingClientRect(); return [r.left + r.width / 2, r.top + r.height / 2]; })()`);
+  await p.mouse(...at);
+  await sleep(200);
+  await p.key('W');
+  await sleep(300);
+  const row = await p.eval(`satexHealth().text.split('\\n')[${sc.line - 1}]`);
+  res.info.row = row;
+  if (!row.startsWith('W')) res.fails.push(`line ${sc.line} after a click on its number and W: ${J(row)}`);
+  return res;
+}
+
+/** `typeundo`: in the Typeset view a click on `word` of hello.tex and a key types it; Ctrl+Z there undoes it in the
+ * source, Ctrl+Shift+Z redoes it, and the next key still types (the caret follows the undo). */
+export async function typeundo(p, sc) {
+  const res = { name: sc.name, fails: [], perf: [], info: {} };
+  await example(p, 'hello.tex');
+  await started(p);
+  await p.until(`!satexHealth().busy`, 60000);
+  await p.eval(`document.querySelector('[data-panel=play-typeset]').click()`);
+  const at = await p.until(`(() => { const w = document.createTreeWalker(document.getElementById('typeset-body'), NodeFilter.SHOW_TEXT); let n; while ((n = w.nextNode())) { const i = n.textContent.indexOf(${J(sc.word)}); if (i >= 0) { const r = document.createRange(); r.setStart(n, i + 2); r.setEnd(n, i + 3); const b = r.getBoundingClientRect(); return b.width && [b.left + 1, b.top + b.height / 2]; } } return null; })()`, 30000);
+  if (!at) { res.fails.push(`setup: no ${sc.word} in the Typeset view`); return res; }
+  const text = () => p.eval(`satexHealth().text`);
+  const mod = async (shift) => { for (const type of ['rawKeyDown', 'keyUp']) await p.s('Input.dispatchKeyEvent', { type, key: shift ? 'Z' : 'z', code: 'KeyZ', windowsVirtualKeyCode: 90, modifiers: 2 | (shift ? 8 : 0) }); await sleep(300); };
+  await p.mouse(...at);
+  await sleep(800);
+  const t0 = await text();
+  await p.key('K'); await sleep(400);
+  const t1 = await text();
+  await mod(false);
+  const t2 = await text();
+  await mod(true);
+  const t3 = await text();
+  await mod(false);
+  await p.key('J'); await sleep(400);
+  const t4 = await text();
+  if (t1 === t0) { res.fails.push('setup: the key did not type'); return res; }
+  if (t2 !== t0) res.fails.push('Ctrl+Z in the Typeset view did not undo the key');
+  if (t3 !== t1) res.fails.push('Ctrl+Shift+Z did not redo it');
+  if (t4 === t0) res.fails.push('the key after the undo did not type');
+  return res;
+}

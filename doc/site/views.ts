@@ -3715,7 +3715,7 @@ button.tv-spec-value { cursor: pointer; } button.tv-spec-value:hover, button.tv-
     version == null || final == null || (preview ? version > final : version >= final);
   /** Completion lists the playground answers from while the worker is busy (playground.js `completions`). */
   type Completion = { label: string; detail?: string; filterText?: string; sortText?: string; insertText?: string; insertTextFormat?: number; textEdit?: { newText: string };
-    args?: string; math?: boolean; doc?: string; data?: { math?: boolean; args?: string | null; doc?: string } };
+    additionalTextEdits?: unknown[]; args?: string; math?: boolean; doc?: string; data?: { math?: boolean; args?: string | null; doc?: string } };
   /** A command's snippet from its argument letters (`m` mandatory, `o` optional, `s` star: the lean scope's `args`), as the
    * server writes one: an optional argument a removable `[options]` field, a mandatory one `{}` with a field, the star left
    * out. The caret takes the first field, Tab the next. Null without arguments. */
@@ -3782,6 +3782,10 @@ button.tv-spec-value { cursor: pointer; } button.tv-spec-value:hover, button.tv-
     if (!x || /[A-Za-z@\s]/.test(x)) return null;
     return /\\*$/.exec(before.slice(0, -1))![0].length % 2 ? x : null;
   };
+  /** `name` typed in full, and taking item `i` (the server's, with its snippet) writes nothing more (`\\noindent`: no
+   * braces, no load): Enter after it is the key's own new line, not the item. A prefix or a name with arguments takes it. */
+  const whole = (i: Completion | undefined | null | false, name: string): boolean => !!i && i.label === name
+    && String(i.insertText ?? i.textEdit?.newText ?? i.label) === name && !opensArgument(i) && !i.additionalTextEdits?.length;
   /** The one-line description of an item: the lean record's `doc`, else the server item's. */
   const docOf = (i: Completion): string => i.doc ?? i.data?.doc ?? '';
   /** Completion order: how well the item matches first (the exact name, a prefix of the label, a part of it, a part of
@@ -3838,6 +3842,6 @@ button.tv-spec-value { cursor: pointer; } button.tv-spec-value:hover, button.tv-
     }
     return out;
   };
-  return { followRows, rowsWin, complete: { rank, kept, reselect, controlSymbol, snippet, mathItem, docOf, plainSnippet, opensArgument, stepsOver, previewOf, tikzTarget }, loads: { unlanded, lacked }, tipBag, yaml, history: { historyEvent }, render, RENDER, hue, passes, masterDetail, usesView, fold, SPEC, mix, colorBand, oklch, drawing: { expandStyles, STYLE_DEF, parse, emit, mermaidIn, mermaidOut, mermaidLoss, layout, importMermaid, tipsOf, toMatrix, cellPlaces, toLayer, picOptions, relocate, relPos, nearestAnchor, anchorAt, tipMarker, shapeSample, shapeList, cycle, STYLE }, forest: forestFns, circuit: { parse: cParse, body: cBody, emit: cEmit }, page: { pageOf, pageBox, textArea, styleNow, taggedNote, pageNodes, numberNodes, numberInForce, headerOf, headerCalls, headerNodes, footSetup, fmtRead, fmtWrite, styleNodes, styleSet, styleEdits }, dev: { traceCsv, stateHtml }, templates: { fill, filled, chosen } };
+  return { followRows, rowsWin, complete: { rank, kept, reselect, controlSymbol, whole, snippet, mathItem, docOf, plainSnippet, opensArgument, stepsOver, previewOf, tikzTarget }, loads: { unlanded, lacked }, tipBag, yaml, history: { historyEvent }, render, RENDER, hue, passes, masterDetail, usesView, fold, SPEC, mix, colorBand, oklch, drawing: { expandStyles, STYLE_DEF, parse, emit, mermaidIn, mermaidOut, mermaidLoss, layout, importMermaid, tipsOf, toMatrix, cellPlaces, toLayer, picOptions, relocate, relPos, nearestAnchor, anchorAt, tipMarker, shapeSample, shapeList, cycle, STYLE }, forest: forestFns, circuit: { parse: cParse, body: cBody, emit: cEmit }, page: { pageOf, pageBox, textArea, styleNow, taggedNote, pageNodes, numberNodes, numberInForce, headerOf, headerCalls, headerNodes, footSetup, fmtRead, fmtWrite, styleNodes, styleSet, styleEdits }, dev: { traceCsv, stateHtml }, templates: { fill, filled, chosen } };
 })();
 self.satexViews = satexViews;

@@ -18,6 +18,9 @@ pub struct Limits {
     /// command takes a few thousand, hyperref's `\GetTitleString` a million. Eight runs answer one
     /// question at most.
     pub probe_steps: u64,
+    /// Packages a write may try for a name it adds that the run lacks, most loaded first, each a
+    /// small run of the call ([`crate::linter::shared::provider_for`]). 0: the most loaded, untried.
+    pub provider_probes: u32,
     pub format_steps: u64,
     /// How deep `\input` may nest.
     pub file_depth: u16,
@@ -217,6 +220,21 @@ pub struct Limits {
     /// outside it.  Results never depend on it, only how far back a rerun
     /// resumes.
     pub checkpoint_memory: bytesize::ByteSize,
+    /// Steps between two checkpoints at first, and how many a run keeps: past
+    /// that number every other one goes and the spacing doubles.
+    pub checkpoint_steps: u64,
+    pub checkpoints: usize,
+    /// In the body a checkpoint is also due between top-level lines after
+    /// this fraction of the spacing.
+    pub checkpoint_body_share: u64,
+    /// After an edit's line: one kept checkpoint past each of this many pages
+    /// shipped, where the next edit's run may meet this one.
+    pub checkpoints_after_edit: u32,
+    /// After an edit where the last run kept no checkpoint nearby, the text before the
+    /// edit is run again from the checkpoint before it to place some: at the edit and
+    /// past it, where the run of the new text may meet the last one. At most this many
+    /// steps past the edit's line.
+    pub checkpoint_meet_steps: u64,
     /// Threads any parallel work may use; 0 lets satex choose.  The
     /// interpreter runs on one thread because TeX's state is one machine, so
     /// this bounds the file walks around it.
@@ -252,6 +270,7 @@ impl Limits {
             "line_overruns" => self.line_overruns.into(),
             "walk_per_step" => self.walk_per_step,
             "probe_steps" => self.probe_steps,
+            "provider_probes" => self.provider_probes.into(),
             "replay_steps" => self.replay_steps,
             "repeat_failures" => self.repeat_failures.into(),
             "seconds" => self.seconds,
@@ -289,6 +308,11 @@ impl Limits {
             "save_stack" => self.save_stack as u64,
             "memory" => self.memory.as_u64(),
             "checkpoint_memory" => self.checkpoint_memory.as_u64(),
+            "checkpoint_steps" => self.checkpoint_steps,
+            "checkpoints" => self.checkpoints as u64,
+            "checkpoint_body_share" => self.checkpoint_body_share,
+            "checkpoints_after_edit" => self.checkpoints_after_edit.into(),
+            "checkpoint_meet_steps" => self.checkpoint_meet_steps,
             _ => return None,
         })
     }
@@ -311,6 +335,7 @@ impl Default for Limits {
         Limits {
             steps: 4_000_000_000,
             probe_steps: 2_000_000,
+            provider_probes: 4,
             // The real expl3 reads the Unicode data files while the kernel
             // is built; that is done once and then cached.
             format_steps: 9_000_000_000,
@@ -393,6 +418,11 @@ impl Default for Limits {
             // starts swapping.
             memory: bytesize::ByteSize::gib(8),
             checkpoint_memory: bytesize::ByteSize::gib(1),
+            checkpoint_steps: 1 << 23,
+            checkpoints: 8,
+            checkpoint_body_share: 8,
+            checkpoints_after_edit: 2,
+            checkpoint_meet_steps: 1 << 22,
             threads: 0,
             cache_size: bytesize::ByteSize::gib(2),
         }
@@ -658,6 +688,10 @@ pub struct CompileConfig {
     pub explain: bool,
     /// Engine passes at most of the `satex` build, until the build files rest.
     pub passes: u32,
+    /// The `satex` build keeps a warm engine for the next build: pdfTeX on its format, waiting to
+    /// open the main file, a named pipe in its place between builds (`src/cli/warm.rs`). For a
+    /// build directory of its own (the playground's), never a project's: the main file is a pipe then.
+    pub warm: bool,
     /// A PDF viewer to open after a build: `none`, `auto` (the system's
     /// default opener), or a program. Only the user's own config sets it.
     pub viewer: String,
@@ -665,7 +699,7 @@ pub struct CompileConfig {
 
 impl Default for CompileConfig {
     fn default() -> CompileConfig {
-        CompileConfig { system: "auto".into(), viewer: "none".into(), explain: true, passes: 4 }
+        CompileConfig { system: "auto".into(), viewer: "none".into(), explain: true, passes: 4, warm: false }
     }
 }
 
@@ -944,6 +978,9 @@ pub struct PlaygroundConfig {
     pub check_delay: u32,
     /// How long the edits rest before a PDF build, in ms. 0 builds only on request.
     pub compile_after: u32,
+    /// How long the edits rest before a PDF build on this machine's TeX (`satex gui`), in ms: the
+    /// build does not wait for the analysis there, nor for `compile_after`. 0 waits for the analysis.
+    pub compile_rest: u32,
     /// Type mode on in the Typeset view from the start.
     pub type_mode: bool,
     /// Type mode's tint of text a macro wrote, a CSS color. Empty takes the theme's.
@@ -988,6 +1025,7 @@ impl Default for PlaygroundConfig {
             line_numbers: true,
             check_delay: 400,
             compile_after: 0,
+            compile_rest: 0,
             type_mode: true,
             tint_macro: String::new(),
             tint_argument: String::new(),

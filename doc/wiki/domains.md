@@ -86,6 +86,8 @@ Every character has one of TeX's sixteen category codes ([The TeXbook, chapter 7
 
 A character whose category is not pinned keeps the set of categories it may have, one bit each (`CatcodeTable::unknown`, [tex.web § 232](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L4811)). A join unions the sets, the save stack restores them (per group, only the first save of a slot on each path joins: it is what the group's end leaves), and `\the\catcode` reads them as a set of numbers. Callers ask `cats` or `is_unknown` before trusting `get`.
 
+The table a LaTeX format hands to the document is the kernel run's own for ASCII: latex.ltx's loops make `^^@` invalid (15), the control characters 1-31 active, tab a space, `^^J` other and `^^L` active. The format cache stores these codes. Codes 128-255 stay letters, a named limit: satex reads characters, where utf8.def makes the bytes active.
+
 ## Character codes as sets
 
 Code table entries (`\lccode`, `\uccode`, `\sfcode`, `\mathcode`, `\delcode`, [tex.web § 1232](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L23040)) hold a `Value`, joined like registers.
@@ -512,6 +514,7 @@ The diagram follows `Ty::parent`, one colour per family: the top `any` (grey), q
 | known text | `\immediate\openout` empties it, each `\write` appends a line. An `\immediate` `\write` token for one of several texts parts the path per text, so each writes it exactly. Other unknown parts are written as one character per class, which reads back as that class. |
 | deferred | a `\write`, `\openout` or `\closeout` without `\immediate` is a whatsit (`Whatsit`): its stream is read now, its text kept unexpanded ([tex.web § 1352](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L24702)). `\shipout`, a page without output routine ([tex.web § 1023](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L19900)) and the end of the run ([tex.web § 1054](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L20477)) run the whatsits in order, a text expanded in the environment then ([tex.web §§ 1370](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L24846), [1374](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L24914)), after the shipout hooks ran. A token for one of several texts writes each text, the files joined. |
 | unknown text | a `\write` to a stream number not pinned adds a line of unknown text to every open file |
+| any file, text outside the run | a `\write18` program whose command line names no output (`-o`, `--outfile`) may write any file (`ANY_OUTPUT`): from then on any file name may exist, its text unknown. An `\input` of it is not followed, and the path is marked `read_outside`: no later error on it is certain. |
 | a set of texts | paths that wrote it differently: texts whose lines pair one by one join line by line (`join_written`), so each differing line keeps its values and the file is not kept once per combination of them. Texts that set different things stay apart, up to `limits.meaning_set`. A read parts the path per text. Past an `\input` of such a file every path has the same source progress (the file's length), so the paths join where they meet again. |
 
 - **Whatsits join** as a set of lists, one per alternative (`join_pending`). At shipout each list runs from the same files, and the files join. Past `limits.meaning_set` lists, one `Lost` whatsit: every open file may get any lines, and the opens and closes the lists held may happen.
@@ -599,6 +602,23 @@ Rules that keep cuts sound and convergent:
 - **Loops over unknown text** (`limits.widen_after`) need not fork: a delimited argument split off unknown text puts its rest back as a fresh rest with a new serial, so no round meets the last one's state exactly, and a round that writes nothing leaves no call summary. A call whose arguments hold such rests, met again in its last round's state but for its rests (by class, a run of them as one), is such a loop. After `widen_after` rounds in a row it is cut like a recursion: what it wrote since it was met again may hold anything, its expansion is unknown text. It is never reported as an endless loop, since TeX may end it.
 - **Unwinding** drops token lists and closes the conditionals and groups their text opened ([tex.web §§ 281](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L6035)–[283](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L6070)), widening values a group restores. Levels left open become [stacks as intervals](#stacks-as-intervals).
 - **The output routine** is a unit: an open output group ([tex.web § 989](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L19360)), flushed with its conditionals when it ends ([tex.web § 1100](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L21213)).
+
+## After an edit: the last run's rest
+
+An edit reruns little. The run resumes at the last saved state whose input is unchanged. It stops where its state meets the last run's again: from there the last run's rest is this run's. Nothing is approximated, the result is the full run's.
+
+| Step | Rule |
+| --- | --- |
+| resume | at the last saved state that read nothing changed. A file it has open must begin as it did. A project file's size is one unknown number per file, 1 to 2³¹-1, or `0` for an empty one: `\IfFileExists` and `\include` ask for it before they open the file (l3file's `\file_full_name:n`), and an edit must not change what they read. Two reads of one file are one token, so the test of `name` against `name.tex` is decided. |
+| place | the first edit at a place finds no state of the last run nearby. The old text is run again from the state before it, only to save states: one at the edit's line, `limits.checkpoints_after_edit` on the first lines past it between paragraphs. It is the last run again, checked by the files it reads. It looks at most `limits.checkpoint_meet_steps` steps past the edit. |
+| meet | at a line start between paragraphs where the last run saved a state with the same text left to read. Modes, lists, conditionals, groups, saves, files written and held, names, facts and the graph must be equal. Counts that are absolute (source read, assignments, groups) compare by how long ago when made since the runs parted. |
+| delta | bindings may differ. Per name the run keeps the step of its last read or write. A name the last run's rest never touched keeps this run's binding to the end. One it touched ends the reuse, and the run goes on. |
+| lists | a recorded list (a paragraph's items, a page's boxes) is named by where it was made. The run begins with every list the last run made, each under its name, so one list has one name in both and its own new lists come after. Without that the runs do not meet. |
+| rest | reused only when every file the last run read after the meeting line still holds. An edit the rest has yet to read is run. |
+| splice | the last run's records after the meeting line follow this run's. Character offsets move by the edit's length: the characters set alike before and after the edited ones align. Rows and graph vertices on the edited lines are this run's. |
+| bound | `limits.checkpoints`, `limits.checkpoint_steps`, `limits.checkpoint_body_share`, `limits.checkpoint_memory`. They change how far a rerun resumes, never a result. |
+
+An edit that adds a name, a fact row or a graph vertex (a new `\label`, a typed command) does not meet: later rows are numbered by position. The run then goes on to the end.
 
 ## The join, in general
 

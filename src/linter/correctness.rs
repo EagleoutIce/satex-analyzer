@@ -949,7 +949,7 @@ fn missing_file(
         (severity == Severity::Error && package && request).then(|| edits.delete_load_at(span, name)).flatten();
     match (delete, hint) {
         (Some(edits), Some(hint)) => {
-            let fix = Fix::new(format!("{hint}; or delete the load"), Applicability::Unsafe, Some(edits));
+            let fix = Fix::new(format!("{hint}, or delete the load"), Applicability::Unsafe, Some(edits));
             report.add_fix_as(severity, span, name, message, fix)
         }
         (_, hint) => report.add_as(severity, span, name, message, hint),
@@ -1259,7 +1259,7 @@ fn catcode_escapes_group(report: &mut Report) {
     if report.analysis.plugins.kernel.source().is_none() {
         return;
     }
-    let base = crate::engine::tex::CatcodeTable::latex();
+    let base = crate::analysis::machine::FormatInfo::table(report.analysis.format.as_ref());
     let changed = report.analysis.catcodes.diff(&base);
     let sites: Vec<(Span, String)> = report
         .analysis

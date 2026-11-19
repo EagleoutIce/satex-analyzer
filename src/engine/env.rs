@@ -246,6 +246,12 @@ pub struct Env {
     read_log: std::cell::RefCell<Vec<(u32, u64)>>,
     /// Whether the log passed [`READ_LOG`] and stopped, so it is incomplete.
     log_full: std::cell::Cell<bool>,
+    /// When the log was cleared, how long it was then, and how long when last asked
+    /// ([`Env::read_log_peak`]).
+    #[serde(skip)]
+    read_spans: std::cell::RefCell<Vec<(u64, usize, usize)>>,
+    #[serde(skip)]
+    read_asked: std::cell::Cell<usize>,
     /// While a call's effect may be kept ([`MemoLog`]).
     /// Path switches (rewinds, resumes): a run another path's steps
     /// interleaved keeps no effect.
@@ -258,6 +264,73 @@ pub struct Env {
     /// Map entries walked, for `Machine::charge`.
     #[serde(skip)]
     pub walked: Walked,
+    /// While a run keeps checkpoints: when each slot was last read or written.
+    #[serde(skip)]
+    pub touched: LastUse,
+}
+
+/// When each entry of a table (a slot, a recorded list's node) was last used, as the run's
+/// step count at its current top-level command: what the run from any point on depended on
+/// is every entry with a later time. After an edit the last run's rest is reused only where
+/// it used nothing the new run holds differently. A copy of the table's owner (a checkpoint,
+/// a probe) keeps the time and starts without the times.
+#[derive(Default)]
+pub struct LastUse {
+    on: std::cell::Cell<bool>,
+    now: std::cell::Cell<u64>,
+    last: std::cell::RefCell<Vec<u64>>,
+}
+
+impl Clone for LastUse {
+    fn clone(&self) -> Self {
+        LastUse { now: self.now.clone(), ..LastUse::default() }
+    }
+}
+
+impl LastUse {
+    /// Notes entry `i` as used now.
+    #[inline]
+    pub fn note(&self, i: usize) {
+        if self.on.get() {
+            let mut last = self.last.borrow_mut();
+            if i >= last.len() {
+                last.resize(i + 1, 0);
+            }
+            last[i] = self.now.get();
+        }
+    }
+
+    /// The time [`LastUse::note`] notes from now on.
+    #[inline]
+    pub fn tick(&self, now: u64) {
+        self.now.set(now);
+    }
+
+    /// Notes every use from now on, on top of `last` (an earlier run's [`LastUse::times`],
+    /// which this one resumes at `now`: what that run used later, this one has not).
+    pub fn track(&self, mut last: Vec<u64>, now: u64) {
+        last.iter_mut().for_each(|t| *t = (*t).min(now));
+        self.on.set(true);
+        self.now.set(now);
+        *self.last.borrow_mut() = last;
+    }
+
+    /// Per entry, when it was last used, 0 for never.
+    pub fn times(&self) -> Vec<u64> {
+        self.last.borrow().clone()
+    }
+
+    /// `mine` (a run's times up to step `now`, where it met the last run at that run's step
+    /// `was`) with what the last run's `rest` used from there on, as many steps later.
+    pub fn joined(mut mine: Vec<u64>, rest: &[u64], was: u64, now: u64) -> Vec<u64> {
+        mine.resize(mine.len().max(rest.len()), 0);
+        for (mine, &rest) in mine.iter_mut().zip(rest) {
+            if rest >= was {
+                *mine = (*mine).max(rest - was + now);
+            }
+        }
+        mine
+    }
 }
 
 /// What running calls whose effect may be kept did to the slots: every
@@ -755,6 +828,7 @@ impl Env {
         self.logging.set(on);
         self.log_full.set(false);
         if !on {
+            self.read_span(self.read_log.borrow().len());
             self.read_log.borrow_mut().clear();
         }
     }
@@ -762,6 +836,7 @@ impl Env {
     /// Logs a read of `sym`'s meaning, or of all of it (`value`).
     #[inline]
     fn memo_read(&self, sym: u32, value: bool) {
+        self.touch(sym);
         if self.memo_on.get() {
             let mut memo = self.memo.borrow_mut();
             if memo.reads.len() >= READ_LOG {
@@ -772,6 +847,13 @@ impl Env {
                 memo.reads.push(sym | u32::from(value) << 31);
             }
         }
+    }
+
+    /// Notes `sym` as read or written now. Every read goes through [`Env::memo_read`] and
+    /// every write through [`Env::log`], a group end's restores too.
+    #[inline]
+    fn touch(&self, sym: u32) {
+        self.touched.note(sym as usize);
     }
 
     /// Whether reads go to the read log of running records.
@@ -800,6 +882,7 @@ impl Env {
     fn log_name(&self, sym: Sym) {
         let mut log = self.read_log.borrow_mut();
         if log.len() >= READ_LOG {
+            self.read_span(READ_LOG);
             log.clear();
             self.logging.set(false);
             self.log_full.set(true);
@@ -915,6 +998,23 @@ impl Env {
         }
     }
 
+    /// Notes that the read log, `len` long, is cleared now.
+    fn read_span(&self, len: usize) {
+        if len > 0 {
+            self.read_spans.borrow_mut().push((self.touched.now.get(), len, self.read_asked.replace(0)));
+        }
+    }
+
+    /// Whether a run whose read log is `longer` at step `at` than this run's was is told the
+    /// same by it from there on. It is until one of them runs over ([`READ_LOG`]), and
+    /// after both have. The longer one runs over that much sooner: alike if this run's log
+    /// never came that near the bound, or was last asked that long before it ran over.
+    pub fn read_log_alike(&self, at: u64, longer: usize) -> bool {
+        let spans = self.read_spans.borrow();
+        let (len, asked) = spans.iter().find(|s| s.0 >= at).map_or((self.read_log.borrow().len(), 0), |s| (s.1, s.2));
+        len + longer < READ_LOG || (len >= READ_LOG && asked + longer < READ_LOG)
+    }
+
     pub fn read_log_len(&self) -> usize {
         self.read_log.borrow().len()
     }
@@ -926,6 +1026,7 @@ impl Env {
             return None;
         }
         let log = self.read_log.borrow();
+        self.read_asked.set(log.len());
         let mut syms: Vec<u32> = log.get(from..)?.iter().map(|r| r.0).collect();
         syms.sort_unstable();
         syms.dedup();
@@ -940,6 +1041,7 @@ impl Env {
             return syms.is_empty().then(Vec::new);
         }
         let log = self.read_log.borrow();
+        self.read_asked.set(log.len());
         let mut met: Vec<Sym> = (log.get(from..)?.iter())
             .filter(|&&(sym, stamp)| stamp <= at && syms.binary_search(&Sym(sym)).is_ok())
             .map(|&(sym, _)| Sym(sym))
@@ -1069,13 +1171,31 @@ impl Env {
         self.marks.iter().filter(|m| !m.many).count()
     }
 
-    /// Whether `other` binds every name alike in the same groups, which saved
-    /// alike since both had made `since` (assignments, saves): before, the runs were the same.
-    pub fn alike(&self, other: &Env, since: (u64, usize)) -> bool {
+    /// Whether `other` stands in the same groups, which saved alike since both had made `since`
+    /// (assignments, saves): before, the runs were the same. With `slots`, also whether it
+    /// binds every name alike.
+    pub fn alike(&self, other: &Env, since: (u64, usize), slots: bool) -> bool {
         self.marks.len() == other.marks.len()
             && self.journal_len() == other.journal_len()
-            && self.slots.alike(&other.slots, same_slot)
+            && (!slots || self.slots.alike(&other.slots, same_slot))
             && self.saves(since.1) == other.saves(since.1)
+    }
+
+    /// Binds `slots` as `from` does, as if assigned now: the names a run's rest never
+    /// touched keep what the run before it left them ([`Env::differing`]).
+    pub fn carry(&mut self, from: &Env, slots: &[u32]) {
+        for &sym in slots {
+            let i = sym as usize;
+            self.grow(Sym(sym));
+            self.assignments += 1;
+            self.stamp.set(i, self.assignments);
+            self.level[i] = from.level_of(sym);
+            self.slots[i] = from.peek(sym).cloned();
+            match from.aliases.get(&Sym(sym)) {
+                Some(&alias) => self.aliases.insert(Sym(sym), alias),
+                None => self.aliases.remove(&Sym(sym)),
+            };
+        }
     }
 
     /// The groups and the saves made since the first `from`, as text with every token's place.
@@ -1085,10 +1205,20 @@ impl Env {
         format!("{:?}{:?}", self.marks, entries.skip(from).collect::<Vec<_>>())
     }
 
-    /// [`Env::saves`] and the bindings written since `since`: what a later
-    /// reader of this state may meet that the runs did not share.
-    pub fn trace(&self, since: (u64, usize)) -> String {
-        let written: Vec<_> = self.stamp.after(since.0).map(|i| &self.slots[i]).collect();
+    /// The slots `other` binds differently, in order.
+    pub fn differing(&self, other: &Env) -> Vec<u32> {
+        let same = |a: Option<&Option<Binding>>, b: Option<&Option<Binding>>| match (a, b) {
+            (Some(a), Some(b)) => same_slot(a, b),
+            (a, b) => a.is_none_or(Option::is_none) && b.is_none_or(Option::is_none),
+        };
+        self.slots.differing(&other.slots, same).into_iter().map(|i| i as u32).collect()
+    }
+
+    /// [`Env::saves`] and the bindings written since `since`, less the names `but` (sorted):
+    /// what a later reader of this state may meet that the runs did not share.
+    pub fn trace(&self, since: (u64, usize), but: &[u32]) -> String {
+        let kept = |i: &usize| but.binary_search(&(*i as u32)).is_err();
+        let written: Vec<_> = self.stamp.after(since.0).filter(kept).map(|i| &self.slots[i]).collect();
         self.saves(since.1) + &format!("{written:?}")
     }
 
@@ -1722,6 +1852,7 @@ impl Env {
     #[inline]
     fn log(&mut self, i: usize) {
         self.unpair(i);
+        self.touch(i as u32);
         if self.memo_on.get() {
             let memo = self.memo.get_mut();
             if memo.pre.len() >= READ_LOG {

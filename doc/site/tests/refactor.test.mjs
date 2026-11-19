@@ -295,3 +295,17 @@ test('insert: the menu rows by target, switched by the viewer', () => {
   assert.ok(rows({ kind: 'caret', caret: 3 }).includes('Footnote'));
   assert.equal(rows({ kind: 'caret', caret: 3 }, { 'type_plugins.insert.enabled': false }).length, 0);
 });
+
+// Intuition: Insert at the caret puts a block where the caret is, unless that splits a group: a caret inside a macro's
+// argument (`\greet{wo|rld}`) takes the block after the line the argument closes on; a footnote stays at the caret.
+// Pins a table written into `\greet{wo…rld}`, a paragraph inside a short argument (sweep 2026-11-19).
+test('insert: a block at the caret never splits a group', () => {
+  const text = '\\begin{document}\n\\greet{world} and more\n\nNext.\n\\end{document}\n', at = text.indexOf('rld');
+  assert.deepEqual(R.insertSpot(text, { caret: at }, false), { at: text.indexOf(' and more') + 9, mode: 'after' });
+  assert.deepEqual(R.insertSpot(text, { caret: at }, true), { at, mode: 'caret' });
+  const free = text.indexOf(' and');
+  assert.deepEqual(R.insertSpot(text, { caret: free }, false), { at: free, mode: 'caret' });
+  const { out } = insert(text, 'equation', { caret: at });
+  assert.match(out, /\\greet\{world\} and more\n\n\\begin\{equation\}\n {2}\n\\end\{equation\}\n\nNext\./);
+  assert.deepEqual(R.insertSpot('\\greet{wo', { caret: 8 }, false), { at: 8, mode: 'caret' }, 'a group never closed: at the caret');
+});

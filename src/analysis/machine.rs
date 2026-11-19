@@ -196,8 +196,9 @@ thread_local! {
     pub static BUILD_CUT: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
 }
 
-/// A build to go on with: its last run's analysis, and where it stood.
-pub type Unfinished = (Box<Analysis>, BuildPending);
+/// A build to go on with: its last run's analysis, and where it stood. Without an analysis: the
+/// files a finished build of an earlier text left, which this build starts from.
+pub type Unfinished = (Option<Box<Analysis>>, BuildPending);
 
 /// A limit (`limits.<key>` in the configuration) that cut the run.
 #[derive(PartialEq, Clone, Debug, serde::Serialize, serde::Deserialize)]
@@ -229,11 +230,21 @@ pub struct FormatInfo {
     pub rebuilt: Option<String>,
     /// The commands the kernel wrote its definitions with ([`crate::caches::exports::written`]).
     pub definers: Vec<String>,
+    /// The codes the kernel run set, against [`CatcodeTable::latex`].
+    #[serde(default)]
+    pub catcodes: Vec<(char, u8)>,
 }
 
 impl FormatInfo {
     pub fn complete(&self) -> bool {
         self.lines == 0 || self.reached * 10 >= self.lines * 9
+    }
+
+    /// The table the format hands to a document.
+    pub fn table(format: Option<&Self>) -> CatcodeTable {
+        let mut table = CatcodeTable::latex();
+        table.apply(format.map_or(&[][..], |f| &f.catcodes));
+        table
     }
 }
 
@@ -467,6 +478,10 @@ pub struct Analysis {
     /// what that run starts from ([`crate::caches::document`] keeps it).
     #[serde(skip)]
     pub build_pending: Option<Box<BuildPending>>,
+    /// The files a finished build left for its runs to read back: the next build of the
+    /// document starts from them ([`crate::caches::document`] keeps them).
+    #[serde(skip)]
+    pub build_files: Vec<(PathBuf, String)>,
     /// The packages among them that were classes.
     pub class_caches: std::collections::BTreeSet<String>,
     /// Files served at least in part from a package cache replay rather
@@ -1632,6 +1647,18 @@ pub(crate) struct SiteRuns {
 /// A site's joined text, with the one-of name it holds and that name's members.
 type SiteJoin = (Option<Rc<MacroDef>>, Option<(Sym, Vec<Meaning>)>);
 
+/// Whether two definitions take the same parameters and hold the same text.
+fn same_text_def(a: &MacroDef, b: &MacroDef) -> bool {
+    a.parameter_text == b.parameter_text && explore::same_text(&a.replacement_text, &b.replacement_text)
+}
+
+/// [`same_text_def`], prefixes and where each token was read too: nothing tells them apart.
+fn identical_text(a: &MacroDef, b: &MacroDef) -> bool {
+    same_text_def(a, b)
+        && (a.arg_spec == b.arg_spec && (a.long, a.outer, a.protected) == (b.long, b.outer, b.protected))
+        && a.replacement_text.iter().zip(b.replacement_text.iter()).all(|(x, y)| x.span == y.span)
+}
+
 /// A hash of a text's tokens, so [`Machine::site_text`] compares in full
 /// only texts whose keys are alike.
 fn site_key(d: &MacroDef) -> u64 {
@@ -2312,6 +2339,12 @@ pub struct Machine<'a> {
     /// The running path took an arm of a box test whose box it cannot see
     /// into: a library fault on it is no run (`analysis.assume_compiles`).
     pub(crate) blind: bool,
+    /// The path read a file a shell program may have written: what it holds
+    /// is outside the run, so no later error on the path is certain.
+    pub(crate) read_outside: bool,
+    /// The path a nested drive runs on took an arm over unknown text before
+    /// the drive began ([`Machine::took_unknown_arm`]).
+    pub(crate) enclosing_unknown_arm: bool,
     /// Set by a cut ([`crate::analysis::machine::explore`]): the input depth of the
     /// file under the token lists the cut left after its `\unknown`. Those
     /// lists were arguments the dropped code may have taken, so what TeX
@@ -2459,6 +2492,7 @@ struct PathState {
     mode_split: Option<(Span, usize)>,
     approximated: bool,
     blind: bool,
+    read_outside: bool,
     /// An error a nested drive's path raised: it is the enclosing
     /// command's run's to drop or contain ([`Machine::explore`]).
     dropping: (Option<String>, bool, bool, bool),
@@ -2474,7 +2508,6 @@ struct PathState {
     /// one path ends no other path's scan.
     scan_starts: Vec<(usize, bool, Span)>,
 }
-
 /// Where a path stands in the input, for telling when two paths meet: a
 /// file or a token list by what is left to read in it (paths may read
 /// different texts of a file a run wrote). Two expansions
@@ -2761,6 +2794,10 @@ const ENGINE_ERRORS: [&str; 10] = [
     "misnumbered-parameter",
 ];
 
+/// The key of [`Machine::outputs`] that stands for every file a shell
+/// program may have written without naming it.
+const ANY_OUTPUT: &str = "\u{2}any";
+
 /// tex.web § 82: after this many errors in one paragraph TeX gives up
 /// ("That makes 100 errors; please try again").
 const MAX_ERRORS: u32 = 100;
@@ -2881,6 +2918,7 @@ impl<'a> Machine<'a> {
                 written_runs: Vec::new(),
                 build_runs: 1,
                 build_pending: None,
+                build_files: Vec::new(),
                 class_caches: Default::default(),
                 cached_files: Default::default(),
                 preamble: None,
@@ -3090,6 +3128,8 @@ impl<'a> Machine<'a> {
             keep_errors: false,
             approximated: false,
             blind: false,
+            enclosing_unknown_arm: false,
+            read_outside: false,
             cut_taint: None,
             gap_depth: None,
             started: std::time::Instant::now(),
@@ -3287,7 +3327,8 @@ impl<'a> Machine<'a> {
         // The last run that was not stopped by a budget.
         let mut complete: Option<Analysis> = None;
         let mut history = Vec::new();
-        // A build an earlier process left between two runs goes on from there.
+        // A build an earlier process left between two runs goes on from there. One it finished
+        // left its files, as latexmk finds the last build's on disk: run 1 reads them.
         if let Some((earlier, pending)) = checkpoints.pending.take() {
             run = (pending.run + 1).min(runs);
             for (at, text) in pending.files {
@@ -3296,8 +3337,8 @@ impl<'a> Machine<'a> {
             }
             widened = pending.widened.into_iter().collect();
             written = pending.written.into_iter().map(|(at, texts)| (at, texts.into_iter().collect())).collect();
-            history = earlier.written_runs.clone();
-            complete = Some(*earlier);
+            history = earlier.as_ref().map(|e| e.written_runs.clone()).unwrap_or_default();
+            complete = earlier.map(|e| *e);
         }
         let mut analysis = loop {
             let before = elapsed(checkpoints);
@@ -3463,16 +3504,13 @@ impl<'a> Machine<'a> {
                     at: Span::default(),
                     count: 1,
                 });
-                placed.sort();
-                placed.dedup();
                 let mut written: Vec<_> =
                     written.iter().map(|(at, texts)| (at.clone(), texts.iter().cloned().collect::<Vec<_>>())).collect();
                 written.iter_mut().for_each(|(_, texts)| texts.sort());
                 written.sort();
                 let mut widened: Vec<_> = widened.iter().cloned().collect();
                 widened.sort();
-                let files =
-                    placed.iter().filter_map(|at| Some((at.clone(), crate::project::overlay::text(at)?))).collect();
+                let files = Machine::build_files(&mut placed);
                 analysis.build_pending = Some(Box::new(BuildPending { run, files, widened, written }));
                 break analysis;
             }
@@ -3483,12 +3521,22 @@ impl<'a> Machine<'a> {
             complete = Some(analysis);
         };
         crate::util::progress::set_run(1, 1);
+        if !analysis.stopped() {
+            analysis.build_files = Machine::build_files(&mut placed);
+        }
         if !keep {
             placed.iter().for_each(|p| crate::project::overlay::remove(p));
         }
         (analysis.package_caches, analysis.format) = caches.unwrap_or_default();
         analysis.written_runs = history;
         analysis
+    }
+
+    /// The build's files in the overlay, by path.
+    fn build_files(placed: &mut Vec<PathBuf>) -> Vec<(PathBuf, String)> {
+        placed.sort();
+        placed.dedup();
+        placed.iter().filter_map(|at| Some((at.clone(), crate::project::overlay::text(at)?))).collect()
     }
 
     /// The `.bbl` the build's bibliography tool would make from the
@@ -3741,7 +3789,7 @@ impl<'a> Machine<'a> {
         // tex.web § 1054: `\end` ships out what is left, deferred writes too.
         m.ship_pending();
         let mut written: Vec<(String, Option<String>)> =
-            m.outputs.iter().map(|(n, t)| (n.clone(), t.clone())).collect();
+            m.outputs.iter().filter(|(n, _)| *n != ANY_OUTPUT).map(|(n, t)| (n.clone(), t.clone())).collect();
         written.sort_unstable_by(|a, b| a.0.cmp(&b.0));
         m.out.written = written;
         // The document's own run only: nested runs read part of it.
@@ -4251,8 +4299,7 @@ impl<'a> Machine<'a> {
                     self.restore_format_diagnostics(&cached);
                     let definers = cached.definers().to_vec();
                     let deltas = cached.install(&mut self.out.interner, &mut self.env);
-                    self.catcodes = self.format_catcodes();
-                    self.catcodes.apply(&deltas);
+                    self.catcodes = self.format_catcodes(&deltas);
                     self.replay_calls();
                     self.out.format = Some(FormatInfo {
                         source: source.display().to_string(),
@@ -4274,6 +4321,7 @@ impl<'a> Machine<'a> {
                         steps: 0,
                         rebuilt: None,
                         definers,
+                        catcodes: deltas,
                     });
                     return;
                 }
@@ -4284,7 +4332,7 @@ impl<'a> Machine<'a> {
             self.run_without_format();
             return;
         };
-        let plain = self.format_catcodes();
+        let plain = self.format_catcodes(&[]);
         // The kernel is read under the table it hands on (see below).
         self.catcodes = plain.clone();
         self.catcodes.at_letter(true);
@@ -4318,9 +4366,11 @@ impl<'a> Machine<'a> {
         let stopped = truncated && kernel_steps < self.cfg.limits.format_steps;
         let reached =
             self.out.facts.defs.iter().filter(|def| def.span.file == id).map(|def| def.span.line).max().unwrap_or(0);
-        // latex.ltx makes the specials `other` while bootstrapping and restores them
-        // in groups; this interpreter only approximates that.
-        self.catcodes = plain;
+        // latex.ltx's own loops set the ASCII codes it dumps (`^^@` 15, `^^L` and
+        // 1-31 active on pdfTeX). 128-255 stay letters: satex reads characters,
+        // where utf8.def makes the bytes active.
+        let kernel: Vec<(char, u8)> = self.catcodes.diff(&plain).into_iter().filter(|(c, _)| c.is_ascii()).collect();
+        self.catcodes = self.format_catcodes(&kernel);
         let preload_truncated = self.run_preload();
         let sites: Vec<(u32, u16, u32)> = {
             let mut seen: HashMap<Sym, Span> = HashMap::default();
@@ -4354,6 +4404,7 @@ impl<'a> Machine<'a> {
             steps: kernel_steps,
             rebuilt,
             definers: definers.clone(),
+            catcodes: kernel.clone(),
         };
         if truncated {
             self.diagnose(
@@ -4409,8 +4460,12 @@ will look undefined",
         if let (true, Some(directory), Some(captured)) = (
             cacheable,
             &cache_dir,
-            Format::capture(&source, &self.out.interner, &self.env, files, sites, &self.wild, &roots)
-                .map(|format| format.diagnosed(&self.out.facts.diagnostics, &self.gaps).with_definers(definers)),
+            Format::capture(&source, &self.out.interner, &self.env, files, sites, &self.wild, &roots).map(|format| {
+                format
+                    .diagnosed(&self.out.facts.diagnostics, &self.gaps)
+                    .with_definers(definers)
+                    .with_catcodes(kernel.clone())
+            }),
         ) {
             let stored = captured.store(
                 directory,
@@ -4425,8 +4480,7 @@ will look undefined",
             }
             // Go on from what was cached, as a run that reads the cache does:
             // a cache never changes an answer.
-            let deltas = captured.install(&mut self.out.interner, &mut self.env);
-            self.catcodes.apply(&deltas);
+            captured.install(&mut self.out.interner, &mut self.env);
             self.out.graph = DependencyGraph::default();
             self.out.calls = CallGraph::default();
             self.out.observed = CallGraph::default();
@@ -4546,8 +4600,9 @@ will look undefined",
 
     /// The table a LaTeX format hands to a document. A package or class
     /// read as the main file has `@` a letter, as `\usepackage` gives it.
-    fn format_catcodes(&self) -> CatcodeTable {
+    fn format_catcodes(&self, kernel: &[(char, u8)]) -> CatcodeTable {
         let mut table = CatcodeTable::latex();
+        table.apply(kernel);
         let package = self.out.files.get(self.out.main_file as usize).is_some_and(|f| f.kind.is_package());
         table.at_letter(self.cfg.at_letter || package);
         table
@@ -4698,7 +4753,7 @@ will look undefined",
             ShellEscape::Restricted => RESTRICTED.split_whitespace().any(|p| p == program),
             ShellEscape::Full => true,
         };
-        if !runs || command.chars().any(crate::engine::tex::is_unknown_char) {
+        if !runs {
             return;
         }
         let (mut outputs, mut inputs, mut options) = (Vec::new(), Vec::new(), false);
@@ -4709,6 +4764,14 @@ will look undefined",
                 _ if word.starts_with('-') => options = true,
                 _ => inputs.push(word.to_string()),
             }
+        }
+        // A command line that names no output may write any file (latexminted's
+        // config): from now on any file may be there, with unknown text.
+        if outputs.is_empty() || command.chars().any(crate::engine::tex::is_unknown_char) {
+            Rc::make_mut(&mut self.outputs).insert(ANY_OUTPUT.to_string(), None);
+        }
+        if command.chars().any(crate::engine::tex::is_unknown_char) {
+            return;
         }
         let bytes: Vec<_> = inputs.iter().map(|name| self.input_bytes(name)).collect();
         if bytes.contains(&Some(None)) {
@@ -4846,7 +4909,10 @@ will look undefined",
     pub(crate) fn written_text(&self, name: &str) -> Option<Option<String>> {
         let name = name.trim();
         let name = name.strip_prefix("./").unwrap_or(name);
-        [Self::output_name(name), name.to_string()].into_iter().find_map(|n| self.outputs.get(&n).cloned())
+        [Self::output_name(name), name.to_string()]
+            .into_iter()
+            .find_map(|n| self.outputs.get(&n).cloned())
+            .or_else(|| self.outputs.get(ANY_OUTPUT).cloned().filter(|_| !name.is_empty()))
     }
 
     /// Counts a read or write of the `\read` streams: a package cache
@@ -6693,7 +6759,7 @@ will look undefined",
     /// Whether what happens now happens in every run: no undecided
     /// conditional or split path encloses it, and the mode is one mode.
     pub(crate) fn exact(&self) -> bool {
-        self.cds.is_empty() && !self.on_paths() && self.mode.is_known() && !self.after_maybe_end()
+        self.cds.is_empty() && !self.on_paths() && self.mode.is_known() && !self.after_maybe_end() && !self.read_outside
     }
 
     /// The file being read may have ended before here ([`Machine::may_run`]).
@@ -7188,11 +7254,26 @@ will look undefined",
                         runs: vec![(0, had.clone(), had.as_deref().map_or(0, site_key))],
                         ..SiteRuns::default()
                     });
-                    match site.runs.iter_mut().find(|r| r.0 == id) {
-                        Some(run) => (run.1, run.2) = (mac, key),
-                        None => site.runs.push((id, mac, key)),
-                    }
-                    self.site_text(i, span)
+                    // One copy per text, spans and all: paths that ran the same code hold the same
+                    // one, so the join below compares addresses, not texts, however many paths passed.
+                    let held = |d: &Rc<MacroDef>| {
+                        let known = site.runs.iter().filter(|r| r.2 == key).filter_map(|r| r.1.as_ref());
+                        known.into_iter().find(|k| identical_text(k, d)).cloned()
+                    };
+                    let mac = mac.map(|d| held(&d).unwrap_or(d));
+                    let was = match site.runs.iter_mut().find(|r| r.0 == id) {
+                        Some(run) => Some(std::mem::replace(run, (id, mac.clone(), key)).1),
+                        None => {
+                            site.runs.push((id, mac.clone(), key));
+                            None
+                        }
+                    };
+                    // The path's text is the one it gave last: the join stands.
+                    let stands = was.is_some_and(|was| match (&was, &mac) {
+                        (Some(a), Some(b)) => Rc::ptr_eq(a, b),
+                        (a, b) => a.is_none() && b.is_none(),
+                    });
+                    self.site_text(i, span, stands)
                 }
             };
             let previous = &mut self.out.facts.defs[i];
@@ -7209,11 +7290,13 @@ will look undefined",
     /// The texts paths gave one definition site, as one: the text they
     /// share, else a one-of token of them, past `limits.meaning_set` or for
     /// differing parameters unknown text. Made with no effect on the run.
-    fn site_text(&mut self, i: usize, span: Span) -> Option<Rc<MacroDef>> {
-        let same = |a: &MacroDef, b: &MacroDef| {
-            a.parameter_text == b.parameter_text && explore::same_text(&a.replacement_text, &b.replacement_text)
-        };
+    /// `stands`: no path's text changed since the last join.
+    fn site_text(&mut self, i: usize, span: Span, stands: bool) -> Option<Rc<MacroDef>> {
         let site = self.scratch.site_texts.get_mut(&i).expect("recorded");
+        if let Some((mac, one_of)) = site.result.clone().filter(|_| stands) {
+            return self.site_join(mac, one_of);
+        }
+        let same = same_text_def;
         // Many paths hold few distinct texts: compare in full only texts whose keys are alike.
         let mut defs: Vec<Rc<MacroDef>> = Vec::new();
         let mut seen: crate::fixed::LookupMap<u64, Vec<usize>> = Default::default();
@@ -7227,14 +7310,9 @@ will look undefined",
         }
         let every = site.runs.iter().all(|r| r.1.is_some());
         // The same distinct texts as last time, spans and all, join to the same text.
-        let identical = |a: &MacroDef, b: &MacroDef| {
-            same(a, b)
-                && (a.arg_spec == b.arg_spec && (a.long, a.outer, a.protected) == (b.long, b.outer, b.protected))
-                && a.replacement_text.iter().zip(b.replacement_text.iter()).all(|(x, y)| x.span == y.span)
-        };
         let again = site.every == every
             && site.joined.len() == defs.len()
-            && site.joined.iter().zip(&defs).all(|(a, b)| Rc::ptr_eq(a, b) || identical(a, b));
+            && site.joined.iter().zip(&defs).all(|(a, b)| Rc::ptr_eq(a, b) || identical_text(a, b));
         let (mac, one_of) = match (again, &site.result) {
             (true, Some(result)) => result.clone(),
             _ => {
@@ -7244,6 +7322,11 @@ will look undefined",
                 result
             }
         };
+        self.site_join(mac, one_of)
+    }
+
+    /// A site's joined text, its one-of name bound to its members.
+    fn site_join(&mut self, mac: Option<Rc<MacroDef>>, one_of: Option<(Sym, Vec<Meaning>)>) -> Option<Rc<MacroDef>> {
         if let Some((sym, may)) = one_of
             && self.env.slot(sym).is_none()
         {
@@ -8130,6 +8213,7 @@ will look undefined",
             let certain = exact
                 || (self.scratch.approximations == self.scratch.approximations_at_command
                     && !self.approximated
+                    && !self.read_outside
                     && !self.after_cut());
             // A message that prints unknown text was built from approximated state.
             let certain = certain && !text.contains('\u{2}');
@@ -13840,6 +13924,7 @@ will look undefined",
             mode_split: self.mode_split,
             approximated: self.approximated,
             blind: self.blind,
+            read_outside: self.read_outside,
             dropping: (self.dropping.clone(), self.dropping_possible, self.dropping_breaks, self.dropping_nested),
             cut_taint: self.cut_taint,
             call_recs: self.call_recs.clone(),
@@ -13898,6 +13983,7 @@ will look undefined",
         self.mode_split = state.mode_split;
         self.approximated = state.approximated;
         self.blind = state.blind;
+        self.read_outside = state.read_outside;
         (self.dropping, self.dropping_possible, self.dropping_breaks, self.dropping_nested) = state.dropping;
         self.cut_taint = state.cut_taint;
         self.call_recs = state.call_recs;
@@ -14405,7 +14491,16 @@ will look undefined",
             None
         };
         // A file this run wrote is read as written (tex.web § 537).
-        let written = if status == LoadStatus::NotFound { self.written_text(&search).flatten() } else { None };
+        // One a program may have written holds text from outside the run: an unknown line, any lines.
+        let written = match self.written_text(&search).filter(|_| status == LoadStatus::NotFound) {
+            Some(None) if resolved.is_none() && self.engine_int(&format!("written.{name}")) != Some(1) => {
+                self.read_outside = true;
+                // the program's file, not the document's
+                Rc::make_mut(&mut self.outputs).insert(Self::output_name(&search), None);
+                Some(format!("{}\n", crate::engine::tex::UNKNOWN_ANY))
+            }
+            text => text.flatten(),
+        };
         let resolved = match (&written, resolved) {
             (Some(_), None) => Some(self.base.join(&search)),
             (_, found) => found,

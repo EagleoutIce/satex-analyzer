@@ -2571,7 +2571,7 @@ fn side_effects(analysis: &Analysis) -> Vec<Record> {
 }
 
 fn catcodes(analysis: &Analysis) -> Vec<Record> {
-    let base = crate::engine::tex::CatcodeTable::latex();
+    let base = crate::analysis::machine::FormatInfo::table(analysis.format.as_ref());
     analysis
         .catcodes
         .diff(&base)

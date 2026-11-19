@@ -11,13 +11,15 @@ type Repair = fn(&Edits, Span, &str) -> Option<Vec<Fix>>;
 
 /// Each headline TeX (`print_err`) or LaTeX (`\@latex@error`) starts the
 /// error with, and its repair.
-const REPAIRS: [(&str, Repair); 14] = [
+const REPAIRS: [(&str, Repair); 16] = [
     ("File ended while scanning use of", close_argument),
     ("Paragraph ended before", close_argument),
     ("Too many }'s", drop_brace),
     ("Missing $ inserted", wrap_math),
     ("Extra alignment tab", add_column),
     ("Misplaced alignment tab character", escape_tab),
+    ("Misplaced \\noalign", end_row),
+    ("Misplaced \\omit", end_row),
     ("LaTeX Error: Missing \\begin{document}", begin_document),
     ("LaTeX Error: Lonely \\item", wrap_list),
     ("LaTeX Error: There's no line here to end", drop_newline),
@@ -53,7 +55,8 @@ fn char_at(edits: &Edits, span: Span, want: char) -> Option<(String, Pos, Pos)> 
 }
 
 /// How far the text on from a scan reaches: to the last token before a
-/// `\par` (tex.web § 392: an argument that is not `\long` stops there), an
+/// `\par` (tex.web § 392: an argument that is not `\long` stops there) or a
+/// command the run saw end a paragraph ([`crate::analysis::facts::Facts::paragraph_enders`]), an
 /// `\end` whose `\begin` came before (environments nest as groups), a `}`
 /// closing a group opened before (`closed`), or the file's end.  With the
 /// groups still open there, and where its first line ends.
@@ -65,7 +68,7 @@ struct Reach {
     par: bool,
 }
 
-fn reach(scan: &mut Scan, mut last: Pos) -> Reach {
+fn reach(edits: &Edits, scan: &mut Scan, mut last: Pos) -> Reach {
     let (mut depth, mut envs, mut line, mut closed, mut par) = (0usize, 0usize, None, false, false);
     loop {
         let lexeme = scan.advance();
@@ -74,7 +77,7 @@ fn reach(scan: &mut Scan, mut last: Pos) -> Reach {
         }
         let Some(l) = lexeme else { break };
         match (l.tok, scan.name(&l)) {
-            (_, Some("par")) => {
+            (_, Some(name)) if edits.ends_paragraph(name) => {
                 par = true;
                 break;
             }
@@ -110,7 +113,7 @@ fn close_argument(edits: &Edits, span: Span, _: &str) -> Option<Vec<Fix>> {
         if !matches!(open.tok, Tok::Chr(_, Catcode::Begin)) {
             return None;
         }
-        let r = reach(&mut scan, open.end);
+        let r = reach(edits, &mut scan, open.end);
         if !r.closed {
             break r;
         }
@@ -199,19 +202,40 @@ fn wrap_math(edits: &Edits, span: Span, _: &str) -> Option<Vec<Fix>> {
     one(format!("set it as a formula, `{open}…{close}`"), Applicability::Unsafe, edits)
 }
 
+/// The table environment last begun before `span` in its file, when it has
+/// not ended there.
+fn open_table<'a>(edits: &Edits<'a>, span: Span) -> Option<&'a crate::analysis::facts::Occurrence> {
+    use crate::engine::builtins::OccKind;
+    let tables = &edits.analysis.settings.conventions.tables.environments;
+    let before = |o: &&crate::analysis::facts::Occurrence| {
+        o.certain && o.span.file == span.file && (o.span.line, o.span.col) < (span.line, span.col)
+    };
+    let occurrences = &edits.analysis.facts.occurrences;
+    let begin = (occurrences.iter().filter(before))
+        .filter(|o| o.kind == OccKind::BeginEnvironment && tables.contains_key(&o.key))
+        .max_by_key(|o| (o.span.line, o.span.col))?;
+    let ended = (occurrences.iter().filter(before)).any(|o| {
+        o.kind == OccKind::EndEnvironment
+            && o.key == begin.key
+            && (o.span.line, o.span.col) > (begin.span.line, begin.span.col)
+    });
+    (!ended).then_some(begin)
+}
+
+/// A `\noalign` (`\hline`, `\bottomrule`) or `\omit` in a cell of a table
+/// (tex.web § 1129): the row lacks its end before it.
+fn end_row(edits: &Edits, span: Span, _: &str) -> Option<Vec<Fix>> {
+    open_table(edits, span)?;
+    let (path, _) = edits.text(span.file)?;
+    one("end the row before it".into(), Applicability::Unsafe, vec![insert(&path, Pos::of(span), "\\\\ ")])
+}
+
 /// An `&` past the columns of the row (tex.web § 792): the preamble's last
 /// column once more, in the alignment it is in.
 fn add_column(edits: &Edits, span: Span, _: &str) -> Option<Vec<Fix>> {
     let analysis = edits.analysis;
     let tables = &analysis.settings.conventions.tables.environments;
-    let begin = analysis
-        .facts
-        .occurrences
-        .iter()
-        .filter(|o| o.kind == crate::engine::builtins::OccKind::BeginEnvironment && o.certain)
-        .filter(|o| o.span.file == span.file && (o.span.line, o.span.col) < (span.line, span.col))
-        .filter(|o| tables.contains_key(&o.key))
-        .max_by_key(|o| (o.span.line, o.span.col))?;
+    let begin = open_table(edits, span)?;
     let (path, text) = edits.text(span.file)?;
     let mut scan = Scan::at(&text, Pos::of(begin.span), edits.cats(span.file))?;
     scan.advance()?;
@@ -282,7 +306,7 @@ fn wrap_list(edits: &Edits, span: Span, message: &str) -> Option<Vec<Fix>> {
     let mut scan = Scan::at(&text, Pos::of(span), edits.cats(span.file))?;
     let mut end = scan.advance()?.end;
     loop {
-        let r = reach(&mut scan, end);
+        let r = reach(edits, &mut scan, end);
         end = r.end;
         // past a paragraph's end, the next lonely item goes on the list
         let next = loop {

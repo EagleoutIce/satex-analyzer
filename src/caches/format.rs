@@ -12,7 +12,7 @@ use crate::engine::tex::{Interner, Meaning, Span, Sym};
 use crate::engine::value::Value;
 
 /// Cache version: different encodings get different files.
-const ENCODING_VERSION: u32 = 8;
+const ENCODING_VERSION: u32 = 9;
 /// The encoding of the package caches, versioned apart from the kernel's.
 pub(crate) const PACKAGE_ENCODING_VERSION: u32 = 14;
 
@@ -887,6 +887,12 @@ impl Format {
         self
     }
 
+    /// The codes the kernel run set, against [`crate::engine::tex::CatcodeTable::latex`].
+    pub(crate) fn with_catcodes(mut self, catcodes: Vec<(char, u8)>) -> Format {
+        self.catcodes = catcodes;
+        self
+    }
+
     pub fn sites(&self) -> &[(u32, u16, u32)] {
         &self.sites
     }
@@ -1178,15 +1184,14 @@ mod tests {
             std::fs::read_dir(&dir).unwrap().flatten().map(|e| e.file_name().to_string_lossy().into_owned()).collect();
         left.sort();
         assert_eq!(pruned.files, 4, "{left:?}");
-        assert_eq!(
-            left,
-            [
-                format!("format-pdftex-2026-v{ENCODING_VERSION}-{key}-1.postcard"),
-                newer,
-                format!("package-a-v5-{key}-1.postcard"),
-                format!("package-b-v5-{key}-1.postcard"),
-            ]
-        );
+        let mut kept = [
+            format!("format-pdftex-2026-v{ENCODING_VERSION}-{key}-1.postcard"),
+            newer,
+            format!("package-a-v5-{key}-1.postcard"),
+            format!("package-b-v5-{key}-1.postcard"),
+        ];
+        kept.sort();
+        assert_eq!(left, kept);
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

@@ -332,7 +332,7 @@
       ask.remove();
       if (styleQueue.length) askStyle(styleQueue.shift());
       if (!button.dataset.a) return;
-      lsp('workspace/executeCommand', { command: 'satex/style', arguments: [{ code: candidate.code, answer: button.dataset.a }] }).catch((err) => toast(`not recorded: ${err.message}`));
+      lsp('workspace/executeCommand', { command: 'satex/style', arguments: [{ code: candidate.code, answer: button.dataset.a }] }).catch((err) => toast(`Not recorded: ${err.message}`));
       // the settings keep the answer, so it holds after a restart and in a shared link
       const key = `${button.dataset.a === 'off' ? 'lint_off' : 'lints.style-prompt.keep'}+`, had = configSet[key] ?? [];
       if (!had.includes(candidate.code)) configKeep({ ...configSet, [key]: [...had, candidate.code] });
@@ -340,17 +340,21 @@
     toastBox.before(ask);
   }
   self.satexToast = (text) => toast(text);
-  /** A short note at the bottom; `ms` null keeps it until the next note or `toast.off()`. */
+  /** A short note at the bottom; `ms` null keeps it until the next note or `toast.off(text)`. */
   /** Type mode's first-use hint: once per browser, and never after the first character typed in Type mode. */
   const typeHint = () => { try { if (localStorage.getItem('satex-type-hinted')) return; localStorage.setItem('satex-type-hinted', '1'); } catch {} toast('Click on a word to type there'); };
   const typeUsed = () => { try { localStorage.setItem('satex-type-hinted', '1'); } catch {} };
+  /** A note's text as shown: a server title's code spans (`\textbf`) without their backticks. */
+  const noteText = (text) => String(text).replace(/`([^`\n]+)`/g, '$1');
   function toast(text, ms = 2600) {
-    toastBox.textContent = text;
+    toastBox.textContent = noteText(text);
     toastBox.classList.add('on');
     clearTimeout(toastTimer);
     if (ms != null) toastTimer = setTimeout(() => toastBox.classList.remove('on'), ms);
   }
-  toast.off = () => { clearTimeout(toastTimer); toastBox.classList.remove('on'); };
+  const GEN_WAIT = 'Waiting for the analysis to read the generated text…', READ_WAIT = 'Waiting for the analysis to read this text…';
+  /** Ends note `text`; a newer note shown meanwhile (a failure said while waiting) stays. */
+  toast.off = (text) => { if (toastBox.textContent !== noteText(text)) return; clearTimeout(toastTimer); toastBox.classList.remove('on'); };
   /** One row of the timing pop-up: a line of text, `items` folded under it. */
   const timing = (id, text, title = '', items = null) => {
     const dd = Object.assign($(id), { title });
@@ -638,8 +642,9 @@
     // every run it was asked during, the worker never free)
     if (running > 0 && textsSent && /^satex\/(view|dialog|dialogApply)$/.test(method) && params?.kind !== 'columns') { Atomics.add(textsSent, 0, 1); analysisQueued = true; }
     const message = { jsonrpc: '2.0', method, params, ...(notify ? {} : { id: nextId++ }) };
-    // TeX's hyphenation and line breaking for the echo while a run goes on: the mailbox, answered at the run's pauses
-    if (!notify && running > 0 && mailbox && /^satex\/(hyphenate|break)$/.test(method) && mailSend(message)) {
+    // TeX's hyphenation and line breaking for the echo, and whether the PDF shown holds, while a run goes on:
+    // the mailbox, answered at the run's pauses
+    if (!notify && running > 0 && mailbox && /^satex\/(hyphenate|break|holds)$/.test(method) && mailSend(message)) {
       return new Promise((resolve, reject) => pending.set(message.id, { resolve, reject, label: questionOf(method, params), at: performance.now() }));
     }
     lspRecent.push(method === 'workspace/executeCommand' ? params.command : method);
@@ -910,7 +915,7 @@
   function checking() { phase(`Analyzing ${state.file}…`); checkStart = performance.now(); }
 
   /** Completion order and the lists kept for a busy worker (views.ts `complete`). */
-  const { rank, kept: keptList, reselect, controlSymbol, mathItem, docOf, plainSnippet, opensArgument, stepsOver, previewOf, tikzTarget } = self.satexViews.complete;
+  const { rank, kept: keptList, reselect, controlSymbol, whole, mathItem, docOf, plainSnippet, opensArgument, stepsOver, previewOf, tikzTarget } = self.satexViews.complete;
   /** Whether offset `at` of `text` is in math (`$…$`, `\\(…\\)`, `\\[…\\]`, a math environment), read from the paragraph's start
    * as pdfedit.ts `scan` reads it: math commands rank first there. */
   const inMath = (text, at) => !!self.satexPdfEdit.scan(text, Math.max(0, text.lastIndexOf('\n\n', at - 1)), at, self.satexPdfEdit.start()).math;
@@ -1181,6 +1186,8 @@
     }
     // a brace typed before a command closes too (`\\cite{` before `\\end`); TeX has no quote pairs
     const closing = st.EditorState.languageData.of(() => [{ closeBrackets: { brackets: ['(', '[', '{'], before: ')]}:;>\\' } }]);
+    /** A run going on or due, or the worker busy with one the page did not start: a hover now is the last run's. */
+    const hoverWorking = () => pendingRun() || 'busy' in status.dataset;
     async function hoverCard(v, pos) {
       // The server has the text; it answers from its last analysis at once.
       push();
@@ -1519,6 +1526,11 @@
         tips.card.show(word, c.html);
         const k = tips.card.el.getBoundingClientRect();
         c.hull = { left: Math.min(word.left, k.left), top: Math.min(word.top, k.top), right: Math.max(word.right, k.right), bottom: Math.max(word.bottom, k.bottom) };
+        // answered from the last run while a newer text waits for its own (`\\toprule` "not reached" before its
+        // \\usepackage{booktabs} was read): the card is the old text's, asked again in place once the runs end
+        if (hoverWorking()) hoverRetry = () => { if (hovered === c && doc() === version && parent.matches(':hover')) editor?.rehover?.(); };
+        // the run it waited for ended while it was asked: once more now
+        if (hoverRetry && !running) setTimeout(() => editor?.hoverAgain?.(), 0);
       };
       hoverTimer = setTimeout(show, 250);
     });
@@ -1545,6 +1557,16 @@
       ev.dispatch({ selection: { anchor: pos } });
       definition(e.clientX, e.clientY);
     }, true);
+    // a press on the gutter left the focus on the scroller, so the next keys went nowhere: the editor keeps it,
+    // a line number puts the caret at its line's start
+    parent.addEventListener('mousedown', (e) => {
+      if (e.button !== 0 || !e.target.closest?.('.cm-gutters')) return;
+      const num = e.target.closest('.cm-lineNumbers'), at = num && ev.lineBlockAtHeight(e.clientY - ev.documentTop).from;
+      requestAnimationFrame(() => {
+        if (at != null) ev.dispatch({ selection: { anchor: at } });
+        if (!ev.hasFocus) ev.focus();
+      });
+    });
     parent.addEventListener('contextmenu', (e) => {
       const pos = ev.posAtCoords({ x: e.clientX, y: e.clientY });
       if (pos == null) return;
@@ -1634,9 +1656,13 @@
         const was = hovered;
         if (!was) return;
         const c = await hoverCard(ev, was.from);
+        if (hovered !== was) return;
+        // a run still going on or due, or the worker busy (no answer yet, or the last run's): once more after it
+        if (hoverWorking()) hoverRetry = () => { if (hovered === was) editor?.rehover?.(); };
         const a = c && ev.coordsAtPos(c.from), b = c && (ev.coordsAtPos(c.to) ?? a);
-        if (!a || hovered !== was) return;
-        hovered = { ...c, hull: was.hull };
+        // no answer for the text as it is now: the old card goes, it would mislead
+        if (!a) { if (!hoverWorking()) { hovered = null; tips.card.hide(); } return; }
+        hovered = Object.assign(was, c);
         tips.card.show({ left: a.left, top: a.top, right: b.right, bottom: Math.max(a.bottom, b.bottom) }, c.html);
       },
       forget: () => resolves.clear(),
@@ -1644,6 +1670,8 @@
       colors: (list) => ev.dispatch({ effects: swatches.of(list.map(([p, q, css]) => [at(doc(), p), at(doc(), q) ?? at(doc(), p), css]).filter(([a, b]) => a != null && b <= doc().length)) }),
       heat: (lines) => ev.dispatch({ effects: heatSet.of(lines?.size ? { lines, most: Math.max(...lines.values()) } : null) }),
       cursor: () => [ev.state.selection.main.anchor, ev.state.selection.main.head],
+      // the editor's undo (`redo`: redo) from a key pressed elsewhere: the key handed to its own keymap (the bundle has no commands)
+      history: (redo) => ev.contentDOM.dispatchEvent(new KeyboardEvent('keydown', { key: redo ? 'Z' : 'z', code: 'KeyZ', keyCode: 90, shiftKey: redo, [/Mac/.test(navigator.platform) ? 'metaKey' : 'ctrlKey']: true, bubbles: true, cancelable: true })),
       scroll: (top) => top == null ? ev.scrollDOM.scrollTop : (ev.scrollDOM.scrollTop = top),
       select: ([anchor, head] = [0, 0]) => { const n = doc().length; ev.dispatch({ selection: { anchor: Math.min(anchor, n), head: Math.min(head, n) }, scrollIntoView: true }); },
       position: () => position(doc(), ev.state.selection.main.head),
@@ -2537,6 +2565,8 @@
     return true;
   }
 
+  /** How long after a key a finding at the caret waits (the word is still being typed). */
+  const TYPING_HOLD_MS = 4000;
   async function show(target, ds, of = null) {
     const actions = await lsp('textDocument/codeAction', { textDocument: { uri: target },
       range: { start: { line: 0, character: 0 }, end: { line: 0, character: 0 } }, context: { diagnostics: [] } }).catch(() => []);
@@ -2550,9 +2580,10 @@
       by.set(key(d), [...(by.get(key(d)) ?? []), { ...a, safety }]);
     }
     // A finding on the word under the cursor while it is typed (`\dra` on the way to `\draw`)
-    // waits until typing moves on: it is about text that is not finished.
-    const typing = target === uri() && performance.now() - typedAt < 4000 && editor?.position?.();
+    // waits until typing pauses: it is about text that is not finished. Then it shows, with no new run needed.
+    const since = performance.now() - typedAt, typing = target === uri() && since < TYPING_HOLD_MS && editor?.position?.();
     const unfinished = (d) => typing && d.range.start.line === typing.line && d.range.start.character <= typing.character && typing.character <= d.range.end.character + 1;
+    if (ds.some(unfinished)) setTimeout(() => { if (diagnosticVersions[target] === of) show(target, ds, of); }, TYPING_HOLD_MS - since);
     // a file the build writes (.aux, .toc …) is no source of the reader's: its lines are never marked
     const generated = writtenFiles.some((f) => target.endsWith(`/${f.name}`));
     diagnostics[target] = generated ? [] : ds.filter((d) => !unfinished(d)).map((d) => ({ ...d, fixes: by.get(key(d)) ?? [] }));
@@ -2700,13 +2731,13 @@
     const files = Object.keys(changes).map((u) => u.split('/').pop());
     // an edit of one other file (a manager writing refs.bib): that file opens first and takes it through the
     // editor, so one Ctrl+Z there undoes it
-    const other = Object.keys(changes).length === 1 && !(uri() in changes) && Object.keys(state.texts).find((n) => uri(n) in changes && !(n in state.ro));
+    const before = uri(), other = Object.keys(changes).length === 1 && !(before in changes) && Object.keys(state.texts).find((n) => uri(n) in changes && !(n in state.ro));
     if (other) choose(other);
     if (!applyEdit(action.edit)) return toast(files.length ? `Not applied: it edits ${files.join(', ')}` : 'Not applied: the fix has no edit');
-    // a fix that edits other files only: said where, and that file opened at the edit
-    const elsewhere = Object.keys(changes).filter((u) => u !== uri());
+    // a fix that edits other files only: said where, and that file shown at the edit
+    const elsewhere = Object.keys(changes).filter((u) => u !== before);
     toast(`Applied: ${action.title}${elsewhere.length ? ` (in ${elsewhere.map((u) => u.split('/').pop()).join(', ')})` : ''}`);
-    const away = !(uri() in changes) && elsewhere[0], name = away && Object.keys(state.texts).find((n) => uri(n) === away);
+    const away = !(before in changes) && elsewhere[0], name = away && Object.keys(state.texts).find((n) => uri(n) === away);
     if (name) openPlace(name, changes[away][0].range.start);
   }
   /** What the type plugins offer at `p` (src/lsp/plugins): the widgets (their views, `satex/view`, and
@@ -2964,6 +2995,13 @@
     if (b.kind) return void window.open(b.url, '_blank');
     Object.assign(document.createElement('a'), { href: b.url, download: b.name }).click();
   }
+  /** Whether `file` is the one shown, opened at `start` when not; a toast says when it cannot be. */
+  async function showFile(file, start) {
+    if (file !== state.file) await openPlace(file, start);
+    if (file === state.file) return true;
+    toast(`${file} cannot be opened here`);
+    return false;
+  }
   /** `file` (a path or a bare name) at `start`; a file outside the project opens read-only. */
   async function openPlace(file, start = { line: 0, character: 0 }, end = start) {
     if (BINARY.test(file)) return openBinary(file);
@@ -3019,12 +3057,13 @@
     Object.assign(box.style, { left: `${c.left}px`, top: `${c.bottom + 4}px` });
     document.body.append(box);
     box.select();
-    const close = () => { box.onblur = null; box.remove(); };
+    // Enter and Escape give the keys back to the editor; a click elsewhere keeps its own focus
+    const close = (back = false) => { box.onblur = null; box.remove(); if (back) editor.refocus?.(); };
     box.onkeydown = (e) => {
-      if (e.key === 'Enter') { e.preventDefault(); close(); renameTo(box.value, position); }
-      else if (e.key === 'Escape') { e.preventDefault(); close(); }
+      if (e.key === 'Enter') { e.preventDefault(); close(true); renameTo(box.value, position); }
+      else if (e.key === 'Escape') { e.preventDefault(); close(true); }
     };
-    box.onblur = close;
+    box.onblur = () => close();
   }
   /** Find references: the places in the findings panel, and marked in the open file. */
   let refs = null;
@@ -3140,7 +3179,10 @@
   /** A menu of `[label, hint, act]` rows (`act` a submenu's rows, or null for a row that only says something);
    * `peek(i)` the HTML shown beside the menu while row `i` has the focus. */
   function showMenu(items, x, y, peek = null) {
-    const close = () => { ctxMenu.hidden = true; ctxMenu.innerHTML = ''; };
+    // what had the focus (the editor) gets it back when the menu closes on a row or a key: a row's prompt, a rename
+    // box, or the next keys find it
+    const back = document.activeElement?.closest?.('.ctx') ? null : document.activeElement;
+    const close = () => { const had = ctxMenu.contains(document.activeElement); ctxMenu.hidden = true; ctxMenu.innerHTML = ''; if (had && back?.isConnected) back.focus({ preventScroll: true }); };
     const build = (box, rows) => {
       box.innerHTML = rows.map(([label, hint, act], i) => act === null
         ? `<li role="menuitem" tabindex="-1" data-i="${i}" aria-disabled="true" class="ctx-wait">${escape(label)}</li>`
@@ -3503,6 +3545,8 @@
   });
   libSearch.oninput = libraryShow;
   libInternal.onchange = libraryLoad;
+  // a dialog whose opener is gone (a button of the closed overflow menu) gives the focus back to the page: the editor takes it
+  document.addEventListener('close', (e) => { if (e.target instanceof HTMLDialogElement) requestAnimationFrame(() => { if (document.activeElement === document.body) editor?.refocus?.(); }); }, true);
   $('lib-open').onclick = () => { $('play-library').showModal(); libraryLoad(); $('lib-search').focus(); };
   $('try-open').onclick = () => { tryNote(); $('play-try').showModal(); $('lib-text').focus(); };
   let tryTimer = 0;
@@ -4842,7 +4886,8 @@
     sync();
     const root = state.root ?? state.file, text = state.texts[file];
     if (text == null || file in state.ro) return toast('Only a file of the project can be sliced');
-    toast(`Slicing ${file}:${from}–${to}…`, 10000);
+    const slicing = `Slicing ${file}:${from}–${to}…`;
+    toast(slicing, 10000);
     const at = `${file === root ? '' : `${file}:`}${from}:1-${to}`;
     // the slice of the run the page has (warm): the definitions in the document's own files the region depends on
     const [got] = (await lsp('workspace/executeCommand', { command: 'satex/query', arguments: [{ file: path(root), queries: [{ type: 'slice', at }] }] }).catch(() => null)) ?? [];
@@ -4857,7 +4902,7 @@
       const printed = (data?.lines ?? []).filter(([kind]) => kind === 'out').map(([, t]) => plain(t)).join('\n');
       body = printed.trim() ? SCR.build(printed, file, state.texts[file], from, to, file === root) : null;
     }
-    toast.off?.();
+    toast.off(slicing);
     if (!body) return toast(`No slice of ${file}:${from}–${to}: the run reached none of its lines`);
     const dir = root.replace(/[^/]*$/, ''), stem = `${dir}scratch-${file.split('/').pop().replace(/\.\w+$/, '')}-${from}-${to}`;
     let name = `${stem}.tex`;
@@ -5186,7 +5231,7 @@
   async function followRoot() {
     const want = wanted();
     if (manualKernel || want === state.kernel) return false;
-    try { await kernel(want); } catch (e) { toast(`the ${manifest.kernels[want].label} kernel did not load: ${e.message}`); return false; }
+    try { await kernel(want); } catch (e) { toast(`The ${manifest.kernels[want].label} kernel did not load: ${e.message}`); return false; }
     toast(`${manifest.kernels[want].label} selected for ${state.root}`);
     return true;
   }
@@ -6048,7 +6093,7 @@
     if (!onServer && (cached || !TEX)) {
       $('play-pdf').classList.remove('pdf-running');
       pdfWait(null);
-      if (!cached) { pdfStatus.innerHTML = `<span class="x-err">${NO_TEX}</span>`; toast('Compiling needs satex gui, which this page cannot reach.'); }
+      if (!cached) { pdfStatus.innerHTML = `<span class="x-err">${NO_TEX}</span>`; toast('Compiling needs satex gui, which this page cannot reach'); }
       return;
     }
     if (pdfBusy) { if (!cached) pdfQueued = [slice, false, alone, true]; return; }
@@ -6059,18 +6104,7 @@
     const what = slice ? `slice at ${at}` : root;
     // an edit no read of the analysis tokenized (a comment, skipped spaces) builds the PDF shown: none runs
     const held = !slice && !cached && alone === null ? await pdfHolds(root) : null;
-    if (held && !pdfBusy) {
-      pdf.texts = { ...pdf.texts, [held.name]: held.text };
-      if (held.name === state.file) pdf.text = held.text;
-      [pdfSent, pdfSentAll] = [pdf.text, pdf.texts];
-      pdfSummary = `${what}: the same PDF (${held.plugin.replace('_', ' ')})`;
-      pdfStatus.textContent = pdfSummary;
-      $('play-pdf').classList.remove('pdf-running');
-      pdfWait(null);
-      pdfHoldEnd();
-      pdfLoaded(true);
-      return;
-    }
+    if (held && !pdfBusy) return pdfStands(held);
     if (pdfBusy) { if (!cached) pdfQueued = [slice, false, alone, true]; return; }
     pdfRound.start = cached ? 0 : start;
     // the browser's first build fetches and starts its engine: said once, beside the phases
@@ -6147,15 +6181,29 @@
   async function pdfHolds(root) {
     // a build with errors never holds: its log's lines are its own text's (an align at a line that is a tabular now)
     if (!pdf?.texts || pdf.error || (pdf.records ?? []).some((r) => r.severity === 'error') || pdf.slice || pdf.root !== root || pdf.dir !== state.dir || pdf.sets !== pdfSets().join('\n')) return null;
-    const now = pdfFiles((d) => d), was = pdf.texts, text = (v) => typeof v === 'string';
+    // the editor's text of this moment: asked as the keys come, before `push` took it
+    const now = { ...pdfFiles((d) => d), ...(state.file in state.texts && !(state.file in state.ro) ? { [state.file]: editor.text() } : {}) };
+    const was = pdf.texts, text = (v) => typeof v === 'string';
     const key = (v) => text(v) ? v : v instanceof Uint8Array ? base64(v) : v?.b64;
     const names = [...new Set([...Object.keys(now), ...Object.keys(was)])], changed = names.filter((n) => key(now[n]) !== key(was[n]));
     if (changed.length !== 1 || !text(now[changed[0]]) || !text(was[changed[0]])) return null;
     const [name] = changed, others = Object.fromEntries(names.filter((n) => n !== name && text(now[n])).map((n) => [path(n), now[n]]));
-    // a run under way answers late: the build goes ahead then
-    const asked = lsp('satex/holds', { textDocument: { uri: uri(name) }, built: was[name], now: now[name], others }).catch(() => null);
+    // from the last finished run (a run under way answers at its pauses): a late answer lets the build go ahead
+    const asked = lsp('satex/holds', { file: uri(name), built: was[name], now: now[name], others }).catch(() => null);
     const plugin = await Promise.race([asked, new Promise((ok) => setTimeout(() => ok(null), HOLDS_MS))]);
     return typeof plugin === 'string' ? { plugin, name, text: now[name] } : null;
+  }
+  /** The PDF shown stands for the texts now (`pdfHolds`): no build, the status says so. */
+  function pdfStands(held) {
+    pdf.texts = { ...pdf.texts, [held.name]: held.text };
+    if (held.name === state.file) pdf.text = held.text;
+    [pdfSent, pdfSentAll] = [pdf.text, pdf.texts];
+    pdfSummary = `${pdf.root}: the same PDF (${held.plugin.replace('_', ' ')})`;
+    pdfStatus.textContent = pdfSummary;
+    $('play-pdf').classList.remove('pdf-running');
+    pdfWait(null);
+    pdfHoldEnd();
+    pdfLoaded(true);
   }
   /** The files query of the root's last run: `{file, records}`. */
   var rootFiles = null; // var: a run may publish before this line
@@ -6234,7 +6282,7 @@
   const pdfAsked = (auto = false) => { if (!pdfAuto.on && !autoChosen()) { try { localStorage.setItem('satex-auto-chosen', 'first compile'); } catch {} playSet('compile_after', 1000); } compile(false, false, null, auto); };
   pdfButtons.forEach((b) => { b.onclick = (e) => { e.preventDefault(); pdfAsked(); }; });
   /** Auto-compile: a build once the edits rest for the chosen delay, remembered per viewer. var: an edit may come first. */
-  var pdfAuto = { on: play.compile_after > 0, delay: play.compile_after || 1000, timer: 0, want: false };
+  var pdfAuto = { on: play.compile_after > 0, delay: play.compile_after || 1000, timer: 0, want: false, asked: 0 };
   const DELAYS = [[0, 'off'], [200, '0.2 s'], [500, '0.5 s'], [1000, '1 s'], [2000, '2 s'], [5000, '5 s']];
   $('pdf-auto-list').insertAdjacentHTML('beforeend', DELAYS.map(([ms, name]) => `<label><input type="radio" name="pdf-delay" value="${ms}"> ${name}</label>`).join(''));
   const pdfAutoKeep = () => {
@@ -6250,9 +6298,18 @@
   function pdfEdited() {
     if (!pdfAuto?.on || pdf?.slice) return pdfDatedMark();
     clearTimeout(pdfAuto.timer);
-    // built once this version's analysis lands (`pdfAutoNow`), the delay a backstop for an analysis that never does
+    // built once this version's analysis lands (`pdfAutoNow`), the delay a backstop for an analysis that never does.
+    // This machine's TeX needs no analysis: with `compile_rest` it builds once the edits rest that long
     pdfAuto.want = true;
-    pdfAuto.timer = setTimeout(pdfAutoNow, pdfAuto.delay);
+    pdfAuto.timer = setTimeout(pdfAutoNow, serverUp && play.compile_rest > 0 ? play.compile_rest : pdfAuto.delay);
+    // an edit pdfTeX would not read is known at once, from the last run: no build waits for this one's analysis
+    const ask = ++pdfAuto.asked, root = state.root ?? state.file;
+    if (!pdfBusy) pdfHolds(root).then((held) => {
+      if (!held || ask !== pdfAuto.asked || pdfBusy || held.text !== (held.name === state.file ? editor.text() : state.texts[held.name])) return;
+      clearTimeout(pdfAuto.timer);
+      pdfAuto.want = false;
+      pdfStands(held);
+    });
   }
   function pdfAutoNow() {
     clearTimeout(pdfAuto.timer);
@@ -7275,14 +7332,15 @@
     if (['table', 'image'].includes(site.kind)) return openDialog(p);
     // the server answers once its run is in: say so meanwhile
     const wait = running > 0 || !!act.phase;
-    if (wait) toast('Opening once the analysis is done…', null);
+    const note = 'Opening once the analysis is done…';
+    if (wait) toast(note, null);
     await typedTools(p);
-    if (wait) toast.off();
+    if (wait) toast.off(note);
     const i = tools.findIndex((t) => t.view?.plugin === site.kind);
     if (i >= 0) return runTool(i);
     // no view yet (a file just shown, its run stopped for it): once the next run is in
     if (!tries) return toast(`No ${site.key} widget here: the analysis found none at this place`);
-    whenRun('Opening once the analysis is done…', () => siteOpen(site, tries - 1));
+    whenRun(note, () => siteOpen(site, tries - 1));
     if (!running && !act.phase) analyze();
   }
   /** The groups of a layer's sub-filters. */
@@ -8596,7 +8654,7 @@
   let tikzLink = null;
   const tikzLinkEnd = () => { tikzLink = null; document.body.classList.remove('tikz-linking'); };
   function tikzPick(prompt, done) {
-    tikzLink = { done };
+    tikzLink = { done, prompt };
     document.body.classList.add('tikz-linking');
     toast(prompt, 10000);
   }
@@ -8604,9 +8662,9 @@
   addEventListener('pointerdown', (e) => {
     if (!tikzLink || e.button !== 0) return;
     e.preventDefault(); e.stopPropagation();
-    const n = pdfBody.contains(e.target) ? tikzHit(tikzPoint(e))?.p.n : typesetBody.contains(e.target) ? tsTikzAt(e)?.n : null, done = tikzLink.done;
+    const n = pdfBody.contains(e.target) ? tikzHit(tikzPoint(e))?.p.n : typesetBody.contains(e.target) ? tsTikzAt(e)?.n : null, { done, prompt } = tikzLink;
     tikzLinkEnd();
-    toast.off?.();
+    toast.off(prompt);
     if (n?.kind === 'node') done(n); else toast('No node there: no edge written');
   }, true);
   addEventListener('keydown', (e) => { if (tikzLink && e.key === 'Escape') { tikzLinkEnd(); toast('No edge written'); } }, true);
@@ -8618,8 +8676,7 @@
    * snapshot printer, which loads the package a new name needs; then the caret in the caption or the new text, its widget opened. */
   async function insertAt(kind, t) {
     const file = t.file ?? t.block?.file ?? state.file;
-    if (file !== state.file) await openPlace(file, { line: (t.line ?? t.block?.to ?? 1) - 1, character: 0 });
-    if (file !== state.file) return toast(`${file} cannot be opened here`);
+    if (!await showFile(file, { line: (t.line ?? t.block?.to ?? 1) - 1, character: 0 })) return;
     const R = self.satexRefactor, it = R.inserts.find((k) => k.kind === kind), text = editor.text();
     const spot = R.insertSpot(text, { caret: t.caret, place: t.place, block: t.block }, !!it?.flow);
     let plan = spot && R.insertPlan(text, docTexts(), kind, spot.at, spot.mode);
@@ -9199,17 +9256,16 @@
     // the server answers once its run is in: asked again a few times
     let all = [];
     for (let i = 0; i < 40 && !all.some((rs) => rs.length); i++) {
-      if (i === 1) toast('Waiting for the analysis to read the generated text…', null);
+      if (i === 1) toast(GEN_WAIT, null);
       all = await (i ? new Promise((ok) => setTimeout(ok, 500)) : Promise.resolve()).then(() => explainMany(GEN_NAMES));
     }
-    if (all.length) toast.off();
+    toast.off(GEN_WAIT);
     const at = all.flatMap((rs, i) => rs.filter((r) => typeof r.body === 'string' && r.body.trim() && row.startsWith(r.body.trim()) && PE.spans(r.body, bare).length).map((r) => [GEN_NAMES[i], r.body.trim()]));
     // the longest value the row starts with (`List of Figures` over a `List`)
     const [name, value] = at.sort((p, q) => q[1].length - p[1].length)[0] ?? [];
     if (!name) return false;
     const root = pdf.root ?? state.root ?? state.file, lang = await pdfBabel();
-    if (root !== state.file) await openPlace(root);
-    if (root !== state.file) return !toast(`${root} cannot be opened here`);
+    if (!await showFile(root)) return true;
     const text = editor.text(), r = PE.renamed(text, name, value, lang), idx = PE.spans(value, bare)[0][0], kk = Math.min(Math.max(k, 0), bare.length);
     if (!r) return !toast(`Not typed here: ${root} has no \\begin{document} to put \\renewcommand{${name}} before`);
     const home = $('play-pdf');
@@ -9244,8 +9300,7 @@
   async function pdfFootAt(page, x, word) {
     const img = pdfImg(page), root = pdf.root ?? state.root ?? state.file;
     if (!img?.naturalWidth) return;
-    if (root !== state.file) await openPlace(root);
-    if (root !== state.file) return toast(`${root} cannot be opened here`);
+    if (!await showFile(root)) return;
     const s = await pageSection();
     if (!s) return toast('The analysis has not read the page layout yet: click again once it ran');
     const [pw, ph] = pageSize(img), block = pdfBlocks().get(page), area = self.satexViews.page.textArea(s);
@@ -9320,8 +9375,7 @@
     const rows = pdfRows(page);
     if (!rows.length) return toast('No text here. Click a word to type', 1600);
     const mid = (r) => Math.abs((r.t + r.d) / 2 - y), near = rows.reduce((m, r) => (mid(r) < mid(m) ? r : m)), mine = rows.filter((r) => r.file === near.file);
-    if (near.file !== state.file) await openPlace(near.file, { line: near.line - 1, character: 0 });
-    if (near.file !== state.file) return toast(`${near.file} cannot be opened here`);
+    if (!await showFile(near.file, { line: near.line - 1, character: 0 })) return;
     const p = PE.blankPlace(editor.text(), mine, x, y);
     if (!p) return toast('No text here. Click a word to type', 1600);
     if (p.kind !== 'new') {
@@ -9367,8 +9421,7 @@
       if (!v) return;
       el.remove();
       removeEventListener('mousedown', off, true);
-      if (root !== state.file) await openPlace(root);
-      if (root !== state.file) return toast(`${root} cannot be opened here`);
+      if (!await showFile(root)) return;
       const text = editor.text(), r = PE.leaders(text, kind, v, tocloft, chapters);
       if (!r) return toast(`${root} has no \\begin{document} to write the setting at`);
       const node = { ...self.satexSnapshot.span({ start: pdfPos(text, r[0]), end: pdfPos(text, r[1]) }, text.slice(r[0], r[1]), r[2]), ...(/\\cft/.test(r[2]) ? { package: { name: 'tocloft', options: 'titles' } } : {}) };
@@ -9418,8 +9471,7 @@
    * `miss()`: tried where the word is in no file of the project, true when it took the click. */
   async function caretPut(c, file, line, word, k, nth, read, first = false, within = null, miss = null) {
     const k0 = k;
-    if (file !== state.file) await openPlace(file, { line: line - 1, character: 0 });
-    if (file !== state.file) return toast(`${file} cannot be opened here`);
+    if (!await showFile(file, { line: line - 1, character: 0 })) return;
     // a word TeX hyphenated at a line's end (`car-` / `ries`): the source spells it whole
     if (c.view === 'pdf' && Array.isArray(c.word)) {
       const ws = pdfWordsOn(c.page), w0 = c.word, rowOf = (v) => ws.filter((u) => Math.abs(u[4] - v[4]) < 1).sort((a, b) => a[1] - b[1]);
@@ -9497,15 +9549,15 @@
       // while a run is under way its rows come when it ends (a document with TikZ: well past 10 s), then 10 s more
       for (let n = 0, last = 0; bare && !got && !current() && n < last + 40 && n < 480; n++) {
         if (running > 0 || act.phase) last = n;
-        if (n === 2) toast('Waiting for the analysis to read this text…', null);
+        if (n === 2) toast(READ_WAIT, null);
         await new Promise((ok) => setTimeout(ok, 250));
-        if ((got = read()) && n >= 2) toast.off();
+        got = read();
       }
+      toast.off(READ_WAIT);
       if ((!got || !(got.file in state.texts)) && await miss?.()) return;
       if (!got) return toast(written ? `Not typed here: “${word}” is not plain text in the source. Edit it in the editor`
         : `Not typed here: “${bare || word}” comes from code satex cannot place in your files (a package, or unknown). Edit it in the editor`);
-      if (got.file !== state.file) await openPlace(got.file, { line: got.line - 1, character: got.col - 1 });
-      if (got.file !== state.file) return toast(`${got.file} cannot be opened here`);
+      if (!await showFile(got.file, { line: got.line - 1, character: got.col - 1 })) return;
       text = editor.text();
       const a = (lineAt(got.line)?.[0] ?? -1) + got.col - 1;
       // spelled there up to case: a `\\MakeUppercase`d title is typed into its lower-case source
@@ -10036,7 +10088,7 @@
       let spaced = [];
       for (const q of texWords ? seq : []) {
         const t = (q.t ?? q.w?.[5])?.normalize('NFKC');
-        if (q.par || q.ctx || q.disp != null || t == null || !t && q.n > 0) { texWords = null; break; }
+        if (q.par || q.brk || q.ctx || q.disp != null || t == null || !t && q.n > 0) { texWords = null; break; }
         if (!t) { if (q.gap > 0 || spaced.length) spaced.push(q); continue; }
         const qw = q.t == null && q.w ? q.n : null;
         if (q.gap > 0 || spaced.length) { texWords.push(t); texW.push(qw); } else { texWords[texWords.length - 1] += t; texW[texW.length - 1] = qw != null && texW.at(-1) != null ? texW.at(-1) + qw : null; }
@@ -10334,7 +10386,7 @@
       const raw = out.at(-1)?.disp != null ? text.slice(r.s, r.e).replace(/^\s+/, '') : text.slice(r.s, r.e);
       if (verb) { for (const [i, part] of raw.split(' ').entries()) out.push({ gap: i ? gap : 0, n: width(part), t: part }); continue; }
       // a word in a command's argument or a group's declaration measured in the font the run set such text in
-      for (const q of PE.prose(raw)) out.push({ gap: q.gap ? gap : 0, n: width(q.t, q.ctx), t: q.t, par: q.par, ...(q.ctx && { ctx: q.ctx }) });
+      for (const q of PE.prose(raw)) out.push({ gap: q.gap ? gap : 0, n: width(q.t, q.ctx), t: q.t, par: q.par, ...(q.brk && { brk: true }), ...(q.ctx && { ctx: q.ctx }) });
     }
     return out.length ? out : [{ gap: 0, n: 0, t: '' }];
   }
@@ -10607,6 +10659,22 @@
   };
   /** The inline math delimiters typing writes: `playground.math_inline` (`\(`, `$`, `auto`). */
   const pdfInline = () => configSet['playground.math_inline'] ?? '\\(';
+  // Ctrl+Z, Ctrl+Shift+Z and Ctrl+Y outside a text field and a widget (the Type caret, the pages, a menu's edit) undo and
+  // redo in the editor: every edit from the page is one of its undo steps
+  addEventListener('keydown', (e) => {
+    const k = e.key.toLowerCase(), t = e.target;
+    if (e.defaultPrevented || !(e.ctrlKey || e.metaKey) || e.altKey || k !== 'z' && k !== 'y' || !editor?.history) return;
+    if (t.closest?.('dialog, .cm-editor') || t !== pdfTypeIn && t.matches?.('input, textarea, select, [contenteditable]:not([contenteditable=false])')) return;
+    e.preventDefault();
+    const c = pdfCaret;
+    editor.history(k === 'y' || e.shiftKey);
+    // the Type caret goes where the undo put the editor's cursor, as a caret of the new text
+    if (c && c === pdfCaret && c.file === state.file && c.target === uri()) {
+      Object.assign(c, { at: editor.cursor()[1], anchor: null, fresh: null, v: version });
+      pdfCaretDraw();
+      if (c.view === 'pdf') pdfRebuild(pdfLive() && !pdfAuto.on);
+    }
+  });
   /** A key at the caret: Backspace and Delete take a character (an escape, an empty pair whole), arrows move over plain text, Enter breaks the line, Escape ends. */
   pdfTypeIn.addEventListener('keydown', (e) => {
     // a selection on the pages: Backspace or Delete takes it, a character replaces it (its input follows)
@@ -10625,7 +10693,8 @@
         const got = pdfOrKept(await pdfWithin(ask)), c = pdfCaretNow(), n = c && /^\\([A-Za-z@]*)$/.exec(editor.text().slice(from, c.at));
         const all = n ? await pdfFull(got, from, n[1]) : got, item = n && all.length && pdfMenuItems(all, n[1])[0];
         pdfMenuOff();
-        if (item) pdfMenuApply(item, from, true);
+        if (e.key === 'Enter' && n && pdfWhole(item, n[1])) pdfEnter(false);
+        else if (item) pdfMenuApply(item, from, true);
       });
       return;
     }
@@ -10651,13 +10720,15 @@
         const all = await pdfFull(pdfOrKept(await pdfWithin(completions(p, p.character, '\\', uri()))), from, m[1]);
         const item = all.length && pdfMenuItems(all, m[1])[0];
         pdfMenuOff();
-        if (item) pdfMenuApply(item, from, true);
+        if (named && pdfWhole(item, m[1])) pdfEnter(false);
+        else if (item) pdfMenuApply(item, from, true);
       });
       return;
     }
     if (pdfMenu && /^(ArrowUp|ArrowDown|Enter|Tab|Escape)$/.test(e.key)) {
       e.preventDefault();
       if (e.key === 'Escape') pdfMenuOff();
+      else if (e.key === 'Enter' && !pdfMenu.arg && pdfWhole(pdfMenu.items[pdfMenu.sel], pdfSeen().text.slice(pdfMenu.from + 1, pdfSeen().at))) { pdfMenuOff(); pdfEnter(e.shiftKey); }
       else if (e.key === 'Enter' || e.key === 'Tab') pdfMenuPick(pdfMenu.sel);
       else { pdfMenu.sel = (pdfMenu.sel + (e.key === 'ArrowUp' ? -1 : 1) + pdfMenu.items.length) % pdfMenu.items.length; pdfMenuDraw(); }
       return;
@@ -10677,7 +10748,7 @@
     // Enter: a row in a table, a line in verbatim (none in an inline \verb), a line break in math or an argument
     // (refused there with Enter, which would end the paragraph: Shift+Enter), else a paragraph (PE.broken)
     else if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); pdfEdit((text, at) => [at, at, '\\\\\n', 3]); pdfRebuild(true); }
-    else if (e.key === 'Enter') { e.preventDefault(); const k = e.shiftKey ? 'Shift+Enter' : 'Enter'; pdfEdit((text, at, fresh) => PE.key(text, at, k, { fresh }), { row: k === 'Enter' }); pdfRebuild(true); }
+    else if (e.key === 'Enter') { e.preventDefault(); pdfEnter(e.shiftKey); }
     else if (step) {
       e.preventDefault();
       pdfQueue(() => {
@@ -10737,6 +10808,11 @@
   /** Once the run under way ends (5 s at most): the server answers a completion then. */
   const pdfRunEnd = async () => { for (let t = 0; running && t < 100; t++) await new Promise((ok) => setTimeout(ok, 50)); };
   /** The items of the server's list `all` for `\\name`: a macro's call clicked, every command with its own first. */
+  /** Enter's own edit: a paragraph, with Shift a line break (PE.key). */
+  const pdfEnter = (shift) => { const k = shift ? 'Shift+Enter' : 'Enter'; pdfEdit((text, at, fresh) => PE.key(text, at, k, { fresh }), { row: k === 'Enter' }); pdfRebuild(true); };
+  /** The server's item of a name from the names in force (it brings the snippet). */
+  const pdfServed = (item) => item.insertText || item.textEdit ? item : commandItems.get('\\')?.find((i) => i.label === item.label && i.insertText) ?? item;
+  const pdfWhole = (item, name) => !!item && whole(pdfServed(item), name);
   function pdfMenuItems(all, name) {
     const back = { label: 'textbackslash', detail: 'a backslash in the text: \\textbackslash{}', insertText: 'textbackslash{}' };
     const made = pdfCaret?.made && `\\${name}` === pdfCaret.made, own = made && (all.find((i) => i.label === name) ?? { label: name, detail: 'the command clicked' });
@@ -10842,7 +10918,7 @@
   /** `item` written over `\\name` from `from`; `now`: in the typing queue's turn already (pdfWritten, not pdfEdit). */
   function pdfMenuApply(item, from, now = false) {
     // a name from the list of names in force: the server's item of that name brings its snippet
-    if (!item.insertText && !item.textEdit) item = commandItems.get('\\')?.find((i) => i.label === item.label && i.insertText) ?? item;
+    item = pdfServed(item);
     let caret = -1, hint = '';
     const body = '\\' + String(item.insertText ?? item.textEdit?.newText ?? item.label).replace(/\$\{(\d+)(?::([^}]*))?\}|\$(\d+)/g, (_, n, text = '', bare, off) => {
       if (caret < 0 && (n ?? bare) !== '0') { caret = off; hint = text; }
@@ -11278,13 +11354,15 @@
     return r?.ok && /image/.test(r.headers.get('content-type') ?? '') ? URL.createObjectURL(await r.blob()) : null;
   }
   /** The table or image dialog at `position` of the open file (`satex/dialog`, doc/site/dialogs.js). */
+  /** The table or image widget at `position`; `quiet` true says nothing when there is none, 'waited' (the run waited
+   * for is in) says so without waiting again. */
   async function openDialog(position, quiet = false) {
     const target = uri();
     const v = await lsp('satex/dialog', { textDocument: { uri: target }, position }).catch(() => null);
     if (!v) {
-      if (quiet) return;
+      if (quiet === true) return;
       // the server has no finished run of this text yet (a start, a restart, an edit): the widget opens once it has
-      if (running > 0 || act.phase || !(target in diagnostics)) { whenRun('Opening once the analysis is done…', () => openDialog(position, true)); if (!running && !act.phase) analyze(); return; }
+      if (!quiet && (running > 0 || act.phase || !(target in diagnostics))) { whenRun('Opening once the analysis is done…', () => openDialog(position, 'waited')); if (!running && !act.phase) analyze(); return; }
       return toast('No table or figure here: the analysis found none at this place');
     }
     const was = textIn(editor.text(), v.range);
@@ -11331,7 +11409,7 @@
   function whenRun(note, then, ms = 4000) {
     if (note) toast(note, null);
     let timer = 0;
-    const mine = afterRun = () => { clearTimeout(timer); if (note) toast.off(); then(); };
+    const mine = afterRun = () => { clearTimeout(timer); if (note) toast.off(note); then(); };
     const check = () => {
       if (afterRun !== mine) return;
       if (running > 0 || act.phase) { timer = setTimeout(check, ms); return; }
@@ -11443,7 +11521,7 @@
   kernelBox.onchange = async () => {
     manualKernel = true;
     kernelBox.disabled = true;
-    try { await kernel(+kernelBox.value); await restart(); if (!plainLint()) await start(); } catch (e) { toast(`the kernel did not load: ${e.message}`); kernelBox.value = String(state.kernel); }
+    try { await kernel(+kernelBox.value); await restart(); if (!plainLint()) await start(); } catch (e) { toast(`The kernel did not load: ${e.message}`); kernelBox.value = String(state.kernel); }
     kernelBox.disabled = false;
   };
 
@@ -11827,6 +11905,8 @@
     if (act.phase && afterRun) { const then = afterRun; setTimeout(() => { if (afterRun === then && !running && !act.phase) { afterRun = null; then(); } }, 300); }
     act.phase = ''; act.text = '';
     delete status.dataset.busy;
+    // a hover card answered while the worker was busy is asked again
+    if (!running) editor?.hoverAgain?.();
     $('play-stop')?.toggleAttribute('hidden', true);
     drawAct();
   }

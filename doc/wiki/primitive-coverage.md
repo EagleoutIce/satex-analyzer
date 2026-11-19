@@ -32,8 +32,8 @@ A primitive that scans its operands and drops their effect with neither of the l
 
 | primitive | modeled as | fidelity | how |
 | --- | --- | --- | --- |
-| `\ ` (control space) | [`Mode(Horizontal(Space))`][builtins-2891] | exact | Real item, appended to the list satex tracks |
-| `\-` | [`Mode(Horizontal(Hyphen))`][builtins-2898] | approximated | Widens to Unknown. A rarely-taken [tex.web](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web) path this pass does not distinguish further |
+| `\ ` (control space) | [`Mode(Horizontal(Space))`][builtins-2895] | exact | Real item, appended to the list satex tracks |
+| `\-` | [`Mode(Horizontal(Hyphen))`][builtins-2902] | approximated | Widens to Unknown. A rarely-taken [tex.web](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web) path this pass does not distinguish further |
 | `\/` | [`Command(Nothing)`][builtins-2766] | approximated | No operand. The size of what `\span`, a fraction or `\overline`/`\underline` builds is widened, not computed |
 | `\TeXXeTstate` | [`IntegerParameter`][builtins-2599] | exact | Stored parameter table |
 | `\above` | [`Command(Fraction { delims: false, dimen: true })`][builtins-2783] | approximated | List so far becomes the numerator and the list starts afresh ([tex.web § 1181](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L22252)). The fraction's size widens |
@@ -50,26 +50,26 @@ A primitive that scans its operands and drops their effect with neither of the l
 | `\badness` | [`LastItem(Badness)`][builtins-2718] | approximated | Always Unknown. Badness needs the line-breaking satex does not run |
 | `\baselineskip` | [`GlueParameter { mu: false }`][builtins-2599] | exact | Stored parameter table |
 | `\batchmode` | [`Command(Interaction(0))`][builtins-2787] | exact | Sets `\interactionmode` |
-| `\beginL` | [`Mode(Horizontal(LR))`][builtins-2891] | exact | Real item, appended to the list satex tracks |
-| `\beginR` | [`Mode(Horizontal(LR))`][builtins-2891] | exact | Real item, appended to the list satex tracks |
+| `\beginL` | [`Mode(Horizontal(LR))`][builtins-2895] | exact | Real item, appended to the list satex tracks |
+| `\beginR` | [`Mode(Horizontal(LR))`][builtins-2895] | exact | Real item, appended to the list satex tracks |
 | `\begingroup` | [`BeginGroup`][builtins-2580] | exact | Tex.web [§§ 1211](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L22720), [1](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L95) (semi-simple groups, `\aftergroup`/`\afterassignment`) |
 | `\belowdisplayshortskip` | [`GlueParameter { mu: false }`][builtins-2599] | exact | Stored parameter table |
 | `\belowdisplayskip` | [`GlueParameter { mu: false }`][builtins-2599] | exact | Stored parameter table |
 | `\binoppenalty` | [`IntegerParameter`][builtins-2599] | exact | Stored parameter table |
-| `\botmark` | [`Convert(Mark(2))`][builtins-2843] | approximated | Scanned, answer unknown |
-| `\botmarks` | [`Convert(Marks(2))`][builtins-2843] | approximated | Scanned, answer unknown |
+| `\botmark` | [`Convert(Mark(2))`][builtins-2847] | approximated | Scanned, answer unknown |
+| `\botmarks` | [`Convert(Marks(2))`][builtins-2847] | approximated | Scanned, answer unknown |
 | `\box` | [`Register(Box)`][builtins-2585] | approximated | Exact for a known register index. An unknown index joins the value into every register it could name (`weaken_registers`) |
 | `\boxmaxdepth` | [`DimenParameter`][builtins-2599] | exact | Stored parameter table |
 | `\brokenpenalty` | [`IntegerParameter`][builtins-2599] | exact | Stored parameter table |
 | `\catcode` | [`CatcodeAssign`][builtins-2605] | approximated | Exact for one known character and category. Through an unknown character or value (`unknown-catcode`) each character it may name keeps its category or takes one it may be given, structural ones included. The reader splits the path on such a character |
-| `\char` | [`Mode(Horizontal(Char))`][builtins-2891] | exact | Real item, appended to the list satex tracks |
+| `\char` | [`Mode(Horizontal(Char))`][builtins-2895] | exact | Real item, appended to the list satex tracks |
 | `\chardef` | [`RegisterDef(Char)`][builtins-2585] | approximated | Exact for a known register index. An unknown index joins the value into every register it could name (`weaken_registers`) |
-| `\cleaders` | [`Mode(Leaders)`][builtins-2863] | approximated | Box or rule is scanned exactly. [tex.web § 1078](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L20920)'s repeated copies are not laid out, since satex tracks natural size, not a page |
+| `\cleaders` | [`Mode(Leaders)`][builtins-2867] | approximated | Box or rule is scanned exactly. [tex.web § 1078](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L20920)'s repeated copies are not laid out, since satex tracks natural size, not a page |
 | `\closein` | [`CloseIn`][builtins-2590] | approximated | Tex.web [§ 1351](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L24696). Exact for a known stream number. One satex cannot pin down leaves every stream's state unknown |
 | `\closeout` | [`Command(CloseOut)`][builtins-2791] | approximated | Tracks the stream state a later `\input` of the written file reads back. A stream number satex cannot pin down widens every stream |
 | `\clubpenalties` | [`Special(Penalties)`][builtins-2755] | approximated | Table satex stores and reads back exactly for a known entry. One it cannot pin down widens every entry the write may have reached |
 | `\clubpenalty` | [`IntegerParameter`][builtins-2599] | exact | Stored parameter table |
-| `\copy` | [`Mode(Box(Copy))`][builtins-2911] | exact | Real box machinery |
+| `\copy` | [`Mode(Box(Copy))`][builtins-2915] | exact | Real box machinery |
 | `\count` | [`Register(Count)`][builtins-2585] | approximated | Exact for a known register index. An unknown index joins the value into every register it could name (`weaken_registers`) |
 | `\countdef` | [`RegisterDef(Count)`][builtins-2585] | approximated | Exact for a known register index. An unknown index joins the value into every register it could name (`weaken_registers`) |
 | `\cr` | [`Command(Nothing)`][builtins-2766] | approximated | No operand. The size of what `\span`, a fraction or `\overline`/`\underline` builds is widened, not computed |
@@ -93,10 +93,10 @@ A primitive that scans its operands and drops their effect with neither of the l
 | `\dimen` | [`Register(Dimen)`][builtins-2585] | approximated | Exact for a known register index. An unknown index joins the value into every register it could name (`weaken_registers`) |
 | `\dimendef` | [`RegisterDef(Dimen)`][builtins-2585] | approximated | Exact for a known register index. An unknown index joins the value into every register it could name (`weaken_registers`) |
 | `\dimexpr` | [`Expr(Dimen)`][builtins-2629] | exact | ETeX manual [§§ 3](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L195), [5](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L268) |
-| `\discretionary` | [`Mode(Horizontal(Discretionary))`][builtins-2891] | exact | Real item, appended to the list satex tracks |
+| `\discretionary` | [`Mode(Horizontal(Discretionary))`][builtins-2895] | exact | Real item, appended to the list satex tracks |
 | `\displayindent` | [`DimenParameter`][builtins-2599] | exact | Stored parameter table |
 | `\displaylimits` | [`Command(Limits)`][builtins-2775] | approximated | No operand. Where the scripts go is not followed, so the formula's size widens |
-| `\displaystyle` | [`Mode(MathStyle(0))`][builtins-2875] | approximated | Tex.web [§ 1171](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L22139): the style of the atoms after it in inline math. Scripts in display style widen |
+| `\displaystyle` | [`Mode(MathStyle(0))`][builtins-2879] | approximated | Tex.web [§ 1171](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L22139): the style of the atoms after it in inline math. Scripts in display style widen |
 | `\displaywidowpenalties` | [`Special(Penalties)`][builtins-2755] | approximated | Table satex stores and reads back exactly for a known entry. One it cannot pin down widens every entry the write may have reached |
 | `\displaywidowpenalty` | [`IntegerParameter`][builtins-2599] | exact | Stored parameter table |
 | `\displaywidth` | [`DimenParameter`][builtins-2599] | exact | Stored parameter table |
@@ -110,13 +110,13 @@ A primitive that scans its operands and drops their effect with neither of the l
 | `\else` | [`Else`][builtins-2573] | exact | Tex.web [§ 510](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L9892), including `insert_relax` for an else or fi met mid-test |
 | `\emergencystretch` | [`DimenParameter`][builtins-2599] | exact | Stored parameter table |
 | `\end` | [`End`][builtins-2623] | exact | Tex.web [§ 1054](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L20477) (`end_job`) |
-| `\endL` | [`Mode(Horizontal(LR))`][builtins-2891] | exact | Real item, appended to the list satex tracks |
-| `\endR` | [`Mode(Horizontal(LR))`][builtins-2891] | exact | Real item, appended to the list satex tracks |
+| `\endL` | [`Mode(Horizontal(LR))`][builtins-2895] | exact | Real item, appended to the list satex tracks |
+| `\endR` | [`Mode(Horizontal(LR))`][builtins-2895] | exact | Real item, appended to the list satex tracks |
 | `\endcsname` | [`Endcsname`][builtins-2566] | exact | [LuaTeX manual, "Macros"](https://ctan.org/pkg/luatex) |
 | `\endgroup` | [`EndGroup`][builtins-2580] | exact | Tex.web [§§ 1211, 1](https://ctan.org/pkg/luatex) (semi-simple groups, `\aftergroup`/`\afterassignment`) |
 | `\endinput` | [`Endinput`][builtins-2622] | exact | Tex.web [§ 362](https://ctan.org/pkg/luatex): under an undecided conditional each path ends its own file |
 | `\endlinechar` | [`IntegerParameter`][builtins-2599] | exact | Stored parameter table |
-| `\eqno` | [`Mode(EqNo)`][builtins-2852] | approximated | Opens the equation number. The display's placement ([tex.web § 1199](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L22500)) is widened |
+| `\eqno` | [`Mode(EqNo)`][builtins-2856] | approximated | Opens the equation number. The display's placement ([tex.web § 1199](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L22500)) is widened |
 | `\errhelp` | [`TokensParameter`][builtins-2601] | approximated | Stored parameter table, but setting any `\every…` list widens the dimensions of boxes that were already packed before it was read |
 | `\errmessage` | [`Message { error: true }`][builtins-2624] | exact | Tex.web [§ 1279](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L23541) |
 | `\errorcontextlines` | [`IntegerParameter`][builtins-2599] | exact | Stored parameter table |
@@ -135,8 +135,8 @@ A primitive that scans its operands and drops their effect with neither of the l
 | `\fam` | [`IntegerParameter`][builtins-2599] | exact | Stored parameter table |
 | `\fi` | [`Fi`][builtins-2573] | exact | Tex.web [§ 510](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L9892), including `insert_relax` for an else or fi met mid-test |
 | `\finalhyphendemerits` | [`IntegerParameter`][builtins-2599] | exact | Stored parameter table |
-| `\firstmark` | [`Convert(Mark(1))`][builtins-2843] | approximated | Scanned, answer unknown |
-| `\firstmarks` | [`Convert(Marks(1))`][builtins-2843] | approximated | Scanned, answer unknown |
+| `\firstmark` | [`Convert(Mark(1))`][builtins-2847] | approximated | Scanned, answer unknown |
+| `\firstmarks` | [`Convert(Marks(1))`][builtins-2847] | approximated | Scanned, answer unknown |
 | `\floatingpenalty` | [`IntegerParameter`][builtins-2599] | exact | Stored parameter table |
 | `\font` | [`FontDef`][builtins-2589] | exact | Tex.web [§ 1257](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L23346) (`\font`) |
 | `\fontchardp` | [`LastItem(FontCharDp)`][builtins-2729] | approximated | Exact for a TFM font ([etex_man § 3.10](https://mirrors.ctan.org/systems/doc/etex/etex_man.pdf)). A native font's height, depth and italic correction are not read, so it widens to Unknown |
@@ -155,21 +155,21 @@ A primitive that scans its operands and drops their effect with neither of the l
 | `\gluestretch` | [`LastItem(GlueStretch)`][builtins-2726] | exact | Computed from a known glue spec |
 | `\gluestretchorder` | [`LastItem(GlueStretchOrder)`][builtins-2726] | exact | Computed from a known glue spec |
 | `\gluetomu` | [`LastItem(GlueToMu)`][builtins-2726] | exact | Computed from a known glue spec |
-| `\halign` | [`Mode(Vertical(Align))`][builtins-2903] | approximated | Cells run in the alignment's own list, not distinguished from the preamble |
+| `\halign` | [`Mode(Vertical(Align))`][builtins-2907] | approximated | Cells run in the alignment's own list, not distinguished from the preamble |
 | `\hangafter` | [`IntegerParameter`][builtins-2599] | exact | Stored parameter table |
 | `\hangindent` | [`DimenParameter`][builtins-2599] | exact | Stored parameter table |
 | `\hbadness` | [`IntegerParameter`][builtins-2599] | exact | Stored parameter table |
-| `\hbox` | [`Mode(Box(HBox))`][builtins-2911] | exact | Real box machinery |
-| `\hfil` | [`Mode(Horizontal(Fil(0)))`][builtins-2891] | exact | Real item, appended to the list satex tracks |
-| `\hfill` | [`Mode(Horizontal(Fil(1)))`][builtins-2891] | exact | Real item, appended to the list satex tracks |
-| `\hfilneg` | [`Mode(Horizontal(Fil(3)))`][builtins-2891] | exact | Real item, appended to the list satex tracks |
+| `\hbox` | [`Mode(Box(HBox))`][builtins-2915] | exact | Real box machinery |
+| `\hfil` | [`Mode(Horizontal(Fil(0)))`][builtins-2895] | exact | Real item, appended to the list satex tracks |
+| `\hfill` | [`Mode(Horizontal(Fil(1)))`][builtins-2895] | exact | Real item, appended to the list satex tracks |
+| `\hfilneg` | [`Mode(Horizontal(Fil(3)))`][builtins-2895] | exact | Real item, appended to the list satex tracks |
 | `\hfuzz` | [`DimenParameter`][builtins-2599] | exact | Stored parameter table |
 | `\hoffset` | [`DimenParameter`][builtins-2599] | exact | Stored parameter table |
 | `\holdinginserts` | [`IntegerParameter`][builtins-2599] | exact | Stored parameter table |
-| `\hrule` | [`Mode(Vertical(Rule))`][builtins-2891] | exact | Real item, appended to the list satex tracks |
+| `\hrule` | [`Mode(Vertical(Rule))`][builtins-2895] | exact | Real item, appended to the list satex tracks |
 | `\hsize` | [`DimenParameter`][builtins-2599] | exact | Stored parameter table |
-| `\hskip` | [`Mode(Horizontal(Glue))`][builtins-2891] | exact | Real item, appended to the list satex tracks |
-| `\hss` | [`Mode(Horizontal(Fil(2)))`][builtins-2891] | exact | Real item, appended to the list satex tracks |
+| `\hskip` | [`Mode(Horizontal(Glue))`][builtins-2895] | exact | Real item, appended to the list satex tracks |
+| `\hss` | [`Mode(Horizontal(Fil(2)))`][builtins-2895] | exact | Real item, appended to the list satex tracks |
 | `\ht` | [`Special(BoxDimen)`][builtins-2753] | approximated | Round-trips through the register consistently. The box behind it is never built |
 | `\hyphenation` | [`Command(GeneralText)`][builtins-2811] | approximated | Scanned, not built |
 | `\hyphenchar` | [`FontParam(HyphenChar)`][builtins-2614] | approximated | Reads the stored font table. A read past the last-loaded font's dimensions is discarded, matching [tex.web § 580](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L11284)'s own recovery. An entry satex cannot pin down widens every one it may name |
@@ -196,29 +196,29 @@ A primitive that scans its operands and drops their effect with neither of the l
 | `\ifx` | [`If(IfX)`][builtins-2670] | approximated | Exact for known meanings ([tex.web § 507](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L9840)'s `original` handles a redefined primitive). Member-by-member across a set of possible meanings otherwise, decided only when they agree |
 | `\ignorespaces` | [`IgnoreSpaces`][builtins-2631] | exact | Tex.web [§ 1045](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L20377) |
 | `\immediate` | [`Prefix(Immediate)`][builtins-2556] | exact | Tex.web [§ 1211](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L22720) |
-| `\indent` | [`Mode(StartPar { indent: true })`][builtins-2855] | exact | Tex.web's own mode-transition rules |
+| `\indent` | [`Mode(StartPar { indent: true })`][builtins-2859] | exact | Tex.web's own mode-transition rules |
 | `\input` | [`Load(Input)`][builtins-2621] | exact | Tex.web [§ 537](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L10365) (`\input`) |
 | `\inputlineno` | [`LastItem(InputLineNo)`][builtins-2720] | exact | Read from state satex already tracks |
-| `\insert` | [`Mode(Insert { vadjust: false })`][builtins-2869] | approximated | Opens the insert's own list. Not told apart from the vertical list around it |
+| `\insert` | [`Mode(Insert { vadjust: false })`][builtins-2873] | approximated | Opens the insert's own list. Not told apart from the vertical list around it |
 | `\insertpenalties` | [`IntegerParameter`][builtins-2599] | exact | Stored parameter table |
 | `\interactionmode` | [`IntegerParameter`][builtins-2599] | exact | Stored parameter table |
 | `\interlinepenalties` | [`Special(Penalties)`][builtins-2755] | approximated | Table satex stores and reads back exactly for a known entry. One it cannot pin down widens every entry the write may have reached |
 | `\interlinepenalty` | [`IntegerParameter`][builtins-2599] | exact | Stored parameter table |
 | `\jobname` | [`Text(JobName)`][builtins-2657] | exact | Run's real main file name |
-| `\kern` | [`Typeset(Dimen)`][builtins-2929] | approximated | `\kern` is exact. `\mkern`'s math-unit dimension always widens to Unknown, since it needs math-font setup satex does not run |
+| `\kern` | [`Typeset(Dimen)`][builtins-2933] | approximated | `\kern` is exact. `\mkern`'s math-unit dimension always widens to Unknown, since it needs math-font setup satex does not run |
 | `\language` | [`IntegerParameter`][builtins-2599] | exact | Stored parameter table |
-| `\lastbox` | [`Mode(Box(LastBox))`][builtins-2912] | approximated | Real box machinery for the one box of a vertical list. A box taken from a horizontal list widens |
+| `\lastbox` | [`Mode(Box(LastBox))`][builtins-2916] | approximated | Real box machinery for the one box of a vertical list. A box taken from a horizontal list widens |
 | `\lastkern` | [`LastItem(Kern)`][builtins-2712] | approximated | Reads the tail of the list satex tracks. Unknown once the tail itself is |
 | `\lastlinefit` | [`IntegerParameter`][builtins-2599] | exact | Stored parameter table |
 | `\lastnodetype` | [`LastItem(NodeType)`][builtins-2714] | approximated | Reads the tail of the list: a character, a ligature, glue, a kern or a penalty, and -1 for the empty main list (etex.ch). Unknown otherwise |
 | `\lastpenalty` | [`LastItem(Penalty)`][builtins-2712] | approximated | Reads the tail of the list satex tracks. Unknown once the tail itself is |
 | `\lastskip` | [`LastItem(Skip)`][builtins-2712] | approximated | Reads the tail of the list satex tracks. Unknown once the tail itself is |
 | `\lccode` | [`CharCode(Lower)`][builtins-2609] | approximated | Exact for one known character and code. Through an unknown character or value (`unknown-char-code`) each entry it may name holds its old code or the new, read back as that set |
-| `\leaders` | [`Mode(Leaders)`][builtins-2863] | approximated | Box or rule is scanned exactly. [tex.web § 1078](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L20920)'s repeated copies are not laid out, since satex tracks natural size, not a page |
-| `\left` | [`Mode(LeftRight { opens: true, closes: false })`][builtins-2879] | approximated | Math left group is kept ([tex.web § 1191](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L22367)). The size of the list it delimits widens |
+| `\leaders` | [`Mode(Leaders)`][builtins-2867] | approximated | Box or rule is scanned exactly. [tex.web § 1078](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L20920)'s repeated copies are not laid out, since satex tracks natural size, not a page |
+| `\left` | [`Mode(LeftRight { opens: true, closes: false })`][builtins-2883] | approximated | Math left group is kept ([tex.web § 1191](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L22367)). The size of the list it delimits widens |
 | `\lefthyphenmin` | [`IntegerParameter`][builtins-2599] | exact | Stored parameter table |
 | `\leftskip` | [`GlueParameter { mu: false }`][builtins-2599] | exact | Stored parameter table |
-| `\leqno` | [`Mode(EqNo)`][builtins-2852] | approximated | Opens the equation number. The display's placement ([tex.web § 1199](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L22500)) is widened |
+| `\leqno` | [`Mode(EqNo)`][builtins-2856] | approximated | Opens the equation number. The display's placement ([tex.web § 1199](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L22500)) is widened |
 | `\let` | [`Let { global: false, future: false }`][builtins-2555] | exact | Tex.web [§ 1221](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L22838), including the two-token `\futurelet` lookahead |
 | `\limits` | [`Command(Limits)`][builtins-2775] | approximated | No operand. Where the scripts go is not followed, so the formula's size widens |
 | `\linepenalty` | [`IntegerParameter`][builtins-2599] | exact | Stored parameter table |
@@ -226,7 +226,7 @@ A primitive that scans its operands and drops their effect with neither of the l
 | `\lineskiplimit` | [`DimenParameter`][builtins-2599] | exact | Stored parameter table |
 | `\long` | [`Prefix(Long)`][builtins-2556] | exact | Tex.web [§ 1211](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L22720) |
 | `\looseness` | [`IntegerParameter`][builtins-2599] | exact | Stored parameter table |
-| `\lower` | [`Mode(Shift { vertical: true })`][builtins-2855] | exact | Tex.web's own mode-transition rules |
+| `\lower` | [`Mode(Shift { vertical: true })`][builtins-2859] | exact | Tex.web's own mode-transition rules |
 | `\lowercase` | [`CaseShift(Lower)`][builtins-2613] | exact | Tex.web [§ 1288](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L23608). Widens a code an unknown token was assigned |
 | `\mag` | [`IntegerParameter`][builtins-2599] | exact | Stored parameter table |
 | `\mark` | [`Command(GeneralText)`][builtins-2811] | approximated | Scanned, not built |
@@ -235,7 +235,7 @@ A primitive that scans its operands and drops their effect with neither of the l
 | `\mathbin` | [`Command(MathComp(2))`][builtins-2770] | approximated | Sets the class of the next atom, whose size and spacing are followed. An operator whose nucleus is a list widens ([tex.web § 749](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L14663) centres a one-character list) |
 | `\mathchar` | [`Command(Number)`][builtins-2811] | approximated | Scanned, not built |
 | `\mathchardef` | [`RegisterDef(MathChar)`][builtins-2585] | approximated | Exact for a known register index. An unknown index joins the value into every register it could name (`weaken_registers`) |
-| `\mathchoice` | [`Mode(MathChoice)`][builtins-2874] | exact | Tex.web [§ 1172](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L22146): opens all four styles in sequence |
+| `\mathchoice` | [`Mode(MathChoice)`][builtins-2878] | exact | Tex.web [§ 1172](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L22146): opens all four styles in sequence |
 | `\mathclose` | [`Command(MathComp(5))`][builtins-2770] | approximated | Sets the class of the next atom, whose size and spacing are followed. An operator whose nucleus is a list widens ([tex.web § 749](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L14663) centres a one-character list) |
 | `\mathcode` | [`CharCode(Math)`][builtins-2609] | approximated | Exact for one known character and code. Through an unknown character or value (`unknown-char-code`) each entry it may name holds its old code or the new, read back as that set |
 | `\mathinner` | [`Command(MathComp(7))`][builtins-2770] | approximated | Sets the class of the next atom, whose size and spacing are followed. An operator whose nucleus is a list widens ([tex.web § 749](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L14663) centres a one-character list) |
@@ -250,22 +250,22 @@ A primitive that scans its operands and drops their effect with neither of the l
 | `\meaning` | [`Text(Meaning)`][builtins-2658] | approximated | Exact for a known operand. Widens when the token's meaning or a register's digits are unresolved |
 | `\medmuskip` | [`GlueParameter { mu: true }`][builtins-2599] | exact | Stored parameter table |
 | `\message` | [`Message { error: false }`][builtins-2624] | exact | Tex.web [§ 1279](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L23541) |
-| `\middle` | [`Mode(LeftRight { opens: true, closes: true })`][builtins-2879] | approximated | Math left group is kept ([tex.web § 1191](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L22367)). The size of the list it delimits widens |
-| `\mkern` | [`Typeset(Dimen)`][builtins-2929] | approximated | `\kern` is exact. `\mkern`'s math-unit dimension always widens to Unknown, since it needs math-font setup satex does not run |
+| `\middle` | [`Mode(LeftRight { opens: true, closes: true })`][builtins-2883] | approximated | Math left group is kept ([tex.web § 1191](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L22367)). The size of the list it delimits widens |
+| `\mkern` | [`Typeset(Dimen)`][builtins-2933] | approximated | `\kern` is exact. `\mkern`'s math-unit dimension always widens to Unknown, since it needs math-font setup satex does not run |
 | `\month` | [`IntegerParameter`][builtins-2599] | exact | Stored parameter table |
-| `\moveleft` | [`Mode(Shift { vertical: false })`][builtins-2855] | exact | Tex.web's own mode-transition rules |
-| `\moveright` | [`Mode(Shift { vertical: false })`][builtins-2855] | exact | Tex.web's own mode-transition rules |
-| `\mskip` | [`Typeset(Glue)`][builtins-2937] | approximated | `\mskip` appends an item of unknown size: its glue is in math units, which need math-font setup satex does not run |
+| `\moveleft` | [`Mode(Shift { vertical: false })`][builtins-2859] | exact | Tex.web's own mode-transition rules |
+| `\moveright` | [`Mode(Shift { vertical: false })`][builtins-2859] | exact | Tex.web's own mode-transition rules |
+| `\mskip` | [`Typeset(Glue)`][builtins-2941] | approximated | `\mskip` appends an item of unknown size: its glue is in math units, which need math-font setup satex does not run |
 | `\muexpr` | [`Expr(MuSkip)`][builtins-2629] | exact | ETeX manual [§§ 3](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L195), [5](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L268) |
 | `\multiply` | [`Arith(Multiply)`][builtins-2594] | approximated | Exact for known operands. Interval arithmetic and [tex.web § 222](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L4513)'s zero default otherwise |
 | `\muskip` | [`Register(MuSkip)`][builtins-2585] | approximated | Exact for a known register index. An unknown index joins the value into every register it could name (`weaken_registers`) |
 | `\muskipdef` | [`RegisterDef(MuSkip)`][builtins-2585] | approximated | Exact for a known register index. An unknown index joins the value into every register it could name (`weaken_registers`) |
 | `\mutoglue` | [`LastItem(MuToGlue)`][builtins-2726] | exact | Computed from a known glue spec |
 | `\newlinechar` | [`IntegerParameter`][builtins-2599] | exact | Stored parameter table |
-| `\noalign` | [`Mode(NoAlign)`][builtins-2872] | approximated | Cells run in the alignment's own list, not distinguished from the preamble |
-| `\noboundary` | [`Mode(Horizontal(NoBoundary))`][builtins-2891] | exact | Real item, appended to the list satex tracks |
+| `\noalign` | [`Mode(NoAlign)`][builtins-2876] | approximated | Cells run in the alignment's own list, not distinguished from the preamble |
+| `\noboundary` | [`Mode(Horizontal(NoBoundary))`][builtins-2895] | exact | Real item, appended to the list satex tracks |
 | `\noexpand` | [`NoExpand`][builtins-2558] | exact | Tex.web [§§ 367](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L7681), [358](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L7503) |
-| `\noindent` | [`Mode(StartPar { indent: false })`][builtins-2855] | exact | Tex.web's own mode-transition rules |
+| `\noindent` | [`Mode(StartPar { indent: false })`][builtins-2859] | exact | Tex.web's own mode-transition rules |
 | `\nolimits` | [`Command(Limits)`][builtins-2775] | approximated | No operand. Where the scripts go is not followed, so the formula's size widens |
 | `\nonscript` | [`Command(NonScript)`][builtins-2778] | approximated | Glue of no size in math ([tex.web § 1171](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L22139)). Script styles, which cancel the next glue, widen |
 | `\nonstopmode` | [`Command(Interaction(1))`][builtins-2787] | exact | Sets `\interactionmode` |
@@ -285,7 +285,7 @@ A primitive that scans its operands and drops their effect with neither of the l
 | `\overline` | [`Command(Nothing)`][builtins-2766] | approximated | No operand. The size of what `\span`, a fraction or `\overline`/`\underline` builds is widened, not computed |
 | `\overwithdelims` | [`Command(Fraction { delims: true, dimen: false })`][builtins-2783] | approximated | List so far becomes the numerator and the list starts afresh ([tex.web § 1181](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L22252)). The fraction's size widens |
 | `\pagedepth` | [`DimenParameter`][builtins-2599] | exact | Stored parameter table |
-| `\pagediscards` | [`Mode(Vertical(Discards(false)))`][builtins-2898] | approximated | Widens to Unknown. A rarely-taken [tex.web](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web) path this pass does not distinguish further |
+| `\pagediscards` | [`Mode(Vertical(Discards(false)))`][builtins-2902] | approximated | Widens to Unknown. A rarely-taken [tex.web](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web) path this pass does not distinguish further |
 | `\pagefilllstretch` | [`DimenParameter`][builtins-2599] | exact | Stored parameter table |
 | `\pagefillstretch` | [`DimenParameter`][builtins-2599] | exact | Stored parameter table |
 | `\pagefilstretch` | [`DimenParameter`][builtins-2599] | exact | Stored parameter table |
@@ -293,7 +293,7 @@ A primitive that scans its operands and drops their effect with neither of the l
 | `\pageshrink` | [`DimenParameter`][builtins-2599] | exact | Stored parameter table |
 | `\pagestretch` | [`DimenParameter`][builtins-2599] | exact | Stored parameter table |
 | `\pagetotal` | [`DimenParameter`][builtins-2599] | exact | Stored parameter table |
-| `\par` | [`Mode(Par)`][builtins-2855] | exact | Tex.web's own mode-transition rules |
+| `\par` | [`Mode(Par)`][builtins-2859] | exact | Tex.web's own mode-transition rules |
 | `\parfillskip` | [`GlueParameter { mu: false }`][builtins-2599] | exact | Stored parameter table |
 | `\parindent` | [`DimenParameter`][builtins-2599] | exact | Stored parameter table |
 | `\parshape` | [`Special(ParShape)`][builtins-2755] | approximated | Table satex stores and reads back exactly for a known entry. One it cannot pin down widens every entry the write may have reached |
@@ -303,7 +303,7 @@ A primitive that scans its operands and drops their effect with neither of the l
 | `\parskip` | [`GlueParameter { mu: false }`][builtins-2599] | exact | Stored parameter table |
 | `\patterns` | [`Command(GeneralText)`][builtins-2811] | approximated | Scanned, not built |
 | `\pausing` | [`IntegerParameter`][builtins-2599] | exact | Stored parameter table |
-| `\penalty` | [`Typeset(Number)`][builtins-2928] | exact | Penalty is appended as scanned |
+| `\penalty` | [`Typeset(Number)`][builtins-2932] | exact | Penalty is appended as scanned |
 | `\postdisplaypenalty` | [`IntegerParameter`][builtins-2599] | exact | Stored parameter table |
 | `\predisplaydirection` | [`IntegerParameter`][builtins-2599] | exact | Stored parameter table |
 | `\predisplaypenalty` | [`IntegerParameter`][builtins-2599] | exact | Stored parameter table |
@@ -313,12 +313,12 @@ A primitive that scans its operands and drops their effect with neither of the l
 | `\prevgraf` | [`IntegerParameter`][builtins-2599] | exact | Stored parameter table |
 | `\protected` | [`Prefix(Protected)`][builtins-2556] | exact | Tex.web [§ 1211](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L22720) |
 | `\radical` | [`Command(Number)`][builtins-2811] | approximated | Scanned, not built |
-| `\raise` | [`Mode(Shift { vertical: true })`][builtins-2855] | exact | Tex.web's own mode-transition rules |
+| `\raise` | [`Mode(Shift { vertical: true })`][builtins-2859] | exact | Tex.web's own mode-transition rules |
 | `\read` | [`Read`][builtins-2590] | approximated | Tex.web [§ 1351](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L24696). Exact for a known stream number. One satex cannot pin down leaves every stream's state unknown |
 | `\readline` | [`Command(ReadLine)`][builtins-2799] | approximated | ETeX manual [§§ 3](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L195), [2](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L131), including the terminal-fatal case. A stream number satex cannot pin down gives an unknown line and does not end the job |
 | `\relax` | [`Relax`][builtins-2630] | exact | Tex.web [§ 1211](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L22720) |
 | `\relpenalty` | [`IntegerParameter`][builtins-2599] | exact | Stored parameter table |
-| `\right` | [`Mode(LeftRight { opens: false, closes: true })`][builtins-2879] | approximated | Math left group is kept ([tex.web § 1191](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L22367)). The size of the list it delimits widens |
+| `\right` | [`Mode(LeftRight { opens: false, closes: true })`][builtins-2883] | approximated | Math left group is kept ([tex.web § 1191](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L22367)). The size of the list it delimits widens |
 | `\righthyphenmin` | [`IntegerParameter`][builtins-2599] | exact | Stored parameter table |
 | `\rightskip` | [`GlueParameter { mu: false }`][builtins-2599] | exact | Stored parameter table |
 | `\romannumeral` | [`Text(Roman)`][builtins-2658] | approximated | Exact for a known operand. Widens when the token's meaning or a register's digits are unresolved |
@@ -327,14 +327,14 @@ A primitive that scans its operands and drops their effect with neither of the l
 | `\scantokens` | [`ScanTokens { text: false }`][builtins-2569] | exact | ETeX manual [§§ 3](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L195), [9](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L333). A capacity overflow (`MAX_IN_OPEN`) is diagnosed, not assumed away |
 | `\scriptfont` | [`Command(FamilyFont)`][builtins-2795] | approximated | Stored and consumed by satex's own font and math-code tables. An operand satex cannot pin down leaves the entry, or the font the name means, unknown |
 | `\scriptscriptfont` | [`Command(FamilyFont)`][builtins-2795] | approximated | Stored and consumed by satex's own font and math-code tables. An operand satex cannot pin down leaves the entry, or the font the name means, unknown |
-| `\scriptscriptstyle` | [`Mode(MathStyle(6))`][builtins-2875] | approximated | Tex.web [§ 1171](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L22139): the style of the atoms after it in inline math. Scripts in display style widen |
+| `\scriptscriptstyle` | [`Mode(MathStyle(6))`][builtins-2879] | approximated | Tex.web [§ 1171](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L22139): the style of the atoms after it in inline math. Scripts in display style widen |
 | `\scriptspace` | [`DimenParameter`][builtins-2599] | exact | Stored parameter table |
-| `\scriptstyle` | [`Mode(MathStyle(4))`][builtins-2875] | approximated | Tex.web [§ 1171](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L22139): the style of the atoms after it in inline math. Scripts in display style widen |
+| `\scriptstyle` | [`Mode(MathStyle(4))`][builtins-2879] | approximated | Tex.web [§ 1171](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L22139): the style of the atoms after it in inline math. Scripts in display style widen |
 | `\scrollmode` | [`Command(Interaction(2))`][builtins-2787] | exact | Sets `\interactionmode` |
 | `\setbox` | [`Command(SetBox)`][builtins-2790] | exact | Forwarded to the real box-scanning path |
 | `\setlanguage` | [`Command(SetLanguage)`][builtins-2782] | exact | Whatsit in horizontal mode, an illegal case elsewhere ([tex.web § 1377](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L24970)) |
 | `\sfcode` | [`CharCode(Space)`][builtins-2609] | approximated | Exact for one known character and code. Through an unknown character or value (`unknown-char-code`) each entry it may name holds its old code or the new, read back as that set |
-| `\shipout` | [`Mode(ShipOut)`][builtins-2867] | exact | Removes the box from the list, [tex.web § 1073](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L20853)'s own effect on it |
+| `\shipout` | [`Mode(ShipOut)`][builtins-2871] | exact | Removes the box from the list, [tex.web § 1073](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L20853)'s own effect on it |
 | `\show` | [`Command(Token)`][builtins-2788] | exact | `\show` |
 | `\showbox` | [`Command(Number)`][builtins-2811] | approximated | Scanned, not built |
 | `\showboxbreadth` | [`IntegerParameter`][builtins-2599] | exact | Stored parameter table |
@@ -351,17 +351,17 @@ A primitive that scans its operands and drops their effect with neither of the l
 | `\spaceskip` | [`GlueParameter { mu: false }`][builtins-2599] | exact | Stored parameter table |
 | `\span` | [`Command(Nothing)`][builtins-2766] | approximated | No operand. The size of what `\span`, a fraction or `\overline`/`\underline` builds is widened, not computed |
 | `\special` | [`Pdf(Special)`][builtins-2639] | approximated | Manual's keywords are scanned exactly. No PDF is built, so the payload is recorded as an occurrence, not replayed |
-| `\splitbotmark` | [`Convert(Mark(4))`][builtins-2843] | approximated | Scanned, answer unknown |
-| `\splitbotmarks` | [`Convert(Marks(4))`][builtins-2843] | approximated | Scanned, answer unknown |
-| `\splitdiscards` | [`Mode(Vertical(Discards(true)))`][builtins-2898] | approximated | Widens to Unknown. A rarely-taken [tex.web](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web) path this pass does not distinguish further |
-| `\splitfirstmark` | [`Convert(Mark(3))`][builtins-2843] | approximated | Scanned, answer unknown |
-| `\splitfirstmarks` | [`Convert(Marks(3))`][builtins-2843] | approximated | Scanned, answer unknown |
+| `\splitbotmark` | [`Convert(Mark(4))`][builtins-2847] | approximated | Scanned, answer unknown |
+| `\splitbotmarks` | [`Convert(Marks(4))`][builtins-2847] | approximated | Scanned, answer unknown |
+| `\splitdiscards` | [`Mode(Vertical(Discards(true)))`][builtins-2902] | approximated | Widens to Unknown. A rarely-taken [tex.web](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web) path this pass does not distinguish further |
+| `\splitfirstmark` | [`Convert(Mark(3))`][builtins-2847] | approximated | Scanned, answer unknown |
+| `\splitfirstmarks` | [`Convert(Marks(3))`][builtins-2847] | approximated | Scanned, answer unknown |
 | `\splitmaxdepth` | [`DimenParameter`][builtins-2599] | exact | Stored parameter table |
 | `\splittopskip` | [`GlueParameter { mu: false }`][builtins-2599] | exact | Stored parameter table |
 | `\string` | [`Text(String)`][builtins-2658] | approximated | Exact for a known operand. Widens when the token's meaning or a register's digits are unresolved |
 | `\tabskip` | [`GlueParameter { mu: false }`][builtins-2599] | exact | Stored parameter table |
 | `\textfont` | [`Command(FamilyFont)`][builtins-2795] | approximated | Stored and consumed by satex's own font and math-code tables. An operand satex cannot pin down leaves the entry, or the font the name means, unknown |
-| `\textstyle` | [`Mode(MathStyle(2))`][builtins-2875] | approximated | Tex.web [§ 1171](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L22139): the style of the atoms after it in inline math. Scripts in display style widen |
+| `\textstyle` | [`Mode(MathStyle(2))`][builtins-2879] | approximated | Tex.web [§ 1171](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L22139): the style of the atoms after it in inline math. Scripts in display style widen |
 | `\the` | [`Text(The)`][builtins-2658] | approximated | Exact for a known operand. Widens when the token's meaning or a register's digits are unresolved |
 | `\thickmuskip` | [`GlueParameter { mu: true }`][builtins-2599] | exact | Stored parameter table |
 | `\thinmuskip` | [`GlueParameter { mu: true }`][builtins-2599] | exact | Stored parameter table |
@@ -369,8 +369,8 @@ A primitive that scans its operands and drops their effect with neither of the l
 | `\toks` | [`Register(Toks)`][builtins-2585] | approximated | Exact for a known register index. An unknown index joins the value into every register it could name (`weaken_registers`) |
 | `\toksdef` | [`RegisterDef(Toks)`][builtins-2585] | approximated | Exact for a known register index. An unknown index joins the value into every register it could name (`weaken_registers`) |
 | `\tolerance` | [`IntegerParameter`][builtins-2599] | exact | Stored parameter table |
-| `\topmark` | [`Convert(Mark(0))`][builtins-2843] | approximated | Scanned, answer unknown |
-| `\topmarks` | [`Convert(Marks(0))`][builtins-2843] | approximated | Scanned, answer unknown |
+| `\topmark` | [`Convert(Mark(0))`][builtins-2847] | approximated | Scanned, answer unknown |
+| `\topmarks` | [`Convert(Marks(0))`][builtins-2847] | approximated | Scanned, answer unknown |
 | `\topskip` | [`GlueParameter { mu: false }`][builtins-2599] | exact | Stored parameter table |
 | `\tracingassigns` | [`IntegerParameter`][builtins-2599] | exact | Stored parameter table |
 | `\tracingcommands` | [`IntegerParameter`][builtins-2599] | exact | Stored parameter table |
@@ -391,43 +391,43 @@ A primitive that scans its operands and drops their effect with neither of the l
 | `\uchyph` | [`IntegerParameter`][builtins-2599] | exact | Stored parameter table |
 | `\underline` | [`Command(Nothing)`][builtins-2766] | approximated | No operand. The size of what `\span`, a fraction or `\overline`/`\underline` builds is widened, not computed |
 | `\unexpanded` | [`Reinject`][builtins-2567] | exact | ETeX manual [§§ 3](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L195), [4](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L231) |
-| `\unhbox` | [`Mode(Horizontal(Unpackage { take: true }))`][builtins-2893] | approximated | Void register adds nothing. A real one becomes Unknown, since its content is not tracked once boxed |
-| `\unhcopy` | [`Mode(Horizontal(Unpackage { take: false }))`][builtins-2893] | approximated | Void register adds nothing. A real one becomes Unknown, since its content is not tracked once boxed |
-| `\unkern` | [`Typeset(Plain)`][builtins-2927] | exact | `\unskip`, `\unkern` and `\unpenalty` remove the real tail item |
+| `\unhbox` | [`Mode(Horizontal(Unpackage { take: true }))`][builtins-2897] | approximated | Void register adds nothing. A real one becomes Unknown, since its content is not tracked once boxed |
+| `\unhcopy` | [`Mode(Horizontal(Unpackage { take: false }))`][builtins-2897] | approximated | Void register adds nothing. A real one becomes Unknown, since its content is not tracked once boxed |
+| `\unkern` | [`Typeset(Plain)`][builtins-2931] | exact | `\unskip`, `\unkern` and `\unpenalty` remove the real tail item |
 | `\unless` | [`Unless`][builtins-2575] | approximated | Etex.ch. Exact before a conditional. Before a name of unknown meaning the conditional it may open is left undecided |
-| `\unpenalty` | [`Typeset(Plain)`][builtins-2927] | exact | `\unskip`, `\unkern` and `\unpenalty` remove the real tail item |
-| `\unskip` | [`Typeset(Plain)`][builtins-2927] | exact | `\unskip`, `\unkern` and `\unpenalty` remove the real tail item |
-| `\unvbox` | [`Mode(Vertical(Unpackage { take: true }))`][builtins-2893] | approximated | Void register adds nothing. A real one becomes Unknown, since its content is not tracked once boxed |
-| `\unvcopy` | [`Mode(Vertical(Unpackage { take: false }))`][builtins-2893] | approximated | Void register adds nothing. A real one becomes Unknown, since its content is not tracked once boxed |
+| `\unpenalty` | [`Typeset(Plain)`][builtins-2931] | exact | `\unskip`, `\unkern` and `\unpenalty` remove the real tail item |
+| `\unskip` | [`Typeset(Plain)`][builtins-2931] | exact | `\unskip`, `\unkern` and `\unpenalty` remove the real tail item |
+| `\unvbox` | [`Mode(Vertical(Unpackage { take: true }))`][builtins-2897] | approximated | Void register adds nothing. A real one becomes Unknown, since its content is not tracked once boxed |
+| `\unvcopy` | [`Mode(Vertical(Unpackage { take: false }))`][builtins-2897] | approximated | Void register adds nothing. A real one becomes Unknown, since its content is not tracked once boxed |
 | `\uppercase` | [`CaseShift(Upper)`][builtins-2613] | exact | Tex.web [§ 1288](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L23608). Widens a code an unknown token was assigned |
-| `\vadjust` | [`Mode(Insert { vadjust: true })`][builtins-2869] | approximated | Opens the insert's own list. Not told apart from the vertical list around it |
-| `\valign` | [`Mode(Horizontal(Align))`][builtins-2903] | approximated | Cells run in the alignment's own list, not distinguished from the preamble |
+| `\vadjust` | [`Mode(Insert { vadjust: true })`][builtins-2873] | approximated | Opens the insert's own list. Not told apart from the vertical list around it |
+| `\valign` | [`Mode(Horizontal(Align))`][builtins-2907] | approximated | Cells run in the alignment's own list, not distinguished from the preamble |
 | `\vbadness` | [`IntegerParameter`][builtins-2599] | exact | Stored parameter table |
-| `\vbox` | [`Mode(Box(VBox))`][builtins-2911] | exact | Real box machinery |
-| `\vcenter` | [`Mode(Box(VCenter))`][builtins-2911] | exact | Real box machinery |
-| `\vfil` | [`Mode(Vertical(Fil(0)))`][builtins-2891] | exact | Real item, appended to the list satex tracks |
-| `\vfill` | [`Mode(Vertical(Fil(1)))`][builtins-2891] | exact | Real item, appended to the list satex tracks |
-| `\vfilneg` | [`Mode(Vertical(Fil(3)))`][builtins-2891] | exact | Real item, appended to the list satex tracks |
+| `\vbox` | [`Mode(Box(VBox))`][builtins-2915] | exact | Real box machinery |
+| `\vcenter` | [`Mode(Box(VCenter))`][builtins-2915] | exact | Real box machinery |
+| `\vfil` | [`Mode(Vertical(Fil(0)))`][builtins-2895] | exact | Real item, appended to the list satex tracks |
+| `\vfill` | [`Mode(Vertical(Fil(1)))`][builtins-2895] | exact | Real item, appended to the list satex tracks |
+| `\vfilneg` | [`Mode(Vertical(Fil(3)))`][builtins-2895] | exact | Real item, appended to the list satex tracks |
 | `\vfuzz` | [`DimenParameter`][builtins-2599] | exact | Stored parameter table |
 | `\voffset` | [`DimenParameter`][builtins-2599] | exact | Stored parameter table |
-| `\vrule` | [`Mode(Horizontal(Rule))`][builtins-2857] | approximated | Real rule item in a horizontal list, but a `\vrule` met in a vertical list starts a paragraph and widens the enclosing box's dimensions rather than answering them exactly |
+| `\vrule` | [`Mode(Horizontal(Rule))`][builtins-2861] | approximated | Real rule item in a horizontal list, but a `\vrule` met in a vertical list starts a paragraph and widens the enclosing box's dimensions rather than answering them exactly |
 | `\vsize` | [`DimenParameter`][builtins-2599] | exact | Stored parameter table |
-| `\vskip` | [`Mode(Vertical(Glue))`][builtins-2891] | exact | Real item, appended to the list satex tracks |
-| `\vsplit` | [`Mode(Box(VSplit))`][builtins-2916] | approximated | Result always widens to Unknown, even from a void register. A real split's remainder is not tracked |
-| `\vss` | [`Mode(Vertical(Fil(2)))`][builtins-2891] | exact | Real item, appended to the list satex tracks |
-| `\vtop` | [`Mode(Box(VTop))`][builtins-2911] | exact | Real box machinery |
+| `\vskip` | [`Mode(Vertical(Glue))`][builtins-2895] | exact | Real item, appended to the list satex tracks |
+| `\vsplit` | [`Mode(Box(VSplit))`][builtins-2920] | approximated | Result always widens to Unknown, even from a void register. A real split's remainder is not tracked |
+| `\vss` | [`Mode(Vertical(Fil(2)))`][builtins-2895] | exact | Real item, appended to the list satex tracks |
+| `\vtop` | [`Mode(Box(VTop))`][builtins-2915] | exact | Real box machinery |
 | `\wd` | [`Special(BoxDimen)`][builtins-2753] | approximated | Round-trips through the register consistently. The box behind it is never built |
 | `\widowpenalties` | [`Special(Penalties)`][builtins-2755] | approximated | Table satex stores and reads back exactly for a known entry. One it cannot pin down widens every entry the write may have reached |
 | `\widowpenalty` | [`IntegerParameter`][builtins-2599] | exact | Stored parameter table |
 | `\write` | [`Write`][builtins-2625] | approximated | `\immediate\write` is exact. A deferred `\write`'s text is recorded unexpanded, since satex never reaches shipout to expand it |
 | `\xdef` | [`Def { global: true, expand: true }`][builtins-2553] | exact | Tex.web [§ 476](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L9357). An unterminated definition is diagnosed, not read past the file's end |
-| `\xleaders` | [`Mode(Leaders)`][builtins-2863] | approximated | Box or rule is scanned exactly. [tex.web § 1078](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L20920)'s repeated copies are not laid out, since satex tracks natural size, not a page |
+| `\xleaders` | [`Mode(Leaders)`][builtins-2867] | approximated | Box or rule is scanned exactly. [tex.web § 1078](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L20920)'s repeated copies are not laid out, since satex tracks natural size, not a page |
 | `\xspaceskip` | [`GlueParameter { mu: false }`][builtins-2599] | exact | Stored parameter table |
 | `\year` | [`IntegerParameter`][builtins-2599] | exact | Stored parameter table |
 
 ## pdfTeX extensions ✓
 
-**Fully modeled**: all 158 primitives, 81 of them exactly. Source: the [pdfTeX manual, "Primitives"](https://ctan.org/pkg/pdftex).
+**Fully modeled**: all 158 primitives, 80 of them exactly. Source: the [pdfTeX manual, "Primitives"](https://ctan.org/pkg/pdftex).
 
 | primitive | modeled as | fidelity | how |
 | --- | --- | --- | --- |
@@ -441,7 +441,7 @@ A primitive that scans its operands and drops their effect with neither of the l
 | `\knaccode` | [`FontParam(CharCode(0))`][builtins-2614] | approximated | Reads the stored font table. A read past the last-loaded font's dimensions is discarded, matching [tex.web § 580](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L11284)'s own recovery. An entry satex cannot pin down widens every one it may name |
 | `\knbccode` | [`FontParam(CharCode(0))`][builtins-2614] | approximated | Reads the stored font table. A read past the last-loaded font's dimensions is discarded, matching [tex.web § 580](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L11284)'s own recovery. An entry satex cannot pin down widens every one it may name |
 | `\knbscode` | [`FontParam(CharCode(0))`][builtins-2614] | approximated | Reads the stored font table. A read past the last-loaded font's dimensions is discarded, matching [tex.web § 580](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L11284)'s own recovery. An entry satex cannot pin down widens every one it may name |
-| `\leftmarginkern` | [`Convert(LeftMarginKern)`][builtins-2843] | approximated | Scanned, answer unknown |
+| `\leftmarginkern` | [`Convert(LeftMarginKern)`][builtins-2847] | approximated | Scanned, answer unknown |
 | `\letterspacefont` | [`Command(CopyFont { amount: true })`][builtins-2795] | approximated | Stored and consumed by satex's own font and math-code tables. An operand satex cannot pin down leaves the entry, or the font the name means, unknown |
 | `\lpcode` | [`FontParam(CharCode(0))`][builtins-2614] | approximated | Reads the stored font table. A read past the last-loaded font's dimensions is discarded, matching [tex.web § 580](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L11284)'s own recovery. An entry satex cannot pin down widens every one it may name |
 | `\partokencontext` | [`IntegerParameter`][builtins-2599] | exact | Stored parameter table |
@@ -452,10 +452,10 @@ A primitive that scans its operands and drops their effect with neither of the l
 | `\pdfappendkern` | [`IntegerParameter`][builtins-2599] | exact | Stored parameter table |
 | `\pdfcatalog` | [`Command(PdfCatalog)`][builtins-2811] | approximated | Scanned, not built |
 | `\pdfcolorstack` | [`Command(PdfColorStack)`][builtins-2804] | approximated | Operation and stack id are tracked. The color text itself is a recorded occurrence, not replayed |
-| `\pdfcolorstackinit` | [`Convert(ColorStackInit)`][builtins-2833] | approximated | `\pdfcolorstackinit` hands out the next color stack number, widened rather than counted exactly. The color text is a recorded occurrence, not replayed |
+| `\pdfcolorstackinit` | [`Convert(ColorStackInit)`][builtins-2837] | approximated | `\pdfcolorstackinit` hands out the next color stack number, widened rather than counted exactly. The color text is a recorded occurrence, not replayed |
 | `\pdfcompresslevel` | [`IntegerParameter`][builtins-2599] | exact | Stored parameter table |
 | `\pdfcopyfont` | [`Command(CopyFont { amount: false })`][builtins-2795] | approximated | Stored and consumed by satex's own font and math-code tables. An operand satex cannot pin down leaves the entry, or the font the name means, unknown |
-| `\pdfcreationdate` | [`Convert(CreationDate)`][builtins-2843] | approximated | Scanned, answer unknown |
+| `\pdfcreationdate` | [`Convert(CreationDate)`][builtins-2847] | approximated | Scanned, answer unknown |
 | `\pdfdecimaldigits` | [`IntegerParameter`][builtins-2599] | exact | Stored parameter table |
 | `\pdfdest` | [`Command(PdfDest)`][builtins-2811] | approximated | Scanned, not built |
 | `\pdfdestmargin` | [`DimenParameter`][builtins-2599] | exact | Stored parameter table |
@@ -470,14 +470,14 @@ A primitive that scans its operands and drops their effect with neither of the l
 | `\pdfescapestring` | [`Convert(EscapeString)`][builtins-2823] | exact | Manual's own algorithm, run for real |
 | `\pdffakespace` | [`Command(Nothing)`][builtins-2766] | approximated | No operand. The size of what `\span`, a fraction or `\overline`/`\underline` builds is widened, not computed |
 | `\pdffiledump` | [`Convert(FileDump)`][builtins-2825] | exact | Reads the real file |
-| `\pdffilemoddate` | [`Convert(FileModDate)`][builtins-2827] | approximated | Form of a date, its digits unknown: satex does not read file modification times |
-| `\pdffilesize` | [`Convert(FileSize)`][builtins-2825] | exact | Reads the real file |
+| `\pdffilemoddate` | [`Convert(FileModDate)`][builtins-2831] | approximated | Form of a date, its digits unknown: satex does not read file modification times |
+| `\pdffilesize` | [`Convert(FileSize)`][builtins-2826] | approximated | Project file's size: only whether it is empty, so an edit leaves what was read before standing |
 | `\pdffirstlineheight` | [`DimenParameter`][builtins-2599] | exact | Stored parameter table |
 | `\pdffontattr` | [`Command(FontText)`][builtins-2811] | approximated | Scanned, not built |
 | `\pdffontexpand` | [`Command(FontExpand)`][builtins-2811] | approximated | Scanned, not built |
-| `\pdffontname` | [`Convert(PdfFontName)`][builtins-2832] | approximated | Widens to Unknown. No PDF font object is built |
-| `\pdffontobjnum` | [`Convert(PdfFontObjNum)`][builtins-2832] | approximated | Widens to Unknown. No PDF font object is built |
-| `\pdffontsize` | [`Convert(PdfFontSize)`][builtins-2830] | exact | Font's real design size |
+| `\pdffontname` | [`Convert(PdfFontName)`][builtins-2836] | approximated | Widens to Unknown. No PDF font object is built |
+| `\pdffontobjnum` | [`Convert(PdfFontObjNum)`][builtins-2836] | approximated | Widens to Unknown. No PDF font object is built |
+| `\pdffontsize` | [`Convert(PdfFontSize)`][builtins-2834] | exact | Font's real design size |
 | `\pdfforcepagebox` | [`IntegerParameter`][builtins-2599] | exact | Stored parameter table |
 | `\pdfgamma` | [`IntegerParameter`][builtins-2599] | exact | Stored parameter table |
 | `\pdfgentounicode` | [`IntegerParameter`][builtins-2599] | exact | Stored parameter table |
@@ -493,13 +493,13 @@ A primitive that scans its operands and drops their effect with neither of the l
 | `\pdfinclusionerrorlevel` | [`IntegerParameter`][builtins-2599] | exact | Stored parameter table |
 | `\pdfinfo` | [`Command(GeneralText)`][builtins-2811] | approximated | Scanned, not built |
 | `\pdfinfoomitdate` | [`IntegerParameter`][builtins-2599] | exact | Stored parameter table |
-| `\pdfinsertht` | [`Convert(InsertHt)`][builtins-2843] | approximated | Scanned, answer unknown |
+| `\pdfinsertht` | [`Convert(InsertHt)`][builtins-2847] | approximated | Scanned, answer unknown |
 | `\pdfinterwordspaceoff` | [`Command(Nothing)`][builtins-2766] | approximated | No operand. The size of what `\span`, a fraction or `\overline`/`\underline` builds is widened, not computed |
 | `\pdfinterwordspaceon` | [`Command(Nothing)`][builtins-2766] | approximated | No operand. The size of what `\span`, a fraction or `\overline`/`\underline` builds is widened, not computed |
 | `\pdflastannot` | [`LastItem(LastXPos)`][builtins-2735] | approximated | Genuinely unknowable without the real engine's clock, RNG or page builder. Widens to Unknown |
 | `\pdflastlinedepth` | [`DimenParameter`][builtins-2599] | exact | Stored parameter table |
 | `\pdflastlink` | [`LastItem(LastXPos)`][builtins-2735] | approximated | Genuinely unknowable without the real engine's clock, RNG or page builder. Widens to Unknown |
-| `\pdflastmatch` | [`Convert(LastMatch)`][builtins-2843] | approximated | Scanned, answer unknown |
+| `\pdflastmatch` | [`Convert(LastMatch)`][builtins-2847] | approximated | Scanned, answer unknown |
 | `\pdflastobj` | [`LastItem(LastXPos)`][builtins-2735] | approximated | Genuinely unknowable without the real engine's clock, RNG or page builder. Widens to Unknown |
 | `\pdflastxform` | [`LastItem(LastXPos)`][builtins-2735] | approximated | Genuinely unknowable without the real engine's clock, RNG or page builder. Widens to Unknown |
 | `\pdflastximage` | [`LastItem(LastXPos)`][builtins-2735] | approximated | Genuinely unknowable without the real engine's clock, RNG or page builder. Widens to Unknown |
@@ -512,14 +512,14 @@ A primitive that scans its operands and drops their effect with neither of the l
 | `\pdfmajorversion` | [`IntegerParameter`][builtins-2599] | exact | Stored parameter table |
 | `\pdfmapfile` | [`Command(GeneralText)`][builtins-2811] | approximated | Scanned, not built |
 | `\pdfmapline` | [`Command(GeneralText)`][builtins-2811] | approximated | Scanned, not built |
-| `\pdfmatch` | [`Convert(Match)`][builtins-2843] | approximated | Scanned, answer unknown |
+| `\pdfmatch` | [`Convert(Match)`][builtins-2847] | approximated | Scanned, answer unknown |
 | `\pdfmdfivesum` | [`Convert(MdFiveSum)`][builtins-2825] | exact | Reads the real file |
 | `\pdfminorversion` | [`IntegerParameter`][builtins-2599] | exact | Stored parameter table |
 | `\pdfmovechars` | [`IntegerParameter`][builtins-2599] | exact | Stored parameter table |
 | `\pdfnames` | [`Command(GeneralText)`][builtins-2811] | approximated | Scanned, not built |
 | `\pdfnobuiltintounicode` | [`Command(Font)`][builtins-2811] | approximated | Scanned, not built |
 | `\pdfnoligatures` | [`Command(Font)`][builtins-2811] | approximated | Scanned, not built |
-| `\pdfnormaldeviate` | [`Convert(NormalDeviate)`][builtins-2843] | approximated | Scanned, answer unknown |
+| `\pdfnormaldeviate` | [`Convert(NormalDeviate)`][builtins-2847] | approximated | Scanned, answer unknown |
 | `\pdfobj` | [`Pdf(Object)`][builtins-2639] | approximated | Manual's keywords are scanned exactly. No PDF is built, so the payload is recorded as an occurrence, not replayed |
 | `\pdfobjcompresslevel` | [`IntegerParameter`][builtins-2599] | exact | Stored parameter table |
 | `\pdfomitcharset` | [`IntegerParameter`][builtins-2599] | exact | Stored parameter table |
@@ -533,14 +533,14 @@ A primitive that scans its operands and drops their effect with neither of the l
 | `\pdfpageattr` | [`TokensParameter`][builtins-2601] | approximated | Stored parameter table, but setting any `\every…` list widens the dimensions of boxes that were already packed before it was read |
 | `\pdfpagebox` | [`IntegerParameter`][builtins-2599] | exact | Stored parameter table |
 | `\pdfpageheight` | [`DimenParameter`][builtins-2599] | exact | Stored parameter table |
-| `\pdfpageref` | [`Convert(PageRef)`][builtins-2843] | approximated | Scanned, answer unknown |
+| `\pdfpageref` | [`Convert(PageRef)`][builtins-2847] | approximated | Scanned, answer unknown |
 | `\pdfpageresources` | [`Pdf(Resources)`][builtins-2639] | approximated | Manual's keywords are scanned exactly. No PDF is built, so the payload is recorded as an occurrence, not replayed |
 | `\pdfpagesattr` | [`TokensParameter`][builtins-2601] | approximated | Stored parameter table, but setting any `\every…` list widens the dimensions of boxes that were already packed before it was read |
 | `\pdfpagewidth` | [`DimenParameter`][builtins-2599] | exact | Stored parameter table |
 | `\pdfpkmode` | [`TokensParameter`][builtins-2601] | approximated | Stored parameter table, but setting any `\every…` list widens the dimensions of boxes that were already packed before it was read |
 | `\pdfpkresolution` | [`IntegerParameter`][builtins-2599] | exact | Stored parameter table |
 | `\pdfprependkern` | [`IntegerParameter`][builtins-2599] | exact | Stored parameter table |
-| `\pdfprimitive` | [`Convert(Primitive)`][builtins-2838] | exact | Re-injects the frozen meaning for normal expansion to re-process, as `\pdfprimitive` does |
+| `\pdfprimitive` | [`Convert(Primitive)`][builtins-2842] | exact | Re-injects the frozen meaning for normal expansion to re-process, as `\pdfprimitive` does |
 | `\pdfprotrudechars` | [`IntegerParameter`][builtins-2599] | exact | Stored parameter table |
 | `\pdfptexuseunderscore` | [`IntegerParameter`][builtins-2599] | exact | Stored parameter table |
 | `\pdfpxdimen` | [`DimenParameter`][builtins-2599] | exact | Stored parameter table |
@@ -565,7 +565,7 @@ A primitive that scans its operands and drops their effect with neither of the l
 | `\pdfsuppresswarningdupdest` | [`IntegerParameter`][builtins-2599] | exact | Stored parameter table |
 | `\pdfsuppresswarningdupmap` | [`IntegerParameter`][builtins-2599] | exact | Stored parameter table |
 | `\pdfsuppresswarningpagegroup` | [`IntegerParameter`][builtins-2599] | exact | Stored parameter table |
-| `\pdftexbanner` | [`Convert(PdftexBanner)`][builtins-2843] | approximated | Scanned, answer unknown |
+| `\pdftexbanner` | [`Convert(PdftexBanner)`][builtins-2847] | approximated | Scanned, answer unknown |
 | `\pdftexrevision` | [`Convert(PdftexRevision)`][builtins-2820] | exact | Real constant or stored name |
 | `\pdftexversion` | [`LastItem(PdftexVersion)`][builtins-2720] | exact | Read from state satex already tracks |
 | `\pdfthread` | [`Command(PdfThread)`][builtins-2811] | approximated | Scanned, not built |
@@ -574,15 +574,15 @@ A primitive that scans its operands and drops their effect with neither of the l
 | `\pdftrailer` | [`Command(GeneralText)`][builtins-2811] | approximated | Scanned, not built |
 | `\pdftrailerid` | [`Command(GeneralText)`][builtins-2811] | approximated | Scanned, not built |
 | `\pdfunescapehex` | [`Convert(UnescapeHex)`][builtins-2823] | exact | Manual's own algorithm, run for real |
-| `\pdfuniformdeviate` | [`Convert(UniformDeviate)`][builtins-2843] | approximated | Scanned, answer unknown |
+| `\pdfuniformdeviate` | [`Convert(UniformDeviate)`][builtins-2847] | approximated | Scanned, answer unknown |
 | `\pdfuniqueresname` | [`IntegerParameter`][builtins-2599] | exact | Stored parameter table |
 | `\pdfvorigin` | [`DimenParameter`][builtins-2599] | exact | Stored parameter table |
 | `\pdfxform` | [`Command(PdfXForm)`][builtins-2811] | approximated | Scanned, not built |
-| `\pdfxformname` | [`Convert(XFormName)`][builtins-2843] | approximated | Scanned, answer unknown |
+| `\pdfxformname` | [`Convert(XFormName)`][builtins-2847] | approximated | Scanned, answer unknown |
 | `\pdfximage` | [`Command(PdfXImage)`][builtins-2803] | exact | File name reaches `observe::image` |
-| `\pdfximagebbox` | [`Convert(ImageBBox)`][builtins-2843] | approximated | Scanned, answer unknown |
-| `\quitvmode` | [`Mode(QuitVMode)`][builtins-2855] | exact | Tex.web's own mode-transition rules |
-| `\rightmarginkern` | [`Convert(MarginKern)`][builtins-2843] | approximated | Scanned, answer unknown |
+| `\pdfximagebbox` | [`Convert(ImageBBox)`][builtins-2847] | approximated | Scanned, answer unknown |
+| `\quitvmode` | [`Mode(QuitVMode)`][builtins-2859] | exact | Tex.web's own mode-transition rules |
+| `\rightmarginkern` | [`Convert(MarginKern)`][builtins-2847] | approximated | Scanned, answer unknown |
 | `\rpcode` | [`FontParam(CharCode(0))`][builtins-2614] | approximated | Reads the stored font table. A read past the last-loaded font's dimensions is discarded, matching [tex.web § 580](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L11284)'s own recovery. An entry satex cannot pin down widens every one it may name |
 | `\shbscode` | [`FontParam(CharCode(0))`][builtins-2614] | approximated | Reads the stored font table. A read past the last-loaded font's dimensions is discarded, matching [tex.web § 580](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L11284)'s own recovery. An entry satex cannot pin down widens every one it may name |
 | `\showstream` | [`IntegerParameter`][builtins-2599] | exact | Stored parameter table |
@@ -592,12 +592,12 @@ A primitive that scans its operands and drops their effect with neither of the l
 
 ## XeTeX extensions ✓
 
-**Fully modeled**: all 94 primitives, 25 of them exactly. Source: the [XeTeX reference](https://tug.org/xetex/).
+**Fully modeled**: all 94 primitives, 24 of them exactly. Source: the [XeTeX reference](https://tug.org/xetex/).
 
 | primitive | modeled as | fidelity | how |
 | --- | --- | --- | --- |
-| `\Uchar` | [`Convert(Uchar { catcode: false })`][builtins-2829] | exact | Tex.web, eTeX and XeTeX's character and category-code construction rules |
-| `\Ucharcat` | [`Convert(Uchar { catcode: true })`][builtins-2829] | exact | Tex.web, eTeX and XeTeX's character and category-code construction rules |
+| `\Uchar` | [`Convert(Uchar { catcode: false })`][builtins-2833] | exact | Tex.web, eTeX and XeTeX's character and category-code construction rules |
+| `\Ucharcat` | [`Convert(Uchar { catcode: true })`][builtins-2833] | exact | Tex.web, eTeX and XeTeX's character and category-code construction rules |
 | `\Udelcode` | [`Special(UCode { math: false, num: false })`][builtins-2755] | approximated | Table satex stores and reads back exactly for a known entry. One it cannot pin down widens every entry the write may have reached |
 | `\Udelcodenum` | [`Special(UCode { math: false, num: true })`][builtins-2755] | approximated | Table satex stores and reads back exactly for a known entry. One it cannot pin down widens every entry the write may have reached |
 | `\Udelimiter` | [`Command(Numbers(3))`][builtins-2811] | approximated | Scanned, not built |
@@ -627,17 +627,17 @@ A primitive that scans its operands and drops their effect with neither of the l
 | `\XeTeXdelcodenum` | [`Special(UCode { math: false, num: true })`][builtins-2755] | approximated | Table satex stores and reads back exactly for a known entry. One it cannot pin down widens every entry the write may have reached |
 | `\XeTeXdelimiter` | [`Command(Numbers(3))`][builtins-2811] | approximated | Scanned, not built |
 | `\XeTeXfeaturecode` | [`LastItem(Xetex(FeatureCode))`][builtins-2744] | approximated | Font's real tables |
-| `\XeTeXfeaturename` | [`Convert(Xetex(FeatureName))`][builtins-2841] | approximated | Exact from a loaded font's real tables. Unknown once they aren't resolved |
+| `\XeTeXfeaturename` | [`Convert(Xetex(FeatureName))`][builtins-2845] | approximated | Exact from a loaded font's real tables. Unknown once they aren't resolved |
 | `\XeTeXfindfeaturebyname` | [`LastItem(Xetex(FindFeatureByName))`][builtins-2744] | approximated | Font's real tables |
 | `\XeTeXfindselectorbyname` | [`LastItem(Xetex(FindSelectorByName))`][builtins-2744] | approximated | Font's real tables |
 | `\XeTeXfindvariationbyname` | [`LastItem(Xetex(FindVariationByName))`][builtins-2744] | approximated | Font's real tables |
 | `\XeTeXfirstfontchar` | [`LastItem(Xetex(FirstFontChar))`][builtins-2744] | approximated | Font's real tables |
 | `\XeTeXfonttype` | [`LastItem(Xetex(FontType))`][builtins-2744] | approximated | Font's real tables |
 | `\XeTeXgenerateactualtext` | [`IntegerParameter`][builtins-2599] | exact | Stored parameter table |
-| `\XeTeXglyph` | [`Mode(Horizontal(Char))`][builtins-2891] | exact | Real item, appended to the list satex tracks |
+| `\XeTeXglyph` | [`Mode(Horizontal(Char))`][builtins-2895] | exact | Real item, appended to the list satex tracks |
 | `\XeTeXglyphbounds` | [`LastItem(Xetex(GlyphBounds))`][builtins-2744] | approximated | Font's real tables |
 | `\XeTeXglyphindex` | [`LastItem(Xetex(GlyphIndex))`][builtins-2744] | approximated | Font's real tables |
-| `\XeTeXglyphname` | [`Convert(Xetex(GlyphName))`][builtins-2841] | approximated | Exact from a loaded font's real tables. Unknown once they aren't resolved |
+| `\XeTeXglyphname` | [`Convert(Xetex(GlyphName))`][builtins-2845] | approximated | Exact from a loaded font's real tables. Unknown once they aren't resolved |
 | `\XeTeXhyphenatablelength` | [`IntegerParameter`][builtins-2599] | exact | Stored parameter table |
 | `\XeTeXinputencoding` | [`Command(FileName)`][builtins-2811] | approximated | Scanned, not built |
 | `\XeTeXinputnormalization` | [`IntegerParameter`][builtins-2599] | exact | Stored parameter table |
@@ -664,7 +664,7 @@ A primitive that scans its operands and drops their effect with neither of the l
 | `\XeTeXradical` | [`Command(Numbers(2))`][builtins-2811] | approximated | Scanned, not built |
 | `\XeTeXrevision` | [`Convert(XetexRevision)`][builtins-2820] | exact | Real constant or stored name |
 | `\XeTeXselectorcode` | [`LastItem(Xetex(SelectorCode))`][builtins-2744] | approximated | Font's real tables |
-| `\XeTeXselectorname` | [`Convert(Xetex(SelectorName))`][builtins-2841] | approximated | Exact from a loaded font's real tables. Unknown once they aren't resolved |
+| `\XeTeXselectorname` | [`Convert(Xetex(SelectorName))`][builtins-2845] | approximated | Exact from a loaded font's real tables. Unknown once they aren't resolved |
 | `\XeTeXtracingfonts` | [`IntegerParameter`][builtins-2599] | exact | Stored parameter table |
 | `\XeTeXupwardsmode` | [`IntegerParameter`][builtins-2599] | exact | Stored parameter table |
 | `\XeTeXuseglyphmetrics` | [`IntegerParameter`][builtins-2599] | exact | Stored parameter table |
@@ -672,24 +672,24 @@ A primitive that scans its operands and drops their effect with neither of the l
 | `\XeTeXvariationdefault` | [`LastItem(Xetex(VariationDefault))`][builtins-2744] | approximated | Font's real tables |
 | `\XeTeXvariationmax` | [`LastItem(Xetex(VariationMax))`][builtins-2744] | approximated | Font's real tables |
 | `\XeTeXvariationmin` | [`LastItem(Xetex(VariationMin))`][builtins-2744] | approximated | Font's real tables |
-| `\XeTeXvariationname` | [`Convert(Xetex(VariationName))`][builtins-2841] | approximated | Exact from a loaded font's real tables. Unknown once they aren't resolved |
+| `\XeTeXvariationname` | [`Convert(Xetex(VariationName))`][builtins-2845] | approximated | Exact from a loaded font's real tables. Unknown once they aren't resolved |
 | `\XeTeXversion` | [`LastItem(XetexVersion)`][builtins-2739] | exact | Constant |
-| `\creationdate` | [`Convert(CreationDate)`][builtins-2843] | approximated | Scanned, answer unknown |
+| `\creationdate` | [`Convert(CreationDate)`][builtins-2847] | approximated | Scanned, answer unknown |
 | `\elapsedtime` | [`LastItem(ElapsedTime)`][builtins-2735] | approximated | Genuinely unknowable without the real engine's clock, RNG or page builder. Widens to Unknown |
 | `\filedump` | [`Convert(FileDump)`][builtins-2825] | exact | Reads the real file |
-| `\filemoddate` | [`Convert(FileModDate)`][builtins-2827] | approximated | Form of a date, its digits unknown: satex does not read file modification times |
-| `\filesize` | [`Convert(FileSize)`][builtins-2825] | exact | Reads the real file |
+| `\filemoddate` | [`Convert(FileModDate)`][builtins-2831] | approximated | Form of a date, its digits unknown: satex does not read file modification times |
+| `\filesize` | [`Convert(FileSize)`][builtins-2826] | approximated | Project file's size: only whether it is empty, so an edit leaves what was read before standing |
 | `\ifprimitive` | [`If(Primitive)`][builtins-2701] | exact | Computed from state satex already tracks (`eval_extra_condition`) |
 | `\mdfivesum` | [`Convert(MdFiveSum)`][builtins-2825] | exact | Reads the real file |
-| `\normaldeviate` | [`Convert(NormalDeviate)`][builtins-2843] | approximated | Scanned, answer unknown |
-| `\primitive` | [`Convert(Primitive)`][builtins-2838] | exact | Re-injects the frozen meaning for normal expansion to re-process, as `\pdfprimitive` does |
+| `\normaldeviate` | [`Convert(NormalDeviate)`][builtins-2847] | approximated | Scanned, answer unknown |
+| `\primitive` | [`Convert(Primitive)`][builtins-2842] | exact | Re-injects the frozen meaning for normal expansion to re-process, as `\pdfprimitive` does |
 | `\randomseed` | [`LastItem(RandomSeed)`][builtins-2735] | approximated | Genuinely unknowable without the real engine's clock, RNG or page builder. Widens to Unknown |
 | `\resettimer` | [`Command(Nothing)`][builtins-2766] | approximated | No operand. The size of what `\span`, a fraction or `\overline`/`\underline` builds is widened, not computed |
 | `\setrandomseed` | [`Command(Number)`][builtins-2811] | approximated | Scanned, not built |
 | `\shellescape` | [`LastItem(ShellEscape)`][builtins-2734] | exact | Configuration's own setting |
 | `\strcmp` | [`Convert(StrCmp)`][builtins-2823] | exact | Manual's own algorithm, run for real |
 | `\suppressfontnotfounderror` | [`IntegerParameter`][builtins-2599] | exact | Stored parameter table |
-| `\uniformdeviate` | [`Convert(UniformDeviate)`][builtins-2843] | approximated | Scanned, answer unknown |
+| `\uniformdeviate` | [`Convert(UniformDeviate)`][builtins-2847] | approximated | Scanned, answer unknown |
 
 ## LuaTeX extensions ✓
 
@@ -849,7 +849,7 @@ A primitive that scans its operands and drops their effect with neither of the l
 | `\boxdir` | [`Unmodeled`][builtins-2647] | unsupported + diagnostic | Widens the mode |
 | `\boxdirection` | [`Unmodeled`][builtins-2647] | unsupported + diagnostic | Widens the mode |
 | `\breakafterdirmode` | [`IntegerParameter`][builtins-2599] | exact | Stored parameter table |
-| `\catcodetable` | [`Lua(SelectCatcodes)`][builtins-2953] | exact | Real string escape or catcode-table operation |
+| `\catcodetable` | [`Lua(SelectCatcodes)`][builtins-2957] | exact | Real string escape or catcode-table operation |
 | `\clearmarks` | [`Unmodeled`][builtins-2647] | unsupported + diagnostic | Widens the mode |
 | `\compoundhyphenmode` | [`IntegerParameter`][builtins-2599] | exact | Stored parameter table |
 | `\copyfont` | [`Command(CopyFont { amount: false })`][builtins-2795] | approximated | Stored and consumed by satex's own font and math-code tables. An operand satex cannot pin down leaves the entry, or the font the name means, unknown |
@@ -859,7 +859,7 @@ A primitive that scans its operands and drops their effect with neither of the l
 | `\crampedtextstyle` | [`Unmodeled`][builtins-2647] | unsupported + diagnostic | Widens the mode |
 | `\csstring` | [`Text(String)`][builtins-2658] | approximated | Exact for a known operand. Widens when the token's meaning or a register's digits are unresolved |
 | `\deferred` | [`Unmodeled`][builtins-2647] | unsupported + diagnostic | Widens the mode |
-| `\directlua` | [`Lua(Direct)`][builtins-2948] | approximated | Chunk runs for real where a Lua host is available. A failed or unavailable run is diagnosed and widened |
+| `\directlua` | [`Lua(Direct)`][builtins-2952] | approximated | Chunk runs for real where a Lua host is available. A failed or unavailable run is diagnosed and widened |
 | `\discretionaryligaturemode` | [`IntegerParameter`][builtins-2599] | exact | Stored parameter table |
 | `\draftmode` | [`IntegerParameter`][builtins-2599] | exact | Stored parameter table |
 | `\dviextension` | [`Unmodeled`][builtins-2647] | unsupported + diagnostic | Widens the mode |
@@ -897,7 +897,7 @@ A primitive that scans its operands and drops their effect with neither of the l
 | `\ignoreligaturesinfont` | [`Command(Font)`][builtins-2811] | approximated | Scanned, not built |
 | `\immediateassigned` | [`Unmodeled`][builtins-2647] | unsupported + diagnostic | Widens the mode |
 | `\immediateassignment` | [`Unmodeled`][builtins-2647] | unsupported + diagnostic | Widens the mode |
-| `\initcatcodetable` | [`Lua(InitCatcodes)`][builtins-2953] | exact | Real string escape or catcode-table operation |
+| `\initcatcodetable` | [`Lua(InitCatcodes)`][builtins-2957] | exact | Real string escape or catcode-table operation |
 | `\insertht` | [`Unmodeled`][builtins-2647] | unsupported + diagnostic | Widens the mode |
 | `\lastnamedcs` | [`LastNamedCs`][builtins-2566] | exact | [LuaTeX manual, "Macros"](https://ctan.org/pkg/luatex) |
 | `\lastsavedboxresourceindex` | [`Unmodeled`][builtins-2647] | unsupported + diagnostic | Widens the mode |
@@ -905,7 +905,7 @@ A primitive that scans its operands and drops their effect with neither of the l
 | `\lastsavedimageresourcepages` | [`Unmodeled`][builtins-2647] | unsupported + diagnostic | Widens the mode |
 | `\lastxpos` | [`Unmodeled`][builtins-2647] | unsupported + diagnostic | Widens the mode |
 | `\lastypos` | [`Unmodeled`][builtins-2647] | unsupported + diagnostic | Widens the mode |
-| `\latelua` | [`Lua(Late)`][builtins-2948] | approximated | Chunk runs for real where a Lua host is available. A failed or unavailable run is diagnosed and widened |
+| `\latelua` | [`Lua(Late)`][builtins-2952] | approximated | Chunk runs for real where a Lua host is available. A failed or unavailable run is diagnosed and widened |
 | `\lateluafunction` | [`Command(Number)`][builtins-2811] | approximated | Scanned, not built |
 | `\leftghost` | [`Unmodeled`][builtins-2647] | unsupported + diagnostic | Widens the mode |
 | `\letcharcode` | [`Unmodeled`][builtins-2647] | unsupported + diagnostic | Widens the mode |
@@ -919,7 +919,7 @@ A primitive that scans its operands and drops their effect with neither of the l
 | `\luabytecodecall` | [`Command(Number)`][builtins-2811] | approximated | Scanned, not built |
 | `\luacopyinputnodes` | [`IntegerParameter`][builtins-2599] | exact | Stored parameter table |
 | `\luadef` | [`Command(NamesNumber)`][builtins-2811] | approximated | Scanned, not built |
-| `\luaescapestring` | [`Lua(Escape)`][builtins-2953] | exact | Real string escape or catcode-table operation |
+| `\luaescapestring` | [`Lua(Escape)`][builtins-2957] | exact | Real string escape or catcode-table operation |
 | `\luafunction` | [`Command(Number)`][builtins-2811] | approximated | Scanned, not built |
 | `\luafunctioncall` | [`Command(Number)`][builtins-2811] | approximated | Scanned, not built |
 | `\luatexbanner` | [`Unmodeled`][builtins-2647] | unsupported + diagnostic | Widens the mode |
@@ -965,7 +965,7 @@ A primitive that scans its operands and drops their effect with neither of the l
 | `\pardir` | [`Unmodeled`][builtins-2647] | unsupported + diagnostic | Widens the mode |
 | `\pardirection` | [`IntegerParameter`][builtins-2599] | exact | Stored parameter table |
 | `\pdfextension` | [`Pdf(Extension)`][builtins-2639] | approximated | Manual's keywords are scanned exactly. No PDF is built, so the payload is recorded as an occurrence, not replayed |
-| `\pdffeedback` | [`Convert(Feedback)`][builtins-2831] | approximated | PdfTeX's query of that name, or a number in the object table |
+| `\pdffeedback` | [`Convert(Feedback)`][builtins-2835] | approximated | PdfTeX's query of that name, or a number in the object table |
 | `\pdfvariable` | [`Pdf(Variable)`][builtins-2639] | approximated | Manual's keywords are scanned exactly. No PDF is built, so the payload is recorded as an occurrence, not replayed |
 | `\postexhyphenchar` | [`IntegerParameter`][builtins-2599] | exact | Stored parameter table |
 | `\posthyphenchar` | [`IntegerParameter`][builtins-2599] | exact | Stored parameter table |
@@ -979,7 +979,7 @@ A primitive that scans its operands and drops their effect with neither of the l
 | `\pxdimen` | [`DimenParameter`][builtins-2599] | exact | Stored parameter table |
 | `\rightghost` | [`Unmodeled`][builtins-2647] | unsupported + diagnostic | Widens the mode |
 | `\saveboxresource` | [`Unmodeled`][builtins-2647] | unsupported + diagnostic | Widens the mode |
-| `\savecatcodetable` | [`Lua(SaveCatcodes)`][builtins-2953] | exact | Real string escape or catcode-table operation |
+| `\savecatcodetable` | [`Lua(SaveCatcodes)`][builtins-2957] | exact | Real string escape or catcode-table operation |
 | `\saveimageresource` | [`Command(PdfXImage)`][builtins-2803] | exact | File name reaches `observe::image` |
 | `\savepos` | [`Unmodeled`][builtins-2647] | unsupported + diagnostic | Widens the mode |
 | `\scantextokens` | [`ScanTokens { text: true }`][builtins-2569] | exact | ETeX manual [§ 3.9](https://ctan.org/pkg/luatex). A capacity overflow (`MAX_IN_OPEN`) is diagnosed, not assumed away |
@@ -1093,35 +1093,36 @@ A primitive that scans its operands and drops their effect with neither of the l
 [builtins-2820]: https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/builtins.rs#L2820
 [builtins-2823]: https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/builtins.rs#L2823
 [builtins-2825]: https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/builtins.rs#L2825
-[builtins-2827]: https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/builtins.rs#L2827
-[builtins-2829]: https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/builtins.rs#L2829
-[builtins-2830]: https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/builtins.rs#L2830
+[builtins-2826]: https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/builtins.rs#L2826
 [builtins-2831]: https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/builtins.rs#L2831
-[builtins-2832]: https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/builtins.rs#L2832
 [builtins-2833]: https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/builtins.rs#L2833
-[builtins-2838]: https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/builtins.rs#L2838
-[builtins-2841]: https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/builtins.rs#L2841
-[builtins-2843]: https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/builtins.rs#L2843
-[builtins-2852]: https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/builtins.rs#L2852
-[builtins-2855]: https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/builtins.rs#L2855
-[builtins-2857]: https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/builtins.rs#L2857
-[builtins-2863]: https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/builtins.rs#L2863
+[builtins-2834]: https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/builtins.rs#L2834
+[builtins-2835]: https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/builtins.rs#L2835
+[builtins-2836]: https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/builtins.rs#L2836
+[builtins-2837]: https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/builtins.rs#L2837
+[builtins-2842]: https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/builtins.rs#L2842
+[builtins-2845]: https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/builtins.rs#L2845
+[builtins-2847]: https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/builtins.rs#L2847
+[builtins-2856]: https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/builtins.rs#L2856
+[builtins-2859]: https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/builtins.rs#L2859
+[builtins-2861]: https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/builtins.rs#L2861
 [builtins-2867]: https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/builtins.rs#L2867
-[builtins-2869]: https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/builtins.rs#L2869
-[builtins-2872]: https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/builtins.rs#L2872
-[builtins-2874]: https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/builtins.rs#L2874
-[builtins-2875]: https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/builtins.rs#L2875
+[builtins-2871]: https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/builtins.rs#L2871
+[builtins-2873]: https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/builtins.rs#L2873
+[builtins-2876]: https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/builtins.rs#L2876
+[builtins-2878]: https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/builtins.rs#L2878
 [builtins-2879]: https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/builtins.rs#L2879
-[builtins-2891]: https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/builtins.rs#L2891
-[builtins-2893]: https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/builtins.rs#L2893
-[builtins-2898]: https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/builtins.rs#L2898
-[builtins-2903]: https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/builtins.rs#L2903
-[builtins-2911]: https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/builtins.rs#L2911
-[builtins-2912]: https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/builtins.rs#L2912
+[builtins-2883]: https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/builtins.rs#L2883
+[builtins-2895]: https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/builtins.rs#L2895
+[builtins-2897]: https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/builtins.rs#L2897
+[builtins-2902]: https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/builtins.rs#L2902
+[builtins-2907]: https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/builtins.rs#L2907
+[builtins-2915]: https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/builtins.rs#L2915
 [builtins-2916]: https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/builtins.rs#L2916
-[builtins-2927]: https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/builtins.rs#L2927
-[builtins-2928]: https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/builtins.rs#L2928
-[builtins-2929]: https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/builtins.rs#L2929
-[builtins-2937]: https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/builtins.rs#L2937
-[builtins-2948]: https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/builtins.rs#L2948
-[builtins-2953]: https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/builtins.rs#L2953
+[builtins-2920]: https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/builtins.rs#L2920
+[builtins-2931]: https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/builtins.rs#L2931
+[builtins-2932]: https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/builtins.rs#L2932
+[builtins-2933]: https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/builtins.rs#L2933
+[builtins-2941]: https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/builtins.rs#L2941
+[builtins-2952]: https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/builtins.rs#L2952
+[builtins-2957]: https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/builtins.rs#L2957

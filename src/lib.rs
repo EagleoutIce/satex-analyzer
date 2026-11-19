@@ -285,6 +285,21 @@ pub mod fixed {
                     .all(|(a, b)| std::rc::Rc::ptr_eq(a, b) || a.iter().zip(b.iter()).all(|(x, y)| eq(x, y)))
         }
 
+        /// Where the elements are not `eq` to `other`'s, in order; a longer one's rest too.
+        /// Chunks both still share are skipped.
+        pub fn differing(&self, other: &Self, eq: impl Fn(Option<&T>, Option<&T>) -> bool) -> Vec<usize> {
+            let mut out = Vec::new();
+            for c in 0..self.0.len().max(other.0.len()) {
+                let (a, b) = (self.0.get(c), other.0.get(c));
+                if matches!((a, b), (Some(a), Some(b)) if std::rc::Rc::ptr_eq(a, b)) {
+                    continue;
+                }
+                let chunk = (0..CHUNK).filter(|&i| !eq(a.and_then(|x| x.get(i)), b.and_then(|x| x.get(i))));
+                out.extend(chunk.map(|i| c * CHUNK + i));
+            }
+            out
+        }
+
         pub fn is_empty(&self) -> bool {
             self.1 == 0
         }

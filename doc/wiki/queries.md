@@ -107,12 +107,12 @@ Everything SaTeX noticed while interpreting the document: widened conditionals, 
 
 ```text
 $ satex query diagnostics -f samples/paper.tex
-severity    code                count  message                         file            
-assumption  page-one-arm        2      an undecided choice while a p…  latex.ltx       @ latex.ltx:21194:8
-assumption  page-one-arm        2      an undecided choice while a p…  latex.ltx       @ latex.ltx:9338:7
-assumption  forced-page-breaks  1      the page may fill here, and p…  paper.tex       @ paper.tex:58:9
-assumption  page-one-arm        1      an undecided choice while a p…  latex.ltx       @ latex.ltx:20715:3
-assumption  page-one-arm        1      an undecided choice while a p…  latex.ltx       @ latex.ltx:20717:7
+severity    code                      count  message                  file            
+assumption  digits-read-as-one-token  3      a number of unknown di…  expl3-code.tex  @ expl3-code.tex:12611:48
+assumption  page-one-arm              2      an undecided choice wh…  latex.ltx       @ latex.ltx:21194:8
+assumption  page-one-arm              2      an undecided choice wh…  latex.ltx       @ latex.ltx:9338:7
+assumption  forced-page-breaks        1      the page may fill here…  paper.tex       @ paper.tex:58:9
+assumption  page-one-arm              1      an undecided choice wh…  latex.ltx       @ latex.ltx:20715:3
 … 1 more line omitted
 ```
 

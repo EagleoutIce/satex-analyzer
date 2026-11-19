@@ -112,29 +112,35 @@ fn a_resumed_run_says_what_a_full_run_says() {
         return;
     }
     let dir = crate::support::tmp_root().join("incremental");
-    std::fs::create_dir_all(&dir).unwrap();
-    std::fs::write(dir.join("main.tex"), MAIN).unwrap();
-    std::fs::write(dir.join("chapter.tex"), CHAPTER).unwrap();
-    std::fs::write(dir.join("appendix.tex"), APPENDIX).unwrap();
     let main = dir.join("main.tex");
-    let cfg = crate::support::config();
-    let mut checkpoints = Checkpoints::new(&cfg).every(64);
     let read = |p: &Path| std::fs::read_to_string(p).unwrap();
-    let first = checkpoints.analyze(&read(&main), &main);
-    let full = Machine::analyze_once(&read(&main), Some(&main), &cfg);
-    assert_eq!(first_difference(&said(&first), &said(&full)), None, "the first run");
     let mut resumed = 0;
-    for (file, from, to) in EDITS {
-        let path = dir.join(file);
-        let text = read(&path);
-        assert!(text.contains(from), "{from} in {file}");
-        std::fs::write(&path, text.replacen(from, to, 1)).unwrap();
-        let incremental = checkpoints.analyze(&read(&main), &main);
-        resumed += usize::from(checkpoints.resumed.is_some());
+    // However many checkpoints stay (`limits.checkpoints`), each one a run resumes from holds.
+    // Pins: with more kept, a run resumed where the document begins (`main.tex:4`) said
+    // otherwise than a full run after `{Hi, #1.}` became `{Hey, #1.}` in `chapter.tex`.
+    for kept in [8, 9, 12, 1000] {
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(&main, MAIN).unwrap();
+        std::fs::write(dir.join("chapter.tex"), CHAPTER).unwrap();
+        std::fs::write(dir.join("appendix.tex"), APPENDIX).unwrap();
+        let mut cfg = crate::support::config();
+        cfg.limits.checkpoints = kept;
+        let mut checkpoints = Checkpoints::new(&cfg).every(64);
+        let first = checkpoints.analyze(&read(&main), &main);
         let full = Machine::analyze_once(&read(&main), Some(&main), &cfg);
-        let at = checkpoints.resumed.clone();
-        let differs = first_difference(&said(&incremental), &said(&full));
-        assert_eq!(differs, None, "after replacing {from} by {to} in {file}, resumed at {at:?}");
+        assert_eq!(first_difference(&said(&first), &said(&full)), None, "the first run");
+        for (file, from, to) in EDITS {
+            let path = dir.join(file);
+            let text = read(&path);
+            assert!(text.contains(from), "{from} in {file}");
+            std::fs::write(&path, text.replacen(from, to, 1)).unwrap();
+            let incremental = checkpoints.analyze(&read(&main), &main);
+            resumed += usize::from(kept == 8 && checkpoints.resumed.is_some());
+            let full = Machine::analyze_once(&read(&main), Some(&main), &cfg);
+            let at = checkpoints.resumed.clone();
+            let differs = first_difference(&said(&incremental), &said(&full));
+            assert_eq!(differs, None, "{kept} kept: after replacing {from} by {to} in {file}, resumed at {at:?}");
+        }
     }
     assert!(resumed >= 5, "only {resumed} runs resumed from a checkpoint");
 }
@@ -310,8 +316,9 @@ A fourth paragraph, the last one.
 /// Then the last run's rest is reused, with this run's facts up to there
 /// (`Checkpoints::converged`). A word in a paragraph changes no binding, mode
 /// or file written, so the states meet on the next line. A changed definition
-/// that later text reads, a changed label the `.aux` gets, or a page grown
-/// longer keeps them apart. An inserted line moves every later place, so the
+/// keeps them apart up to the last line that reads it: the rest never touched the
+/// name, so it ends as the edit bound it. A changed label the `.aux` gets or a page
+/// grown longer keeps them apart. An inserted line moves every later place, so the
 /// rest is run again. In every case the result is a full run's.
 #[test]
 fn a_run_after_an_edit_reuses_the_last_runs_rest_only_when_the_states_meet() {
@@ -323,13 +330,14 @@ fn a_run_after_an_edit_reuses_the_last_runs_rest_only_when_the_states_meet() {
     let main = dir.join("main.tex");
     let cfg = crate::support::config();
     let line_of = |text: &str, part: &str| 1 + text.lines().position(|l| l.contains(part)).unwrap() as u32;
-    // (text replaced, its replacement, whether the rest is reused)
+    // (text replaced, its replacement, whether the rest is reused: past the line that holds this)
     let edits = [
-        ("that the edits change", "that one edit changed", true),
-        ("\\def\\name{first}", "\\def\\name{second}", false),
-        ("\\label{one}", "\\label{two}", false),
-        ("\\vspace{2cm}", "\\vspace{30cm}", false),
-        ("that the edits change.", "that the edits change.\nAn inserted line.", false),
+        ("that the edits change", "that one edit changed", Some("that one edit changed")),
+        // A changed definition: the rest is reused past the last line that reads it, no earlier.
+        ("\\def\\name{first}", "\\def\\name{second}", Some("reads \\name")),
+        ("\\label{one}", "\\label{two}", None),
+        ("\\vspace{2cm}", "\\vspace{30cm}", None),
+        ("that the edits change.", "that the edits change.\nAn inserted line.", None),
     ];
     for (from, to, meets) in edits {
         std::fs::write(&main, PARAGRAPHS).unwrap();
@@ -357,8 +365,8 @@ fn a_run_after_an_edit_reuses_the_last_runs_rest_only_when_the_states_meet() {
         assert_eq!(first_difference(&said(&incremental), &said(&full)), None, "after replacing {from} by {to}");
         let at = checkpoints.converged.as_ref().map(|(_, line, _)| *line);
         match meets {
-            true => assert!(at.is_none_or(|l| l > line_of(&text, to)), "{from}: met at {at:?}"),
-            false => assert_eq!(at, None, "{from}: the rest must run again"),
+            Some(past) => assert!(at.is_none_or(|l| l > line_of(&text, past)), "{from}: met at {at:?}"),
+            None => assert_eq!(at, None, "{from}: the rest must run again"),
         }
     }
     let _ = std::fs::remove_dir_all(&dir);
@@ -519,8 +527,9 @@ fn a_lax_page_model_reuses_the_rest_of_the_last_run() {
         checkpoints.analyze(&text, &main);
         checkpoints.hooks.provisional = None;
         let lax = got.take();
+        // The exact run may meet the last one first: then no provisional one is due.
         if let Some(met) = met {
-            assert_eq!(lax.is_some(), met, "{now}: a provisional run");
+            assert_eq!(lax.is_some() || checkpoints.converged.is_some(), met, "{now}: a provisional run");
         }
         if let Some(lax) = lax {
             let full = Machine::analyze_once(&text, Some(&main), &cfg);
@@ -566,6 +575,120 @@ fn checkpoints_stay_within_their_memory() {
     assert!(bounded.resumed.is_some(), "the rerun resumed");
     let full = Machine::analyze_once(&edited, Some(&main), &cfg);
     assert_eq!(first_difference(&said(&incremental), &said(&full)), None);
+}
+
+/// The last run's rest is reused only where it read nothing that changed. Here the chapter is
+/// read twice: after an edit in it the run resumes before its first reading, and on the lines
+/// between the two readings its state equals the last run's, whose rest read the old chapter
+/// again. Pins: a run resumed before the edited file was opened (a checkpoint kept where the
+/// document begins) spliced the last run's end at a line before the file, with the old text.
+#[test]
+fn a_rest_that_reads_the_edited_file_runs_again() {
+    if !installed() {
+        return;
+    }
+    let dir = crate::support::tmp_root().join("incremental-read-again");
+    std::fs::create_dir_all(&dir).unwrap();
+    let (main, chapter) = (dir.join("main.tex"), dir.join("chapter.tex"));
+    let between: String = (0..12).map(|i| format!("Between the readings, paragraph {i}.\n\n")).collect();
+    let main_text = format!(
+        "\\documentclass{{article}}\n\\begin{{document}}\n\\input{{chapter}}\n\n{between}\\input{{chapter}}\n\nAfter.\n\\end{{document}}\n"
+    );
+    let paragraphs: Vec<String> = (0..8).map(|i| format!("Paragraph {i} of the chapter.\n")).collect();
+    std::fs::write(&main, &main_text).unwrap();
+    std::fs::write(&chapter, paragraphs.join("\n")).unwrap();
+    let cfg = crate::support::config();
+    let mut checkpoints = Checkpoints::new(&cfg).every(64);
+    checkpoints.analyze(&main_text, &main);
+    for word in ["section", "chapter"] {
+        std::fs::write(
+            &chapter,
+            paragraphs.join("\n").replacen("Paragraph 5 of the chapter", &format!("Paragraph 5 of the {word}"), 1),
+        )
+        .unwrap();
+        let incremental = checkpoints.analyze(&main_text, &main);
+        let full = Machine::analyze_once(&main_text, Some(&main), &cfg);
+        let at = (checkpoints.resumed.clone(), checkpoints.converged.clone());
+        assert_eq!(first_difference(&said(&incremental), &said(&full)), None, "{word}: resumed, met at {at:?}");
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A report of `chapters` included chapters, each with `sections` sections of five blocks: a
+/// paragraph that cites an equation, a numbered claim with references, an equation, a list
+/// with a footnote, and a figure. What a thesis is made of, small enough to run in seconds.
+fn report(chapters: usize, sections: usize) -> Vec<(String, String)> {
+    let words = "Some words that fill a paragraph of text across a few lines on the page here";
+    let mut main = String::from(
+        "\\documentclass{report}\n\\newcommand\\term[1]{\\emph{#1}}\n\\newcounter{claims}\n\
+         \\newcommand\\claim[1]{\\refstepcounter{claims}\\textbf{Claim \\theclaims.} #1}\n\
+         \\begin{document}\n\\tableofcontents\n",
+    );
+    let mut files = Vec::new();
+    for c in 0..chapters {
+        main += &format!("\\include{{ch{c}}}\n");
+        let mut text = format!("\\chapter{{Chapter {c}}}\\label{{ch:{c}}}\n\n");
+        for s in 0..sections {
+            let k = c * sections + s;
+            text += &format!(
+                "\\section{{Section {c}.{s}}}\\label{{sec:{k}}}\n\n\
+                 Paragraph {k}. {words}, {words}, {words} (Equation~\\ref{{eq:{k}}}).\n\n\
+                 \\claim{{{words}.}} See Section~\\ref{{sec:{k}}} of Chapter~\\ref{{ch:{c}}}.\n\n\
+                 \\begin{{equation}}\n  a_{{{k}}} = b + {k}\\label{{eq:{k}}}\n\\end{{equation}}\n\n\
+                 \\begin{{itemize}}\n\\item \\term{{first}} {words}\n\\item second\\footnote{{Note {k}.}} {words}\n\\end{{itemize}}\n\n\
+                 \\begin{{figure}}\n\\centering\\rule{{3cm}}{{2cm}}\n\\caption{{Figure {k}}}\\label{{fig:{k}}}\n\\end{{figure}}\n\n"
+            );
+        }
+        files.push((format!("ch{c}.tex"), text));
+    }
+    main += "\\end{document}\n";
+    files.insert(0, ("main.tex".to_string(), main));
+    files
+}
+
+/// A word typed in a paragraph of one chapter of a long report runs that paragraph again, no
+/// more: the run resumes at the edited line, meets the last run on the first line past the
+/// paragraph, and takes the rest from it. The first edit at a place first runs the old text
+/// again from the checkpoint before it, to place those two states; the next ones find them.
+/// Pins: every typed word ran the document from `\begin{document}` to its end (a thesis: minutes).
+#[test]
+fn a_word_typed_in_a_chapter_of_a_long_report_runs_its_paragraph() {
+    if !installed() {
+        return;
+    }
+    /// The first edit at a place may run this share of the document's steps, a later one this.
+    const FIRST: u64 = 2;
+    const LATER: u64 = 50;
+    let dir = crate::support::tmp_root().join("incremental-report");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let files = report(6, 3);
+    for (name, text) in &files {
+        std::fs::write(dir.join(name), text).unwrap();
+    }
+    let (main, chapter) = (dir.join("main.tex"), dir.join("ch2.tex"));
+    let read = |p: &Path| std::fs::read_to_string(p).unwrap();
+    let cfg = crate::support::config();
+    let mut checkpoints = Checkpoints::new(&cfg);
+    Machine::build(&mut checkpoints, &read(&main), &main, &cfg, true);
+    let original = read(&chapter);
+    // As long as the word replaced, so the paragraph's lines break alike.
+    for (n, typed) in ["Paragraph 7! Some", "Paragraph 7? Some", "Paragraph 7; Some"].into_iter().enumerate() {
+        std::fs::write(&chapter, original.replacen("Paragraph 7. Some", typed, 1)).unwrap();
+        let incremental = Machine::build(&mut checkpoints, &read(&main), &main, &cfg, true);
+        let (at, (ran, all)) = ((checkpoints.resumed.clone(), checkpoints.converged.clone()), checkpoints.ran);
+        let full = Machine::build(&mut Checkpoints::new(&cfg), &read(&main), &main, &cfg, true);
+        assert_eq!(first_difference(&said(&incremental), &said(&full)), None, "typed {typed} (resumed, met: {at:?})");
+        assert!(
+            at.0.as_ref().is_some_and(|(path, _)| path.ends_with("ch2.tex")),
+            "typed {typed}: resumed at {:?}",
+            at.0
+        );
+        assert!(at.1.is_some(), "typed {typed}: the runs never met");
+        let share = if n == 0 { FIRST } else { LATER };
+        assert!(ran * share <= all, "typed {typed}: ran {ran} of {all} steps");
+    }
+    let _ = std::fs::remove_dir_all(&dir);
 }
 
 /// A small deterministic generator, so a failing sequence is replayed by its seed.
@@ -621,8 +744,13 @@ fn random_edit_sequences_build_what_a_fresh_build_does() {
     const EDITS: usize = 6;
     const SEEDS: u64 = 2;
     let dir = crate::support::tmp_root().join("incremental-random");
-    let fixtures: [&[(&str, &str)]; 2] =
-        [&[("main.tex", MAIN), ("chapter.tex", CHAPTER), ("appendix.tex", APPENDIX)], &[("main.tex", PARAGRAPHS)]];
+    let report = report(3, 2);
+    let report: Vec<(&str, &str)> = report.iter().map(|(name, text)| (name.as_str(), text.as_str())).collect();
+    let fixtures: [&[(&str, &str)]; 3] = [
+        &[("main.tex", MAIN), ("chapter.tex", CHAPTER), ("appendix.tex", APPENDIX)],
+        &[("main.tex", PARAGRAPHS)],
+        &report,
+    ];
     let cfg = crate::support::config();
     for (k, files) in fixtures.iter().enumerate() {
         for seed in 0..SEEDS {
@@ -706,10 +834,11 @@ fn a_second_edit_meets_the_last_run_a_page_on() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// An edit in a file read by `\include` resumes where that file is included, or inside it, with
-/// the full run's result. `\include` tests the file (`\IfFileExists` reads its size) before it
-/// reads it, so no checkpoint inside it holds after an edit there. Red (tests/known-red.txt): a
-/// thesis of included chapters runs from `\begin{document}` again for every typed word.
+/// An edit in a file read by `\include` resumes inside it, with the full run's result.
+/// `\include` tests the file before it reads it (`\IfFileExists`, l3file's `\file_full_name:n`,
+/// asks for its size): the size is one unknown number per file, so the test reads nothing an
+/// edit changes. Pins: the size was read as the file's text, the file counted as read twice,
+/// and a thesis of included chapters ran from `\begin{document}` again for every typed word.
 #[test]
 fn an_edit_in_an_included_file_resumes_where_it_is_included() {
     if !installed() {
@@ -737,12 +866,7 @@ fn an_edit_in_an_included_file_resumes_where_it_is_included() {
         assert_eq!(first_difference(&said(&incremental), &said(&full)), None, "{edit}: resumed at {at:?}");
         let includes = 1 + main_text.lines().position(|l| l.starts_with("\\include")).unwrap() as u32;
         let near = |(path, line): &(String, u32)| path.ends_with("chapter.tex") || *line >= includes;
-        if edit != "edited" {
-            assert!(
-                at.as_ref().is_some_and(near),
-                "{edit}: resumed at {at:?}, the chapter is included on line {includes}"
-            );
-        }
+        assert!(at.as_ref().is_some_and(near), "{edit}: resumed at {at:?}, the chapter is included on line {includes}");
     }
     let _ = std::fs::remove_dir_all(&dir);
 }

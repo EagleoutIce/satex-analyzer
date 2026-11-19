@@ -10,7 +10,10 @@ impl Machine<'_> {
     /// [`super::RunHooks::provisional`]: the state equals `old`'s apart from the page being built, so
     /// the last run's rest, spliced in, is what a lax page model shows; its pages are marked
     /// not exact. Once per run; this run goes on exact.
-    pub(super) fn lax_splice(&mut self, old: &Machine) {
+    pub(super) fn lax_splice(&mut self, old: &Machine, reads: usize) {
+        if !self.checkpoints.on.as_mut().is_some_and(|t| t.prior.rest_holds(reads)) {
+            return;
+        }
         let Some(taking) = self.checkpoints.on.as_ref() else { return };
         let (Some((id, source, _)), Some(edit), Some(end)) =
             (&taking.provisional, &taking.prior.edit, &taking.prior.end)
@@ -24,8 +27,9 @@ impl Machine<'_> {
             return;
         };
         let since = taking.since;
-        let (mine, theirs) = (comparable_path(self, true), comparable_path(old, true));
-        let traces = [&mine, &self.env.trace((since.0, since.1)), &theirs, &old.env.trace((since.0, since.1))];
+        let (mine, theirs) = (comparable_path(self, true, taking.parted), comparable_path(old, true, taking.parted));
+        let traces =
+            [&mine, &self.env.trace((since.0, since.1), &[]), &theirs, &old.env.trace((since.0, since.1), &[])];
         if mine != theirs || traces.iter().any(|t| mentions(t, window)) {
             return;
         }
@@ -46,9 +50,38 @@ impl Machine<'_> {
 /// A machine's path state as two runs that differ by an edit before here are compared:
 /// the source position, the document mark and the open calls' absolute counts left out
 /// ([`super::calls::CallRec::alike_view`]); `lax` also leaves out the page being built.
-pub(super) fn comparable_path(m: &Machine, lax: bool) -> String {
+pub(super) fn comparable_path(m: &Machine, lax: bool, since: Parted) -> String {
+    format!("{:?}", comparable_state(m, lax, since))
+}
+
+/// The source read, the groups opened and the assignments made when two runs parted.
+pub(super) type Parted = (u64, u64, u64);
+
+/// [`comparable_path`] before it is written out. A loop is named by the source read when
+/// it began: one begun since the runs parted (`since`) is named by how long ago.
+pub(super) fn comparable_state(m: &Machine, lax: bool, since: Parted) -> super::PathState {
+    let from = since.0;
     let mut p = super::PathState { source_progress: 0, doc_mark: 0, ..m.save_path() };
-    p.call_recs = Rc::new(p.call_recs.iter().map(|r| Rc::new(r.alike_view(lax))).collect());
+    let view = |r: &Rc<super::calls::CallRec>| Rc::new(r.alike_view(lax).ending_view(m.natural, m.input.len()));
+    p.call_recs = Rc::new(p.call_recs.iter().map(view).collect());
+    let ago = |(at, by, read): super::LoopId| match read > from {
+        true => (at, by, 1 << 63 | m.source_progress.saturating_sub(read)),
+        false => (at, by, read),
+    };
+    p.loop_bounds = Rc::new(p.loop_bounds.iter().map(|&(id, bound)| (ago(id), bound)).collect());
+    p.summary_of = Rc::new(p.summary_of.iter().map(|&id| ago(id)).collect());
+    // A token list holds the group and the assignment count it was pushed at: likewise.
+    let (groups, assigned) = (m.env.group_ids().0, m.env.assignments);
+    for frame in p.input.0.iter_mut() {
+        if let super::Frame::Tokens { at, .. } = &**frame
+            && (at.1 > since.1 || at.2 > since.2)
+            && let super::Frame::Tokens { at, .. } = Rc::make_mut(frame)
+        {
+            let ago =
+                |now: u64, then: u64, from: u64| if then > from { 1 << 63 | now.saturating_sub(then) } else { then };
+            (at.1, at.2) = (ago(groups, at.1, since.1), ago(assigned, at.2, since.2));
+        }
+    }
     if lax {
         // the output routines fired so far, and the braces they read: the page builder's.
         // `align_state` counts only inside an alignment cell (tex.web § 342).
@@ -57,7 +90,7 @@ pub(super) fn comparable_path(m: &Machine, lax: bool) -> String {
             p.align_state = 0;
         }
     }
-    format!("{p:?}")
+    p
 }
 
 /// Serde's bytes of `t`, to compare values of any recorded type.
@@ -135,11 +168,12 @@ trait Offsets: Sized + Clone + PartialEq {
     fn moved(&self, by: Move) -> Option<Self>;
 }
 
-/// Characters set alike in both runs, set at the meeting line, and the change in between.
+/// Where the characters the runs set differently begin and where, in the last run's count,
+/// they end, and by how much the later ones moved.
 type Move = (u32, u32, i64);
 
-/// An offset before the resume stays, one set from the meeting line on moves,
-/// one in between (set in the edited part) is not known.
+/// An offset before the characters set differently stays, one after them moves,
+/// one among them is not known.
 fn shift(x: u32, (resume, from, by): Move) -> Option<u32> {
     match x {
         _ if x < resume => Some(x),
@@ -213,15 +247,14 @@ offset_first!(
 /// longer word moves every later character). The rest may only add, and what
 /// it reads of the list, its last entry against the characters set so far,
 /// must stand alike in both runs.
-fn offsets<T: Offsets>(new: &[T], at: &[T], end: &mut Vec<T>, (now, then, resume): (u32, u32, u32)) -> bool {
+fn offsets<T: Offsets>(new: &[T], at: &[T], end: &mut Vec<T>, (now, then, by): (u32, u32, Move)) -> bool {
     let rel = |l: &[T], len: u32| l.last().map(|x| i64::from(x.first()) - i64::from(len));
     let reads_alike = match (rel(new, now), rel(at, then)) {
         (Some(x), Some(y)) => x == y || (x < 0 && y < 0),
         (x, y) => x == y,
     };
-    let by = i64::from(now) - i64::from(then);
     let Some(rest) = end.get(at.len()..).filter(|_| reads_alike && end[..at.len()] == *at) else { return false };
-    let Some(rest) = rest.iter().map(|x| x.moved((resume, then, by))).collect::<Option<Vec<T>>>() else { return false };
+    let Some(rest) = rest.iter().map(|x| x.moved(by)).collect::<Option<Vec<T>>>() else { return false };
     *end = new.iter().cloned().chain(rest).collect();
     true
 }
@@ -235,11 +268,19 @@ fn splice_text(
     resume: u32,
 ) -> Result<Move, &'static str> {
     let k = at.at.len();
-    // Characters both runs set alike before the edited ones keep their offsets.
+    // Characters both runs set alike before the edited ones keep their offsets, the ones
+    // set alike after them move together.
     let from = (resume as usize).min(k).min(new.at.len());
-    let resume = (from + new.at[from..].iter().zip(&at.at[from..k]).take_while(|(a, b)| a == b).count()) as u32;
-    let lens = (new.at.len() as u32, k as u32, resume);
-    let by = (resume, lens.1, i64::from(lens.0) - i64::from(lens.1));
+    let resume = from + new.at[from..].iter().zip(&at.at[from..k]).take_while(|(a, b)| a == b).count();
+    let (mine, theirs): (Vec<char>, Vec<char>) =
+        (new.chars.chars().skip(resume).collect(), at.chars.chars().skip(resume).take(k - resume).collect());
+    let same = |i: usize, j: usize| new.at[i] == at.at[j] && new.site.get(i) == at.site.get(j);
+    let tail = (1..=mine.len().min(theirs.len()))
+        .take_while(|&n| mine[mine.len() - n] == theirs[theirs.len() - n] && same(new.at.len() - n, k - n))
+        .count();
+    let resume = resume as u32;
+    let by = (resume, (k - tail) as u32, new.at.len() as i64 - k as i64);
+    let lens = (new.at.len() as u32, k as u32, by);
     let crate::analysis::facts::Text {
         chars,
         at: spots,
@@ -336,17 +377,17 @@ pub(super) fn splice_out(new: &Analysis, at: &Analysis, end: &mut Analysis, wind
         journal_size, held_tokens_left, loop_heads, peak_paths, peak_output_paths, forks, output_forks, call_memo,
         joined_slots, memory_reported, untyped, package_caches, written, written_runs, build_runs, class_caches,
         cached_files, preamble, kernel, timings: _, started: _, hot: _, probes: _, context_probes: _, takes: _,
-        role_sources: _, tagging: _, probed_roles: _, bib: _, scope_rows: _, said: _, build_pending: _ } = end;
+        role_sources: _, tagging: _, probed_roles: _, bib: _, scope_rows: _, said: _, build_pending: _, build_files: _ } = end;
     let crate::analysis::facts::Facts { defs, written_files, absent, found, shapes, types, length_fonts, vars,
         letters, expansions, loads, occurrences, literals, diagnostics, csnames, slots, groups, raised, spaces,
-        kept_spaces, conditionals, quantities, colors, items, color_uses, color_stack, text, overfull,
-        lines: line_reads } = facts;
+        kept_spaces, paragraph_enders, conditionals, quantities, colors, items, color_uses, color_stack, text,
+        overfull, lines: line_reads } = facts;
     let (n, a) = (&new.facts, &at.facts);
     // What this run recorded must be what the last one had here: the rest then leaves the same.
     let alike = [
         (new.interner.len() == at.interner.len() && new.interner == at.interner, "names"),
-        // lax: the edited line's nodes sit at other columns; the provisional end keeps the last run's
-        (new.graph.len() == at.graph.len() && (lax || new.graph == at.graph), "graph"),
+        // The edited line's nodes sit at other columns: the end takes this run's; the provisional one keeps the last run's.
+        (new.graph.len() == at.graph.len() && (lax || graph.splice(&new.graph, &at.graph, span)), "graph"),
         (new.calls == at.calls && new.observed == at.observed, "calls"),
         (new.files == at.files, "files"),
         (same(&(new.main_file, &new.literate, &new.project, &new.plugins, &new.distribution, new.document_depth),
@@ -367,7 +408,7 @@ pub(super) fn splice_out(new: &Analysis, at: &Analysis, end: &mut Analysis, wind
     let by = splice_text(&n.text, &a.text, text, resume)?;
     // A literal holds the characters set before it. The rest's move with them; the last
     // run's before the meeting line are compared as this run would have set them.
-    let moved = |c: u32| if c < by.0 { c } else { u32::try_from(i64::from(c) + by.2).unwrap_or(u32::MAX) };
+    let moved = |c: u32| if c < by.1 { c } else { u32::try_from(i64::from(c) + by.2).unwrap_or(u32::MAX) };
     let at_literals: Vec<_> = (a.literals.iter().cloned()).map(|l| crate::analysis::facts::Literal { chars: moved(l.chars), ..l }).collect();
     for (i, l) in literals.iter_mut().enumerate() {
         l.chars = match i < a.literals.len() { true => moved(l.chars), false => shift(l.chars, by).ok_or("literals")? };
@@ -404,6 +445,7 @@ pub(super) fn splice_out(new: &Analysis, at: &Analysis, end: &mut Analysis, wind
         (members(&n.written_files, &a.written_files, written_files, never), "written files"),
         (members(&n.absent, &a.absent, absent, never), "absent"), (members(&n.found, &a.found, found, never), "found"),
         (members(&n.kept_spaces, &a.kept_spaces, kept_spaces, span), "kept spaces"),
+        (members(&n.paragraph_enders, &a.paragraph_enders, paragraph_enders, never), "paragraph enders"),
         (keyed(&n.shapes, &a.shapes, shapes, never), "shapes"), (keyed(&n.types, &a.types, types, span), "types"),
         (keyed(&n.length_fonts, &a.length_fonts, length_fonts, span), "length fonts"),
         (keyed(&n.csnames, &a.csnames, csnames, span), "csnames"), (keyed(&n.slots, &a.slots, slots, span), "slots"),

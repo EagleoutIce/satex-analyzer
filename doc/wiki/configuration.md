@@ -750,6 +750,8 @@ compile:  # what satex compile runs and shows
     #! affects: speed
   passes: 4  # engine passes at most of the satex build, until the build files rest
     #! affects: output
+  warm: false  # keep pdfTeX started on the next build's format, the main file a named pipe between builds. Only for a build directory of its own (satex gui sets it)
+    #! affects: speed
   # viewer: none  # a PDF viewer `satex compile --view` opens: none or auto (the system's opener) or a program. Only your own config sets it
     #! affects: output
 
@@ -958,6 +960,9 @@ playground:  # what only the web playground reads
   compile_after: 0  # how long the edits rest before a PDF build, in ms. 0 builds only on request. The Compile menu sets it too
     #! affects: output
     #! example: `compile_after: 1000`: the PDF follows a second after the edits rest
+  compile_rest: 0  # with automatic compile on: how long the edits rest before a build on this machine's TeX (satex gui), in ms, waiting for neither the analysis nor compile_after. 0 waits for the analysis
+    #! affects: speed
+    #! example: `compile_rest: 60`: the PDF follows the keys, comment edits build too
   type_mode: true  # Type mode on in the Typeset view from the start: a click on a word puts the caret at its place in the source
     #! affects: output
   tint_macro: ""  # Type mode's tint of text a macro wrote, a CSS color. Empty takes the theme's violet
@@ -1094,6 +1099,21 @@ limits:  # what bounds the analysis: reaching one stops that part of the run, so
   checkpoint_memory: 1GiB  # most memory the saved states for reruns may copy together. Past it every other one goes. 0 = only their number bounds them
     #! affects: memory, speed
     #! example: `checkpoint_memory: 256MiB` for a long document on a small machine, reruns then resume further back
+  checkpoint_steps: 8388608  # steps between two saved states at first. Past `checkpoints` of them every other one goes and the spacing doubles
+    #! affects: memory, speed
+    #! example: `checkpoint_steps: 1000000` saves states more often, so a rerun after an edit resumes closer to it
+  checkpoints: 8  # how many saved states a run keeps for its reruns, besides the ones around the last edit and where the document begins
+    #! affects: memory, speed
+    #! example: `checkpoints: 32` on a machine with memory to spare, reruns then resume closer to the edit
+  checkpoint_body_share: 8  # in the body a state is also saved between top-level lines after this fraction of `checkpoint_steps`
+    #! affects: memory, speed
+    #! example: `checkpoint_body_share: 64` saves a state every few paragraphs of a long document
+  checkpoints_after_edit: 2  # after an edit's line one state is kept past each of this many pages shipped, where the next edit's run may meet this one
+    #! affects: memory, speed
+    #! example: `checkpoints_after_edit: 4` lets the run after a longer edit still meet the last one a few pages on
+  checkpoint_meet_steps: 4194304  # after an edit far from every saved state the text before the edit is run again to save states around it. At most this many steps past the edit's line
+    #! affects: speed
+    #! example: `checkpoint_meet_steps: 0` never runs the old text again, the run after an edit then goes on to the document's end
   threads: 0  # threads for walking the project's files, 0 lets satex choose. The analysis itself uses one
     #! affects: speed
     #! example: `threads: 1` keeps the walk on one core
@@ -1106,6 +1126,9 @@ limits:  # what bounds the analysis: reaching one stops that part of the run, so
   probe_steps: 2000000  # tokens one trial run may read when a hover learns what a command does. Eight runs answer one question
     #! affects: speed, precision
     #! example: lower in a single-threaded host, where a trial blocks the next request
+  provider_probes: 4  # packages a write may try, most loaded first, for a name it adds that the run lacks: each a small run of the call. 0 loads the most loaded untried
+    #! affects: speed, precision
+    #! example: `\includegraphics[width=5cm]` loads graphicx, whose definition takes the key, not graphics
   format_steps: 9000000000  # the same for reading the LaTeX format, which is cached after the first time
     #! affects: speed
     #! example: rarely needs a change
@@ -1498,6 +1521,11 @@ stubs:
 | --- | --- | --- |
 | `limits.memory` | `8GiB` | stops the run with `budget-exhausted` (`--max-memory`), library users get no limit |
 | `limits.checkpoint_memory` | `1GiB` | what the saved states for reruns may copy together, past it every other one goes. Results stay the same, reruns resume further back |
+| `limits.checkpoint_steps` | `8388608` | steps between two saved states at first. Past `limits.checkpoints` of them every other one goes and the spacing doubles |
+| `limits.checkpoints` | `8` | saved states a run keeps for its reruns, besides the ones around the last edit and where the document begins |
+| `limits.checkpoint_body_share` | `8` | in the body a state is also saved between top-level lines after this fraction of `limits.checkpoint_steps` |
+| `limits.checkpoints_after_edit` | `2` | states kept on the first lines past an edit and past the next pages shipped, where the next edit's run may meet this one |
+| `limits.checkpoint_meet_steps` | `4194304` | after an edit far from every saved state the old text is run again to save states around it, at most this many steps past the edit. `0` never does |
 | `limits.seconds` | `300` | stops the run, lints after it share the same budget |
 | `limits.degrade_at_percent` | `100` (off) | past that share of `limits.steps`, halves the time-only limits, reported as `precision-degraded` |
 | `limits.threads` | `0` (`min(4, cores)`) | file scans only, the interpreter is one thread |

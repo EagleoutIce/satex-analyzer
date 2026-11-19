@@ -46,4 +46,7 @@ export default [
   // Type mode: Ctrl+Enter is one forced line break, never a build
   { name: 'tc-type-ctrl-enter', source: MARKUP, example: 'hello.tex', word: is('second'), src: /a second/, keys: ['Ctrl+Enter', 'Quokka'], speed: 'human', settle: true, expect: () => null, contains: [/a second\\\\\nQuokka/],
     steps: 'MARKUP, Type mode; click the end of "second"; Ctrl+Enter, "Quokka": `\\\\\\\\` and a new line before Quokka (was: Ctrl+Enter built the PDF, wrote nothing)' },
+  // Type mode: Enter right after a whole name that writes nothing more (`\noindent`) is Enter's own; a prefix takes the item
+  { name: 'tc-type-enter-whole', source: MARKUP, example: 'hello.tex', word: is('second'), src: /a second/, keys: [' \\noindent', 'Enter', 'Quokka'], speed: 'human', settle: true, expect: () => null, contains: [/a second \\noindent\n+Quokka/],
+    steps: 'MARKUP, Type mode; click the end of "second"; " \\noindent", Enter, "Quokka": a new paragraph after \\noindent (was: Enter took the item, no line)' },
 ];

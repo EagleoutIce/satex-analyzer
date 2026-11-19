@@ -697,7 +697,7 @@ pub(super) fn reads(text: &str, from: usize, to: usize, edits: &[Edit]) -> Strin
 pub fn printed(analysis: &Analysis, doc: &Text, nodes: &[Node]) -> Result<(Vec<Edit>, Vec<String>), String> {
     let (mut edits, mut notes) = (Vec::new(), Vec::new());
     // packages wanted in order, and names asked of the installation, by the node that wants them
-    let (mut wanted, mut asked): (Vec<Package>, Vec<(String, bool)>) = Default::default();
+    let (mut wanted, mut asked): (Vec<Package>, Vec<(String, bool, String)>) = Default::default();
     for n in nodes {
         let own = edits_of(doc, n)?;
         // a `.bib` entry loads no package
@@ -717,15 +717,19 @@ pub fn printed(analysis: &Analysis, doc: &Text, nodes: &[Node]) -> Result<(Vec<E
                 match &n.package {
                     Some(p) if new && name == n.name => wanted.push(p.clone()),
                     _ if unknown => {}
-                    _ => asked.push((name.to_string(), new && name == n.name)),
+                    _ => asked.push((name.to_string(), new && name == n.name, now.clone())),
                 }
             }
             wanted.extend(n.package.clone().filter(|_| !new));
         }
         edits.extend(own);
     }
-    for (name, own) in asked {
-        match crate::linter::shared::provider(analysis, &name) {
+    // each name's usual provider, loaded beside the one probed: a table's call needs all of them
+    let usual: Vec<String> =
+        asked.iter().filter_map(|(name, ..)| crate::linter::shared::provider(analysis, name)).collect();
+    for (name, own, call) in asked {
+        // the package whose definition takes the call as written (graphicx for `[width=…]`)
+        match crate::linter::shared::provider_for(analysis, &name, &call, &usual) {
             Some(p) => wanted.push(Package { name: p, options: String::new() }),
             None if own => notes.push(format!("\\{name} is not defined in the run: load its package")),
             None => {}

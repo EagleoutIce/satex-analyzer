@@ -402,7 +402,8 @@ impl Machine<'_> {
     /// joined meaning or text. What follows holds only where that text has
     /// the arm's shape.
     pub(crate) fn took_unknown_arm(&self) -> bool {
-        self.choices.iter().any(|c| c.joined || c.by == self.unknown || self.is_unknown_name(c.by))
+        self.enclosing_unknown_arm
+            || self.choices.iter().any(|c| c.joined || c.by == self.unknown || self.is_unknown_name(c.by))
     }
 
     /// The choice just made picks one of the meanings or texts a join left.
@@ -422,8 +423,11 @@ impl Machine<'_> {
     /// end. Paths that reach `done` are joined and continue as one.
     pub(super) fn drive(&mut self, unit: Unit, done: impl Fn(&Self) -> bool) {
         // A run resumed from a checkpoint continues with the saved drive.
+        // A nested drive runs on its enclosing path: the arms that path took hold here too.
+        let enclosing = self.enclosing_unknown_arm;
         let Drive { mut outer, outer_unit, nested, mut paths, keep_errors, mut mark, mut commands } =
             self.checkpoints.resume().unwrap_or_else(|| {
+                self.enclosing_unknown_arm = self.took_unknown_arm();
                 let outer =
                     (std::mem::take(&mut self.script), std::mem::take(&mut self.choices), self.runs, self.replayable);
                 let outer_unit = (std::mem::replace(&mut self.unit, unit), self.lone);
@@ -448,6 +452,7 @@ impl Machine<'_> {
                 crate::util::progress::pause();
             }
             if !ended && paths.top {
+                self.env.touched.tick(self.out.steps);
                 self.probe_convergence();
             }
             let spliced = self.spliced();
@@ -455,7 +460,7 @@ impl Machine<'_> {
                 let (outer, paths) = (outer.clone(), paths.clone());
                 self.take_checkpoint(Drive { outer, outer_unit, nested, paths, keep_errors, mark, commands });
             }
-            self.halted |= spliced || (!ended && paths.top && self.preview_done());
+            self.halted |= spliced || (!ended && paths.top && (self.preview_done() || self.planted()));
             self.charge(&mut mark);
             if !nested {
                 self.undo.clear();
@@ -725,6 +730,7 @@ impl Machine<'_> {
         self.keep_errors = keep_errors;
         (self.script, self.choices, self.runs, self.replayable) = outer;
         (self.unit, self.lone) = outer_unit;
+        self.enclosing_unknown_arm = enclosing;
     }
 
     /// The run ends in the join of all paths that ended the same way as the
@@ -3098,6 +3104,7 @@ impl Machine<'_> {
         x.learn_forks = x.learn_forks.max(y.learn_forks);
         x.approximated |= y.approximated;
         x.blind |= y.blind;
+        x.read_outside |= y.read_outside;
         x.ran_off = x.ran_off.or(y.ran_off);
         // The join keeps a pending error only if every joined path has one.
         // A path without one is a feasible run that covers the other's recovery.

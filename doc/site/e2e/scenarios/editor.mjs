@@ -20,4 +20,18 @@ export default [
   { kind: 'dated', name: 'pdf-banner-dated', text: '\\documentclass{article}\n\\begin{document}\nIn the\n\\begin{align}\nx\n\\end{align}\n\\end{document}\n',
     fixed: '\\documentclass{article}\n\\begin{document}\nIn the\n\\begin{tabular}{ll}\na & b \\\\\n\\end{tabular}\n\\end{document}\n',
     steps: 'hello.tex, auto compile off; a build of an undefined align fails; the text becomes a tabular: the banner and bar say "of an older text"; Compile: no banner' },
+  // sweep 2026-11-19: Ctrl+Z at the Type caret did nothing, a key after an undo in the editor was refused
+  { kind: 'typeundo', name: 'type-undo-redo', word: 'world', steps: 'hello.tex, Typeset; click "world", K; Ctrl+Z: gone; Ctrl+Shift+Z: back; Ctrl+Z, J: J types' },
+  // sweep 2026-11-19: a click on a line number left the focus on the scroller, the next keys went nowhere
+  { kind: 'gutterkey', name: 'gutter-click-keys', line: 3, steps: 'hello.tex; click line number 3, press W: W starts line 3' },
+  // sweep 2026-11-19: a fix of chapter.tex from thesis.tex left the caret at the top, the note did not say where
+  { kind: 'fixfile', name: 'fix-other-file', example: 'thesis.tex', finding: 'sec:cost', file: 'chapter.tex', line: '\\subsection{Cost}',
+    steps: 'thesis.tex; Findings, Fix of "label sec:cost is never referenced": chapter.tex shown at the edit, the note names it' },
+  // sweep 2026-11-19: `%` typed before \newcommand{\section}, then erased: the finding stayed gone until the next edit
+  { kind: 'heldback', name: 'finding-after-pause', line: 3, key: '%',
+    steps: 'hello.tex; type % at the start of line 3 (its finding goes), Backspace; once typing pauses the finding is back' },
+  // user 2026-11-19: "\toprule: not reached by the analysis" stayed on the card while booktabs was loaded and the status said Ready
+  { kind: 'hoverlate', name: 'hover-after-load', text: '\\documentclass{article}\n\\begin{document}\nIn the\n\n\\begin{tabular}{llr}\n  \n  a & b & c \\\\\n\\end{tabular}\n\\end{document}\n',
+    line: 6, keys: ['\\', 't', 'o', 'p', 'r', 'u', 'l'], word: '\\toprule', want: /booktabs\.sty:\d+/,
+    steps: 'hello.tex; "\\toprul" Tab in a tabular (writes \\usepackage{booktabs}); the pointer on \\toprule during the run; once quiet the card is booktabs\' macro card (was: the busy note or "not reached" stayed)' },
 ];

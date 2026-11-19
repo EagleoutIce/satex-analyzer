@@ -868,6 +868,44 @@ fn every_tex_error_of_the_document_is_an_error_finding() {
     }
 }
 
+/// tex.web §§ 785, 1129: only `align_peek`, right after a `\cr`, takes a
+/// `\noalign`; anywhere else it is "Misplaced \noalign", and so is an
+/// `\omit` past a cell's start. A row missing its `\\` puts the
+/// `\bottomrule` (or `\hline`) in its last cell. satex opened the rule's
+/// material as if between rows and stayed silent; pdflatex stops there.
+/// A `\noalign` right after a `\\` stays silent.
+#[test]
+fn a_noalign_inside_a_cell_is_misplaced() {
+    if !installed() {
+        return;
+    }
+    let head = "\\documentclass{article}\n\\usepackage{booktabs}\n\\begin{document}\n";
+    let body_line = head.lines().count() as u64 + 1;
+    let lines = |body: &str| {
+        let analysis = analyze(&format!("{head}{body}\n\\end{{document}}\n"));
+        let mut found: Vec<_> = satex::linter::lint(&analysis)
+            .into_iter()
+            .filter(|f| f["severity"] == "error")
+            .filter_map(|f| f["line"].as_u64())
+            .collect();
+        found.dedup();
+        found
+    };
+    let table = |rule: &str, end: &str| {
+        format!("\\begin{{tabular}}{{llr}}\n\\toprule\na & b & c \\\\\ne & hallo{end}\n{rule}\n\\end{{tabular}}")
+    };
+    for rule in [r"\bottomrule", r"\hline", r"\noalign{}", r"\cline{1-2}"] {
+        let at = body_line + table(rule, "").lines().position(|l| l == rule).unwrap() as u64;
+        assert_eq!(lines(&table(rule, "")).first(), Some(&at), "{rule}: no error at the rule");
+        let after = lines(&table(rule, r" \\"));
+        assert!(after.is_empty(), "{rule} after a row: {after:?}");
+    }
+    let omit = lines(r"\begin{tabular}{l}a\omit\end{tabular}");
+    assert_eq!(omit.first(), Some(&body_line), "\\omit in a cell");
+    let start = lines(r"\begin{tabular}{l}\omit a\end{tabular}");
+    assert!(start.is_empty(), "\\omit at a cell's start: {start:?}");
+}
+
 /// An error any code raises reaches the lints, as pdflatex stops on it: the
 /// kernel's ltcmd refuses an xparse-only argument type and a misplaced `!`,
 /// and leaves the command undefined.

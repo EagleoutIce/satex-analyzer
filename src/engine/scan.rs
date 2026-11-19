@@ -1317,7 +1317,14 @@ impl Machine<'_> {
         let steps = self.out.tex_steps();
         let n = if self.digits_made.0 == steps { self.digits_made.1 + 1 } else { 0 };
         self.digits_made = (steps, n);
-        let sym = self.intern(&format!("{TYPED_DIGITS}{}..{}#{steps}.{n}", num.lo, num.hi));
+        self.digits_of(num, &format!("{steps}.{n}"), span)
+    }
+
+    /// One token of unknown digits in `num`, the number called `id`: every read of
+    /// that number is this token, so a test of it against itself is decided
+    /// ([`Machine::decide_numbers`]) and one that narrows it narrows every read.
+    pub(crate) fn digits_of(&mut self, num: Num, id: &str, span: Span) -> Vec<Token> {
+        let sym = self.intern(&format!("{TYPED_DIGITS}{}..{}#{id}", num.lo, num.hi));
         if self.env.slot(sym).is_none() {
             let mut binding =
                 crate::engine::env::Binding::builtin(Meaning::Char(crate::engine::tex::UNKNOWN_CHAR, Catcode::Other));

@@ -4,6 +4,10 @@
 //! they were. A served run executes nothing. A build `limits.seconds` cut
 //! between two runs is kept with the files its next run reads, and the next
 //! process goes on from there.
+//! A finished build is kept with the files it left (`.aux`, `.toc`, `.bbl`):
+//! once the document is edited, its next build starts from them, as latexmk
+//! starts from the files on disk. It ends when a run writes what it read, the
+//! same test as for a build from nothing, mostly after one run.
 
 use crate::analysis::machine::{Analysis, BuildPending, Unfinished};
 use crate::caches::format::{self, Fnv};
@@ -12,7 +16,7 @@ use crate::project::overlay::Read;
 use std::path::{Path, PathBuf};
 
 /// The encoding of the files, apart from the interpreter's [`format::cache_key`].
-const VERSION: u32 = 3;
+const VERSION: u32 = 4;
 
 /// What a listing shows of a file: it comes first, so a listing reads only the file's start.
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -65,6 +69,9 @@ struct Head {
     reads: Vec<Read>,
     /// Set for a build to go on with, not to serve.
     pending: Option<BuildPending>,
+    /// The files a finished build left: where a build of the document starts once this one
+    /// is no longer served (an edit), so it settles in one run where a build from nothing takes three.
+    files: Vec<(PathBuf, String)>,
 }
 
 /// A run that stores its analysis once it ends.
@@ -73,6 +80,8 @@ pub(crate) struct Recording {
     key: u64,
     document: Option<PathBuf>,
 }
+
+type BuildFiles = Vec<(PathBuf, String)>;
 
 pub(crate) enum Lookup {
     Served(Box<Analysis>),
@@ -122,10 +131,17 @@ pub(crate) fn lookup(source: &str, path: Option<&Path>, cfg: &Config) -> Lookup 
                 }
                 // The cut is the last process's: this one has its own time.
                 analysis.limits.retain(|hit| hit.key != "seconds" || hit.at.line != 0);
-                pending = Some((Box::new(analysis), build));
+                pending = Some((Some(Box::new(analysis)), build));
             }
-            Err(why) if cfg.verbose >= 1 => crate::util::progress::note!("satex: document cache not used: {why}"),
-            Err(_) => {}
+            Err((why, files)) => {
+                if cfg.verbose >= 1 {
+                    let from = if files.is_empty() { "" } else { ", the build starts from the last one's files" };
+                    crate::util::progress::note!("satex: document cache not used: {why}{from}");
+                }
+                if !files.is_empty() {
+                    pending = Some((None, BuildPending { files, ..Default::default() }));
+                }
+            }
         }
     }
     if !crate::project::overlay::record() {
@@ -134,25 +150,26 @@ pub(crate) fn lookup(source: &str, path: Option<&Path>, cfg: &Config) -> Lookup 
     Lookup::Record(Recording { file, key: key.0, document: absolute }, pending)
 }
 
-fn serve(file: &Path, key: u64, cfg: &Config) -> Result<(Analysis, Option<BuildPending>), String> {
-    let bytes = std::fs::read(file).map_err(|_| "none stored".to_string())?;
-    let (label, rest): (Label, &[u8]) = postcard::take_from_bytes(&bytes).map_err(|e| e.to_string())?;
+/// The stored analysis, or why it is not served and the build files it was stored with.
+fn serve(file: &Path, key: u64, cfg: &Config) -> Result<(Analysis, Option<BuildPending>), (String, BuildFiles)> {
+    let none = |why: String| (why, Vec::new());
+    let bytes = std::fs::read(file).map_err(|_| none("none stored".into()))?;
+    let (label, rest): (Label, &[u8]) = postcard::take_from_bytes(&bytes).map_err(|e| none(e.to_string()))?;
     if label.version != VERSION {
-        return Err("stored by another version".into());
+        return Err(none("stored by another version".into()));
     }
-    let (head, rest): (Head, &[u8]) = postcard::take_from_bytes(rest).map_err(|e| e.to_string())?;
+    let (head, rest): (Head, &[u8]) = postcard::take_from_bytes(rest).map_err(|e| none(e.to_string()))?;
     let roots: Vec<PathBuf> = head.trees.iter().map(|(root, ..)| PathBuf::from(root)).collect();
-    if head.version != VERSION || head.key != key {
-        return Err("the text or the settings changed".into());
-    }
-    if crate::caches::distribution::stamps_for(&roots) != head.trees {
-        return Err("the installation changed".into());
-    }
-    if let Some(read) = head.reads.iter().find(|r| !r.holds()) {
-        return Err(format!("{} changed", read.path.display()));
+    let why = match () {
+        _ if head.version != VERSION || head.key != key => Some("the text or the settings changed".to_string()),
+        _ if crate::caches::distribution::stamps_for(&roots) != head.trees => Some("the installation changed".into()),
+        _ => head.reads.iter().find(|r| !r.holds()).map(|read| format!("{} changed", read.path.display())),
+    };
+    if let Some(why) = why {
+        return Err((why, head.pending.map_or(head.files, |p| p.files)));
     }
     let mut analysis: Analysis =
-        crate::fixed::shared::with(|| postcard::from_bytes(rest)).map_err(|e| e.to_string())?;
+        crate::fixed::shared::with(|| postcard::from_bytes(rest)).map_err(|e| none(e.to_string()))?;
     analysis.served_steps = analysis.steps;
     analysis.cached_files = (0..analysis.files.len()).filter_map(|i| i.try_into().ok()).collect();
     analysis.settings.source = cfg.source.clone();
@@ -199,6 +216,7 @@ impl Recording {
             trees: crate::caches::distribution::stamps_for(&analysis.distribution.roots),
             reads,
             pending: pending.clone(),
+            files: std::mem::take(&mut analysis.build_files),
         };
         let body = crate::fixed::shared::with(|| postcard::to_allocvec(&*analysis));
         let label = Label { version: VERSION, document: self.document.clone() };

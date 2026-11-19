@@ -74,7 +74,15 @@ declare global {
     .reduce<PaGroup[]>((out, g) => { const o = out.find((x) => x.title === g.title && !x.inline && !g.inline); if (o) o.items = [...o.items, ...g.items]; else out.push(g); return out; }, []);
 
   // ---------------------------------------------------------------- the menu
-  const close = () => { for (const el of document.querySelectorAll('.pa-menu, .tikz-input, .pa-mix')) el.remove(); };
+  const POPS = '.pa-menu, .tikz-input, .pa-mix';
+  /** What had the focus before the first menu, prompt or mixer opened: it gets it back when they close (the editor after
+   * Extract to \newcommand, the Type caret after a node's text); none when the page had it. */
+  let back: HTMLElement | null = null;
+  const hold = () => { const a = document.activeElement as HTMLElement | null; if (!a?.closest?.(POPS)) back = a && a !== document.body ? a : null; };
+  const close = () => {
+    for (const el of document.querySelectorAll(POPS)) el.remove();
+    if (back?.isConnected && (!document.activeElement || document.activeElement === document.body)) back.focus({ preventScroll: true });
+  };
   /** One menu box of `rows` at screen point (x, y), nested under `parent` (a row) when given. */
   function box(rows: (PaItem | 'hr' | string)[], x: number, y: number, parent: HTMLElement | null) {
     const m = Object.assign(document.createElement('div'), { className: `pa-menu${parent ? ' pa-sub' : ''}` });
@@ -115,6 +123,7 @@ declare global {
   function shut(s: any) { for (const o of [...document.querySelectorAll('.pa-sub')] as any[]) if (o !== s && isAbove(s, o)) o.remove(); s.up?.setAttribute('aria-expanded', 'false'); if (s.up) s.up.sub = null; s.remove(); }
   /** The menu titled `title` of `groups` at (x, y): a group a submenu row, an inline one its rows between rules. */
   function open(x: number, y: number, title: string, gs: PaGroup[]) {
+    hold();
     close();
     if (!gs.length) return null;
     const rows: (PaItem | 'hr' | string)[] = [title];
@@ -164,6 +173,7 @@ declare global {
   }
   /** A one-line input at (x, y): Enter writes `done(value)` (a value unchanged only when `always`), Escape leaves it. */
   function ask(x: number, y: number, value: string, what: string, done: (v: string) => void, always = false) {
+    hold();
     close();
     const b = Object.assign(document.createElement('div'), { className: 'tikz-input' });
     b.innerHTML = `<input type="text" aria-label="${esc(what)}" placeholder="${esc(what)}"><small>Enter writes it, Escape leaves it</small>`;
@@ -266,6 +276,7 @@ declare global {
   }
   /** The mixer: two colors and a share of the first (`a!p!b`), previewed, written by Apply. */
   function mixer(ctx: PaCtx, names: string[], now: string | null, pick: (c: string) => void) {
+    hold();
     close();
     const all = colors(ctx.all, ctx.facts), css = new Map([...all.doc, ...all.base, ...all.more]), known = new Map([...css].map(([n, h]): [string, number[]] => [n, rgb(h)]));
     const [a0, p0, b0] = (now ?? '').split('!'), opt = (sel: string) => names.map((n) => `<option${n === sel ? ' selected' : ''}>${esc(n)}</option>`).join('');
@@ -780,7 +791,7 @@ declare global {
   const apply = (current: string, from: number, to: number, body: string) => { const C = current.split('\n'); return [...C.slice(0, from - 1), ...body.split('\n'), ...C.slice(to)].join('\n'); };
   const FLOATS = /^(?:figure|table|wrapfigure|wraptable|sidewaysfigure|sidewaystable)\*?$/, MATH = /^(?:equation|align|gather|multline|flalign|eqnarray|displaymath)\*?$/;
   /** The block around 1-based `line` of `text`: the outermost figure or table, else the outermost display, else the
-   * paragraph (to the blank lines around it). `[from, to, what]`. */
+   * paragraph (to the blank lines around it), named by its environment when it is one. `[from, to, what]`. */
   function block(text: string, line: number): [number, number, string] {
     const L = text.split('\n'), open: [string, number][] = [], around: [string, number, number][] = [];
     L.forEach((l, i) => {
@@ -803,7 +814,8 @@ declare global {
     if (blank(a)) return [a, a, head(a) ? 'heading' : 'line'];
     while (a > 1 && !blank(a - 1)) a--;
     while (b < L.length && !blank(b + 1)) b++;
-    return [a, b, 'paragraph'];
+    // a paragraph that is one environment (a picture, a list, a tabular) is named by it
+    return [a, b, around.find(([, x, y]) => x === a && y === b)?.[0].replace(/\*$/, '') ?? 'paragraph'];
   }
   self.satexScratch = { build, local, extract, merge, apply, block };
   self.satexPageActions.register({

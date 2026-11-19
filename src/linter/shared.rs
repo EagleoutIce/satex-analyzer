@@ -456,6 +456,35 @@ pub fn provider(analysis: &Analysis, name: &str) -> Option<String> {
     exports(analysis)?.provider(name)?.strip_suffix(".sty").map(str::to_string)
 }
 
+/// The installed package to load for `call`, a call of `name` the run lacks: of the packages that
+/// may provide it ([`crate::caches::exports::Exports::candidates`]), the most loaded under which the
+/// call runs clean ([`takes`]), at most `limits.provider_probes` tried; else [`provider`].
+pub fn provider_for(analysis: &Analysis, name: &str, call: &str, with: &[String]) -> Option<String> {
+    let tries = analysis.settings.limits.provider_probes as usize;
+    let first = provider(analysis, name);
+    let others =
+        exports(analysis)?.candidates(name).into_iter().filter_map(|f| f.strip_suffix(".sty").map(str::to_string));
+    // The usual provider first: the others are tried only when the call fails under it.
+    let mut packages = first.clone().into_iter().chain(others.filter(|p| Some(p) != first.as_ref()));
+    packages.by_ref().take(tries).find(|p| takes(analysis, p, call, with)).or(first)
+}
+
+/// Whether `call` runs clean with `package` loaded: a document of the run's class that loads it and
+/// makes the call reaches `\end{document}` with no certain error. TeX's verdict on the package's
+/// real code: graphics' `\includegraphics[width=1cm]{x}` reads to the end for `[llx,lly]`'s comma.
+/// `with`: the packages the same write loads for the call's other names.
+fn takes(analysis: &Analysis, package: &str, call: &str, with: &[String]) -> bool {
+    use crate::engine::builtins::LoadKind;
+    // LaTeX's standard class where the run names none
+    let class = analysis.facts.loads.iter().find(|l| l.kind == LoadKind::Class).map_or("article", |l| l.name.as_str());
+    let loads: String = with.iter().filter(|p| *p != package).map(|p| format!("\\usepackage{{{p}}}\n")).collect();
+    let probe = format!(
+        "\\documentclass{{{class}}}\n{loads}\\usepackage{{{package}}}\n\\begin{{document}}\n{call}\n\\end{{document}}\n"
+    );
+    let run = crate::analyze(&probe, None, &analysis.settings);
+    !run.facts.raised.iter().any(|e| e.certain) && !run.facts.diagnostics.iter().any(|d| d.code == "missing-end")
+}
+
 /// Names the installed packages define that `keep` takes (`env`: environments only), the `n` best by `rank`
 /// (lowest first), each with the package to load for it ([`crate::caches::exports::Exports::package_for`]).
 pub fn offered<K: Ord>(

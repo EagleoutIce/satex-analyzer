@@ -3909,6 +3909,34 @@ fn page_styles_read_the_run_and_print() {
     }
 }
 
+/// Intuition: a write that adds a name the run lacks loads the package whose definition takes the
+/// call as written. `\includegraphics[width=…]` needs graphicx: graphics defines the command, and is
+/// the most loaded, but its `[llx,lly]` reads to the document's end for a comma (the playground's
+/// Insert ▸ Figure built with 2 errors). A plain `\includegraphics{x}` keeps graphics.
+#[test]
+fn snapshot_load_follows_the_call_shape() {
+    let text = "\\documentclass{article}\n\\begin{document}\nHello.\n\n\\end{document}\n";
+    let (mut server, uri, dir) = open_set("provider-shape", text, &[]);
+    let views = at(&mut server, &uri, "satex/view", 2, 0);
+    assert!(views.is_array(), "{views}");
+    let write = |server: &mut Server, body: &str| {
+        let range = json!({ "start": { "line": 3, "character": 0 }, "end": { "line": 3, "character": 0 } });
+        let node = json!({ "kind": "text", "name": "", "star": false, "args": [], "range": range, "text": "", "body_at": [0, 0], "body": body });
+        let id = server.request(
+            "satex/dialogApply",
+            json!({ "textDocument": { "uri": uri }, "kind": "snapshot", "nodes": [node] }),
+        );
+        let out = server.response(id)["result"].clone();
+        applied(text, &uri, &json!({ "changes": { &uri: out["edits"] } }), &[])
+    };
+    let keyed = write(&mut server, "\\includegraphics[width=0.8\\linewidth]{example-image}\n");
+    assert!(keyed.contains("\\usepackage{graphicx}\n"), "{keyed}");
+    let plain = write(&mut server, "\\includegraphics{example-image}\n");
+    assert!(plain.contains("\\usepackage{graphics}\n"), "{plain}");
+    server.shutdown();
+    std::fs::remove_dir_all(dir).ok();
+}
+
 /// Page numbering: the page view lists where numbering may restart (`\frontmatter`, `\mainmatter`,
 /// each `\pagenumbering` as written) and whether `page` restarts per chapter. A new style goes on
 /// the line after its mark, since the mark sets its own first; the chapter reset goes in the preamble.
@@ -5644,19 +5672,36 @@ fn incremental_edits_keep_the_run_and_equal_a_fresh_one() {
 /// category 12, each a place `satex/holds` judges an edit at.
 const SHIP: &str = "\\catcode`\\{=1 \\catcode`\\}=2 \\pdfoutput=1 \\pdfpagewidth=200pt \\pdfpageheight=50pt\n\\font\\f=cmr10 \\f\n\\shipout\\hbox{Hello  world % a note\n% a comment line\n  again {\\catcode`\\%=12 y % not a comment}}\n\\end\n";
 
-/// What `satex/holds` answers for a build of `built` once the editor holds `new`.
+/// What `satex/holds` answers for a build of `built` once the editor holds `new`: asked at once,
+/// from the run of `built` while the run of `new` is still to come, and again after it.
 fn holds_after(tag: &str, built: &str, new: &str) -> Value {
     let (mut server, uri, _, dir) = open_unsaved(tag, built);
     server.notify(
         "textDocument/didChange",
         json!({ "textDocument": { "uri": uri, "version": 2 }, "contentChanges": [{ "text": new }] }),
     );
-    while server.published()["params"]["version"] != 2 {}
-    let id = server.request("satex/holds", json!({ "textDocument": { "uri": uri }, "built": built, "now": new }));
-    let answer = server.response(id)["result"].clone();
+    let params = json!({ "file": uri, "built": built, "now": new });
+    let id = server.request("satex/holds", params.clone());
+    // the run of `new` may publish while the answer is on its way
+    let (mut early, mut ran) = (None, false);
+    while early.is_none() {
+        let msg = server.read();
+        if msg.get("id").and_then(Value::as_i64) == Some(id) {
+            early = Some(msg["result"].clone());
+        } else if msg["method"] == "textDocument/publishDiagnostics"
+            && msg["params"]["version"] == 2
+            && !provisional(&msg)
+        {
+            ran = true;
+        }
+    }
+    while !ran && server.published()["params"]["version"] != 2 {}
+    let id = server.request("satex/holds", params);
+    let (early, late) = (early.unwrap_or_default(), server.response(id)["result"].clone());
     server.shutdown();
     let _ = std::fs::remove_dir_all(&dir);
-    answer
+    assert_eq!(early, late, "{tag}: the last run and the next one judge alike");
+    early
 }
 
 /// pdfTeX's PDF of `text` (INITEX), dated alike so two builds of one text are equal bytes.

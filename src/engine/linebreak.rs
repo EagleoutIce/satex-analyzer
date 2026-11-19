@@ -74,6 +74,26 @@ pub(crate) struct Arena {
     pub(crate) texts: Vec<std::rc::Rc<[crate::engine::tex::Token]>>,
 }
 
+impl Arena {
+    /// `self` with every list `other` holds, each under `other`'s name: a run that goes on
+    /// from a state of the run that made `other` names every list that run made as it did,
+    /// and its own new ones past them. Lists are only ever asked for by name, so more of
+    /// them change nothing, short of the bound on their number: `None` where `other` holds
+    /// over half of it, or is not `self` grown.
+    pub(crate) fn grown(&self, other: &Arena) -> Option<Arena> {
+        let n = self.nodes.len();
+        let same = other.nodes.get(..n) == Some(&self.nodes[..])
+            && other.texts.get(..self.texts.len()) == Some(&self.texts[..]);
+        (same && other.nodes.len() <= MAX_NODES / 2).then(|| other.clone())
+    }
+
+    /// Whether `self` holds every list of `other` under the same name.
+    pub(crate) fn holds(&self, other: &Arena) -> bool {
+        self.nodes.get(..other.nodes.len()) == Some(&other.nodes[..])
+            && self.texts.get(..other.texts.len()) == Some(&other.texts[..])
+    }
+}
+
 /// A box's width, height and depth.
 type Dims = (Scaled, Scaled, Scaled);
 

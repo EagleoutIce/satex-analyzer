@@ -437,6 +437,8 @@ fn run_on(cli: &mut Cli, file: Option<PathBuf>, explaining: bool, piped: Option<
         (Some(text), _) => text,
         _ if !cli.command().needs_source() => String::new(),
         (None, Some(path)) => {
+            #[cfg(target_os = "linux")]
+            satex::cli::warm::reclaim(path);
             satex::project::overlay::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?
         }
         (None, None) => EMPTY_DOCUMENT.to_string(),

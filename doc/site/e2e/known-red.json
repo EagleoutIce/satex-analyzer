@@ -132,22 +132,16 @@
   "match": "^caret jumped",
   "why": "the same root as tc-type-begin-arg: the echo sets the environment's body on the row typed in, TeX a centred row a \\topsep lower"
  },
- "tc-type-ctrl-enter": {
-  "owner": "Type-mode echo (pdfedit.ts)",
-  "since": "2026-11-19",
-  "match": "^caret jumped",
-  "why": "the echo draws no line break for the \\\\ that Ctrl+Enter writes: the word after it stays on the row typed in until the build lands and the caret jumps to the next row"
- },
  "tc-type-align-loads": {
   "owner": "server (Rust: src/caches/exports.rs `scan`) + Type-mode echo",
   "since": "2026-11-19",
-  "match": "^(source lacks|compile:|caret jumped)",
-  "why": "the exports index records only names defined as a control sequence (`\\def\\align`, amstex.sty), never an environment defined by a braced name (`\\newenvironment{align}`, amsmath.sty): align is offered with `\\usepackage{amstex}`, which is obsolete and errors; then the echo's environment row (tc-type-begin-arg)"
+  "match": "^(source lacks|compile:|caret jumped|settle: not settled)",
+  "why": "the exports index records only names defined as a control sequence (`\\def\\align`, amstex.sty), never an environment defined by a braced name (`\\newenvironment{align}`, amsmath.sty): align is offered with `\\usepackage{amstex}`, which is obsolete and errors; then the echo's environment row (tc-type-begin-arg); the echo of a display's body (x typed into align or equation, no load needed) stays after the build has it, so the page never settles"
  },
  "tc-type-load-keeps-caret": {
   "owner": "server (Rust: src/caches/exports.rs `scan`) + Type-mode echo",
   "since": "2026-11-19",
-  "match": "^(compile:|caret jumped)",
-  "why": "x lands (the check this scenario guards); the build fails on the \\usepackage{amstex} the exports index offers for align (tc-type-align-loads) and the echo's environment row jumps (tc-type-begin-arg)"
+  "match": "^(compile:|caret jumped|settle: not settled)",
+  "why": "x lands (the check this scenario guards); the build fails on the \\usepackage{amstex} the exports index offers for align (tc-type-align-loads) and the echo's environment row jumps (tc-type-begin-arg); the echo of a display's body (x typed into align or equation, no load needed) stays after the build has it, so the page never settles"
  }
 }

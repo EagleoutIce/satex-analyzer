@@ -157,3 +157,15 @@ test('rank: sortText by code point, `~` last', () => {
   const items = [{ label: 'centernss', sortText: '~0000centernss' }, { label: 'center', sortText: '00100center' }];
   assert.deepEqual(labels(rank(items, 'cent')), ['center', 'centernss']);
 });
+
+// Intuition: Enter right after a typed name takes the list's item only when that item writes more than the name: a
+// prefix (`\noind`) or arguments (`\begin` → `begin{$1}`). After `\noindent` in full it is Enter's new line. Pins
+// `\noindent` Enter writing nothing (the named-Enter path took the item, user 2026-11-19).
+test('whole: a complete name with nothing more to write', () => {
+  const { whole } = self.satexViews.complete;
+  assert.equal(whole({ label: 'noindent', insertText: 'noindent' }, 'noindent'), true);
+  assert.equal(whole({ label: 'noindent', insertText: 'noindent' }, 'noind'), false, 'a prefix takes the item');
+  assert.equal(whole({ label: 'begin', insertText: 'begin{$1}', insertTextFormat: 2 }, 'begin'), false, 'arguments to write');
+  assert.equal(whole({ label: 'toprule', insertText: 'toprule', additionalTextEdits: [{}] }, 'toprule'), false, 'a load to write');
+  assert.equal(whole(null, 'x'), false);
+});

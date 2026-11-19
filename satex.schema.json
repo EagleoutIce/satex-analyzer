@@ -370,6 +370,14 @@
           "x-affects": [
             "output"
           ]
+        },
+        "warm": {
+          "default": false,
+          "description": "keep pdfTeX started on the next build's format, the main file a named pipe between builds. Only for a build directory of its own (satex gui sets it)",
+          "type": "boolean",
+          "x-affects": [
+            "speed"
+          ]
         }
       },
       "type": "object"
@@ -2853,6 +2861,27 @@
           ],
           "x-example": "`\\pgfmathparse{\\x}` with unknown `\\x` reuses what earlier calls did"
         },
+        "checkpoint_body_share": {
+          "default": 8,
+          "description": "in the body a state is also saved between top-level lines after this fraction of `checkpoint_steps`",
+          "minimum": 0,
+          "type": "integer",
+          "x-affects": [
+            "memory",
+            "speed"
+          ],
+          "x-example": "`checkpoint_body_share: 64` saves a state every few paragraphs of a long document"
+        },
+        "checkpoint_meet_steps": {
+          "default": 4194304,
+          "description": "after an edit far from every saved state the text before the edit is run again to save states around it. At most this many steps past the edit's line",
+          "minimum": 0,
+          "type": "integer",
+          "x-affects": [
+            "speed"
+          ],
+          "x-example": "`checkpoint_meet_steps: 0` never runs the old text again, the run after an edit then goes on to the document's end"
+        },
         "checkpoint_memory": {
           "default": "1.0 GiB",
           "description": "most memory the saved states for reruns may copy together. Past it every other one goes. 0 = only their number bounds them",
@@ -2862,6 +2891,39 @@
             "speed"
           ],
           "x-example": "`checkpoint_memory: 256MiB` for a long document on a small machine, reruns then resume further back"
+        },
+        "checkpoint_steps": {
+          "default": 8388608,
+          "description": "steps between two saved states at first. Past `checkpoints` of them every other one goes and the spacing doubles",
+          "minimum": 0,
+          "type": "integer",
+          "x-affects": [
+            "memory",
+            "speed"
+          ],
+          "x-example": "`checkpoint_steps: 1000000` saves states more often, so a rerun after an edit resumes closer to it"
+        },
+        "checkpoints": {
+          "default": 8,
+          "description": "how many saved states a run keeps for its reruns, besides the ones around the last edit and where the document begins",
+          "minimum": 0,
+          "type": "integer",
+          "x-affects": [
+            "memory",
+            "speed"
+          ],
+          "x-example": "`checkpoints: 32` on a machine with memory to spare, reruns then resume closer to the edit"
+        },
+        "checkpoints_after_edit": {
+          "default": 2,
+          "description": "after an edit's line one state is kept past each of this many pages shipped, where the next edit's run may meet this one",
+          "minimum": 0,
+          "type": "integer",
+          "x-affects": [
+            "memory",
+            "speed"
+          ],
+          "x-example": "`checkpoints_after_edit: 4` lets the run after a longer edit still meet the last one a few pages on"
         },
         "choices": {
           "default": 8,
@@ -3155,6 +3217,17 @@
             "precision"
           ],
           "x-example": "lower in a single-threaded host, where a trial blocks the next request"
+        },
+        "provider_probes": {
+          "default": 4,
+          "description": "packages a write may try, most loaded first, for a name it adds that the run lacks: each a small run of the call. 0 loads the most loaded untried",
+          "minimum": 0,
+          "type": "integer",
+          "x-affects": [
+            "speed",
+            "precision"
+          ],
+          "x-example": "`\\includegraphics[width=5cm]` loads graphicx, whose definition takes the key, not graphics"
         },
         "recursion_depth": {
           "default": 100,
@@ -4597,6 +4670,16 @@
             "output"
           ],
           "x-example": "`compile_after: 1000`: the PDF follows a second after the edits rest"
+        },
+        "compile_rest": {
+          "default": 0,
+          "description": "with automatic compile on: how long the edits rest before a build on this machine's TeX (satex gui), in ms, waiting for neither the analysis nor compile_after. 0 waits for the analysis",
+          "minimum": 0,
+          "type": "integer",
+          "x-affects": [
+            "speed"
+          ],
+          "x-example": "`compile_rest: 60`: the PDF follows the keys, comment edits build too"
         },
         "complete_while_typing": {
           "default": true,

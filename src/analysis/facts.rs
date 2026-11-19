@@ -750,6 +750,10 @@ pub struct Facts {
     /// so it shows: neither a paragraph's end (tex.web § 816) nor
     /// `\unskip` (§ 1105) took it away.
     pub kept_spaces: crate::fixed::HashSet<Span>,
+    /// The document's commands whose own code ran `\par` (tex.web § 1094):
+    /// each ends a paragraph, as `\section` does through `\@startsection`.
+    #[serde(default)]
+    pub paragraph_enders: crate::fixed::HashSet<Sym>,
     /// What TeX packs wider than its target (tex.web §§ 664-666), by the
     /// user's call that ended it and its [`Overfull::kind`].
     #[serde(default)]

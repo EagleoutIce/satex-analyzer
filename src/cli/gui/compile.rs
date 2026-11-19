@@ -233,15 +233,27 @@ fn build(root: &Path, body: &[u8], base: Option<&Path>, runs: &mut Vec<Value>) -
         }
         None => dir.clone(),
     };
+    // The whole project builds in its lineage's own directory, where the last build left an engine
+    // waiting (`compile.warm`, src/cli/warm.rs); this build's directory gets what it wrote.
+    let warm = (cfg!(target_os = "linux") && request["at"].is_null()).then(|| root.join(format!("{WARM}{lineage}")));
+    let mut flags = flags;
+    if let Some(w) = &warm {
+        fill(w, &dir).map_err(|e| format!("{}: {e}", w.display()))?;
+        flags.extend(["--set", "compile.warm=true"]);
+    }
+    let ran = warm.clone().unwrap_or_else(|| work.clone());
     let out = run(
         runs,
-        Command::new(&satex).args(&flags).args(["--format", "json", "compile", "-f", main]).current_dir(&work),
+        Command::new(&satex).args(&flags).args(["--format", "json", "compile", "-f", main]).current_dir(&ran),
     )?;
+    if let Some(w) = &warm {
+        mirror(w, &dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    }
     let mut records: Vec<Value> = serde_json::from_slice(&out.stdout).unwrap_or_default();
     for r in &mut records {
         if let Some(p) = r["path"].as_str() {
             let p = Path::new(p);
-            r["path"] = json!(p.strip_prefix(&work).unwrap_or(p).to_string_lossy().trim_start_matches("./"));
+            r["path"] = json!(p.strip_prefix(&ran).unwrap_or(p).to_string_lossy().trim_start_matches("./"));
         }
     }
     let stem = Path::new(main).with_extension("");
@@ -344,6 +356,59 @@ fn build(root: &Path, body: &[u8], base: Option<&Path>, runs: &mut Vec<Value>) -
     Ok(answer)
 }
 
+/// Where a lineage's builds run, beside the builds: `w-` and the lineage.
+const WARM: &str = "w-";
+
+/// The lineage directory `w` made `dir`'s project: its files, the build state kept. The engine
+/// waiting there is stopped unless it waits in its open (src/cli/warm.rs `settle`), and every
+/// file goes in by rename, so the pipe in the main file's place is replaced, never fed. A file
+/// gone from `dir` goes from `w`: the build sees what a fresh one would.
+#[cfg(target_os = "linux")]
+fn fill(w: &Path, dir: &Path) -> std::io::Result<()> {
+    let keep = w.join(crate::cli::compile::KEEP);
+    std::fs::create_dir_all(&keep)?;
+    crate::cli::warm::settle(&keep, w);
+    let file = |p: &Path| std::fs::symlink_metadata(p).is_ok_and(|m| m.is_file());
+    let state = |name: &Path| name.components().next().is_some_and(|c| c.as_os_str() == crate::cli::compile::KEEP);
+    for old in walkdir(w) {
+        let Ok(name) = old.strip_prefix(w) else { continue };
+        if !state(name) && file(&old) && !file(&dir.join(name)) {
+            std::fs::remove_file(&old)?;
+        }
+    }
+    for from in walkdir(dir) {
+        let Ok(name) = from.strip_prefix(dir) else { continue };
+        // the build state of a first build of the lineage, from the build it was seeded by
+        if (state(name) && w.join(name).exists()) || !file(&from) {
+            continue;
+        }
+        let to = w.join(name);
+        std::fs::create_dir_all(to.parent().unwrap_or(w))?;
+        crate::cli::warm::put(&to, &std::fs::read(&from)?)?;
+    }
+    Ok(())
+}
+
+#[cfg(not(target_os = "linux"))]
+fn fill(_: &Path, _: &Path) -> std::io::Result<()> {
+    Ok(())
+}
+
+/// What the build in `w` wrote, into `dir`: its plain files, no build state, no pipe.
+fn mirror(w: &Path, dir: &Path) -> std::io::Result<()> {
+    for from in walkdir(w) {
+        let Ok(name) = from.strip_prefix(w) else { continue };
+        let state = name.components().next().is_some_and(|c| c.as_os_str() == crate::cli::compile::KEEP);
+        if state || !std::fs::symlink_metadata(&from).is_ok_and(|m| m.is_file()) || name == Path::new(LINEAGE) {
+            continue;
+        }
+        let to = dir.join(name);
+        std::fs::create_dir_all(to.parent().unwrap_or(dir))?;
+        std::fs::copy(&from, &to)?;
+    }
+    Ok(())
+}
+
 /// Copies the build files and satex's build state of the newest build of `lineage` into `dir`.
 fn seed(root: &Path, dir: &Path, lineage: &str) {
     let mut builds: Vec<PathBuf> =
@@ -359,7 +424,10 @@ fn seed(root: &Path, dir: &Path, lineage: &str) {
         let Ok(name) = from.strip_prefix(&last) else { continue };
         let ext = name.extension().and_then(|e| e.to_str()).unwrap_or_default();
         let state = name.components().any(|c| c.as_os_str() == crate::cli::compile::KEEP);
-        if !(state || crate::cli::compile::rests(ext)) || dir.join(name).exists() {
+        // a lineage directory's waiting engine stays its own
+        let engine = name.components().any(|c| c.as_os_str() == "warm");
+        let plain = std::fs::symlink_metadata(&from).is_ok_and(|m| m.is_file());
+        if !(state || crate::cli::compile::rests(ext)) || engine || !plain || dir.join(name).exists() {
             continue;
         }
         let to = dir.join(name);
@@ -564,8 +632,11 @@ fn walkdir(dir: &Path) -> Vec<PathBuf> {
 
 /// Drops all but the newest [`KEEP`] builds.
 fn prune(root: &Path) {
+    // builds are named by their time; a lineage's directory (`WARM`) and the warm-up's stay
+    let build =
+        |p: &PathBuf| p.file_name().and_then(|n| n.to_str()).is_some_and(|n| n.bytes().all(|b| b.is_ascii_digit()));
     let mut builds: Vec<PathBuf> =
-        std::fs::read_dir(root).into_iter().flatten().filter_map(|e| Some(e.ok()?.path())).collect();
+        std::fs::read_dir(root).into_iter().flatten().filter_map(|e| Some(e.ok()?.path())).filter(build).collect();
     builds.sort();
     for old in builds.iter().rev().skip(KEEP - 1) {
         let _ = std::fs::remove_dir_all(old);

@@ -135,7 +135,7 @@ dialog.pop.pop-peek::backdrop { opacity: 0; }
 .sd-grid td.sd-cell.cur { box-shadow: inset 0 0 0 2px var(--c-accent); z-index: 1; }
 .sd-cell.merged::after { content: ''; position: absolute; right: 3px; top: 3px; width: 5px; height: 5px; border-radius: 50%; background: var(--c-accent); opacity: .55; }
 .sd-cell input { position: absolute; inset: 0; width: 100%; height: 100%; box-sizing: border-box; border: 0; border-radius: 0; box-shadow: inset 0 0 0 2px var(--c-accent); background: var(--c-bg); font: inherit; padding: 0 .5rem; text-align: inherit; z-index: 2; }
-.sd-cell .sd-ph { color: var(--c-muted); opacity: .5; }
+.sd-cell .sd-ph { color: var(--c-muted); opacity: .5; } .sd-cell.sd-missing:not(.sel) { background: transparent; outline: 1px dashed var(--c-border); outline-offset: -3px; }
 /* the row gutter: the rule above the row, its number; the − on hover */
 .sd-grid .sd-rh { border: 0; padding: 0 .35rem 0 0 !important; color: var(--c-muted); font-size: .78em; white-space: nowrap; position: relative; }
 .sd-gut { display: grid; grid-template-columns: 4.1rem 1.6em 1rem; gap: .3rem; align-items: center; line-height: 1; }
@@ -924,6 +924,20 @@ tr:hover > .sd-rh .sd-del, .sd-colh:hover .sd-del, .sd-del:focus-visible { opaci
   const T = {
     injected, alignOf, injectStyle,
     multirow, rowsOf, inner, setInner, layout, normalize, cellAt, width, RULES,
+    /** The cell at row `r`, column `c` to write into: a short row (TeX ends it at its `\\` with fewer cells than
+     * columns) gets empty cells up to it, an `&` each; `n` the cells it had, for `unpad`. Null outside the table. */
+    reach(s: Tbl, r: number, c: number): { o: Slot; n: number } | null {
+      const row = s.rows[r];
+      if (!row || c < 0 || c >= s.cols.length) return null;
+      const n = row.cells.length;
+      if (!layout(s)[r]![c]) pad(row, c + 1);
+      const o = layout(s)[r]![c];
+      return o ? { o, n } : null;
+    },
+    /** Drops the blank cells `reach` added past the row's first `n`: an empty cell left as it was writes no `&`. */
+    unpad(row: TRow, n: number) {
+      while (row.cells.length > n && !inner(row.cells.at(-1)!).trim() && Math.max(1, row.cells.at(-1)!.span) === 1) row.cells.pop();
+    },
     /** Merges the block: a row span is a `\multicolumn`, a column span a `\multirow`, a block both. */
     merge(s: Tbl, rect: Rect) {
       const [r0, c0, r1, c1] = normalize(s, rect);
@@ -1342,15 +1356,22 @@ tr:hover > .sd-rh .sd-del, .sd-colh:hover .sd-del, .sd-del:focus-visible { opaci
             'data-r': k, 'data-c': at, 'data-align': align, title: merged ? `merged: ${span > 1 ? `\\multicolumn{${span}}{${c.spec}}` : ''}${T.rowsOf(c) > 1 ? ` \\multirow{${T.rowsOf(c)}}` : ''}` : null,
           }, text ? text : h('span', { class: 'sd-ph' }, '·')));
         });
-        const short = n - T.width(r);
-        if (short > 0) tds.push(h('td', { colspan: 2 * short, class: 'sd-muted' }));
+        // a short row's missing cells: empty cells to select and type into (edit pads the row, T.reach)
+        for (let at = T.width(r); at < n; at++) {
+          if (map[k][at]) continue;
+          const sel = !(k < r0 || k > r1 || at < c0 || at > c1);
+          tds.push(h('td', { class: 'sd-cell sd-missing' + (sel ? ' sel' : '') + (k === focus[0] && at === focus[1] ? ' cur' : ''), colspan: 2, tabindex: -1, role: 'gridcell', 'aria-selected': String(sel), 'data-r': k, 'data-c': at, title: 'no cell here yet: type to add it' }, h('span', { class: 'sd-ph' }, '·')));
+        }
         const del = s.rows.length > 1 ? h('button', { type: 'button', class: 'sd-del', title: `Remove row ${k + 1}`, 'aria-label': `remove row ${k + 1}`, onclick: () => { change((s) => T.deleteRows(s, k, k)); select([Math.min(k, t().rows.length - 1), focus[1]]); } }, '−') : null;
         const others = r.before.filter((x) => !RULES.includes(x)).map((x) => h('span', { class: 'sd-chip', title: x }, x.length > 24 ? x.slice(0, 22) + '…' : x));
         rows.push(h('tr', { class: 'sd-data' }, h('td', { class: 'sd-rh' }, h('span', { class: 'sd-gut' }, ruleSel(k), h('span', { class: 'sd-n' }, String(k + 1)), del ?? h('span'))), tds, vbar(n, 'td'), h('td', { class: 'sd-chips' }, others)));
       });
       const after = s.after.filter((x) => !RULES.includes(x)).map((x) => h('span', { class: 'sd-chip', title: x }, x));
       rows.push(ruleRow(s.rows.length, new Set()), h('tr', { class: 'sd-end' }, h('td', { class: 'sd-rh' }, h('span', { class: 'sd-gut' }, ruleSel(s.rows.length))), h('td', { colspan: 2 * n + 1, class: 'sd-muted sd-endtxt' }, after.length ? after : ''), h('td')));
+      // a redraw keeps a focused cell focused: keys typed next reach the grid, not the page's body
+      const held = !editing && !!document.activeElement?.closest?.('td.sd-cell') && grid.contains(document.activeElement);
       grid.replaceChildren(h('thead', {}, head), h('tbody', {}, rows));
+      if (held) cellEl(focus)?.focus({ preventScroll: true });
       preview();
       placeBar();
     }
@@ -1395,9 +1416,10 @@ tr:hover > .sd-rh .sd-del, .sd-colh:hover .sd-del, .sd-del:focus-visible { opaci
 
     // editing in place: Enter, F2, a double click or typing opens the cell's TeX
     function edit(r: number, c: number, seed: string | null = null) {
-      const s = t(), o = T.layout(s)[r]?.[c];
-      if (!o) return;
-      const td = cellEl([o.r, o.c]), cell = s.rows[o.r].cells[o.i], was = T.inner(cell);
+      // a short row's missing cell is written into too: the row gets its `&` (T.reach), dropped again when left empty
+      const s = t(), got = T.reach(s, r, c);
+      if (!got) return;
+      const { o, n: had } = got, td = cellEl([o.r, o.c]), cell = s.rows[o.r].cells[o.i], was = T.inner(cell);
       f.history.hold(true);
       const input = h('input', { value: seed ?? was, 'aria-label': `row ${o.r + 1} column ${o.c + 1}`, spellcheck: 'false' });
       editing = { input, done: false };
@@ -1411,7 +1433,9 @@ tr:hover > .sd-rh .sd-del, .sd-colh:hover .sd-del, .sd-del:focus-visible { opaci
       const finish = (keep: boolean, move?: string) => {
         if (editing?.done) return;
         editing!.done = true;
-        if (!keep) { T.setInner(cell, was); f.refresh(); }
+        if (!keep) T.setInner(cell, was);
+        T.unpad(s.rows[o.r], had);
+        f.refresh();
         f.history.hold(false);
         editing = null;
         anchor = focus = [o.r, o.c];
@@ -1439,7 +1463,8 @@ tr:hover > .sd-rh .sd-del, .sd-colh:hover .sd-del, .sd-del:focus-visible { opaci
     grid.addEventListener('dblclick', (e) => { const p = at(e); if (p) edit(...p); });
     grid.addEventListener('keydown', (e) => {
       if (editing || !(e.target as Element).closest('td.sd-cell')) return;
-      const s = t(), mod = e.ctrlKey || e.metaKey, o = T.layout(s)[focus[0]][focus[1]];
+      // a short row's missing cell stands for one cell
+      const s = t(), mod = e.ctrlKey || e.metaKey, o = T.layout(s)[focus[0]]?.[focus[1]] ?? { r: focus[0]!, c: focus[1]!, i: -1, span: 1, rows: 1 };
       const step = { ArrowUp: [-1, 0], ArrowDown: [1, 0], ArrowLeft: [0, -1], ArrowRight: [0, 1] }[e.key];
       if (step && e.altKey) {
         e.preventDefault();

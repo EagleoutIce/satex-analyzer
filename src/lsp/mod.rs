@@ -555,8 +555,9 @@ fn dispatch(engine_tx: Send<'_>, req: Request) -> Result<Json, String> {
         }
         // Whether a build of the document as it was built (`built`, its text now `now`) gives what a build of
         // its text now gives: the incremental plugin that proves it, `null` where none does.
+        // `file`, not `textDocument`: asked as the keys come, it sends no text ahead of it.
         "satex/holds" => {
-            let uri: Uri = serde_json::from_value(params["textDocument"]["uri"].clone()).map_err(|e| e.to_string())?;
+            let uri: Uri = serde_json::from_value(params["file"].clone()).map_err(|e| e.to_string())?;
             let texts = serde_json::from_value(params.clone()).map_err(|e| e.to_string())?;
             Ok(ask(engine_tx, |reply| EngineMsg::Holds(uri, texts, reply))?)
         }
@@ -848,6 +849,58 @@ fn route(path: &Path, text: &str) -> String {
     format!("{:?}", (discovery::is_document(text), discovery::declared_root(path, text), profile))
 }
 
+/// The incremental plugin by which a build of `texts.built` gives the output a build of `texts.now`
+/// gives, `uri`'s two texts, every other file as the client sent it (alike in both builds). Judged
+/// by the last finished run (a run under way answers it at its pauses): both must be edits that run
+/// holds for ([`Reuse::Fresh`] or [`Reuse::Shifted`]), so no read of it tokenized what they change
+/// (tex.web § 347) and pdfTeX runs alike on both. The project files it read must be the client's.
+fn holds(docs: &HashMap<Uri, Doc>, uri: &Uri, texts: &Holds) -> Option<&'static str> {
+    use plugins::incremental::{Edit, Reuse, decide};
+    let doc = docs.get(uri)?;
+    let (analysis, read) = (doc.analysis.as_deref()?, doc.analyzed.as_deref()?);
+    // A file read past the mouth (`\openin`, `\pdfmdfivesum file`: `Facts::found`, every one noted while
+    // under the limit) may show any byte of it in the PDF, comments too. LaTeX's `\IfFileExists` opens
+    // each `\input` file so: coarse, only the main file's edits skip then.
+    let raw = &analysis.facts.found;
+    if raw.len() >= analysis.settings.limits.facts
+        || raw.iter().any(|p| Path::new(p).file_name() == doc.path.file_name())
+    {
+        return None;
+    }
+    // Every other project file the run read, as it read it, is the client's (the same in both builds,
+    // which the client checks). Matched by base name: two files of one name must both be alike.
+    let base = |p: &str| Path::new(p).file_name().map(|n| n.to_os_string());
+    for file in analysis.files.iter().filter(|f| Path::new(&f.path) != doc.path) {
+        let sent: Vec<&String> =
+            texts.others.iter().filter(|(k, _)| base(k) == base(&file.path)).map(|(_, t)| t).collect();
+        if sent.is_empty() {
+            continue;
+        }
+        let read = match docs.values().find(|d| d.path == Path::new(&file.path)) {
+            Some(d) => d.analyzed.clone(),
+            None => crate::project::overlay::read_to_string(Path::new(&file.path)).ok(),
+        };
+        if read.is_none_or(|r| sent.iter().any(|t| **t != r)) {
+            return None;
+        }
+    }
+    let name = doc.path.display().to_string();
+    let mut by = "same";
+    for text in [&texts.built, &texts.now] {
+        if text == read {
+            continue;
+        }
+        if route(&doc.path, read) != route(&doc.path, text) {
+            return None;
+        }
+        match decide(&Edit::new(analysis, &name, read, text)?)? {
+            (_, Reuse::Provisional) => return None,
+            (plugin, _) => by = plugin,
+        }
+    }
+    Some(by)
+}
+
 /// One run of a root: the open buffers' texts it read, by hash, and the
 /// files it read.
 struct Run {
@@ -948,7 +1001,8 @@ impl EngineMsg {
             | EngineMsg::Typeset(uri, ..)
             | EngineMsg::Typesetting(uri, ..)
             | EngineMsg::Written(uri, ..)
-            | EngineMsg::Caches(uri, ..) => Some(uri),
+            | EngineMsg::Caches(uri, ..)
+            | EngineMsg::Holds(uri, ..) => Some(uri),
             EngineMsg::Dialog(Ask::Actions(uri, _) | Ask::Open(uri, _) | Ask::Apply(uri, _), _) => Some(uri),
             _ => None,
         }
@@ -1216,62 +1270,6 @@ impl Engine {
         true
     }
 
-    /// The incremental plugin by which a build of `texts.built` gives the output a build of `texts.now`
-    /// gives, `uri`'s two texts, every other file as the client sent it (alike in both builds). Both
-    /// must be edits the last run holds for ([`Reuse::Fresh`] or [`Reuse::Shifted`]): no read of the
-    /// run tokenized what they change (tex.web § 347), so pdfTeX runs alike on both. The project
-    /// files the run read must be the client's, and nothing may wait for a run.
-    fn holds(&self, uri: &Uri, texts: &Holds) -> Option<&'static str> {
-        use plugins::incremental::{Edit, Reuse, decide};
-        let doc = self.docs.get(uri)?;
-        let (analysis, read) = (doc.analysis.as_deref()?, doc.analyzed.as_deref()?);
-        if !self.dirty.is_empty() || doc.text != texts.now {
-            return None;
-        }
-        // A file read past the mouth (`\openin`, `\pdfmdfivesum file`: `Facts::found`, every one noted while
-        // under the limit) may show any byte of it in the PDF, comments too. LaTeX's `\IfFileExists` opens
-        // each `\input` file so: coarse, only the main file's edits skip then.
-        let raw = &analysis.facts.found;
-        if raw.len() >= analysis.settings.limits.facts
-            || raw.iter().any(|p| Path::new(p).file_name() == doc.path.file_name())
-        {
-            return None;
-        }
-        // Every other project file the run read, as it read it, is the client's (the same in both builds,
-        // which the client checks). Matched by base name: two files of one name must both be alike.
-        let base = |p: &str| Path::new(p).file_name().map(|n| n.to_os_string());
-        for file in analysis.files.iter().filter(|f| Path::new(&f.path) != doc.path) {
-            let sent: Vec<&String> =
-                texts.others.iter().filter(|(k, _)| base(k) == base(&file.path)).map(|(_, t)| t).collect();
-            if sent.is_empty() {
-                continue;
-            }
-            let read = match self.docs.values().find(|d| d.path == Path::new(&file.path)) {
-                Some(d) if d.analyzed.as_ref() == Some(&d.text) => Some(d.text.clone()),
-                Some(_) => None,
-                None => crate::project::overlay::read_to_string(Path::new(&file.path)).ok(),
-            };
-            if read.is_none_or(|r| sent.iter().any(|t| **t != r)) {
-                return None;
-            }
-        }
-        let name = doc.path.display().to_string();
-        let mut by = "same";
-        for text in [&texts.built, &texts.now] {
-            if text == read {
-                continue;
-            }
-            if route(&doc.path, read) != route(&doc.path, text) {
-                return None;
-            }
-            match decide(&Edit::new(analysis, &name, read, text)?)? {
-                (_, Reuse::Provisional) => return None,
-                (plugin, _) => by = plugin,
-            }
-        }
-        Some(by)
-    }
-
     /// What a build tells the editor between its runs ([`SETTLED_NOTIFICATION`]).
     fn between_runs(&self, root: &Path) -> crate::analysis::machine::BetweenRuns {
         let (outbox, silenced, root) = (self.outbox.clone(), self.silenced.clone(), root.to_path_buf());
@@ -1529,7 +1527,7 @@ impl Engine {
             let (docs, hovers, blank) = (self.docs.clone(), self.hovers.clone(), self.blank.clone());
             let pause = Box::new(move || {
                 while let Some(req) = wasm::mail() {
-                    if !matches!(req.method.as_str(), "satex/hyphenate" | "satex/break") {
+                    if !matches!(req.method.as_str(), "satex/hyphenate" | "satex/break" | "satex/holds") {
                         wasm::reply(&Response::new_err(
                             req.id,
                             ErrorCode::RequestCanceled as i32,
@@ -1806,6 +1804,7 @@ impl Engine {
             | EngineMsg::Typesetting(..)
             | EngineMsg::Written(..)
             | EngineMsg::Caches(..)
+            | EngineMsg::Holds(..)
             | EngineMsg::Dialog(..)
             | EngineMsg::View(..)
             | EngineMsg::Colors(..)
@@ -1819,6 +1818,7 @@ impl Engine {
                 if !matches!(
                     msg,
                     EngineMsg::Completion(..)
+                        | EngineMsg::Holds(..)
                         | EngineMsg::Typesetting(..)
                         | EngineMsg::View(..)
                         | EngineMsg::Colors(..)
@@ -1831,10 +1831,6 @@ impl Engine {
                     self.ensure(&uri);
                 }
                 answer(&self.docs, &self.hovers, self.blank.as_deref(), msg);
-            }
-            EngineMsg::Holds(uri, texts, reply) => {
-                self.ensure(&uri);
-                let _ = reply.send(Json::from(self.holds(&uri, &texts)));
             }
             EngineMsg::Highlight(uri, pos, reply) => {
                 self.fresh(&uri);
@@ -2080,6 +2076,9 @@ fn answer(docs: &HashMap<Uri, Doc>, hovers: &Hovers, blank: Option<&Analysis>, m
                     .collect()
             };
             let _ = reply.send(with_doc(docs, &uri, |analysis, _| files(analysis)).unwrap_or_default());
+        }
+        EngineMsg::Holds(uri, texts, reply) => {
+            let _ = reply.send(Json::from(holds(docs, &uri, &texts)));
         }
         EngineMsg::Caches(uri, reply) => {
             // The run's size first, then what it reused: what the playground's timing pop-up shows.

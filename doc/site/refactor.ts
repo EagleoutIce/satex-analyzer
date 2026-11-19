@@ -52,6 +52,15 @@ declare global {
     }
     return at;
   }
+  /** Where the braces open at `at` (counted from its paragraph's start) close again: `at` when none is open, null
+   * when one never closes. */
+  function groupEnd(text: string, at: number): number | null {
+    const t = blank(text);
+    let d = 0;
+    for (let i = t.lastIndexOf('\n\n', at) + 1; i < at; i++) { if (t[i] === '\\') i++; else if (t[i] === '{') d++; else if (t[i] === '}') d--; }
+    for (let i = at; d > 0 && i < t.length; i++) { if (t[i] === '\\') i++; else if (t[i] === '{') d++; else if (t[i] === '}' && --d === 0) return i + 1; }
+    return d > 0 ? null : at;
+  }
   /** Every `\begin{e}…\end{e}` pair, inner ones first: `head` after the `\begin{e}` and its options, `foot` at `\end`. */
   function envs(text: string): RfSpan[] {
     const t = blank(text), open: [string, number, number][] = [], out: RfSpan[] = [];
@@ -346,7 +355,11 @@ declare global {
   /** Where an insert goes: at the caret; at a blank place between paragraphs; after the block clicked (a mark of the
    * running text at its paragraph's last character). Null for a mark where no paragraph is. */
   function insertSpot(text: string, t: InsTarget, flow: boolean): { at: number; mode: InsMode } | null {
-    if (t.caret != null) return { at: t.caret, mode: 'caret' };
+    if (t.caret != null) {
+      // a block never splits a group (a macro's argument, `\greet{wo|rld}`): it goes after the line the group closes on
+      const out = flow ? t.caret : groupEnd(text, t.caret) ?? t.caret;
+      return out === t.caret ? { at: out, mode: 'caret' } : { at: lineEnd(text, out), mode: 'after' };
+    }
     if (t.place != null) return flow ? null : { at: t.place, mode: 'after' };
     if (!t.block) return null;
     let end = 0;

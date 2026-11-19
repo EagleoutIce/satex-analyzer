@@ -2341,6 +2341,17 @@ impl Machine<'_> {
                 // web2c drops the quotes a name may carry, and a file the
                 // engine cannot find gives the empty string.
                 let name = self.expanded_text().map(|name| name.replace('"', ""));
+                // A file of the project is under edit: of its size the run knows only whether
+                // it is empty (what `\\IfFileExists` asks, l3file's `\\file_full_name:n`), so
+                // an edit there leaves what the run read before the file itself standing.
+                // One unknown number per file: l3file compares the sizes it finds by a name with
+                // and without `.tex`, which is one file.
+                let own = name.as_deref().filter(|_| matches!(convert, C::FileSize)).and_then(|n| self.own_size(n));
+                if let Some((class, path)) = own {
+                    let size = crate::engine::value::Num::range(1, crate::engine::value::MAX_INT);
+                    let id = format!("size of {}", path.display());
+                    return if class == 1 { self.text_tokens("0", span) } else { self.digits_of(size, &id, span) };
+                }
                 let bytes = name.and_then(|name| self.input_bytes(&name));
                 match (convert, bytes) {
                     // A file the run made with what it holds unknown.
@@ -2572,6 +2583,25 @@ impl Machine<'_> {
                 Some(None)
             }
         }
+    }
+
+    /// For a file of the project found by `name`, whether it is empty (1) or not (2)
+    /// ([`crate::project::overlay::sized`]), and its path. `None` for any other file, and one the run wrote.
+    fn own_size(&mut self, name: &str) -> Option<(u64, std::path::PathBuf)> {
+        if self.written_text(name).is_some() {
+            return None;
+        }
+        let path = self.locate_input(name)?;
+        let main = self.out.file_path(self.out.main_file)?;
+        let own =
+            crate::project::paths::within(&crate::project::paths::dir_of(main), &path) && !self.out.build_file(&path);
+        if !own || self.outputs.keys().any(|written| path.ends_with(written)) {
+            return None;
+        }
+        if self.out.facts.found.len() < self.cfg.limits.facts {
+            self.out.facts.found.insert(path.display().to_string());
+        }
+        Some(crate::project::overlay::sized(&path)).filter(|&class| class > 0).map(|class| (class, path))
     }
 
     /// `\pdfprimitive⟨cs⟩`: the primitive of that name, whatever the name

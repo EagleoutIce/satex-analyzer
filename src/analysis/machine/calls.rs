@@ -135,12 +135,22 @@ pub(crate) struct Memo {
 
 impl CallRec {
     /// This record as two runs that differ only by an edit before it are compared: the
-    /// assignment count is absolute and moves by the edit's, and under the lax page model
-    /// the list being built is the page's, which may differ.
+    /// assignment count and the read log's length are absolute and move by the edit's
+    /// (the log's bound is the splice's to mind, [`crate::engine::env::Env::read_log_peak`]),
+    /// and under the lax page model the list being built is the page's, which may differ.
     pub(crate) fn alike_view(&self, lax: bool) -> CallRec {
         let natural = if lax { None } else { self.natural };
         // the memo's start holds absolute counts too: whether one is kept is what compares
-        CallRec { assigned: 0, forks_at: 0, natural, memo: None, ..self.clone() }
+        CallRec { assigned: 0, reads: 0, forks_at: 0, natural, memo: None, ..self.clone() }
+    }
+
+    /// [`CallRec::alike_view`] of a record whose text is read to its end, with the list being
+    /// built `now`: it ends at the next read, which looks only at whether the list is the one
+    /// it began with ([`Machine::end_calls`]), so that is all of it that compares.
+    pub(crate) fn ending_view(self, now: Option<crate::engine::mode::Natural>, depth: usize) -> CallRec {
+        let other = [None, Some(Default::default())].into_iter().find(|n| *n != now).flatten();
+        let natural = if depth <= self.base && self.natural != now { other } else { self.natural };
+        CallRec { natural, ..self }
     }
 
     pub(crate) fn memo_mark(&self) -> Option<crate::engine::env::MemoMark> {

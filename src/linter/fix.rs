@@ -373,6 +373,12 @@ impl<'a> Edits<'a> {
         self.analysis.env.meaning(self.analysis.interner.lookup(name)?).prim()
     }
 
+    /// `\par`, or a command the run saw end a paragraph.
+    pub(crate) fn ends_paragraph(&self, name: &str) -> bool {
+        let pars = &self.analysis.facts.paragraph_enders;
+        name == "par" || self.analysis.interner.lookup(name).is_some_and(|sym| pars.contains(&sym))
+    }
+
     fn defined(&self, name: &str) -> bool {
         self.analysis.defined(name)
     }

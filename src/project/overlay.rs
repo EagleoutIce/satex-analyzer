@@ -97,9 +97,21 @@ pub fn probed(path: &Path) {
     push(path, true, false, || presence(path));
 }
 
-/// Whether `path` is there to read: 1, else 0.
+/// Notes that a run looked for `path` and at whether it holds anything, and says which:
+/// 0 not there, 1 empty, 2 with content.
+pub fn sized(path: &Path) -> u64 {
+    probed(path);
+    presence(path)
+}
+
+/// What a run that only looks for `path` sees: 0 not there, 1 empty, 2 with content.
 fn presence(path: &Path) -> u64 {
-    u64::from(holds(path) || path.is_file())
+    match text(path) {
+        Some(text) => 1 + u64::from(!text.is_empty()),
+        None => {
+            std::fs::metadata(path).ok().filter(std::fs::Metadata::is_file).map_or(0, |m| 1 + u64::from(m.len() > 0))
+        }
+    }
 }
 
 /// What `path` holds now, as a hash: the overlay's text, else the file's
@@ -127,6 +139,16 @@ fn hash(bytes: &std::io::Result<Vec<u8>>) -> u64 {
     let mut hasher = std::hash::DefaultHasher::new();
     bytes.as_ref().ok().hash(&mut hasher);
     hasher.finish()
+}
+
+/// [`read_bytes`], not logged as a read of the run.
+pub fn peek_bytes(path: &Path) -> std::io::Result<Vec<u8>> {
+    read_bytes_unlogged(path)
+}
+
+/// The text at `path` when it is UTF-8, not logged as a read of the run: what [`set`] puts back as it was.
+pub fn peek(path: &Path) -> Option<String> {
+    String::from_utf8(read_bytes_unlogged(path).ok()?).ok()
 }
 
 pub fn read_to_string(path: &Path) -> std::io::Result<String> {
