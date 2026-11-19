@@ -1594,7 +1594,7 @@
           from, to: Math.min(Math.max(to, from + 1), doc().length), severity: sev(d),
           message: d.message, source: d.code,
           renderMessage: () => Object.assign(document.createElement('span'), { innerHTML: inline(d.message) }),
-          actions: [...d.fixes.map((f) => ({ name: `Fix (${f.safety})`, apply: () => fix(f) })), { name: 'Explain rule', apply: () => unfold(i, false) }],
+          actions: [...d.fixes.map((f, j) => ({ name: `${j ? 'Other fix' : 'Fix'} (${f.safety})`, apply: () => fix(f) })), { name: 'Explain rule', apply: () => unfold(i, false) }],
         };
       }))),
       complete: () => ac.startCompletion(ev),
@@ -2571,7 +2571,8 @@
     markStale();
     if (pdfOverlayOn?.findings) pdfOverlay();
     typesetFindings();
-    const fixButton = (f, j) => `<button class="small apply fix-${f.safety}" data-j="${j}" title="${escape(f.title)}">Fix (${f.safety})</button>`;
+    // a finding's other ways to repair it come after its fix, each a button of its own
+    const fixButton = (f, j) => `<button class="small apply fix-${f.safety}" data-j="${j}" title="${escape(f.title)}">${j ? 'Other fix' : 'Fix'} (${f.safety})</button>`;
     const item = (d, i) => `<li class="f-${sev(d)}${unfolded.has(key(d)) ? ' open' : ''}" data-i="${i}" tabindex="0">` +
       `<span class="msg">${d.number ? `<code class="rno" title="rule number">${escape(d.number)}</code> ` : ''}<b class="rn">${escape(d.code ?? '')}</b>: ${commandRefs(inline(d.message))}</span>` +
       `<span class="where"><b class="loc">${d.file ? `<span class="loc-file">${escape(d.file)}:</span>` : ''}${d.range.start.line + 1}:${d.range.start.character + 1}</b><span class="shape" title="${sev(d)}" aria-label="${sev(d)}"></span></span>` +
@@ -7847,7 +7848,8 @@
       // an answer for an older text is dropped: the run of the newer one asks again
       if (!r?.tables || asked !== uri() || v !== version) return;
       pdfCols = { ...r, file };
-      if (!pdfDrag && pdf?.boxes) pdfOverlay();
+      // a pointer resting on the table since the ask: its chips show without another move
+      if (!pdfDrag && pdf?.boxes) { const e = pdfHoverLast, at = e && document.elementFromPoint(e.clientX, e.clientY); if (at) pdfHoverAt({ clientX: e.clientX, clientY: e.clientY, target: at }); pdfOverlay(); }
     }).catch(() => {});
   }
   /** `node` (a text snapshot of `target`) printed as `body` and applied: false when refused, or when the text
@@ -8842,25 +8844,28 @@
   const ALIGNS = { l: 'left', c: 'centered', r: 'right', p: 'top (paragraph)', m: 'middle (paragraph)', b: 'bottom (paragraph)' };
   /** The table under the pointer, its column layer shown while the widths layer is off. */
   var pdfHoverTable = -1;
-  let pdfHoverFrame = 0;
+  let pdfHoverFrame = 0, pdfHoverLast = null;
+  /** The table under the pointer `e` hovers: its column chips show. */
+  function pdfHoverAt(e) {
+    // over a column's own label the table stays
+    if (pdfDrag || e.target.closest?.('.pdf-col')) return;
+    const img = e.target.closest?.('.pdf-page')?.querySelector('img'), page = +(img?.parentElement.dataset.page ?? 0);
+    let hit = -1;
+    // the columns as written, asked once a table may be under the pointer
+    if (img && pdfCols?.file !== state.file) pdfColsAsk();
+    if (img?.naturalWidth && pdfCols?.file === state.file && pdf?.boxes) {
+      const [w, h] = pageSize(img), r = img.getBoundingClientRect(), x = (e.clientX - r.left) / r.width * w, y = (e.clientY - r.top) / r.height * h;
+      // the label row above the table counts as the table
+      hit = pdfCols.tables.findIndex((t) => { const b = PE.extent(pdf.boxes, state.file, t); return b && b.page === page && x >= b.x && x <= b.x + b.w && y >= b.y - b.h - 14 && y <= b.y + b.d; });
+    }
+    if (hit !== pdfHoverTable) { pdfHoverTable = hit; pdfOverlay(); }
+  }
   pdfBody.addEventListener('pointermove', (e) => {
+    pdfHoverLast = e;
     if (pdfHoverFrame || pdfDrag) return;
-    pdfHoverFrame = requestAnimationFrame(() => {
-      pdfHoverFrame = 0;
-      // over a column's own label the table stays
-      if (e.target.closest?.('.pdf-col')) return;
-      const img = e.target.closest?.('.pdf-page')?.querySelector('img'), page = +(img?.parentElement.dataset.page ?? 0);
-      let hit = -1;
-      // the columns as written, asked once a table may be under the pointer
-      if (img && pdfCols?.file !== state.file) pdfColsAsk();
-      if (img?.naturalWidth && pdfCols?.file === state.file && pdf?.boxes) {
-        const [w, h] = pageSize(img), r = img.getBoundingClientRect(), x = (e.clientX - r.left) / r.width * w, y = (e.clientY - r.top) / r.height * h;
-        // the label row above the table counts as the table
-        hit = pdfCols.tables.findIndex((t) => { const b = PE.extent(pdf.boxes, state.file, t); return b && b.page === page && x >= b.x && x <= b.x + b.w && y >= b.y - b.h - 14 && y <= b.y + b.d; });
-      }
-      if (hit !== pdfHoverTable) { pdfHoverTable = hit; pdfOverlay(); }
-    });
+    pdfHoverFrame = requestAnimationFrame(() => { pdfHoverFrame = 0; pdfHoverAt(pdfHoverLast); });
   });
+  pdfBody.addEventListener('pointerleave', () => { pdfHoverLast = null; });
   /** The hold of a column change ends once the pages show the text as now and the layers are not stale. */
   function pdfHoldEnd() { if (pdf?.text === editor.text() && !pdfBody.classList.contains('ov-stale')) document.body.classList.remove('pdf-hold'); }
   /** A column's letter rewritten from the layer: `l`, `c`, `r`, or `p`, `m`, `b` keeping its width. */
@@ -9585,7 +9590,7 @@
   /** The font page image `img` sets word `w` in: pdf.js's embedded font of the text run under the word's glyphs (by
    * position: the run on its baseline overlapping it most, never by spelling), its size and baseline in bp. A run
    * whose PDF was closed for a newer build has its face added back (pdfFaces). No run: the echo font as wide as the word. */
-  /** A run's font name without the subset tag (`BXLKFT+CMR10` is CMR10, no bold face). */
+  /** A run's font name without the subset tag (six capitals and `+`, PDF 1.7 §9.6.4: `BXLKFT+CMR10` is CMR10, no bold face). */
   const pdfFaceName = (r) => (r.name ?? '').replace(/^[A-Z]{6}\+/, '');
   function pdfFontOf(img, w) {
     pdfLmLoad();
@@ -9632,24 +9637,30 @@
     return pdfOwns(ctx, f, whole) ? `${f.own ? '' : f.fb ?? ''}${px}px ${f.family}` : `${f.fb ?? ''}${px * (f.xs ?? 1)}px ${PDF_ECHO_FONT}`;
   }
   /** The width of `t` in echo font `f` (bp) over an image `k` px a bp. */
-  let pdfShapeCtx = null;
-  const pdfWidthIn = (f, t, k) => { const ctx = pdfShapeCtx ??= document.createElement('canvas').getContext('2d'); ctx.font = `${f.own ? '' : f.fb ?? ''}${f.size * k}px ${f.family}`; return pdfTextWidth(ctx, f, t, f.size * k) / k; };
-  /** The echo font of shape `shape` (`bf`, `it`: pdfedit `prose`) beside row font `f` over page image `img`: the face of a
-   * run a shown page sets in that shape, at `f`'s size; else the fallback so shaped. Once per image and font. */
-  const pdfShapeOf = new WeakMap();
-  function pdfShapeFont(img, f, shape) {
-    const key = `${f.family}|${f.size}|${shape}`, memo = pdfShapeOf.get(img) ?? new Map();
-    pdfShapeOf.set(img, memo);
-    if (!memo.has(key)) {
-      const re = shape === 'bf' ? /BX|Bold|CMB(?!SY)/ : /CMTI|Ital|Obl/, math = /Math|CMMI|CMSY|CMEX/;
-      // the run nearest the row's size (CMBX10 beside CMR10, not a heading's CMBX12)
-      const hit = [img, ...pdfBody.querySelectorAll('.pdf-page img')].flatMap((i) => (i.__runs ?? []).map((r) => [i, r])).filter(([, r]) => re.test(pdfFaceName(r)) && !math.test(pdfFaceName(r)))
-        .sort((p, q) => Math.abs(p[1].size - f.size) - Math.abs(q[1].size - f.size)).find(([, r]) => pdfFaceUp(r));
+  let pdfWidthCtx = null;
+  const pdfWidthIn = (f, t, k) => { const ctx = pdfWidthCtx ??= document.createElement('canvas').getContext('2d'); ctx.font = `${f.own ? '' : f.fb ?? ''}${f.size * k}px ${f.family}`; return pdfTextWidth(ctx, f, t, f.size * k) / k; };
+  /** The echo font of text in context `ctx` (pdfedit `prose`: `textbf` of `\\textbf{…}`, `bfseries` of `{\\bfseries …}`)
+   * over page image `img`, row font `f`: the font the run set for the first word after another use of that command, read
+   * off its build's page, at `f`'s size (NFSS changes series and shape, not \\f@size: ltfssbas.dtx). No such word
+   * shown: `f` itself (the fallback). Once per image, font and context. */
+  const pdfCtxOf = new WeakMap(), PDF_CTX_TRIES = 20;
+  function pdfCtxFont(img, f, ctx) {
+    const b = img.__build ?? pdf, key = `${f.family}|${f.size}|${ctx}`, memo = pdfCtxOf.get(img) ?? new Map();
+    pdfCtxOf.set(img, memo);
+    if (memo.has(key)) return memo.get(key);
+    const B = pdfBuiltText(b) ?? '', name = ctx.replace(/[@*]/g, (c) => `\\${c}`), re = new RegExp(`\\\\${name}(?:\\*?\\s*\\{|(?![A-Za-z@]))\\s*(?=[^\\s{}\\\\])`, 'g');
+    let F = null, n = 0;
+    for (const m of B.matchAll(re)) {
+      if (++n > PDF_CTX_TRIES) break;
+      const o = m.index + m[0].length, t = pdfParaWords(b, o).find((u) => u.s <= o && o < u.e && u.w), page = t && pdfImg(t.w[0]);
+      if (!page?.naturalWidth || (page.__build ?? pdf) !== b) continue;
       // (pdfFontOf measures in the echo's canvas: its font as the caller set it, kept)
-      const was = pdfEchoCtx?.font, F = hit && pdfFontOf(hit[0], [0, hit[1].x, hit[1].y - hit[1].size * 0.7, hit[1].x + hit[1].w, hit[1].y + hit[1].size * 0.2, '']);
+      const was = pdfEchoCtx?.font;
+      F = pdfFontOf(page, t.w);
       if (was) pdfEchoCtx.font = was;
-      memo.set(key, F?.own ? { ...F, size: f.size, base: f.base } : { family: PDF_ECHO_FONT, size: f.size, base: f.base, own: false, fb: shape === 'bf' ? 'bold ' : 'italic ' });
+      break;
     }
+    memo.set(key, F ? { ...F, size: f.size, base: f.base } : f);
     return memo.get(key);
   }
   /** The width of `t` in echo font `f` with `ctx.font` set to it at `px` px: a character its face lacks counts at the
@@ -9794,7 +9805,7 @@
       // a word TeX set before (`satex/break`'s widths: its letters with the font's ligatures and kerns) as wide as TeX
       // sets it, else as the canvas measures it
       const fkey = `${f.family}|${f.size}|`, pieces = [];
-      const width = (t, shape) => shape ? pdfWidthIn(pdfShapeFont(img, f, shape), t, k) : pdfTexWidth.get(fkey + t) ?? pdfTextWidth(ctx, f, t, f.size * k) / k;
+      const width = (t, cx) => cx ? pdfWidthIn(pdfCtxFont(img, f, cx), t, k) : pdfTexWidth.get(fkey + t) ?? pdfTextWidth(ctx, f, t, f.size * k) / k;
       // the text typed as pieces, its formulas laid out as math; the caret in the last piece of the text up to it
       const M = pdfMathOf(img, f), typed = (to) => pdfPieces(g.text, A.e, to, verb, width, gap, M);
       pieces.push(...typed(upto));
@@ -9859,7 +9870,7 @@
       let spaced = [];
       for (const q of texWords ? seq : []) {
         const t = (q.t ?? q.w?.[5])?.normalize('NFKC');
-        if (q.par || q.brk != null || q.shape || q.disp != null || t == null || !t && q.n > 0) { texWords = null; break; }
+        if (q.par || q.ctx || q.disp != null || t == null || !t && q.n > 0) { texWords = null; break; }
         if (!t) { if (q.gap > 0 || spaced.length) spaced.push(q); continue; }
         const qw = q.t == null && q.w ? q.n : null;
         if (q.gap > 0 || spaced.length) { texWords.push(t); texW.push(qw); } else { texWords[texWords.length - 1] += t; texW[texW.length - 1] = qw != null && texW.at(-1) != null ? texW.at(-1) + qw : null; }
@@ -9876,15 +9887,14 @@
           return at.slice(0, -1).map((a, i) => {
             const b = at[i + 1], part = { ...q, gap: i ? 0 : q.gap, st: i ? 0 : q.st, sh: i ? 0 : q.sh, hy: i < at.length - 2, hw, wc: (q.wc0 ?? 0) + a };
             // a typed word's parts share its width as TeX sets it (a ligature spans a part's end)
-            const whole = !xs && !q.shape && pdfTexWidth.get(fkey + t), scale = whole ? whole / at.slice(0, -1).reduce((m, c, j) => m + width(t.slice(c, at[j + 1])), 0) : 1;
-            return xs ? { ...part, n: xs[b] - xs[a], w: [q.w[0], xs[a], q.w[2], xs[b], q.w[4], t.slice(a, b)] } : { ...part, n: width(t.slice(a, b), q.shape) * scale, t: t.slice(a, b), word: t };
+            const whole = !xs && !q.ctx && pdfTexWidth.get(fkey + t), scale = whole ? whole / at.slice(0, -1).reduce((m, c, j) => m + width(t.slice(c, at[j + 1])), 0) : 1;
+            return xs ? { ...part, n: xs[b] - xs[a], w: [q.w[0], xs[a], q.w[2], xs[b], q.w[4], t.slice(a, b)] } : { ...part, n: width(t.slice(a, b), q.ctx) * scale, t: t.slice(a, b), word: t };
           });
         };
         tagged.splice(0, tagged.length, ...tagged.flatMap(split));
         for (const r of later) r.pieces = r.pieces.flatMap(split);
       }
-      // an alignment environment's rows are a \\topsep apart from the text (article's 8pt at 10pt)
-      const flow = PE.reflow(tagged, w[3], { right, left, indent, skip, parskip, envskip: 0.8 * f.size, rows: later, pull: dl < 0, fit: fits, breaks: texWords && pdfTexBreaks(fkey, texWords.map((t, i) => (texW[i] != null ? [t, Math.round(texW[i] * 65536 * 72.27 / 72)] : t)), tagged, later, line[0][1] - left, pdfPos(g.text, A.s).line) });
+      const flow = PE.reflow(tagged, w[3], { right, left, indent, skip, parskip, rows: later, pull: dl < 0, fit: fits, breaks: texWords && pdfTexBreaks(fkey, texWords.map((t, i) => (texW[i] != null ? [t, Math.round(texW[i] * 65536 * 72.27 / 72)] : t)), tagged, later, line[0][1] - left, pdfPos(g.text, A.s).line) });
       const rows = [];
       for (const fr of flow.rows) {
         const prev = rows.at(-1), L = later[fr.from];
@@ -10026,7 +10036,7 @@
     cg.font = `${f.size * k}px ${f.family}`;
     for (const q of out) {
       // text as wide as laid out (`n`): glyphs the face lacks are drawn in the fallback, stretched to the page's width
-      if (q.t != null) { const F = q.shape ? pdfShapeFont(img, f, q.shape) : f; cg.font = pdfWordFont(cg, F, q.word ?? q.t, F.size * k); const m = cg.measureText(q.t).width, sx = m > 0 && q.n ? q.n * k / m : 1; cg.save(); cg.scale(sx, 1); cg.fillText(q.t, (q.x - x0) * k / sx, (f.base - top) * k); cg.restore(); }
+      if (q.t != null) { const F = q.ctx ? pdfCtxFont(img, f, q.ctx) : f; cg.font = pdfWordFont(cg, F, q.word ?? q.t, F.size * k); const m = cg.measureText(q.t).width, sx = m > 0 && q.n ? q.n * k / m : 1; cg.save(); cg.scale(sx, 1); cg.fillText(q.t, (q.x - x0) * k / sx, (f.base - top) * k); cg.restore(); }
       else if (q.math) pdfMathPaint(cg, q, (q.x - x0) * k, (f.base - top) * k, k);
       // no glyph of a word the change left redrawn: its pixels moved
       // a word moved from another row (wrapped down) comes from its own place, set on this row's baseline
@@ -10157,8 +10167,8 @@
       // a blank line typed (Enter) starts a paragraph: the piece after it opens an indented row of its own
       const raw = out.at(-1)?.disp != null ? text.slice(r.s, r.e).replace(/^\s+/, '') : text.slice(r.s, r.e);
       if (verb) { for (const [i, part] of raw.split(' ').entries()) out.push({ gap: i ? gap : 0, n: width(part), t: part }); continue; }
-      // a word in \\textbf or \\emph measured in its own face; an alignment environment's lines rows of their own
-      for (const q of PE.prose(raw)) out.push({ gap: q.gap ? gap : 0, n: width(q.t, q.shape), t: q.t, par: q.par, ...(q.brk != null && { brk: q.brk }), ...(q.shape && { shape: q.shape }) });
+      // a word in a command's argument or a group's declaration measured in the font the run set such text in
+      for (const q of PE.prose(raw)) out.push({ gap: q.gap ? gap : 0, n: width(q.t, q.ctx), t: q.t, par: q.par, ...(q.ctx && { ctx: q.ctx }) });
     }
     return out.length ? out : [{ gap: 0, n: 0, t: '' }];
   }

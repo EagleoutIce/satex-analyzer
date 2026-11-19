@@ -108,35 +108,29 @@ spec('justify sets a broken row to the edge, never the first or the last', () =>
   assert.equal(end(f.rows[2]), 50, 'the last row ragged');
   assert.equal(end(f.rows[0]), 60, 'the first row as laid');
 });
-/** Each piece of `prose` as `text`, `_` before it for a gap, `¶` a blank line, `|c` an alignment break, `:bf` a shape. */
-const prose = (raw) => E.prose(raw).map((q) => `${q.par ? '¶' : ''}${q.brk != null ? `|${q.brk}` : ''}${q.gap ? '_' : ''}${q.t}${q.shape ? `:${q.shape}` : ''}`).join(' ');
+/** Each piece of `prose` as `text`, `_` before it for a gap, `¶` a blank line, `:ctx` its context. */
+const prose = (raw) => E.prose(raw).map((q) => `${q.par ? '¶' : ''}${q.gap ? '_' : ''}${q.t}${q.ctx ? `:${q.ctx}` : ''}`).join(' ');
 // Intuition: typed prose reads as the page sets it: commands dropped, a space typed is the caret's empty word, the first
 // piece joins the word before. Pins the echo's words equal to the old plain-text split.
 test('prose: plain words, the empty first and last piece', () => {
   assert.equal(prose(' Quokka'), ' _Quokka');
-  assert.equal(prose('a \\foo  b '), 'a _b _');
+  assert.equal(prose('a \\foo  b '), 'a _b:foo _:foo');
   assert.equal(prose('x\n\ny'), 'x ¶_y');
   assert.equal(prose('50\\% off % gone'), '50% _off _');
 });
-// Intuition: \textbf{…} and \emph{…} set their words in another face, wider than the row's: the echo measures them in
-// it. Pins tc-type-textbf: \textbf{Quokka} measured upright, the caret 4 px short of where the build set it.
-test('prose: shapes from \\textbf, \\emph and declarations', () => {
-  assert.equal(prose(' \\textbf{Quokka} x'), ' _Quokka:bf _x');
-  assert.equal(prose('\\emph{a \\emph{b}c}d'), 'a:it _b c:it d');
-  assert.equal(prose('{\\bfseries Big} small'), ' _Big:bf _small');
-  assert.equal(prose('Q\\textbf{uo}kka'), 'Q uo:bf kka');
+// Intuition: a word in a command's argument or after a group's declaration is set in the font the run chose there, which
+// the playground reads off the page: the piece names that context, no table of font commands. Pins tc-type-textbf:
+// \textbf{Quokka} measured upright, the caret 4 px short of where the build set it.
+test('prose: the context of a command argument or a group declaration', () => {
+  assert.equal(prose(' \\textbf{Quokka} x'), ' _Quokka:textbf _x');
+  assert.equal(prose('{\\bfseries Big} small'), ' _Big:bfseries _small');
+  assert.equal(prose('Q\\textbf{uo}kka'), 'Q uo:textbf kka');
+  assert.equal(prose('{a \\bfseries b} c'), 'a _b:bfseries _c');
+  assert.equal(prose('a \\foo b'), 'a _b:foo');
 });
-// Intuition: an alignment environment's lines are rows of their own, never prose on the row before (`center Quokka
-// center`). Pins tc-type-begin-arg: the caret jumped 51 px when the build set Quokka centered on its own row.
-test('prose: center starts and ends rows of its own', () => {
-  assert.equal(prose(' \\begin{center}\nQuokka\n\\end{center} more'), ' |c_Quokka |_more');
-  assert.equal(prose('a \\begin{flushright}'), 'a |r_');
-});
-// Intuition: an alignment break starts a row at the margin, a skip apart, centered; the text after the environment's end
-// goes on at the margin, unindented, another skip down.
-test('reflow: an alignment break centers its row', () => {
-  const f = E.reflow([p(10, 0), p(20, 3, { brk: 'c' }), p(30, 3, { brk: '' })], 0, { ...LINE, envskip: 8 });
-  assert.deepEqual(shape(f), ['-2@0:0', '-1@0:40 dy20', '-1@0:0 dy20']);
+// Intuition: an environment's name is a csname the kernel reads, never text on the row (`center Quokka center`).
+test('prose: \\begin and \\end set no word', () => {
+  assert.equal(prose(' \\begin{center}\nQuokka\n\\end{center} more'), ' _Quokka _more');
 });
 // Intuition: two places typed since the shown run are two edits of whole words, the words between them untouched, so
 // the Typeset view shows both at once. Pins fz-ts-end-keeps-typed: one change over both lost the second word.

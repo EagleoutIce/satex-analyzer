@@ -34,18 +34,6 @@
   "match": "^(caret jumped|caret stepped back|pages scrolled|echo [\\d.]+px past|echo font|final caret at|echo rows overlap|echo wrapped)",
   "why": "the echo's rows and font differ from the landed build: the caret jumps when the build lands, the echo runs past the margin, its font is not the page's width"
  },
- "enter-twice": {
-  "owner": "playground echo layout (ui-48 echo helper)",
-  "since": "2026-11-19",
-  "match": "^(caret jumped|caret stepped back|pages scrolled|echo [\\d.]+px past|echo font|final caret at|echo rows overlap|echo wrapped)",
-  "why": "the echo's rows and font differ from the landed build: the caret jumps when the build lands, the echo runs past the margin, its font is not the page's width"
- },
- "gap-before-command": {
-  "owner": "playground echo layout (ui-48 echo helper)",
-  "since": "2026-11-19",
-  "match": "^(caret jumped|caret stepped back|pages scrolled|echo [\\d.]+px past|echo font|final caret at|echo rows overlap|echo wrapped)",
-  "why": "the echo's rows and font differ from the landed build: the caret jumps when the build lands, the echo runs past the margin, its font is not the page's width"
- },
  "page-foot": {
   "owner": "playground echo layout (ui-48 echo helper)",
   "since": "2026-11-19",
@@ -53,18 +41,6 @@
   "why": "the echo's rows and font differ from the landed build: the caret jumps when the build lands, the echo runs past the margin, its font is not the page's width"
  },
  "pagebreak": {
-  "owner": "playground echo layout (ui-48 echo helper)",
-  "since": "2026-11-19",
-  "match": "^(caret jumped|caret stepped back|pages scrolled|echo [\\d.]+px past|echo font|final caret at|echo rows overlap|echo wrapped)",
-  "why": "the echo's rows and font differ from the landed build: the caret jumps when the build lands, the echo runs past the margin, its font is not the page's width"
- },
- "prose-backspace": {
-  "owner": "playground echo layout (ui-48 echo helper)",
-  "since": "2026-11-19",
-  "match": "^(caret jumped|caret stepped back|pages scrolled|echo [\\d.]+px past|echo font|final caret at|echo rows overlap|echo wrapped)",
-  "why": "the echo's rows and font differ from the landed build: the caret jumps when the build lands, the echo runs past the margin, its font is not the page's width"
- },
- "prose-burst": {
   "owner": "playground echo layout (ui-48 echo helper)",
   "since": "2026-11-19",
   "match": "^(caret jumped|caret stepped back|pages scrolled|echo [\\d.]+px past|echo font|final caret at|echo rows overlap|echo wrapped)",
@@ -86,12 +62,6 @@
   "owner": "playground echo layout (ui-48 echo helper)",
   "since": "2026-11-19",
   "why": "a click after a ligature (`fi` in `fine`) lands one character early, the typed word is not set where expected; the landing jump as the others"
- },
- "tex-second-pass": {
-  "owner": "playground echo layout (ui-48 echo helper)",
-  "since": "2026-11-19",
-  "match": "^(caret jumped|caret stepped back|pages scrolled|echo [\\d.]+px past|echo font|final caret at|echo rows overlap|echo wrapped)",
-  "why": "the echo's rows and font differ from the landed build: the caret jumps when the build lands, the echo runs past the margin, its font is not the page's width"
  },
  "tikz-node": {
   "owner": "playground echo layout (ui-48 echo helper)",
@@ -125,5 +95,29 @@
   "owner": "server (wasm analysis); evidence by ui-51",
   "why": "the wasm server publishes an empty diagnostics list for the text's version (raw publishDiagnostics captured: `diagnostics: []`), also with the brace there from the start (no resume), while native `satex lint` of the same text reports C013 `Too many }'s` at 8:18: the client shows what it gets",
   "since": "2026-11-19"
+ },
+ "tc-type-begin-arg": {
+  "owner": "server (Rust: environment effects for the echo) + Type-mode echo",
+  "since": "2026-11-19",
+  "match": "^caret jumped",
+  "why": "the echo no longer prints the environment's name, but sets \\begin{center} Quokka \\end{center} on the row typed in, while TeX starts a centred row a \\topsep lower: the caret jumps ~50 px as the build lands. A fix without a name table needs the run to report, per environment name, what its begin code leaves: the vertical space it adds (\\topsep, \\partopsep, \\parskip as \\@trivlist adds them, ltlists.dtx) and the paragraph shape it sets (\\leftskip, \\rightskip, \\parfillskip: \\centering's 0pt plus 1fil), e.g. in the page view's run lengths or a satex/envEffect query"
+ },
+ "forest-child": {
+  "owner": "server (wasm text sync); evidence by ui-61",
+  "why": "under load the snapshot printer answers `a place outside the text` (src/lsp/snapshot.rs edits_of): the wasm server holds an older, shorter text of hello.tex than the editor, though the client sent the scenario's text (didChange v2, 1359 chars) before the request. Intermittent: passed 1 of 2 runs (forest-sibling 2 of 3); evidence target/scratch/ui-61/dbg-forest.log",
+  "since": "2026-11-19",
+  "match": "^source unchanged \\(toast: a place outside the text\\)"
+ },
+ "forest-sibling": {
+  "owner": "server (wasm text sync); evidence by ui-61",
+  "why": "under load the snapshot printer answers `a place outside the text` (src/lsp/snapshot.rs edits_of): the wasm server holds an older, shorter text of hello.tex than the editor, though the client sent the scenario's text (didChange v2, 1359 chars) before the request. Intermittent: passed 1 of 2 runs (forest-sibling 2 of 3); evidence target/scratch/ui-61/dbg-forest.log",
+  "since": "2026-11-19",
+  "match": "^source unchanged \\(toast: a place outside the text\\)"
+ },
+ "col-align": {
+  "owner": "server (wasm text sync); evidence by ui-61",
+  "why": "under load the run of the scenario's text reports findings on every line (squiggles from \\documentclass on, 8 findings for a clean text) and the columns query gives no table, so no chip shows; passed 1 of 3 runs. The client side (chips once the columns arrive, without another pointer move) is fixed",
+  "since": "2026-11-19",
+  "match": "^no column chip"
  }
 }

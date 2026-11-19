@@ -58,6 +58,9 @@ async function load(p, sc) {
   return before;
 }
 
+/** The page's checks done (a fresh context fetches the TeX bundle first, slow on a loaded machine): what a widget or
+ * menu asks of the language server is answered at once, not queued behind the fetch. */
+async function idle(p, ms = 240000) { if (!await p.until(`!satexHealth().busy`, ms)) throw new Error('setup: the page stayed busy (its first check never ended)'); }
 /** No run going on, due or queued for 1.5 s (a fresh profile's first run builds the kernel cache: minutes at most). */
 const settled = (p, ms = 240000) => p.until(`(() => { const h = satexHealth(); if (h.running || h.busy || h.due || h.queued) { self.__e2eQ = null; return false; } self.__e2eQ ??= performance.now(); return performance.now() - self.__e2eQ > 1500; })()`, ms);
 /** A word on the pages in client px: [x0, y0, x1, y1, page, text] with the page scrolled to show it. */
@@ -147,7 +150,7 @@ async function typeScenario(p, sc) {
   await load(p, sc);
   // the check of the loaded text done first: the printer waits behind it (measured: up to ~25 s for thesis.tex)
   const idle0 = Date.now();
-  await p.until(`!satexHealth().busy`, 60000);
+  await idle(p);
   res.info.analysisMs = Date.now() - idle0;
   await sleep(300);
   // the word placed after the layout settled
@@ -457,7 +460,7 @@ async function tintScenario(p, sc) {
   const res = { name: sc.name, kind: 'tint', fails: [], perf: [], info: {} };
   await load(p, sc);
   // the tints come from the check's run: wait for it
-  await p.until(`!satexHealth().busy`, 60000);
+  await idle(p);
   await sleep(1500);
   const t = await tints(p);
   res.info.tints = t.length;
@@ -494,7 +497,7 @@ async function tintScenario(p, sc) {
 async function clickScenario(p, sc) {
   const res = { name: sc.name, kind: 'click', fails: [], perf: [], info: {} };
   await load(p, sc);
-  await p.until(`!satexHealth().busy`, 60000);
+  await idle(p);
   // `ready`: the analysis of the scenario's text is in (the origins a macro's output is placed by)
   if (sc.ready) await p.until(sc.ready, 120000);
   await sleep(300);
@@ -569,7 +572,7 @@ async function completeScenario(p, sc) {
 async function selectScenario(p, sc) {
   const res = { name: sc.name, kind: 'select', fails: [], perf: [], info: {} };
   await load(p, sc);
-  await p.until(`!satexHealth().busy`, 60000);
+  await idle(p);
   await sleep(300);
   const a = await wordAt(p, sc.from), b = await wordAt(p, sc.to);
   if (!a || !b) { res.fails.push('setup: no page words'); return res; }
@@ -606,11 +609,12 @@ async function selectScenario(p, sc) {
 async function colScenario(p, sc) {
   const res = { name: sc.name, kind: 'col', fails: [], perf: [], info: {} };
   await load(p, sc);
-  await p.until(`!satexHealth().busy`, 60000);
+  await idle(p);
   // the chips belong to the open file: the table's file opened from the tree, the PDF tab kept
   if (sc.file) {
     await p.eval(`document.querySelector('#play-files-tree .file[data-name=${J(sc.file)}]')?.click()`);
-    if (!await p.until(`satexHealth().file === ${J(sc.file)} && !satexHealth().busy`, 20000)) { res.fails.push(`setup: ${sc.file} not opened`); return res; }
+    if (!await p.until(`satexHealth().file === ${J(sc.file)}`, 20000)) { res.fails.push(`setup: ${sc.file} not opened`); return res; }
+    await idle(p);
     await p.eval(`document.querySelector('.side-tabs [data-panel=play-pdf]').click()`);
     await sleep(800);
   }
@@ -663,7 +667,7 @@ async function colScenario(p, sc) {
 async function forestScenario(p, sc) {
   const res = { name: sc.name, kind: 'forest', fails: [], perf: [], info: {} };
   await load(p, sc);
-  await p.until(`!satexHealth().busy`, 60000);
+  await idle(p);
   // `ts`: the node's text in the Typeset view's sketch instead of the page
   if (sc.ts) await p.eval(`(self.__errs = [], addEventListener('error', (e) => self.__errs.push(String(e.error?.stack ?? e.message).slice(0, 600))), document.querySelector('.side-tabs [data-panel=play-typeset]').click())`);
   const w = sc.ts
@@ -733,7 +737,7 @@ async function shiftScenario(p, sc) {
   await load(p, sc);
   // a new text: the build runs, none comes from the cache
   await setText(p, (await p.eval(`satexHealth().text`)) + `% ${Date.now()}\n`);
-  await p.until(`!satexHealth().busy`, 60000);
+  await idle(p);
   const r = await p.eval(`new Promise((ok) => {
     const rect = () => { const e = document.querySelector('#play-pdf .pdf-pages'); if (!e) return null; const r = e.getBoundingClientRect(); return [r.left, r.top, r.width]; };
     const r0 = rect(); let max = 0, frames = 0, saw = false, worst = null; const t0 = performance.now();

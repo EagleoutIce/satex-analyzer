@@ -21,14 +21,14 @@ type Form = { kind: 'len'; num: number; unit: string } | { kind: 'share'; num: n
  * a new paragraph (Enter). Anything else it carries (its text, the page word it is) rides along. */
 /** `disp`: display math, centered on a row of its own, that much more space above it (bp), `dshort` when the row
  * before ends left of it, `below` after it. */
-type Piece = { gap: number; n: number; par?: boolean; brk?: string | null; disp?: number; dshort?: number; below?: number; st?: number; sh?: number; hy?: boolean; hw?: number };
+type Piece = { gap: number; n: number; par?: boolean; disp?: number; dshort?: number; below?: number; st?: number; sh?: number; hy?: boolean; hw?: number };
 /** The lines a paragraph may take: its right edge, its left margin, the indent and gap of a new paragraph, the rows the
  * page set after the first (each its left edge and its own words, gaps set), whether a row may take words up (`pull`). */
-type Line<P> = { right: number; left: number; indent: number; skip: number; parskip: number; envskip?: number; rows: { x: number; pieces: P[] }[]; pull?: boolean; shrink?: number; justify?: boolean; fit?: boolean; breaks?: { breaks: number[]; ratios: number[] } | null };
+type Line<P> = { right: number; left: number; indent: number; skip: number; parskip: number; rows: { x: number; pieces: P[] }[]; pull?: boolean; shrink?: number; justify?: boolean; fit?: boolean; breaks?: { breaks: number[]; ratios: number[] } | null };
 /** Rows laid out: each its left edge, its pieces placed (`x`), the page row it takes (`from`: -2 the first, -1 a new
  * one) and a new row's baseline shift from the row before (`dy`); `freed` the page rows whose words all went up. */
 /** A piece of prose as typed (pdfedit.ts `prose`). */
-type Prose = { t: string; gap: boolean; par: boolean; brk: string | null; shape: string };
+type Prose = { t: string; gap: boolean; par: boolean; ctx: string };
 type Flow<P> = { rows: { x: number; from: number; dy: number; par: boolean; out: (P & { x: number })[] }[]; freed: number[] };
 declare global {
   interface Window {
@@ -964,7 +964,7 @@ declare global {
   function reflow<P extends Piece>(pieces: P[], x0: number, line: Line<P>): Flow<P> {
     // `fit`: TeX's total fit over the typed pieces and every page row after them, each line but the last justified;
     // greedy below where nothing fits within the tolerance, or a new paragraph or display is typed
-    const all = line.fit && !pieces.some((q) => q.par || q.brk != null || q.disp != null) ? [...pieces, ...line.rows.flatMap((r) => r.pieces)] : null;
+    const all = line.fit && !pieces.some((q) => q.par || q.disp != null) ? [...pieces, ...line.rows.flatMap((r) => r.pieces)] : null;
     // `breaks`: the lines TeX's own breaker gave for these pieces (`satex/break`), else the echo's total fit
     const given = !!all && !!line.breaks && line.breaks.breaks.every((b) => b > 0 && b < all.length);
     const k = all && (given ? line.breaks : fit(all, line.right - x0, line.right - line.left));
@@ -989,9 +989,7 @@ declare global {
       return { rows, freed: line.rows.map((_, i) => i).filter((i) => i >= starts.length - 1) };
     }
     const queue = [...pieces], rows: Flow<P>['rows'] = [{ x: x0, from: -2, dy: 0, par: false, out: [] }], slots: { x: number; from: number }[] = [];
-    let ri = 0, x = x0, i = 0, after: number | null = null, sunk = false, gaps = 0, align = '';
-    // each row's alignment (an alignment environment's: pdfedit `prose`); spaces at a row's start after its break drop
-    const aligned = new Map<object, string>(), lead = new Set<object>();
+    let ri = 0, x = x0, i = 0, after: number | null = null, sunk = false, gaps = 0;
     const shrink = line.shrink ?? 0;
     const take = () => { const r = line.rows[ri]!; queue.push(...r.pieces); return { x: r.x, from: ri++ }; };
     const lay = () => {
@@ -999,20 +997,17 @@ declare global {
         const q = queue[i]!;
         let r = rows.at(-1)!;
         const own = q.disp != null || after != null;
-        const brk = q.brk != null;
-        if (own || r.out.length && (q.par || brk || q.n > 0 && x + q.gap + q.n - shrink * (gaps + q.gap) > line.right + 0.5)) {
-          sunk ||= own || brk;
+        if (own || r.out.length && (q.par || q.n > 0 && x + q.gap + q.n - shrink * (gaps + q.gap) > line.right + 0.5)) {
+          sunk ||= own;
           const s = !q.par && !sunk && (slots.shift() ?? (ri < line.rows.length ? take() : null));
-          const at = q.disp != null ? (line.left + line.right - q.n) / 2 : line.left + (q.par && !brk && !align ? line.indent : 0);
+          const at = q.disp != null ? (line.left + line.right - q.n) / 2 : line.left + (q.par ? line.indent : 0);
           // TeX's short skip above a display whose row before ends left of it (an empty row after Enter): no
           // \abovedisplayskip, only what a tall formula adds
-          const dy = line.skip + (q.disp != null && r.out.every((o) => o.x + o.n <= at) ? q.dshort ?? q.disp : q.disp ?? after ?? (q.par || brk ? line.parskip : 0) + (brk ? line.envskip ?? 0 : 0));
-          rows.push(r = s ? { x: s.x, from: s.from, dy: 0, par: false, out: [] } : { x: at, from: -1, dy, par: !!q.par && !brk, out: [] });
-          if (brk) { align = q.brk!; lead.add(r); }
-          if (align) aligned.set(r, align);
+          const dy = line.skip + (q.disp != null && r.out.every((o) => o.x + o.n <= at) ? q.dshort ?? q.disp : q.disp ?? after ?? (q.par ? line.parskip : 0));
+          rows.push(r = s ? { x: s.x, from: s.from, dy: 0, par: false, out: [] } : { x: at, from: -1, dy, par: !!q.par, out: [] });
           x = r.x - (own ? 0 : q.gap);
           gaps = own ? 0 : -q.gap;
-        } else if (lead.has(r) && !r.out.some((o) => o.n > 0)) { x -= q.gap; gaps -= q.gap; }
+        }
         after = q.disp != null ? q.below ?? 0 : null;
         if (own) { r.out.push({ ...q, gap: 0, x }); x += q.n; continue; }
         x += q.gap;
@@ -1029,16 +1024,8 @@ declare global {
       slots.push(take());
       lay();
     }
-    // an aligned row (center, flushright) moves to its place between the margins
-    for (const [r, a] of aligned) {
-      const out = (r as Flow<P>['rows'][number]).out, last = out.at(-1);
-      if (!last || a === 'l') continue;
-      const d = (line.right - (last.x + last.n) - (out[0]!.x - line.left)) / (a === 'c' ? 2 : 1);
-      for (const o of out) o.x += d;
-    }
     // a row past the edge (its spaces shrunk) or broken for the next (justified) ends at the edge: its spaces share it
     rows.forEach((r, j) => {
-      if (aligned.has(r)) return;
       const last = r.out.at(-1), next = rows[j + 1];
       if (!last || r.out.length < 2) return;
       const d = line.right - (last.x + last.n), room = r.out.slice(1).reduce((n, q) => n + q.gap, 0);
@@ -1294,35 +1281,32 @@ declare global {
     }
     return out.map((n, k) => [n, k] as const).sort((p, q) => p[0][2] - q[0][2] || p[1] - q[1]).map(([n]) => [n[0], n[1]]);
   }
-  /** The pieces prose `raw` sets, as the echo lays them out: markup dropped, a word split where its shape changes. Each
-   * piece its text, whether a space stands before it (`gap`), a blank line (`par`), the shape `bf` or `it` of the
-   * \\textbf, \\textit, \\emph or declaration around it, and `brk` where an alignment environment (the kernel's center,
-   * flushleft, flushright) begins or ends before it: a row of its own, aligned `c`, `l` or `r` (`''` justified again).
+  /** The pieces prose `raw` sets, as the echo lays them out: markup dropped, a word split where its context changes. Each
+   * piece its text, whether a space stands before it (`gap`), a blank line (`par`), and its context `ctx`: the command
+   * whose braced argument holds it (`textbf` of `\\textbf{…}`), else the last command before it in its group (`bfseries`
+   * of `{\\bfseries …}`: whatever state that command left), else ''. Which font that is the run tells (the playground's `pdfCtxFont`), never a name table.
+   * An environment's `\\begin{name}`/`\\end{name}` sets no word (the kernel reads `name` as a csname, ltmiscen.dtx).
    * The first piece has no gap and may be empty, as may the last (the caret's empty word after a space). */
   function prose(raw: string): Prose[] {
-    const re = /(?<!\\)(%[^\n]*)|\\(begin|end)\s*\{(center|flushleft|flushright)\}|\\(textbf|textit|emph)\s*\{|\\(bfseries|itshape|upshape|mdseries|normalfont)(?![A-Za-z@])|\\[A-Za-z@]+\*?|\\(?=[^A-Za-z@\s])|[{}$^_]|[\s~]+|[^]/gu;
-    const ALIGN: Record<string, string> = { center: 'c', flushleft: 'l', flushright: 'r' };
-    const shapes = [''], aligns = [''], out: Prose[] = [];
-    let cur: Prose = { t: '', gap: false, par: false, brk: null, shape: '' };
-    const next = (gap: boolean) => { out.push(cur); cur = { t: '', gap, par: false, brk: null, shape: shapes.at(-1)! }; };
+    const re = /(?<!\\)(%[^\n]*)|\\(?:begin|end)\s*\{[^{}]*\}|\\([A-Za-z@]+)\*?\s*\{|\\([A-Za-z@]+)\*?|\\(?=[^A-Za-z@\s])|[{}$^_]|[\s~]+|[^]/gu;
+    // per open group: its context
+    const groups = [{ ctx: '' }], out: Prose[] = [];
+    let cur: Prose = { t: '', gap: false, par: false, ctx: '' };
+    const top = () => groups.at(-1)!, next = (gap: boolean) => { out.push(cur); cur = { t: '', gap, par: false, ctx: top().ctx }; };
     for (const m of raw.matchAll(re)) {
-      const [x, com, env, name, cmd, decl] = m;
-      if (com) continue;
-      if (env) {
-        if (env === 'begin') aligns.push(ALIGN[name!]!); else if (aligns.length > 1) aligns.pop();
-        if (cur.t || !out.length) next(true);
-        cur.brk = aligns.at(-1)!;
-      } else if (cmd) shapes.push(cmd === 'textbf' ? 'bf' : cmd === 'emph' && shapes.at(-1) === 'it' ? '' : 'it');
-      else if (decl) shapes[shapes.length - 1] = decl === 'bfseries' ? 'bf' : decl === 'itshape' ? 'it' : '';
-      else if (x === '{') shapes.push(shapes.at(-1)!);
-      else if (x === '}') { if (shapes.length > 1) shapes.pop(); }
+      const [x, com, arg, cmd] = m;
+      if (com || x[0] === '\\' && !arg && !cmd) continue;
+      if (arg) groups.push({ ctx: arg });
+      else if (cmd) top().ctx = cmd;
+      else if (x === '{') groups.push({ ctx: top().ctx });
+      else if (x === '}') { if (groups.length > 1) groups.pop(); }
       else if (/^[\s~]/.test(x)) {
         if (cur.t || !out.length) next(true);
         else cur.gap = true;
         if (/\n[ \t]*\n/.test(x)) cur.par = true;
-      } else if (x[0] !== '\\' && !/^[{}$^_]$/.test(x)) {
-        if (cur.t && cur.shape !== shapes.at(-1)) next(false);
-        if (!cur.t) cur.shape = shapes.at(-1)!;
+      } else if (!/^[$^_]$/.test(x)) {
+        if (cur.t && cur.ctx !== top().ctx) next(false);
+        if (!cur.t) cur.ctx = top().ctx;
         cur.t += x;
       }
     }

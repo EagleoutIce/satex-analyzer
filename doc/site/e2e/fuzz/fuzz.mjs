@@ -159,6 +159,8 @@ async function open(p, doc, view) {
   await p.eval('self.__fzN = 0');
   await toView(p, 'pdf', true);
   if (view === 'ts') await toView(p, 'ts');
+  // the first analysis builds the kernel caches in this fresh browser (minutes on a loaded machine): the steps start after it
+  await landed(p, view, 600000);
 }
 async function toView(p, view, compile = false) {
   await p.eval(`document.querySelector('.side-tabs [data-panel=${view === 'pdf' ? 'play-pdf' : 'play-typeset'}]').click()`);
@@ -173,8 +175,8 @@ async function toView(p, view, compile = false) {
   await sleep(250);
 }
 /** Landed: nothing compiles, analyses or is due, no echo drawn, for 1 s. */
-const landed = (p, view) => p.until(`(() => { const h = satexHealth(), busy = h.busy || h.due || h.running || h.queued || ${view === 'pdf'} && (!!document.querySelector('#play-pdf.pdf-running') || !!document.querySelector('#play-pdf .pdf-echo:not(.pdf-push)'));
-  if (busy) { self.__fzQ = null; return false; } self.__fzQ ??= performance.now(); return performance.now() - self.__fzQ > 1000; })()`, 40000);
+const landed = (p, view, ms = 40000) => p.until(`(() => { const h = satexHealth(), busy = h.busy || h.due || h.running || h.queued || ${view === 'pdf'} && (!!document.querySelector('#play-pdf.pdf-running') || !!document.querySelector('#play-pdf .pdf-echo:not(.pdf-push)'));
+  if (busy) { self.__fzQ = null; return false; } self.__fzQ ??= performance.now(); return performance.now() - self.__fzQ > 1000; })()`, ms);
 
 async function click(p, view, step) {
   const [, what, a, b] = step.split(':');
@@ -221,7 +223,9 @@ export async function run(p, { doc, view, steps }) {
     else if (kind === 'wait') {
       // each frame while the build lands: an echo shown, then the old page fading on top with no echo (the typed text gone for frames)
       await p.eval(`(() => { const F = self.__fzF = { n: 0, on: true }; let had = false; const tick = () => { const echo = !!document.querySelector('#play-pdf .pdf-echo:not(.pdf-push)'), fade = !!document.querySelector('#play-pdf .pdf-page img.pdf-fade'); if (had && fade && !echo) F.n++; had = echo || had && fade; if (F.on) requestAnimationFrame(tick); }; requestAnimationFrame(tick); })()`);
-      await landed(p, view);
+      // not landed in time (a kernel cache built in the browser on a loaded machine): the checks after it would read a
+      // run still under way, a lost word that is only late
+      if (!await landed(p, view)) { const h = await p.eval('satexHealth().status'); fail(i, 'not-landed', `no quiet within 40 s: ${J(h)}`); continue; }
       const flick = await p.eval(`(self.__fzF.on = false, self.__fzF.n)`);
       if (flick) fail(i, 'land-flicker', `${flick} frames showed the old page fading over the typed text with no echo as the build landed`);
       await sleep(400);

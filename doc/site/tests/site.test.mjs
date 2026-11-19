@@ -304,6 +304,19 @@ test('sketchSvg: the view holds every text, the run\'s box smaller', async () =>
   assert.ok(at(80 + 6 * size * 0.3) <= vb, `Walter's right end inside: ${svg}`);
 });
 
+// Intuition: `\node (a) {\TeX{} file}; \node (b) [right=of a] {findings}; \draw[->] (a) -- (b);` has no frames: each text
+// stands at its node's centre, the edge starts at a's east border. The sketch's font is wider than TeX's, so a text
+// laid out by its own estimate ran into the edge ("TEX file" struck through by the arrow); it is squeezed to the gap.
+test('sketchSvg: an unframed node text stays clear of the edge beside it', async () => {
+  const { sketchSvg } = self.satexCards;
+  const svg = sketchSvg({ box: [-20, -6, 110, 12], paths: [{ d: 'M 18.5 0 L 58 0', fill: false, stroke: true, width: 0.4 }],
+    texts: [{ text: 'TEX file', x: 0, y: 0 }, { text: 'findings', x: 80, y: 0 }] });
+  const [, len] = /<text data-k="0"[^>]*textLength="([\d.]+)"/.exec(svg) ?? [];
+  assert.ok(len && +len / 2 <= 18.5, `squeezed to end before the edge (half width ${len / 2})`);
+  // a text with no edge on its row keeps its own width
+  assert.doesNotMatch(sketchSvg({ box: [0, 0, 40, 10], paths: [{ d: 'M 0 30 L 40 30', fill: false, stroke: true, width: 0.4 }], texts: [{ text: 'TEX file', x: 20, y: 0 }] }), /textLength/);
+});
+
 // Intuition: `\draw[-Kite] (x) -- (y)` between two nodes: the run wrote the line from x's east border to y's west one and
 // the tip as a filled and stroked closed path; the tip is solid ink, only a frame around a text is tinted, and the
 // line's ends stay between the texts. Pins the tip drawn as a faint tint (invisible) on row 19 of the user's screenshot.
