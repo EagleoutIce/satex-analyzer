@@ -8,7 +8,7 @@
    "file": "results.tex",
    "title": "Try it here",
    "caption": "Edit this document. Hover a length or the [ht] to see what they mean. The typeset text on the right follows as you type.",
-   "demo-status": "A recording. Typing here yourself loads SaTeX once (10 MB).",
+   "demo-status": "A recording. Trying it loads 10 MB, once.",
    "status": "Computed when this page was built. SaTeX starts in your browser when the window comes into view (about 10 MB, loaded once).",
    "text": "\\documentclass{article}\n\\begin{document}\n\\section{Results}\nRuns took 10-12 s when warm.\n\\vspace{12pt}\n\\begin{figure}[ht]\n  \\centering\n  \\rule{0.6\\linewidth}{2cm}\n  \\caption{The warm cache.}\n\\end{figure}\n\\end{document}\n"
   },

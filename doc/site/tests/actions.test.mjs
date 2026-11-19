@@ -289,3 +289,25 @@ test('dependents of a dragged node and their stay rewrite', () => {
   assert.deepEqual(back, ['\\node[right=of a, xshift=-10mm, yshift=5mm] (b) {B};', '\\node[xshift=-10mm, yshift=5mm] (d) at (a.east) {D};']);
   for (const s of back) assert.ok(T.nodes(wrap(s))[0].placed || /at \(a\.east\)/.test(s), 'the relative form kept');
 });
+
+// Intuition: `placing`'s fix moves the frame to where TikZ sets it from the keys written: its gap to the reference is the
+// written gap exactly (on the grid, or the node distance), its centre on the reference's line. The dependents left behind
+// are shifted by the drag plus this fix, so they stay to the point. Pins a drift of the grid's rounding (~1 bp).
+test('relative placement: the landed place is the written one', () => {
+  const cm = 72 / 2.54, box = (l, t, w = cm, h = cm / 2) => ({ l, t, r: l + w, d: t + h }), a = box(0, 0), R = rng(733);
+  const move = (b, f) => ({ l: b.l + f[0], r: b.r + f[0], t: b.t + f[1], d: b.d + f[1] });
+  for (let k = 0; k < 300; k++) {
+    const b = box((R.float() - 0.5) * 8 * cm, (R.float() - 0.5) * 8 * cm), dist = [R.pick([1, 1.2]), R.pick([1, 2.4])];
+    const at = T.placing(b, a, 0.5, dist, 'a');
+    if (!at) continue;
+    const m = move(b, at.fix), keys = at.text.split(', '), [, side, val] = /^([a-z ]+)=(.*?)\s*of a$/.exec(keys[0]);
+    const gaps = val ? val.split(' and ').map((x) => parseFloat(x)) : side.includes(' ') ? dist : [/above|below/.test(side) ? dist[0] : dist[1]];
+    const [gv, gh] = side.includes(' ') ? gaps : /above|below/.test(side) ? [gaps[0], null] : [null, gaps[0]];
+    const near = (x, y) => Math.abs(x - y) < 1e-6;
+    if (gh != null) assert.ok(near(side.includes('right') ? m.l - a.r : a.l - m.r, gh * cm), `${at.text}: horizontal gap`);
+    if (gv != null) assert.ok(near(side.includes('below') ? m.t - a.d : a.t - m.d, gv * cm), `${at.text}: vertical gap`);
+    const shift = keys[1] && /([xy])shift=(-?[\d.]+)cm/.exec(keys[1]);
+    if (gh == null) assert.ok(near((m.l + m.r) / 2, (a.l + a.r) / 2 + (shift?.[1] === 'x' ? +shift[2] * cm : 0)), `${at.text}: centred across`);
+    if (gv == null) assert.ok(near((m.t + m.d) / 2, (a.t + a.d) / 2 - (shift?.[1] === 'y' ? +shift[2] * cm : 0)), `${at.text}: centred across`);
+  }
+});

@@ -242,10 +242,14 @@ Both builds must use the same profile: a cache is keyed on the build that wrote 
 The landing page's showcase images come from a served playground.
 `doc/site/showcase/shots.json` lists each widget: its example, the steps that open it, the crop and the caption.
 `node doc/site/showcase/capture.mjs http://127.0.0.1:8000/` takes each one in light and dark and writes AVIF, WebP and PNG to `doc/site/showcase/img`.
-Entries marked `"server": true` (the PDF and the log) need the compile server of `cargo playground`: the site build keeps their last images, so run `ONLY=pdf,runaway node doc/site/showcase/capture.mjs http://127.0.0.1:8000/` while it serves.
+Entries marked `"server": true` (the PDF, the log and the landing page's typing demo) need the compile server of `cargo playground`. The site build starts `satex-playground --dev` on its output for them when that binary stands beside `--satex`. Else it keeps their last images: run `ONLY=pdf,runaway,typing node doc/site/showcase/capture.mjs http://127.0.0.1:8000/` while `cargo playground` serves.
 Each entry gets `budget` ms (90 s by default, `shots.json`) for its steps, and a build runs two captures at a time.
 It needs Chromium, ImageMagick, `avifenc` and `pngquant`.
 `build.py` copies the images and sizes each one in the page.
+
+The playground has two test suites. `node doc/site/views.test.mjs` runs the unit tests in `doc/site/tests` in seconds, with no browser.
+`scripts/e2e.sh quick` runs the browser scenarios of `doc/site/e2e` against a dev server of its own on a port of 8472–8479, in about five minutes (`full` runs every scenario, `perf` the timing bounds).
+Run both before a push that touches `doc/site`. The e2e suite is not in the pre-push hook or CI: it needs `cargo playground`'s build and its compile server. `doc/site/e2e/README.md` has the details and `doc/site/e2e/known-red.json` the known reds.
 
 ## Regression checks
 

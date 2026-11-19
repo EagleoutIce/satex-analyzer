@@ -1,8 +1,15 @@
-// New paragraphs typed after the last one (kinds/newpara.mjs): the echo draws only typed text, one font a row, and
-// the caret stays put when the build lands. Fast keys (no build lands between them), a person's pace (builds land
-// between keys), and on in the editor after the PDF caret.
+// Paragraphs typed after the last one, keys around a macro's output, arrows: in the PDF and the Typeset view
+// (kinds/echo.mjs, one case each). The user reports of 10:02-10:16 (2026-11-19): stray `document` echoed after the
+// caret, two fonts in a word, Typeset rows duplicated or changed by an arrow, keys after `\greet{world}` landing in
+// its argument.
 export default [
-  { kind: 'newpara', name: 'newpara-pdf', mode: 'pdf', keyMs: 25 },
-  { kind: 'newpara', name: 'newpara-pdf-slow', mode: 'pdf', keyMs: 160 },
-  { kind: 'newpara', name: 'newpara-editor', mode: 'editor' },
+  { kind: 'echo', name: 'newpara-pdf', case: 'pdf-new-para' },
+  { kind: 'echo', name: 'newpara-pdf-slow', case: 'pdf-new-para-slow' },
+  { kind: 'echo', name: 'newpara-editor', case: 'pdf-editor-para' },
+  { kind: 'echo', name: 'arrows-pdf', case: 'pdf-arrows' },
+  { kind: 'echo', name: 'after-macro-pdf', case: 'pdf-after-macro' },
+  { kind: 'echo', name: 'newpara-ts', case: 'ts-new-para' },
+  { kind: 'echo', name: 'mid-word-ts', case: 'ts-mid' },
+  { kind: 'echo', name: 'arrows-ts', case: 'ts-arrows' },
+  { kind: 'echo', name: 'after-macro-ts', case: 'ts-after-macro' },
 ];

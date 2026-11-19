@@ -1391,7 +1391,8 @@ declare global {
       named(stmt: string, i: number, name: string): string | null; fresh(text: string, picAt: number, base: string): string;
       picOpts(text: string, picAt: number): { from: number; to: number; keys: string[] } | null; picSet(text: string, picAt: number, group: RegExp, add: string[]): { from: number; to: number; was: string; now: string } | null;
       dependents(text: string, n: TikzNode): { direct: TikzNode[]; all: TikzNode[] };
-      relation(b: TikzBox, ref: TikzBox, tol: number, dist: [number, number] | undefined, name: string): string | null; place(stmt: string, i: number, rel: string): string | null;
+      relation(b: TikzBox, ref: TikzBox, tol: number, dist: [number, number] | undefined, name: string): string | null;
+      placing(b: TikzBox, ref: TikzBox, tol: number, dist: [number, number] | undefined, name: string): { text: string; fix: [number, number] } | null; place(stmt: string, i: number, rel: string): string | null;
       snapAngle(deg: number, step: number): number; angle(stmt: string, i: number): number; unlabel(stmt: string, i: number): string | null;
     };
   }
@@ -1845,21 +1846,27 @@ declare global {
   /** Where frame `b` stands beside frame `ref` (page bp, y down) as positioning writes it: a side when their centres line up
    * within `tol`, else a corner (`above right=⟨vertical⟩ and ⟨horizontal⟩ of a`), each gap between their borders in cm on
    * the 0.5 mm grid; gaps equal to the picture's node distance `dist` (vertical, horizontal) unwritten. Null: the same centre. */
-  function relation(b: TikzBox, ref: TikzBox, tol: number, dist: [number, number] = [1, 1], name: string) {
+  function relation(b: TikzBox, ref: TikzBox, tol: number, dist: [number, number] = [1, 1], name: string) { return placing(b, ref, tol, dist, name)?.text ?? null; }
+  /** `relation`'s keys and `fix`, what to add to `b`'s place (bp) for where TikZ sets it: the gaps as written, on the grid. */
+  function placing(b: TikzBox, ref: TikzBox, tol: number, dist: [number, number] = [1, 1], name: string) {
     const bp = 72 / 2.54, mid = (o: TikzBox, ax: number) => (ax ? o.t + o.d : o.l + o.r) / 2;
     const dx = mid(b, 0) - mid(ref, 0), dy = mid(b, 1) - mid(ref, 1);
     const h = Math.abs(dx) <= tol ? '' : dx > 0 ? 'right' : 'left', v = Math.abs(dy) <= tol ? '' : dy > 0 ? 'below' : 'above';
     if (!h && !v) return null;
     const gx = (h === 'right' ? b.l - ref.r : ref.l - b.r) / bp, gy = (v === 'below' ? b.t - ref.d : ref.t - b.d) / bp;
-    const fmt = (c: number) => `${+(Math.round(c / GRID) * GRID).toFixed(2)}cm`, same = (g: number, d: number) => Math.abs(g - d) < GRID / 2;
+    const grid = (c: number) => +(Math.round(c / GRID) * GRID).toFixed(2), fmt = (c: number) => `${grid(c)}cm`, same = (g: number, d: number) => Math.abs(g - d) < GRID / 2;
+    // where a side puts `b` given the gap it lands at (cm): its near border that far from `ref`'s
+    const atX = (g: number) => (h === 'right' ? ref.r + g * bp - b.l : ref.l - g * bp - b.r), atY = (g: number) => (v === 'below' ? ref.d + g * bp - b.t : ref.t - g * bp - b.d);
     // frames overlapping across a corner: the side they stand apart on, shifted by the centres' offset along the other axis
     if (h && v && (gx < 0 || gy < 0)) {
-      const vert = gy >= gx, d = vert ? dist[0] : dist[1], g = vert ? gy : gx;
-      return `${vert ? v : h}=${same(g, d) ? '' : `${fmt(g)} `}of ${name}, ${vert ? `xshift=${fmt(dx / bp)}` : `yshift=${fmt(-dy / bp)}`}`;
+      const vert = gy >= gx, d = vert ? dist[0] : dist[1], g = vert ? gy : gx, land = same(g, d) ? d : grid(g), sh = grid((vert ? dx : -dy) / bp);
+      return { text: `${vert ? v : h}=${same(g, d) ? '' : `${fmt(g)} `}of ${name}, ${vert ? `xshift=${fmt(dx / bp)}` : `yshift=${fmt(-dy / bp)}`}`,
+        fix: (vert ? [mid(ref, 0) + sh * bp - mid(b, 0), atY(land)] : [atX(land), mid(ref, 1) - sh * bp - mid(b, 1)]) as [number, number] };
     }
     const gaps: [number, number][] = [...(v ? [[gy, dist[0]] as [number, number]] : []), ...(h ? [[gx, dist[1]] as [number, number]] : [])];
-    const val = gaps.every(([g, d]) => same(g, d)) ? '' : `${gaps.map(([g]) => fmt(g)).join(' and ')} `;
-    return `${[v, h].filter(Boolean).join(' ')}=${val}of ${name}`;
+    const plain = gaps.every(([g, d]) => same(g, d)), val = plain ? '' : `${gaps.map(([g]) => fmt(g)).join(' and ')} `;
+    const fix: [number, number] = [h ? atX(plain ? dist[1] : grid(gx)) : mid(ref, 0) - mid(b, 0), v ? atY(plain ? dist[0] : grid(gy)) : mid(ref, 1) - mid(b, 1)];
+    return { text: `${[v, h].filter(Boolean).join(' ')}=${val}of ${name}`, fix };
   }
   /** `stmt` with node `i` placed by positioning keys `rel` (`right=of a`, a shift after it): its placement, shifts and `at` before go. */
   function place(stmt: string, i: number, rel: string) {
@@ -1894,7 +1901,7 @@ declare global {
     return stmt.slice(0, a) + stmt.slice(p.t[1] + 1);
   }
   self.satexTikzMove = { nodes, move, len, cm, posOn, clipped, snap, edges, shapeOf, shape, looks, flip, retext, tipOf, tip, label,
-    SHAPES: SHAPE_LIST, library, keysAt, current, set, segOf, route, bend, inout, looseness, segPath, addEdge, named, fresh, picOpts, picSet, snapAngle, angle, unlabel, relation, place, dependents };
+    SHAPES: SHAPE_LIST, library, keysAt, current, set, segOf, route, bend, inout, looseness, segPath, addEdge, named, fresh, picOpts, picSet, snapAngle, angle, unlabel, relation, placing, place, dependents };
 })();
 
 // References switched from the pages: a reference's printed number is no text to type into. Where its key stands in

@@ -46,3 +46,19 @@ assert.equal(layers.length('1.5em', { em: 10 }).pt, 15);
 assert.deepEqual([layers.length('0cm'), layers.length('cm'), layers.length('-1pt')], [null, null, null]);
 assert.deepEqual(layers.groups(['grid', 'glue', 'geometry']), [['layout', 'Layout', ['glue', 'geometry', 'grid']]]);
 });
+// The Typeset view's Show menu (user 2026-11-19): each ready switch on is one class on the view, kept per viewer; one
+// the run does not report yet is shown disabled and puts no class (pins the option-to-class mapping).
+test('the Typeset Show menu: switches to classes', async () => {
+  const L = self.satexLayers, d = L.showDefaults();
+  assert.deepEqual(Object.keys(d), Object.keys(L.SHOW));
+  assert.equal(d.parskip, true, 'on by default');
+  assert.equal(d.indent, false, 'not reported by the run yet: off');
+  assert.deepEqual(L.showClasses(d), Object.keys(L.SHOW).filter((k) => L.SHOW[k][2] && L.SHOW[k][3]).map((k) => `ts-show-${k}`));
+  assert.deepEqual(L.showClasses({ ...d, parskip: false, justify: true, indent: true }).filter((c) => /parskip|justify|indent/.test(c)), ['ts-show-justify'], 'off drops its class, a switch not ready never adds one');
+  const store = new Map(), S = { get: (k) => store.get(k), set: (k, v) => store.set(k, v) };
+  store.set('layers-typeset-show', { colors: false });
+  assert.equal(L.state('typeset-show', d, S).colors, false, 'kept per viewer');
+  const h = L.showHtml(d);
+  assert.equal((h.match(/role="switch"/g) ?? []).length, Object.keys(L.SHOW).length);
+  assert.ok(/id="typeset-show-indent"[^>]*disabled/.test(h), 'a switch not ready is disabled');
+});

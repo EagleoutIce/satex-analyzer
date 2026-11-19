@@ -469,3 +469,13 @@ test("References switched from the pages (pdfedit.ts)", async () => {
   assert.equal(R.fuzzy('sint', 'xyz'), -1);
   assert.ok(R.fuzzy('sint', 'sec:intro') > R.fuzzy('sint', 'some:other:intent'), 'word starts and runs rank first');
 });
+// A click after a glyph a macro's body sets past its argument (`\greet{world}` sets `world!`) types after the call, never
+// into the argument (user 2026-11-19 10:04: `\greet{world What do you sy?}`).
+test('afterCall: the end of the call whose argument closes there', async () => {
+  const E = self.satexPdfEdit, t = '\\greet{world}! \\pair{a}[b]{c} x {\\bf y} \\cmd{a{b}c}', at = (s) => t.indexOf(s);
+  assert.equal(E.afterCall(t, at('}!')), at('!'), 'past the one argument');
+  assert.equal(E.afterCall(t, at('}[b]')), at(' x'), 'past the arguments after it');
+  assert.equal(E.afterCall(t, at('}c}') + 2), t.length, 'a nested group in the argument');
+  assert.equal(E.afterCall(t, at('} \\cmd')), null, 'a group no macro opens');
+  assert.equal(E.afterCall(t, at('world')), null, 'no brace');
+});

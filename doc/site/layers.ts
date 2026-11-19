@@ -36,6 +36,29 @@ declare global {
     origins: ['origins', 'analysis'],
     bad: ['bad boxes', 'analysis'],
   };
+  /** The Typeset view's Show menu: what it renders as TeX does, each [label, title, on by default, ready]. A switch on
+   * puts `ts-show-<id>` on the view (style.css draws it); one the run does not report yet (`ready` false) is shown off. */
+  const SHOW: Record<string, [string, string, boolean, boolean]> = {
+    indent: ['paragraph indent', '\\parindent before a paragraph\'s first line, none after a heading', true, false],
+    parskip: ['paragraph spacing', '\\parskip between paragraphs, as the run set it', true, true],
+    baselineskip: ['line spacing', '\\baselineskip between lines, 1.2 times the font size as LaTeX\'s sizes set it', true, true],
+    colors: ['text colors', '\\color and \\textcolor', true, true],
+    fonts: ['font shapes', 'bold, italic, slanted, small caps, sans serif and typewriter', true, true],
+    math: ['math layout', 'scripts raised and lowered, stacked', true, true],
+    pages: ['page breaks', 'page breaks, headers and footers', true, true],
+    footnotes: ['footnotes at page end', 'footnotes at the page\'s end, else where their mark stands', true, false],
+    hyphens: ['hyphenation points', 'where TeX may break a word', false, false],
+    justify: ['justified', 'lines set flush on both sides, as TeX justifies them (off: ragged right)', false, true],
+    numbers: ['section numbers', 'the numbers of headings', true, false],
+    refs: ['printed references', 'references and citations as printed (the keys layer shows their keys)', true, false],
+    index: ['index marks', '\\index and glossary entries where they stand', false, false],
+  };
+  /** The Typeset view's classes for Show switches `on`: `ts-show-<id>` for each ready one on. */
+  const showClasses = (on: On) => Object.keys(SHOW).filter((k) => SHOW[k]![3] && on[k]).map((k) => `ts-show-${k}`);
+  /** The Show switches' defaults. */
+  const showDefaults = (): On => Object.fromEntries(Object.entries(SHOW).map(([k, v]) => [k, v[2] && v[3]]));
+  /** The Show menu's switches as HTML: one per item, one not ready disabled. */
+  const showHtml = (on: On) => Object.entries(SHOW).map(([k, [label, title, , ready]]) => `<label class="layer${ready ? '' : ' layer-off'}" title="${esc(title)}${ready ? '' : ' (the run does not report it yet)'}"><input type="checkbox" role="switch" id="typeset-show-${k}" data-layer="${k}"${on[k] && ready ? ' checked' : ''}${ready ? '' : ' disabled'}><span>${esc(label)}</span></label>`).join('');
   /** `ids` by group, in catalogue order: [[group, label, ids]], empty groups left out. */
   const groups = (ids: string[]) => GROUPS.map(([g, label]) => [g, label, Object.keys(LAYERS).filter((k) => ids.includes(k) && LAYERS[k][1] === g)]).filter((x) => x[2].length) as [string, string, string[]][];
   /** The chips of `about` (id → title) as HTML: a labelled segmented group each. Each switch is
@@ -102,5 +125,5 @@ declare global {
     const unit = m?.[2].toLowerCase(), per = unit && (PT[unit] ?? font[unit]);
     return m && unit && per && +m[1] > 0 ? { pt: +m[1] * per, num: +m[1], unit } : null;
   }
-  self.satexLayers = { GROUPS, LAYERS, groups, html, state, wire, count, menu, length };
+  self.satexLayers = { GROUPS, LAYERS, groups, html, state, wire, count, menu, length, SHOW, showClasses, showDefaults, showHtml };
 })();

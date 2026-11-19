@@ -8,11 +8,12 @@ import { fileURLToPath } from 'node:url';
 import { browser, page } from './lib.mjs';
 import { ctx, KINDS, reseed } from './engine.mjs';
 import { foot } from './kinds/foot.mjs';
-import { newpara } from './kinds/newpara.mjs';
+import { echo } from './kinds/echo.mjs';
 import { paper } from './kinds/paper.mjs';
 import { follow } from './kinds/follow.mjs';
 import { tikz } from './kinds/tikz.mjs';
 import { crash } from './kinds/crash.mjs';
+import { gutter, close } from './kinds/editor.mjs';
 import { SCENARIOS, TIERS } from './scenarios/index.mjs';
 
 const ROOT = fileURLToPath(new URL('../../../', import.meta.url));
@@ -26,7 +27,7 @@ const OUT = arg('out', join(ROOT, 'target/e2e', `${tier}-${stamp}`));
 mkdirSync(OUT, { recursive: true });
 ctx.out = OUT;
 const KNOWN = JSON.parse(readFileSync(new URL('known-red.json', import.meta.url), 'utf8'));
-const RUN = { ...KINDS, foot, newpara, paper, follow, tikz, crash };
+const RUN = { ...KINDS, foot, echo, paper, follow, tikz, crash, gutter, close };
 
 const picked = SCENARIOS.filter((sc) => only.length ? only.includes(sc.name)
   : (!areas.length || areas.includes(sc.area)) && (tier === 'full' || TIERS[tier].includes(sc.name)));
@@ -38,6 +39,7 @@ try { const r = await fetch(URL_); if (!r.ok) throw new Error(`HTTP ${r.status}`
 catch (e) { console.error(`no playground at ${URL_} (${e.message}): start one with scripts/e2e.sh or satex-playground --dev --port N`); process.exit(2); }
 
 const started = Date.now(), b = await browser(OUT), runs = new Map();
+ctx.cdp = b.cdp; ctx.url = URL_;
 let p;
 b.cdp.on('Page.javascriptDialogOpening', () => p?.s('Page.handleJavaScriptDialog', { accept: true }).catch(() => {}));
 for (let round = 1; round <= repeat; round++) {

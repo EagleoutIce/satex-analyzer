@@ -1416,6 +1416,20 @@
       // the way from the word to its card is part of the hover: the card stays while the pointer is on it
       if (hovered?.hull && inRect(hovered.hull, e.clientX, e.clientY)) return;
       unhover();
+      // a finding's marker in the gutter: its line's findings, their fixes, the card beside the marker
+      const mark = e.target.closest?.('.cm-lint-marker');
+      if (mark && !e.buttons) {
+        const n = ev.state.doc.lineAt(ev.lineBlockAtHeight(e.clientY - ev.documentTop).from).number - 1, version = doc();
+        hoverTimer = setTimeout(() => {
+          const found = findingsAt(n, null);
+          if (!found.length || doc() !== version || !mark.matches(':hover')) return;
+          const r = mark.getBoundingClientRect();
+          tips.card.show(r, (hoverFixes.length = 0, found).map(([d]) => findingCard(d, true) + explanation(d)).join(''));
+          const k = tips.card.el.getBoundingClientRect();
+          hovered = { from: -1, to: -1, hull: { left: Math.min(r.left, k.left), top: Math.min(r.top, k.top), right: Math.max(r.right, k.right), bottom: Math.max(r.bottom, k.bottom) } };
+        }, 250);
+        return;
+      }
       if (pos == null || e.buttons) return;
       const version = doc();
       hoverRetry = null;
@@ -1469,7 +1483,11 @@
       const marker = e.target.closest('.cm-lint-marker');
       if (!marker && !e.target.closest('[class*=cm-lintRange]')) return;
       const pos = marker ? ev.lineBlockAtHeight(e.clientY - ev.documentTop).from : ev.posAtCoords({ x: e.clientX, y: e.clientY });
-      if (pos != null) pick(ev.state.doc.lineAt(pos).number - 1, marker ? null : position(ev.state.doc, pos).character);
+      if (pos == null) return;
+      pick(ev.state.doc.lineAt(pos).number - 1, marker ? null : position(ev.state.doc, pos).character);
+      // the marker opens its finding where it shows: the Findings panel in front
+      const tab = document.querySelector('[data-panel=play-findings]');
+      if (marker && tab?.getAttribute('aria-selected') !== 'true') tab?.click();
     });
     const span = (r) => [at(doc(), r.start), Math.max(at(doc(), r.end), at(doc(), r.start))];
     let holdTimer = 0;
@@ -1617,6 +1635,12 @@
   const tsApply = (k) => { typesetBody.classList.toggle(`show-${k}`, tsOn[k]); if (k === 'envs') typesetFindings(); if (k === 'origins') requestAnimationFrame(tsOriginsDraw); };
   self.satexLayers.wire($('typeset-layers'), 'typeset', tsOn, self.satexStore, tsApply);
   self.satexLayers.menu($('typeset-layers-menu'), $('typeset-layers'), tsOn);
+  // the Show menu: what the view renders as TeX does, each switch a class on the view (kept per viewer)
+  const tsShow = self.satexLayers.state('typeset-show', self.satexLayers.showDefaults(), self.satexStore);
+  const tsShowApply = () => { for (const k of Object.keys(self.satexLayers.SHOW)) typesetBody.classList.remove(`ts-show-${k}`); typesetBody.classList.add(...self.satexLayers.showClasses(tsShow)); };
+  $('typeset-show').innerHTML = self.satexLayers.showHtml(tsShow);
+  self.satexLayers.wire($('typeset-show'), 'typeset-show', tsShow, self.satexStore, tsShowApply);
+  tsShowApply();
   for (const k of Object.keys(TS_LAYERS)) tsApply(k);
   /** The document's outline from the root's run (`satex query occurrences`), in reading order: its
    * sectioning units indented by level, each with its labels, then the bibliography and its entries. */
@@ -2308,6 +2332,7 @@
       c.typed = null;
       return false;
     };
+    if (c.tsAt) { c.typed = { box, s0: c.tsAt.s0, at: c.tsAt.at, len: 0, seen: box.textContent, e: c.tsAt.s0, src: null }; c.tsAt = null; }
     if (c.typed && (c.typed.box !== box || box.textContent !== c.typed.seen)) c.typed = null;
     if (c.typed && typed()) return;
     // the word around the caret, found again in the paragraph: the nearest one so spelled
@@ -7667,7 +7692,7 @@
     }
     // relative by default: positioning's `right=of a` beside the nearest node set before it; Ctrl: a fixed place
     const rel = !(e.ctrlKey || e.metaKey) && tikzRel(p, dx, dy, text);
-    if (rel) return { ...rel, stmt, snap: s, d: [dx, dy] };
+    if (rel) return { ...rel, stmt, snap: s };
     const r = TM.move(stmt, p.n.i, p.n.pic, { by: [dx / CM, -dy / CM], grid });
     return r && { ...r, stmt, snap: s, d: [r.by[0] * k, -r.by[1] * k] };
   }
@@ -7680,9 +7705,10 @@
     if (!lib || 'line' in lib) return null;
     const frame = (q, x = 0, y = 0) => ({ l: q.l - TIKZ_SEP + x, r: q.r + TIKZ_SEP + x, t: q.t - TIKZ_SEP + y, d: q.d + TIKZ_SEP + y }), c = [p.c[0] + dx, p.c[1] + dy];
     const lined = (q) => +(Math.abs(q.c[0] - c[0]) < 0.5 || Math.abs(q.c[1] - c[1]) < 0.5), far = (q) => Math.hypot(q.c[0] - c[0], q.c[1] - c[1]);
-    const ref = refs.sort((a, b) => lined(b) - lined(a) || far(a) - far(b))[0], label = TM.relation(frame(p, dx, dy), frame(ref), 0.5, p.n.pic.dist, ref.n.name);
-    const now = label && TM.place(text.slice(p.n.from, p.n.to), p.n.i, label);
-    return now && { text: now, label, pre: 'edit' in lib ? [lib.edit] : [] };
+    const ref = refs.sort((a, b) => lined(b) - lined(a) || far(a) - far(b))[0], at = TM.placing(frame(p, dx, dy), frame(ref), 0.5, p.n.pic.dist, ref.n.name);
+    const now = at && TM.place(text.slice(p.n.from, p.n.to), p.n.i, at.text);
+    // `d`: where it lands, the gaps on the grid (the ghost shows it, the dependents left behind are shifted by it)
+    return now && { text: now, label: at.text, pre: 'edit' in lib ? [lib.edit] : [], d: [dx + at.fix[0], dy + at.fix[1]] };
   }
   /** The nodes placed straight from a node moved by `d` bp kept where they stand: each shifted back by as much (the
    * chains placed from them follow them, so they stay too); one edit per statement. */
@@ -8464,6 +8490,7 @@
    * answer), a macro's definition after a note. `k`: the clicked character's index in the word. `read` first if `first`.
    * `miss()`: tried where the word is in no file of the project, true when it took the click. */
   async function caretPut(c, file, line, word, k, nth, read, first = false, within = null, miss = null) {
+    const k0 = k;
     if (file !== state.file) await openPlace(file, { line: line - 1, character: 0 });
     if (file !== state.file) return toast(`${file} cannot be opened here`);
     // a word TeX hyphenated at a line's end (`car-` / `ries`): the source spells it whole
@@ -8575,6 +8602,8 @@
     pdfCaret = { ...c, file: state.file, target: uri(), anchor: c.view === 'pdf' ? from + span[0] : null, at: call ?? from + span[0] + Math.min(Math.max(k, 0), span[1] - span[0] + past), v: version };
     // the clicked paragraph's start: a blank line typed after it (Enter) starts another (tsCaretDraw)
     if (c.view === 'ts') pdfCaret.p0 = PE.paragraph(text, pdfCaret.at)[0];
+    // after a call the view shows the typed text where it was clicked (after the body's `!`), not in the argument's word
+    if (c.view === 'ts' && call != null) pdfCaret.tsAt = { s0: call, at: c.idx + k0 };
     pdfCaret.clicked = pdfCaret.at;
     pdfTypeIn.focus({ preventScroll: true });
     pdfNote(def);
