@@ -367,7 +367,7 @@ const DATASOURCE: &str = "bcf:datasource";
 /// A line a `\write` handed a file: the command it starts with (empty for
 /// text such as a `.bcf`'s XML), the text of its arguments, and the names
 /// running it where the file is read back defined.
-#[derive(Clone)]
+#[derive(Clone, PartialEq)]
 pub struct WrittenLine {
     head: String,
     /// The XML element each of `args` is the content of.
@@ -384,6 +384,11 @@ pub struct WrittenLine {
 }
 
 impl WrittenLine {
+    /// Where the writing call stands.
+    pub(crate) fn place(&self) -> Span {
+        self.span
+    }
+
     /// The key texts alone, for matching against the names the line defined.
     fn keys(&self) -> Vec<String> {
         self.keys.iter().map(|(key, _)| key.clone()).collect()
@@ -408,6 +413,24 @@ pub struct NameReads {
     pub list: Vec<NameRead>,
     /// Where each name read at a call site stands in `list`.
     at: crate::fixed::LookupMap<(crate::engine::tex::Sym, Span), Vec<u32>>,
+}
+
+impl NameReads {
+    /// `list`, indexed anew.
+    pub(crate) fn of(list: Vec<NameRead>) -> NameReads {
+        let mut at: crate::fixed::LookupMap<_, Vec<u32>> = Default::default();
+        for (i, read) in list.iter().enumerate() {
+            at.entry((read.name, read.span)).or_default().push(i as u32);
+        }
+        NameReads { list, at }
+    }
+}
+
+impl NameRead {
+    /// Where the reading call stands.
+    pub(crate) fn place(&self) -> Span {
+        self.span
+    }
 }
 
 /// A name a call in the document body read.

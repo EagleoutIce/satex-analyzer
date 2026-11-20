@@ -453,11 +453,13 @@ An edit reruns little. The run resumes at the last saved state whose input is un
 | meet | at a line start between paragraphs where the last run saved a state with the same text left to read. Modes, lists, conditionals, groups, saves, files written and held, names, facts and the graph must be equal. Counts that are absolute (source read, assignments, groups) compare by how long ago when made since the runs parted. |
 | delta | bindings may differ. Per name the run keeps the step of its last read or write. A name the last run's rest never touched keeps this run's binding to the end. One it touched ends the reuse, and the run goes on. |
 | lists | a recorded list (a paragraph's items, a page's boxes) is named by where it was made. The run begins with every list the last run made, each under its name, so one list has one name in both and its own new lists come after. Without that the runs do not meet. |
+| names | a name is numbered at its first use. The run begins with the last run's names too, so a name both runs use has one number and a name only this run makes comes after. A name is only ever asked for its meaning (tex.web § 259), so more names change nothing. Typed digits are still named by the step they were made at, so an edit before them renames them and that stretch runs again. |
+| records | what the run keeps outside its analysis for its end (lines written, names read, names defined from keys) is spliced like the fact rows. A row raised in a package's file by a call on an edited line is that line's. The places the run keeps of what it read last must stand off the edited lines. |
 | rest | reused only when every file the last run read after the meeting line still holds. An edit the rest has yet to read is run. |
 | splice | the last run's records after the meeting line follow this run's. Character offsets move by the edit's length: the characters set alike before and after the edited ones align. Rows and graph vertices on the edited lines are this run's. |
 | bound | `limits.checkpoints`, `limits.checkpoint_steps`, `limits.checkpoint_body_share`, `limits.checkpoint_memory`. They change how far a rerun resumes, never a result. |
 
-An edit that adds a name, a fact row or a graph vertex (a new `\label`, a typed command) does not meet: later rows are numbered by position. The run then goes on to the end.
+An edit that adds a fact row or a graph vertex (a new `\label`, a typed command) does not meet: later rows are numbered by position. The run then goes on to the end. The page that holds the edited paragraph meets once it has shipped.
 
 ## The join, in general
 

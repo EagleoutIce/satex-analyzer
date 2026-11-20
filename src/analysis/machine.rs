@@ -2294,6 +2294,9 @@ pub struct Machine<'a> {
     /// The step the last typed digits were made at, and how many then: their
     /// names, so a name never depends on how many names the run interned.
     pub(crate) digits_made: (u64, u32),
+    /// The line of the user's files the run last read a token from, how many times that line changed, and
+    /// TeX's steps then: a time an edit on another line leaves as it was ([`Machine::digits_in`]).
+    pub(crate) line_seq: ((FileId, u32), u64, u64),
     /// The group depth and the open conditionals when the run last read from
     /// a file: the state a cut rolls back to.
     /// How many gaps (`Severity::Unsupported`) the run has raised, and the
@@ -3114,6 +3117,7 @@ impl<'a> Machine<'a> {
             own_files: Vec::new(),
             file_ids: HashMap::default(),
             digits_made: (0, 0),
+            line_seq: Default::default(),
             gaps_raised: 0,
             tex_errors: 0,
             join_commands: Vec::new(),
@@ -5353,6 +5357,10 @@ will look undefined",
                         }
                         self.source_progress += 1;
                         if self.own_file(t.span.file) {
+                            // Of the user's files only: a package served from its cache reads no line.
+                            if self.line_seq.0 != (t.span.file, t.span.line) {
+                                self.line_seq = ((t.span.file, t.span.line), self.line_seq.1 + 1, self.out.tex_steps());
+                            }
                             self.doc_mark = self.env.assignments;
                         }
                         self.env.clear_recent();
@@ -7417,7 +7425,7 @@ will look undefined",
 
     /// Calls a body makes through `\csname…\endcsname` of characters
     /// (`\csname lstlisting@\endcsname`), added at the run's end when every
-    /// name is interned: only names the run knows, so no name is made.
+    /// name is interned: only names the run left defined, so no name is made.
     /// A name the body defines (`\expandafter\def\csname…`) is no call.
     fn link_csname_calls(&mut self) {
         let prim = |m: &Self, t: &Token| t.cs().and_then(|cs| m.env.meaning(cs).prim());
@@ -7442,7 +7450,9 @@ will look undefined",
                         _ => None,
                     })
                     .collect();
-                if let Some(callee) = chars.filter(|_| !defines).and_then(|c| self.out.interner.lookup(&c)) {
+                // A name with a meaning: one only numbered (by an earlier run's text) calls nothing.
+                let callee = chars.filter(|_| !defines).and_then(|c| self.out.interner.lookup(&c));
+                if let Some(callee) = callee.filter(|&c| self.env.is_defined(c)) {
                     edges.push((name, callee));
                 }
             }
@@ -10720,9 +10730,8 @@ will look undefined",
         if !unknown {
             return false;
         }
-        if let Some(font) = self.out.interner.lookup("\u{4}font") {
-            self.env.set_value(font, crate::engine::value::Value::Unknown, false);
-        }
+        let font = self.intern("\u{4}font");
+        self.env.set_value(font, crate::engine::value::Value::Unknown, false);
         self.diagnose(
             Severity::Imprecision,
             "unknown-font",

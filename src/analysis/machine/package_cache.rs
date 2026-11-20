@@ -1732,6 +1732,7 @@ impl Machine<'_> {
             own_files: _,
             file_ids: _,
             digits_made: _,
+            line_seq: _,
             gaps_raised: _,
             tex_errors: _,
             join_commands: _,

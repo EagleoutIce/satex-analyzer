@@ -713,6 +713,12 @@ impl Interner {
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
+    /// Whether every name of `other` is a name here, under the same symbol.
+    pub fn holds(&self, other: &Interner) -> bool {
+        let (mine, theirs) = (self.names(), other.names());
+        theirs.len() <= mine.len() && theirs.iter().zip(mine.iter()).all(|(a, b)| Rc::ptr_eq(a, b) || a == b)
+    }
+
     /// Every name, in symbol order, sharing the interner's strings.
     pub fn names(&self) -> Names {
         Names { base: self.base.clone(), rest: Rc::from(&self.names[..]) }

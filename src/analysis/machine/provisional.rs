@@ -34,7 +34,9 @@ impl Machine<'_> {
             return;
         }
         let (id, source, mut end) = (*id, source.clone(), (**end).clone());
-        if splice_out(&self.out, &old.out, &mut end.out, window, since.2, true).is_err() {
+        if splice_out(&self.out, &old.out, &mut end.out, window, since.2, true).is_err()
+            || splice_records(self, old, &mut end, window).is_err()
+        {
             return;
         }
         // where the rest's pages break, the lax model does not know
@@ -344,6 +346,24 @@ fn splice_text(
     lists.into_iter().find(|(ok, _)| !ok).map_or(Ok(by), |(_, what)| Err(what))
 }
 
+/// [`splice_out`] for what a run records outside its analysis and relates once it ends
+/// ([`crate::analysis::observe::relate`]): the lines written, the names read, the names defined from keys.
+pub(super) fn splice_records(
+    new: &Machine,
+    at: &Machine,
+    end: &mut Machine,
+    window: Window,
+) -> Result<(), &'static str> {
+    let span = |s: Span| s.file == window.0 && (window.1..=window.2).contains(&s.line);
+    let mut reads = std::mem::take(&mut end.name_reads).list;
+    let ok = rows(&new.written_lines, &at.written_lines, &mut end.written_lines, |r| span(r.place()))
+        && rows(&new.name_reads.list, &at.name_reads.list, &mut reads, |r| span(r.place()))
+        && rows(&new.key_names, &at.key_names, &mut end.key_names, |r| span(r.3))
+        && new.stream_files == at.stream_files;
+    end.name_reads = crate::analysis::observe::NameReads::of(reads);
+    ok.then_some(()).ok_or("records")
+}
+
 /// No key is on an edited line.
 fn never<K>(_: &K) -> bool {
     false
@@ -385,7 +405,8 @@ pub(super) fn splice_out(new: &Analysis, at: &Analysis, end: &mut Analysis, wind
     let (n, a) = (&new.facts, &at.facts);
     // What this run recorded must be what the last one had here: the rest then leaves the same.
     let alike = [
-        (new.interner.len() == at.interner.len() && new.interner == at.interner, "names"),
+        // This run began with the last run's names ([`super::Checkpoints::analyze`]): the end takes its.
+        (new.interner.holds(interner), "names"),
         // The edited line's nodes sit at other columns: the end takes this run's; the provisional one keeps the last run's.
         (new.graph.len() == at.graph.len() && (lax || graph.splice(&new.graph, &at.graph, span)), "graph"),
         (new.calls == at.calls && new.observed == at.observed, "calls"),
@@ -399,12 +420,13 @@ pub(super) fn splice_out(new: &Analysis, at: &Analysis, end: &mut Analysis, wind
             == (at.journal_size, at.held_tokens_left, at.loop_heads, at.peak_paths, at.peak_output_paths, at.memory_reported), "peaks"),
         ((&new.package_caches, &new.written, &new.written_runs, new.build_runs, &new.class_caches, &new.cached_files)
             == (&at.package_caches, &at.written, &at.written_runs, at.build_runs, &at.class_caches, &at.cached_files), "caches"),
-        (new.env.slots.len() == at.env.slots.len() && new.preamble.is_some() == at.preamble.is_some()
+        (new.preamble.is_some() == at.preamble.is_some()
             && new.kernel.is_some() == at.kernel.is_some() && same(&new.settings, &at.settings), "settings"),
     ];
     if let Some((_, what)) = alike.into_iter().find(|(ok, _)| !ok) {
         return Err(what);
     }
+    *interner = new.interner.clone();
     let by = splice_text(&n.text, &a.text, text, resume)?;
     // A literal holds the characters set before it. The rest's move with them; the last
     // run's before the meeting line are compared as this run would have set them.
@@ -431,7 +453,10 @@ pub(super) fn splice_out(new: &Analysis, at: &Analysis, end: &mut Analysis, wind
         (rows(&n.letters, &a.letters, letters, |r| s(&r.0)), "letters"),
         (rows(&n.expansions, &a.expansions, expansions, |r| s(&r.span)), "expansions"),
         (rows(&n.loads, &a.loads, loads, |r| s(&r.span)), "loads"),
-        (rows(&n.occurrences, &a.occurrences, occurrences, |r| s(&r.span)), "occurrences"),
+        // Raised in a package's file by a call on an edited line: that call's place is what moved.
+        (rows(&n.occurrences, &a.occurrences, occurrences, |r| {
+            s(&r.span) || [r.expanded, r.call.map(|c| c.1), r.site.map(|c| c.1)].iter().flatten().any(s)
+        }), "occurrences"),
         (rows(&n.literals, &at_literals, literals, |r| s(&r.at)), "literals"),
         // A repeat is counted on its first row, which `diag_seen` names by index.
         (n.diagnostics.len() == a.diagnostics.len() && rows(&n.diagnostics, &a.diagnostics, diagnostics, |r| s(&r.span)), "diagnostics"),

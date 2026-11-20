@@ -2350,7 +2350,10 @@ impl Machine<'_> {
                 let own = name.as_deref().filter(|_| matches!(convert, C::FileSize)).and_then(|n| self.own_size(n));
                 if let Some((class, path)) = own {
                     let size = crate::engine::value::Num::range(1, crate::engine::value::MAX_INT);
-                    let id = format!("size of {}", path.display());
+                    // Named by the path, in digits and dots as every typed number is.
+                    let mut hash = std::hash::DefaultHasher::new();
+                    std::hash::Hash::hash(&path, &mut hash);
+                    let id = format!("0.0.0.{}", std::hash::Hasher::finish(&hash));
                     return if class == 1 { self.text_tokens("0", span) } else { self.digits_of(size, &id, span) };
                 }
                 let bytes = name.and_then(|name| self.input_bytes(&name));

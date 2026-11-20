@@ -384,14 +384,6 @@ impl Machine<'_> {
                 differs.unwrap_or("alike")
             );
         }
-        if self.cfg.verbose >= 2 && differs == Some("names") {
-            let (a, b) = (&self.out.interner, &old.out.interner);
-            let apart = |x: &crate::engine::tex::Interner, y: &crate::engine::tex::Interner| -> Vec<String> {
-                let names = (0..x.len() as u32).map(|i| x.name(crate::engine::tex::Sym(i)));
-                names.filter(|n| y.lookup(n).is_none()).take(6).map(str::to_string).collect()
-            };
-            crate::util::progress::note!("satex:   names only here {:?}, only there {:?}", apart(a, b), apart(b, a));
-        }
         if let Some(taking) = self.checkpoints.on.as_mut() {
             match differs {
                 None => taking.converged = Some((path, line, total.saturating_sub(old.out.steps))),
@@ -418,6 +410,27 @@ impl Machine<'_> {
         if self.mode != crate::engine::mode::Modes::VERTICAL {
             return Err("inside a paragraph");
         }
+        // The places the run keeps of what it read last stand past the edited lines: what the
+        // rest records at one of them it records as this run would.
+        let lasts = |m: &Machine| {
+            let spans = [
+                m.project_site,
+                m.typed_at,
+                m.project_call.map(|c| c.1),
+                m.text_site.map(|c| c.1),
+                m.built_name.map(|c| c.1),
+            ];
+            (spans, m.call_parts.as_ref().map(|p| (p.0, p.1)))
+        };
+        let (mine, theirs) = (lasts(self), lasts(old));
+        let on_edit = |s: &crate::engine::tex::Span| s.file == window.0 && (window.1..=window.2).contains(&s.line);
+        let places = |l: &(
+            [Option<crate::engine::tex::Span>; 5],
+            Option<(crate::engine::tex::Span, crate::engine::tex::Span)>,
+        )| { l.0.iter().flatten().chain(l.1.iter().flat_map(|p| [&p.0, &p.1])).any(on_edit) };
+        if mine != theirs || places(&mine) {
+            return Err("a place on the edited lines");
+        }
         // In the body: a package load replays against bindings it reads unnoted.
         if self.out.document_depth.is_none() {
             return Err("before the document");
@@ -443,8 +456,8 @@ impl Machine<'_> {
         }
         // A recorded list is named by where it was made: the runs name one list alike only
         // when this one began with every list the last one made ([`crate::engine::linebreak::Arena::grown`]).
-        if !prior.end.as_ref().is_some_and(|end| self.kp.holds(&end.kp)) {
-            return Err("lists named apart");
+        if !prior.end.as_ref().is_some_and(|end| self.kp.holds(&end.kp) && self.out.interner.holds(&end.out.interner)) {
+            return Err("lists or names numbered apart");
         }
         // An open call's record compares without where its reads begin in the log: the logs may
         // differ in length by the edit's reads, so the rest must not have come that near the log's bound.
@@ -463,6 +476,7 @@ impl Machine<'_> {
         // Last: it splices `end` in place, so a failure leaves no end for a later line.
         let mut end = self.checkpoints.on.as_mut().and_then(|t| t.prior.end.take()).ok_or("no end of the last run")?;
         provisional::splice_out(&self.out, &old.out, &mut end.out, window, since.2, false)?;
+        provisional::splice_records(self, old, &mut end, window)?;
         end.env.carry(&self.env, &delta);
         end.kp = self.kp.clone();
         end.started = self.started;
@@ -498,7 +512,6 @@ impl Machine<'_> {
             (!Rc::ptr_eq(&self.pending, &old.pending) && self.pending != old.pending, "writes held"),
             ((self.mode, self.list) != (old.mode, old.list) || !lax && self.pages != old.pages, "mode or pages"),
             (!lax && self.natural != old.natural, "page so far"),
-            (self.out.interner.len() != old.out.interner.len(), "names"),
             (self.out.graph.len() != old.out.graph.len(), "graph"),
             (self.out.files.len() != old.out.files.len(), "files read"),
             (counts(f) != counts(g), "facts"),
@@ -813,6 +826,9 @@ impl<'a> Checkpoints<'a> {
         {
             let m = (**end).clone();
             let id = m.out.main_file;
+            if self.cfg.verbose >= 2 {
+                crate::util::progress::note!("satex: nothing the last run read changed ({} files)", self.log.len());
+            }
             self.ran = (0, m.out.steps);
             return m.conclude(id, source);
         }
@@ -847,9 +863,18 @@ impl<'a> Checkpoints<'a> {
             }
         };
         m.started = *self.build_started.get_or_insert(m.started);
-        // The last run's lists keep their names in this one.
-        if let Some(lists) = self.end.as_ref().filter(|_| self.resumed.is_some()).and_then(|end| m.kp.grown(&end.kp)) {
-            m.kp = lists;
+        // The last run's lists and names keep their numbers in this one, its own new ones come
+        // after: what both runs make is numbered alike, whatever the edit made in between. A
+        // name is only ever asked for its meaning (tex.web § 259 `id_lookup`: one never seen
+        // and one undefined are the same to TeX), so more names change nothing.
+        // After an edit only: a rerun of the same text meets nothing, and numbers as a run from the start does.
+        if let Some(end) = self.end.as_ref().filter(|_| self.resumed.is_some() && change.is_some()) {
+            if let Some(lists) = m.kp.grown(&end.kp) {
+                m.kp = lists;
+            }
+            if end.out.interner.holds(&m.out.interner) {
+                m.out.interner = end.out.interner.clone();
+            }
         }
         let edit = changed.map(|line| (PathBuf::from(&m.out.files[usize::from(id)].path), line)).or(edit);
         // Known exactly when the last run's text of the edited file is.

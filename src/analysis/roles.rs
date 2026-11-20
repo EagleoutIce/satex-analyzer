@@ -698,7 +698,7 @@ fn typed(analysis: &Analysis) -> (Typed, Vec<(String, Ty)>) {
         let Some(at) = d.mac.as_ref().and_then(|m| m.replacement_text.first()).map(|t| t.span) else { continue };
         let Some((text, byte)) = source(at) else { continue };
         let Some((cmd, arg, _, optional)) = enclosing_call(text, byte) else { continue };
-        if cmd != analysis.interner.name(d.name) && analysis.interner.lookup(cmd).is_some() {
+        if cmd != analysis.interner.name(d.name) && analysis.defined(cmd) {
             out.push((cmd.to_string(), arg, Ty::Body, optional));
         }
     }
