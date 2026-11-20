@@ -246,6 +246,8 @@ fn own(
     #[cfg(not(unix))]
     let _ = (rest, head, databases, path, clock);
     eprintln!("satex: {ran} pass{} in {:.2} s", if ran == 1 { "" } else { "es" }, started.elapsed().as_secs_f64());
+    #[cfg(not(target_os = "linux"))]
+    let _ = (warm, last);
     #[cfg(target_os = "linux")]
     if warm && !last.is_empty() {
         super::warm::start(&keep, dir, &last, file, &[(PRINT_LINE.0, PRINT_LINE.1)]);
@@ -278,6 +280,7 @@ fn clock_key(clock: &str) -> String {
 /// A file's line of the key: its path and content hash. A directory's: its path with a slash (two
 /// when `deep`) and the hash of the names in it, `deep` to every level (a file the build looked for and did not
 /// find appears there).
+#[cfg(unix)]
 fn stamp(path: &Path, deep: bool) -> String {
     let meta = std::fs::metadata(path);
     // a pipe or device gives other bytes each read: its line never holds again
@@ -311,6 +314,7 @@ fn stamp(path: &Path, deep: bool) -> String {
 /// (`-recorder`), the directories outside `dir` they are in, `dir` and the TeX search path's disk
 /// directories to every level, and kpathsea's file databases (`ls-R`): where a file found nowhere
 /// would appear.
+#[cfg(unix)]
 fn reads(dir: &Path, at: &Path, job: &str, keep: &Path, databases: &str, path: &str) -> String {
     let fls = [at.join(format!("{job}.fls")), keep.join(format!("{job}.fls"))];
     let text: String = fls.iter().map(|f| std::fs::read_to_string(f).unwrap_or_default()).collect();
@@ -342,6 +346,7 @@ fn reads(dir: &Path, at: &Path, job: &str, keep: &Path, databases: &str, path: &
 
 /// The status of the build the key in `done` was written by, when the key holds now: its head is
 /// `head` and every file and directory in it stamps as it did.
+#[cfg(unix)]
 fn current(done: &Path, head: &str) -> Option<i32> {
     let key = std::fs::read_to_string(done).ok()?;
     let (raw, rest) = key.strip_prefix(head)?.split_once('\n')?;

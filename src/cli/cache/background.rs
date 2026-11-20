@@ -270,7 +270,8 @@ fn creation_flags(breakaway: bool) -> u32 {
 
 /// `exe`, detached from the terminal's signals, at the lowest priority:
 /// under `nice -n 19` where there is one, Windows' idle class.
-#[cfg_attr(not(windows), allow(unused_variables))]
+// Unix reads `nice`, Windows `breakaway`.
+#[allow(unused_variables)]
 fn detached(exe: &Path, nice: Option<&Path>, breakaway: bool) -> std::process::Command {
     #[cfg(unix)]
     {
