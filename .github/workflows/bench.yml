@@ -36,8 +36,8 @@ jobs:
     steps:
       - name: Install the build tools
         run: |
-          apt-get update
-          apt-get install -y --no-install-recommends build-essential git ca-certificates python3
+          apt-get -o Acquire::Retries=5 update
+          apt-get -o Acquire::Retries=5 install -y --no-install-recommends build-essential git ca-certificates python3
 
       - uses: actions/checkout@v5
         with:
@@ -85,7 +85,7 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add doc/site/bench/data.json
           git diff --cached --quiet || git commit -m "perf(bench): results for ${{ needs.bench.outputs.version }}"
-          git push
+          git push || { git pull --rebase origin main && git push; }
           gh workflow run pages.yml --ref main
         env:
           GH_TOKEN: ${{ github.token }}

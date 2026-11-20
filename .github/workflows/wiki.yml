@@ -21,6 +21,7 @@ concurrency:
 jobs:
   wiki:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v5
 
@@ -31,7 +32,8 @@ jobs:
           TOKEN: ${{ github.token }}
         run: |
           url="https://x-access-token:${TOKEN}@github.com/${GITHUB_REPOSITORY}.wiki.git"
-          git clone --depth=1 "$url" wiki || {
+          for i in 1 2 3; do git clone --depth=1 "$url" wiki && break; sleep 10; done
+          [ -d wiki/.git ] || {
             echo "::error::No wiki repository yet. Create the first page in the wiki tab once."
             exit 1
           }
@@ -72,4 +74,5 @@ jobs:
           git checkout --orphan sync
           git add -A
           git commit -m "Sync wiki from ${GITHUB_SHA::7}"
-          git push --force origin "sync:${branch}"
+          for i in 1 2 3; do git push --force origin "sync:${branch}" && exit 0; sleep 10; done
+          exit 1

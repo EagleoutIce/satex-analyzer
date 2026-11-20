@@ -54,7 +54,7 @@ jobs:
           base=
           case "$EVENT" in
             pull_request) base=HEAD^1 ;;
-            push) git fetch --depth=1 origin "$BEFORE" && base=$BEFORE || true ;;
+            push) for i in 1 2 3; do git fetch --depth=1 origin "$BEFORE" && base=$BEFORE && break; sleep 5; done || true ;;
           esac
           scripts/ci-changes.sh "$base" > changes
           # A tree a same-repository pull request already passed is not tested again.
@@ -83,7 +83,7 @@ jobs:
     steps:
       # Lua and LPeg are compiled from C; the TeX Live image has no compiler.
       - name: Install a C toolchain
-        run: apt-get update && apt-get install -y --no-install-recommends build-essential poppler-utils jq
+        run: apt-get -o Acquire::Retries=5 update && apt-get -o Acquire::Retries=5 install -y --no-install-recommends build-essential poppler-utils jq
 
       - uses: actions/checkout@v5
 
@@ -168,7 +168,7 @@ jobs:
     steps:
       # The differential tests read pdflatex's output with pdftotext.
       - name: Install poppler
-        run: apt-get update && apt-get install -y --no-install-recommends poppler-utils
+        run: apt-get -o Acquire::Retries=5 update && apt-get -o Acquire::Retries=5 install -y --no-install-recommends poppler-utils
 
       - uses: actions/checkout@v5
 
@@ -236,7 +236,7 @@ jobs:
     container: texlive/texlive:latest
     steps:
       - name: Install a C toolchain
-        run: apt-get update && apt-get install -y --no-install-recommends build-essential poppler-utils
+        run: apt-get -o Acquire::Retries=5 update && apt-get -o Acquire::Retries=5 install -y --no-install-recommends build-essential poppler-utils
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
@@ -400,7 +400,7 @@ jobs:
         shard: ['1/8', '2/8', '3/8', '4/8', '5/8', '6/8', '7/8', '8/8', compliance]
     steps:
       - name: Install a C toolchain
-        run: apt-get update && apt-get install -y --no-install-recommends build-essential poppler-utils
+        run: apt-get -o Acquire::Retries=5 update && apt-get -o Acquire::Retries=5 install -y --no-install-recommends build-essential poppler-utils
 
       - uses: actions/checkout@v5
 
@@ -563,6 +563,7 @@ jobs:
   changelog:
     name: Changelog covers the commits
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     continue-on-error: true
     steps:
       - uses: actions/checkout@v5
@@ -591,7 +592,7 @@ jobs:
           restore-keys: lychee-
 
       - name: Install lychee
-        run: curl -sSfL https://github.com/lycheeverse/lychee/releases/download/lychee-v0.24.2/lychee-x86_64-unknown-linux-gnu.tar.gz | tar -xz --strip-components=1 -C "$RUNNER_TEMP" && echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
+        run: curl -sSfL --retry 5 --retry-all-errors https://github.com/lycheeverse/lychee/releases/download/lychee-v0.24.2/lychee-x86_64-unknown-linux-gnu.tar.gz | tar -xz --strip-components=1 -C "$RUNNER_TEMP" && echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
 
       # Links into this repository (a `main` blob link is checked against the checkout, see
       # lychee.toml): every page, offline, in seconds.

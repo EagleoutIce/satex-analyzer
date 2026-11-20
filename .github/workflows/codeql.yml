@@ -3,8 +3,10 @@ name: CodeQL
 on:
   push:
     branches: [main]
+    paths-ignore: ['**/*.md', 'doc/**', 'editors/**', 'samples/**']
   pull_request:
     branches: [main]
+    paths-ignore: ['**/*.md', 'doc/**', 'editors/**', 'samples/**']
   schedule:
     - cron: '17 4 * * 1'
 
