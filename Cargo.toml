@@ -12,7 +12,12 @@ documentation = "https://eagleoutice.github.io/satex-analyzer/"
 readme = "README.md"
 keywords = ["latex", "tex", "linter", "static-analysis", "lsp"]
 categories = ["command-line-utilities", "development-tools", "text-processing"]
-exclude = ["samples/", ".github/", "scripts/"]
+# crates.io takes at most 10 MiB: the site's media, the benchmark corpus, the proofs and the editor
+# extensions are not needed to build the crate (the site's dev.js is, for satex-playground).
+exclude = [
+  "samples/", ".github/", "scripts/", "doc/site/showcase/", "doc/site/bench/", "doc/site/e2e/", "doc/demo.gif",
+  "benches/docs/", "semantics/", "editors/",
+]
 
 [features]
 doc = []
