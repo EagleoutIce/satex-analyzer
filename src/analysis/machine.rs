@@ -5253,7 +5253,9 @@ will look undefined",
                     }
                     // A `\scantokens` pseudo file ends like a file.
                     if *expanding == Some(self.pseudo_file) && !across_files && self.scanner != Scanner::Normal {
-                        self.file_ended_while_scanning(None);
+                        if self.file_ended_while_scanning(None) {
+                            continue;
+                        }
                         return None;
                     }
                 }
@@ -5287,7 +5289,9 @@ will look undefined",
                     }
                     // A pseudo file ends like a file.
                     if !across_files && self.scanner != Scanner::Normal {
-                        self.file_ended_while_scanning(None);
+                        if self.file_ended_while_scanning(None) {
+                            continue;
+                        }
                         return None;
                     }
                 }
@@ -5450,9 +5454,13 @@ will look undefined",
     /// tex.web §§ 336-339 `check_outer_validity`: a file ending mid-scan ends it.
     /// The definition or text gets its `}`, the skipped conditional its `\fi`, and a
     /// macro call is abandoned, as `\par` with `long_state = outer_call` abandons it.
-    fn file_ended_while_scanning(&mut self, file: Option<FileId>) {
+    /// `true` when a `\scantokens` pseudo file (`file` `None`) closed and its `}` was
+    /// put back behind it (§ 362: the file closes, then the check inserts): an
+    /// `\ifcat` in an `\xdef` body may take it as its operand. A real file's end
+    /// ends the scan where it stands, as the inserted `}` would.
+    fn file_ended_while_scanning(&mut self, file: Option<FileId>) -> bool {
         let (what, recovery) = match self.scanner {
-            Scanner::Normal => return,
+            Scanner::Normal => return false,
             Scanner::Skipping => ("conditional text", "\\fi"),
             Scanner::Defining => ("definition", "}"),
             Scanner::Matching => ("use", "\\par"),
@@ -5461,7 +5469,7 @@ will look undefined",
         // A macro call reports it at the call, named (tex.web § 338).
         if self.scanner == Scanner::Matching {
             self.runaway = Runaway::FileEnded;
-            return;
+            return false;
         }
         self.scratch.skip_ended = self.scanner == Scanner::Skipping;
         let span = file.map_or_else(|| self.position_span(), |f| Span::new(f, 0, 0));
@@ -5484,6 +5492,12 @@ will look undefined",
             span,
             format!("file ended while scanning {what}; {recovery} inserted"),
         );
+        if recovery != "}" || file.is_some() {
+            return false;
+        }
+        self.end_input_frame();
+        self.unread(Token::new(Tok::Chr('}', Catcode::End), span));
+        true
     }
 
     fn pop_frame(&mut self) {

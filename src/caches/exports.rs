@@ -424,6 +424,11 @@ pub fn defined_in(file: &Path, definers: &HashSet<&str>, name: &str) -> bool {
     names.contains(name)
 }
 
+/// The names `text` defines with one of `definers` (the run's, [`definers`]), as the index reads a package.
+pub fn defines(text: &str, definers: &HashSet<&str>) -> Vec<String> {
+    scan(text, definers).0
+}
+
 fn scan(text: &str, definers: &HashSet<&str>) -> (Vec<String>, Vec<String>) {
     use crate::engine::tex::Tok;
     let (tokens, names) = tokenize(text);

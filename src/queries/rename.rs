@@ -394,6 +394,16 @@ fn bodies(
     out
 }
 
+/// What a rename at `at` renames, without its sites ([`plan`] finds those): the key of a name
+/// the project declares, or of a key it spells (a label, a citation).
+pub fn target(analysis: &Analysis, path: &str, at: Pos, name: &str, is_command: bool) -> Result<String, String> {
+    let (members, key, _) = family(analysis, path, at, name, is_command)?;
+    if members.is_empty() && !analysis.facts.occurrences.iter().any(|o| o.key == key) {
+        return Err(format!("nothing in this project spells `{key}`"));
+    }
+    Ok(key)
+}
+
 /// What a rename of the name at `at` would touch.
 pub fn plan(
     analysis: &Analysis,

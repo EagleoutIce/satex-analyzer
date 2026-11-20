@@ -169,7 +169,7 @@ fn an_unreadable_database_keeps_citations_unjudged() {
 
 /// The databases against the style: a file loaded twice, one work under two keys in two
 /// files, a cited entry lacking a field its type requires, a constant neither an `@string`
-/// nor the style (plain.bst's `jul`, `cacm`) defines, an entry never cited.
+/// nor the style (plain.bst's `jul`, `cacm`) defines, the entries never cited.
 #[test]
 fn the_databases_are_checked_against_the_style() {
     if !installed() {
@@ -186,7 +186,7 @@ fn the_databases_are_checked_against_the_style() {
         &[
             (
                 "refs.bib",
-                "@string{cacm = {Comm. ACM}}\n@article{knuth84,\n  author = {Donald E. Knuth},\n  title = {Literate Programming},\n  journal = {The Computer Journal},\n  year = 1984,\n  doi = {10.1093/comjnl/27.2.97}\n}\n\n@article{lamport78,\n  author = {Leslie Lamport},\n  title = {Time, Clocks},\n  journal = cacm # nosuch,\n  month = jul,\n}\n\n@misc{spare, title = {Never cited}}\n",
+                "@string{cacm = {Comm. ACM}}\n@article{knuth84,\n  author = {Donald E. Knuth},\n  title = {Literate Programming},\n  journal = {The Computer Journal},\n  year = 1984,\n  doi = {10.1093/comjnl/27.2.97}\n}\n\n@article{lamport78,\n  author = {Leslie Lamport},\n  title = {Time, Clocks},\n  journal = cacm # nosuch,\n  month = jul,\n}\n\n@misc{spare, title = {Never cited}}\n\n@misc{extra, title = {Never cited either}}\n",
             ),
             (
                 "more.bib",
@@ -214,8 +214,9 @@ fn the_databases_are_checked_against_the_style() {
         "{undefined:?}"
     );
     let uncited = messages("uncited-bibliography-entry");
+    // every uncited entry, in the one finding at its database's `\bibliography` (only the first was named)
     assert_eq!(uncited.len(), 1, "{uncited:?}");
-    assert!(uncited[0].contains("`spare`"), "{uncited:?}");
+    assert!(uncited[0].contains("`spare`") && uncited[0].contains("`extra`"), "{uncited:?}");
     // the fixes: drop the second load, merge the twin into the richer entry
     let records = satex::linter::lint(&analysis);
     let fix = |code: &str| {

@@ -682,6 +682,9 @@ pub(super) fn command_hover(analysis: &Analysis, name: &str, active: Option<Reco
             if !doc.example.is_empty() {
                 markdown.push_str(&format!("```tex\n{}\n```\n\n", doc.example.join("\n")));
             }
+        } else if text("body").and_then(|b| b.split_whitespace().next()).is_some_and(|w| w.ends_with("-cmd")) {
+            // ltoutenc.dtx `\DeclareTextCommand`: `\?-cmd \t \?\t` is the kernel's dispatch
+            markdown.push_str("A text command: what it sets depends on the font encoding in use.\n\n");
         } else if let Some(pretty) =
             text("pretty").filter(|_| text("tag") != Some("primitive") && analysis.settings.type_plugins.pretty.enabled)
         {
@@ -1501,17 +1504,23 @@ fn rename_plan(
     crate::queries::rename::plan(analysis, &Sources::default(), path, Pos::new(pos.line, col), &name, is_command)
 }
 
-/// `textDocument/prepareRename`: the span under the cursor and its name.
+/// `textDocument/prepareRename`: the name under the cursor and what it renames, without the
+/// sites: an editor asks it on every menu, the sites wait for `rename`.
 pub fn prepare_rename(
     analysis: &Analysis,
     doc: &Text,
     path: &str,
     position: Position,
 ) -> Option<PrepareRenameResponse> {
-    let plan = rename_plan(analysis, doc, path, position).ok()?;
-    let site = plan.at(path, to_pos(doc, position))?;
-    let range = Range { start: to_lsp(doc, site.start), end: to_lsp(doc, site.end) };
-    Some(PrepareRenameResponse::RangeWithPlaceholder { range, placeholder: plan.key.clone() })
+    let pos = to_pos(doc, position);
+    let (name, is_command, col) = word_span(doc.line(pos.line), pos.col)?;
+    let key = crate::queries::rename::target(analysis, path, Pos::new(pos.line, col), &name, is_command).ok()?;
+    let start = Pos::new(pos.line, col + u32::from(is_command));
+    let end = Pos::new(pos.line, start.col + name.chars().count() as u32);
+    Some(PrepareRenameResponse::RangeWithPlaceholder {
+        range: Range { start: to_lsp(doc, start), end: to_lsp(doc, end) },
+        placeholder: key,
+    })
 }
 
 /// `textDocument/rename`: the name under the cursor, every name its
@@ -3070,69 +3079,77 @@ fn command_items(analysis: &Analysis, pos: Pos, typed: &str, math: bool) -> (Vec
     let tiers = &analysis.settings.conventions.completion.tiers;
     let typeable =
         |label: &str| label.chars().count() < 2 || label.chars().all(|c| c.is_alphabetic() || letters.contains(&c));
-    let mut items: Vec<(CompletionItem, &query::ScopeRow)> = {
+    let rows = {
         let named = |name: &str| crate::engine::tex::bare_name(name).to_lowercase().contains(&typed);
         query::scope_named(analysis, Some((analysis.main_file, pos.line, pos.col)), true, named)
-    }
-    .into_iter()
-    .filter_map(|row| {
-        let record = row.lean();
-        let name = record.get("name")?.as_str()?.to_string();
-        let label = crate::engine::tex::bare_name(&name).to_string();
-        if !label.to_lowercase().contains(&typed) || !typeable(&label) {
-            return None;
-        }
-        let tag = record.get("tag").and_then(Json::as_str).unwrap_or("");
-        let internal = analysis.settings.conventions.is_internal(crate::engine::tex::bare_name(&label));
-        if label.is_empty() || (internal && !matches!(tag, "macro" | "primitive" | "environment" | "alias")) {
-            return None;
-        }
-        let shape = record.get("effective").and_then(Json::as_str).unwrap_or("");
-        let package = record.get("package").and_then(Json::as_str).unwrap_or("");
-        let tier = match (package, internal) {
-            ("document", _) => tiers.document,
-            (_, true) => tiers.internal,
-            _ if tag == "primitive" || !label.chars().any(char::is_alphabetic) => tiers.primitive,
-            _ => tiers.package,
-        };
-        let count = analysis.interner.lookup(&label).and_then(|s| used.get(&s)).copied().unwrap_or(0);
-        // The argument is a name to pick: the editor asks again inside
-        // the braces, and an environment brings its `\end`.
-        let pick = analysis.settings.conventions.completion.pick.contains(&label);
-        // a kernel or package command has no definition fact: its shape counts its `{…}`
-        let braced = || shape.strip_prefix(label.as_str()).unwrap_or(shape).matches('{').count() as u8;
-        // the arguments the lean record knows (a robust `\\textbf` hands off to its partner) count too
-        let args = record.get("args").and_then(Json::as_str);
-        let mandatory = args.map_or(0, |a| a.matches('m').count() as u8);
-        let (insert_text, format) = match takes.get(&name).copied().unwrap_or_else(braced).max(mandatory) {
-            _ if pick => (format!("{label}{{$1}}"), InsertTextFormat::SNIPPET),
-            0 => (label.clone(), InsertTextFormat::PLAIN_TEXT),
-            min => {
-                let args: String = (1..=min).map(|i| format!("{{${i}}}")).collect();
-                (format!("{label}{args}"), InsertTextFormat::SNIPPET)
+    };
+    // `\X` with a defined `\endX` is environment X's own code, run by `\begin{X}`
+    // (latex.ltx `\begin`): typed as a command it is the kernel's internals.
+    let macros: crate::fixed::HashSet<String> = (rows.iter().map(|r| r.lean()))
+        .filter(|r| r.get("tag").and_then(Json::as_str) != Some("primitive"))
+        .filter_map(|r| Some(crate::engine::tex::bare_name(r.get("name")?.as_str()?).to_string()))
+        .collect();
+    let mut items: Vec<(CompletionItem, &query::ScopeRow)> = rows
+        .into_iter()
+        .filter_map(|row| {
+            let record = row.lean();
+            let name = record.get("name")?.as_str()?.to_string();
+            let label = crate::engine::tex::bare_name(&name).to_string();
+            if !label.to_lowercase().contains(&typed) || !typeable(&label) {
+                return None;
             }
-        };
-        let is_math = record.get("math").and_then(Json::as_bool).unwrap_or(false);
-        // in math, math commands first: `!` sorts before the tiers' digits
-        let lead = if math && is_math { "!" } else { "" };
-        let it = CompletionItem {
-            sort_text: Some(format!("{lead}{tier}{:06}{label}", 999_999u32.saturating_sub(count))),
-            label: label.clone(),
-            kind: Some(if tag == "primitive" { CompletionItemKind::KEYWORD } else { CompletionItemKind::FUNCTION }),
-            detail: Some(package.to_string()),
-            insert_text: Some(insert_text),
-            insert_text_format: Some(format),
-            command: pick.then(|| lsp_types::Command {
-                title: "pick".into(),
-                command: "editor.action.triggerSuggest".into(),
-                arguments: None,
-            }),
-            data: Some(serde_json::json!({ "math": is_math, "args": args })),
-            ..Default::default()
-        };
-        Some((it, row))
-    })
-    .collect();
+            let tag = record.get("tag").and_then(Json::as_str).unwrap_or("");
+            let internal = analysis.settings.conventions.is_internal(crate::engine::tex::bare_name(&label))
+                || (matches!(tag, "macro" | "alias") && macros.contains(&format!("end{label}")));
+            if label.is_empty() || (internal && !matches!(tag, "macro" | "primitive" | "environment" | "alias")) {
+                return None;
+            }
+            let shape = record.get("effective").and_then(Json::as_str).unwrap_or("");
+            let package = record.get("package").and_then(Json::as_str).unwrap_or("");
+            let tier = match (package, internal) {
+                ("document", _) => tiers.document,
+                (_, true) => tiers.internal,
+                _ if tag == "primitive" || !label.chars().any(char::is_alphabetic) => tiers.primitive,
+                _ => tiers.package,
+            };
+            let count = analysis.interner.lookup(&label).and_then(|s| used.get(&s)).copied().unwrap_or(0);
+            // The argument is a name to pick: the editor asks again inside
+            // the braces, and an environment brings its `\end`.
+            let pick = analysis.settings.conventions.completion.pick.contains(&label);
+            // a kernel or package command has no definition fact: its shape counts its `{…}`
+            let braced = || shape.strip_prefix(label.as_str()).unwrap_or(shape).matches('{').count() as u8;
+            // the arguments the lean record knows (a robust `\\textbf` hands off to its partner) count too
+            let args = record.get("args").and_then(Json::as_str);
+            let mandatory = args.map_or(0, |a| a.matches('m').count() as u8);
+            let (insert_text, format) = match takes.get(&name).copied().unwrap_or_else(braced).max(mandatory) {
+                _ if pick => (format!("{label}{{$1}}"), InsertTextFormat::SNIPPET),
+                0 => (label.clone(), InsertTextFormat::PLAIN_TEXT),
+                min => {
+                    let args: String = (1..=min).map(|i| format!("{{${i}}}")).collect();
+                    (format!("{label}{args}"), InsertTextFormat::SNIPPET)
+                }
+            };
+            let is_math = record.get("math").and_then(Json::as_bool).unwrap_or(false);
+            // in math, math commands first: `!` sorts before the tiers' digits
+            let lead = if math && is_math { "!" } else { "" };
+            let it = CompletionItem {
+                sort_text: Some(format!("{lead}{tier}{:06}{label}", 999_999u32.saturating_sub(count))),
+                label: label.clone(),
+                kind: Some(if tag == "primitive" { CompletionItemKind::KEYWORD } else { CompletionItemKind::FUNCTION }),
+                detail: Some(package.to_string()),
+                insert_text: Some(insert_text),
+                insert_text_format: Some(format),
+                command: pick.then(|| lsp_types::Command {
+                    title: "pick".into(),
+                    command: "editor.action.triggerSuggest".into(),
+                    arguments: None,
+                }),
+                data: Some(serde_json::json!({ "math": is_math, "args": args })),
+                ..Default::default()
+            };
+            Some((it, row))
+        })
+        .collect();
     // A name that starts with what is typed before one that only holds it, in math a math one first.
     items.sort_by_cached_key(|(i, _)| {
         let first = math && i.sort_text.as_deref().is_some_and(|s| s.starts_with('!'));

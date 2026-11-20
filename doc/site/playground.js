@@ -8765,8 +8765,9 @@
     if (!rows.length) return null;
     const mid = (r) => Math.abs((r.t + r.d) / 2 - pt[2]), near = rows.reduce((m, r) => (mid(r) < mid(m) ? r : m)), file = near.file;
     if (!(file in state.texts) || file in state.ro || !/\.(tex|ltx)$/.test(file)) return null;
-    const p = PE.blankPlace(file === state.file ? editor.text() : state.texts[file], rows.filter((r) => r.file === file), pt[1], pt[2]);
-    return p?.kind === 'new' ? { kind: 'place', file, place: p.at, line: near.line } : null;
+    const text = file === state.file ? editor.text() : state.texts[file], p = PE.blankPlace(text, rows.filter((r) => r.file === file), pt[1], pt[2]);
+    // named by the line the new paragraph goes after, not the nearest row (a table's row inside its float)
+    return p?.kind === 'new' ? { kind: 'place', file, place: p.at, line: text.slice(0, p.at).split('\n').length } : null;
   }
   pdfBody.addEventListener('contextmenu', (e) => {
     const pt = tikzPoint(e), t = pdfTarget(pt) ?? pdfPlaceAt(pt) ?? pdfBlockAt(pt);

@@ -612,6 +612,8 @@ struct Effect {
     diagnostics: Vec<CachedDiagnostic>,
     metadata: Vec<(String, String, String)>,
     csnames: Vec<(Span, u8, bool, bool)>,
+    /// Names the document's call read through the load ([`crate::analysis::observe::read_name`]).
+    name_reads: Vec<Sym>,
     shapes: Vec<(Sym, String)>,
     gaps: Vec<(String, Sym)>,
     scalars: Scalars,
@@ -910,6 +912,7 @@ struct Marks {
     gaps_seen: usize,
     gaps_new: usize,
     csnames: usize,
+    name_reads: usize,
     origins: usize,
     identifications: usize,
     opened: usize,
@@ -959,6 +962,13 @@ struct Rest {
     command_level: bool,
     held_tokens: usize,
     reader: bool,
+    /// `\aftergroup` tokens of the group the load stands in: a file that adds
+    /// one acts past its own end (tex.web § 282).
+    after: usize,
+    /// In a group, the category codes and `\endlinechar`: a replay sets them
+    /// without the group's save stack, so a checkpoint there needs them as at
+    /// the load's start (local or global, the group's end must not see a change).
+    local: Option<(Vec<(char, u8)>, i32)>,
 }
 
 /// A package being recorded.
@@ -1350,8 +1360,6 @@ impl Machine<'_> {
                 "the run traces"
             } else if self.on_paths() || !self.cds.is_empty() || self.conds.iter().any(|c| c.dep) {
                 "it is loaded under a conditional"
-            } else if self.env.depth() != 0 {
-                "it is loaded inside a group"
             } else if self.mode != crate::engine::mode::Modes::VERTICAL {
                 "it is loaded inside a paragraph or a box"
             } else if !self.held.is_empty() || self.edef_depth != 0 || self.scanning != 0 {
@@ -1829,7 +1837,7 @@ impl Machine<'_> {
             scan_undecided,
             pdf_string,
             written_lines,
-            name_reads,
+            name_reads: _,
             line_sandbox: _,
             line_defined,
             stream_files,
@@ -1909,7 +1917,8 @@ impl Machine<'_> {
             file_depth: *file_depth,
             aux: (
                 line_defined.is_some(),
-                written_lines.len() + name_reads.list.len() + stream_files.len() + key_names.len(),
+                // name reads are replayed (`Effect::name_reads`)
+                written_lines.len() + stream_files.len() + key_names.len(),
             ),
             pinned: pinned.len(),
             docstrip: *docstrip,
@@ -1919,6 +1928,8 @@ impl Machine<'_> {
             command_level: false,
             held_tokens: *held_tokens,
             reader: self.out.graph.reader.is_some(),
+            after: env.after_len(),
+            local: (env.depth() != 0).then(|| (self.catcodes.diff(&CatcodeTable::latex()), self.end_line.0)),
         }
     }
 
@@ -2877,6 +2888,10 @@ impl Machine<'_> {
         for (field, text, source) in &st.metadata {
             self.out.metadata.push(Metadata { field: leak(field), text: text.clone(), source: source.clone() });
         }
+        for &name in &st.name_reads {
+            let name = self.out.interner.name(name).to_string();
+            crate::analysis::observe::read_name(self, &name);
+        }
         for (span, kind, global, expand) in &st.csnames {
             self.out.facts.csnames.entry(span_in(*span, site)).or_insert(role_in(*kind, *global, *expand));
         }
@@ -3062,6 +3077,7 @@ impl Machine<'_> {
             gaps_seen: rec.log.gaps_seen.len(),
             gaps_new: rec.log.gaps_new.len(),
             csnames: rec.log.csnames.len(),
+            name_reads: self.name_reads.list.len(),
             origins: rec.log.origins.len(),
             identifications: rec.log.identifications.len(),
             opened: rec.log.opened.len(),
@@ -3900,6 +3916,10 @@ impl Machine<'_> {
             metadata: self.out.metadata[m.metadata..]
                 .iter()
                 .map(|x| (x.field.to_string(), x.text.clone(), x.source.clone()))
+                .collect(),
+            name_reads: self.name_reads.list[m.name_reads.min(self.name_reads.list.len())..]
+                .iter()
+                .map(|r| r.name())
                 .collect(),
             csnames: rec.log.csnames[m.csnames..]
                 .iter()

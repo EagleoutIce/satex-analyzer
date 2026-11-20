@@ -1126,6 +1126,16 @@ pub fn detokenize(toks: &[Token], it: &Interner) -> String {
     detokenize_by(toks, it, Some('\\'), &|c: char| c.is_alphabetic(), Selector::File { newline: None })
 }
 
+/// The prefix of a frozen copy of a primitive: the `\\relax` an `\\else` waits
+/// behind (tex.web § 510), the token `\\pdfprimitive` puts back.
+pub const FROZEN: &str = "\u{4}primitive.";
+
+/// The name a control sequence prints with: a frozen copy prints its
+/// primitive's text, as TeX's frozen ones do (tex.web § 222 `text`).
+pub fn printed_name(name: &str) -> &str {
+    name.strip_prefix(FROZEN).unwrap_or(name)
+}
+
 /// A name satex made for its own bookkeeping rather than one a document
 /// wrote: a register, a code table entry or a marker for something unknown.
 /// They start with a character no control sequence name can.
@@ -1199,7 +1209,7 @@ fn detokenize_by(
     for t in toks {
         match t.tok {
             Tok::Cs(sym) => {
-                let name = it.name(sym);
+                let name = printed_name(it.name(sym));
                 // tex.web § 63 `print_esc`.
                 escape.into_iter().for_each(|c| put(&mut out, c));
                 // tex.web § 262: the control sequence with the empty name

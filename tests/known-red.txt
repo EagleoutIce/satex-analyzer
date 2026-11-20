@@ -4,13 +4,9 @@
 # a run cut by a budget, a false error from over-approximation.
 
 # == soundness ==
-# Open (2026-11-19, owner: cex3): likely as the `\xdef` body is read balanced before it expands (counterexamples.rs `par_is_forbidden…`), the `}` § 339 inserts where a `\scantokens` file ends closes the body instead of reaching `\ifcat` as its operand (pdftex: `O`, satex: empty). `\xdef\R{\scantokens{Z}}` alone is right.
-counterexamples::a_brace_inserted_where_a_scantokens_file_ends_is_read_on
-# Open (2026-11-19, owner: cex3): `\pdfprimitive` before a non-expandable primitive puts back one frozen token named `\u{4}primitive.relax`; pdftex.web inserts frozen `\pdfprimitive` before the token itself, so `\string` prints `\pdfprimitive` and `\relax` stays.
-counterexamples::a_frozen_pdfprimitive_prints_as_pdfprimitive
 
 # == precision ==
-# Open (2026-11-19, owner: speed): `\begin{document}` reads l3backend-pdftex.def anew every run (~25% of the line's steps): a `.def` is not cacheable by kind, and `\begin`'s group makes `cacheable_at_push` refuse it too. Needs caching by what a file does (pure function of its reads), with local effects inside a group replayed as locals.
+# Open (2026-11-19, owner: speed; cex3 round 2): `\begin{document}` reads l3backend-pdftex.def anew every run (~25% of the line's steps). A load inside a group is cacheable since cex3 (locals replay as locals; a checkpoint needs the group's `\aftergroup` tokens and catcodes as at the start). Left: the `.def` is an `\input`, not a package; tried caching library `\input` files (cacheable_at_push by `!project_file`): 12 package_cache/incremental tests then differ cold vs cached (body-time facts a package never produces: `facts.spaces`, letters, conditionals, one graph edge). Needs those facts in the segment (or library inputs counted as package code), not landed.
 package_cache::the_backend_loaded_by_begin_document_is_served_from_a_cache
 # Open (2026-11-19, owner: next box round, from sound2): `\lastbox` now takes a plain box (was void, unsound). LaTeX's mark extraction (latex.ltx `\__mark_prepare_and_extract:nn`) takes the column's last vbox (a here float) and unpacks it; a box taken from a list keeps no facts of its own (calm, last item, `vl` record), so the `\vsplit` to `\maxdimen` after it is unknown and `\box_if_empty` loops "maybe". Needs per-item box facts in the vl record (Kp::Box with box kind and its register facts).
 differential::a_here_figure_after_a_display_stays_on_its_page

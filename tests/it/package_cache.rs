@@ -1914,10 +1914,9 @@ fn a_cfg_the_document_s_folder_overrides_is_not_served_stale() {
 /// `\begin{document}` loads `l3backend-pdftex.def` (latex.ltx `\document`,
 /// `\@expl@sys@load@backend@@`), about a quarter of the line's steps on a
 /// minimal article. A second run should serve it from a cache, as a package.
-/// RED: a `.def` is no package or class (`cacheable_at_push` takes only those),
-/// and `\begin` opened a group first (latex.ltx `\begin`: `\begingroup`), which
-/// the cache refuses as well: a replay inside a group needs local effects kept
-/// apart from global ones.
+/// RED: a `.def` is no package or class (`cacheable_at_push` takes only those);
+/// the group `\begin` opens first (latex.ltx `\begin`: `\begingroup`) no longer
+/// refuses it (tests/known-red.txt).
 #[test]
 fn the_backend_loaded_by_begin_document_is_served_from_a_cache() {
     if !installed() {
@@ -1933,4 +1932,28 @@ fn the_backend_loaded_by_begin_document_is_served_from_a_cache() {
         "{:?}",
         second.package_caches
     );
+}
+
+/// A package loaded inside a group is served from a cache by what it does,
+/// its local assignments local to that group: after the group its `\def` is
+/// gone and its `\gdef` stays, on the fresh run and on the cached one alike.
+/// Pinned: caching refused every load inside a group; a replay sets a local as
+/// a local (tex.web § 279), and a checkpoint needs the group's `\aftergroup`
+/// tokens and category codes as at the load's start.
+#[test]
+fn a_package_loaded_in_a_group_is_cached_with_its_locals_local() {
+    if !installed() {
+        return;
+    }
+    let dir = project("in-group");
+    std::fs::write(dir.join("grouped.sty"), "\\ProvidesPackage{grouped}\n\\def\\localone{1}\n\\gdef\\globalone{1}\n")
+        .expect("grouped.sty");
+    let document = "\\documentclass{article}\n\\begingroup\\usepackage{grouped}\\endgroup\n\\begin{document}\nx\n\\end{document}\n";
+    let first = run(&dir, document);
+    let second = run(&dir, document);
+    for run in [&first, &second] {
+        assert!(undefined(run, "localone") && defined(run, "globalone"));
+    }
+    assert_eq!(served(&first, "grouped"), Some(false), "{:?}", first.package_caches);
+    assert_eq!(served(&second, "grouped"), Some(true), "{:?}", second.package_caches);
 }

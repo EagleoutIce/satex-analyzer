@@ -698,6 +698,19 @@ pub fn printed(analysis: &Analysis, doc: &Text, nodes: &[Node]) -> Result<(Vec<E
     let (mut edits, mut notes) = (Vec::new(), Vec::new());
     // packages wanted in order, and names asked of the installation, by the node that wants them
     let (mut wanted, mut asked): (Vec<Package>, Vec<(String, bool, String)>) = Default::default();
+    // a name the written text defines itself (`\newcommand{\x}` beside its use, an extract) loads no package: the
+    // run's definers read the text as the export index reads a package, once a name is new to the run
+    let own_defs = std::cell::OnceCell::new();
+    let self_defined = |m: &str| {
+        own_defs
+            .get_or_init(|| {
+                let definers = crate::caches::exports::definers(analysis, &analysis.settings.conventions.definers);
+                let text: Vec<String> = nodes.iter().filter(|n| !n.drop).map(canonical).collect();
+                crate::caches::exports::defines(&text.join("\n"), &definers.iter().map(String::as_str).collect())
+            })
+            .iter()
+            .any(|d| d == m)
+    };
     for n in nodes {
         let own = edits_of(doc, n)?;
         // a `.bib` entry loads no package
@@ -713,7 +726,8 @@ pub fn printed(analysis: &Analysis, doc: &Text, nodes: &[Node]) -> Result<(Vec<E
             let new = n.range.is_none();
             // a new node the run lacks: the names it writes are its package's to define
             let unknown = new && n.package.is_some() && !analysis.defined(&n.name);
-            for name in names(&now).into_iter().filter(|m| !names(&was).contains(m) && !met(analysis, m)) {
+            let fresh = |m: &&str| !names(&was).contains(m) && !met(analysis, m) && !self_defined(m);
+            for name in names(&now).into_iter().filter(fresh) {
                 match &n.package {
                     Some(p) if new && name == n.name => wanted.push(p.clone()),
                     _ if unknown => {}

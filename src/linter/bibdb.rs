@@ -548,21 +548,31 @@ fn uncited_entry(report: &mut Report) {
     if all || dbs.is_empty() {
         return;
     }
+    // One finding per database: its entries all stand at the one load, where a site keeps one finding.
     for db in &dbs {
         let Some(load) = at_load(&loads, &db.path) else { continue };
-        for e in db.entries.iter().filter(|e| !keys.contains(e.key.as_str())) {
-            let edits = entry_lines(&db.text, e).filter(|_| sources.editable(analysis, &db.path)).map(|(from, to)| {
-                vec![Edit { path: db.path.clone(), start: from, end: to, replacement: String::new() }]
-            });
-            let message = format!("`{}` ({}:{}) is never cited", e.key, file_name(&db.path), e.line);
-            report.add_fix_as(
-                Severity::Info,
-                load.span,
-                &e.key,
-                message,
-                Fix::new(format!("delete `{}`", e.key), Applicability::Unsafe, edits),
-            );
-        }
+        let uncited: Vec<_> = db.entries.iter().filter(|e| !keys.contains(e.key.as_str())).collect();
+        let Some(first) = uncited.first() else { continue };
+        let editable = sources.editable(analysis, &db.path);
+        let edits: Option<Vec<Edit>> = (uncited.iter())
+            .map(|e| entry_lines(&db.text, e).filter(|_| editable))
+            .map(|lines| {
+                lines.map(|(from, to)| Edit { path: db.path.clone(), start: from, end: to, replacement: String::new() })
+            })
+            .collect();
+        let named: Vec<String> =
+            uncited.iter().map(|e| format!("`{}` ({}:{})", e.key, file_name(&db.path), e.line)).collect();
+        let (message, title) = match named.len() {
+            1 => (format!("{} is never cited", named[0]), format!("delete `{}`", first.key)),
+            n => (format!("{n} entries are never cited: {}", named.join(", ")), format!("delete the {n} entries")),
+        };
+        report.add_fix_as(
+            Severity::Info,
+            load.span,
+            &first.key,
+            message,
+            Fix::new(title, Applicability::Unsafe, edits),
+        );
     }
 }
 

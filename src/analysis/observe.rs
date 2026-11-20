@@ -421,6 +421,12 @@ pub struct NameRead {
     context: OccContext,
 }
 
+impl NameRead {
+    pub fn name(&self) -> crate::engine::tex::Sym {
+        self.name
+    }
+}
+
 /// A definition made while a written line runs in the sandbox.
 pub fn defined_name(m: &mut Machine, sym: crate::engine::tex::Sym) {
     if let Some(defined) = &mut m.line_defined {

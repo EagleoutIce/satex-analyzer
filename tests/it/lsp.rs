@@ -3937,6 +3937,60 @@ fn snapshot_load_follows_the_call_shape() {
     std::fs::remove_dir_all(dir).ok();
 }
 
+/// Intuition: prepareRename answers from the name under the cursor alone (the editor asks it on every
+/// menu; the sites wait for the rename): the word's range and its key, nothing for a word the project
+/// neither declares nor spells as a key. Pins the editor menu waiting a second on a thesis (sweep 2026-11-19).
+#[test]
+fn prepare_rename_is_the_word_and_its_key() {
+    let line = "\\section{A}\\label{seca} Hello \\greet{x} and \\ref{seca}.";
+    let text = format!(
+        "\\documentclass{{article}}\n\\newcommand{{\\greet}}[1]{{Hi #1}}\n\\begin{{document}}\n{line}\n\\end{{document}}\n"
+    );
+    let (mut server, uri, dir) = open_set("prepare-rename", &text, &[]);
+    let col = |w: &str| line.find(w).unwrap() as u32;
+    let greet = at(&mut server, &uri, "textDocument/prepareRename", 3, col("\\greet") + 2);
+    assert_eq!(greet["placeholder"], "greet", "{greet}");
+    let (from, to) = (col("\\greet") + 1, col("\\greet") + 6);
+    assert_eq!(
+        greet["range"],
+        json!({ "start": { "line": 3, "character": from }, "end": { "line": 3, "character": to } })
+    );
+    let key = at(&mut server, &uri, "textDocument/prepareRename", 3, col("seca}.") + 1);
+    assert_eq!(key["placeholder"], "seca", "{key}");
+    let word = at(&mut server, &uri, "textDocument/prepareRename", 3, col("Hello") + 1);
+    assert!(word.is_null(), "{word}");
+    server.shutdown();
+    std::fs::remove_dir_all(dir).ok();
+}
+
+/// Intuition: a write that defines a name itself (Extract to \newcommand writes the definition and its use)
+/// loads no package for it, though the run lacks the name: the run's definers read the written text. Pins
+/// `\usepackage{cclicenses}` written above an extracted `\newcommand{\nd}` (sweep 2026-11-19). The control:
+/// the same call alone loads its package.
+#[test]
+fn snapshot_loads_nothing_for_a_name_it_defines() {
+    let text = "\\documentclass{article}\n\\begin{document}\nHello.\n\n\\end{document}\n";
+    let (mut server, uri, dir) = open_set("provider-own", text, &[]);
+    let views = at(&mut server, &uri, "satex/view", 2, 0);
+    assert!(views.is_array(), "{views}");
+    let write = |server: &mut Server, body: &str| {
+        let range = json!({ "start": { "line": 3, "character": 0 }, "end": { "line": 3, "character": 0 } });
+        let node = json!({ "kind": "text", "name": "", "star": false, "args": [], "range": range, "text": "", "body_at": [0, 0], "body": body });
+        let id = server.request(
+            "satex/dialogApply",
+            json!({ "textDocument": { "uri": uri }, "kind": "snapshot", "nodes": [node] }),
+        );
+        let out = server.response(id)["result"].clone();
+        applied(text, &uri, &json!({ "changes": { &uri: out["edits"] } }), &[])
+    };
+    let used = write(&mut server, "\\includegraphics{x}\n");
+    assert!(used.contains("\\usepackage{graphics}\n"), "{used}");
+    let defined = write(&mut server, "\\newcommand{\\includegraphics}[1]{#1}\n\\includegraphics{x}\n");
+    assert!(!defined.contains("\\usepackage"), "{defined}");
+    server.shutdown();
+    std::fs::remove_dir_all(dir).ok();
+}
+
 /// Page numbering: the page view lists where numbering may restart (`\frontmatter`, `\mainmatter`,
 /// each `\pagenumbering` as written) and whether `page` restarts per chapter. A new style goes on
 /// the line after its mark, since the mark sets its own first; the chapter reset goes in the preamble.
@@ -7225,6 +7279,28 @@ fn own_tikz_styles_come_first_with_their_place_and_comment() {
     assert_eq!(own["detail"], "style (defined in main.tex:4)", "{own}");
     assert!(own["documentation"]["value"].as_str().is_some_and(|d| d.starts_with("A thick red line.")), "{own}");
     assert_eq!(labels(&items)[0], "myline", "{:?}", &labels(&items)[..5.min(items.len())]);
+    server.shutdown();
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Words a LaTeX user can follow: `\document` is environment `document`'s
+/// own code (`\enddocument` pairs with it), so a bare `\` does not offer it
+/// among the first commands; `\t`'s hover names an encoding-specific text
+/// command instead of the kernel's dispatch `\?-cmd \t \?\t`. Pinned: both
+/// showed the kernel's internals (cex3 typing sessions).
+#[test]
+fn completion_and_hover_speak_latex_not_kernel_internals() {
+    let text = "\\documentclass{article}\n\\begin{document}\n\\t{oo} \\\n\\end{document}\n";
+    let (mut server, uri, _, dir) = open_loaded("internals", text);
+    let first: Vec<String> =
+        labels(&complete(&mut server, &uri, 2, 8)).into_iter().take(8).map(str::to_string).collect();
+    assert!(!first.iter().any(|l| l == "document"), "{first:?}");
+    let id = server.request(
+        "textDocument/hover",
+        json!({ "textDocument": { "uri": uri }, "position": { "line": 2, "character": 1 } }),
+    );
+    let hover = server.response(id)["result"]["contents"]["value"].as_str().unwrap_or_default().to_string();
+    assert!(hover.contains("font encoding") && !hover.contains("-cmd"), "{hover}");
     server.shutdown();
     let _ = std::fs::remove_dir_all(&dir);
 }

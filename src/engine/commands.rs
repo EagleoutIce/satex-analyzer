@@ -13,7 +13,7 @@ use crate::engine::builtins::DefMode;
 use crate::engine::builtins::{CodeTable, Cond, Convert, FontParam, LastItem, Primitive, Special, Syntax};
 use crate::engine::env::GroupKind;
 use crate::engine::mode::group;
-use crate::engine::tex::{Catcode, Meaning, RegKind, Span, Sym, Tok, Token};
+use crate::engine::tex::{Catcode, FROZEN, Meaning, RegKind, Span, Sym, Tok, Token};
 use crate::engine::value::{Scaled, UNIT, Value};
 
 /// Keeps font tables and other engine state out of the control-sequence namespace.
@@ -1685,6 +1685,7 @@ impl Machine<'_> {
                 self.set_engine("font", Value::Int(font.into()), global);
             }
             Primitive::Command(syntax) => self.obey_command(syntax, by, span),
+            Primitive::Convert(crate::engine::builtins::Convert::Primitive) => self.primitive_meaning(by, span),
             Primitive::Convert(convert) => {
                 let tokens = self.convert(convert, span);
                 self.unread_all(&tokens);
@@ -2464,10 +2465,8 @@ impl Machine<'_> {
                 self.set_engine("colorstacks", next.map_or(Value::Unknown, Value::Int), true);
                 next.map(|n| n.to_string())
             }
-            C::Primitive => {
-                self.primitive_meaning(span);
-                return Vec::new();
-            }
+            // run by `primitive_meaning`, which knows the token it was
+            C::Primitive => return Vec::new(),
         };
         // What the engine gives and satex cannot know is unknown text.
         match text {
@@ -2605,15 +2604,29 @@ impl Machine<'_> {
     }
 
     /// `\pdfprimitive⟨cs⟩`: the primitive of that name, whatever the name
-    /// means now — expanded if it is expandable, otherwise put back as a
-    /// token that means it.
-    fn primitive_meaning(&mut self, span: Span) {
+    /// means now — expanded if it is expandable. pdftex.web: one that does not
+    /// expand goes back behind a frozen `\pdfprimitive` (`\string` prints that
+    /// name), and the frozen one puts back a token that means it.
+    fn primitive_meaning(&mut self, by: Sym, span: Span) {
         let Some(token) = self.next_token() else { return };
         let Some(sym) = token.cs() else { return };
         let name = self.name(sym).to_string();
         let Some(p) = self.engine_primitive(&name) else { return };
-        let frozen = self.intern(&format!("{ENGINE}primitive.{name}"));
-        self.env.set(frozen, crate::engine::env::Binding::builtin(Meaning::Primitive(p)), true);
+        let builtin = |m: Meaning| crate::engine::env::Binding::builtin(m);
+        let own = format!("{FROZEN}{}", self.name(self.env.identity(by)));
+        if !crate::engine::builtins::expandable(p) && self.name(by) != own {
+            let frozen = self.intern(&own);
+            self.env.set(
+                frozen,
+                builtin(Meaning::Primitive(Primitive::Convert(crate::engine::builtins::Convert::Primitive))),
+                true,
+            );
+            self.unread(token);
+            self.unread(Token::new(Tok::Cs(frozen), span));
+            return;
+        }
+        let frozen = self.intern(&format!("{FROZEN}{name}"));
+        self.env.set(frozen, builtin(Meaning::Primitive(p)), true);
         self.unread(Token::new(Tok::Cs(frozen), span));
     }
 

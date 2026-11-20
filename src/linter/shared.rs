@@ -437,7 +437,7 @@ pub fn own_runaway(analysis: &Analysis, d: &crate::analysis::facts::Diagnostic) 
         blank &= c == '\n';
     };
     let first = d.message.split(':').next().unwrap_or(&d.message);
-    Some((at, format!("{first}: the argument of `\\{name}` opened here never closes, {end}")))
+    Some((at, format!("{}: the argument of `\\{name}` opened here never closes, {end}", first.trim_end())))
 }
 
 /// The installed package that, with what it loads, defines `name` (no

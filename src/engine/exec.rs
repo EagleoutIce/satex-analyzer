@@ -361,7 +361,7 @@ impl Machine<'_> {
                 let sym = match self.last_named_cs {
                     Some(sym) => sym,
                     None => {
-                        let relax = self.intern("\u{4}primitive.relax");
+                        let relax = self.intern(&format!("{}relax", crate::engine::tex::FROZEN));
                         self.env.set(relax, Binding::builtin(Meaning::Primitive(Primitive::Relax)), true);
                         relax
                     }
@@ -1160,7 +1160,7 @@ impl Machine<'_> {
                         && let Tok::Cs(sym) = token.tok
                         && !self.name(sym).is_empty()
                     {
-                        let name = self.name(sym).to_string();
+                        let name = crate::engine::tex::printed_name(self.name(sym)).to_string();
                         let mut tokens = escape(self);
                         tokens.extend(self.text_tokens(&name, token.span));
                         return self.unread_all(&tokens);
@@ -1191,7 +1191,7 @@ impl Machine<'_> {
                         // range. `\csstring` never prints one.
                         let bare = self.name(self.env.identity(by)) == "csstring";
                         let escape = if bare { None } else { self.escape_char() };
-                        let name = self.name(sym).to_string();
+                        let name = crate::engine::tex::printed_name(self.name(sym)).to_string();
                         let mut text: String = escape.into_iter().collect();
                         // tex.web § 263: empty name prints as `\csname\endcsname`.
                         if name.is_empty() {
@@ -2815,7 +2815,7 @@ impl Machine<'_> {
     /// tex.web § 510: an `\else`, `\or` or `\fi` met while its own test is read
     /// (`\ifnum…>20\else`) waits. An unredefinable `\relax` ends the test first.
     fn insert_relax(&mut self, by: Sym, span: Span) {
-        let relax = self.intern("\u{4}primitive.relax");
+        let relax = self.intern(&format!("{}relax", crate::engine::tex::FROZEN));
         self.env.set(relax, Binding::builtin(Meaning::Primitive(Primitive::Relax)), true);
         self.unread(Token::new(Tok::Cs(by), span));
         self.unread(Token::new(Tok::Cs(relax), span));
