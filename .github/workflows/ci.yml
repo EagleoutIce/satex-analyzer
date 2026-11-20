@@ -569,6 +569,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+      # views.test.mjs bundles the TypeScript with esbuild, as the Pages build does
+      - run: npm install --no-save --prefix "$RUNNER_TEMP/esbuild" esbuild@0.25.12 && echo "$RUNNER_TEMP/esbuild/node_modules/.bin" >> "$GITHUB_PATH"
       - run: ./scripts/typecheck-site.sh
       - run: node --check doc/site/playground.js
       - run: node doc/site/views.test.mjs

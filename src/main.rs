@@ -547,7 +547,10 @@ fn run_on(cli: &mut Cli, file: Option<PathBuf>, explaining: bool, piped: Option<
     } else {
         Analysis::empty()
     };
-    drop(keys);
+    // the key reader stops here (a guard only on Linux, nothing to drop elsewhere)
+    {
+        let _keys = keys;
+    }
     satex::util::progress::finish();
     if cli.stats || cfg.verbose >= 1 {
         for line in analysis.cache_report() {
