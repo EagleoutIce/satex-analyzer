@@ -4449,6 +4449,8 @@ impl Machine<'_> {
         let global = self.take_global();
         match target {
             Some(target) => self.assign(target, value, global, span),
+            // A cut dropped the number: the write is part of the skipped rest.
+            None if self.cutting() => {}
             None => self.weaken_registers(kind, spread.as_deref(), value, global),
         }
     }
@@ -4472,6 +4474,10 @@ impl Machine<'_> {
                 }
             }
             let global = self.take_global();
+            // A cut dropped the number: the write is part of the skipped rest.
+            if self.cutting() {
+                return;
+            }
             return self.weaken_registers(kind, spread.as_deref(), Value::Unknown, global);
         };
         // tex.web § 1236: the `by` is an optional keyword.
