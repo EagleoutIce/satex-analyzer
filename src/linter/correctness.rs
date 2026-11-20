@@ -542,6 +542,11 @@ fn undefined_control_sequences(report: &mut Report) {
     // was read under codes the analysis only assumed: what TeX reads there
     // is not known.
     let assumed = report.analysis.facts.diagnostics.iter().any(|d| d.code == "region-catcodes");
+    // A class or package file that never loaded may define any name: a
+    // name the run never defines is then only maybe undefined.
+    let unread = (report.analysis.facts.diagnostics.iter())
+        .find(|d| d.severity == crate::analysis::facts::Severity::Unsupported && d.code.starts_with("unresolved-"))
+        .map(|d| report.place(d.origin.unwrap_or(d.span)));
     let mut known: Option<Vec<String>> = None;
     // Per name: where else the run defines it, the package that would define it, and the nearest
     // known name (a name used undefined many times is looked up once).
@@ -574,6 +579,8 @@ fn undefined_control_sequences(report: &mut Report) {
             (Severity::Info, format!("`{name}` is undefined on a path the analysis approximated"))
         } else if let Some(inside) = &elsewhere {
             (Severity::Error, format!("`{name}` is undefined here: the run defines it only {inside}"))
+        } else if let (true, Some(at)) = (expansion.cds.is_empty(), &unread) {
+            (Severity::Warning, format!("`{name}` is undefined unless the file missing at {at} defines it"))
         } else if expansion.cds.is_empty() {
             (Severity::Error, format!("`{name}` is never defined in this run"))
         } else {

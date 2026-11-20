@@ -233,6 +233,33 @@ fn tagpdf_warm() {
     }
 }
 
+/// What the loads of `testphase=latest` may run warm: only the `\\RequirePackage`
+/// wrappers (the kernel's hook names per file) and the `.def`/`.ltx` inputs.
+/// Measured 2026-11-20: 4.6M of 57M, tagpdf and latex-lab replay from their caches.
+const WARM_TESTPHASE_LOADING: u64 = 4_620_000;
+
+/// Intuition: a tagged document loads tagpdf, latex-lab and the PDF management
+/// before `\\documentclass`. Warm, they replay from the package caches like any
+/// package. The bug it pins: the warm `--stats` line showed 57M loading tokens,
+/// all credited by replayed segments, and read as if every run loaded them again.
+/// Cold and warm must find the same.
+#[test]
+fn testphase_latest_loads_from_cache_warm() {
+    if !crate::support::installed() {
+        return;
+    }
+    let source = "\\DocumentMetadata{testphase=latest,lang=en}\n\\documentclass{article}\n\\begin{document}\nx\n\\end{document}\n";
+    let cfg = crate::support::warm_config("testphase-warm");
+    let cold = Machine::analyze(source, None, &cfg);
+    let warm = Machine::analyze(source, None, &cfg);
+    let codes = |a: &Analysis| a.facts.diagnostics.iter().map(|d| (d.code, d.count)).collect::<Vec<_>>();
+    assert_eq!(codes(&cold), codes(&warm), "cold and warm differ");
+    assert_eq!(cold.facts.occurrences.len(), warm.facts.occurrences.len(), "cold and warm differ");
+    assert_eq!(cold.served_steps, 0, "the cold run has no cache to replay");
+    assert!(warm.served_steps * 10 >= warm.load_steps * 9, "warm loads not replayed: {}", warm.served_steps);
+    within("testphase warm loading", warm.load_steps - warm.served_steps, WARM_TESTPHASE_LOADING);
+}
+
 #[test]
 fn document_metadata() {
     let source = "\\DocumentMetadata{}\\documentclass{article}\\begin{document}x\\end{document}";

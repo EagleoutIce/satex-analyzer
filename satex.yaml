@@ -728,12 +728,14 @@ compile:  # what satex compile runs and shows
   system: auto  # the build system: auto (arara directives, then Tectonic.toml, then latexmk, then the engine), latexmk, arara, tectonic, make, l3build, engine or satex (its own incremental build: a preamble format, reruns only while the build files move)
     #! affects: output
     #! example: `system: arara`: the `% arara:` directives of the main file build it
-    #! example: `system: satex`: a body edit is one pdfTeX pass from the dumped preamble
+    #! example: `system: satex`: a body edit is one pdfTeX pass from the dumped preamble, an unchanged build none
   explain: true  # explain the build's messages by a full analysis. false explains by rule and waits for none
     #! affects: speed
   passes: 4  # engine passes at most of the satex build, until the build files rest
     #! affects: output
   warm: false  # keep pdfTeX started on the next build's format, the main file a named pipe between builds. Only for a build directory of its own (satex gui sets it)
+    #! affects: speed
+  clock: minute  # the clock a document may read: a satex build whose read files, searched directories and clock are as the last rested build left them runs no pass. minute (TeX's \time, sound) or day (assumes only \today reads it). A fixed clock (SOURCE_DATE_EPOCH with FORCE_SOURCE_DATE=1) never parts builds
     #! affects: speed
   # viewer: none  # a PDF viewer `satex compile --view` opens: none or auto (the system's opener) or a program. Only your own config sets it
     #! affects: output

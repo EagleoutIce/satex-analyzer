@@ -5,7 +5,7 @@
 //! between two runs is kept with the files its next run reads, and the next
 //! process goes on from there.
 //! A finished build is kept with the files it left (`.aux`, `.toc`, `.bbl`):
-//! once the document is edited, its next build starts from them, as latexmk
+//! once the document is edited (or `--stats` measures it), its next build starts from them, as latexmk
 //! starts from the files on disk. It ends when a run writes what it read, the
 //! same test as for a build from nothing, mostly after one run.
 
@@ -103,8 +103,9 @@ fn environment() -> Vec<(String, String)> {
 pub(crate) fn lookup(source: &str, path: Option<&Path>, cfg: &Config) -> Lookup {
     let hot = crate::analysis::machine::HOT.load(std::sync::atomic::Ordering::Relaxed);
     // `satex cache build` prepares packages; another run's files in the overlay
-    // (`lint --fix`, the language server) are no input a key holds.
-    let off = !cfg.cache.enabled || !cfg.cache.document || cfg.cache.index.building || cfg.trace || hot;
+    // (`lint --fix`, the language server) are no input a key holds. `--stats`
+    // measures a run, so nothing is served, but it builds from the last build's files.
+    let off = !cfg.cache.enabled || !cfg.cache.document || cfg.cache.index.building || cfg.trace;
     if off || !crate::project::overlay::is_empty() {
         return Lookup::Off;
     }
@@ -120,7 +121,7 @@ pub(crate) fn lookup(source: &str, path: Option<&Path>, cfg: &Config) -> Lookup 
     let file = file_for(&dir, absolute.as_deref());
     let mut pending = None;
     if !cfg.cache.rebuild && !cfg.cache.index.refresh {
-        match serve(&file, key.0, cfg) {
+        match serve(&file, key.0, cfg, hot) {
             Ok((analysis, None)) => {
                 format::touch(&file);
                 return Lookup::Served(Box::new(analysis));
@@ -150,8 +151,13 @@ pub(crate) fn lookup(source: &str, path: Option<&Path>, cfg: &Config) -> Lookup 
     Lookup::Record(Recording { file, key: key.0, document: absolute }, pending)
 }
 
-/// The stored analysis, or why it is not served and the build files it was stored with.
-fn serve(file: &Path, key: u64, cfg: &Config) -> Result<(Analysis, Option<BuildPending>), (String, BuildFiles)> {
+/// The stored analysis, or why it is not served (`measure`: `--stats`) and the build files it was stored with.
+fn serve(
+    file: &Path,
+    key: u64,
+    cfg: &Config,
+    measure: bool,
+) -> Result<(Analysis, Option<BuildPending>), (String, BuildFiles)> {
     let none = |why: String| (why, Vec::new());
     let bytes = std::fs::read(file).map_err(|_| none("none stored".into()))?;
     let (label, rest): (Label, &[u8]) = postcard::take_from_bytes(&bytes).map_err(|e| none(e.to_string()))?;
@@ -164,7 +170,8 @@ fn serve(file: &Path, key: u64, cfg: &Config) -> Result<(Analysis, Option<BuildP
         _ if head.version != VERSION || head.key != key => Some("the text or the settings changed".to_string()),
         _ if crate::caches::distribution::stamps_for(&roots) != head.trees => Some("the installation changed".into()),
         _ => head.reads.iter().find(|r| !r.holds()).map(|read| format!("{} changed", read.path.display())),
-    };
+    }
+    .or_else(|| measure.then(|| "`--stats` measures a run".to_string()));
     if let Some(why) = why {
         return Err((why, head.pending.map_or(head.files, |p| p.files)));
     }
@@ -197,7 +204,10 @@ impl Recording {
     pub(crate) fn store(self, analysis: &mut Analysis) {
         let mut reads = crate::project::overlay::recorded();
         let pending = analysis.build_pending.take().map(|p| *p);
-        if analysis.stopped() && pending.is_none() && analysis.caches_built() > 0 {
+        // A run `limits.memory` stopped is not encoded: that holds it twice, past the limit.
+        if analysis.stopped() && pending.is_none() && analysis.caches_built() > 0
+            || analysis.limits.iter().any(|l| l.key == "memory")
+        {
             return;
         }
         // Every file it opened, those a package cache served included.

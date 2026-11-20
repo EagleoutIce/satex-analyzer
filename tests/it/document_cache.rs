@@ -294,3 +294,38 @@ fn an_edited_document_keeps_one_entry() {
     assert_eq!(satex::caches::document::stored(&dir.join("cache")).len(), 2);
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// `--stats` measures a run, so it is never served. Intuition: it still starts from the files
+/// the last build left, as an edit does, so an unchanged document takes one run whose files are
+/// what it read, with the findings of a build from nothing. The bug it pins: `--stats` turned the
+/// document cache off, so every call built from an empty `.aux` and took two runs (4.9 s for a
+/// tagged document where one run takes 3 s).
+#[test]
+fn stats_builds_from_the_last_builds_files() {
+    if !installed() {
+        return;
+    }
+    let dir = project("stats");
+    let doc = dir.join("doc.tex");
+    std::fs::write(
+        &doc,
+        "\\documentclass{article}\\begin{document}\\section{A}\\label{a}See \\ref{a}.\\end{document}\n",
+    )
+    .expect("the document");
+    let lint = || {
+        let out = crate::support::satex()
+            .args(["-v", "--stats", "-f", "doc.tex", "lint", "--format", "json"])
+            .current_dir(&dir)
+            .stdin(std::process::Stdio::null())
+            .output()
+            .expect("satex runs");
+        let err = String::from_utf8_lossy(&out.stderr).into_owned();
+        (out.stdout, err.lines().filter(|l| l.contains("build run")).count())
+    };
+    let (cold, cold_runs) = lint();
+    assert!(cold_runs > 1, "the label needs a second run from nothing: {cold_runs}");
+    let (warm, warm_runs) = lint();
+    assert_eq!(warm_runs, 1, "a run that writes what it read ends the build");
+    assert_eq!(String::from_utf8_lossy(&warm), String::from_utf8_lossy(&cold), "differs from a build from nothing");
+    let _ = std::fs::remove_dir_all(&dir);
+}

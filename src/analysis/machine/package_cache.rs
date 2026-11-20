@@ -2752,7 +2752,7 @@ impl Machine<'_> {
                 mode: e.mode,
                 depth: 0,
             });
-            self.expansion_sites.insert(
+            self.expansion_sites.insert_mut(
                 key,
                 Site {
                     fact,
@@ -2962,7 +2962,7 @@ impl Machine<'_> {
         let now = self.site_progress();
         for (key, fact, repeats, current) in sites {
             let progress = if current { now } else { !now };
-            self.expansion_sites.insert(
+            self.expansion_sites.insert_mut(
                 key,
                 Site { fact, repeats, progress, size: usize::MAX, source: 0, unread: 1, ..Site::fresh(fact) },
             );

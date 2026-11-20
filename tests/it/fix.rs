@@ -819,7 +819,8 @@ fn fixes_of_one_round_that_clash_go_in_one_at_a_time() {
 
 /// The slow-preamble fix writes a `%&` format line only once the format is
 /// dumped: before, the line names a format TeX cannot find. Pinned: the
-/// line went in on every `--fix --unsafe-fixes`.
+/// line went in on every `--fix --unsafe-fixes`. The message counts the
+/// `\usepackage` lines only, never the class.
 #[test]
 fn a_format_line_waits_for_its_format() {
     if !installed() {
@@ -839,6 +840,8 @@ fn a_format_line_waits_for_its_format() {
     let cost: Vec<Record> =
         satex::linter::lint(&analysis).into_iter().filter(|r| r["code"] == "preamble-cost").collect();
     assert!(!cost.is_empty(), "no preamble-cost finding");
+    // The class is no `\usepackage`: two packages, not three. Pinned: the count took the class in.
+    assert!(cost.iter().all(|r| r["message"].as_str().is_some_and(|m| m.starts_with("2 packages "))), "{cost:?}");
     assert!(cost.iter().all(|r| r.get("edits").is_none_or(|e| e.as_array().is_none_or(Vec::is_empty))), "{cost:?}");
     let _ = std::fs::remove_dir_all(&dir);
 }

@@ -567,7 +567,7 @@ $ satex lint -f samples/paper.tex --filter 'category=performance'
 performance (1)
 
   ● P003 preamble-cost (1)
-    paper.tex:26:1  5 packages requested directly, 275 files read, 82% of the tokens the build takes
+    paper.tex:26:1  4 packages requested directly, 275 files read, 82% of the tokens the build takes
       26 │ \begin{document}
          │ ^^^^^^
 … 6 more lines omitted

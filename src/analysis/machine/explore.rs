@@ -2533,7 +2533,7 @@ impl Machine<'_> {
         while self.undo.len() > mark {
             match self.undo.pop().expect("length checked") {
                 Undo::Site(key, site) => {
-                    self.expansion_sites.insert(key, site);
+                    self.expansion_sites.insert_mut(key, site);
                 }
                 Undo::Count(i, count) => self.out.facts.diagnostics[i].count = count,
             }
@@ -2890,7 +2890,7 @@ impl Machine<'_> {
             self.call_runs.len(),
             self.call_recs.len(),
             self.definition_sites.len(),
-            self.expansion_sites.len(),
+            self.expansion_sites.size(),
             self.cond_sites.len(),
             self.diag_seen.len(),
             self.undo.len(),

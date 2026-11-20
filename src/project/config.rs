@@ -692,6 +692,11 @@ pub struct CompileConfig {
     /// open the main file, a named pipe in its place between builds (`src/cli/warm.rs`). For a
     /// build directory of its own (the playground's), never a project's: the main file is a pipe then.
     pub warm: bool,
+    /// The clock a document may read, for the `satex` build's skip: a build whose read files, the
+    /// directories it looked in and this clock are as its last one left them is not run again.
+    /// `minute` (TeX's `\time`, sound), `day` (assumes only `\today` reads it). A fixed clock
+    /// (`SOURCE_DATE_EPOCH` with `FORCE_SOURCE_DATE=1`) never parts builds.
+    pub clock: String,
     /// A PDF viewer to open after a build: `none`, `auto` (the system's
     /// default opener), or a program. Only the user's own config sets it.
     pub viewer: String,
@@ -699,7 +704,14 @@ pub struct CompileConfig {
 
 impl Default for CompileConfig {
     fn default() -> CompileConfig {
-        CompileConfig { system: "auto".into(), viewer: "none".into(), explain: true, passes: 4, warm: false }
+        CompileConfig {
+            system: "auto".into(),
+            viewer: "none".into(),
+            explain: true,
+            passes: 4,
+            warm: false,
+            clock: "minute".into(),
+        }
     }
 }
 

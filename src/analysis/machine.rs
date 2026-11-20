@@ -763,12 +763,14 @@ impl Analysis {
         let exhausted = if self.exhausted { "  |  budget exhausted" } else { "" };
         [
             format!("{:.3}s{peak}{exhausted}", elapsed.as_secs_f64()),
+            // A replayed cache segment counts the steps its build ran: say how many, so warm work reads apart.
             format!(
-                "{} files  {} lines  {} tokens ({} loading)",
+                "{} files  {} lines  {} tokens ({} loading, {} replayed from caches)",
                 c(self.files.len()),
                 compact_count(self.lines),
                 compact_count(self.steps),
-                compact_count(self.load_steps)
+                compact_count(self.load_steps),
+                compact_count(self.served_steps)
             ),
             format!(
                 "{} definitions  {} expansions  {} occurrences  {} diagnostics",
@@ -2154,7 +2156,8 @@ pub struct Machine<'a> {
     /// does not duplicate what it observed. Packages running one kernel site
     /// (`\DeclareOption*`'s `\edef\default@ds`) each keep their own fact.
     definition_sites: crate::fixed::LookupMap<(Span, Sym, Option<Sym>), usize>,
-    expansion_sites: crate::fixed::LookupMap<(Span, Sym), Site>,
+    /// Persistent, so a checkpoint or a fork shares it instead of copying it.
+    expansion_sites: rpds::HashTrieMapSync<(Span, Sym), Site, crate::engine::tex::NameHash>,
     /// Per site, the names written in the round before its last expansion
     /// and what they held then, under [`Site::assigned`] of that one.
     site_writes: crate::fixed::LookupMap<(Span, Sym), (u64, Written)>,
@@ -4648,7 +4651,7 @@ will look undefined",
         self.out.facts.shapes.clear();
         self.call_shape = None;
         self.definition_sites.clear();
-        self.expansion_sites.clear();
+        self.expansion_sites = Default::default();
         self.out.facts.spaces.clear();
         self.out.facts.kept_spaces.clear();
         self.out.facts.overfull.clear();
@@ -4690,9 +4693,8 @@ will look undefined",
         self.scratch = Scratch::default();
         #[cfg(test)]
         package_cache::note_load_end(&self.carried, self.guard.lines.len());
-        for site in self.expansion_sites.values_mut() {
-            *site = Site::fresh(site.fact);
-        }
+        let fresh = self.expansion_sites.iter().map(|(k, s)| (*k, Site::fresh(s.fact)));
+        self.expansion_sites = fresh.collect();
     }
 
     /// `\count5` and the rest: a register addressed by number keeps its value
@@ -10623,7 +10625,7 @@ will look undefined",
             recent: self.env.assignments,
             ..Site::fresh(fact)
         };
-        self.expansion_sites.insert((span, name), site);
+        self.expansion_sites.insert_mut((span, name), site);
         self.undo.push(Undo::Site((span, name), Site::fresh(fact)));
         self.out.facts.expansions.push(Expansion {
             name,

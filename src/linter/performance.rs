@@ -452,8 +452,13 @@ fn dump_command(engine: crate::project::config::Engine, job: &str, file: &str) -
 
 fn preamble_cost(report: &mut Report) {
     let analysis = report.analysis;
-    let direct =
-        analysis.facts.loads.iter().filter(|l| l.kind.is_package() && l.span.file == analysis.main_file).count();
+    // `\usepackage` lines only: the class is not a package the message counts.
+    let direct = analysis
+        .facts
+        .loads
+        .iter()
+        .filter(|l| l.kind == crate::engine::builtins::LoadKind::Package && l.span.file == analysis.main_file)
+        .count();
     let (files, steps) = analysis.preamble_cost.unwrap_or((analysis.files.len(), analysis.tex_steps()));
     // Only a preamble that is most of the build, and no small one, is worth a format.
     if !analysis.settings.lints.build_cost.costly(steps, analysis.tex_steps()) {

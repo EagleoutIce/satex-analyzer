@@ -176,6 +176,74 @@ fn the_satex_build_equals_latexmk_across_edits() {
     }
 }
 
+/// A build whose read files, the directories it looked in and the clock are as the last rested
+/// build left them runs no pass, as latexmk skips one. A file the document looked for and did not
+/// find is in no `.fls`: its appearing must rebuild, as must an edit of it. Pins: a skip that
+/// keeps a PDF a plain build would not give.
+#[test]
+fn the_satex_build_skips_only_what_cannot_change() {
+    if !crate::support::installed()
+        || satex::project::paths::which("pdflatex").is_err()
+        || satex::project::paths::which("pdftotext").is_err()
+    {
+        return;
+    }
+    let dir = crate::support::scratch_dir(crate::support::tmp_root().join("satex-compile-skip"));
+    let doc = "\\documentclass{article}\n\\begin{document}\nMain.\n\\IfFileExists{sub/extra.tex}{\\input{sub/extra}}{}\n\\end{document}\n";
+    std::fs::write(dir.join("doc.tex"), doc).unwrap();
+    // a fixed clock: the builds of this test fall in one minute or not, the skip may not tell
+    let build = || {
+        let out = crate::support::satex()
+            .args(["compile", "-f", "doc.tex", "--format", "json", "--system", "satex"])
+            .args(["--set", "limits.seconds=0", "--set", "compile.explain=false"])
+            .env("SOURCE_DATE_EPOCH", "1700000000")
+            .env("FORCE_SOURCE_DATE", "1")
+            .current_dir(&dir)
+            .output()
+            .unwrap();
+        let said = String::from_utf8_lossy(&out.stderr).into_owned();
+        (said.contains("$ pdflatex"), pdf_text(&dir.join("doc.pdf")), said)
+    };
+    let (ran, text, said) = build();
+    assert!(ran && text.contains("Main."), "{said}");
+    let (ran, _, said) = build();
+    assert!(!ran && said.contains("up to date"), "nothing changed, yet a pass ran: {said}");
+    std::fs::create_dir_all(dir.join("sub")).unwrap();
+    std::fs::write(dir.join("sub/extra.tex"), "Extra.\n").unwrap();
+    let (ran, text, said) = build();
+    assert!(ran && text.contains("Extra."), "a file that was missing appeared: {said}");
+    std::fs::write(dir.join("sub/extra.tex"), "Other.\n").unwrap();
+    let (ran, text, said) = build();
+    assert!(ran && text.contains("Other."), "a read file changed: {said}");
+    let (ran, _, said) = build();
+    assert!(!ran, "{said}");
+}
+
+/// mylatexformat replays the preamble's `\\openout`s at `\\begin{document}`, and glossaries'
+/// `\\makeglossaries` before another package breaks that replay ("Extra \\fi" in `\\MYLATEX@opens`),
+/// though a plain run has no error. Pins: the format build reporting errors pdflatex has not.
+#[test]
+fn a_preamble_the_format_breaks_is_read_by_the_run() {
+    let tools = ["pdflatex", "kpsewhich"];
+    if !crate::support::installed()
+        || tools.iter().any(|t| satex::project::paths::which(t).is_err())
+        || ["mylatexformat.ltx", "glossaries.sty", "cleveref.sty"]
+            .iter()
+            .any(|f| std::process::Command::new("kpsewhich").arg(f).output().map_or(true, |o| o.stdout.is_empty()))
+    {
+        return;
+    }
+    let dir = crate::support::scratch_dir(crate::support::tmp_root().join("satex-compile-mylatex"));
+    let doc = "\\documentclass{book}\n\\usepackage{glossaries}\\makeglossaries\\usepackage{cleveref}\n\
+               \\begin{document}\n\\frontmatter\nHi.\n\\end{document}\n";
+    std::fs::write(dir.join("m.tex"), doc).unwrap();
+    for build in 0..2 {
+        let (rows, said) = satex_build(&dir, "m.tex");
+        assert!(rows.iter().all(|r| r["severity"] != "error"), "build {build}: {rows:?}\n{said}");
+        std::fs::write(dir.join("m.tex"), doc.replace("Hi.", "Ho.")).unwrap();
+    }
+}
+
 /// An error and a warning in the preamble are reported though the preamble comes from a
 /// format: the error keeps the format from being used, the warning is read from the dump's
 /// log, also in a later build that reuses the format. Pins: messages lost to the format.
@@ -201,8 +269,9 @@ fn the_satex_build_reports_what_the_preamble_says() {
     assert!(!said.contains("-fmt="), "a preamble with an error is read from a format: {said}");
     let warned = "\\documentclass{article}\n\\makeatletter\\PackageWarningNoLine{demo}{said in the preamble}\n\
                   \\begin{document}\nHi.\n\\end{document}\n";
-    std::fs::write(dir.join("warn.tex"), warned).unwrap();
     for build in 0..2 {
+        // another body each build: an unchanged one is not built again
+        std::fs::write(dir.join("warn.tex"), warned.replace("Hi.", ["Hi.", "Ho."][build])).unwrap();
         let (rows, said) = satex_build(&dir, "warn.tex");
         assert!(said.contains("-fmt="), "{said}");
         let found = rows.iter().any(|r| r["message"].as_str().is_some_and(|m| m.contains("said in the preamble")));

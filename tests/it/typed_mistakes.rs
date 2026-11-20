@@ -125,3 +125,18 @@ fn a_period_after_a_footnote_ending_in_one_is_not_doubled() {
         0,
     );
 }
+
+/// A misspelled package (`mmsthm` for `amsthm`) is a file the run never
+/// reads, so nothing it would define is known: `\theoremstyle` after it is
+/// only maybe undefined, a warning beside the misspelling, never a certain
+/// error pdflatex does not give (it stops at the missing file). Pinned:
+/// the cex round of 2026-11-20 found `\theoremstyle` "never defined".
+#[test]
+fn a_name_after_a_missing_package_is_only_maybe_undefined() {
+    if !installed() {
+        return;
+    }
+    let doc = "\\documentclass{article}\n\\usepackage{mmsthm}\n\\theoremstyle{plain}\n\\begin{document}\nx\n\\end{document}\n";
+    assert_eq!(error_lines(doc), Vec::<u32>::new());
+    crate::support::assert_lint(doc, "undefined-control-sequence", 1);
+}

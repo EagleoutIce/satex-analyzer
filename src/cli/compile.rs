@@ -88,8 +88,9 @@ pub fn run(context: &Context, system: Option<&str>, view: bool) -> Result<Output
         }
         "satex" => {
             let at = out_dir.clone().unwrap_or_else(|| dir.clone());
-            let (passes, warm) = (analysis.settings.compile.passes, analysis.settings.compile.warm);
-            let (status, dumped) = own(program, latex, context.source, file, &job, &dir, &at, passes, warm)?;
+            let c = &analysis.settings.compile;
+            let (status, dumped) =
+                own(program, latex, context.source, file, &job, &dir, &at, c.passes, c.warm, &c.clock)?;
             preamble = dumped;
             status
         }
@@ -147,7 +148,8 @@ pub const KEEP: &str = ".satex-build";
 /// Biber and makeindex where their inputs changed, a LaTeX preamble read from a format dumped once
 /// per preamble. A fresh build's first pass writes no PDF. With `warm`, a pass is fed to the engine
 /// the last build left waiting where it runs that pass's command (`warm.rs`), and the build leaves
-/// one for the next. Gives the status and the dump's log.
+/// one for the next. A build whose inputs are as the last rested one left them runs no pass
+/// (`current`). Gives the status and the dump's log.
 #[allow(clippy::too_many_arguments)]
 fn own(
     program: &str,
@@ -159,10 +161,14 @@ fn own(
     at: &Path,
     passes: u32,
     warm: bool,
+    clock: &str,
 ) -> Result<(std::process::ExitStatus, String), String> {
+    let started = std::time::Instant::now();
     let keep = at.join(KEEP);
     std::fs::create_dir_all(&keep).map_err(|e| format!("{}: {e}", keep.display()))?;
     let mut args = vec!["-interaction=nonstopmode".to_string(), "-file-line-error".into(), "-synctex=1".into()];
+    // the .fls names every file a pass reads and writes, for `current`
+    args.push("-recorder".into());
     if at != dir {
         args.push(format!("-output-directory={}", at.display()));
     }
@@ -172,12 +178,27 @@ fn own(
     }
     let read = |ext: &str| std::fs::read(at.join(format!("{job}.{ext}"))).unwrap_or_default();
     let rested = || -> Vec<u8> { OWN.iter().flat_map(|e| [read(e), b"\0".to_vec()].concat()).collect() };
+    let mut dumped = fmt.as_ref().map(|(_, log)| log.clone()).unwrap_or_default();
+    // a changed .bib reruns BibTeX first: its new .bbl is a changed input
+    tools(job, dir, at, &keep)?;
+    let done = keep.join(format!("{job}.done"));
+    let head = |args: &[String]| format!("{}\n", [program, &args.join(" "), file, &clock_key(clock)].join("\t"));
+    #[cfg(unix)]
+    if let Some(raw) = current(&done, &head(&args)) {
+        eprintln!("satex: up to date, no file it reads changed ({:.2} s)", started.elapsed().as_secs_f64());
+        return Ok((std::os::unix::process::ExitStatusExt::from_raw(raw), dumped));
+    }
+    let _ = std::fs::remove_file(&done);
+    // kpathsea's databases and search path, asked while the passes run
+    let ask = |args: &[&str]| Command::new("kpsewhich").args(args).stdout(std::process::Stdio::piped()).spawn().ok();
+    let asked = [ask(&["-all", "ls-R"]), ask(&["-show-path=tex"])];
     let mut was = rested();
     // LaTeX writes an .aux: a first pass without one is never the last
     let fresh = latex && read("aux").is_empty();
-    let mut status = None;
+    let (mut status, mut ran, mut rest) = (None, 0, false);
     let mut last = Vec::new();
     for pass in 0..passes.max(1) {
+        ran += 1;
         let draft = fresh && pass == 0;
         let mut pass_args: Vec<&str> = args.iter().map(String::as_str).collect();
         if draft {
@@ -195,17 +216,145 @@ fn own(
         tools(job, dir, at, &keep)?;
         let now = rested();
         let log = String::from_utf8_lossy(&read("log")).into_owned();
+        // mylatexformat replays the preamble's \openout at \begin{document} and can break there (an
+        // \openout under \if, glossaries' \makeglossaries): an error a plain run has not. The format
+        // is unusable then, and the pass runs again on the preamble itself.
+        if args.iter().any(|a| a.starts_with("-fmt=")) && log.contains("\\MYLATEX@") {
+            let key = keep.join(format!("{job}.key"));
+            let _ = std::fs::write(&key, std::fs::read_to_string(&key).unwrap_or_default() + "unusable\n");
+            args.retain(|a| !a.starts_with("-fmt="));
+            dumped.clear();
+            continue;
+        }
         if !draft && now == was && !log.contains("Rerun to get") && !log.contains("Label(s) may have changed") {
+            rest = true;
             break;
         }
         was = now;
     }
+    let status = status.ok_or("no pass ran")?;
+    // waited for also when unused: a long-lived `satex gui` keeps no zombies
+    let [databases, path] = asked.map(|c| c.and_then(|c| c.wait_with_output().ok()).map(|o| o.stdout));
+    let [databases, path] = [databases, path].map(|o| String::from_utf8_lossy(&o.unwrap_or_default()).into_owned());
+    // only a build that rested gives what its next one would, failed or not: what it read is its key
+    #[cfg(unix)]
+    if rest {
+        let raw = std::os::unix::process::ExitStatusExt::into_raw(status);
+        let _ =
+            std::fs::write(&done, format!("{}{raw}\n{}", head(&args), reads(dir, at, job, &keep, &databases, &path)));
+    }
+    #[cfg(not(unix))]
+    let _ = (rest, head, databases, path, clock);
+    eprintln!("satex: {ran} pass{} in {:.2} s", if ran == 1 { "" } else { "es" }, started.elapsed().as_secs_f64());
     #[cfg(target_os = "linux")]
     if warm && !last.is_empty() {
         super::warm::start(&keep, dir, &last, file, &[(PRINT_LINE.0, PRINT_LINE.1)]);
     }
-    let dumped = fmt.map(|(_, log)| log).unwrap_or_default();
-    Ok((status.ok_or("no pass ran")?, dumped))
+    Ok((status, dumped))
+}
+
+/// What may part this build from the last one besides files: the environment the engine and
+/// kpathsea read, and the clock at `clock`'s grain (`compile.clock`), unless it is fixed.
+fn clock_key(clock: &str) -> String {
+    let mut env: Vec<String> = std::env::vars()
+        .filter(|(k, _)| {
+            ["TEX", "BIB", "BST", "KPSE", "MF", "SOURCE_DATE"].iter().any(|p| k.contains(p))
+                || k.starts_with(|c: char| c.is_ascii_lowercase())
+        })
+        .map(|(k, v)| format!("{k}={v}"))
+        .collect();
+    env.sort_unstable();
+    let fixed =
+        std::env::var("FORCE_SOURCE_DATE").is_ok_and(|v| v == "1") && std::env::var("SOURCE_DATE_EPOCH").is_ok();
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs() / 60);
+    let grain = match (fixed, clock) {
+        (true, _) => "fixed".to_string(),
+        (_, "day") => format!("day {}", now / (24 * 60)),
+        _ => format!("minute {now}"),
+    };
+    format!("{grain} {}", env.join(" "))
+}
+
+/// A file's line of the key: its path and content hash. A directory's: its path with a slash (two
+/// when `deep`) and the hash of the names in it, `deep` to every level (a file the build looked for and did not
+/// find appears there).
+fn stamp(path: &Path, deep: bool) -> String {
+    let meta = std::fs::metadata(path);
+    // a pipe or device gives other bytes each read: its line never holds again
+    if meta.as_ref().is_ok_and(|m| !m.is_file() && !m.is_dir()) {
+        return format!("{}\t{:?}\n", path.display(), std::time::SystemTime::now());
+    }
+    if !meta.is_ok_and(|m| m.is_dir()) {
+        return format!("{}\t{:016x}\n", path.display(), hash(&std::fs::read(path).unwrap_or_default()));
+    }
+    fn names(dir: &Path, deep: bool, out: &mut Vec<String>) {
+        let Ok(entries) = std::fs::read_dir(dir) else { return };
+        for e in entries.flatten() {
+            let name = e.file_name().to_string_lossy().into_owned();
+            // satex's own files and the history move with every build or commit
+            if name == KEEP || name == ".git" {
+                continue;
+            }
+            out.push(e.path().display().to_string());
+            if deep && e.file_type().is_ok_and(|t| t.is_dir()) {
+                names(&e.path(), deep, out);
+            }
+        }
+    }
+    let mut out = Vec::new();
+    names(path, deep, &mut out);
+    out.sort_unstable();
+    format!("{}{}\t{:016x}\n", path.display(), if deep { "//" } else { "/" }, hash(out.join("\n").as_bytes()))
+}
+
+/// The key of the build just run: every file its last pass and the format's dump read or wrote
+/// (`-recorder`), the directories outside `dir` they are in, `dir` and the TeX search path's disk
+/// directories to every level, and kpathsea's file databases (`ls-R`): where a file found nowhere
+/// would appear.
+fn reads(dir: &Path, at: &Path, job: &str, keep: &Path, databases: &str, path: &str) -> String {
+    let fls = [at.join(format!("{job}.fls")), keep.join(format!("{job}.fls"))];
+    let text: String = fls.iter().map(|f| std::fs::read_to_string(f).unwrap_or_default()).collect();
+    let mut files: Vec<PathBuf> = text
+        .lines()
+        .filter_map(|l| l.strip_prefix("INPUT ").or_else(|| l.strip_prefix("OUTPUT ")))
+        .map(|p| dir.join(p))
+        .filter(|p| !p.starts_with(keep) || p.extension().is_some_and(|e| e == "fmt"))
+        .collect();
+    files.extend(databases.lines().filter(|l| !l.is_empty()).map(PathBuf::from));
+    files.sort_unstable();
+    files.dedup();
+    let root = dir.canonicalize().unwrap_or_else(|_| dir.to_path_buf());
+    let mut dirs: Vec<PathBuf> = files
+        .iter()
+        .filter_map(|f| f.canonicalize().ok()?.parent().map(Path::to_path_buf))
+        .filter(|d| !d.starts_with(&root))
+        .collect();
+    dirs.sort_unstable();
+    dirs.dedup();
+    let mut key: String = files.iter().map(|f| stamp(f, false)).collect();
+    key.extend(dirs.iter().map(|d| stamp(d, false)));
+    // the search path's directories kpathsea reads from disk, not from an `ls-R` (`!!`)
+    let searched = path.trim().split(':').filter(|d| !d.starts_with("!!") && !d.is_empty() && *d != ".");
+    let searched = searched.map(|d| dir.join(d.trim_end_matches('/')));
+    key.extend([root].into_iter().chain(searched).map(|d| stamp(&d, true)));
+    key
+}
+
+/// The status of the build the key in `done` was written by, when the key holds now: its head is
+/// `head` and every file and directory in it stamps as it did.
+fn current(done: &Path, head: &str) -> Option<i32> {
+    let key = std::fs::read_to_string(done).ok()?;
+    let (raw, rest) = key.strip_prefix(head)?.split_once('\n')?;
+    let holds = !rest.is_empty()
+        && rest.lines().all(|l| {
+            let path = l.split('\t').next().unwrap_or_default();
+            let (path, deep) = match path.strip_suffix("//") {
+                Some(d) => (d, true),
+                None => (path.strip_suffix('/').unwrap_or(path), false),
+            };
+            stamp(Path::new(path), deep) == format!("{l}\n")
+        });
+    holds.then(|| raw.parse().ok()).flatten()
 }
 
 /// The pass `command` by the warm engine (`warm.rs`), named on stderr as a run is.
