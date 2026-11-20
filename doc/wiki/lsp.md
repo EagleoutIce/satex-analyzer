@@ -4,7 +4,7 @@
 
 # Language Server
 
-`satex lsp` serves the Language Server Protocol on top of the existing lints and queries: diagnostics from [lint](lints.md), hover and definitions from [`explain`](queries.md#explain), completion from [`scope`](../../README.md#comprehension), and any [query request](queries.md#json-requests) through `workspace/executeCommand`.
+This page is for editor authors and users of `satex lsp`: what it serves, how it decides what to offer and how to start it. For ready-made clients see [VS Code](vscode.md) and [IntelliJ](intellij.md). It serves the Language Server Protocol on top of the existing lints and queries: diagnostics from [lint](lints.md), hover and definitions from [`explain`](queries.md#explain), completion from [`scope`](../../README.md#comprehension), and any [query request](queries.md#json-requests) through `workspace/executeCommand`.
 
 ```sh
 satex lsp                    # stdio, the default every editor client speaks
@@ -14,7 +14,7 @@ satex lsp --port 9257 --host 0.0.0.0
 
 **How it runs.** Edits arrive as changed ranges (incremental sync). A document is re-analyzed `lsp.debounce_ms` after its last edit. The run resumes from the last checkpoint whose input is unchanged, so an edit late in the document reruns only what follows it, with the same result as a full run. Each analysis is the whole build (latexmk-style), and its `.aux`/`.bbl` stay for the next one. Queries and the playground read that one analysis. While a run or its lint rules go on, hover, completion, signature help, widgets, colors, lenses and inlay hints answer from the last one, at most `lsp.pause_ms` later. Each request is answered on its own: one that waits for the run (a code action, a rename) holds no other. A hover over a finding adds its rule's card: number, severity, category, summary, explanation and sources. `\input` sees the unsaved text of other open documents. A file without `\documentclass` is analyzed as part of the document that reads it.
 
-**Style prompt.** When a project's own files break one style rule at least `lints.style-prompt.min_findings` times, the server asks once per session through `window/showMessageRequest`, so any client can answer. *Yes* adds the rule to `lint_off+` in the project's `satex.yaml` (made if missing) and takes its findings off at once. *No* asks again in the next session. *Never ask* adds it to `style_prompt.keep`. `style_prompt.enabled: false` turns the prompt off, and `style_prompt.categories` names the categories a project may call its style. The playground asks the same in a banner, through the command `satex/style` with `{code, answer}`, `answer` being `off` or `keep`.
+**Style prompt.** When a project's own files break one style rule at least `lints.style-prompt.min_findings` times, the server asks once per session through `window/showMessageRequest`, so any client can answer. *Yes* adds the rule to `lint_off+` in the project's `satex.yaml` (made if missing) and takes its findings off at once. *No* asks again in the next session. *Never ask* adds it to `lints.style-prompt.keep`. `lints.style-prompt.enabled: false` turns the prompt off, and `lints.style-prompt.categories` names the categories a project may call its style. `satex lint --style` lists the same rules (see [lints](lints.md#suppressing-findings)). The playground asks the same in a banner, through the command `satex/style` with `{code, answer}`, `answer` being `off` or `keep`.
 
 ## Capabilities
 
@@ -92,12 +92,13 @@ Hover over `\mybox` shows `\mybox{⟨the text to box⟩}`, from `mypackage`.
 
 ```yaml
 lsp:
-  port: ~            # unset: stdio. A number switches to TCP.
+  # port: 2087       # unset: stdio. A number switches to TCP.
   host: 127.0.0.1    # interface `port` binds to
-  debounce_ms: 300    # quiet time after an edit before re-analyzing
+  debounce_ms: 100   # quiet time after an edit before re-analyzing
+  pause_ms: 10       # how long a run goes on before requests answer from the last one
 ```
 
-`--port` and `--host` override these for one run.
+`--port` and `--host` override these for one run. What completion offers is set under `completion.*`, the rest of the file is described on the [configuration page](configuration.md).
 
 ## Editor setup
 

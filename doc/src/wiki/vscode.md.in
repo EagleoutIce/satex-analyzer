@@ -10,14 +10,14 @@ The extension lives in `editors/vscode/`. Other editors: [IntelliJ](intellij.md)
 
 ## Features
 
-- Starts `satex lsp` over stdio for LaTeX, TeX and BibTeX files, at a lower priority and with a memory limit (`satex.server.maxMemory`).
+- Starts [`satex lsp`](lsp.md) over stdio for LaTeX, TeX and BibTeX files, at a lower priority and with a memory limit (`satex.server.maxMemory`).
 - A satex view in the activity bar: the findings of the open documents by rule, most severe first, and the actions below.
 - A status bar entry: what satex caches or analyzes (`caching pdftex kernel`), then its errors and warnings. A click opens the view. The kernel cache is built once on first use.
 - Hovers are kept and answered at once, also while an edit is analyzed. The names a document uses most are prepared while satex is idle.
 - With LaTeX Workshop installed, satex offers once to turn its chktex linting off, so a finding is not reported twice.
 - `satex: Trace Expansion Here` (`satex.traceAtCursor`): traces what the selection, or the control sequence at the cursor, expands to at that position and shows the steps beside the editor.
 - `satex: Compile` (`satex.compile`): builds the root document, streams the build output to the "satex build" channel and shows the findings as diagnostics.
-- Widgets sit where you are. A code lens above each table, figure and plugin view says `Edit table…`, `Edit image…` or `Edit placement…`. A tabular without rows has one too. The same entries are code actions (`Ctrl+.`) and hover links. A type plugin switches its lens off in `satex.yaml` (`type_plugins`). `satex: Open Widget…` lists them all.
+- Widgets sit where you are. A code lens above each table, figure and plugin view says `Edit table…`, `Edit image…` or `Edit placement…`. A tabular without rows has one too. The same entries are code actions (`Ctrl+.`) and hover links. A [type plugin](type-plugins.md) switches its lens off in `satex.yaml` (`type_plugins`). `satex: Open Widget…` lists them all.
 
 ## Requirements
 

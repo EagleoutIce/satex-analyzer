@@ -34,10 +34,10 @@ cargo build --release
 Shell completion: after installing, run `satex completions install` once. It adds the hook to the startup file of your shell (bash, zsh or fish). `satex completions <shell>` prints the script for bash, zsh, fish, elvish or powershell. Query names and `--set` keys complete from the program itself. See the [command line page](doc/wiki/cli.md).
 
 ```sh
-source <(satex completions bash)                          # bash: add to ~/.bashrc
-source <(satex completions zsh)                           # zsh: add to ~/.zshrc
-satex completions fish > ~/.config/fish/completions/satex.fish
+source <(satex completions bash)   # bash: add to ~/.bashrc
 ```
+
+zsh and fish are on the [command line page](doc/wiki/cli.md#shell-completion).
 
 Current version: {{version}}. `satex --version` also lists the plugins included in this build and the configuration in effect:
 
@@ -203,7 +203,7 @@ Every command prints text by default. You can use `--format json`, `csv` or `mar
 
 ## Editor integration
 
-`satex lsp` runs a Language Server: diagnostics, hover, definitions, references, completion, document symbols and quick fixes, all backed by the commands above. Stdio by default, `--port`/`--host` for TCP. See the [LSP wiki page](doc/wiki/lsp.md) for the protocol details and Neovim/VS Code setup.
+`satex lsp` runs a Language Server: diagnostics, hover, definitions, references, completion, document symbols and quick fixes, all backed by the commands above. Stdio by default, `--port`/`--host` for TCP. See the [LSP wiki page](doc/wiki/lsp.md) for the protocol details and Neovim setup, and the [VS Code](doc/wiki/vscode.md) and [IntelliJ](doc/wiki/intellij.md) pages for those editors.
 
 `satex gui [DIR]` opens the browser playground on a project of your computer: its files, the TeX packages installed there, the native language server and your TeX for the PDF. Edits are saved to the files. See [the playground on your machine](doc/wiki/cli.md#the-playground-on-your-machine).
 
@@ -226,7 +226,7 @@ Concretely:
 
 ## Gaps
 
-Use `satex query gaps -f <document>` to get details on noted issues SaTeX has with analyzing the document (and its dependencies).
+Use `satex query gaps -f <document>` to get details on noted issues SaTeX has with analyzing the document (and its dependencies). The [challenges page](doc/wiki/challenges.md) shows what makes TeX hard to analyze.
 
 ## Related Work
 

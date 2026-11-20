@@ -1,5 +1,7 @@
 # Command line
 
+This page is for what every `satex` command shares: input, configuration, output and exit codes. It also covers shell completion and the local playground. `satex --help` and `satex COMMAND --help` list the flags. [Lint rules](lints.md) and [queries](queries.md) describe what the commands print. The [configuration page](configuration.md) describes `satex.yaml`.
+
 ## Rules every command shares
 
 Every `satex` command follows the same rules for its input, its configuration and its output. A command differs only where its job does: `lint` shows early findings, `satex cache` reads no document.
@@ -16,7 +18,7 @@ Every `satex` command follows the same rules for its input, its configuration an
 
 ### Configuration
 
-Every command reads the same layers: built-in defaults, the global config, each `satex.yaml` from the filesystem root down to the document's directory (the current one without `-f`), `--config FILE`, then `--set PATH=VALUE`. `--no-config` drops every file. `--profile` picks the defaults. `satex --version` lists the files in effect. A file that does not read is named once, by its full path. `satex gui` hands its config flags to every run it starts. `satex completions` reads no config, since nothing it prints depends on one.
+Every command reads the same layers: built-in defaults, the global config, each `satex.yaml` from the filesystem root down to the document's directory (the current one without `-f`), `--config FILE`, then `--set PATH=VALUE`. `--no-config` drops every file. `--profile` picks the defaults ([profiles](configuration.md#profiles)). `satex --version` lists the files in effect. A file that does not read is named once, by its full path. `satex gui` hands its config flags to every run it starts. `satex completions` reads no config, since nothing it prints depends on one.
 
 ### Output
 

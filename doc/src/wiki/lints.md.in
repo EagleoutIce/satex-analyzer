@@ -4,7 +4,7 @@
 
 # Lint rules
 
-`satex lint` checks the input file with every rule below. `--all` also checks the packages and classes it loads. `--rules` lists the codes, `--explain CODE` prints one rule's explanation. See [Chktex-Coverage](Chktex-Coverage) for the chktex warning each rule follows, and [Primitive-coverage](Primitive-coverage) and [Domains](Domains) for how satex gets the facts a rule reads.
+`satex lint` checks the input file with every rule below. `--all` also checks the packages and classes it loads. `--rules` lists the codes, `--explain CODE` prints one rule's explanation. `lint_off` and `lints.⟨code⟩` in [`satex.yaml`](Configuration) turn rules off and tune them. The same findings come from `satex query diagnostics` ([queries](Queries#diagnostics)) and the [language server](lsp.md). See [Chktex-Coverage](Chktex-Coverage) for the chktex warning each rule follows, and [Primitive-coverage](Primitive-coverage) and [Domains](Domains) for how satex gets the facts a rule reads.
 
 Every rule has a stable number: its category's letter and a count, such as `C012`. The letters are `C` correctness, `X` security, `S` style, `P` performance and `A` precision (of the analysis). Output shows it before the code: the text and GitHub formats, SARIF's rule id and the editor's diagnostic code. `--explain`, `lint_off` and the suppression comments take the number in place of the code. A new rule gets the next free number of its category in [`src/data/lint-numbers.txt`](https://github.com/EagleoutIce/satex-analyzer/blob/main/src/data/lint-numbers.txt). A removed rule keeps its line there, so a number never changes meaning. A rule that moves to another category keeps its number, so suppressions and links that name it stay valid.
 
@@ -16,7 +16,7 @@ Every rule, with a link to its explanation below. The shape gives the severity: 
 
 ## Early findings
 
-Each rule declares the facts it needs. Most need the whole run. A few need only the files' text, or the text and the standard meaning of a few names: which files `\input`, `\include` and `\subfile` read, and which environments, such as `verbatim`, take their content as plain text. The `keys` tier also reads what the text's commands name, by their standard meaning: `\label` defines a label, `\ref` and `\cref` refer to one, `\cite` cites a key of the databases `\bibliography` and `\addbibresource` name, `\usepackage` loads a package, and `\includegraphics` includes a file that graphics finds with one of its extensions. A later pass can still change these findings, so the editor does not keep them between passes, as it keeps `text` and `names` ones. These rules run first, on a rough copy of the document, before the run starts. `lints.early` in `satex.yaml` lists the names, and the rough copy reports this as the assumption `early-standard-names`.
+Each rule declares the facts it needs. Most need the whole run. A few need only the files' text, or the text and the standard meaning of a few names: which files `\input`, `\include` and `\subfile` read, and which environments, such as `verbatim`, take their content as plain text. The `keys` tier also reads what the text's commands name, by their standard meaning: `\label` defines a label, `\ref` and `\cref` refer to one, `\cite` cites a key of the databases `\bibliography` and `\addbibresource` name, `\usepackage` loads a package, and `\includegraphics` includes a file that graphics finds with one of its extensions. A later pass can still change these findings, so the editor does not keep them between passes, as it keeps `text` and `names` ones. These rules run first, on a rough copy of the document, before the run starts. `lints.early` in [`satex.yaml`](Configuration) lists the names, and the rough copy reports this as the assumption `early-standard-names`.
 
 {{early}}
 
@@ -37,7 +37,7 @@ A comment in the document silences findings. Without codes it silences every rul
 
 They apply to every output format and to `--fix`. An unknown code is reported as `unknown-suppress-code`.
 
-`satex lint --style` lists the rules the project breaks so often that they may be its style, as an editor asks about them (`lints.style-prompt` in `satex.yaml`).
+`satex lint --style` lists the rules the project breaks so often that they may be its style, as an editor asks about them (`lints.style-prompt` in `satex.yaml`, see the [style prompt](lsp.md)).
 
 ## Assertions
 
@@ -74,7 +74,7 @@ Some findings can be repaired in more than one way: a runaway argument may end a
 
 `--format json` gives each fix as `applicability` and `edits` (`path`, 1-based `start`/`end`, `replacement`), `--format sarif` as `fixes`, `--format lsp` as diagnostics with `quickfix` code actions.
 
-In the rule list below, `S` marks a rule with a safe fix and `U` one with an unsafe fix. A rule with both is safe where its fix cannot change what the document means and unsafe where it might. Each finding names its own kind.
+In the rule list, `S` marks a rule with a safe fix and `U` one with an unsafe fix. A rule with both is safe where its fix cannot change what the document means and unsafe where it might. Each finding names its own kind.
 
 ## Explanations
 

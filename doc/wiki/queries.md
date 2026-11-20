@@ -4,7 +4,7 @@
 
 # Queries
 
-`satex query NAME -f FILE` runs a query and prints its records. `satex query --list` names them all. Every query takes `--filter EXPR` (e.g. `'tag=macro and arity>0'`) and `--format json`/`csv`. The examples analyze `samples/paper.tex`.
+`satex query NAME -f FILE` runs a query and prints its records. `satex query --list` names them all. Every query takes `--filter EXPR` (e.g. `'tag=macro and arity>0'`) and `--format json`/`csv`. Input, configuration, output and exit codes work as for every command, see the [command line page](cli.md). The examples analyze `samples/paper.tex`.
 
 - [calls](#calls): which control sequences each macro's body invokes (since 0.1.0)
 - [catcodes](#catcodes): explicit \catcode assignments the document makes (since 0.1.0)
@@ -27,7 +27,7 @@
 - [recursion](#recursion): macros that call themselves, directly or through others (since 0.1.0)
 - [side-effects](#side-effects): definitions and assignments a macro makes when called (since 0.1.0)
 - [tagging](#tagging): PDF tagging: whether it is on, the standard, language, title and each package's status (since 0.2.5)
-- [trace](#trace): every step: macro expansions, primitives run, changes made (since 0.1.0)
+- [trace](#trace): every step: macro expansions, primitives run, changes made (only with `trace: true`, or use `satex trace`) (since 0.1.0)
 - [type-plugins](#type-plugins): the editor's type plugins: the types each triggers on and its features (since 0.2.0)
 - [typeset](#typeset): the text the document typesets, one row per paragraph (since 0.2.0)
 
@@ -88,7 +88,7 @@ package  already-loaded  amsgen          amsbsy          amsbsy.sty          @ a
 
 ## dependency-graph
 
-The dependency graph as records. `satex dependencies` renders it as DOT or JSON.
+The dependency graph as records. `satex dependencies` renders it as DOT or JSON (see the [command line](cli.md)).
 
 ```text
 $ satex query dependency-graph -f samples/paper.tex --filter 'file=paper.tex'
@@ -103,7 +103,7 @@ macro-call           \value                                                     
 
 ## diagnostics
 
-Everything SaTeX noticed while interpreting the document: widened conditionals, extra `\else`, and the rest of the internal diagnostics distinct from the lint rules.
+Everything SaTeX noticed while interpreting the document: widened conditionals, extra `\else`, and the rest of the internal diagnostics distinct from the [lint rules](lints.md). `satex lint` and the editor show the findings that matter.
 
 ```text
 $ satex query diagnostics -f samples/paper.tex
@@ -217,7 +217,7 @@ code args  /demo/l…  \def \d…                                               
 
 ## plugins
 
-The provider, platform, engine, output target, and build system plugins chose for this run, and why.
+The provider, platform, engine, output target, and build system plugins chose for this run, and why. The values and what they are detected from are in [configuration](configuration.md#plugins).
 
 ```text
 $ satex query plugins -f samples/paper.tex
@@ -294,7 +294,7 @@ $ satex explain '\itshape'
 
 ## project
 
-The document class, engine, and build configuration SaTeX detected or was told to assume.
+The document class, engine, and build configuration SaTeX detected or was told to assume (see [profiles](configuration.md#profiles)).
 
 The rows below list what the project scan found, without what `.gitignore` excludes.
 `unreachable` lists the inputs, packages, classes and bibliographies no root reads.
@@ -536,7 +536,7 @@ macro  \mymode      my@draft  \ifmy@draft, the switch `\newif`…  \ifmy@d…  m
 `satex query --request FILE` (`-` for stdin) runs several queries on one analysis and prints one JSON answer per query. The request is a JSON object:
 
 * `file`: the document to analyze. Falls back to `-f` when omitted.
-* `config`: optional overrides, the same dotted paths `--set` takes: `{"limits.memory": "1GiB", "load.packages": false}`.
+* `config`: optional overrides, the same dotted paths `--set` takes (the keys are on the [configuration page](configuration.md)): `{"limits.memory": "1GiB", "load.packages": false}`.
 * `queries`: an array of query objects, each with a `type`: any name from the query list above (`definitions`, `pgfkeys`, `gaps`, …, with `text`/`prefix`/`name`/`filter` as that query takes them), or `explain`, `controls`, `slice`, `options`, `providers`, or `docs`, with their own arguments:
   * `explain`: `names` (array), `all` (bool).
   * `controls`: `names` (array), `all` (bool).

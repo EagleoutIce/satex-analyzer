@@ -14,6 +14,8 @@ SaTeX merges `satex.yaml` layers, later ones winning:
 
 Mappings merge recursively. A list replaces the outer one unless its key ends in `+` (`load.skip+: [extra]`). A layer that does not fit the schema is skipped. `--no-config` ignores every file but keeps `--set`. `satex --version` lists the merged files.
 
+Rule settings (`lints`, `lint_off`) belong to the [lint rules](Lints). The `lsp` and `completion` keys belong to the [language server](Lsp). `limits` is explained [below](#configurable-limits-for-the-analysis).
+
 ```yaml
 # yaml-language-server: $schema=https://raw.githubusercontent.com/EagleoutIce/satex-analyzer/main/satex.schema.json
 # satex configuration. Merged from the global config, then every satex.yaml
@@ -1297,7 +1299,7 @@ limits:  # what bounds the analysis: reaching one stops that part of the run, so
 
 ## Plugins
 
-A plugin picks a default from the machine, the installation and the build files. `satex.yaml` can override each. `satex query plugins -f FILE` shows what was chosen and why.
+A plugin picks a default from the machine, the installation and the build files. `satex.yaml` can override each. `satex query plugins -f FILE` shows what was chosen and why ([queries](Queries#plugins)).
 
 | Plugin | Values | Detected from |
 | --- | --- | --- |
@@ -1321,7 +1323,7 @@ A plugin picks a default from the machine, the installation and the build files.
 
 ### Format and package caches
 
-The interpreted kernel is cached after the first run (`satex cache`, `satex cache build`, `satex cache clear`).
+The interpreted kernel is cached after the first run (`satex cache`, `satex cache build`, `satex cache clear`, see the [command line page](Cli)).
 
 A package is cached per **read set**: the meanings, registers, hooks, options and catcodes it consulted, with the values seen. Its **effect** (bindings, hooks, facts, diagnostics) is replayed in any later run that agrees with the read set. Register allocations are renumbered on replay.
 
@@ -1386,7 +1388,7 @@ profiles:
 
 `project.root`: The root document, relative to the project directory: what a run starts from when none is named, over a `% !TeX root` line and every guess.
 
-A rule's own settings live under `lints.⟨code⟩`.
+A rule's own settings live under `lints.⟨code⟩`. [Lint rules](Lints) lists the rules, and `lint_off` turns one off.
 
 `lints.unused-definition.report_public` (default `true`): Whether the rule also reports a name with no `@` and no expl3-style `module_function:signature`. The package and class profiles turn it off, since such a name is the package's public interface, and the caller, not this run, is the one to use it.
 
@@ -1530,4 +1532,4 @@ stubs:
 | `limits.degrade_at_percent` | `100` (off) | past that share of `limits.steps`, halves the time-only limits, reported as `precision-degraded` |
 | `limits.threads` | `0` (`min(4, cores)`) | file scans only, the interpreter is one thread |
 
-Steps are counted alike on every machine, so results never depend on speed. Seconds and memory only stop a run. The installation's answers (`kpsewhich --expand-var`, engine version) are cached against the program's path and timestamp.
+`--max-steps`, `--max-memory` and `--threads` set the first, second and last for one run. Steps are counted alike on every machine, so results never depend on speed. Seconds and memory only stop a run. The installation's answers (`kpsewhich --expand-var`, engine version) are cached against the program's path and timestamp.

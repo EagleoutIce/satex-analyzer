@@ -4,7 +4,7 @@
 
 # Queries
 
-`satex query NAME -f FILE` runs a query and prints its records. `satex query --list` names them all. Every query takes `--filter EXPR` (e.g. `'tag=macro and arity>0'`) and `--format json`/`csv`. The examples analyze `samples/paper.tex`.
+`satex query NAME -f FILE` runs a query and prints its records. `satex query --list` names them all. Every query takes `--filter EXPR` (e.g. `'tag=macro and arity>0'`) and `--format json`/`csv`. Input, configuration, output and exit codes work as for every command, see the [command line page](cli.md). The examples analyze `samples/paper.tex`.
 
 {{queries}}
 
@@ -34,13 +34,13 @@ The files, packages and classes the document reads, and what loaded each. Lua mo
 
 ## dependency-graph
 
-The dependency graph as records. `satex dependencies` renders it as DOT or JSON.
+The dependency graph as records. `satex dependencies` renders it as DOT or JSON (see the [command line](cli.md)).
 
 {{run(6): satex query dependency-graph -f samples/paper.tex --filter 'file=paper.tex'}}
 
 ## diagnostics
 
-Everything SaTeX noticed while interpreting the document: widened conditionals, extra `\else`, and the rest of the internal diagnostics distinct from the lint rules.
+Everything SaTeX noticed while interpreting the document: widened conditionals, extra `\else`, and the rest of the internal diagnostics distinct from the [lint rules](lints.md). `satex lint` and the editor show the findings that matter.
 
 {{run(6): satex query diagnostics -f samples/paper.tex}}
 
@@ -92,7 +92,7 @@ The pgfkeys keys defined at the end of the run and what each does (`initial`, `c
 
 ## plugins
 
-The provider, platform, engine, output target, and build system plugins chose for this run, and why.
+The provider, platform, engine, output target, and build system plugins chose for this run, and why. The values and what they are detected from are in [configuration](configuration.md#plugins).
 
 {{run(6): satex query plugins -f samples/paper.tex}}
 
@@ -120,7 +120,7 @@ Only the places that stand behind an expansion, for a text the document never wr
 
 ## project
 
-The document class, engine, and build configuration SaTeX detected or was told to assume.
+The document class, engine, and build configuration SaTeX detected or was told to assume (see [profiles](configuration.md#profiles)).
 
 The rows below list what the project scan found, without what `.gitignore` excludes.
 `unreachable` lists the inputs, packages, classes and bibliographies no root reads.
@@ -275,7 +275,7 @@ The scratch document is the root's preamble as written, the body definitions the
 `satex query --request FILE` (`-` for stdin) runs several queries on one analysis and prints one JSON answer per query. The request is a JSON object:
 
 * `file`: the document to analyze. Falls back to `-f` when omitted.
-* `config`: optional overrides, the same dotted paths `--set` takes: `{"limits.memory": "1GiB", "load.packages": false}`.
+* `config`: optional overrides, the same dotted paths `--set` takes (the keys are on the [configuration page](configuration.md)): `{"limits.memory": "1GiB", "load.packages": false}`.
 * `queries`: an array of query objects, each with a `type`: any name from the query list above (`definitions`, `pgfkeys`, `gaps`, …, with `text`/`prefix`/`name`/`filter` as that query takes them), or `explain`, `controls`, `slice`, `options`, `providers`, or `docs`, with their own arguments:
   * `explain`: `names` (array), `all` (bool).
   * `controls`: `names` (array), `all` (bool).

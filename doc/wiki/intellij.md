@@ -4,7 +4,7 @@
 
 # IntelliJ plugin
 
-The plugin in `editors/intellij/` runs `satex lsp` inside IntelliJ-based IDEs. It uses the LSP4IJ plugin as the language client, so it also works in Community editions.
+The plugin in `editors/intellij/` runs `satex lsp` inside IntelliJ-based IDEs. It uses the LSP4IJ plugin as the language client, so it also works in Community editions. Other editors: [VS Code](vscode.md), and any LSP client through [the language server](lsp.md#editor-setup).
 
 It provides [diagnostics, quick fixes, hover, definitions, completion and document colors](lsp.md#capabilities). `satex.yaml` is checked against the bundled `satex.schema.json`.
 
@@ -22,7 +22,7 @@ Settings, Tools, SaTeX.
 | Setting | Meaning |
 | --- | --- |
 | Path to satex | The binary. Empty uses `satex` on the `PATH`. |
-| Memory limit | Passed as `--max-memory`. Empty uses satex's own limit. |
+| Memory limit | Passed as `--max-memory`. Empty uses satex's own limit (`limits.memory`, see [configuration](configuration.md#configurable-limits-for-the-analysis)). |
 
 ## Publishing
 

@@ -34,10 +34,10 @@ cargo build --release
 Shell completion: after installing, run `satex completions install` once. It adds the hook to the startup file of your shell (bash, zsh or fish). `satex completions <shell>` prints the script for bash, zsh, fish, elvish or powershell. Query names and `--set` keys complete from the program itself. See the [command line page](doc/wiki/cli.md).
 
 ```sh
-source <(satex completions bash)                          # bash: add to ~/.bashrc
-source <(satex completions zsh)                           # zsh: add to ~/.zshrc
-satex completions fish > ~/.config/fish/completions/satex.fish
+source <(satex completions bash)   # bash: add to ~/.bashrc
 ```
+
+zsh and fish are on the [command line page](doc/wiki/cli.md#shell-completion).
 
 Current version: 0.2.4. `satex --version` also lists the plugins included in this build and the configuration in effect:
 
@@ -614,31 +614,31 @@ macro   \WeirdMore   super #1\;                                       #1       p
 
 ```text
 $ satex query --list
-name              about                                                                                   
-calls             which control sequences each macro's body invokes                                       
-catcodes          explicit \catcode assignments the document makes                                        
-definitions       every macro, environment and register the document or its packages define               
-dependencies      files, packages and classes read, and what loaded each                                  
-dependency-graph  the dependency graph between files and packages as records                              
-diagnostics       what satex noticed while interpreting, apart from lint rules                            
-distribution      the detected TeX installation, version and searched trees                               
-expansions        how often each macro was expanded during the run                                        
-exports           the names installed packages define, each with the package or library to load           
-files             every file read, in the order it was opened                                             
-gaps              constructs the run could not interpret, grouped by cause                                
-occurrences       package banners, passed options and other one-off events                                
-options           the keys an environment or command's optional argument accepts                          
-pgfkeys           pgfkeys defined at the end of the run and what each does                                
-plugins           what each plugin chose for this run, and why                                            
-previews          arrow tips and patterns the run declared, drawn by TeX                                  
-produces          where a given text can come from, expanded or not                                       
-project           document class, engine and build settings detected or assumed                           
-recursion         macros that call themselves, directly or through others                                 
-side-effects      definitions and assignments a macro makes when called                                   
-tagging           PDF tagging: whether it is on, the standard, language, title and each package's status  
-trace             every step: macro expansions, primitives run, changes made                              
-type-plugins      the editor's type plugins: the types each triggers on and its features                  
-typeset           the text the document typesets, one row per paragraph                                   
+name              about                                                                                                 
+calls             which control sequences each macro's body invokes                                                     
+catcodes          explicit \catcode assignments the document makes                                                      
+definitions       every macro, environment and register the document or its packages define                             
+dependencies      files, packages and classes read, and what loaded each                                                
+dependency-graph  the dependency graph between files and packages as records                                            
+diagnostics       what satex noticed while interpreting, apart from lint rules                                          
+distribution      the detected TeX installation, version and searched trees                                             
+expansions        how often each macro was expanded during the run                                                      
+exports           the names installed packages define, each with the package or library to load                         
+files             every file read, in the order it was opened                                                           
+gaps              constructs the run could not interpret, grouped by cause                                              
+occurrences       package banners, passed options and other one-off events                                              
+options           the keys an environment or command's optional argument accepts                                        
+pgfkeys           pgfkeys defined at the end of the run and what each does                                              
+plugins           what each plugin chose for this run, and why                                                          
+previews          arrow tips and patterns the run declared, drawn by TeX                                                
+produces          where a given text can come from, expanded or not                                                     
+project           document class, engine and build settings detected or assumed                                         
+recursion         macros that call themselves, directly or through others                                               
+side-effects      definitions and assignments a macro makes when called                                                 
+tagging           PDF tagging: whether it is on, the standard, language, title and each package's status                
+trace             every step: macro expansions, primitives run, changes made (only with `trace: true`, or use `satex …  
+type-plugins      the editor's type plugins: the types each triggers on and its features                                
+typeset           the text the document typesets, one row per paragraph                                                 
 ```
 
 </details>
@@ -693,7 +693,7 @@ Every command prints text by default. You can use `--format json`, `csv` or `mar
 
 ## Editor integration
 
-`satex lsp` runs a Language Server: diagnostics, hover, definitions, references, completion, document symbols and quick fixes, all backed by the commands above. Stdio by default, `--port`/`--host` for TCP. See the [LSP wiki page](doc/wiki/lsp.md) for the protocol details and Neovim/VS Code setup.
+`satex lsp` runs a Language Server: diagnostics, hover, definitions, references, completion, document symbols and quick fixes, all backed by the commands above. Stdio by default, `--port`/`--host` for TCP. See the [LSP wiki page](doc/wiki/lsp.md) for the protocol details and Neovim setup, and the [VS Code](doc/wiki/vscode.md) and [IntelliJ](doc/wiki/intellij.md) pages for those editors.
 
 `satex gui [DIR]` opens the browser playground on a project of your computer: its files, the TeX packages installed there, the native language server and your TeX for the PDF. Edits are saved to the files. See [the playground on your machine](doc/wiki/cli.md#the-playground-on-your-machine).
 
@@ -716,7 +716,7 @@ Concretely:
 
 ## Gaps
 
-Use `satex query gaps -f <document>` to get details on noted issues SaTeX has with analyzing the document (and its dependencies).
+Use `satex query gaps -f <document>` to get details on noted issues SaTeX has with analyzing the document (and its dependencies). The [challenges page](doc/wiki/challenges.md) shows what makes TeX hard to analyze.
 
 ## Related Work
 
