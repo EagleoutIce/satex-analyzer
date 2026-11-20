@@ -2234,7 +2234,7 @@
       for (let n = 0; n <= j; n++) at = text.indexOf(old, at + 1);
       // the start in the node of the old text's first character, never the end of the one before (a footnote's mark
       // `<sup>1</sup>`: the typed text would go into the superscript)
-      const f = at >= 0 && tsNodeAt(box, at + 1), from = f && [f[0], f[1] - 1], to = tsNodeAt(box, at + old.length);
+      const f = at >= 0 && tsNodeAt(box, at + 1), from = f && /** @type {[Text, number]} */ ([f[0], f[1] - 1]), to = tsNodeAt(box, at + old.length);
       if (at < 0 || !from || !to) return;
       const r = document.createRange();
       r.setStart(...from); r.setEnd(...to);
@@ -2316,9 +2316,10 @@
     tsOriginsDraw();
   };
   /** The text node and offset at index `at` of `box`'s text. */
+  /** @param {Node} box @param {number} at @returns {[Text, number] | null} */
   const tsNodeAt = (box, at) => {
-    const walk = document.createTreeWalker(box, NodeFilter.SHOW_TEXT);
-    for (let n = walk.nextNode(), seen = 0; n; seen += n.length, n = walk.nextNode()) if (at <= seen + n.length) return [n, at - seen];
+    const walk = document.createTreeWalker(box, NodeFilter.SHOW_TEXT), next = () => /** @type {Text | null} */ (walk.nextNode());
+    for (let n = next(), seen = 0; n; seen += n.length, n = next()) if (at <= seen + n.length) return [n, at - seen];
     return null;
   };
   const tsWords = (text) => [...text.matchAll(/[\p{L}\p{N}]+/gu)];
@@ -2559,7 +2560,7 @@
   /** `len` characters at index `at` of `box`'s text become `text`, when they lie in one text node. */
   function tsSplice(box, at, len, text) {
     // the node the characters start in: at a boundary the next one, not the end of the one before
-    const n = len && tsNodeAt(box, at + 1), spot = n ? [n[0], n[1] - 1] : tsNodeAt(box, at);
+    const n = len && tsNodeAt(box, at + 1), spot = n ? /** @type {[Text, number]} */ ([n[0], n[1] - 1]) : tsNodeAt(box, at);
     if (!spot || spot[1] + len > spot[0].length) return false;
     spot[0].replaceData(spot[1], len, text);
     return true;
@@ -4662,8 +4663,8 @@
     clearInterval(tick);
     traceLive = null;
     if (mine !== traceRun) return;
-    traceFor.records = rs?.records ?? [];
-    for (const id of ['trace-json', 'trace-csv']) $(id).disabled = !traceFor.records.length;
+    const records = traceFor.records = rs?.records ?? [];
+    for (const id of ['trace-json', 'trace-csv']) $(id).disabled = !records.length;
     traceFor.error = rs?.error;
     await traceShow(at, name, mine);
   }
@@ -6934,14 +6935,14 @@
     };
     const end = (u) => {
       if (u.pointerId !== id) return;
-      for (const [t, f] of [['pointermove', move], ['pointerup', end], ['pointercancel', end]]) removeEventListener(t, f);
+      for (const [t, f] of /** @type {[string, EventListener][]} */ ([['pointermove', move], ['pointerup', end], ['pointercancel', end]])) removeEventListener(t, f);
       if (!on) return;
       pdfSelEnd = performance.now();
       // the hidden input takes the keys: Ctrl+C copies, Ctrl+V finds no caret
       if (pdfTypeIn.parentElement !== $('play-pdf')) $('play-pdf').append(pdfTypeIn);
       pdfTypeIn.focus({ preventScroll: true });
     };
-    for (const [t, f] of [['pointermove', move], ['pointerup', end], ['pointercancel', end]]) addEventListener(t, f);
+    for (const [t, f] of /** @type {[string, EventListener][]} */ ([['pointermove', move], ['pointerup', end], ['pointercancel', end]])) addEventListener(t, f);
   });
   /** Where page word `w` stands in the open text, at or after offset `min`: its `[from, to]`, else null. */
   function pdfWordSrc(w, min = 0) {
@@ -7325,7 +7326,7 @@
     const sites = widgetSites(), name = Object.keys(state.texts).find((n) => path.endsWith(`/${n}`)) ?? null, line = +host.dataset.line;
     const note = el.closest('.ts-note')?.textContent.replace(/^▢\s*/, '').trim();
     if (note) {
-      const img = sites.filter((s) => s.kind === 'image' && s.key === note).sort((a, b) => (a.file !== name) - (b.file !== name) || Math.abs(a.line - line) - Math.abs(b.line - line))[0];
+      const img = sites.filter((s) => s.kind === 'image' && s.key === note).sort((a, b) => Number(a.file !== name) - Number(b.file !== name) || Math.abs(a.line - line) - Math.abs(b.line - line))[0];
       if (img) return img;
     }
     if (!name) return null;
@@ -7479,8 +7480,12 @@
   }
   /** Row `r`'s characters with a source site (a math atom's marked `math`): each with its site's path and line and, where the run read
    * it elsewhere in the user's files (`origins`), that place and the macro whose definition holds it. */
+  /** @typedef {{ c: string, path: string, line: any, col: any, math: boolean, mode: any, generated: boolean,
+   *   from: { path: any, line: any, col: number, def: any, defLine: any }, lib: { source: any, file: any, line: any, def: any },
+   *   kind?: string, made?: boolean, key?: string, call?: { path: any, line: any, col: number } }} RowChar
+   * A row's character: its site, where it was read, and (rowOrigins) who made it. */
   function rowChars(r) {
-    const chars = [], marked = [...(r.marked ?? r.detail ?? '')], sites = r.sites ?? [], origins = r.origins ?? [];
+    const chars = /** @type {RowChar[]} */ ([]), marked = [...(r.marked ?? r.detail ?? '')], sites = r.sites ?? [], origins = r.origins ?? [];
     // `atom`: a math note's class (`\u0006i`, `\u00060`…) opens a math atom, an empty one (`\u0006`) closes it
     let k = 0, o = -1, i = 0, note = false, math = false, atom = '', inMath = false, mo = -1;
     const modes = r.math ?? [];
@@ -7978,7 +7983,7 @@
         placed.push({ left: r.left, right: r.right, top, bottom: top + r.height });
       }
       // glue labels, widest glue first: off the chips and each other, over the least ink, else elided (the spec stays on hover)
-      const specs = [...page.querySelectorAll('.pdf-glue-spec')].map((el) => { el.style.transform = ''; el.hidden = false; return [el, el.getBoundingClientRect(), el.parentElement.getBoundingClientRect().width]; })
+      const specs = [...page.querySelectorAll('.pdf-glue-spec')].map((el) => { el.style.transform = ''; el.hidden = false; return /** @type {[Element, DOMRect, number]} */ ([el, el.getBoundingClientRect(), el.parentElement.getBoundingClientRect().width]); })
         .filter(([, r]) => r.width).sort((a, b) => b[2] - a[2]);
       if (!specs.length) continue;
       const img = page.querySelector('img'), at = img?.getBoundingClientRect(), wh = img?.naturalWidth && pageSize(img), R = (r) => ({ l: r.left, t: r.top, r: r.right, b: r.bottom });
@@ -7992,6 +7997,9 @@
   /** The open file's tables with the widths a drag rewrites (src/lsp/dialogs.rs `columns`), `\linewidth` in pt. */
   /** The column chip whose ⋯ menu (the page actions' `table-column`) is open (`table:column`), kept while the layer redraws. */
   var pdfColMenu = null;
+  /** @typedef {{ view: string, page: any, word: any, k?: number, foot?: any, file: any, target: string, anchor: any, at: any, v: number,
+   *   blind?: boolean, ghost?: any, pending?: (() => Promise<unknown>) | null, waiting?: boolean, made?: boolean }} PdfCaret
+   * The caret a click puts in the page: where its keys write; `pending` writes what the first key needs (a rename, a footer). */
   var pdfCols = null, pdfDrag = null, pdfTyping = true, pdfCaret = null, pdfKeep = null, pdfHold = 0, pdfWrote = null, pdfShownRecords = null; // var: a run may end before these lines ran
   /** The last build's round trip, from Compile to its first page shown: live typing needs it short. */
   var pdfRound = { start: 0, ms: Infinity };
@@ -8050,7 +8058,9 @@
     // the node rewritten: the width's own, else the column's letter, loading array where its `>{…}` or `m` needs it
     const wrap = (text) => grow ? PE.respec(col.align, text, col.spec.text).body : text;
     const node = grow ? { ...structuredClone(col.spec), ...(PE.respec(col.align, '').array ? { package: { name: 'array', options: '' } } : {}) } : structuredClone(col.node);
-    const d = pdfDrag = { t: i, k, page, was, w: was, max: Math.max(was, room), col: col.width || null, text: col.width, label: grow ? col.align : col.width, wrap, line: lw, node, before: editor.text(), perBp: img.getBoundingClientRect().width / pageSize(img)[0] };
+    const drag = { t: i, k, page, was, w: was, max: Math.max(was, room), col: col.width || null, text: col.width, label: grow ? col.align : col.width, wrap, line: lw, node, before: editor.text(), perBp: img.getBoundingClientRect().width / pageSize(img)[0] };
+    /** @type {typeof drag & { send?: { put(v: string): void, flush(): Promise<void> }, shown?: any }} */
+    const d = pdfDrag = drag;
     d.send = PE.sender(async (text) => {
       const body = wrap(text), rows = () => editor.text().split('\n').length, n0 = rows();
       if (!(await pdfWrite(target, d.node, body, { history: false }))) return false;
@@ -8125,11 +8135,11 @@
     };
     const end = (u) => {
       if (u.pointerId !== id) return;
-      for (const [t, f] of [['pointermove', move], ['pointerup', end], ['pointercancel', end]]) removeEventListener(t, f);
+      for (const [t, f] of /** @type {[string, EventListener][]} */ ([['pointermove', move], ['pointerup', end], ['pointercancel', end]])) removeEventListener(t, f);
       host?.removeAttribute('data-v');
       if (v != null && u.type === 'pointerup') paWrite(text, (one || pad).edits(v));
     };
-    for (const [t, f] of [['pointermove', move], ['pointerup', end], ['pointercancel', end]]) addEventListener(t, f);
+    for (const [t, f] of /** @type {[string, EventListener][]} */ ([['pointermove', move], ['pointerup', end], ['pointercancel', end]])) addEventListener(t, f);
   });
   /** The handle keys step: focused again once the overlay redraws it. */
   var pdfGripFocus = null;
@@ -8151,10 +8161,10 @@
     // every end (a release, a cancel by the browser or the system) ends the drag and its listeners
     const end = (u) => {
       if (u.pointerId !== id) return;
-      for (const [t, f] of [['pointermove', move], ['pointerup', end], ['pointercancel', end]]) removeEventListener(t, f);
+      for (const [t, f] of /** @type {[string, EventListener][]} */ ([['pointermove', move], ['pointerup', end], ['pointercancel', end]])) removeEventListener(t, f);
       pdfDragEnd();
     };
-    for (const [t, f] of [['pointermove', move], ['pointerup', end], ['pointercancel', end]]) addEventListener(t, f);
+    for (const [t, f] of /** @type {[string, EventListener][]} */ ([['pointermove', move], ['pointerup', end], ['pointercancel', end]])) addEventListener(t, f);
   });
   // a handle by keyboard: arrows step its width (Shift: finer), each key one undo step
   pdfBody.addEventListener('keydown', (e) => {
@@ -8374,7 +8384,7 @@
     const key = (k) => { if (k.key === 'Escape') { last = null; end({ pointerId: id }); } };
     const end = async (u) => {
       if (u.pointerId !== id) return;
-      for (const [t, f] of [['pointermove', move], ['pointerup', end], ['pointercancel', end], ['keydown', key]]) removeEventListener(t, f);
+      for (const [t, f] of /** @type {[string, EventListener][]} */ ([['pointermove', move], ['pointerup', end], ['pointercancel', end], ['keydown', key]])) removeEventListener(t, f);
       tikzMoving = null;
       tikzClear('.pdf-tikz-ghost'); tikzClear('.pdf-tikz'); tikzClear('.pdf-tikz-guide');
       // a drag is no click: no caret, no jump to the source
@@ -8390,7 +8400,7 @@
       if (version !== v || uri() !== target || text.slice(p.n.from, p.n.to) !== last.stmt) { toast('The text changed meanwhile: the node was not moved'); return; }
       paWrite(text, [...last.pre ?? [], { from: p.n.from, to: p.n.to, now: last.text }, ...(free ? tikzStay(text, deps.direct, last.d) : [])]);
     };
-    for (const [t, f] of [['pointermove', move], ['pointerup', end], ['pointercancel', end], ['keydown', key]]) addEventListener(t, f);
+    for (const [t, f] of /** @type {[string, EventListener][]} */ ([['pointermove', move], ['pointerup', end], ['pointercancel', end], ['keydown', key]])) addEventListener(t, f);
   }, true);
   /** The path segment near a page point: its path, segment index, ends in bp; a corner or a bend as the segment draws it. */
   function tikzEdgeAt(pt) {
@@ -8520,7 +8530,7 @@
     const key = (k) => { if (k.key === 'Escape') { now = null; end({ pointerId: id }); } };
     const end = (u) => {
       if (u.pointerId !== id) return;
-      for (const [t, f] of [['pointermove', move], ['pointerup', end], ['pointercancel', end], ['keydown', key]]) removeEventListener(t, f);
+      for (const [t, f] of /** @type {[string, EventListener][]} */ ([['pointermove', move], ['pointerup', end], ['pointercancel', end], ['keydown', key]])) removeEventListener(t, f);
       tikzMoving = null;
       tikzClear('.pdf-size');
       if (u.type === 'pointercancel' || !now || now === q.s.value) return;
@@ -8528,7 +8538,7 @@
       if (editor.text() !== text0) { toast('The text changed meanwhile: the width was not written'); return; }
       paWrite(text0, [{ from: q.s.from, to: q.s.to, now }]);
     };
-    for (const [t, f] of [['pointermove', move], ['pointerup', end], ['pointercancel', end], ['keydown', key]]) addEventListener(t, f);
+    for (const [t, f] of /** @type {[string, EventListener][]} */ ([['pointermove', move], ['pointerup', end], ['pointercancel', end], ['keydown', key]])) addEventListener(t, f);
   }, true);
   /** The pictures whose grid shows, this session: `file#k`, the file's k-th picture, so an edit above it keeps it.
    * var: the overlay may draw before this line ran. */
@@ -8599,7 +8609,7 @@
     const key = (k) => { if (k.key === 'Escape') { last = null; end({ pointerId: id }); } };
     const end = (u) => {
       if (u.pointerId !== id) return;
-      for (const [t, f] of [['pointermove', move], ['pointerup', end], ['pointercancel', end], ['keydown', key]]) removeEventListener(t, f);
+      for (const [t, f] of /** @type {[string, EventListener][]} */ ([['pointermove', move], ['pointerup', end], ['pointercancel', end], ['keydown', key]])) removeEventListener(t, f);
       tikzMoving = null;
       tikzClear('.pdf-tikz-path, .pdf-tikz-bend, .pdf-tikz-ghost, .pdf-tikz-tag');
       if (moved) pdfSelEnd = performance.now();
@@ -8607,7 +8617,7 @@
       if (editor.text() !== text0) { toast('The text changed meanwhile: no bend point written'); return; }
       paWrite(text0, [{ from: g.e.from, to: g.e.to, now: last.now }]);
     };
-    for (const [t, f] of [['pointermove', move], ['pointerup', end], ['pointercancel', end], ['keydown', key]]) addEventListener(t, f);
+    for (const [t, f] of /** @type {[string, EventListener][]} */ ([['pointermove', move], ['pointerup', end], ['pointercancel', end], ['keydown', key]])) addEventListener(t, f);
   }
   /** The segment of a path at page point `pt` with its ends' centres, when no node is there. */
   const tikzSegAt = (pt) => { if (!pt || tikzHit(pt)) return null; const h = tikzEdgeAt(pt), s = h && tikzSegs(h.e).find((x) => x.k === h.k); return s && { e: h.e, k: h.k, a: s.a, b: s.b }; };
@@ -8811,7 +8821,7 @@
     const k = texts.indexOf(e.target.closest('text'));
     if (k >= 0) { const n = of(k); return n && { kind: n.kind === 'label' ? 'tikz-label' : 'tikz-node', n }; }
     // a path: the sketch's place of each named node, the click in the sketch's frame (pt, y down)
-    const where = new Map(texts.map((t, j) => [of(j)?.name, [+t.getAttribute('x'), +t.getAttribute('y')]]).filter(([n]) => n));
+    const where = new Map(texts.map((t, j) => /** @type {[string, [number, number]]} */ ([of(j)?.name, [+t.getAttribute('x'), +t.getAttribute('y')]])).filter(([n]) => n));
     let p;
     try { const q = svg.createSVGPoint(); q.x = e.clientX; q.y = e.clientY; const m = q.matrixTransform(g.getScreenCTM().inverse()); p = [m.x, m.y]; } catch { return null; }
     let best = null;
@@ -8869,14 +8879,14 @@
     };
     const end = (u) => {
       if (u.pointerId !== id) return;
-      for (const [t, f] of [['pointermove', move], ['pointerup', end], ['pointercancel', end]]) removeEventListener(t, f);
+      for (const [t, f] of /** @type {[string, EventListener][]} */ ([['pointermove', move], ['pointerup', end], ['pointercancel', end]])) removeEventListener(t, f);
       tikzMoving = null;
       pdfSelEnd = performance.now();
       tikzClear('.pdf-tikz');
       if (u.type === 'pointercancel') return;
       paWrite(text, [{ from: p.n.from, to: p.n.to, now: TM.set(stmt, p.n.i, 'rotate', deg ? [`rotate=${deg}`] : []) }]);
     };
-    for (const [t, f] of [['pointermove', move], ['pointerup', end], ['pointercancel', end]]) addEventListener(t, f);
+    for (const [t, f] of /** @type {[string, EventListener][]} */ ([['pointermove', move], ['pointerup', end], ['pointercancel', end]])) addEventListener(t, f);
   }
   /** The forest node page point `pt` sets, in the open file: the tree's body `from`..`to` (after `\begin{forest}`),
    * the tree as the forest widget reads it and the node, the n-th in bracket order as the `[`s before it count. */
@@ -8964,7 +8974,7 @@
     };
     const end = (u) => {
       if (u.pointerId !== id) return;
-      for (const [t, fn] of [['pointermove', move], ['pointerup', end], ['pointercancel', end]]) removeEventListener(t, fn);
+      for (const [t, fn] of /** @type {[string, EventListener][]} */ ([['pointermove', move], ['pointerup', end], ['pointercancel', end]])) removeEventListener(t, fn);
       tikzMoving = null;
       tikzClear('.pdf-forest-tag, .pdf-forest-add');
       if (u.type === 'pointercancel' || !drop || editor.text() !== text) return;
@@ -8973,7 +8983,7 @@
       FOREST.settle(f.t);
       paWrite(text, [{ from: f.from, to: f.to, now: FOREST.emit(f.t) }]);
     };
-    for (const [t, fn] of [['pointermove', move], ['pointerup', end], ['pointercancel', end]]) addEventListener(t, fn);
+    for (const [t, fn] of /** @type {[string, EventListener][]} */ ([['pointermove', move], ['pointerup', end], ['pointercancel', end]])) addEventListener(t, fn);
   }
   /* References switched from the pages (pdfedit.ts `satexRefPick`): in Type mode a reference's printed number, a
    * citation's label, is no text to type into. Hovering one outlines it, a click opens the keys the editor completes
@@ -9286,10 +9296,10 @@
     const root = pdf.root ?? state.root ?? state.file, lang = await pdfBabel();
     if (!await showFile(root)) return true;
     const text = editor.text(), r = PE.renamed(text, name, value, lang), idx = PE.spans(value, bare)[0][0], kk = Math.min(Math.max(k, 0), bare.length);
-    if (!r) return !toast(`Not typed here: ${root} has no \\begin{document} to put \\renewcommand{${name}} before`);
+    if (!r) { toast(`Not typed here: ${root} has no \\begin{document} to put \\renewcommand{${name}} before`); return true; }
     const home = $('play-pdf');
     if (pdfTypeIn.parentElement !== home) home.append(pdfTypeIn);
-    const c = pdfCaret = { view: 'pdf', page, word, k: kk + Math.max(0, word[5].normalize('NFKC').search(/[\p{L}\p{N}]/u)), file: state.file, target: uri(), anchor: r[3] + idx, at: r[3] + idx + kk, v: version };
+    const c = pdfCaret = /** @type {PdfCaret} */ ({ view: 'pdf', page, word, k: kk + Math.max(0, word[5].normalize('NFKC').search(/[\p{L}\p{N}]/u)), file: state.file, target: uri(), anchor: r[3] + idx, at: r[3] + idx + kk, v: version });
     const where = lang ? `<code>\\addto\\captions${escape(lang)}</code> (babel sets the names anew)` : 'the preamble';
     const say = (line) => typeNote(c, `Typing renames ${escape(name)} (“${escape(value)}”) in ${where}, line ${line}: every “${escape(value)}” changes.`, [], text, () => {});
     if (r[0] !== r[1]) say(pdfPos(text, r[0]).line + 1);
@@ -9340,7 +9350,7 @@
     const home = $('play-pdf');
     if (pdfTypeIn.parentElement !== home) home.append(pdfTypeIn);
     const foot = { pkg: setup.package, letter: setup.letter, spot, l, r, base: band[0] ? font.base : area?.foot ?? ref[4], num, font, cover: cell, shown: cell.map((w) => w[5]).join(' '), k: after ? 99 : 0 };
-    const c = pdfCaret = { view: 'pdf', page, word: ref, foot, file: state.file, target: uri(), anchor: null, at: 0, v: version };
+    const c = pdfCaret = /** @type {PdfCaret} */ ({ view: 'pdf', page, word: ref, foot, file: state.file, target: uri(), anchor: null, at: 0, v: version });
     const say = (t, before) => { const a = PE.footArg(t, setup.package, setup.letter); typeNote(c, `Footer set with ${escape(setup.package)} (line ${a ? pdfPos(t, a[0]).line + 1 : '?'})`, [], before, () => {}); };
     if (!setup.nodes.length) { c.at = place(text) ?? 0; pdfNote(null); }
     else {
@@ -9405,7 +9415,7 @@
     if (pdfTypeIn.parentElement !== home) home.append(pdfTypeIn);
     // the line before the new paragraph carries the caret once it is written (pdfTypeDraw's new paragraph)
     const prev = [...mine].sort((a, b) => a.base - b.base).findLast((r) => r.base < p.ghost.base) ?? mine[0];
-    const c = pdfCaret = { view: 'pdf', page, word: prev.words.at(-1), file: state.file, target: uri(), anchor: null, at: p.at, blind: true, ghost: p.ghost, v: version };
+    const c = pdfCaret = /** @type {PdfCaret} */ ({ view: 'pdf', page, word: prev.words.at(-1), file: state.file, target: uri(), anchor: null, at: p.at, blind: true, ghost: p.ghost, v: version });
     c.pending = async () => {
       const now = editor.text();
       if (pdfCaret !== c) return;
@@ -10256,6 +10266,7 @@
   }
   /** Paints over page image `img` the rest of a row from `x` (bp): its words (`row`'s, and `w`'s height) covered,
    * then each piece of `out` at its `x`: a text `t` in font `f`, or a word `w` as the page drew it, moved. */
+  /** @param {{ img: any, w: any, row: any[], x: number, f: any, k: number, out: any[], n?: any, hue?: any }} piece */
   function pdfEchoPaint({ img, w, row, x: x0, f, k, out, n, hue: given = null }) {
     const [pw, ph] = pageSize(img), all = [...(w ? [w] : []), ...(n ? [n] : []), ...row.map((t) => t.w)];
     if (!all.length) return;
@@ -10393,6 +10404,7 @@
   /** Typed text `from..to` as PE.reflow's pieces: its words in the page's font (`width`, word space `gap`), each formula
    * one piece laid out as math (mathlayout.ts) in fonts `M`, a display one standing on a row of its own. */
   function pdfPieces(text, from, to, verb, width, gap, M) {
+    /** @type {{ gap: number, n: number, t?: string, math?: any, M?: any, disp?: number, dshort?: number, below?: number, par?: any, brk?: boolean, ctx?: any }[]} */
     const out = [];
     for (const r of verb ? [{ s: from, e: to, kind: '' }] : PE.mathRuns(text, from, to)) {
       if (r.kind) {
@@ -11374,7 +11386,8 @@
   }
   /** The table or image dialog at `position` of the open file (`satex/dialog`, doc/site/dialogs.js). */
   /** The table or image widget at `position`; `quiet` true says nothing when there is none, 'waited' (the run waited
-   * for is in) says so without waiting again. */
+   * for is in) says so without waiting again.
+   * @param {any} position @param {boolean | 'waited'} [quiet] */
   async function openDialog(position, quiet = false) {
     const target = uri();
     const v = await lsp('satex/dialog', { textDocument: { uri: target }, position }).catch(() => null);

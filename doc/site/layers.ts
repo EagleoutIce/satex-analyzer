@@ -20,6 +20,8 @@ declare global {
       runsBy<T>(items: T[], key: (x: T) => string | null | undefined): [string, number, number][];
       mathSpans(boxes: Box[]): { page: number; l: number; t: number; r: number; d: number; file: string; line: number }[];
       fitLabels(labels: Rect[], fixed: Rect[], ink: Rect[]): (number | null)[];
+      SHOW: Record<string, [string, string, boolean, boolean]>;
+      showClasses(on: On): string[]; showDefaults(): On; showHtml(on: On): string;
     };
   }
 }

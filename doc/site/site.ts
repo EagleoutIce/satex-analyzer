@@ -57,7 +57,7 @@ declare global {
 /** CodeMirror's stream and the language states the tokenizers keep. */
 interface Stream {
   match(re: RegExp | string, consume?: boolean): RegExpMatchArray | boolean | null; eatSpace(): boolean; skipTo(ch: string): boolean; skipToEnd(): void; next(): string | void;
-  sol(): boolean; string: string;
+  sol(): boolean; string: string; pos: number; current(): string; backUp(n: number): void;
 }
 (() => {
   const root = document.documentElement;
@@ -1674,7 +1674,7 @@ interface Stream {
     card.el.addEventListener('click', act);
     // Type mode in the typeset text, as in the playground's Typeset view: a click on a word puts a caret there, keys write
     // into the source at its place (pdfedit.js: escapes, math, pairs), the text beside shows a plain letter at once
-    let caret: { at: number; line: number; idx: number } | null = null, PE: Rec = null;
+    let caret: { at: number; line: number; idx: number } | null = null, PE: Rec | null = null;
     const typeIn = Object.assign(document.createElement('textarea'), { className: 'pdf-type-in', spellcheck: false, tabIndex: -1 });
     typeIn.setAttribute('aria-label', 'type into the typeset text');
     out.after(typeIn);
@@ -1687,7 +1687,7 @@ interface Stream {
     redraw = () => {
       out.querySelector('.pdf-caret')?.remove();
       const box = boxOf();
-      if (!caret || !box) return;
+      if (!caret || !box || !PE) return;
       // after a run the caret's word is found again: its spelling nearest the old place
       const w = PE.wordAt(view.state.doc.toString(), caret.at), all = box.textContent ?? '';
       if (w) {
@@ -1742,10 +1742,10 @@ interface Stream {
     typeIn.addEventListener('input', () => {
       const s = typeIn.value;
       typeIn.value = '';
-      for (const c of s) if (caret) { const t = PE.typed(view.state.doc.toString(), caret.at, c, undefined, true); typeWrite(t, t[2] === c ? c : null); }
+      for (const c of s) if (caret && PE) { const t = PE.typed(view.state.doc.toString(), caret.at, c, undefined, true); typeWrite(t, t[2] === c ? c : null); }
     });
     typeIn.addEventListener('keydown', (e) => {
-      if (!caret || e.isComposing) return;
+      if (!caret || !PE || e.isComposing) return;
       const text = view.state.doc.toString(), at = caret.at;
       if (e.key === 'Escape') { typeIn.blur(); return; }
       if (e.key === 'Backspace' || e.key === 'Delete') {

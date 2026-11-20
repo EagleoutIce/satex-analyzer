@@ -10,7 +10,7 @@ interface Element extends Loose {}
 interface Node { contains(other: EventTarget | null): boolean; data?: string; replaceWith?(...nodes: (Node | string)[]): void; classList?: DOMTokenList }
 // What the pages share through `window`.
 interface Window { satexTypeList: any; SATEX_FILES: any; satexTypes: any; satexHealth: any; satexKill: any; [name: `satex${string}`]: any }
-interface Event { key?: string; inputType?: string }
+interface Event { key?: string; inputType?: string; isComposing?: boolean }
 interface Navigator { connection?: { saveData?: boolean; effectiveType?: string } }
 interface Uint8ArrayConstructor { fromBase64?(text: string): Uint8Array }
 /** A record the server sent (`satex/view` JSON, shaped by the Rust plugins and validated there): its fields are read by name. */

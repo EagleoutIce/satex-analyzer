@@ -566,7 +566,7 @@ const satexViews = (() => {
       }
       // the shared footer when the color is written somewhere (status, Cancel, the write button), else the undo tools alone
       const said = el('span', 'tv-muted');
-      let foot = el('div', 'tv-actions');
+      let foot: HTMLElement = el('div', 'tv-actions');
       if (hist && !s.apply) { foot.append(...hist.controls(), el('span', 'tv-muted tv-hint', esc(self.satexDialogs.HINT.replace('Enter applies, ', '')))); hist.keys(box); }
       if (s.apply) {
         const writeIt = () => {
