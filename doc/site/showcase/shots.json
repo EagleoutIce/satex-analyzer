@@ -646,6 +646,10 @@
      "wait": 1500
     },
     {
+     "until": "[...document.querySelectorAll('.cm-line')].filter((l) => /begin\\{tabular\\}/.test(l.textContent)).every((l) => !l.querySelector('[class*=cm-lintRange]'))",
+     "ms": 30000
+    },
+    {
      "eval": "clearInterval(self.__mark); self.__mark = setInterval(() => { for (const l of document.querySelectorAll('.cm-line')) l.style.background = /\\\\(top|mid|bottom)rule/.test(l.textContent) ? 'color-mix(in srgb, #1a7f37 20%, transparent)' : ''; }, 100);",
      "wait": 400
     }
@@ -658,6 +662,70 @@
     760
    ],
    "beforeCrop": "=lines('\\\\begin{table}', '\\\\end{table}')"
+  },
+  {
+   "name": "merge",
+   "server": true,
+   "file": "hello.tex",
+   "title": "Scratch and merge back",
+   "wide": true,
+   "caption": "Slice a few lines into a scratch document, edit them there, and merge the change back as one undo step.",
+   "viewport": [
+    1000,
+    760
+   ],
+   "text": "\\documentclass{article}\n\\usepackage{booktabs}\n\\begin{document}\n\\section{Results}\nRuns took less time when warm.\n\n\\begin{tabular}{ll}\n\\toprule\nrun & time \\\\\n\\midrule\na & b \\\\\n\\bottomrule\n\\end{tabular}\n\\end{document}\n",
+   "steps": [
+    {
+     "eval": "const v = document.querySelector('.cm-editor').satexView; const a = __at('\\\\begin{tabular}')[2], b = __at('\\\\end{tabular}')[2] + 13; v.focus(); v.dispatch({ selection: { anchor: a, head: b } }); await new Promise((r) => setTimeout(r, 400)); const c = v.coordsAtPos(a + 20); self.__sel = [c.left, c.top]; 0",
+     "wait": 1500
+    },
+    {
+     "eval": "const v = document.querySelector('.cm-editor').satexView; v.focus(); v.contentDOM.dispatchEvent(new KeyboardEvent('keydown', { key: 'F10', code: 'F10', keyCode: 121, shiftKey: true, bubbles: true, cancelable: true })); for (let k = 0; k < 100 && document.getElementById('play-ctx').hidden; k++) await new Promise((r) => setTimeout(r, 200));",
+     "until": "!document.getElementById('play-ctx').hidden && /scratch document/.test(document.getElementById('play-ctx').textContent)",
+     "ms": 90000
+    },
+    {
+     "hover": "[...document.querySelectorAll('#play-ctx > li')].find((l) => /scratch document/.test(l.textContent))"
+    },
+    {
+     "click": "[...document.querySelectorAll('#play-ctx > li')].find((l) => /scratch document/.test(l.textContent))"
+    },
+    {
+     "until": "document.querySelector('.cm-editor').satexView.state.doc.toString().includes('%\\\\satex@scratch{begin')",
+     "ms": 120000,
+     "wait": 1500
+    },
+    {
+     "eval": "const v = document.querySelector('.cm-editor').satexView, i = v.state.doc.toString().indexOf('\\\\bottomrule'); v.dispatch({ changes: { from: i, insert: 'c & d \\\\\\\\\\n' }, selection: { anchor: i } }); 0",
+     "wait": 1500
+    },
+    {
+     "click": "document.getElementById('scratch-merge')"
+    },
+    {
+     "until": "document.getElementById('play-scratch-merge').open",
+     "ms": 30000,
+     "wait": 800,
+     "snap": "diff"
+    },
+    {
+     "click": "document.getElementById('scratch-mine')"
+    },
+    {
+     "until": "!document.getElementById('play-scratch-merge').open && document.getElementById('play-scratch').hidden && /c & d/.test(document.querySelector('.cm-editor').satexView.state.doc.toString())",
+     "ms": 30000,
+     "wait": 2500
+    },
+    {
+     "eval": "const v = document.querySelector('.cm-editor').satexView; v.dispatch({ selection: { anchor: 0 } }); 0",
+     "wait": 2500
+    }
+   ],
+   "crop": "=lines('\\\\documentclass', '\\\\end{document}')",
+   "pad": 8,
+   "keepMouse": true,
+   "beforeCrop": "#play-scratch-merge"
   },
   {
    "name": "page",
