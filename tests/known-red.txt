@@ -6,6 +6,8 @@
 # == soundness ==
 
 # == precision ==
+# Open (2026-11-20, owner: P0.1 (b) sound pruning of assumed arms, see ~/satex-plan.md): since assume_arm marks arms that guess where a delimiter lies in unknown text as approximated (sound), this tikz loop of random-width nodes no longer prunes those arms: on TeX Live 2025 it runs into the time budget (241 s warm, was 12 s at 9ebd0457), under 1 min on TeX Live 2026.
+observed::literals_around_skipped_code_have_unknown_balance
 # Open (2026-11-20, owner: one-of class round, from tagfix): a delimited argument that ends inside a one-of now parts known texts with and without the delimiter (sound, fixes false C013/C007 on tagged graphics). pgfmath's `#1.#2` scan meets one-of tokens of class `ds+` counted as "may hold `.`", so it forks on every pass (1109 vs 439 forks). Root: tighten the one-of class so sign/digit texts are known far/inside texts. Log target/scratch/round-0740/tagfix/log.md.
 documents::pgfmath_divides_learn_past_their_scratch_names
 # Open (2026-11-20, owner: fpfork / intdom round 0740): l3fp parses a typed unknown (the image's natural size \Gin@urx) per character, so only the first of several tagged graphics is recorded.
