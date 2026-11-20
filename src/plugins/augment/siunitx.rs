@@ -14,9 +14,13 @@ fn review(analysis: &Analysis, draft: &mut Draft) {
                 draft.fix = Some("round them by hand, or let siunitx `S` round with `round-mode = places`".into());
                 return;
             };
-            // `round-mode` lives in this str (siunitx.dtx, number options): `S`
-            // prints numbers as written while it is `none` and the column sets none.
-            let none = macro_text(analysis, "l__siunitx_number_round_mode_str").as_deref() == Some("none");
+            // `round-mode` lives in this variable (siunitx.dtx, number options), a str
+            // since 2026, a tl before: `S` prints numbers as written while it is
+            // `none` and the column sets none.
+            let mode = ["l__siunitx_number_round_mode_str", "l__siunitx_number_round_mode_tl"]
+                .into_iter()
+                .find_map(|name| macro_text(analysis, name));
+            let none = mode.as_deref() == Some("none");
             draft.keep = none && !options.contains("round-mode");
             draft.message =
                 format!("`S` column {column} prints its numbers as written, with {low} to {high} decimal places");
