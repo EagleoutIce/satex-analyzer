@@ -406,6 +406,9 @@ declare global {
   }
   /** The verbatim body `at` stands in (its ends included), null outside one. */
   const verbatimAt = (text: string, at: number) => verbatim(text).find((v) => v.from <= at && at <= v.to) ?? null;
+  /** What follows a row's `\\`: its star and its `[…]` space, each after optional spaces, as `\@ifstar` and
+   * `\@ifnextchar` skip them (latex.ltx `\@tabularcr`). */
+  const ROWEND = /^(\s*\*)?(\s*\[[^\]]*\])?/;
   /** The table `at` stands in: its rows of cells, each cell's text `[from, to]` without the spaces and rules around
    * it, and the row and cell of `at`. Cells part at `&`, rows at `\\`, both at the body's own level (a `{…}`
    * holds its own). Null outside a tabular, array, tabularx, longtable or tabulary body. */
@@ -419,7 +422,11 @@ declare global {
       if (/\*|x|y/.test(m[1]!.slice(-1)) && m[1] !== 'array') i = group();
       const pos = /^\s*\[[^\]]*\]/.exec(text.slice(i)); if (pos) i += pos[0].length;
       i = group();
-      const end = text.indexOf(`\\end{${m[1]}}`, i);
+      // the matching `\end`: a nested table of the same name holds its own
+      const ends = new RegExp(String.raw`\\(begin|end)\s*\{${m[1]!.replace('*', '\\*')}\}`, 'g');
+      ends.lastIndex = i;
+      let end = -1;
+      for (let d = 1, x; end < 0 && (x = ends.exec(text));) if (!(d += x[1] === 'begin' ? 1 : -1)) end = x.index;
       if (end >= at && i <= at) body = [i, end];
     }
     if (!body) return null;
@@ -435,7 +442,10 @@ declare global {
       const c = text[i];
       if (c === '%') { while (i < body[1] && text[i] !== '\n') i++; continue; }
       if (c === '\\') {
-        if (depth === 0 && text[i + 1] === '\\') { put(i); rows.push([]); i++; const opt = /^\*?\s*\[[^\]]*\]/.exec(text.slice(i + 1)); if (opt) i += opt[0].length; from = i + 1; } else i++;
+        // a nested environment holds its own `&` and `\\`, as a group does
+        const env = /^\\(begin|end)\s*\{/.exec(text.slice(i, i + 8));
+        if (env) depth += env[1] === 'begin' ? 1 : -1;
+        if (depth === 0 && text[i + 1] === '\\') { put(i); rows.push([]); i++; i += ROWEND.exec(text.slice(i + 1))![0].length; from = i + 1; } else i++;
         continue;
       }
       if (c === '{') depth++; else if (c === '}') depth--;
@@ -461,8 +471,8 @@ declare global {
     if (!t) return null;
     const row = t.rows[t.r]!, end = row.at(-1)![1], amp = ' &'.repeat(row.length - 1);
     // the row's own `\\`, if it has one: the new row goes on the line after it
-    const sep = /^\s*\\\\(\*?\s*\[[^\]]*\])?/.exec(text.slice(end));
-    if (sep) { const at2 = end + sep[0].length; return [at2, at2, `\n${amp} \\\\`, 1]; }
+    const sep = /^\s*\\\\/.exec(text.slice(end)), at2 = sep && end + sep[0].length + ROWEND.exec(text.slice(end + sep[0].length))![0].length;
+    if (at2) return [at2, at2, `\n${amp} \\\\`, 1];
     return [end, end, ` \\\\\n${amp}`, 4];
   }
   /** A structural token of the source: `{`, `}`, a command's option `[` and `]`, `$`, `$$`, `&`, `#`, `_`, `^`, `par` (a blank line), `%` (a comment),

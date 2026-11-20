@@ -6499,6 +6499,12 @@
     const caretNow = () => { if (pdfCaret?.view === 'pdf') pdfCaretDraw(); };
     if (!pdfViewer) { pdfBody.querySelectorAll('.pdf-page img').forEach((img) => img.addEventListener('load', () => { if (img.naturalWidth) img.classList.add('pdf-drawn'); pdfLoaded_(); }, { once: true })); caretNow(); return; }
     let kept = 0;
+    // a page drawn from a build of the same texts (a second run of them: the next pass, a rebuild asked twice) is no
+    // older than the source: it is redrawn but not dimmed meanwhile. Asked once per build, not per page.
+    const same = new Map(), sameTexts = (b) => {
+      if (!same.has(b)) same.set(b, !!b && b.text === pdf.text && Object.keys({ ...b.texts, ...pdf.texts }).every((k) => b.texts?.[k] === pdf.texts?.[k]));
+      return same.get(b);
+    };
     for (const el of pdfBody.querySelectorAll('.pdf-page')) {
       const img = el.querySelector('img'), was = old.get(el.dataset.page);
       if (was && `${was.naturalWidth}x${was.naturalHeight}` === `${img.getAttribute('width')}x${img.getAttribute('height')}`) {
@@ -6513,7 +6519,7 @@
           pdfRastersDraw(el, was, was.__rasters ?? []);
           pdfPaperMark(el);
           kept++;
-        }
+        } else if (sameTexts(was.__build)) el.classList.remove('pdf-stale');
       } else img.addEventListener('load', pdfSettle, { once: true });
     }
     if (kept) pdfLoaded_();
@@ -8137,7 +8143,11 @@
     const x0 = e.clientX, id = e.pointerId;
     // a click on the handle writes nothing: a width only once the pointer moved 3 px
     let on = false;
-    const move = (m) => { if (m.pointerId === id && (on ||= Math.abs(m.clientX - x0) >= 3)) pdfDragSet(PE.snapWidth(d.col, d.was, Math.min(d.max, Math.max(2, d.was + (m.clientX - x0) / d.perBp)), d.line, m.shiftKey, (unitsConv(), TM.convention(editor.text())))); };
+    // a width snapped past the room (a fast drag beyond the edge rounded up) is snapped again one step inside it, so
+    // the column reaches the edge instead of keeping the last width under the pointer's way
+    const snap = (bp, fine) => { const conv = (unitsConv(), TM.convention(editor.text())), s = PE.snapWidth(d.col, d.was, bp, d.line, fine, conv);
+      return s && PE.widthBp(s, d.line) > d.max + 0.01 ? PE.snapWidth(d.col, d.was, d.max - (fine ? 0.1 : 0.5) * 72 / 25.4, d.line, fine, conv) : s; };
+    const move = (m) => { if (m.pointerId === id && (on ||= Math.abs(m.clientX - x0) >= 3)) pdfDragSet(snap(Math.min(d.max, Math.max(2, d.was + (m.clientX - x0) / d.perBp)), m.shiftKey)); };
     // every end (a release, a cancel by the browser or the system) ends the drag and its listeners
     const end = (u) => {
       if (u.pointerId !== id) return;
@@ -9086,8 +9096,14 @@
     pdfHoverFrame = requestAnimationFrame(() => { pdfHoverFrame = 0; pdfHoverAt(pdfHoverLast); });
   });
   pdfBody.addEventListener('pointerleave', () => { pdfHoverLast = null; });
-  /** The hold of a column change ends once the pages show the text as now and the layers are not stale. */
-  function pdfHoldEnd() { if (pdf?.text === editor.text() && !pdfBody.classList.contains('ov-stale')) document.body.classList.remove('pdf-hold'); }
+  /** The hold of a column change ends once the pages show the text as now, the layers are not stale and no page in
+   * view still shows the last build's image (the overlay redrawn first let the pages dim before they were drawn). */
+  function pdfHoldEnd() {
+    if (!document.body.classList.contains('pdf-hold') || pdf?.text !== editor.text() || pdfBody.classList.contains('ov-stale')) return;
+    const v = pdfBody.querySelector('.pdf-pages')?.getBoundingClientRect();
+    if (v && [...pdfBody.querySelectorAll('.pdf-page.pdf-stale')].some((e) => { const b = e.getBoundingClientRect(); return b.bottom > v.top && b.top < v.bottom; })) return;
+    document.body.classList.remove('pdf-hold');
+  }
   /** A column's letter rewritten from the layer: `l`, `c`, `r`, or `p`, `m`, `b` keeping its width. */
   async function pdfColAlign(b) {
     const t = pdfCols?.tables[+b.dataset.t], col = t?.cols[+b.dataset.k];

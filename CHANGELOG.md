@@ -40,6 +40,7 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 
 ### Playground
 
+- `feat-fix` **Tables: nested tables, starred row ends, steady pages.** A tabular inside a cell no longer ends the outer table, so Tab and Enter stay in the right one. `\\*` row ends are read as LaTeX reads them. A column change no longer dims the page after a second build of the same text. A fast width drag stops at the edge instead of keeping an old width.
 - `feat` **Typeset view: TeX's lines.** The Show switch *TeX's lines* breaks each paragraph where the run's own line breaker broke it (the fonts' widths, kerns, ligatures and the document's hyphenation), where all of it is known. `satex query typeset` lists them as `linebreaks`.
 - `feat` **Missing packages in the playground.** The site ships the names every installed package defines (`satex query exports`, a line per file with its names) beside the bundle, so `\toprule` gets the fix `\usepackage{booktabs}` in the browser too.
 - `feat` **Smart wrap.** With `playground.smart_wrap` a line typed past `conventions.lines.length` (0: the document's own wrapped lines, else 80) breaks at its best space: a sentence's end, then after an argument's closing brace, then after a comma, else the last space. Never inside math, an option list, `\verb`, a comment or a verbatim environment. Typing in the editor and Type mode's writes in the PDF and Typeset view wrap alike.

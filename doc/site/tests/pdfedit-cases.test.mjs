@@ -356,6 +356,26 @@ test("Typing in a table (pdfedit.ts)", async () => {
   const open = '\\begin{tabular}{ll}\na & b\n\\end{tabular}', r = E.rowAfter(open, open.indexOf('& b') + 2);
   assert.equal(open.slice(0, r[0]) + r[2] + open.slice(r[1]), '\\begin{tabular}{ll}\na & b \\\\\n &\n\\end{tabular}', 'a last row without \\\\ gets one');
 });
+// Typing in a nested table (pdfedit.ts): an inner tabular or minipage holds its own `&` and `\\`, as a group does,
+// and the outer body ends at its own `\end`. Pins Tab in the outer row stepping into the inner table's cells, and
+// Enter after an inner table finding no table at all (the body cut at the inner `\end{tabular}`).
+test("Typing in a nested table (pdfedit.ts)", async () => {
+  const E = self.satexPdfEdit;
+  const text = '\\begin{tabular}{ll}\na & \\begin{tabular}{c}x \\\\ y\\end{tabular} \\\\\nb & \\begin{minipage}{1cm}u \\\\ v\\end{minipage} \\\\\nc & d\n\\end{tabular}';
+  const at = (s, k = 0) => text.indexOf(s) + k, cell = (t) => t.rows.map((r) => r.map(([a, b]) => text.slice(a, b)));
+  const outer = E.cells(text, at('c &'));
+  assert.deepEqual(cell(outer).map((r) => r.length), [2, 2, 2], 'three outer rows of two cells, the inner rows none of them');
+  assert.deepEqual([outer.r, outer.c], [2, 0], 'past the inner table: still the outer one');
+  assert.equal(E.cellStep(text, at('a &'), 1), at('\\end{tabular} \\\\\nb', 13), 'Tab: the whole inner table is the next cell');
+  assert.deepEqual(cell(E.cells(text, at('x'))), [['x'], ['y']], 'inside the inner table: its own cells');
+  assert.ok(E.rowAfter(text, at('d')), 'Enter after a nested table: a row');
+  // `\\*` and `\\ [2pt]`: the star and the space belong to the row end (`\@ifstar` skips spaces), never to the next
+  // cell or after the new row. Pins Enter writing `\\` + new row + `*`.
+  const star = '\\begin{tabular}{ll}\na & b \\\\*\nc & d \\\\ [2pt]\ne\n\\end{tabular}';
+  assert.deepEqual(E.cells(star, star.indexOf('c &')).rows.map((r) => r.map(([a, b]) => star.slice(a, b))), [['a', 'b'], ['c', 'd'], ['e']]);
+  const r = E.rowAfter(star, star.indexOf('b \\'));
+  assert.equal(star.slice(0, r[0]) + r[2] + star.slice(r[1]), star.replace('*', '*\n & \\\\'), 'the new row after the whole row end');
+});
 // Typing in the PDF: the source words of a paragraph by offset, matched in order to the page's words. The caret and
 // the echo are placed by these offsets, never by a word's spelling alone (`lorem … lorem`), so a rebuilt page that
 // moved the caret's line to the next page still puts the caret after the same character.
