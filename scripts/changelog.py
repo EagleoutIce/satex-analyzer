@@ -7,7 +7,8 @@
   changelog.py notes vX.Y.Z     print the section of a release
   changelog.py links            write bare `@abc1234` and `#12` in the file as links
 
-Commits after the one that cut the last release section count as not yet curated.
+Commits after the last release section and after the last edit of CHANGELOG.md count as
+not yet curated, unless an entry names their sha.
 """
 import datetime, os, re, subprocess, sys
 from pathlib import Path
@@ -62,7 +63,7 @@ def last_release():
 
 
 def pending():
-    """(sha, kind, scope, subject) of commits after the last release that no entry links."""
+    """(sha, kind, scope, subject) of commits after the last release that are not curated."""
     _, m = unreleased()
     body = m.group(1) if m else ""
     base = last_release()
@@ -71,6 +72,9 @@ def pending():
     if tag and subprocess.run(["git", "merge-base", "--is-ancestor", base, tag], cwd=ROOT).returncode == 0:
         base = tag
     refs = set(re.findall(r"\b[0-9a-f]{7,40}\b", body))
+    # Entries are curated in batches: every commit up to the last edit of the changelog counts as curated.
+    edited = git("log", "-1", "--format=%H", f"{base}..HEAD", "--", str(FILE))
+    base = edited or base
     out = []
     for line in git("log", "--no-merges", "--format=%H %s", f"{base}..HEAD").splitlines():
         sha, subject = line.split(" ", 1)
