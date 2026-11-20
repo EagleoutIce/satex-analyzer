@@ -6,12 +6,21 @@ use satex::analysis::tagging::{self, Val};
 
 /// `source` as `main.tex` of a directory of its own, so that fixes have a file to edit.
 fn analyze(source: &str) -> Analysis {
+    analyze_in(None, source)
+}
+
+/// [`analyze`] under `engine`, `None` for the default.
+fn analyze_in(engine: Option<satex::project::config::Engine>, source: &str) -> Analysis {
     let dir = crate::support::tmp_root().join(format!("tagging-{:x}", fxhash(source)));
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("a.png"), PNG).unwrap();
     let main = dir.join("main.tex");
     std::fs::write(&main, source).unwrap();
-    satex::analysis::machine::Machine::analyze(source, Some(&main), &crate::support::config())
+    let cfg = satex::project::config::Config {
+        engine: engine.or(crate::support::config().engine),
+        ..crate::support::config()
+    };
+    satex::analysis::machine::Machine::analyze(source, Some(&main), &cfg)
 }
 
 /// A name per source, so tests running at once keep apart.
@@ -330,4 +339,76 @@ fn an_fp_eval_of_an_unknown_integer_forks_only_on_its_length() {
     // sign arms, then length arms per block: 1.2k today
     const SIGN_THEN_LENGTH_FORKS: u64 = 1_300;
     assert!(a.forks <= SIGN_THEN_LENGTH_FORKS, "{} forks", a.forks);
+}
+
+/// LuaLaTeX makes MathML only through luamml, which latex-lab loads when unicode-math is
+/// loaded (`latex-lab-math.ltx`, else the warning `unicode-math-missing`). Without it the
+/// formulas get no MathML just as under pdfLaTeX: one finding. With unicode-math luamml opens
+/// `main-luamml-mathml.html` for writing, which the next run reads: no finding. Before, the
+/// rule asked for pdfLaTeX and missed the first case.
+#[test]
+fn lualatex_without_unicode_math_writes_no_mathml() {
+    if !crate::support::installed() {
+        return;
+    }
+    let lua = Some(satex::project::config::Engine::LuaTeX);
+    let doc = |pre: &str| {
+        metadata(
+            "lang=en,pdfstandard=ua-2,tagging=on",
+            &format!("\\usepackage{{graphicx}}\n{pre}\\title{{Hello}}\n"),
+            &format!("{BODY} $x$"),
+        )
+    };
+    let plain = analyze_in(lua, &doc(""));
+    assert_eq!(found(&plain, "tagged-math-without-mathml").len(), 1);
+    let unicode = analyze_in(lua, &doc("\\usepackage{unicode-math}\n"));
+    assert_eq!(found(&unicode, "tagged-math-without-mathml"), Vec::<String>::new());
+}
+
+/// latex-lab keeps one mode per graphic, the last mode key winning, and warns
+/// `alt-text-missing` in mode `alt` (the default, and `tag=⟨struct⟩`) when `alt` is empty.
+/// lualatex warns for the first three below and not for the rest (TeX Live 2026). Before,
+/// any key named `alt` or `tag` counted as alternative text, so `alt={}`, `tag=Figure` and
+/// `artifact,alt=` were missed. Red (known): the run loses every `\includegraphics` after the
+/// first tagged one. latex-lab's BBox `\fp_eval:n` over `\property_ref:een{…}{xpos}{0}` forks per
+/// character of an unknown and widens the nesting, so only the first graphic is an occurrence.
+#[test]
+fn a_graphic_is_tagged_by_its_last_mode_key() {
+    if !crate::support::installed() {
+        return;
+    }
+    let warned = ["alt={}", "tag=Figure", "artifact,alt="];
+    let quiet = [
+        "tagging-setup={artifact}",
+        "alt=x,tag=Figure",
+        "tag=false",
+        "tag=artifact",
+        "alt=x,tagging-setup={tag=Figure}",
+    ];
+    let body: String = warned.iter().chain(&quiet).map(|o| format!("\\includegraphics[{o}]{{a}}\n")).collect();
+    let a = analyze(&metadata("lang=en,tagging=on", "\\usepackage{graphicx}\n", &body));
+    let msgs = found(&a, "graphic-without-alt");
+    assert_eq!(msgs.len(), warned.len(), "{msgs:?}");
+}
+
+/// A tagged `\includegraphics` raises no certain error at `\end{document}`: TeX runs it cleanly. The
+/// output routine maps tagpdf's MC mark (`\tex_splitfirstmarks:D`, one of several clists like
+/// `e+,3,6`) with `\clist_map_function:nN`. `\__clist_trim_next:w` ended its `,`-delimited
+/// argument in that token but kept the whole token, comma included. The next scan split the
+/// same text at its comma, `\__seq_wrap_item:n` met the group's `}`, and satex reported C013
+/// and C007 as certain. `clip` skips latex-lab's BBox trim fp and its forks.
+#[test]
+fn a_tagged_graphic_raises_no_error_at_the_end() {
+    if !crate::support::installed() {
+        return;
+    }
+    let source =
+        metadata("testphase=latest,lang=en", "\\usepackage{graphicx}\n", "Text.\n\\includegraphics[clip,width=1cm]{a}");
+    let a = analyze(&source);
+    let certain: Vec<_> = satex::linter::lint(&a)
+        .into_iter()
+        .filter(|f| f.get("severity").and_then(|s| s.as_str()) == Some("error"))
+        .map(|f| format!("{:?} {:?}", f.get("code"), f.get("message")))
+        .collect();
+    assert!(certain.is_empty(), "{certain:#?}");
 }

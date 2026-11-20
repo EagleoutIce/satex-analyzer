@@ -1660,6 +1660,7 @@ impl Machine<'_> {
             memo_count: _,
             memo_verify: _,
             memo_said: _,
+            memo_uses: _,
             side_effects: _,
             file_writes: _,
             call_recs: _,

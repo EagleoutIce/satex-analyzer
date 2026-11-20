@@ -6,6 +6,12 @@
 # == soundness ==
 
 # == precision ==
+# Open (2026-11-20, owner: one-of class round, from tagfix): a delimited argument that ends inside a one-of now parts known texts with and without the delimiter (sound, fixes false C013/C007 on tagged graphics). pgfmath's `#1.#2` scan meets one-of tokens of class `ds+` counted as "may hold `.`", so it forks on every pass (1109 vs 439 forks). Root: tighten the one-of class so sign/digit texts are known far/inside texts. Log target/scratch/round-0740/tagfix/log.md.
+documents::pgfmath_divides_learn_past_their_scratch_names
+# Open (2026-11-20, owner: fpfork / intdom round 0740): l3fp parses a typed unknown (the image's natural size \Gin@urx) per character, so only the first of several tagged graphics is recorded.
+tagging::a_graphic_is_tagged_by_its_last_mode_key
+# Open (2026-11-20, owner: luahang round 0740): tagpdf under LuaTeX: \int_to_Hex:n of \int_rand forks per digit and a \lua_now:e per namespace line keeps the paths apart; the run never ends. Lua state is shared across paths (mlua clone), limits.seconds not honored there.
+tagging::lualatex_without_unicode_math_writes_no_mathml
 # Open (2026-11-19, owner: speed; cex3 round 2): `\begin{document}` reads l3backend-pdftex.def anew every run (~25% of the line's steps). A load inside a group is cacheable since cex3 (locals replay as locals; a checkpoint needs the group's `\aftergroup` tokens and catcodes as at the start). Left: the `.def` is an `\input`, not a package; tried caching library `\input` files (cacheable_at_push by `!project_file`): 12 package_cache/incremental tests then differ cold vs cached (body-time facts a package never produces: `facts.spaces`, letters, conditionals, one graph edge). Needs those facts in the segment (or library inputs counted as package code), not landed.
 package_cache::the_backend_loaded_by_begin_document_is_served_from_a_cache
 # Open (2026-11-19, owner: next box round, from sound2): `\lastbox` now takes a plain box (was void, unsound). LaTeX's mark extraction (latex.ltx `\__mark_prepare_and_extract:nn`) takes the column's last vbox (a here float) and unpacks it; a box taken from a list keeps no facts of its own (calm, last item, `vl` record), so the `\vsplit` to `\maxdimen` after it is unknown and `\box_if_empty` loops "maybe". Needs per-item box facts in the vl record (Kp::Box with box kind and its register facts).

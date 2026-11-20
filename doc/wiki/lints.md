@@ -141,7 +141,7 @@ Every rule, with a link to its explanation below. The shape gives the severity: 
 | S066 | [`redundant-package-load`](#redundant-package-load) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-style">style</span> | — | <span class="fix fix-safe" title="safe: the fix keeps the document's meaning, --fix applies it">S</span> | package loaded already | 0.2.5 | — |
 | S043 | [`stray-space`](#stray-space) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-style">style</span> | — | <span class="fix fix-safe" title="safe: the fix keeps the document's meaning, --fix applies it">S</span> | space from a line end in a macro | 0.1.0 | — |
 | S044 | [`table-rules`](#table-rules) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-style">style</span> | — | — | vertical rules or hline in a table | 0.2.0 | — |
-| S065 | [`tagged-math-without-mathml`](#tagged-math-without-mathml) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-style">style</span> | <span class="eng" title="only under pdftex">pdftex</span> | — | formulas without MathML | 0.2.5 | — |
+| S065 | [`tagged-math-without-mathml`](#tagged-math-without-mathml) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-style">style</span> | — | — | formulas without MathML | 0.2.5 | — |
 | S055 | [`uncited-bibliography-entry`](#uncited-bibliography-entry) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-style">style</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix may change the meaning, only --unsafe-fixes applies it">U</span> | database entry never cited | 0.2.0 | — |
 | S045 | [`unit-in-cells`](#unit-in-cells) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-style">style</span> | — | — | unit repeated in every cell | 0.2.0 | — |
 | S046 | [`unreferenced-numbered-display`](#unreferenced-numbered-display) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-style">style</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix may change the meaning, only --unsafe-fixes applies it">U</span> | numbered display never referenced | 0.2.0 | — |
@@ -1843,13 +1843,13 @@ See [booktabs § 2](https://ctan.org/pkg/booktabs).
 
 ### tagged-math-without-mathml
 
-<p class="badges"><code class="num" title="rule number">S065</code> <span class="sev sev-info" title="default: info">default: info</span> <span class="cat cat-style">style</span> <span class="eng" title="only under pdftex">pdftex</span> <span class="since" title="first release">since 0.2.5</span></p>
+<p class="badges"><code class="num" title="rule number">S065</code> <span class="sev sev-info" title="default: info">default: info</span> <span class="cat cat-style">style</span> <span class="since" title="first release">since 0.2.5</span></p>
 
 **formulas without MathML**
 
-Under LuaLaTeX the tagging code turns each formula into MathML (luamml). pdfLaTeX cannot: it only attaches MathML it reads from `<jobname>-mathml.html`, and the run looked for that file and found none. The formulas are then tagged with their LaTeX source as alternative text, which PDF/UA-2 accepts less well than MathML.
+The tagging code attaches MathML to each formula. It reads it from `<jobname>-mathml.html` or `<jobname>-luamml-mathml.html`. Under LuaLaTeX luamml writes the second one, but only when unicode-math is loaded (latex-lab warns `unicode-math-missing` otherwise). pdfLaTeX cannot write either. The rule fires when the run looked for these files, found none, and wrote none. The formulas are then tagged with their LaTeX source as alternative text, which PDF/UA-2 accepts less well than MathML.
 
-Fix by compiling with LuaLaTeX, or by making the MathML file once with a LuaLaTeX run (or `\tagpdfsetup{math/mathml/write-dummy}` and filling it in).
+Fix by compiling with LuaLaTeX and loading unicode-math, or by making the MathML file once with such a run.
 
 See [latex-lab § latex-lab-math](https://ctan.org/pkg/latex-lab).
 

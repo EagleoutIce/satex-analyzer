@@ -870,3 +870,29 @@ fn an_edit_in_an_included_file_resumes_where_it_is_included() {
     }
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// A build that makes its kernel and class caches and the next build, served from them, say
+/// the same, row for row. An edit's rerun resumes from the first build's checkpoints and
+/// splices its rest, so any row the two kinds of run record differently breaks the rerun.
+/// Pins: the cold run went on from the kernel capture, whose names share macro bodies, so kept
+/// call effects (keyed by body) were replayed elsewhere than warm, and a replay counted no uses.
+#[test]
+fn a_report_built_with_its_caches_says_what_one_served_from_them_says() {
+    if !installed() {
+        return;
+    }
+    let dir = crate::support::tmp_root().join("incremental-coldwarm");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    for (name, text) in &report(6, 3) {
+        std::fs::write(dir.join(name), text).unwrap();
+    }
+    let main = dir.join("main.tex");
+    let text = std::fs::read_to_string(&main).unwrap();
+    let mut cfg = crate::support::config();
+    cfg.cache.dir = Some(dir.join("cache"));
+    let cold = said(&Machine::build(&mut Checkpoints::new(&cfg), &text, &main, &cfg, true));
+    let warm = said(&Machine::build(&mut Checkpoints::new(&cfg), &text, &main, &cfg, true));
+    assert_eq!(first_difference(&cold, &warm), None, "cold build vs warm build");
+    let _ = std::fs::remove_dir_all(&dir);
+}

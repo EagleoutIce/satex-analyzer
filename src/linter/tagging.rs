@@ -145,17 +145,20 @@ Fix by compiling with LuaLaTeX, which the tagging project recommends, or pdfLaTe
         severity: Severity::Info,
         summary: "formulas without MathML",
         explanation: "\
-Under LuaLaTeX the tagging code turns each formula into MathML (luamml).
-pdfLaTeX cannot: it only attaches MathML it reads from
-`<jobname>-mathml.html`, and the run looked for that file and found none.
-The formulas are then tagged with their LaTeX source as alternative text,
-which PDF/UA-2 accepts less well than MathML.
+\
+The tagging code attaches MathML to each formula. It reads it from
+`<jobname>-mathml.html` or `<jobname>-luamml-mathml.html`. Under LuaLaTeX
+luamml writes the second one, but only when unicode-math is loaded
+(latex-lab warns `unicode-math-missing` otherwise). pdfLaTeX cannot write
+either. The rule fires when the run looked for these files, found none, and
+wrote none. The formulas are then tagged with their LaTeX source as
+alternative text, which PDF/UA-2 accepts less well than MathML.
 
-Fix by compiling with LuaLaTeX, or by making the MathML file once with a
-LuaLaTeX run (or `\\tagpdfsetup{math/mathml/write-dummy}` and filling it in).",
+Fix by compiling with LuaLaTeX and loading unicode-math, or by making the
+MathML file once with such a run.",
         references: &[Ref { source: Source::LatexLab, at: "latex-lab-math" }],
         fixes: &[],
-        engines: &[Engine::PdfTeX],
+        engines: &[],
         run: math_without_mathml,
     },
 ];
@@ -221,9 +224,30 @@ fn incompatible_packages(report: &mut Report) {
     }
 }
 
-/// The keys that give a graphic its tagging: alternative text, an artifact, actual text, or a
-/// structure of its own (latex-lab's graphic keys).
-const TAGGING_KEYS: [&str; 5] = ["alt", "artifact", "actualtext", "tag", "tagging-setup"];
+/// Whether latex-lab tags a graphic with these keys without warning `alt-text-missing`:
+/// its keys in order, the last mode key winning (latex-lab-testphase-graphic.sty, keys `Gin`
+/// and `tag/graphic`). Mode `alt` (the default, and `tag=⟨struct⟩`) warns when `alt` is empty.
+/// `None` when a key name is not plain text.
+fn tagged(entries: &[(String, String)]) -> Option<bool> {
+    // (mode is `alt`, `alt` is not empty, suspended)
+    fn fold(entries: &[(String, String)], state: &mut (bool, bool, bool)) -> Option<()> {
+        for (name, value) in entries {
+            match (name.as_str(), value.as_str()) {
+                ("alt", v) => (state.0, state.1) = (true, !v.is_empty()),
+                ("artifact" | "actualtext", _) | ("tag", "artifact") => state.0 = false,
+                // `\tag_suspend:n`: the graphic is not tagged at all
+                ("tag", "false") => state.2 = true,
+                ("tag", _) => state.0 = true,
+                ("tagging-setup", v) => fold(&entries_of(v)?, state)?,
+                _ => {}
+            }
+        }
+        Some(())
+    }
+    let mut state = (true, false, false);
+    fold(entries, &mut state)?;
+    Some(!state.0 || state.1 || state.2)
+}
 
 fn graphics_without_alt(report: &mut Report) {
     let Some(_) = tagging::of(report.analysis()).filter(|t| t.active()) else { return };
@@ -238,8 +262,8 @@ fn graphics_without_alt(report: &mut Report) {
             continue;
         }
         seen.push(o.span);
-        let Some(keys) = graphic_keys(report, o.span) else { continue };
-        if keys.iter().any(|k| TAGGING_KEYS.contains(&k.as_str())) {
+        let Some(entries) = graphic_keys(report, o.span) else { continue };
+        if tagged(&entries) != Some(false) {
             continue;
         }
         let message = format!("`{}` has no alternative text: tagging reads out its file name", o.key);
@@ -248,9 +272,9 @@ fn graphics_without_alt(report: &mut Report) {
     }
 }
 
-/// The key names of the `\includegraphics` written at `span`, empty without options; `None`
-/// where something else stands there, or a key name is not plain text (a macro of options).
-pub(crate) fn graphic_keys(report: &Report, span: Span) -> Option<Vec<String>> {
+/// The keys and values of the `\includegraphics` written at `span`, empty without options;
+/// `None` where something else stands there, or a key name is not plain text (a macro of options).
+pub(crate) fn graphic_keys(report: &Report, span: Span) -> Option<Vec<(String, String)>> {
     let edits = report.edits();
     let (_, text, mut scan, cs) = edits.command(span)?;
     if scan.name(&cs)? != "includegraphics" {
@@ -258,18 +282,26 @@ pub(crate) fn graphic_keys(report: &Report, span: Span) -> Option<Vec<String>> {
     }
     scan.star();
     let Some(opt) = scan.optional() else { return Some(Vec::new()) };
-    let body = text.slice(opt.inner_start, opt.inner_end)?;
-    let mut names = Vec::new();
+    entries_of(text.slice(opt.inner_start, opt.inner_end)?)
+}
+
+/// A key list's entries as (name, value), the value trimmed and one brace pair stripped (keyval
+/// does both); `None` when a name is not plain text.
+fn entries_of(body: &str) -> Option<Vec<(String, String)>> {
+    let mut out = Vec::new();
     for entry in split_top(body) {
-        let name = entry.split_once('=').map_or(entry, |(n, _)| n).trim();
+        let (name, value) = entry.split_once('=').unwrap_or((entry, ""));
+        let name = name.trim();
         if name.contains(['\\', '{', '}', '%']) {
             return None;
         }
+        let value = value.trim();
+        let value = value.strip_prefix('{').and_then(|v| v.strip_suffix('}')).unwrap_or(value);
         if !name.is_empty() {
-            names.push(name.to_string());
+            out.push((name.to_string(), value.to_string()));
         }
     }
-    Some(names)
+    Some(out)
 }
 
 /// The entries of a key list, split at commas outside braces.
@@ -407,22 +439,21 @@ fn unsupported_engine(report: &mut Report) {
 fn math_without_mathml(report: &mut Report) {
     let a = report.analysis();
     let Some(t) = tagging::of(a).filter(|t| t.active()) else { return };
-    if a.plugins.engine != Engine::PdfTeX || t.ua() != Some("UA-2") {
+    if t.ua() != Some("UA-2") || a.facts.text.math.is_empty() {
         return;
     }
-    // formulas the run set, and the math module's search for `<jobname>-mathml.html` found nothing
-    if a.facts.text.math.is_empty() {
+    // latex-lab-math.ltx reads `<job>-mathml` and `<job>-luamml-mathml`, and luamml `\iow_open`s
+    // the second: the formulas get MathML when one was found or this run writes one
+    let mathml = |f: &&String| f.ends_with("-mathml.html") || f.ends_with("-mathml");
+    if a.facts.written_files.iter().any(|f| mathml(&f)) || a.facts.found.iter().any(|f| mathml(&f)) {
         return;
     }
-    let Some(missing) = a.facts.absent.iter().find(|f| f.ends_with("-mathml.html") || f.ends_with("-mathml")) else {
-        return;
-    };
+    let Some(missing) = a.facts.absent.iter().find(mathml) else { return };
     let Some(at) = metadata_call(report) else { return };
-    let message = format!("formulas are tagged without MathML: `{missing}` does not exist and pdfLaTeX cannot make it");
-    report.add(
-        at,
-        "DocumentMetadata",
-        message,
-        Some("compile with LuaLaTeX, or make the MathML file with one LuaLaTeX run".into()),
-    );
+    let message = format!("formulas are tagged without MathML: `{missing}` does not exist and this run writes none");
+    let fix = match a.plugins.engine {
+        Engine::LuaTeX => "load `unicode-math`, then luamml writes the MathML file",
+        _ => "compile with LuaLaTeX and `unicode-math`, or make the MathML file with one such run",
+    };
+    report.add(at, "DocumentMetadata", message, Some(fix.into()));
 }

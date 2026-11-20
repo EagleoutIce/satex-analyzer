@@ -99,6 +99,8 @@ pub(crate) struct MemoStart {
     verify: Option<(Rc<Memo>, Sym)>,
     /// [`Machine::memo_said`]'s length at the start.
     said: usize,
+    /// [`Machine::memo_uses`]'s length at the start.
+    uses: usize,
 }
 
 /// What decides where a run's occurrences stand ([`Machine::raised_at`]).
@@ -125,6 +127,9 @@ pub(crate) struct Memo {
     /// Occurrences the run said again, each said before it, and where it
     /// raised them: a replay holds only where each is still said before.
     said: Option<(Raise, Said)>,
+    /// The call sites the run counted, once per use: a replay counts them too,
+    /// so uses do not depend on which calls were replayed.
+    uses: Rc<[(Span, Sym)]>,
     writes: Vec<(Sym, Binding, bool)>,
     /// A run that closed its caller's group ends there: its `\\endgroup`, and
     /// the tokens its text had left to read. A replay closes the group and reads them.
@@ -424,6 +429,7 @@ impl Machine<'_> {
                         facts: self.fact_lens(),
                         verify: self.memo_verify.take(),
                         said: self.memo_said.len(),
+                        uses: self.memo_uses.len(),
                     })
                 }),
             };
@@ -681,6 +687,7 @@ impl Machine<'_> {
                 let floor = self.call_recs.iter().rev().find_map(|r| r.memo_mark());
                 if floor.is_none() {
                     self.memo_said.clear();
+                    self.memo_uses.clear();
                 }
                 self.env.memo_floor(floor);
             }
@@ -1019,6 +1026,7 @@ impl Machine<'_> {
     pub(crate) fn drop_call_recs(&mut self) {
         self.env.memo_floor(None);
         self.memo_said.clear();
+        self.memo_uses.clear();
         for rec in std::mem::take(Rc::make_mut(&mut self.call_recs)) {
             if rec.site
                 && let Some(entry) = self.call_runs.get_mut(&rec.key)
@@ -1157,6 +1165,7 @@ impl Machine<'_> {
         let floor = self.call_recs.iter().rev().find_map(|r| r.memo_mark());
         if floor.is_none() {
             self.memo_said.clear();
+            self.memo_uses.clear();
         }
         self.env.memo_floor(floor);
     }
@@ -1443,6 +1452,7 @@ impl Machine<'_> {
         let said = self.memo_said.get(start.said..).filter(|s| !s.is_empty()).map(|s| (self.raise(), s.into()));
         Ok(Memo {
             said,
+            uses: self.memo_uses.get(start.uses..).unwrap_or_default().into(),
             logged,
             own,
             args: rec.args.clone(),
@@ -1487,6 +1497,7 @@ impl Machine<'_> {
                 && (m.logged.is_some() || !env.logging())
                 && (m.rest.is_none()
                     || env.group_kind() == Some(crate::engine::env::GroupKind::SemiSimple) && env.nest().is_none())
+                && m.uses.iter().all(|key| self.expansion_sites.get(key).is_some())
                 && m.said.as_ref().is_none_or(|(raise, said)| {
                     *raise == self.raise() && said.iter().all(|(k, key, at)| self.said_before(*k, key, *at).is_some())
                 })
@@ -1503,6 +1514,14 @@ impl Machine<'_> {
             for (kind, key, at) in said.iter() {
                 self.occurrence(*kind, key.clone(), None, *at);
             }
+        }
+        for key in memo.uses.iter() {
+            let Some(fact) = self.expansion_sites.get(key).map(|site| site.fact) else { continue };
+            let e = &mut self.out.facts.expansions[fact];
+            (e.count, e.mode) = (e.count.saturating_add(1), e.mode.union(self.mode));
+        }
+        if self.env.memo_recording() {
+            self.memo_uses.extend(memo.uses.iter().copied());
         }
         for (sym, b, global) in &memo.writes {
             self.env.set(*sym, b.clone(), *global);

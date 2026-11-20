@@ -2093,6 +2093,8 @@ pub struct Machine<'a> {
     memo_verify: Option<(Rc<calls::Memo>, Sym)>,
     /// Occurrences recorded calls said again, each already said ([`calls`]).
     memo_said: Vec<(OccKind, String, Span)>,
+    /// Call sites recorded calls counted, once per use: a replay counts them again ([`calls`]).
+    memo_uses: Vec<(Span, Sym)>,
     /// Changes outside the slots no kept effect replays: boxes' text,
     /// outputs, streams, reads of the clock, the generator, the input line.
     pub(crate) side_effects: u64,
@@ -3049,6 +3051,7 @@ impl<'a> Machine<'a> {
             memo_count: 0,
             memo_verify: None,
             memo_said: Vec::new(),
+            memo_uses: Vec::new(),
             side_effects: 0,
             file_writes: 0,
             call_recs: Rc::default(),
@@ -4483,12 +4486,18 @@ will look undefined",
                 self.cfg.eviction_bound(),
                 &roots,
             );
-            if let (Err(e), true) = (stored, self.cfg.verbose >= 1) {
+            if let (Err(e), true) = (&stored, self.cfg.verbose >= 1) {
                 crate::util::progress::note!("satex: the kernel cache could not be written: {e}");
             }
             // Go on from what was cached, as a run that reads the cache does:
-            // a cache never changes an answer.
-            captured.install(&mut self.out.interner, &mut self.env);
+            // a cache never changes an answer. Read back from disk where it was
+            // stored: the bytes share no macro body between names, the capture
+            // does, and kept call effects are keyed by body.
+            let engine = self.out.plugins.engine.as_str();
+            let bound = self.cfg.eviction_bound();
+            let stored =
+                stored.ok().and_then(|_| Format::load(directory, &source, engine, preload_key, bound, &roots).ok());
+            stored.unwrap_or(captured).install(&mut self.out.interner, &mut self.env);
             self.out.graph = DependencyGraph::default();
             self.out.calls = CallGraph::default();
             self.out.observed = CallGraph::default();
@@ -4666,6 +4675,7 @@ will look undefined",
         self.call_runs.clear();
         (self.memos, self.memo_codes, self.memo_seen, self.memo_count) = Default::default();
         self.memo_said.clear();
+        self.memo_uses.clear();
         self.call_recs = Rc::default();
         self.env.memo_floor(None);
         self.scratch = Scratch::default();
@@ -9008,6 +9018,15 @@ will look undefined",
         self.refute_if(unknown_arm, text, opener)
     }
 
+    /// The scan takes the arm where unknown text holds no delimiter (or holds
+    /// it here). The arm holds only for texts of that shape, so the path
+    /// approximated: its errors are not TeX's for certain.
+    pub(crate) fn assume_arm(&mut self) {
+        self.arm_assumed = true;
+        self.scratch.approximations += 1;
+        self.approximated = true;
+    }
+
     /// [`Self::refute_library_fault`] on a path known to rest on an approximation.
     pub(crate) fn refute_if(&mut self, approximated: bool, text: &str, opener: Span) -> bool {
         let refuted = self.may_refute(opener) && approximated;
@@ -10556,6 +10575,9 @@ will look undefined",
         arguments: Vec<Box<[Token]>>,
     ) -> u32 {
         self.note_site(span, name);
+        if self.env.memo_recording() {
+            self.memo_uses.push((span, name));
+        }
         let progress = self.site_progress();
         // The macro whose text held the call, as its vertex was made: a list
         // used up by the call's last token has ended since (tex.web § 390).
@@ -12313,13 +12335,12 @@ will look undefined",
         let continues = |m: &Self, x: &[Token]| {
             !tail_free && delimiter.len() > 1 && x.first().is_some_and(|f| m.hole(*f).is_some())
         };
-        if texts.iter().any(|x| continues(self, x) || self.hides_delimiter(x, delimiter)) {
-            return OneOfScan::Unknown;
-        }
-        let mut inside: Vec<usize> = Vec::new();
-        let mut far: Vec<usize> = Vec::new();
+        // Texts with unknown text that may hold the delimiter, known texts
+        // without it, and known texts with it.
+        let [mut dark, mut far, mut inside]: [Vec<usize>; 3] = Default::default();
         for (i, text) in texts.iter().enumerate() {
             match Self::find_delimiter(text, delimiter) {
+                _ if continues(self, text) || self.hides_delimiter(text, delimiter) => dark.push(i),
                 Some(_) => inside.push(i),
                 None if explore::balanced(text) => far.push(i),
                 None => return OneOfScan::Unknown,
@@ -12329,7 +12350,7 @@ will look undefined",
             // No text holds it: the token is one more token of the argument,
             // unless a text ends in the delimiter's first tokens, which may
             // run on into what comes after (tex.web § 392): a path per text.
-            if inside.is_empty() {
+            if inside.is_empty() && dark.is_empty() {
                 let begins = |x: &[Token]| {
                     let seen: Vec<Tok> = out.iter().chain(x).map(|t| t.tok).collect();
                     (1..delimiter.len().min(seen.len() + 1)).any(|j| seen[seen.len() - j..] == delimiter[..j])
@@ -12339,22 +12360,26 @@ will look undefined",
                 }
                 return if self.split_one_of(t) { OneOfScan::Again } else { OneOfScan::Unknown };
             }
-            // Some do: two paths, each with the token for one group of
-            // texts. Read as unknown text instead, the scan would end in
-            // it on every pass of a loop over it and never get past.
-            let parts = [far, inside];
-            let groups: [Vec<Rc<[Token]>>; 2] = parts.clone().map(|g| g.iter().map(|&i| texts[i].clone()).collect());
+            // The argument never ends in a text without the delimiter: a
+            // path per kind, each with the token for its texts. Read as
+            // unknown text instead, the scan would end in it on every pass
+            // of a loop over it and never get past.
+            let parts: Vec<Vec<usize>> = [dark, far, inside].into_iter().filter(|g| !g.is_empty()).collect();
             let parted = self.split_one_of_groups(t, t.span, &parts, |m, arm| {
-                match &groups[arm][..] {
-                    [one] => m.unread_all(one),
-                    texts => {
-                        let token = m.one_of(texts.to_vec(), t.span);
+                match &parts[arm][..] {
+                    [one] => m.unread_all(&texts[*one]),
+                    group => {
+                        let token = m.one_of(group.iter().map(|&i| texts[i].clone()).collect(), t.span);
                         m.unread(token);
                     }
                 }
                 true
             });
             return if parted { OneOfScan::Again } else { OneOfScan::Unknown };
+        }
+        // Unknown text may hold the delimiter or go on one: read as unknown.
+        if !dark.is_empty() {
+            return OneOfScan::Unknown;
         }
         let one = |m: &mut Self, parts: Vec<Rc<[Token]>>| -> Vec<Token> {
             let first = &parts[0];
@@ -12611,7 +12636,7 @@ will look undefined",
                         self.scan_abandoned = true;
                         return strip_braces(out);
                     }
-                    Some(_) => self.arm_assumed = true,
+                    Some(_) => self.assume_arm(),
                     None => {
                         fuzzy = fuzzy.or(Some(t.span));
                         tail_free = false;
@@ -12660,7 +12685,7 @@ will look undefined",
                     false => None,
                 };
                 if depth == 0 && (!unknown_text || ends == Some(0)) {
-                    out.push(t);
+                    out.push(self.split_prefix(t, delimiter));
                     self.unread_rest(t, delimiter, t.span);
                     // The delimiter may be inside the unknown text just
                     // split off: this scan gave up, not found it. A caller
@@ -12675,7 +12700,7 @@ will look undefined",
                 // level 0 the arm that holds no delimiter reads on exactly:
                 // the other arm took the split.
                 match ends {
-                    Some(1) => self.arm_assumed = true,
+                    Some(1) => self.assume_arm(),
                     _ => fuzzy = fuzzy.or(Some(t.span)),
                 }
                 if depth == 0 && unknown_text {
@@ -12780,7 +12805,7 @@ will look undefined",
                         }
                         // The texts that do not end so read on.
                         Some(_) => {
-                            self.arm_assumed = true;
+                            self.assume_arm();
                             out[p] = others.expect("forked on it");
                         }
                         None => fuzzy = fuzzy.or(Some(t.span)),
@@ -13256,7 +13281,7 @@ will look undefined",
                         if only_empty || self.branch(self.unknown, 2, t.span) != Some(1) {
                             continue;
                         }
-                        self.arm_assumed = true;
+                        self.assume_arm();
                     }
                     // After unknown text the literal may be inside it: what
                     // was read is given back, and the parameters go on.
@@ -15859,6 +15884,15 @@ impl Machine<'_> {
             }
             self.unread(rest);
         }
+    }
+
+    /// What an argument that ends in `t` takes of it (tex.web § 392): of one
+    /// of several texts, each up to its first delimiter, never one with it.
+    fn split_prefix(&mut self, t: Token, delimiter: &[Tok]) -> Token {
+        let Some(texts) = self.one_of_members(t) else { return t };
+        let cut =
+            |x: &Rc<[Token]>| Self::find_delimiter(x, delimiter).map_or_else(|| x.clone(), |at| Rc::from(&x[..at]));
+        self.one_of(texts.iter().map(cut).collect(), t.span)
     }
 
     /// Unknown text `t` detokenized: its class printed

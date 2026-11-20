@@ -157,6 +157,7 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 
 ### Analysis
 
+- `feat-fix` **No false certain errors from guesses inside unknown text.** A split that assumes where a delimiter lies inside unknown text marks its arms as approximated, so an error there is possible, not certain (a false `missing number` before `\include`). An argument that ends inside one of several known texts keeps no delimiter (false "extra }" and "paragraph ended" on tagged graphics). A run served from the kernel cache counts the same uses as the run that built it.
 - `perf` **Leaner checkpoints, honest stats.** A checkpoint shares the expansion sites instead of copying them: −6% peak memory on a 40-page document. `--stats` names the tokens replayed from caches apart from those run. A `--stats` run starts from the last build's own files too (the thesis example 3 runs → 1), and a run stopped by `limits.memory` is not stored.
 - `feat` **Manuals for TikZ, pgf, primitives and more packages.** Hovers and Explain show pgf's manual, the pdfTeX manual, TeX by Topic and package docs in more formats (`docCommand`, `\DescribeMacro`, `desc` blocks, tcolorbox, enumitem, titlesec, xstring). Set by `docs.named_environments` and `docs.usage_blocks`.
 - `feat-fix` **Option completion in listings and floats.** A body's `\csname lstlisting@\endcsname` is a call in the call graph, so `\begin{lstlisting}[` completes listings' keys. A float's `[…]` offers the placement letters not yet typed.

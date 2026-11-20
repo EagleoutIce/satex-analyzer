@@ -922,6 +922,11 @@ impl Env {
     }
 
     /// The innermost open record begins at `floor` again; `None` stops the log.
+    /// Whether a call is being recorded for a kept effect.
+    pub fn memo_recording(&self) -> bool {
+        self.memo_on.get()
+    }
+
     pub fn memo_floor(&mut self, floor: Option<MemoMark>) {
         match floor {
             Some(m) => self.memo.get_mut().floor = m.pre,
