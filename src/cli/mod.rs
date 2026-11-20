@@ -588,6 +588,19 @@ pub fn parse_filter(text: Option<&str>) -> Result<crate::queries::query::Filter,
     text.map_or(Ok(crate::queries::query::Filter::Always), crate::queries::query::Filter::parse)
 }
 
+/// A field no record has selects nothing: `rule=…` for `code=…` would read as "none found".
+pub fn known_fields(filter: &crate::queries::query::Filter, found: &[Record], what: &str) -> Result<(), String> {
+    let Some(field) =
+        filter.fields().into_iter().find(|f| !found.is_empty() && !found.iter().any(|r| r.contains_key(*f)))
+    else {
+        return Ok(());
+    };
+    let mut fields: Vec<&str> = found.iter().flat_map(|r| r.keys()).map(String::as_str).collect();
+    fields.sort_unstable();
+    fields.dedup();
+    Err(format!("no {what} has the field `{field}`. They have: {}", fields.join(", ")))
+}
+
 pub fn parse_position(text: &str) -> Result<(u32, u32), String> {
     let (line, col) = text.split_once(':').ok_or("expected LINE:COL")?;
     Ok((

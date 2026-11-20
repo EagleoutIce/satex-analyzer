@@ -36,7 +36,7 @@ const BUILD_FILES: [&str; 7] =
     ["latexmkrc", ".latexmkrc", "Makefile", "justfile", "arara.yaml", "tectonic.toml", super::l3build::FILE];
 
 pub fn scan(root: &Path) -> Discovery {
-    scan_with(root, 1)
+    scan_with(root, 1, &crate::project::config::Config::discover(root))
 }
 
 /// How much of a file is read to tell a document from an input: both
@@ -143,7 +143,8 @@ fn classify(path: &Path) -> Option<Found> {
 /// The same walk on `threads` threads.  More than one runs the parallel
 /// walker, which is what makes a large project tree cheap to look at; one
 /// keeps the walk on this thread.
-pub fn scan_with(root: &Path, threads: usize) -> Discovery {
+/// Under the run's settings `cfg`: its `project.root` names the root over every guess.
+pub fn scan_with(root: &Path, threads: usize, cfg: &crate::project::config::Config) -> Discovery {
     // `Path::parent` of a bare file name is the empty path, which names the
     // current directory everywhere else but walks nothing here.
     let root = match root.as_os_str().is_empty() {
@@ -208,12 +209,11 @@ pub fn scan_with(root: &Path, threads: usize) -> Discovery {
     ] {
         list.sort();
     }
-    // `project.root` in `satex.yaml` names the root over every guess.
-    if let Some(named) = crate::project::config::Config::discover(root).project.root {
+    if let Some(named) = &cfg.project.root {
         found.declared_root = Some(root.join(named));
     }
     if found.build.iter().any(|path| path.ends_with(super::l3build::FILE))
-        && let Some(config) = super::l3build::L3build::read(root)
+        && let Some(config) = super::l3build::L3build::read(root, &cfg.l3build)
     {
         let base = std::fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
         let tests = if config.checks { config.tests() } else { Vec::new() };

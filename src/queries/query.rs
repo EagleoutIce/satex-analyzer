@@ -375,7 +375,9 @@ impl Query {
             Query::Recursion => "macros that call themselves, directly or through others",
             Query::Calls => "which control sequences each macro's body invokes",
             Query::DependencyGraph => "the dependency graph between files and packages as records",
-            Query::Trace => "every step: macro expansions, primitives run, changes made",
+            Query::Trace => {
+                "every step: macro expansions, primitives run, changes made (only with `trace: true`, or use `satex trace`)"
+            }
             Query::Files => "every file read, in the order it was opened",
             Query::Diagnostics => "what satex noticed while interpreting, apart from lint rules",
             Query::Distribution => "the detected TeX installation, version and searched trees",

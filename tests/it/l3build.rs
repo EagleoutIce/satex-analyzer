@@ -84,7 +84,8 @@ fn defaults_come_from_l3build_itself() {
         return;
     }
     let dir = bundle("defaults");
-    let config = satex::plugins::l3build::L3build::read(&dir).expect("build.lua");
+    let config = satex::plugins::l3build::L3build::read(&dir, &satex::project::config::Config::discover(&dir).l3build)
+        .expect("build.lua");
     assert_eq!(config.how, "texlua");
     // l3build-variables.lua: `unpackfiles = unpackfiles or {"*.ins"}`.
     assert_eq!(config.list("unpackfiles"), vec!["*.ins".to_string()]);

@@ -2816,7 +2816,7 @@ pub(crate) const WIDEN_ON: [&str; 6] = [
 
 impl<'a> Machine<'a> {
     pub fn new(cfg: &'a Config, base: PathBuf) -> Self {
-        let project = Project::discover(&base);
+        let project = Project::discover_with(&base, &cfg.l3build);
         let plugins = Plugins::resolve(cfg, &project);
         // TEXINPUTS etc., in kpathsea's own precedence: environment, then
         // the project's `latexmkrc`/Makefile, then `satex.yaml`'s `paths.*`.
@@ -3693,7 +3693,8 @@ impl<'a> Machine<'a> {
             m.catcodes.at_letter(true);
         }
         if m.cfg.plugins.discovery {
-            m.out.plugins.discovery = crate::plugins::discovery::scan_with(&m.base, m.cfg.limits.thread_count());
+            m.out.plugins.discovery =
+                crate::plugins::discovery::scan_with(&m.base, m.cfg.limits.thread_count(), &m.cfg);
         }
         m.out.plugins.read_build(&m.cfg, &m.out.project, path);
         if m.cfg.plugins.magic {

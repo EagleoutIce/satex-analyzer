@@ -194,7 +194,7 @@ impl Guess {
             let tried = |d: &PathBuf| files.iter().any(|f| d.join(f).is_file());
             let mut installed = |files: &[String]| {
                 let resolver = resolver.get_or_insert_with(|| {
-                    let project = crate::project::build_files::Project::discover(dir);
+                    let project = crate::project::build_files::Project::discover_with(dir, &cfg.l3build);
                     crate::engine::loader::Resolver::for_project(cfg, &project)
                 });
                 files.iter().any(|f| resolver.resolve(f, LoadKind::Input, dir).is_some())

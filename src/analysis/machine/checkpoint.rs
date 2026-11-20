@@ -1266,9 +1266,9 @@ pub(crate) fn setup_key(cfg: &Config, source: &str, path: &Path) -> u64 {
         .filter(|p| !p.as_os_str().is_empty())
         .map_or_else(|| std::env::current_dir().unwrap_or_default(), Path::to_path_buf);
     let mut hasher = std::hash::DefaultHasher::new();
-    format!("{:?}", crate::project::build_files::Project::discover(&base)).hash(&mut hasher);
+    format!("{:?}", crate::project::build_files::Project::discover_with(&base, &cfg.l3build)).hash(&mut hasher);
     if cfg.plugins.discovery {
-        format!("{:?}", crate::plugins::discovery::scan_with(&base, cfg.limits.thread_count())).hash(&mut hasher);
+        format!("{:?}", crate::plugins::discovery::scan_with(&base, cfg.limits.thread_count(), cfg)).hash(&mut hasher);
     }
     format!("{:?}", crate::plugins::magic::scan_with(source, &cfg.magic)).hash(&mut hasher);
     format!("{:?}", crate::plugins::Kernel::detect(source)).hash(&mut hasher);

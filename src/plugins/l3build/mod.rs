@@ -122,8 +122,8 @@ impl L3build {
     /// it or in the nearest directory above, within the repository, since
     /// l3build runs from the bundle's main directory while its tests and
     /// documentation sit below it.
-    pub fn read(dir: &Path) -> Option<L3build> {
-        let settings = crate::project::config::Config::discover(dir).l3build;
+    pub fn read(dir: &Path, settings: &crate::project::config::L3buildConfig) -> Option<L3build> {
+        let settings = settings.clone();
         if !settings.enabled {
             return None;
         }

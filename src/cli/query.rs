@@ -60,7 +60,9 @@ pub fn run(
         (Query::Options, _, Some(for_)) => return kept(query::options(context.analysis, for_)),
         _ => {}
     }
-    let records = query::run(context.analysis, query, &filter);
+    let all = query::run(context.analysis, query, &crate::queries::query::Filter::Always);
+    super::known_fields(&filter, &all, "record")?;
+    let records: Vec<Record> = all.into_iter().filter(|r| filter.accepts(r)).collect();
     if query == Query::Typeset && context.format.is_text() {
         for r in &records {
             let field = |k: &str| r.get(k).and_then(Json::as_str).unwrap_or("");

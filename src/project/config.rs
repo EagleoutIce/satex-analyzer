@@ -3311,6 +3311,8 @@ impl Config {
         // (`project.ignore_other_configs: true`); the global file only when none does.
         let mut layers: Vec<PathBuf> = Vec::new();
         let mut rooted = false;
+        // `.` has no ancestors: a bare file name's directory walks up from where it is.
+        let dir = std::fs::canonicalize(dir).unwrap_or_else(|_| dir.to_path_buf());
         for candidate in dir.ancestors().map(|a| a.join(FILE_NAME)).filter(|p| p.is_file()) {
             let stops = read_config_value(&candidate)
                 .ok()

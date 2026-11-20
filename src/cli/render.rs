@@ -1494,14 +1494,27 @@ pub fn github(records: &[Record]) -> String {
 /// … on input line ⟨line⟩.` for the rest, which TeXstudio's log view reads.
 pub fn texlog(records: &[Record]) -> String {
     let mut out = String::new();
+    let sources = crate::linter::fix::Sources::default();
     for record in records {
         let text = |key: &str| plain(record.get(key).unwrap_or(&Json::Null)).replace('\n', " ");
         let line = record.get("line").and_then(Json::as_u64).unwrap_or(1);
         let (path, code, message) = (text("path"), crate::linter::label(&text("code")), text("message"));
         // TeX opens a file as `(./name.tex`.
         let path = if path.starts_with(['/', '.']) { path } else { format!("./{path}") };
+        // TeX shows the line broken where it stopped: the read part after `l.⟨line⟩`, the rest below.
+        let col = record.get("col").and_then(Json::as_u64).unwrap_or(1).max(1) as usize - 1;
+        let source = sources.get(&text("path")).map(|t| t.line(line as u32).trim_end().to_string()).unwrap_or_default();
+        let cut = source.char_indices().nth(col).map_or(source.len(), |(i, _)| i);
+        let (read, rest) = source.split_at(cut);
+        let rest = if rest.is_empty() {
+            String::new()
+        } else {
+            format!("\n{}{rest}", " ".repeat(format!("l.{line} {read}").chars().count()))
+        };
         let _ = match record.get("severity").and_then(Json::as_str) {
-            Some("error") => writeln!(out, "({path}\n! Package satex Error: {code}: {message}.\nl.{line} \n)"),
+            Some("error") => {
+                writeln!(out, "({path}\n! Package satex Error: {code}: {message}.\nl.{line} {read}{rest}\n)")
+            }
             _ => writeln!(out, "({path}\nPackage satex Warning: {code}: {message} on input line {line}.\n)"),
         };
     }

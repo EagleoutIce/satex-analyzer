@@ -41,6 +41,11 @@ pub struct Project {
 
 impl Project {
     pub fn discover(root: &Path) -> Project {
+        Self::discover_with(root, &crate::project::config::Config::discover(root).l3build)
+    }
+
+    /// [`Self::discover`] under the run's own `l3build` settings.
+    pub fn discover_with(root: &Path, l3build: &crate::project::config::L3buildConfig) -> Project {
         let mut files = Vec::new();
         for (name, tool) in BUILD_FILES {
             let path = root.join(name);
@@ -75,7 +80,7 @@ impl Project {
                 }
             }
         }
-        let l3build = crate::plugins::l3build::L3build::read(root);
+        let l3build = crate::plugins::l3build::L3build::read(root, l3build);
         if let Some(config) = &l3build {
             files.push(BuildFile {
                 tool: "l3build",
