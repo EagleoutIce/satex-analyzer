@@ -102,10 +102,7 @@ jobs:
           echo "ESBUILD=$RUNNER_TEMP/esbuild/node_modules/.bin/esbuild" >> "$GITHUB_ENV"
           echo "TSC=$RUNNER_TEMP/esbuild/node_modules/.bin/tsc" >> "$GITHUB_ENV"
       - name: Type-check the site's scripts
-        run: |
-          "$TSC" -p doc/site/tsconfig.json
-          "$TSC" -p doc/site/jsconfig.json
-          "$TSC" -p doc/site/tsconfig.worker.json
+        run: ./scripts/typecheck-site.sh
 
       # build.py keys its memo by the analysis, so stale entries are ignored.
       # Saved even when the build fails or runs out of time: the next run goes on from there.

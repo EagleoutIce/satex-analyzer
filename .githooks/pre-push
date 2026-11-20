@@ -35,6 +35,9 @@ while read -r _ local_sha _ remote_sha; do
     done
 done
 
+echo "pre-push: type-checking the site's scripts..."
+./scripts/typecheck-site.sh
+
 echo "pre-push: checking the formatting..."
 cargo fmt --all --check
 

@@ -560,6 +560,19 @@ jobs:
 
   # Not blocking: lists the user-visible commits CHANGELOG.md's Unreleased
   # section does not cover yet (scripts/changelog.py draft shows them).
+  site-check:
+    name: Type-check and unit-test the site
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: ./scripts/typecheck-site.sh
+      - run: node --check doc/site/playground.js
+      - run: node doc/site/views.test.mjs
+
   changelog:
     name: Changelog covers the commits
     runs-on: ubuntu-latest
