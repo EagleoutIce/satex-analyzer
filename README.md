@@ -39,11 +39,11 @@ source <(satex completions bash)   # bash: add to ~/.bashrc
 
 zsh and fish are on the [command line page](doc/wiki/cli.md#shell-completion).
 
-Current version: 0.2.4. `satex --version` also lists the plugins included in this build and the configuration in effect:
+Current version: 0.2.5. `satex --version` also lists the plugins included in this build and the configuration in effect:
 
 ```text
 $ satex --version
-satex 0.2.4
+satex 0.2.5
 https://github.com/EagleoutIce/satex-analyzer
 
 plugins: 48 in 11 kinds

@@ -150,3 +150,4 @@ S068 indistinct-colors
 C063 misspelled-magic-comment
 C064 package-call-error
 C065 missing-bibliography
+# released v0.2.5: the 144 numbered lines above never change (fnv 303aa4362b6595ba)
