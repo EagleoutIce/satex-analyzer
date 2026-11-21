@@ -480,6 +480,7 @@ fn columns(analysis: &Analysis, t: &tabular::Table) -> Option<Package> {
 pub fn apply(
     analysis: &Analysis,
     doc: &Text,
+    file: Option<crate::engine::tex::FileId>,
     kind: &str,
     range: Range,
     state: &Json,
@@ -540,7 +541,7 @@ pub fn apply(
         }
         k => return Err(format!("no dialog `{k}`")),
     };
-    let (edits, more) = snapshot::printed(analysis, doc, &[node])?;
+    let (edits, more) = snapshot::printed(analysis, doc, file, &[node])?;
     notes.extend(more);
     let text = snapshot::reads(doc.body(), start, end, &edits);
     let edits = snapshot::lsp_edits(doc, edits);
@@ -562,7 +563,7 @@ pub fn actions(analysis: &Analysis, doc: &Text, path: &str, uri: &str, range: Ra
         let text = &doc.body()[t.start..t.end];
         let r = lsp_range(doc, t.start, t.end);
         let mut edit = |title: &str, state: Json, kind: &str| {
-            if let Ok(e) = apply(analysis, doc, kind, r, &state, None) {
+            if let Ok(e) = apply(analysis, doc, super::type_at::file_of(analysis, path), kind, r, &state, None) {
                 let notes: Vec<String> = e["notes"]
                     .as_array()
                     .into_iter()

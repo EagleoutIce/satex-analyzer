@@ -244,13 +244,13 @@ fn note_append(_name: &str, _parent: Option<u32>, _target: Option<usize>, _chain
 
 #[cfg(test)]
 thread_local! {
-    /// Per cacheable load's end, its [`Carried`] state, in a fixed order.
+    /// Per cacheable load's end, its [`Carried`] state and the counters names are made of, in a fixed order.
     pub(super) static LOAD_ENDS: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(Vec::new()) };
 }
 
 #[cfg(test)]
-pub(super) fn note_load_end(carried: &Carried, guarded_lines: usize) {
-    let state = format!("{:?} lines {guarded_lines}", carried.delta(&Carried::default()));
+pub(super) fn note_load_end(carried: &Carried, guarded_lines: usize, names: impl std::fmt::Debug) {
+    let state = format!("{:?} lines {guarded_lines} names {names:?}", carried.delta(&Carried::default()));
     LOAD_ENDS.with_borrow_mut(|v| v.push(state));
 }
 
@@ -282,6 +282,8 @@ struct CachedBinding {
     defs: Vec<VRef>,
     certain: bool,
     global: bool,
+    /// Written locally: in a group, the read left it at the load's level.
+    local: bool,
     /// Where the old text goes in the new meaning (stored without the old).
     splice: Option<u32>,
     /// The text kept from the one it held where the segment began: that
@@ -401,7 +403,14 @@ struct Scalars {
     /// replay holds only where the lists start alike, and leaves them as
     /// the read did.
     builder: (super::ListsState, super::ListsState),
+    /// The counters names are made of ([`Machine::digits_in`]) where the load changed them.
+    names: NameCounters,
 }
+
+/// What a load did to the counters names are made of: how many lines of the user's files it
+/// began, the last one with TeX's steps then, and the steps and index of the last typed digits
+/// made. Steps count from the load's start, so a replay leaves them where the read would.
+type NameCounters = (Option<(u64, Span, u64)>, Option<(u64, u32)>);
 
 /// The state a checkpoint leaves that changes now and then: stored only
 /// when it differs from the checkpoint before. The keyed lists and `loaded`
@@ -846,6 +855,8 @@ struct Before {
     steps: u64,
     progress: u64,
     assignments: u64,
+    /// [`Machine::line_seq`] and [`Machine::digits_made`].
+    names: (super::LineSeq, super::DigitsMade),
     recent_file_spans: Vec<Span>,
     /// Call the load is read on behalf of.
     reader: Option<NodeId>,
@@ -1417,6 +1428,12 @@ impl Machine<'_> {
             settings.profiles = defaults.profiles.clone();
             settings.depp = defaults.depp.clone();
             settings.lsp = defaults.lsp.clone();
+            // Which files the project takes as given steers reports and fixes only
+            // (`linter::Frozen`); its globs are absolute, so they would key a cache by the folder.
+            // The build, the documentation shown and slices are tools after the run.
+            settings.project = defaults.project.clone();
+            (settings.compile, settings.docs, settings.slice) =
+                (defaults.compile.clone(), defaults.docs.clone(), defaults.slice.clone());
             // kept call arguments are a report (completion reads them), not interpretation
             settings.record_arguments = false;
             settings.engine = None;
@@ -1514,6 +1531,12 @@ impl Machine<'_> {
             self.end_line.0,
         ));
         parts.push(("category codes".into(), hash.0));
+        // A replay writes each name once, at this level: its locals, the save
+        // stack and the facts' depths hold only for loads at the level it was
+        // read at (tex.web § 283).
+        let mut hash = Fnv::new();
+        hash.put(&self.env.depth());
+        parts.push(("the group level".into(), hash.0));
         let roots = self.cache_roots();
         let mut hash = Fnv::new();
         hash.put(&(roots.canonical(path), crate::caches::format::content_hash(Path::new(path))));
@@ -1569,6 +1592,7 @@ impl Machine<'_> {
             steps: self.out.steps,
             progress: self.source_progress,
             assignments: self.env.assignments,
+            names: (self.line_seq, self.digits_made),
             recent_file_spans: self.recent_file_spans.clone(),
             carried: self.carried.clone(),
             facts: FactMaps {
@@ -1652,6 +1676,7 @@ impl Machine<'_> {
             base: _,
             resolver: _,
             dont_expand: _,
+            end_template: _,
             unknown: _,
             call_runs: _,
             memos: _,
@@ -1748,6 +1773,7 @@ impl Machine<'_> {
             keep_errors: _,
             approximated: _,
             blind: _,
+            arm: _,
             enclosing_unknown_arm: _,
             read_outside: _,
             cut_taint: _,
@@ -1796,6 +1822,7 @@ impl Machine<'_> {
             runs: _,
             replayable: _,
             infeasible: _,
+            absent: _,
             ended_run: _,
             undo: _,
             waiting: _,
@@ -1818,6 +1845,7 @@ impl Machine<'_> {
             halted,
             budget,
             format_progress: _,
+            building_kernel: _,
             region: _,
             guard: _,
             scan_starts: _,
@@ -2634,7 +2662,7 @@ impl Machine<'_> {
                 global: b.global,
                 may: b.may.clone().map(Into::into),
             };
-            self.env.set(*sym, binding, b.global);
+            self.env.set(*sym, binding, !b.local);
         }
         for (counter, _, after, defs) in &st.moved {
             let sym = self.register_sym(RegKind::Count, i64::from(*counter));
@@ -2674,13 +2702,11 @@ impl Machine<'_> {
             };
             let span = span_in(d.span, site);
             if let Some(&i) = self.definition_sites.get(&(span, d.name, d.package)) {
-                let previous = &mut self.out.facts.defs[i];
-                previous.certain &= d.certain;
-                previous.mac = mac;
+                crate::analysis::facts::Definition::rerun(&mut self.out.facts.defs, i, d.certain, mac);
                 continue;
             }
             let cds = self.resolve_cds(&st, &mut ids, &reached, before, site, &d.cds);
-            self.definition_sites.insert((span, d.name, d.package), self.out.facts.defs.len());
+            self.definition_sites.insert_mut((span, d.name, d.package), self.out.facts.defs.len());
             self.out.facts.defs.push(Definition {
                 name: d.name,
                 by: d.by,
@@ -2734,6 +2760,7 @@ impl Machine<'_> {
                 (3, _) => MeaningKind::Char,
                 (4, _) => MeaningKind::Undefined,
                 (6, _) => MeaningKind::UndefinedApproximated,
+                (7, _) => MeaningKind::UndefinedOnArm,
                 _ => MeaningKind::Unknown,
             };
             let node_id =
@@ -2956,6 +2983,7 @@ impl Machine<'_> {
         recent.drain(..excess);
         self.recent_file_spans = recent;
         self.out.steps = before.steps + s.steps;
+        self.names_in(before, &s.names, site);
         self.skip_replayed_steps(s.steps);
         self.source_progress = before.progress + s.progress;
         self.env.assignments = before.assignments + s.assignments;
@@ -2969,6 +2997,31 @@ impl Machine<'_> {
             );
         }
         Ok(written)
+    }
+
+    /// What the load did to the counters names are made of, steps from its start. No kept call
+    /// effect replays in a cacheable load (`memo_records`), so TeX's steps there are
+    /// the run's plus a constant.
+    fn names_out(&self, before: &Before, site: Span) -> NameCounters {
+        let start = before.steps + self.out.call_memo[2];
+        let ((was, _), ((file, line), lines, begun)) = (before.names, self.line_seq);
+        let lines = (lines != was.1)
+            .then(|| (lines.wrapping_sub(was.1), span_out(Span::new(file, line, 0), site), begun.wrapping_sub(start)));
+        let (at, n) = self.digits_made;
+        (lines, (self.digits_made != before.names.1).then(|| (at.wrapping_sub(start), n)))
+    }
+
+    /// The counters names are made of, as reading the load would leave them.
+    fn names_in(&mut self, before: &Before, names: &NameCounters, site: Span) {
+        let start = before.steps + self.out.call_memo[2];
+        (self.line_seq, self.digits_made) = before.names;
+        if let Some((lines, span, begun)) = names.0 {
+            let span = span_in(span, site);
+            self.line_seq = ((span.file, span.line), self.line_seq.1 + lines, start.wrapping_add(begun));
+        }
+        if let Some((at, n)) = names.1 {
+            self.digits_made = (start.wrapping_add(at), n);
+        }
     }
 
     /// Vertices a reference stands for: table entry (found/made) or pre-load definitions.
@@ -3342,15 +3395,20 @@ impl Machine<'_> {
         self.out.facts.csnames.entry(span).or_insert(role);
     }
 
+    /// The load being recorded did what no segment replays: it is stored up to its last
+    /// checkpoint, and every run reads the rest.
+    pub(crate) fn spoil_recording(&mut self, why: &'static str) {
+        if let Some(rec) = self.package_capture.as_mut() {
+            rec.log.spoiled.get_or_insert(why);
+        }
+    }
+
     /// End the segment at `mark` and begin the next.
     fn checkpoint(&mut self, mark: LineMark) {
         // A degraded run's state is one no full-precision run reaches: its
         // segments would be keyed by a root they were not recorded against.
         if self.pressure > 0 {
-            if let Some(rec) = self.package_capture.as_mut() {
-                rec.log.spoiled.get_or_insert(DEGRADED);
-            }
-            return;
+            return self.spoil_recording(DEGRADED);
         }
         if matches!(self.input.last(), Some(Frame::File { mouth, .. }) if mouth.position().0 < mark.line)
             && let Some(Frame::File { mouth, .. }) = self.input.last_mut()
@@ -3359,10 +3417,7 @@ impl Machine<'_> {
         }
         self.note_pending_lines();
         let Some(mut node) = self.encode_segment(mark) else {
-            if let Some(rec) = self.package_capture.as_mut() {
-                rec.log.spoiled.get_or_insert("a segment could not be written");
-            }
-            return;
+            return self.spoil_recording("a segment could not be written");
         };
         let Some(rec) = self.package_capture.as_mut() else { return };
         rec.last_line = mark.line;
@@ -3595,6 +3650,12 @@ impl Machine<'_> {
         }
         let moved_syms: HashSet<Sym> =
             counters.iter().filter(|(c, ..)| moved.iter().any(|(m, ..)| m == c)).map(|(_, s, _)| *s).collect();
+        // In a group a replay writes each name once: globally when the read left it
+        // at level 0, else locally at the load's level (`Binding::global` only says
+        // some write was global). Open: a global write then a local one makes the
+        // group's end restore the global value (tex.web § 283), one write cannot.
+        let depth = rec.rest.depth;
+        let local = |sym: Sym, b: &Binding| if depth > 0 { self.env.level_of(sym.0) != 0 } else { !b.global };
         let bindings: Vec<(Sym, Option<CachedBinding>, u8)> = dirty
             .iter()
             .filter(|(sym, bits)| *bits != 0 && !moved_syms.contains(sym))
@@ -3645,6 +3706,7 @@ impl Machine<'_> {
                     },
                     certain: b.certain,
                     global: b.global,
+                    local: local(*sym, b),
                 });
                 (*sym, b, *bits)
             })
@@ -3723,6 +3785,7 @@ impl Machine<'_> {
                     MeaningKind::Undefined => (4, None),
                     MeaningKind::Unknown => (5, None),
                     MeaningKind::UndefinedApproximated => (6, None),
+                    MeaningKind::UndefinedOnArm => (7, None),
                 },
                 within: template.within,
                 arguments: template.arguments.clone(),
@@ -3738,9 +3801,11 @@ impl Machine<'_> {
                 current: site_state.progress == now,
             });
         }
-        let occurrences: Vec<CachedOccurrence> = self.out.facts.occurrences
-            [m.occurrences.min(self.out.facts.occurrences.len())..]
-            .iter()
+        let occurrences: Vec<CachedOccurrence> = self
+            .out
+            .facts
+            .occurrences
+            .iter_from(m.occurrences)
             .map(|o| CachedOccurrence {
                 kind: o.kind,
                 key: o.key.clone(),
@@ -3752,8 +3817,11 @@ impl Machine<'_> {
                 certain: o.certain,
             })
             .collect();
-        let colors: Vec<CachedColorDef> = self.out.facts.colors[m.colors.min(self.out.facts.colors.len())..]
-            .iter()
+        let colors: Vec<CachedColorDef> = self
+            .out
+            .facts
+            .colors
+            .iter_from(m.colors)
             .map(|c| CachedColorDef {
                 name: c.name.clone(),
                 alias: c.alias,
@@ -3766,9 +3834,11 @@ impl Machine<'_> {
                 certain: c.certain,
             })
             .collect();
-        let color_uses: Vec<CachedColorUse> = self.out.facts.color_uses
-            [m.color_uses.min(self.out.facts.color_uses.len())..]
-            .iter()
+        let color_uses: Vec<CachedColorUse> = self
+            .out
+            .facts
+            .color_uses
+            .iter_from(m.color_uses)
             .map(|u| CachedColorUse {
                 name: u.name.clone(),
                 role: role_out(u.role),
@@ -3855,6 +3925,7 @@ impl Machine<'_> {
             finished_call: rec.seg_call_finished,
             last_named_cs: self.last_named_cs,
             builder: (rec.before.builder, self.lists_state()),
+            names: self.names_out(&rec.before, site),
             recent_file_spans: {
                 let before = &rec.before.recent_file_spans;
                 let kept = (0..=before.len())
@@ -3919,10 +3990,7 @@ impl Machine<'_> {
                 .iter()
                 .map(|x| (x.field.to_string(), x.text.clone(), x.source.clone()))
                 .collect(),
-            name_reads: self.name_reads.list[m.name_reads.min(self.name_reads.list.len())..]
-                .iter()
-                .map(|r| r.name())
-                .collect(),
+            name_reads: self.name_reads.list.iter_from(m.name_reads).map(|r| r.name()).collect(),
             csnames: rec.log.csnames[m.csnames..]
                 .iter()
                 .map(|(span, role)| {
@@ -4553,6 +4621,36 @@ mod tests {
             assert_eq!(facts(run), facts(&runs[0].0));
             assert_eq!(ends, &runs[0].1, "what each load carries on");
         }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Typed digits are named by counters the run steps as it reads: the user's lines begun
+    /// (with TeX's steps then) and the digits made at a step. A package of the user's own read
+    /// lines and made digits; served from its cache it read nothing, so it left both counters
+    /// where they stood before it, and every number made after it got another name built than
+    /// served: one-of members sorted otherwise and the two runs explored in another order.
+    #[test]
+    fn a_replay_leaves_the_counters_names_are_made_of_where_a_read_does() {
+        if !installed() {
+            return;
+        }
+        let _serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+        let dir = project("namey");
+        let package = "\\ProvidesPackage{namey}[2020/01/01 v1]\n\\edef\\nameya{\\pdfuniformdeviate 10 }\n\
+\\edef\\nameyb{\\pdfuniformdeviate 10 }\n\\relax\n";
+        std::fs::write(dir.join("namey.sty"), package).expect("namey.sty");
+        let doc = "\\documentclass{article}\n\\usepackage{namey}\n\\usepackage{guard}\n\
+\\begin{document}\\relax\\end{document}\n";
+        let runs: Vec<(Analysis, Vec<String>)> = (0..2)
+            .map(|_| {
+                LOAD_ENDS.with_borrow_mut(Vec::clear);
+                let run = analyze(&dir, doc);
+                (run, LOAD_ENDS.take())
+            })
+            .collect();
+        assert_eq!(state_of(&runs[1].0, "namey").as_deref(), Some("cached"), "{:?}", runs[1].0.package_caches);
+        assert!(!runs[0].1.is_empty(), "the reading run records each load's end");
+        assert_eq!(runs[1].1, runs[0].1, "the counters at each load's end, read vs served");
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

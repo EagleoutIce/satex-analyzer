@@ -469,7 +469,7 @@ fn convert(cx: &Cx, l: &List) -> Vec<Json> {
     let edit = json!({ "documentChanges": [
         { "kind": "create", "uri": bib_uri.as_str(), "options": { "ignoreIfExists": true } },
         { "textDocument": { "uri": bib_uri.as_str(), "version": null }, "edits": [{ "range": zero, "newText": bib }] },
-        { "textDocument": { "uri": tex_uri.as_str(), "version": null }, "edits": snapshot::edits(cx.analysis, cx.doc, &nodes) },
+        { "textDocument": { "uri": tex_uri.as_str(), "version": null }, "edits": snapshot::edits(cx.analysis, cx.doc, cx.file(), &nodes) },
     ] });
     vec![
         json!({ "kind": "text", "markdown": format!(
@@ -500,7 +500,7 @@ fn print(
 ) -> Result<Vec<String>, String> {
     let (analysis, sources) = cx;
     let text = sources.get(file).ok_or_else(|| format!("{file} cannot be read"))?;
-    let (edits, notes) = snapshot::printed(analysis, &text, nodes)?;
+    let (edits, notes) = snapshot::printed(analysis, &text, None, nodes)?;
     let uri = path_uri(file).as_str().to_string();
     let own = json!(snapshot::lsp_edits(&text, edits));
     match into.get_mut(&uri).and_then(Json::as_array_mut) {

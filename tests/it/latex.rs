@@ -244,8 +244,10 @@ fn an_unknown_arrow_tip_names_its_library() {
 const SPIN_PASSES: u64 = 5_000_000;
 
 /// A name read with `{` a letter is TeX's error where the category codes
-/// are known, but not where a cut made the analysis assume them back
-/// (`region-catcodes`): there it is reported as possible only. The budget is
+/// are known, but not after a cut: the run rests on the cut from there
+/// (`Diagnostic::rest`), so the name is reported as possible only, with the
+/// gap it may follow from. Bug pinned: the rule looked for a
+/// `region-catcodes` row alone, and a cut that raised none left a certain error. The budget is
 /// the plain run's cost, so the cut falls in the loop however much
 /// `\begin{document}` costs (a fixed 400000 began to cut `\begin{document}`).
 #[test]
@@ -280,7 +282,11 @@ fn a_name_read_under_assumed_category_codes_is_no_certain_error() {
     };
     assert!(plain < SPIN_PASSES, "the loop's line must cost more than the plain run: {plain}");
     let assumed = severity("\\begingroup\\catcode`\\{=11 \\spin\\endgroup", plain);
-    assert_eq!(assumed, ["warning `\\x{y` is undefined where the analysis assumed category codes back after a cut"]);
+    assert_eq!(assumed.len(), 1, "{assumed:?}");
+    assert!(
+        assumed[0].starts_with("info `\\x{y` is never defined in this run (may follow from the analysis gap at"),
+        "{assumed:?}"
+    );
 }
 
 /// Only `\newlabel` warns about a name defined twice (pdflatex: "Label
@@ -673,6 +679,68 @@ fn metadata_is_recorded() {
             (!wrong.is_empty()).then(|| wrong.join("; "))
         },
     );
+}
+
+/// tex.web § 338: a definition that runs to the end of the main file is
+/// TeX's fatal "File ended while scanning definition of \rep". Bug pinned:
+/// satex read the body on as text and said only that the run was
+/// incomplete, with no error. With no approximation on the way the error is
+/// certain.
+#[test]
+fn a_definition_open_at_the_end_of_the_file_is_an_error() {
+    if !installed() {
+        return;
+    }
+    let analysis = analyze("\\documentclass{article}\n\\begin{document}\n\\def\\rep{x\ny\n\\end{document}\n");
+    let errors: Vec<_> = satex::linter::lint(&analysis)
+        .into_iter()
+        .filter(|f| f.get("severity").and_then(|s| s.as_str()) == Some("error"))
+        .filter_map(|f| f.get("message")?.as_str().map(str::to_string))
+        .collect();
+    assert!(errors.iter().any(|m| m.contains("ile ended while scanning definition")), "{errors:?}");
+}
+
+/// tex.web §§ 1240, 1236: `\multiply` of a dimension past `max_answer` and
+/// `\divide` by zero are "Arithmetic overflow". With `\count1` one of 0 and 1
+/// some runs err: pdflatex errs for one seed and not the other. Bug pinned:
+/// the interval arithmetic joins the erring members in silently, so the run
+/// is "complete" with no possible error. Each line must give one.
+#[test]
+fn an_overflow_on_some_members_of_an_interval_is_a_possible_error() {
+    if !installed() {
+        return;
+    }
+    for line in [r"\dimen0=\count1 pt \multiply\dimen0 by 16384", r"\count2=10 \divide\count2 by \count1"] {
+        let source = format!(
+            "\\documentclass{{article}}\n\\begin{{document}}\n\\count1=\\pdfuniformdeviate 2\\relax\n{line}\n\\end{{document}}\n"
+        );
+        let found: Vec<_> = satex::linter::lint(&analyze(&source))
+            .into_iter()
+            .filter_map(|f| f.get("message")?.as_str().map(str::to_string))
+            .collect();
+        assert!(found.iter().any(|m| m.contains("Arithmetic overflow")), "{line}: {found:?}");
+    }
+}
+
+/// `round` of an unknown quotient in l3fp: on an approximated path the expandable error's
+/// `\???` scan runs off past `\end{document}`. Bug pinned: the run then said `missing-end`, a
+/// certain error, though pdflatex ends the document. An end reached past a gap the run left is
+/// the analysis' end, said as `analysis-ended-early`, never a certain error.
+#[test]
+fn an_approximated_fp_round_is_no_missing_end() {
+    if !installed() {
+        return;
+    }
+    let analysis = analyze(
+        r"\documentclass{article}
+\begin{document}
+\ExplSyntaxOn
+\fp_eval:n { round ( \pdfuniformdeviate 300 / 7 ) }
+\ExplSyntaxOff
+\end{document}",
+    );
+    let found = codes(&analysis);
+    assert!(!found.iter().any(|c| c == "missing-end"), "{found:?}");
 }
 
 /// satex renders `\title` as a PDF string itself, which no TeX run does.
@@ -3358,6 +3426,121 @@ fn a_lookahead_at_a_cell_end_meets_its_v_part() {
     );
 }
 
+/// tex.web §§ 342, 780, 336: an `&` that skipped conditional text reads at
+/// `align_state` zero ends the cell, and the `v` part TeX inserts ends in
+/// `\endtemplate`, which counts as `\outer`: "Incomplete \iffalse", then
+/// "Extra \fi" and "Extra alignment tab" (pdflatex). Bug pinned: satex skipped
+/// past the `&` and said nothing, on a run it called complete. After a
+/// `\relax` only: `align_peek` expands a leading `\iffalse` at `align_state`
+/// 1000000, where an `&` ends nothing (pdflatex: no error).
+#[test]
+fn an_alignment_tab_in_skipped_text_ends_the_cell() {
+    if !installed() {
+        return;
+    }
+    let errors = |cell: &str| {
+        let source = format!(
+            "\\documentclass{{article}}\n\\begin{{document}}\n\\setbox0\\vbox{{\\halign{{#&#\\cr {cell} x&y\\cr}}}}\n\\end{{document}}\n"
+        );
+        let analysis = analyze(&source);
+        let lint = satex::linter::lint(&analysis);
+        let errors = lint.iter().filter(|f| f.get("severity").is_some_and(|s| s == "error"));
+        errors.filter_map(|f| f.get("message")?.as_str().map(str::to_string)).collect::<Vec<_>>()
+    };
+    let skipped = errors("\\relax\\iffalse a&b\\fi");
+    assert_eq!(skipped.len(), 3, "{skipped:?}");
+    assert!(skipped.iter().any(|m| m.contains("endtemplate")), "{skipped:?}");
+    assert_eq!(errors("\\iffalse a&b\\fi"), Vec::<String>::new());
+}
+
+/// A macro that calls itself with nothing to stop it, run on one arm of an
+/// undecided conditional: pdflatex never ends on the runs that take the arm
+/// (seed 2), the others end clean. Some run fails, so the run reports a
+/// possible finding, a warning. Bug pinned: run on every path the same loop
+/// is an error (`unguarded-recursion`), on one arm the engine notes its
+/// `endless-loop` only as imprecision and no rule reports it.
+#[test]
+fn an_endless_loop_on_one_arm_is_a_possible_finding() {
+    if !installed() {
+        return;
+    }
+    let analysis = analyze(
+        "\\documentclass{article}\n\\begin{document}\nx\n\\def\\r{\\r}\\ifnum\\pdfuniformdeviate2=0 \\r\\fi\n\\end{document}\n",
+    );
+    let lints = satex::linter::lint(&analysis);
+    let severity = |s: &str| lints.iter().any(|f| f.get("severity").and_then(|v| v.as_str()) == Some(s));
+    assert!(severity("warning") && !severity("error"), "{lints:?}");
+}
+
+/// [`an_alignment_tab_in_skipped_text_ends_the_cell`] in a LaTeX `tabular`:
+/// pdflatex gives "Incomplete \iffalse", "Missing } inserted" and "Extra
+/// \fi" for the cell `\relax\iffalse a & b \fi`. Bug pinned: satex reports
+/// nothing on a run it calls complete; the skip passes the `&` as if no cell
+/// ended there (the plain `\halign` case is caught).
+#[test]
+fn an_alignment_tab_in_skipped_text_ends_a_tabular_cell() {
+    if !installed() {
+        return;
+    }
+    let analysis = analyze(
+        r"\documentclass{article}
+\begin{document}
+\begin{tabular}{cc}
+\relax\iffalse a & b \fi\\
+\end{tabular}
+\end{document}",
+    );
+    let errors: Vec<_> = satex::linter::lint(&analysis)
+        .into_iter()
+        .filter(|f| f.get("severity").and_then(|s| s.as_str()) == Some("error"))
+        .collect();
+    assert!(!errors.is_empty(), "no error");
+}
+
+/// tex.web § 780: only the `\endtemplate` a cell's `v` part ends in is
+/// forbidden in a scan, not a token that looks like the `&` given back
+/// behind it. Here `\amp` ends the cell and the `v` part's `\edef` expands
+/// `\amp` again: both `&` are the one token of `\amp`'s body. Bug pinned:
+/// the put-back `&` was known by where it was read (file, line, column), so
+/// the `\edef`'s `&` counted as `\endtemplate` and the scan stopped with a
+/// false forbidden-outer. pdflatex raises nothing.
+#[test]
+fn a_cell_end_from_a_macro_is_no_endtemplate_in_its_v_part() {
+    if !installed() {
+        return;
+    }
+    let source = "\\documentclass{article}\n\\def\\amp{&}\n\\begin{document}\n\\setbox0\\vbox{\\halign{#\\edef\\x{\\amp}&#\\cr a\\amp b\\cr}}\n\\end{document}\n";
+    let a = analyze(source);
+    let outer: Vec<_> =
+        a.facts.diagnostics.iter().filter(|d| d.code == "forbidden-outer").map(|d| &d.message).collect();
+    assert!(outer.is_empty(), "{outer:?}");
+}
+
+/// tex.web § 324: `align_state` is zero where a `u` part ends, whatever
+/// braces it opened, so with the template `{#}` an `&` in skipped text still
+/// ends the cell (pdflatex: Incomplete \iffalse, Missing }, Extra \fi, Extra
+/// alignment tab). Bug pinned: satex took the cell's base before reading
+/// the `u` part's `{`, so no `&` ever matched it (every LaTeX tabular cell).
+/// Clean cells stay clean.
+#[test]
+fn an_alignment_tab_in_skipped_text_ends_a_braced_cell() {
+    if !installed() {
+        return;
+    }
+    let errors = |cell: &str| {
+        let source = format!(
+            "\\documentclass{{article}}\n\\begin{{document}}\n\\setbox0\\vbox{{\\halign{{{{#}}&#\\cr {cell}\\cr}}}}\n\\end{{document}}\n"
+        );
+        let lint = satex::linter::lint(&analyze(&source));
+        let errors = lint.iter().filter(|f| f.get("severity").is_some_and(|s| s == "error"));
+        errors.filter_map(|f| f.get("message")?.as_str().map(str::to_string)).collect::<Vec<_>>()
+    };
+    let skipped = errors("\\relax\\iffalse a&b\\fi x&y");
+    assert!(skipped.iter().any(|m| m.contains("endtemplate")), "{skipped:?}");
+    assert_eq!(errors("\\relax\\iffalse a\\fi x&y"), Vec::<String>::new());
+    assert_eq!(errors("\\iffalse a&b\\fi x&y"), Vec::<String>::new());
+}
+
 /// siunitx collects an `S` cell token by token with `\peek_...` until it
 /// meets the `v` part, which TeX inserts where the `\cr` is looked at
 /// (tex.web § 342); array's `\\` raises `align_state` with
@@ -4917,6 +5100,42 @@ fn names_a_package_builds_per_call_are_never_dead() {
     assert!(dead.is_empty(), "{dead:?}");
 }
 
+/// `\include{k}` writes `\@setckpt{k}{` to the `.aux` and reads names built
+/// from `k`, the shape a citation has (`\cite{k}` writes `\citation{k}`, reads
+/// `\b@k`). Bug pinned: the included file's name was a citation, so the run
+/// warned "`chapa` is cited, but no bibliography is named" and "no
+/// bibliography entry declares `chapa`" (pdflatex: no warning). A key that
+/// names the file its call loads is no citation.
+#[test]
+fn an_included_file_is_no_citation() {
+    if !installed() {
+        return;
+    }
+    let root =
+        crate::support::scratch_dir(crate::support::tmp_root().join(format!("satex-include-{}", std::process::id())));
+    let path = root.join("main.tex");
+    let source = r"\documentclass{report}
+\begin{filecontents*}[overwrite]{chapa.tex}
+\chapter{A}\label{ch:a}
+\end{filecontents*}
+\begin{filecontents*}[overwrite]{part.tex}
+\end{filecontents*}
+\begin{document}
+\include{chapa}
+\end{document}";
+    std::fs::write(&path, source).unwrap();
+    // the second build run reads the `.aux` the first wrote
+    let analysis =
+        satex::analysis::machine::Machine::analyze_build(source, Some(&path), &crate::support::discover(&root));
+    let cites: Vec<_> = satex::linter::lint(&analysis)
+        .into_iter()
+        .filter(|f| {
+            f.get("code").and_then(|c| c.as_str()).is_some_and(|c| c.contains("citation") || c.contains("bibliography"))
+        })
+        .collect();
+    assert!(cites.is_empty(), "{cites:?}");
+}
+
 /// A here-float the output routine puts on its own list (`\box\@currbox` in `\@addtocurcol`)
 /// reaches the page with that list: its caption is typeset, not lost to the next box built.
 #[test]
@@ -5276,6 +5495,111 @@ fn errors_met_while_expanding_or_computing_are_error_findings() {
     }
 }
 
+/// `\@alph` is an `\ifcase` with 26 arms and `\@ctrerr` in its `\else`:
+/// a counter in 27..29 takes the `\else` on every run, so "Counter too
+/// large" is certain (`pdflatex`: the error for each seed). Bug pinned: an
+/// interval past the last `\or` was split as undecided into its one arm, and
+/// the error was only possible.
+#[test]
+fn an_ifcase_selector_past_its_last_or_takes_the_else_for_certain() {
+    if !installed() {
+        return;
+    }
+    let source = "\\documentclass{article}\n\\newcounter{c}\n\\begin{document}\n\\setcounter{c}{\\numexpr27+\\pdfuniformdeviate 3\\relax}\\alph{c}\n\\end{document}\n";
+    let analysis = analyze(source);
+    let errors = satex::linter::lint(&analysis).into_iter().filter(|f| f["severity"] == "error" && f["line"] == 4);
+    assert!(errors.count() > 0, "{:?}", codes(&analysis));
+}
+
+/// l3fp packs an operand into blocks `1dddd` and takes them apart with
+/// `1#3\__fp_sep:`: the `1` of the delimiter matched against typed digits
+/// 11000..13999 leaves exactly four places, a slice of that number.
+/// `pdflatex`: `\fp_eval:n{1+x}` for x in 1..3 is 2, 3 or 4. Bug pinned: the
+/// rest became digits of open length, a later `\int_value:w` of the blocks
+/// was any number, read as one token by a one-digit test, and the result ran
+/// into the file: `\R` was `\par` for certain, with a false "Too many }'s".
+#[test]
+fn an_fp_sum_of_a_bounded_unknown_integer_stays_a_number() {
+    if !installed() {
+        return;
+    }
+    let source = "\\documentclass{article}\n\\ExplSyntaxOn\n\\int_set:Nn\\l_tmpa_int{\\int_rand:nn{1}{3}}\\xdef\\R{\\fp_eval:n{1+\\l_tmpa_int}}\n\\ExplSyntaxOff\n\\begin{document}\n\\end{document}\n";
+    let analysis = analyze(source);
+    let r = body(&analysis, "R");
+    assert!(!r.contains("par") && !r.is_empty(), "{r:?}");
+    let errors = satex::linter::lint(&analysis).into_iter().filter(|f| f["severity"] == "error").count();
+    assert_eq!(errors, 0, "{:?}", codes(&analysis));
+}
+
+/// l3fp's own `\numexpr`s over an unknown quotient's digits may overflow on
+/// satex's wide intervals, never on pdflatex's runs (0..299 / 7). Bug pinned:
+/// that library-internal maybe-overflow was said at the document line as a
+/// possible "Arithmetic overflow".
+#[test]
+fn library_arithmetic_over_an_unknown_quotient_is_no_possible_overflow() {
+    if !installed() {
+        return;
+    }
+    let source = "\\documentclass{article}\n\\begin{document}\n\\ExplSyntaxOn\n\\fp_eval:n { round(\\pdfuniformdeviate 300/7,2) }\n\\ExplSyntaxOff\n\\end{document}\n";
+    let found: Vec<_> = satex::linter::lint(&analyze(source))
+        .into_iter()
+        .filter_map(|f| f.get("message")?.as_str().map(str::to_string))
+        .collect();
+    assert!(!found.iter().any(|m| m.contains("Arithmetic overflow")), "{found:?}");
+}
+
+/// A `\numexpr` some members of an interval overflow (0..1 times 2^31) is a
+/// possible error when the document writes it, and none when library code
+/// does (`\int_eval:n`'s own `\numexpr`): library code is assumed to compile.
+/// Bug pinned: the test of whose code it is read the file being read, which
+/// is the document's while any library macro runs from it, so l3mark's
+/// `\numexpr\lastnodetype` in memoir's output routine said a possible
+/// "Arithmetic overflow" at each `\chapter` (classes::memoir).
+#[test]
+fn a_possible_overflow_is_said_for_the_document_code_only() {
+    if !installed() {
+        return;
+    }
+    for (body, said) in [
+        (r"\count2=\numexpr\pdfuniformdeviate 2*1073741824*2\relax", true),
+        (r"\ExplSyntaxOn\int_set:Nn\l_tmpa_int{\pdfuniformdeviate 2*1073741824*2}\ExplSyntaxOff", false),
+    ] {
+        let source = format!("\\documentclass{{article}}\n\\begin{{document}}\n{body}\n\\end{{document}}\n");
+        let found: Vec<_> = satex::linter::lint(&analyze(&source))
+            .into_iter()
+            .filter_map(|f| f.get("message")?.as_str().map(str::to_string))
+            .collect();
+        assert_eq!(found.iter().any(|m| m.contains("Arithmetic overflow")), said, "{body}: {found:?}");
+    }
+}
+
+/// Arithmetic on an interval errs on every run when every value of it does:
+/// `\multiply` and `\numexpr` of 2..3 by 2^30, a `\dimexpr` past `\maxdimen`
+/// for every 0..2pt (pdflatex: "Arithmetic overflow" for each seed). Where
+/// some value stays in range (0..2 times 2^30) no error is certain. Bug
+/// pinned: the interval lift clipped every corner to the bound and only
+/// flagged "may err", so a certain overflow was silent.
+#[test]
+fn arithmetic_that_overflows_for_every_value_of_an_interval_is_an_error() {
+    if !installed() {
+        return;
+    }
+    let two = r"\count1=\pdfuniformdeviate 2 \advance\count1 2 ";
+    let cases = [
+        (format!(r"{two}\multiply\count1 by 1073741824 "), true),
+        (format!(r"{two}\count2=\numexpr\count1*1073741824\relax"), true),
+        (r"\dimen0=\pdfuniformdeviate 3pt \dimen1=\dimexpr 16383.99998pt+\dimen0+1sp\relax".to_string(), true),
+        (r"\count1=\pdfuniformdeviate 3 \multiply\count1 by 1073741824 ".to_string(), false),
+        (r"\count1=\pdfuniformdeviate 3 \count2=\numexpr\count1*1073741824\relax".to_string(), false),
+    ];
+    for (body, certain) in cases {
+        let analysis =
+            analyze(&format!("\\documentclass{{article}}\n\\begin{{document}}\n{body}\n\\end{{document}}\n"));
+        let errors = satex::linter::lint(&analysis).into_iter().filter(|f| f["severity"] == "error" && f["line"] == 3);
+        assert_eq!(errors.count() > 0, certain, "{body}: {:?}", codes(&analysis));
+    }
+}
+
 /// tex.web § 398: a call that does not match its parameter text is dropped
 /// with the token that did not match. `pdflatex`: `\v` is `Z`. The call ran
 /// on with no argument and the token stayed: `XyZ`.
@@ -5316,4 +5640,96 @@ fn a_document_started_from_its_own_dumped_preamble_has_one_documentclass() {
         .map(|r| r["message"].to_string())
         .collect();
     assert!(errors.is_empty(), "{errors:?}");
+}
+
+/// Each LaTeX error here is raised on one arm of an undecided `\if` only:
+/// pdflatex with `\pdfsetrandomseed 1` raises none of them, with seed 2
+/// each. The specific rules that report these errors in place of
+/// `raised-error` must keep its certainty: possible, not an error. Pins:
+/// `missing-graphic`, `undefined-environment`, `already-defined`,
+/// `not-defined`, `option-clash`, `math-still-open` and
+/// `undefined-glossary-entry` reported them as certain errors.
+#[test]
+fn a_latex_error_on_one_undecided_arm_is_no_certain_error() {
+    if !installed() {
+        return;
+    }
+    let arm = "\\ifnum\\pdfuniformdeviate2=0 ";
+    let cases = [
+        ("missing-graphic", "\\usepackage{graphicx}".to_string(), format!("{arm}\\includegraphics{{nofile}}\\fi")),
+        ("undefined-environment", String::new(), format!("{arm}\\begin{{noenv}}\\end{{noenv}}\\fi")),
+        ("already-defined", format!("{arm}\\newcommand\\foo{{}}\\fi \\newcommand\\foo{{}}"), String::new()),
+        ("already-defined", String::new(), format!("{arm}\\newenvironment{{itemize}}{{}}{{}}\\fi")),
+        ("not-defined", format!("{arm}\\renewcommand\\nothere{{}}\\fi"), String::new()),
+        (
+            "option-clash",
+            format!("\\usepackage[a4paper]{{geometry}}{arm}\\usepackage[letterpaper]{{geometry}}\\fi"),
+            String::new(),
+        ),
+        ("math-still-open", String::new(), format!("{arm}$x\\fi y")),
+        (
+            "undefined-glossary-entry",
+            "\\usepackage{glossaries}\\makeglossaries".to_string(),
+            format!("{arm}\\newglossaryentry{{e}}{{name=e,description=d}}\\fi\\gls{{e}}"),
+        ),
+    ];
+    for (code, preamble, body) in cases {
+        let source =
+            format!("\\documentclass{{article}}\n{preamble}\n\\begin{{document}}\nx\n{body}\n\\end{{document}}\n");
+        let findings = satex::linter::lint(&crate::support::analyze_latex(&source));
+        let wrong: Vec<_> = findings
+            .iter()
+            .filter(|f| f.get("severity").and_then(|s| s.as_str()) == Some("error"))
+            .map(|f| f.get("message").and_then(|m| m.as_str()).unwrap_or_default().to_string())
+            .collect();
+        assert!(wrong.is_empty(), "{code}: one run raises nothing: {wrong:?}");
+    }
+}
+
+/// `\fp_eval:n` of `ops` in an `\xdef`, then `\ifx` of the result against each
+/// of `values` (the results TeX gives on some run): the names whose test may
+/// hold. A value lost from `\Ra` leaves its probe undefined.
+fn fp_values_lost(set: &str, ops: &str, values: &[&str]) -> Vec<String> {
+    let probes: String = values
+        .iter()
+        .enumerate()
+        .map(|(i, v)| format!("\\def\\v{{{v}}}\\ifx\\Ra\\v\\expandafter\\gdef\\csname R{i}\\endcsname{{}}\\fi\n"))
+        .collect();
+    let source = format!(
+        "\\documentclass{{article}}\n\\ExplSyntaxOn\n{set}\\xdef\\Ra{{\\fp_eval:n{{{ops}}}}}\n\\ExplSyntaxOff\n{probes}\\begin{{document}}\n\\end{{document}}\n"
+    );
+    let analysis = analyze(&source);
+    (0..values.len()).map(|i| format!("R{i}")).filter(|n| !maybe_defined(&analysis, n)).collect()
+}
+
+/// Intuition: a product of two random integers 1..3 is one of 1, 2, 3, 4, 6, 9, so
+/// `\Ra` may be each. Bug pinned (H5): l3fp reads its operand blocks with
+/// delimited arguments over typed digits; the read forks, the last reruns run
+/// away and are refuted, and the refutation flag of that last rerun stayed set
+/// after the drive returned the feasible arm. The forking command ended the
+/// `\int_value:w` scan it ran in, so the enclosing run took itself for refuted:
+/// every path was dropped and `\Ra` was the empty text, its only value.
+#[test]
+fn a_product_of_two_unknown_integers_keeps_every_value() {
+    if !installed() {
+        return;
+    }
+    let set = r"\int_set:Nn\l_tmpa_int{\int_rand:nn{1}{3}}\int_set:Nn\l_tmpb_int{\int_rand:nn{1}{3}}";
+    let lost = fp_values_lost(set, r"\l_tmpa_int*\l_tmpb_int", &["1", "2", "3", "4", "6", "9"]);
+    assert!(lost.is_empty(), "values lost: {lost:?}");
+}
+
+/// Intuition: `1/x` for x in -1..1 is -1 or 1 (and for 0 an error and a value).
+/// Bug pinned (H6): the run reruns the `\xdef` per path a look ahead left
+/// apart; a rerun that ended with fewer paths than the run it repeats dropped
+/// the arms past them as infeasible (explore.rs, the replayed-arm `no_arm`),
+/// so only `-1` stayed.
+#[test]
+fn a_reciprocal_of_an_unknown_integer_keeps_every_value() {
+    if !installed() {
+        return;
+    }
+    let set = r"\int_set:Nn\l_tmpa_int{\int_rand:nn{-1}{1}}";
+    let lost = fp_values_lost(set, r"1/\l_tmpa_int", &["-1", "1"]);
+    assert!(lost.is_empty(), "values lost: {lost:?}");
 }

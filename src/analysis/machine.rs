@@ -675,9 +675,7 @@ impl Analysis {
             };
             m.register_file(path.display().to_string(), kind);
         }
-        if cfg.plugins.magic {
-            m.out.plugins.read_magic(source, &cfg.magic);
-        }
+        m.read_plugins(source, main);
         let base = m.base.clone();
         for load in loads.iter_mut().filter(|l| l.kind.is_package()) {
             load.path = m.resolver.resolve(&load.name, load.kind, &base).map(|p| p.display().to_string());
@@ -1646,6 +1644,9 @@ pub(crate) struct SiteRuns {
     result: Option<SiteJoin>,
 }
 
+/// The name of [`Machine::end_template`]: no file can spell it.
+const END_TEMPLATE: &str = "\u{2}endtemplate:";
+
 /// A site's joined text, with the one-of name it holds and that name's members.
 type SiteJoin = (Option<Rc<MacroDef>>, Option<(Sym, Vec<Meaning>)>);
 
@@ -1717,9 +1718,10 @@ pub(crate) struct Scratch {
     /// Per loop, what this path's last pass began with
     /// ([`Machine::pass_bound`]).
     pub(crate) loop_bounds: Rc<Vec<(LoopId, Option<u64>)>>,
-    /// The last loop cut with no path waiting: its head, the source
-    /// progress, and how often it was met there since ([`Machine::end_covered`]).
-    pub(crate) recut: Option<(Span, u64, u32)>,
+    /// Loops cut with no path waiting since source was last read: the source
+    /// progress, each head with the text left to read there, and how often
+    /// one was met again ([`Machine::end_covered`]).
+    pub(crate) recut: Option<Recut>,
     /// The gap that has now been met `limits.repeat_failures` times at one
     /// place: said at the next step.
     pub(crate) repeat_cut: Option<(&'static str, Span)>,
@@ -1913,9 +1915,9 @@ pub struct Machine<'a> {
     base: PathBuf,
     resolver: Resolver,
     pub(crate) file_depth: u16,
-    /// Arms the running command takes at its choices: a run again
-    /// ([`Machine::branch`]).
-    script: Vec<usize>,
+    /// Arms the running command takes at its choices, each with the number
+    /// of arms the run it repeats met there ([`Machine::branch`]).
+    script: Vec<(usize, usize)>,
     /// The choices the running command met.
     choices: Vec<Choice>,
     /// Runs of the running command so far.
@@ -1929,8 +1931,12 @@ pub struct Machine<'a> {
     pub(crate) lone: bool,
     /// Expanding scans in flight, innermost last.
     pub(crate) scans: Vec<Accum>,
-    /// The running command took an arm that does not exist.
+    /// The running command's path is no run of the document: its arm does
+    /// not exist, or it was refuted.
     infeasible: bool,
+    /// Its arm did not exist, nor does any later one ([`Machine::no_arm`]): a
+    /// refuted arm ([`Machine::refute`]) leaves the later arms to be run.
+    absent: bool,
     /// The running path ended as a run of its own ([`Machine::end_path`]).
     ended_run: bool,
     /// What the running command changed of the counters in [`Undo`].
@@ -2036,6 +2042,9 @@ pub struct Machine<'a> {
     pub(crate) stream_lines: HashMap<String, u64>,
     /// While the format builds: its file's input frame.
     format_progress: Option<usize>,
+    /// While the kernel builds: its graph is dropped and its calls are replayed from the
+    /// installed format once it ends ([`Machine::replay_calls`]), so none is recorded on the way.
+    building_kernel: bool,
     /// Tokens the input stack currently holds, so that deep nesting of large
     /// replacement texts cannot grow without bound.
     held_tokens: usize,
@@ -2068,6 +2077,9 @@ pub struct Machine<'a> {
     pub(crate) font_watch: FontWatch,
     /// The marker `\noexpand` puts in front of the token it guards.
     pub(crate) dont_expand: Sym,
+    /// `\endtemplate`, the token a cell's `v` part ends in (tex.web § 780):
+    /// it stands in front of the `&` or `\cr` given back behind that part.
+    pub(crate) end_template: Sym,
     /// A token standing for text satex cannot know, such as what
     /// `\pdfuniformdeviate` expands to: it has an unknown meaning, so a
     /// value scanned from it is unknown, and so is text built with it.
@@ -2082,7 +2094,7 @@ pub struct Machine<'a> {
     /// holds no delimiter: a runaway after it refutes that arm.
     arm_assumed: bool,
     /// Recorded runs per call ([`calls`]).
-    call_runs: crate::fixed::LookupMap<calls::CallKey, Rc<calls::CallRuns>>,
+    call_runs: crate::fixed::SharedMap<calls::CallKey, Rc<calls::CallRuns>>,
     /// Kept effects of calls, by code and arguments ([`calls`]).
     memos: LookupMap<u64, Vec<Rc<calls::Memo>>>,
     memo_codes: LookupMap<usize, calls::MemoCode>,
@@ -2157,9 +2169,9 @@ pub struct Machine<'a> {
     /// Fact index by source site and package, so that re-analyzing a file
     /// does not duplicate what it observed. Packages running one kernel site
     /// (`\DeclareOption*`'s `\edef\default@ds`) each keep their own fact.
-    definition_sites: crate::fixed::LookupMap<(Span, Sym, Option<Sym>), usize>,
+    definition_sites: crate::fixed::SharedMap<(Span, Sym, Option<Sym>), usize>,
     /// Persistent, so a checkpoint or a fork shares it instead of copying it.
-    expansion_sites: rpds::HashTrieMapSync<(Span, Sym), Site, crate::engine::tex::NameHash>,
+    expansion_sites: crate::fixed::SharedMap<(Span, Sym), Site>,
     /// Per site, the names written in the round before its last expansion
     /// and what they held then, under [`Site::assigned`] of that one.
     site_writes: crate::fixed::LookupMap<(Span, Sym), (u64, Written)>,
@@ -2298,10 +2310,10 @@ pub struct Machine<'a> {
     file_ids: HashMap<PathBuf, usize>,
     /// The step the last typed digits were made at, and how many then: their
     /// names, so a name never depends on how many names the run interned.
-    pub(crate) digits_made: (u64, u32),
+    pub(crate) digits_made: DigitsMade,
     /// The line of the user's files the run last read a token from, how many times that line changed, and
     /// TeX's steps then: a time an edit on another line leaves as it was ([`Machine::digits_in`]).
-    pub(crate) line_seq: ((FileId, u32), u64, u64),
+    pub(crate) line_seq: LineSeq,
     /// The group depth and the open conditionals when the run last read from
     /// a file: the state a cut rolls back to.
     /// How many gaps (`Severity::Unsupported`) the run has raised, and the
@@ -2347,6 +2359,11 @@ pub struct Machine<'a> {
     /// The running path took an arm of a box test whose box it cannot see
     /// into: a library fault on it is no run (`analysis.assume_compiles`).
     pub(crate) blind: bool,
+    /// The running path took an arm of a choice since the paths parted:
+    /// what it does happens in some runs only ([`Machine::on_paths`]). A
+    /// rerun of a command starts without it, so what the command does before
+    /// its first choice is judged alike in every rerun.
+    pub(crate) arm: bool,
     /// The path read a file a shell program may have written: what it holds
     /// is outside the run, so no later error on the path is certain.
     pub(crate) read_outside: bool,
@@ -2500,6 +2517,7 @@ struct PathState {
     mode_split: Option<(Span, usize)>,
     approximated: bool,
     blind: bool,
+    arm: bool,
     read_outside: bool,
     /// An error a nested drive's path raised: it is the enclosing
     /// command's run's to drop or contain ([`Machine::explore`]).
@@ -2520,8 +2538,16 @@ struct PathState {
 /// file or a token list by what is left to read in it (paths may read
 /// different texts of a file a run wrote). Two expansions
 /// of one macro are separate lists but the same continuation.
+/// [`Machine::line_seq`]: the line a name is made on, and steps since it began.
+pub(crate) type LineSeq = ((FileId, u32), u64, u64);
+/// [`Machine::digits_made`].
+pub(crate) type DigitsMade = (u64, u32);
+
+/// [`Scratch::recut`]: source progress, each cut head with its text left, times met again.
+pub(crate) type Recut = (u64, Vec<(Span, Vec<Place>)>, u32);
+
 #[derive(Debug, Clone)]
-enum Place {
+pub(crate) enum Place {
     File(FileId, usize, bool, Rc<[char]>),
     Tokens(Rc<[Token]>, usize),
     Pseudo(Span, Rc<[char]>, usize),
@@ -2789,7 +2815,13 @@ const ENGINE_WARNINGS: [&str; 8] = [
 /// raised like [`TEX_ERRORS`] where the path is TeX's, a note otherwise.
 /// The arithmetic ones (tex.web §§ 445, 448, 1236, 1240 and e-TeX's
 /// expressions) leave the limit, or the register as it was.
-const ENGINE_ERRORS: [&str; 10] = [
+const ENGINE_ERRORS: [&str; 13] = [
+    // tex.web § 484: "*** (cannot \read from terminal in nonstop modes)"
+    "terminal-read-fatal",
+    // tex.web § 336: "Incomplete \if...", "Forbidden control sequence found"
+    "forbidden-outer",
+    // tex.web § 338: "File ended while scanning ..."
+    "file-ended",
     "wrong-mode",
     "arithmetic-overflow",
     "number-too-big",
@@ -2832,6 +2864,7 @@ impl<'a> Machine<'a> {
         interner.intern("");
         // No file can spell this name with the catcodes a run starts with.
         let dont_expand = interner.intern("\u{2}notexpanded:");
+        let end_template = interner.intern(END_TEMPLATE);
         let unknown = interner.intern(crate::engine::tex::UNKNOWN_CS);
         let unknown_digits = interner.intern("\u{2}unknown digits:");
         let unknown_more = interner.intern("\u{2}unknown more digits:");
@@ -2989,6 +3022,7 @@ impl<'a> Machine<'a> {
             lone: false,
             scans: Vec::new(),
             infeasible: false,
+            absent: false,
             ended_run: false,
             undo: Vec::new(),
             waiting: 0,
@@ -3029,6 +3063,7 @@ impl<'a> Machine<'a> {
             letters_depth: None,
             budget: None,
             format_progress: None,
+            building_kernel: false,
             cached_lines: 0,
             progress_next: 0,
             lines_seen: HashMap::default(),
@@ -3043,6 +3078,7 @@ impl<'a> Machine<'a> {
             name_slot: None,
             font_watch: FontWatch::default(),
             dont_expand,
+            end_template,
             unknown,
             call_runs: Default::default(),
             memos: Default::default(),
@@ -3138,6 +3174,7 @@ impl<'a> Machine<'a> {
             keep_errors: false,
             approximated: false,
             blind: false,
+            arm: false,
             enclosing_unknown_arm: false,
             read_outside: false,
             cut_taint: None,
@@ -3702,12 +3739,7 @@ impl<'a> Machine<'a> {
             m.out.plugins.discovery =
                 crate::plugins::discovery::scan_with(&m.base, m.cfg.limits.thread_count(), &m.cfg);
         }
-        m.out.plugins.read_build(&m.cfg, &m.out.project, path);
-        if m.cfg.plugins.magic {
-            m.out.plugins.read_magic(source, &m.cfg.magic);
-        }
-        m.out.plugins.read_shell_escape(&m.cfg, &m.out.project);
-        m.out.plugins.read_kernel(&m.cfg, source);
+        m.read_plugins(source, path);
         // `Plugins::resolve` ran before the source was read, so a magic
         // comment may have named a different engine than the table installed
         // in `Machine::new` assumed.
@@ -4360,7 +4392,10 @@ impl<'a> Machine<'a> {
         let lines = text.lines().count() as u32;
         self.format_progress = Some(self.input.len() - 1);
         let job_lists = self.lists_state();
+        // The kernel's graph and call graphs are dropped below, cached or not: build only the vertices.
+        (self.building_kernel, self.out.graph.vertices_only) = (true, true);
         self.run();
+        (self.building_kernel, self.out.graph.vertices_only) = (false, false);
         // tex.web § 1335: `\dump` ended the format's job, not the document's.
         self.job_ended = false;
         let kernel_steps = self.out.steps;
@@ -4462,47 +4497,51 @@ will look undefined",
         // LuaTeX dumps no Lua state: a job starts with a fresh one, and `\everyjob`
         // runs `ltluatex`, luaotfload and expl3's Lua again (LuaTeX manual, "Lua
         // general"). So the cache, which carries no Lua state, loses nothing.
-        self.lua = Default::default();
+        crate::plugins::lua::fresh(self);
         let cacheable = self.cfg.cache.enabled && !truncated && !preload_truncated && complete;
         // Every file the kernel was read from, in order, minus the document itself,
         // so installing this cache hands out the same file numbers the cached spans carry.
         let files: Vec<(String, LoadKind)> =
             self.out.files.iter().skip(1).map(|file| (file.path.clone(), file.kind)).collect();
-        if let (true, Some(directory), Some(captured)) = (
-            cacheable,
-            &cache_dir,
+        let captured =
             Format::capture(&source, &self.out.interner, &self.env, files, sites, &self.wild, &roots).map(|format| {
                 format
                     .diagnosed(&self.out.facts.diagnostics, &self.gaps)
                     .with_definers(definers)
                     .with_catcodes(kernel.clone())
-            }),
-        ) {
-            let stored = captured.store(
-                directory,
-                &source,
-                self.out.plugins.engine.as_str(),
-                preload_key,
-                self.cfg.eviction_bound(),
-                &roots,
-            );
-            if let (Err(e), true) = (&stored, self.cfg.verbose >= 1) {
-                crate::util::progress::note!("satex: the kernel cache could not be written: {e}");
-            }
-            // Go on from what was cached, as a run that reads the cache does:
-            // a cache never changes an answer. Read back from disk where it was
-            // stored: the bytes share no macro body between names, the capture
-            // does, and kept call effects are keyed by body.
-            let engine = self.out.plugins.engine.as_str();
-            let bound = self.cfg.eviction_bound();
-            let stored =
-                stored.ok().and_then(|_| Format::load(directory, &source, engine, preload_key, bound, &roots).ok());
+            });
+        // Go on from the captured format whether it is stored or not, as a run that reads the
+        // cache does: a cache never changes an answer, and cold, warm and uncached runs start the
+        // document from the same state. Read back from disk where it was stored: the bytes share
+        // no macro body between names, the capture does, and kept call effects are keyed by body.
+        if let Some(captured) = captured {
+            let stored = match (cacheable, &cache_dir) {
+                (true, Some(directory)) => {
+                    let stored = captured.store(
+                        directory,
+                        &source,
+                        self.out.plugins.engine.as_str(),
+                        preload_key,
+                        self.cfg.eviction_bound(),
+                        &roots,
+                    );
+                    if let (Err(e), true) = (&stored, self.cfg.verbose >= 1) {
+                        crate::util::progress::note!("satex: the kernel cache could not be written: {e}");
+                    }
+                    let engine = self.out.plugins.engine.as_str();
+                    let bound = self.cfg.eviction_bound();
+                    stored.ok().and_then(|_| Format::load(directory, &source, engine, preload_key, bound, &roots).ok())
+                }
+                _ => None,
+            };
             stored.unwrap_or(captured).install(&mut self.out.interner, &mut self.env);
+            // the installed bindings name no vertex of the kernel's graph
             self.out.graph = DependencyGraph::default();
-            self.out.calls = CallGraph::default();
-            self.out.observed = CallGraph::default();
-            self.replay_calls();
-        } else if self.cfg.verbose >= 1 && self.cfg.cache.enabled && !cacheable {
+        }
+        self.out.calls = CallGraph::default();
+        self.out.observed = CallGraph::default();
+        self.replay_calls();
+        if self.cfg.verbose >= 1 && self.cfg.cache.enabled && !cacheable {
             crate::util::progress::note!(
                 "satex: the kernel is not cached: {}",
                 if truncated {
@@ -4649,6 +4688,9 @@ will look undefined",
         self.counter_namespace = None;
         self.out.exhausted = false;
         (self.out.steps, self.out.load_steps, self.out.served_steps) = (0, 0, 0);
+        // A cached kernel brings no charged lines: the guard starts as it does there.
+        self.guard = LineGuard { tally: std::mem::take(&mut self.guard.tally), ..Default::default() };
+        self.settle_guard();
         // Steps of the kernel's: a build would otherwise leave the document's
         // loops open to the stall check a cached kernel leaves them closed to.
         self.region = Region::default();
@@ -4659,7 +4701,7 @@ will look undefined",
         self.out.facts.loads.clear();
         self.out.facts.shapes.clear();
         self.call_shape = None;
-        self.definition_sites.clear();
+        self.definition_sites = Default::default();
         self.expansion_sites = Default::default();
         self.out.facts.spaces.clear();
         self.out.facts.kept_spaces.clear();
@@ -4672,7 +4714,7 @@ will look undefined",
         // What the kernel run left that a cached kernel does not bring:
         // visit counts, summaries, counters and the typed-name table (kept,
         // a built run forked 50x more than a cached one on the same document).
-        self.call_runs.clear();
+        self.call_runs = Default::default();
         (self.memos, self.memo_codes, self.memo_seen, self.memo_count) = Default::default();
         self.memo_said.clear();
         self.memo_uses.clear();
@@ -4682,6 +4724,8 @@ will look undefined",
         self.carried = Carried::default();
         self.unknown_chars.clear();
         (self.source_progress, self.lines_read) = (0, 0);
+        // The counters names are made of, as a cached kernel leaves them.
+        (self.digits_made, self.line_seq) = Default::default();
         self.own_files.clear();
         self.last_file = None;
         self.join_commands.clear();
@@ -4701,8 +4745,13 @@ will look undefined",
         self.drop_call_recs();
         self.forget_settled_calls();
         self.scratch = Scratch::default();
+        // The places the run keeps of what it read last stand in the load's own call (its
+        // options) after a read, and where they were after a replay: a later row is raised
+        // at the call either way ([`Machine::raised_at`]).
+        (self.project_site, self.project_call, self.typed_at, self.text_site, self.built_name) = Default::default();
+        self.settle_guard();
         #[cfg(test)]
-        package_cache::note_load_end(&self.carried, self.guard.lines.len());
+        package_cache::note_load_end(&self.carried, self.guard.lines.len(), (self.line_seq, self.digits_made));
         let fresh = self.expansion_sites.iter().map(|(k, s)| (*k, Site::fresh(s.fact)));
         self.expansion_sites = fresh.collect();
     }
@@ -5163,6 +5212,11 @@ will look undefined",
         if let Some(space) = self.outer_while_scanning(token) {
             return Some(space);
         }
+        // tex.web § 780: outside a scan `\endtemplate` only says the cell's
+        // `v` part is over; the `&` or `\cr` behind it ends the cell.
+        if token.tok == Tok::Cs(self.end_template) {
+            return self.read(across_files);
+        }
         if token.tok != Tok::Cs(self.dont_expand) {
             self.noexpanded = None;
             return Some(token);
@@ -5446,8 +5500,9 @@ will look undefined",
         if self.scanner == Scanner::Normal {
             return None;
         }
-        let sym = token.cs()?;
-        if !self.env.is_outer(sym) {
+        let end_template = self.end_template_read(token);
+        let sym = token.cs().filter(|&sym| self.env.is_outer(sym));
+        if sym.is_none() && !end_template {
             return None;
         }
         let (what, recovery) = match self.scanner {
@@ -5460,7 +5515,7 @@ will look undefined",
         if self.scanner == Scanner::Matching {
             self.runaway = Runaway::Outer;
         }
-        let name = self.name(sym).to_string();
+        let name = sym.map_or_else(|| "endtemplate".to_string(), |sym| self.name(sym).to_string());
         self.diagnose(
             Severity::Warning,
             "forbidden-outer",
@@ -6581,11 +6636,17 @@ will look undefined",
                 }
                 self.tex_error(&text, span);
             }
-            None if matches!(severity, Severity::Unsupported | Severity::Imprecision) => {
+            // An assumption that is no premise marks its path like a gap.
+            None if crate::analysis::facts::approximates(severity, code) => {
                 self.scratch.approximations += 1;
                 self.approximated = true;
             }
             None => {}
+        }
+        // What TeX does on an arm (raised above as it may be) it does not do
+        // in every run ([`Machine::exact`]): its row is no certain one.
+        if severity == Severity::Warning && !self.exact() {
+            severity = Severity::Imprecision;
         }
         // A runaway has read its file to where it gave up: the command in
         // the user's files that started it is the place, not that end.
@@ -6741,6 +6802,13 @@ will look undefined",
         recent.find(|o| o.span == span && o.kind == kind && o.key == key && o.call == self.file_call).map(|o| o.node)
     }
 
+    /// Where what the running call does stands: the innermost command the
+    /// file call's own text wrote (`\ref` in `\footnote{see \ref{a}}`),
+    /// else the file call, else `span`.
+    pub fn own_site(&self, span: Span) -> Span {
+        self.text_site.or(self.file_call).map_or(span, |(_, at)| at)
+    }
+
     /// What an occurrence recorded now would be attributed to. Kept for one
     /// recorded once the run has ended.
     pub fn occurrence_context(&self) -> crate::analysis::observe::OccContext {
@@ -6876,7 +6944,7 @@ will look undefined",
         let defs = &mut self.out.facts.defs;
         let from = defs.len().saturating_sub(WINDOW);
         let mut found = false;
-        for def in defs[from..].iter_mut().filter(|d| d.name == partner && d.span == span) {
+        for def in defs.iter_mut_from(from).filter(|d| d.name == partner && d.span == span) {
             if matches!(def.tag, "macro" | "alias" | "environment") {
                 def.tag = "environment";
                 found = true;
@@ -7095,17 +7163,32 @@ will look undefined",
             self.name_pattern(name)
         };
         if pattern.as_ref().is_some_and(|(p, s)| p.is_empty() && s.is_empty()) {
-            // Assumption: a name of wholly unknown text is a fresh one. It
-            // redefines no name that has a meaning and no name spelled out
-            // elsewhere; a lookup of unknown text stays unknown.
+            // Typed text of bounded length may spell names that have a
+            // meaning: each may now mean this one too.
+            let token = Token::new(Tok::Cs(name), span);
+            let len = self.text_length(&[token]);
+            let class = self.typed_shape(token).filter(|_| len.1.is_some()).map(|shape| shape.0);
+            let reached = class.is_some_and(|class| self.may_reach("", "", class, len, &meaning, global));
+            // Assumption: the name is a fresh one. It redefines no name
+            // spelled out elsewhere and, unless reached above, none that has
+            // a meaning; a lookup of unknown text stays unknown.
+            let said = match reached {
+                true => "names with a meaning it may spell may mean it now, any other is assumed new",
+                false => "it is assumed to be a new name",
+            };
             self.diagnose(
-                Severity::Imprecision,
+                Severity::Assumption,
                 "unknown-name-defines-fresh",
                 span,
-                "a name built from unknown text was defined; it is assumed to be a new name".into(),
+                format!("a name built from unknown text was defined; {said}"),
             );
         } else if let Some((prefix, suffix)) = pattern {
             let digits = self.name_gap_is_digits(name);
+            // Assumption past the bound: it redefines no name with a meaning.
+            if !self.may_reach(&prefix, &suffix, self.name_gap_class(name), (0, None), &meaning, global) {
+                let said = "past limits.text_names names it may spell, it is assumed to redefine none of them";
+                self.diagnose(Severity::Assumption, "unknown-name-defines-fresh", span, said.into());
+            }
             self.numbered_may_be(name, &meaning, |p, s| {
                 (p.starts_with(prefix.as_str()) || prefix.starts_with(p))
                     && (s.ends_with(suffix.as_str()) || suffix.ends_with(s))
@@ -7266,7 +7349,7 @@ will look undefined",
                         let runs = SiteRuns { runs: vec![(self.path_id, mac.clone(), key)], ..SiteRuns::default() };
                         self.scratch.site_texts.insert(self.out.facts.defs.len(), runs);
                     }
-                    self.definition_sites.insert((span, name, fact.package), self.out.facts.defs.len());
+                    self.definition_sites.insert_mut((span, name, fact.package), self.out.facts.defs.len());
                     self.out.facts.defs.push(fact);
                 } else if context_is_new {
                     self.out.facts.defs.push(fact);
@@ -7311,9 +7394,7 @@ will look undefined",
                     self.site_text(i, span, stands)
                 }
             };
-            let previous = &mut self.out.facts.defs[i];
-            previous.certain &= certain;
-            previous.mac = mac;
+            crate::analysis::facts::Definition::rerun(&mut self.out.facts.defs, i, certain, mac);
         }
         // The kernel's own run defines nothing a document reports.
         if self.budget.is_none() {
@@ -7422,7 +7503,9 @@ will look undefined",
     /// Whether the expansion was written in the source macro's replacement
     /// text, not handed to it as an argument: its expansion reached this one.
     fn observe_call(&mut self, sym: Sym, span: Span) {
-        let Some(source) = self.source.filter(|_| span != Span::default()) else { return };
+        let Some(source) = self.source.filter(|_| span != Span::default() && !self.building_kernel) else {
+            return;
+        };
         let meaning = self.env.meaning(source);
         if self.out.observed.has(source, sym) {
             return;
@@ -7476,6 +7559,9 @@ will look undefined",
     }
 
     fn record_calls(&mut self, name: Sym, body: &[Token]) {
+        if self.building_kernel {
+            return;
+        }
         // A redefinition replaces what the name calls. Without clearing, a
         // scratch name the kernel reuses (`\reserved@a`, `\@gtempa`, ...)
         // would keep every callee any of its bodies ever had, inventing
@@ -7513,6 +7599,7 @@ will look undefined",
         m.env = env;
         m.catcodes = catcodes;
         m.dont_expand = m.out.interner.intern("\u{2}notexpanded:");
+        m.end_template = m.out.interner.intern(END_TEMPLATE);
         m.unknown = m.out.interner.intern(crate::engine::tex::UNKNOWN_CS);
         m.unknown_digits = m.out.interner.intern("\u{2}unknown digits:");
         m.unknown_more = m.out.interner.intern("\u{2}unknown more digits:");
@@ -7672,6 +7759,18 @@ will look undefined",
         true
     }
 
+    /// What the build configuration and the source say about the run: its engine, magic
+    /// comments, shell escape and kernel. One reader for a run and a [`Analysis::sketch`], so a
+    /// build and its analysis choose the same engine.
+    fn read_plugins(&mut self, source: &str, path: Option<&Path>) {
+        self.out.plugins.read_build(&self.cfg, &self.out.project, path);
+        if self.cfg.plugins.magic {
+            self.out.plugins.read_magic(source, &self.cfg.magic);
+        }
+        self.out.plugins.read_shell_escape(&self.cfg, &self.out.project);
+        self.out.plugins.read_kernel(&self.cfg, source);
+    }
+
     /// A format installed from its bindings brings no definitions with it:
     /// what each kernel macro's replacement text names is read off again.
     fn replay_calls(&mut self) {
@@ -7781,6 +7880,13 @@ will look undefined",
                     span.line
                 ),
             );
+            return;
+        }
+        // Said already (all paths dropped): no second finding. Any other row
+        // the run rests on (an approximated scan, unknown text run as a no-op,
+        // which may be the end itself) leaves the missing end a possible one:
+        // the linter's one rule says so ([`Diagnostic::rest`]).
+        if self.out.facts.diagnostics.iter().any(|d| d.code == "analysis-ended-early") {
             return;
         }
         let (lines, last) = (source.lines().count().max(1) as u32, source.lines().last().unwrap_or_default());
@@ -8102,7 +8208,11 @@ will look undefined",
             }
         });
         let part = hook.unwrap_or(if self.out.document_depth.is_some() { "document" } else { "preamble" });
-        match crate::analysis::observe::current_environment(self).filter(|e| e != "document" && !e.is_empty()) {
+        // Peeked: what the progress bar shows is no read of the run. Logged, it entered kept
+        // call effects and segments at whichever step the bar was drawn.
+        let environment = self.out.interner.lookup("@currenvir").and_then(|sym| self.env.peek(sym.0));
+        let environment = environment.and_then(|b| b.meaning.as_macro()).map(|m| m.replacement_text.clone());
+        match environment.map(|text| self.text_of(&text)).filter(|e| e != "document" && !e.is_empty()) {
             Some(env) => format!("{part} · {env}"),
             None => part.to_string(),
         }
@@ -8300,6 +8410,26 @@ will look undefined",
         // Reported like `\errmessage` errors (`raised-error`).
         self.occurrence(OccKind::Message, text.to_string(), Some("errmessage".to_string()), at);
         self.count_error(at);
+    }
+
+    /// An engine error some concrete runs of this path raise and others do
+    /// not (an interval whose members err only in part): a possible error.
+    /// The path stays exact, its value covers both outcomes. Only for the
+    /// document's own code on a path that did not approximate: library code
+    /// over an approximated or decorrelated value would only say satex's gap.
+    /// `span` is the erring command's token, so whose code it is: the file
+    /// being read is the document's while any library macro runs from it.
+    pub(crate) fn possible_tex_error(&mut self, text: &str, span: Span) {
+        let tex_path = !self.approximated && self.scratch.approximations == self.scratch.approximations_at_command;
+        if self.probe.is_some() || self.halted || self.scan_stop.is_some() || !tex_path || !self.own_file(span.file) {
+            return;
+        }
+        let at = self.raised_at(span);
+        if self.said_before(OccKind::Message, text, at).is_none() {
+            let mut context = self.occurrence_context();
+            context.certain = false;
+            self.occurrence_in(OccKind::Message, text.to_string(), Some("errmessage".to_string()), at, &context);
+        }
     }
 
     /// tex.web § 82 `error`: counts one more error. The count is per paragraph
@@ -8781,6 +8911,15 @@ will look undefined",
         }
     }
 
+    /// The guard as if it had just checked. A read load is checked every `CHECK_INTERVAL`
+    /// steps and a replayed one not at all, so where the next check falls, and with it where
+    /// a line is cut, would depend on the cache: both start counting anew at the load's end.
+    /// What is dropped (under one interval of steps, and the walks) was the load's own.
+    fn settle_guard(&mut self) {
+        (self.guard.step, self.checked_at, self.walked) = (self.out.steps, self.out.steps, 0);
+        self.env.walked.take();
+    }
+
     fn walk_per_step(&self) -> u64 {
         self.limits.walk_per_step.max(1)
     }
@@ -9016,15 +9155,6 @@ will look undefined",
     pub(crate) fn refute_library_fault(&mut self, text: &str, opener: Span) -> bool {
         let unknown_arm = self.took_unknown_arm();
         self.refute_if(unknown_arm, text, opener)
-    }
-
-    /// The scan takes the arm where unknown text holds no delimiter (or holds
-    /// it here). The arm holds only for texts of that shape, so the path
-    /// approximated: its errors are not TeX's for certain.
-    pub(crate) fn assume_arm(&mut self) {
-        self.arm_assumed = true;
-        self.scratch.approximations += 1;
-        self.approximated = true;
     }
 
     /// [`Self::refute_library_fault`] on a path known to rest on an approximation.
@@ -9612,6 +9742,13 @@ will look undefined",
                 may.iter().all(|m| !matches!(m, Meaning::Unknown | Meaning::Undefined) && !self.expandable_meaning(m))
             },
         )
+    }
+
+    /// tex.web § 358: behind `\noexpand`'s marker a token whose command is
+    /// past `max_command` reads as `relax`: every expandable meaning and
+    /// `undefined_cs` (`max_command + 1`).
+    pub fn relax_when_noexpanded(&self, meaning: &Meaning) -> bool {
+        matches!(meaning, Meaning::Undefined) || self.expandable_meaning(meaning)
     }
 
     pub fn expandable_meaning(&self, meaning: &Meaning) -> bool {
@@ -10558,11 +10695,14 @@ will look undefined",
 
     /// An undefined name met here: [`MeaningKind::UndefinedApproximated`]
     /// on a path that approximated since the paths parted, where the
-    /// engine's error is a possible one ([`Machine::certain_error`]).
+    /// engine's error is a possible one ([`Machine::certain_error`]). On an
+    /// arm no undecided conditional names (a joined value read apart) it is
+    /// TeX's in some runs.
     pub(crate) fn undefined_kind(&mut self) -> MeaningKind {
-        match self.approximated || self.after_cut() {
-            true => MeaningKind::UndefinedApproximated,
-            false => MeaningKind::Undefined,
+        match (self.approximated || self.after_cut(), self.cds.is_empty() && self.on_paths()) {
+            (true, _) => MeaningKind::UndefinedApproximated,
+            (false, true) => MeaningKind::UndefinedOnArm,
+            (false, false) => MeaningKind::Undefined,
         }
     }
 
@@ -10574,6 +10714,23 @@ will look undefined",
         node: Option<NodeId>,
         arguments: Vec<Box<[Token]>>,
     ) -> u32 {
+        // A join left the name undefined on some arm (env.rs `join`): it runs
+        // with the meaning it has elsewhere, and where it was undefined TeX
+        // stops here (tex.web § 370), as the conditionals its definitions
+        // hang on decide. A possible error, never a certain one.
+        let mut cds = None;
+        let meaning = match self.env.peek(name.0) {
+            Some(b) if b.may.as_ref().is_some_and(|m| m.contains(&Meaning::Undefined)) && !meaning.undefined() => {
+                let graph = &self.out.graph;
+                let mut deps = self.cds.to_vec();
+                deps.extend(b.defs.iter().filter_map(|&d| graph.vertex(d)).flat_map(|v| v.cds.iter().copied()));
+                deps.dedup();
+                let kind = if deps.is_empty() { MeaningKind::UndefinedOnArm } else { MeaningKind::Undefined };
+                cds = Some(deps);
+                kind
+            }
+            _ => meaning,
+        };
         self.note_site(span, name);
         if self.env.memo_recording() {
             self.memo_uses.push((span, name));
@@ -10602,7 +10759,7 @@ will look undefined",
                 meaning,
                 within: captured,
                 arguments: arguments.clone(),
-                cds: self.cds.to_vec(),
+                cds: cds.clone().unwrap_or_else(|| self.cds.to_vec()),
                 count: 0,
                 mode: self.mode,
                 depth: self.env.group_level() as u16,
@@ -10657,7 +10814,7 @@ will look undefined",
             meaning,
             within,
             arguments,
-            cds: self.cds.to_vec(),
+            cds: cds.unwrap_or_else(|| self.cds.to_vec()),
             count: 1,
             mode: self.mode,
             depth: self.env.group_level() as u16,
@@ -10816,7 +10973,8 @@ will look undefined",
                             let sub = g.finish();
                             // Without the length: a pile of rests in front grows every round.
                             let mut g = crate::engine::tex::NameHash.build_hasher();
-                            let loose = (vague && self.vague_hash(window, &mut g)).then(|| g.finish());
+                            // Always computed: the memo outlives `vague`, and which list hits it depends on addresses.
+                            let loose = self.vague_hash(window, &mut g).then(|| g.finish());
                             memo[slot] = Some((toks.clone(), *pos, sub, loose));
                             (sub, loose)
                         }
@@ -10875,8 +11033,8 @@ will look undefined",
     /// round before it wrote, back to what they held then, and changed
     /// nothing else: TeX is in the state it was in, though it assigned
     /// (tex.web § 366). Notes this round's writes for the next.
-    fn rewrites_last_round(&mut self, key: (Span, Sym), shape: u64, nest: (usize, usize)) -> bool {
-        let Some(site) = self.expansion_sites.get(&key).copied() else { return false };
+    fn rewrites_last_round(&mut self, key: (Span, Sym), site: Option<Site>, shape: u64, nest: (usize, usize)) -> bool {
+        let Some(site) = site else { return false };
         let repeat = site.shape == shape && site.nest == nest && site.unread > 1;
         if !repeat || site.effective == self.env.effective {
             return false;
@@ -10981,7 +11139,7 @@ will look undefined",
         let defs = self.env.link_defs(sym);
         let definition = defs.first().copied();
         self.link_reads(node, sym, &defs);
-        if let Some(caller) = self.within.last().map(|(name, _)| *name) {
+        if let Some(caller) = self.within.last().map(|(name, _)| *name).filter(|_| !self.building_kernel) {
             self.out.calls.add(caller, sym);
         }
         self.observe_call(sym, span);
@@ -11071,7 +11229,7 @@ will look undefined",
         // the argument in that text.
         if self.runaway != Runaway::No && std::mem::take(&mut self.arm_assumed) && self.may_refute(span) {
             self.runaway = Runaway::No;
-            self.no_arm();
+            self.refute();
             return;
         }
         if self.runaway != Runaway::No {
@@ -11150,11 +11308,12 @@ will look undefined",
         // recursion that re-enters the same site without reading further only
         // terminates if its arguments get smaller.
         let size: usize = arguments.iter().map(Vec::len).sum();
-        let below = self.expansion_sites.get(&(span, sym)).map_or(usize::MAX, |site| site.levels);
+        let last = self.expansion_sites.get(&(span, sym)).copied();
+        let below = last.map_or(usize::MAX, |site| site.levels);
         let (shape, levels, under, vague) = self.call_shape_hash(&arguments, below);
         let nest = (self.conds.len(), self.env.depth());
         let effective = self.env.effective;
-        let rewritten = self.rewrites_last_round((span, sym), shape, nest);
+        let rewritten = self.rewrites_last_round((span, sym), last, shape, nest);
         let (other, assigned) = (effective - self.env.slot_changes, self.env.assignments);
         let (shrinking, unread, deeper, cycled, vagued, since) = match self.expansion_sites.get_mut(&(span, sym)) {
             Some(site) => {
@@ -11849,27 +12008,25 @@ will look undefined",
                 if self.part_digits(t, num) {
                     return self.read_undelimited();
                 }
-                // Digits of any length stay whole, but TeX reads a `-` alone,
-                // the magnitude after it, and a `0` alone: whole, they begin
-                // with a digit 1 to 9 ([`Machine::part_signs`]). A macro that
-                // puts them back together reads them as TeX does.
-                let rejoined = self.scratch.rejoined.1;
-                if !rejoined
-                    && num.lo <= 0
-                    && crate::engine::scan::unbounded_digits(num)
-                    && self.part_signs(t, num, true)
-                {
-                    return self.read_undelimited();
-                }
-                self.read_whole.insert(t.cs().expect("typed digits are a name"));
-                if rejoined {
+                // A macro that puts them back together reads them whole, as TeX
+                // gives them. Else digits of any length part as TeX reads them
+                // (tex.web § 392, one token per parameter): a `-` alone, the
+                // magnitude after it, a `0` alone ([`Machine::part_signs`]),
+                // then digits 1 to 9 first, by length as bounded ones.
+                if self.scratch.rejoined.1 {
+                    self.read_whole.insert(sym);
                     return vec![t];
                 }
+                if num.lo <= 0 && self.part_signs(t, num, true) || num.lo > 0 && self.part_lengths(t, num) {
+                    return self.read_undelimited();
+                }
+                // No more paths may part by sign: whole, said so.
+                self.read_whole.insert(sym);
                 self.diagnose(
                     Severity::Assumption,
                     "digits-read-as-one-token",
                     t.span,
-                    "a number of unknown digits was read as one argument where TeX reads its first digit; the macro is assumed to put it back together whole".into(),
+                    "a number of unknown digits was read as one argument where TeX reads its first digit, since no more paths may part; the macro is assumed to put it back together whole".into(),
                 );
                 vec![t]
             }
@@ -11940,7 +12097,12 @@ will look undefined",
     /// length (a 32-bit value nothing bounds: a split keeps nothing of their
     /// bound), or where no more paths may part.
     pub(crate) fn part_digits(&mut self, t: Token, num: crate::engine::value::Num) -> bool {
-        let Some(sym) = t.cs().filter(|_| !crate::engine::scan::unbounded_digits(num)) else { return false };
+        !crate::engine::scan::unbounded_digits(num) && self.part_lengths(t, num)
+    }
+
+    /// [`Machine::part_digits`] for digits of any length too.
+    fn part_lengths(&mut self, t: Token, num: crate::engine::value::Num) -> bool {
+        let Some(sym) = t.cs() else { return false };
         let arms = self.digit_arms(sym, num, t.span);
         if let [(_, text)] = &arms[..] {
             self.unread_all(text);
@@ -12255,19 +12417,27 @@ will look undefined",
 
     /// What a loop pass has left to read, ordered: first the lines its
     /// streams have left (a pass that reads a line of a known file is one
-    /// of finitely many), then [`Machine::input_bound`]. `None` when
-    /// neither is bounded. A pass that begins with less ends by
-    /// construction.
-    pub(crate) fn pass_bound(&self, input: &Input, streams: &Streams) -> Option<u64> {
-        self.use_streams();
+    /// of finitely many), then [`Machine::input_bound`], each `u32::MAX`
+    /// where unbounded. A pass that begins with less ends by construction.
+    /// Only a change of the stream half between passes reads the streams
+    /// ([`Machine::compare_bounds`]): its value alone keys no package cache.
+    pub(crate) fn pass_bound(&self, input: &Input, streams: &Streams) -> u64 {
         let lines = (!streams.contains_key(&ANY_STREAM)).then(|| {
             let left = |a: &At| if a.lo == CLOSED { 0 } else { a.lines.len().saturating_sub(a.lo) };
             streams.values().map(|t| t.iter().map(left).max().unwrap_or(0)).sum::<usize>()
         });
         let tokens = self.input_bound(input);
         let lines = lines.map(|n| u32::try_from(n).unwrap_or(u32::MAX - 1));
-        (lines.is_some() || tokens.is_some())
-            .then(|| u64::from(lines.unwrap_or(u32::MAX)) << 32 | u64::from(tokens.unwrap_or(u32::MAX)))
+        u64::from(lines.unwrap_or(u32::MAX)) << 32 | u64::from(tokens.unwrap_or(u32::MAX))
+    }
+
+    /// Reads the streams if a pass bound `bound` is compared with one of
+    /// `before`, whose stream halves differ ([`Machine::pass_bound`]). Equal
+    /// halves leave the tokens to decide, whatever the streams hold.
+    pub(crate) fn compare_bounds(&self, before: impl IntoIterator<Item = u64>, bound: u64) {
+        if before.into_iter().any(|b| b >> 32 != bound >> 32) {
+            self.use_streams();
+        }
     }
 
     /// The most tokens `input`'s token lists may hold, typed text by its
@@ -12517,7 +12687,7 @@ will look undefined",
             // what library code did on no run into it. Past a refused fork
             // (`fuzzy`) the argument may have ended sooner: a run, kept.
             if m.cfg.compiles() && m.probe.is_none() && fuzzy.is_none() {
-                m.no_arm();
+                m.refute();
                 return Vec::new();
             }
             m.give_back(out, k, mark.as_ref());
@@ -12629,14 +12799,26 @@ will look undefined",
                         && self.may_begin(t, &delimiter[j..])
                 })
             {
-                match self.branch(self.unknown, 2, t.span) {
+                let ends = match self.digits_all_begin(t, &delimiter[j..]) {
+                    true => Some(0),
+                    false => self.branch(self.unknown, 2, t.span),
+                };
+                match ends {
                     Some(0) => {
                         out.truncate(out.len() - j);
-                        self.unread_rest(t, &delimiter[j..], t.span);
+                        // Digits of a known length keep their places after the delimiter's.
+                        match self.digits_after(t, &delimiter[j..]) {
+                            Some(Some(rest)) => self.unread_all(&rest),
+                            Some(None) => {
+                                self.refute();
+                                return Vec::new();
+                            }
+                            None => self.unread_rest(t, &delimiter[j..], t.span),
+                        }
                         self.scan_abandoned = true;
                         return strip_braces(out);
                     }
-                    Some(_) => self.assume_arm(),
+                    Some(_) => self.arm_assumed = true,
                     None => {
                         fuzzy = fuzzy.or(Some(t.span));
                         tail_free = false;
@@ -12700,7 +12882,7 @@ will look undefined",
                 // level 0 the arm that holds no delimiter reads on exactly:
                 // the other arm took the split.
                 match ends {
-                    Some(1) => self.assume_arm(),
+                    Some(1) => self.arm_assumed = true,
                     _ => fuzzy = fuzzy.or(Some(t.span)),
                 }
                 if depth == 0 && unknown_text {
@@ -12805,7 +12987,7 @@ will look undefined",
                         }
                         // The texts that do not end so read on.
                         Some(_) => {
-                            self.assume_arm();
+                            self.arm_assumed = true;
                             out[p] = others.expect("forked on it");
                         }
                         None => fuzzy = fuzzy.or(Some(t.span)),
@@ -12814,12 +12996,24 @@ will look undefined",
             }
             if depth == 0 && out.len() >= delimiter.len() {
                 let at = out.len() - delimiter.len();
-                if out[at..].iter().enumerate().all(|(i, t)| matches(i, t)) {
-                    if out[at..].iter().zip(delimiter).any(|(t, d)| t.tok != *d) {
-                        let message =
-                            "a delimiter of unknown text is taken to end the argument where it may first match".into();
-                        self.diagnose(Severity::Assumption, "unknown-delimiter", out[at].span, message);
-                    }
+                // A delimiter token of several values may match here or not
+                // (tex.web § 392): a path each way, the second reads on.
+                // Where no path may part, read on and keep the argument unknown.
+                let vaguely = out[at..].iter().zip(delimiter).any(|(t, d)| t.tok != *d);
+                let here = out[at..].iter().enumerate().all(|(i, t)| matches(i, t))
+                    && (!vaguely
+                        || match self.branch(self.unknown, 2, out[at].span) {
+                            Some(0) => true,
+                            Some(_) => {
+                                self.arm_assumed = true;
+                                false
+                            }
+                            None => {
+                                fuzzy = fuzzy.or(Some(out[at].span));
+                                false
+                            }
+                        });
+                if here {
                     if from_file >= delimiter.len() && out[at].cs().is_some() {
                         self.carried.absorbed = Some(out[at].span);
                     }
@@ -13281,7 +13475,7 @@ will look undefined",
                         if only_empty || self.branch(self.unknown, 2, t.span) != Some(1) {
                             continue;
                         }
-                        self.assume_arm();
+                        self.arm_assumed = true;
                     }
                     // After unknown text the literal may be inside it: what
                     // was read is given back, and the parameters go on.
@@ -13725,7 +13919,8 @@ will look undefined",
     /// place: `\message{\thefoo}` reads `\thefoo` and the counter under it.
     pub fn reads_value(&mut self, node: NodeId, toks: &[Token]) {
         const MAX_VALUE_DEPTH: u16 = 16;
-        let mut seen: Vec<Sym> = Vec::new();
+        // In meeting order (the edges' order), with a set beside it: a long walk was quadratic.
+        let (mut seen, mut met): (Vec<Sym>, crate::fixed::LookupSet<Sym>) = Default::default();
         let mut stack: Vec<(Rc<[Token]>, u16)> = vec![(Rc::from(toks), 0)];
         while let Some((source, depth)) = stack.pop() {
             for (at, token) in source.iter().enumerate() {
@@ -13747,13 +13942,14 @@ will look undefined",
                 };
                 if let Some(name) = formed.filter(|n| !n.is_empty()) {
                     let formed = self.intern(&name);
-                    if !seen.contains(&formed) {
+                    if met.insert(formed) {
                         seen.push(formed);
                     }
                 }
-                if seen.contains(&sym) || seen.len() >= self.cfg.limits.expansion_tokens {
+                if met.contains(&sym) || seen.len() >= self.cfg.limits.expansion_tokens {
                     continue;
                 }
+                met.insert(sym);
                 seen.push(sym);
                 if let Meaning::Macro(m) = self.env.meaning(sym)
                     && depth < MAX_VALUE_DEPTH
@@ -13966,6 +14162,7 @@ will look undefined",
             mode_split: self.mode_split,
             approximated: self.approximated,
             blind: self.blind,
+            arm: self.arm,
             read_outside: self.read_outside,
             dropping: (self.dropping.clone(), self.dropping_possible, self.dropping_breaks, self.dropping_nested),
             cut_taint: self.cut_taint,
@@ -14025,6 +14222,7 @@ will look undefined",
         self.mode_split = state.mode_split;
         self.approximated = state.approximated;
         self.blind = state.blind;
+        self.arm = state.arm;
         self.read_outside = state.read_outside;
         (self.dropping, self.dropping_possible, self.dropping_breaks, self.dropping_nested) = state.dropping;
         self.cut_taint = state.cut_taint;
@@ -14099,9 +14297,12 @@ will look undefined",
             self.parted_by = Some(ControlDep { on, taken: arm == 0 });
         }
         // A replay that meets fewer arms than its script names: that arm
-        // is gone, and its siblings cover the ones left.
-        if arm >= arms || !enter(self, arm) {
+        // is gone, and its siblings cover the ones left. An arm that cannot
+        // be entered is refuted alone.
+        if arm >= arms {
             self.no_arm();
+        } else if !enter(self, arm) {
+            self.refute();
         }
         true
     }
@@ -14142,9 +14343,10 @@ will look undefined",
         class: impl Fn(&Self, &Meaning) -> Option<bool>,
     ) -> bool {
         // A name with a meaning of its own may only be undefined besides:
-        // it is read with that meaning ([`crate::engine::env`]'s one-sided join).
-        let Some(may) =
-            self.env.slot(sym).filter(|b| matches!(b.meaning, Meaning::Unknown)).and_then(|b| b.may.clone())
+        // it is read with that meaning ([`crate::engine::env`]'s one-sided join),
+        // unless a test (`\ifx`, `\ifdefined`) answers it apart from the undefined one.
+        let Some((own, may)) =
+            self.env.slot(sym).and_then(|b| Some((!matches!(b.meaning, Meaning::Unknown), b.may.clone()?)))
         else {
             return false;
         };
@@ -14159,7 +14361,9 @@ will look undefined",
                 None => classes.push((c, vec![m.clone()])),
             }
         }
+        let answered = classes.len() > 1 && classes.iter().all(|(c, _)| c.is_some());
         !one_of
+            && (!own || answered)
             && self.may_split_meaning()
             && self.split(sym, span, classes.len(), |m, arm| {
                 m.joined_arm();
@@ -16152,6 +16356,54 @@ impl Machine<'_> {
         }
     }
 
+    /// A definition of a name of unknown text may have reached every bound
+    /// name the text can spell: `prefix`, `len` characters of `class`,
+    /// `suffix`. Each may now mean `meaning` too. `false`, and none is
+    /// touched, past `limits.text_names` such names.
+    fn may_reach(
+        &mut self,
+        prefix: &str,
+        suffix: &str,
+        class: TextClass,
+        len: (usize, Option<usize>),
+        meaning: &Meaning,
+        global: bool,
+    ) -> bool {
+        // Any character token but an active one may stand in a name
+        // (tex.web § 372): which categories `class` holds decides.
+        let cats = [Catcode::Letter, Catcode::Other, Catcode::Space, Catcode::Begin, Catcode::Param];
+        let spells = |n: &str| {
+            let gap = &n[prefix.len()..n.len() - suffix.len()];
+            let count = gap.chars().count();
+            let holds = |c| cats.iter().any(|&k| class.holds(Tok::Chr(c, k)));
+            count >= len.0 && len.1.is_none_or(|most| count <= most) && gap.chars().all(holds)
+        };
+        let bound = |m: &Self, s: Sym| m.env.slot(s).filter(|b| !matches!(b.meaning, Meaning::Undefined)).cloned();
+        let limit = self.env.sets.text_names;
+        let reached: Vec<(Sym, Binding)> = (self.bound_shaped(prefix, suffix).into_iter())
+            .filter(|&s| !self.out.interner.own(s) && spells(self.name(s)))
+            .filter_map(|s| Some((s, bound(self, s)?)))
+            .take(limit + 1)
+            .collect();
+        if reached.len() > limit {
+            return false;
+        }
+        let syms = self.typed_syms();
+        for (sym, b) in reached {
+            self.may_also(sym, b, meaning, global);
+            // Like the family's writes ([`Machine::widen_wild`]): a text
+            // per record read stays one meaning, its hull.
+            let Some(mut b) = self.env.slot(sym).cloned() else { continue };
+            let typed = crate::engine::env::typed!(self, syms);
+            if let Some(h) = b.may.as_deref().and_then(|ms| crate::engine::env::macros_hull(ms, &typed, limit)) {
+                (b.meaning, b.may) = (h, None);
+                self.env.set(sym, b, global);
+            }
+        }
+        self.mint();
+        true
+    }
+
     /// A write that may have reached `sym`, bound as `b`: it may now mean
     /// `meaning` besides what it meant (a weak update).
     fn may_also(&mut self, sym: Sym, mut b: Binding, meaning: &Meaning, global: bool) {
@@ -17163,5 +17415,37 @@ mod written {
         let kept = texts_of(&either);
         assert_eq!(kept.len(), 2, "{either:?}");
         assert!(kept.iter().all(|t| !t.contains(UNKNOWN_ANY)), "{either:?}");
+    }
+}
+
+#[cfg(test)]
+mod shape {
+    use super::{Config, Machine, REST_SERIAL, Rc};
+    use crate::engine::tex::{Tok, Token};
+
+    /// A call's shape is a function of the input pending, never of what the
+    /// memo of list hashes saw before. The memo kept a list's vague hash only
+    /// when the path hashing it was approximated, so an approximated path
+    /// read back none for a list an exact path met first. Whether it met the
+    /// memo slot again depended on the list's address: cold runs of one
+    /// document forked 462, 4.1k or 16.5k times.
+    #[test]
+    fn a_shape_does_not_depend_on_what_the_memo_saw() {
+        let cfg = Config {
+            load: crate::project::config::Load { format: false, ..Default::default() },
+            texmf: crate::project::config::Texmf { kpsewhich: false, ..Default::default() },
+            ..Config::default()
+        };
+        let shape = |seen_exact: bool| {
+            let mut m = Machine::new(&cfg, std::path::PathBuf::new());
+            let rest = Token { tok: Tok::Cs(m.intern(&format!("\u{2}text{REST_SERIAL}7"))), span: Default::default() };
+            m.push_tokens(Rc::from(vec![rest, rest]));
+            if seen_exact {
+                m.call_shape_hash(&[vec![rest]], 0);
+            }
+            m.approximated = true;
+            m.call_shape_hash(&[vec![rest]], 0)
+        };
+        assert_eq!(shape(true), shape(false));
     }
 }

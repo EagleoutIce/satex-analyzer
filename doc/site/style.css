@@ -2682,3 +2682,17 @@ pre.out-block:hover .out-meta { opacity: .85; }
 
 /* a widget's change whose build failed: said at the table it wrote, above it */
 .pdf-page > .pdf-wrote-fail { position: absolute; z-index: 5; transform: translateY(-100%); margin: 0; padding: .15rem .45rem; font-size: .78rem; background: var(--bg); border: 1px solid currentColor; border-radius: 4px; max-width: 90%; pointer-events: none; }
+/* the Draw dialog's formula bar (draw.ts): the formula drawn, its LaTeX, the templates */
+.draw-formula { display: grid; gap: var(--d-2, .5rem); margin: 0 1rem var(--d-2, .5rem); padding: var(--d-2, .5rem); border: 1px solid var(--border); border-radius: 8px; background: var(--sunk); min-width: 0; }
+.draw-formula[hidden] { display: none; }
+.draw-f-view { min-height: 3rem; display: flex; align-items: center; justify-content: center; overflow-x: auto; color: var(--fg); font-size: 2.2rem; }
+/* the formula's glyphs are text: no icon stroke on them */
+.draw-formula svg { fill: currentColor; stroke: none; }
+.draw-f-row { display: flex; gap: var(--d-2, .5rem); min-width: 0; }
+.draw-f-src { flex: 1 1 auto; min-width: 0; height: var(--ctl, 2rem); padding: 0 .75rem; border: 1px solid var(--border); border-radius: 999px; background: var(--bg); color: var(--fg); font: .85rem var(--mono, monospace); }
+.draw-f-src:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.draw-f-kinds { display: flex; flex-wrap: wrap; gap: .3rem; }
+.draw-f-kinds .pill { height: 2.2rem; min-width: 2.4rem; padding: 0 .5rem; justify-content: center; border: 1px solid var(--border); background: var(--bg); color: var(--fg); font-size: 1.05rem; }
+.draw-f-kinds .pill svg { height: 1.5em; width: auto; max-width: 3.5em; }
+.draw-f-kinds .pill:hover, #draw-formula[aria-pressed=true] { border-color: var(--accent); color: var(--accent); }
+#draw-f-insert.done { border-color: var(--accent); }

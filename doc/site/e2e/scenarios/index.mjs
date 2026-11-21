@@ -23,10 +23,12 @@ import sync from './sync.mjs';
 import scratch from './scratch.mjs';
 import cold from './cold-start.mjs';
 import insert from './insert.mjs';
+import robust from './robust.mjs';
+import draw from './draw.mjs';
 
 const AREAS = { 'typing-pdf': typingPdf, 'titles-footnotes': titles, math, clicks, select, 'tints-typeset': tints, widgets,
   completion, 'double-click': dbl, 'footer-blank': foot, 'echo-paragraphs': newpara, 'follow-highlight': follow,
-  'dark-mode': dark, 'tikz-actions': tikz, refactor, 'crash-recovery': crash, editor, fuzz, sync, scratch, 'cold-start': cold, insert };
+  'dark-mode': dark, 'tikz-actions': tikz, refactor, 'crash-recovery': crash, editor, fuzz, sync, scratch, 'cold-start': cold, insert, robust, draw };
 
 export const SCENARIOS = Object.entries(AREAS).flatMap(([area, list]) => list.map((sc) => ({ area, ...sc })));
 

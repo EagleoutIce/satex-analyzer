@@ -288,15 +288,22 @@ const satexViews = (() => {
   const RENDER: Record<string, Renderer> = {
     text: (s, view, ctx) => el('div', 'tv-text', ctx.markdown(s.markdown)),
     table: (s) => el('table', 'tv-table', `<thead><tr>${s.columns.map((c: Rec) => `<th>${esc(c)}</th>`).join('')}</tr></thead><tbody>${s.rows.map((r: Rec) => `<tr>${r.map((c: Rec) => `<td>${esc(c)}</td>`).join('')}</tr>`).join('')}</tbody>`),
+    // buttons that apply their edits: `on` marks the run's own choice (pressed, nothing to write), `detail` is what one writes
     actions: (s, view, ctx) => {
       const box = el('div', 'tv-actions');
       for (const a of s.items) {
-        const b = el('button', 'tv-button', esc(a.title));
+        const b = el('button', a.on ? 'tv-button tv-on' : 'tv-button', esc(a.title));
         b.type = 'button';
+        if (a.detail) b.title = a.detail;
+        if (a.on != null) b.setAttribute('aria-pressed', String(!!a.on));
+        b.disabled = !!a.on || !a.edits?.length;
         b.onclick = () => ctx.apply(a.edits);
         box.append(b);
       }
-      return box;
+      if (!s.title) return box;
+      const group = el('div', 'tv-group');
+      group.append(el('div', 'tv-h', esc(s.title)), box);
+      return group;
     },
     // a filterable list: each choice applies its edits
     choices: (s, view, ctx) => {
@@ -848,7 +855,8 @@ const satexViews = (() => {
     const indent = items.find((i) => i.lead.includes('\n'))?.lead.split('\n').pop() ?? '  ';
     const stmt = (i: Item) => i.type === 'matrix' ? matrixText(i, k, indent) : i.type === 'node' ? nodeText(i, k) : edgeText(i);
     const text = (i: Item) => {
-      const nl = `\n${i.lead.includes('\n') ? i.lead.split('\n').pop() : indent}`, first = i.lead || nl;
+      // a statement of the text keeps its own lead, none too (`\node…;` first in `\begin{tikzpicture}\node…;`)
+      const nl = `\n${i.lead.includes('\n') ? i.lead.split('\n').pop() : indent}`, first = i.lead || (i.text != null ? '' : nl);
       if (!i.moved) return first + stmt(i);
       const own = i.layer === 'main' ? `${first}${stmt(i)}` : `${first}\\begin{pgfonlayer}{${i.layer}}${nl}  ${stmt(i)}${nl}\\end{pgfonlayer}`;
       if (!i.block) return own;
@@ -856,7 +864,9 @@ const satexViews = (() => {
       const bl = `\n${i.block.lead.split('\n').pop()}`;
       return `${first.replace(/\n[ \t]*$/, '') || ''}${bl}${i.block.closeCode}${nl}${own.slice(first.length)}${bl}${i.block.code}`;
     };
-    const kept = items.filter((i) => !i.deleted && i.lead), added = items.filter((i) => !i.deleted && !i.lead);
+    // new: neither read from the text nor standing in for a statement of it (toMatrix keeps its first node's lead)
+    const fresh = (i: Item) => i.text == null && !i.lead;
+    const kept = items.filter((i) => !i.deleted && !fresh(i)), added = items.filter((i) => !i.deleted && fresh(i));
     // new statements go after the last one's line, its comment included
     const line = tail.match(/^[^\n]*/)![0];
     return kept.map((i) => i.dirty || i.moved ? text(i) : i.text).join('') + line + added.map(text).join('') + tail.slice(line.length);
@@ -1127,11 +1137,15 @@ const satexViews = (() => {
   const LOGO: Record<string, (string | number)[][]> = { TeX: [['T'], ['E', -0.17, 0.22], ['X', -0.12, -0.22]] };
   LOGO.LaTeX = [['L'], ['A', -0.36, -0.2, 0.7], ['T', -0.15, 0.2], ...LOGO.TeX.slice(1)];
   type Run = [string, number?, number?, number?, boolean?];
-  const runs = (label?: string) => {
+  /** The document's text macros (`net` → `Größe-Net`, the run's `macros`): a label's `\\net` shows their text. */
+  let labelMacros: Record<string, string> = {};
+  const runs = (label?: string, macros = labelMacros, depth = 0): Run[] => {
     const out: Run[] = [];
     let italic = false;
     for (const [m, cs, sym] of (label ?? '').matchAll(/\\([A-Za-z]+)\s*(?:\{\})?|\\(.)|[^\\${}~]+|./g)) {
-      if (cs) out.push(...(LOGO[cs] ?? []).map(([t, dx = 0, dy = 0, size = 1]): Run => [t as string, dx as number, dy as number, size as number, italic]));
+      // a macro's text, one level deep: a body naming another macro shows that one's name dropped as before
+      if (cs && Object.hasOwn(macros, cs) && !depth) out.push(...runs(macros[cs], macros, 1).map((r): Run => [r[0], r[1], r[2], r[3], r[4] || italic]));
+      else if (cs) out.push(...(Object.hasOwn(LOGO, cs) ? LOGO[cs]! : []).map(([t, dx = 0, dy = 0, size = 1]): Run => [t as string, dx as number, dy as number, size as number, italic]));
       else if (m === '$') italic = !italic;
       else if (m === '~' || sym === '\\' || sym === ',') out.push([' ']);
       else if (sym) out.push([sym, 0, 0, 1, italic]);
@@ -1139,7 +1153,7 @@ const satexViews = (() => {
     }
     return out;
   };
-  const plain = (label?: string) => runs(label).map((r) => r[0]).join('');
+  const plain = (label?: string, macros = labelMacros) => runs(label, macros).map((r) => r[0]).join('');
   function setLabel<T extends Element>(t: T, label?: string): T {
     for (const [text, dx, dy, size, italic] of runs(label)) {
       const span = Object.assign(svgEl('tspan'), { textContent: text });
@@ -1190,6 +1204,7 @@ const satexViews = (() => {
 
   function drawing(s: Rec, view: Rec, ctx: ViewCtx) {
     const R = s.run ?? {}, keys = R.layer_keys ?? {};
+    labelMacros = R.macros ?? {};
     const state = parse(s.body, keys), run = new Map<string, Rec>((s.nodes ?? []).map((n: Rec) => [n.name, n]));
     const S = self.satexSnapshot, pic = picOptions(S.text(s.node, '[') ?? '');
     let picDirty = false;
@@ -3445,6 +3460,7 @@ button.tv-spec-value { cursor: pointer; } button.tv-spec-value:hover, button.tv-
 .tv-style { display: grid; gap: .3rem; padding: .15rem 0; } .tv-style.on { border: 1px solid var(--tv-border); border-radius: 8px; padding: .3rem; background: var(--tv-sunk); }
 .tv-style > .tv-row { display: grid; grid-template-columns: minmax(0, 1fr) auto auto auto; gap: .3rem; align-items: center; } .tv-style .tv-choice { min-width: 0; padding: .2rem .4rem; overflow: hidden; } .tv-style .tv-choice span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tv-style-new { display: flex; flex-wrap: wrap; gap: .3rem; margin-top: .3rem; } .tv-style-new input { flex: 1 1 7rem; min-width: 0; } .tv-style-new select { flex: 0 1 11rem; min-width: 0; } .tv-draw-side .tv-input { font-size: .82rem; } .tv-styles[open], .tv-draw-side > .tv-mermaid[open] { display: grid; gap: .35rem; }
+.tv-group { display: grid; gap: .3rem; } .tv-button.tv-on:disabled { opacity: 1; cursor: default; border-color: var(--accent); color: var(--accent); font-weight: 600; }
 .tv-beside { display: flex; gap: .2rem; } .tv-beside .tv-button { min-width: 2rem; padding: 0 .4rem; }
 @media (max-width: 760px) { .tv-draw { height: auto; } .tv-draw-main { grid-template-columns: 1fr; } .tv-draw-side { overflow: visible; } .tv-draw-main > .tv-canvas { height: auto; max-height: 55vh; } }
 .tv-muted { color: var(--tv-muted); font-size: .78rem; } .tv-sel { align-items: center; min-height: 2rem; } .tv-sel input { flex: 1; font-size: .88rem; }
@@ -3842,6 +3858,6 @@ button.tv-spec-value { cursor: pointer; } button.tv-spec-value:hover, button.tv-
     }
     return out;
   };
-  return { followRows, rowsWin, complete: { rank, kept, reselect, controlSymbol, whole, snippet, mathItem, docOf, plainSnippet, opensArgument, stepsOver, previewOf, tikzTarget }, loads: { unlanded, lacked }, tipBag, yaml, history: { historyEvent }, render, RENDER, hue, passes, masterDetail, usesView, fold, SPEC, mix, colorBand, oklch, drawing: { expandStyles, STYLE_DEF, parse, emit, mermaidIn, mermaidOut, mermaidLoss, layout, importMermaid, tipsOf, toMatrix, cellPlaces, toLayer, picOptions, relocate, relPos, nearestAnchor, anchorAt, tipMarker, shapeSample, shapeList, cycle, STYLE }, forest: forestFns, circuit: { parse: cParse, body: cBody, emit: cEmit }, page: { pageOf, pageBox, textArea, styleNow, taggedNote, pageNodes, numberNodes, numberInForce, headerOf, headerCalls, headerNodes, footSetup, fmtRead, fmtWrite, styleNodes, styleSet, styleEdits }, dev: { traceCsv, stateHtml }, templates: { fill, filled, chosen } };
+  return { followRows, rowsWin, complete: { rank, kept, reselect, controlSymbol, whole, snippet, mathItem, docOf, plainSnippet, opensArgument, stepsOver, previewOf, tikzTarget }, loads: { unlanded, lacked }, tipBag, yaml, history: { historyEvent }, render, RENDER, hue, passes, masterDetail, usesView, fold, SPEC, mix, colorBand, oklch, drawing: { expandStyles, STYLE_DEF, parse, emit, plain, mermaidIn, mermaidOut, mermaidLoss, layout, importMermaid, tipsOf, toMatrix, cellPlaces, toLayer, picOptions, relocate, relPos, nearestAnchor, anchorAt, tipMarker, shapeSample, shapeList, cycle, STYLE }, forest: forestFns, circuit: { parse: cParse, body: cBody, emit: cEmit }, page: { pageOf, pageBox, textArea, styleNow, taggedNote, pageNodes, numberNodes, numberInForce, headerOf, headerCalls, headerNodes, footSetup, fmtRead, fmtWrite, styleNodes, styleSet, styleEdits }, dev: { traceCsv, stateHtml }, templates: { fill, filled, chosen } };
 })();
 self.satexViews = satexViews;

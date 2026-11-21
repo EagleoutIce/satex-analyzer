@@ -4,9 +4,12 @@
 #            QUICK_NEW 0 (tests not in tests/times.txt left out: some take minutes)
 #   quick    the edit loop: tests under QUICK_SECONDS (1), the QUICK_MIN (1)
 #            cheapest of every module, and tests not measured yet
-#   changed  the per-edit loop: the tests tests/changed-map.txt maps the files of
-#            git diff HEAD (and untracked ones) to, cheapest first; a src/ path
-#            without a rule adds the quick set, a rule `all` the fast set
+#   changed  the per-edit loop: the tests tests/changed-map.txt maps the changed
+#            files to, cheapest first; a src/ path without a rule adds the quick
+#            set, a rule `all` the fast set. Changed means: differs from the
+#            pristine copy CHANGED_BASE (default ../base, a helper's work copy),
+#            else git diff HEAD and untracked files. It says how many tests of
+#            the fast tier it left out: the fast tier stays the gate.
 #   fast     the gate before a commit: all but tests/slow.txt and
 #            tests/known-red.txt, plus the unit tests in src/
 #   slow     only tests/slow.txt
@@ -21,7 +24,9 @@
 # A filter keeps the tests whose name contains it. One build, then SHARDS
 # processes (quick 2, else 4) of THREADS test threads (3), balanced by time.
 # Each shard takes its own target/scratch/lock2.sh slot when that exists and
-# this script does not already run in one (cap.sh sets SATEX_SLOT). A shard
+# this script does not already run in one (cap.sh sets SATEX_SLOT); smoke and
+# changed queue as short jobs (LOCK_CLASS), ahead of the tiers, and build the
+# `edit` profile (PROFILE), whose rebuild after an edit is a sixth of `fast`'s. A shard
 # whose process is killed (OOM) reruns its unfinished tests, then one at a
 # time; what still does not finish is reported. All shards share the
 # suite's caches (target/scratch/test-cache), which lock their builds.
@@ -31,11 +36,16 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 export LC_ALL=C
 tier=${1:?usage: $0 smoke|quick|changed|fast|slow|reds|measure [filter...] [-- libtest args]}; shift
+case $tier in smoke|changed) export LOCK_CLASS=${LOCK_CLASS:-short} PROFILE=${PROFILE:-edit} ;; esac
 [ "$tier" != smoke ] || { tier=quick; QUICK_SECONDS=${QUICK_SECONDS:-0.3} QUICK_MIN=${QUICK_MIN:-0} QUICK_NEW=${QUICK_NEW:-0}; }
 filters=(); while [ $# -gt 0 ] && [ "$1" != -- ]; do filters+=("$1"); shift; done
 [ "${1:-}" != -- ] || shift
 pass=("$@")
 names() { grep -v '^\s*\(#\|$\)' "$1" || true; }
+# The seconds each test took: this checkout's latest (target/scratch/test-times.txt, which
+# every run updates with what it timed) over tests/times.txt, sorted by name.
+local_times=target/scratch/test-times.txt
+times() { { cat "$local_times" 2>/dev/null; join -v2 -1 2 -2 2 -o 2.1,2.2 <(sort -k2,2 "$local_times" 2>/dev/null) <(sort -k2,2 tests/times.txt 2>/dev/null); } | sort -k2,2; }
 mapfile -t slow < <(names tests/slow.txt)
 mapfile -t reds < <(names tests/known-red.txt)
 if [ "$tier" = reds ]; then
@@ -64,10 +74,18 @@ skip=$(printf '%s\n' "${slow[@]}" "${reds[@]}" | sort -u)
 # The quick tier's set of the tests on stdin.
 quick_set() {
     local timed
-    timed=$(join -a1 -1 1 -2 2 -o 0,2.1 -e - <(sort) <(sort -k2,2 tests/times.txt 2>/dev/null))
+    timed=$(join -a1 -1 1 -2 2 -o 0,2.1 -e - <(sort) <(times))
     { awk -v q="${QUICK_SECONDS:-1}" -v new="${QUICK_NEW:-1}" '$2 == "-" ? new : $2 < q { print $1 }' <<<"$timed"
       awk '$2 != "-" { m = $1; sub(/::.*/, "", m); print m, $2, $1 }' <<<"$timed" |
           sort -k1,1 -k2,2g | awk -v k="${QUICK_MIN:-1}" 'n[$1]++ < k { print $3 }'; } | sort -u
+}
+# The paths that differ from the pristine copy, else from HEAD.
+changed_files() {
+    local base=${CHANGED_BASE:-../base}
+    if [ -d "$base/src" ]; then
+        diff -rq -x target -x .git "$base" . | sed -nE -e 's/^Files .* and \.\/(.*) differ$/\1/p' \
+            -e "s|^Only in (\\./\|$base/)([^:]*): (.*)\$|\\2/\\3|p" -e "s|^Only in (\\.\|$base): (.*)\$|\\2|p"
+    else git diff --name-only HEAD; git ls-files -o --exclude-standard; fi
 }
 # The tests the changed files map to: stdout the filters, or `all`; `quick` when a src/ path has no rule.
 changed_filters() {
@@ -83,7 +101,7 @@ changed_filters() {
         [ "$hit" = 0 ] || continue
         if [[ $f =~ $re ]]; then echo "${BASH_REMATCH[1]}::"
         elif [[ $f == src/* ]]; then quick=1; echo "no rule for $f: adding the quick tier" >&2; fi
-    done < <({ git diff --name-only HEAD; git ls-files -o --exclude-standard; } | sort -u)
+    done < <(changed_files | sort -u)
     [ "$all" = 0 ] || echo all
     [ "$quick" = 0 ] || echo quick
 }
@@ -92,14 +110,14 @@ case $tier in
     measure) set_=$(printf '%s\n' "$set_" "${slow[@]}" | sort -u) ;;
     slow) set_=$(printf '%s\n' "${slow[@]}") ;;
     quick) set_=$(quick_set <<<"$set_") ;;
-    changed) mapfile -t cf < <(changed_filters | sort -u)
+    changed) fastset=$set_; mapfile -t cf < <(changed_filters | sort -u)
         if printf '%s\n' "${cf[@]}" | grep -qx all; then :
         else
             sel=$(for f in "${cf[@]}"; do [ "$f" = quick ] || grep -F -- "$f" <<<"$set_" || true; done)
             [ "${#cf[@]}" -gt 0 ] && ! printf '%s\n' "${cf[@]}" | grep -qx quick || sel=$({ echo "$sel"; quick_set <<<"$set_"; } | grep . || true)
             set_=$(sort -u <<<"$sel")
+            echo "changed: ${cf[*]}: $(grep -c . <<<"$set_") of the fast tier's $(wc -l <<<"$fastset") tests, the others are left out" >&2
             [ -n "$set_" ] || { echo "no changed file maps to tests"; exit 0; }
-            echo "changed: ${cf[*]}" >&2
         fi ;;
     fast) ;;
     *) echo "usage: $0 smoke|quick|changed|fast|slow|reds|measure [filter...] [-- libtest args]" >&2; exit 2 ;;
@@ -136,7 +154,7 @@ phase() {
     local d="$out/$1" list tests
     tests=$(cat); [ -n "$tests" ] || return 0
     mkdir -p "$d"
-    join -a1 -1 1 -2 2 -o 0,2.1 -e 1 <(sort <<<"$tests") <(sort -k2,2 tests/times.txt 2>/dev/null) | sort -k2 -rn |
+    join -a1 -1 1 -2 2 -o 0,2.1 -e 1 <(sort <<<"$tests") <(times) | sort -k2 -rn |
         awk -v n="$shards" -v d="$d" '{ b = 1; for (i = 2; i <= n; i++) if (s[i] < s[b]) b = i; s[b] += $2; print $1 > (d "/" b ".list") }'
     local pids=() watcher
     for list in "$d"/*.list; do shard "$list" & pids+=($!); done
@@ -175,7 +193,7 @@ if [ -n "$first" ]; then echo "$(echo "$first" | wc -l) failed last time first" 
 if [ "$ok" = 0 ] && [ -n "${FAIL_FAST:-}" ]; then :
 elif [ "$tier" = changed ] || [ -n "${FAIL_FAST:-}" ]; then
     # Cheap batch, then the dear one; unmeasured tests count as dear.
-    cheap=$(join -1 1 -2 2 -o 0,2.1 <(echo "$rest" | sort) <(sort -k2,2 tests/times.txt 2>/dev/null) | awk -v q="${CHEAP_SECONDS:-1}" '$2 < q { print $1 }')
+    cheap=$(join -1 1 -2 2 -o 0,2.1 <(echo "$rest" | sort) <(times) | awk -v q="${CHEAP_SECONDS:-1}" '$2 < q { print $1 }')
     dear=$(comm -23 <(echo "$rest" | sort) <(echo "$cheap" | sort))
     phase 2 <<<"$cheap" || ok=0
     if [ "$ok" = 1 ] || [ -z "${FAIL_FAST:-}" ]; then phase 3 <<<"$dear" || ok=0; fi
@@ -208,6 +226,12 @@ echo "$(grep -c ' ok' "$out/results" || true) passed, $(echo -n "$failed" | grep
 if [ -f "$out/lib.out" ]; then
     grep -q '^test result: ok' "$out/lib.out" || { grep -E '^test .* FAILED|^test result' "$out/lib.out"; echo "unit tests FAILED"; rc=1; }
     grep '^test result' "$out/lib.out" | sed 's/^/unit tests: /'
+fi
+# This run's seconds of the tests that passed replace the checkout's older ones.
+sed -nE 's/^test (\S+) \.\.\. ok <([0-9.]+)s>$/\2 \1/p' "$out/results" | sort -k2,2 >"$out/timed"
+if [ -s "$out/timed" ]; then
+    { cat "$out/timed"; join -v2 -1 2 -2 2 -o 2.1,2.2 "$out/timed" <(sort -k2,2 "$local_times" 2>/dev/null); } | sort -k2,2 >"$out/local"
+    mv "$out/local" "$local_times"
 fi
 if [ "$tier" = measure ]; then
     # This run's seconds, then the old ones of tests it did not run.

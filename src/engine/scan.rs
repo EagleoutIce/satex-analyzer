@@ -259,7 +259,7 @@ impl Machine<'_> {
         let Some(sym) = self.active_cs(token).or(token.cs()) else { return false };
         let meaning = self.env.meaning(sym);
         matches!(meaning.prim(), Some(Primitive::Relax))
-            || (self.read_noexpanded(token) && self.expandable_meaning(&meaning))
+            || (self.read_noexpanded(token) && self.relax_when_noexpanded(&meaning))
     }
 
     /// "Scan an optional space" (tex.web § 443).
@@ -1217,6 +1217,65 @@ impl Machine<'_> {
         Some(num.meet(&ty).unwrap_or(ty))
     }
 
+    /// Whether every value of typed digits `t`, a whole number of one known
+    /// length, is spelled beginning with the digits `prefix`: TeX's match of
+    /// a delimiter there is then decided (tex.web § 392), no path parts.
+    pub(crate) fn digits_all_begin(&self, t: Token, prefix: &[Tok]) -> bool {
+        let digits: Option<String> = (prefix.iter())
+            .map(|d| match d {
+                Tok::Chr(c, Catcode::Other) if c.is_ascii_digit() => Some(*c),
+                _ => None,
+            })
+            .collect();
+        let (Some(digits), Some(sym)) = (digits.filter(|d| !d.is_empty()), t.cs()) else { return false };
+        let Some(num) = self.typed_digits_of(sym).filter(|_| self.typed_slice(sym).is_none()) else { return false };
+        let (k, d) = (digit_count(num.lo), digits.len() as u32);
+        if num.lo < 0 || digit_count(num.hi) != k || k < d {
+            return false;
+        }
+        let (Ok(p), r) = (digits.parse::<i64>(), 10i64.pow(k - d)) else { return false };
+        p * r <= num.lo && num.hi < (p + 1) * r
+    }
+
+    /// Typed digits `t` of one known length that a delimiter's digits
+    /// `prefix` begin (tex.web § 392 matches them one by one): the places
+    /// after them, a slice of the same number, and `t` narrowed to the values
+    /// spelled with that prefix. `Some(None)`: no value begins so. `None`
+    /// where `t` is no such number.
+    pub(crate) fn digits_after(&mut self, t: Token, prefix: &[Tok]) -> Option<Option<Vec<Token>>> {
+        let digits: String = prefix
+            .iter()
+            .map(|d| match d {
+                Tok::Chr(c, Catcode::Other) if c.is_ascii_digit() => Some(*c),
+                _ => None,
+            })
+            .collect::<Option<_>>()?;
+        let sym = t.cs()?;
+        let num = self.typed_digits_of(sym)?;
+        let d = digits.len() as u32;
+        let (whole, k, i, j) = match self.typed_slice(sym) {
+            Some((whole, k, i, j)) if k != OPEN && j != OPEN && j - i >= d => (whole, k, i, j),
+            Some(_) => return None,
+            None if num.lo >= 0 && digit_count(num.lo) == digit_count(num.hi) && digit_count(num.lo) >= d => {
+                (sym, digit_count(num.lo), 0, digit_count(num.lo))
+            }
+            None => return None,
+        };
+        // A whole number begins with the prefix only on [P·10^r, (P+1)·10^r).
+        if whole == sym {
+            let (p, r) = (digits.parse::<i64>().ok()?, 10i64.pow(k - d));
+            let Some(narrow) = num.meet(&Num::range(p * r, (p + 1) * r - 1)) else { return Some(None) };
+            if !self.refine_value(sym, Value::from_num(crate::engine::value::Quantity::Int, narrow)) {
+                return Some(None);
+            }
+        }
+        if i + d == j {
+            return Some(Some(Vec::new()));
+        }
+        let whole_num = self.typed_digits_of(whole).unwrap_or(num);
+        Some(Some(vec![self.slice_token(whole, whole_num, (k, i + d, j), t.span)]))
+    }
+
     /// A slice of typed digits: the number it is cut from, the length of
     /// that number's spelling, and the places `[i, j)` it holds.
     pub(crate) fn typed_slice(&self, sym: Sym) -> Option<(Sym, u32, u32, u32)> {
@@ -1317,7 +1376,14 @@ impl Machine<'_> {
         let steps = self.out.tex_steps();
         let n = if self.digits_made.0 == steps { self.digits_made.1 + 1 } else { 0 };
         self.digits_made = (steps, n);
-        self.digits_of(num, &format!("{steps}.{n}"), span)
+        // Named by the line begun and the steps since, which an edit on another line keeps. Steps
+        // that fell behind the line's (a run begun anew counts from 0) begin a new count, so no
+        // two numbers share a name.
+        if steps < self.line_seq.2 {
+            self.line_seq = (self.line_seq.0, self.line_seq.1 + 1, steps);
+        }
+        let (_, line, begun) = self.line_seq;
+        self.digits_of(num, &format!("{line}.{}.{n}", steps - begun), span)
     }
 
     /// One token of unknown digits in `num`, the number called `id`: every read of
@@ -1839,8 +1905,8 @@ impl Machine<'_> {
     /// are also evaluated on intervals ([`Num::lift`]), so `\numexpr` of an
     /// unknown register is the interval of its results, joined with 0 when
     /// some may overflow. A glue expression with an unknown operand is
-    /// unknown.
-    pub(crate) fn scan_expr(&mut self, kind: RegKind) -> Value {
+    /// unknown. `site` is the expression command's token: whose code it is.
+    pub(crate) fn scan_expr(&mut self, kind: RegKind, site: Span) -> Value {
         struct Frame {
             l: RegKind,
             s: ExprOp,
@@ -2125,7 +2191,11 @@ impl Machine<'_> {
             Form::Lin(x, c) if kind == RegKind::Count => Some((x, crate::engine::value::Quantity::Int, c)),
             _ => None,
         };
-        if arith && !unknown {
+        // `err.1`: every concrete run of an interval operand overflows; `err.0`: some may.
+        if err.0 && !err.1 && unknown {
+            self.possible_tex_error("Arithmetic overflow", site);
+        }
+        if (arith && !unknown) || err.1 {
             let span = self.position_span();
             self.diagnose(
                 crate::analysis::facts::Severity::Warning,

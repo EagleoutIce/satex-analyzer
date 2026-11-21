@@ -139,7 +139,8 @@ fn code_only(text: &[u8]) -> Vec<u8> {
     out
 }
 
-/// Lua 5.3 with satex's unknown value made untestable (vendor/lua/SATEX.patch).
+/// Lua 5.3 with satex's unknown value made untestable and a run's writes counted
+/// (vendor/lua/SATEX.patch).
 /// `mlua` runs in `module` mode and links this build, since a `[patch]` on a
 /// Lua crate does not survive publishing.
 fn lua() {

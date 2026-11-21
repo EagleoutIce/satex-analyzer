@@ -11,6 +11,7 @@ pub(super) use bibliography::op as bib_op;
 mod color;
 mod environment;
 mod float;
+mod font;
 mod forest;
 mod frame;
 mod glossary;
@@ -53,6 +54,11 @@ pub(super) struct Cx<'a> {
 impl Cx<'_> {
     pub fn cfg(&self) -> &TypePlugins {
         &self.analysis.settings.type_plugins
+    }
+
+    /// The run's id of the document's file: what run facts about it are keyed by.
+    pub fn file(&self) -> Option<crate::engine::tex::FileId> {
+        super::type_at::file_of(self.analysis, self.path)
     }
 
     /// The LSP URI of the document, for edits.
@@ -153,6 +159,7 @@ pub(super) static PLUGINS: &[&dyn TypePlugin] = &[
     &overlay::Overlay,
     &frame::Frame,
     &page::Page,
+    &font::Font,
     &tagging::Tagged,
     &incremental::CommentEdit,
     &incremental::WhitespaceEdit,
@@ -578,7 +585,7 @@ pub fn list(analysis: &Analysis) -> Vec<crate::queries::query::Record> {
 /// A code action that replaces `range` of the document with `text`.
 pub(super) fn rewrite(cx: &Cx, title: String, edits: Vec<lsp_types::TextEdit>) -> CodeAction {
     let mut changes = std::collections::HashMap::new();
-    changes.insert(cx.uri(), edits);
+    changes.insert(cx.uri(), super::writing::clean_lsp(cx.analysis, cx.doc, cx.file(), edits));
     CodeAction {
         title,
         kind: Some(lsp_types::CodeActionKind::REFACTOR_REWRITE),

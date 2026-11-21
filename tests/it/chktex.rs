@@ -716,6 +716,10 @@ fn an_x_between_numbers_is_reported() {
 
 math_none! {
     an_x_beside_letters_is_not_reported("letter-x", r"Screen 640 by 480 and ax4 and 4xa here.", "dimension-times");
+    /// An identifier with digits on both sides of an x (`w120x5`, a widget name
+    /// a generated document repeated 720 times) is one word, no dimension. Bug
+    /// pinned: S003 dimension-times fired inside the name.
+    an_x_inside_an_identifier_is_not_reported("ident-x", r"Widget w120x5 and $v3x4$ here.", "dimension-times");
 }
 
 // chktex warning 40: `You should put punctuation outside inner/inside

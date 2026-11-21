@@ -54,6 +54,7 @@ declare global {
       sender<V>(send: (v: V) => Promise<boolean>): { put(v: V): void; flush(): Promise<void> };
       typed(text: string, at: number, c: string, inline?: string, smart?: boolean, fresh?: [number, number] | null): [number, number, string, number];
       erased(text: string, at: number, back: boolean, fresh?: [number, number] | null): [number, number];
+      cluster(text: string, at: number, back: boolean): number;
       checked(text: string, edit: [number, number, string, number?], o?: object): string | null;
       naming(text: string, at: number, fresh?: [number, number] | null): boolean;
       entries(texts: Record<string, string>, root: string, kind: string): [string, number, number, number][];
@@ -85,7 +86,7 @@ declare global {
       widthBp(text: string, line: number): number | null;
       respec(align: string, width: string | null, spec?: string, h?: string): Respec | null;
       halign(spec: string): string;
-      padding(text: string, begin: number, env: string): Spacing & { name: string };
+      padding(text: string, begin: number, env: string): (Spacing & { name: string }) | null;
       gap(text: string, prev: number, next: number): Spacing | null;
       HALIGN: Record<string, string>;
       wordAt(text: string, at: number): [number, string] | null;
@@ -245,7 +246,7 @@ declare global {
   /** A table's own column padding, `\setlength` of `\tabcolsep` (`\arraycolsep` for `array`) right before its
    * `\begin` at `begin`: what it is (null: none, the document's), and the edits that set it to `v` (null: drop it).
    * The setting stays local: inside the environment the table sits in, else in a `{…}` group written around the
-   * table, as a declaration inside a group is undone at its end (tex.web § 282). */
+   * table, as a declaration inside a group is undone at its end (tex.web § 282). Null where neither exists. */
   function padding(text: string, begin: number, env: string) {
     const name = env === 'array' ? 'arraycolsep' : 'tabcolsep', head = text.slice(0, begin);
     const indent = /[ \t]*$/.exec(head)![0], set = (v: string, open: string) => `${open}\\setlength{\\${name}}{${v}}${open && '%'}\n${indent}`;
@@ -259,6 +260,8 @@ declare global {
     re.lastIndex = begin;
     let close = -1;
     for (let d = 0, x; close < 0 && (x = re.exec(text));) if (!(d += x[1] === 'begin' ? 1 : -1)) close = x.index + x[0].length;
+    // no `\end` (typed half-way) and no environment around: the group's `}` has no place, the setting would leak
+    if (close < 0 && !grouped) return null;
     const wrapped = !!m?.[1] && text[close] === '}', brace = close >= 0 && (m ? wrapped : !grouped);
     return {
       name, now: m ? m[2].trim() : null,
@@ -409,6 +412,7 @@ declare global {
   /** What follows a row's `\\`: its star and its `[…]` space, each after optional spaces, as `\@ifstar` and
    * `\@ifnextchar` skip them (latex.ltx `\@tabularcr`). */
   const ROWEND = /^(\s*\*)?(\s*\[[^\]]*\])?/;
+  const GRAPHEMES = new Intl.Segmenter(undefined, { granularity: 'grapheme' });
   /** The table `at` stands in: its rows of cells, each cell's text `[from, to]` without the spaces and rules around
    * it, and the row and cell of `at`. Cells part at `&`, rows at `\\`, both at the body's own level (a `{…}`
    * holds its own). Null outside a tabular, array, tabularx, longtable or tabulary body. */
@@ -772,9 +776,19 @@ declare global {
   /** What Backspace (`back`) or Delete takes at `at`: `[from, to]`, an escape or an empty pair (`$ $`, `{}`, `\(\)`)
    * whole, a formula whose last character goes with it, at a formula's `\)` (`\(` for Delete) its character inside,
    * a `\` typed with the space that kept it off a word. */
+  /** The offset one character the reader sees (a grapheme cluster, UAX #29) before or after `at`: never half a
+   * surrogate pair, a letter without its accent, half a flag. */
+  function cluster(text: string, at: number, back: boolean): number {
+    const a = Math.max(0, at - 64);
+    for (const g of GRAPHEMES.segment(text.slice(a, at + 64))) {
+      const from = a + g.index, to = from + g.segment.length;
+      if (back ? from < at && at <= to : from <= at && at < to) return back ? from : to;
+    }
+    return back ? Math.max(0, at - 1) : Math.min(text.length, at + 1);
+  }
   function erased(text: string, at: number, back: boolean, fresh: [number, number] | null = null): [number, number] {
     const v = verbatimAt(text, at);
-    if (v) return back ? (at > v.from ? [at - 1, at] : [at, at]) : (at < v.to ? [at, at + 1] : [at, at]);
+    if (v) return back ? (at > v.from ? [Math.max(v.from, cluster(text, at, true)), at] : [at, at]) : (at < v.to ? [at, Math.min(v.to, cluster(text, at, false))] : [at, at]);
     for (const pair of ['{}', '\\(\\)', '\\[\\]']) {
       const h = pair.length / 2;
       if (text.slice(at - h, at + h) === pair) return [at - h, at + h];
@@ -787,7 +801,8 @@ declare global {
     // the same at an inline `$`: its closer before the caret (Backspace), its opener after it (Delete)
     if (back && text[at - 1] === '$' && text[at - 2] !== '$' && !odd(at - 2) && scan(text, 0, at - 1, start()).math === '$') return erased(text, at - 1, true, fresh);
     if (!back && text[at] === '$' && text[at + 1] !== '$' && !odd(at - 1) && !scan(text, 0, at, start()).math) return erased(text, at + 1, false, fresh);
-    let p = back ? at - 1 : at, q = back ? at : at + 1;
+    let p = back ? cluster(text, at, true) : at, q = back ? at : cluster(text, at, false);
+    const one = (a: number, b: number) => b > a && cluster(text, b, true) === a;
     const esc = /(?:\\(?:textbackslash|textasciitilde|textasciicircum)\{\}|\\[^A-Za-z@\\])/y;
     if (back) {
       const m = /(?:\\(?:textbackslash|textasciitilde|textasciicircum)\{\}|(?:^|[^\\])(?:\\\\)*\\[^A-Za-z@\\])$/.exec(text.slice(Math.max(0, at - 20), at));
@@ -799,7 +814,7 @@ declare global {
       if (m) q = at + m[0].length;
     }
     // the only character of a formula takes the formula with it
-    if (q - p === 1) {
+    if (one(p, q)) {
       if (text[p - 1] === '$' && text[q] === '$' && text[p - 2] !== '\\' && scan(text, 0, p, start()).math === '$') return [p - 1, q + 1];
       for (const [o, c] of [['\\(', '\\)'], ['\\[', '\\]']]) if (text.slice(p - 2, p) === o && text.startsWith(c, q)) return [p - 2, q + 2];
     }
@@ -1543,7 +1558,7 @@ declare global {
     const m = /(\\\]|\$\$|\\end\{([A-Za-z]+)\*?\})[ \t]*$/.exec(text.slice(Math.max(0, at - 40), at));
     return !!m && (!m[2] || MATH.test(m[2]) && m[2] !== 'math');
   }
-  self.satexPdfEdit = { onRow, run, displayEnd, offsetAt, units, treeNodes, naming, entries, shortTitle, bothTitles, renamed, leaders, checked, grow, key, broken, scan, start, cells, cellStep, rowAfter, verbatim, verbatimAt, nearest, bands, joined, place, extent, failNote, room, form, measure, respec, halign, HALIGN, padding, gap, widthBp, snapWidth, resized, stepped, plain, editable, spans, sender, typed, erased, mathAt, boundaries, boundaryAt, inkSnap, locate, columns, wordAt, argAt, afterCall, defining, relaid, reflow, prose, hunks, fit, glue, centered, apart, tokens, unset, aligned, changed, paragraph, mathRuns, footArg, footBack, footShown, blankPlace };
+  self.satexPdfEdit = { onRow, run, displayEnd, offsetAt, units, treeNodes, naming, entries, shortTitle, bothTitles, renamed, leaders, checked, grow, key, broken, scan, start, cells, cellStep, rowAfter, verbatim, verbatimAt, nearest, bands, joined, place, extent, failNote, room, form, measure, respec, halign, HALIGN, padding, gap, widthBp, snapWidth, resized, stepped, plain, editable, spans, sender, typed, erased, cluster, mathAt, boundaries, boundaryAt, inkSnap, locate, columns, wordAt, argAt, afterCall, defining, relaid, reflow, prose, hunks, fit, glue, centered, apart, tokens, unset, aligned, changed, paragraph, mathRuns, footArg, footBack, footShown, blankPlace };
 })();
 
 // TikZ nodes moved by drag: where each `\node` and path label stands in the source, and the statement a drag

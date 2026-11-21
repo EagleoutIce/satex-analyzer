@@ -296,8 +296,9 @@ fn render(cx: &Cx, all: &[Kind]) -> Option<Json> {
                 .collect();
             // unread, nothing prints and no choice is offered
             let base = snapshot::read(cx.doc, call.0, &keyed, false).unwrap_or_default();
-            let print =
-                |n: Node| snapshot::printed(cx.analysis, cx.doc, &[n]).map(|(e, _)| snapshot::lsp_edits(cx.doc, e));
+            let print = |n: Node| {
+                snapshot::printed(cx.analysis, cx.doc, cx.file(), &[n]).map(|(e, _)| snapshot::lsp_edits(cx.doc, e))
+            };
             let mut choices: Vec<(String, Vec<lsp_types::TextEdit>)> = Vec::new();
             let mut own = base.clone();
             clear(&mut own, now(&k.shared));

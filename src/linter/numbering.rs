@@ -305,6 +305,13 @@ fn ref_sites(report: &Report) -> Vec<Site> {
             let line: Vec<char> = text.line(span.line).chars().collect();
             let at = span.col as usize - 1;
             let (label, end) = ref_at(&line, at)?;
+            // The word before it decides: one set in math, code or
+            // typewriter type (`\texttt{see \ref{a}}`) is no prose.
+            let before = line[..at].iter().rposition(|c| !c.is_whitespace() && *c != '~');
+            let set = before.and_then(|k| view.at_span(Span { col: k as u32 + 1, ..span }));
+            if set.is_some_and(|i| !view.is_text(i)) {
+                return None;
+            }
             Some(Site { span, path, line, at, end, label })
         })
         .collect()

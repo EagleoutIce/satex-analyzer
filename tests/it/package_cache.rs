@@ -1957,3 +1957,35 @@ fn a_package_loaded_in_a_group_is_cached_with_its_locals_local() {
     assert_eq!(served(&first, "grouped"), Some(false), "{:?}", first.package_caches);
     assert_eq!(served(&second, "grouped"), Some(true), "{:?}", second.package_caches);
 }
+
+/// A kernel cut short by `limits.format_steps` is never cached, and the run starts the document
+/// from the same state with a cache directory or without one: the same call graph and facts.
+/// Pins the kernel's graph built as vertices only whenever a cache directory was set, but
+/// dropped and its calls replayed only when the kernel was stored, so a truncated kernel with a
+/// cache directory lost every kernel call the uncached run kept.
+#[test]
+fn a_truncated_kernel_starts_the_document_alike_with_or_without_a_cache() {
+    if !installed() {
+        return;
+    }
+    let dir = project("truncated-kernel");
+    let source = "\\def\\a{\\b}\\def\\b{x}\\a\n";
+    // a directory of its own: a seeded full kernel would be read instead
+    let mut cached = Config {
+        cache: Cache { dir: Some(dir.join("fresh")), document: false, ..Default::default() },
+        ..crate::support::config()
+    };
+    cached.limits.format_steps = cached.limits.format_steps.min(20_000);
+    let mut bare = cached.clone();
+    bare.cache.enabled = false;
+    let (a, b) = (Machine::analyze(source, None, &cached), Machine::analyze(source, None, &bare));
+    assert!(a.format.as_ref().is_some_and(|f| f.cache.is_some()), "the kernel run had a cache directory");
+    let calls = |x: &Analysis| -> std::collections::BTreeSet<(String, String)> {
+        let name = |i: usize| x.interner.name(x.calls.nodes[i]).to_string();
+        (0..x.calls.nodes.len()).flat_map(|i| x.calls.edges[i].iter().map(move |&j| (name(i), name(j)))).collect()
+    };
+    let (ca, cb) = (calls(&a), calls(&b));
+    assert!(!ca.is_empty(), "the kernel's macros call others");
+    assert_eq!(ca, cb, "the call graphs differ");
+    same_facts(&a, &b);
+}

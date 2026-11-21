@@ -367,6 +367,10 @@ pub fn url(code: &str) -> String {
     format!("{}wiki/lints.html#{code}", env!("CARGO_PKG_HOMEPAGE"))
 }
 
+/// Marks, until [`lint_run`] has paired the findings, one that were an
+/// error if the run were certain at its place: it still explains TeX's.
+const POSSIBLE: &str = "possible";
+
 /// What one [`Rule`] can see and write while it runs: the finished
 /// [`Analysis`], and the [`Record`]s it has produced so far via
 /// [`Report::add`].
@@ -490,7 +494,17 @@ impl<'a> Report<'a> {
         if !self.wanted(span) {
             return;
         }
+        // An error is in every run. Where the run's facts at its place are
+        // not ([`Index::unsure`]), it is a possible error, and says why.
+        let unsure = self.index.unsure(span).filter(|_| severity == Severity::Error);
+        let (severity, message) = match unsure {
+            Some(unsure) => (unsure.severity(), format!("{message}{}", unsure.note())),
+            None => (severity, message),
+        };
         let mut record = crate::queries::query::place(self.analysis, span);
+        if unsure.is_some() {
+            record.insert(POSSIBLE.into(), json!(true));
+        }
         record.insert("code".into(), json!(self.rule.code));
         record.insert("number".into(), json!(self.rule.number()));
         record.insert("category".into(), json!(self.rule.category.as_str()));
@@ -518,6 +532,12 @@ impl<'a> Report<'a> {
                 self.rule.code,
                 applicability.as_str()
             );
+            // A possible finding holds on some runs only: its fix is right
+            // there alone, so `--fix` never applies it unasked.
+            let applicability = match unsure {
+                Some(_) => fix::Applicability::Unsafe,
+                None => applicability,
+            };
             record.insert("applicability".into(), json!(applicability.as_str()));
             record.insert("edits".into(), edits.iter().map(fix::Edit::to_json).collect());
         }
@@ -544,12 +564,10 @@ impl<'a> Report<'a> {
         (at, Some(note))
     }
 
-    /// A finding on an error raised after `cause`, which may have led to
-    /// it: one severity lower, naming the cause, without edits.
-    /// A finding that may only follow from an earlier gap: a possible one,
-    /// so a note, never a warning or an error.
-    pub fn add_doubted(&mut self, span: Span, name: &str, message: String, cause: &str) {
-        self.add_as(Severity::Info, span, name, format!("{message} (may follow from {cause}: check that first)"), None);
+    /// A finding that is not certain for `cause`: a possible one, never an
+    /// error, naming the cause, without edits.
+    pub fn add_doubted(&mut self, span: Span, name: &str, message: String, cause: &shared::Unsure) {
+        self.add_as(cause.severity(), span, name, format!("{message}{}", cause.note()), None);
     }
 
     /// A finding that the analysis may cause rather than the document: a
@@ -761,6 +779,7 @@ pub(crate) fn lint_run(analysis: &Analysis, document: bool, wanted: impl Fn(&Rul
             let correctness = record.get("category").and_then(|v| v.as_str()) == Some("correctness")
                 && severity != Some("warning")
                 || severity == Some("error");
+            let correctness = correctness || record.contains_key(POSSIBLE);
             if correctness && !raised.contains(&i) && lines.contains(&line(record)) {
                 explained.insert(place(record));
             }
@@ -776,6 +795,7 @@ pub(crate) fn lint_run(analysis: &Analysis, document: bool, wanted: impl Fn(&Rul
             keep[at - 1]
         });
     }
+    out.iter_mut().for_each(|r| _ = r.remove(POSSIBLE));
     // A file the run writes holds what LaTeX, BibTeX or makeindex wrote
     // there: only an error in it, which still stops the build, is the
     // document's to know about.

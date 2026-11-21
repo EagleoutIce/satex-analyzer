@@ -626,7 +626,23 @@ fn edits_of(doc: &Text, n: &Node) -> Result<Vec<Edit>, String> {
         let at = byte(n.at.ok_or("a new node without a place")?)?;
         // a new call whose key lists are all empty is a place offered, not yet written
         let offered = n.args.iter().any(|a| a.keys.is_some()) && n.args.iter().all(|a| a.keys.is_none() || a.empty());
-        return Ok(if n.drop || offered { Vec::new() } else { vec![(at, at, canonical(n))] });
+        if n.drop || offered {
+            return Ok(Vec::new());
+        }
+        // a new environment on an indented blank line (in a minipage) stands at that indent, its lines alike
+        let rest = &text[at..];
+        let blanks = rest.len() - rest.trim_start_matches([' ', '\t']).len();
+        let blank_line = (at == 0 || text.as_bytes()[at - 1] == b'\n')
+            && matches!(rest.as_bytes().get(blanks), None | Some(b'\n' | b'\r'));
+        if blanks > 0 && blank_line && !n.line {
+            let indent = &rest[..blanks];
+            let lines: Vec<String> = canonical(n)
+                .split('\n')
+                .map(|l| if l.is_empty() { String::new() } else { format!("{indent}{l}") })
+                .collect();
+            return Ok(vec![(at, at + blanks, lines.join("\n"))]);
+        }
+        return Ok(vec![(at, at, canonical(n))]);
     };
     let (from, to) = (byte(r.start)?, byte(r.end)?);
     if text.get(from..to) != Some(n.text.as_str()) {
@@ -694,7 +710,12 @@ pub(super) fn reads(text: &str, from: usize, to: usize, edits: &[Edit]) -> Strin
 /// A name a written node adds that the run does not define loads its package: a new node's
 /// `package` hint for its own name, else the installation's provider. A written node's hint
 /// is loaded too (what the run cannot name, as a column letter).
-pub fn printed(analysis: &Analysis, doc: &Text, nodes: &[Node]) -> Result<(Vec<Edit>, Vec<String>), String> {
+pub fn printed(
+    analysis: &Analysis,
+    doc: &Text,
+    file: Option<crate::engine::tex::FileId>,
+    nodes: &[Node],
+) -> Result<(Vec<Edit>, Vec<String>), String> {
     let (mut edits, mut notes) = (Vec::new(), Vec::new());
     // packages wanted in order, and names asked of the installation, by the node that wants them
     let (mut wanted, mut asked): (Vec<Package>, Vec<(String, bool, String)>) = Default::default();
@@ -771,7 +792,9 @@ pub fn printed(analysis: &Analysis, doc: &Text, nodes: &[Node]) -> Result<(Vec<E
     }
     // a load goes first where it shares a place
     loads.append(&mut edits);
-    Ok((merged(loads)?, notes))
+    let (edits, more) = super::writing::clean(analysis, doc, file, merged(loads)?);
+    notes.extend(more);
+    Ok((edits, notes))
 }
 
 /// Byte edits as LSP edits.
@@ -780,24 +803,39 @@ pub fn lsp_edits(doc: &Text, edits: Vec<Edit>) -> Vec<lsp_types::TextEdit> {
 }
 
 /// The LSP edits that write `nodes`, none when refused.
-pub fn edits(analysis: &Analysis, doc: &Text, nodes: &[Node]) -> Vec<lsp_types::TextEdit> {
-    printed(analysis, doc, nodes).map(|(e, _)| lsp_edits(doc, e)).unwrap_or_default()
+pub fn edits(
+    analysis: &Analysis,
+    doc: &Text,
+    file: Option<crate::engine::tex::FileId>,
+    nodes: &[Node],
+) -> Vec<lsp_types::TextEdit> {
+    printed(analysis, doc, file, nodes).map(|(e, _)| lsp_edits(doc, e)).unwrap_or_default()
 }
 
 /// The edits that write `nodes` as LSP edits: `{edits, notes}`.
-pub fn print(analysis: &Analysis, doc: &Text, nodes: &[Node]) -> Result<Json, String> {
-    let (edits, notes) = printed(analysis, doc, nodes)?;
+pub fn print(
+    analysis: &Analysis,
+    doc: &Text,
+    file: Option<crate::engine::tex::FileId>,
+    nodes: &[Node],
+) -> Result<Json, String> {
+    let (edits, notes) = printed(analysis, doc, file, nodes)?;
     Ok(json!({ "edits": lsp_edits(doc, edits), "notes": notes }))
 }
 
 /// A `satex/dialogApply` of kind `snapshot`: the edits that write its `nodes`.
-pub fn apply(analysis: &Analysis, doc: &Text, params: &Json) -> Result<Json, String> {
+pub fn apply(
+    analysis: &Analysis,
+    doc: &Text,
+    file: Option<crate::engine::tex::FileId>,
+    params: &Json,
+) -> Result<Json, String> {
     // a bibliography manager's request (src/lsp/plugins/bibliography.rs `op`)
     if params["nodes"].is_object() {
         return super::plugins::bib_op(analysis, &params["nodes"]);
     }
     let nodes: Vec<Node> = serde_json::from_value(params["nodes"].clone()).map_err(|e| e.to_string())?;
-    print(analysis, doc, &nodes)
+    print(analysis, doc, file, &nodes)
 }
 
 #[cfg(test)]
@@ -930,6 +968,19 @@ mod tests {
                 assert_eq!(back.body, n.body, "{out}");
             }
         }
+    }
+
+    /// A new environment offered on an indented blank line (inside a minipage) stands at that
+    /// indent, its own lines indented alike, no blanks left after its end. Pins the Draw widget's
+    /// new picture written at column 0 inside an indented minipage, `\end{tikzpicture}    ` after it.
+    #[test]
+    fn a_new_env_on_an_indented_blank_line_takes_its_indent() {
+        let d = Text::new("\\begin{minipage}{3cm}\n    \n\\end{minipage}\n".to_string());
+        let n = Node { body: "\n  \\node {x};\n".into(), ..new_env("tikzpicture", Position::new(1, 0), "tikz") };
+        assert_eq!(
+            write(d.body(), &edits_of(&d, &n).unwrap()),
+            "\\begin{minipage}{3cm}\n    \\begin{tikzpicture}\n      \\node {x};\n    \\end{tikzpicture}\n\\end{minipage}\n"
+        );
     }
 
     #[test]

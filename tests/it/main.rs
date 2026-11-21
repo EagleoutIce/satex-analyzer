@@ -19,6 +19,7 @@ mod chktex;
 mod classes;
 mod cli_rules;
 mod clones;
+mod coldwarm;
 mod colors;
 mod compile;
 #[cfg(unix)]

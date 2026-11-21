@@ -352,6 +352,49 @@ const TYPESET_CASES: &[(&str, &str)] = &[
     ),
     // tex.web § 1080: `\lastbox` is void when the tail is no box.
     ("lastbox-after-glue", r"\setbox0=\hbox{a\hskip3pt\setbox1=\lastbox\xdef\r{\the\wd1,\the\lastskip}}"),
+    // tex.web §§ 1105, 1110: `\unvbox` gives the whole list back, so `\unskip`, `\unkern` and
+    // `\unpenalty` uncover the items under its last one, through `\box` and `\copy` too.
+    (
+        "unskip-after-unvbox",
+        concat!(
+            r"\setbox0=\vbox{\hbox{a}\penalty7\kern2pt\vskip1pt\vskip3pt}\setbox2=\box0 \setbox0=\copy2 ",
+            r"\setbox2=\vbox{\unvbox0 \unskip\xdef\a{\the\lastskip}\unskip\xdef\b{\the\lastkern}\unkern",
+            r"\xdef\r{\a,\b,\the\lastpenalty}}"
+        ),
+    ),
+    // tex.web § 679: interline glue lies between two boxes of a vertical list, so under a box
+    // `\lastbox` took it is the tail, not the glue before it.
+    (
+        "lastbox-uncovers-interline-glue",
+        r"\baselineskip=12pt \setbox0=\vbox{\hbox{a}\vskip3pt\vbox{}\setbox1=\lastbox\xdef\r{\the\lastskip}}",
+    ),
+    // tex.web §§ 668, 1080, 1105: a list is as high as before, once the items an `\unvbox` put
+    // on it are taken off again (LaTeX's output routine does so with `\box255` at every float).
+    (
+        "lastbox-and-unskip-restore-the-size",
+        concat!(
+            r"\baselineskip=12pt \setbox0=\vbox{\hbox{a}\vskip3pt\vbox{}}",
+            r"\setbox2=\vbox{\hrule height5pt \unvbox0 \setbox4=\lastbox\xdef\a{\the\lastskip}\unskip}",
+            r"\xdef\r{\a,\the\ht2,\the\dp2}"
+        ),
+    ),
+    (
+        "lastbox-leaves-the-glue-under-it",
+        concat!(
+            r"\baselineskip=12pt \setbox0=\vbox{\hbox{g}\kern3pt\penalty5\hbox{y}}",
+            r"\setbox2=\vbox{\hrule height5pt depth1pt \unvbox0 \setbox4=\lastbox\unpenalty\unkern}",
+            r"\xdef\r{\the\ht2,\the\dp2}"
+        ),
+    ),
+    // tex.web § 668: glue over glue adds its width alone, the depth before it being zero.
+    (
+        "unskip-glue-over-glue",
+        concat!(
+            r"\setbox0=\vbox{\hbox{g}\vskip3pt\vskip4pt}",
+            r"\setbox2=\vbox{\hrule height5pt depth1pt \unvbox0 \unskip\vskip0pt\unskip\unskip}",
+            r"\xdef\r{\the\ht2,\the\dp2}"
+        ),
+    ),
     // tex.web § 1078: a leader box goes on no list of its own.
     ("hbox-leaders", r"\setbox0=\hbox{a\leaders\hbox{.}\hskip5pt}\xdef\r{\the\wd0}"),
     // tex.web § 420: a void register reads as zero in all three.

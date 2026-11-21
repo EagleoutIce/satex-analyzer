@@ -369,9 +369,9 @@ fn lualatex_without_unicode_math_writes_no_mathml() {
 /// `alt-text-missing` in mode `alt` (the default, and `tag=⟨struct⟩`) when `alt` is empty.
 /// lualatex warns for the first three below and not for the rest (TeX Live 2026). Before,
 /// any key named `alt` or `tag` counted as alternative text, so `alt={}`, `tag=Figure` and
-/// `artifact,alt=` were missed. Red (known): the run loses every `\includegraphics` after the
-/// first tagged one. latex-lab's BBox `\fp_eval:n` over `\property_ref:een{…}{xpos}{0}` forks per
-/// character of an unknown and widens the nesting, so only the first graphic is an occurrence.
+/// `artifact,alt=` were missed. Also pinned: pdftex.def loads a file once (`\pdfximage`) and
+/// places it again by `\pdfrefximage`, and only the load was an occurrence, so every include
+/// of `a` after the first one had none and was never checked.
 #[test]
 fn a_graphic_is_tagged_by_its_last_mode_key() {
     if !crate::support::installed() {
@@ -411,4 +411,28 @@ fn a_tagged_graphic_raises_no_error_at_the_end() {
         .map(|f| format!("{:?} {:?}", f.get("code"), f.get("message")))
         .collect();
     assert!(certain.is_empty(), "{certain:#?}");
+}
+
+/// A tagged here-figure, then a list. The l3 code tagging them meets unknown text, and on an
+/// approximated path an expandable error's `\???` scan runs off (a runaway). Bug pinned: that
+/// path read past `\end{document}`, and the run gave `missing-end` as a certain error, though
+/// pdflatex ends the document. An end the run approximated on the way to is the analysis' end:
+/// `missing-end` may still be noted after the gap, but never as an error or warning, and its fix
+/// (appending `\end{document}`) is never safe to apply.
+#[test]
+fn an_approximated_tagged_float_is_no_missing_end() {
+    if !crate::support::installed() {
+        return;
+    }
+    let body = "\\begin{figure}[h]\n\\end{figure}\n\\begin{itemize}\\item one \\item two\\end{itemize}";
+    let a = analyze(&metadata("lang=en,pdfversion=2.0,pdfstandard=ua-2,testphase={phase-III}", "", body));
+    let bad: Vec<_> = satex::linter::lint(&a)
+        .into_iter()
+        .filter(|f| {
+            f.get("code").is_some_and(|c| c == "missing-end")
+                && (matches!(f.get("severity").and_then(|s| s.as_str()), Some("error" | "warning"))
+                    || f.get("applicability").and_then(|s| s.as_str()) == Some("safe"))
+        })
+        .collect();
+    assert!(bad.is_empty(), "{bad:?}");
 }

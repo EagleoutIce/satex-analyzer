@@ -547,3 +547,23 @@ test("Column gaps (pdfedit.ts)", async () => {
   assert.equal(apply(set, E.gap(set, ...at(set, 'p{2cm}', 'r')).edits(null)), t, 'dropped');
   for (const sep of ['|', '!{x}', '@{}', '@{\\hspace{1pt}}@{\\hspace{1pt}}']) assert.equal(E.gap(`{l${sep}r}`, 2, 2 + sep.length), null, `${sep}: not one length`);
 });
+// Intuition: Backspace and Delete in Type mode take one character as the reader sees it (a grapheme cluster), as the
+// editor does: an emoji's two UTF-16 units, a letter with its combining accent, a flag's two regional indicators.
+// Pins Backspace after 😀 leaving a lone surrogate in the source (an invalid file, a broken build), and an arrow
+// putting the Type caret between its two halves.
+test('erased: one grapheme cluster, never half a surrogate pair', () => {
+  const E = self.satexPdfEdit, back = (t) => { const [a, b] = E.erased(t, t.length, true); return t.slice(0, a) + t.slice(b); };
+  assert.equal(back('ab😀'), 'ab');
+  assert.equal(back('café'), 'caf');
+  assert.equal(back('a🇩🇪'), 'a');
+  assert.equal(back('ße'), 'ß');
+  const [a, b] = E.erased('😀b', 0, false);
+  assert.equal('😀b'.slice(0, a) + '😀b'.slice(b), 'b', 'Delete too');
+  assert.deepEqual(E.erased('$😀$', 3, true), [0, 4], "a formula's only character takes the formula with it");
+  assert.deepEqual(E.erased('a\\%', 3, true), [1, 3], 'an escape stays whole');
+  const v = '\\verb|x😀|';
+  assert.equal(v.slice(0, E.erased(v, v.length - 1, true)[0]), '\\verb|x', 'in verbatim too');
+  // the arrows step the same way: the caret never lands inside 😀, where the next key would split it
+  assert.equal(E.cluster('a😀b', 1, false), 3);
+  assert.equal(E.cluster('a😀b', 3, true), 1);
+});

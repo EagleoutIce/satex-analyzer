@@ -235,6 +235,13 @@ conventions:  # how TeX is usually written, where the text alone does not say
     slanted: [itdefault, sldefault]  # macros naming the shapes LaTeX gives a slanted face
       #! affects: output
       #! example: `slanted+: [scdefault]`
+  writing:  # how the LaTeX a widget writes reads the document's own
+    macros: false  # inserted text that is the whole body of your command without arguments is written as that command (\model for TinyNet) where the run typeset prose beside it: never in verbatim, math, a comment, a URL or an argument the run did not typeset. Assumes a call typesetting its argument's characters typesets the command the same
+      #! affects: output
+      #! example: `macros: true`: a sentence typed `we use TinyNet here` is written `we use \model{} here`
+    repeat_min: 16  # characters a written call needs for a note when it then stands twice, offering to extract it
+      #! affects: output
+      #! example: `repeat_min: 8`: a second \textbf{Note} is noted too
   # alternatives: {hskip: '`\hspace`', vskip: '`\vspace`', ...}  # primitives LaTeX has a command for, with that command, as chktex's Primitives. latex_alternatives adds to it
     #! affects: output
     #! example: alternatives: {hskip: '`\hspace`'}
@@ -733,10 +740,13 @@ compile:  # what satex compile runs and shows
     #! affects: speed
   passes: 4  # engine passes at most of the satex build, until the build files rest
     #! affects: output
-  warm: false  # keep pdfTeX started on the next build's format, the main file a named pipe between builds. Only for a build directory of its own (satex gui sets it)
+  warm: false  # keep pdfTeX started on the next build's format (Linux): the build runs in a mirror of the project under .satex-build, the mirror's main file a named pipe between builds
     #! affects: speed
   clock: minute  # the clock a document may read: a satex build whose read files, searched directories and clock are as the last rested build left them runs no pass. minute (TeX's \time, sound) or day (assumes only \today reads it). A fixed clock (SOURCE_DATE_EPOCH with FORCE_SOURCE_DATE=1) never parts builds
     #! affects: speed
+  memoize: true  # the satex build extracts memoize's externs itself between passes (memoize's TeX method, no shell escape, no Perl or Python module) and tells memoize not to. false: memoize extracts as the document says
+    #! affects: speed
+    #! example: an unchanged picture is included from its extern, its code not run again
   # viewer: none  # a PDF viewer `satex compile --view` opens: none or auto (the system's opener) or a program. Only your own config sets it
     #! affects: output
 
@@ -851,6 +861,17 @@ type_plugins:  # editor features by type, grouped by category: widget, hover, co
     enabled: true  # "Page layout…": margins, paper, header and footer to scale, for the document or a part
       #! affects: output
       #! example: `enabled: false`: no page layout lens, link or dialog
+  font:  # the document's font and base size: \documentclass
+    #! category: widget
+    enabled: true  # "Font and size…": the base size as a class option, a font as a package (pdfLaTeX) or with fontspec (LuaLaTeX, XeLaTeX)
+      #! affects: output
+      #! example: `enabled: false`: no font lens, action or dialog
+    sizes: [10pt, 11pt, 12pt]  # the base sizes offered
+      #! affects: output
+      #! example: `sizes: [11pt, 12pt]`
+    fonts: {Latin Modern: [lmodern, Latin Modern Roman], Libertinus: [libertinus, Libertinus Serif], Source Serif: [sourceserifpro, Source Serif Pro], TeX Gyre Heros: [tgheros, TeX Gyre Heros, sans], TeX Gyre Pagella: [tgpagella, TeX Gyre Pagella], TeX Gyre Termes: [tgtermes, TeX Gyre Termes]}  # the fonts offered: the package pdfLaTeX loads, the font fontspec names, sans for a sans serif main font
+      #! affects: output
+      #! example: `fonts: {Charter: [XCharter, XCharter]}`
   tagging:  # PDF tagging: \DocumentMetadata
     #! category: widget
     enabled: true  # "Accessibility…": tagging, PDF standard, language and title, figures' alternative text, tables' header rows

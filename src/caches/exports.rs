@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::fixed::{HashMap, HashSet};
 
-const VERSION: u32 = 5;
+const VERSION: u32 = 6;
 
 #[derive(Serialize, Deserialize, Default)]
 pub struct Exports {
@@ -17,6 +17,9 @@ pub struct Exports {
     pub files: Vec<String>,
     /// Name (no backslash) to defining files.
     defines: HashMap<String, Vec<u32>>,
+    /// Name a document can write (no `@`, `_`, `:`) to files where it stands right after a command
+    /// that starts its line and that the index knows as no definer (url's `\\DeclareUrlCommand\\url`): candidates a run confirms.
+    mentions: HashMap<String, Vec<u32>>,
     loads: Vec<Vec<u32>>,
     /// Per file, the files that load it: `loads` reversed, made once.
     #[serde(skip)]
@@ -36,7 +39,7 @@ pub struct Exports {
 /// `\\endx`, ltdefns.dtx) is listed once more with it, after a space:
 /// `newenvironment end`.
 pub fn written(
-    defs: &[crate::analysis::facts::Definition],
+    defs: &crate::fixed::Chunked<crate::analysis::facts::Definition>,
     interner: &crate::engine::tex::Interner,
     path: impl Fn(crate::engine::tex::FileId) -> Option<String>,
 ) -> Vec<String> {
@@ -192,14 +195,16 @@ impl Exports {
                 continue;
             };
             let text = String::from_utf8_lossy(&bytes);
-            let (mut defined, loaded) = scan(&text, &definers);
+            let (mut defined, loaded, mentioned) = scan(&text, &definers);
             if name.ends_with(".code.tex") {
                 defined.extend(declared(&text));
             }
-            for name in defined {
-                let files = exports.defines.entry(name).or_default();
-                if files.last() != Some(&(i as u32)) {
-                    files.push(i as u32);
+            for (into, names) in [(&mut exports.defines, defined), (&mut exports.mentions, mentioned)] {
+                for name in names {
+                    let files = into.entry(name).or_default();
+                    if files.last() != Some(&(i as u32)) {
+                        files.push(i as u32);
+                    }
                 }
             }
             exports.loads.push(loaded.iter().filter_map(|l| position.get(l).copied()).collect());
@@ -301,6 +306,21 @@ impl Exports {
             all.into_iter().map(|f| (std::cmp::Reverse(self.users(f)), &self.files[f as usize])).collect();
         ranked.sort();
         ranked.into_iter().map(|(_, f)| f.clone()).collect()
+    }
+
+    /// The packages that name `name` after a command the index knows as no definer and that more
+    /// files load than `pick` ([`Exports::package_for`]'s), most loaded first: a run of each says
+    /// whether it defines it.
+    pub fn proposed(&self, name: &str, pick: Option<&str>) -> Vec<String> {
+        let Some(files) = self.mentions.get(name) else { return Vec::new() };
+        let floor = pick.and_then(|p| self.position().get(&format!("{p}.sty"))).map_or(0, |&f| self.users(f));
+        let mut ranked: Vec<_> = (files.iter().copied())
+            .filter(|&f| self.files[f as usize].ends_with(".sty"))
+            .map(|f| (std::cmp::Reverse(self.users(f)), &self.files[f as usize]))
+            .filter(|(users, _)| users.0 > floor)
+            .collect();
+        ranked.sort();
+        ranked.into_iter().map(|(_, f)| f.trim_end_matches(".sty").to_string()).collect()
     }
 
     /// How many files load `file`, directly or through others.
@@ -411,7 +431,6 @@ impl Exports {
     }
 }
 
-/// Names defined after one of `definers`, and files loaded.
 /// Whether the text of `file` defines `name` with one of `definers`: its names read once per process.
 pub fn defined_in(file: &Path, definers: &HashSet<&str>, name: &str) -> bool {
     type Names = std::sync::Arc<HashSet<String>>;
@@ -429,7 +448,9 @@ pub fn defines(text: &str, definers: &HashSet<&str>) -> Vec<String> {
     scan(text, definers).0
 }
 
-fn scan(text: &str, definers: &HashSet<&str>) -> (Vec<String>, Vec<String>) {
+/// Names defined after one of `definers`, files loaded, and the names a document can write that
+/// stand after another command that starts its line.
+fn scan(text: &str, definers: &HashSet<&str>) -> (Vec<String>, Vec<String>, Vec<String>) {
     use crate::engine::tex::Tok;
     let (tokens, names) = tokenize(text);
     // `newenvironment end`: the definer also makes `end` + the name ([`written`])
@@ -439,12 +460,21 @@ fn scan(text: &str, definers: &HashSet<&str>) -> (Vec<String>, Vec<String>) {
         made.entry(by).or_default().push(prefix);
     }
     made.values_mut().for_each(|p| p.sort_unstable());
-    let defined: Vec<String> = pairs(&tokens, &names)
-        .flat_map(|(_, cmd, name)| {
-            let prefixes = made.get(names.name(cmd)).map_or(&[][..], Vec::as_slice);
-            prefixes.iter().map(move |p| format!("{p}{name}")).collect::<Vec<_>>()
-        })
-        .collect();
+    // the command each line starts with: where a package's definitions stand
+    let mut first: HashMap<u32, Option<crate::engine::tex::Sym>> = HashMap::default();
+    for t in &tokens {
+        first.entry(t.span.line).or_insert(if let Tok::Cs(cs) = t.tok { Some(cs) } else { None });
+    }
+    let (mut defined, mut mentioned) = (Vec::new(), Vec::new());
+    for (line, cmd, name) in pairs(&tokens, &names) {
+        match made.get(names.name(cmd)) {
+            Some(prefixes) => defined.extend(prefixes.iter().map(|p| format!("{p}{name}"))),
+            None if first.get(&line) == Some(&Some(cmd)) && !name.is_empty() && !name.contains(['@', '_', ':']) => {
+                mentioned.push(name)
+            }
+            None => {}
+        }
+    }
     let mut loaded = Vec::new();
     for (i, t) in tokens.iter().enumerate() {
         let ext = match t.tok {
@@ -457,7 +487,7 @@ fn scan(text: &str, definers: &HashSet<&str>) -> (Vec<String>, Vec<String>) {
         };
         loaded.extend(group(&tokens[i + 1..]).split(',').map(|n| format!("{}{ext}", n.trim())));
     }
-    (defined, loaded)
+    (defined, loaded, mentioned)
 }
 
 /// The names a pgf or TikZ library declares besides macros: arrow tips
@@ -506,9 +536,21 @@ mod tests {
     fn definitions_and_loads_are_read_off_the_text() {
         let definers = ["def", "newcommand", "newrobustcmd"].into_iter().collect();
         let text = "\\RequirePackage[x]{a, b}\\def\\one{}\\newcommand*{\\two}{}\\newrobustcmd*\\three{}\n% \\def\\no{}\n\\let\\four";
-        let (defined, loaded) = super::scan(text, &definers);
+        let (defined, loaded, _) = super::scan(text, &definers);
         assert_eq!(defined, ["one", "two", "three"]);
         assert_eq!(loaded, ["a.sty", "b.sty"]);
+    }
+
+    /// Intuition: a name a document can write right after a command that starts its line and that the
+    /// index knows as no definer is a candidate, not a definition: url's `\\DeclareUrlCommand\\url`. Internals (`\\x@y`) are none. Pins
+    /// the index losing url.sty for `\\url` when the run never used url's definer.
+    #[test]
+    fn names_after_unknown_definers_are_candidates() {
+        let definers = ["def"].into_iter().collect();
+        let (defined, _, mentioned) =
+            super::scan("\\DeclareUrlCommand\\url{}\n\\let\\a@b\\relax\n\\def\\path{}\\x\\y", &definers);
+        assert_eq!(defined, ["path"]);
+        assert_eq!(mentioned, ["url"]);
     }
 
     /// Intuition: `\\newenvironment{align}` defines `\\align` and `\\endalign` (ltdefns.dtx), learned from runs as
@@ -518,7 +560,7 @@ mod tests {
     fn braced_names_and_their_prefixed_partners_are_read_off_the_text() {
         let definers = ["newenvironment", "newenvironment end"].into_iter().collect();
         let text = "\\newenvironment{align*}{}{}\\newenvironment{a\\x}{}{}\\newenvironment {gather}";
-        let (defined, _) = super::scan(text, &definers);
+        let (defined, ..) = super::scan(text, &definers);
         assert_eq!(defined, ["align*", "endalign*", "gather", "endgather"]);
     }
 }

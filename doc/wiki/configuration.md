@@ -14,7 +14,7 @@ SaTeX merges `satex.yaml` layers, later ones winning:
 
 Mappings merge recursively. A list replaces the outer one unless its key ends in `+` (`load.skip+: [extra]`). A layer that does not fit the schema is skipped. `--no-config` ignores every file but keeps `--set`. `satex --version` lists the merged files.
 
-Rule settings (`lints`, `lint_off`) belong to the [lint rules](Lints). The `lsp` and `completion` keys belong to the [language server](Lsp). `limits` is explained [below](#configurable-limits-for-the-analysis).
+Rule settings (`lints`, `lint_off`) belong to the [lint rules](lints.md). The `lsp` and `completion` keys belong to the [language server](lsp.md). `limits` is explained [below](#configurable-limits-for-the-analysis).
 
 ```yaml
 # yaml-language-server: $schema=https://raw.githubusercontent.com/EagleoutIce/satex-analyzer/main/satex.schema.json
@@ -254,6 +254,13 @@ conventions:  # how TeX is usually written, where the text alone does not say
     slanted: [itdefault, sldefault]  # macros naming the shapes LaTeX gives a slanted face
       #! affects: output
       #! example: `slanted+: [scdefault]`
+  writing:  # how the LaTeX a widget writes reads the document's own
+    macros: false  # inserted text that is the whole body of your command without arguments is written as that command (\model for TinyNet) where the run typeset prose beside it: never in verbatim, math, a comment, a URL or an argument the run did not typeset. Assumes a call typesetting its argument's characters typesets the command the same
+      #! affects: output
+      #! example: `macros: true`: a sentence typed `we use TinyNet here` is written `we use \model{} here`
+    repeat_min: 16  # characters a written call needs for a note when it then stands twice, offering to extract it
+      #! affects: output
+      #! example: `repeat_min: 8`: a second \textbf{Note} is noted too
   # alternatives: {hskip: '`\hspace`', vskip: '`\vspace`', ...}  # primitives LaTeX has a command for, with that command, as chktex's Primitives. latex_alternatives adds to it
     #! affects: output
     #! example: alternatives: {hskip: '`\hspace`'}
@@ -752,10 +759,13 @@ compile:  # what satex compile runs and shows
     #! affects: speed
   passes: 4  # engine passes at most of the satex build, until the build files rest
     #! affects: output
-  warm: false  # keep pdfTeX started on the next build's format, the main file a named pipe between builds. Only for a build directory of its own (satex gui sets it)
+  warm: false  # keep pdfTeX started on the next build's format (Linux): the build runs in a mirror of the project under .satex-build, the mirror's main file a named pipe between builds
     #! affects: speed
   clock: minute  # the clock a document may read: a satex build whose read files, searched directories and clock are as the last rested build left them runs no pass. minute (TeX's \time, sound) or day (assumes only \today reads it). A fixed clock (SOURCE_DATE_EPOCH with FORCE_SOURCE_DATE=1) never parts builds
     #! affects: speed
+  memoize: true  # the satex build extracts memoize's externs itself between passes (memoize's TeX method, no shell escape, no Perl or Python module) and tells memoize not to. false: memoize extracts as the document says
+    #! affects: speed
+    #! example: an unchanged picture is included from its extern, its code not run again
   # viewer: none  # a PDF viewer `satex compile --view` opens: none or auto (the system's opener) or a program. Only your own config sets it
     #! affects: output
 
@@ -870,6 +880,17 @@ type_plugins:  # editor features by type, grouped by category: widget, hover, co
     enabled: true  # "Page layout…": margins, paper, header and footer to scale, for the document or a part
       #! affects: output
       #! example: `enabled: false`: no page layout lens, link or dialog
+  font:  # the document's font and base size: \documentclass
+    #! category: widget
+    enabled: true  # "Font and size…": the base size as a class option, a font as a package (pdfLaTeX) or with fontspec (LuaLaTeX, XeLaTeX)
+      #! affects: output
+      #! example: `enabled: false`: no font lens, action or dialog
+    sizes: [10pt, 11pt, 12pt]  # the base sizes offered
+      #! affects: output
+      #! example: `sizes: [11pt, 12pt]`
+    fonts: {Latin Modern: [lmodern, Latin Modern Roman], Libertinus: [libertinus, Libertinus Serif], Source Serif: [sourceserifpro, Source Serif Pro], TeX Gyre Heros: [tgheros, TeX Gyre Heros, sans], TeX Gyre Pagella: [tgpagella, TeX Gyre Pagella], TeX Gyre Termes: [tgtermes, TeX Gyre Termes]}  # the fonts offered: the package pdfLaTeX loads, the font fontspec names, sans for a sans serif main font
+      #! affects: output
+      #! example: `fonts: {Charter: [XCharter, XCharter]}`
   tagging:  # PDF tagging: \DocumentMetadata
     #! category: widget
     enabled: true  # "Accessibility…": tagging, PDF standard, language and title, figures' alternative text, tables' header rows
@@ -1301,7 +1322,7 @@ limits:  # what bounds the analysis: reaching one stops that part of the run, so
 
 ## Plugins
 
-A plugin picks a default from the machine, the installation and the build files. `satex.yaml` can override each. `satex query plugins -f FILE` shows what was chosen and why ([queries](Queries#plugins)).
+A plugin picks a default from the machine, the installation and the build files. `satex.yaml` can override each. `satex query plugins -f FILE` shows what was chosen and why ([queries](queries.md#plugins)).
 
 | Plugin | Values | Detected from |
 | --- | --- | --- |
@@ -1320,17 +1341,18 @@ A plugin picks a default from the machine, the installation and the build files.
 - **l3build.** A `build.lua` runs in a sandboxed `texlua` (else its plain assignments are read). Its source dirs are searched, `.ins`/`.dtx` pairs read through docstrip, and `typesetexe`/`stdengine` pick the engine. `l3build:` in `satex.yaml` says which build files to look for (`files`), which `--config` files to read after it (`config`), and overrides the `module`, the test patterns (`tests`) and the check engines (`engines`). `checks: true` analyzes the regression tests as documents too. Empty values keep what the bundle says.
 - **depp.** Every file read maps to its TeX Live package by TDS path. With depp loaded or its file present, `missing-dependency` and `unused-dependency` compare against it. Rules: `depp.rules`, `depp.renames`, `depp.file`.
 - **Package augmentations.** What SaTeX knows about one package lives in one module, not in the lint rules. A rule asks the module, which can veto a finding or rewrite its message and fix. It reads the package's state from the run. siunitx is the first: an `S` column that rounds keeps `inconsistent-precision` quiet, and the fix names `\sisetup{round-mode = ...}`. `plugins.augment` lists the modules that are on.
-- **Typesetting.** `plugins.typeset` holds plugins that run TeX's own algorithms again on text the last run did not set, for the playground's echo of typed text. Each reads only the run's end state: fonts, parameters, codes and hyphenation tables. `hyphenate` answers `satex/hyphenate`: where each word may take a hyphen, from the patterns, exceptions, hyphen mins and `\lccode`s in force. `linebreak` answers `satex/break`: the lines a paragraph's words break into, by the run's own Knuth–Plass breaker ([tex.web §§ 813](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L15997)–[890](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L17438)). It builds the list as TeX's main loop does: TFM widths, ligatures and kerns, interword glue by space factor. Fonts come from the run's paragraph at the line given, and the parameters from where the run broke that paragraph. Anything not known gives `null`. Both are on by default.
+- **Typesetting.** `plugins.typeset` holds plugins that run TeX's own algorithms again on text the last run did not set, for the playground's echo of typed text. Each reads only the run's end state: fonts, parameters, codes and hyphenation tables. `hyphenate` answers `satex/hyphenate`: where each word may take a hyphen, from the patterns, exceptions, hyphen mins and `\lccode`s in force. `linebreak` answers `satex/break`: the lines a paragraph's words break into, by the run's own Knuth–Plass breaker ([tex.web §§ 813](https://github.com/TeX-Live/texlive-source/blob/69cabeea43cf685d86cb7b58216f3a9e57fe055c/texk/web2c/tex.web#L15997)–[890](https://github.com/TeX-Live/texlive-source/blob/69cabeea43cf685d86cb7b58216f3a9e57fe055c/texk/web2c/tex.web#L17438)). It builds the list as TeX's main loop does: TFM widths, ligatures and kerns, interword glue by space factor. Fonts come from the run's paragraph at the line given, and the parameters from where the run broke that paragraph. Anything not known gives `null`. Both are on by default.
 - **Preloaded format.** A `%&fmt` line, `-fmt=` or `preload:` names a dumped preamble. SaTeX interprets that preamble instead (up to `\endofdump`). `pretex:` is code read before the first line (latexmk's `-usepretex`).
 
 ### Format and package caches
 
-The interpreted kernel is cached after the first run (`satex cache`, `satex cache build`, `satex cache clear`, see the [command line page](Cli)).
+The interpreted kernel is cached after the first run (`satex cache`, `satex cache build`, `satex cache clear`, see the [command line page](cli.md)).
 
 A package is cached per **read set**: the meanings, registers, hooks, options and catcodes it consulted, with the values seen. Its **effect** (bindings, hooks, facts, diagnostics) is replayed in any later run that agrees with the read set. Register allocations are renumbered on replay.
 
 - **Rejected** when a file it read changed, a name now resolves to another file, or the state disagrees. `-v` says why. `satex summary` shows `cached`, `stored`, `stale: …`.
-- **Not cached**: loads under a conditional or in a group, or that ran out of budget or left a group open. `-v` names each one and why.
+- **Not cached**: loads under a conditional, or that ran out of budget or left a group open. `-v` names each one and why.
+- **In a group** a load is cached apart for each group level. Its local assignments stay local there.
 - **Nested loads** have their own entries, also from a file `\input` in between. The outer one resumes at its next line at rest.
 - **Project files** (frozen or not) are cached like installed ones. The key holds their content, so an edit reads them again.
 - **Lookaheads** that read a line ahead (`\@ifnextchar` after `\RequirePackage`, beamer's `\mode`) give it back to the file. That line then starts at rest too.
@@ -1390,7 +1412,7 @@ profiles:
 
 `project.root`: The root document, relative to the project directory: what a run starts from when none is named, over a `% !TeX root` line and every guess.
 
-A rule's own settings live under `lints.⟨code⟩`. [Lint rules](Lints) lists the rules, and `lint_off` turns one off.
+A rule's own settings live under `lints.⟨code⟩`. [Lint rules](lints.md) lists the rules, and `lint_off` turns one off.
 
 `lints.unused-definition.report_public` (default `true`): Whether the rule also reports a name with no `@` and no expl3-style `module_function:signature`. The package and class profiles turn it off, since such a name is the package's public interface, and the caller, not this run, is the one to use it.
 
@@ -1468,7 +1490,7 @@ A rule's own settings live under `lints.⟨code⟩`. [Lint rules](Lints) lists t
 
 ## The clock
 
-`clock` sets `\year`, `\month`, `\day`, `\time` and `\pdfcreationdate` ([tex.web § 241](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L5240)).
+`clock` sets `\year`, `\month`, `\day`, `\time` and `\pdfcreationdate` ([tex.web § 241](https://github.com/TeX-Live/texlive-source/blob/69cabeea43cf685d86cb7b58216f3a9e57fe055c/texk/web2c/tex.web#L5240)).
 
 | Value | Meaning |
 | --- | --- |
@@ -1480,7 +1502,7 @@ Package caches that read the clock are kept per setting. So are document caches.
 
 ## Where paths join
 
-Undecided tests part the run into paths ([Domains](Domains)). They join where they stand alike, and at the points `analysis.join_paths_at` names.
+Undecided tests part the run into paths ([Domains](domains.md)). They join where they stand alike, and at the points `analysis.join_paths_at` names.
 
 ```yaml
 analysis:
@@ -1517,7 +1539,7 @@ stubs:
   \xinttheexpr: { until: \relax, result: { text: number } }
 ```
 
-`args`: `s` star, `o` optional, `m` mandatory, or `until` a delimiter. `result` is an element of the [unknown-text lattice](Domains#unknown-text-the-textclass-lattice): `nothing`, `number` / `{ number: [lo, hi] }`, `dimen`, `text` / `{ text: digits | number | dimension | cs-free | any }`, `box` / `{ box: { width, height, depth } }`. `sets` names what it assigns (`sets: { \pgfmathresult: number }`). A document that redefines the name gets its own definition.
+`args`: `s` star, `o` optional, `m` mandatory, or `until` a delimiter. `result` is an element of the [unknown-text lattice](domains.md#unknown-text-the-textclass-lattice): `nothing`, `number` / `{ number: [lo, hi] }`, `dimen`, `text` / `{ text: digits | number | dimension | cs-free | any }`, `box` / `{ box: { width, height, depth } }`. `sets` names what it assigns (`sets: { \pgfmathresult: number }`). A document that redefines the name gets its own definition.
 
 ## Configurable limits for the analysis
 

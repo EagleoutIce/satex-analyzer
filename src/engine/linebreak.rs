@@ -64,14 +64,15 @@ impl Kp {
 }
 
 /// The recorded lists, hash-consed: a list is the id of its last node.
+/// Copies share the lists recorded before them (a checkpoint holds one).
 #[derive(Clone, Default)]
 pub(crate) struct Arena {
-    nodes: Vec<(Kp, u32, u32)>,
+    nodes: crate::fixed::Chunked<(Kp, u32, u32)>,
     /// Per node: the characters the run had set when it was last pushed, so where a line breaks
     /// in the text. A note, not part of the node: lists stay shared.
-    chars: Vec<u32>,
-    index: HashMap<(Kp, u32), u32>,
-    pub(crate) texts: Vec<std::rc::Rc<[crate::engine::tex::Token]>>,
+    chars: crate::fixed::Chunked<u32>,
+    index: crate::fixed::SharedMap<(Kp, u32), u32>,
+    pub(crate) texts: crate::fixed::Chunked<std::rc::Rc<[crate::engine::tex::Token]>>,
 }
 
 impl Arena {
@@ -81,16 +82,13 @@ impl Arena {
     /// them change nothing, short of the bound on their number: `None` where `other` holds
     /// over half of it, or is not `self` grown.
     pub(crate) fn grown(&self, other: &Arena) -> Option<Arena> {
-        let n = self.nodes.len();
-        let same = other.nodes.get(..n) == Some(&self.nodes[..])
-            && other.texts.get(..self.texts.len()) == Some(&self.texts[..]);
+        let same = other.nodes.starts_with(&self.nodes) && other.texts.starts_with(&self.texts);
         (same && other.nodes.len() <= MAX_NODES / 2).then(|| other.clone())
     }
 
     /// Whether `self` holds every list of `other` under the same name.
     pub(crate) fn holds(&self, other: &Arena) -> bool {
-        self.nodes.get(..other.nodes.len()) == Some(&other.nodes[..])
-            && self.texts.get(..other.texts.len()) == Some(&other.texts[..])
+        self.nodes.starts_with(&other.nodes) && self.texts.starts_with(&other.texts)
     }
 }
 
@@ -150,13 +148,19 @@ impl Machine<'_> {
             return;
         }
         let next = a.nodes.len() as u32 + 1;
-        let (nodes, at) = (&mut a.nodes, &mut a.chars);
-        let id = *a.index.entry((item, prev)).or_insert_with(|| {
-            nodes.push((item, prev, len + 1));
-            at.push(0);
-            next
-        });
-        at[id as usize - 1] = chars;
+        let id = match a.index.get(&(item, prev)) {
+            Some(&id) => id,
+            None => {
+                a.index.insert_mut((item, prev), next);
+                a.nodes.push((item, prev, len + 1));
+                a.chars.push(0);
+                next
+            }
+        };
+        // Only a new count unshares the chunk.
+        if a.chars[id as usize - 1] != chars {
+            a.chars[id as usize - 1] = chars;
+        }
         *items = Some(id);
     }
 

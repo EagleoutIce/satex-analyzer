@@ -309,3 +309,30 @@ test('insert: a block at the caret never splits a group', () => {
   assert.match(out, /\\greet\{world\} and more\n\n\\begin\{equation\}\n {2}\n\\end\{equation\}\n\nNext\./);
   assert.deepEqual(R.insertSpot('\\greet{wo', { caret: 8 }, false), { at: 8, mode: 'caret' }, 'a group never closed: at the caret');
 });
+
+// Intuition: a block needs paragraph mode and a float outer paragraph mode. With the caret in math, a tabular, a
+// picture or any alignment (a body with a top-level `&`, which TeX takes only in an alignment, tex.web § 1128), the
+// block goes after the line that box ends on; a float also leaves the float around it. A list item or a float's
+// own body takes a display at the caret. Pins a figure written into a tabular cell or `$…$` ("Not in outer par mode").
+test('insert: a block at the caret never lands in math, a table or a picture', () => {
+  const after = (text, end) => ({ at: text.indexOf('\n', text.indexOf(end)), mode: 'after' });
+  const spot = (text, mark, kind) => { const it = R.inserts.find((k) => k.kind === kind); return R.insertSpot(text, { caret: text.indexOf(mark) + 1 }, !!it.flow, !!it.wrap); };
+  const tab = 'x\n\\begin{tabular}{ll}\na & b \\\\\n\\end{tabular}\ny\n';
+  assert.deepEqual(spot(tab, 'b ', 'figure-image'), after(tab, '\\end{tabular}'), 'float: after the tabular');
+  assert.deepEqual(spot(tab, 'b ', 'equation'), after(tab, '\\end{tabular}'), 'display: after the tabular');
+  const flt = 'x\n\\begin{table}\n\\caption{c}\n\\begin{tabular}{ll}\na & b \\\\\n\\end{tabular}\n\\end{table}\ny\n';
+  assert.deepEqual(spot(flt, 'b ', 'table'), after(flt, '\\end{table}'), 'a float never inside a float');
+  assert.deepEqual(spot(flt, 'b ', 'itemize'), after(flt, '\\end{tabular}'), 'a list may stand in the float');
+  const inl = 'so $a+b$ and more\n\nNext.\n';
+  assert.deepEqual(spot(inl, 'a+', 'equation'), { at: inl.indexOf('\n'), mode: 'after' }, 'inline math');
+  assert.deepEqual(spot(inl, 'a+', 'footnote'), { at: inl.indexOf('a+') + 1, mode: 'caret' }, 'a mark stays at the caret');
+  const al = 'x\n\\begin{align}\n  a &= b\n\\end{align}\ny\n';
+  assert.deepEqual(spot(al, 'a ', 'itemize'), after(al, '\\end{align}'));
+  const own = 'x\n\\begin{mygrid}\n  a & b\n\\end{mygrid}\ny\n';
+  assert.deepEqual(spot(own, 'a ', 'table'), after(own, '\\end{mygrid}'), 'an alignment of any name');
+  const pic = 'x\n\\begin{tikzpicture}\n  \\node {A};\n\\end{tikzpicture}\ny\n';
+  assert.deepEqual(spot(pic, 'node', 'figure-image'), after(pic, '\\end{tikzpicture}'));
+  const box = 'x \\mbox{\\begin{tabular}{l} a \\end{tabular}} more\ny\n';
+  assert.deepEqual(spot(box, ' a ', 'equation'), { at: box.indexOf(' more') + 5, mode: 'after' }, 'a box around the table, left too');
+    assert.deepEqual(spot('x\n\\begin{itemize}\n  \\item one\n\\end{itemize}\n', 'one', 'equation').mode, 'caret', 'a list item takes it');
+});

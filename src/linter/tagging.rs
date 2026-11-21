@@ -281,7 +281,8 @@ pub(crate) fn graphic_keys(report: &Report, span: Span) -> Option<Vec<(String, S
         return None;
     }
     scan.star();
-    let Some(opt) = scan.optional() else { return Some(Vec::new()) };
+    // without `[`, the file name's group follows, else the options come from elsewhere
+    let Some(opt) = scan.optional() else { return scan.group().map(|_| Vec::new()) };
     entries_of(text.slice(opt.inner_start, opt.inner_end)?)
 }
 

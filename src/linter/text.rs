@@ -43,7 +43,7 @@ pub struct View<'a> {
     /// The mode each of the document's command sites was read in.  Built
     /// the first time a rule asks.
     modes_at: OnceCell<HashMap<Span, Modes>>,
-    expansions: &'a [crate::analysis::facts::Expansion],
+    expansions: &'a crate::fixed::Chunked<crate::analysis::facts::Expansion>,
     /// Which character the run set at a source position, the first one
     /// where several share it.  Built the first time a rule asks.
     at_span: OnceCell<HashMap<Span, usize>>,

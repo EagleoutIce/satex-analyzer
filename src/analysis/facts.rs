@@ -62,6 +62,21 @@ impl Definition {
     pub fn arity(&self) -> u8 {
         self.mac.as_ref().map_or(0, |m| m.arity())
     }
+
+    /// A site's definition run again: certain only if every run was, its latest text.
+    /// Writes only a change, so a chunk a checkpoint shares stays shared.
+    pub fn rerun(defs: &mut crate::fixed::Chunked<Definition>, i: usize, certain: bool, mac: Option<Rc<MacroDef>>) {
+        let same = |d: &Definition| match (&d.mac, &mac) {
+            (Some(a), Some(b)) => Rc::ptr_eq(a, b),
+            (a, b) => a.is_none() && b.is_none(),
+        };
+        if defs.get(i).is_some_and(|d| d.certain <= certain && same(d)) {
+            return;
+        }
+        let previous = &mut defs[i];
+        previous.certain &= certain;
+        previous.mac = mac;
+    }
 }
 
 /// One `\errmessage`-family error a real call in the run raised, while
@@ -92,10 +107,18 @@ pub enum MeaningKind {
     /// Undefined, met on a path the analysis approximated since the paths
     /// parted: TeX may never expand it there.
     UndefinedApproximated,
+    /// Undefined, met on an arm no undecided conditional names (a joined
+    /// value read apart): some runs expand it there.
+    UndefinedOnArm,
     Unknown,
 }
 
 impl MeaningKind {
+    /// Undefined in some run or in every run.
+    pub fn undefined(self) -> bool {
+        matches!(self, MeaningKind::Undefined | MeaningKind::UndefinedApproximated | MeaningKind::UndefinedOnArm)
+    }
+
     pub fn as_str(self) -> &'static str {
         match self {
             MeaningKind::Primitive => "primitive",
@@ -104,6 +127,7 @@ impl MeaningKind {
             MeaningKind::Char => "char",
             MeaningKind::Undefined => "undefined",
             MeaningKind::UndefinedApproximated => "undefined-approximated",
+            MeaningKind::UndefinedOnArm => "undefined-on-arm",
             MeaningKind::Unknown => "unknown",
         }
     }
@@ -191,8 +215,9 @@ pub struct Occurrence {
     pub kind: OccKind,
     pub key: String,
     pub detail: Option<String>,
-    /// Where it stands: the call the file made, or, for a key derived from
-    /// a written line, the key's own text.
+    /// Where it stands: the call the file made (a reference or an accent:
+    /// the innermost command of that call's own text), or, for a key
+    /// derived from a written line, the key's own text.
     pub span: Span,
     /// Where `span` was reached from: the call that expanded the full
     /// target, or the `\write` whose line declared the key.
@@ -668,6 +693,27 @@ impl Severity {
     }
 }
 
+/// Assumption rows about the run's surroundings, which satex.yaml sets
+/// (the clock, a stub, how pages break and fill, that library code
+/// compiles): the findings are stated under them.
+pub const PREMISES: [&str; 6] =
+    ["clock-assumed", "stubbed", "forced-page-breaks", "page-one-arm", "assumed-compiles", "expected-load"];
+
+/// Assumption rows whose doubt a typed unknown value carries on: digits
+/// read whole stay unknown digits, and say so wherever they are read. Only
+/// their own command rests on them.
+pub const CARRIED: [&str; 1] = ["digits-read-as-one-token"];
+
+/// Why what the run did after a row may not be what TeX does
+/// ([`Diagnostic::rest`]), the weaker reason first.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
+pub enum Rest {
+    /// The run assumed state it could not follow: sound if that holds.
+    Assumed,
+    /// The run could not follow TeX: what follows may be the gap's echo.
+    Gap,
+}
+
 /// One thing the analysis wants the user to know: a message, a [`Severity`],
 /// and the [`Span`] it concerns. [`Facts::diagnostics`] is what `satex
 /// lint`'s correctness rules and `query diagnostics` read.
@@ -689,11 +735,42 @@ pub struct Diagnostic {
     pub after: usize,
 }
 
+/// Whether all the run does after a row of this severity and code rests on
+/// it: no finding after it in run order is certain. The one place that says
+/// which rows do: a gap, and an assumption that stands in for state the
+/// run lost and that no value carries.
+pub fn rest(severity: Severity, code: &str) -> Option<Rest> {
+    match severity {
+        Severity::Unsupported => Some(Rest::Gap),
+        Severity::Assumption if !PREMISES.contains(&code) && !CARRIED.contains(&code) => Some(Rest::Assumed),
+        _ => None,
+    }
+}
+
+/// Whether a row of this severity and code marks its path as approximated:
+/// what the path raises until it is the only one again is not certain.
+pub fn approximates(severity: Severity, code: &str) -> bool {
+    match severity {
+        Severity::Imprecision | Severity::Unsupported => true,
+        Severity::Assumption => !PREMISES.contains(&code),
+        Severity::Info | Severity::Warning => false,
+    }
+}
+
+impl Diagnostic {
+    /// [`rest`] of this row.
+    pub fn rest(&self) -> Option<Rest> {
+        rest(self.severity, self.code)
+    }
+}
+
 /// What a run observed: [`Definition`]s, [`Expansion`]s, [`Occurrence`]s and
 /// [`Load`]s, which every query and lint reads.
 #[derive(Clone, Default, serde::Serialize, serde::Deserialize)]
+/// The long record lists are [`crate::fixed::Chunked`]: a checkpoint shares them.
 pub struct Facts {
-    pub defs: Vec<Definition>,
+    #[serde(with = "crate::fixed::flat")]
+    pub defs: crate::fixed::Chunked<Definition>,
     /// The files `\write` handed lines to, as `\openout` named them.
     pub written_files: std::collections::BTreeSet<String>,
     /// The files `\openin` or `\pdffilesize` looked for and did not find:
@@ -722,11 +799,14 @@ pub struct Facts {
     /// one, at the user's line that caused it (`\makeatletter`); a file's
     /// line 0 for the letters it opened with: what names can be typed where.
     pub letters: Vec<(crate::engine::tex::Span, char, bool)>,
-    pub expansions: Vec<Expansion>,
+    #[serde(with = "crate::fixed::flat")]
+    pub expansions: crate::fixed::Chunked<Expansion>,
     pub loads: Vec<Load>,
-    pub occurrences: Vec<Occurrence>,
+    #[serde(with = "crate::fixed::flat")]
+    pub occurrences: crate::fixed::Chunked<Occurrence>,
     /// Every `\pdfliteral` the run wrote, in order: what a picture draws.
-    pub literals: Vec<Literal>,
+    #[serde(with = "crate::fixed::flat")]
+    pub literals: crate::fixed::Chunked<Literal>,
     pub diagnostics: Vec<Diagnostic>,
     /// What each `\csname` site formed its control sequence for, the first
     /// time it ran.
@@ -763,11 +843,13 @@ pub struct Facts {
     /// Numbers with letters set right after them, outside package code.
     pub quantities: Vec<Quantity>,
     /// The colors the run defined, in order.
-    pub colors: Vec<ColorDef>,
+    #[serde(with = "crate::fixed::flat")]
+    pub colors: crate::fixed::Chunked<ColorDef>,
     /// Every `\item` of the document's files that stepped a list counter, in order.
     pub items: Vec<ListItem>,
     /// Every `\color@⟨name⟩` the run formed a control sequence for.
-    pub color_uses: Vec<ColorUse>,
+    #[serde(with = "crate::fixed::flat")]
+    pub color_uses: crate::fixed::Chunked<ColorUse>,
     /// Every `\pdfcolorstack` the run executed, in order.
     pub color_stack: Vec<ColorStack>,
     /// Every character set outside package code, in order.
@@ -849,7 +931,7 @@ impl Facts {
 /// `\\ProcessOptions` lets it to `\\relax`.
 pub fn switches_named(
     interner: &crate::engine::tex::Interner,
-    defs: &[Definition],
+    defs: &crate::fixed::Chunked<Definition>,
     wanted: &str,
 ) -> Vec<(String, String)> {
     let mut out = vec![

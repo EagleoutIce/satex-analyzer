@@ -906,6 +906,10 @@ fn between_numbers(view: &View, at: usize) -> Option<String> {
         return None;
     }
     let start = left + 1 - view.word_before(left + 1).chars().count();
+    // A letter before the digits makes one identifier (`w120x5`), no dimension.
+    if view.char_at(start).is_some_and(char::is_alphabetic) {
+        return None;
+    }
     let end = right + view.word_after(right).chars().count();
     Some(view.slice(start..end).to_string())
 }

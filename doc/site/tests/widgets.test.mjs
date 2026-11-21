@@ -314,3 +314,45 @@ test("Settings YAML (playground Settings, YAML tab and export)", async () => {
   // each line's path: a list's items and a folded text's lines belong to their key
   assert.deepEqual(paths(text).slice(0, 4).map((p) => p && [p.path.join('.'), p.inner]), [['analysis', false], ['analysis.join_paths_at', false], ['analysis.join_paths_at', true], ['analysis.join_paths_at', true]]);
 });
+
+// The font view's buttons (views.js `actions`): the run's own size and font are pressed and write nothing, another
+// choice applies the edits the server printed, `detail` says what it writes. Pins the font and size widget showing
+// its current choice from the run, and a section title above its buttons.
+test("actions mark the run's choice and apply the printed edits", async () => {
+  const made = [];
+  const node = (tag) => { const n = { tag, children: [], attrs: {}, append(...c) { this.children.push(...c); }, setAttribute(k, v) { this.attrs[k] = v; } }; made.push(n); return n; };
+  const was = globalThis.document;
+  globalThis.document = { createElement: node };
+  try {
+    const applied = [];
+    const s = { kind: 'actions', title: 'Base size', items: [{ title: '10pt', on: false, edits: [{ newText: '10pt' }], detail: '\\documentclass[10pt]' }, { title: '11pt', on: true, edits: [] }] };
+    const group = self.satexViews.RENDER.actions(s, {}, { apply: (e) => applied.push(e) });
+    const [head, box] = group.children;
+    assert.equal(head.innerHTML, 'Base size', 'the section title heads the buttons');
+    const [ten, eleven] = box.children;
+    assert.deepEqual([ten.attrs['aria-pressed'], eleven.attrs['aria-pressed']], ['false', 'true']);
+    assert.deepEqual([ten.disabled, eleven.disabled], [false, true], 'the current choice writes nothing');
+    assert.equal(ten.title, '\\documentclass[10pt]');
+    ten.onclick();
+    assert.deepEqual(applied, [[{ newText: '10pt' }]]);
+    // without a title the box stands alone, as the frame and history actions have it
+    const bare = self.satexViews.RENDER.actions({ items: [{ title: 'Go', edits: [{}] }] }, {}, { apply() {} });
+    assert.equal(bare.className, 'tv-actions');
+    assert.equal(bare.children[0].disabled, false, 'an item without `on` stays a plain button');
+  } finally { globalThis.document = was; }
+});
+
+// The printer's notes reach the person when it also writes (snapshot.js `write`): a package it added, a call that now
+// stands twice and could be extracted. Before, notes were said only when nothing was written, so the repeat note of the
+// clean-LaTeX printer never showed.
+test("snapshot write says the printer's notes beside its edits", async () => {
+  const S = self.satexSnapshot, said = [], applied = [];
+  const ctx = (r) => ({ print: async () => r, apply: (e) => applied.push(e) });
+  await S.write(ctx({ edits: [{ newText: 'x' }], notes: ['`\\textbf{Important result}` now stands 2 times'] }), [], (m) => said.push(m));
+  assert.equal(applied.length, 1);
+  assert.deepEqual(said, ['`\\textbf{Important result}` now stands 2 times']);
+  await S.write(ctx({ edits: [{ newText: 'y' }], notes: [] }), [], (m) => said.push(m));
+  assert.equal(said.length, 1, 'edits without notes say nothing');
+  await S.write(ctx({ edits: [], notes: [] }), [], (m) => said.push(m));
+  assert.equal(said.at(-1), 'no changes');
+});

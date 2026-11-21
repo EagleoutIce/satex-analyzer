@@ -896,3 +896,30 @@ fn a_report_built_with_its_caches_says_what_one_served_from_them_says() {
     assert_eq!(first_difference(&cold, &warm), None, "cold build vs warm build");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// Intuition: inserting an overlay command into a beamer frame is one edit,
+/// and the build that resumes before it must say what a build from nothing
+/// says. Pins a resumed build of an approximated beamer document (unknown
+/// colour names, errors on undecided paths) that published other findings
+/// than a fresh one: found by the LSP edit-sequence driver (cex-edit).
+#[test]
+fn a_resumed_beamer_build_after_an_overlay_edit_says_what_a_fresh_build_says() {
+    if !installed() {
+        return;
+    }
+    let dir = crate::support::tmp_root().join("incremental-beamer-only");
+    std::fs::create_dir_all(&dir).unwrap();
+    let main = dir.join("main.tex");
+    let text = "\\documentclass{beamer}\n\\usetheme{Madrid}\\usecolortheme{default}\n\\title{Slides}\\author{S. Peaker}\\date{}\n\\begin{document}\n\\begin{frame}\\titlepage\\end{frame}\n\\begin{frame}{Outline}\\tableofcontents\\end{frame}\n\\section{Overlays}\n\\begin{frame}{Items}\n\\begin{itemize}[<+->]\\item first \\item second \\item \\alert{third}\\end{itemize}\n\\pause Then more.\n\\only<2>{Only on two.}\\uncover<3->{Uncovered from three.}\n\\end{frame}\n\\end{document}\n";
+    std::fs::write(&main, text).unwrap();
+    let cfg = crate::support::config();
+    let mut checkpoints = Checkpoints::new(&cfg).every(64);
+    Machine::build(&mut checkpoints, text, &main, &cfg, true);
+    let edited = text.replacen("\\begin{frame}\\titlepage", "\\begin{frame}\\only<2>{two}\n\\titlepage", 1);
+    std::fs::write(&main, &edited).unwrap();
+    let incremental = Machine::build(&mut checkpoints, &edited, &main, &cfg, true);
+    let at = checkpoints.resumed.clone();
+    let full = Machine::build(&mut Checkpoints::new(&cfg), &edited, &main, &cfg, true);
+    assert_eq!(first_difference(&said(&incremental), &said(&full)), None, "resumed at {at:?}");
+    let _ = std::fs::remove_dir_all(&dir);
+}

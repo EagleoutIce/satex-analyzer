@@ -257,6 +257,17 @@ impl Machine<'_> {
             .as_ref()
             .and_then(|t| t.list.last())
             .is_some_and(|c| c.machine.out.steps == self.out.steps);
+        if std::env::var_os("SATEX_MEMPROBE").is_some() && !again {
+            let o = &self.out;
+            let fa = &o.facts;
+            let mut v = crate::probe_sz!("o.interner" => o.interner, "o.graph" => o.graph, "o.calls" => o.calls, "o.observed" => o.observed, "o.files" => o.files, "o.facts" => o.facts, "o.trace" => o.trace, "o.env" => o.env, "o.kernel_sites" => o.kernel_sites, "o.font_states" => o.font_states, "out" => self.out,
+                "f.defs" => fa.defs, "f.types" => fa.types, "f.length_fonts" => fa.length_fonts, "f.vars" => fa.vars, "f.letters" => fa.letters, "f.expansions" => fa.expansions, "f.loads" => fa.loads, "f.occurrences" => fa.occurrences, "f.literals" => fa.literals, "f.diagnostics" => fa.diagnostics, "f.csnames" => fa.csnames, "f.groups" => fa.groups, "f.raised" => fa.raised, "f.spaces" => fa.spaces, "f.kept_spaces" => fa.kept_spaces, "f.conditionals" => fa.conditionals, "f.text" => fa.text, "f.lines" => fa.lines, "f.shapes" => fa.shapes,
+                "env" => self.env, "kp" => self.kp, "input" => self.input, "catcodes" => self.catcodes, "lua" => self.lua, "carried" => self.carried, "scratch" => self.scratch, "outputs" => self.outputs, "streams" => self.streams, "unknown_chars" => self.unknown_chars, "box_chars" => self.box_chars, "diag_seen" => self.diag_seen, "quantity" => self.quantity, "undo" => self.undo, "choices" => self.choices, "pending" => self.pending, "definition_sites" => self.definition_sites, "expansion_sites" => self.expansion_sites, "site_writes" => self.site_writes, "cond_sites" => self.cond_sites, "call_runs" => self.call_runs, "memos" => self.memos, "memo_codes" => self.memo_codes, "memo_seen" => self.memo_seen, "name_reads" => self.name_reads, "lines_seen" => self.lines_seen, "settings_scopes" => self.settings_scopes, "cfg" => self.cfg, "pinned" => self.pinned, "read_whole" => self.read_whole, "box_saves" => self.box_saves, "diag_raised" => self.diag_raised, "scans" => self.scans, "resolver" => self.resolver, "cds" => self.cds, "whole" => *self);
+            v.extend(self.out.graph.probe());
+            v.extend(self.env.probe());
+            v.sort_by_key(|p| std::cmp::Reverse(p.1));
+            eprintln!("PROBE step {} {:?}", self.out.steps, &v[..v.len().min(30)]);
+        }
         let (before, clock) = (crate::analysis::budget::in_use(), std::time::Instant::now());
         let machine = (!again).then(|| self.clone());
         let (bytes, copied) = (crate::analysis::budget::in_use().saturating_sub(before), clock.elapsed());
@@ -1137,6 +1148,11 @@ impl<'a> Checkpoints<'a> {
     ) -> (Option<(Machine<'a>, crate::engine::tex::FileId)>, Option<Edit>, Vec<Checkpoint<'a>>) {
         let (mut holds, mut edit, mut old) = (HashMap::default(), None, Vec::new());
         while let Some(checkpoint) = self.list.pop() {
+            // The Lua state went on past this point: a run from here would not have its own.
+            if !crate::plugins::lua::in_step(&checkpoint.machine) {
+                old.push(checkpoint);
+                continue;
+            }
             // Only the input is reread: the machine is copied once it holds.
             let (mut input, mut drive) = (checkpoint.machine.input.clone(), checkpoint.drive.clone());
             if let Err(changed) = reread(

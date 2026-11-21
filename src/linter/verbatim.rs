@@ -15,7 +15,6 @@
 use crate::fixed::{HashMap, HashSet};
 use std::rc::Rc;
 
-use crate::analysis::facts::MeaningKind;
 use crate::analysis::machine::Analysis;
 use crate::engine::builtins::OccKind;
 use crate::engine::source::{byte_of_col, col_of_byte};
@@ -249,10 +248,7 @@ pub fn code(analysis: &Analysis, sources: &Sources) -> Bodies {
     // arguments are read as code, not prose.
     let quiet = &analysis.settings.lints.quiet_arguments.commands;
     let commands = (analysis.facts.expansions.iter())
-        .filter(|e| {
-            matches!(e.meaning, MeaningKind::Undefined | MeaningKind::UndefinedApproximated)
-                || quiet.iter().any(|q| analysis.interner.name(e.name) == q)
-        })
+        .filter(|e| e.meaning.undefined() || quiet.iter().any(|q| analysis.interner.name(e.name) == q))
         .map(|e| (e.span, None));
     let environments = (analysis.facts.occurrences.iter())
         .filter(|o| o.kind == OccKind::Message)

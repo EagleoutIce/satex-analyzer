@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Edit-compile-test loop: builds under the build lock, runs the tests without it.
 #   scripts/t.sh [libtest args: filter, --skip x, --exact, ...]
+# PROFILE=edit rebuilds an edit in a sixth of the CPU time; its tests run half as long again.
 # Env: PROFILE (fast), THREADS (12), JOBS (12), BUILD_LOCK ($CARGO_TARGET_DIR/.build.lock),
 #      CARGO_TARGET_DIR, CAP=0 to skip the systemd-run memory/CPU cap,
 #      BUILD_ONLY=1 to only build and print the test binaries (BUILD_ONLY=it: the integration one only),

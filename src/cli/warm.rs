@@ -211,3 +211,95 @@ pub fn start(keep: &Path, dir: &Path, command: &[String], file: &str, env: &[(&s
         let _ = std::fs::write(record_path(keep), text);
     }
 }
+
+/// Where, under a project's `.satex-build`, its warm build runs: a mirror of the project, so the
+/// pipe takes the place of the mirror's main file, never of the project's own.
+pub const MIRROR: &str = "mirror";
+
+/// The project's files under `dir`, by name, but satex's build state and the history, each with
+/// where it points when it is a symbolic link (not followed: a link stands as a link).
+fn plain(dir: &Path, under: &Path, out: &mut Vec<(PathBuf, Option<PathBuf>)>) {
+    for entry in std::fs::read_dir(dir).into_iter().flatten().flatten() {
+        let name = entry.file_name();
+        if name == super::compile::KEEP || name == ".git" {
+            continue;
+        }
+        let (path, kind) = (entry.path(), entry.file_type());
+        let Some(rel) = path.strip_prefix(under).ok().map(Path::to_path_buf) else { continue };
+        match kind {
+            Ok(k) if k.is_dir() => plain(&path, under, out),
+            Ok(k) if k.is_file() => out.push((rel, None)),
+            // where the link points from its own place, so the same link anywhere reads the same file
+            Ok(k) if k.is_symlink() => {
+                let Ok(to) = std::fs::read_link(&path) else { continue };
+                let to = std::path::absolute(path.parent().unwrap_or(dir).join(to)).unwrap_or_default();
+                out.push((rel, Some(to)));
+            }
+            _ => {}
+        }
+    }
+}
+
+/// `to` as `from` is, by length and time: a file copied by [`copy`] carries its source's time.
+fn same(from: &Path, to: &Path) -> bool {
+    let stamp =
+        |p: &Path| std::fs::symlink_metadata(p).ok().filter(|m| m.is_file()).map(|m| (m.len(), m.modified().ok()));
+    stamp(from).is_some_and(|s| Some(s) == stamp(to))
+}
+
+/// `from` to `to` by rename of a new file (a pipe there is replaced, never fed), with `from`'s time:
+/// TeX reads a file's time (`\pdffilemoddate`).
+fn copy(from: &Path, to: &Path) -> std::io::Result<()> {
+    std::fs::create_dir_all(to.parent().unwrap_or(Path::new(".")))?;
+    put(to, &std::fs::read(from)?)?;
+    let time = std::fs::metadata(from)?.modified()?;
+    std::fs::File::options().write(true).open(to)?.set_modified(time)
+}
+
+/// The mirror `w` made `dir`'s project for a build: every file as `dir` has it, a symbolic link
+/// as a link to the same place (what it reaches is not copied), a file gone from `dir` gone from
+/// `w`. The engine waiting there is stopped unless it waits in its open (`settle`).
+pub fn fill(w: &Path, dir: &Path) -> Result<std::time::SystemTime, String> {
+    let since = std::time::SystemTime::now();
+    let fail = |e: std::io::Error| format!("{}: {e}", w.display());
+    std::fs::create_dir_all(w.join(super::compile::KEEP)).map_err(fail)?;
+    settle(&w.join(super::compile::KEEP), w);
+    let (mut theirs, mut ours) = (Vec::new(), Vec::new());
+    plain(dir, dir, &mut theirs);
+    plain(w, w, &mut ours);
+    for (gone, _) in ours.iter().filter(|o| !theirs.contains(o)) {
+        std::fs::remove_file(w.join(gone)).map_err(fail)?;
+    }
+    for (name, link) in &theirs {
+        let at = w.join(name);
+        match link {
+            // the main file is the pipe here: no regular file, so it goes in again
+            None if !same(&dir.join(name), &at) => copy(&dir.join(name), &at).map_err(fail)?,
+            None => {}
+            Some(to) if std::fs::read_link(&at).ok().as_ref() != Some(to) => {
+                // a directory of the mirror the project now links: its files went above
+                if at.is_dir() && !at.is_symlink() {
+                    std::fs::remove_dir_all(&at).map_err(fail)?;
+                }
+                std::fs::create_dir_all(at.parent().unwrap_or(w)).map_err(fail)?;
+                std::os::unix::fs::symlink(to, &at).map_err(fail)?;
+            }
+            Some(_) => {}
+        }
+    }
+    Ok(since)
+}
+
+/// What the build in the mirror `w` wrote `since` it was filled, into `dir`: no build state, no pipe,
+/// and no file only `fill` put there, so an edit of the project during the build stays.
+pub fn mirror(w: &Path, dir: &Path, since: std::time::SystemTime) -> Result<(), String> {
+    let mut ours = Vec::new();
+    plain(w, w, &mut ours);
+    let wrote = |n: &Path| std::fs::metadata(w.join(n)).and_then(|m| m.modified()).is_ok_and(|t| t >= since);
+    // what the build wrote through a link is in the project already
+    let files = ours.iter().filter(|(_, link)| link.is_none()).map(|(n, _)| n);
+    for name in files.filter(|n| wrote(n) && !same(&w.join(n), &dir.join(n))) {
+        copy(&w.join(name), &dir.join(name)).map_err(|e| format!("{}: {e}", dir.display()))?;
+    }
+    Ok(())
+}

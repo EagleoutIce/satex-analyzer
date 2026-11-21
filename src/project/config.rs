@@ -166,7 +166,9 @@ pub struct Limits {
     pub join_names: u16,
     /// How many control sequences typed unknown text names: a widened
     /// list of names (`\@elt\bx@A…`) keeps which it may hold. Past them
-    /// it may hold any control sequence.
+    /// it may hold any control sequence. Also how many names with a
+    /// meaning a definition of a name of unknown text may reach (each may
+    /// then mean it too): past them the name is assumed to be a new one.
     pub text_names: u16,
     /// How many exact values a count or length keeps after branches merge.
     /// Past them only its range is kept, so `{1, 5}` becomes `1..5`. Also
@@ -689,14 +691,18 @@ pub struct CompileConfig {
     /// Engine passes at most of the `satex` build, until the build files rest.
     pub passes: u32,
     /// The `satex` build keeps a warm engine for the next build: pdfTeX on its format, waiting to
-    /// open the main file, a named pipe in its place between builds (`src/cli/warm.rs`). For a
-    /// build directory of its own (the playground's), never a project's: the main file is a pipe then.
+    /// open the main file (`src/cli/warm.rs`). The build runs in a mirror of the project under
+    /// `.satex-build`, whose main file is a named pipe between builds, never the project's own.
     pub warm: bool,
     /// The clock a document may read, for the `satex` build's skip: a build whose read files, the
     /// directories it looked in and this clock are as its last one left them is not run again.
     /// `minute` (TeX's `\time`, sound), `day` (assumes only `\today` reads it). A fixed clock
     /// (`SOURCE_DATE_EPOCH` with `FORCE_SOURCE_DATE=1`) never parts builds.
     pub clock: String,
+    /// The `satex` build extracts memoize's externs itself between passes, with memoize's own
+    /// TeX method, and tells memoize not to (`src/plugins/memoize`): no shell escape, no Perl or
+    /// Python module. Off, memoize extracts as the document says.
+    pub memoize: bool,
     /// A PDF viewer to open after a build: `none`, `auto` (the system's
     /// default opener), or a program. Only the user's own config sets it.
     pub viewer: String,
@@ -711,6 +717,7 @@ impl Default for CompileConfig {
             passes: 4,
             warm: false,
             clock: "minute".into(),
+            memoize: true,
         }
     }
 }
@@ -764,6 +771,7 @@ pub struct TypePlugins {
     pub overlay: Switch,
     pub frame: Switch,
     pub page: Switch,
+    pub font: FontPlugin,
     pub tagging: Switch,
     pub comment_edit: Switch,
     pub whitespace_edit: Switch,
@@ -893,6 +901,36 @@ pub struct UnitsPlugin {
 impl Default for UnitsPlugin {
     fn default() -> Self {
         Self { enabled: true, units: ["pt", "mm", "cm", "in", "bp"].map(String::from).to_vec(), decimals: 2 }
+    }
+}
+
+/// `type_plugins.font:` the document's font and base size.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct FontPlugin {
+    pub enabled: bool,
+    /// The base sizes offered, as class options.
+    pub sizes: Vec<String>,
+    /// The fonts offered: a name, then the package pdfLaTeX loads, the font fontspec names, and
+    /// `sans` for a sans serif face that becomes the default family.
+    pub fonts: BTreeMap<String, Vec<String>>,
+}
+
+impl Default for FontPlugin {
+    fn default() -> Self {
+        let fonts = [
+            ("Latin Modern", &["lmodern", "Latin Modern Roman"][..]),
+            ("Libertinus", &["libertinus", "Libertinus Serif"]),
+            ("Source Serif", &["sourceserifpro", "Source Serif Pro"]),
+            ("TeX Gyre Heros", &["tgheros", "TeX Gyre Heros", "sans"]),
+            ("TeX Gyre Pagella", &["tgpagella", "TeX Gyre Pagella"]),
+            ("TeX Gyre Termes", &["tgtermes", "TeX Gyre Termes"]),
+        ];
+        Self {
+            enabled: true,
+            sizes: strs(&["10pt", "11pt", "12pt"]),
+            fonts: fonts.iter().map(|(k, v)| (k.to_string(), strs(v))).collect(),
+        }
     }
 }
 
@@ -1386,6 +1424,7 @@ pub struct Conventions {
     pub math: MathConventions,
     pub csname: Csname,
     pub fonts: Fonts,
+    pub writing: Writing,
     /// Primitives LaTeX has a command for (chktex's `Primitives`), with it.
     pub alternatives: BTreeMap<String, String>,
     pub completion: Completion,
@@ -1550,6 +1589,16 @@ area! {
         roman: String = "cmr".into(),
         /// Macros naming the shapes LaTeX gives a slanted face.
         slanted: Vec<String> = strs(&["itdefault", "sldefault"]),
+    }
+}
+
+area! {
+    /// How the LaTeX a widget writes reads the document's own.
+    Writing {
+        /// Text that is the whole body of a document's command without arguments is written as that command.
+        macros: bool = false,
+        /// Characters a written call must have for a note when it then stands twice, to extract it.
+        repeat_min: usize = 16,
     }
 }
 
@@ -1774,6 +1823,7 @@ impl Default for Conventions {
             math: MathConventions::default(),
             csname: Csname::default(),
             fonts: Fonts::default(),
+            writing: Writing::default(),
             alternatives: pairs(
                 &[
                     ("above", r"`\frac`"),

@@ -137,3 +137,22 @@ fn a_kernel_environment_is_refused() {
         assert!(refused.contains("renaming it here would only change its uses"), "{refused}");
     }
 }
+
+/// A `\ref` inside another command's argument is a site of the key too.
+/// Pins that its occurrence stands at the `\ref`, not at the outer call
+/// (`\footnote`, `\textbf`) whose own argument is not the key: the rename
+/// used to skip both and leave the references dangling.
+#[test]
+fn a_label_moves_with_references_in_arguments() {
+    if !installed() {
+        return;
+    }
+    let cfg = Config { load: Load { classes: true, ..Default::default() }, ..crate::support::config() };
+    let fixture = write(
+        "ref-in-argument",
+        "\\documentclass{article}\n\\begin{document}\n\\section{A}\\label{s:one}\nX.\\footnote{see \\ref{s:one}.}\n\\textbf{in \\ref{s:one}}\n\\end{document}\n",
+        cfg,
+    );
+    let sites = rename(&fixture, 3, 19, "s:one", false, "s:two").expect("a rename");
+    assert_eq!(sites, ["3:19=s:two", "4:22=s:two", "5:17=s:two"]);
+}

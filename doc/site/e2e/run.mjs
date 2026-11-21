@@ -17,9 +17,11 @@ import { crash } from './kinds/crash.mjs';
 import { gutter, close, auto, dated, hoverlate, heldback, fixfile, gutterkey, typeundo } from './kinds/editor.mjs';
 import { scratch } from './kinds/scratch.mjs';
 import { insert } from './kinds/insert.mjs';
+import { robust } from './kinds/robust.mjs';
 import { fuzz } from './fuzz/fuzz.mjs';
 import { sync, kernelCut } from './kinds/sync.mjs';
 import { soak } from './kinds/soak.mjs';
+import { draw } from './kinds/draw.mjs';
 import { SCENARIOS, TIERS } from './scenarios/index.mjs';
 
 const ROOT = fileURLToPath(new URL('../../../', import.meta.url));
@@ -33,7 +35,7 @@ const OUT = arg('out', join(ROOT, 'target/e2e', `${tier}-${stamp}`));
 mkdirSync(OUT, { recursive: true });
 ctx.out = OUT;
 const KNOWN = JSON.parse(readFileSync(new URL('known-red.json', import.meta.url), 'utf8'));
-const RUN = { ...KINDS, foot, echo, paper, follow, tikz, refactor, crash, gutter, close, auto, dated, hoverlate, heldback, fixfile, gutterkey, typeundo, scratch, insert, fuzz, sync, soak, kernelCut };
+const RUN = { ...KINDS, foot, echo, paper, follow, tikz, refactor, crash, gutter, close, auto, dated, hoverlate, heldback, fixfile, gutterkey, typeundo, scratch, insert, robust, fuzz, sync, soak, kernelCut, draw };
 
 const picked = SCENARIOS.filter((sc) => only.length ? only.includes(sc.name)
   : (!areas.length || areas.includes(sc.area)) && (tier === 'full' || TIERS[tier].includes(sc.name)));

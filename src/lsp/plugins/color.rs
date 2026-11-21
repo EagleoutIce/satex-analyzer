@@ -439,7 +439,10 @@ pub(super) fn presentations(
             .flatten()
             .collect(),
     };
-    let Ok((edits, _)) = snapshot::printed(analysis, doc, &nodes) else { return Vec::new() };
+    let Ok((edits, _)) = snapshot::printed(analysis, doc, super::super::type_at::file_of(analysis, path), &nodes)
+    else {
+        return Vec::new();
+    };
     // the presentation's own edit: the slot's node (the last) from its first edit to its end, the rest go along
     let byte = |p| doc.offset(to_pos(doc, p));
     let Some(held) = nodes.last().and_then(|n| n.range).and_then(|r| Some(byte(r.start)?..byte(r.end)?)) else {

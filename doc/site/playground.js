@@ -4288,15 +4288,32 @@
     usepackage: true,
     // the name at the cursor; with its package, the \usepackage line too, before \begin{document} when it is not there yet
     pick: (name, pkg, use) => {
-      const at = editor.position(), lines = editor.text().split('\n'), begin = lines.findIndex((l) => /\\begin\s*\{document\}/.test(l));
-      const edits = [{ range: { start: at, end: at }, newText: name }];
-      const adds = use && begin >= 0 && !editor.text().includes(use);
-      if (adds) edits.unshift({ range: { start: { line: begin, character: 0 }, end: { line: begin, character: 0 } }, newText: `${use}\n` });
-      editor.apply(edits);
+      const at = editor.position();
+      const adds = drawUses(use ? [use] : [], [{ range: { start: at, end: at }, newText: name }]);
       $('play-draw').close();
-      toast(adds ? `${name} inserted, ${use} added` : `${name} inserted`);
+      toast(adds.length ? `${name} inserted, ${use} added` : `${name} inserted`);
+    },
+    // a formula of the formula bar: inline math at the cursor (none inside math) through the snapshot printer, which
+    // loads amsmath for a matrix; its symbols' packages as a pick adds them
+    formula: async (latex, uses) => {
+      const text = editor.text(), [a, b, delims, k] = self.satexPdfEdit.mathAt(text, editor.cursor()[1], 'inline', pdfInline());
+      const body = delims.slice(0, k) + latex + delims.slice(k), range = { start: pdfPos(text, a), end: pdfPos(text, b) };
+      const node = { ...self.satexSnapshot.span(range, text.slice(a, b), body), ...(/\\begin\{pmatrix\}/.test(latex) ? { package: { name: 'amsmath', options: '' } } : {}) };
+      const ok = await pdfWrite(uri(), node, body) || editor.text() === text && (editor.apply([{ range, newText: body }]), true);
+      if (!ok) return toast('The text changed meanwhile: insert again');
+      drawUses(uses, []);
+      $('play-draw').close();
+      toast(`${latex} inserted`);
     },
   });
+  /** `edits` with the `\usepackage` lines of `uses` the text lacks, before `\begin{document}`, as one edit; the lines added. */
+  function drawUses(uses, edits) {
+    const text = editor.text(), begin = text.split('\n').findIndex((l) => /\\begin\s*\{document\}/.test(l));
+    const adds = begin < 0 ? [] : [...new Set(uses)].filter((u) => !text.includes(u));
+    if (adds.length) edits.unshift({ range: { start: { line: begin, character: 0 }, end: { line: begin, character: 0 } }, newText: adds.map((u) => `${u}\n`).join('') });
+    if (edits.length) editor.apply(edits);
+    return adds;
+  }
   $('draw-open').onclick = () => { $('play-draw').showModal(); drawPicker.load(); };
 
   // ---------------------------------------------------------------- trace: how one call expands
@@ -6160,7 +6177,12 @@
           if (data.error && !TEX) probeServer().then((up) => { if (!up) { pdfStatus.innerHTML = `needs ${GUI}`; toast('Compiling needs satex gui'); } });
         });
       }
-      if (next) compile(...next);
+      // a queued build of the very texts, settings and root this one built (a write that asked for a build while its
+      // own auto build ran) would only draw the same pages again: dropped. Any difference, or a slice, builds.
+      const files = next && !next[0] && next[2] === null && alone === null && !slice && !cached && pdfFiles((d) => d);
+      const again = files && root === (state.root ?? state.file) && dir === state.dir && sets.join('\n') === pdfSets().join('\n') && editor.text() === state.texts[state.file]
+        && Object.keys({ ...files, ...pdfSentAll }).every((k) => files[k] === pdfSentAll[k]);
+      if (next && !again) compile(...next);
     };
     if (!onServer) {
       const parser = pdfWorker;
@@ -8028,6 +8050,8 @@
     if (!r?.edits?.length) { if (r?.notes?.length || how?.say) toast(r?.notes?.length ? r.notes.join('; ') : 'The language server wrote nothing for this change'); return false; }
     editor.apply(r.edits, how);
     push();
+    // what the printer adds beside the edit: a package loaded, a repeat it offers to extract
+    if (r.notes?.length) toast(r.notes.join('; '));
     return true;
   }
   /** A build for a live edit: at once (`now`), else once edits rest for the auto-compile delay (TYPE_MS without one). */
@@ -8120,8 +8144,9 @@
     const a = tab?.cols[k - 1]?.spec?.range, b = tab?.cols[k]?.spec?.range;
     if (!a || !b || !img?.naturalWidth) return;
     const pt = (v) => v == null ? null : self.satexLayers.length(v)?.pt ?? null, at = (p) => PE.offsetAt(text, p);
-    const pad = PE.padding(text, text.lastIndexOf(`\\begin{${tab.env}}`, at(b.start)), tab.env), sep = pt(pad.now) ?? pdfCols.seps?.[pad.name];
+    const pad = PE.padding(text, text.lastIndexOf(`\\begin{${tab.env}}`, at(b.start)), tab.env), sep = pad && (pt(pad.now) ?? pdfCols.seps?.[pad.name]);
     const one = e.shiftKey && PE.gap(text, at(a.end), at(b.start));
+    if (!one && !pad) { toast(`The table has no \\end{${tab.env}}: its spacing would leak into the rest of the document`); return; }
     if (e.shiftKey && !one) { toast(`The gap before column ${k + 1} holds a rule or another @{…}: its width is not one length to drag`); return; }
     const was = one ? pt(one.now) ?? (sep == null ? null : 2 * sep) : sep;
     if (was == null) { toast(`The run gives no one value of \\${pad.name} here: set one in the column's menu first`); return; }
@@ -8700,7 +8725,7 @@
     const file = t.file ?? t.block?.file ?? state.file;
     if (!await showFile(file, { line: (t.line ?? t.block?.to ?? 1) - 1, character: 0 })) return;
     const R = self.satexRefactor, it = R.inserts.find((k) => k.kind === kind), text = editor.text();
-    const spot = R.insertSpot(text, { caret: t.caret, place: t.place, block: t.block }, !!it?.flow);
+    const spot = R.insertSpot(text, { caret: t.caret, place: t.place, block: t.block }, !!it?.flow, !!it?.wrap);
     let plan = spot && R.insertPlan(text, docTexts(), kind, spot.at, spot.mode);
     if (!plan) return toast('Nothing to insert here: click into a paragraph');
     if (!await paWrite(text, plan.edits)) return;
@@ -10785,11 +10810,12 @@
       pdfQueue(() => {
         const c = pdfCaretNow(), text = editor.text();
         if (!c) return;
-        const [a, b] = step < 0 ? [c.at - 1, c.at] : [c.at, c.at + 1];
+        // one character as the reader sees it (pdfedit.ts cluster): never into an emoji's surrogate pair
+        const to = PE.cluster(text, c.at, step < 0), [a, b] = step < 0 ? [to, c.at] : [c.at, to];
         // the caret stays where typing may go: text or math, not a key, a name or markup
-        const why = pdfWhy(text, a, b) ?? pdfWhy(text, c.at + step, c.at + step);
+        const why = pdfWhy(text, a, b) ?? pdfWhy(text, to, to);
         if (why && !/math/.test(why)) return;
-        c.at += step;
+        c.at = to;
         pdfCaretDraw();
       });
     } else if ((e.key === 'Backspace' || e.key === 'Delete') && pdfCaret.foot && !e.ctrlKey && !e.altKey) {

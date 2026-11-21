@@ -63,6 +63,7 @@ serde_json = "1"
 regex = "1"
 postcard = { version = "1.1.3", default-features = false, features = ["alloc", "use-std"] }
 rpds = { version = "1.2", features = ["serde"] }
+archery = "1.2"
 serde_yaml_ng = "0.10.0"
 terminal_size = "0.4.4"
 walkdir = "2.5.0"
@@ -123,6 +124,15 @@ inherits = "release"
 lto = false
 codegen-units = 256
 incremental = true
+
+# The edit loop (PROFILE=edit scripts/t.sh, test-tier.sh smoke|changed): `fast` without any
+# LTO. `lto = false` still runs the crate-local thin LTO, which re-optimizes most of the 256
+# codegen units after a one-line edit (359 CPU s); "off" rebuilds only the edited ones (57 CPU s).
+# The price is no inlining across units: tests run about half as long again, so the tiers stay
+# on `fast`.
+[profile.edit]
+inherits = "fast"
+lto = "off"
 
 [build-dependencies]
 cc = "1.4.7"

@@ -316,6 +316,33 @@ mod self_referential_macros {
     }
 }
 
+/// A loop that reads its text four tokens at a time, as pgf's
+/// `\pgfprocesssplitsubpath` walks a soft path up to `\pgf@stop`, over text
+/// a widened loop left unknown (`\x` is "some letters"). TeX's text is
+/// finite, so the walk meets `\stop` after a few rounds. satex reads the
+/// unknown text's first character and puts back a rest of the same kind,
+/// so every round reads three copies of that rest and never the `\stop`
+/// behind it, and no conditional is undecided to meet a loop head. The
+/// walk ran until the line budget (500M steps by default): hang.tex's
+/// 30-node `\foreach` spent 420M tokens there on an infeasible
+/// `\ifpgf@worry` arm. A rest read from unbounded unknown text must make
+/// progress, so the walk ends long before the line budget.
+#[test]
+fn a_walk_over_unknown_text_reaches_its_end_marker() {
+    let analysis = Machine::analyze(
+        "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \n\
+         \\def\\x{}\\def\\l{\\edef\\x{\\x a}\\ifnum\\pdfuniformdeviate 2=0 \\expandafter\\l\\fi}\\l\n\
+         \\def\\stop{\\stopx}\\def\\stopx{}\\def\\pre{}\n\
+         \\def\\split#1#2#3#4{\\ifx#4\\stop\\let\\next\\relax\\else\\edef\\pre{\\pre#1}\\let\\next\\split\\fi\\next#4}\n\
+         \\expandafter\\split\\x\\stop\\stop\\stop\\stop\\def\\done{}",
+        None,
+        &cfg(400_000),
+    );
+    let cut: Vec<_> = analysis.facts.diagnostics.iter().filter(|d| d.code == "line-budget-cut").collect();
+    assert!(cut.is_empty(), "the walk ran into the line budget: {} steps", analysis.steps);
+    assert!(crate::support::defined(&analysis, "done"));
+}
+
 /// satex's own marker for text it could not read is itself a fixed point:
 /// `Meaning::Unknown` on that one reserved symbol expands back to the same
 /// symbol (`Machine::unknown_token`). `\exp_after:wN`, expl3's

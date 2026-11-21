@@ -34,6 +34,8 @@ interface Req { id: number; want: Int32Array; mul: Float32Array; add: Float32Arr
 interface DrawOptions {
   root: HTMLElement; base: string; symbols: string; inForce?: () => Promise<string[][]>; pick?: (name: string, pkg: string | null, use?: string) => void;
   label?: string; usepackage?: boolean; document?: boolean;
+  /** Writes a formula of the formula bar (clean LaTeX) with the `\\usepackage` lines its symbols need; without it the bar copies. */
+  formula?: (latex: string, uses: string[]) => void;
 }
 declare global { interface Window { satexDraw: (o: DrawOptions) => Rec } }
 self.satexDraw = (
@@ -46,6 +48,7 @@ self.satexDraw = (
     label = 'Insert',
     usepackage = false,
     document: doc = true,
+    formula,
   }: DrawOptions,
 ) => {
   const esc = (s: unknown) =>
@@ -1358,7 +1361,8 @@ self.satexDraw = (
   {
     // the strokes are kept: a change of theme draws them again in its ink
     // or a symbol's glyph, set large on the pad by its "similar" button: the drawing that finds its look-alikes
-    let ink: number[][][] = [], stamp: { ch: string; bitmap?: Bitmap; family: string } | null = null;
+    type Stamp = { ch: string; bitmap?: Bitmap; family: string } | null;
+    let ink: number[][][] = [], stamp: Stamp = null;
     const paint = () => {
       pen.clearRect(0, 0, pad.width, pad.height);
       const w = pad.width, color = getComputedStyle(pad).color;
@@ -1389,13 +1393,36 @@ self.satexDraw = (
         lineJoin: 'round',
         strokeStyle: getComputedStyle(pad).color,
       });
+      // a tap is a stroke of one point, inked as a dot of the pen's width (`\cdot`, the dots of `÷`): a zero-length
+      // segment's round cap is drawn by some canvas backends only (none on an accelerated canvas)
       for (const st of ink) {
         pen.beginPath();
+        if (st.length === 1) {
+          pen.arc(st[0]![0]!, st[0]![1]!, DRAW.pen / 2, 0, 2 * Math.PI);
+          pen.fillStyle = pen.strokeStyle;
+          pen.fill();
+          continue;
+        }
         st.forEach((p, k) => (k ? pen.lineTo(p[0]!, p[1]!) : pen.moveTo(p[0]!, p[1]!)));
         pen.stroke();
       }
     };
+    // undo and redo: every stroke, clear and stamp is a step (Ctrl+Z, Ctrl+Shift+Z or Ctrl+Y on the pad's dialog)
+    type PadState = { ink: number[][][]; stamp: Stamp };
+    const back: PadState[] = [], ahead: PadState[] = [];
+    const step = () => { back.push({ ink: [...ink], stamp }); ahead.length = 0; };
+    const restore = (from: PadState[], to: PadState[]) => {
+      const st = from.pop();
+      if (!st) return;
+      to.push({ ink: [...ink], stamp });
+      ({ ink, stamp } = st);
+      last = null;
+      paint();
+      drawn = ink.length > 0 || !!stamp;
+      drawMatch();
+    };
     const clear = () => {
+      if (ink.length || stamp) step();
       ink = [];
       stamp = null;
       paint();
@@ -1407,19 +1434,24 @@ self.satexDraw = (
       attributeFilter: ['data-theme'],
     });
     matchMedia('(prefers-color-scheme: dark)').addEventListener?.('change', paint);
-    let last: number[] | null = null;
+    // one pen at a time: a second finger or a right button draws nothing
+    let last: number[] | null = null, pointer = -1;
     const at = (e: PointerEvent) => {
       const b = pad.getBoundingClientRect();
       return [(e.clientX - b.left) * pad.width / b.width, (e.clientY - b.top) * pad.height / b.height];
     };
     pad.addEventListener('pointerdown', (e) => {
+      if (last || e.button !== 0) return;
       pad.setPointerCapture(e.pointerId);
+      pointer = e.pointerId;
       last = at(e);
       drawn = true;
+      step();
       ink.push([last]);
+      paint();
     });
     pad.addEventListener('pointermove', (e) => {
-      if (!last) return;
+      if (!last || e.pointerId !== pointer) return;
       const p = at(e);
       Object.assign(pen, {
         lineWidth: DRAW.pen,
@@ -1434,11 +1466,25 @@ self.satexDraw = (
       ink.at(-1)!.push(p);
       last = p;
     });
-    pad.addEventListener('pointerup', () => {
+    // a cancelled stroke (the browser took the touch) ends as drawn so far
+    const lift = (e: PointerEvent) => {
+      if (!last || e.pointerId !== pointer) return;
       last = null;
       if (drawn) drawMatch();
-    });
+    };
+    pad.addEventListener('pointerup', lift);
+    pad.addEventListener('pointercancel', lift);
     $('draw-clear').onclick = clear;
+    $('draw-clear').insertAdjacentHTML('afterend', '<button type="button" class="pill" id="draw-undo" title="Undo the last stroke (Ctrl+Z)" aria-label="Undo the last stroke"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M5.5 3.5L2.5 6.5l3 3"/><path d="M2.5 6.5h7a3.5 3.5 0 0 1 0 7H7"/></svg></button>');
+    $('draw-undo').onclick = () => restore(back, ahead);
+    // the keys outside a text field: the search box keeps its own undo
+    root.addEventListener('keydown', (e) => {
+      const k = e.key.toLowerCase();
+      if (!(e.ctrlKey || e.metaKey) || e.altKey || (k !== 'z' && k !== 'y')) return;
+      if ((e.target as HTMLElement).matches?.('input, textarea, select, [contenteditable]:not([contenteditable=false])')) return;
+      e.preventDefault();
+      if (k === 'y' || e.shiftKey) restore(ahead, back); else restore(back, ahead);
+    });
     $('draw-search').closest('.draw-top')!.insertAdjacentHTML('afterend', '<div id="draw-hints" class="lib-kinds draw-filters" role="group" aria-label="search filters" hidden></div>');
     $('draw-search').addEventListener('input', () => {
       searchShow();
@@ -1590,6 +1636,7 @@ self.satexDraw = (
       if (alike) {
         const table = await symbolsLoad(), s = table.rows[+alike.dataset.like];
         await faceReady(table, s.font).catch(() => {});
+        step();
         ink = [];
         stamp = { ch: s.ch, bitmap: s.bitmap, family: table.fonts[s.font].family };
         paint();
@@ -1635,11 +1682,70 @@ self.satexDraw = (
       }
       const b = (e.target as HTMLElement).closest('.draw-put');
       if (!b) return;
-      pick(b.dataset.name, b.dataset.pkg, b.dataset.use ?? null);
+      // the formula bar open: the symbol goes into the formula
+      if (!formulaPut?.(b.dataset.name!, b.dataset.use ?? null)) pick(b.dataset.name, b.dataset.pkg, b.dataset.use ?? null);
       // a moment's ✓ on the button that did it
       b.classList.add('done');
       setTimeout(() => b.classList.remove('done'), 1200);
     });
+  }
+  // the formula bar (mathlayout.ts `satexMath.formula`): templates with slots, Tab to the next, a drawn symbol put in
+  // at the caret, the formula drawn as TeX sets it; Insert writes its clean LaTeX
+  let formulaPut: ((name: string, use: string | null) => boolean) | null = null;
+  const F = self.satexMath?.formula, tools = root.querySelector('.draw-tools'), box = root.querySelector('.draw-box');
+  if (F && tools && box) {
+    const KINDS: [string, string][] = [['frac', 'Fraction'], ['sup', 'Superscript'], ['sub', 'Subscript'], ['sqrt', 'Root'], ['sum', 'Sum with limits'], ['int', 'Integral with limits'], ['paren', 'Parentheses'], ['matrix', 'Matrix 2×2']];
+    tools.insertAdjacentHTML('beforeend', '<button type="button" class="pill" id="draw-formula" aria-pressed="false" title="Build a formula: templates, and drawn symbols put in" aria-label="Build a formula">∑</button>');
+    box.insertAdjacentHTML('beforebegin', `<div class="draw-formula" id="draw-f" hidden role="group" aria-label="formula">
+      <div class="draw-f-view" id="draw-f-view" aria-live="polite"></div>
+      <div class="draw-f-row"><input id="draw-f-src" class="draw-f-src" spellcheck="false" autocomplete="off" aria-label="the formula's LaTeX; Tab goes to the next empty slot" placeholder="draw a symbol, or pick a template">
+        <button type="button" class="pill primary" id="draw-f-insert">${formula ? 'Insert' : 'Copy'}</button></div>
+      <div class="draw-f-kinds">${KINDS.map(([k, t]) => `<button type="button" class="pill" data-t="${k}" title="${t}" aria-label="${t}">${F.svg(`${k === 'sup' || k === 'sub' ? '{}' : ''}${F.TEMPLATES[k]!.replace('#', '')}`)}</button>`).join('')}</div></div>`);
+    const bar = $('draw-f'), src = $<HTMLInputElement>('draw-f-src'), uses = new Set<string>();
+    const now = () => ({ src: src.value, at: src.selectionStart ?? src.value.length, to: src.selectionEnd ?? src.value.length });
+    const show = (f = now()) => {
+      if (src.value !== f.src) src.value = f.src;
+      src.setSelectionRange(f.at, f.to);
+      $('draw-f-view').innerHTML = F.svg(f.src);
+    };
+    const set = (f: { src: string; at: number; to: number }) => { show(f); src.focus(); };
+    $('draw-formula').onclick = () => {
+      bar.hidden = !bar.hidden;
+      $('draw-formula').setAttribute('aria-pressed', String(!bar.hidden));
+      if (!bar.hidden) set(now());
+    };
+    formulaPut = (name, use) => {
+      if (bar.hidden) return false;
+      if (use) uses.add(use);
+      set(F.put(now(), name));
+      return true;
+    };
+    bar.addEventListener('click', (e) => {
+      const k = (e.target as HTMLElement).closest<HTMLElement>('[data-t]')?.dataset.t;
+      if (k) set(F.wrap(now(), k));
+    });
+    src.addEventListener('input', () => show());
+    // Tab: the next empty slot, out of a group; at the end it leaves the field as Tab does
+    src.addEventListener('keydown', (e) => {
+      if (e.key !== 'Tab' || e.shiftKey) return;
+      const f = now(), g = F.next(f);
+      if (g.at === f.at && f.at === f.to) return;
+      e.preventDefault();
+      set(g);
+    });
+    $('draw-f-insert').onclick = async () => {
+      const latex = F.clean(src.value);
+      if (!latex) return;
+      if (formula) {
+        formula(latex, [...uses]);
+        set({ src: '', at: 0, to: 0 });
+        uses.clear();
+      } else {
+        await navigator.clipboard?.writeText(latex).catch(() => {});
+        $('draw-f-insert').classList.add('done');
+        setTimeout(() => $('draw-f-insert').classList.remove('done'), 1200);
+      }
+    };
   }
   symbolsLoad();
   const tune = (cfg: Partial<Tune>) => {

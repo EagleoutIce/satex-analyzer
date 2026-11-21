@@ -263,6 +263,31 @@ fn undefined_control_sequences_are_reported() {
     );
 }
 
+/// A name one arm of an undecided conditional leaves undefined (`\let` to
+/// `\undefined`, or defined on the other arm only) is "Undefined control
+/// sequence" where it runs on that arm's runs (pdftex, seeds 1 and 3). The
+/// join keeps the defined meaning and the undefined one: a use is a possible
+/// error, a warning; a test that asks first (`\ifx`, `\ifdefined`) parts the
+/// arms and finds nothing. Bug pinned: the join ran the name with its defined
+/// meaning and reported nothing.
+#[test]
+fn a_name_undefined_on_one_arm_is_a_possible_error_where_it_runs() {
+    let undefined = |source: &str| -> Vec<String> {
+        let lints = satex::linter::lint(&analyze(source));
+        let found = lints.iter().filter(|l| l["code"] == "undefined-control-sequence");
+        found.map(|l| l["severity"].as_str().unwrap_or_default().to_string()).collect()
+    };
+    let arms = [r"\let\x\relax\else\let\x\undefined", r"\def\x{a}"];
+    for arm in arms {
+        let split = format!(r"\ifnum\pdfuniformdeviate2=0 {arm}\fi");
+        assert_eq!(undefined(&format!(r"{split} \x")), ["warning"], "{arm}");
+        assert_eq!(
+            undefined(&format!(r"{split} \ifx\x\undefined\else\x\fi \ifdefined\x\x\fi \ifcsname x\endcsname\x\fi")),
+            Vec::<String>::new()
+        );
+    }
+}
+
 #[test]
 fn catcode_changes_take_effect_immediately() {
     let analysis = analyze("\\catcode`\\@=11 \\def\\a@b{x}");
@@ -703,6 +728,21 @@ fn a_terminal_read_in_nonstop_mode_ends_the_job() {
     assert!(definition(&analysis, "after").is_none());
     let analysis = analyze(r"\errorstopmode\read-1 to\x \def\after{}");
     assert!(definition(&analysis, "after").is_some());
+}
+
+/// A fatal error is a certain finding: TeX ends the job at a terminal read
+/// in nonstop mode (tex.web § 484), in every run. On one arm of an undecided
+/// conditional it is a possible one. Bug pinned: the stop was only a
+/// diagnostic row, and the linter reported nothing about a run that it
+/// said reached its end.
+#[test]
+fn a_fatal_terminal_read_is_a_certain_error_and_on_an_arm_a_possible_one() {
+    let fatal = |source: &str| {
+        let found = problems(&analyze(source));
+        found.into_iter().filter(|p| p.4.contains("cannot \\read from terminal")).map(|p| p.1).collect::<Vec<_>>()
+    };
+    assert_eq!(fatal("\\nonstopmode\\read-1 to\\x\n"), ["error"]);
+    assert_eq!(fatal("\\nonstopmode\\ifnum\\pdfuniformdeviate2=0 \\read-1 to\\x \\fi\n"), ["warning"]);
 }
 
 #[test]
@@ -2866,6 +2906,23 @@ fn a_summarized_loop_keeps_the_bounds_no_pass_moved() {
     assert!(!defined.contains(&"neg".to_string()), "{defined:?}");
 }
 
+/// Intuition: `\sep 1` after `\sep` and a number of 11000..11999 is met at once: every
+/// value is spelled with a leading `1`, so TeX's match is decided and the argument is `x`.
+/// Bug pinned (H5, l3fp's `\__fp_exp_after_normal:Nwwwww` over `\int_value:w 1 #4`): the
+/// read forked on whether the text begins with `1`. The arm where it does not is no run, and
+/// once the site's forks were spent the read took that arm alone: it read on past the real
+/// end, ran away, and every value of `\fp_eval:n{\a*\b}` was lost.
+#[test]
+fn digits_every_value_of_which_begins_a_delimiter_end_the_argument_there() {
+    let analysis = analyze(
+        r"\count1=\pdfuniformdeviate 1000 \advance\count1 by 11000 \def\a#1\sep 1#2\sep{\xdef\got{#1/#2}}
+          \edef\b{\noexpand\a x\noexpand\sep\the\count1 \noexpand\sep}\b",
+    );
+    assert_eq!(analysis.peak_paths, 1, "no path parts on a decided match");
+    assert!(diagnosed(&analysis, "raised-error").is_empty(), "{:?}", diagnosed(&analysis, "raised-error"));
+    assert!(body(&analysis, "got").starts_with("x/"), "{}", body(&analysis, "got"));
+}
+
 /// Typed text that cannot hold a whole delimiter (other characters, and
 /// `|\End` names a control sequence) meets it only where it ends in its
 /// start: the argument never ends inside the text, so `\End` is not left
@@ -3445,4 +3502,98 @@ fn digits_then_typed_digits_of_either_sign_may_be_negative() {
     );
     assert!(crate::support::defined(&analysis, "after"));
     assert!(crate::support::maybe_defined(&analysis, "negative"), "1\\x may be below 0");
+}
+
+/// A `\def` or `\let` to a name of unknown text is assumed to make a fresh
+/// name (`unknown-name-defines-fresh`, `unknown-name`). That assumption
+/// approximates the path: in some runs the random name is `xi` (or `fooxi`),
+/// the `\errmessage` macro is replaced, and TeX raises nothing (pdftex with
+/// `\pdfsetrandomseed 18523` and range 5000 shows it). So `boom` is at most a
+/// possible error. Pins: an `\errmessage` occurrence takes its certainty
+/// from `exact()` alone, which ignores the path's `approximated` mark, so it
+/// was reported as a certain `raised-error`.
+#[test]
+fn an_error_after_a_definition_of_an_unknown_name_is_only_possible() {
+    for (what, source) in [
+        (
+            "def",
+            "\\def\\xi{\\errmessage{boom}}\n\\expandafter\\def\\csname\\romannumeral\\pdfuniformdeviate 12\\endcsname{}\n\\xi\n",
+        ),
+        (
+            "prefix",
+            "\\def\\fooxi{\\errmessage{boom}}\n\\expandafter\\def\\csname foo\\romannumeral\\pdfuniformdeviate 12\\endcsname{}\n\\fooxi\n",
+        ),
+        (
+            "let",
+            "\\def\\xi{\\errmessage{boom}}\n\\expandafter\\let\\csname\\romannumeral\\pdfuniformdeviate 12\\endcsname\\relax\n\\xi\n",
+        ),
+    ] {
+        let found = problems(&analyze(source));
+        let certain: Vec<_> = found.iter().filter(|p| p.0 == "raised-error" && p.1 == "error").collect();
+        assert!(certain.is_empty(), "{what}: a run may redefine the macro, so boom is not certain: {found:?}");
+    }
+}
+
+/// `\csname foo\romannumeral<0..11>\endcsname` may spell `\fooxi`, a macro
+/// that raises an error, so after the definition `\fooxi` means its old body
+/// or the empty one: the error is possible, never certain. And a macro the
+/// text cannot spell (`\barxi`) keeps its body: its error stays certain.
+/// Pins: a definition of a name with a known prefix and an unknown rest
+/// only marked undefined names as maybe defined. A bound name it may spell
+/// kept its one meaning, so its error was reported as certain.
+#[test]
+fn a_prefixed_unknown_name_may_redefine_a_name_it_spells() {
+    let define = "\\expandafter\\def\\csname foo\\romannumeral\\pdfuniformdeviate 12\\endcsname{}\n";
+    let certain = |source: String| {
+        let found = problems(&analyze(&source));
+        found.iter().any(|p| p.0 == "raised-error" && p.1 == "error" && p.4.contains("boom"))
+    };
+    assert!(!certain(format!("\\def\\fooxi{{\\errmessage{{boom}}}}\n{define}\\fooxi\n")));
+    assert!(certain(format!("\\def\\barxi{{\\errmessage{{boom}}}}\n{define}\\barxi\n")));
+}
+
+/// A name of wholly unknown text that may spell more names with a meaning
+/// than `limits.text_names` touches none of them and says so: the row
+/// `unknown-name-defines-fresh` names the assumption. Pins: the weak update
+/// of every name the text may spell must stay bounded, and past the bound
+/// the assumption must be reported, never made silently.
+#[test]
+fn an_unknown_name_past_the_bound_is_assumed_fresh_and_says_so() {
+    let source = "\\def\\xi{\\errmessage{boom}}\n\\expandafter\\let\\csname\\romannumeral\\pdfuniformdeviate 12\\endcsname\\relax\n";
+    let rows = analyze(source).facts.diagnostics;
+    assert!(rows.iter().any(|d| d.code == "unknown-name-defines-fresh"), "{rows:?}");
+}
+
+/// A `\write` to a stream drawn from 0..3 never reaches the shell, and a
+/// `\write18` on one arm of an undecided `\if` runs in only some runs.
+/// Neither is a certain shell escape. Pins: the unpinned stream records a
+/// `ShellEscape` occurrence, and the `shell-escape` rule reports every such
+/// occurrence as an error without looking at `certain`.
+#[test]
+fn a_shell_escape_no_run_or_only_some_runs_make_is_no_certain_error() {
+    for source in
+        ["\\immediate\\write\\pdfuniformdeviate 4{b}\n", "\\ifnum\\pdfuniformdeviate2=0 \\immediate\\write18{b}\\fi\n"]
+    {
+        let found = problems(&analyze(source));
+        let certain: Vec<_> = found.iter().filter(|p| p.0 == "shell-escape" && p.1 == "error").collect();
+        assert!(certain.is_empty(), "{source}: {found:?}");
+    }
+}
+
+/// `\the` prints a dimension so that reading it back gives the same
+/// dimension (tex.web § 103, print_scaled is exact). A dimension of
+/// whole points in 0..N-1 printed and read back is never past N-1 pt.
+/// Pins the printed dimen's unknown fraction: `\the` of an interval is
+/// its integer part then any five digits, so the top value plus any
+/// fraction leaves the High arm live (pgfmath results go through this:
+/// documents::pgfmath_signed_random_count_plus_a_constant_stays_in_range).
+#[test]
+fn a_printed_interval_dimen_read_back_keeps_its_bound() {
+    const SPAN: i64 = 16000;
+    let top = SPAN - 1;
+    let analysis = analyze(&format!(
+        r"\dimen0=\pdfuniformdeviate {SPAN}pt \edef\x{{\the\dimen0}}\ifdim\x>{top}pt \def\high{{}}\else\def\within{{}}\fi"
+    ));
+    assert!(!crate::support::undefined(&analysis, "within"), "the true arm is live");
+    assert!(crate::support::undefined(&analysis, "high"), "\\the\\dimen0 read back may pass {top}pt");
 }

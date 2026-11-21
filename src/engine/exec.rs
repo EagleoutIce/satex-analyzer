@@ -413,7 +413,7 @@ impl Machine<'_> {
             P::FontDef => self.font_def(by, span),
             P::Write => self.write_stream(span),
             P::Expr(kind) => {
-                let value = self.scan_expr(kind);
+                let value = self.scan_expr(kind, span);
                 let tokens =
                     match value {
                         Value::Num { quantity: crate::engine::value::Quantity::Int, num } => self.digits_in(num, span),
@@ -539,7 +539,8 @@ impl Machine<'_> {
                     crate::analysis::observe::align(self, crate::analysis::facts::Align::Break);
                 }
                 // The item before it, where the list's tail is followed.
-                let before = self.natural.map_or(crate::engine::mode::Last::UNKNOWN, |n| n.tail[0]);
+                let before =
+                    self.natural.map_or([crate::engine::mode::Last::UNKNOWN; crate::engine::mode::TAIL], |n| n.tail);
                 self.append_item(crate::engine::mode::Item::Penalty(penalty));
                 // tex.web §§ 1005, 1012: a forced break on the main vertical
                 // list ejects the page, which is then empty.
@@ -1090,7 +1091,7 @@ impl Machine<'_> {
                 if kind == TextOf::Meaning
                     && self.read_noexpanded(token)
                     && let Some(sym) = self.active_cs(token).or(token.cs())
-                    && self.expandable_meaning(&self.env.meaning(sym))
+                    && self.relax_when_noexpanded(&self.env.meaning(sym))
                 {
                     let text = format!("{}relax", self.escape_char().map(String::from).unwrap_or_default());
                     let tokens = self.text_tokens(&text, span);
@@ -2030,6 +2031,8 @@ impl Machine<'_> {
             let decided = match &range {
                 Some(num) if num.hi < 0 => Some(-1),
                 Some(num) if num.lo == num.hi => Some(num.lo),
+                // All past the last `\or`: the `\else` (tex.web § 509), as `\@alph` of 27..29.
+                Some(num) if num.lo > 0 && self.case_arms().is_some_and(|ors| num.lo > ors as i64) => Some(num.lo),
                 _ => None,
             };
             return match selector.or(decided) {
@@ -3457,7 +3460,7 @@ impl Machine<'_> {
                         _ => Some(true),
                     });
                 }
-                self.decide_defined(sym?)
+                self.decide_defined(sym?, t.span)
             }
             Cond::Csname => {
                 let at = self.peek().map(|t| t.span).unwrap_or_default();
@@ -3466,7 +3469,7 @@ impl Machine<'_> {
                 let sym = self.intern(&name);
                 self.last_named_cs = Some(sym);
                 operands.push(sym);
-                self.decide_defined(sym)
+                self.decide_defined(sym, at)
             }
             Cond::Chars | Cond::Catcodes => {
                 // Operands that may be several tokens are decided pair by
@@ -3500,11 +3503,17 @@ impl Machine<'_> {
 
     /// Whether `sym` is defined, for `\ifdefined` and `\ifcsname`: a name
     /// a join left one of several meanings is defined when every one of
-    /// them is, undefined when none is; `None` when that differs.
-    fn decide_defined(&mut self, sym: Sym) -> Option<bool> {
+    /// them is, undefined when none is; where that differs, a path each
+    /// with the name narrowed to its answer; `None` where no path may part.
+    fn decide_defined(&mut self, sym: Sym, span: Span) -> Option<bool> {
         if let Some(may) = self.env.slot(sym).and_then(|b| b.may.clone()) {
             self.env.note_read(sym, crate::engine::env::ReadKind::Defined);
             let defined = alike(may.iter().map(|m| !matches!(m, Meaning::Undefined)));
+            let defined = defined.or_else(|| {
+                let split = !self.may_be_defined(sym)
+                    && self.split_meaning_by(sym, span, |_, m| Some(!matches!(m, Meaning::Undefined)));
+                split.then(|| self.env.is_defined(sym))
+            });
             return defined.filter(|defined| *defined || !self.may_be_defined(sym));
         }
         Some(self.env.is_defined(sym)).filter(|defined| *defined || !self.may_be_defined(sym))
@@ -3524,7 +3533,7 @@ impl Machine<'_> {
             },
             meaning => meaning,
         };
-        if self.read_noexpanded(token) && self.expandable_meaning(&meaning) {
+        if self.read_noexpanded(token) && self.relax_when_noexpanded(&meaning) {
             return Meaning::Primitive(Primitive::DontExpand);
         }
         meaning
@@ -3763,7 +3772,7 @@ impl Machine<'_> {
             // a join left it one of a few exact values, those (the set
             // lift), to the test that reads it, as a register does.
             Some(Primitive::Expr(kind)) => {
-                let value = self.scan_expr(kind);
+                let value = self.scan_expr(kind, span);
                 let from = self.abs_from.take();
                 let read = self.read_abstract(value);
                 self.abs_from = from.filter(|_| self.abs.is_some());
@@ -4493,10 +4502,24 @@ impl Machine<'_> {
             RegKind::Skip | RegKind::MuSkip => {
                 let mu = kind == RegKind::MuSkip;
                 let result = match op {
-                    Arith::Advance => match (glue_of(&current), self.scan_glue(mu)) {
-                        (Some(a), Some(b)) => Some(add_glue(a, b)),
-                        _ => None,
-                    },
+                    // Glue known within a hull advances within one (the sum of two exact
+                    // glues is exact).
+                    Arith::Advance => {
+                        let by = self.scan_glue_hull(mu);
+                        let hull = match &current {
+                            Value::Glue(g) | Value::MuGlue(g) => Some(value::GlueHull::exact(g)),
+                            Value::GlueNum { hull, .. } => Some(**hull),
+                            _ => None,
+                        };
+                        match (glue_of(&current), by.glue()) {
+                            (Some(a), Some(b)) => Some(add_glue(a, b)),
+                            _ => {
+                                let value = hull.map_or(Value::Unknown, |h| h.add(&by).value(mu));
+                                let global = self.take_global();
+                                return self.assign_from_old(via, target, value::trap_zero_glue(value), global, span);
+                            }
+                        }
+                    }
                     _ => match (glue_of(&current), self.scan_number()) {
                         (Some(a), Some(n)) => scale_glue(a, n, op).or(Some(a)),
                         _ => None,
@@ -5072,8 +5095,10 @@ impl Machine<'_> {
                 "\\write to a stream satex could not pin down. The shell and every open file may get it".into(),
             );
             let label = Some("an unknown stream".to_string());
-            self.occurrence(OccKind::ShellEscape, text.clone(), label.clone(), span);
-            self.occurrence(OccKind::Write, text, label, span);
+            self.occurrence(OccKind::Write, text.clone(), label.clone(), span);
+            // Only a run that draws stream 18 reaches the shell.
+            let context = crate::analysis::observe::OccContext { certain: false, ..self.occurrence_context() };
+            self.occurrence_in(OccKind::ShellEscape, text, label, span, &context);
             return;
         };
         // tex.web § 1370: a stream not open writes to terminal and log. That is a
@@ -5218,7 +5243,13 @@ impl Machine<'_> {
     pub(crate) fn read_file_name_quoted(&mut self) -> (String, bool) {
         self.skip_spaces();
         match self.peek() {
-            Some(t) if t.is_cat(Catcode::Begin) => (self.read_text(), false),
+            // web2c's `scan_file_name_braced` (tex.ch): a braced name expands as `\edef`
+            // does, primitives too (`\openout\w{\jobname.mmz}`, memoize.sty).
+            Some(t) if t.is_cat(Catcode::Begin) => {
+                let raw = self.read_undelimited();
+                let expanded = self.expand_tokens(Rc::from(raw));
+                (self.text_of(&expanded), false)
+            }
             _ => {
                 // tex.web § 526: scanned with `get_x_token`, so `\@@input\jobname.aux`
                 // names the job. What the gullet cannot remove ends the name and stays.
@@ -5573,6 +5604,8 @@ impl Machine<'_> {
                 // Every member erred: TeX's error on every run.
                 if out.is_empty() {
                     self.diagnose(Severity::Warning, "arithmetic-overflow", span, "Arithmetic overflow".into());
+                } else {
+                    self.possible_tex_error("Arithmetic overflow", span);
                 }
                 for &x in xs {
                     if !out.contains(&x) {
@@ -5616,7 +5649,10 @@ impl Machine<'_> {
             num
         };
         let num = match num {
-            Some(num) if err => num.join(&current),
+            Some(num) if err => {
+                self.possible_tex_error("Arithmetic overflow", span);
+                num.join(&current)
+            }
             Some(num) => num,
             None => {
                 self.diagnose(Severity::Warning, "arithmetic-overflow", span, "Arithmetic overflow".into());

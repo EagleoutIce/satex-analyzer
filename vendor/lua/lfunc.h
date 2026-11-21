@@ -35,6 +35,7 @@
 struct UpVal {
   TValue *v;  /* points to stack or to its own value */
   lu_mem refcount;  /* reference counter */
+  unsigned int satex_epoch;  /* satex: the epoch it was made in */
   union {
     struct {  /* (when open) */
       UpVal *next;  /* linked list */

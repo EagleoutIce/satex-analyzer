@@ -188,6 +188,11 @@ fn unused_package(report: &mut Report) {
     let consumed = consumed_names(analysis, &files);
     let mut bound: BTreeMap<Sym, BTreeSet<Sym>> = BTreeMap::new();
     let mut acts: BTreeSet<Sym> = BTreeSet::new();
+    // which packages' loads read each file, looked up once per binding
+    let mut readers: crate::fixed::HashMap<crate::engine::tex::FileId, Vec<Sym>> = crate::fixed::HashMap::default();
+    for (package, read) in &files {
+        read.iter().for_each(|f| readers.entry(*f).or_default().push(*package));
+    }
     for sym in analysis.env.bound() {
         let Some(binding) = analysis.env.slot(sym) else { continue };
         let Some(file) = binding.defs.last().and_then(|&n| analysis.graph.vertex(n)).map(|v| v.span.file) else {
@@ -196,7 +201,7 @@ fn unused_package(report: &mut Report) {
         let format = analysis.kernel.as_ref().and_then(|k| k.slot(sym));
         let changed = format.is_none_or(|f| f.meaning != binding.meaning || f.value != binding.value);
         let parameter = matches!(binding.meaning.prim(), Some(p) if p.is_parameter());
-        for package in files.iter().filter(|(_, f)| f.contains(&file)).map(|(p, _)| *p) {
+        for &package in readers.get(&file).into_iter().flatten() {
             match (changed, parameter) {
                 (true, true) => _ = acts.insert(package),
                 (true, false) if analysis.env.is_defined(sym) => _ = bound.entry(package).or_default().insert(sym),
@@ -256,11 +261,12 @@ fn consumed_names(
     packages: &BTreeMap<Sym, BTreeSet<crate::engine::tex::FileId>>,
 ) -> crate::fixed::HashSet<Sym> {
     // the calls the document writes itself, not those its macros and environments make
+    let loads: crate::fixed::HashSet<Span> = analysis.facts.loads.iter().map(|l| l.span).collect();
     let own = |e: &&crate::analysis::facts::Expansion| {
         e.within.is_none()
             && crate::queries::query::origin(analysis, e.span.file) == "document"
             && e.span.line > 0
-            && !analysis.facts.loads.iter().any(|l| l.span == e.span)
+            && !loads.contains(&e.span)
     };
     let document = |kind| analysis.facts.occurrences.iter().find(|o| o.kind == kind && o.key == "document");
     let begun = document(crate::engine::builtins::OccKind::BeginEnvironment);
@@ -282,8 +288,10 @@ fn consumed_names(
         }
     }
     let called = (0..graph.nodes.len()).filter(|&i| reached[i]).map(|i| graph.nodes[i]);
+    let read_by_packages: crate::fixed::HashSet<crate::engine::tex::FileId> =
+        packages.values().flatten().copied().collect();
     let outside = |from: crate::engine::env::NodeId| {
-        analysis.graph.vertex(from).is_some_and(|v| packages.values().all(|f| !f.contains(&v.span.file)))
+        analysis.graph.vertex(from).is_some_and(|v| !read_by_packages.contains(&v.span.file))
     };
     let register = |sym: Sym| matches!(analysis.env.meaning(sym), crate::engine::tex::Meaning::Register(..));
     let read =

@@ -4418,7 +4418,7 @@ fn tables_and_figures_open_dialogs_that_write_them_back() {
     let lenses = ask("textDocument/codeLens", json!({ "textDocument": { "uri": uri } }));
     let lenses: Vec<(u64, &str)> = (lenses.as_array().unwrap().iter())
         .map(|l| (l["range"]["start"]["line"].as_u64().unwrap(), l["command"]["title"].as_str().unwrap()))
-        .filter(|(_, t)| !t.starts_with("Page layout"))
+        .filter(|(_, t)| !t.starts_with("Page layout") && !t.starts_with("Font and size"))
         .collect::<Vec<_>>()
         .into_iter()
         .map(|(line, t)| (line, if t.contains("table") { "table" } else { "image" }))
@@ -4516,8 +4516,12 @@ fn tables_and_figures_open_dialogs_that_write_them_back() {
 #[test]
 fn switched_off_dialog_plugins_offer_nothing() {
     let text = "\\documentclass{article}\n\\usepackage{graphicx}\n\\begin{document}\n\\begin{tabular}{l}\na \\\\\n\\end{tabular}\n\\includegraphics{example-image}\n\\end{document}\n";
-    let off =
-        ["type_plugins.table.enabled=false", "type_plugins.image.enabled=false", "type_plugins.page.enabled=false"];
+    let off = [
+        "type_plugins.table.enabled=false",
+        "type_plugins.image.enabled=false",
+        "type_plugins.page.enabled=false",
+        "type_plugins.font.enabled=false",
+    ];
     let (mut server, uri, dir) = open_set("dialogs-off", text, &off);
     let id = server.request("textDocument/codeLens", json!({ "textDocument": { "uri": uri } }));
     assert_eq!(server.response(id)["result"], json!([]));
@@ -4865,6 +4869,20 @@ fn tikz_plugin_shows_the_runs_nodes() {
     std::fs::remove_dir_all(dir).ok();
 }
 
+/// The drawing's run facts carry the document's text macros: a node labelled `{\net}` shows
+/// "Grosse-Net" on the canvas, not an empty box (the canvas dropped every command it did not know).
+#[test]
+fn tikz_plugin_sends_the_documents_text_macros() {
+    let text = "\\documentclass{article}\n\\usepackage{tikz}\n\\newcommand{\\net}{Grosse-Net}\n\\begin{document}\n\\begin{tikzpicture}\n  \\node[draw] (a) at (0,0) {\\net};\n\\end{tikzpicture}\n\\end{document}\n";
+    let (mut server, uri, dir) = open_set("tikz-macros", text, &[]);
+    let _ = at(&mut server, &uri, "textDocument/hover", 5, 3);
+    let views = at(&mut server, &uri, "satex/view", 5, 3);
+    let draw = &views.as_array().unwrap().iter().find(|v| v["plugin"] == "tikz").expect("a drawing")["sections"][0];
+    assert_eq!(draw["run"]["macros"]["net"], "Grosse-Net", "{}", draw["run"]);
+    server.shutdown();
+    std::fs::remove_dir_all(dir).ok();
+}
+
 /// Nodes placed relative to others (`right of=`, `right=of`): the run's centers and sizes for
 /// each, the picture's options for the canvas (`every node/.style`, `node distance`).
 #[test]
@@ -5079,7 +5097,12 @@ fn tikz_plugin_new_drawing_and_off() {
     let (mut server, uri, dir) = open_set(
         "tikz-off",
         PICTURE,
-        &["type_plugins.tikz.enabled=false", "type_plugins.page.enabled=false", "type_plugins.history.enabled=false"],
+        &[
+            "type_plugins.tikz.enabled=false",
+            "type_plugins.page.enabled=false",
+            "type_plugins.font.enabled=false",
+            "type_plugins.history.enabled=false",
+        ],
     );
     let _ = at(&mut server, &uri, "textDocument/hover", 4, 3);
     assert_eq!(at(&mut server, &uri, "satex/view", 5, 3), json!([]));
@@ -7303,4 +7326,459 @@ fn completion_and_hover_speak_latex_not_kernel_internals() {
     assert!(hover.contains("font encoding") && !hover.contains("-cmd"), "{hover}");
     server.shutdown();
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The font view of a section `title` at the `\documentclass` line.
+fn font_section(server: &mut Server, uri: &str, title: &str) -> Value {
+    let views = at(server, uri, "satex/view", 0, 1);
+    let view = views.as_array().unwrap().iter().find(|v| v["plugin"] == "font").expect("a font view").clone();
+    view["sections"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|s| s["title"] == title)
+        .unwrap_or_else(|| panic!("{view}"))
+        .clone()
+}
+
+/// The item `title` of a font view section, written into `text`.
+fn font_pick(text: &str, uri: &str, section: &Value, title: &str) -> String {
+    let item = section["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|i| i["title"] == title)
+        .unwrap_or_else(|| panic!("{section}"));
+    applied(text, uri, &json!({ "changes": { uri: item["edits"] } }), &[])
+}
+
+/// The font view marks what the run set, not what a regex finds: 11pt from `\f@size` (10.95)
+/// and Pagella from the package the run loaded. A new font replaces the old one's load in its
+/// place and adds the T1 encoding pdfLaTeX fonts want; a size rewrites the class's option.
+/// Pins the base size and font being read from the run and written through the printer.
+#[test]
+fn font_view_reads_the_run_and_writes_packages() {
+    let text = "\\documentclass[11pt]{article}\n\\usepackage{tgpagella}\n\\begin{document}\nText\n\\end{document}\n";
+    let (mut server, uri, dir) = open_set("font-pdf", text, &[]);
+    let _ = at(&mut server, &uri, "textDocument/hover", 3, 1);
+    let sizes = font_section(&mut server, &uri, "Base size");
+    let on: Vec<&Value> =
+        sizes["items"].as_array().unwrap().iter().filter(|i| i["on"] == true).map(|i| &i["title"]).collect();
+    assert_eq!(on, [&json!("11pt")], "{sizes}");
+    assert!(font_pick(text, &uri, &sizes, "12pt").starts_with("\\documentclass[12pt]{article}\n"));
+    let fonts = font_section(&mut server, &uri, "Font");
+    let on: Vec<&Value> =
+        fonts["items"].as_array().unwrap().iter().filter(|i| i["on"] == true).map(|i| &i["title"]).collect();
+    assert_eq!(on, [&json!("TeX Gyre Pagella")], "{fonts}");
+    let out = font_pick(text, &uri, &fonts, "Libertinus");
+    assert!(out.contains("\\usepackage{libertinus}\n\\usepackage[T1]{fontenc}\n\\begin{document}"), "{out}");
+    assert!(!out.contains("tgpagella"), "{out}");
+    // a sans main font: its package and the default family
+    let out = font_pick(text, &uri, &fonts, "TeX Gyre Heros");
+    assert!(
+        out.contains("\\usepackage{tgheros}") && out.contains("\\renewcommand{\\familydefault}{\\sfdefault}"),
+        "{out}"
+    );
+    // the same choices as code actions on the class line, the current ones left out
+    let actions = at(&mut server, &uri, "textDocument/codeAction", 0, 1);
+    let titles: Vec<&str> = actions.as_array().unwrap().iter().filter_map(|a| a["title"].as_str()).collect();
+    assert!(titles.contains(&"Font: Libertinus") && titles.contains(&"Base size: 10pt"), "{titles:?}");
+    assert!(!titles.contains(&"Base size: 11pt"), "{titles:?}");
+    server.shutdown();
+    std::fs::remove_dir_all(dir).ok();
+}
+
+/// KOMA-Script takes the size as `fontsize=`, LuaLaTeX a font as fontspec's `\setmainfont`: the
+/// current font is the run's main family (`LibertinusSerif(0)`), the new one edits that call.
+/// `enabled: false` takes lens and view away.
+#[test]
+fn font_view_koma_and_fontspec() {
+    let text = "% !TeX program = lualatex\n\\documentclass{scrartcl}\n\\usepackage{fontspec}\n\\setmainfont{Libertinus Serif}\n\\begin{document}\nText\n\\end{document}\n";
+    let (mut server, uri, dir) = open_set("font-lua", text, &[]);
+    let _ = at(&mut server, &uri, "textDocument/hover", 5, 1);
+    let views = at(&mut server, &uri, "satex/view", 1, 1);
+    let view = views.as_array().unwrap().iter().find(|v| v["plugin"] == "font").expect("a font view").clone();
+    let section = |t: &str| view["sections"].as_array().unwrap().iter().find(|s| s["title"] == t).unwrap().clone();
+    let (sizes, fonts) = (section("Base size"), section("Font"));
+    let on = |s: &Value| s["items"].as_array().unwrap().iter().find(|i| i["on"] == true).map(|i| i["title"].clone());
+    assert_eq!(on(&fonts), Some(json!("Libertinus")), "{fonts}");
+    assert_eq!(on(&sizes), Some(json!("11pt")), "KOMA-Script's default: {sizes}");
+    assert!(font_pick(text, &uri, &sizes, "12pt").contains("\\documentclass[fontsize=12pt]{scrartcl}"));
+    let out = font_pick(text, &uri, &fonts, "TeX Gyre Pagella");
+    assert!(out.contains("\\setmainfont{TeX Gyre Pagella}\n") && !out.contains("Libertinus"), "{out}");
+    server.shutdown();
+    std::fs::remove_dir_all(dir).ok();
+    let (mut server, uri, dir) = open_set("font-off", text, &["type_plugins.font.enabled=false"]);
+    let _ = at(&mut server, &uri, "textDocument/hover", 5, 1);
+    let views = at(&mut server, &uri, "satex/view", 1, 1);
+    assert!(!views.as_array().unwrap().iter().any(|v| v["plugin"] == "font"), "{views}");
+    let id = server.request("textDocument/codeLens", json!({ "textDocument": { "uri": uri } }));
+    assert!(!server.response(id)["result"].to_string().contains("Font and size"));
+    server.shutdown();
+    std::fs::remove_dir_all(dir).ok();
+}
+
+/// What the printer writes reuses the document's own commands, decided by run facts: an
+/// inserted `TinyNet`, the whole body of `\model`, becomes `\model` only where plain text leads
+/// back to a character the run typeset as word prose (a sentence, `\textbf`'s argument). It stays
+/// in verbatim (`\verb`, `verbatim`), a URL (typewriter), math, a comment, an argument the run
+/// never typeset (`\label`, a command dropping its argument), and where it already stood (only
+/// inserted text changes). Pins the source-shape scan that rewrote all of these.
+#[test]
+fn printer_writes_the_documents_macros() {
+    let lines = [
+        "We use Old here.",
+        "\\textbf{Bold Old here}.",
+        "\\url{a Old b}",
+        "\\verb|a Old b|",
+        "$a Old b$",
+        "% a Old b",
+        "\\label{a Old b}",
+        "\\drop{a Old b}",
+        "\\begin{verbatim}\na Old b\n\\end{verbatim}",
+        "TinyNet and Old.",
+    ];
+    let text = format!(
+        "\\documentclass{{article}}\n\\usepackage{{url}}\n\\newcommand{{\\model}}{{TinyNet}}\n\\newcommand{{\\drop}}[1]{{}}\n\\begin{{document}}\n{}\n\\end{{document}}\n",
+        lines.join("\n\n")
+    );
+    let (mut server, uri, dir) = open_set("writing-macros", &text, &["conventions.writing.macros=true"]);
+    let _ = at(&mut server, &uri, "textDocument/hover", 5, 1);
+    let line = |l: usize, c: usize| json!({ "line": l, "character": c });
+    // each `Old` written as `TinyNet` (on the last line the edit spans the `TinyNet` before it
+    // too): the line it then reads as
+    let mut written = Vec::new();
+    for (l, src) in text.lines().enumerate().filter(|(_, l)| l.contains("Old")) {
+        let end = src.find("Old").unwrap() + 3;
+        let start = if src.starts_with("TinyNet") { 0 } else { end - 3 };
+        let (was, body) = (&src[start..end], src[start..end].replace("Old", "TinyNet"));
+        let node = json!({ "kind": "text", "range": { "start": line(l, start), "end": line(l, end) }, "text": was, "body_at": [0, was.len()], "body": body });
+        let id = server.request(
+            "satex/dialogApply",
+            json!({ "textDocument": { "uri": uri }, "kind": "snapshot", "nodes": [node] }),
+        );
+        let out = server.response(id)["result"].clone();
+        let all = applied(&text, &uri, &json!({ "changes": { uri.clone(): out["edits"] } }), &[]);
+        written.push(all.lines().nth(l).unwrap().to_string());
+    }
+    let want = [
+        "We use \\model{} here.",
+        "\\textbf{Bold \\model{} here}.",
+        "\\url{a TinyNet b}",
+        "\\verb|a TinyNet b|",
+        "$a TinyNet b$",
+        "% a TinyNet b",
+        "\\label{a TinyNet b}",
+        "\\drop{a TinyNet b}",
+        "a TinyNet b",
+        "TinyNet and \\model.",
+    ];
+    assert_eq!(written, want);
+    server.shutdown();
+    std::fs::remove_dir_all(dir).ok();
+    // off by default
+    let (mut server, uri, dir) = open_set("writing-macros-off", &text, &[]);
+    let _ = at(&mut server, &uri, "textDocument/hover", 5, 1);
+    let node = json!({ "kind": "text", "range": { "start": line(5, 7), "end": line(5, 10) }, "text": "Old", "body_at": [0, 3], "body": "TinyNet" });
+    let id = server
+        .request("satex/dialogApply", json!({ "textDocument": { "uri": uri }, "kind": "snapshot", "nodes": [node] }));
+    let out = server.response(id)["result"].clone();
+    assert_eq!(out["edits"][0]["newText"], "TinyNet", "{out}");
+    server.shutdown();
+    std::fs::remove_dir_all(dir).ok();
+}
+
+/// A written call that then stands a second time gets a note offering to extract it, a short
+/// one or one standing once does not. Pins widgets duplicating a snippet without a word.
+#[test]
+fn printer_notes_a_written_repeat() {
+    let text = "\\documentclass{article}\n\\begin{document}\n\\textbf{Important result}\nOld\n\\end{document}\n";
+    let (mut server, uri, dir) = open_set("writing-repeat", text, &[]);
+    let _ = at(&mut server, &uri, "textDocument/hover", 3, 1);
+    let print = |server: &mut Server, body: &str| {
+        let line = |l: u32, c: u32| json!({ "line": l, "character": c });
+        let node = json!({ "kind": "text", "range": { "start": line(3, 0), "end": line(3, 3) }, "text": "Old", "body_at": [0, 3], "body": body });
+        let id = server.request(
+            "satex/dialogApply",
+            json!({ "textDocument": { "uri": uri }, "kind": "snapshot", "nodes": [node] }),
+        );
+        server.response(id)["result"]["notes"].clone()
+    };
+    let notes = print(&mut server, "\\textbf{Important result} again");
+    assert!(notes.to_string().contains("`\\\\textbf{Important result}` now stands 2 times"), "{notes}");
+    assert_eq!(print(&mut server, "\\textbf{Other result} once"), json!([]));
+    assert_eq!(print(&mut server, "\\emph{x} \\emph{x}"), json!([]), "shorter than repeat_min");
+    server.shutdown();
+    std::fs::remove_dir_all(dir).ok();
+}
+
+/// Intuition: closing a buffer without saving discards its text, so the
+/// runs of the documents that read the file read the disk again. Pins the
+/// overlay keeping the closed buffer: `\foo` stayed defined by text the
+/// editor had thrown away, a finding a fresh run reports went missing.
+#[test]
+fn closing_an_unsaved_buffer_reads_the_file_from_disk_again() {
+    let dir = crate::support::tmp_root().join(format!("satex-lsp-close-unsaved-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let main = "\\documentclass{article}\n\\input{chap}\n\\begin{document}\n\\foo\n\\end{document}\n";
+    std::fs::write(dir.join("main.tex"), main).unwrap();
+    std::fs::write(dir.join("chap.tex"), "% nothing yet\n").unwrap();
+    let mut server = serve(&dir, true);
+    let (uri, first) = open_file(&mut server, &dir, "main.tex");
+    let undefined = |p: &Value| p["params"]["diagnostics"].to_string().contains("\\\\foo");
+    assert!(undefined(&first), "{first}");
+    let chap = fixture_uri(&dir.join("chap.tex"));
+    open_file(&mut server, &dir, "chap.tex");
+    server.notify(
+        "textDocument/didChange",
+        json!({ "textDocument": { "uri": chap, "version": 2 }, "contentChanges": [{ "text": "\\def\\foo{}\n" }] }),
+    );
+    let main_of = |server: &mut Server| loop {
+        let p = server.published();
+        if p["params"]["uri"] == uri {
+            return p;
+        }
+    };
+    assert!(!undefined(&main_of(&mut server)), "the unsaved buffer defines \\foo");
+    server.notify("textDocument/didClose", json!({ "textDocument": { "uri": chap } }));
+    let after = main_of(&mut server);
+    assert!(undefined(&after), "the disk's chap.tex defines nothing: {after}");
+    server.shutdown();
+    std::fs::remove_dir_all(dir).ok();
+}
+
+/// Intuition: a document closed and opened again with the same text gets
+/// its diagnostics again, even when the run is the one kept for that text.
+/// Pins the kept-run path republishing only diagnostics it had sent before:
+/// close dropped them, so the reopened document showed no findings at all.
+#[test]
+fn a_reopened_document_gets_its_diagnostics_again() {
+    let text = "\\documentclass{article}\n\\begin{document}\n\\foo\n\\end{document}\n";
+    let (mut server, uri, first, dir) = open_loaded("reopen-same", text);
+    assert!(first["params"]["diagnostics"].to_string().contains("\\\\foo"), "{first}");
+    server.notify("textDocument/didClose", json!({ "textDocument": { "uri": uri } }));
+    server.notify(
+        "textDocument/didOpen",
+        json!({ "textDocument": { "uri": uri, "languageId": "tex", "version": 2, "text": text } }),
+    );
+    let again = server.published();
+    assert_eq!(again["params"]["version"], 2, "{again}");
+    assert_eq!(again["params"]["diagnostics"], first["params"]["diagnostics"]);
+    server.shutdown();
+    std::fs::remove_dir_all(dir).ok();
+}
+
+/// Intuition: a finished run kept for the open texts stands only while the
+/// files it read from disk stand too. Pins the run memo keyed by the open
+/// texts alone: `chap.tex` lost `\def\foo{}` on disk, the reopened document
+/// got the old run back and missed the `\foo` finding a fresh run reports.
+#[test]
+fn a_kept_run_reads_a_file_changed_on_disk_again() {
+    let dir = crate::support::tmp_root().join(format!("satex-lsp-kept-disk-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let main = "\\documentclass{article}\n\\input{chap}\n\\begin{document}\n\\foo\n\\end{document}\n";
+    std::fs::write(dir.join("main.tex"), main).unwrap();
+    std::fs::write(dir.join("chap.tex"), "\\def\\foo{}\n").unwrap();
+    let mut server = serve(&dir, true);
+    let (uri, first) = open_file(&mut server, &dir, "main.tex");
+    let undefined = |p: &Value| p["params"]["diagnostics"].to_string().contains("\\\\foo");
+    assert!(!undefined(&first), "{first}");
+    std::fs::write(dir.join("chap.tex"), "% gone\n").unwrap();
+    server.notify("textDocument/didClose", json!({ "textDocument": { "uri": uri } }));
+    server.notify(
+        "textDocument/didOpen",
+        json!({ "textDocument": { "uri": uri, "languageId": "tex", "version": 2, "text": main } }),
+    );
+    let again = server.published();
+    assert!(undefined(&again), "chap.tex on disk no longer defines \\foo: {again}");
+    server.shutdown();
+    std::fs::remove_dir_all(dir).ok();
+}
+
+/// Intuition: a run that looked for a file and did not find it stands only
+/// while the file stays missing. Pins the kept run checking only the files it
+/// read: `chap.tex` appears on disk with `\def\foo{}`, the reopened document
+/// got the old run back, whose `\IfFileExists` took the missing branch.
+#[test]
+fn a_kept_run_looks_again_for_a_file_now_there() {
+    let dir = crate::support::tmp_root().join(format!("satex-lsp-kept-absent-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let main = "\\documentclass{article}\n\\IfFileExists{chap.tex}{\\input{chap}}{}\n\\begin{document}\n\\foo\n\\end{document}\n";
+    std::fs::write(dir.join("main.tex"), main).unwrap();
+    let mut server = serve(&dir, true);
+    let (uri, first) = open_file(&mut server, &dir, "main.tex");
+    let undefined = |p: &Value| p["params"]["diagnostics"].to_string().contains("\\\\foo");
+    assert!(undefined(&first), "{first}");
+    std::fs::write(dir.join("chap.tex"), "\\def\\foo{}\n").unwrap();
+    server.notify("textDocument/didClose", json!({ "textDocument": { "uri": uri } }));
+    server.notify(
+        "textDocument/didOpen",
+        json!({ "textDocument": { "uri": uri, "languageId": "tex", "version": 2, "text": main } }),
+    );
+    let again = server.published();
+    assert!(!undefined(&again), "chap.tex now defines \\foo: {again}");
+    server.shutdown();
+    std::fs::remove_dir_all(dir).ok();
+}
+
+/// Intuition: a reopen with nothing changed, the open texts nor the files
+/// read from disk, gets the kept run back: checking the reads costs a stat
+/// per file, no analysis. Pins the check of the reads rerunning every reopen.
+#[test]
+fn an_unchanged_reopen_runs_nothing() {
+    let dir = crate::support::tmp_root().join(format!("satex-lsp-kept-same-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let main = "\\documentclass{article}\n\\input{chap}\n\\begin{document}\n\\foo\n\\end{document}\n";
+    std::fs::write(dir.join("main.tex"), main).unwrap();
+    std::fs::write(dir.join("chap.tex"), "\\def\\foo{}\n").unwrap();
+    let mut server = serve(&dir, true);
+    let (uri, _) = open_file(&mut server, &dir, "main.tex");
+    server.notify("textDocument/didClose", json!({ "textDocument": { "uri": uri } }));
+    server.notify(
+        "textDocument/didOpen",
+        json!({ "textDocument": { "uri": uri, "languageId": "tex", "version": 2, "text": main } }),
+    );
+    // A run sends `satex/runInfo` before its diagnostics, the kept one none.
+    let ran = loop {
+        let msg = server.read();
+        match msg.get("method").and_then(Value::as_str) {
+            Some("satex/runInfo") => break true,
+            Some("textDocument/publishDiagnostics") if !provisional(&msg) => break false,
+            _ => {}
+        }
+    };
+    assert!(!ran, "nothing changed, yet the reopen ran again");
+    server.shutdown();
+    std::fs::remove_dir_all(dir).ok();
+}
+
+/// Intuition: an open file the document stops reading (its `\input` is
+/// commented out) is no longer that run's: it runs again, as no root's, the
+/// way a fresh server sees it. Pins the open file keeping the findings of the
+/// last run that read it, a stale set no fresh run would publish.
+#[test]
+fn an_open_file_the_document_stops_reading_runs_again() {
+    let dir = crate::support::tmp_root().join(format!("satex-lsp-unread-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let main = "\\documentclass{article}\n\\begin{document}\n\\input{chap}\n\\end{document}\n";
+    std::fs::write(dir.join("main.tex"), main).unwrap();
+    std::fs::write(dir.join("chap.tex"), "Some text.\n").unwrap();
+    let mut server = serve(&dir, true);
+    let (uri, _) = open_file(&mut server, &dir, "main.tex");
+    let chap = fixture_uri(&dir.join("chap.tex"));
+    let (_, read) = open_file(&mut server, &dir, "chap.tex");
+    let unreachable = |p: &Value| p["params"]["diagnostics"].to_string().contains("unreachable-file");
+    assert!(!unreachable(&read), "{read}");
+    let commented = main.replace("\\input{chap}", "%\\input{chap}");
+    server.notify(
+        "textDocument/didChange",
+        json!({ "textDocument": { "uri": uri, "version": 2 }, "contentChanges": [{ "text": commented }] }),
+    );
+    let after = loop {
+        let p = server.published();
+        if p["params"]["uri"] == chap {
+            break p;
+        }
+    };
+    assert!(unreachable(&after), "no root reads chap.tex now: {after}");
+    server.shutdown();
+    std::fs::remove_dir_all(dir).ok();
+}
+
+/// Intuition: a file no root reads runs inside a root, read where the
+/// root's preamble ends, so that run's findings of the root are not the
+/// root's. Pins the run publishing them for the root as well: `loose.tex`
+/// defines `\foo` there, and the root's undefined `\foo` went missing.
+#[test]
+fn a_file_no_root_reads_publishes_only_its_own_findings() {
+    let dir = crate::support::tmp_root().join(format!("satex-lsp-orphan-own-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let main = "\\documentclass{article}\n\\begin{document}\n\\foo\n\\end{document}\n";
+    std::fs::write(dir.join("main.tex"), main).unwrap();
+    std::fs::write(dir.join("loose.tex"), "\\gdef\\foo{}\n").unwrap();
+    let mut server = serve(&dir, true);
+    let (uri, first) = open_file(&mut server, &dir, "main.tex");
+    let undefined = |p: &Value| p["params"]["diagnostics"].to_string().contains("\\\\foo");
+    assert!(undefined(&first), "{first}");
+    let loose = fixture_uri(&dir.join("loose.tex"));
+    server.notify(
+        "textDocument/didOpen",
+        json!({ "textDocument": { "uri": loose, "languageId": "tex", "version": 1, "text": "\\gdef\\foo{}\n" } }),
+    );
+    loop {
+        let p = server.published();
+        assert!(p["params"]["uri"] != uri || undefined(&p), "the root's findings come from its own run: {p}");
+        if p["params"]["uri"] == loose {
+            break;
+        }
+    }
+    // the rest of that run's publishes come before the answer to a later request
+    let id = server.request("textDocument/documentSymbol", json!({ "textDocument": { "uri": uri } }));
+    loop {
+        let msg = server.read();
+        if msg.get("id").and_then(Value::as_i64) == Some(id) {
+            break;
+        }
+        let main_set = msg["method"] == "textDocument/publishDiagnostics" && msg["params"]["uri"] == uri;
+        assert!(!main_set || undefined(&msg), "the root's findings come from its own run: {msg}");
+    }
+    server.shutdown();
+    std::fs::remove_dir_all(dir).ok();
+}
+
+/// Intuition: the editor's build runs bibtex again when an open `.bib`
+/// changes, as latexmk does: an entry removed there leaves its `\cite`
+/// undefined. Pins the build keeping the last `.bbl` after a `.bib` edit:
+/// the session reported the new entry uncited but not `knuth` undefined,
+/// which a fresh `satex lint` reports.
+#[test]
+fn an_entry_removed_from_an_open_bib_file_leaves_its_citation_undefined() {
+    let dir = crate::support::tmp_root().join(format!("satex-lsp-bib-edit-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let main = "\\documentclass{article}\n\\begin{document}\nSee \\cite{knuth}.\n\\bibliographystyle{plain}\n\\bibliography{refs}\n\\end{document}\n";
+    let bib = "@book{knuth, author={D. Knuth}, title={T}, year={1984}}\n";
+    std::fs::write(dir.join("main.tex"), main).unwrap();
+    std::fs::write(dir.join("refs.bib"), bib).unwrap();
+    let mut server = serve(&dir, true);
+    let (uri, first) = open_file(&mut server, &dir, "main.tex");
+    let undefined = |p: &Value| p["params"]["diagnostics"].to_string().contains("undefined-citation");
+    assert!(!undefined(&first), "{first}");
+    let refs = fixture_uri(&dir.join("refs.bib"));
+    server.notify(
+        "textDocument/didOpen",
+        json!({ "textDocument": { "uri": refs, "languageId": "bibtex", "version": 1, "text": bib } }),
+    );
+    server.notify(
+        "textDocument/didChange",
+        json!({ "textDocument": { "uri": refs, "version": 2 }, "contentChanges": [{ "text": bib.replace("knuth", "lamport") }] }),
+    );
+    // the first set of main that sees the new entry (uncited) is of the edited `.bib`
+    let after = loop {
+        let p = server.published();
+        if p["params"]["uri"] == uri && p["params"]["diagnostics"].to_string().contains("uncited-bibliography-entry") {
+            break p;
+        }
+    };
+    assert!(undefined(&after), "no entry knuth in refs.bib: {after}");
+    server.shutdown();
+    std::fs::remove_dir_all(dir).ok();
+}
+
+/// Intuition: a definition history names the `\let` copy a package keeps of
+/// the meaning it replaces, whether the package ran or was replayed from its
+/// cache. Pins the copy found by pointer identity only: replayed bodies are
+/// copies of their own, so a fresh server's hover of `\maketitle` lost
+/// "saves the old meaning as `\HyOrg@maketitle`" that a long session showed.
+#[test]
+fn a_definition_history_names_the_saved_copy_from_a_cached_package() {
+    let text = "\\documentclass{article}\n\\usepackage{hyperref}\n\\begin{document}\n\\maketitle\n\\end{document}\n";
+    let (mut server, uri, _, dir) = open_loaded("saved-copy", text);
+    let id = server.request(
+        "textDocument/hover",
+        json!({ "textDocument": { "uri": uri }, "position": { "line": 3, "character": 2 } }),
+    );
+    let hover = server.response(id)["result"]["contents"]["value"].as_str().unwrap_or_default().to_string();
+    assert!(hover.contains("saves the old meaning as `\\HyOrg@maketitle`"), "{hover}");
+    server.shutdown();
+    std::fs::remove_dir_all(dir).ok();
 }

@@ -287,13 +287,17 @@ impl Num {
             })
             .collect();
         let (mut lo, mut hi, mut err, mut any, mut wrapped) = (i64::MAX, i64::MIN, false, false, false);
+        // The ideal results' hull, which bounds every value of the box: past
+        // one bound, every concrete run errs (`None`, like an exact error).
+        let (mut ilo, mut ihi, mut undefined) = (i64::MAX, i64::MIN, false);
         for c in combos(&pts) {
             // If a corner overflows, every value between the other corners
             // and the bound is still reachable.
             let Some(v) = ideal(&c) else {
-                (err, any, lo, hi) = (true, true, range.0, range.1);
+                (err, any, lo, hi, undefined) = (true, true, range.0, range.1, true);
                 continue;
             };
+            (ilo, ihi) = (ilo.min(v), ihi.max(v));
             if v < range.0 || v > range.1 {
                 if wrap {
                     wrapped = true;
@@ -307,6 +311,10 @@ impl Num {
         }
         if wrapped {
             return (Some(Num::range(WORD_MIN, WORD_MAX)), err);
+        }
+        // -2^31 negates to itself on 32 bits (tex.web § 105): no certain error there.
+        if !wrap && !undefined && args.iter().all(|a| a.lo > WORD_MIN) && (ilo > range.1 || ihi < range.0) {
+            return (None, true);
         }
         (any.then(|| Num::range(lo, hi)), err)
     }
@@ -468,6 +476,32 @@ impl GlueHull {
     /// tex.web § 461: a minus sign negates every amount, not the orders.
     pub fn neg(&self) -> GlueHull {
         GlueHull { width: self.width.neg(), stretch: self.stretch.neg(), shrink: self.shrink.neg(), ..*self }
+    }
+
+    /// tex.web § 1239: `self` advanced by `by`. Widths add; of two infinities the higher
+    /// order stands, unless what is added has none of it; equal orders add. Orders not
+    /// known apart give every case.
+    pub fn add(&self, by: &GlueHull) -> GlueHull {
+        let sum = |a: Num, b: Num| match (a.lo.checked_add(b.lo), a.hi.checked_add(b.hi)) {
+            (Some(lo), Some(hi)) if -MAX_DIMEN <= lo && hi <= MAX_DIMEN => Num::range(lo, hi),
+            _ => Num::full(true),
+        };
+        let part = |a: Num, ao: Num, b: Num, bo: Num| {
+            let (amount, order) = if ao.lo == ao.hi && ao == bo {
+                (sum(a, b), ao)
+            } else if bo.hi < ao.lo && a.excludes_zero() {
+                (a, ao)
+            } else if ao.hi < bo.lo && b.excludes_zero() {
+                (b, bo)
+            } else {
+                (a.join(&b).join(&sum(a, b)), ao.join(&bo))
+            };
+            // An amount of zero is of normal order.
+            (amount, if amount.excludes_zero() { order } else { order.join(&Num::exact(0)) })
+        };
+        let (stretch, stretch_order) = part(self.stretch, self.stretch_order, by.stretch, by.stretch_order);
+        let (shrink, shrink_order) = part(self.shrink, self.shrink_order, by.shrink, by.shrink_order);
+        GlueHull { width: sum(self.width, by.width), stretch, stretch_order, shrink, shrink_order }
     }
 
     /// Least upper bound, componentwise.
@@ -1362,6 +1396,27 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// Every value of 2..3 times 2^30 is past `\multiply`'s bound, so the
+    /// lift says the error is certain (`None`); 0..2 holds 0 and 2^30, so
+    /// it only may err. Pins the clipped hull that hid certain errors.
+    #[test]
+    fn lift_says_an_error_every_value_makes() {
+        let mult = |v: &[i64]| mult_and_add(v[0], v[1], 0, MAX_INT);
+        let ideal = |v: &[i64]| v[0].checked_mul(v[1]);
+        let by = Num::exact(1 << 30);
+        assert_eq!(Num::lift(&[&Num::range(2, 3), &by], (-MAX_INT, MAX_INT), false, mult, ideal), (None, true));
+        let (num, err) = Num::lift(&[&Num::range(0, 2), &by], (-MAX_INT, MAX_INT), false, mult, ideal);
+        assert!(err && num.is_some_and(|n| n.lo == 0 && n.hi >= 1 << 30));
+        // A wrap is no error: `\advance` past the bound wraps on every value.
+        let add = |v: &[i64]| Some(wrap(v[0] + v[1]));
+        let sum = |v: &[i64]| Some(v[0] + v[1]);
+        assert!(
+            Num::lift(&[&Num::range(MAX_INT - 1, MAX_INT), &Num::exact(5)], (WORD_MIN, WORD_MAX), true, add, sum)
+                .0
+                .is_some()
+        );
     }
 
     /// `\advance`, `\multiply` and `\divide` on abstract numbers cover

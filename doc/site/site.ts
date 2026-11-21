@@ -1761,7 +1761,7 @@ interface Stream {
       } else if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
         e.preventDefault();
         const d = e.key === 'ArrowLeft' ? -1 : 1;
-        caret.at = Math.min(Math.max(at + d, 0), text.length);
+        caret.at = PE.cluster(text, at, d < 0);
         caret.idx = Math.max(0, caret.idx + d);
         view.dispatch({ selection: { anchor: caret.at } });
         redraw();

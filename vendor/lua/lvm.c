@@ -856,6 +856,7 @@ void luaV_execute (lua_State *L) {
       }
       vmcase(OP_SETUPVAL) {
         UpVal *uv = cl->upvals[GETARG_B(i)];
+        satex_write(L, uv);
         setobj(L, uv->v, ra);
         luaC_upvalbarrier(L, uv);
         vmbreak;

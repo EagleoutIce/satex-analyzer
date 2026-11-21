@@ -120,8 +120,15 @@ jobs:
             target/ci/lib-bin
           key: tests-${{ github.run_id }}-${{ github.run_attempt }}
 
-      # A kernel cache is keyed on the source it was built by (build.rs's digest of src/), so the
-      # cache key is the same digest's inputs: a change outside them reuses the kernels.
+      # A kernel cache file carries the key of the source it was built by (build.rs's digest of the
+      # non-reporting src/, format::cache_key). The binary prints that key, so the CI cache has
+      # the very same one: an edit to lints, the CLI or the LSP reuses the kernels.
+      - name: The kernels' key
+        id: guard
+        run: |
+          key=$(target/ci/satex --version --format json | sed -n 's/^ *"cache_key": "\(.*\)",$/\1/p')
+          [ -n "$key" ] && echo "key=$key" >> "$GITHUB_OUTPUT"
+
       - name: Restore the kernels
         id: kernels
         uses: actions/cache/restore@v4
@@ -129,7 +136,7 @@ jobs:
           path: |
             target/scratch/test-cache
             target/scratch/test-kernel
-          key: kernels-TL2025-${{ hashFiles('src/**', 'build.rs', 'Cargo.lock', 'Cargo.toml') }}
+          key: kernels-TL2025-${{ steps.guard.outputs.key }}-${{ hashFiles('Cargo.lock') }}
 
       - name: Build the kernels
         if: steps.kernels.outputs.cache-hit != 'true'
@@ -183,13 +190,19 @@ jobs:
           key: tests-${{ github.run_id }}-${{ github.run_attempt }}
           fail-on-cache-miss: true
 
+      - name: The kernels' key
+        id: guard
+        run: |
+          key=$(target/ci/satex --version --format json | sed -n 's/^ *"cache_key": "\(.*\)",$/\1/p')
+          [ -n "$key" ] && echo "key=$key" >> "$GITHUB_OUTPUT"
+
       - name: Restore the kernels
         uses: actions/cache/restore@v4
         with:
           path: |
             target/scratch/test-cache
             target/scratch/test-kernel
-          key: kernels-TL2025-${{ hashFiles('src/**', 'build.rs', 'Cargo.lock', 'Cargo.toml') }}
+          key: kernels-TL2025-${{ steps.guard.outputs.key }}-${{ hashFiles('Cargo.lock') }}
 
       # Tests write beside the build: CARGO_TARGET_TMPDIR names this directory.
       - name: Prepare

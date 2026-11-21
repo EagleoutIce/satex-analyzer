@@ -2,7 +2,7 @@ use crate::fixed::{HashMap, HashSet};
 use std::cell::{OnceCell, RefCell};
 use std::collections::BTreeMap;
 
-use crate::analysis::facts::{Load, Occurrence};
+use crate::analysis::facts::{Load, Occurrence, Rest};
 use crate::analysis::machine::{Analysis, Recursion};
 use crate::engine::builtins::OccKind;
 use crate::engine::tex::{FileId, Span, Sym};
@@ -16,11 +16,40 @@ pub fn is_error(analysis: &Analysis, o: &crate::analysis::facts::Occurrence) -> 
             == Some(crate::engine::builtins::Primitive::Message { error: true })
 }
 
-/// The first place before the `index`th occurrence in run order where the
-/// run could not follow TeX (an `Unsupported` diagnostic: a limit, a cut,
-/// an engine error on an approximated path).  An error raised after it may
-/// be its echo rather than TeX's.
-pub fn doubt(analysis: &Analysis, index: usize) -> Option<String> {
+/// Why a finding is not in every run of the document.
+#[derive(Clone, PartialEq, Debug)]
+pub enum Unsure {
+    /// On a path the run could not decide.
+    Undecided,
+    /// After a row the run rests on ([`Diagnostic::rest`]), which this names.
+    After(Rest, String),
+}
+
+impl Unsure {
+    /// What a finding that would be an error is instead: possible where
+    /// TeX may raise it, a note where the analysis may have caused it.
+    pub fn severity(&self) -> crate::linter::Severity {
+        match self {
+            Unsure::After(Rest::Gap, _) => crate::linter::Severity::Info,
+            _ => crate::linter::Severity::Warning,
+        }
+    }
+
+    /// What ends the message of a finding that is not certain.
+    pub fn note(&self) -> String {
+        match self {
+            Unsure::Undecided => " (on a path the run could not decide: TeX may raise it)".into(),
+            Unsure::After(Rest::Assumed, cause) => format!(" (holds if {cause} holds)"),
+            Unsure::After(Rest::Gap, cause) => format!(" (may follow from {cause}: check that first)"),
+        }
+    }
+}
+
+/// The first row before the `index`th occurrence in run order that the run
+/// rests on from there ([`Diagnostic::rest`]: a limit, a cut, an engine
+/// error on an approximated path, an assumption about lost state).  An
+/// error raised after it may be its echo rather than TeX's.
+pub fn doubt(analysis: &Analysis, index: usize) -> Option<Unsure> {
     gap_between(analysis, 0, index)
 }
 
@@ -43,16 +72,15 @@ pub fn skipped_between(analysis: &Analysis, from: usize, to: usize) -> bool {
 }
 
 /// [`doubt`] between the `from`th and the `to`th occurrence: what the run
-/// may have lost there (a closer an open operator waits for).
-pub fn gap_between(analysis: &Analysis, from: usize, to: usize) -> Option<String> {
-    let d = analysis
-        .facts
-        .diagnostics
-        .iter()
-        .filter(|d| d.severity == crate::analysis::facts::Severity::Unsupported && (from..=to).contains(&d.after))
-        .min_by_key(|d| d.after)?;
-    let at = d.origin.unwrap_or(d.span);
-    Some(format!("the analysis gap at {}:{}:{} ({})", analysis.short_name(at.file), at.line, at.col, d.code))
+/// may have lost there (a closer an open operator waits for). A gap before
+/// an assumption.
+pub fn gap_between(analysis: &Analysis, from: usize, to: usize) -> Option<Unsure> {
+    let rows = analysis.facts.diagnostics.iter().filter(|d| (from..=to).contains(&d.after));
+    let (rest, d) =
+        rows.filter_map(|d| Some((d.rest()?, d))).min_by_key(|(rest, d)| (std::cmp::Reverse(*rest), d.after))?;
+    let (at, what) = (d.origin.unwrap_or(d.span), if rest == Rest::Gap { "analysis gap" } else { "assumption" });
+    let place = format!("{}:{}:{}", analysis.short_name(at.file), at.line, at.col);
+    Some(Unsure::After(rest, format!("the {what} at {place} ({})", d.code)))
 }
 
 pub use crate::analysis::machine::{loaded, macro_text};
@@ -166,6 +194,7 @@ pub struct Index<'a> {
     recursion: OnceCell<Vec<Recursion>>,
     load_spans: OnceCell<HashSet<Span>>,
     error_spans: OnceCell<HashSet<Span>>,
+    unsure: OnceCell<HashMap<Span, Option<Unsure>>>,
     sites: OnceCell<Sites>,
     origins: RefCell<Vec<Option<&'static str>>>,
     live: OnceCell<Vec<bool>>,
@@ -193,6 +222,7 @@ impl<'a> Index<'a> {
             recursion: OnceCell::new(),
             load_spans: OnceCell::new(),
             error_spans: OnceCell::new(),
+            unsure: OnceCell::new(),
             sites: OnceCell::new(),
             origins: RefCell::new(vec![None; analysis.files.len()]),
             live: OnceCell::new(),
@@ -279,6 +309,62 @@ impl<'a> Index<'a> {
         self.error_spans.get_or_init(|| {
             self.analysis.facts.occurrences.iter().filter(|o| is_error(self.analysis, o)).map(|o| o.span).collect()
         })
+    }
+
+    /// Why an error at `span` is not in every run, if it is not. The facts
+    /// the run recorded there say: an occurrence, an engine error's row, an
+    /// undefined name. Each is certain or not ([`Unsure`]). An error fact
+    /// that is certain backs every finding at its place.
+    pub fn unsure(&self, span: Span) -> Option<&Unsure> {
+        let a = self.analysis;
+        let build = || {
+            // The first gap and the first assumption in run order. A finding
+            // at such a row's own place reports the row: it does not rest on it.
+            let first = |rest| {
+                let rows = a.facts.diagnostics.iter().filter(|d| d.rest() == Some(rest));
+                let d = rows.min_by_key(|d| d.after)?;
+                let row = a.facts.diagnostics.iter().position(|r| std::ptr::eq(r, d))?;
+                Some(((d.after, row), [Some(d.span), d.origin], gap_between(a, 0, d.after)?))
+            };
+            let firsts = [first(Rest::Gap), first(Rest::Assumed)];
+            let mut at: HashMap<Span, Option<Unsure>> = HashMap::default();
+            // `index`: the occurrences before the fact, and for a row its place among the rows.
+            let mut fact = |span: Span, error: bool, certain: bool, index: (usize, Option<usize>)| {
+                let rests = |((after, row), own, _): &&((usize, usize), [Option<Span>; 2], Unsure)| {
+                    index.1.map_or(*after <= index.0, |at| *row < at) && !own.contains(&Some(span))
+                };
+                let after = || firsts.iter().flatten().find(rests).map(|(_, _, u)| u.clone());
+                match if certain { after() } else { Some(Unsure::Undecided) } {
+                    None if error => _ = at.insert(span, None),
+                    None => {}
+                    unsure => _ = at.entry(span).or_insert(unsure),
+                }
+            };
+            let occurrences = &a.facts.occurrences;
+            for (i, o) in occurrences.iter().enumerate() {
+                fact(o.span, is_error(a, o), o.certain, (i, None));
+            }
+            let exact =
+                |d: &&crate::analysis::facts::Diagnostic| d.severity == crate::analysis::facts::Severity::Warning;
+            for (row, d) in a.facts.diagnostics.iter().enumerate().filter(|(_, d)| exact(d)) {
+                [Some(d.span), d.origin]
+                    .into_iter()
+                    .flatten()
+                    .for_each(|span| fact(span, true, true, (d.after, Some(row))));
+            }
+            use crate::analysis::facts::MeaningKind::Undefined;
+            // Expansions and vertices are made in run order, and an undefined
+            // name has no vertex: the occurrences before the next expansion
+            // that has one bound those before it. An expansion under an
+            // undecided conditional is a fact too: its place is not every run's.
+            let mut index = usize::MAX;
+            for e in a.facts.expansions.iter().rev() {
+                index = e.node.map_or(index, |n| occurrences.partition_point(|o| o.node <= n));
+                fact(e.span, e.meaning == Undefined, e.cds.is_empty(), (index, None));
+            }
+            at
+        };
+        self.unsure.get_or_init(build).get(&span)?.as_ref()
     }
 
     /// [`crate::queries::query::origin`], which compares whole paths, per file
@@ -447,7 +533,77 @@ pub fn own_runaway(analysis: &Analysis, d: &crate::analysis::facts::Diagnostic) 
 /// package completion offers ([`crate::caches::exports::Exports::package_for`]): of
 /// several, the one most loaded, so `\includegraphics` is graphicx's.
 pub fn providing_package(analysis: &Analysis, name: &str) -> Option<String> {
-    exports(analysis)?.package_for(name)
+    let index = exports(analysis)?;
+    let pick = index.package_for(name);
+    // a package that defines it with a definer this run never saw (url's `\DeclareUrlCommand`):
+    // its own run says, at most `limits.provider_probes` of them, most loaded first
+    let tries = analysis.settings.limits.provider_probes as usize;
+    let proposed = index.proposed(name, pick.as_deref());
+    proposed.into_iter().take(tries).find(|p| own_names(analysis, p).contains(name)).or(pick)
+}
+
+/// The names `package` defines in its own files and holds at the end of a run that loads it
+/// ([`probe`]).
+fn own_names(analysis: &Analysis, package: &str) -> std::sync::Arc<HashSet<String>> {
+    probe(analysis, &[], package, "").own
+}
+
+/// What one probe run said: whether its call ran clean, and the names the probed package's own
+/// files define (the package, or a file it reads itself, never one another package reads) and
+/// the run still holds at its end.
+#[derive(Clone)]
+struct Probed {
+    clean: bool,
+    own: std::sync::Arc<HashSet<String>>,
+}
+
+/// A document of the run's class that loads `with`, then `package`, and makes `call`, run once per
+/// process for that text and the settings it runs under. It runs without wall-clock limit: what
+/// it says depends on the installation and the settings, never on the machine's load. Its step
+/// limits bound it.
+fn probe(analysis: &Analysis, with: &[String], package: &str, call: &str) -> Probed {
+    use crate::engine::builtins::LoadKind;
+    type Runs = HashMap<(u64, Vec<std::path::PathBuf>, String), Probed>;
+    static RUNS: std::sync::Mutex<Option<Runs>> = std::sync::Mutex::new(None);
+    // LaTeX's standard class where the run names none
+    let class = analysis.facts.loads.iter().find(|l| l.kind == LoadKind::Class).map_or("article", |l| l.name.as_str());
+    let loads: String = with.iter().filter(|p| *p != package).map(|p| format!("\\usepackage{{{p}}}\n")).collect();
+    let text = format!(
+        "\\documentclass{{{class}}}\n{loads}\\usepackage{{{package}}}\n\\begin{{document}}\n{call}\n\\end{{document}}\n"
+    );
+    let mut settings = analysis.settings.clone();
+    settings.limits.seconds = 0;
+    let digest = crate::caches::format::digest(serde_json::to_string(&settings).unwrap_or_default().as_bytes());
+    let key = (digest, analysis.distribution.roots.clone(), text);
+    if let Some(p) = RUNS.lock().ok().and_then(|r| r.as_ref()?.get(&key).cloned()) {
+        return p;
+    }
+    let run = crate::analyze(&key.2, None, &settings);
+    let clean =
+        !run.facts.raised.iter().any(|e| e.certain) && !run.facts.diagnostics.iter().any(|d| d.code == "missing-end");
+    let base =
+        |file: FileId| run.files.get(usize::from(file)).map_or("", |f| f.path.rsplit('/').next().unwrap_or(&f.path));
+    // a file is the package's own when the nearest package or class up its chain of loads is it
+    let own = format!("{package}.sty");
+    let mine = |mut file: FileId| {
+        for _ in 0..run.files.len() {
+            let name = base(file);
+            if name.ends_with(".sty") || name.ends_with(".cls") {
+                return name == own;
+            }
+            let Some(load) = run.facts.loads.iter().find(|l| l.file == Some(file)) else { return false };
+            file = load.span.file;
+        }
+        false
+    };
+    let made: HashSet<Sym> = run.facts.defs.iter().filter(|d| mine(d.span.file)).map(|d| d.name).collect();
+    let held = made.into_iter().filter(|&s| !matches!(run.env.meaning(s), crate::engine::tex::Meaning::Undefined));
+    let own = std::sync::Arc::new(held.map(|s| run.interner.name(s).to_string()).collect::<HashSet<_>>());
+    let probed = Probed { clean, own };
+    if let Ok(mut runs) = RUNS.lock() {
+        runs.get_or_insert_with(HashMap::default).insert(key, probed.clone());
+    }
+    probed
 }
 
 /// The installed package that defines `name` itself, the most loaded of several
@@ -474,15 +630,7 @@ pub fn provider_for(analysis: &Analysis, name: &str, call: &str, with: &[String]
 /// real code: graphics' `\includegraphics[width=1cm]{x}` reads to the end for `[llx,lly]`'s comma.
 /// `with`: the packages the same write loads for the call's other names.
 fn takes(analysis: &Analysis, package: &str, call: &str, with: &[String]) -> bool {
-    use crate::engine::builtins::LoadKind;
-    // LaTeX's standard class where the run names none
-    let class = analysis.facts.loads.iter().find(|l| l.kind == LoadKind::Class).map_or("article", |l| l.name.as_str());
-    let loads: String = with.iter().filter(|p| *p != package).map(|p| format!("\\usepackage{{{p}}}\n")).collect();
-    let probe = format!(
-        "\\documentclass{{{class}}}\n{loads}\\usepackage{{{package}}}\n\\begin{{document}}\n{call}\n\\end{{document}}\n"
-    );
-    let run = crate::analyze(&probe, None, &analysis.settings);
-    !run.facts.raised.iter().any(|e| e.certain) && !run.facts.diagnostics.iter().any(|d| d.code == "missing-end")
+    probe(analysis, with, package, call).clean
 }
 
 /// Names the installed packages define that `keep` takes (`env`: environments only), the `n` best by `rank`

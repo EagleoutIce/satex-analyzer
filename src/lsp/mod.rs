@@ -46,6 +46,7 @@ mod typeset_stream;
 mod unreached;
 #[cfg(target_os = "emscripten")]
 mod wasm;
+mod writing;
 
 use crate::fixed::HashMap;
 use crate::plugins::discovery;
@@ -907,6 +908,9 @@ struct Run {
     texts: u64,
     analysis: Rc<Analysis>,
     reads: HashSet<PathBuf>,
+    /// What it read outside the open texts ([`crate::caches::document::reads_of`]),
+    /// `None` when unlogged: it stands only while each still holds.
+    outside: Option<Vec<crate::project::overlay::Read>>,
 }
 
 /// The workspace folders the client named, else its root.
@@ -1126,10 +1130,34 @@ impl Engine {
             if !cfg!(target_os = "emscripten") {
                 self.serving(|_| handlers::warm(&analysis));
             }
+            // the run whose findings `uri` showed until now
+            let before = self.published.get(uri).and_then(|(run, _)| run.upgrade());
             self.install(uri, &analysis, &text, changed);
             self.publish_run(&analysis, &path, &versions, None);
+            // An open file that run read and this one no longer does keeps its findings:
+            // it runs again, through another root or as no root's.
+            // A run cut short read only part of the document: what it did not read says nothing.
+            if let Some(before) = before.filter(|b| !Rc::ptr_eq(b, &analysis) && !analysis.stopped()) {
+                let unread: Vec<Uri> = (self.published.iter())
+                    .filter(|(u, (run, _))| *u != uri && run.upgrade().is_some_and(|r| Rc::ptr_eq(&r, &before)))
+                    .map(|(u, _)| u.clone())
+                    .filter(|u| self.docs.contains_key(u) && !self.dirty.contains(u))
+                    .collect();
+                self.dirty.extend(unread);
+            }
             if let Some(prior) = &prior {
                 self.serving(|_| crate::queries::query::carry_scope(prior, &analysis));
+            }
+        } else if !self
+            .published
+            .get(uri)
+            .is_some_and(|(run, _)| run.upgrade().is_some_and(|r| Rc::ptr_eq(&r, &analysis)))
+        {
+            // a kept run the document has no diagnostics of (it was closed and opened again): lint it,
+            // unless a run cut short gave way to the last whole one
+            self.install(uri, &analysis, &text, changed);
+            if self.docs.get(uri).and_then(|d| d.analysis.as_ref()).is_some_and(|a| Rc::ptr_eq(a, &analysis)) {
+                self.publish_run(&analysis, &path, &versions, None);
             }
         } else {
             self.install(uri, &analysis, &text, changed);
@@ -1175,9 +1203,11 @@ impl Engine {
         shift: Option<plugins::incremental::Shift>,
     ) {
         // Requests that only read are answered while the rules run.
-        let open: Vec<PathBuf> = self.docs.values().map(|d| d.path.clone()).collect();
-        let open: Vec<&Path> = open.iter().map(PathBuf::as_path).collect();
         let orphan = self.orphans.contains(&canonical(path));
+        // A file no root reads runs inside a root's preamble: the other open files it reads
+        // there are context, their findings are their own root's run's.
+        let open: Vec<PathBuf> = self.docs.values().map(|d| d.path.clone()).filter(|_| !orphan).collect();
+        let open: Vec<&Path> = open.iter().map(PathBuf::as_path).collect();
         let (mut published, candidates) = self.serving(|engine| {
             let records = unsilenced(&engine.silenced, handlers::findings(analysis));
             let candidates = crate::linter::style_candidates(&records, &analysis.settings.lints.style_prompt);
@@ -1464,9 +1494,15 @@ impl Engine {
             hasher.finish()
         };
         let key = canonical(root);
-        if let Some(run) = self.runs.get(&key).filter(|run| run.texts == texts) {
+        let stands = |run: &&Run| {
+            run.texts == texts
+                && run.outside.as_ref().is_some_and(|o| o.iter().all(crate::project::overlay::Read::holds))
+        };
+        if let Some(run) = self.runs.get(&key).filter(stands) {
             return (run.analysis.clone(), false);
         }
+        // The files not open are read from disk: logged, as the document cache does.
+        let recording = crate::project::overlay::record();
         let source = crate::project::overlay::read_to_string(root).unwrap_or_default();
         // A newer text, of any open file, makes this run stale: it stops, the next one starts.
         #[cfg(not(target_os = "emscripten"))]
@@ -1495,6 +1531,8 @@ impl Engine {
                 }
             })
         });
+        let outside =
+            recording.then(|| crate::caches::document::reads_of(&analysis, crate::project::overlay::recorded()));
         let analysis = Rc::new(analysis);
         if cancelled {
             self.cancelled = true;
@@ -1511,7 +1549,7 @@ impl Engine {
                 self.owners.entry(file.clone()).or_insert_with(|| root.to_path_buf());
             }
         }
-        self.runs.insert(key, Run { texts, analysis: analysis.clone(), reads });
+        self.runs.insert(key, Run { texts, analysis: analysis.clone(), reads, outside });
         let runs = &self.runs;
         self.checkpoints.retain(|root, _| runs.contains_key(root));
         (analysis, true)
@@ -1783,7 +1821,7 @@ impl Engine {
                 self.edited.remove(&uri);
                 self.store_hovers(&uri);
                 self.stores.remove(&uri);
-                self.docs.remove(&uri);
+                let closed = self.docs.remove(&uri).map(|d| d.path);
                 self.actions.remove(&uri);
                 self.dirty.retain(|d| d != &uri);
                 self.preambles.remove(&uri);
@@ -1791,6 +1829,16 @@ impl Engine {
                 self.prefill.retain(|(u, _)| u != &uri);
                 if let Ok(mut hovers) = self.hovers.lock() {
                     hovers.retain(|(u, _), _| u != &uri);
+                }
+                // A closed buffer is read from disk again: discarded unsaved text
+                // changes what the other documents' runs read.
+                if let Some(path) = closed {
+                    let unsaved = crate::project::overlay::text(&path)
+                        .is_some_and(|text| std::fs::read_to_string(&path).ok().as_deref() != Some(text.as_str()));
+                    crate::project::overlay::remove(&path);
+                    if unsaved {
+                        self.outside_changed();
+                    }
                 }
             }
             msg @ (EngineMsg::Hover(..)
@@ -2127,12 +2175,22 @@ fn answer(docs: &HashMap<Uri, Doc>, hovers: &Hovers, blank: Option<&Analysis>, m
             let result = with_doc(docs, &uri, |analysis, text| match ask {
                 Ask::Actions(_, range) => Ok(Json::Array(dialogs::actions(analysis, text, &path, uri.as_str(), range))),
                 Ask::Open(_, pos) => Ok(dialogs::dialog(analysis, text, &path, pos).unwrap_or(Json::Null)),
-                Ask::Apply(_, p) if p["kind"] == "snapshot" => snapshot::apply(analysis, text, &p),
+                Ask::Apply(_, p) if p["kind"] == "snapshot" => {
+                    snapshot::apply(analysis, text, type_at::file_of(analysis, &path), &p)
+                }
                 Ask::Apply(_, p) if p["kind"] == "columns" => Ok(dialogs::widths(analysis, text, &path)),
                 Ask::Apply(_, p) => {
                     let range = serde_json::from_value(p["range"].clone()).map_err(|e| e.to_string())?;
                     let kind = p["kind"].as_str().unwrap_or_default();
-                    dialogs::apply(analysis, text, kind, range, &p["state"], p["op"].as_str())
+                    dialogs::apply(
+                        analysis,
+                        text,
+                        type_at::file_of(analysis, &path),
+                        kind,
+                        range,
+                        &p["state"],
+                        p["op"].as_str(),
+                    )
                 }
             });
             let _ = reply.send(result.unwrap_or(Ok(Json::Null)));

@@ -78,6 +78,25 @@ fn documents_are_typeset_with_typesetexe_and_tests_checked_with_the_first_engine
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// The sketch a build runs on (`satex compile`) reads the build configuration as the run does:
+/// both pick `typesetexe`'s engine for a document. Pins the sketch that read only magic
+/// comments, so the build ran pdfLaTeX where the analysis ran LuaLaTeX.
+#[test]
+fn a_build_sketch_picks_the_engine_the_run_picks() {
+    let dir = bundle("sketch");
+    let path = dir.join("demo-doc.tex");
+    let source = std::fs::read_to_string(&path).unwrap();
+    let sketch = satex::analysis::machine::Analysis::sketch(
+        &source,
+        std::slice::from_ref(&path),
+        &crate::support::config(),
+        Vec::new(),
+    );
+    assert_eq!(sketch.plugins.engine, Engine::LuaTeX);
+    assert_eq!(sketch.plugins.engine, analyze(&path).plugins.engine);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 #[test]
 fn defaults_come_from_l3build_itself() {
     if satex::project::paths::which("texlua").is_err() || !installed() {

@@ -77,8 +77,13 @@ declare global {
     }
     return out;
   }
-  /** `nodes` printed by the server (`ctx.print`) and written (`kept`: what a manager shows again); else `say` gets its notes. */
+  /** `nodes` printed by the server (`ctx.print`) and written (`kept`: what a manager shows again); `say` gets its notes
+   * either way (a package added, a repeat to extract), 'no changes' when nothing is written and nothing noted. */
   const write = (ctx: SnapCtx, nodes: SnapNode[], say: (m: string) => void, kept?: unknown) => ctx.print(nodes).catch((e: Error): { edits?: unknown; notes?: string[] } => ({ notes: [String(e?.message ?? e)] }))
-    .then((r) => { if ((r?.edits as unknown[] | undefined)?.length) ctx.apply(r!.edits, kept); else say((r?.notes ?? []).join('; ') || 'no changes'); });
+    .then((r) => {
+      const wrote = !!(r?.edits as unknown[] | undefined)?.length, notes = (r?.notes ?? []).join('; ');
+      if (wrote) ctx.apply(r!.edits, kept);
+      if (notes || !wrote) say(notes || 'no changes');
+    });
   self.satexSnapshot = { list, get, set, setKeys, text, keys, arg, call, drop, span, same, fill, write };
 })();

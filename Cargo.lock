@@ -816,6 +816,7 @@ version = "0.2.5"
 dependencies = [
  "anstream",
  "anstyle",
+ "archery",
  "bytesize",
  "cc",
  "clap",

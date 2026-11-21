@@ -30,7 +30,7 @@ declare global {
       extract(text: string, all: string, a: number, b: number, name: string, every: boolean): { edits: PaEdit[] } | { error: string };
       occurrences(text: string, body: string): number[];
       inserts: InsItem[];
-      insertSpot(text: string, t: InsTarget, flow: boolean): { at: number; mode: InsMode } | null;
+      insertSpot(text: string, t: InsTarget, flow: boolean, float?: boolean): { at: number; mode: InsMode } | null;
       insertPlan(text: string, all: string, kind: string, at: number, mode: InsMode): InsPlan | null;
       lineHabit(text: string): number; wrapLine(text: string, at: number, max: number, indent?: boolean): PaEdit | null;
     };
@@ -352,12 +352,23 @@ declare global {
     { kind: 'tikz', label: 'TikZ picture', hint: 'tikzpicture', body: TIKZ, widget: 'tikz' },
     { kind: 'forest', label: 'Forest tree', hint: 'forest', body: '\\begin{forest}\n  [Root\n    [Child]\n    [Child]\n  ]\n\\end{forest}', widget: 'forest' },
   ];
+  /** The innermost box around `at` that holds no paragraph: math, a picture or tabular (WRAP), an alignment (a body
+   * with a top-level `&`, which TeX takes only in one, tex.web § 1128); a float too for a `float`, which needs outer
+   * paragraph mode (latex.ltx `\@xfloat`). Null in running text; a stray `&` in the document's body is its error, no box. */
+  function boxAt(text: string, at: number, float: boolean): RfSpan | null {
+    const inside = (s: RfSpan) => s.from < at && at < s.to;
+    const all = envs(text).filter((e) => inside(e) && (WRAP.test(e.env!) || float && FLOAT.test(e.env!) || e.env !== 'document' && tops(text.slice(e.head, e.foot), /&/).length > 0));
+    const m = mathAt(text, at);
+    return [...all, ...m && inside(m) ? [m] : []].sort((a, b) => (a.to - a.from) - (b.to - b.from))[0] ?? null;
+  }
   /** Where an insert goes: at the caret; at a blank place between paragraphs; after the block clicked (a mark of the
    * running text at its paragraph's last character). Null for a mark where no paragraph is. */
-  function insertSpot(text: string, t: InsTarget, flow: boolean): { at: number; mode: InsMode } | null {
+  function insertSpot(text: string, t: InsTarget, flow: boolean, float = false): { at: number; mode: InsMode } | null {
     if (t.caret != null) {
-      // a block never splits a group (a macro's argument, `\greet{wo|rld}`): it goes after the line the group closes on
-      const out = flow ? t.caret : groupEnd(text, t.caret) ?? t.caret;
+      // a block never splits a group (a macro's argument, `\greet{wo|rld}`) nor stands in a box: it goes after the
+      // line the group or box closes on; a box in a group and a group in a box, each left in turn
+      let out = t.caret;
+      for (let was = -1; !flow && was !== out;) { was = out; out = groupEnd(text, out) ?? out; out = boxAt(text, out, float)?.to ?? out; }
       return out === t.caret ? { at: out, mode: 'caret' } : { at: lineEnd(text, out), mode: 'after' };
     }
     if (t.place != null) return flow ? null : { at: t.place, mode: 'after' };

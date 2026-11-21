@@ -208,6 +208,15 @@ const BODIES: &[crate::support::BodyRow] = &[
           \lccode`\Q=`\z \lowercase{\def\w{Q}}",
         &[("v", "[97][65][999]"), ("w", "z")],
     ),
+    // tex.web § 358: behind `\noexpand`'s marker a command past `max_command`
+    // reads as `relax`, and `undefined_cs` is `max_command + 1`. Pins satex
+    // printing `undefined` here. `pdftex`: `\meaning` gives `\relax` for an
+    // undefined name as for a macro.
+    (
+        "an_undefined_name_behind_noexpand_means_relax",
+        r"\def\m{x}\edef\u{\expandafter\meaning\noexpand\undefinedQ}\edef\v{\expandafter\meaning\noexpand\m}",
+        &[("u", r"\relax"), ("v", r"\relax")],
+    ),
 ];
 
 #[test]
@@ -1256,4 +1265,87 @@ fn a_brace_inserted_where_a_scantokens_file_ends_is_read_on() {
 fn a_frozen_pdfprimitive_prints_as_pdfprimitive() {
     let analysis = analyze(r"\xdef\R{\expandafter\string\pdfprimitive\relax}");
     assert_eq!(body(&analysis, "R"), r"\pdfprimitive\relax ");
+}
+
+/// pdftex.web `\pdfprimitive`: the frozen `\pdfprimitive` its expansion
+/// puts back makes the next token the primitive, once. `pdftex`: `\R` is
+/// `3.0pt`. Pinned: the frozen copy froze its token again, a loop without
+/// end (memoize ships its externs with `\pdf@primitive\shipout`).
+#[test]
+fn a_primitive_behind_pdfprimitive_runs_once() {
+    let analysis = analyze(r"\setbox0\hbox{\pdfprimitive\kern3pt}\xdef\R{\the\wd0}");
+    assert_eq!(body(&analysis, "R"), "3.0pt");
+}
+
+/// memoize's extern loop in plain TeX (memoize.sty `\mmz@shipout@externs`):
+/// `\lastbox` takes each box back until `\lastskip` sees the skip under
+/// them, and each is shipped with `\pdfprimitive\shipout`. Pinned: the
+/// shipout never ran, the run looped until limits.memory stopped it.
+#[test]
+fn a_lastbox_loop_shipping_through_pdfprimitive_ends() {
+    let analysis = analyze(
+        r"\setbox1\hbox{x}\setbox2\vbox{\copy1}
+\setbox3\vbox{\vskip1pt \unvbox2
+  \def\next{\ifdim0pt=\lastskip \setbox4\lastbox \pdfprimitive\shipout\box4 \expandafter\next\fi}\next}
+\gdef\R{end}",
+    );
+    assert_eq!(body(&analysis, "R"), "end");
+}
+
+/// web2c's `scan_file_name_braced`: a braced file name expands as `\edef` does, so
+/// `\openout1{\jobname.zz}` writes `<job>.zz`. Pinned: the primitive `\jobname` stayed
+/// unexpanded in the name, so the build never read memoize's `.mmz` (opened that way) again.
+#[test]
+fn a_braced_file_name_expands_the_job_name() {
+    let analysis = analyze(r"\immediate\openout1{\jobname.zz}\immediate\closeout1 \xdef\R{\jobname.zz}");
+    let name = body(&analysis, "R");
+    let written: Vec<_> = analysis.written.iter().map(|(n, _)| n.as_str()).collect();
+    assert!(written.contains(&name.as_str()), "{name} not in {written:?}");
+}
+
+/// The texts the last `\name` stands for, for messages.
+fn texts(analysis: &Analysis, name: &str) -> Vec<String> {
+    crate::support::last_definition(analysis, name).map_or_else(Vec::new, |d| crate::support::site_bodies(analysis, d))
+}
+
+/// l3fp parses `1/x` in a tower of nested value scans whose arms do not join, so
+/// each scan reruns its enclosing one per arm. `pdftex` over random seeds: `\Ra`
+/// is `-1`, `1`, or (x = 0) an error and a long number. Pinned: a nested scan whose
+/// last rerun was refuted left that run's "infeasible" on the path it went on with,
+/// so the enclosing run of the other sign counted as refuted and was dropped
+/// unmarked: `\Ra` was exactly `-1`.
+#[test]
+fn an_fp_quotient_over_an_unknown_sign_keeps_both_signs() {
+    if !installed() {
+        return;
+    }
+    let analysis = document(
+        r"\documentclass{article}
+\ExplSyntaxOn
+\int_set:Nn\l_tmpa_int{\int_rand:nn{-1}{1}}\xdef\Ra{\fp_eval:n{1/\l_tmpa_int}}
+\ExplSyntaxOff
+\begin{document}\Ra\end{document}",
+    );
+    let texts = texts(&analysis, "Ra");
+    assert!(covers(&analysis, "Ra", "-1") && covers(&analysis, "Ra", "1"), "{texts:?}");
+}
+
+/// The same tower over an integer of one sign. `pdftex`: `\Ra` is `1` or `0.5`.
+/// Open: the cut of a scan the tower re-enters past `limits.loop_entries` reads one
+/// unknown token into l3fp's parser, a delimited argument runs past the body's `}`,
+/// and `\Ra` is exactly `\par`.
+#[test]
+fn an_fp_quotient_over_an_unknown_positive_integer_covers_its_values() {
+    if !installed() {
+        return;
+    }
+    let analysis = document(
+        r"\documentclass{article}
+\ExplSyntaxOn
+\int_set:Nn\l_tmpa_int{\int_rand:nn{1}{2}}\xdef\Ra{\fp_eval:n{1/\l_tmpa_int}}
+\ExplSyntaxOff
+\begin{document}\Ra\end{document}",
+    );
+    let texts = texts(&analysis, "Ra");
+    assert!(covers(&analysis, "Ra", "1") && covers(&analysis, "Ra", "0.5"), "{texts:?}");
 }

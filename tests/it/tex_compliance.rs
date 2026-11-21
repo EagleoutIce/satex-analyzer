@@ -720,3 +720,46 @@ fn glue_after_a_penalty_is_no_breakpoint() {
         "10.0pt/2.0pt",
     );
 }
+
+/// tex.web § 392: a delimiter that holds a number of several values (`x` in
+/// 0..3) may match where its digits first could, or later. `\w ab0cd<x>\end`
+/// gives `[ab]` for 0 and `[ab0cd]` for 1..3; `\u+-+0-0<x>\relax\end` takes
+/// `-` for its second argument for 0 and `\relax` otherwise. Bug pinned: the
+/// earliest possible match was taken on every run, so `[ab]` and `T` were certain.
+#[test]
+fn a_delimiter_of_several_values_matches_where_it_first_may_or_later() {
+    let a = analyze(
+        r"\count1=\pdfuniformdeviate 4 \edef\x{\the\count1}\def\A{[ab]}\def\B{[ab0cd]}
+\def\v#1{\def\w##1#1##2\end{\gdef\Rb{[##1]}}\w ab0cd#1\end}\expandafter\v\expandafter{\x}
+\ifx\Rb\A\gdef\R{A}\else\ifx\Rb\B\gdef\R{B}\else\gdef\R{other}\fi\fi
+\def\t#1{\def\u##1#1##2##3\end{\ifx\relax##2\gdef\S{F}\else\gdef\S{T}\fi}\u+-+0-0#1\relax\end}\expandafter\t\expandafter{\x}",
+    );
+    for (name, want) in [("R", ["A", "B"]), ("S", ["T", "F"])] {
+        let got = bodies(&a, name);
+        for w in want {
+            assert!(got.iter().any(|(t, _)| t == w), "\\{name} misses {w}: {got:?}");
+        }
+        assert!(got.iter().all(|(_, certain)| !certain), "\\{name} is certain: {got:?}");
+    }
+}
+
+/// tex.web § 392: an undelimited argument read from text that is one of
+/// several (empty, `x` or `xx`) is that text's first token, or the token after
+/// it when the text is empty, so the count of arguments a macro takes from
+/// it differs per text: 0, 1 or 2 here, and 1, 2 or 3 for `a`/`bx`/`cxx`.
+/// Bug pinned: the read took the one-of whole as one argument (an empty text
+/// counted as a token), so the 1 was missing from both counts.
+#[test]
+fn arguments_read_from_one_of_several_texts_count_as_each_text_does() {
+    let a = analyze(
+        r"\count1=\pdfuniformdeviate 3 \edef\t{\ifcase\count1 \or x\or xx\fi}\edef\u{\ifcase\count1 a\or bx\or cxx\fi}
+\def\c#1#2#3\end{\ifx\stop#1\gdef\R{0}\else\ifx\stop#2\gdef\R{1}\else\gdef\R{2}\fi\fi}\expandafter\c\t\stop\stop\end
+\def\d#1#2#3\end{\ifx\stop#2\gdef\S{1}\else\ifx\stop#3\gdef\S{2}\else\gdef\S{3}\fi\fi}\expandafter\d\u\stop\stop\end",
+    );
+    for (name, want) in [("R", ["0", "1", "2"]), ("S", ["1", "2", "3"])] {
+        let got = bodies(&a, name);
+        for w in want {
+            assert!(got.iter().any(|(t, _)| t == w), "\\{name} misses {w}: {got:?}");
+        }
+    }
+}

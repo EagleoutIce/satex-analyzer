@@ -219,6 +219,49 @@ fn the_satex_build_skips_only_what_cannot_change() {
     assert!(!ran, "{said}");
 }
 
+/// An explained build whose logs, source, settings and every file the analysis read are as the
+/// last explained build left them gives that build's records without an analysis; an edit of an
+/// `\input` file explains anew. Pins: a stored explanation served past a change it depends on.
+#[test]
+fn an_unchanged_build_reuses_its_explanation_only() {
+    if !crate::support::installed() || satex::project::paths::which("pdflatex").is_err() {
+        return;
+    }
+    let dir = crate::support::tmp_root().join(format!("satex-explained-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        dir.join("doc.tex"),
+        "\\documentclass{article}\n\\begin{document}\n\\input{part}\n\\end{document}\n",
+    )
+    .unwrap();
+    std::fs::write(dir.join("part.tex"), "Some \\foo text.\n").unwrap();
+    let build = || {
+        let out = crate::support::satex()
+            .args(["compile", "-f", "doc.tex", "--format", "json", "--system", "satex", "--set", "limits.seconds=0"])
+            .current_dir(&dir)
+            .output()
+            .unwrap();
+        let said = String::from_utf8_lossy(&out.stderr).into_owned();
+        let rows: Vec<serde_json::Value> =
+            serde_json::from_slice(&out.stdout).unwrap_or_else(|e| panic!("{e}: {said}"));
+        (rows, said.contains("explained as the last build was"))
+    };
+    let fix = |rows: &[serde_json::Value]| {
+        let row = rows.iter().find(|r| r["code"] == "undefined-control-sequence");
+        let row = row.unwrap_or_else(|| panic!("no undefined name: {rows:?}"));
+        row["fix"].as_str().unwrap_or_default().to_string()
+    };
+    let (first, reused) = build();
+    assert!(!reused && fix(&first).contains("\\foo"), "{first:?}");
+    let (second, reused) = build();
+    assert!(reused && second == first, "{second:?}");
+    std::fs::write(dir.join("part.tex"), "Some \\baz text.\n").unwrap();
+    let (third, reused) = build();
+    assert!(!reused && fix(&third).contains("\\baz"), "{third:?}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// mylatexformat replays the preamble's `\\openout`s at `\\begin{document}`, and glossaries'
 /// `\\makeglossaries` before another package breaks that replay ("Extra \\fi" in `\\MYLATEX@opens`),
 /// though a plain run has no error. Pins: the format build reporting errors pdflatex has not.
@@ -415,4 +458,117 @@ fn a_run_by_hand_never_waits_on_the_warm_engines_pipe() {
     assert!(done, "the run waited on the pipe");
     assert_eq!(std::fs::read_to_string(dir.join("main.tex")).unwrap(), text);
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// memoize in satex's own build: memoize extracts nothing (`extract=no` before the document),
+/// the build extracts each new extern with memoize's own TeX method between passes, so no shell
+/// escape and no Perl or Python module is needed. The PDF then shows each picture once and no
+/// extern page, and the next build includes every extern, compiling no picture again. Pins the
+/// compile half of memoize support: a TeX Live without Perl's PDF::API2 errors on every pdflatex
+/// run with memoize's default `extract=perl`, and pictures were compiled on every build.
+#[test]
+fn the_satex_build_extracts_memoize_externs_itself() {
+    let tools = ["pdflatex", "pdftex", "pdftotext", "kpsewhich"];
+    if !crate::support::installed()
+        || tools.iter().any(|t| satex::project::paths::which(t).is_err())
+        || std::process::Command::new("kpsewhich").arg("memoize.sty").output().map_or(true, |o| o.stdout.is_empty())
+    {
+        return;
+    }
+    let dir = crate::support::scratch_dir(crate::support::tmp_root().join("satex-compile-memoize"));
+    let doc = "\\documentclass{article}\n\\usepackage{memoize}\n\\usepackage{tikz}\n\\begin{document}\nPICTURE\n\
+               \\begin{tikzpicture}\\node{first};\\end{tikzpicture}\n\
+               \\begin{tikzpicture}\\node{second};\\end{tikzpicture}\n\\end{document}\n";
+    let pages = |text: &str| text.matches('\u{c}').count();
+    // the first build compiles both pictures, extracts both, and its last pass includes them
+    std::fs::write(dir.join("doc.tex"), doc.replace("PICTURE", "Pictures:")).unwrap();
+    let (rows, said) = satex_build(&dir, "doc.tex");
+    assert!(rows.iter().all(|r| r["severity"] != "error"), "{rows:?}\n{said}");
+    assert_eq!(said.matches("$ pdftex").count(), 2, "one extraction per picture: {said}");
+    let text = pdf_text(&dir.join("doc.pdf"));
+    assert_eq!((pages(&text), text.matches("first").count()), (1, 1), "an extern page is left: {text}");
+    let externs = |dir: &std::path::Path| {
+        let memo = std::fs::read_dir(dir.join("doc.memo.dir")).unwrap().flatten();
+        memo.filter(|e| e.path().extension().is_some_and(|x| x == "pdf")).count()
+    };
+    assert_eq!(externs(&dir), 2);
+    // an edit beside the pictures: both are read from their memos, none extracted again
+    std::fs::write(dir.join("doc.tex"), doc.replace("PICTURE", "Edited:")).unwrap();
+    let (_, said) = satex_build(&dir, "doc.tex");
+    assert_eq!(said.matches("$ pdftex").count(), 0, "a picture was compiled again: {said}");
+    let mmz = std::fs::read_to_string(dir.join("doc.mmz")).unwrap();
+    assert!(!mmz.contains("\\mmzNewExtern") && mmz.matches("\\mmzUsedExtern").count() == 2, "{mmz}");
+}
+
+/// `compile.warm` from the command line: the build runs in a mirror of the project, so the next
+/// build's pass goes to the engine the last one left waiting, while the project's main file stays
+/// a plain file the editor may write at any time. Its PDF text equals a cold build's, also after an
+/// edit. Pins: the CLI stopping its own warm engine (it found the pipe in the main file's place).
+#[test]
+#[cfg(target_os = "linux")]
+fn a_warm_build_from_the_command_line_feeds_the_waiting_engine() {
+    if !crate::support::installed() || satex::project::paths::which("pdflatex").is_err() {
+        return;
+    }
+    let dir = crate::support::tmp_root().join(format!("satex-warm-cli-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let doc = |body: &str| format!("\\documentclass{{article}}\n\\begin{{document}}\n{body}\n\\end{{document}}\n");
+    std::fs::write(dir.join("doc.tex"), doc("First text.")).unwrap();
+    let build = || {
+        let out = crate::support::satex()
+            .args(["compile", "-f", "doc.tex", "--format", "json", "--system", "satex"])
+            .args(["--set", "limits.seconds=0", "--set", "compile.explain=false", "--set", "compile.warm=true"])
+            .current_dir(&dir)
+            .output()
+            .unwrap();
+        assert!(std::fs::symlink_metadata(dir.join("doc.tex")).unwrap().is_file(), "the project's file is no pipe");
+        String::from_utf8_lossy(&out.stderr).contains("(warm)")
+    };
+    assert!(!build(), "a first build has no engine waiting");
+    // an edit each time, so no build is skipped; the engine reads the clock's minute as it starts
+    let warm = (0..3).any(|i| {
+        std::fs::write(dir.join("doc.tex"), doc(&format!("Edit {i}."))).unwrap();
+        build() && pdf_text(&dir.join("doc.pdf")).contains(&format!("Edit {i}."))
+    });
+    let record = dir.join(".satex-build/mirror/.satex-build/warm/engine");
+    if let Some(pid) = std::fs::read_to_string(&record).ok().and_then(|r| r.lines().next().map(str::to_string)) {
+        let _ = std::process::Command::new("kill").arg(pid).status();
+    }
+    assert!(warm, "no pass went to the waiting engine");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The warm build's mirror holds a project's symbolic link as a link to the same place, so
+/// `\input{sub/a}` through `sub -> ../real` reads in the mirror as in the project, and nothing
+/// behind the link is copied. A link the project points elsewhere is pointed anew. Pins the
+/// mirror that dropped links (a directory entry's type does not follow them): the build then
+/// met no `sub/a.tex`.
+#[cfg(unix)]
+#[test]
+fn the_warm_mirror_keeps_symbolic_links() {
+    let root = crate::support::tmp_root().join(format!("satex-mirror-links-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    let (proj, w) = (root.join("proj"), root.join("mirror"));
+    for d in ["proj", "real", "other"] {
+        std::fs::create_dir_all(root.join(d)).unwrap();
+    }
+    std::fs::write(proj.join("main.tex"), "\\input{sub/a}\n").unwrap();
+    std::fs::write(root.join("real/a.tex"), "real\n").unwrap();
+    std::fs::write(root.join("other/a.tex"), "other\n").unwrap();
+    std::os::unix::fs::symlink("../real", proj.join("sub")).unwrap();
+    let read = || std::fs::read_to_string(w.join("sub/a.tex")).ok();
+    satex::cli::warm::fill(&w, &proj).unwrap();
+    assert!(std::fs::symlink_metadata(w.join("sub")).unwrap().is_symlink(), "a link, not a copy");
+    assert_eq!(read().as_deref(), Some("real\n"));
+    std::fs::remove_file(proj.join("sub")).unwrap();
+    std::os::unix::fs::symlink("../other", proj.join("sub")).unwrap();
+    let since = satex::cli::warm::fill(&w, &proj).unwrap();
+    assert_eq!(read().as_deref(), Some("other\n"));
+    // what the build writes beside the link comes back; nothing comes back for the link
+    std::fs::write(w.join("main.log"), "log\n").unwrap();
+    satex::cli::warm::mirror(&w, &proj, since).unwrap();
+    assert_eq!(std::fs::read_to_string(proj.join("main.log")).ok().as_deref(), Some("log\n"));
+    assert!(std::fs::symlink_metadata(proj.join("sub")).unwrap().is_symlink());
+    std::fs::remove_dir_all(&root).ok();
 }

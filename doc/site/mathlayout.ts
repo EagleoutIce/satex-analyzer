@@ -502,13 +502,77 @@ const xml = (t: string) => t.replace(/&/g, '&amp;').replace(/</g, '&lt;').replac
  * as a/b. Null for a command the preview does not know as math. */
 const preview = (name: string, metric: Metric = roughMetric): string | null => {
   const src = sampleOf(name);
-  if (!src) return null;
-  const b = layout(src, metric, false), pad = 0.08, w = b.w + 2 * pad, h = b.h + b.d + 2 * pad, f = (x: number) => +x.toFixed(3);
+  return src ? svgOf(src, name, metric) : null;
+};
+/** Math `src` drawn as an SVG string in `currentColor`, labelled `label`. */
+function svgOf(src: string, label: string, metric: Metric = roughMetric, display = false): string {
+  const b = layout(src, metric, display), pad = 0.08, w = b.w + 2 * pad, h = b.h + b.d + 2 * pad, f = (x: number) => +x.toFixed(3);
   const face = (k: string) => k === 'it' ? ' font-style="italic"' : k === 'bf' ? ' font-weight="bold"' : '';
   const glyphs = b.g.map(([t, x, y, sc, k, sy]) => `<text x="${f(x + pad)}" y="${f((b.h + pad - y) / (sy ?? 1))}" font-size="${f(sc)}"${face(k)}${sy && sy !== 1 ? ` transform="scale(1 ${f(sy)})"` : ''}>${xml(t)}</text>`);
   const rules = b.r.map(([x, y, rw, rh]) => `<rect x="${f(x + pad)}" y="${f(b.h + pad - y - rh)}" width="${f(rw)}" height="${f(rh)}"/>`);
-  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${f(w)} ${f(h)}" width="${f(w)}em" height="${f(h)}em" fill="currentColor" font-family="'Latin Modern Math','STIX Two Math','Cambria Math',serif" role="img" aria-label="${xml(name)}">${glyphs.join('')}${rules.join('')}</svg>`;
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${f(w)} ${f(h)}" width="${f(w)}em" height="${f(h)}em" fill="currentColor" font-family="'Latin Modern Math','STIX Two Math','Cambria Math',serif" role="img" aria-label="${xml(label)}">${glyphs.join('')}${rules.join('')}</svg>`;
+}
+
+// A formula built from templates (the Draw dialog's formula bar): its LaTeX `src` and a selection `at`..`to`. A slot
+// is an empty group `{}` or an empty matrix cell; a template puts the selection into its first slot (`#`).
+type Formula = { src: string; at: number; to: number };
+const TEMPLATES: Record<string, string> = {
+  frac: '\\frac{#}{}', sup: '^{#}', sub: '_{#}', sqrt: '\\sqrt{#}', sum: '\\sum_{#}^{}', int: '\\int_{#}^{}', paren: '\\left(#\\right)',
+  matrix: '\\begin{pmatrix}#&\\\\&\\end{pmatrix}',
 };
-self.satexMath = { layout, parse, css, PARAMS, spaceMu, isMath, preview };
+/** The slots of `src` as caret offsets: inside `{}`, in an empty cell of a matrix. */
+const slots = (src: string) => [...src.matchAll(/\{\}|(?<=&|\\\\|\\begin\{pmatrix\})[ ]*(?=&|\\\\|\\end\{pmatrix\})/g)].map((m) => m.index! + (m[0] === '{}' ? 1 : 0));
+/** Tab: the next slot after the caret; without one, out of the group the caret is in (past its `}`), else the end. */
+const next = (f: Formula): Formula => {
+  let at = slots(f.src).find((i) => i > f.at);
+  for (let i = f.at, d = 0; at == null && i < f.src.length; i++) {
+    if (f.src[i] === '\\') i++;
+    else if (f.src[i] === '{') d++;
+    else if (f.src[i] === '}' && d-- === 0) at = i + 1;
+  }
+  at ??= f.src.length;
+  return { src: f.src, at, to: at };
+};
+/** `text` with a blank between a command's name and a letter that would run into it (`\\alpha x`). */
+const join = (a: string, b: string) => a + (/\\[A-Za-z]+$/.test(a) && /^[A-Za-z]/.test(b) ? ' ' : '') + b;
+/** `text` put in place of the selection, the caret after it. */
+const put = (f: Formula, text: string): Formula => {
+  const head = join(f.src.slice(0, f.at), text), src = join(head, f.src.slice(f.to));
+  return { src, at: head.length, to: head.length };
+};
+/** Template `kind` around the selection; the caret in its first slot when nothing was selected, else in the next one.
+ * A script goes after the selection, which stays its base. */
+const wrap = (f: Formula, kind: string): Formula => {
+  const t = TEMPLATES[kind]!, sel = f.src.slice(f.at, f.to), script = kind === 'sup' || kind === 'sub';
+  const [pre, post] = t.split('#') as [string, string], body = script ? `${sel}${pre}` : `${pre}${sel}`;
+  const g = put(f, body + post), at = g.at - post.length, more = slots(g.src).find((i) => i > at);
+  // a selection put in: on to the template's next slot, or past the template without one
+  const to = !sel || script ? at : more ?? g.at;
+  return { src: g.src, at: to, to };
+};
+/** Clean LaTeX: Unicode symbols as commands, empty scripts dropped, a one-token script without braces (`x^2`,
+ * `_\\alpha`), single blanks, trimmed. */
+/** The command the preview's table names first for character `c` (`α` → `alpha`), for non-ASCII characters. */
+let NAMES: Map<string, string> | null = null;
+const nameOf = (c: string) => {
+  if (!NAMES) { sym('alpha'); NAMES = new Map(); for (const [n, [ch]] of SYMS!) if (/[^\x00-\x7f]/.test(ch) && !NAMES.has(ch)) NAMES.set(ch, n); }
+  return NAMES.get(c);
+};
+const clean = (src: string): string => {
+  // a symbol typed as Unicode (`α`, `≤`) as its command: pdfTeX's math has no Unicode input
+  src = src.replace(/([^\x00-\x7f])(?=([A-Za-z])?)/gu, (c, _, after) => { const n = nameOf(c); return n ? `\\${n}${after ? ' ' : ''}` : c; });
+  // an empty script goes, nested ones too (`^{_{}}`); a command's name before it keeps its blank to a letter after
+  let s = src, was;
+  do { was = s; s = s.replace(/[\^_]\{\s*\0*\s*\}/g, '\0'); } while (s !== was);
+  s = s.replace(/(\\[A-Za-z]+)\0+(?=[A-Za-z])/g, '$1 ').replace(/\0/g, '');
+  s = s.replace(/([\^_])\{\s*(\\[A-Za-z]+|[^{}\\\s])\s*\}([A-Za-z]?)/g, (_, op, tok, after) => op + tok + (after && /[A-Za-z]$/.test(tok) ? ' ' : '') + after);
+  // a matrix: one blank around its cells' `&` and `\\`, and inside its begin and end
+  s = s.replace(/[ \t]+/g, ' ').replace(/ ?((?<!\\)&|\\\\) ?/g, ' $1 ').replace(/(\\begin\{\w*matrix\}) ?/g, '$1 ').replace(/ ?(\\end\{\w*matrix\})/g, ' $1');
+  return s.replace(/ {2,}/g, ' ').trim();
+};
+/** The formula drawn: empty slots as boxes. */
+const formulaSvg = (src: string, metric: Metric = roughMetric) =>
+  svgOf(src.replace(/\{\}/g, '{\\Box}').replace(/(&|\\\\|\\begin\{pmatrix\})[ ]*(?=&|\\\\|\\end\{pmatrix\})/g, '$1\\Box') || '\\Box', clean(src), metric);
+self.satexMath = { layout, parse, css, PARAMS, spaceMu, isMath, preview, formula: { TEMPLATES, slots, next, put, wrap, clean, svg: formulaSvg } };
 // the Typeset view's math reads them (style.css falls back to the same values where this script is not loaded)
 if (self.document) for (const [k, v] of Object.entries(css())) document.documentElement.style.setProperty(k, v);

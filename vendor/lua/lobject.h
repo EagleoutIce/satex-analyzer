@@ -355,6 +355,7 @@ typedef union UTString {
 typedef struct Udata {
   CommonHeader;
   lu_byte ttuv_;  /* user value's tag */
+  unsigned int satex_epoch;  /* satex: the epoch it was made in */
   struct Table *metatable;
   size_t len;  /* number of bytes */
   union Value user_;  /* user value */
@@ -508,6 +509,7 @@ typedef struct Table {
   lu_byte flags;  /* 1<<p means tagmethod(p) is not present */
   lu_byte lsizenode;  /* log2 of size of 'node' array */
   unsigned int sizearray;  /* size of 'array' array */
+  unsigned int satex_epoch;  /* satex: the epoch it was made in */
   TValue *array;  /* array part */
   Node *node;
   Node *lastfree;  /* any free position is before this position */

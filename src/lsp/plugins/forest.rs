@@ -45,7 +45,7 @@ impl TypePlugin for Forest {
     fn actions(&self, cx: &Cx, _hit: &Hit) -> Vec<CodeAction> {
         let Some(new) = super::blank(cx, ENV, ENV) else { return Vec::new() };
         let node = snapshot::Node { body: format!("  {TEMPLATE}"), ..snapshot::new_env(ENV, new.at.start, ENV) };
-        let Ok((edits, notes)) = snapshot::printed(cx.analysis, cx.doc, &[node]) else { return Vec::new() };
+        let Ok((edits, notes)) = snapshot::printed(cx.analysis, cx.doc, cx.file(), &[node]) else { return Vec::new() };
         let note: String = notes.iter().map(|n| format!(" ({n})")).collect();
         vec![rewrite(cx, format!("Insert forest tree{note}"), snapshot::lsp_edits(cx.doc, edits))]
     }

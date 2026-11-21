@@ -185,8 +185,13 @@ impl Machine<'_> {
     }
 
     /// `\pdfrefximage⟨n⟩`: a box of the image's size, depth zero, where
-    /// the size is known.
-    fn ref_ximage(&mut self, n: Option<i64>) {
+    /// the size is known. It places image `n` again: graphicx loads a file
+    /// once and refers to it on every include (pdftex.def `\Gin@setfile`).
+    fn ref_ximage(&mut self, n: Option<i64>, span: Span) {
+        let name = n.map(|n| self.engine_sym(&format!("ximage.{n}.name")));
+        if let Some(name) = name.and_then(|sym| text_of_value(&self.env.value(sym))) {
+            crate::analysis::observe::placed_image(self, &name, span);
+        }
         let dim =
             |m: &mut Self, k: &str| Some(crate::engine::mode::Dim::exact(m.engine_int(&format!("ximage.{}.{k}", n?))?));
         let item = match (dim(self, "w"), dim(self, "h")) {
@@ -1717,7 +1722,7 @@ impl Machine<'_> {
             }
             Syntax::Number if self.name(self.env.identity(by)) == "pdfrefximage" => {
                 let n = self.scan_int();
-                self.ref_ximage(n);
+                self.ref_ximage(n, span);
             }
             Syntax::Number if let Some(shift) = self.math_char_command(by) => {
                 let code = self.scan_int().map(|v| v >> shift);
@@ -2073,6 +2078,7 @@ impl Machine<'_> {
                     for (k, sp) in [("w", size.map(|s| s.0)), ("h", size.map(|s| s.1))] {
                         self.set_engine(&format!("ximage.{n}.{k}"), sp.map_or(Value::Unknown, Value::Int), true);
                     }
+                    self.set_engine(&format!("ximage.{n}.name"), Value::Toks(file.into()), true);
                 }
             }
             Syntax::PdfColorStack => {
@@ -2616,9 +2622,9 @@ impl Machine<'_> {
         let name = self.name(sym).to_string();
         let Some(p) = self.engine_primitive(&name) else { return };
         let builtin = |m: Meaning| crate::engine::env::Binding::builtin(m);
-        let own = format!("{FROZEN}{}", self.name(self.env.identity(by)));
-        if !crate::engine::builtins::expandable(p) && self.name(by) != own {
-            let frozen = self.intern(&own);
+        // The frozen copy puts back the primitive itself: it is never frozen again.
+        if !crate::engine::builtins::expandable(p) && !self.name(by).starts_with(FROZEN) {
+            let frozen = self.intern(&format!("{FROZEN}{}", self.name(self.env.identity(by))));
             self.env.set(
                 frozen,
                 builtin(Meaning::Primitive(Primitive::Convert(crate::engine::builtins::Convert::Primitive))),

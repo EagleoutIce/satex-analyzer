@@ -55,12 +55,14 @@ fn is_unknown(v: &LV) -> bool {
 unsafe extern "C-unwind" {
     /// LPeg's opener (vendor/lpeg, built by build.rs).
     fn luaopen_lpeg(state: *mut mlua::ffi::lua_State) -> std::ffi::c_int;
+    /// `track(start)`: the writes to state older than the current run so far; `true` starts
+    /// a run's epoch, `false` ends it (vendor/lua/SATEX.patch, `satex_write`).
+    fn satex_track(state: *mut mlua::ffi::lua_State) -> std::ffi::c_int;
 }
 
-/// The registry slot of the current run's dispatcher, and of the table
-/// `lua.get_functions_table` returns.
-const DISPATCH: &str = "satex.dispatch";
+/// The registry slots of the table `lua.get_functions_table` returns and of `satex_track`.
 const FUNCTIONS: &str = "satex.functions";
+const TRACK: &str = "satex.track";
 /// Lua instructions one step of `limits.steps` pays for.
 const INSTRUCTIONS_A_STEP: u32 = 1000;
 
@@ -99,6 +101,42 @@ struct Shared {
     /// are unknown, not nil.  `all` stands for every name.
     tainted: RefCell<crate::fixed::HashSet<String>>,
     all: Cell<bool>,
+    /// The run that last changed this state ([`LAST_RUN`]); 0 before any.
+    last: Cell<i64>,
+    /// The dispatchers of the runs in progress, innermost last. Not in the registry: a
+    /// write there would count as the run's.
+    dispatch: RefCell<Vec<mlua::Function>>,
+}
+
+/// The name that holds, per path, the last Lua run of that path: a hash of every run before
+/// it and its text. One state serves all paths, checkpoints and sandboxes, and no join or
+/// rewind reaches into it. It is a path's own state only while this name holds the state's
+/// last run. A global assignment like any other, so choices, joins, rewinds, widenings,
+/// checkpoints and caches carry it: a path that meets another value (a sibling ran Lua, a
+/// join, a replayed load) does not run its Lua, whose results are then unknown. Only a run that
+/// changed the state moves it: the VM counts writes to state older than the run (tables,
+/// userdata, upvalues, coroutines it did not make, C-side state), and a run that wrote none
+/// is no change, so its siblings stay in step.
+const LAST_RUN: &str = "lua last run";
+
+/// Whether the state holds what this path's runs made of it, and nothing else.
+pub(super) fn in_step(m: &Machine) -> bool {
+    let slot = m.out.interner.lookup(LAST_RUN).and_then(|slot| m.env.peek(slot.0));
+    let here = match slot.map(|b| &b.value) {
+        None => Some(0),
+        Some(Value::Int(n)) => Some(*n),
+        _ => None,
+    };
+    let last = m.lua.state.as_ref().and_then(|lua| Some(lua.app_data_ref::<Shared>()?.last.get()));
+    here == Some(last.unwrap_or(0))
+}
+
+/// A job starts with a fresh state (LuaTeX dumps none): no run is its last.
+pub(super) fn fresh(m: &mut Machine) {
+    let slot = m.intern(LAST_RUN);
+    if m.env.peek(slot.0).is_some() {
+        m.env.set_value(slot, Value::Int(0), true);
+    }
 }
 
 /// Fails the run.
@@ -199,7 +237,9 @@ fn op(name: &str) -> usize {
 
 /// Calls library function `k` through the current run's dispatcher.
 fn dispatch(lua: &State, k: usize, mut args: MultiValue) -> R<MultiValue> {
-    let LV::Function(d) = lua.named_registry_value::<LV>(DISPATCH)? else { return unknown(lua) };
+    let Some(d) = lua.app_data_ref::<Shared>().and_then(|s| s.dispatch.borrow().last().cloned()) else {
+        return unknown(lua);
+    };
     args.push_front(LV::Integer(k as i64));
     d.call(args)
 }
@@ -288,6 +328,8 @@ fn new_state(memory: u64, steps: u64) -> R<State> {
     // SAFETY: `luaopen_lpeg` is LPeg's `lua_CFunction`, built against the
     // Lua 5.3 headers of the Lua this state is.
     let lpeg = unsafe { lua.create_c_function(luaopen_lpeg) }?.call::<Table>(())?;
+    // SAFETY: `satex_track` is a `lua_CFunction` of this state's Lua (vendor/lua/lapi.c).
+    lua.set_named_registry_value(TRACK, unsafe { lua.create_c_function(satex_track) }?)?;
     libraries.set("lpeg", lpeg)?;
     lua.load(PRELUDE).set_name("=satex").set_mode(ChunkMode::Text).call::<()>(libraries)?;
     Ok(lua)
@@ -447,11 +489,17 @@ fn enter(
         return None;
     }
     let lua = state(m)?;
-    if std::mem::take(&mut m.lua.stale) {
-        taint(m, &[None]);
-    }
+    // No cache holds the state: a load that runs Lua is read from here on by every run.
+    m.spoil_recording("it runs Lua, whose state no cache holds");
     let outer = m.lua.depth == 0;
     let failed_before = {
+        if !in_step(m) {
+            if m.cfg.verbose >= 3 {
+                let at = (m.out.file_name(span.file).to_string(), span.line);
+                crate::util::progress::note!("satex: Lua at {}:{} not run: the state is not this path's", at.0, at.1);
+            }
+            return None;
+        }
         let shared = lua.app_data_ref::<Shared>()?;
         if outer {
             let left = m.cfg.limits.steps.saturating_sub(m.out.steps);
@@ -460,6 +508,9 @@ fn enter(
         }
         shared.failed.replace(false)
     };
+    let track: mlua::Function = lua.named_registry_value(TRACK).ok()?;
+    // Whether the run wrote state it found: unless the VM's count says it did not, it did.
+    let mut wrote = true;
     m.lua.depth += 1;
     let run =
         RefCell::new(Run { m, span, out: Vec::new(), files: Vec::new(), stopped: Vec::new(), captured: Vec::new() });
@@ -469,10 +520,21 @@ fn enter(
             let Some((_, f)) = usize::try_from(k).ok().and_then(|k| OPS.get(k)) else { return unknown(lua) };
             f(&run, lua, args)
         })?;
-        let previous: LV = lua.named_registry_value(DISPATCH)?;
-        lua.set_named_registry_value(DISPATCH, d)?;
+        lua.app_data_ref::<Shared>()
+            .ok_or_else(|| mlua::Error::runtime("satex: no state"))?
+            .dispatch
+            .borrow_mut()
+            .push(d);
+        // The outermost run is one epoch: what it makes is fresh, writing it is no change.
+        let before = track.call::<i64>(outer.then_some(true));
         let result = work(&lua);
-        lua.set_named_registry_value(DISPATCH, previous)?;
+        let after = track.call::<i64>(outer.then_some(false));
+        if let Some(shared) = lua.app_data_ref::<Shared>() {
+            shared.dispatch.borrow_mut().pop();
+        }
+        if let (Ok(before), Ok(after)) = (before, after) {
+            wrote = after != before;
+        }
         result
     });
     let Run { m, out, stopped, .. } = run.into_inner();
@@ -482,11 +544,19 @@ fn enter(
         if outer {
             m.out.steps += shared.used.get();
         }
-        result.is_err() || shared.failed.replace(failed_before)
+        let failed = result.is_err() || shared.failed.replace(failed_before);
+        // A run that changed the state (a failed one taints it) is now the state's last, and
+        // this path's. One that wrote nothing leaves both: paths that forked stay in step.
+        if wrote || failed {
+            use std::hash::BuildHasher;
+            let h = crate::engine::tex::NameHash.hash_one((shared.last.get(), &text, span.line, span.col));
+            shared.last.set((h >> 1) as i64 | 1);
+            let slot = m.intern(LAST_RUN);
+            m.env.set_value(slot, Value::Int(shared.last.get()), true);
+        }
+        failed
     };
-    // A run inside undecided conditionals changes the one state every
-    // path shares: what it did cannot be undone for the other paths.
-    if failed || m.env.forking() {
+    if failed {
         // What did not run: the chunk or function from where it stopped,
         // and the modules whose loading stopped, from where they did.
         let trace = result.as_ref().err().map(ToString::to_string).unwrap_or_default();

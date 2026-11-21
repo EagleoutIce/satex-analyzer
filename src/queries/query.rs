@@ -1145,7 +1145,9 @@ fn rule_note(line: &mut String, keys: &mut Keys<'_>, rule: Rule) {
 /// driver's literals moved the origin by a translation (`1 0 0 1 x y cm`) of
 /// at least `OFF_PAGE` bp and had not moved it back, as pgf's
 /// `\pgfsys@begininvisible` does for beamer's covered text.
-pub(crate) fn invisible(literals: &[crate::analysis::facts::Literal]) -> Vec<std::ops::Range<u32>> {
+pub(crate) fn invisible(
+    literals: &crate::fixed::Chunked<crate::analysis::facts::Literal>,
+) -> Vec<std::ops::Range<u32>> {
     const OFF_PAGE: f64 = 1000.0;
     let (mut out, mut shift, mut from) = (Vec::new(), (0.0, 0.0), None);
     for l in literals {
@@ -3079,8 +3081,10 @@ pub fn reconstruct_mapped(analysis: &Analysis, slice: &[Record], source: &str) -
             .filter(|(_, v)| !(v.span.file == main && frame.ends.contains(&v.span.line)))
             .max_by_key(|(id, _)| *id);
         match last {
-            Some((id, last)) => analysis.graph.vertices[id as usize..]
-                .iter()
+            Some((id, last)) => analysis
+                .graph
+                .vertices
+                .iter_from(id as usize)
                 .position(|v| v.span.file == last.span.file && v.span.line > last.span.line)
                 .map_or(NodeId::MAX, |next| (id + next as NodeId).saturating_sub(1)),
             None => NodeId::MAX,
@@ -5768,7 +5772,15 @@ fn redefinition_chain(analysis: &Analysis, def: &crate::analysis::facts::Definit
             .filter(|c| {
                 let text = &c.mac.as_ref().expect("filtered").replacement_text;
                 match from {
-                    Some(f) => f.mac.as_ref().is_some_and(|m| Rc::ptr_eq(&m.replacement_text, text)),
+                    // `\let` copies the body: the same tokens from the same places. A body replayed
+                    // from a cache is a copy of its own, so identity alone differs cold and warm.
+                    Some(f) => f.mac.as_ref().is_some_and(|m| {
+                        let (a, b) = (&m.replacement_text, text);
+                        Rc::ptr_eq(a, b)
+                            || !a.is_empty()
+                                && a.len() == b.len()
+                                && a.iter().zip(b.iter()).all(|(x, y)| x == y && x.span == y.span)
+                    }),
                     None => text.first().is_some_and(|t| {
                         kernel.is_some_and(|k| {
                             t.span.file == k.file && t.span.line >= k.line && next.is_none_or(|n| t.span.line < n)

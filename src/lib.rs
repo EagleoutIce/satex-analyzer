@@ -71,6 +71,8 @@ pub(crate) fn push_shared<T: Clone>(stack: &mut std::rc::Rc<Vec<T>>, item: T) {
 /// Hash collections with fixed keys, so iteration order is the same every
 /// run: with the std's random keys one run in about eight took other paths.
 pub mod fixed {
+    #[macro_export]
+    macro_rules! probe_sz { ($($n:literal => $e:expr),* $(,)?) => {{ let mut v: Vec<(&'static str, usize)> = Vec::new(); $( let b = $crate::analysis::budget::in_use(); let x = $e.clone(); let d = $crate::analysis::budget::in_use().saturating_sub(b); drop(x); v.push(($n, d >> 10)); )* v }} }
     pub type Hasher = std::hash::BuildHasherDefault<std::collections::hash_map::DefaultHasher>;
     pub type HashMap<K, V> = std::collections::HashMap<K, V, Hasher>;
     pub type HashSet<K> = std::collections::HashSet<K, Hasher>;
@@ -78,6 +80,8 @@ pub mod fixed {
     /// before use: no order of theirs is ever seen, so a fast hash will do.
     pub type LookupMap<K, V> = std::collections::HashMap<K, V, crate::engine::tex::NameHash>;
     pub type LookupSet<K> = std::collections::HashSet<K, crate::engine::tex::NameHash>;
+    /// A map a clone shares: one place to pick the pointer kind.
+    pub type SharedMap<K, V> = rpds::HashTrieMap<K, V, archery::RcK, crate::engine::tex::NameHash>;
 
     /// A mutex whose clone holds a copy of its value: an [`crate::analysis::machine::Analysis`] is cloned whole.
     #[derive(Default, Debug)]
@@ -308,6 +312,16 @@ pub mod fixed {
             (i < self.1).then(|| &self.0[i / CHUNK][i % CHUNK])
         }
 
+        /// As `slice::partition_point`: the first index where `pred` stops holding (the list is partitioned by it).
+        pub fn partition_point(&self, mut pred: impl FnMut(&T) -> bool) -> usize {
+            let (mut lo, mut hi) = (0, self.1);
+            while lo < hi {
+                let mid = lo + (hi - lo) / 2;
+                if pred(&self[mid]) { lo = mid + 1 } else { hi = mid }
+            }
+            lo
+        }
+
         /// Grows to `n` with `value`; never shrinks.
         pub fn resize(&mut self, n: usize, value: T) {
             while self.1 < n {
@@ -321,8 +335,252 @@ pub mod fixed {
             }
         }
 
-        pub fn iter(&self) -> impl Iterator<Item = &T> {
-            self.0.iter().flat_map(|c| c.iter())
+        pub fn iter(&self) -> Iter<'_, T> {
+            self.iter_from(0)
+        }
+
+        /// The last element, if any.
+        pub fn last(&self) -> Option<&T> {
+            self.1.checked_sub(1).map(|i| &self[i])
+        }
+
+        pub fn get_mut(&mut self, i: usize) -> Option<&mut T> {
+            (i < self.1).then(|| &mut self[i])
+        }
+
+        /// Appends; a chunk a copy still shares is copied first (one chunk at most).
+        pub fn push(&mut self, value: T) {
+            if self.1.is_multiple_of(CHUNK) {
+                self.0.push(std::rc::Rc::new(Vec::new()));
+            }
+            std::rc::Rc::make_mut(self.0.last_mut().expect("pushed")).push(value);
+            self.1 += 1;
+        }
+
+        pub fn pop(&mut self) -> Option<T> {
+            let last = std::rc::Rc::make_mut(self.0.last_mut()?);
+            let value = last.pop();
+            if last.is_empty() {
+                self.0.pop();
+            }
+            self.1 -= 1;
+            value
+        }
+
+        /// Keeps the first `n`; chunks past it are dropped, not copied.
+        pub fn truncate(&mut self, n: usize) {
+            if n >= self.1 {
+                return;
+            }
+            self.0.truncate(n.div_ceil(CHUNK));
+            let keep = n - (n - 1) / CHUNK * CHUNK;
+            if let Some(last) = self.0.last_mut().filter(|c| c.len() > keep) {
+                std::rc::Rc::make_mut(last).truncate(keep);
+            }
+            self.1 = n;
+        }
+
+        pub fn swap(&mut self, a: usize, b: usize) {
+            if a != b {
+                let y = self[b].clone();
+                let x = std::mem::replace(&mut self[a], y);
+                self[b] = x;
+            }
+        }
+
+        pub fn clear(&mut self) {
+            *self = Chunked::default();
+        }
+
+        /// Whether `prefix`'s elements are this one's first ones. Chunks both share are equal unread.
+        pub(crate) fn starts_with(&self, prefix: &Self) -> bool
+        where
+            T: PartialEq,
+        {
+            let whole = prefix.1 / CHUNK;
+            prefix.1 <= self.1
+                && self.0.iter().zip(&prefix.0[..whole]).all(|(a, b)| std::rc::Rc::ptr_eq(a, b) || a == b)
+                && self.iter_from(whole * CHUNK).zip(prefix.iter_from(whole * CHUNK)).all(|(a, b)| a == b)
+        }
+
+        /// The elements from `from` on, in order.
+        pub fn iter_from(&self, from: usize) -> Iter<'_, T> {
+            Iter(self, from.min(self.1)..self.1)
+        }
+
+        /// Every element, writable: every chunk is unshared first.
+        pub fn iter_mut(&mut self) -> impl Iterator<Item = &mut T> {
+            self.iter_mut_from(0)
+        }
+
+        /// The elements from `from` on, writable: only their chunks are unshared.
+        pub fn iter_mut_from(&mut self, from: usize) -> impl Iterator<Item = &mut T> {
+            let chunks = self.0.get_mut(from / CHUNK..).unwrap_or_default();
+            chunks.iter_mut().flat_map(|c| std::rc::Rc::make_mut(c).iter_mut()).skip(from % CHUNK)
+        }
+    }
+
+    impl<T: PartialEq> PartialEq for Chunked<T> {
+        fn eq(&self, other: &Self) -> bool {
+            self.1 == other.1 && self.0.iter().zip(&other.0).all(|(a, b)| std::rc::Rc::ptr_eq(a, b) || a == b)
+        }
+    }
+
+    impl<T: Clone> FromIterator<T> for Chunked<T> {
+        fn from_iter<I: IntoIterator<Item = T>>(items: I) -> Self {
+            let mut out = Chunked::default();
+            out.extend(items);
+            out
+        }
+    }
+
+    impl<T: Clone> Extend<T> for Chunked<T> {
+        fn extend<I: IntoIterator<Item = T>>(&mut self, items: I) {
+            for x in items {
+                self.push(x);
+            }
+        }
+    }
+
+    impl<T: Clone> From<Vec<T>> for Chunked<T> {
+        fn from(v: Vec<T>) -> Self {
+            v.into_iter().collect()
+        }
+    }
+
+    /// The elements of a [`Chunked`] in a range of positions.
+    #[derive(Clone)]
+    pub struct Iter<'a, T>(&'a Chunked<T>, std::ops::Range<usize>);
+
+    impl<'a, T> Iterator for Iter<'a, T> {
+        type Item = &'a T;
+        fn next(&mut self) -> Option<&'a T> {
+            self.1.next().map(|i| &self.0.0[i / CHUNK][i % CHUNK])
+        }
+        fn size_hint(&self) -> (usize, Option<usize>) {
+            self.1.size_hint()
+        }
+        fn nth(&mut self, n: usize) -> Option<&'a T> {
+            self.1.nth(n).map(|i| &self.0.0[i / CHUNK][i % CHUNK])
+        }
+    }
+
+    impl<T> DoubleEndedIterator for Iter<'_, T> {
+        fn next_back(&mut self) -> Option<Self::Item> {
+            self.1.next_back().map(|i| &self.0.0[i / CHUNK][i % CHUNK])
+        }
+    }
+
+    impl<T> ExactSizeIterator for Iter<'_, T> {}
+
+    impl<'a, T: Clone> IntoIterator for &'a Chunked<T> {
+        type Item = &'a T;
+        type IntoIter = Iter<'a, T>;
+        fn into_iter(self) -> Iter<'a, T> {
+            self.iter()
+        }
+    }
+
+    /// A [`Chunked`] behaves as a `Vec` would, and a copy shares the chunks it does not write.
+    /// Pins the record lists checkpoints share: a wrong `truncate` or `pop` near a chunk border
+    /// would drop or keep one record, and `flat` must write a `Vec`'s bytes, else cache files change.
+    #[cfg(test)]
+    #[test]
+    fn chunked_is_a_vec_that_copies_share() {
+        let n = 3 * CHUNK + 5;
+        let (mut c, mut v): (Chunked<usize>, Vec<usize>) = (Chunked::default(), Vec::new());
+        for i in 0..n {
+            c.push(i);
+            v.push(i);
+        }
+        let copy = c.clone();
+        for cut in [n - 1, 2 * CHUNK + 1, 2 * CHUNK, CHUNK - 1, 0] {
+            c.truncate(cut);
+            v.truncate(cut);
+            assert!(c.iter().eq(v.iter()) && c.len() == v.len(), "truncate {cut}");
+        }
+        assert!(copy.iter().copied().eq(0..n), "the copy keeps every element");
+        let mut c = copy.clone();
+        c[CHUNK + 1] = 0;
+        assert!(std::rc::Rc::ptr_eq(&c.0[0], &copy.0[0]) && !std::rc::Rc::ptr_eq(&c.0[1], &copy.0[1]));
+        assert_eq!(c.pop(), Some(n - 1));
+        assert_eq!(c.iter_from(n - 3).copied().collect::<Vec<_>>(), vec![n - 3, n - 2]);
+        assert_eq!(c.iter().rev().len(), n - 1);
+        #[derive(serde::Serialize, serde::Deserialize)]
+        struct Flat(#[serde(with = "flat")] Chunked<usize>);
+        let plain: Vec<usize> = copy.iter().copied().collect();
+        let bytes = postcard::to_allocvec(&Flat(copy)).expect("encodes");
+        assert_eq!(bytes, postcard::to_allocvec(&plain).expect("encodes"));
+        let back: Flat = postcard::from_bytes(&bytes).expect("decodes");
+        assert!(back.0.iter().eq(plain.iter()));
+    }
+
+    /// Cutting a list back to a chunk border, or past the end, leaves the chunks a copy
+    /// shares shared: a checkpoint's rewind would otherwise copy a full chunk for nothing.
+    /// And a log kept in a `RefCell` (`Env`'s read log) writes a `Vec`'s bytes too.
+    #[cfg(test)]
+    #[test]
+    fn chunked_truncate_keeps_untouched_chunks_shared() {
+        let mut c: Chunked<u32> = (0..2 * CHUNK as u32).collect();
+        let copy = c.clone();
+        c.truncate(CHUNK);
+        c.truncate(5 * CHUNK);
+        assert!(std::rc::Rc::ptr_eq(&c.0[0], &copy.0[0]), "a full chunk kept whole stays shared");
+        assert_eq!(c.len(), CHUNK);
+        assert!(c.iter_from(CHUNK - 2).copied().eq([CHUNK as u32 - 2, CHUNK as u32 - 1]));
+        #[derive(serde::Serialize, serde::Deserialize)]
+        struct Log(#[serde(with = "flat::cell")] std::cell::RefCell<Chunked<(u32, u64)>>);
+        let log = Log(std::cell::RefCell::new((0..CHUNK as u32 + 3).map(|i| (i, 2 * i as u64)).collect()));
+        let plain: Vec<(u32, u64)> = log.0.borrow().iter().copied().collect();
+        let bytes = postcard::to_allocvec(&log).expect("encodes");
+        assert_eq!(bytes, postcard::to_allocvec(&plain).expect("encodes"));
+        let back: Log = postcard::from_bytes(&bytes).expect("decodes");
+        assert!(back.0.borrow().iter().eq(plain.iter()));
+    }
+
+    /// Serde for a [`Chunked`] as the plain sequence a `Vec` writes: a record
+    /// list that checkpoints share is stored as it was before.
+    pub mod flat {
+        pub fn serialize<S: serde::Serializer, T: serde::Serialize + Clone>(
+            v: &super::Chunked<T>,
+            s: S,
+        ) -> Result<S::Ok, S::Error> {
+            s.collect_seq(v.iter())
+        }
+        pub fn deserialize<'de, D: serde::Deserializer<'de>, T: serde::Deserialize<'de> + Clone>(
+            d: D,
+        ) -> Result<super::Chunked<T>, D::Error> {
+            struct Seq<T>(std::marker::PhantomData<T>);
+            impl<'de, T: serde::Deserialize<'de> + Clone> serde::de::Visitor<'de> for Seq<T> {
+                type Value = super::Chunked<T>;
+                fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                    f.write_str("a sequence")
+                }
+                fn visit_seq<A: serde::de::SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
+                    let mut out = super::Chunked::default();
+                    while let Some(x) = seq.next_element()? {
+                        out.push(x);
+                    }
+                    Ok(out)
+                }
+            }
+            d.deserialize_seq(Seq(std::marker::PhantomData))
+        }
+
+        /// `flat` inside a `RefCell`.
+        pub mod cell {
+            use std::cell::RefCell;
+            pub fn serialize<S: serde::Serializer, T: serde::Serialize + Clone>(
+                v: &RefCell<super::super::Chunked<T>>,
+                s: S,
+            ) -> Result<S::Ok, S::Error> {
+                super::serialize(&v.borrow(), s)
+            }
+            pub fn deserialize<'de, D: serde::Deserializer<'de>, T: serde::Deserialize<'de> + Clone>(
+                d: D,
+            ) -> Result<RefCell<super::super::Chunked<T>>, D::Error> {
+                super::deserialize(d).map(RefCell::new)
+            }
         }
     }
 

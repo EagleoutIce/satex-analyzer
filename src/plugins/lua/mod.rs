@@ -31,8 +31,18 @@ pub struct Lua {
     pub(super) state: Option<mlua::Lua>,
     /// The runs in progress.
     pub(super) depth: usize,
-    /// A cached segment ran Lua this state has not seen.
-    pub(super) stale: bool,
+}
+
+/// Whether the one Lua state is `m`'s own: a copy of a machine (a checkpoint) whose state
+/// went on without it is not a place to go on from.
+pub fn in_step(m: &Machine) -> bool {
+    run::in_step(m)
+}
+
+/// A job's fresh Lua state, as LuaTeX starts one after a format.
+pub fn fresh(m: &mut Machine) {
+    m.lua = Default::default();
+    run::fresh(m);
 }
 
 impl Lua {
@@ -49,7 +59,6 @@ impl Lua {
     }
 
     pub fn set_files(&mut self, files: Vec<PathBuf>) {
-        self.stale |= files.iter().any(|f| !self.read.contains(f));
         self.read = files.into_iter().collect();
     }
 }

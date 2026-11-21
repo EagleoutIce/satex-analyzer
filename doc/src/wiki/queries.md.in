@@ -167,7 +167,7 @@ Every step: which macro expanded, which primitive ran, what changed. Use `satex 
 | `paired` | the names a join kept paired across its arms, and how many arms |
 | `catcodes` | the catcode of each non-alphanumeric character in the file text ahead |
 
-A `value` names its type in the [`Ty` lattice](Domains#argument-types-the-ty-lattice) (`number`, `dimen`, `glue`, `muglue`, `quantity`, `text`, `any`) and what satex knows about its value: `exact`, an `interval` `[lo, hi]`, a `set`, or `unknown`. Typed unknown text appears as its own names (`unknown digits:0..1439`). `limits.trace_state` caps each list. In the playground, *dev mode* in the settings turns this on: the trace shows the domains of the selected step, the editor menu offers *Inspect state here*, and the trace exports as JSON or CSV.
+A `value` names its type in the [`Ty` lattice](domains.md#argument-types-the-ty-lattice) (`number`, `dimen`, `glue`, `muglue`, `quantity`, `text`, `any`) and what satex knows about its value: `exact`, an `interval` `[lo, hi]`, a `set`, or `unknown`. Typed unknown text appears as its own names (`unknown digits:0..1439`). `limits.trace_state` caps each list. In the playground, *dev mode* in the settings turns this on: the trace shows the domains of the selected step, the editor menu offers *Inspect state here*, and the trace exports as JSON or CSV.
 
 ## exports
 
@@ -179,13 +179,13 @@ PDF tagging as `\DocumentMetadata` set it up, read from the run with the kernel'
 
 ## type-plugins
 
-The editor's type plugins this run would offer: each plugin, its category, the types it triggers on and its features. See [type plugins](Type-plugins) for what each does.
+The editor's type plugins this run would offer: each plugin, its category, the types it triggers on and its features. See [type plugins](type-plugins.md) for what each does.
 
 {{run(6): satex query type-plugins -f samples/paper.tex}}
 
 ## typeset
 
-The text satex computes for the typeset document, one row per paragraph, then the named assumptions it rests on. `{a|b}` is a choice between the arms of an undecided conditional. `⟦x⟧` is text set in a box: it reaches the page only if the box is used. `⟨?⟩` is a character the run could not know. `│` is a table's `|`, `―` an `\hline` or other `\hrule`, `▬` a `\rule` bar. Rules of no width (struts) are left out. The [challenges](Challenges) compare it with what pdflatex sets.
+The text satex computes for the typeset document, one row per paragraph, then the named assumptions it rests on. `{a|b}` is a choice between the arms of an undecided conditional. `⟦x⟧` is text set in a box: it reaches the page only if the box is used. `⟨?⟩` is a character the run could not know. `│` is a table's `|`, `―` an `\hline` or other `\hrule`, `▬` a `\rule` bar. Rules of no width (struts) are left out. The [challenges](challenges.md) compare it with what pdflatex sets.
 
 {{run(6): satex query typeset -f doc/src/wiki/challenges/04-typesetting.tex}}
 

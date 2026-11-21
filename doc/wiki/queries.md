@@ -98,7 +98,7 @@ variable-definition  \pkgcls@targetdate                                         
 use                  @                                                             paper.tex  @ paper.tex:1:1
 use                  11pt                                                          paper.tex  @ paper.tex:1:1
 macro-call           \value                                                        paper.tex  @ paper.tex:0:0
-… 527 more lines omitted
+… 530 more lines omitted
 ```
 
 ## diagnostics
@@ -107,13 +107,12 @@ Everything SaTeX noticed while interpreting the document: widened conditionals, 
 
 ```text
 $ satex query diagnostics -f samples/paper.tex
-severity    code                      count  message                  file            
-assumption  digits-read-as-one-token  3      a number of unknown di…  expl3-code.tex  @ expl3-code.tex:12611:48
-assumption  page-one-arm              2      an undecided choice wh…  latex.ltx       @ latex.ltx:21194:8
-assumption  page-one-arm              2      an undecided choice wh…  latex.ltx       @ latex.ltx:9338:7
-assumption  forced-page-breaks        1      the page may fill here…  paper.tex       @ paper.tex:58:9
-assumption  page-one-arm              1      an undecided choice wh…  latex.ltx       @ latex.ltx:20715:3
-… 1 more line omitted
+severity    code                count  message                         file            
+assumption  page-one-arm        1      an undecided choice while a p…  latex.ltx       @ latex.ltx:9350:12
+assumption  forced-page-breaks  1      the page may fill here, and p…  paper.tex       @ paper.tex:82:15
+assumption  page-one-arm        1      an undecided choice while a p…  latex.ltx       @ latex.ltx:20715:3
+assumption  page-one-arm        1      an undecided choice while a p…  latex.ltx       @ latex.ltx:20717:7
+assumption  clock-assumed       1      the document is assumed to be…  expl3-code.tex  @ expl3-code.tex:8203:38
 ```
 
 ## distribution
@@ -377,7 +376,7 @@ index  step    name         detail                        file
 | `paired` | the names a join kept paired across its arms, and how many arms |
 | `catcodes` | the catcode of each non-alphanumeric character in the file text ahead |
 
-A `value` names its type in the [`Ty` lattice](Domains#argument-types-the-ty-lattice) (`number`, `dimen`, `glue`, `muglue`, `quantity`, `text`, `any`) and what satex knows about its value: `exact`, an `interval` `[lo, hi]`, a `set`, or `unknown`. Typed unknown text appears as its own names (`unknown digits:0..1439`). `limits.trace_state` caps each list. In the playground, *dev mode* in the settings turns this on: the trace shows the domains of the selected step, the editor menu offers *Inspect state here*, and the trace exports as JSON or CSV.
+A `value` names its type in the [`Ty` lattice](domains.md#argument-types-the-ty-lattice) (`number`, `dimen`, `glue`, `muglue`, `quantity`, `text`, `any`) and what satex knows about its value: `exact`, an `interval` `[lo, hi]`, a `set`, or `unknown`. Typed unknown text appears as its own names (`unknown digits:0..1439`). `limits.trace_state` caps each list. In the playground, *dev mode* in the settings turns this on: the trace shows the domains of the selected step, the editor menu offers *Inspect state here*, and the trace exports as JSON or CSV.
 
 ## exports
 
@@ -389,7 +388,7 @@ PDF tagging as `\DocumentMetadata` set it up, read from the run with the kernel'
 
 ## type-plugins
 
-The editor's type plugins this run would offer: each plugin, its category, the types it triggers on and its features. See [type plugins](Type-plugins) for what each does.
+The editor's type plugins this run would offer: each plugin, its category, the types it triggers on and its features. See [type plugins](type-plugins.md) for what each does.
 
 ```text
 $ satex query type-plugins -f samples/paper.tex
@@ -399,12 +398,12 @@ widget       environment      environment name                            change
 widget       table            environment the run met                     a grid dialog for each tabular, booktabs an…  
 widget       image            graphic file                                a crop, rotate and size dialog for each fig…  
 widget       float            environment the run met                     a float's placement: what each letter lets …  
-… 20 more lines omitted
+… 21 more lines omitted
 ```
 
 ## typeset
 
-The text satex computes for the typeset document, one row per paragraph, then the named assumptions it rests on. `{a|b}` is a choice between the arms of an undecided conditional. `⟦x⟧` is text set in a box: it reaches the page only if the box is used. `⟨?⟩` is a character the run could not know. `│` is a table's `|`, `―` an `\hline` or other `\hrule`, `▬` a `\rule` bar. Rules of no width (struts) are left out. The [challenges](Challenges) compare it with what pdflatex sets.
+The text satex computes for the typeset document, one row per paragraph, then the named assumptions it rests on. `{a|b}` is a choice between the arms of an undecided conditional. `⟦x⟧` is text set in a box: it reaches the page only if the box is used. `⟨?⟩` is a character the run could not know. `│` is a table's `|`, `―` an `\hline` or other `\hrule`, `▬` a `\rule` bar. Rules of no width (struts) are left out. The [challenges](challenges.md) compare it with what pdflatex sets.
 
 ```text
 $ satex query typeset -f doc/src/wiki/challenges/04-typesetting.tex

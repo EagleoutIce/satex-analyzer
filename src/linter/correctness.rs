@@ -1,8 +1,8 @@
-use crate::analysis::facts::{LoadStatus, MeaningKind};
+use crate::analysis::facts::{LoadStatus, MeaningKind, Rest};
 use crate::engine::builtins::OccKind;
 use crate::engine::tex::{Span, Sym};
 use crate::linter::fix::{Applicability, Fix};
-use crate::linter::shared::own_runaway;
+use crate::linter::shared::{Unsure, own_runaway};
 use crate::linter::{Category, Ref, Report, Rule, Severity, Source};
 use crate::plugins::Provider;
 
@@ -446,14 +446,16 @@ fn unguarded_recursion(report: &mut Report) {
     let analysis = report.analysis();
     let recursive: std::collections::BTreeMap<Sym, bool> =
         report.index().recursion().iter().map(|r| (r.name, r.observed)).collect();
+    // Where the run cut a recursion or met a loop that never ends, per name.
+    let cut = |d: &&crate::analysis::facts::Diagnostic| matches!(d.code, "recursion-widened" | "endless-loop");
     let sites: crate::fixed::HashSet<crate::engine::tex::Span> =
-        analysis.facts.diagnostics.iter().filter(|d| d.code == "recursion-widened").map(|d| d.span).collect();
-    let widened: crate::fixed::HashSet<Sym> =
-        analysis.facts.expansions.iter().filter(|e| sites.contains(&e.span)).map(|e| e.name).collect();
+        analysis.facts.diagnostics.iter().filter(cut).map(|d| d.span).collect();
+    let widened: crate::fixed::HashMap<Sym, Span> =
+        analysis.facts.expansions.iter().filter(|e| sites.contains(&e.span)).map(|e| (e.name, e.span)).collect();
     for def in &analysis.facts.defs {
         let Some(&observed) = recursive.get(&def.name) else { continue };
         // A recursion the run saw end had something to stop it.
-        if observed && !widened.contains(&def.name) {
+        if observed && !widened.contains_key(&def.name) {
             continue;
         }
         let Some(mac) = &def.mac else { continue };
@@ -487,7 +489,13 @@ fn unguarded_recursion(report: &mut Report) {
                 ),
             )
         };
-        report.add_as(severity, def.span, &name, message, Some("add the test that ends the recursion".into()));
+        // The loop runs where it was met, not where it is defined: that place decides.
+        match widened.get(&def.name).and_then(|site| report.index().unsure(*site)) {
+            Some(unsure) => report.add_doubted(def.span, &name, message, unsure),
+            None => {
+                report.add_as(severity, def.span, &name, message, Some("add the test that ends the recursion".into()))
+            }
+        }
     }
 }
 
@@ -536,12 +544,6 @@ fn undefined_control_sequences(report: &mut Report) {
     if report.analysis.plugins.kernel == crate::plugins::Kernel::Context {
         return;
     }
-    // Where a cut made the analysis assume category codes back
-    // (`region-catcodes`), a name holding a character that is no letter
-    // under any category code a document keeps (`{`, `\\`, a space, ...)
-    // was read under codes the analysis only assumed: what TeX reads there
-    // is not known.
-    let assumed = report.analysis.facts.diagnostics.iter().any(|d| d.code == "region-catcodes");
     // A class or package file that never loaded may define any name: a
     // name the run never defines is then only maybe undefined.
     let unread = (report.analysis.facts.diagnostics.iter())
@@ -556,35 +558,29 @@ fn undefined_control_sequences(report: &mut Report) {
     let local: crate::fixed::HashSet<Sym> =
         report.analysis.facts.defs.iter().filter(|d| !d.global).map(|d| d.name).collect();
     for expansion in &report.analysis.facts.expansions {
-        if !matches!(expansion.meaning, MeaningKind::Undefined | MeaningKind::UndefinedApproximated)
-            || !report.wanted(expansion.span)
-        {
+        if !expansion.meaning.undefined() || !report.wanted(expansion.span) {
             continue;
         }
         let name = report.cs(expansion.name);
         let raw = report.analysis.interner.name(expansion.name);
-        let odd = raw.chars().count() > 1 && raw.chars().any(|c| "\\{}$&#% \t\r".contains(c));
-        let elsewhere = match expansion.cds.is_empty() && local.contains(&expansion.name) {
+        // In every run only where no undecided conditional and no parted path encloses it.
+        let certain = expansion.meaning == MeaningKind::Undefined && expansion.cds.is_empty();
+        let elsewhere = match certain && local.contains(&expansion.name) {
             true => (elsewheres.entry(expansion.name))
                 .or_insert_with(|| defined_elsewhere(report.analysis, expansion.name))
                 .clone(),
             false => None,
         };
-        let (severity, message) = if assumed && odd {
-            (
-                Severity::Warning,
-                format!("`{name}` is undefined where the analysis assumed category codes back after a cut"),
-            )
-        } else if expansion.meaning == MeaningKind::UndefinedApproximated {
+        let (severity, message) = if expansion.meaning == MeaningKind::UndefinedApproximated {
             (Severity::Info, format!("`{name}` is undefined on a path the analysis approximated"))
+        } else if !certain {
+            (Severity::Warning, format!("`{name}` is undefined on a path satex could not decide"))
         } else if let Some(inside) = &elsewhere {
             (Severity::Error, format!("`{name}` is undefined here: the run defines it only {inside}"))
-        } else if let (true, Some(at)) = (expansion.cds.is_empty(), &unread) {
+        } else if let Some(at) = &unread {
             (Severity::Warning, format!("`{name}` is undefined unless the file missing at {at} defines it"))
-        } else if expansion.cds.is_empty() {
-            (Severity::Error, format!("`{name}` is never defined in this run"))
         } else {
-            (Severity::Warning, format!("`{name}` is undefined on a path satex could not decide"))
+            (Severity::Error, format!("`{name}` is never defined in this run"))
         };
         let fix = match severity == Severity::Error && elsewhere.is_none() {
             true => fixes.entry(expansion.name).or_insert_with(|| load_fix(report, raw)).clone(),
@@ -630,7 +626,7 @@ fn load_fix(report: &Report, name: &str) -> Option<Fix> {
 /// (`\draw` in a `tikzpicture`), or in a group at a line of it.
 fn defined_elsewhere(analysis: &crate::analysis::machine::Analysis, name: crate::engine::tex::Sym) -> Option<String> {
     // where a use of it found it defined, else where it was defined
-    let defined = |m: &MeaningKind| !matches!(m, MeaningKind::Undefined | MeaningKind::UndefinedApproximated);
+    let defined = |m: &MeaningKind| !m.undefined();
     let sites: Vec<crate::engine::tex::Span> = (analysis.facts.expansions.iter())
         .filter(|e| e.name == name && defined(&e.meaning))
         .map(|e| e.span)
@@ -1019,15 +1015,24 @@ fn new_redefines(report: &mut Report) {
         .collect();
     calls.sort_by_key(|c| c.0);
     let mut seen = std::collections::BTreeSet::new();
+    let made: Vec<&crate::analysis::facts::Definition> =
+        analysis.facts.defs.iter().filter(|d| d.redefines && d.spelled && d.certain).collect();
+    // The definitions of each name made again: one pass over all, not one per made one.
+    let mut of_name: crate::fixed::HashMap<crate::engine::tex::Sym, Vec<&crate::analysis::facts::Definition>> =
+        made.iter().map(|d| (d.name, Vec::new())).collect();
+    for d in &analysis.facts.defs {
+        if let Some(all) = of_name.get_mut(&d.name) {
+            all.push(d);
+        }
+    }
+    let same_name = |def: &crate::analysis::facts::Definition| of_name[&def.name].iter().copied();
     // A declaration run again (captured into a cache, then run live, both
     // recorded at the same vertex when the replay stands for the live run)
     // meets only its own earlier definition: no other meaning is lost.
     let rerun = |def: &crate::analysis::facts::Definition| {
-        (analysis.facts.defs.iter())
-            .any(|d| d.name == def.name && d.node <= def.node && d.span == def.span && !std::ptr::eq(d, def))
+        same_name(def).any(|d| d.node <= def.node && d.span == def.span && !std::ptr::eq(d, def))
     };
-    let made = analysis.facts.defs.iter().filter(|d| d.redefines && d.spelled && d.certain);
-    for def in made.filter(|d| !rerun(d)) {
+    for def in made.iter().copied().filter(|d| !rerun(d)) {
         let Some(&(_, span, call)) = calls.get(calls.partition_point(|c| c.0 <= def.node).wrapping_sub(1)) else {
             continue;
         };
@@ -1036,8 +1041,7 @@ fn new_redefines(report: &mut Report) {
         // while a class loads every definition runs inside some macro.
         let inside = def.via.map(|v| analysis.interner.name(v)).is_some_and(|v| v == command || v == "e@alloc");
         // A register declared again as one of its kind loses nothing but a register.
-        let before =
-            (analysis.facts.defs.iter()).filter(|d| d.name == def.name && d.node < def.node).max_by_key(|d| d.node);
+        let before = same_name(def).filter(|d| d.node < def.node).max_by_key(|d| d.node);
         let same_kind = before.is_some_and(|d| d.by == def.by && d.mac.is_none() && def.mac.is_none());
         if !command.starts_with("new") || !inside || same_kind || !seen.insert((span, def.name)) {
             continue;
@@ -1062,7 +1066,7 @@ fn already_defined(report: &mut Report) {
         report.add_fix(span, &name, message, fix);
     }
     let analysis = report.analysis();
-    let refused: Vec<(Span, String, Option<String>)> = analysis
+    let refused: Vec<(Span, String, Option<Unsure>)> = analysis
         .facts
         .diagnostics
         .iter()
@@ -1178,7 +1182,7 @@ fn not_defined(report: &mut Report) {
 
 /// The messages that match `parse`, once per place.
 /// With each, the place the run could not follow before it, if any.
-fn kernel_errors(report: &Report, parse: impl Fn(&str) -> Option<String>) -> Vec<(Span, String, Option<String>)> {
+fn kernel_errors(report: &Report, parse: impl Fn(&str) -> Option<String>) -> Vec<(Span, String, Option<Unsure>)> {
     let analysis = report.analysis();
     let mut seen = crate::fixed::HashSet::default();
     analysis
@@ -1516,7 +1520,7 @@ fn environment_mismatch(report: &mut Report) {
         // Over-approximated: reported, but as a consequence to check after
         // its cause, never as a certain fault.
         let cause = cascade(&open, span)
-            .map(|at| format!("the error at {}", report.place(at)))
+            .map(|at| Unsure::After(Rest::Gap, format!("the error at {}", report.place(at))))
             .or_else(|| crate::linter::shared::doubt(report.analysis(), i));
         if let Some(cause) = cause {
             report.add_doubted(span, &found, message, &cause);

@@ -353,6 +353,15 @@
             "speed"
           ]
         },
+        "memoize": {
+          "default": true,
+          "description": "the satex build extracts memoize's externs itself between passes (memoize's TeX method, no shell escape, no Perl or Python module) and tells memoize not to. false: memoize extracts as the document says",
+          "type": "boolean",
+          "x-affects": [
+            "speed"
+          ],
+          "x-example": "an unchanged picture is included from its extern, its code not run again"
+        },
         "passes": {
           "default": 4,
           "description": "engine passes at most of the satex build, until the build files rest",
@@ -381,7 +390,7 @@
         },
         "warm": {
           "default": false,
-          "description": "keep pdfTeX started on the next build's format, the main file a named pipe between builds. Only for a build directory of its own (satex gui sets it)",
+          "description": "keep pdfTeX started on the next build's format (Linux): the build runs in a mirror of the project under .satex-build, the mirror's main file a named pipe between builds",
           "type": "boolean",
           "x-affects": [
             "speed"
@@ -2250,6 +2259,31 @@
                 "output"
               ],
               "x-example": "`unprefixed+: [px]`"
+            }
+          },
+          "type": "object"
+        },
+        "writing": {
+          "description": "how the LaTeX a widget writes reads the document's own",
+          "properties": {
+            "macros": {
+              "default": false,
+              "description": "inserted text that is the whole body of your command without arguments is written as that command (\\model for TinyNet) where the run typeset prose beside it: never in verbatim, math, a comment, a URL or an argument the run did not typeset. Assumes a call typesetting its argument's characters typesets the command the same",
+              "type": "boolean",
+              "x-affects": [
+                "output"
+              ],
+              "x-example": "`macros: true`: a sentence typed `we use TinyNet here` is written `we use \\model{} here`"
+            },
+            "repeat_min": {
+              "default": 16,
+              "description": "characters a written call needs for a note when it then stands twice, offering to extract it",
+              "minimum": 0,
+              "type": "integer",
+              "x-affects": [
+                "output"
+              ],
+              "x-example": "`repeat_min: 8`: a second \\textbf{Note} is noted too"
             }
           },
           "type": "object"
@@ -5515,6 +5549,109 @@
                 "output"
               ],
               "x-example": "`enabled: false`: no placement hover, completion or dialog"
+            }
+          },
+          "type": "object",
+          "x-category": "widget"
+        },
+        "font": {
+          "description": "the document's font and base size: \\documentclass",
+          "properties": {
+            "enabled": {
+              "default": true,
+              "description": "\"Font and size…\": the base size as a class option, a font as a package (pdfLaTeX) or with fontspec (LuaLaTeX, XeLaTeX)",
+              "type": "boolean",
+              "x-affects": [
+                "output"
+              ],
+              "x-example": "`enabled: false`: no font lens, action or dialog"
+            },
+            "fonts": {
+              "description": "the fonts offered: the package pdfLaTeX loads, the font fontspec names, sans for a sans serif main font",
+              "properties": {
+                "Latin Modern": {
+                  "default": [
+                    "lmodern",
+                    "Latin Modern Roman"
+                  ],
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                "Libertinus": {
+                  "default": [
+                    "libertinus",
+                    "Libertinus Serif"
+                  ],
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                "Source Serif": {
+                  "default": [
+                    "sourceserifpro",
+                    "Source Serif Pro"
+                  ],
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                "TeX Gyre Heros": {
+                  "default": [
+                    "tgheros",
+                    "TeX Gyre Heros",
+                    "sans"
+                  ],
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                "TeX Gyre Pagella": {
+                  "default": [
+                    "tgpagella",
+                    "TeX Gyre Pagella"
+                  ],
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                "TeX Gyre Termes": {
+                  "default": [
+                    "tgtermes",
+                    "TeX Gyre Termes"
+                  ],
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                }
+              },
+              "type": "object",
+              "x-affects": [
+                "output"
+              ],
+              "x-example": "`fonts: {Charter: [XCharter, XCharter]}`"
+            },
+            "sizes": {
+              "default": [
+                "10pt",
+                "11pt",
+                "12pt"
+              ],
+              "description": "the base sizes offered",
+              "items": {
+                "type": "string"
+              },
+              "type": "array",
+              "x-affects": [
+                "output"
+              ],
+              "x-example": "`sizes: [11pt, 12pt]`"
             }
           },
           "type": "object",

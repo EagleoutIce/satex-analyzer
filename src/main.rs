@@ -536,12 +536,19 @@ fn run_on(cli: &mut Cli, file: Option<PathBuf>, explaining: bool, piped: Option<
     if !early.is_empty() && keys.is_none() {
         anstream::eprint!("{}", listing());
     }
-    // a build explained by rules only waits for no analysis: one that reads nothing
-    let sketched = matches!(cli.command, Some(Command::Compile { .. })) && !cfg.compile.explain;
-    let analysis = if sketched {
-        let mut sketch = Analysis::sketch(&source, &cli.file.iter().cloned().collect::<Vec<_>>(), &cfg, Vec::new());
-        sketch.plugins.read_kernel(&cfg, &source);
-        sketch
+    // A build runs on a sketch, the analysis after it: only where a logged message needs a
+    // finding, and no stored explanation of that log has inputs as they are now.
+    let mut compiled = None;
+    let analysis = if let Some(Command::Compile { system, view }) = &cli.command {
+        let sketch = Analysis::sketch(&source, &cli.file.iter().cloned().collect::<Vec<_>>(), &cfg, Vec::new());
+        let context = Context { analysis: &sketch, source: &source, format: cli.format, links };
+        let build = satex::cli::compile::build_only(&context, system.as_deref(), *view)?;
+        let needed = cfg.compile.explain && build.needs_analysis();
+        compiled = Some(build);
+        match needed {
+            true => Machine::analyze(&source, cli.file.as_deref(), &cfg),
+            false => sketch,
+        }
     } else if cli.command().needs_analysis() {
         Machine::analyze(&source, cli.file.as_deref(), &cfg)
     } else {
@@ -600,7 +607,10 @@ fn run_on(cli: &mut Cli, file: Option<PathBuf>, explaining: bool, piped: Option<
     let links = cli.link_policy(satex::util::progress::terminal(io::stdout()));
     let context = Context { analysis: &analysis, source: &source, format: cli.format, links };
     let mut out = anstream::stdout().lock();
-    let mut output = cli.command().run(&context, &mut out)?;
+    let mut output = match compiled {
+        Some(built) => satex::cli::compile::explained(built, &analysis),
+        None => cli.command().run(&context, &mut out)?,
+    };
     if matches!(cli.command, Some(Command::Summary { .. })) && cli.format.is_text() {
         let project = satex::project::build_files::Project::discover(&base_dir(cli.file.as_deref()));
         let _ = write!(out, "{}", environment_text(&cfg, &project));

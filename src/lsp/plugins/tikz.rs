@@ -46,7 +46,7 @@ impl TypePlugin for Tikz {
     fn actions(&self, cx: &Cx, _hit: &Hit) -> Vec<CodeAction> {
         let Some(new) = super::blank(cx, ENV, "tikz") else { return Vec::new() };
         let node = Node { body: format!("  {TEMPLATE}"), ..snapshot::new_env(ENV, new.at.start, "tikz") };
-        let Ok((edits, notes)) = snapshot::printed(cx.analysis, cx.doc, &[node]) else { return Vec::new() };
+        let Ok((edits, notes)) = snapshot::printed(cx.analysis, cx.doc, cx.file(), &[node]) else { return Vec::new() };
         let note: String = notes.iter().map(|n| format!(" ({n})")).collect();
         vec![rewrite(cx, format!("Insert tikzpicture{note}"), snapshot::lsp_edits(cx.doc, edits))]
     }
@@ -88,7 +88,8 @@ impl TypePlugin for Tikz {
 
 /// What the run declared that a canvas offers: arrow tips (each with TeX's picture once drawn),
 /// colors, node shapes, layers in their order, the keys that put a scope on a layer, the TikZ
-/// libraries loaded and where `\usetikzlibrary` goes for one more. `own`: the picture's bytes.
+/// libraries loaded and where `\usetikzlibrary` goes for one more, the document's text macros.
+/// `own`: the picture's bytes.
 fn facts(cx: &Cx, own: std::ops::Range<usize>) -> Json {
     let a = cx.analysis;
     use crate::queries::preview::{Stroke, arrow_specs, drawn};
@@ -137,7 +138,10 @@ fn facts(cx: &Cx, own: std::ops::Range<usize>) -> Json {
         .map(|s| lsp_types::Position::new(s.line.saturating_sub(1), 0));
     let (keys_of, defs) = tikz_keys(cx, file, own);
     let sample = [crate::queries::preview::SAMPLE_W, crate::queries::preview::SAMPLE_H];
-    json!({ "tips": tips, "colors": colors, "shapes": shapes, "sample": sample, "libraries": libraries, "load_at": load_at, "layers": { "declared": declared, "order": order }, "layer_keys": keys, "keys": keys_of, "defs": defs })
+    // the document's text macros (`\net` for `Größe-Net`): the canvas shows a label `{\net}` as TeX sets it
+    let macros: serde_json::Map<String, Json> =
+        super::super::writing::own_macros(a).into_iter().map(|(name, body, _)| (name, json!(body))).collect();
+    json!({ "tips": tips, "colors": colors, "shapes": shapes, "sample": sample, "libraries": libraries, "load_at": load_at, "layers": { "declared": declared, "order": order }, "layer_keys": keys, "keys": keys_of, "defs": defs, "macros": macros })
 }
 
 /// Every node shape: the run's (`pgf@sh@s@⟨name⟩`) with the `/pgf/` keys its code reads that

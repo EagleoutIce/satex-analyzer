@@ -223,7 +223,7 @@ fn figure(cx: &Cx, (at, end, file): (usize, usize, String)) -> Json {
                 list.retain(|k| k.key != "alt");
                 list.push(Key { key: "artifact".into(), value: None });
             }
-            let edits = snapshot::edits(cx.analysis, cx.doc, &[d]);
+            let edits = snapshot::edits(cx.analysis, cx.doc, cx.file(), &[d]);
             actions.push(json!({ "title": "Mark as decoration (artifact)", "edit": super::edit_of(cx.path, edits) }));
         }
     }

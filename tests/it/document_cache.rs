@@ -74,8 +74,11 @@ fn differs_unordered(a: &Analysis, b: &Analysis) -> Option<&'static str> {
         return Some("the maps of facts");
     }
     // The bindings by value: a hash map serializes in the order its entries came in.
+    // Equal bytes are equal values; only bytes that differ are compared as JSON
+    // values (maps sorted), which hold some 3.5 GiB per side (OOM-killed shards).
+    let bytes = |x: &Analysis| postcard::to_allocvec(&(&x.env, &x.catcodes, &x.preamble)).expect("encodable");
     let env = |x: &Analysis| serde_json::to_value((&x.env, &x.catcodes, &x.preamble)).expect("encodable");
-    if env(&a) != env(&b) {
+    if bytes(&a) != bytes(&b) && env(&a) != env(&b) {
         return Some("env");
     }
     // The graph's and the calls' tables too: the same bytes, in the order each run filled them.

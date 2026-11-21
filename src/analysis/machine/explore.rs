@@ -132,7 +132,7 @@ struct Head {
     config: Config,
     passes: u32,
     /// The bound the last pass here started with ([`Machine::pass_bound`]).
-    bound: Option<u64>,
+    bound: u64,
 }
 
 /// Where a loop was entered: the input levels, conditionals and groups at entry.
@@ -270,7 +270,7 @@ enum Next {
 /// command's state and the paths. Saved in checkpoints.
 #[derive(Clone)]
 pub(super) struct Drive {
-    outer: (Vec<usize>, Vec<Choice>, usize, bool),
+    outer: (Vec<(usize, usize)>, Vec<Choice>, usize, bool),
     outer_unit: (Unit, bool),
     nested: bool,
     paths: Paths,
@@ -339,13 +339,14 @@ impl Machine<'_> {
         if !needed && self.hot_site(span) && !scripted {
             return None;
         }
-        let arm = self.script.get(i).copied().unwrap_or(0);
+        let arm = self.script.get(i).map_or(0, |s| s.0);
         self.out.heat(|h| &mut h.forks, span);
         match self.output_active() {
             true => self.out.output_forks += 1,
             false => self.out.forks += 1,
         }
         self.choices.push(Choice { span, by, arms, arm, joined: false });
+        self.arm = true;
         Some(arm)
     }
 
@@ -386,6 +387,13 @@ impl Machine<'_> {
     /// The arm [`Machine::branch`] returned does not exist, nor does any later
     /// one. The path is not a possible run of the document.
     pub(crate) fn no_arm(&mut self) {
+        self.refute();
+        self.absent = true;
+    }
+
+    /// The path is refuted: no run of the document takes it. The other arms
+    /// of its choices are runs of their own and are still explored.
+    pub(crate) fn refute(&mut self) {
         self.infeasible = true;
         self.halted = true;
     }
@@ -416,7 +424,7 @@ impl Machine<'_> {
     /// Whether the run may be one of several paths, so what it does now need
     /// not happen in every run.
     pub(crate) fn on_paths(&self) -> bool {
-        self.parted || self.env.forking() || !self.choices.is_empty()
+        self.parted || self.arm
     }
 
     /// Runs commands on every path until `done` holds for all of them or they
@@ -478,7 +486,7 @@ impl Machine<'_> {
             }
             self.lone = paths.fork.is_none();
             if self.lone && paths.top {
-                (self.approximated, self.blind) = (false, false);
+                (self.approximated, self.blind, self.arm) = (false, false, false);
             }
             let (live_before, steps_before) = (paths.parked.len(), self.out.steps);
             let next = if finished { None } else { Some(self.explore(&mut paths, true)) };
@@ -654,9 +662,17 @@ impl Machine<'_> {
                         self.swap_choices(&mut outer);
                         let arm = self.branch_at(self.unknown, configs.len(), span, true);
                         self.swap_choices(&mut outer);
+                        // A replay names an arm by its place among the paths the run it
+                        // repeats ended with. A rerun that ended with another number
+                        // (a count shared with the earlier runs refused a choice or
+                        // summarized a loop) names no fixed path: it follows the join of
+                        // all it has. It runs the same command from the same state, at
+                        // most coarser, so the join covers the arms the index meant.
+                        let replayed = outer.1.len().checked_sub(1).and_then(|i| outer.0.get(i));
+                        let stale = arm.is_some() && replayed.is_some_and(|s| s.1 != configs.len());
                         let forced = match arm {
-                            Some(_) => None,
-                            None => self.join_done(&fork, &configs, false),
+                            Some(_) if !stale => None,
+                            _ => self.join_done(&fork, &configs, false),
                         };
                         match forced {
                             Some(joined) => {
@@ -670,7 +686,7 @@ impl Machine<'_> {
                             }
                             None => {
                                 // During a cut the region is summarized whichever path it follows.
-                                if arm.is_none() && !self.cutting() {
+                                if (arm.is_none() || stale) && !self.cutting() {
                                     self.diagnose(
                                         Severity::Unsupported,
                                         "unjoined-lookahead",
@@ -678,13 +694,8 @@ impl Machine<'_> {
                                         "paths a look ahead parted into end apart in different files past the choices one command may make. The first is followed".into(),
                                     );
                                 }
-                                // A replayed arm beyond the paths this run ended with is infeasible.
-                                let Some(config) = configs.into_iter().nth(arm.unwrap_or(0)) else {
-                                    self.no_arm();
-                                    self.env.unfork(fork);
-                                    break;
-                                };
-                                config
+                                let k = arm.unwrap_or(0).min(configs.len() - 1);
+                                configs.into_iter().nth(k).expect("configs is not empty")
                             }
                         }
                     }
@@ -847,7 +858,7 @@ impl Machine<'_> {
     }
 
     /// Swaps the running drive's choices with the enclosing command's.
-    fn swap_choices(&mut self, outer: &mut (Vec<usize>, Vec<Choice>, usize, bool)) {
+    fn swap_choices(&mut self, outer: &mut (Vec<(usize, usize)>, Vec<Choice>, usize, bool)) {
         std::mem::swap(&mut self.script, &mut outer.0);
         std::mem::swap(&mut self.choices, &mut outer.1);
         std::mem::swap(&mut self.runs, &mut outer.2);
@@ -898,7 +909,7 @@ impl Machine<'_> {
                 self.path_ids += 1;
                 self.path_id = self.path_ids;
             }
-            (self.infeasible, self.ended_run) = (false, false);
+            (self.infeasible, self.ended_run, self.absent) = (false, false, false);
             self.at_join = None;
             // A top-level run starts with no pending error. A nested one keeps its path's.
             (self.dropping, self.dropping_possible, self.dropping_breaks, self.dropping_nested) = match paths.top {
@@ -922,7 +933,7 @@ impl Machine<'_> {
             // A refuted run ends its combination of arms: the other arms
             // of its last choice are tried next (see `next_script`).
             let refuted = self.infeasible && !self.ended_run;
-            let next = next_script(&self.choices, refuted);
+            let next = next_script(&self.choices, refuted && self.absent);
             let rows = rows_from..self.raised_mark();
             // A refuted run raised no diagnostics.
             if refuted {
@@ -1027,6 +1038,10 @@ impl Machine<'_> {
         if outcomes.is_empty() {
             return Next::None;
         }
+        // The flags tell of the last run, which may be a refuted arm. The
+        // command goes on as its outcomes, so a run that encloses this drive
+        // must not take it for refuted.
+        (self.infeasible, self.ended_run, self.absent) = (false, false, false);
         match first {
             Some(choice) if head => self.loop_head(paths, choice, start, outcomes),
             _ => Next::Many(outcomes),
@@ -1214,7 +1229,7 @@ impl Machine<'_> {
         for c in outcomes.iter_mut() {
             let bounds = Rc::make_mut(&mut c.state.loop_bounds);
             bounds.retain(|(l, _)| *l != id);
-            bounds.push((id, bound));
+            bounds.push((id, Some(bound)));
         }
         let entry = paths.loops.iter().find(|l| l.id == id).map(|l| (l.depth.0, l.depth.1, l.passes));
         let forced = match paths.loops.iter().position(|l| l.id == id) {
@@ -1224,7 +1239,8 @@ impl Machine<'_> {
                 // bounded text) is not counted: such loops end by construction,
                 // with every state exact.
                 let before = here.state.loop_bounds.iter().find(|(l, _)| *l == id).and_then(|(_, b)| *b);
-                let shrinks = matches!((before, bound), (Some(a), Some(b)) if b < a);
+                self.compare_bounds(before, bound);
+                let shrinks = before.is_some_and(|a| bound < a);
                 let l = &mut paths.loops[l];
                 l.pages = pages;
                 l.passes += u32::from(!shrinks);
@@ -1330,7 +1346,8 @@ impl Machine<'_> {
         // is treated as the same head with its input widened. A head whose input
         // held more bounded text is an earlier pass of a loop that ends by
         // construction, so it is neither kin nor a deeper level.
-        let shrunk = |h: &Head| matches!((h.bound, bound), (Some(a), Some(b)) if b < a);
+        self.compare_bounds(paths.heads.iter().filter(|h| same(h)).map(|h| h.bound), bound);
+        let shrunk = |h: &Head| bound < h.bound;
         let kin = |h: &Head| {
             let (a, b) = (&h.config.key, &here.key);
             let text = |p: &Place| matches!(p, Place::Tokens(..) | Place::Returned(..));
@@ -1681,14 +1698,26 @@ impl Machine<'_> {
             paths.parked.iter().chain(&paths.arrived).chain(&paths.done).any(|p| p.state.summary_of.contains(&id));
         if !carried {
             let mut entry = paths.stopped[l].depth;
-            // Met again with no source read since the last cut: the cut left
-            // the text that leads back here. Each such meeting drops one more
-            // input level. When only source is left, the line is skipped.
-            let again = match self.scratch.recut {
-                Some((s, p, k)) if s == span && p == here.key.progress => k + 1,
-                _ => 0,
+            // Met again at a head cut since source was last read, with the same
+            // text left to read: the cuts left the text that leads back here.
+            // Each such meeting drops one more input level. When only source is
+            // left, the line is skipped. Heads of one loop may take turns (an
+            // `\if` in a loop's body that also calls it), so any head counts.
+            let (progress, at) = (here.key.progress, (span, here.key.places.clone()));
+            let again = match &mut self.scratch.recut {
+                Some((p, heads, k)) if *p == progress => {
+                    match heads.contains(&at) {
+                        true => *k += 1,
+                        false => heads.push(at),
+                    }
+                    keep_last(heads, self.limits.loop_heads);
+                    *k
+                }
+                recut => {
+                    *recut = Some((progress, vec![at], 0));
+                    0
+                }
             };
-            self.scratch.recut = Some((span, here.key.progress, again));
             entry.0 = entry.0.min(depth.0).saturating_sub(again as usize);
             if again > 0
                 && entry.0
@@ -1759,6 +1788,7 @@ impl Machine<'_> {
         self.resume_config(fork, Config::new(here.state, env, false));
         let l = paths.stopped.iter().rposition(|l| l.id == id);
         let carried = cut && l.is_some_and(|l| self.exits_carry(paths, fork, l, progress, span));
+        let frames = self.input.len();
         if cut && !carried {
             self.unwind(depth, span);
         }
@@ -1781,7 +1811,12 @@ impl Machine<'_> {
         if carried {
             return Next::None;
         }
-        if cut {
+        // The unknown token stands for the text the cut dropped. Outside a scan
+        // of text it is read in front of what is left, so with nothing dropped
+        // it would add a token no run has: the path runs on from the widened
+        // state instead. In a scan of text it stands for the rest of that text.
+        let text = matches!(self.unit, Unit::Body { .. } | Unit::Expand);
+        if cut && (text || self.input.len() < frames) {
             self.read_unknown(span);
         }
         self.explore(paths, false)
@@ -2887,9 +2922,9 @@ impl Machine<'_> {
             self.out.graph.len(),
             self.out.graph.edge_count(),
             self.out.interner.len(),
-            self.call_runs.len(),
+            self.call_runs.size(),
             self.call_recs.len(),
-            self.definition_sites.len(),
+            self.definition_sites.size(),
             self.expansion_sites.size(),
             self.cond_sites.len(),
             self.diag_seen.len(),
@@ -3104,6 +3139,7 @@ impl Machine<'_> {
         x.learn_forks = x.learn_forks.max(y.learn_forks);
         x.approximated |= y.approximated;
         x.blind |= y.blind;
+        x.arm |= y.arm;
         x.read_outside |= y.read_outside;
         x.ran_off = x.ran_off.or(y.ran_off);
         // The join keeps a pending error only if every joined path has one.
@@ -3689,15 +3725,15 @@ fn partner(parked: &[Config], config: &Config, apart: &dyn Fn(&Config, &Config) 
 /// The arms for the next run of a command: the last choice with an arm left
 /// advances to it, and the choices after it start over. With `absent`, the
 /// last choice's arm did not exist, nor does any later one.
-fn next_script(choices: &[Choice], absent: bool) -> Option<Vec<usize>> {
+fn next_script(choices: &[Choice], absent: bool) -> Option<Vec<(usize, usize)>> {
     let mut arms: Vec<(usize, usize)> = choices.iter().map(|c| (c.arm, c.arms)).collect();
     if absent {
         arms.pop();
     }
     while let Some((arm, count)) = arms.pop() {
         if arm + 1 < count {
-            let mut script: Vec<usize> = arms.iter().map(|a| a.0).collect();
-            script.push(arm + 1);
+            let mut script = arms;
+            script.push((arm + 1, count));
             return Some(script);
         }
     }

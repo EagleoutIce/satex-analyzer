@@ -438,6 +438,7 @@ fn body_rows(b: &str, t: &mut Table) {
             row_start = Some(i - extra);
         }
         let c = rest.chars().next().unwrap_or(' ');
+        let nested = rest.strip_prefix("\\begin{").and_then(|r| extent(b, i, r.split('}').next()?));
         match c {
             '{' => {
                 let e = group_end(b, i).unwrap_or(b.len());
@@ -474,6 +475,13 @@ fn body_rows(b: &str, t: &mut Table) {
                 row.cells = cells.drain(..).map(|c| cell(&c)).collect();
                 t.rows.push(std::mem::take(&mut row));
                 line_has_row = true;
+                i = e;
+            }
+            // a nested environment (a tabular in a cell) holds its own `&` and `\\`, as a group does: its
+            // own alignment takes them (tex.web § 789, an entry ends at an `&` of its own alignment only)
+            '\\' if nested.is_some() => {
+                let e = nested.map_or(i + 1, |(_, e)| e);
+                cur.push_str(&b[i..e]);
                 i = e;
             }
             '\\' => {
@@ -748,6 +756,21 @@ mod tests {
             let t = parse(c).unwrap();
             assert_eq!(emit(&t), c, "{t:#?}");
         }
+    }
+
+    /// Intuition: a tabular in a cell is one cell of the outer table: its own `&` and `\\` part its own
+    /// cells. Pins the table dialog splitting `\begin{tabular}{c}in1 \\ in2\end{tabular}` into two outer
+    /// rows, so any edit in the dialog rewrote the nested table broken.
+    #[test]
+    fn a_nested_tabular_is_one_cell() {
+        let src = "\\begin{tabular}{lll}\n\\multirow{2}{*}{a} & b & \\begin{tabular}{@{}c@{}}in1 \\\\ in2\\end{tabular} \\\\\n & c & d \\\\\n\\end{tabular}";
+        let t = parse(src).unwrap();
+        assert_eq!(t.rows.len(), 2);
+        assert_eq!(t.rows[0].cells[2].text, "\\begin{tabular}{@{}c@{}}in1 \\\\ in2\\end{tabular}");
+        assert_eq!(emit(&t), src);
+        // a `\begin` without its `\end` stays text, the rows after it are read as before
+        let open = parse("\\begin{tabular}{ll}\na & \\begin{x} \\\\\nc & d \\\\\n\\end{tabular}").unwrap();
+        assert_eq!(open.rows.len(), 2);
     }
 
     #[test]

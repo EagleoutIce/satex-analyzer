@@ -35,6 +35,7 @@ node doc/site/e2e/run.mjs --port 8472 --tier quick
 | `CHROME` | the browser binary, else `chromium`, `google-chrome` or rod's download |
 | `E2E_SERVER` | the server binary for `scripts/e2e.sh`, default `target/playground/satex-playground` |
 | `E2E_SETTLE=1` | typing scenarios wait for the first run to end before the click |
+| `E2E_SITE_SRC` | serve the page's own scripts and style from this `doc/site` (a work copy's), the rest from the server |
 | `E2E_WARM_MS` | how long to wait for a fresh server to build its TeX caches, default 30 min |
 | `E2E_DUMPFRAMES=1` | typing scenarios write their frames, boxes and words as JSON |
 

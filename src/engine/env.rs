@@ -187,7 +187,9 @@ pub struct Env {
     /// from the same bindings. One entry per slot and fork: the first change
     /// under a fork saves what rewinding restores, and links to the slot's
     /// previous entry, which rewinding puts back.
-    trail: Vec<(u32, Option<Binding>, u32, u32, u64)>,
+    /// Chunked: a checkpoint taken while a fork is open shares it.
+    #[serde(with = "crate::fixed::flat")]
+    trail: crate::fixed::Chunked<(u32, Option<Binding>, u32, u32, u64)>,
     /// Per slot, its latest trail entry, `NONE` for none.
     trailed: crate::fixed::Chunked<u32>,
     /// Per open fork, the fewest groups the running path stood in since.
@@ -243,7 +245,8 @@ pub struct Env {
     /// While calls are recorded: every name read, in order, with the stamp
     /// of the binding it read.
     logging: std::cell::Cell<bool>,
-    read_log: std::cell::RefCell<Vec<(u32, u64)>>,
+    #[serde(with = "crate::fixed::flat::cell")]
+    read_log: std::cell::RefCell<crate::fixed::Chunked<(u32, u64)>>,
     /// Whether the log passed [`READ_LOG`] and stopped, so it is incomplete.
     log_full: std::cell::Cell<bool>,
     /// When the log was cleared, how long it was then, and how long when last asked
@@ -267,6 +270,53 @@ pub struct Env {
     /// While a run keeps checkpoints: when each slot was last read or written.
     #[serde(skip)]
     pub touched: LastUse,
+    #[serde(skip)]
+    distinct: Distinct,
+}
+
+/// Takes each name of a read log once, in one pass over it: per name, the pass that last met
+/// it and where. Sorting the log instead cost a record's end `n log n` for `n` reads, most of
+/// them repeats. A copy starts empty: it is scratch.
+#[derive(Default)]
+struct Distinct {
+    pass: std::cell::Cell<u32>,
+    met: std::cell::RefCell<Vec<(u32, u32)>>,
+}
+
+impl Clone for Distinct {
+    fn clone(&self) -> Self {
+        Distinct::default()
+    }
+}
+
+impl Distinct {
+    /// The names of `reads` (`sym | value << 31`), each once, sorted, with the value bit
+    /// set where any of its reads had it.
+    fn of(&self, reads: impl Iterator<Item = u32>) -> Vec<u32> {
+        let pass = self.pass.get().wrapping_add(1);
+        let mut met = self.met.borrow_mut();
+        if pass == 0 {
+            met.clear();
+        }
+        self.pass.set(pass.max(1));
+        let pass = pass.max(1);
+        let mut out: Vec<u32> = Vec::new();
+        for r in reads {
+            let sym = (r & !(1 << 31)) as usize;
+            if sym >= met.len() {
+                met.resize(sym + 1, (0, 0));
+            }
+            match met[sym] {
+                (p, at) if p == pass => out[at as usize] |= r & 1 << 31,
+                _ => {
+                    met[sym] = (pass, out.len() as u32);
+                    out.push(r);
+                }
+            }
+        }
+        out.sort_unstable_by_key(|r| r & !(1 << 31));
+        out
+    }
 }
 
 /// When each entry of a table (a slot, a recorded list's node) was last used, as the run's
@@ -341,7 +391,7 @@ impl LastUse {
 struct MemoLog {
     reads: Vec<u32>,
     /// Parts of `reads` an ended record took each name of once, by start:
-    /// their end and those names, so a record around it sorts no part twice.
+    /// their end and those names, so a record around it reads no part twice.
     parts: std::collections::BTreeMap<usize, (usize, Rc<[u32]>)>,
     pre: Vec<(u32, Option<Binding>)>,
     at: LookupMap<u32, usize>,
@@ -539,6 +589,12 @@ fn distinct_sorted(names: &[u32]) -> Vec<u32> {
     out.sort_unstable();
     out.dedup();
     out
+}
+
+impl Env {
+    pub fn probe(&self) -> Vec<(&'static str, usize)> {
+        crate::probe_sz!("e.slots" => self.slots, "e.level" => self.level, "e.journal" => self.journal, "e.marks" => self.marks, "e.trail" => self.trail, "e.trailed" => self.trailed, "e.lows" => self.lows, "e.floors" => self.floors, "e.changed" => self.changed, "e.recent" => self.recent, "e.recent_at" => self.recent_at, "e.stamp" => self.stamp, "e.aliases" => self.aliases, "e.read_log" => self.read_log, "e.reads" => self.reads)
+    }
 }
 
 impl Env {
@@ -953,19 +1009,19 @@ impl Env {
         // Each name once: read whole if any read took more than its meaning.
         let end = memo.reads.len();
         memo.reads.get(from.reads..)?;
-        let (mut logged, mut at) = (Vec::new(), from.reads);
-        // A part that overlaps the last one is skipped: the log has its reads.
+        // The log's own reads and the parts ended records took, a part that
+        // overlaps the last one skipped: the log has its reads.
+        let mut pieces: Vec<&[u32]> = Vec::new();
+        let mut at = from.reads;
         for (&start, (stop, names)) in memo.parts.range(from.reads..) {
             if start < at {
                 continue;
             }
-            logged.extend_from_slice(&memo.reads[at..start]);
-            logged.extend_from_slice(names);
+            pieces.extend([&memo.reads[at..start], &names[..]]);
             at = *stop;
         }
-        logged.extend_from_slice(&memo.reads[at..end]);
-        logged.sort_unstable_by_key(|r| (r & !(1 << 31), std::cmp::Reverse(r >> 31)));
-        logged.dedup_by_key(|r| *r & !(1 << 31));
+        pieces.push(&memo.reads[at..end]);
+        let logged = self.distinct.of(pieces.into_iter().flatten().copied());
         let reads: Vec<(u32, bool)> = logged.iter().map(|r| (r & !(1 << 31), r >> 31 == 1)).collect();
         // The parts inside this one are in it.
         drop(memo.parts.split_off(&from.reads));
@@ -1032,9 +1088,7 @@ impl Env {
         }
         let log = self.read_log.borrow();
         self.read_asked.set(log.len());
-        let mut syms: Vec<u32> = log.get(from..)?.iter().map(|r| r.0).collect();
-        syms.sort_unstable();
-        syms.dedup();
+        let syms = self.distinct.of((from <= log.len()).then(|| log.iter_from(from))?.map(|r| r.0));
         Some(syms.into_iter().map(Sym).collect())
     }
 
@@ -1047,7 +1101,7 @@ impl Env {
         }
         let log = self.read_log.borrow();
         self.read_asked.set(log.len());
-        let mut met: Vec<Sym> = (log.get(from..)?.iter())
+        let mut met: Vec<Sym> = ((from <= log.len()).then(|| log.iter_from(from))?)
             .filter(|&&(sym, stamp)| stamp <= at && syms.binary_search(&Sym(sym)).is_ok())
             .map(|&(sym, _)| Sym(sym))
             .collect();
@@ -1987,10 +2041,10 @@ impl Env {
     /// What the running path changed since `fork`.
     pub fn path(&mut self, fork: &Fork) -> PathEnv {
         debug_assert_eq!(self.floors.get(fork.level), Some(&fork.trail), "the fork is open");
-        let (trail, slots, level, walked) = (&self.trail[fork.trail..], &self.slots, &self.level, &self.walked);
+        let (trail, slots, level, walked) = (self.trail.iter_from(fork.trail), &self.slots, &self.level, &self.walked);
         let slots = self.changed.get_mut(fork.level).map_or_else(Changed::new, |map| {
             let entry = |sym: u32| (sym, (slots[sym as usize].clone(), level[sym as usize]));
-            map.get_or_insert_with(|| Changed::collect(trail.iter().map(|e| entry(e.0)), walked)).clone()
+            map.get_or_insert_with(|| Changed::collect(trail.map(|e| entry(e.0)), walked)).clone()
         });
         let low = self.lows.get(fork.level).copied().unwrap_or(fork.marks.len());
         PathEnv { slots, journal: self.journal.clone(), marks: self.marks.clone(), low, corr: self.corr.clone() }
@@ -2810,7 +2864,9 @@ pub fn widen_slot(
     let (xv, yv) = (x.value.num(), y.value.num());
     let toks = typed_toks_join(&[&x.value, &y.value], typed, true);
     let mut joined = join(old.clone(), new, sets, Some(typed))?;
-    if meaning_grows {
+    // Only `undefined` joined the meanings the head had: nothing grows past
+    // this join, so it is its own widening, and its code keeps its texts.
+    if meaning_grows && defined_grows(x, &joined) {
         use crate::engine::builtins::{Cond, Primitive};
         let switch = matches!(joined.meaning.prim(), Some(Primitive::If(_)));
         // The texts are kept only while they are no more than the head
@@ -2854,6 +2910,13 @@ pub fn widen_slot(
         };
     }
     Some(joined)
+}
+
+/// Whether `new` may have a defined meaning `old` may not.
+fn defined_grows(old: &Binding, new: &Binding) -> bool {
+    let members = |b: &Binding| b.may.as_deref().map_or_else(|| vec![b.meaning.clone()], <[Meaning]>::to_vec);
+    let had = members(old);
+    members(new).iter().any(|m| *m != Meaning::Undefined && !had.iter().any(|h| one_meaning(h, m)))
 }
 
 /// Whether `b` is a set of meanings, each a macro with parameters.
@@ -3729,6 +3792,29 @@ mod tests {
 
     use super::*;
 
+    /// A record's reads are each name once, by name, a read of the whole value winning over
+    /// a read of the meaning, whether the read was its own or an ended inner record's. Pins
+    /// the merge of an inner record's sorted part into the outer one's raw reads.
+    #[test]
+    fn a_record_reads_each_name_once_with_inner_parts_merged() {
+        let mut env = Env::with_capacity(8);
+        let outer = env.memo_open();
+        env.get(Sym(5));
+        env.kept(Sym(3));
+        let inner = env.memo_open();
+        env.kept(Sym(3));
+        env.get(Sym(2));
+        env.kept(Sym(7));
+        env.kept(Sym(2));
+        let reads = |r: Option<(Vec<(u32, bool)>, _, _)>| r.expect("not full").0;
+        assert_eq!(reads(env.memo_since(inner)), [(2, true), (3, false), (7, false)]);
+        env.memo_floor(Some(outer));
+        env.kept(Sym(2));
+        env.get(Sym(3));
+        env.kept(Sym(1));
+        assert_eq!(reads(env.memo_since(outer)), [(1, false), (2, true), (3, true), (5, true), (7, false)]);
+    }
+
     /// Macros alike but for `\long` join to that text, nothing in between.
     #[test]
     fn hull_of_empty_texts_is_empty() {
@@ -3777,6 +3863,37 @@ mod tests {
         let two = syms[bounded_index(TextClass::DIGIT, true, 2, 0).expect("bounded")];
         assert_eq!(d.replacement_text.iter().map(|t| t.tok).collect::<Vec<_>>(), vec![Tok::Cs(two)]);
         assert!(!b.certain);
+    }
+
+    /// A loop head where a name was defined on one pass and not yet on
+    /// another: only `undefined` joins its meaning, which the join itself
+    /// bounds. The widening keeps the text (here code, a call with an
+    /// argument and `+40`), so the parser still runs it. Pins the hull that
+    /// made pgfmath's stripped expression and its dispatch macros any text.
+    #[test]
+    fn maybe_undefined_at_a_head_keeps_its_text() {
+        let interner = Interner::default();
+        let syms: Vec<Sym> = (0..TYPED_NAMES as u32).map(|i| Sym(1000 + i)).collect();
+        let minted = Default::default();
+        let typed = Typed { interner: &interner, syms: &syms, digits: Sym(1), more: Sym(2), minted: &minted };
+        let other = |c| Token::new(Tok::Chr(c, Catcode::Other), Span::default());
+        let text = vec![Token::new(Tok::Cs(Sym(7)), Span::default()), other('+'), other('4'), other('0')];
+        let def = Meaning::Macro(Rc::new(crate::engine::tex::MacroDef {
+            parameter_text: Default::default(),
+            arg_spec: None,
+            replacement_text: text.into(),
+            long: false,
+            outer: false,
+            protected: false,
+        }));
+        let old = Binding::builtin(def.clone());
+        let new = Binding { may: Some(vec![def.clone(), Meaning::Undefined].into()), ..Binding::builtin(def.clone()) };
+        for reach in [Reach::Joined, Reach::Havoc] {
+            let b = widen_slot(&Some(old.clone()), Some(new.clone()), SetLimits::default(), &typed, reach)
+                .expect("a binding");
+            let may = b.may.as_deref().expect("still maybe undefined");
+            assert!(may.contains(&Meaning::Undefined) && may.contains(&def), "{reach:?}: {may:?}");
+        }
     }
 
     /// Numbers joined at a loop head keep the operator between them, and

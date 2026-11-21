@@ -5,9 +5,8 @@
 #   scripts/ci-test.sh lib
 #   scripts/ci-test.sh reds     the known-red tests, at most ${REDS_SECONDS:-1200} s
 #   scripts/ci-test.sh quick <filters>   the given modules, without the doc feature
-# Tests are dealt round-robin from the sorted list, the long ones of
-# tests/slow.txt first, so every shard gets a similar share of both.
-# A new test lands in a shard by itself.  The compliance ledger fails on
+# Tests are dealt longest first onto the least loaded shard by the seconds in
+# tests/times.txt, so the shards end together.  The compliance ledger fails on
 # purpose while it has open entries, so it is a shard of its own, reported
 # non-blocking; being short, it also runs the unit tests (`lib`), blocking.
 # A shard fails on any failing test; the ones tests/known-red.txt lists run
@@ -87,15 +86,22 @@ fi
 k=${BASH_REMATCH[1]} n=${BASH_REMATCH[2]}
 (( k <= n )) || { echo "$0: shard $k of $n" >&2; exit 2; }
 
+# Longest first onto the least loaded shard, by tests/times.txt (an unmeasured test counts
+# 60 s if tests/slow.txt names it, else one); every shard computes the same deal.
 mapfile -t tests < <(
     it --list 2>/dev/null | sed -n 's/: test$//p' | LC_ALL=C sort |
-        awk -v k="$k" -v n="$n" '
+        awk '
+            FILENAME == "tests/times.txt" { t[$2] = $1; next }
             FILENAME == "tests/slow.txt" { slow[$0] = 1; next }
             FILENAME == "tests/known-red.txt" { red[$0] = 1; next }
             $0 in red { next }
             /^compliance_matrix::/ { next }
-            { c = ($0 in slow) ? "s" : "f"; if (i[c]++ % n + 1 == k) print }
-        ' tests/slow.txt tests/known-red.txt -
+            { print ($0 in t ? t[$0] : ($0 in slow ? 60 : 1)), $0 }
+        ' tests/times.txt tests/slow.txt tests/known-red.txt - |
+        LC_ALL=C sort -k1,1gr -k2,2 |
+        awk -v k="$k" -v n="$n" '
+            { b = 1; for (i = 2; i <= n; i++) if (s[i] < s[b]) b = i; s[b] += $1; if (b == k) print $2 }
+        '
 )
 (( ${#tests[@]} > 0 )) || { echo "$0: shard $k/$n is empty" >&2; exit 1; }
 

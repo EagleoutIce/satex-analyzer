@@ -716,4 +716,9 @@ test('table column spacing', withStore(() => {
   const arr = '\\[\\begin{array}{ll} a & b \\end{array}\\]';
   assert.equal(menu(arr, 'array').g.items[0].label, 'default (2.5pt)');
   assert.match(menu(arr, 'array').set('4pt'), /\{\\setlength\{\\arraycolsep\}\{4pt\}%\n\\begin\{array\}/);
+  // a table without its \end (typed half-way): no place for the group's `}`, so no spacing is offered rather than a
+  // \setlength at document level that every later table takes
+  const open = '\\begin{document}\nx\n\\begin{tabular}{ll}\na & b \\\\\nz\n\\end{document}\n';
+  assert.equal(menu(open).g, undefined, 'no \\end: no spacing menu');
+  assert.equal(self.satexPdfEdit.padding(open, open.indexOf('\\begin{tabular}'), 'tabular'), null, 'no \\end: no local padding');
 }));

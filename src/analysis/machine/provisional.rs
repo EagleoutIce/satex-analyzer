@@ -108,13 +108,18 @@ fn same<T: serde::Serialize + ?Sized>(a: &T, b: &T) -> bool {
 /// `at`, and the rows it added. Rows are kept per index (a site's row is
 /// updated in place), so a row both runs hold differently must be one the
 /// rest cannot touch: placed on an edited line, of which no token is left.
-fn rows<T: PartialEq + Clone>(new: &[T], at: &[T], end: &mut Vec<T>, edited: impl Fn(&T) -> bool) -> bool {
-    if end.len() < at.len() {
+fn rows<T: PartialEq + Clone>(
+    new: &impl Rows<T>,
+    at: &impl Rows<T>,
+    end: &mut impl Rows<T>,
+    edited: impl Fn(&T) -> bool,
+) -> bool {
+    if end.count() < at.count() {
         return false;
     }
-    let mut out = Vec::with_capacity(new.len() + end.len() - at.len());
-    for (i, was) in at.iter().enumerate() {
-        let (mine, last) = (new.get(i), &end[i]);
+    let mut out = Vec::with_capacity(new.count() + end.count() - at.count());
+    for i in 0..at.count() {
+        let (was, mine, last) = (at.row(i).expect("in range"), new.row(i), end.row(i).expect("longer"));
         let rest_changed = last != was;
         match mine {
             Some(mine) if mine == was => out.push(last.clone()),
@@ -123,14 +128,45 @@ fn rows<T: PartialEq + Clone>(new: &[T], at: &[T], end: &mut Vec<T>, edited: imp
             _ => return false,
         }
     }
-    let added = new.get(at.len()..).unwrap_or_default();
-    if !added.iter().all(&edited) {
+    let added = (at.count()..new.count()).filter_map(|i| new.row(i));
+    if !added.clone().all(&edited) {
         return false;
     }
-    out.extend(added.iter().cloned());
-    out.extend(end[at.len()..].iter().cloned());
-    *end = out;
+    out.extend(added.cloned());
+    out.extend((at.count()..end.count()).filter_map(|i| end.row(i)).cloned());
+    end.set(out);
     true
+}
+
+/// A list [`rows`] reads by index: a `Vec`, or a [`crate::fixed::Chunked`] checkpoints share.
+trait Rows<T> {
+    fn row(&self, i: usize) -> Option<&T>;
+    fn count(&self) -> usize;
+    fn set(&mut self, rows: Vec<T>);
+}
+
+impl<T> Rows<T> for Vec<T> {
+    fn row(&self, i: usize) -> Option<&T> {
+        self.get(i)
+    }
+    fn count(&self) -> usize {
+        self.len()
+    }
+    fn set(&mut self, rows: Vec<T>) {
+        *self = rows;
+    }
+}
+
+impl<T: Clone> Rows<T> for crate::fixed::Chunked<T> {
+    fn row(&self, i: usize) -> Option<&T> {
+        self.get(i)
+    }
+    fn count(&self) -> usize {
+        self.len()
+    }
+    fn set(&mut self, rows: Vec<T>) {
+        *self = rows.into();
+    }
 }
 
 /// `end` becomes `new` with the entries the last run changed after `at`. An

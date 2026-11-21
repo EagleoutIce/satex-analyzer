@@ -137,8 +137,8 @@ fn ot1_font_encoding(report: &mut Report) {
         return;
     };
     // Only an accent standing where OT1 text stands is one OT1 had to build.
-    let accents: Vec<_> = occurrences[start..]
-        .iter()
+    let accents: Vec<_> = occurrences
+        .iter_from(start)
         .filter(|o| o.kind == OccKind::Accent && ot1.lines.contains(&(o.span.file, o.span.line)))
         .collect();
     let Some(accent) = accents.first() else { return };

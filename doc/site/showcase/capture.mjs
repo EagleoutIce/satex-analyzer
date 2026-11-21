@@ -193,11 +193,17 @@ async function record(s, stem, [w, h]) {
     if (s.cursor) await js(CURSOR);
     await raw('Page.startScreencast', { format: 'png', maxWidth: w * 2, maxHeight: h * 2, everyNthFrame: 1 });
     await sleep(300);
-    for (const st of s.video) await step({ ms: 45000, ...st }, s);
+    // a modal that opens on the way (a widget's dialog) is part of the take: the crop grows to hold it whole
+    let modal = null;
+    for (const st of s.video) {
+      await step({ ms: 45000, ...st }, s);
+      const m = await box('dialog[open]', 0);
+      if (m) modal = modal ? union(modal, m) : m;
+    }
     await sleep(s.hold ?? 900);
     await raw('Page.stopScreencast');
     events.delete('Page.screencastFrame');
-    const clip = union(before, await box(s.crop, s.pad ?? 0));
+    const clip = [await box(s.crop, s.pad ?? 0), modal].filter(Boolean).reduce(union, before);
     // the timeline: each frame as long as it stood (shorter by the entry's `speed`), the last one a beat longer
     const list = frames.map(([f, t], i) => `file '${f}'\nduration ${Math.max(0.02 / (s.speed ?? 1), ((frames[i + 1]?.[1] ?? t + .5) - t) / (s.speed ?? 1)).toFixed(3)}`).join('\n') + `\nfile '${frames.at(-1)[0]}'\n`;
     writeFileSync(join(dir, 'list.txt'), list);

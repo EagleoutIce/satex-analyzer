@@ -23,7 +23,110 @@ struct Logged {
     message: String,
 }
 
+/// A build done and its log read: what explaining it needs.
+pub struct Built {
+    main: PathBuf,
+    keep: PathBuf,
+    logged: Vec<Logged>,
+    /// The status, when the build failed without a TeX error in the log.
+    failed: Option<String>,
+    /// The key of the explanation: the logged messages, the source, satex and its settings.
+    head: String,
+    /// The records the last explanation of this log gave, when nothing it read changed since.
+    stored: Option<Vec<Record>>,
+}
+
+impl Built {
+    /// Whether explaining the build needs the analysis: only findings at the logged messages
+    /// explain them, and a stored explanation whose inputs did not change is the one it would give.
+    pub fn needs_analysis(&self) -> bool {
+        !self.logged.is_empty() && self.stored.is_none()
+    }
+}
+
+/// The build, explained by the findings of `context`'s analysis (rules only without `compile.explain`).
 pub fn run(context: &Context, system: Option<&str>, view: bool) -> Result<Output, String> {
+    let built = build_only(context, system, view)?;
+    Ok(explained(built, context.analysis))
+}
+
+/// Each logged message with satex's finding there: `analysis`'s findings where the build
+/// needs them (a sketch has none), else the stored records. Stores what an analysis gave.
+pub fn explained(built: Built, analysis: &crate::analysis::machine::Analysis) -> Output {
+    if let Some(records) = built.stored {
+        eprintln!("satex: explained as the last build was, nothing the analysis read changed");
+        return Output::Lint(records);
+    }
+    let asked = built.needs_analysis() && analysis.settings.compile.explain;
+    let findings = if asked { crate::linter::lint(analysis) } else { Vec::new() };
+    let mut records: Vec<Record> = built.logged.iter().map(|l| explain(l, &findings, &built.main)).collect();
+    if let Some(status) = &built.failed {
+        let message = format!("the build failed ({status}) without a TeX error in the log");
+        records.push(record(&built.main, None, true, "build", message, None));
+    }
+    #[cfg(unix)]
+    // a run a budget stopped gives findings of the time it had
+    if asked && !analysis.stopped() {
+        store(&built, analysis, &records);
+    }
+    Output::Lint(records)
+}
+
+/// The explanation's key: its head, then a stamp of every file the analysis read and of the
+/// project tree (a file it looked for and did not find appears there); its records beside it.
+#[cfg(unix)]
+fn store(built: &Built, analysis: &crate::analysis::machine::Analysis, records: &[Record]) {
+    let job = built.main.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
+    let (key, json) = (built.keep.join(format!("{job}.explained")), built.keep.join(format!("{job}.explained.json")));
+    let root = built.main.parent().map(Path::to_path_buf).unwrap_or_default();
+    let path = |f: &str| Path::new(f).canonicalize().unwrap_or_else(|_| root.join(f));
+    let mut files: Vec<PathBuf> = analysis.files.iter().map(|f| path(&f.path)).collect();
+    files.sort_unstable();
+    files.dedup();
+    let mut text = built.head.clone();
+    text.extend(files.iter().map(|f| stamp(f, false)));
+    text.push_str(&stamp(&root, true));
+    text.push_str(&kpathsea(&root));
+    let _ = std::fs::create_dir_all(&built.keep);
+    let _ = std::fs::write(&json, serde_json::to_vec(records).unwrap_or_default());
+    let _ = std::fs::write(&key, text);
+}
+
+/// The stored records of `head`'s explanation, when its key holds.
+#[cfg(unix)]
+fn stored(keep: &Path, job: &str, head: &str) -> Option<Vec<Record>> {
+    let key = std::fs::read_to_string(keep.join(format!("{job}.explained"))).ok()?;
+    holds(key.strip_prefix(head)?).then_some(())?;
+    serde_json::from_slice(&std::fs::read(keep.join(format!("{job}.explained.json"))).ok()?).ok()
+}
+/// The stamps of where kpathsea finds a file the project does not hold: its file databases
+/// (`ls-R`) and the TeX search path's directories it reads from disk (no `!!`), to every level.
+#[cfg(unix)]
+fn kpathsea(dir: &Path) -> String {
+    let ask = |args: &[&str]| {
+        let out = Command::new("kpsewhich").args(args).current_dir(dir).output().ok();
+        String::from_utf8_lossy(&out.map(|o| o.stdout).unwrap_or_default()).into_owned()
+    };
+    let (databases, path) = (ask(&["-all", "ls-R"]), ask(&["-show-path=tex"]));
+    let mut key: String = databases.lines().filter(|l| !l.is_empty()).map(|l| stamp(Path::new(l), false)).collect();
+    key.extend(searched(dir, &path).map(|d| stamp(&d, true)));
+    key
+}
+
+/// The search path's directories kpathsea reads from disk, not from an `ls-R` (`!!`).
+#[cfg(unix)]
+fn searched<'a>(dir: &'a Path, path: &'a str) -> impl Iterator<Item = PathBuf> + 'a {
+    let disk = path.trim().split(':').filter(|d| !d.starts_with("!!") && !d.is_empty() && *d != ".");
+    disk.map(move |d| dir.join(d.trim_end_matches('/')))
+}
+
+#[cfg(not(unix))]
+fn stored(_: &Path, _: &str, _: &str) -> Option<Vec<Record>> {
+    None
+}
+
+/// The build with the tools this machine has, its log read.
+pub fn build_only(context: &Context, system: Option<&str>, view: bool) -> Result<Built, String> {
     let analysis = context.analysis;
     let main = PathBuf::from(analysis.file_name(analysis.main_file));
     let main = main.canonicalize().unwrap_or(main);
@@ -89,8 +192,34 @@ pub fn run(context: &Context, system: Option<&str>, view: bool) -> Result<Output
         "satex" => {
             let at = out_dir.clone().unwrap_or_else(|| dir.clone());
             let c = &analysis.settings.compile;
-            let (status, dumped) =
-                own(program, latex, context.source, file, &job, &dir, &at, c.passes, c.warm, &c.clock)?;
+            // A warm engine waits in a mirror of the project: the pipe is never one of its files.
+            #[cfg(target_os = "linux")]
+            let mirror = (c.warm && out_dir.is_none()).then(|| dir.join(KEEP).join(super::warm::MIRROR));
+            #[cfg(not(target_os = "linux"))]
+            let mirror: Option<PathBuf> = None;
+            #[cfg(target_os = "linux")]
+            let since = match &mirror {
+                Some(w) => Some(super::warm::fill(w, &dir)?),
+                None => None,
+            };
+            let (ran, at) = mirror.as_ref().map_or((&dir, &at), |w| (w, w));
+            let (status, dumped) = own(
+                program,
+                latex,
+                context.source,
+                file,
+                &job,
+                ran,
+                at,
+                c.passes,
+                c.warm && mirror.is_some(),
+                &c.clock,
+                c.memoize,
+            )?;
+            #[cfg(target_os = "linux")]
+            if let (Some(w), Some(since)) = (&mirror, since) {
+                super::warm::mirror(w, &dir, since)?;
+            }
             preamble = dumped;
             status
         }
@@ -119,19 +248,14 @@ pub fn run(context: &Context, system: Option<&str>, view: bool) -> Result<Output
     // a preamble read from a format said its messages while the format was dumped
     let mut logged = parse_log(&preamble, &dir);
     logged.extend(parse_log(&String::from_utf8_lossy(&log), &dir));
-    let findings = if analysis.settings.compile.explain { crate::linter::lint(analysis) } else { Vec::new() };
-    let mut records: Vec<Record> = logged.iter().map(|l| explain(l, &findings, &main)).collect();
-    if !status.success() && !logged.iter().any(|l| l.error) {
-        records.push(record(
-            &main,
-            None,
-            true,
-            "build",
-            format!("the build failed ({status}) without a TeX error in the log"),
-            None,
-        ));
-    }
-    Ok(Output::Lint(records))
+    let failed = (!status.success() && !logged.iter().any(|l| l.error)).then(|| status.to_string());
+    let settings = serde_json::to_vec(&analysis.settings).unwrap_or_default();
+    // the records are of the logged messages, not of the log (its first line holds the time)
+    let said = [format!("{logged:?}{failed:?}{main:?}").as_bytes(), context.source.as_bytes(), &settings].map(hash);
+    let head = format!("{}\t{said:016x?}\n", env!("SATEX_SOURCE_ID"));
+    let keep = out_dir.unwrap_or_else(|| dir.clone()).join(KEEP);
+    let stored = stored(&keep, &job, &head).filter(|_| !logged.is_empty());
+    Ok(Built { main, keep, logged, failed, head, stored })
 }
 
 /// The build files a run reads back: equal before and after a pass, the references rest.
@@ -149,7 +273,9 @@ pub const KEEP: &str = ".satex-build";
 /// per preamble. A fresh build's first pass writes no PDF. With `warm`, a pass is fed to the engine
 /// the last build left waiting where it runs that pass's command (`warm.rs`), and the build leaves
 /// one for the next. A build whose inputs are as the last rested one left them runs no pass
-/// (`current`). Gives the status and the dump's log.
+/// (`current`). With `memoize`, the build extracts memoize's externs itself where the document may
+/// load it (`plugins::memoize`).
+/// Gives the status and the dump's log.
 #[allow(clippy::too_many_arguments)]
 fn own(
     program: &str,
@@ -162,6 +288,7 @@ fn own(
     passes: u32,
     warm: bool,
     clock: &str,
+    memoize: bool,
 ) -> Result<(std::process::ExitStatus, String), String> {
     let started = std::time::Instant::now();
     let keep = at.join(KEEP);
@@ -172,7 +299,18 @@ fn own(
     if at != dir {
         args.push(format!("-output-directory={}", at.display()));
     }
-    let fmt = if latex && program == "pdflatex" { format(source, file, job, dir, &keep) } else { None };
+    // memoize's option goes before the file, as latexmk's -usepretex puts it; a dumped preamble
+    // would not read it, so the passes read the preamble themselves.
+    // pdfTeX reads a `%&format` line only from the file it is given: no code before it then
+    let memoize = memoize
+        && !source.starts_with("%&")
+        && crate::plugins::memoize::may_load(source, &at.join(format!("{job}.fls")));
+    let pretex = format!("{}\\input{{{file}}}", crate::plugins::memoize::PRETEX);
+    let file = if memoize { pretex.as_str() } else { file };
+    if memoize {
+        args.push(format!("-jobname={job}"));
+    }
+    let fmt = if latex && program == "pdflatex" && !memoize { format(source, file, job, dir, &keep) } else { None };
     if let Some((fmt, _)) = &fmt {
         args.push(format!("-fmt={}", fmt.display()));
     }
@@ -214,6 +352,12 @@ fn own(
             last = command;
         }
         tools(job, dir, at, &keep)?;
+        // an extern made now leaves its page in this pass's PDF: one more pass drops it
+        let mut extracted = false;
+        for (args, script, extern_) in crate::plugins::memoize::extractions(job, at).into_iter().filter(|_| memoize) {
+            build("pdftex", &args.each_ref().map(String::as_str), &script, at)?;
+            extracted |= at.join(extern_).is_file();
+        }
         let now = rested();
         let log = String::from_utf8_lossy(&read("log")).into_owned();
         // mylatexformat replays the preamble's \openout at \begin{document} and can break there (an
@@ -226,7 +370,12 @@ fn own(
             dumped.clear();
             continue;
         }
-        if !draft && now == was && !log.contains("Rerun to get") && !log.contains("Label(s) may have changed") {
+        if !draft
+            && !extracted
+            && now == was
+            && !log.contains("Rerun to get")
+            && !log.contains("Label(s) may have changed")
+        {
             rest = true;
             break;
         }
@@ -337,10 +486,7 @@ fn reads(dir: &Path, at: &Path, job: &str, keep: &Path, databases: &str, path: &
     dirs.dedup();
     let mut key: String = files.iter().map(|f| stamp(f, false)).collect();
     key.extend(dirs.iter().map(|d| stamp(d, false)));
-    // the search path's directories kpathsea reads from disk, not from an `ls-R` (`!!`)
-    let searched = path.trim().split(':').filter(|d| !d.starts_with("!!") && !d.is_empty() && *d != ".");
-    let searched = searched.map(|d| dir.join(d.trim_end_matches('/')));
-    key.extend([root].into_iter().chain(searched).map(|d| stamp(&d, true)));
+    key.extend([root].into_iter().chain(searched(dir, path)).map(|d| stamp(&d, true)));
     key
 }
 
@@ -350,16 +496,21 @@ fn reads(dir: &Path, at: &Path, job: &str, keep: &Path, databases: &str, path: &
 fn current(done: &Path, head: &str) -> Option<i32> {
     let key = std::fs::read_to_string(done).ok()?;
     let (raw, rest) = key.strip_prefix(head)?.split_once('\n')?;
-    let holds = !rest.is_empty()
-        && rest.lines().all(|l| {
+    holds(rest).then(|| raw.parse().ok()).flatten()
+}
+
+/// Whether every line of a key (`stamp`) stamps as it did.
+#[cfg(unix)]
+fn holds(key: &str) -> bool {
+    !key.is_empty()
+        && key.lines().all(|l| {
             let path = l.split('\t').next().unwrap_or_default();
             let (path, deep) = match path.strip_suffix("//") {
                 Some(d) => (d, true),
                 None => (path.strip_suffix('/').unwrap_or(path), false),
             };
             stamp(Path::new(path), deep) == format!("{l}\n")
-        });
-    holds.then(|| raw.parse().ok()).flatten()
+        })
 }
 
 /// The pass `command` by the warm engine (`warm.rs`), named on stderr as a run is.

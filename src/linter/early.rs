@@ -61,7 +61,8 @@ fn occurrence(kind: OccKind, key: &str, detail: Option<&str>, span: Span) -> Occ
         package: None,
         node: 0,
         section: None,
-        certain: false,
+        // The sketch follows one path: the run's findings replace its own.
+        certain: true,
     }
 }
 
@@ -222,7 +223,7 @@ pub fn sketch(source: &str, main: &Path, cfg: &Config) -> Analysis {
     guess.missing_graphics(&dir, early, cfg);
     let paths: Vec<PathBuf> = guess.files.iter().map(|(p, _)| p.clone()).collect();
     let mut analysis = Analysis::sketch(source, &paths, cfg, guess.loads);
-    analysis.facts.occurrences = guess.occurrences;
+    analysis.facts.occurrences = guess.occurrences.into();
     analysis
 }
 

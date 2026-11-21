@@ -381,6 +381,9 @@ pub struct WrittenLine {
     defined: Vec<String>,
     span: Span,
     context: OccContext,
+    /// The line is the writing call's own source, as far as it was read (memoize's `.memo` of
+    /// `\begin{x}…`): a copy TeX reads back, naming no key for another program.
+    copies: bool,
 }
 
 impl WrittenLine {
@@ -410,19 +413,27 @@ impl WrittenLine {
 /// The names body calls read, each read once: a loop in a call reads its names alike again.
 #[derive(Clone, Default)]
 pub struct NameReads {
-    pub list: Vec<NameRead>,
+    pub list: crate::fixed::Chunked<NameRead>,
     /// Where each name read at a call site stands in `list`.
-    at: crate::fixed::LookupMap<(crate::engine::tex::Sym, Span), Vec<u32>>,
+    at: crate::fixed::SharedMap<(crate::engine::tex::Sym, Span), Vec<u32>>,
 }
 
 impl NameReads {
-    /// `list`, indexed anew.
-    pub(crate) fn of(list: Vec<NameRead>) -> NameReads {
-        let mut at: crate::fixed::LookupMap<_, Vec<u32>> = Default::default();
-        for (i, read) in list.iter().enumerate() {
-            at.entry((read.name, read.span)).or_default().push(i as u32);
+    fn push_at(&mut self, key: (crate::engine::tex::Sym, Span), i: u32) {
+        match self.at.get_mut(&key) {
+            Some(v) => v.push(i),
+            None => self.at.insert_mut(key, vec![i]),
         }
-        NameReads { list, at }
+    }
+
+    /// `list`, indexed anew.
+    pub(crate) fn of(list: crate::fixed::Chunked<NameRead>) -> NameReads {
+        let mut reads = NameReads::default();
+        for (i, read) in list.iter().enumerate() {
+            reads.push_at((read.name, read.span), i as u32);
+        }
+        reads.list = list;
+        reads
     }
 }
 
@@ -441,6 +452,8 @@ pub struct NameRead {
     parts: std::rc::Rc<[String]>,
     call: crate::engine::tex::Sym,
     span: Span,
+    /// Where the read's occurrence stands ([`Machine::own_site`]).
+    site: Span,
     context: OccContext,
 }
 
@@ -544,11 +557,13 @@ pub fn read_name(m: &mut Machine, name: &str) {
     let recent = m.name_reads.list.iter().rev().take(8).any(|r| r.name == name && r.span == span);
     if !recent {
         let context = m.occurrence_context();
-        let read = NameRead { name, parts: call_parts(m, span), call, span, context };
+        let site = m.own_site(span);
+        let read = NameRead { name, parts: call_parts(m, span), call, span, site, context };
         let reads = &mut m.name_reads;
-        let same = reads.at.entry((name, span)).or_default();
-        if !same.iter().any(|&i| reads.list[i as usize] == read) {
-            same.push(reads.list.len() as u32);
+        let same = reads.at.get(&(name, span));
+        if !same.is_some_and(|same| same.iter().any(|&i| reads.list[i as usize] == read)) {
+            let next = reads.list.len() as u32;
+            reads.push_at((name, span), next);
             reads.list.push(read);
         }
     }
@@ -566,7 +581,7 @@ pub fn warned(m: &mut Machine, text: &str, span: Span) {
     if key.trim().is_empty() || !tail.contains("undefined") {
         return;
     }
-    let at = m.file_call.map_or(span, |(_, at)| at);
+    let at = m.own_site(span);
     m.occurrence(OccKind::Ref, key.trim().to_string(), None, at);
 }
 
@@ -750,6 +765,7 @@ fn line(m: &mut Machine, tokens: &[Token], span: Span) {
             defined: Vec::new(),
             span,
             context,
+            copies: false,
         });
         return;
     };
@@ -786,6 +802,11 @@ fn line(m: &mut Machine, tokens: &[Token], span: Span) {
         }
     }
     let text = crate::engine::tex::text_with_groups(tokens, &m.out.interner);
+    let squash = |t: &str| t.chars().filter(|c| !c.is_whitespace()).collect::<String>();
+    let copies = extent.as_ref().is_some_and(|(_, source)| {
+        let (line, source) = (squash(&text), squash(source));
+        source.starts_with(&line) || line.starts_with(&source)
+    });
     let defined = sandbox_run(m, &text);
     if m.out.timings.is_enabled()
         && let Some(Some(sandbox)) = &m.line_sandbox
@@ -794,7 +815,7 @@ fn line(m: &mut Machine, tokens: &[Token], span: Span) {
         m.out.timings.written_line((span.file, span.line), steps, &text);
     }
     let parts = call_parts(m, span);
-    m.written_lines.push(WrittenLine { head, elements: Vec::new(), args, keys, parts, defined, span, context });
+    m.written_lines.push(WrittenLine { head, elements: Vec::new(), args, keys, parts, defined, span, context, copies });
 }
 
 /// Where the writing call's own text ends: at the next control sequence
@@ -1012,11 +1033,20 @@ pub fn relate(m: &mut Machine) {
     for read in &reads {
         reads_at.entry(read.span).or_default().push(read);
     }
+    let mut loads_at: crate::fixed::HashMap<Span, Vec<&String>> = crate::fixed::HashMap::default();
+    let graphics = m.out.facts.occurrences.iter().filter(|o| o.kind == OccKind::Graphics).map(|o| (o.span, &o.key));
+    for (span, name) in m.out.facts.loads.iter().map(|l| (l.span, &l.name)).chain(graphics) {
+        loads_at.entry(span).or_default().push(name);
+    }
+    let file = |l: &str, key: &str| l == key || l.rsplit_once('.').is_some_and(|(stem, _)| stem == key);
     let mut named: Vec<(usize, String, usize)> = Vec::new();
-    for (i, line) in lines.iter().enumerate().filter(|(i, l)| !declaring.contains(i) && !l.head.is_empty()) {
+    let mut named_at: crate::fixed::HashSet<(String, usize)> = crate::fixed::HashSet::default();
+    let citing = |(i, l): &(usize, &WrittenLine)| !declaring.contains(i) && !l.head.is_empty() && !l.copies;
+    for (i, line) in lines.iter().enumerate().filter(citing) {
         let keys = line.keys();
         // a name built from unknown text shows no shape of a key
-        for read in reads_at.get(&line.span).into_iter().flatten().filter(|r| !m.is_unknown_name(r.name)) {
+        let reads = reads_at.get(&line.span).into_iter().flatten();
+        for read in reads.filter(|r| !m.is_unknown_name(r.name)) {
             let name = m.name(read.name).to_string();
             if let Some((key, prefix, suffix)) = within(&name, &keys).filter(|(_, p, s)| !p.is_empty() || !s.is_empty())
             {
@@ -1024,7 +1054,9 @@ pub fn relate(m: &mut Machine) {
                 shapes[at].3.get_or_insert_with(|| line.head.clone());
                 let written = line.at(&key).0;
                 let option = options.contains(&(written.file, key.as_str()));
-                if !option && !named.iter().any(|n| n.1 == key && n.2 == i) {
+                // the file the call loads (`\include{k}` writes `\@setckpt{k}`), no citation
+                let loaded = loads_at.get(&line.span).into_iter().flatten().any(|l| file(l, &key));
+                if !option && !loaded && named_at.insert((key.clone(), i)) {
                     named.push((at, key, i));
                 }
             }
@@ -1034,12 +1066,6 @@ pub fn relate(m: &mut Machine) {
     // read as its own (`\begin{document}` reads `\document`), nor a file
     // it loaded (`\usepackage{x}` defines `\ver@x.sty`) or included, its
     // extension left out (`\includegraphics{x}` caching `x.pdf`).
-    let mut loads_at: crate::fixed::HashMap<Span, Vec<&String>> = crate::fixed::HashMap::default();
-    let graphics = m.out.facts.occurrences.iter().filter(|o| o.kind == OccKind::Graphics).map(|o| (o.span, &o.key));
-    for (span, name) in m.out.facts.loads.iter().map(|l| (l.span, &l.name)).chain(graphics) {
-        loads_at.entry(span).or_default().push(name);
-    }
-    let file = |l: &str, key: &str| l == key || l.rsplit_once('.').is_some_and(|(stem, _)| stem == key);
     let names: Vec<_> = std::mem::take(&mut m.key_names)
         .into_iter()
         .filter(|n| !reads_at.get(&n.3).into_iter().flatten().any(|r| m.name(r.name) == n.1))
@@ -1123,7 +1149,9 @@ pub fn relate(m: &mut Machine) {
         shapes.iter().filter(|s| s.2.is_some() && s.3.is_none()).map(|s| (s.0.clone(), s.1.clone(), false)).collect();
     every.extend(names.iter().map(|n| (n.0.0.clone(), n.0.1.clone(), true)));
     every.sort_by_key(|(p, s, _)| std::cmp::Reverse(p.len() + s.len()));
-    every.dedup();
+    // One entry per shape: a later copy never matches where the first did not.
+    let mut kept = crate::fixed::HashSet::default();
+    every.retain(|e| kept.insert(e.clone()));
     let mut uses = Vec::new();
     for read in &reads {
         if heads.contains(m.name(read.call)) {
@@ -1145,14 +1173,14 @@ pub fn relate(m: &mut Machine) {
         };
         let related = [OccKind::Ref, OccKind::KeyUse, OccKind::Label, OccKind::BibItem, OccKind::Key]
             .iter()
-            .any(|k| seen.contains(&(*k, key.clone(), read.span, read.context.call.map(|c| c.1))));
-        if !related && seen.insert((kind, key.clone(), read.span, read.context.call.map(|c| c.1))) {
+            .any(|k| seen.contains(&(*k, key.clone(), read.site, read.context.call.map(|c| c.1))));
+        if !related && seen.insert((kind, key.clone(), read.site, read.context.call.map(|c| c.1))) {
             uses.push((kind, key, read));
         }
     }
     for (kind, key, read) in uses {
         let head = m.name(read.call).to_string();
-        m.occurrence_in(kind, key, Some(head), read.span, &read.context);
+        m.occurrence_in(kind, key, Some(head), read.site, &read.context);
     }
     for (shape, key, call, span, context) in &names {
         let related = [OccKind::Ref, OccKind::KeyUse, OccKind::Label, OccKind::BibItem]
@@ -1175,8 +1203,9 @@ pub fn relate(m: &mut Machine) {
     // The other lines name files, the bibliography databases and style;
     // the rest of their keys are entries for the program that reads them.
     let (mut tried, mut files) = (crate::fixed::HashSet::default(), crate::fixed::HashSet::default());
+    let naming: crate::fixed::HashSet<usize> = named.iter().map(|n| n.2).collect();
     for (i, line) in lines.iter().enumerate() {
-        if declaring.contains(&i) || named.iter().any(|n| n.2 == i) {
+        if declaring.contains(&i) || naming.contains(&i) {
             continue;
         }
         for (n, arg) in line.args.iter().enumerate() {
@@ -1272,6 +1301,16 @@ fn group_span(tokens: &[Token], start: usize) -> Option<(Vec<Token>, usize)> {
     None
 }
 
+/// An image the call places, read now or before (`\pdfrefximage`): an
+/// occurrence at the call, and where its name resolves.
+pub fn placed_image(m: &mut Machine, name: &str, span: Span) -> Option<std::path::PathBuf> {
+    let at = m.file_call.map_or(span, |(_, at)| at);
+    let base = m.base().to_path_buf();
+    let path = m.resolver_mut().resolve(name, crate::engine::builtins::LoadKind::Input, &base);
+    m.occurrence(OccKind::Graphics, name.to_string(), path.as_ref().map(|p| p.display().to_string()), at);
+    path
+}
+
 /// An image primitive (`\pdfximage`, pdfTeX manual § "Graphics") opens a
 /// file: the image the call includes, under the name the driver handed the
 /// engine and where that name resolves. Names the driver tried first
@@ -1282,10 +1321,7 @@ pub fn image(m: &mut Machine, name: &str, span: Span) -> Option<std::path::PathB
     if name.is_empty() {
         return None;
     }
-    let at = m.file_call.map_or(span, |(_, at)| at);
-    let base = m.base().to_path_buf();
-    let path = m.resolver_mut().resolve(name, crate::engine::builtins::LoadKind::Input, &base);
-    m.occurrence(OccKind::Graphics, name.to_string(), path.as_ref().map(|p| p.display().to_string()), at);
+    let path = placed_image(m, name, span);
     if let Some(path) = &path {
         m.note_read_file(path);
     }
@@ -1297,7 +1333,7 @@ pub fn image(m: &mut Machine, name: &str, span: Span) -> Option<std::path::PathB
 /// is no longer one TeX can hyphenate (The TeXbook, appendix H).
 pub fn accent(m: &mut Machine, span: Span) -> Option<i64> {
     let code = m.scan_number();
-    let at = m.file_call.map_or(span, |(_, at)| at);
+    let at = m.own_site(span);
     m.occurrence(OccKind::Accent, code.unwrap_or(0).to_string(), None, at);
     code
 }

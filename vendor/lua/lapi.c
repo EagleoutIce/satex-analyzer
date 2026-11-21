@@ -226,6 +226,8 @@ LUA_API void lua_copy (lua_State *L, int fromidx, int toidx) {
   to = index2addr(L, toidx);
   api_checkvalidindex(L, to);
   setobj(L, to, fr);
+  if (isupvalue(toidx) || toidx == LUA_REGISTRYINDEX)  /* satex: a C upvalue */
+    satex_wrote(L);
   if (isupvalue(toidx))  /* function upvalue? */
     luaC_barrier(L, clCvalue(L->ci->func), fr);
   /* LUA_REGISTRYINDEX does not need gc barrier
@@ -860,6 +862,7 @@ LUA_API int lua_setmetatable (lua_State *L, int objindex) {
   }
   switch (ttnov(obj)) {
     case LUA_TTABLE: {
+      satex_write(L, hvalue(obj));
       hvalue(obj)->metatable = mt;
       if (mt) {
         luaC_objbarrier(L, gcvalue(obj), mt);
@@ -868,6 +871,7 @@ LUA_API int lua_setmetatable (lua_State *L, int objindex) {
       break;
     }
     case LUA_TUSERDATA: {
+      satex_write(L, uvalue(obj));
       uvalue(obj)->metatable = mt;
       if (mt) {
         luaC_objbarrier(L, uvalue(obj), mt);
@@ -876,6 +880,7 @@ LUA_API int lua_setmetatable (lua_State *L, int objindex) {
       break;
     }
     default: {
+      satex_wrote(L);
       G(L)->mt[ttnov(obj)] = mt;
       break;
     }
@@ -892,6 +897,7 @@ LUA_API void lua_setuservalue (lua_State *L, int idx) {
   api_checknelems(L, 1);
   o = index2addr(L, idx);
   api_check(L, ttisfulluserdata(o), "full userdata expected");
+  satex_write(L, uvalue(o));
   setuservalue(L, uvalue(o), L->top - 1);
   luaC_barrier(L, gcvalue(o), L->top - 1);
   L->top--;
@@ -1249,6 +1255,7 @@ LUA_API const char *lua_setupvalue (lua_State *L, int funcindex, int n) {
   name = aux_upvalue(fi, n, &val, &owner, &uv);
   if (name) {
     L->top--;
+    if (uv) satex_write(L, uv); else satex_wrote(L);
     setobj(L, val, L->top);
     if (owner) { luaC_barrier(L, owner, L->top); }
     else if (uv) { luaC_upvalbarrier(L, uv); }
@@ -1293,6 +1300,7 @@ LUA_API void lua_upvaluejoin (lua_State *L, int fidx1, int n1,
   UpVal **up2 = getupvalref(L, fidx2, n2);
   if (*up1 == *up2)
     return;
+  satex_wrote(L);
   luaC_upvdeccount(L, *up1);
   *up1 = *up2;
   (*up1)->refcount++;
@@ -1301,3 +1309,25 @@ LUA_API void lua_upvaluejoin (lua_State *L, int fidx1, int n1,
 }
 
 
+
+
+/* satex: state that has no epoch was written. */
+LUA_API void satex_state_written (lua_State *L) {
+  satex_wrote(L);
+}
+
+
+/* satex: 'track(start)', a lua_CFunction, returns how many writes to state
+** older than the current run there were so far.  'start' true begins a run's
+** epoch: what is made from here on is fresh; false ends it. */
+LUA_API int satex_track (lua_State *L) {
+  global_State *g = G(L);
+  if (lua_type(L, 1) == LUA_TBOOLEAN) {
+    if (lua_toboolean(L, 1))
+      g->satex_epoch = (g->satex_epochs == UINT_MAX) ? 0 : ++g->satex_epochs;
+    else
+      g->satex_epoch = 0;
+  }
+  lua_pushinteger(L, l_castU2S(g->satex_writes));
+  return 1;
+}

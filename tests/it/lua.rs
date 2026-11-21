@@ -261,3 +261,107 @@ fn lua_run_off_leaves_the_output_unknown() {
     assert!(undefined(&analysis, "a"));
     assert!(analysis.facts.diagnostics.iter().any(|d| d.code == "lua-output"));
 }
+
+/// One Lua state serves every path. A global one arm of an undecided conditional sets is not
+/// what the run without that arm reads: after the join `x` is 0 or 1, so neither test of it
+/// is decided. Pins: the sibling path and the joined path read the arm's `x = 1` as certain.
+#[test]
+fn a_global_one_arm_sets_is_not_what_the_other_path_reads() {
+    let analysis = primitives(
+        r"\directlua{x = 0}
+\ifodd\uniformdeviate 7 \directlua{x = 1}\fi
+\ifnum\directlua{tex.print(x)}=1 \def\one{}\else\def\zero{}\fi",
+    );
+    assert!(!defined(&analysis, "one"), "x is 0 where the arm did not run");
+    assert!(!undefined(&analysis, "zero"), "x is 0 where the arm did not run");
+}
+
+/// The arm that does not set the global reads it while the other arm's run is already in the
+/// one state. Pins: the `\else` arm read `x = 1`, which only the first arm's run holds.
+#[test]
+fn an_arm_does_not_read_what_its_sibling_arm_set() {
+    let analysis = primitives(
+        r"\directlua{x = 0}
+\ifodd\uniformdeviate 7 \directlua{x = 1}\else
+\ifnum\directlua{tex.print(x)}=0 \def\zero{}\else\def\wrong{}\fi\fi",
+    );
+    assert!(!undefined(&analysis, "zero"), "the arm that sets nothing reads the 0 from before the choice");
+}
+
+/// A path that waits at its `\fi` while its sibling runs is no longer inside the conditional
+/// when it goes on. Two choices in a row: the second one's arms each start from a state the
+/// first one's arms both ran in. Pins: a counter stepped on every path read as their sum.
+#[test]
+fn a_counter_stepped_on_each_path_is_not_their_sum() {
+    let analysis = primitives(
+        r"\directlua{n = 0}
+\ifodd\uniformdeviate 7 \directlua{n = n + 1}\else\directlua{n = n + 1}\fi
+\ifnum\directlua{tex.print(n)}=2 \def\two{}\fi
+\ifnum\directlua{tex.print(n)}=1 \def\one{}\fi",
+    );
+    assert!(!defined(&analysis, "two"), "no run steps twice");
+    assert!(!undefined(&analysis, "one"), "every run steps once");
+}
+
+/// Without any undecided choice the one state is the run's own: nothing is given up.
+#[test]
+fn a_run_without_choices_keeps_its_lua_state_exact() {
+    let analysis = primitives(
+        r"\directlua{n = 0}\directlua{n = n + 1}\ifnum\directlua{tex.print(n)}=1 \def\one{}\fi
+\ifodd\uniformdeviate 7 \def\a{}\fi
+\directlua{n = n + 1}\ifnum\directlua{tex.print(n)}=2 \def\two{}\fi",
+    );
+    assert!(defined(&analysis, "one"));
+    assert!(defined(&analysis, "two"), "a choice that runs no Lua leaves the state exact");
+}
+
+/// A run that writes no state it found leaves the state's identity alone, so the paths of an
+/// undecided choice stay in step: both arms call a pure compare in an old table (as expl3's
+/// `\str_if_eq` calls `l3kernel.strcmp`), and the run after the join still runs.
+/// Pins: every run, even a pure one, advanced the state's last run, so after the first arm's
+/// compare its sibling and the joined path were out of step and every later run was unknown.
+#[test]
+fn a_run_that_writes_nothing_keeps_forked_paths_in_step() {
+    let analysis = primitives(
+        r"\directlua{cmp = {} function cmp.eq(a, b) tex.print(a == b and 1 or 0) end n = 0}
+\ifodd\uniformdeviate 7 \ifnum\directlua{cmp.eq('a', 'a')}=1 \fi\else\ifnum\directlua{cmp.eq('a', 'b')}=0 \fi\fi
+\directlua{local t = {} t.v = 1 n = n + t.v}\ifnum\directlua{tex.print(n)}=1 \def\one{}\fi",
+    );
+    assert!(defined(&analysis, "one"), "the pure compares left both paths in step");
+}
+
+/// Every way Lua code writes state it found counts as a write: an upvalue, a raw set, a new
+/// key, a metatable, a coroutine resumed, a library table. One arm of an
+/// undecided choice writes; after the join the read is undecided, never the arm's value.
+/// Pins: a write tracking that misses a channel keeps both paths in step on a state only one
+/// of them changed, and the read is the arm's value as certain.
+#[test]
+fn every_kind_of_lua_write_puts_the_other_path_out_of_step() {
+    let cases = [
+        ("local c = 0 function bump() c = 1 end function get() return c end", "bump()", "get()"),
+        ("t = {v = 0}", "rawset(t, 'v', 1)", "t.v"),
+        ("t = {}", "t.v = 1", "t.v or 0"),
+        ("t = {}", "setmetatable(t, {__index = function() return 1 end})", "t.v or 0"),
+        (
+            "co = coroutine.create(function() coroutine.yield() end)",
+            "coroutine.resume(co) coroutine.resume(co)",
+            "coroutine.status(co) == 'dead' and 1 or 0",
+        ),
+        ("", "string.extra = 1", "string.extra or 0"),
+        ("", "pcall(function() x = 1 error('e') end)", "x or 0"),
+        ("t = {0}", "table.sort(t, function() return false end) t[1] = 1", "t[1]"),
+    ];
+    let missed: Vec<&str> = cases
+        .iter()
+        .filter(|(setup, write, read)| {
+            let analysis = primitives(&format!(
+                "\\directlua{{{setup}}}\n\\ifodd\\uniformdeviate 7 \\directlua{{{write}}}\\fi\n\
+                 \\ifnum\\directlua{{tex.print({read})}}=1 \\def\\one{{}}\\else\\def\\zero{{}}\\fi"
+            ));
+            // The path without the write reads 0: `\one` is not certain, `\zero` may be defined.
+            defined(&analysis, "one") || undefined(&analysis, "zero")
+        })
+        .map(|(_, write, _)| *write)
+        .collect();
+    assert!(missed.is_empty(), "writes read as certain on both paths: {missed:?}");
+}

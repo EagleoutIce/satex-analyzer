@@ -11,6 +11,7 @@ pub mod format;
 pub mod l3build;
 pub mod lua;
 pub mod magic;
+pub mod memoize;
 pub mod output;
 pub mod packages;
 pub mod pdf;

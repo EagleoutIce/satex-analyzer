@@ -275,6 +275,118 @@ fn forest_names_and_relative_nodes() {
     check_within("forest_names", "mwe.tex", &[], &[], FOREST_NAMES_STEPS);
 }
 
+/// memoize writes a picture's source to its `.memo` file and ships the
+/// extern with `\pdf@primitive\shipout` (memoize.sty `\mmz@shipout@extern`).
+/// Pinned: the frozen `\pdfprimitive` froze `\shipout` again without end
+/// until limits.memory stopped the run; and the `.memo` line, which starts
+/// with `\begin` itself, made `tikzpicture` look like a citation.
+#[test]
+fn memoize_ships_an_extern_and_cites_nothing() {
+    let Some(analysis) = check("memoize_extern", "main.tex", &[]) else { return };
+    let cites: Vec<_> = analysis.facts.occurrences.iter().filter(|o| o.kind == OccKind::Cite).map(|o| &o.key).collect();
+    assert!(cites.is_empty(), "cited: {cites:?}");
+}
+
+/// The md5 sums naming the memos of the `memoize_pictures` fixture's two pictures, in order.
+const MEMO_PICTURES: [&str; 2] = ["12A6F4D53C2B126731CA304386EB3517", "A1C333FB3D8D176A2B438AD2380CD847"];
+
+/// The width the context memo of the picture named `md5` records for its extern.
+fn memo_width(md5: &str) -> String {
+    let memos = std::fs::read_dir(dir("memoize_pictures").join("main.memo.dir")).expect("the memo directory");
+    let memo = memos.flatten().map(|e| e.path()).find(|p| {
+        let name = p.file_name().unwrap_or_default().to_string_lossy().into_owned();
+        name.starts_with(&format!("{md5}-")) && name.ends_with(".memo")
+    });
+    let text = std::fs::read_to_string(memo.expect("a context memo")).expect("its text");
+    text.split("\\hbox {").nth(1).and_then(|rest| rest.split('}').next()).expect("the extern's width").to_string()
+}
+
+/// The `memoize_pictures` fixture in a scratch copy named `name`, its source with `edits` applied
+/// and the memo files whose names hold one of `drop` deleted, analyzed. Gives the analysis, each
+/// picture's width (`\FirstWidth`, `\SecondWidth`) and the code memos the run wrote, which memoize
+/// writes only for a picture it compiled (memoize.sty `\mmz@write@cmemo`).
+fn memoize_pictures(name: &str, edits: &[(&str, &str)], drop: &[&str]) -> Option<(Analysis, [String; 2], Vec<String>)> {
+    if !installed() {
+        return None;
+    }
+    let root = crate::support::tmp_root().join(name);
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(root.join("main.memo.dir")).unwrap();
+    for entry in std::fs::read_dir(dir("memoize_pictures").join("main.memo.dir")).unwrap().flatten() {
+        if !drop.iter().any(|d| entry.file_name().to_string_lossy().contains(d)) {
+            std::fs::copy(entry.path(), root.join("main.memo.dir").join(entry.file_name())).unwrap();
+        }
+    }
+    let mut source = std::fs::read_to_string(dir("memoize_pictures").join("main.tex")).unwrap();
+    for (from, to) in edits {
+        assert!(source.contains(from), "the fixture holds `{from}`");
+        source = source.replace(from, to);
+    }
+    let path = root.join("main.tex");
+    std::fs::write(&path, &source).unwrap();
+    let mut cfg = crate::support::config();
+    // one cache for all cases: the packages are the same, the document cache keys on the source
+    cfg.cache.dir = Some(crate::support::scratch_dir(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/scratch/documents-memoize_pictures"),
+    ));
+    crate::support::seed_kernel(&cfg);
+    let analysis = Machine::analyze(&source, Some(&path), &cfg);
+    assert!(defined(&analysis, "SatexReachedEnd"), "the end was not reached");
+    let widths = ["FirstWidth", "SecondWidth"].map(|w| crate::support::body(&analysis, w));
+    let mut written: Vec<String> = (analysis.written.iter().map(|(n, _)| n.rsplit('/').next().unwrap_or(n)))
+        .filter(|n| n.ends_with(".memo") && !n.contains('-'))
+        .map(str::to_string)
+        .collect();
+    written.sort();
+    written.dedup();
+    let _ = std::fs::remove_dir_all(&root);
+    Some((analysis, widths, written))
+}
+
+/// memoize names a picture's memo by the md5 sum of its code (memoize.sty `\Memoize`,
+/// `\mmz@cmemo@path`). With the memos and externs the last pdflatex build left, the next build
+/// reads each memo and includes the extern at the size the memo records, and so does satex: no
+/// picture's code runs, each box has its recorded width. Pins: an unchanged picture costs its memo.
+#[test]
+fn a_memoized_picture_is_read_from_its_memo() {
+    let Some((_, widths, written)) = memoize_pictures("memoize-present", &[], &[]) else { return };
+    assert_eq!(widths, MEMO_PICTURES.map(memo_width));
+    assert!(written.is_empty(), "compiled although memoized: {written:?}");
+}
+
+/// A stale memo: the first picture edited, the md5 sum of its code names no memo, so memoize
+/// compiles it, and so does satex. The memo of the old code is never read (its width is not the
+/// box's). Pins the md5 check: a memo is trusted only for the code satex itself sees.
+#[test]
+fn an_edited_picture_is_compiled_not_read_from_the_old_memo() {
+    let edit = [("rectangle (2,1)", "rectangle (3,1)")];
+    let Some((_, widths, written)) = memoize_pictures("memoize-stale", &edit, &[]) else { return };
+    assert_ne!(widths[0], memo_width(MEMO_PICTURES[0]), "the old memo's width was used");
+    assert_eq!(written.len(), 1, "one picture compiled: {written:?}");
+    assert!(!written[0].starts_with(MEMO_PICTURES[0]), "the old memo was written again");
+}
+
+/// Memos missing (the externs deleted with them): memoize compiles both pictures and writes
+/// their memos, which are named by the same md5 sums the last build used. Pins the no-memo path:
+/// it reaches the end and memoizes each picture under its code's md5 sum.
+#[test]
+fn pictures_without_memos_are_compiled_and_memoized() {
+    let Some((_, _, written)) = memoize_pictures("memoize-missing", &[], &MEMO_PICTURES) else { return };
+    let expected: Vec<String> = MEMO_PICTURES.iter().map(|m| format!("{m}.memo")).collect();
+    assert_eq!(written, expected);
+}
+
+/// An edit to one picture leaves the other memoized: only the second picture's code changes, so
+/// only it is compiled, the first keeps its recorded width. Pins that the memo key is per picture.
+#[test]
+fn an_edit_to_one_picture_leaves_the_others_memoized() {
+    let edit = [("circle (1)", "circle (2)")];
+    let Some((_, widths, written)) = memoize_pictures("memoize-one-edit", &edit, &[]) else { return };
+    assert_eq!(widths[0], memo_width(MEMO_PICTURES[0]));
+    assert_eq!(written.len(), 1, "only the edited picture compiled: {written:?}");
+    assert!(!MEMO_PICTURES.iter().any(|m| written[0].starts_with(m)), "an old memo was written: {written:?}");
+}
+
 /// Math nodes (`\frac`, a subscript): the tree typesets its contents and nothing else, as
 /// pdftotext reads `x2 1 2 yi`. Unknown packing typesets stray `pt` text (open root R1).
 #[test]
@@ -1199,4 +1311,25 @@ fn pgfmath_signed_random_count_plus_a_constant_stays_in_range() {
     assert!(!undefined(&a, "InRange"), "the true value's arm is live");
     let outside: Vec<_> = ["Low", "High"].into_iter().filter(|n| !undefined(&a, n)).collect();
     assert!(outside.is_empty(), "\\pgfmathresult may lie outside {lo}..{hi}: {outside:?}");
+}
+
+/// Intuition: pgfmath seeds `rand` from `\time` and `\year` when it loads, so under an unknown
+/// clock the seed and every number `rand` draws are unknown, yet the document compiles at any
+/// time: some path reaches its end.
+/// Bug: `\pgfmathrand@@#1#2#3#4\pgfmath@` read the printed number of any length whole as `#1`
+/// (or `#2` after a `-`), its next parameter took `\pgfmath@`, and every path ran away to the
+/// end of the file: "every path was dropped", then a certain `missing-end`.
+#[test]
+fn pgfmath_rand_under_an_unknown_clock_reaches_the_end() {
+    if !installed() {
+        return;
+    }
+    let mut cfg = crate::support::config();
+    cfg.clock = satex::project::config::Clock::Unknown;
+    let source = "\\documentclass{article}\\usepackage{pgfmath}\\pgfmathparse{rand}\\gdef\\SatexReachedEnd{}\\begin{document}x\\end{document}";
+    let a = Machine::analyze(source, None, &cfg);
+    assert!(crate::support::maybe_defined(&a, "SatexReachedEnd"), "the true run's path reaches the end");
+    let dropped: Vec<_> =
+        a.facts.diagnostics.iter().filter(|d| d.code == "unread-document").map(|d| &d.message).collect();
+    assert!(dropped.is_empty(), "{dropped:?}");
 }

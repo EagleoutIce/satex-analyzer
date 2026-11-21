@@ -1,6 +1,6 @@
 # The formal model
 
-The [concrete rules](Semantics) and the [abstract domains](Domains) as a Lean 4 model, with a soundness theorem that ties them together under named hypotheses.
+The [concrete rules](../../SEMANTICS.md) and the [abstract domains](domains.md) as a Lean 4 model, with a soundness theorem that ties them together under named hypotheses.
 The model is core Lean, no mathlib, and `lake build` passes with no `sorry`.
 It states what TeX does and what satex computes in place of it. It does not check the Rust. The [mapping](#lean-and-rust) says where the two differ.
 
@@ -11,8 +11,8 @@ Every Lean file is shown as code on this site. Each name links to its definition
 ## The files
 
 - [`Core.lean`](../../semantics/lean/Satex/Core.lean): characters, category codes, tokens, meanings, the state TeX computes with. Shared by the rest.
-- [`Concrete.lean`](../../semantics/lean/Satex/Concrete.lean): TeX itself as inductive rules, one `Exec` rule per primitive. This is the [concrete semantics](Semantics) in code.
-- [`Abstract.lean`](../../semantics/lean/Satex/Abstract.lean): the abstract values, joins and widenings of the [domains](Domains), and the abstract state.
+- [`Concrete.lean`](../../semantics/lean/Satex/Concrete.lean): TeX itself as inductive rules, one `Exec` rule per primitive. This is the [concrete semantics](../../SEMANTICS.md) in code.
+- [`Abstract.lean`](../../semantics/lean/Satex/Abstract.lean): the abstract values, joins and widenings of the [domains](domains.md), and the abstract state.
 - [`Soundness.lean`](../../semantics/lean/Satex/Soundness.lean): the theorems. If the abstract reading and the families without a transfer are covered, every concrete trace of a document is covered by an abstract path up to the budget cut. Every abstract run ends within its budget, one counter for the whole run. Past the cut nothing is claimed.
 - `Axioms.lean`: a check that the main theorems use only Lean's standard axioms.
 
@@ -27,4 +27,4 @@ The theorems that are proven and the ones that are not yet are listed in [PROOF-
 One row per primitive the engines define. The rule is the `Exec` rule of `Concrete.lean` that gives it meaning. A primitive is **exact** when the rule is TeX's own, **over-approximated** when the rule states a superset of what TeX does, and has **no rule yet** when satex follows the manual but the model is silent. The Rust column is where `builtins.rs` names it.
 <!--satex-site:primitives-->
 
-Next: [Primitive coverage](Primitive-coverage), what each primitive does in the interpreter.
+Next: [Primitive coverage](primitive-coverage.md), what each primitive does in the interpreter.

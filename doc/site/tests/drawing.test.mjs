@@ -328,3 +328,34 @@ test("Circuits (circuitikz)", async () => {
   assert.ok(C.body(st).includes('\\draw (0,0) to[R, l=$R_1$] (2,0);\n  \\draw (2,0) -- (G1.in 1);'), 'an edited chain: one statement per part');
   assert.equal(C.emit({ kind: 'C', a: [0, 0], b: [0, 1.5], label: 'a, b', opts: ['v=$U$'] }), '\\draw (0,0) to[C, l={a, b}, v=$U$] (0,1.5);');
 });
+
+// Intuition: a statement read from the text is written where it stood, even with no lead before it. Pins the picture
+// `\begin{tikzpicture}\node (a) …;` (first statement right after the begin): its first node had no lead, so `emit` took
+// it for a new one and wrote it after the others, a newline added: the unedited picture changed, and a node placed
+// `right=of a` came before `a` (an error in TikZ).
+test('a first statement without a lead stays first and as written', () => {
+  const { parse, emit } = self.satexViews.drawing;
+  for (const body of ['\\node (a) at (0,0) {first};\\node (b) at (1,0) {second};', '\\node (a) at (0,0) {x};\n  \\node[right=of a] (b) {y};\n']) {
+    assert.equal(emit(parse(body)), body, 'untouched: as written');
+    const st = parse(body);
+    for (const i of st.items) i.dirty = true;
+    assert.equal(emit(st), body, 'rewritten in place: same order, same leads');
+  }
+  const st = parse('\\node (a) at (0,0) {x};');
+  st.items[0].x = 1; st.items[0].dirty = true;
+  st.items.push({ type: 'node', dirty: true, lead: '', layer: 'main', name: 'n', label: 'new', opts: [], at: true, x: 2, y: 0 });
+  assert.equal(emit(st), '\\node (a) at (1,0) {x};\n  \\node (n) at (2,0) {new};', 'a moved first node in place, a new one after it on its own line');
+});
+
+// Intuition: a label that is a document macro (`{\net}` with `\newcommand{\net}{Größe-Net}`) reads on the canvas as
+// TeX sets it; unknown commands still drop to their text. Pins the empty box the canvas drew for `{\net}` (the run's
+// `macros`, src/lsp/plugins/tikz.rs `facts`).
+test('a label naming a document macro shows its text', () => {
+  const { plain } = self.satexViews.drawing, m = { net: 'Größe-Net', model: '\\textbf{Tiny}' };
+  assert.equal(plain('\\net', m), 'Größe-Net');
+  assert.equal(plain('{\\net} v2', m), 'Größe-Net v2');
+  assert.equal(plain('\\model', m), 'Tiny', 'markup in a body drops as in a label');
+  assert.equal(plain('\\net', {}), '', 'no macros: dropped as before');
+  // a command named as an Object.prototype member (`\\constructor`, `\\toString`) crashed the canvas: LOGO[cs] was a function
+  assert.equal(plain('\\constructor x \\toString', m), 'x ', 'a name only the object prototype has is no macro and no logo');
+});

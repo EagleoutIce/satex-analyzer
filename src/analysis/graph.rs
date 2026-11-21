@@ -103,22 +103,26 @@ pub struct Vertex {
 /// `satex slice` walks.
 #[derive(PartialEq, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct DependencyGraph {
-    pub vertices: Vec<Vertex>,
+    /// Shared in chunks by checkpoints and forks, stored as a plain list.
+    #[serde(with = "crate::fixed::flat")]
+    pub vertices: crate::fixed::Chunked<Vertex>,
     /// `limits.vertices` (0: none): past it a new site shares one overflow vertex, so
     /// the graph stops growing while the analysis goes on.
     pub cap: usize,
     overflow: Option<NodeId>,
     /// Outgoing edges, indexed by source vertex.
-    out: Vec<Vec<(NodeId, EdgeKind)>>,
+    #[serde(with = "crate::fixed::flat")]
+    out: crate::fixed::Chunked<Vec<(NodeId, EdgeKind)>>,
     /// Where each target sits in `out`, for the vertices with many outgoing
     /// edges: a call that runs a long loop reaches every vertex the loop
     /// makes, and finding an edge by scanning would make it quadratic.
-    wide: LookupMap<NodeId, LookupMap<NodeId, u32>>,
+    /// Shared with copies, each index copied once written.
+    wide: crate::fixed::SharedMap<NodeId, std::rc::Rc<LookupMap<NodeId, u32>>>,
     /// One vertex per source site.  A macro body that is read several times —
     /// because a package is analyzed under both arms of an undecided
     /// conditional, or because a loop is unrolled — describes the same
     /// program point every time.
-    sites: LookupMap<(Span, Sym, VertexTag), NodeId>,
+    sites: crate::fixed::SharedMap<(Span, Sym, VertexTag), NodeId>,
     /// The last line a construct that began at a span reached, for the ones
     /// whose arguments ran past their own line.  Only spans that reach
     /// further than their own line are in here.
@@ -148,6 +152,10 @@ pub struct DependencyGraph {
     /// with the call a read was charged to, and each `made_by` among them
     /// as an edge of no kind; every extent noted.
     log: Option<GraphLog>,
+    /// Vertices only, no edges, extents or makers: set while building a
+    /// kernel whose graph is dropped once it is cached, which reads none of them.
+    #[serde(skip)]
+    pub vertices_only: bool,
 }
 
 #[derive(PartialEq, Clone, Default, serde::Serialize, serde::Deserialize)]
@@ -159,6 +167,12 @@ pub struct GraphLog {
     /// Set while such a read's own edges are made, which are not logged.
     pub linking: bool,
     pub extents: Vec<(Span, u32)>,
+}
+
+impl DependencyGraph {
+    pub fn probe(&self) -> Vec<(&'static str, usize)> {
+        crate::probe_sz!("g.vertices" => self.vertices, "g.out" => self.out, "g.wide" => self.wide, "g.sites" => self.sites, "g.extents" => self.extents, "g.made_by" => self.made_by, "g.defs_of" => self.defs_of, "g.ends" => self.ends, "g.touched" => self.touched, "g.touched_readers" => self.touched_readers, "g.log" => self.log)
+    }
 }
 
 impl Vertex {
@@ -192,9 +206,8 @@ impl DependencyGraph {
             |a: &Vertex, b: &Vertex| edited(&a.span) && edited(&b.span) && Vertex { span: b.span, ..a.clone() } == *b;
         let n = at.vertices.len();
         let moves: Vec<usize> = (0..n.min(new.vertices.len())).filter(|&i| new.vertices[i] != at.vertices[i]).collect();
-        let keyed = |a: &LookupMap<(Span, Sym, VertexTag), NodeId>, b: &LookupMap<(Span, Sym, VertexTag), NodeId>| {
-            a.iter().all(|(k, v)| edited(&k.0) || b.get(k) == Some(v))
-        };
+        type Sites = crate::fixed::SharedMap<(Span, Sym, VertexTag), NodeId>;
+        let keyed = |a: &Sites, b: &Sites| a.iter().all(|(k, v)| edited(&k.0) || b.get(k) == Some(v));
         let extents =
             |a: &HashMap<Span, u32>, b: &HashMap<Span, u32>| a.iter().all(|(k, v)| edited(k) || b.get(k) == Some(v));
         let alike = new.vertices.len() == n
@@ -209,7 +222,7 @@ impl DependencyGraph {
             && new.touched == at.touched
             && new.touched_readers == at.touched_readers
             && new.log == at.log
-            && (new.sites.len(), new.extents.len()) == (at.sites.len(), at.extents.len())
+            && (new.sites.size(), new.extents.len()) == (at.sites.size(), at.extents.len())
             && keyed(&new.sites, &at.sites)
             && keyed(&at.sites, &new.sites)
             && extents(&new.extents, &at.extents)
@@ -220,8 +233,8 @@ impl DependencyGraph {
         for i in moves {
             self.vertices[i].span = new.vertices[i].span;
         }
-        self.sites.retain(|k, _| !edited(&k.0));
-        self.sites.extend(new.sites.iter().filter(|(k, _)| edited(&k.0)).map(|(k, v)| (*k, *v)));
+        let kept = self.sites.iter().filter(|(k, _)| !edited(&k.0));
+        self.sites = kept.chain(new.sites.iter().filter(|(k, _)| edited(&k.0))).map(|(k, v)| (*k, *v)).collect();
         self.extents.retain(|k, _| !edited(k));
         self.extents.extend(new.extents.iter().filter(|(k, _)| edited(k)).map(|(k, v)| (*k, *v)));
         true
@@ -308,7 +321,7 @@ impl DependencyGraph {
             return id;
         }
         let id = self.vertices.len() as NodeId;
-        self.sites.insert((vertex.span, vertex.name, vertex.tag), id);
+        self.sites.insert_mut((vertex.span, vertex.name, vertex.tag), id);
         self.out.push(Vec::new());
         self.vertices.push(vertex);
         id
@@ -324,8 +337,9 @@ impl DependencyGraph {
         cds: &[ControlDep],
     ) -> NodeId {
         if let Some(&id) = self.sites.get(&(span, name, tag)) {
-            let vertex = &mut self.vertices[id as usize];
-            if vertex.cds != cds {
+            // Only a change unshares the vertex's chunk.
+            if self.vertices[id as usize].cds != cds {
+                let vertex = &mut self.vertices[id as usize];
                 if cds.len() > 16 {
                     let keep: crate::fixed::HashSet<(NodeId, bool)> = cds.iter().map(|c| (c.on, c.taken)).collect();
                     vertex.cds.retain(|c| keep.contains(&(c.on, c.taken)));
@@ -345,7 +359,7 @@ impl DependencyGraph {
         if self.cap > 0 && self.vertices.len() + 1 >= self.cap {
             self.overflow = Some(id);
         }
-        self.sites.insert((span, name, tag), id);
+        self.sites.insert_mut((span, name, tag), id);
         self.out.push(Vec::new());
         self.vertices.push(Vertex { tag, name, key, span, cds: cds.to_vec(), within });
         // A control dependency is an edge like any other, so that slicing is
@@ -374,7 +388,7 @@ impl DependencyGraph {
 
     /// Record that the construct beginning at `span` reads as far as `line`.
     pub fn note_extent(&mut self, span: Span, line: u32) {
-        if line <= span.line {
+        if line <= span.line || self.vertices_only {
             return;
         }
         if let Some(log) = &mut self.log {
@@ -406,6 +420,9 @@ impl DependencyGraph {
 
     /// Record that `call`'s expansion has just run the definition `def`.
     pub fn made_by(&mut self, def: NodeId, call: NodeId) {
+        if self.vertices_only {
+            return;
+        }
         if let Some(log) = &mut self.log {
             // In the order of the edges too: a read after it is charged to
             // this call, one before it to the one before.
@@ -418,6 +435,9 @@ impl DependencyGraph {
     }
 
     pub fn edge(&mut self, from: NodeId, to: NodeId, kind: EdgeKind) {
+        if self.vertices_only {
+            return;
+        }
         let mention = kind.intersects(EdgeKind::MENTION);
         let kind = EdgeKind(kind.0 & !EdgeKind::MENTION.0);
         // A vertex inside a macro body stands for every expansion of it, so
@@ -457,12 +477,24 @@ impl DependencyGraph {
     }
 
     fn add_edge(&mut self, from: NodeId, to: NodeId, kind: EdgeKind) {
+        if self.vertices_only {
+            return;
+        }
         if let Some(log) = &mut self.log
             && !log.linking
         {
             log.edges.push((from, to, kind, self.reader));
         }
         const WIDE: usize = 32;
+        // Only a new edge or kind unshares the vertex's chunk.
+        let Some(slot) = self.out.get(from as usize) else { return };
+        let at = match slot.len() < WIDE {
+            true => slot.iter().position(|(t, _)| *t == to),
+            false => self.wide.get(&from).and_then(|w| w.get(&to)).map(|&i| i as usize),
+        };
+        if at.is_some_and(|i| slot[i].1 | kind == slot[i].1) {
+            return;
+        }
         let Some(slot) = self.out.get_mut(from as usize) else { return };
         if slot.len() < WIDE {
             if let Some(e) = slot.iter_mut().find(|(t, _)| *t == to) {
@@ -472,10 +504,11 @@ impl DependencyGraph {
             }
             return;
         }
-        let index = self
-            .wide
-            .entry(from)
-            .or_insert_with(|| slot.iter().enumerate().map(|(i, (t, _))| (*t, i as u32)).rev().collect());
+        if self.wide.get(&from).is_none() {
+            let index = slot.iter().enumerate().map(|(i, (t, _))| (*t, i as u32)).rev().collect();
+            self.wide.insert_mut(from, std::rc::Rc::new(index));
+        }
+        let index = std::rc::Rc::make_mut(self.wide.get_mut(&from).expect("inserted"));
         match index.get(&to) {
             Some(&i) => slot[i as usize].1 |= kind,
             None => {
@@ -682,9 +715,11 @@ impl DependencyGraph {
 /// holds the one for a run.
 #[derive(PartialEq, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct CallGraph {
-    pub nodes: Vec<Sym>,
-    index: LookupMap<Sym, usize>,
-    pub edges: Vec<Vec<usize>>,
+    #[serde(with = "crate::fixed::flat")]
+    pub nodes: crate::fixed::Chunked<Sym>,
+    index: crate::fixed::SharedMap<Sym, usize>,
+    #[serde(with = "crate::fixed::flat")]
+    pub edges: crate::fixed::Chunked<Vec<usize>>,
     /// While a package cache is being captured: every distinct `node` and
     /// `add` since the last `clear` of its name, and every `clear`, in order.
     log: Option<(crate::fixed::LookupSet<CallEvent>, Vec<CallEvent>)>,
@@ -749,7 +784,7 @@ impl CallGraph {
         }
         let i = self.nodes.len();
         self.nodes.push(s);
-        self.index.insert(s, i);
+        self.index.insert_mut(s, i);
         self.edges.push(Vec::new());
         i
     }
@@ -771,7 +806,7 @@ impl CallGraph {
 
     /// Collapse parallel edges once, after the run.
     pub fn finish(&mut self) {
-        for targets in &mut self.edges {
+        for targets in self.edges.iter_mut() {
             targets.sort_unstable();
             targets.dedup();
         }
@@ -807,7 +842,7 @@ fn escape(s: &str) -> String {
 /// The strongly connected components of `edges` (Tarjan), each closed
 /// before the ones that reach it, iteratively so a long chain of calls
 /// cannot overflow the stack.
-fn strongly_connected(edges: &[Vec<usize>]) -> Vec<Vec<usize>> {
+fn strongly_connected(edges: &crate::fixed::Chunked<Vec<usize>>) -> Vec<Vec<usize>> {
     const NONE: usize = usize::MAX;
     let n = edges.len();
     let (mut index, mut low, mut on) = (vec![NONE; n], vec![0; n], vec![false; n]);
@@ -860,8 +895,37 @@ mod scc_tests {
     fn components_close_before_what_reaches_them() {
         // 0 -> 1 <-> 2, 3 -> 3, 4 alone.
         let edges = vec![vec![1], vec![2], vec![1], vec![3], vec![]];
-        let mut found = super::strongly_connected(&edges);
+        let mut found = super::strongly_connected(&edges.into());
         found.iter_mut().for_each(|c| c.sort());
         assert_eq!(found, [vec![1, 2], vec![0], vec![3], vec![4]]);
+    }
+}
+
+#[cfg(test)]
+mod vertices_only_tests {
+    use super::{DependencyGraph, EdgeKind, VertexTag};
+    use crate::engine::tex::{Span, Sym};
+
+    /// A kernel build keeps only vertices: its graph is dropped once the kernel is
+    /// cached. The ids must be the ones a full graph hands out, since the run keeps
+    /// them (open calls, control dependencies), while no edge is stored.
+    #[test]
+    fn a_vertices_only_graph_numbers_vertices_as_a_full_one_and_keeps_no_edges() {
+        let build = |vertices_only| {
+            let mut g = DependencyGraph { vertices_only, ..Default::default() };
+            let at = |line| Span { file: 1, line, col: 0 };
+            let a = g.push(VertexTag::MacroCall, Sym(1), at(1), None, &[]);
+            g.set_reader(Some(a));
+            let b = g.push(VertexTag::MacroCall, Sym(2), at(2), Some(a), &[]);
+            let again = g.push(VertexTag::MacroCall, Sym(2), at(2), Some(a), &[]);
+            g.edge(a, b, EdgeKind::READS);
+            g.made_by(b, a);
+            g.note_extent(at(1), 5);
+            ((a, b, again, g.len()), g.edge_count(), g.maker(b))
+        };
+        let (full, lean) = (build(false), build(true));
+        assert_eq!(full.0, lean.0);
+        assert!(full.1 > 0 && full.2.is_some());
+        assert_eq!((lean.1, lean.2), (0, None));
     }
 }

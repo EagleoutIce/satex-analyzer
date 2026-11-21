@@ -55,7 +55,13 @@ jobs:
             name=$(basename "$f" .md)
             case "$name" in
               _*) cp "$f" "wiki/$name.md" ;;
-              *) cp "$f" "wiki/${name^}.md" ;;
+              # Pages link each other as files (`lints.md`, `../chktex-coverage.md`), so lychee checks them. The wiki names its pages instead.
+              *) sed -E \
+                   -e 's#\((\.\./)+SEMANTICS\.md#(Semantics#g' \
+                   -e 's#\((\.\./)+README\.md#(Home#g' \
+                   -e 's#\(\.\./chktex-coverage\.md#(Chktex-Coverage#g' \
+                   -e 's#\(([a-z])([a-z-]*)\.md#(\u\1\2#g' \
+                   "$f" > "wiki/${name^}.md" ;;
             esac
           done
 
