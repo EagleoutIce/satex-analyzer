@@ -756,6 +756,21 @@ pub(crate) fn lint_run(analysis: &Analysis, document: bool, wanted: impl Fn(&Rul
         }
     }
     crate::util::progress::clear();
+    // One fact, one finding: where a finding of the first rule stands at a related place,
+    // the second rule's finding there is part of it.
+    const COVERS: [(&str, &str); 1] = [("unreferenced-numbered-display", "unused-label")];
+    for (by, of) in COVERS {
+        // by line: one rule may stand at the command, the other at its argument
+        let at = |r: &Record| (r.get("path").cloned(), r.get("line").cloned());
+        let code = |r: &Record| r.get("code").and_then(|c| c.as_str()).map(str::to_string);
+        let covered: crate::fixed::HashSet<_> = (out.iter().filter(|r| code(r).as_deref() == Some(by)))
+            .flat_map(|r| r.get("related").and_then(|v| v.as_array()).cloned().unwrap_or_default())
+            .filter_map(|p| p.as_object().map(|p| (p.get("path").cloned(), p.get("line").cloned())))
+            .collect();
+        if !covered.is_empty() {
+            out.retain(|r| code(r).as_deref() != Some(of) || !covered.contains(&at(r)));
+        }
+    }
     if !skipped.is_empty() {
         crate::util::progress::note!(
             "satex: limits.seconds = {seconds} was reached by the lint rules: {} not run ({}). Raise it with --set limits.seconds=<larger>",

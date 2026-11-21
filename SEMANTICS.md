@@ -285,7 +285,16 @@ Everything else is executed by the stomach.
     of it stops the run. Passing it to the engine stops the run, and so do
     a module SaTeX cannot find and a callback that changes what it reads.
     `pcall` does not catch any of these, so no branch is taken on an unknown
-    value. `status.ini_version` is true while the kernel is read (or with
+    value. A run that stopped at a truth test, `==` or `<` of it and wrote
+    nothing runs again once per outcome, from its start, with the outcomes
+    of its tests given to the VM (`satex_choose`), at most `lua.outcomes`
+    runs. Up to the first test each run gets what the first run's library
+    calls returned, so the machine reads its input once. After it the VM
+    stops a run before it stores into state it found, and the host refuses
+    library calls that act on the machine, `token.put_next` kept back. What
+    the runs print and put back is one of their texts: `\tex_strcmp:D` of
+    an unknown string is one of `-1`, `0`, `1`. A scanned string of unknown
+    text is the unknown value. `status.ini_version` is true while the kernel is read (or with
     no format), and `status.luatex_engine` is the engine `fmtutil.cnf`
     builds the `lualatex` format with. A run also stops past the step limit (1000 Lua instructions a
     step) or the memory limit. **[abstraction]**

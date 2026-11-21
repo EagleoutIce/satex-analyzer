@@ -4792,7 +4792,7 @@ impl Machine<'_> {
             _ => None,
         };
         let hist = match (self.list_slot("marks.hist"), self.list_slot("marks.page")) {
-            (Some((h, ht)), Some((p, pt))) if h.len() < crate::engine::linebreak::MAX_ITEMS as usize => {
+            (Some((h, ht)), Some((p, pt))) if h.len() < self.cfg.limits.paragraph_items => {
                 use crate::engine::linebreak::Kp;
                 let marks = p.iter().filter_map(|k| match *k {
                     Kp::Mark(c, t) => Some(Kp::Mark(c, t + ht.len() as u32)),

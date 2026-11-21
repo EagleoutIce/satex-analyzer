@@ -341,6 +341,31 @@ fn an_fp_eval_of_an_unknown_integer_forks_only_on_its_length() {
     assert!(a.forks <= SIGN_THEN_LENGTH_FORKS, "{} forks", a.forks);
 }
 
+/// Soundness of the same document: `\fp_eval:n` of an unknown integer gives that integer's
+/// digits (up to ten, perhaps a sign), so what `\y` ends with must cover them, and the
+/// `\tl_gset:Ne` ends at its own `}`. Bug pinned: past the site's fork budget a widened `\if`
+/// inside the expansion skipped arms that read the input after them, so `\y` ended as one of
+/// a single unknown character, a single unknown letter, or the token `\ExplSyntaxOff` from
+/// behind the brace: no text of several digits, and one arm read past the body.
+#[test]
+fn an_fp_eval_of_an_unknown_integer_covers_its_digits() {
+    if !crate::support::installed() {
+        return;
+    }
+    let source = "\\documentclass{article}\n\\begin{document}\n\\ExplSyntaxOn\\tl_gset:Ne\\x{\\int_use:N\\pdflastxpos}\\tl_gset:Ne\\y{\\fp_eval:n{\\x}}\\ExplSyntaxOff\n\\gdef\\after{reached}\n\\end{document}\n";
+    let a = crate::support::analyze_latex(source);
+    let y = a.interner.lookup("y").and_then(|sym| a.env.slot(sym)).expect("\\y is defined");
+    let texts: Vec<_> = match &y.may {
+        Some(may) => may.iter().filter_map(|m| m.as_macro()).map(|m| m.replacement_text.clone()).collect(),
+        None => y.meaning.as_macro().map(|m| m.replacement_text.clone()).into_iter().collect(),
+    };
+    let spelled: Vec<String> = texts.iter().map(|t| satex::engine::tex::detokenize(t, &a.interner)).collect();
+    assert!(!spelled.iter().any(|t| t.contains("ExplSyntaxOff")), "an arm read past the body: {spelled:?}");
+    // a text of one character token covers no number of two digits
+    let one_char = |t: &[satex::engine::tex::Token]| matches!(t, [c] if c.cs().is_none());
+    assert!(!texts.iter().all(|t| one_char(t)), "no text covers several digits: {spelled:?}");
+}
+
 /// LuaLaTeX makes MathML only through luamml, which latex-lab loads when unicode-math is
 /// loaded (`latex-lab-math.ltx`, else the warning `unicode-math-missing`). Without it the
 /// formulas get no MathML just as under pdfLaTeX: one finding. With unicode-math luamml opens

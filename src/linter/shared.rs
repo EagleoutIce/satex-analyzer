@@ -606,10 +606,11 @@ fn probe(analysis: &Analysis, with: &[String], package: &str, call: &str) -> Pro
     probed
 }
 
-/// The installed package that defines `name` itself, the most loaded of several
-/// ([`crate::caches::exports::Exports::provider`]).
+/// The installed package to load for `name`: a code file's own package, else the one that defines
+/// it itself, the most loaded of several ([`crate::caches::exports::Exports::package_for`]).
 pub fn provider(analysis: &Analysis, name: &str) -> Option<String> {
-    exports(analysis)?.provider(name)?.strip_suffix(".sty").map(str::to_string)
+    // a name a code file defines is its package's (`tikzpicture` is tikz's, though forest `\let`s it)
+    exports(analysis)?.package_for(name)
 }
 
 /// The installed package to load for `call`, a call of `name` the run lacks: of the packages that

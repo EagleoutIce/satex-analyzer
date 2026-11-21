@@ -108,7 +108,7 @@ conventions:  # how TeX is usually written, where the text alone does not say
   internal: ['@', '^__', '_.*:']  # names matching these patterns count as internal: hidden in completion, private to lints
     #! affects: output
     #! example: add `'^my@'` to hide your package's helper macros
-  definers: []  # your commands that define the name written after them, like \newcommand does
+  definers: ['NewDocumentEnvironment', 'NewDocumentEnvironment end', 'RenewDocumentEnvironment', 'RenewDocumentEnvironment end', 'ProvideDocumentEnvironment', 'ProvideDocumentEnvironment end', 'DeclareDocumentEnvironment', 'DeclareDocumentEnvironment end']  # commands that define the name written after them, like \newcommand does, besides those the runs show (`X end`: also `end` + the name). Add your own
     #! affects: precision
     #! example: `definers: ['\defmacro']`
     #! example: `\defmacro\foo{...}` then counts as a definition of `\foo`
@@ -752,17 +752,23 @@ lua:  # \directlua code, run by satex's own Lua 5.3 with no io, os or debug libr
     #! affects: precision
     #! example: `modules: 2`: a third nested require gives an unknown module
     #! plugin: lua_run
+  outcomes: 8  # runs one piece of Lua code gets at most when it tests unknown values: one per outcome of its tests
+    #! affects: precision, speed
+    #! example: `outcomes: 1`: `\directlua{if os.clock() > 1 then tex.print("a") end}` prints something unknown
+    #! plugin: lua_run
 
 compile:  # what satex compile runs and shows
   system: auto  # the build system: auto (arara directives, then Tectonic.toml, then latexmk, then the engine), latexmk, arara, tectonic, make, l3build, engine or satex (its own incremental build: a preamble format, reruns only while the build files move)
     #! affects: output
     #! example: `system: arara`: the `% arara:` directives of the main file build it
     #! example: `system: satex`: a body edit is one pdfTeX pass from the dumped preamble, an unchanged build none
-  explain: true  # explain the build's messages by a full analysis. false explains by rule and waits for none
+  explain: true  # explain the build's messages by a full analysis. false explains by rule only
+    #! affects: speed
+  wait: false  # wait for the analysis that explains the build's messages. false: the build returns with the PDF, explained by rules and by what the last analysis said of the same messages, and a detached satex analyzes for the next call
     #! affects: speed
   passes: 4  # engine passes at most of the satex build, until the build files rest
     #! affects: output
-  warm: false  # keep pdfTeX started on the next build's format (Linux): the build runs in a mirror of the project under .satex-build, the mirror's main file a named pipe between builds
+  warm: true  # keep pdfTeX started on the next build's format (Linux), waiting on a named pipe under .satex-build that it reads in the main file's stead: the next build within the same clock minute feeds it and saves the engine's start. The engine ends with its minute. false starts none
     #! affects: speed
   timeout: 600  # seconds a build asked for by a page (satex gui, the playground's server) may run before the server stops it with every process it started. 0: no limit
     #! affects: speed
@@ -783,6 +789,12 @@ lsp:  # how satex lsp serves an editor
   pause_ms: 10  # how long a run goes on at most before it answers hover, completion and widgets from the last run. Lower answers sooner, the run takes a little longer
     #! affects: speed
     #! example: `50`: requests during a run wait up to 50 ms
+  provisional: true  # a build run that another run follows publishes its findings at once, those a later run may change marked provisional (dimmed, "build run k"). The build's last run replaces them
+    #! affects: speed
+    #! example: `false`: a big document shows its findings only once the build's files are at rest
+  provisional_after_ms: 2000  # only a run that took at least this long publishes provisional findings: a short build's final ones come soon anyway
+    #! affects: speed
+    #! example: `0`: every run of a build publishes its findings
   # port: 2087  # a TCP port to serve on instead of stdio
     #! affects: output
 
@@ -901,6 +913,11 @@ type_plugins:  # editor features by type, grouped by category: widget, hover, co
     enabled: true  # "Accessibility…": tagging, PDF standard, language and title, figures' alternative text, tables' header rows
       #! affects: output
       #! example: `enabled: false`: no accessibility lens or manager
+  class:  # the class's options as its code declares them: \documentclass, the \usepackage of a style the project ships
+    #! category: widget
+    enabled: true  # "Class options…": every option the run read from the class, a template's common choices first, the header line to copy
+      #! affects: output
+      #! example: `enabled: false`: no class options lens or dialog
   forest:  # a forest environment the run met, a blank line of the document body
     #! category: widget
     enabled: true  # "Edit tree…": add, delete, rename and drag nodes, node and `for tree` options, indented outlines in
@@ -1037,6 +1054,23 @@ slice:  # what satex slice leaves out
   standalone: true  # make the slice one file that compiles in an empty directory. Local files it reads go in as filecontents, graphics as example-image of the same size
     #! affects: output
     #! example: `standalone: false`: `satex slice --out` also copies the local files the slice names
+
+templates:  # where satex new and the New document dialog get the provider files the TeX installation lacks
+  fetch: true  # fetch a template's files from its provider and an archive from its URL, over HTTPS. Off, only the cache and the TeX installation serve
+    #! affects: output
+    #! example: `fetch: false`: satex new uses the cached NeurIPS style and never goes online
+  refresh_days: 7  # days a fetched template is used before it is fetched again. Offline the cached copy serves
+    #! affects: output
+    #! example: `refresh_days: 0` looks for a new release on every satex new
+  timeout: 20  # seconds a download may take before it is given up
+    #! affects: output
+    #! example: `timeout: 5` gives up sooner on a slow network
+  max_bytes: 50MiB  # the most an imported archive may unpack to
+    #! affects: output
+    #! example: `max_bytes: 200MiB` imports a repository with large figures
+  max_files: 2000  # the most files an imported archive may hold
+    #! affects: output
+    #! example: `max_files: 10000` imports a large repository
 
 docs:  # where a package's documentation is looked for and which conventions of it are read
   source_root: source  # the folder of a TDS tree that holds the documented sources
@@ -1323,6 +1357,9 @@ limits:  # what bounds the analysis: reaching one stops that part of the run, so
   list_items: 8388608  # most items of the lists the run records to break lines and set boxes (a paragraph's characters, glue and boxes; equal lists share theirs). Past it a list is not recorded. Past half of it a run after an edit keeps its own numbering, so it cannot take the last run's rest and runs to the document's end
     #! affects: memory, speed, output
     #! example: a book of 1000 pages of prose records about 2 million items: with `list_items: 2097152` every edit in it runs to the end
+  paragraph_items: 4000  # most items of one recorded list (a paragraph's characters, glue and boxes; a box; the page's marks). Past it that list is not recorded and its lines and size stay unknown
+    #! affects: speed, output
+    #! example: a paragraph of 800 words is about 5000 items: with the default its line breaks stay unknown
   table_reach: 4000  # most macros the table widget follows through the run's calls from an environment to the code that splits its body at `&` (tabularray)
     #! affects: output
     #! example: `table_reach: 0` offers the table dialog on array tables only

@@ -375,6 +375,9 @@ body.play main { padding: 0; height: 100%; display: grid; grid-template-rows: mi
 .diagnostics { list-style: none; margin: 0; padding: 0; font-size: .88rem; }
 .diagnostics li { padding: .45rem .6rem; border: 1px solid var(--border); border-left: 3px solid currentColor; margin-bottom: .4rem; background: var(--panel); border-radius: 6px; cursor: pointer; color: var(--fg); }
 .diagnostics li:hover { box-shadow: var(--shadow); }
+/* a build run's finding a later run may change (lsp.provisional) */
+.diagnostics li[data-provisional] { opacity: .62; border-left-style: dashed; }
+.cm-lintRange.cm-provisional { background-image: none; text-decoration: underline dotted color-mix(in srgb, var(--sev) 60%, transparent); text-underline-offset: 3px; }
 .diagnostics li { border-left-color: var(--sev); }
 /* code inside prose: a quiet tint, not a chip; a command in it explains itself on hover */
 .diagnostics code, .explain code { color: inherit; background: color-mix(in srgb, var(--fg) 6%, transparent); padding: 0 .2em; border-radius: 3px; }
@@ -1040,6 +1043,14 @@ code, .tname, .ts-file, .o-file, .tr-at, .place, .loc, .cache-name { text-transf
 @media (max-width: 36rem) { .lib-list li { flex-wrap: wrap; row-gap: 0; } .lib-list .lib-use { max-width: none; flex: 1 1 0; } .lib-list .lib-does { order: 9; flex: 1 1 100%; } }
 .lib-with { display: inline; } .lib-with summary { display: inline; cursor: pointer; font-size: .72rem; color: var(--muted); } .lib-with[open] { white-space: normal; }
 .lib-tag, .lib-pkg { font-size: .7rem; color: var(--muted); white-space: nowrap; } .lib-pkg { margin-left: auto; }
+.cache-dialog.newdoc-dialog { height: fit-content; max-height: min(86vh, 52rem); width: min(40rem, calc(100vw - 2rem)); }
+.newdoc-dialog .nd-pane { display: grid; gap: .6rem; padding: .2rem 1rem .6rem; } .newdoc-dialog .lib-bar { padding: 0 1rem; }
+.newdoc-dialog .nd-row { display: flex; align-items: center; gap: .6rem; flex-wrap: wrap; } .newdoc-dialog .nd-row > span:first-child { min-width: 7.5rem; color: var(--muted); }
+.newdoc-dialog .nd-row > select, .newdoc-dialog .nd-row > input { flex: 1; min-width: 12rem; }
+.newdoc-dialog .nd-opts { display: flex; flex-wrap: wrap; gap: .3rem .9rem; } .newdoc-dialog .nd-opt { display: inline-flex; gap: .3rem; align-items: center; }
+.newdoc-dialog .nd-header { margin: 0; padding: .5rem .7rem; border-radius: 8px; border: 1px solid var(--border); background: var(--sunk); white-space: pre-wrap; word-break: break-all; user-select: all; }
+.newdoc-dialog .nd-files { margin: 0; padding-left: 1.2rem; max-height: 30vh; overflow: auto; font-size: .85rem; } .newdoc-dialog .nd-main code { font-weight: 700; }
+.newdoc-dialog .try-bar { padding: .6rem 1rem 1rem; justify-content: space-between; }
 .cache-dialog.try-dialog { height: fit-content; max-height: min(86vh, 52rem); width: min(44rem, calc(100vw - 2rem)); }
 .try-box { display: flex; gap: .5rem; align-items: flex-start; margin: .5rem 1rem; } .try-box textarea { flex: 1; min-width: 0; font: .85rem/1.45 ui-monospace, Menlo, monospace; resize: vertical; }
 .try-bar { display: flex; align-items: center; gap: 1rem; margin: 0 1rem .4rem; font-size: .76rem; } .try-bar .ts-toggle { margin-left: 0; }

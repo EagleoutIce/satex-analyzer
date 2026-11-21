@@ -1678,6 +1678,7 @@ impl Machine<'_> {
             pressure: _,
             hyph_cache: _,
             name_index: _,
+            one_of_open: _,
             kp: _,
             degraded_at: _,
             base: _,

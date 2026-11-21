@@ -1257,6 +1257,24 @@ fn a_brace_inserted_where_a_scantokens_file_ends_is_read_on() {
     assert_eq!(body(&analysis, "R"), "O");
 }
 
+/// e-TeX `\scantokens` of text satex does not know (`\pdftexbanner` is the
+/// engine's own): it reads back as unknown text, as from a file the run
+/// wrote, and the known text around it is read as written. Pinned: the
+/// unknown-text token's own name was printed and read back as letters, so the
+/// delimited macro after it "did not match its definition" (hyperxmp's
+/// `\hyxmp@remove@this`: a false certain error in every acmart document).
+#[test]
+fn scantokens_of_unknown_text_reads_it_back_as_unknown_text() {
+    let analysis = analyze(
+        r"\def\rem This is #1\relax{\gdef\R{[#1]}}\def\btp#1{{\scantokens{\rem#1\relax}}}
+\expandafter\btp\expandafter{\pdftexbanner}\def\S{end}",
+    );
+    assert_eq!(crate::support::broken_gaps(&analysis), Vec::<String>::new());
+    assert!(!crate::support::codes(&analysis).iter().any(|c| c == "raised-error"));
+    assert_eq!(body(&analysis, "S"), "end");
+    assert!(crate::support::maybe_defined(&analysis, "R") || crate::support::defined(&analysis, "R"));
+}
+
 /// pdftex.web `\pdfprimitive`: for a primitive that does not expand, its
 /// expansion is a frozen `\pdfprimitive` followed by the token read, so
 /// `\string` prints `\pdfprimitive` and `\relax` stays. `pdftex`: `\R` is

@@ -263,9 +263,11 @@ fn evaluate(analysis: &Analysis, state: State, prelude: Option<&str>, exprs: &[S
 /// the value all members share, else unknown.
 fn value(m: &Machine, toks: &[crate::engine::tex::Token]) -> Val {
     if let [one] = toks
-        && let Some(members) = m.one_of_members(*one)
+        && m.one_of_members(*one).is_some()
     {
-        let mut vals = members.iter().map(|t| value(m, t));
+        // A text that holds itself, or nested too deep: unknown.
+        let crate::analysis::machine::explore::Nested::Open(inner) = m.one_of_nested(*one) else { return Val::Unknown };
+        let mut vals = inner.texts.iter().map(|t| value(m, t));
         let first = vals.next().unwrap_or(Val::Unknown);
         return if vals.all(|v| v == first) { first } else { Val::Unknown };
     }

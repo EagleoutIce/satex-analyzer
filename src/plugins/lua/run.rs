@@ -58,11 +58,32 @@ unsafe extern "C-unwind" {
     /// `track(start)`: the writes to state older than the current run so far; `true` starts
     /// a run's epoch, `false` ends it (vendor/lua/SATEX.patch, `satex_write`).
     fn satex_track(state: *mut mlua::ffi::lua_State) -> std::ffi::c_int;
+    /// `choices(bits, n)`: the outcomes of the next run's first `n` tests of unknown values;
+    /// returns whether the last run stopped at a test past its own (`satex_choose`).
+    fn satex_choices(state: *mut mlua::ffi::lua_State) -> std::ffi::c_int;
 }
 
 /// The registry slots of the table `lua.get_functions_table` returns and of `satex_track`.
 const FUNCTIONS: &str = "satex.functions";
 const TRACK: &str = "satex.track";
+const CHOICES: &str = "satex.choices";
+/// The outcomes one run is given at most: the bits `satex_choices` takes.
+const MAX_CHOICES: u32 = 16;
+/// What a run may still call once a test of an unknown value was given an outcome: it runs
+/// once per outcome, so only what leaves the machine alone, and `token.put_next`, kept back.
+const AFTER_CHOICE: &[&str] = &[
+    "token.put_next",
+    "token.new",
+    "token.create",
+    "token.is_defined",
+    "token.get_macro",
+    "tex.write",
+    "tex.print",
+    "tex.sprint",
+    "tex.tprint",
+    "tex.cprint",
+    "tex.getcatcode",
+];
 /// Lua instructions one step of `limits.steps` pays for.
 const INSTRUCTIONS_A_STEP: u32 = 1000;
 
@@ -80,11 +101,20 @@ pub struct LuaConfig {
     /// How deep runs nest (Lua scanning TeX that runs Lua) and modules load.
     pub depth: usize,
     pub modules: usize,
+    /// Runs one piece of code gets at most, one per outcome of its tests of unknown values.
+    pub outcomes: usize,
 }
 
 impl Default for LuaConfig {
     fn default() -> LuaConfig {
-        LuaConfig { run: true, steps: 200_000, memory: bytesize::ByteSize::mib(256), depth: 16, modules: 8 }
+        LuaConfig {
+            run: true,
+            steps: 200_000,
+            memory: bytesize::ByteSize::mib(256),
+            depth: 16,
+            modules: 8,
+            outcomes: 8,
+        }
     }
 }
 /// Names made for tokens `token.create(n, cmd)` makes without a name.
@@ -187,6 +217,14 @@ pub(super) struct Run<'r, 'a> {
     stopped: Vec<crate::engine::tex::FileId>,
     /// What `token.put_next` puts back inside `tex.runtoks`, innermost last.
     captured: Vec<Vec<Token>>,
+    /// What the first run's library calls returned, in order. A run that stops at a test of
+    /// an unknown value runs again per outcome: up to that test it gets these again, so the
+    /// machine sees each call once.
+    log: Vec<MultiValue>,
+    /// In such a later run, the call it is at.
+    at: Option<usize>,
+    /// What `token.put_next` put back after the test, kept for this outcome's text.
+    put: Vec<Token>,
 }
 
 enum Pending {
@@ -240,6 +278,7 @@ const OPS: &[(&str, Op)] = &[
     ("status.luatex_engine", luatex_engine),
     ("status.ini_version", ini_version),
     ("status.shell_escape", shell_escape),
+    ("status.safer_option", safer_option),
     ("lfs.attributes", attributes),
 ];
 
@@ -343,6 +382,8 @@ fn new_state(memory: u64, steps: u64) -> R<State> {
     let lpeg = unsafe { lua.create_c_function(luaopen_lpeg) }?.call::<Table>(())?;
     // SAFETY: `satex_track` is a `lua_CFunction` of this state's Lua (vendor/lua/lapi.c).
     lua.set_named_registry_value(TRACK, unsafe { lua.create_c_function(satex_track) }?)?;
+    // SAFETY: `satex_choices` is a `lua_CFunction` of this state's Lua (vendor/lua/lapi.c).
+    lua.set_named_registry_value(CHOICES, unsafe { lua.create_c_function(satex_choices) }?)?;
     libraries.set("lpeg", lpeg)?;
     lua.load(PRELUDE).set_name("=satex").set_mode(ChunkMode::Text).call::<()>(libraries)?;
     Ok(lua)
@@ -369,25 +410,39 @@ fn state(m: &mut Machine) -> Option<State> {
     m.lua.state.clone()
 }
 
-/// Marks the globals `texts` may assign as possibly missing; `None`
-/// stands for code satex has not the text of.
+/// Marks the globals `texts` may assign as unknown; `None` stands for
+/// code satex has not the text of. One the text rebinds (`n = 1`, not
+/// `n.f = 1` or `n = n or {}`) is removed if set, so it reads through the prelude's
+/// `__index` as unknown like a missing one: the value the stopped rest
+/// would write is not the one it found. A table whose fields it writes
+/// keeps them (a field write is not followed).
 fn taint(m: &mut Machine, texts: &[Option<String>]) {
     let Some(lua) = &m.lua.state else { return };
     let Some(shared) = lua.app_data_ref::<Shared>() else { return };
+    let g = lua.globals();
     for text in texts {
         match text.as_deref().and_then(globals) {
-            Some(names) => shared.tainted.borrow_mut().extend(names),
+            Some(names) => {
+                for (name, rebound) in &names {
+                    // `x = x or …` rebinds a `false` too.
+                    if *rebound || matches!(g.raw_get::<LV>(name.as_str()), Ok(LV::Boolean(false))) {
+                        let _ = g.raw_set(name.as_str(), LV::Nil);
+                    }
+                }
+                shared.tainted.borrow_mut().extend(names.into_iter().map(|(name, _)| name))
+            }
             None => shared.all.set(true),
         }
     }
 }
 
-/// The globals Lua text may assign: `name =` and `name.field =` outside a
+/// The globals Lua text may assign, each with whether it rebinds the name
+/// (not a field write): `name =` and `name.field =` outside a
 /// `local`, `function name`, `_G.name`, `_G["name"]` and
 /// `rawset(_G, "name", …)`; `None` when it may assign any: `_G` or `_ENV`
 /// used otherwise than these or `__index = _G`, or `load` of a chunk
 /// without its own environment.
-fn globals(text: &str) -> Option<Vec<String>> {
+fn globals(text: &str) -> Option<Vec<(String, bool)>> {
     let t = super::lex(text);
     let is_name = |s: &str| s.chars().next().is_some_and(|c| c.is_alphabetic() || c == '_');
     let at = |j: usize| t.get(j).map(String::as_str);
@@ -410,7 +465,7 @@ fn globals(text: &str) -> Option<Vec<String>> {
                     }
                     _ => None,
                 };
-                names.push(reached?);
+                names.push((reached?, true));
                 continue;
             }
             "load" | "loadstring" if !field && !matches!(before(k), Some("local" | "function")) => {
@@ -430,12 +485,24 @@ fn globals(text: &str) -> Option<Vec<String>> {
         while before(first) == Some(",") && first >= 2 && is_name(&t[first - 2]) {
             first -= 2;
         }
-        let assigned = at(k + 1).is_some_and(|n| n == "=" || n == "," || n == ".")
-            && !matches!(before(first), Some("local" | "for"))
-            && !field;
+        // `name.f.g` up to `j`, then `, other.f` up to the `=` of a list.
+        let fields = |mut j: usize| {
+            while at(j) == Some(".") && at(j + 1).is_some_and(is_name) {
+                j += 2;
+            }
+            j
+        };
+        let end = fields(k + 1);
+        let mut list = end;
+        while at(list) == Some(",") && at(list + 1).is_some_and(is_name) {
+            list = fields(list + 2);
+        }
+        let assigned = at(list) == Some("=") && !matches!(before(first), Some("local" | "for")) && !field;
         let defined = before(k) == Some("function") && !(k >= 2 && t[k - 2] == "local");
         if assigned || defined {
-            names.push(t[k].clone());
+            // `x = x or …` keeps a value that is set (Lua's `or`): no rebind then.
+            let keeps = at(list + 1) == Some(t[k].as_str()) && at(list + 2) == Some("or") && list == k + 1;
+            names.push((t[k].clone(), end == k + 1 && !keeps));
         }
     }
     Some(names)
@@ -496,7 +563,7 @@ fn enter(
     span: Span,
     text: Option<String>,
     origin: Option<(String, usize, usize)>,
-    work: impl FnOnce(&State) -> R<()>,
+    work: impl Fn(&State) -> R<()>,
 ) -> Option<Vec<Token>> {
     if m.lua.depth >= m.cfg.lua.depth || !m.cfg.lua.run {
         return None;
@@ -524,14 +591,43 @@ fn enter(
     let track: mlua::Function = lua.named_registry_value(TRACK).ok()?;
     // Whether the run wrote state it found: unless the VM's count says it did not, it did.
     let mut wrote = true;
+    // An outcome's run wrote: the state is then no path's, this one's neither.
+    let mut spoiled = false;
     m.lua.depth += 1;
-    let run =
-        RefCell::new(Run { m, span, out: Vec::new(), files: Vec::new(), stopped: Vec::new(), captured: Vec::new() });
+    let outcomes = m.cfg.lua.outcomes;
+    let run = RefCell::new(Run {
+        m,
+        span,
+        out: Vec::new(),
+        files: Vec::new(),
+        stopped: Vec::new(),
+        captured: Vec::new(),
+        log: Vec::new(),
+        at: None,
+        put: Vec::new(),
+    });
+    // The texts of the runs per outcome, where the first run stopped at a test of an unknown.
+    let mut texts: Vec<(Vec<Pending>, Vec<Token>)> = Vec::new();
     let result = lua.scope(|scope| {
         let d = scope.create_function(|lua, mut args: MultiValue| {
             let Some(LV::Integer(k)) = args.pop_front() else { return unknown(lua) };
-            let Some((_, f)) = usize::try_from(k).ok().and_then(|k| OPS.get(k)) else { return unknown(lua) };
-            f(&run, lua, args)
+            let Some((name, f)) = usize::try_from(k).ok().and_then(|k| OPS.get(k)) else { return unknown(lua) };
+            let again = {
+                let mut run = run.borrow_mut();
+                let at = run.at;
+                run.at = at.map(|i| i + 1);
+                at.map(|i| run.log.get(i).cloned())
+            };
+            match again {
+                Some(Some(result)) => return Ok(result),
+                Some(None) if !AFTER_CHOICE.contains(name) => return unknown(lua),
+                _ => {}
+            }
+            let result = f(&run, lua, args)?;
+            if again.is_none() {
+                run.borrow_mut().log.push(result.clone());
+            }
+            Ok(result)
         })?;
         lua.app_data_ref::<Shared>()
             .ok_or_else(|| mlua::Error::runtime("satex: no state"))?
@@ -540,8 +636,76 @@ fn enter(
             .push(d);
         // The outermost run is one epoch: what it makes is fresh, writing it is no change.
         let before = track.call::<i64>(outer.then_some(true));
-        let result = work(&lua);
-        let after = track.call::<i64>(outer.then_some(false));
+        let mut result = work(&lua);
+        let mut after = track.call::<i64>(outer.then_some(false));
+        // Stopped at a test of an unknown value, having written nothing: one run per outcome,
+        // each from the start with the outcomes of its tests so far. What they print is one of
+        // their texts. A run that writes, or acts on the machine after a test, ends them all.
+        let choices: mlua::Function = lua.named_registry_value(CHOICES)?;
+        let asked = choices.call::<bool>((0, 0)).unwrap_or(false);
+        let clean = |before: &R<i64>, after: &R<i64>| matches!((before, after), (Ok(b), Ok(a)) if a == b);
+        if outer && asked && result.is_err() && clean(&before, &after) {
+            let (out, calls) = {
+                let run = run.borrow();
+                (run.out.len(), run.log.len())
+            };
+            let mut open: Vec<(u32, u32)> = vec![(1, 1), (0, 1)];
+            let mut runs = 1;
+            let mut done = Vec::new();
+            while let Some((bits, n)) = open.pop() {
+                runs += 1;
+                if runs > outcomes {
+                    done.clear();
+                    break;
+                }
+                if let Some(shared) = lua.app_data_ref::<Shared>() {
+                    shared.failed.set(false);
+                    shared.failed_writes.set(None);
+                }
+                {
+                    let mut run = run.borrow_mut();
+                    run.out.truncate(out);
+                    run.log.truncate(calls);
+                    run.put.clear();
+                    run.at = Some(0);
+                }
+                choices.call::<bool>((bits, n))?;
+                let start = track.call::<i64>(true);
+                let one = work(&lua);
+                let end = track.call::<i64>(false);
+                let asked = choices.call::<bool>((0, 0)).unwrap_or(false);
+                // Counted where the run failed: later writes are the error's way out.
+                let at_failure = lua.app_data_ref::<Shared>().and_then(|shared| shared.failed_writes.take());
+                if !clean(&start, &at_failure.map_or(end.clone(), Ok)) {
+                    // A store the VM does not stop (a raw set) was one outcome's: no path's state.
+                    after = end;
+                    spoiled = true;
+                    done.clear();
+                    break;
+                }
+                match one {
+                    Ok(()) => {
+                        let mut run = run.borrow_mut();
+                        let put = std::mem::take(&mut run.put);
+                        done.push((run.out.split_off(out), put));
+                    }
+                    Err(_) if asked && n < MAX_CHOICES => open.extend([(bits | 1 << n, n + 1), (bits, n + 1)]),
+                    Err(_) => {
+                        done.clear();
+                        break;
+                    }
+                }
+            }
+            run.borrow_mut().at = None;
+            if !done.is_empty() {
+                if let Some(shared) = lua.app_data_ref::<Shared>() {
+                    shared.failed.set(false);
+                    shared.failed_writes.set(None);
+                }
+                result = Ok(());
+                texts = done;
+            }
+        }
         if let Some(shared) = lua.app_data_ref::<Shared>() {
             shared.dispatch.borrow_mut().pop();
             let at_failure = shared.failed_writes.replace(failed_writes_before);
@@ -566,8 +730,10 @@ fn enter(
             use std::hash::BuildHasher;
             let h = crate::engine::tex::NameHash.hash_one((shared.last.get(), &text, span.line, span.col));
             shared.last.set((h >> 1) as i64 | 1);
-            let slot = m.intern(LAST_RUN);
-            m.env.set_value(slot, Value::Int(shared.last.get()), true);
+            if !spoiled {
+                let slot = m.intern(LAST_RUN);
+                m.env.set_value(slot, Value::Int(shared.last.get()), true);
+            }
         }
         failed
     };
@@ -609,12 +775,27 @@ fn enter(
     if failed {
         return None;
     }
-    let mut tokens = Vec::new();
-    for pending in out {
-        match pending {
-            Pending::Print(print) => tokens.extend(super::print_tokens(m, &print, span)),
-            Pending::Tokens(t) => tokens.extend(t),
+    let spell = |m: &mut Machine, out: Vec<Pending>| {
+        let mut tokens = Vec::new();
+        for pending in out {
+            match pending {
+                Pending::Print(print) => tokens.extend(super::print_tokens(m, &print, span)),
+                Pending::Tokens(t) => tokens.extend(t),
+            }
         }
+        tokens
+    };
+    let mut tokens = spell(m, out);
+    if !texts.is_empty() {
+        let texts: Vec<Rc<[Token]>> = texts
+            .into_iter()
+            .map(|(out, put)| {
+                let mut text = spell(m, out);
+                text.extend(put);
+                Rc::from(text)
+            })
+            .collect();
+        tokens.push(m.one_of(texts, span));
     }
     Some(tokens)
 }
@@ -859,8 +1040,11 @@ fn scan_string<'r, 'a>(run: &RefCell<Run<'r, 'a>>, lua: &State, _: MultiValue) -
     let mut run = run.borrow_mut();
     let body = run.m.read_general_text();
     let body = run.m.expand_tokens(Rc::from(body));
-    let text = run.m.text_known(&body);
-    ret(lua, known(lua, text)?)
+    // Unknown text is the unknown value: a comparison of it is a test with two outcomes.
+    match run.m.text_known(&body) {
+        Some(text) => ret(lua, text),
+        None => ret(lua, marker(lua)?),
+    }
 }
 
 fn scan_argument<'r, 'a>(run: &RefCell<Run<'r, 'a>>, lua: &State, args: MultiValue) -> R<MultiValue> {
@@ -870,8 +1054,11 @@ fn scan_argument<'r, 'a>(run: &RefCell<Run<'r, 'a>>, lua: &State, args: MultiVal
     if expand {
         body = run.m.expand_tokens(Rc::from(body));
     }
-    let text = run.m.text_known(&body);
-    ret(lua, known(lua, text)?)
+    // Unknown text is the unknown value: a comparison of it is a test with two outcomes.
+    match run.m.text_known(&body) {
+        Some(text) => ret(lua, text),
+        None => ret(lua, marker(lua)?),
+    }
 }
 
 fn scan_int<'r, 'a>(run: &RefCell<Run<'r, 'a>>, lua: &State, _: MultiValue) -> R<MultiValue> {
@@ -941,10 +1128,15 @@ fn put_next<'r, 'a>(run: &RefCell<Run<'r, 'a>>, lua: &State, args: MultiValue) -
         }
     }
     let mut run = run.borrow_mut();
+    let kept = run.at.is_some();
     match run.captured.last_mut() {
         Some(captured) => {
             tokens.append(captured);
             *captured = tokens;
+        }
+        None if kept => {
+            tokens.append(&mut run.put);
+            run.put = tokens;
         }
         None => run.m.push_tokens(Rc::from(tokens)),
     }
@@ -1318,6 +1510,12 @@ fn shell_escape<'r, 'a>(run: &RefCell<Run<'r, 'a>>, lua: &State, _: MultiValue) 
     ret(lua, run.borrow().m.out.plugins.shell_escape.level())
 }
 
+/// `status.safer_option`: 0, as without `--safer`, the command line of TeX Live's
+/// `lualatex`, latexmk's and satex's own builds.
+fn safer_option<'r, 'a>(_: &RefCell<Run<'r, 'a>>, lua: &State, _: MultiValue) -> R<MultiValue> {
+    ret(lua, 0)
+}
+
 /// `status.luatex_engine`: the engine `fmtutil.cnf` builds the `lualatex`
 /// format with, when the LaTeX kernel is what runs.
 fn luatex_engine<'r, 'a>(run: &RefCell<Run<'r, 'a>>, lua: &State, _: MultiValue) -> R<MultiValue> {
@@ -1476,3 +1674,25 @@ fn leave_file<'r, 'a>(run: &RefCell<Run<'r, 'a>>, lua: &State, args: MultiValue)
 /// Lua's side of the set-up: the LuaTeX globals, `require` over satex's
 /// searcher, `pcall` that does not catch an unknown, `load` of text only.
 const PRELUDE: &str = include_str!("prelude.lua");
+
+#[cfg(test)]
+mod tests {
+    /// Intuition: only an assignment names a global, and only `name =` rebinds it, so a
+    /// stopped run's rest makes unknown what it would set and nothing it only reads. Pins
+    /// reads (`pcall(require, …)`, `module.name`, parameters) taken for writes, which made
+    /// `require` unknown after luaotfload's load stopped.
+    #[test]
+    fn only_assignments_name_globals() {
+        let names = |text: &str| super::globals(text).expect("names");
+        assert_eq!(names("n = 1"), [("n".to_string(), true)]);
+        assert_eq!(names("t.v.w = 1"), [("t".to_string(), false)]);
+        assert_eq!(names("a, b.c = 1, 2"), [("a".to_string(), true), ("b".to_string(), false)]);
+        assert!(
+            names("x = pcall(require, 'm') f(module.name, y) local function g(module, z) end")
+                .iter()
+                .all(|(n, _)| n == "x")
+        );
+        assert!(names("if n == 1 then end").is_empty());
+        assert_eq!(names("c = c or {}"), [("c".to_string(), false)], "a set value stays");
+    }
+}

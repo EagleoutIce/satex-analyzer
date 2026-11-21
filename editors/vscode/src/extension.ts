@@ -305,10 +305,11 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     binaryPath = binary;
     const bar = (status ??= new Status());
     // What the Problems view shows while a run goes (`satex.findings.whileAnalyzing`).
+    const stale = (d: vscode.Diagnostic) => Object.assign(new vscode.Diagnostic(d.range, d.message, d.severity),
+        { code: d.code, tags: d.tags, relatedInformation: d.relatedInformation, data: (d as { data?: unknown }).data, source: STALE });
     const findings = new Findings<vscode.Diagnostic>(
         () => vscode.workspace.getConfiguration('satex').get<Mode>('findings.whileAnalyzing', 'hide'),
-        d => Object.assign(new vscode.Diagnostic(d.range, d.message, d.severity),
-            { code: d.code, tags: d.tags, relatedInformation: d.relatedInformation, data: (d as { data?: unknown }).data, source: STALE }),
+        stale,
         (uri, diagnostics) => client?.diagnostics?.set(vscode.Uri.parse(uri), diagnostics));
     client = new LanguageClient(
         'satex', 'satex', () => startServer(binary),
@@ -391,8 +392,10 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         command('satex.openWidget', () => widgets(client)),
         command('satex.openSettings', () => vscode.commands.executeCommand('workbench.action.openSettings', `@ext:${context.extension.id}`)),
         client.onNotification('satex/status', working),
+        // a build run's findings (`run` said) before the build's last run: those a later run may change marked stale
         client.onNotification('satex/settled', async (p: { uri: string; diagnostics: never[] }) =>
-            findings.settled(p.uri, await client?.protocol2CodeConverter.asDiagnostics(p.diagnostics) ?? [])),
+            findings.settled(p.uri, (await client?.protocol2CodeConverter.asDiagnostics(p.diagnostics) ?? [])
+                .map(d => (d as { data?: { provisional?: boolean } }).data?.provisional ? stale(d) : d))),
         // the client gives up on a server that closed five times in three minutes: try again after a minute
         client.onDidChangeState(e => {
             const stopped = e.newState === State.Stopped;

@@ -11,6 +11,7 @@ mod inspect;
 pub mod install;
 mod lint;
 pub mod lsp;
+pub mod new;
 pub mod query;
 pub mod render;
 mod summary;
@@ -338,6 +339,37 @@ pub enum Command {
         #[arg(long, hide = true)]
         dev: bool,
     },
+    /// A new project in DIR: a provider template (`--list` names them) or another project's
+    /// files (`--from`). The template's class comes from the TeX installation, or from its
+    /// provider over HTTPS into the cache (`templates:` in satex.yaml). Then a run reads the new
+    /// main file and reports the class or style and its version. Nothing in an archive runs.
+    New {
+        /// The folder of the new project.
+        #[arg(value_name = "DIR")]
+        dir: Option<std::path::PathBuf>,
+        /// The provider template, as `acm-sigconf` or `ieee-conference`.
+        #[arg(long, short = 't', value_name = "ID")]
+        #[cfg_attr(not(target_os = "emscripten"), arg(add = clap_complete::ArgValueCandidates::new(|| {
+            crate::lsp::templates::catalog().iter().map(|t| clap_complete::CompletionCandidate::new(&t.id)).collect::<Vec<_>>()
+        })))]
+        template: Option<String>,
+        /// Another project: a GitHub repository URL (a `/tree/BRANCH/FOLDER` too), the HTTPS URL
+        /// of a zip, a local zip or a folder.
+        #[arg(long, value_name = "URL|PATH")]
+        from: Option<String>,
+        /// The class options (or the style's) instead of the template's, as `-o sigconf,review`.
+        #[arg(long = "option", short = 'o', value_name = "OPTION", value_delimiter = ',')]
+        options: Vec<String>,
+        /// List the templates instead.
+        #[arg(long)]
+        list: bool,
+        /// Write over files that exist.
+        #[arg(long)]
+        force: bool,
+        /// Only write the files, without the run that reads them.
+        #[arg(long)]
+        no_check: bool,
+    },
 }
 
 /// `satex cache`'s further commands.
@@ -416,6 +448,7 @@ impl Command {
                 | Command::Lsp { .. }
                 | Command::Gui { .. }
                 | Command::Completions { .. }
+                | Command::New { list: true, .. }
         ) && !matches!(self, Command::Cache { action: Some(a) } if !matches!(a, CacheAction::Status))
     }
 
@@ -576,6 +609,9 @@ impl Command {
             // `Query { request: Some(_) }`.
             Command::Cache { action: Some(_) } => Ok(Output::Done),
             Command::Lsp { .. } | Command::Gui { .. } | Command::Completions { .. } => Ok(Output::Done),
+            // `main.rs` writes the project and lists the templates: the run read the new main file
+            Command::New { list: true, .. } => Ok(Output::Records(new::list())),
+            Command::New { .. } => new::report(context),
             Command::Compile { system, view } => compile::run(context, system.as_deref(), *view),
             Command::Install { packages, yes, dry_run, usermode } => {
                 let options = install::Options { yes: *yes, dry_run: *dry_run, usermode: *usermode };

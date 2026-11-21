@@ -934,7 +934,25 @@ pub fn print(
     nodes: &[Node],
 ) -> Result<Json, String> {
     let (edits, notes, roots) = printed(analysis, doc, file, nodes)?;
-    Ok(json!({ "edits": lsp_edits(doc, edits), "notes": notes, "roots": roots }))
+    // each node as it now reads: a view shows it (the class dialog's header line)
+    let texts: Vec<String> = nodes
+        .iter()
+        .map(|n| match n.range.and_then(|r| doc.offset(to_pos(doc, r.start))) {
+            Some(at) => reads(doc.body(), at, at + n.text.len(), &edits),
+            None => canonical(n),
+        })
+        .collect();
+    Ok(json!({ "edits": lsp_edits(doc, edits), "notes": notes, "roots": roots, "texts": texts }))
+}
+
+/// `doc`'s text with `nodes` written by the printer alone, no run consulted: a new project's
+/// main file (`src/lsp/templates.rs`).
+pub fn rewritten(doc: &Text, nodes: &[Node]) -> Result<String, String> {
+    let mut edits = Vec::new();
+    for n in nodes {
+        edits.extend(edits_of(doc, n)?);
+    }
+    Ok(reads(doc.body(), 0, doc.body().len(), &merged(edits)?))
 }
 
 /// A `satex/dialogApply` of kind `snapshot`: the edits that write its `nodes`.

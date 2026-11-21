@@ -15,7 +15,7 @@ use crate::queries::query::Record;
 use serde_json::json;
 
 /// One message of the build log, where TeX says it arose.
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 struct Logged {
     path: Option<PathBuf>,
     line: Option<u64>,
@@ -27,6 +27,7 @@ struct Logged {
 pub struct Built {
     main: PathBuf,
     keep: PathBuf,
+    job: String,
     logged: Vec<Logged>,
     /// The status, when the build failed without a TeX error in the log.
     failed: Option<String>,
@@ -34,7 +35,13 @@ pub struct Built {
     head: String,
     /// The records the last explanation of this log gave, when nothing it read changed since.
     stored: Option<Vec<Record>>,
+    /// Held by a satex that explains aside ([`Built::resumed`]): one per job.
+    explaining: Option<std::fs::File>,
 }
+
+/// Set for the `satex compile` a build starts aside to explain it ([`Built::aside`]): no build
+/// runs there, the analysis does, and what it explains is stored for the next `satex compile`.
+pub const ASIDE: &str = "SATEX_COMPILE_ASIDE";
 
 impl Built {
     /// Whether explaining the build needs the analysis: only findings at the logged messages
@@ -44,24 +51,137 @@ impl Built {
     pub fn needs_analysis(&self) -> bool {
         self.stored.is_none() && self.logged.iter().any(|l| l.line.is_some())
     }
+
+    fn file(&self, ext: &str) -> PathBuf {
+        self.keep.join(format!("{}.{ext}", self.job))
+    }
+
+    /// Whether this satex explains a build aside: it waits for the analysis, no one waits for it.
+    pub fn is_aside(&self) -> bool {
+        self.explaining.is_some()
+    }
+
+    /// Starts a satex of its own, detached and at the lowest priority, that analyzes the document
+    /// and stores the explanation of this build's messages ([`Built::resumed`]). The build's caller
+    /// has the PDF and returns; the next `satex compile` of the same text gives the stored records.
+    pub fn aside(&self) -> bool {
+        let record = json!({ "logged": self.logged, "failed": self.failed, "main": self.main });
+        let Ok(satex) = std::env::current_exe() else { return false };
+        if std::fs::create_dir_all(&self.keep).is_err()
+            || std::fs::write(self.file("explain"), record.to_string()).is_err()
+        {
+            return false;
+        }
+        use super::cache::background::{NO_SETUP, detached, nice};
+        let mut command = detached(&satex, nice().as_deref(), true);
+        command.args(std::env::args_os().skip(1)).env(ASIDE, "1").env(NO_SETUP, "1");
+        command.stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null());
+        command.stderr(std::process::Stdio::null());
+        // reaped by a thread: a long-lived caller keeps no zombie
+        command.spawn().map(|mut child| std::thread::spawn(move || child.wait())).is_ok()
+    }
+
+    /// In a satex started aside ([`ASIDE`]): the build to explain, as its starter recorded it.
+    /// `None`: this is no such satex. `Some(None)`: nothing to explain, since another satex is at
+    /// it or the record is gone.
+    pub fn resumed(context: &Context) -> Option<Option<Built>> {
+        std::env::var_os(ASIDE)?;
+        let place = Place::of(context.analysis);
+        let (keep, job) = (place.keep(), place.job.clone());
+        let resume = || {
+            let explaining = super::cache::background::try_lock(&keep.join(format!("{job}.explaining"))).ok()??;
+            let _ = std::fs::write(keep.join(format!("{job}.explaining")), std::process::id().to_string());
+            let record: serde_json::Value =
+                serde_json::from_slice(&std::fs::read(keep.join(format!("{job}.explain"))).ok()?).ok()?;
+            let logged: Vec<Logged> = serde_json::from_value(record["logged"].clone()).ok()?;
+            let failed = record["failed"].as_str().map(str::to_string);
+            let head = head(&logged, &failed, &place.main, context);
+            let (main, keep) = (place.main.clone(), keep.clone());
+            Some(Built {
+                main,
+                keep,
+                job: job.clone(),
+                logged,
+                failed,
+                head,
+                stored: None,
+                explaining: Some(explaining),
+            })
+        };
+        Some(resume())
+    }
+}
+
+/// Stops the satex that explains an earlier build of `job` aside: its text is no longer the
+/// document's. Its lock says it runs, its file names it.
+fn supersede(keep: &Path, job: &str) {
+    let file = keep.join(format!("{job}.explaining"));
+    if !file.is_file() || !matches!(super::cache::background::try_lock(&file), Ok(None)) {
+        return;
+    }
+    let pid = std::fs::read_to_string(&file).unwrap_or_default();
+    if cfg!(unix) && !pid.is_empty() && pid.bytes().all(|b| b.is_ascii_digit()) {
+        let _ = Command::new("kill").arg(&pid).status();
+    }
+}
+
+/// Where a document's build is: its main file, directory, job name and output directory.
+struct Place {
+    main: PathBuf,
+    dir: PathBuf,
+    job: String,
+    out_dir: Option<PathBuf>,
+}
+
+impl Place {
+    fn of(analysis: &crate::analysis::machine::Analysis) -> Place {
+        let main = PathBuf::from(analysis.file_name(analysis.main_file));
+        let main = main.canonicalize().unwrap_or(main);
+        let dir =
+            main.parent().map(Path::to_path_buf).filter(|d| !d.as_os_str().is_empty()).unwrap_or_else(|| ".".into());
+        let job = main.file_stem().and_then(|f| f.to_str()).unwrap_or_default().to_string();
+        let out_dir = analysis.project.output_dir().map(|(d, _)| dir.join(d));
+        Place { main, dir, job, out_dir }
+    }
+
+    /// Where satex keeps its state of this build.
+    fn keep(&self) -> PathBuf {
+        self.out_dir.clone().unwrap_or_else(|| self.dir.clone()).join(KEEP)
+    }
+}
+
+/// The key of a build's explanation: the logged messages, the source, satex and its settings.
+fn head(logged: &[Logged], failed: &Option<String>, main: &Path, context: &Context) -> String {
+    let settings = serde_json::to_vec(&context.analysis.settings).unwrap_or_default();
+    // the records are of the logged messages, not of the log (its first line holds the time)
+    let said = [format!("{logged:?}{failed:?}{main:?}").as_bytes(), context.source.as_bytes(), &settings].map(hash);
+    format!("{}\t{said:016x?}\n", env!("SATEX_SOURCE_ID"))
 }
 
 /// The build, explained by the findings of `context`'s analysis (rules only without `compile.explain`).
 pub fn run(context: &Context, system: Option<&str>, view: bool) -> Result<Output, String> {
     let built = build_only(context, system, view)?;
-    Ok(explained(built, context.analysis))
+    Ok(explained(built, context.analysis, true))
 }
 
-/// Each logged message with satex's finding there: `analysis`'s findings where the build
-/// needs them (a sketch has none), else the stored records. Stores what an analysis gave.
-pub fn explained(built: Built, analysis: &crate::analysis::machine::Analysis) -> Output {
+/// Each logged message explained: by the stored records where they hold, else by satex's finding
+/// there where `analysis` is the document's (`analyzed`; a sketch has none), else by the finding
+/// the last analysis made of the same message, else by its rule. Stores what an analysis gave.
+pub fn explained(built: Built, analysis: &crate::analysis::machine::Analysis, analyzed: bool) -> Output {
     if let Some(records) = built.stored {
         eprintln!("satex: explained as the last build was, nothing the analysis read changed");
         return Output::Lint(records);
     }
-    let asked = built.needs_analysis() && analysis.settings.compile.explain;
+    let wanted = built.needs_analysis() && analysis.settings.compile.explain;
+    let asked = wanted && analyzed;
     let findings = if asked { crate::linter::lint(analysis) } else { Vec::new() };
-    let mut records: Vec<Record> = built.logged.iter().map(|l| explain(l, &findings, &built.main)).collect();
+    // what the last analysis said of a message this build repeats, while none of this text is there
+    let earlier: Vec<Record> = match wanted && !analyzed {
+        true => std::fs::read(built.file("explained.json")).ok().and_then(|j| serde_json::from_slice(&j).ok()),
+        false => None,
+    }
+    .unwrap_or_default();
+    let mut records: Vec<Record> = built.logged.iter().map(|l| explain(l, &findings, &earlier, &built.main)).collect();
     if let Some(status) = &built.failed {
         let message = format!("the build failed ({status}) without a TeX error in the log");
         records.push(record(&built.main, None, true, "build", message, None));
@@ -78,8 +198,7 @@ pub fn explained(built: Built, analysis: &crate::analysis::machine::Analysis) ->
 /// project tree (a file it looked for and did not find appears there); its records beside it.
 #[cfg(unix)]
 fn store(built: &Built, analysis: &crate::analysis::machine::Analysis, records: &[Record]) {
-    let job = built.main.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
-    let (key, json) = (built.keep.join(format!("{job}.explained")), built.keep.join(format!("{job}.explained.json")));
+    let (key, json) = (built.file("explained"), built.file("explained.json"));
     let root = built.main.parent().map(Path::to_path_buf).unwrap_or_default();
     let path = |f: &str| Path::new(f).canonicalize().unwrap_or_else(|_| root.join(f));
     let mut files: Vec<PathBuf> = analysis.files.iter().map(|f| path(&f.path)).collect();
@@ -133,13 +252,13 @@ pub fn build_only(context: &Context, system: Option<&str>, view: bool) -> Result
     #[cfg(not(target_os = "emscripten"))]
     super::group::die_together();
     let analysis = context.analysis;
-    let main = PathBuf::from(analysis.file_name(analysis.main_file));
-    let main = main.canonicalize().unwrap_or(main);
-    let dir = main.parent().map(Path::to_path_buf).filter(|d| !d.as_os_str().is_empty()).unwrap_or_else(|| ".".into());
+    let place = Place::of(analysis);
+    let Place { main, dir, job, out_dir } = &place;
+    let (main, dir, job, out_dir) = (main.clone(), dir.clone(), job.clone(), out_dir.clone());
     let file = main.file_name().and_then(|f| f.to_str()).ok_or("the document has no file name")?;
-    let job = main.file_stem().and_then(|f| f.to_str()).unwrap_or(file).to_string();
     let project = &analysis.project;
-    let out_dir = project.output_dir().map(|(d, _)| dir.join(d));
+    // an explanation of an earlier text, still in the making, is of no use to this build
+    supersede(&place.keep(), &job);
     let log_path = out_dir.clone().unwrap_or_else(|| dir.clone()).join(format!("{job}.log"));
     let engine = analysis.plugins.engine;
     // latexmk runs LaTeX: a plain TeX file (`% !TeX program = tex`) runs its own program.
@@ -197,34 +316,9 @@ pub fn build_only(context: &Context, system: Option<&str>, view: bool) -> Result
         "satex" => {
             let at = out_dir.clone().unwrap_or_else(|| dir.clone());
             let c = &analysis.settings.compile;
-            // A warm engine waits in a mirror of the project: the pipe is never one of its files.
-            #[cfg(target_os = "linux")]
-            let mirror = (c.warm && out_dir.is_none()).then(|| dir.join(KEEP).join(super::warm::MIRROR));
-            #[cfg(not(target_os = "linux"))]
-            let mirror: Option<PathBuf> = None;
-            #[cfg(target_os = "linux")]
-            let since = match &mirror {
-                Some(w) => Some(super::warm::fill(w, &dir)?),
-                None => None,
-            };
-            let (ran, at) = mirror.as_ref().map_or((&dir, &at), |w| (w, w));
-            let (status, dumped) = own(
-                program,
-                latex,
-                context.source,
-                file,
-                &job,
-                ran,
-                at,
-                c.passes,
-                c.warm && mirror.is_some(),
-                &c.clock,
-                c.memoize,
-            )?;
-            #[cfg(target_os = "linux")]
-            if let (Some(w), Some(since)) = (&mirror, since) {
-                super::warm::mirror(w, &dir, since)?;
-            }
+            let warm = c.warm && cfg!(target_os = "linux");
+            let (status, dumped) =
+                own(program, latex, context.source, file, &job, &dir, &at, c.passes, warm, &c.clock, c.memoize)?;
             preamble = dumped;
             status
         }
@@ -254,13 +348,10 @@ pub fn build_only(context: &Context, system: Option<&str>, view: bool) -> Result
     let mut logged = parse_log(&preamble, &dir);
     logged.extend(parse_log(&String::from_utf8_lossy(&log), &dir));
     let failed = (!status.success() && !logged.iter().any(|l| l.error)).then(|| status.to_string());
-    let settings = serde_json::to_vec(&analysis.settings).unwrap_or_default();
-    // the records are of the logged messages, not of the log (its first line holds the time)
-    let said = [format!("{logged:?}{failed:?}{main:?}").as_bytes(), context.source.as_bytes(), &settings].map(hash);
-    let head = format!("{}\t{said:016x?}\n", env!("SATEX_SOURCE_ID"));
-    let keep = out_dir.unwrap_or_else(|| dir.clone()).join(KEEP);
+    let head = head(&logged, &failed, &main, context);
+    let keep = place.keep();
     let stored = stored(&keep, &job, &head).filter(|_| !logged.is_empty());
-    Ok(Built { main, keep, logged, failed, head, stored })
+    Ok(Built { main, keep, job, logged, failed, head, stored, explaining: None })
 }
 
 /// The build files a run reads back: equal before and after a pass, the references rest.
@@ -306,6 +397,13 @@ fn own(
     let mut args = vec!["-interaction=nonstopmode".to_string(), "-file-line-error".into(), SYNCTEX.into()];
     // the .fls names every file a pass reads and writes, for `current`
     args.push("-recorder".into());
+    // XeTeX hands its pages to xdvipdfmx, which waits for none while the pass runs (a third to
+    // a half of a pass): the passes keep the pages, and the driver runs once after the last, as
+    // latexmk has it.
+    let paged = matches!(program, "xelatex" | "xetex");
+    if paged {
+        args.push("-no-pdf".into());
+    }
     if at != dir {
         args.push(format!("-output-directory={}", at.display()));
     }
@@ -315,8 +413,18 @@ fn own(
     let memoize = memoize
         && !source.starts_with("%&")
         && crate::plugins::memoize::may_load(source, &at.join(format!("{job}.fls")));
-    let pretex = format!("{}\\input{{{file}}}", crate::plugins::memoize::PRETEX);
-    let file = if memoize { pretex.as_str() } else { file };
+    // a warm engine reads a pipe in the main file's stead: its name stands where the file's would
+    // only Linux has warm engines (cli::warm): elsewhere the pass reads the file itself
+    #[cfg(target_os = "linux")]
+    let (main, piped) = (file, super::warm::pipe(&keep, file).display().to_string());
+    #[cfg(not(target_os = "linux"))]
+    let (main, piped) = (file, file.to_string());
+    let given = |file: &str| match memoize {
+        true => format!("{}\\input{{{file}}}", crate::plugins::memoize::PRETEX),
+        false => file.to_string(),
+    };
+    let (pretex, piped_arg) = (given(file), given(&piped));
+    let file = pretex.as_str();
     if memoize {
         args.push(format!("-jobname={job}"));
     }
@@ -324,7 +432,14 @@ fn own(
         if latex && program == "pdflatex" && !memoize { Dump::of(source, file, job, dir, &keep) } else { None };
     let formats = |args: &[String]| args.iter().any(|a| a.starts_with("-fmt="));
     let read = |ext: &str| std::fs::read(at.join(format!("{job}.{ext}"))).unwrap_or_default();
-    let rested = || -> Vec<u8> { OWN.iter().flat_map(|e| [read(e), b"\0".to_vec()].concat()).collect() };
+    let rested = || -> Vec<Vec<u8>> { OWN.iter().map(|e| read(e)).collect() };
+    // The build files the last pass read (its `.fls`): latexmk reruns for a change of those
+    // only, so a `.toc` no `\tableofcontents` reads lets the build rest.
+    let read_back = || -> Vec<bool> {
+        let fls = String::from_utf8_lossy(&read("fls")).into_owned();
+        let inputs: Vec<&str> = fls.lines().filter_map(|l| l.strip_prefix("INPUT ")).collect();
+        OWN.iter().map(|e| inputs.iter().any(|i| i.ends_with(&format!("{job}.{e}")))).collect()
+    };
     // a changed .bib reruns BibTeX first: its new .bbl is a changed input
     tools(job, dir, at, &keep)?;
     let done = keep.join(format!("{job}.done"));
@@ -352,23 +467,38 @@ fn own(
     }
     let (mut status, mut ran, mut rest) = (None, 0, false);
     let command = |args: &[String]| -> Vec<String> {
-        [program].into_iter().chain(args.iter().map(String::as_str)).chain([file]).map(str::to_string).collect()
+        // web2c opens its input once before TeX does, to look for a `%&format` line: that open
+        // would take the pipe's text and TeX's own would wait for more. A document with a format
+        // of ours has no such line (`Dump::of`), so the look is told off.
+        let last = ["-no-parse-first-line", piped_arg.as_str()];
+        let words = [program].into_iter().chain(args.iter().map(String::as_str)).chain(last);
+        words.map(str::to_string).collect()
     };
     let mut formatted = false;
     for _ in 0..passes.max(1) {
         ran += 1;
-        // an engine the last build left waiting on the preamble itself (its dump was not done) is taken as it is
-        #[cfg(target_os = "linux")]
-        let waits = warm && super::warm::command(&keep).is_some_and(|c| c == command(&args));
-        #[cfg(not(target_os = "linux"))]
-        let waits = false;
-        if let Some(d) = dump.as_ref().filter(|d| !waits && !formats(&args) && d.usable()) {
+        if let Some(d) = dump.as_ref().filter(|d| !formats(&args) && d.usable()) {
             args.push(format!("-fmt={}", d.fmt.display()));
         }
         formatted = formats(&args);
         let pass_args: Vec<&str> = args.iter().map(String::as_str).collect();
-        let followed = follow(at, job);
-        let ran_warm = warmed(warm, &keep, dir, &command(&args), file, &at.join(format!("{job}.log")));
+        // the SyncTeX data names its inputs by their whole path
+        let whole =
+            |name: &str| format!("{}/./{name}", dir.canonicalize().unwrap_or_else(|_| dir.to_path_buf()).display());
+        let followed = follow(at, job, warm.then(|| (piped.clone(), whole(main))));
+        let ran_warm = warmed(warm && formatted, &keep, dir, &command(&args), main, &at.join(format!("{job}.log")));
+        if ran_warm.is_some() {
+            // what the engine wrote of its input's name is the main file's, as a fresh pass writes it
+            // (the log's command line is the name as given, without the `./` of an opened file,
+            // under the line of the look for a `%&` line that a fresh engine takes)
+            let given = (format!("**{piped}"), format!(" %&-line parsing enabled.\n**{main}"));
+            for (ext, name) in [("log", format!("./{main}")), ("fls", main.to_string())] {
+                let path = at.join(format!("{job}.{ext}"));
+                let text = std::fs::read(&path).unwrap_or_default();
+                let text = replaced(&text, given.0.as_bytes(), given.1.as_bytes());
+                let _ = std::fs::write(&path, replaced(&text, piped.as_bytes(), name.as_bytes()));
+            }
+        }
         let ran_pass = match ran_warm {
             Some(status) => Ok(status),
             None => build(program, &pass_args, file, dir),
@@ -393,13 +523,23 @@ fn own(
             args.retain(|a| !a.starts_with("-fmt="));
             continue;
         }
-        if !extracted && now == was && !log.contains("Rerun to get") && !log.contains("Label(s) may have changed") {
+        // one not there before the pass may be read by the next (a first `.toc`)
+        let same = read_back().iter().zip(now.iter().zip(&was)).all(|(read, (n, w))| n == w || !read && !w.is_empty());
+        if !extracted && same && !log.contains("Rerun to get") && !log.contains("Label(s) may have changed") {
             rest = true;
             break;
         }
         was = now;
     }
-    let status = status.ok_or("no pass ran")?;
+    let mut status = status.ok_or("no pass ran")?;
+    let pages = at.join(format!("{job}.xdv"));
+    if paged && pages.is_file() {
+        let pdf = at.join(format!("{job}.pdf")).display().to_string();
+        let driven = build("xdvipdfmx", &["-q", "-E", "-o", &pdf], &pages.display().to_string(), dir)?;
+        if status.success() {
+            status = driven;
+        }
+    }
     // the next build's passes read the format when it is there by now: its warm engine too
     if let Some(d) = dump.as_ref().filter(|d| !formats(&args) && d.usable()) {
         args.push(format!("-fmt={}", d.fmt.display()));
@@ -420,23 +560,29 @@ fn own(
     eprintln!("satex: {ran} pass{} in {:.2} s", if ran == 1 { "" } else { "es" }, started.elapsed().as_secs_f64());
     #[cfg(not(target_os = "linux"))]
     let _ = (warm, command);
+    // only on a format: that is the start a warm engine saves, and the document has no `%&` line then
     #[cfg(target_os = "linux")]
-    if warm {
-        super::warm::start(&keep, dir, &command(&args), file, &[(PRINT_LINE.0, PRINT_LINE.1)]);
+    if warm && formats(&args) {
+        let held = super::warm::start(&keep, dir, &command(&args), main, &[(PRINT_LINE.0, PRINT_LINE.1)]);
+        if let Some(seconds) = held {
+            eprintln!("satex: a pdfTeX waits {seconds} s for the next build, then ends (compile.warm)");
+        }
     }
     Ok((status, dumped))
+}
+
+/// Whether the engine or kpathsea may read the environment variable `key`: TeX's own, and every
+/// lowercase one (a `texmf.cnf` setting is overridden by a variable of its name).
+pub(super) fn read_by_tex(key: &str) -> bool {
+    ["TEX", "BIB", "BST", "KPSE", "MF", "SOURCE_DATE"].iter().any(|p| key.contains(p))
+        || key.starts_with(|c: char| c.is_ascii_lowercase())
 }
 
 /// What may part this build from the last one besides files: the environment the engine and
 /// kpathsea read, and the clock at `clock`'s grain (`compile.clock`), unless it is fixed.
 fn clock_key(clock: &str) -> String {
-    let mut env: Vec<String> = std::env::vars()
-        .filter(|(k, _)| {
-            ["TEX", "BIB", "BST", "KPSE", "MF", "SOURCE_DATE"].iter().any(|p| k.contains(p))
-                || k.starts_with(|c: char| c.is_ascii_lowercase())
-        })
-        .map(|(k, v)| format!("{k}={v}"))
-        .collect();
+    let mut env: Vec<String> =
+        std::env::vars().filter(|(k, _)| read_by_tex(k)).map(|(k, v)| format!("{k}={v}")).collect();
     env.sort_unstable();
     let fixed =
         std::env::var("FORCE_SOURCE_DATE").is_ok_and(|v| v == "1") && std::env::var("SOURCE_DATE_EPOCH").is_ok();
@@ -498,6 +644,8 @@ fn reads(dir: &Path, at: &Path, job: &str, keep: &Path, formatted: bool, databas
         .filter(|p| !p.starts_with(keep) || p.extension().is_some_and(|e| e == "fmt"))
         .collect();
     files.extend(databases.lines().filter(|l| !l.is_empty()).map(PathBuf::from));
+    // the PDF too, where a driver wrote it after the pass: a build without it is not the last one's
+    files.push(at.join(format!("{job}.pdf")));
     files.sort_unstable();
     files.dedup();
     let root = dir.canonicalize().unwrap_or_else(|_| dir.to_path_buf());
@@ -549,7 +697,7 @@ fn warmed(
 ) -> Option<std::process::ExitStatus> {
     #[cfg(target_os = "linux")]
     if warm {
-        let status = super::warm::take(keep, dir, command, file, log)?;
+        let status = super::warm::take(keep, dir, command, file, log, &[PRINT_LINE])?;
         eprintln!("$ {} (warm)", command.join(" "));
         return Some(status);
     }
@@ -761,6 +909,45 @@ const BROKEN: &str = "\\MYLATEX@";
 /// (1000 pages: 2.8 s without, 3.8 s with), [`follow`] compresses on another core meanwhile.
 const SYNCTEX: &str = "-synctex=-1";
 
+/// `text` with every `from` replaced by `to`.
+fn replaced(text: &[u8], from: &[u8], to: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(at) = rest.windows(from.len().max(1)).position(|w| w == from) {
+        out.extend_from_slice(&rest[..at]);
+        out.extend_from_slice(to);
+        rest = &rest[at + from.len()..];
+    }
+    out.extend_from_slice(rest);
+    out
+}
+
+/// Whole lines of SyncTeX data with the input named `from` named `to`, as the engine would have
+/// written them: an `Input:` line gets the name, and each `!⟨bytes⟩` record, which counts the
+/// data's bytes since the record before it, loses the bytes taken out in between (`less`, kept
+/// across calls; a record that got shorter itself counts for the next).
+fn renamed(lines: &[u8], from: &[u8], to: &[u8], less: &mut i64) -> Vec<u8> {
+    let mut out = Vec::with_capacity(lines.len());
+    for line in lines.split_inclusive(|&b| b == b'\n') {
+        let text = line.strip_suffix(b"\n").unwrap_or(line);
+        let count = text.strip_prefix(b"!").filter(|d| !d.is_empty() && d.iter().all(u8::is_ascii_digit));
+        let count = count.and_then(|d| std::str::from_utf8(d).ok()?.parse::<i64>().ok());
+        if text.starts_with(b"Input:") && text.ends_with(from) {
+            out.extend_from_slice(&text[..text.len() - from.len()]);
+            out.extend_from_slice(to);
+            *less += from.len() as i64 - to.len() as i64;
+        } else if let Some(count) = count {
+            let moved = format!("!{}", count - *less);
+            *less = text.len() as i64 - moved.len() as i64;
+            out.extend_from_slice(moved.as_bytes());
+        } else {
+            out.extend_from_slice(text);
+        }
+        out.extend_from_slice(&line[text.len()..]);
+    }
+    out
+}
+
 /// The compression of the SyncTeX data the next pass in `at` writes, running beside that pass.
 struct Followed {
     done: std::sync::Arc<std::sync::atomic::AtomicBool>,
@@ -781,7 +968,8 @@ impl Followed {
 /// `job.synctex` at its end) and feeds what it reads to `gzip`: `job.synctex.gz` is whole when the
 /// pass is, as the engine itself would have written it. Without gzip the uncompressed file stays,
 /// which viewers read too. A pass that ends without SyncTeX data leaves the files as they were.
-fn follow(at: &Path, job: &str) -> Followed {
+/// `named`: an input's name the data may hold and the name to put in its place (a warm engine's pipe).
+fn follow(at: &Path, job: &str, named: Option<(String, String)>) -> Followed {
     use std::io::{Read, Write};
     use std::sync::atomic::Ordering;
     let name = |ext: &str| at.join(format!("{job}.{ext}"));
@@ -810,18 +998,36 @@ fn follow(at: &Path, job: &str) -> Followed {
         let mut pipe = gzip.stdin.take();
         let mut chunk = vec![0; 1 << 16];
         let mut whole = true;
+        // whole lines only: a name to replace is never cut in two
+        let mut lines: Vec<u8> = Vec::new();
+        // bytes the renaming took out since the data's last `!` record
+        let mut less = 0i64;
+        let mut send = |bytes: &[u8]| match &named {
+            Some((from, to)) => {
+                let named = renamed(bytes, from.as_bytes(), to.as_bytes(), &mut less);
+                pipe.as_mut().is_some_and(|p| p.write_all(&named).is_ok())
+            }
+            None => pipe.as_mut().is_some_and(|p| p.write_all(bytes).is_ok()),
+        };
         loop {
             let last = ended.load(Ordering::SeqCst);
             match data.read(&mut chunk) {
                 Ok(0) if last => break,
                 Ok(0) => pause(),
-                Ok(n) => whole &= pipe.as_mut().is_some_and(|p| p.write_all(&chunk[..n]).is_ok()),
+                Ok(n) => {
+                    lines.extend_from_slice(&chunk[..n]);
+                    let end = lines.iter().rposition(|&b| b == b'\n').map_or(0, |i| i + 1);
+                    whole &= send(&lines[..end]);
+                    lines.drain(..end);
+                }
                 Err(_) => whole = false,
             }
             if !whole {
                 break;
             }
         }
+        whole &= send(&lines);
+        drop(send);
         drop(pipe.take());
         whole &= gzip.wait().is_ok_and(|s| s.success());
         // an aborted pass removes its data: what was read of it is no file
@@ -955,9 +1161,18 @@ fn track_files(line: &str, dir: &Path, files: &mut Vec<PathBuf>) {
     }
 }
 
-/// The record for one logged message, with satex's finding at that place or
-/// the summary of the rule the message is named by.
-fn explain(logged: &Logged, findings: &[Record], main: &Path) -> Record {
+/// A message without its numbers: the same message of another build, whose lines and pages moved.
+fn worded(message: &str) -> String {
+    message.chars().filter(|c| !c.is_ascii_digit()).collect()
+}
+
+/// What follows an explanation taken from the analysis of an earlier text.
+const EARLIER: &str = " (said by the analysis of an earlier text)";
+
+/// The record for one logged message, with satex's finding at that place, else what the last
+/// analysis said of the same message at that file (`earlier`, marked as such), else the summary
+/// of the rule the message is named by, else what TeX means by it ([`SAID`]).
+fn explain(logged: &Logged, findings: &[Record], earlier: &[Record], main: &Path) -> Record {
     let path = logged.path.clone().filter(|p| p.is_file()).unwrap_or_else(|| main.to_path_buf());
     let same = |p: &str| Path::new(p).canonicalize().ok() == path.canonicalize().ok();
     let near = |r: &&Record| {
@@ -976,21 +1191,68 @@ fn explain(logged: &Logged, findings: &[Record], main: &Path) -> Record {
         code.is_none_or(|c| r.get("code").and_then(|c| c.as_str()) == Some(c)) && key.is_none_or(|k| text.contains(k))
     };
     let finding = findings.iter().filter(near).find(about);
+    let by_rule = || {
+        let rule = code.and_then(|c| crate::linter::all().find(|r| r.code == c)).map(|r| r.summary.to_string());
+        rule.or_else(|| SAID.iter().find(|(text, _)| logged.message.contains(text)).map(|(_, why)| why.to_string()))
+    };
+    // the same message in the same file: only its numbers may differ
+    let before = || {
+        let text = |r: &Record, key: &str| r.get(key).and_then(|m| m.as_str()).map(str::to_string);
+        let again = |r: &&Record| {
+            text(r, "path").is_some_and(|p| same(&p))
+                && text(r, "message").is_some_and(|m| worded(&m) == worded(&logged.message))
+        };
+        let fix = earlier.iter().find(again).and_then(|r| text(r, "fix"))?;
+        let fix = fix.strip_suffix(EARLIER).unwrap_or(&fix).to_string();
+        // a rule's summary is no finding: it is said without the mark
+        (Some(&fix) != by_rule().as_ref()).then(|| format!("{fix}{EARLIER}"))
+    };
     let why = match finding {
         Some(f) => {
             let text = f.get("message").and_then(|m| m.as_str()).unwrap_or_default();
             let fix = f.get("fix").and_then(|m| m.as_str()).map(|fix| format!(". {fix}")).unwrap_or_default();
             Some(format!("{text}{fix}"))
         }
-        None => code.and_then(|c| crate::linter::all().find(|r| r.code == c)).map(|r| r.summary.to_string()),
+        None => before().or_else(by_rule),
     };
     let code = code.unwrap_or(if logged.error { "tex-error" } else { "tex-warning" });
     record(&path, logged.line, logged.error, code, logged.message.clone(), why)
 }
 
+/// What TeX and LaTeX mean by the messages no lint rule is about, in plain words.
+const SAID: [(&str, &str); 11] = [
+    (
+        "Underfull \\hbox",
+        "a line is set loose: its spaces are stretched past what \\tolerance and \\hbadness accept. Rephrase, allow a hyphenation, or accept it",
+    ),
+    (
+        "Underfull \\vbox",
+        "a page or column is not filled: its stretchable space cannot reach the height, often before a heading, float or display that did not fit. \\raggedbottom accepts it",
+    ),
+    (
+        "Overfull \\vbox",
+        "a page or box is higher than its height: its material cannot shrink enough and sticks out below",
+    ),
+    ("Font shape", "the font has no such shape, series or size: LaTeX set the substitute it names"),
+    ("float specifier changed", "the float cannot go where its specifier says: LaTeX added the place it names"),
+    ("Float too large", "the float is higher than the page: it sticks out below"),
+    ("Marginpar on page", "a margin note would overlap the one above it and was moved down"),
+    (
+        "destination with the same identifier",
+        "two link targets share a name, often pages numbered alike: links go to the first",
+    ),
+    (
+        "Token not allowed in a PDF string",
+        "a bookmark is plain text: hyperref dropped the command it names. \\texorpdfstring gives the bookmark its own text",
+    ),
+    ("Unused global option", "no package used this class option: a misspelling, or an option of a package not loaded"),
+    ("Empty bibliography", "the bibliography has no entry: nothing was cited, or BibTeX or Biber did not run"),
+];
+
 /// The lint rule a TeX or LaTeX message is.
 fn code_of(message: &str) -> Option<&'static str> {
-    const NAMED: [(&str, &str); 7] = [
+    const NAMED: [(&str, &str); 8] = [
+        ("Overfull \\hbox (", "overfull-line"),
         ("Undefined control sequence", "undefined-control-sequence"),
         ("Environment ", "undefined-environment"),
         ("' not found", "unresolved-file"),
@@ -999,6 +1261,10 @@ fn code_of(message: &str) -> Option<&'static str> {
         ("Reference `", "undefined-reference"),
         ("Missing number", "missing-number"),
     ];
+    // a box packed to a width (`detected at line`) is another rule than a paragraph's line
+    if message.starts_with("Overfull \\hbox") && message.contains("detected at line") {
+        return Some("overfull-box");
+    }
     NAMED.iter().find(|(text, _)| message.contains(text)).map(|(_, code)| *code)
 }
 
@@ -1049,6 +1315,30 @@ mod tests {
         assert!(got[0].message.contains("12.3pt too wide"), "{got:?}");
     }
 
+    /// SyncTeX data names each input once and counts, in every `!` record, the bytes since the
+    /// record before. A warm engine wrote the pipe's name: with the main file's name in its place
+    /// the next record counts the difference less, and a record that lost a digit by that passes
+    /// one byte on to the record after it. Pins: data that viewers read with counts that are off.
+    #[test]
+    fn synctex_data_renamed_counts_as_if_written_so() {
+        let data = |name: &str, counts: [usize; 3]| {
+            format!(
+                "SyncTeX Version:1\nInput:1:{name}\nInput:2:/t/a.sty\n!{}\n{{1\n!{}\n}}1\n!{}\n",
+                counts[0], counts[1], counts[2]
+            )
+        };
+        // the first record counts the head (1000 with the pipe's name, 13 bytes longer than the file's)
+        let (pipe, file) = ("/p/.satex-build/warm/in/d.tex", "/p/./d.tex");
+        let less = pipe.len() - file.len();
+        let (written, wanted) = (data(pipe, [1000, 9, 12]), data(file, [1000 - less, 8, 12]));
+        let mut carried = 0;
+        // fed in two parts, as the follower reads it: what was taken out is carried over
+        let (head, tail) = written.split_at(written.find("!1000").unwrap());
+        let mut got = renamed(head.as_bytes(), pipe.as_bytes(), file.as_bytes(), &mut carried);
+        got.extend(renamed(tail.as_bytes(), pipe.as_bytes(), file.as_bytes(), &mut carried));
+        assert_eq!(String::from_utf8(got).unwrap(), wanted);
+    }
+
     #[test]
     fn a_finding_explains_only_the_message_about_its_key() {
         let main = Path::new("main.tex");
@@ -1058,7 +1348,7 @@ mod tests {
             finding("undefined-reference", "no `\\label{sec:nope}` anywhere"),
         ];
         let logged = |message: &str| Logged { path: None, line: Some(4), error: false, message: message.into() };
-        let why = |message: &str| explain(&logged(message), &findings, main)["fix"].as_str().map(str::to_owned);
+        let why = |message: &str| explain(&logged(message), &findings, &[], main)["fix"].as_str().map(str::to_owned);
         assert_eq!(why("Reference `sec:nope' on page 1 undefined").as_deref(), Some("no `\\label{sec:nope}` anywhere"));
         // another key on that line: the rule's summary, not the finding about `sec:nope`
         assert!(why("Reference `sec:other' on page 1 undefined").is_some_and(|w| !w.contains("sec:nope")));

@@ -38,7 +38,8 @@ pub mod knowledge;
 mod labels;
 pub(crate) mod plugins;
 mod search;
-mod snapshot;
+pub(crate) mod snapshot;
+pub mod templates;
 pub use plugins::{INTEGRATIONS, plugin_features, works_in};
 mod tabular;
 mod tblr;
@@ -80,6 +81,10 @@ const EXECUTE_COMMAND: &str = "satex/query";
 /// The answer to a style prompt, `{code, answer}` with `answer` `off` or
 /// `keep`, recorded in the project's `satex.yaml`.
 const STYLE_COMMAND: &str = "satex/style";
+
+/// A new project (`src/lsp/templates.rs` `request`): `{template, options}` or `{from}`, written
+/// into `dir` when given, else answered with its files. `satex/templates` lists the templates.
+const NEW_COMMAND: &str = "satex/newDocument";
 
 /// The prompt's answers, as `window/showMessageRequest` offers them.
 const STYLE_ANSWERS: [(&str, Option<crate::project::config::StyleChoice>); 4] = [
@@ -215,7 +220,7 @@ fn server_capabilities() -> ServerCapabilities {
         code_lens_provider: Some(lsp_types::CodeLensOptions { resolve_provider: Some(false) }),
         inlay_hint_provider: Some(OneOf::Left(true)),
         execute_command_provider: Some(ExecuteCommandOptions {
-            commands: vec![EXECUTE_COMMAND.to_string(), STYLE_COMMAND.to_string()],
+            commands: vec![EXECUTE_COMMAND.to_string(), STYLE_COMMAND.to_string(), NEW_COMMAND.to_string()],
             ..Default::default()
         }),
         ..Default::default()
@@ -695,8 +700,14 @@ fn dispatch(engine_tx: Send<'_>, req: Request) -> Result<Json, String> {
             let uri: Uri = serde_json::from_value(params["textDocument"]["uri"].clone()).map_err(|e| e.to_string())?;
             ask(engine_tx, |reply| EngineMsg::Dialog(Ask::Apply(uri, params), reply))?
         }
+        "satex/templates" => Ok(crate::lsp::templates::listing()),
+        NEW_COMMAND => ask(engine_tx, |reply| EngineMsg::NewDocument(params, reply))?,
         "workspace/executeCommand" => {
             let p: ExecuteCommandParams = serde_json::from_value(params).map_err(|e| e.to_string())?;
+            if p.command == NEW_COMMAND {
+                let arg = p.arguments.into_iter().next().unwrap_or_default();
+                return ask(engine_tx, |reply| EngineMsg::NewDocument(arg, reply))?;
+            }
             if p.command == STYLE_COMMAND {
                 let arg = p.arguments.first().cloned().unwrap_or_default();
                 let code = arg["code"].as_str().ok_or("expected `{code, answer}`")?.to_string();
@@ -804,6 +815,8 @@ enum EngineMsg {
     ExecuteCommand(Json, Sender<Result<Vec<Json>, String>>),
     /// A style prompt's answer for a rule: the path of the `satex.yaml` written.
     Style(String, crate::project::config::StyleChoice, Sender<Result<Json, String>>),
+    /// `satex/newDocument`'s params: the project, written when they name a folder.
+    NewDocument(Json, Sender<Result<Json, String>>),
     Typeset(Uri, Sender<Vec<Json>>),
     /// A typesetting plugin's request and its params: `null` before a first run.
     Typesetting(Uri, String, Json, Sender<Json>),
@@ -1345,16 +1358,43 @@ impl Engine {
         Box::new(wasm::cancelled)
     }
 
-    /// What a build tells the editor between its runs ([`SETTLED_NOTIFICATION`]).
+    /// What a build tells the editor between its runs ([`SETTLED_NOTIFICATION`]): the findings no
+    /// later run changes, and with `lsp.provisional`, after a run of `lsp.provisional_after_ms`,
+    /// all of them, `run` and `runs` said. Every finding of a rule that reads more than the text
+    /// is marked provisional: this run read build files the next one reads changed (else no run
+    /// follows), and a rule's facts are of the whole run, so none of them is known to stand.
     fn between_runs(&self, root: &Path) -> crate::analysis::machine::BetweenRuns {
         let (outbox, silenced, root) = (self.outbox.clone(), self.silenced.clone(), root.to_path_buf());
         let open: Vec<PathBuf> = self.docs.values().map(|d| d.path.clone()).collect();
+        let versions: Vec<(PathBuf, i32)> = self.docs.values().map(|d| (d.path.clone(), d.version)).collect();
+        let (lsp, runs) = (&self.cfg.lsp, self.cfg.limits.build_runs);
+        let (wanted, after) = (lsp.provisional, std::time::Duration::from_millis(lsp.provisional_after_ms));
+        let since = std::cell::Cell::new(std::time::Instant::now());
         Box::new(move |analysis| {
-            let records = unsilenced(&silenced, handlers::settled_findings(analysis));
+            let all = wanted && since.get().elapsed() >= after;
+            let records = if all {
+                let mut records = handlers::findings(analysis);
+                for r in records.iter_mut() {
+                    if !r.get("code").and_then(Json::as_str).is_some_and(crate::linter::settled) {
+                        r.insert("provisional".into(), Json::Bool(true));
+                    }
+                }
+                records
+            } else {
+                handlers::settled_findings(analysis)
+            };
+            let records = unsilenced(&silenced, records);
             let open: Vec<&Path> = open.iter().map(PathBuf::as_path).collect();
-            for params in publish(&mut HashMap::default(), analysis, &records, &root, &open) {
-                let _ = outbox.send(Notification::new(SETTLED_NOTIFICATION.into(), params));
+            for mut params in publish(&mut HashMap::default(), analysis, &records, &root, &open) {
+                params.version = version_of(&versions, &params.uri);
+                let mut params = serde_json::to_value(params).unwrap_or_default();
+                if all {
+                    params["run"] = analysis.build_runs.into();
+                    params["runs"] = runs.into();
+                }
+                notify_to(&outbox, Notification::new(SETTLED_NOTIFICATION.into(), params));
             }
+            since.set(std::time::Instant::now());
         })
     }
 
@@ -1475,7 +1515,11 @@ impl Engine {
             if self.cancelled {
                 return run;
             }
-            if self.runs.get(&root_key).is_some_and(|r| r.reads.contains(&key)) {
+            // A root that read the file before and stopped at a budget this time
+            // stays its owner: run alone, the file's references are all undefined.
+            let stopped = |a: &Analysis| a.exhausted || a.limits.iter().any(|h| matches!(h.key, "seconds" | "memory"));
+            let owner = self.owners.get(&key).is_some_and(|o| canonical(o) == root_key);
+            if self.runs.get(&root_key).is_some_and(|r| r.reads.contains(&key) || owner && stopped(&r.analysis)) {
                 self.orphans.remove(&key);
                 self.owners.insert(key, root);
                 return run;
@@ -1966,6 +2010,9 @@ impl Engine {
             }
             EngineMsg::Style(code, choice, reply) => {
                 let _ = reply.send(self.answer_style(code, choice));
+            }
+            EngineMsg::NewDocument(params, reply) => {
+                let _ = reply.send(crate::lsp::templates::request(&params, &self.cfg.templates));
             }
             EngineMsg::ExecuteCommand(body, reply) => {
                 // An open document's own analysis answers; another file is run.

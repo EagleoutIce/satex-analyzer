@@ -1811,6 +1811,8 @@ pub struct Machine<'a> {
     pub(crate) pressure: u8,
     /// The last language's patterns [`crate::engine::hyph`] parsed, by their text.
     pub(crate) hyph_cache: Option<(Rc<[Token]>, Rc<crate::engine::hyph::Patterns>)>,
+    /// The one-of tokens a walk into their texts is inside of ([`Machine::one_of_nested`]).
+    pub(crate) one_of_open: explore::Open,
     /// The interned names sorted forwards and backwards ([`Machine::bound_shaped`]).
     pub(crate) name_index: Rc<std::cell::RefCell<NameIndex>>,
     /// The paragraphs' recorded item lists, for the line breaker.
@@ -3032,6 +3034,7 @@ impl<'a> Machine<'a> {
             pressure: 0,
             hyph_cache: None,
             name_index: Default::default(),
+            one_of_open: Default::default(),
             kp: Default::default(),
             degraded_at: None,
             out: Analysis {
@@ -3596,8 +3599,11 @@ impl<'a> Machine<'a> {
                 .chain(analysis.facts.defs.iter().map(|d| d.name))
                 .map(|n| analysis.interner.name(n))
                 .collect();
+            // A line that names nothing (counttexruns' run count) is data a `\read`
+            // takes as it stands: what the run made of it is not seen here.
             let reads = |line: &str| {
-                referenced.iter().any(|key| line.contains(key.as_str()))
+                !line.trim().is_empty() && !line.contains('\\')
+                    || referenced.iter().any(|key| line.contains(key.as_str()))
                     || line.split('\\').skip(1).any(|cs| {
                         let end = cs.find(|c: char| !(c.is_ascii_alphabetic() || c == '@')).unwrap_or(cs.len());
                         end > 0 && expanded.contains(&cs[..end])
@@ -5524,14 +5530,16 @@ will look undefined",
                 }
                 Some(Frame::Pseudo { mouth, at, eof, pos }) => {
                     let mut load = false;
-                    let next = match Rc::make_mut(mouth).next_with(catcodes, &mut out.interner, *end_line) {
-                        Some(t) => Some(Token::new(t.tok, *at)),
+                    let mouth = Rc::make_mut(mouth);
+                    let next = match mouth.next_with(catcodes, &mut out.interner, *end_line) {
+                        Some(t) => Some((Token::new(t.tok, *at), mouth.written.take(), mouth.digit.take())),
                         None => {
                             load = *pos == 0 && eof.is_empty();
-                            eof.get(*pos).copied().inspect(|_| *pos += 1)
+                            eof.get(*pos).copied().inspect(|_| *pos += 1).map(|t| (t, None, None))
                         }
                     };
-                    if let Some(t) = next {
+                    if let Some((t, written, digit)) = next {
+                        let t = self.read_back(t, written, digit);
                         self.source = Some(self.pseudo_file);
                         self.last_file = None;
                         return Some(t);
@@ -5600,11 +5608,7 @@ will look undefined",
                         if let Some(c) = unknown {
                             self.unknown_chars.insert(t.span, c);
                         }
-                        let t = match (written, digit) {
-                            (Some((class, one)), _) => self.unknown_text(Unk::Class(class, one, None, &[]), t.span),
-                            (_, Some(c)) => self.written_digit(c, t.span),
-                            _ => t,
-                        };
+                        let t = self.read_back(t, written, digit);
                         // A letter or an other character either way: one of the two tokens.
                         let plain = (1 << Catcode::Letter as u8) | (1 << Catcode::Other as u8);
                         let chars = unknown.filter(|&c| self.catcodes.cats(c) & !plain == 0);
@@ -10338,11 +10342,38 @@ will look undefined",
     /// holds the token, and its text is read unexpanded to its end, its
     /// `\fi`s beyond its own conditionals closing what opened since it began.
     pub(crate) fn read_unknown(&mut self, span: Span) {
+        self.read_unknown_from(span, false);
+    }
+
+    /// [`Machine::read_unknown`]. `fresh`: the cut dropped no expansion in
+    /// flight, so the scan reads its own text next. The braces and characters
+    /// it copies before its first expandable token are kept as TeX copies
+    /// them, and the unknown token stands for the rest: a cut keeps the
+    /// bracket structure of the scan (`\expanded{{…}}` stays one group).
+    pub(crate) fn read_unknown_from(&mut self, span: Span, fresh: bool) {
         let unknown = self.unknown_text(Unk::Any, span);
         let body = matches!(self.unit, Unit::Body { .. });
-        let Some(acc) = self.scans.last_mut().filter(|_| body || matches!(self.unit, Unit::Expand)) else {
+        let Some(acc) = self.scans.last().filter(|_| body || matches!(self.unit, Unit::Expand)) else {
             return self.push_tokens(Rc::from(vec![unknown]));
         };
+        let (base, mut depth, mut own) = (acc.base, acc.depth, acc.own);
+        let mut kept = Vec::new();
+        while fresh && self.text_levels() <= base {
+            let Some(t) = self.read(false) else { break };
+            match t.tok {
+                Tok::Chr(_, Catcode::Begin) if body => (depth, own) = (depth + 1, own + 1),
+                Tok::Chr(_, Catcode::End) if body && depth > 0 => (depth, own) = (depth - 1, own.saturating_sub(1)),
+                Tok::Chr(_, Catcode::Letter | Catcode::Other | Catcode::Space) => {}
+                _ => {
+                    self.unread(t);
+                    break;
+                }
+            }
+            kept.push(t);
+        }
+        let acc = self.scans.last_mut().expect("the scan is in flight");
+        acc.tail.extend(kept);
+        (acc.depth, acc.own) = (depth, own);
         acc.tail.push(unknown);
         let (base, own, mut depth) = (acc.base, acc.conds, acc.depth);
         let (mut pops, mut closers) = (0, Vec::new());
@@ -12867,15 +12898,34 @@ will look undefined",
             Frame::Returned(tokens) => Some(&tokens[..]),
             _ => None,
         });
-        let (mut sum, mut bounded) = (0, false);
-        for t in lists.flatten() {
-            match self.text_len(*t) {
-                Some(n) => (sum, bounded) = (sum + n, true),
-                None if self.typed_shape(*t).is_none() && t.cs() != Some(self.unknown) => sum += 1,
-                None => return None,
-            }
-        }
+        let (sum, bounded) = self.tokens_bound(lists.flatten())?;
         bounded.then_some(sum)
+    }
+
+    /// The most tokens `text` may hold and whether unknown text is among
+    /// them: typed text by its bound, one of several texts by the longest.
+    fn tokens_bound<'t>(&self, text: impl Iterator<Item = &'t Token>) -> Option<(u32, bool)> {
+        let (mut sum, mut bounded) = (0u32, false);
+        for t in text {
+            let n = match self.text_len(*t) {
+                Some(n) => n,
+                None => match self.one_of_nested(*t) {
+                    explore::Nested::Open(inner) => {
+                        let lens: Option<Vec<u32>> =
+                            inner.texts.iter().map(|m| Some(self.tokens_bound(m.iter())?.0)).collect();
+                        lens?.into_iter().max().unwrap_or(0)
+                    }
+                    explore::Nested::No if self.typed_shape(*t).is_none() && t.cs() != Some(self.unknown) => {
+                        sum = sum.saturating_add(1);
+                        continue;
+                    }
+                    // Unknown text, or a text that holds itself: no bound.
+                    _ => return None,
+                },
+            };
+            (sum, bounded) = (sum.saturating_add(n), true);
+        }
+        Some((sum, bounded))
     }
 
     fn pending_in(input: &Input) -> Vec<Token> {
@@ -14216,19 +14266,22 @@ will look undefined",
         let mut out = Vec::new();
         while let Some(mut t) = mouth.next_with(&self.catcodes, &mut self.out.interner, self.end_line) {
             t.span = at;
-            // Text a run wrote of a known class reads back as that class, as from a file.
-            if let Some((class, one)) = mouth.written.take() {
-                t = self.unknown_text(Unk::Class(class, one, None, &[]), at);
-            }
-            if let Some(c) = mouth.digit.take() {
-                t = self.written_digit(c, at);
-            }
-            out.push(t);
+            out.push(self.read_back(t, mouth.written.take(), mouth.digit.take()));
         }
         out
     }
 
-    /// An unknown digit a run wrote, read where some digit is not of
+    /// A token the mouth read from a file, a line or a `\scantokens` pseudo
+    /// file: text the run wrote of a known class (`written`) reads back as
+    /// that class, an unknown digit (`digit`) as [`Machine::written_digit`].
+    fn read_back(&mut self, t: Token, written: Option<(TextClass, bool)>, digit: Option<char>) -> Token {
+        match (written, digit) {
+            (Some((class, one)), _) => self.unknown_text(Unk::Class(class, one, None, &[]), t.span),
+            (_, Some(c)) => self.written_digit(c, t.span),
+            _ => t,
+        }
+    }
+
     /// category 12: one of the digits of another category now, each as it
     /// reads (tex.web § 343), or the unknown digit for those still 12.
     fn written_digit(&mut self, c: char, span: Span) -> Token {
@@ -14893,7 +14946,7 @@ will look undefined",
         if members.len() > limit {
             return false;
         }
-        for s in self.bound_shaped(&prefix, &suffix) {
+        for s in self.bound_names(&prefix, &suffix) {
             let name = self.out.interner.name(s);
             if self.is_unknown_name(s) || !gap_fits(&name[prefix.len()..name.len() - suffix.len()], gap, num) {
                 continue;
@@ -16715,6 +16768,10 @@ impl Machine<'_> {
     /// covering each of `texts`; any control sequence where they name too
     /// many. Untyped text counts as the widest class. Braces are balanced
     /// ones, as in every argument.
+    /// A one-of text may hold its own token (a join of passes): that member
+    /// adds what the cover being made already holds, so it counts as text of
+    /// unknown length, the least fixpoint. Past `limits.meaning_set` nested
+    /// one-of tokens there is no cover ([`Machine::one_of_nested`]).
     fn cover(&self, texts: &[&[Token]]) -> Option<(TextClass, bool, Option<u32>, Vec<Sym>)> {
         let syms = self.typed_syms.clone().unwrap_or_default();
         let typed = crate::engine::env::typed!(self, syms);
@@ -16743,14 +16800,19 @@ impl Machine<'_> {
                     }
                     // One of several texts: what covers each of them, so the
                     // control sequences they hold stay in the cover.
-                    _ if let Some(members) = self.one_of_members(*t) => {
-                        let members: Vec<&[Token]> = members.iter().map(|m| &m[..]).collect();
-                        let (c, s, k, named) = self.cover(&members)?;
-                        cs.extend(named);
-                        (c, k, s)
-                    }
-                    (Tok::Cs(_), None) => (TextClass::WIDE, None, false),
-                    (tok, None) => (TextClass::of(tok), Some(1), true),
+                    _ => match self.one_of_nested(*t) {
+                        explore::Nested::Again => (TextClass::EMPTY, None, false),
+                        explore::Nested::Deep => return None,
+                        explore::Nested::Open(inner) => {
+                            let members: Vec<&[Token]> = inner.texts.iter().map(|m| &m[..]).collect();
+                            let (c, s, _, named) = self.cover(&members)?;
+                            cs.extend(named);
+                            // Its length is not kept: a join of loop passes would grow it every pass.
+                            (c, None, s)
+                        }
+                        explore::Nested::No if t.cs().is_some() => (TextClass::WIDE, None, false),
+                        explore::Nested::No => (TextClass::of(t.tok), Some(1), true),
+                    },
                 };
                 some |= s;
                 class = class.union(c);
@@ -16993,7 +17055,7 @@ impl Machine<'_> {
         };
         let bound = |m: &Self, s: Sym| m.env.slot(s).filter(|b| !matches!(b.meaning, Meaning::Undefined)).cloned();
         let limit = self.env.sets.text_names;
-        let reached: Vec<(Sym, Binding)> = (self.bound_shaped(prefix, suffix).into_iter())
+        let reached: Vec<(Sym, Binding)> = (self.bound_names(prefix, suffix))
             .filter(|&s| !self.out.interner.own(s) && spells(self.name(s)))
             .filter_map(|s| Some((s, bound(self, s)?)))
             .take(limit + 1)
@@ -17087,6 +17149,16 @@ impl Machine<'_> {
         found.into_iter().map(Sym).collect()
     }
 
+    /// [`Machine::bound_shaped`] one by one, for a reader that stops at a
+    /// bound: a family with no known part is every bound name, listed as far
+    /// as read and not swept.
+    fn bound_names<'s>(&'s self, prefix: &str, suffix: &str) -> Box<dyn Iterator<Item = Sym> + 's> {
+        if prefix.is_empty() && suffix.is_empty() {
+            return Box::new((0..self.out.interner.len() as u32).map(Sym).filter(|&s| self.env.slot(s).is_some()));
+        }
+        Box::new(self.bound_shaped(prefix, suffix).into_iter())
+    }
+
     /// The one control sequence `\csname` builds from partly unknown text.
     /// Around one number's digits it is that number's own name: what was
     /// defined under it stays, until a name it may also be is defined.
@@ -17150,7 +17222,11 @@ impl Machine<'_> {
         num: Option<crate::engine::value::Num>,
     ) -> Option<Vec<Meaning>> {
         let mut all = self.wild.overlap_meanings(prefix, suffix)?;
-        for s in self.bound_shaped(prefix, suffix) {
+        for s in self.bound_names(prefix, suffix) {
+            // More than a name may hold: any, whatever the rest of the family means.
+            if all.len() >= usize::from(self.limits.meaning_set) {
+                return None;
+            }
             let name = self.out.interner.name(s);
             if !gap_fits(&name[prefix.len()..name.len() - suffix.len()], class, num) || self.is_unknown_name(s) {
                 continue;
@@ -18109,5 +18185,110 @@ mod kp_tests {
         assert_eq!(text(&mut copy, &[1, 2, 3, 4]), first);
         assert_eq!(text(&mut copy, &[1, 2, 7]), apart);
         assert_eq!(m.kp_list(first[3]), [1, 2, 3, 4].map(Kp::Penalty));
+    }
+}
+
+/// [`Machine::cover`] of one-of tokens, tested here: the tokens come from joins.
+#[cfg(test)]
+mod cover_tests {
+    use super::{Binding, Config, Machine, Meaning, Rc};
+    use crate::engine::tex::{Catcode, Tok, Token};
+
+    /// Intuition: a one-of token's text may hold that token again (a join of
+    /// loop passes) or one-of tokens nested past any bound, and its cover
+    /// must still end: a cycle adds nothing new, a nesting past
+    /// `limits.meaning_set` has no cover. Pins the unbounded recursion into
+    /// one-of members that overflowed the stack on a beamer document.
+    #[test]
+    fn the_cover_of_a_one_of_holding_itself_ends() {
+        let cfg = Config {
+            load: crate::project::config::Load { format: false, ..Default::default() },
+            texmf: crate::project::config::Texmf { kpsewhich: false, ..Default::default() },
+            ..Config::default()
+        };
+        let mut m = Machine::new(&cfg, std::path::PathBuf::new());
+        let chr = |c| Token::new(Tok::Chr(c, Catcode::Letter), Default::default());
+        let one = m.one_of(vec![Rc::from([chr('a')]), Rc::from([chr('b')])], Default::default());
+        let sym = one.cs().expect("a one-of token is a name");
+        // Its first text now holds the token itself.
+        let mut binding = Binding::builtin(Meaning::Unknown);
+        let texts: [Rc<[Token]>; 2] = [Rc::from([one, chr('a')]), Rc::from([chr('b')])];
+        binding.may = Some(texts.into_iter().map(super::explore::text_meaning).collect::<Vec<_>>().into());
+        m.env.constant(sym, binding);
+        let (class, _, len, _) = m.cover(&[&[one]]).expect("a cover");
+        assert!(class.meets(crate::engine::tex::TextClass::of(Tok::Chr('a', Catcode::Letter))));
+        assert_eq!(len, None, "a text holding itself has no length bound");
+        // Nested one level more per pass, past the bound: no cover, no crash.
+        let mut nested = one;
+        for c in 0..usize::from(m.limits.meaning_set) + 4 {
+            let other = char::from(b'c' + (c % 20) as u8);
+            nested = m.one_of(vec![Rc::from([nested, chr(other)]), Rc::from([chr(other)])], Default::default());
+        }
+        assert!(m.cover(&[&[nested]]).is_none());
+    }
+
+    /// Intuition: a repetition (`text*`, a join of loop passes) is a one-of
+    /// token whose own text holds it again, so whatever walks one-of texts
+    /// must end on it. Every primitive is run with one as its operands (and
+    /// with one-of tokens nested past `limits.meaning_set`), on a 2 MiB stack: a walk without a cycle guard overflows it, which ends
+    /// the test binary. Pins that class for all readers at once.
+    #[test]
+    fn every_primitive_ends_on_a_text_that_holds_itself() {
+        let run = || {
+            let cfg = Config {
+                load: crate::project::config::Load { format: false, ..Default::default() },
+                texmf: crate::project::config::Texmf { kpsewhich: false, ..Default::default() },
+                ..Config::default()
+            };
+            let mut base = Machine::new(&cfg, std::path::PathBuf::new());
+            let chr = |c, cat| Token::new(Tok::Chr(c, cat), Default::default());
+            let star = base.repeat_token(&[chr('a', Catcode::Letter)], Default::default());
+            let either = base.one_of(
+                vec![Rc::from([star, chr('1', Catcode::Other)]), Rc::from([chr('2', Catcode::Other), star])],
+                Default::default(),
+            );
+            // Nested a level per loop pass, past `limits.meaning_set`.
+            let mut deep = either;
+            for c in 0..usize::from(base.limits.meaning_set) * 4 {
+                let digit = chr(char::from(b'0' + (c % 10) as u8), Catcode::Other);
+                deep = base.one_of(vec![Rc::from([deep, digit]), Rc::from([digit])], Default::default());
+            }
+            let (open, close, dot) = (chr('{', Catcode::Begin), chr('}', Catcode::End), chr('.', Catcode::Other));
+            let name = |m: &mut Machine, n: &str| Token::new(Tok::Cs(m.intern(n)), Default::default());
+            // A macro that reads to a delimiter, so the scans meet the operand too.
+            let reader = name(&mut base, "reader");
+            let (relax, def, edef, x) =
+                (name(&mut base, "relax"), name(&mut base, "def"), name(&mut base, "edef"), name(&mut base, "x"));
+            let (hash, one, two) = (chr('#', Catcode::Param), chr('1', Catcode::Other), chr('2', Catcode::Other));
+            let text = [def, reader, hash, one, dot, hash, two, relax, open, hash, two, hash, one, close];
+            base.push_tokens(Rc::from(text));
+            while base.command() {}
+            assert!(matches!(base.env.meaning(reader.cs().expect("a name")), Meaning::Macro(_)));
+            let mut names: Vec<&String> =
+                crate::engine::builtins::primitive_names(base.out.plugins.engine).keys().collect();
+            names.sort();
+            for prim in names {
+                for o in [star, either, deep] {
+                    let cs = name(&mut base, prim);
+                    let layouts: [&[Token]; 4] = [
+                        &[cs, o, o, open, o, close, o, relax, relax],
+                        &[cs, open, o, close, open, o, close, o, relax, relax],
+                        &[edef, x, open, cs, o, o, close, x, relax],
+                        &[reader, o, cs, o, dot, o, cs, relax, relax],
+                    ];
+                    for layout in layouts {
+                        let mut m = base.clone();
+                        m.push_tokens(Rc::from(layout));
+                        let mut steps = 0;
+                        while steps < STEPS && m.command() {
+                            steps += 1;
+                        }
+                    }
+                }
+            }
+        };
+        /// Commands run per layout: each is about ten tokens.
+        const STEPS: u32 = 64;
+        std::thread::Builder::new().stack_size(2 << 20).spawn(run).expect("a thread").join().expect("no panic");
     }
 }

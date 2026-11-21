@@ -249,6 +249,11 @@ fn home(dir: &Path) -> &Path {
     dir.ancestors().last().unwrap_or(dir)
 }
 
+/// `nice`, where this machine has it.
+pub(crate) fn nice() -> Option<PathBuf> {
+    nice_of(&NICE)
+}
+
 /// The first of `candidates` that is an absolute path to a file.
 fn nice_of(candidates: &[&str]) -> Option<PathBuf> {
     candidates.iter().map(PathBuf::from).find(|p| p.is_absolute() && p.is_file())
@@ -285,6 +290,9 @@ pub(crate) fn detached(exe: &Path, nice: Option<&Path>, breakaway: bool) -> std:
             None => std::process::Command::new(exe),
         };
         command.process_group(0);
+        // the browser build has no process groups (cli::group is native only)
+        #[cfg(not(target_os = "emscripten"))]
+        crate::cli::group::alone(&mut command);
         command
     }
     #[cfg(windows)]

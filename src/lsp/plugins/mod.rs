@@ -7,6 +7,7 @@
 //! lists them.
 
 mod bibliography;
+mod class;
 pub(super) use bibliography::op as bib_op;
 mod color;
 mod environment;
@@ -161,6 +162,7 @@ pub(super) static PLUGINS: &[&dyn TypePlugin] = &[
     &page::Page,
     &font::Font,
     &tagging::Tagged,
+    &class::Class,
     &incremental::CommentEdit,
     &incremental::WhitespaceEdit,
     &incremental::Typing,

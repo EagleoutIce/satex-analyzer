@@ -14,8 +14,9 @@ Tools (all with the clock pinned by SOURCE_DATE_EPOCH, FORCE_SOURCE_DATE=1):
   latexmk      latexmk -pdf|-lualatex|-xelatex
   engine       the engine, rerun as latexmk would: BibTeX/Biber/makeindex on changed input,
                again while the build files change or the log asks, at most 5 passes
-  satex        satex compile --system satex, explaining the log (the analysis where it needs one)
-  satex-build  the same with compile.explain=false: the PDF only
+  satex        satex compile --system satex as it is by default: the log explained by rules at once
+               (the analysis runs aside for the next call), a pdfTeX waiting for the next build
+  satex-build  the same with compile.explain=false and compile.warm=false: the PDF only, no helper left
   satex-warm   satex-build with compile.warm=true: a pdfTeX waits on its format for the next build
 Scenarios:
   cold  a fresh copy of the document's directory, no build files. Caches that exist: the OS file
@@ -165,7 +166,7 @@ def build(tool, satex, dir, file, job, engine, env):
         tools = len(re.findall(r"Run number \d+ of rule '(?:bibtex|biber|makeindex)", out))
         return wall, code, passes, tools, None, out
     sets = [f"engine={engine}", f"clock={CLOCK}"]
-    sets += {"satex": [], "satex-build": ["compile.explain=false"],
+    sets += {"satex": [], "satex-build": ["compile.explain=false", "compile.warm=false"],
              "satex-warm": ["compile.explain=false", "compile.warm=true"]}[tool]
     cmd = [satex, "compile", "--system", "satex", "--stats", "--format", "json", "--color", "never"]
     cmd += [a for s in sets for a in ("--set", s)] + ["-f", file]
@@ -176,8 +177,23 @@ def build(tool, satex, dir, file, job, engine, env):
     return wall, code, passes, None, analysis if tool == "satex" else False, out
 
 
+def stop_aside(dir, job):
+    """Stops the analysis a `satex compile` left running aside (it explains the build for the next
+    call): its CPU and memory are not this run's, and fresh copies would pile them up."""
+    rec = dir / ".satex-build" / f"{job}.explaining"
+    for _ in range(20):  # it names itself as it starts
+        try:
+            os.kill(int(rec.read_text().strip()), signal.SIGTERM)
+            break
+        except (OSError, ValueError):
+            if not (dir / ".satex-build" / f"{job}.explain").exists():
+                break
+            time.sleep(0.01)
+    reap()
+
+
 def stop_warm(dir):
-    rec = dir / ".satex-build" / "mirror" / ".satex-build" / "warm" / "engine"
+    rec = dir / ".satex-build" / "warm" / "engine"
     if rec.exists():
         try:
             os.kill(int(rec.read_text().split()[0]), signal.SIGTERM)
@@ -253,6 +269,7 @@ def cell(args, doc, engine, group, tools, env, loads):
         fresh(src_dir, d, names)
         build(tool, args.satex, d, file, job, engine, env)
         stop_warm(d)
+        stop_aside(d, job)
     for scenario in args.scenarios:
         samples = {t: [] for t in tools}
         dirs = {t: work / scenario / t for t in tools}
@@ -260,6 +277,8 @@ def cell(args, doc, engine, group, tools, env, loads):
             for t in tools:
                 fresh(src_dir, dirs[t], names)
                 build(t, args.satex, dirs[t], file, job, engine, env)
+                if t == "satex":
+                    stop_aside(dirs[t], job)
         for rep in range(reps):
             for t in tools:  # interleaved, so a noisy minute hits every tool
                 d = dirs[t]
@@ -272,6 +291,8 @@ def cell(args, doc, engine, group, tools, env, loads):
                 with Meter() as m:
                     wall, code, passes, ntools, analysis, out = build(t, args.satex, d, file, job, engine, env)
                     m.stop()
+                if t == "satex":
+                    stop_aside(d, job)
                 pdf = d / f"{job}.pdf"
                 ok = code != "timeout" and pdf.exists()
                 # the PDF's last write: satex explains the log after it, the editor shows it at once
@@ -324,7 +345,7 @@ def geomean(xs):
     return round(statistics.geometric_mean(xs), 2) if xs else None
 
 
-def summary(runs, tool="satex-build"):
+def summary(runs, tool="satex"):
     by = {(r["doc"], r["engine"], r["scenario"], r["tool"]): r for r in runs}
 
     def speedup(of):
@@ -399,8 +420,8 @@ def main():
              "repeats": args.repeats, "tools": {
                  "latexmk": "latexmk -pdf|-lualatex|-xelatex -interaction=nonstopmode",
                  "engine": "the engine rerun as latexmk would: BibTeX/Biber/makeindex on changed input, again while the build files change",
-                 "satex": "satex compile --system satex: own fixpoint, preamble format, no pass when nothing read changed; explains the log, with the analysis where a message needs it",
-                 "satex-build": "satex compile --system satex, compile.explain=false: the PDF only",
+                 "satex": "satex compile --system satex, its defaults: own fixpoint, preamble format, no pass when nothing read changed, a pdfTeX waiting for the next build; the log explained by rules at once, by the analysis (run aside) on the next call",
+                 "satex-build": "satex compile --system satex, compile.explain=false, compile.warm=false: the PDF only, no helper left running",
                  "satex-warm": "satex-build with compile.warm=true: a pdfTeX waits on its format for the next build"},
              "scenarios": {
                  "cold": "fresh copy, no build files; OS file cache, font cache and satex package caches primed",

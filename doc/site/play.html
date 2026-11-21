@@ -28,7 +28,7 @@
         <div class="treehead"><span>Project</span>
           <span class="menu-wrap"><button id="play-upload" class="add" type="button" aria-haspopup="menu" title="a new file, or files, a folder or a .zip from your computer; you can also drop them on the page" aria-label="add files">
             <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 3v10M3 8h10"/></svg></button>
-            <span id="play-upmenu" class="ctx" role="menu" hidden><button role="menuitem" data-pick="new">New file…</button><button role="menuitem" data-pick="files">Upload files or .zip…</button><button role="menuitem" data-pick="folder">Upload folder…</button></span></span></div>
+            <span id="play-upmenu" class="ctx" role="menu" hidden><button role="menuitem" data-pick="new">New file…</button><button role="menuitem" data-pick="document">New document…</button><button role="menuitem" data-pick="files">Upload files or .zip…</button><button role="menuitem" data-pick="folder">Upload folder…</button></span></span></div>
         <div id="play-files-tree" role="tree" aria-label="the project's files"></div>
         <details open class="sect tree-sect" id="play-outline"><summary>Outline <b id="outline-count"></b></summary>
           <div id="outline-body" class="outline grow"><p class="muted">Parts, labels and bibliography of the document, after each check.</p></div></details>
@@ -92,6 +92,18 @@
         <div id="lib-kinds" class="lib-kinds" role="group" aria-label="which kind of name"></div>
         <ul id="lib-list" class="lib-list"><li class="muted">Names in force, after each check.</li></ul>
       </div></dialog>
+    <dialog id="play-newdoc" class="cache-dialog newdoc-dialog" aria-labelledby="nd-title">
+      <header><h3 id="nd-title">New document</h3><button type="button" class="ghost small" id="nd-close" aria-label="close">✕</button></header>
+      <p class="muted cache-note">A new project in place of this one: a provider's template, or another project from GitHub. Once it runs, <b>Class options…</b> on <code>\documentclass</code> offers every option the class declares.</p>
+      <div class="lib-bar"><span id="nd-tabs" class="lib-kinds" role="group" aria-label="where from"><button type="button" class="lib-kind" data-tab="template" aria-pressed="true">Template</button><button type="button" class="lib-kind" data-tab="github" aria-pressed="false">GitHub</button></span></div>
+      <div id="nd-template" class="nd-pane"><label class="nd-row"><span>Template</span><select id="nd-pick" class="dropdown" aria-label="template"></select></label>
+        <div id="nd-opts" class="nd-opts" role="group" aria-label="common options"></div>
+        <label class="nd-row"><span>Other options</span><input id="nd-more" type="text" spellcheck="false" placeholder="key=value, …"></label>
+        <div class="nd-row"><span>Header line</span><button type="button" class="small" id="nd-copy" title="copy the header line">Copy</button></div><pre id="nd-header" class="nd-header" aria-live="polite"></pre></div>
+      <div id="nd-github" class="nd-pane" hidden><label class="nd-row"><span>Repository</span><input id="nd-url" type="url" spellcheck="false" placeholder="https://github.com/owner/repo or …/tree/branch/folder"></label>
+        <div class="nd-row"><button type="button" class="small" id="nd-fetch">List files</button><span class="muted">Public repositories, read in this browser. A .zip goes through Upload.</span></div>
+        <ul id="nd-files" class="nd-files"></ul></div>
+      <div class="try-bar"><span id="nd-status" class="muted"></span><button type="button" id="nd-create" class="runbtn">Create</button></div></dialog>
     <dialog id="play-try" class="cache-dialog try-dialog" aria-labelledby="try-title">
       <header><h3 id="try-title">Try</h3><button type="button" class="ghost small" id="try-close" aria-label="close">✕</button></header>
       <p class="muted cache-note" id="try-note">Read right after <code>\begin{document}</code> of this document. The file stays as it is.</p>

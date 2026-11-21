@@ -1415,13 +1415,29 @@
     }
     // The `}` of a `\begin{name}` the document does not close yet adds its
     // `\end{name}` on the next line; the cursor stays for the arguments.
+    // A `}` that ends an `\end{name}` typed by hand where the environment is closed already (the
+    // `\end` the `\begin`'s `}` wrote below): that later `\end` goes, so the one typed closes it.
+    const endTyped = (v, from, line) => {
+      const name = line.text.slice(0, from - line.from).match(/\\end\s*\{([^{}%]*)$/)?.[1].trim();
+      if (!name) return false;
+      const doc = v.state.doc.toString(), code = doc.replace(/(^|[^\\])%.*$/gm, '$1'), quoted = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const count = (kind) => code.match(new RegExp(`\\\\${kind}\\s*\\{\\s*${quoted}\\s*\\}`, 'g'))?.length ?? 0;
+      if (count('end') < count('begin')) return false;
+      // the next `\end{name}` after the caret, on a line of its own
+      const re = new RegExp(`^[ \\t]*\\\\end\\s*\\{\\s*${quoted}\\s*\\}[ \\t]*$`, 'm');
+      const rest = doc.slice(line.to + 1), m = re.exec(rest);
+      if (!m || /\\begin\s*\{/.test(rest.slice(0, m.index).replace(/(^|[^\\])%.*$/gm, '$1'))) return false;
+      const a = line.to + 1 + m.index, b = Math.min(doc.length, a + m[0].length + 1);
+      v.dispatch({ changes: [{ from, insert: '}' }, { from: a, to: b }], selection: { anchor: from + 1 }, userEvent: 'input.type' });
+      return true;
+    };
     const closeEnvironment = view.EditorView.inputHandler.of((v, from, to, text) => {
       if (text !== '}' || from !== to || state.file in state.ro) return false;
       const s = v.state, line = s.doc.lineAt(from);
       // a `}` typed before the `}` a completion or the editor wrote, where the line's braces are closed, steps over it
       const over = () => { if (!stepsOver(line.text, from - line.from)) return false; v.dispatch({ selection: { anchor: from + 1 }, userEvent: 'select' }); return true; };
       const name = line.text.slice(0, from - line.from).match(/\\begin\s*\{([^{}%]*)$/)?.[1].trim();
-      if (!name) return over();
+      if (!name) return endTyped(v, from, line) || over();
       const code = s.doc.toString().replace(/(^|[^\\])%.*$/gm, '$1'), quoted = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
       const count = (kind) => code.match(new RegExp(`\\\\${kind}\\s*\\{\\s*${quoted}\\s*\\}`, 'g'))?.length ?? 0;
       // an editor-closed `}` already completes this `\begin`
@@ -1713,7 +1729,7 @@
         const [from, to] = span(d.range);
         return {
           from, to: Math.min(Math.max(to, from + 1), doc().length), severity: sev(d),
-          message: d.message, source: d.code,
+          message: d.message, source: d.code, ...(d.data?.provisional ? { markClass: 'cm-provisional' } : {}),
           renderMessage: () => Object.assign(document.createElement('span'), { innerHTML: inline(d.message) }),
           actions: [...d.fixes.map((f, j) => ({ name: `${j ? 'Other fix' : 'Fix'} (${f.safety})`, apply: () => fix(f) })), { name: 'Explain rule', apply: () => unfold(i, false) }],
         };
@@ -2704,6 +2720,22 @@
     if (target === uri() || !act.phase || act.phase === 'Waiting') render();
     drawTree();
   }
+  /** The build run whose findings show before the build's last one (`lsp.provisional`): {run, runs}, null once the last run's came. */
+  var provisionalRun = null; // var: render may run before this line
+  /** A build run's findings while the next run goes: shown at once, dimmed where a later run may change them, no fixes
+   * (asking for them would wait for the run). The build's last run replaces them through `publish`. */
+  function showProvisional(p) {
+    if (outdated(p) || writtenFiles.some((f) => p.uri.endsWith(`/${f.name}`))) return;
+    for (const d of p.diagnostics) [d.number, d.code] = [d.code, d.data?.rule ?? d.code];
+    // a run that lacked a package is never shown (`publish`); the files it probed absent are known only after the run
+    if (lackedBy(p.diagnostics.filter((d) => d.code === 'unresolved-file').map((d) => d.message), [], ranWith).length) return;
+    if (p.uri === uri()) loadingFor = '';
+    diagnostics[p.uri] = p.diagnostics.map((d) => ({ ...d, fixes: [] }));
+    diagnosticVersions[p.uri] = p.version;
+    provisionalRun = { run: p.run, runs: p.runs };
+    render();
+    drawTree();
+  }
   /** Each finding: its severity, place, rule and message once. */
   /** The findings the panel lists: the open file's, then every other project file's, each with its file. */
   let listed = [];
@@ -2727,14 +2759,16 @@
     $('fix-all').innerHTML = editableFile() ? fixAllButton('all') : '';
     // the unsafe switch only where there is something to fix
     document.querySelector('.fix-bar').hidden = !$('fix-all').innerHTML;
-    lspStatus.textContent = state.file in state.ro ? 'read-only file' : loadingFor ? `loading ${loadingFor}: the findings show once ${loadingFor.includes(', ') ? 'they are' : 'it is'} in` : listed.length ? '' : 'none';
+    const dim = provisionalRun && listed.some((d) => d.data?.provisional);
+    lspStatus.textContent = state.file in state.ro ? 'read-only file' : loadingFor ? `loading ${loadingFor}: the findings show once ${loadingFor.includes(', ') ? 'they are' : 'it is'} in` : dim ? `build run ${provisionalRun.run} of at most ${provisionalRun.runs}: the dimmed findings may change in the next run` : listed.length ? '' : 'none';
     list.classList.toggle('loading', !!loadingFor);
     markStale();
     if (pdfOverlayOn?.findings) pdfOverlay();
     typesetFindings();
     // a finding's other ways to repair it come after its fix, each a button of its own
     const fixButton = (f, j) => `<button class="small apply fix-${f.safety}" data-j="${j}" title="${escape(f.title)}">${j ? 'Other fix' : 'Fix'} (${f.safety})</button>`;
-    const item = (d, i) => `<li class="f-${sev(d)}${unfolded.has(key(d)) ? ' open' : ''}" data-i="${i}" tabindex="0">` +
+    const dimmed = (d) => d.data?.provisional ? ' data-provisional="" title="provisional: a later build run may change it"' : '';
+    const item = (d, i) => `<li class="f-${sev(d)}${unfolded.has(key(d)) ? ' open' : ''}"${dimmed(d)} data-i="${i}" tabindex="0">` +
       `<span class="msg">${d.number ? `<code class="rno" title="rule number">${escape(d.number)}</code> ` : ''}<b class="rn">${escape(d.code ?? '')}</b>: ${commandRefs(inline(d.message))}</span>` +
       `<span class="where"><b class="loc">${d.file ? `<span class="loc-file">${escape(d.file)}:</span>` : ''}${d.range.start.line + 1}:${d.range.start.character + 1}</b><span class="shape" title="${sev(d)}" aria-label="${sev(d)}"></span></span>` +
       `<span class="acts">${d.fixes.map(fixButton).join('')}${!d.file && editableFile() ? fixAllButton('rule', d.code, `Fix all ${d.code}`) : ''}<button class="small ghost why">${unfolded.has(key(d)) ? 'Hide rule' : 'Explain rule'}</button></span>` +
@@ -12444,7 +12478,101 @@
     const r = e.currentTarget.getBoundingClientRect();
     Object.assign(upMenu.style, { left: `${Math.max(4, Math.min(r.left, innerWidth - upMenu.offsetWidth - 8))}px`, top: `${r.bottom + 4}px` });
   };
-  upMenu.onclick = (e) => { const b = e.target.closest('[data-pick]'); if (!b) return; upMenu.hidden = true; if (b.dataset.pick === 'new') newFile(); else $(`play-${b.dataset.pick}`).click(); };
+  upMenu.onclick = (e) => { const b = e.target.closest('[data-pick]'); if (!b) return; upMenu.hidden = true; if (b.dataset.pick === 'new') newFile(); else if (b.dataset.pick === 'document') newDocument(); else $(`play-${b.dataset.pick}`).click(); };
+
+  // ---------------------------------------------------------------- new document
+
+  // A provider template (src/data/templates.yaml) or a GitHub repository as a new project. The server prints the
+  // header line (`satex/newDocument`): the page only picks options. A template whose files the provider must
+  // send is for `satex new` on a machine: this page has the TeX files its build ships.
+  const ND = { list: null, picked: null, files: null, asked: 0 };
+  const ndBox = $('play-newdoc'), ndSay = (m) => { $('nd-status').textContent = m; };
+  const ndOptions = () => [...$('nd-opts').querySelectorAll('input:checked')].map((i) => i.value)
+    .concat($('nd-more').value.split(',').map((x) => x.trim()).filter(Boolean));
+  async function ndHeader() {
+    const t = ND.picked, k = ++ND.asked;
+    if (!t) return;
+    const r = await lsp('satex/newDocument', { template: t.id, options: ndOptions() }).catch((e) => ({ error: String(e?.message ?? e) }));
+    if (k !== ND.asked) return;
+    $('nd-header').textContent = r?.header ?? '';
+    ndSay(r?.error ?? '');
+  }
+  function ndPick(id) {
+    const t = ND.picked = ND.list.find((x) => x.id === id);
+    const given = new Set(t.given.map((g) => g.split('=')[0]));
+    $('nd-opts').innerHTML = t.hint.map((h) => `<label class="nd-opt"><input type="checkbox" value="${escape(h)}"${given.has(h) ? ' checked' : ''}> <code>${escape(h)}</code></label>`).join('');
+    $('nd-more').value = t.given.filter((g) => !t.hint.includes(g.split('=')[0])).join(', ');
+    $('nd-header').textContent = t.header;
+    ndSay(`${t.provider}: \\${t.load}{${t.loads}}`);
+  }
+  async function newDocument() {
+    ND.list ??= await lsp('satex/templates', {});
+    if (!ND.list?.length) return toast('No templates: the language server is not ready yet');
+    $('nd-pick').innerHTML = ND.list.map((t) => `<option value="${escape(t.id)}"${t.fetch ? ' disabled' : ''}>${escape(t.name)}${t.fetch ? ' (satex new on your machine)' : ''}</option>`).join('');
+    ndPick(ND.list.find((t) => !t.fetch).id);
+    ndTab('template');
+    ndBox.showModal();
+  }
+  function ndTab(tab) {
+    for (const b of $('nd-tabs').querySelectorAll('[data-tab]')) b.setAttribute('aria-pressed', String(b.dataset.tab === tab));
+    $('nd-template').hidden = tab !== 'template';
+    $('nd-github').hidden = tab !== 'github';
+    ndBox.dataset.tab = tab;
+    ndSay('');
+  }
+  /** A public repository's files through GitHub's API and raw files (both answer a page): text files and images, capped. */
+  async function ndGithub(url) {
+    const m = url.trim().match(/^(?:https:\/\/github\.com\/)?([\w.-]+)\/([\w.-]+?)(?:\.git)?(?:\/tree\/([^/]+)(?:\/(.+?))?)?\/?$/);
+    if (!m) throw new Error('a repository is https://github.com/owner/repo');
+    const [, owner, repo, ref = 'HEAD', sub = ''] = m;
+    const r = await fetch(`https://api.github.com/repos/${owner}/${repo}/git/trees/${ref}?recursive=1`);
+    if (!r.ok) throw new Error(`GitHub answered ${r.status}${r.status === 403 ? ' (its hourly limit for this address)' : ''}`);
+    const prefix = sub ? `${sub.replace(/\/$/, '')}/` : '';
+    const blobs = (await r.json()).tree.filter((b) => b.type === 'blob' && b.path.startsWith(prefix) && !/(^|\/)\.git/.test(b.path) && (TEXT.test(b.path) || /\.(png|jpe?g|pdf|eps|svg)$/i.test(b.path)));
+    const total = blobs.reduce((n, b) => n + (b.size ?? 0), 0);
+    if (blobs.length > 400 || total > LIMIT) throw new Error(`${blobs.length} files, ${Math.round(total / 2 ** 20)} MiB: more than this page takes, use satex new --from`);
+    const files = {};
+    for (const [i, b] of blobs.entries()) {
+      ndSay(`reading ${i + 1} of ${blobs.length}: ${b.path}`);
+      const f = await fetch(`https://raw.githubusercontent.com/${owner}/${repo}/${ref}/${b.path.split('/').map(encodeURIComponent).join('/')}`);
+      if (!f.ok) throw new Error(`${b.path}: ${f.status}`);
+      files[b.path.slice(prefix.length)] = new Uint8Array(await f.arrayBuffer());
+    }
+    return { files, label: `${owner}/${repo}` };
+  }
+  $('nd-tabs').onclick = (e) => { const b = e.target.closest('[data-tab]'); if (b) ndTab(b.dataset.tab); };
+  $('nd-pick').onchange = (e) => ndPick(e.target.value);
+  $('nd-opts').onchange = ndHeader;
+  $('nd-more').oninput = ndHeader;
+  $('nd-close').onclick = () => ndBox.close();
+  $('nd-copy').onclick = () => navigator.clipboard?.writeText($('nd-header').textContent).then(() => ndSay('header line copied'), () => ndSay('select the line and press Ctrl+C'));
+  $('nd-fetch').onclick = async () => {
+    try {
+      ND.files = await ndGithub($('nd-url').value);
+      const decoder = new TextDecoder(), names = Object.keys(ND.files.files);
+      const found = roots(Object.fromEntries(names.filter((n) => TEXT.test(n)).map((n) => [n, decoder.decode(ND.files.files[n])])));
+      $('nd-files').innerHTML = names.map((n) => `<li${found[0] === n ? ' class="nd-main"' : ''}><code>${escape(n)}</code>${found[0] === n ? ' <b>main</b>' : ''}</li>`).join('');
+      ndSay(found.length ? `${names.length} files, main file ${found[0]}` : 'no file has \\documentclass and \\begin{document}');
+    } catch (e) { ND.files = null; ndSay(e.message); }
+  };
+  $('nd-create').onclick = async () => {
+    try {
+      if (ndBox.dataset.tab === 'github') {
+        if (!ND.files) return ndSay('List the files first');
+        if (manifest.local) return ndSay(`This page works on ${manifest.local.dir}: run satex new --from ${$('nd-url').value} DIR`);
+        ndBox.close();
+        return await project(ND.files.files, ND.files.label);
+      }
+      // `satex gui` works on its own folder: the project goes into a new folder beside its files
+      const into = manifest.local ? `${manifest.local.dir}/${ND.picked.id}` : null;
+      const r = await lsp('satex/newDocument', { template: ND.picked.id, options: ndOptions(), ...(into ? { dir: into } : {}) });
+      if (!r?.files) return ndSay(r?.error ?? 'the server made no project');
+      if (into) return ndSay(`Wrote ${Object.keys(r.files).length} files into ${into}: run satex gui ${into} to open it`);
+      const encoder = new TextEncoder();
+      ndBox.close();
+      await project(Object.fromEntries(Object.entries(r.files).map(([n, t]) => [n, typeof t === 'string' ? encoder.encode(t) : new Uint8Array(t)])), ND.picked.name, r.main);
+    } catch (e) { ndSay(e.message); }
+  };
   // Files dragged over the page, the editor too: the drop zone covers it until the drop,
   // Escape, a click, or the drag leaving the window.
   const drop = $('play-drop');
@@ -12780,6 +12908,9 @@
   const published = new Map();
   /** The packages the next findings wait for: a run that may have lacked one is not shown. */
   var loadingFor = ''; // var: a render may run before this line
+  /** The packages a run lacked: the files it could not resolve, those probed `absent`, those the texts name, and those still loading. */
+  const lackedBy = (unresolved, absent, saw) => self.satexViews.loads.lacked([...new Set([...missing(unresolved, true), ...absent, ...wanted_(named(projectTexts()), state.kernel, true), ...inFlight])],
+    fetchedPackages, [inFlight, background], landedAt, saw);
   async function publish(p, ended = false, final = false) {
     // of a text the server no longer has: its analysis of the newer one follows, else is asked for
     if (outdated(p)) { if (p.uri === uri() && timer === null) analyze(); return; }
@@ -12798,8 +12929,7 @@
     const absent = final ? [] : await absentBundles();
     if (seq !== published.get(p.uri) || outdated(p)) return;
     if (current && version === synced && pdfAuto?.want) pdfAutoNow();
-    const lacking = final ? [] : self.satexViews.loads.lacked([...new Set([...missing(unresolved, true), ...absent, ...wanted_(named(projectTexts()), state.kernel, true), ...inFlight])],
-      fetchedPackages, [inFlight, background], landedAt, saw);
+    const lacking = final ? [] : lackedBy(unresolved, absent, saw);
     if (lacking.length) {
       if (current) lackedKeep(lacking);
       // another file's findings come again with the open one's run
@@ -12846,7 +12976,8 @@
   function notified(m, ended = false) {
     if (m.method === 'satex/log') { if (DEBUG) for (const l of m.params) console.log(`satex: ${l}`); }
     else if (m.method === 'satex/styleCandidates') for (const c of m.params.candidates ?? []) askStyle(c);
-    else if (m.method === 'textDocument/publishDiagnostics' && m.params.uri.startsWith(`file://${state.dir}/`)) publish(m.params, ended);
+    else if (m.method === 'textDocument/publishDiagnostics' && m.params.uri.startsWith(`file://${state.dir}/`)) { provisionalRun = null; publish(m.params, ended); }
+    else if (m.method === 'satex/settled' && m.params.run && m.params.uri.startsWith(`file://${state.dir}/`)) showProvisional(m.params);
     else if (m.method === 'satex/runInfo' && m.params.uri === uri()) runInfoShow(m.params);
     // `preview`: the edited paragraph's rows, run first; the run's own rows follow
     else if (m.method === 'satex/typesetRows' && !outdated(m.params) && self.satexViews.rowsWin(tsFinal.get(m.params.uri), m.params.version, !!m.params.preview)) {

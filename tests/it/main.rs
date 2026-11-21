@@ -91,6 +91,7 @@ mod successors;
 mod support;
 mod tables;
 mod tagging;
+mod templates;
 mod termination;
 mod tex_compliance;
 mod tex_semantics;

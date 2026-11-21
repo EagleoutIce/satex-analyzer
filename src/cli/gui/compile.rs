@@ -58,7 +58,9 @@ pub fn warm(root: &Path, examples: &Path) {
                 }
                 let _one = ONE.lock().unwrap_or_else(|e| e.into_inner());
                 let mut command = Command::new(&satex);
-                command.args(["--format", "json", "compile", "-f", &main]).current_dir(&dir);
+                command
+                    .args(["--format", "json", "--set", "compile.wait=true", "compile", "-f", &main])
+                    .current_dir(&dir);
                 let wanted = || (WANTED.load(Relaxed) > 0).then(|| "a build of the page comes first".to_string());
                 if output_unless(&mut command, wanted).is_err() {
                     todo.push_back(main);
@@ -254,7 +256,10 @@ fn build(root: &Path, body: &[u8], base: Option<&Path>, runs: &mut Vec<Value>, s
     let out = run(
         runs,
         stop,
-        Command::new(&satex).args(&flags).args(["--format", "json", "compile", "-f", main]).current_dir(&ran),
+        Command::new(&satex)
+            .args(&flags)
+            .args(["--format", "json", "--set", "compile.wait=true", "compile", "-f", main])
+            .current_dir(&ran),
     )?;
     if let Some(w) = &warm {
         mirror(w, &dir).map_err(|e| format!("{}: {e}", dir.display()))?;

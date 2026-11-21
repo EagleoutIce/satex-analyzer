@@ -274,7 +274,9 @@ impl Machine<'_> {
             // ending in `\endlinechar`, `\everyeof` inserted at its end
             // (expl3's `\tl_set_rescan:Nnn` relies on that end marker).
             P::ScanTokens { text: pseudo_text } => {
+                // Unknown text in it is read back as from a file the run wrote.
                 let body = self.read_general_text();
+                let body = self.as_written(&body);
                 // etex.ch `pseudo_start`: printed to a string (tex.web § 59).
                 let escape = self.escape_char();
                 let text = crate::engine::tex::detokenize_in(
@@ -908,9 +910,12 @@ impl Machine<'_> {
         let mut out: Vec<Meaning> = Vec::new();
         for text in texts {
             let first = *text.first()?;
-            let meanings = match self.one_of_members(first) {
-                Some(nested) => self.first_meanings(&nested)?.to_vec(),
-                None => match self.let_may(first) {
+            let meanings = match self.one_of_nested(first) {
+                crate::analysis::machine::explore::Nested::Open(nested) => self.first_meanings(&nested.texts)?.to_vec(),
+                // A text that begins with its own token: the firsts of its other texts.
+                crate::analysis::machine::explore::Nested::Again => continue,
+                crate::analysis::machine::explore::Nested::Deep => return None,
+                crate::analysis::machine::explore::Nested::No => match self.let_may(first) {
                     Some(may) => may.to_vec(),
                     None if first.cs().is_some_and(|s| self.is_unknown_marker(s)) => return None,
                     None => vec![self.token_meaning(first)],
@@ -1477,8 +1482,9 @@ impl Machine<'_> {
                 flush(self, &mut run, &mut out);
                 // One of several texts prints as one of their spellings, each
                 // spelled as far as it is known.
-                if let Some(members) = self.one_of_members(t) {
-                    let texts = members.iter().map(|m| Rc::from(self.detokenize_known_runs(m))).collect();
+                // A text that holds itself, or nested too deep, prints as text of its class.
+                if let crate::analysis::machine::explore::Nested::Open(inner) = self.one_of_nested(t) {
+                    let texts = inner.texts.iter().map(|m| Rc::from(self.detokenize_known_runs(m))).collect();
                     out.push(self.one_of(texts, t.span));
                     continue;
                 }
@@ -2180,7 +2186,9 @@ impl Machine<'_> {
     /// out: that is the text TeX holds there.
     fn settled<'a>(&self, tokens: &'a [Token]) -> std::borrow::Cow<'a, [Token]> {
         let one = |t: &Token| -> Option<Vec<Token>> {
-            if let Some([text]) = self.one_of_members(*t).as_deref() {
+            if let crate::analysis::machine::explore::Nested::Open(inner) = self.one_of_nested(*t)
+                && let [text] = &inner.texts[..]
+            {
                 return Some(self.settled(text).into_owned());
             }
             let sym = t.cs()?;
@@ -5194,12 +5202,24 @@ impl Machine<'_> {
         let newline = self.env.value(newlinechar).as_int().and_then(|c| u32::try_from(c).ok()).and_then(char::from_u32);
         let to = crate::engine::tex::Selector::File { newline };
         let escape = self.escape_char();
-        // Unknown text goes to the file as one character that reads back
-        // as unknown text of its class ([`crate::engine::tex::Mouth::next_with`]).
+        let file = self.as_written(&text);
+        let line = crate::engine::tex::detokenize_in(&file, &self.out.interner, escape, &self.catcodes, to);
+        self.write_output(number, &line);
+        if number == Some(18) {
+            self.run_shell(&line);
+        }
+        if immediate {
+            self.write_facts(number, &text, true, span);
+        }
+    }
+
+    /// `text` as a file or a `\scantokens` pseudo file holds it: unknown
+    /// text is one character that reads back as unknown text of its class
+    /// ([`crate::engine::tex::Mouth::next_with`]).
+    fn as_written(&mut self, text: &[Token]) -> Vec<Token> {
         let syms = self.typed_syms();
         let typed = crate::engine::env::typed!(self, syms);
-        let file: Vec<Token> = text
-            .iter()
+        text.iter()
             .map(|t| match t.cs().is_some_and(|s| self.name(s).starts_with(crate::engine::tex::UNKNOWN_PREFIX)) {
                 true => {
                     // One of several texts: the class they share.
@@ -5213,15 +5233,7 @@ impl Machine<'_> {
                 }
                 false => *t,
             })
-            .collect();
-        let line = crate::engine::tex::detokenize_in(&file, &self.out.interner, escape, &self.catcodes, to);
-        self.write_output(number, &line);
-        if number == Some(18) {
-            self.run_shell(&line);
-        }
-        if immediate {
-            self.write_facts(number, &text, true, span);
-        }
+            .collect()
     }
 
     /// What a `\write` call records: its line, and the text as an occurrence.

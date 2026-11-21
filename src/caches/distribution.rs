@@ -47,16 +47,21 @@ pub struct Distribution {
 }
 
 impl Distribution {
+    /// The installation, as a finding names it: the same whether its index was cached or not.
     pub fn describe(&self) -> String {
         let year = self.year.map_or_else(|| "unknown".into(), |y| y.to_string());
         let format = self.format_version.as_deref().unwrap_or("unknown");
         format!(
-            "TeX Live {year}, LaTeX2e {format}, {} trees via {}, {} files indexed{}",
+            "TeX Live {year}, LaTeX2e {format}, {} trees via {}, {} files indexed",
             self.roots.len(),
             self.discovery.as_str(),
             self.indexed,
-            if self.index_cached { " (cached)" } else { "" }
         )
+    }
+
+    /// [`Distribution::describe`], and whether the index was cached: for a status line.
+    pub fn status(&self) -> String {
+        format!("{}{}", self.describe(), if self.index_cached { " (cached)" } else { "" })
     }
 }
 

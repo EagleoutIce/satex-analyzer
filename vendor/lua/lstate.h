@@ -172,6 +172,10 @@ typedef struct global_State {
   lua_Unsigned satex_writes;  /* satex: writes to state older than the run */
   unsigned int satex_epoch;  /* satex: the current run's epoch, 0 outside runs */
   unsigned int satex_epochs;  /* satex: the last epoch handed out */
+  unsigned int satex_choices;  /* satex: outcomes of the run's tests of unknowns, bit i the i-th */
+  unsigned int satex_nchoices;  /* satex: how many of them are given */
+  unsigned int satex_chosen;  /* satex: how many of them were taken */
+  lu_byte satex_asked;  /* satex: the run stopped at a test past them */
 } global_State;
 
 
@@ -216,6 +220,10 @@ struct lua_State {
                                  (o)->satex_epoch == G(L)->satex_epoch)
 #define satex_wrote(L)	cast_void(G(L)->satex_writes++)
 #define satex_write(L,o)	(satex_fresh(L,o) ? cast_void(0) : satex_wrote(L))
+/* satex: a run that was given the outcome of a test ('satex_choose') runs
+** once per outcome, so it stops before it stores into state it found. */
+#define satex_guard(L,o)	((G(L)->satex_chosen != 0 && !satex_fresh(L,o)) ? \
+                                 satex_unknown(L) : cast_void(0))
 
 
 /*

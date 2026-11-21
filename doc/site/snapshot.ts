@@ -14,7 +14,7 @@ declare global {
   }
   /** What a view hands the snapshot code: the server's printer and the edit applier. */
   interface SnapCtx {
-    print(payload: unknown): Promise<{ edits?: unknown; notes?: string[]; error?: string } | undefined>;
+    print(payload: unknown): Promise<{ edits?: unknown; notes?: string[]; error?: string; texts?: string[] } | undefined>;
     apply(edits: unknown, kept?: unknown): void;
   }
   interface Window {

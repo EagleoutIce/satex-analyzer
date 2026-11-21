@@ -27,6 +27,7 @@ widget       theorem          environment name                            manage
 widget       page             environment the run met                     the page geometry to scale: margins, paper,…  
 widget       font             environment the run met                     the document's font and base size: a class …  
 widget       tagging          environment the run met                     PDF tagging: on or off, the standard, langu…  
+widget       class            environment the run met                     the class's options as its code declares th…  
 hover        units            dimen, glue, dimen register, skip register  a length in every unit, each value a click …  
 hover        overlay          overlay specification                       the slides of its frame the material shows …  
 completion   keys             options, option key, pgf key, declared key  key list completion, family continuation an…  
@@ -196,6 +197,15 @@ The dialog draws the page to scale, both pages when the class is two-sided: the 
   - A sketch in the browser's fonts shows the change before Apply.
 - Style sets: the headings, numbering and page color saved under a name in the browser. Switching to one fills the dialog in, Apply writes it as one undo step. What the document cannot take is skipped and listed: a level it lacks, a command or color it does not define, a numbering depth past its levels, a second alignment for levels that share KOMA's `\raggedsection`.
 
+## class
+
+The options of the class, as its own code declares them: `\DeclareOption`, and the keys of its own keyval, xkeyval or kvoptions family, read from the run. "Class options…" is a lens on `\documentclass`. A style the project ships beside the main file (`acl.sty`, `icml2026.sty`) gets "Style options…" on its `\usepackage`.
+
+- Each declared option is a box to tick, the ones the document passes ticked. The common choices of a provider template come first (`hint` in `src/data/templates.yaml`).
+- Options with a value, or ones the class takes without declaring them, go in a key list field: `natbib=false, screen`.
+- The header line is the call as the snapshot printer writes it, updated as boxes change. Copy puts it on the clipboard: what a submission system asks for. Write writes it.
+- The view says the version the class's file gives (`\ProvidesClass{acmart}[2025/08/27 v2.16 …]`) and the file the run read.
+
 ## font
 
 The document's base size and main font, as the run set them: `\f@size` and the default family (`\familydefault`). "Font and size…" is a lens on `\documentclass`, and each choice is also a code action there.
@@ -284,6 +294,7 @@ The editors are [VS Code](vscode.md), [IntelliJ](intellij.md) and any client of 
 | `page` | lens, hover, view | full | full | full | partial | partial |
 | `font` | lens, actions, view | full | full | full | partial | partial |
 | `tagging` | lens, manage | full | full | full | partial | partial |
+| `class` | lens, view | full | full | full | partial | partial |
 | `comment_edit` | reuse | - | - | - | - | - |
 | `whitespace_edit` | reuse | - | - | - | - | - |
 | `typing` | reuse | - | - | - | - | - |

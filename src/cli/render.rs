@@ -968,7 +968,7 @@ pub fn summary(
         let room = terminal_width().saturating_sub(kind.as_str().len() + source.len() + 8);
         let _ = writeln!(out, "  {} {} {}", label(kind.as_str()), elide(&value, room), label(&format!("({source})")));
     }
-    let _ = writeln!(out, "  {} {}", label("installation"), analysis.distribution.describe());
+    let _ = writeln!(out, "  {} {}", label("installation"), analysis.distribution.status());
     if let Some(format) = &analysis.format {
         let _ = writeln!(
             out,

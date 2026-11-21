@@ -72,6 +72,39 @@ struct Tag {
     after: Vec<Vec<Tok>>,
 }
 
+/// The one-of tokens being walked into, innermost last. A run's own: a copy starts with none.
+#[derive(Default)]
+pub(crate) struct Open(Rc<std::cell::RefCell<Vec<Sym>>>);
+
+impl Clone for Open {
+    fn clone(&self) -> Self {
+        Open::default()
+    }
+}
+
+/// What [`Machine::one_of_nested`] finds a token to be.
+pub(crate) enum Nested {
+    /// No one-of token.
+    No,
+    /// A one-of token the walk is inside of: its texts add nothing the walk does not see already.
+    Again,
+    /// One-of tokens nested past `limits.meaning_set`: any text of its class.
+    Deep,
+    Open(Opened),
+}
+
+/// A one-of token's texts, open for a walk until dropped.
+pub(crate) struct Opened {
+    pub(crate) texts: Vec<Rc<[Token]>>,
+    open: Open,
+}
+
+impl Drop for Opened {
+    fn drop(&mut self) {
+        self.open.0.borrow_mut().pop();
+    }
+}
+
 impl Key {
     fn new(state: &PathState, groups: &[(GroupKind, bool, Vec<Tok>)]) -> Key {
         let places = state.input.iter().filter_map(place).collect();
@@ -1832,7 +1865,7 @@ impl Machine<'_> {
         // state instead. In a scan of text it stands for the rest of that text.
         let text = matches!(self.unit, Unit::Body { .. } | Unit::Expand);
         if cut && (text || self.input.len() < frames) {
-            self.read_unknown(span);
+            self.read_unknown_from(span, self.input.len() == frames);
         }
         self.explore(paths, false)
     }
@@ -2885,6 +2918,26 @@ impl Machine<'_> {
         })?;
         let may = self.env.slot(sym)?.may.as_ref()?;
         Some(may.iter().filter_map(|m| m.as_macro().map(|m| m.replacement_text.clone())).collect())
+    }
+
+    /// [`Machine::one_of_members`] for a walk that goes on into the texts.
+    /// A text may hold its own token (a repetition, [`Machine::repeat_token`])
+    /// or nest one-of tokens pass by pass, so such a walk ends only with
+    /// this: a token it is inside of already is [`Nested::Again`], one past
+    /// `limits.meaning_set` levels [`Nested::Deep`], and the walker says what
+    /// holds there. The texts stay open until the value is dropped.
+    pub(crate) fn one_of_nested(&self, t: Token) -> Nested {
+        let Some(texts) = self.one_of_members(t) else { return Nested::No };
+        let sym = t.cs().expect("a one-of token is a name");
+        let mut open = self.one_of_open.0.borrow_mut();
+        if open.contains(&sym) {
+            return Nested::Again;
+        }
+        if open.len() >= usize::from(self.limits.meaning_set) {
+            return Nested::Deep;
+        }
+        open.push(sym);
+        Nested::Open(Opened { texts, open: Open(self.one_of_open.0.clone()) })
     }
 
     /// At `-vvvv`, prints the sizes of the main tables at each new 256 MiB high.

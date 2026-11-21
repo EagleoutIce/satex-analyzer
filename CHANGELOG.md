@@ -15,6 +15,8 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 
 ### LSP
 
+- `fix` **A chapter whose root stopped at a budget keeps its root.** The editor ran the chapter alone in a made-up document and reported its references as undefined.
+- `perf` **Each build run's findings reach the editor at once, marked provisional** (`lsp.provisional`, on): a 737-page document shows its first findings after 11.6 s instead of 32 s; the final set is unchanged and replaces them.
 - `fix` **Completions show a command's whole shape.** `\section` offers `*[⟨options⟩]{⟨arg⟩}`, ltcmd commands their `(…)` and `<…>` arguments, a `\def` its own delimiters; taking one writes the braces with the caret inside. The PDF page's list shows shapes and descriptions too, also while a run goes on.
 - `fix` **Editors: a name built around unknown digits is the same name after an edit.** It named its number by the token's index, which a resumed run numbers differently than a run from the start, so findings and definitions spelled other names than `satex lint`.
 - `fix` **Editors read the open `.bib` and root, not the files on disk.** An entry removed from an open `.bib` leaves its `\cite` undefined, an `\include` commented out leaves its chapter's labels undefined, and a `.bbl` or `.ind` the tool no longer makes is removed instead of kept stale.
@@ -26,15 +28,28 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 
 ### Compile
 
+- `perf` **`compile.warm` is on by default on Linux.** A build whose preamble has a format leaves one pdfTeX waiting for the next build in the same clock minute and says so; it ends a second after that minute. Small edits rebuild in about half the time.
+- `perf` **XeLaTeX builds run their passes without the PDF driver and xdvipdfmx once at the end, as latexmk does; helpers that outlive a build release the locks and descriptors it inherited; a warm engine is taken only when TeX's environment is the build's.**
+- `perf` **`satex compile` returns with the PDF.** Rule-level explanations come at once, the analysis runs detached and its findings show on the next call (`compile.wait` waits for them): a one-word edit of a big book returns in about latexmk's time instead of 18 s.
 - `perf` **`satex compile` runs no draft pass and never waits for the preamble format.** A fresh build starts from latexmk's seed `.aux` and runs as many passes as latexmk; the format is dumped in the background; SyncTeX is compressed beside the pass. Cold builds 1.16× and edits 1.27× latexmk's speed on the benchmark subset, PDFs identical.
 - `fix` **A build is one process group, ended when a newer one replaces it, its client goes away or `compile.timeout` passes.** Warm engines end after their minute, and a stopped server takes its build along: no orphaned pdflatex.
 - `perf` **`satex compile` runs the analysis only for log messages it can explain.** A message with no source line (an underfull box while the output routine is active) no longer starts it: a one-word edit of a 1000-page book returns with its PDF, not 17 s later.
 - `fix` **The progress bar counts packages built into caches, not only those loaded from them.** A first run after an update shows how many packages are done.
-- `perf` **`satex compile`: the PDF first, the analysis only where a message needs it.** The build runs before the analysis, which runs only when the log has a message to explain and no stored explanation of the same messages, source, settings and read files holds: an unchanged 195-page book 1.7 s → 0.05 s with `compile.explain` on, the PDF of an edit in ~3 s instead of after the analysis. `compile.warm` works from the command line: the build runs in a mirror of the project under `.satex-build`, so no file of the project is ever a pipe.
+- `perf` **`satex compile`: the PDF first, the analysis only where a message needs it.** The build runs before the analysis, which runs only when the log has a message to explain and no stored explanation of the same messages, source, settings and read files holds: an unchanged 195-page book 1.7 s → 0.05 s with `compile.explain` on, the PDF of an edit in ~3 s instead of after the analysis. `compile.warm` works from the command line: the engine waits on a named pipe under `.satex-build` that it reads in the main file's stead, in the project's own directory, so no file of the project is touched and `\input{../shared}` reads as in a fresh build.
 - `feat` **memoize: `satex compile` extracts memoize's externs itself.** No shell escape and no Perl module needed: the build runs memoize's TeX extraction between passes (`compile.memoize`).
 
 ### Analysis
 
+- `fix` **A Lua run that stops leaves what its rest would have written unknown.** Globals the stopped rest assigns read as unknown after it; reads such as `pcall(require, …)` or `t.f =` no longer count as writes.
+- `fix` **The package index reads the code files a package inputs, and ltcmd's environments.** `tikzpicture` is tikz's (forest only `\let`s it), `\begin{forest}` is forest's: an inserted TikZ picture no longer loads forest, a forest tree loads forest, and a `conventions.definers` entry written with its backslash counts.
+- `fix` **No "`\` is never used" for a name the run could not decide** (`\csname\romannumeral\count1\endcsname`): that name is built, not written on the line.
+- `fix` **No false errors on ACM (acmart) documents**: text the engine alone knows, read again by `\scantokens`, stays unknown text.
+- `fix` **A build file read back line by line sends the build round again.** counttexruns' `.ctr` line names no macro, so the build stopped after two runs, where latexmk runs on to its limit.
+- `fix` **A paragraph too long to record is reported** (`limits.paragraph_items`, 4000): its lines and size stay unknown, said with the setting to raise; before, the cap was silent and fixed.
+- `fix` **A loop cut at the start of an expansion keeps the braces the scan copied.** The cut read `\expanded{ {…} }`'s whole group as one unknown token without its braces, so `\tl_gset:Ne\y{\fp_eval:n{\x}}` could store a letter where TeX stores digits.
+- `fix` **A Lua run that stops at a test of an unknown value and wrote nothing runs once per outcome** (`lua.outcomes`, 8): the result is one of what the runs print, so expl3's string comparisons under LuaTeX no longer leave gaps.
+- `fix` **The cover of nested one-of texts is bounded.** A one-of already being covered adds nothing and past `limits.meaning_set` nested ones the text is unknown: a beamer overlay document no longer overflows the stack.
+- `fix` **One of several texts counts as its longest text in a loop's pass bound**, so a walk over them runs its exact passes instead of being forced to converge (an l3str hex conversion of unknown digits leaves no gap).
 - `fix` **Reaching `limits.list_items` is reported** (`limit-reached`), and a progress note names the setting once half of it is used.
 - `perf` **Edits in large documents resume at the edit and meet the last run.** A body whose lines end in a control word keeps its checkpoints, and the paragraph lists' size limit is the configurable `limits.list_items` (it was a fixed bound past which no edit of a 500-page book met the last run): a word typed mid-book reruns 2 287 steps in 0.18 s instead of 2.6M steps in 5.2 s.
 - `fix` **A printed dimension read back keeps its bound.** The fraction `\the` prints names its print, so a dimension scan of integer, point and that fraction reads the print's own interval, in any unit and either sign, without forking.
@@ -89,6 +104,8 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 
 ### Playground
 
+- `fix` **The playground builds again**: the browser build no longer calls native-only process-group and warm-engine code.
+- `feat` **Templates and a New document dialog.** ACM, IEEE, Springer LNCS, Elsevier, APS REVTeX from TeX Live and ACL, NeurIPS, ICML fetched from their providers (version and source reported); a Class options lens on `\documentclass` with a live, copyable header line; `satex new` and the editor's New document command, also from a GitHub repository or a zip.
 - `perf` **A big build reaches the page in parts**, so a 737-page document lands without stalls (longest task 0.16 s).
 - `perf` **The PDF pane handles books: one SyncTeX and word index per build, layers only for the pages near the view.** A 737-page document scrolls and types without stalls (it hung for minutes after a build).
 - `fix` **The style prompt shows the count per file and up to three places with the spot marked before it asks.**
@@ -116,7 +133,7 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 - `fix` **Type mode: text typed at a full page's foot goes over to the next page's top and pushes its text down, as pdfTeX does.** The pages an edit spans switch to the new build together, without a blink.
 - `fix` **Type mode: a formula in text breaks after a relation or binary operator as TeX does.** A paragraph typed after Enter is justified by TeX's total fit.
 - `feat` **Type mode: typing in a TikZ picture draws it as the run computed it** (frames, edges, node texts, dashed where approximate) until the build lands.
-- `fix` **Widgets write the document's macros only where the run typeset that text as prose** (off by default): never in math, verbatim, `\url`, labels or comments, and only in the inserted text. The warm build's mirror keeps symbolic links.
+- `fix` **Widgets write the document's macros only where the run typeset that text as prose** (off by default): never in math, verbatim, `\url`, labels or comments, and only in the inserted text.
 - `fix` **Drawing on an indented line (in a minipage) is written at that indent; Unicode symbols typed into the formula bar (α, ≤) are written as commands.** The standalone Draw page gets the formula bar too.
 - `feat` **Drawing builds formulas.** The ∑ toggle in the draw widget opens a formula bar: templates with slots (fraction, scripts, root, sum, integral, parentheses, a 2×2 matrix), Tab to the next slot, drawn symbols go into the formula, and a live preview. Insert writes clean inline math at the cursor through the snapshot printer, loading `amsmath` when a matrix needs it.
 - `fix` **Drawing: an unedited picture stays as it was; the pad takes dots and undo.** A picture whose first statement has no lead is no longer rewritten with its first node moved last. A tap on the draw pad inks a dot (`\cdot`, `÷`), one pointer draws at a time, and strokes, clears and stamps undo and redo (Ctrl+Z, Ctrl+Shift+Z).

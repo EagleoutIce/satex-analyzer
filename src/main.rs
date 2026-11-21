@@ -369,6 +369,22 @@ fn run() -> Result<(), String> {
             satex::cli::gui::Options { open: !no_open, dev: *dev, verbose: cli.verbose > 0, flags: config_flags(&cli) };
         return satex::cli::gui::run(&dir, *port, site.as_deref(), options);
     }
+    // `satex new`: the project written first, then the run below reads its main file
+    if let Some(Command::New { dir, template, from, options, list: false, force, no_check }) = &cli.command {
+        let (cfg, _) = configure(&cli, None)?;
+        let o = satex::cli::new::Options {
+            dir: dir.as_deref(),
+            template: template.as_deref(),
+            from: from.as_deref(),
+            options,
+            force: *force,
+        };
+        let (main, _) = satex::cli::new::write(&o, &cfg.templates)?;
+        if *no_check {
+            return Ok(());
+        }
+        cli.file = Some(main);
+    }
     anstream::ColorChoice::from(cli.color).write_global();
     // Progress is for a person reading text, not for a program reading output.
     if !matches!(cli.format, Format::Text) {
@@ -557,10 +573,22 @@ fn run_on(cli: &mut Cli, file: Option<PathBuf>, explaining: bool, piped: Option<
     let analysis = if let Some(Command::Compile { system, view }) = &cli.command {
         let sketch = Analysis::sketch(&source, &cli.file.iter().cloned().collect::<Vec<_>>(), &cfg, Vec::new());
         let context = Context { analysis: &sketch, source: &source, format: cli.format, links };
-        let build = satex::cli::compile::build_only(&context, system.as_deref(), *view)?;
+        // a satex started aside explains the build its starter ran
+        let build = match satex::cli::compile::Built::resumed(&context) {
+            Some(None) => return Ok(()),
+            Some(Some(build)) => build,
+            None => satex::cli::compile::build_only(&context, system.as_deref(), *view)?,
+        };
         let needed = cfg.compile.explain && build.needs_analysis();
-        compiled = Some(build);
-        match needed {
+        // the PDF is there: the analysis is waited for only where asked, else it runs aside
+        let analyzed = needed && (cfg.compile.wait || build.is_aside());
+        if needed && !analyzed && build.aside() {
+            let note = "satex: the analysis explains the messages aside, `satex compile` shows it when done \
+                        (compile.wait: true waits for it)";
+            anstream::eprintln!("{}", render::status(note));
+        }
+        compiled = Some((build, analyzed));
+        match analyzed {
             true => Machine::analyze(&source, cli.file.as_deref(), &cfg),
             false => sketch,
         }
@@ -623,7 +651,7 @@ fn run_on(cli: &mut Cli, file: Option<PathBuf>, explaining: bool, piped: Option<
     let context = Context { analysis: &analysis, source: &source, format: cli.format, links };
     let mut out = anstream::stdout().lock();
     let mut output = match compiled {
-        Some(built) => satex::cli::compile::explained(built, &analysis),
+        Some((built, analyzed)) => satex::cli::compile::explained(built, &analysis, analyzed),
         None => cli.command().run(&context, &mut out)?,
     };
     if matches!(cli.command, Some(Command::Summary { .. })) && cli.format.is_text() {

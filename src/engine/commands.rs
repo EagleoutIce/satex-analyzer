@@ -603,7 +603,7 @@ impl Machine<'_> {
                     num: crate::engine::value::Num::range(0, crate::engine::value::MAX_DIMEN),
                 })
             }
-            Primitive::LastItem(item) => self.last_item(item),
+            Primitive::LastItem(item) => self.last_item(item).or_else(|| last_item_range(item)),
             Primitive::Special(special) => self.special_value(special, sym),
             Primitive::FontParam(param) => self.font_param_value(param, sym),
             _ => None,
@@ -2971,4 +2971,29 @@ impl Machine<'_> {
         SHAPINGS.with(|s| s.borrow_mut().insert(key, shaping.clone()));
         shaping
     }
+}
+
+/// The values an engine quantity can take where satex does not know which: an unknown
+/// node type is still one of etex.ch's -1..15, not any word.
+fn last_item_range(item: LastItem) -> Option<Value> {
+    use LastItem as L;
+    // Bounds wide enough for pdfTeX, XeTeX and LuaTeX, whose codes run further than etex.ch's.
+    let (lo, hi) = match item {
+        // etex.ch: -1 (none) .. 15 (unset)
+        L::NodeType => (-1, 63),
+        // tex.web §§ 660, 664, 674: up to inf_bad, 1000000 for an overfull box
+        L::Badness => (0, 1_000_000),
+        // a quarterword (tex.web § 271, LuaTeX's is 16 bits)
+        L::GroupLevel => (0, 65_535),
+        // etex.ch: 0 (bottom level) .. 16 (math left)
+        L::GroupType => (0, 63),
+        // etex.ch: a conditional's code, negated in its else part
+        L::IfType => (-127, 127),
+        L::IfBranch => (-1, 1),
+        L::GlueStretchOrder | L::GlueShrinkOrder => (0, 4),
+        L::ShellEscape => (0, 2),
+        L::IfLevel | L::InputLineNo | L::ElapsedTime => (0, i64::from(i32::MAX)),
+        _ => return None,
+    };
+    Some(Value::Num { quantity: crate::engine::value::Quantity::Int, num: crate::engine::value::Num::range(lo, hi) })
 }

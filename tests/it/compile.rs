@@ -16,6 +16,7 @@ fn the_build_log_is_explained_where_it_arose() {
     std::fs::write(dir.join("part.tex"), "Some \\foo text.\n").unwrap();
     let out = crate::support::satex()
         .args(["compile", "-f", "doc.tex", "--format", "json", "--set", "limits.seconds=0"])
+        .args(["--set", "compile.wait=true"])
         .current_dir(&dir)
         .env_remove("DISPLAY")
         .env_remove("WAYLAND_DISPLAY")
@@ -114,7 +115,6 @@ fn satex_build(dir: &std::path::Path, main: &str) -> (Vec<serde_json::Value>, St
     (serde_json::from_slice(&out.stdout).unwrap_or_else(|e| panic!("{e}: {said}")), said)
 }
 
-/// The text of a PDF, page by page (form feeds between pages).
 /// Waits until the format a build of `job` in `dir` had dumped aside is there: its key is written
 /// when the dump and its proof are done. No build waits for it, so a test that wants the next
 /// build to read the format does.
@@ -127,6 +127,7 @@ fn dumped(dir: &std::path::Path, job: &str) {
     assert!(key.is_file(), "no format key after a minute: {}", key.display());
 }
 
+/// The text of a PDF, page by page (form feeds between pages).
 fn pdf_text(pdf: &std::path::Path) -> String {
     let out = std::process::Command::new("pdftotext").arg(pdf).arg("-").output().unwrap();
     String::from_utf8_lossy(&out.stdout).into_owned()
@@ -223,6 +224,58 @@ fn a_fresh_build_passes_once_where_nothing_is_referred_to() {
     assert!(pdf_text(&dir.join("toc.pdf")).matches("Listed").count() == 2, "{said}");
 }
 
+/// XeTeX hands its pages to xdvipdfmx, which takes a third to a half of a pass: satex's build
+/// keeps the pages of every pass (`-no-pdf`) and runs the driver once after the last, as latexmk
+/// does. The PDF's text is latexmk's, an edit builds it again, and a PDF that is gone is built
+/// again though no source changed. Pins: a driver run per pass, and a build that calls itself up
+/// to date without its PDF.
+#[test]
+fn the_satex_build_drives_xetex_pages_once() {
+    let tools = ["xelatex", "xdvipdfmx", "latexmk", "pdftotext"];
+    if !crate::support::installed() || tools.iter().any(|t| satex::project::paths::which(t).is_err()) {
+        return;
+    }
+    let root = crate::support::scratch_dir(crate::support::tmp_root().join("satex-compile-xetex"));
+    let (ours, theirs) = (root.join("ours"), root.join("theirs"));
+    let doc = |body: &str| {
+        format!(
+            "\\documentclass{{article}}\n\\begin{{document}}\n\\tableofcontents\n\\section{{Listed}}\n{body}\n\\end{{document}}\n"
+        )
+    };
+    let build = |dir: &std::path::Path| {
+        let out = crate::support::satex()
+            .args(["compile", "-f", "doc.tex", "--format", "json", "--system", "satex", "--set", "engine=xetex"])
+            .args(["--set", "limits.seconds=0", "--set", "compile.explain=false"])
+            .env("SOURCE_DATE_EPOCH", "1700000000")
+            .env("FORCE_SOURCE_DATE", "1")
+            .current_dir(dir)
+            .output()
+            .unwrap();
+        String::from_utf8_lossy(&out.stderr).into_owned()
+    };
+    for body in ["First text.", "Edited text."] {
+        for dir in [&ours, &theirs] {
+            std::fs::create_dir_all(dir).unwrap();
+            std::fs::write(dir.join("doc.tex"), doc(body)).unwrap();
+        }
+        let said = build(&ours);
+        assert_eq!(said.matches("$ xdvipdfmx").count(), 1, "{said}");
+        assert!(said.contains("$ xelatex") && said.contains("-no-pdf"), "{said}");
+        let made = std::process::Command::new("latexmk")
+            .args(["-xelatex", "-interaction=nonstopmode", "doc.tex"])
+            .current_dir(&theirs)
+            .output()
+            .unwrap();
+        assert!(theirs.join("doc.pdf").is_file(), "{}", String::from_utf8_lossy(&made.stdout));
+        assert_eq!(pdf_text(&ours.join("doc.pdf")), pdf_text(&theirs.join("doc.pdf")), "{said}");
+    }
+    let said = build(&ours);
+    assert!(said.contains("up to date"), "{said}");
+    std::fs::remove_file(ours.join("doc.pdf")).unwrap();
+    let said = build(&ours);
+    assert!(ours.join("doc.pdf").is_file() && !said.contains("up to date"), "{said}");
+}
+
 /// A build whose read files, the directories it looked in and the clock are as the last rested
 /// build left them runs no pass, as latexmk skips one. A file the document looked for and did not
 /// find is in no `.fls`: its appearing must rebuild, as must an edit of it. Pins: a skip that
@@ -286,6 +339,7 @@ fn an_unchanged_build_reuses_its_explanation_only() {
     let build = || {
         let out = crate::support::satex()
             .args(["compile", "-f", "doc.tex", "--format", "json", "--system", "satex", "--set", "limits.seconds=0"])
+            .args(["--set", "compile.wait=true"])
             .current_dir(&dir)
             .output()
             .unwrap();
@@ -307,6 +361,64 @@ fn an_unchanged_build_reuses_its_explanation_only() {
     let (third, reused) = build();
     assert!(!reused && fix(&third).contains("\\baz"), "{third:?}");
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// `satex compile` returns with the PDF: its messages are explained by rule at once, and a detached
+/// satex analyzes the document and stores what its findings say. The next call of the same text
+/// gives those records; a call after an edit that leaves a message as it was repeats what the last
+/// analysis said of it, marked as of an earlier text, while a new analysis runs. Pins: a build that
+/// waits for the analysis, an explanation that never arrives, and one of an earlier text passed
+/// off as of this one.
+#[test]
+fn a_build_returns_before_its_explanation_and_shows_it_later() {
+    if !crate::support::installed() || satex::project::paths::which("pdflatex").is_err() {
+        return;
+    }
+    let dir = crate::support::scratch_dir(crate::support::tmp_root().join("satex-compile-aside"));
+    let doc = |end: &str| {
+        format!("\\documentclass{{article}}\n\\begin{{document}}\nSome \\foo text.\n{end}\\end{{document}}\n")
+    };
+    std::fs::write(dir.join("doc.tex"), doc("")).unwrap();
+    let build = || {
+        let out = crate::support::satex()
+            .args(["compile", "-f", "doc.tex", "--format", "json", "--system", "satex", "--set", "limits.seconds=0"])
+            .current_dir(&dir)
+            .output()
+            .unwrap();
+        let said = String::from_utf8_lossy(&out.stderr).into_owned();
+        let rows: Vec<serde_json::Value> =
+            serde_json::from_slice(&out.stdout).unwrap_or_else(|e| panic!("{e}: {said}"));
+        let row = rows.iter().find(|r| r["code"] == "undefined-control-sequence");
+        let fix = row.unwrap_or_else(|| panic!("no undefined name: {rows:?}"))["fix"]
+            .as_str()
+            .unwrap_or_default()
+            .to_string();
+        (fix, said)
+    };
+    // the explanation of the text as it is now: its key is written last
+    let explained = |since: std::time::SystemTime| {
+        let key = dir.join(".satex-build/doc.explained");
+        let until = std::time::Instant::now() + std::time::Duration::from_secs(300);
+        let fresh = || std::fs::metadata(&key).and_then(|m| m.modified()).is_ok_and(|t| t >= since);
+        while !fresh() && std::time::Instant::now() < until {
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+        assert!(fresh(), "no explanation after five minutes");
+    };
+    let start = std::time::SystemTime::now();
+    let (fix, said) = build();
+    assert!(!fix.contains("\\foo") && said.contains("explains the messages aside"), "{fix}\n{said}");
+    explained(start);
+    let (found, said) = build();
+    assert!(found.contains("\\foo") && said.contains("explained as the last build was"), "{found}\n{said}");
+    // an edit elsewhere: the message is the same, what was said of it is repeated and marked
+    let edited = std::time::SystemTime::now();
+    std::fs::write(dir.join("doc.tex"), doc("More.\n")).unwrap();
+    let (fix, said) = build();
+    assert!(fix.contains("\\foo") && fix.ends_with("(said by the analysis of an earlier text)"), "{fix}\n{said}");
+    explained(edited);
+    let (fix, _) = build();
+    assert_eq!(fix, found);
 }
 
 /// mylatexformat replays the preamble's `\\openout`s at `\\begin{document}`, and glossaries'
@@ -558,75 +670,94 @@ fn the_satex_build_extracts_memoize_externs_itself() {
     assert!(!mmz.contains("\\mmzNewExtern") && mmz.matches("\\mmzUsedExtern").count() == 2, "{mmz}");
 }
 
-/// `compile.warm` from the command line: the build runs in a mirror of the project, so the next
-/// build's pass goes to the engine the last one left waiting, while the project's main file stays
-/// a plain file the editor may write at any time. Its PDF text equals a cold build's, also after an
-/// edit. Pins: the CLI stopping its own warm engine (it found the pipe in the main file's place).
+/// `compile.warm` from the command line: the next build's pass goes to the engine the last one left
+/// waiting on a pipe under `.satex-build`, given to it in the main file's stead. The engine runs in
+/// the project's directory, so a name means what it means to a fresh engine: `\input{../shared}`,
+/// a file behind a symbolic link, the main file opened again by its own name. The project's main
+/// file is never a pipe. With the clock fixed, the PDF, the log (but its memory statistics) and the
+/// SyncTeX data of a warm pass are those of a fresh pass on the same text, byte for byte. Pins: a warm build that ran in a copy
+/// of the project and found no `../shared.tex`, the CLI stopping its own warm engine, the pipe's
+/// name left in the log or the SyncTeX data, and an engine started under another `TEXINPUTS` taken
+/// for the one a pass would start.
 #[test]
 #[cfg(target_os = "linux")]
-fn a_warm_build_from_the_command_line_feeds_the_waiting_engine() {
-    if !crate::support::installed() || satex::project::paths::which("pdflatex").is_err() {
+fn a_warm_build_writes_what_a_fresh_build_writes() {
+    let tools = ["pdflatex", "gzip", "mkfifo"];
+    if !crate::support::installed() || tools.iter().any(|t| satex::project::paths::which(t).is_err()) {
         return;
     }
-    let dir = crate::support::tmp_root().join(format!("satex-warm-cli-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).unwrap();
-    let doc = |body: &str| format!("\\documentclass{{article}}\n\\begin{{document}}\n{body}\n\\end{{document}}\n");
-    std::fs::write(dir.join("doc.tex"), doc("First text.")).unwrap();
-    let build = || {
+    let root = crate::support::scratch_dir(crate::support::tmp_root().join("satex-warm-cli"));
+    let dir = root.join("proj");
+    for d in ["proj", "real"] {
+        std::fs::create_dir_all(root.join(d)).unwrap();
+    }
+    std::fs::write(root.join("shared.tex"), "Shared above.\n").unwrap();
+    std::fs::write(root.join("real/a.tex"), "Behind a link.\n").unwrap();
+    std::os::unix::fs::symlink("../real", dir.join("sub")).unwrap();
+    let doc = |body: &str| {
+        format!(
+            "\\documentclass{{article}}\n\\begin{{document}}\n{body}\n\\input{{../shared}}\\input{{sub/a}}\n\
+             \\IfFileExists{{doc.tex}}{{\\newread\\r\\openin\\r=doc.tex \\read\\r to\\first\\closein\\r Named.}}{{}}\n\
+             \\end{{document}}\n"
+        )
+    };
+    let build_under = |warm: &str, texinputs: &str| {
         let out = crate::support::satex()
             .args(["compile", "-f", "doc.tex", "--format", "json", "--system", "satex"])
-            .args(["--set", "limits.seconds=0", "--set", "compile.explain=false", "--set", "compile.warm=true"])
+            .args(["--set", "limits.seconds=0", "--set", "compile.explain=false", "--set"])
+            .arg(format!("compile.warm={warm}"))
+            .env("TEXINPUTS", texinputs)
+            .env("SOURCE_DATE_EPOCH", "1700000000")
+            .env("FORCE_SOURCE_DATE", "1")
             .current_dir(&dir)
             .output()
             .unwrap();
         assert!(std::fs::symlink_metadata(dir.join("doc.tex")).unwrap().is_file(), "the project's file is no pipe");
-        String::from_utf8_lossy(&out.stderr).contains("(warm)")
+        String::from_utf8_lossy(&out.stderr).into_owned()
     };
-    assert!(!build(), "a first build has no engine waiting");
+    let build = |warm: &str| build_under(warm, ".:");
+    let wrote = || {
+        let synctex = std::process::Command::new("gzip").arg("-dc").arg(dir.join("doc.synctex.gz")).output().unwrap();
+        (std::fs::read(dir.join("doc.pdf")).unwrap(), std::fs::read(dir.join("doc.log")).unwrap(), synctex.stdout)
+    };
+    std::fs::write(dir.join("doc.tex"), doc("First text.")).unwrap();
+    assert!(!build("true").contains("(warm)"), "a first build has no engine waiting");
+    dumped(&dir, "doc");
     // an edit each time, so no build is skipped; the engine reads the clock's minute as it starts
-    let warm = (0..3).any(|i| {
+    let mut warm = None;
+    for i in 0..4 {
         std::fs::write(dir.join("doc.tex"), doc(&format!("Edit {i}."))).unwrap();
-        build() && pdf_text(&dir.join("doc.pdf")).contains(&format!("Edit {i}."))
-    });
-    let record = dir.join(".satex-build/mirror/.satex-build/warm/engine");
+        if build("true").contains("(warm)") {
+            warm = Some((i, wrote()));
+            break;
+        }
+    }
+    // the engine waiting now started under this search path: a build under another starts its own
+    if warm.is_some() {
+        std::fs::write(dir.join("doc.tex"), doc("Elsewhere.")).unwrap();
+        let said = build_under("true", ".:..:");
+        assert!(said.contains("$ pdflatex") && !said.contains("(warm)"), "{said}");
+    }
+    let record = dir.join(".satex-build/warm/engine");
     if let Some(pid) = std::fs::read_to_string(&record).ok().and_then(|r| r.lines().next().map(str::to_string)) {
         let _ = std::process::Command::new("kill").arg(pid).status();
     }
-    assert!(warm, "no pass went to the waiting engine");
-    let _ = std::fs::remove_dir_all(&dir);
-}
-
-/// The warm build's mirror holds a project's symbolic link as a link to the same place, so
-/// `\input{sub/a}` through `sub -> ../real` reads in the mirror as in the project, and nothing
-/// behind the link is copied. A link the project points elsewhere is pointed anew. Pins the
-/// mirror that dropped links (a directory entry's type does not follow them): the build then
-/// met no `sub/a.tex`.
-#[cfg(unix)]
-#[test]
-fn the_warm_mirror_keeps_symbolic_links() {
-    let root = crate::support::tmp_root().join(format!("satex-mirror-links-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&root);
-    let (proj, w) = (root.join("proj"), root.join("mirror"));
-    for d in ["proj", "real", "other"] {
-        std::fs::create_dir_all(root.join(d)).unwrap();
+    let (i, warm) = warm.expect("no pass went to the waiting engine");
+    // the same text by a fresh engine
+    std::fs::write(dir.join("doc.tex"), doc(&format!("Edit {i}."))).unwrap();
+    let said = build("false");
+    assert!(said.contains("$ pdflatex") && !said.contains("(warm)"), "{said}");
+    let fresh = wrote();
+    let text = pdf_text(&dir.join("doc.pdf"));
+    for said in [format!("Edit {i}."), "Shared above.".into(), "Behind a link.".into(), "Named.".into()] {
+        assert!(text.contains(&said), "no `{said}`: {text}");
     }
-    std::fs::write(proj.join("main.tex"), "\\input{sub/a}\n").unwrap();
-    std::fs::write(root.join("real/a.tex"), "real\n").unwrap();
-    std::fs::write(root.join("other/a.tex"), "other\n").unwrap();
-    std::os::unix::fs::symlink("../real", proj.join("sub")).unwrap();
-    let read = || std::fs::read_to_string(w.join("sub/a.tex")).ok();
-    satex::cli::warm::fill(&w, &proj).unwrap();
-    assert!(std::fs::symlink_metadata(w.join("sub")).unwrap().is_symlink(), "a link, not a copy");
-    assert_eq!(read().as_deref(), Some("real\n"));
-    std::fs::remove_file(proj.join("sub")).unwrap();
-    std::os::unix::fs::symlink("../other", proj.join("sub")).unwrap();
-    let since = satex::cli::warm::fill(&w, &proj).unwrap();
-    assert_eq!(read().as_deref(), Some("other\n"));
-    // what the build writes beside the link comes back; nothing comes back for the link
-    std::fs::write(w.join("main.log"), "log\n").unwrap();
-    satex::cli::warm::mirror(&w, &proj, since).unwrap();
-    assert_eq!(std::fs::read_to_string(proj.join("main.log")).ok().as_deref(), Some("log\n"));
-    assert!(std::fs::symlink_metadata(proj.join("sub")).unwrap().is_symlink());
-    std::fs::remove_dir_all(&root).ok();
+    assert!(warm.0 == fresh.0, "the PDF differs");
+    // up to TeX's memory statistics: the pipe's longer name takes more of the string pool
+    let said = |log: &[u8]| {
+        let log = String::from_utf8_lossy(log).into_owned();
+        log.split("Here is how much of TeX's memory you used").next().unwrap_or_default().to_string()
+    };
+    assert_eq!(said(&warm.1), said(&fresh.1), "the log differs");
+    assert!(warm.2 == fresh.2 && !fresh.2.is_empty(), "the SyncTeX data differs");
 }

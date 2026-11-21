@@ -347,7 +347,7 @@
         },
         "explain": {
           "default": true,
-          "description": "explain the build's messages by a full analysis. false explains by rule and waits for none",
+          "description": "explain the build's messages by a full analysis. false explains by rule only",
           "type": "boolean",
           "x-affects": [
             "speed"
@@ -397,9 +397,17 @@
             "output"
           ]
         },
-        "warm": {
+        "wait": {
           "default": false,
-          "description": "keep pdfTeX started on the next build's format (Linux): the build runs in a mirror of the project under .satex-build, the mirror's main file a named pipe between builds",
+          "description": "wait for the analysis that explains the build's messages. false: the build returns with the PDF, explained by rules and by what the last analysis said of the same messages, and a detached satex analyzes for the next call",
+          "type": "boolean",
+          "x-affects": [
+            "speed"
+          ]
+        },
+        "warm": {
+          "default": true,
+          "description": "keep pdfTeX started on the next build's format (Linux), waiting on a named pipe under .satex-build that it reads in the main file's stead: the next build within the same clock minute feeds it and saves the engine's start. The engine ends with its minute. false starts none",
           "type": "boolean",
           "x-affects": [
             "speed"
@@ -923,8 +931,17 @@
           "type": "object"
         },
         "definers": {
-          "default": [],
-          "description": "your commands that define the name written after them, like \\newcommand does",
+          "default": [
+            "NewDocumentEnvironment",
+            "NewDocumentEnvironment end",
+            "RenewDocumentEnvironment",
+            "RenewDocumentEnvironment end",
+            "ProvideDocumentEnvironment",
+            "ProvideDocumentEnvironment end",
+            "DeclareDocumentEnvironment",
+            "DeclareDocumentEnvironment end"
+          ],
+          "description": "commands that define the name written after them, like \\newcommand does, besides those the runs show (`X end`: also `end` + the name). Add your own",
           "items": {
             "type": "string"
           },
@@ -3321,6 +3338,17 @@
           ],
           "x-example": "0: every float's `\\ifdim` takes its first arm, 1000: a short paper stays exact"
         },
+        "paragraph_items": {
+          "default": 4000,
+          "description": "most items of one recorded list (a paragraph's characters, glue and boxes; a box; the page's marks). Past it that list is not recorded and its lines and size stay unknown",
+          "minimum": 0,
+          "type": "integer",
+          "x-affects": [
+            "speed",
+            "output"
+          ],
+          "x-example": "a paragraph of 800 words is about 5000 items: with the default its line breaks stay unknown"
+        },
         "paths": {
           "default": 16,
           "description": "how many alternative paths satex keeps at once before merging the oldest two. Higher is more precise and slower",
@@ -4569,6 +4597,25 @@
           "x-affects": [
             "output"
           ]
+        },
+        "provisional": {
+          "default": true,
+          "description": "a build run that another run follows publishes its findings at once, those a later run may change marked provisional (dimmed, \"build run k\"). The build's last run replaces them",
+          "type": "boolean",
+          "x-affects": [
+            "speed"
+          ],
+          "x-example": "`false`: a big document shows its findings only once the build's files are at rest"
+        },
+        "provisional_after_ms": {
+          "default": 2000,
+          "description": "only a run that took at least this long publishes provisional findings: a short build's final ones come soon anyway",
+          "minimum": 0,
+          "type": "integer",
+          "x-affects": [
+            "speed"
+          ],
+          "x-example": "`0`: every run of a build publishes its findings"
         }
       },
       "type": "object"
@@ -4607,6 +4654,18 @@
             "precision"
           ],
           "x-example": "`modules: 2`: a third nested require gives an unknown module",
+          "x-plugin": "lua_run"
+        },
+        "outcomes": {
+          "default": 8,
+          "description": "runs one piece of Lua code gets at most when it tests unknown values: one per outcome of its tests",
+          "minimum": 0,
+          "type": "integer",
+          "x-affects": [
+            "precision",
+            "speed"
+          ],
+          "x-example": "`outcomes: 1`: `\\directlua{if os.clock() > 1 then tex.print(\"a\") end}` prints something unknown",
           "x-plugin": "lua_run"
         },
         "run": {
@@ -5448,6 +5507,60 @@
       "properties": {},
       "type": "object"
     },
+    "templates": {
+      "description": "where satex new and the New document dialog get the provider files the TeX installation lacks",
+      "properties": {
+        "fetch": {
+          "default": true,
+          "description": "fetch a template's files from its provider and an archive from its URL, over HTTPS. Off, only the cache and the TeX installation serve",
+          "type": "boolean",
+          "x-affects": [
+            "output"
+          ],
+          "x-example": "`fetch: false`: satex new uses the cached NeurIPS style and never goes online"
+        },
+        "max_bytes": {
+          "default": "50.0 MiB",
+          "description": "the most an imported archive may unpack to",
+          "type": "string",
+          "x-affects": [
+            "output"
+          ],
+          "x-example": "`max_bytes: 200MiB` imports a repository with large figures"
+        },
+        "max_files": {
+          "default": 2000,
+          "description": "the most files an imported archive may hold",
+          "minimum": 0,
+          "type": "integer",
+          "x-affects": [
+            "output"
+          ],
+          "x-example": "`max_files: 10000` imports a large repository"
+        },
+        "refresh_days": {
+          "default": 7,
+          "description": "days a fetched template is used before it is fetched again. Offline the cached copy serves",
+          "minimum": 0,
+          "type": "integer",
+          "x-affects": [
+            "output"
+          ],
+          "x-example": "`refresh_days: 0` looks for a new release on every satex new"
+        },
+        "timeout": {
+          "default": 20,
+          "description": "seconds a download may take before it is given up",
+          "minimum": 0,
+          "type": "integer",
+          "x-affects": [
+            "output"
+          ],
+          "x-example": "`timeout: 5` gives up sooner on a slow network"
+        }
+      },
+      "type": "object"
+    },
     "texlive": {
       "properties": {
         "root": {
@@ -5568,6 +5681,22 @@
               "x-affects": [
                 "output"
               ]
+            }
+          },
+          "type": "object",
+          "x-category": "widget"
+        },
+        "class": {
+          "description": "the class's options as its code declares them: \\documentclass, the \\usepackage of a style the project ships",
+          "properties": {
+            "enabled": {
+              "default": true,
+              "description": "\"Class options…\": every option the run read from the class, a template's common choices first, the header line to copy",
+              "type": "boolean",
+              "x-affects": [
+                "output"
+              ],
+              "x-example": "`enabled: false`: no class options lens or dialog"
             }
           },
           "type": "object",

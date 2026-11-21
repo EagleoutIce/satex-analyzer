@@ -123,7 +123,6 @@ pub(crate) fn letters(c: u32, lig: u32) -> Option<Vec<u32>> {
     }
 }
 
-pub(crate) const MAX_ITEMS: u32 = 4000;
 const INF_BAD: i64 = 10000;
 const EJECT: i64 = -10000;
 const AWFUL: i64 = 0o7777777777;
@@ -146,11 +145,11 @@ impl Machine<'_> {
         let chars = self.out.facts.text.at.len() as u32;
         let a = &mut self.kp;
         let len = if prev == 0 { 0 } else { a.nodes[prev as usize - 1].2 };
-        if len >= MAX_ITEMS || a.nodes.len() >= self.cfg.limits.list_items {
-            // No more lists are recorded from here on: said, with the setting to raise.
-            if a.nodes.len() >= self.cfg.limits.list_items {
-                self.limit_reached("list_items", self.position_span());
-            }
+        let full = a.nodes.len() >= self.cfg.limits.list_items;
+        if full || len as usize >= self.cfg.limits.paragraph_items {
+            // This list (or every later one) is not recorded: said, with the setting to raise.
+            let key = if full { "list_items" } else { "paragraph_items" };
+            self.limit_reached(key, self.position_span());
             *items = None;
             return;
         }

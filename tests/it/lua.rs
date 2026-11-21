@@ -41,9 +41,19 @@ fn an_extension_reads_its_general_texts() {
 
 #[test]
 fn a_conditional_print_is_a_gap_not_a_guess() {
-    let analysis = primitives("\\directlua{if os.clock() > 1 then tex.print(\"\\\\def\\\\a{}\") end}");
-    assert!(undefined(&analysis, "a"));
-    assert!(analysis.facts.diagnostics.iter().any(|d| d.code == "lua-output"));
+    let analysis = primitives(r"\directlua{if os.clock() > 1 then tex.print('\string\\def\string\\a{}') end}");
+    // one run per outcome of the test: defined on one, not on the other
+    assert!(!undefined(&analysis, "a") && !defined(&analysis, "a"));
+}
+
+/// luaotfload.lua stops the run when `status.safer_option` is not 0; an unknown value
+/// left every LuaTeX document without luaotfload, so fonts and tagging went unknown.
+/// Pins: the value is that of a run without `--safer`.
+#[test]
+fn a_run_is_not_safer() {
+    let analysis =
+        primitives(r"\directlua{if status.safer_option == 0 then tex.print('\string\\def\string\\a{}') end}");
+    assert!(defined(&analysis, "a"));
 }
 
 #[test]
@@ -170,9 +180,6 @@ fn a_chunk_runs_loops_tables_and_string_format() {
 
 #[test]
 fn a_test_of_an_unknown_value_is_unknown() {
-    // `status.cs_count` is not known: neither branch is taken for sure.
-    let analysis = primitives("\\directlua{if status.cs_count then tex.print('a') else tex.print('b') end}");
-    assert!(analysis.facts.diagnostics.iter().any(|d| d.code == "lua-output"));
     let analysis = primitives("\\directlua{local t = type(os.name) if t then tex.sprint(t) end}\\edef\\out{x}");
     assert!(analysis.facts.diagnostics.iter().any(|d| d.code == "lua-output"));
     // The clock is unknown: neither `a` nor `b` is printed for sure, and
@@ -183,10 +190,16 @@ fn a_test_of_an_unknown_value_is_unknown() {
         )
     };
     assert!(defined(&primitives(&source("1 > 0")), "a"));
-    for test in ["os.clock() + 1", "os.clock() == 0", "type(os.clock()) == 'number'", "not os.clock()"] {
+    // Its type cannot be asked: the run stops, a gap.
+    let analysis = primitives(&source("type(os.clock()) == 'number'"));
+    assert!(undefined(&analysis, "a") && undefined(&analysis, "b"));
+    assert!(analysis.facts.diagnostics.iter().any(|d| d.code == "lua-output"));
+    // A test of it has both outcomes, a run each (`status.cs_count` is not known either).
+    for test in ["os.clock() + 1", "os.clock() == 0", "not os.clock()", "os.clock() < 2", "status.cs_count"] {
         let analysis = primitives(&source(test));
-        assert!(undefined(&analysis, "a") && undefined(&analysis, "b"), "{test}");
-        assert!(analysis.facts.diagnostics.iter().any(|d| d.code == "lua-output"), "{test}");
+        for name in ["a", "b"] {
+            assert!(!undefined(&analysis, name) && !defined(&analysis, name), "{test}: \\{name}");
+        }
     }
 }
 
@@ -414,4 +427,86 @@ fn every_kind_of_lua_write_puts_the_other_path_out_of_step() {
         .map(|(_, write, _)| *write)
         .collect();
     assert!(missed.is_empty(), "writes read as certain on both paths: {missed:?}");
+}
+
+/// A run that stops at a test of an unknown value and wrote nothing runs once per outcome
+/// (the VM takes the outcomes the host gives, `satex_choose`), and what the runs print is one
+/// of their texts. Up to the test the later runs get what the first run's library calls
+/// returned, so the machine reads the scanned text once. Pins: expl3's `\tex_strcmp:D` under
+/// LuaTeX (`scan_string` twice, `<`, `==`, `put_next`) on an unknown string was unknown text,
+/// so every `\str_if_eq:nnTF` of unknown text ran garbage (tagpdf's namespace loop).
+#[test]
+fn a_test_of_an_unknown_value_in_a_run_that_writes_nothing_has_each_outcome() {
+    let analysis = primitives(
+        r"\edef\x{\uniformdeviate 9 }\directlua{local s = token.scan_string() if s == 'a' then tex.sprint('\string\\def\string\\same{}') else tex.sprint('\string\\def\string\\other{}') end}{\x}\def\after{}",
+    );
+    assert!(!undefined(&analysis, "same") && !defined(&analysis, "same"), "the test may hold");
+    assert!(!undefined(&analysis, "other") && !defined(&analysis, "other"), "the test may fail");
+    assert!(defined(&analysis, "after"), "the text was scanned once");
+}
+
+/// The three results of a string comparison written as expl3 writes it for LuaTeX: tokens put
+/// back after two tests. `\ifnum` over them is undecided, each arm live, nothing else read.
+#[test]
+fn a_comparison_of_unknown_strings_puts_back_one_of_its_results() {
+    let analysis = primitives(
+        r"\edef\x{\uniformdeviate 9 }\directlua{local minus, zero, one = token.new(45, 12), token.new(48, 12), token.new(49, 12)
+function cmp() local a, b = token.scan_string(), token.scan_string() if a < b then token.put_next(minus, one) else token.put_next(a == b and zero or one) end end}
+\ifcase\numexpr 1+\directlua{cmp()}{\x}{5}\relax \def\less{}\or \def\same{}\or \def\more{}\else \def\none{}\fi",
+    );
+    for name in ["less", "same", "more"] {
+        assert!(!undefined(&analysis, name) && !defined(&analysis, name), "\\{name} is one of the results");
+    }
+    assert!(undefined(&analysis, "none"), "a comparison gives -1, 0 or 1");
+}
+
+/// The sound side: a run per outcome is a reading without a guess only while it changes
+/// nothing. Past a test that was given an outcome the VM stops a run before it stores into
+/// state it found (`satex_guard`), and the host refuses calls that act on the machine
+/// (`token.set_macro`): the result is unknown, as when the run stopped at the test.
+/// Pins: an outcome's write must never be what a later run reads as certain.
+#[test]
+fn a_write_after_a_test_of_an_unknown_value_is_no_outcome() {
+    let writes = [
+        ("n = 0", "n = 1", "n"),
+        ("t = {v = 0}", "t.v = 1", "t.v"),
+        ("t = {}", "t.v = 1", "t.v or 0"),
+        ("t = {v = 0}", "rawset(t, 'v', 1)", "t.v"),
+        ("local c = 0 function bump() c = 1 end function get() return c end", "bump()", "get()"),
+        ("t = {}", "setmetatable(t, {__index = function() return 1 end})", "t.v or 0"),
+    ];
+    for (setup, write, read) in writes {
+        let analysis = primitives(&format!(
+            "\\edef\\x{{\\uniformdeviate 9 }}\\directlua{{{setup}}}\\directlua{{local s = token.scan_string() if s == 'a' then {write} end}}{{\\x}}\n\
+             \\ifnum\\directlua{{tex.print({read})}}=1 \\def\\one{{}}\\fi"
+        ));
+        assert!(!defined(&analysis, "one"), "{write}: only one outcome writes it");
+    }
+    let defines = primitives(
+        r"\edef\x{\uniformdeviate 9 }\directlua{local s = token.scan_string() if s == 'a' then token.set_macro('made', 'x') end}{\x}",
+    );
+    assert!(!defined(&defines, "made"), "only one outcome defines it");
+}
+
+/// A run that stops on something unknown did not do what its rest does: a value that rest
+/// writes is unknown afterwards. TeX runs `n = 1` here (`os.clock()` is a number).
+/// Pins: the stopped run left the state as it found it, and a later run read the old value
+/// as certain, since only globals that were missing became unknown (`taint`).
+#[test]
+fn a_run_that_stops_before_a_write_leaves_the_written_value_unknown() {
+    let analysis = primitives(
+        r"\directlua{n = 0}\directlua{if type(os.clock()) == 'number' then n = 1 end}
+\ifnum\directlua{tex.print(n)}=0 \def\zero{}\fi",
+    );
+    assert!(!defined(&analysis, "zero"), "TeX prints 1");
+}
+
+/// More tests of unknown values than `lua.outcomes` runs can follow: the result is unknown,
+/// as before, never the text of some of the outcomes.
+#[test]
+fn more_outcomes_than_runs_allowed_is_unknown() {
+    let analysis = primitives(
+        r"\edef\x{\uniformdeviate 9 }\directlua{local s, n = token.scan_string(), 0 for i = 1, 20 do if s == i then n = n + 1 end end tex.sprint('\string\\def\string\\done{}')}{\x}",
+    );
+    assert!(!defined(&analysis, "done"), "the run was given up");
 }

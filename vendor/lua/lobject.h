@@ -187,7 +187,8 @@ extern char satex_unknown_tag;
 #define satex_isunknown(o) \
   (ttislightuserdata(o) && pvalue(o) == (void *)&satex_unknown_tag)
 LUAI_FUNC l_noret satex_unknown (struct lua_State *L);
-#define l_isfalseL(L,o)	(satex_isunknown(o) ? (satex_unknown(L), 0) : l_isfalse(o))
+LUAI_FUNC int satex_choose (struct lua_State *L);
+#define l_isfalseL(L,o)	(satex_isunknown(o) ? satex_choose(L) : l_isfalse(o))
 
 
 #define iscollectable(o)	(rttype(o) & BIT_ISCOLLECTABLE)

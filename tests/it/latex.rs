@@ -1086,6 +1086,26 @@ fn an_unused_command_is_reported_once_not_with_its_implementation() {
     assert_eq!(names, [r"\fd", r"\fe"]);
 }
 
+/// A `\csname` name the run could not decide (`\romannumeral` of a random
+/// count) is a fresh name, never written on the line: no "`\` is never used"
+/// with a fix that deletes a backslash (audit n8).
+#[test]
+fn a_name_the_run_could_not_decide_is_not_an_unused_definition() {
+    if !installed() {
+        return;
+    }
+    let analysis = analyze(
+        r"\documentclass{article}
+\count1=\pdfuniformdeviate 12 \expandafter\def\csname\romannumeral\count1\endcsname{}
+\begin{document}x\end{document}",
+    );
+    let unused: Vec<_> = satex::linter::lint(&analysis)
+        .into_iter()
+        .filter(|f| f.get("code").and_then(|c| c.as_str()) == Some("unused-definition"))
+        .collect();
+    assert!(unused.is_empty(), "{unused:?}");
+}
+
 /// A definition is used when anything that reads it is: a `\let` copy that
 /// is expanded, a `\csname` dispatch table, a token list a package keeps
 /// (`\lstset` literate).  Names package code builds for the document
@@ -5177,6 +5197,68 @@ fn an_included_file_is_no_citation() {
         })
         .collect();
     assert!(cites.is_empty(), "{cites:?}");
+}
+
+/// counttexruns reads the run count back with `\read` from the `.ctr` file each run
+/// writes: a line that names no macro. latexmk sees the file change and runs again
+/// until its limit. Bug pinned (audit): the build stopped after its second run, since
+/// no line it changed named a name the run read, and reported the count of a build
+/// latexmk never ends with. Now each run's new line sends the build round again.
+#[test]
+fn a_run_count_read_back_from_a_data_line_runs_the_build_again() {
+    if !installed() {
+        return;
+    }
+    let root =
+        crate::support::scratch_dir(crate::support::tmp_root().join(format!("satex-ctr-{}", std::process::id())));
+    let path = root.join("main.tex");
+    let source = r"\documentclass{article}
+\usepackage{counttexruns}
+\begin{document}
+\ifnum\value{counttexruns}=1 \errmessage{one}\fi
+\ifnum\value{counttexruns}>1 \errmessage{many}\fi
+\end{document}";
+    std::fs::write(&path, source).unwrap();
+    let analysis =
+        satex::analysis::machine::Machine::analyze_build(source, Some(&path), &crate::support::discover(&root));
+    let limit = crate::support::discover(&root).limits.build_runs;
+    assert_eq!(analysis.build_runs, u32::from(limit));
+}
+
+/// l3mark's `\int_compare:nNnT \tex_lastnodetype:D < 0` in memoir's output routine
+/// reads the node type of a list whose tail satex does not know. Bug pinned (memoir):
+/// an unknown engine quantity was any word, -2^31 included, which fails e-TeX's
+/// expression check, so three possible errors no run has were said. A node type
+/// stays in its own range.
+#[test]
+fn memoir_output_reads_no_overflowing_node_type() {
+    if !installed() {
+        return;
+    }
+    let root =
+        crate::support::scratch_dir(crate::support::tmp_root().join(format!("satex-memoir-{}", std::process::id())));
+    let path = root.join("main.tex");
+    std::fs::write(
+        root.join("chap.tex"),
+        r"\chapter{Two}\label{two}
+See~\ref{one}.\footnote{A note.}
+\begin{figure}[h!]\centering x\caption{A figure}\label{fig}\end{figure}
+\begin{itemize}\item one\end{itemize}
+",
+    )
+    .unwrap();
+    let source = r"\documentclass{memoir}
+\begin{document}
+\tableofcontents
+\chapter{One}\label{one}
+Text.
+\include{chap}
+\end{document}";
+    std::fs::write(&path, source).unwrap();
+    let analysis =
+        satex::analysis::machine::Machine::analyze_build(source, Some(&path), &crate::support::discover(&root));
+    let raised = raised(&analysis);
+    assert!(raised.is_empty(), "{raised:?}");
 }
 
 /// A here-float the output routine puts on its own list (`\box\@currbox` in `\@addtocurcol`)

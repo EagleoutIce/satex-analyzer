@@ -477,10 +477,13 @@ fn unused_definition(report: &mut Report) {
         // A name not written where it is defined was built there (`\csname`
         // in a macro the line calls, like a `\cite` wrapper): the line holds
         // nothing to delete, and the name is looked up the same way.
-        let written = report.edits().text(def.span.file).is_none_or(|(_, text)| {
-            let needle = if name.starts_with('\\') { name.clone() } else { format!("\\{name}") };
-            text.line(def.span.line).contains(&needle)
-        });
+        // The empty name (`\csname\endcsname`, or a name the run could not
+        // decide) is always built.
+        let written = !name.trim_start_matches('\\').is_empty()
+            && report.edits().text(def.span.file).is_none_or(|(_, text)| {
+                let needle = if name.starts_with('\\') { name.clone() } else { format!("\\{name}") };
+                text.line(def.span.line).contains(&needle)
+            });
         if !written {
             continue;
         }

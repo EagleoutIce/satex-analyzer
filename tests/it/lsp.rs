@@ -4747,7 +4747,9 @@ fn tables_and_figures_open_dialogs_that_write_them_back() {
     let lenses = ask("textDocument/codeLens", json!({ "textDocument": { "uri": uri } }));
     let lenses: Vec<(u64, &str)> = (lenses.as_array().unwrap().iter())
         .map(|l| (l["range"]["start"]["line"].as_u64().unwrap(), l["command"]["title"].as_str().unwrap()))
-        .filter(|(_, t)| !t.starts_with("Page layout") && !t.starts_with("Font and size"))
+        .filter(|(_, t)| {
+            !t.starts_with("Page layout") && !t.starts_with("Font and size") && !t.starts_with("Class options")
+        })
         .collect::<Vec<_>>()
         .into_iter()
         .map(|(line, t)| (line, if t.contains("table") { "table" } else { "image" }))
@@ -4850,6 +4852,7 @@ fn switched_off_dialog_plugins_offer_nothing() {
         "type_plugins.image.enabled=false",
         "type_plugins.page.enabled=false",
         "type_plugins.font.enabled=false",
+        "type_plugins.class.enabled=false",
     ];
     let (mut server, uri, dir) = open_set("dialogs-off", text, &off);
     let id = server.request("textDocument/codeLens", json!({ "textDocument": { "uri": uri } }));
@@ -5481,6 +5484,7 @@ fn tikz_plugin_new_drawing_and_off() {
             "type_plugins.tikz.enabled=false",
             "type_plugins.page.enabled=false",
             "type_plugins.font.enabled=false",
+            "type_plugins.class.enabled=false",
             "type_plugins.history.enabled=false",
         ],
     );
@@ -6672,6 +6676,66 @@ fn settled_findings_come_early_and_the_end_comes_after_the_findings() {
     let _ = server.notification("satex/status");
     server.shutdown();
     let _ = std::fs::remove_dir_all(dir);
+}
+
+/// Intuition: a big build's first run already knows most findings, so with `lsp.provisional` each
+/// run that another follows sends all of them on the settled channel, `run` said, each a later
+/// run may change marked provisional (a `\ref` to a label the run had not yet read back), the
+/// text-only ones not. `publishDiagnostics` then brings the build's last run, the same set as a
+/// server that sends nothing provisional.
+/// Bug pinned: on a 700-page document the editor showed nothing for the minutes of four runs.
+#[test]
+fn a_build_publishes_each_run_provisionally_then_the_final_set() {
+    let text = "\\documentclass{article}\n\\begin{document}\n% TODO note\n\\tableofcontents\n\\section{One}\nSee \\ref{later} and \\ref{never}.\n\\section{Two}\\label{later}\n\\end{document}\n";
+    let dir = crate::support::tmp_root().join(format!("satex-lsp-provisional-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("main.tex"), text).unwrap();
+    let uri = fixture_uri(&dir.join("main.tex"));
+    let run = |provisional: bool| {
+        let set = ["--set", "limits.seconds=0", "--set", "lsp.provisional_after_ms=0", "--set"];
+        let on = format!("lsp.provisional={provisional}");
+        let mut server = Server::start_with(&crate::support::test_cache(), &dir, &[&set[..], &[on.as_str()]].concat());
+        let id = server.request("initialize", json!({ "processId": null, "rootUri": null, "capabilities": {} }));
+        server.response(id);
+        server.notify("initialized", json!({}));
+        server.notify(
+            "textDocument/didOpen",
+            json!({ "textDocument": { "uri": uri, "languageId": "tex", "version": 1, "text": text } }),
+        );
+        let mut runs = Vec::new();
+        let last = loop {
+            let msg = server.read();
+            if msg["method"] == "satex/settled" && msg["params"]["uri"] == uri.as_str() && msg["params"]["run"].is_u64()
+            {
+                runs.push(msg["params"].clone());
+            } else if msg["method"] == "textDocument/publishDiagnostics"
+                && msg["params"]["uri"] == uri.as_str()
+                && msg["params"]["diagnostics"].as_array().unwrap().iter().all(|d| d["data"]["provisional"].is_null())
+            {
+                break msg["params"]["diagnostics"].clone();
+            }
+        };
+        server.shutdown();
+        (runs, last)
+    };
+    let (runs, last) = run(true);
+    let (none, before) = run(false);
+    let _ = std::fs::remove_dir_all(&dir);
+    assert!(none.is_empty(), "provisional off sends none: {none:?}");
+    assert_eq!(last, before, "the final set is the one a single publish sent");
+    let first = runs.first().unwrap_or_else(|| panic!("a second run follows the first: {last}"));
+    assert_eq!(first["run"], 1, "{first}");
+    let find = |set: &Value, needle: &str| {
+        set.as_array().unwrap().iter().find(|d| d["message"].to_string().contains(needle)).cloned()
+    };
+    let diagnostics = &first["diagnostics"];
+    let marker = find(diagnostics, "TODO").unwrap_or_else(|| panic!("{diagnostics}"));
+    assert!(marker["data"]["provisional"].is_null() && marker["data"]["settled"] == true, "{marker}");
+    let reference = find(diagnostics, "{never}").unwrap_or_else(|| panic!("{diagnostics}"));
+    assert_eq!(reference["data"]["provisional"], true, "{reference}");
+    for d in diagnostics.as_array().unwrap() {
+        assert!(d["data"]["settled"] == true || d["data"]["provisional"] == true, "neither settled nor marked: {d}");
+    }
 }
 
 /// Intuition: the rules that need no run report on a sketch before the run starts, on the settled
@@ -8092,6 +8156,67 @@ fn an_open_file_the_document_stops_reading_runs_again() {
     std::fs::remove_dir_all(dir).ok();
 }
 
+/// Intuition: a chapter's root that read it before and stops at a budget this time
+/// (an edit put a long loop before `\input{chap}`) still owns the chapter. Pins the
+/// fallback: the session ran the chapter alone in a made-up document, with no `.aux`,
+/// and published a certain undefined reference for `\ref{sec:a}` (lspsync).
+#[test]
+fn a_chapter_whose_root_stopped_at_a_budget_keeps_its_root() {
+    let dir = crate::support::tmp_root().join(format!("satex-lsp-stopped-root-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let main =
+        "\\documentclass{article}\n\\begin{document}\n\\section{A}\\label{sec:a}\n\\input{chap}\n\\end{document}\n";
+    std::fs::write(dir.join("main.tex"), main).unwrap();
+    std::fs::write(dir.join("chap.tex"), "See \\ref{sec:a}.\n").unwrap();
+    let mut server = Server::start_with(
+        &crate::support::test_cache(),
+        &dir,
+        &["--set", "limits.seconds=0", "--set", "limits.steps=40000000"],
+    );
+    let id = server.request("initialize", json!({ "processId": null, "rootUri": null, "capabilities": {} }));
+    server.response(id);
+    server.notify("initialized", json!({}));
+    let (uri, first) = open_file(&mut server, &dir, "main.tex");
+    assert!(!first["params"]["diagnostics"].to_string().contains("budget"), "the root runs to its end: {first}");
+    let chap = fixture_uri(&dir.join("chap.tex"));
+    let text = "See \\ref{sec:a}.\n";
+    server.notify(
+        "textDocument/didOpen",
+        json!({ "textDocument": { "uri": chap, "languageId": "tex", "version": 1, "text": text } }),
+    );
+    let undefined = |p: &Value| p["params"]["diagnostics"].to_string().contains("undefined-reference");
+    loop {
+        let p = server.published();
+        if p["params"]["uri"] == chap {
+            assert!(!undefined(&p), "{p}");
+            break;
+        }
+    }
+    let slow = main.replace(
+        "\\input{chap}",
+        "\\count255=0 \\loop\\advance\\count255 1 \\ifnum\\count255<1000000000 \\repeat\n\\input{chap}",
+    );
+    server.notify(
+        "textDocument/didChange",
+        json!({ "textDocument": { "uri": uri, "version": 2 }, "contentChanges": [{ "text": slow }] }),
+    );
+    server.notify(
+        "textDocument/didChange",
+        json!({ "textDocument": { "uri": chap, "version": 2 }, "contentChanges": [{ "text": "See  \\ref{sec:a}.\n" }] }),
+    );
+    let id = server.request("textDocument/documentSymbol", json!({ "textDocument": { "uri": chap } }));
+    loop {
+        let msg = server.read();
+        if msg.get("id").and_then(Value::as_i64) == Some(id) {
+            break;
+        }
+        let chap_set = msg["method"] == "textDocument/publishDiagnostics" && msg["params"]["uri"] == chap;
+        assert!(!chap_set || !undefined(&msg), "the chapter is not run alone: {msg}");
+    }
+    server.shutdown();
+    std::fs::remove_dir_all(dir).ok();
+}
+
 /// Intuition: a file no root reads runs inside a root, read where the
 /// root's preamble ends, so that run's findings of the root are not the
 /// root's. Pins the run publishing them for the root as well: `loose.tex`
@@ -8370,4 +8495,72 @@ fn caption_item_carries_its_shape() {
     let text = "\\documentclass{article}\n\\begin{document}\n\\begin{figure}\\caption[s]{x}\\end{figure}\n\\capti\n\\end{document}\n";
     let found = shapes_of("shape-caption", text, &["caption"]);
     assert_eq!(found[0].0, "[⟨options⟩]{⟨arg⟩}");
+}
+
+/// Intuition: the class dialog offers what the class's own code declares (`\DeclareOption`), says
+/// the version its file gives, and the header line it shows is what the snapshot printer writes;
+/// written, the class runs with the option. Pins the round trip options in, header line out,
+/// class seeing them (src/lsp/plugins/class.rs).
+#[test]
+fn class_options_round_trip() {
+    if !crate::support::installed() {
+        return;
+    }
+    let cls = "\\ProvidesClass{demo}[2026/01/01 v1.0 a demo class]\n\\newif\\ifdemo@review\n\
+               \\DeclareOption{review}{\\demo@reviewtrue}\n\\DeclareOption{anonymous}{}\n\\ProcessOptions\\relax\n\
+               \\LoadClass{article}\n\\ifdemo@review\\def\\demostate{under review}\\else\\def\\demostate{final}\\fi\n";
+    let text = "\\documentclass{demo}\n\\begin{document}\nText\n\\end{document}\n";
+    let (mut server, uri, dir) = open_with("class-options", text, &[("demo.cls", cls)], &[]);
+    let views = at(&mut server, &uri, "satex/view", 0, 2);
+    let v = views.as_array().unwrap().iter().find(|v| v["plugin"] == "class").expect("a class view").clone();
+    let s = &v["sections"][1];
+    let offered: Vec<&str> = s["offered"].as_array().unwrap().iter().filter_map(|o| o["name"].as_str()).collect();
+    assert!(offered.contains(&"review") && offered.contains(&"anonymous"), "{offered:?}");
+    assert!(v["sections"][0]["markdown"].as_str().unwrap().contains("v1.0 a demo class"), "{v}");
+    let mut node = s["node"].clone();
+    node["args"][0]["keys"] = json!([{ "key": "review", "value": null }]);
+    let id = server
+        .request("satex/dialogApply", json!({ "textDocument": { "uri": uri }, "kind": "snapshot", "nodes": [node] }));
+    let printed = server.response(id)["result"].clone();
+    let header = printed["texts"][0].as_str().unwrap().to_string();
+    assert_eq!(header, "\\documentclass[review]{demo}", "{printed}");
+    let written = text.replacen("\\documentclass{demo}", &header, 1);
+    server.notify(
+        "textDocument/didChange",
+        json!({ "textDocument": { "uri": uri, "version": 2 }, "contentChanges": [{ "text": written }] }),
+    );
+    let request = json!({ "file": dir.join("main.tex").display().to_string(), "queries": [{ "type": "explain", "names": ["\\demostate"] }] });
+    let id = server.request("workspace/executeCommand", json!({ "command": "satex/query", "arguments": [request] }));
+    let reply = server.response(id);
+    assert!(reply["result"][0].to_string().contains("under review"), "{reply}");
+    server.shutdown();
+    std::fs::remove_dir_all(dir).ok();
+}
+
+/// Intuition: an editor's New document command lists the templates, prints the header line for
+/// chosen options with the snapshot printer, and writes the project where it is told to. Pins
+/// `satex/templates` and `satex/newDocument` (as a request and as an executed command).
+#[test]
+fn new_document_command() {
+    if !crate::support::installed() {
+        return;
+    }
+    let (mut server, _uri, dir) = open_set("new-document", "\\documentclass{article}\n", &[]);
+    let id = server.request("satex/templates", json!({}));
+    let list = server.response(id)["result"].clone();
+    let ieee = list.as_array().unwrap().iter().find(|t| t["id"] == "ieee-conference").expect("IEEE").clone();
+    assert_eq!(ieee["header"], "\\documentclass[conference]{IEEEtran}", "{ieee}");
+    let id = server
+        .request("satex/newDocument", json!({ "template": "ieee-conference", "options": ["conference", "a4paper"] }));
+    let made = server.response(id)["result"].clone();
+    assert_eq!(made["header"], "\\documentclass[conference, a4paper]{IEEEtran}", "{made}");
+    assert!(made["files"]["main.tex"].as_str().unwrap().starts_with("\\documentclass[conference, a4paper]{IEEEtran}"));
+    let target = dir.join("paper");
+    let args = json!({ "template": "ieee-conference", "dir": target.display().to_string() });
+    let id = server.request("workspace/executeCommand", json!({ "command": "satex/newDocument", "arguments": [args] }));
+    let wrote = server.response(id)["result"].clone();
+    assert_eq!(wrote["written"], target.join("main.tex").display().to_string(), "{wrote}");
+    assert!(target.join("references.bib").is_file());
+    server.shutdown();
+    std::fs::remove_dir_all(dir).ok();
 }

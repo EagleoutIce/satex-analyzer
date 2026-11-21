@@ -13,6 +13,9 @@ glossaries makeidx imakeidx cleveref enumitem biblatex
 # slides
 beamer.cls
 
+# provider templates (src/data/templates.yaml, the New document dialog)
+acmart.cls IEEEtran.cls llncs.cls elsarticle.cls cas-dc.cls revtex4-2.cls
+
 # often next to them
 biblatex csquotes mathtools bm tabularx longtable makecell array url xspace
 setspace lipsum todonotes algorithm2e algpseudocode wrapfig titlesec parskip

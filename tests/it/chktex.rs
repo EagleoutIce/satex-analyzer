@@ -1226,6 +1226,19 @@ fn an_unreferenced_equation_is_reported() {
     assert!(found[0].contains("eq:unused"), "{found:?}");
 }
 
+/// One fact, one finding: the display's finding names its unused label and its fix
+/// drops it, so `unused-label` does not report the label again with a fix of its own
+/// that conflicts (delete the label, leaving the number).
+#[test]
+fn an_unreferenced_equation_label_is_reported_once() {
+    let Some(doc) = display("eq-once", "\\begin{equation}\n  a = b\n  \\label{eq:once}\n\\end{equation}\n") else {
+        return;
+    };
+    assert_eq!(findings(&doc.analysis, "unreferenced-numbered-display").len(), 1);
+    let labels = findings(&doc.analysis, "unused-label");
+    assert!(labels.is_empty(), "{labels:?}");
+}
+
 /// A numbered display with no label at all can never be referenced.
 #[test]
 fn an_unlabelled_numbered_equation_is_reported() {

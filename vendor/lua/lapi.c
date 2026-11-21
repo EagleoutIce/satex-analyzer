@@ -1331,3 +1331,18 @@ LUA_API int satex_track (lua_State *L) {
   lua_pushinteger(L, l_castU2S(g->satex_writes));
   return 1;
 }
+
+
+/* satex: 'choices(bits, n)', a lua_CFunction, gives the next run the
+** outcomes of its first n tests of unknown values (ldebug.c 'satex_choose')
+** and returns whether the last run stopped asking for one more. */
+LUA_API int satex_choices (lua_State *L) {
+  global_State *g = G(L);
+  int asked = g->satex_asked;
+  g->satex_choices = (unsigned int)lua_tointeger(L, 1);
+  g->satex_nchoices = (unsigned int)lua_tointeger(L, 2);
+  g->satex_chosen = 0;
+  g->satex_asked = 0;
+  lua_pushboolean(L, asked);
+  return 1;
+}

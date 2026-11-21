@@ -661,6 +661,17 @@ l_noret satex_unknown (lua_State *L) {
   luaG_runerror(L, "satex: unknown");
 }
 
+/* The outcome of a test of an unknown value: the next of the choices the
+** run was given ('satex_choices').  Past them the run fails, asking for
+** one more: the host runs it again per outcome. */
+int satex_choose (lua_State *L) {
+  global_State *g = G(L);
+  if (g->satex_chosen < g->satex_nchoices)
+    return (g->satex_choices >> g->satex_chosen++) & 1;
+  g->satex_asked = 1;
+  satex_unknown(L);
+}
+
 
 l_noret luaG_runerror (lua_State *L, const char *fmt, ...) {
   CallInfo *ci = L->ci;

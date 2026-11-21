@@ -329,6 +329,8 @@ LUA_API lua_State *lua_newstate (lua_Alloc f, void *ud) {
   g->gcfinnum = 0;
   g->satex_writes = 0;
   g->satex_epoch = g->satex_epochs = 0;
+  g->satex_choices = g->satex_nchoices = g->satex_chosen = 0;
+  g->satex_asked = 0;
   L->satex_epoch = 0;
   g->gcpause = LUAI_GCPAUSE;
   g->gcstepmul = LUAI_GCMUL;

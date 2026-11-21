@@ -23,6 +23,25 @@ pub fn lead(command: &mut Command) {
     }
 }
 
+/// `command` without the descriptors this process was handed, but its standard three: a helper
+/// that outlives who started it (a format dump, an analysis aside, a warm engine and its reaper)
+/// must not keep open what the starter's own caller holds, such as the lock file of a wrapping
+/// `flock` or a pipe someone reads to its end. They are closed as the command starts (Linux).
+pub fn alone(command: &mut Command) {
+    #[cfg(target_os = "linux")]
+    // SAFETY: runs between fork and exec, where only async-signal-safe calls are allowed:
+    // `close_range` is a plain system call. It only marks the descriptors close-on-exec, so the
+    // pipe that reports a failed exec to the parent still works.
+    unsafe {
+        std::os::unix::process::CommandExt::pre_exec(command, || {
+            libc::close_range(3, libc::c_uint::MAX, libc::CLOSE_RANGE_CLOEXEC as libc::c_int);
+            Ok(())
+        });
+    }
+    #[cfg(not(target_os = "linux"))]
+    let _ = command;
+}
+
 /// Ends the group `child` leads ([`lead`]) and waits for the child.
 pub fn end(child: &mut Child) {
     #[cfg(unix)]
@@ -55,5 +74,31 @@ pub fn die_together() {
                 libc::signal(libc::SIGHUP, handler);
             }
         }
+    }
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod tests {
+    /// A helper started [`super::alone`] has none of the descriptors its starter was handed, a
+    /// plain child has them. Pins: `flock lock satex compile` held `lock` for as long as the
+    /// build's warm engine, format dump or analysis aside lived (seen as a build slot kept busy).
+    #[test]
+    fn a_helper_started_alone_holds_no_descriptor_of_its_starter() {
+        use std::os::fd::AsRawFd;
+        let handed = std::fs::File::open("/proc/self/exe").unwrap();
+        let fd = handed.as_raw_fd();
+        // as a wrapper hands a descriptor on: not close-on-exec
+        // SAFETY: `fcntl` on a descriptor this test owns.
+        unsafe { libc::fcntl(fd, libc::F_SETFD, 0) };
+        let has = |alone: bool| {
+            let mut command = std::process::Command::new("sh");
+            command.arg("-c").arg(format!("test -e /proc/self/fd/{fd}"));
+            if alone {
+                super::alone(&mut command);
+            }
+            command.status().unwrap().success()
+        };
+        assert!(has(false), "the plain child lost the descriptor: the test proves nothing");
+        assert!(!has(true));
     }
 }

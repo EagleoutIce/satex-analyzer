@@ -4530,7 +4530,7 @@ fn attach(
     Some(node)
 }
 
-fn identification(analysis: &Analysis, file: Option<FileId>) -> Option<String> {
+pub fn identification(analysis: &Analysis, file: Option<FileId>) -> Option<String> {
     let file = file?;
     analysis
         .facts

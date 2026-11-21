@@ -326,6 +326,48 @@ const satexViews = (() => {
       setTimeout(() => input.focus(), 0);
       return box;
     },
+    // a load's options (src/lsp/plugins/class.rs): the declared ones to tick, a template's common choices first,
+    // others typed as a key list; the header line as the server's printer writes it, to copy, and Write
+    options: (s, view, ctx) => {
+      const box = el('div', 'tv-options'), snap = self.satexSnapshot;
+      const known = new Set<string>(s.offered.map((o: Rec) => o.name));
+      const given = new Set<string>(s.given);
+      // `a, b={c,d}` as [key, value] pairs: commas inside braces stay
+      const pairs = (t: string) => { const out: string[] = []; let d = 0, cur = ''; for (const c of t) { if (c === ',' && !d) { out.push(cur); cur = ''; continue; } d += c === '{' ? 1 : c === '}' ? -1 : 0; cur += c; } out.push(cur);
+        return out.map((x) => x.trim()).filter(Boolean).map((x): [string, string | null] => { const i = x.indexOf('='); return i < 0 ? [x, null] : [x.slice(0, i).trim(), x.slice(i + 1).trim().replace(/^\{([\s\S]*)\}$/, '$1')]; }); };
+      const filter = Object.assign(el('input', 'tv-input'), { placeholder: `filter ${s.offered.length} options`, spellcheck: false, ariaLabel: 'filter options' });
+      const grid = el('div', 'tv-opts');
+      const order = [...s.offered].sort((a: Rec, b: Rec) => Number(!!b.hint) - Number(!!a.hint) || Number(given.has(b.name)) - Number(given.has(a.name)) || a.name.localeCompare(b.name));
+      const boxes = order.map((o: Rec) => {
+        const lab = el('label', o.hint ? 'tv-opt tv-hint' : 'tv-opt', `<input type="checkbox"${given.has(o.name) ? ' checked' : ''}> <code>${esc(o.name)}</code>${o.default ? `<span class="tv-muted">=${esc(o.default)}</span>` : ''}`);
+        lab.title = o.hint ? 'a common choice of the template' : 'declared by the code';
+        return [o.name, lab, lab.querySelector('input')!] as [string, HTMLLabelElement, HTMLInputElement];
+      });
+      grid.append(...boxes.map(([, l]) => l));
+      const more = Object.assign(el('input', 'tv-input'), { placeholder: 'other options: key=value, …', spellcheck: false, ariaLabel: 'other options' });
+      more.value = (snap.list(s.node) ?? []).filter((k) => !known.has(k.key)).map((k) => k.value == null ? k.key : `${k.key}=${k.value}`).join(', ');
+      const line = el('pre', 'tv-headline'), said = el('span', 'tv-muted');
+      line.textContent = s.node.text;
+      const node = () => {
+        const keys: [string, string | null][] = [...boxes.filter(([, , i]) => i.checked).map(([n]): [string, string | null] => [n, null]), ...pairs(more.value)];
+        const n = structuredClone(s.node) as SnapNode;
+        return snap.setKeys(n, (snap.list(n) ?? []).map((k) => k.key), keys);
+      };
+      let ask = 0;
+      const show = () => { const k = ++ask; ctx.print([node()]).then((r) => { if (k === ask) { line.textContent = r?.texts?.[0] ?? s.node.text; said.textContent = r?.error ?? ''; } }).catch((e) => { said.textContent = String(e?.message ?? e); }); };
+      filter.oninput = () => { const q = filter.value.trim().toLowerCase(); for (const [n, l] of boxes) l.hidden = !!q && !n.toLowerCase().includes(q); };
+      grid.onchange = show;
+      more.oninput = show;
+      const copy = el('button', 'tv-button', 'Copy'), write = el('button', 'tv-button tv-primary', 'Write');
+      copy.type = write.type = 'button';
+      copy.title = 'copy the header line';
+      copy.onclick = () => navigator.clipboard?.writeText(line.textContent ?? '').then(() => { said.textContent = 'copied'; }, () => { getSelection()?.selectAllChildren(line); said.textContent = 'selected: press Ctrl+C'; });
+      write.onclick = () => snap.write(ctx, [node()], (m) => { said.textContent = m; });
+      const acts = el('div', 'tv-actions');
+      acts.append(write, copy, said);
+      box.append(filter, grid, more, el('div', 'tv-h', 'Header line'), line, acts);
+      return box;
+    },
     // a manager (bibliography, glossary, index, theorems): the shared master/detail list; each record opens to
     // its uses, its fields (edited through edit templates, `${value}` the new text), a table and actions; `add` is a form of templates
     records: (s, view, ctx) => {
@@ -3411,6 +3453,9 @@ const satexViews = (() => {
 button.tv-spec-value { cursor: pointer; } button.tv-spec-value:hover, button.tv-spec-value:focus-visible { background: color-mix(in srgb, var(--tv-accent) 12%, transparent); color: var(--tv-accent); outline: none; }
 .tv-unit { transition: border-color .12s, background .12s, transform .12s; } .tv-unit.exact b { color: var(--tv-accent); }
 @media (prefers-reduced-motion: reduce) { .tv-unit { transition: none; } .tv-unit:hover { transform: none; } }
+.tv-options { display: grid; gap: .5rem; } .tv-opts { display: grid; grid-template-columns: repeat(auto-fill, minmax(10rem, 1fr)); gap: .1rem .6rem; max-height: 40vh; overflow: auto; }
+.tv-opt { display: flex; align-items: center; gap: .3rem; font-size: .85rem; } .tv-opt.tv-hint code { color: var(--tv-accent); font-weight: 600; } .tv-opt[hidden] { display: none; }
+.tv-headline { margin: 0; padding: .45rem .6rem; border-radius: 6px; background: var(--tv-sunk); border: 1px solid var(--tv-border); white-space: pre-wrap; word-break: break-all; font-size: .85rem; user-select: all; }
 .tv-choices { display: grid; gap: .5rem; } .tv-list { display: grid; gap: .2rem; max-height: 50vh; overflow: auto; }
 .tv-choice { font: inherit; display: flex; justify-content: space-between; gap: 1rem; padding: .35rem .6rem; border-radius: 6px; border: 1px solid transparent; background: none; color: var(--tv-fg); cursor: pointer; text-align: left; }
 .tv-choice:hover, .tv-choice:focus { border-color: var(--tv-accent); background: var(--tv-sunk); } .tv-choice span { color: var(--tv-muted); font-family: ui-monospace, monospace; font-size: .8rem; }

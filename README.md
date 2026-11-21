@@ -84,6 +84,7 @@ Commands:
   completions   Print the shell completion script: bash, zsh, fish, elvish or powershell.  Values complete from the running binary.  `install [bash|zsh|fish]` registers it in that shell's startup file. Without a shell, it does so in every shell installed or in use
   lsp           A Language Server Protocol server: a thin facade over the queries and lints above, driven by `initialize`/`didOpen`/`didChange` instead of one-shot arguments.  Stdio by default, `--port` switches to TCP
   gui           The browser playground on this machine: opens it on the project in DIR, with the TeX packages installed here, the native language server and the local TeX for the PDF. Edits are saved to the files
+  new           A new project in DIR: a provider template (`--list` names them) or another project's files (`--from`). The template's class comes from the TeX installation, or from its provider over HTTPS into the cache (`templates:` in satex.yaml). Then a run reads the new main file and reports the class or style and its version. Nothing in an archive runs
   help          Print this message or the help of the given subcommand(s)
 
 Options:

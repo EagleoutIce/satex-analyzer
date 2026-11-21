@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::fixed::{HashMap, HashSet};
 
-const VERSION: u32 = 6;
+const VERSION: u32 = 7;
 
 #[derive(Serialize, Deserialize, Default)]
 pub struct Exports {
@@ -57,6 +57,11 @@ pub fn written(
             continue;
         }
         let (by, name) = (interner.name(def.by).to_string(), interner.name(def.name));
+        // a name no file can write as one control word (ltcmd's `\x code`) is the definer's own
+        // helper, made from the given name: it says nothing of where the definer puts that name
+        if name.contains(' ') {
+            continue;
+        }
         let next = pairs.contains(&(def.span.line, by.clone(), name.to_string()));
         // a name the call made from its given one: the prefix it put before it
         let given = pairs.iter().filter(|(line, cmd, _)| *line == def.span.line && *cmd == by);
@@ -154,7 +159,8 @@ pub fn definers(analysis: &crate::analysis::machine::Analysis, extra: &[String])
     };
     let mut out = written(&analysis.facts.defs, &analysis.interner, path);
     out.extend(analysis.format.iter().flat_map(|f| f.definers.iter().cloned()));
-    out.extend(extra.iter().cloned());
+    // written as in a document (`\\defmacro`) or as the index keeps them
+    out.extend(extra.iter().map(|d| d.trim_start_matches('\\').to_string()));
     out.sort();
     out.dedup();
     out
@@ -187,6 +193,8 @@ impl Exports {
         );
         let position: HashMap<String, u32> =
             found.iter().enumerate().map(|(i, (name, _))| (name.clone(), i as u32)).collect();
+        let code: HashMap<String, PathBuf> =
+            crate::caches::distribution::files_with(roots, ".code.tex").into_iter().collect();
         let definers: HashSet<&str> = definers.iter().map(String::as_str).collect();
         for (i, (name, path)) in found.iter().enumerate() {
             exports.files.push(name.clone());
@@ -198,6 +206,16 @@ impl Exports {
             let (mut defined, loaded, mentioned) = scan(&text, &definers);
             if name.ends_with(".code.tex") {
                 defined.extend(declared(&text));
+            }
+            // what the code files it inputs define is the package's own, as far as they input more
+            let mut inputs: Vec<String> = loaded.iter().filter(|l| l.ends_with(".code.tex")).cloned().collect();
+            let mut read: HashSet<String> = HashSet::default();
+            while let Some(input) = inputs.pop() {
+                let Some(path) = code.get(&input).filter(|_| read.insert(input.clone())) else { continue };
+                let Ok(bytes) = std::fs::read(path) else { continue };
+                let (more, also, _) = scan(&String::from_utf8_lossy(&bytes), &definers);
+                defined.extend(more);
+                inputs.extend(also.into_iter().filter(|l| l.ends_with(".code.tex")));
             }
             for (into, names) in [(&mut exports.defines, defined), (&mut exports.mentions, mentioned)] {
                 for name in names {
@@ -481,6 +499,27 @@ fn scan(text: &str, definers: &HashSet<&str>) -> (Vec<String>, Vec<String>, Vec<
             Tok::Cs(cs) => match names.name(cs) {
                 "LoadClass" => ".cls",
                 "RequirePackage" | "usepackage" | "RequirePackageWithOptions" => ".sty",
+                // a code file the package reads as its own text (`tikz.sty`'s `\input{tikz.code.tex}`)
+                "input" => {
+                    let braced = group(&tokens[i + 1..]);
+                    let bare = || -> String {
+                        (tokens[i + 1..]
+                            .iter()
+                            .skip_while(|t| matches!(t.tok, Tok::Chr(_, crate::engine::tex::Catcode::Space))))
+                        .map_while(|t| match t.tok {
+                            Tok::Chr(c, crate::engine::tex::Catcode::Letter | crate::engine::tex::Catcode::Other) => {
+                                Some(c)
+                            }
+                            _ => None,
+                        })
+                        .collect()
+                    };
+                    let name = if braced.is_empty() { bare() } else { braced };
+                    if name.ends_with(".code.tex") {
+                        loaded.push(name.trim().to_string());
+                    }
+                    continue;
+                }
                 _ => continue,
             },
             _ => continue,

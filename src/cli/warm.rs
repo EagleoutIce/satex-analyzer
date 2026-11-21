@@ -1,17 +1,25 @@
 //! A warm engine for the `satex` build (`compile.warm`): after a build, pdfTeX starts with the
-//! last pass's arguments and waits to open the main file, a named pipe in its place. The next
-//! build's pass feeds it the text instead of starting an engine, which saves the start: kpathsea's
-//! file database and the format's load.
+//! last pass's arguments in the project's directory and waits to open its input: a named pipe
+//! under the build's keep ([`pipe`]), named like the main file, given in the main file's stead.
+//! The next build's pass feeds it the text instead of starting an engine, which saves the start:
+//! kpathsea's file database and the format's load.
 //!
 //! Sound because pdfTeX opens the name it was given (tex.web § 537) and reads nothing of it before
-//! the open returns: the pipe gives the bytes the file holds. The file is back in the pipe's place
-//! before the pipe is fed, for a later open by name. The engine reads the clock as it starts
-//! (§ 241): one started in another minute is not used, nor one on another format file. Linux only:
+//! the open returns: the pipe gives the bytes the file holds. No file of the project is touched
+//! and the engine runs where a fresh one does, so every other name means what it means there
+//! (`../shared`, a link, the main file opened again by name). What tells the pipe's name from the
+//! main file's is only where the engine writes it: the log, the recorder's list and the SyncTeX
+//! data, where the build puts the main file's name back (and the log's memory statistics: the
+//! longer name takes more of the string pool). The job name is the file's own (§ 537:
+//! the name without its directory). The engine reads the clock as it starts
+//! (§ 241): one started in another minute is not used, nor one on another format file or under
+//! another environment as far as TeX reads it. Linux only:
 //! the engine must be seen waiting in its open (`/proc/PID/wchan`), else it may be past it.
 //!
 //! An engine no build took is of no use once its minute is over, so it ends then: each one gets
 //! a reaper (`satex --warm-reap KEEP`, [`reap`]) that outlives the build. Who uses or ends an
 //! engine first takes its record by rename ([`claim`]): a build and the reaper never both act.
+use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitStatus};
 
@@ -35,11 +43,6 @@ fn record_path(keep: &Path) -> PathBuf {
 
 fn read(keep: &Path) -> Option<Record> {
     read_at(&record_path(keep))
-}
-
-/// The command the engine of `keep` waits to run, if one was left.
-pub fn command(keep: &Path) -> Option<Vec<String>> {
-    read(keep).map(|r| r.command)
 }
 
 fn read_at(record: &Path) -> Option<Record> {
@@ -126,12 +129,11 @@ fn runs(pid: u32, command: &[String]) -> bool {
     words.len() == command.len() && words.iter().zip(command).all(|(w, c)| *w == c.as_bytes())
 }
 
-/// Readies `dir` for files written into it: an engine not seen waiting in its open is stopped,
-/// since it could open the main file the next build writes and run ahead of that build.
+/// Waits for the engine of `keep` to load its format and reach its open; one not seen waiting
+/// there in time is stopped. (An engine of an older satex waits on a pipe in the main file's own
+/// place: stopped here, it never opens the file a build writes there.)
 pub fn settle(keep: &Path, dir: &Path) {
     let Some(r) = read(keep) else { return };
-    // The main file is the pipe until this build writes it: an engine not yet in its open is still
-    // loading its format, and gets there sooner than a fresh one would.
     let deadline = std::time::Instant::now() + LOADING;
     while alive(r.pid) && !waiting(r.pid, dir) && std::time::Instant::now() < deadline {
         std::thread::sleep(std::time::Duration::from_millis(1));
@@ -147,12 +149,12 @@ const LOADING: std::time::Duration = std::time::Duration::from_millis(500);
 /// `satex`'s first argument for [`reap`], then the keep.
 pub const REAP: &str = "--warm-reap";
 
-/// The main file's text while the pipe takes its place.
+/// The main file's text while an older satex's pipe took its place.
 const SOURCE: &str = "source";
 
-/// A run reading `path` while a warm engine's pipe takes its place (a build directory of
-/// `satex gui`, run by hand) would wait on the pipe forever: the engine is stopped and the text
-/// it kept is put back first. Any other pipe stays.
+/// A run reading `path` while the pipe of an older satex's warm engine takes its place would wait
+/// on the pipe forever: the engine is stopped and the text it kept is put back first. Any other
+/// pipe stays.
 pub fn reclaim(path: &Path) {
     let pipe = std::fs::symlink_metadata(path).is_ok_and(|m| std::os::unix::fs::FileTypeExt::is_fifo(&m.file_type()));
     let keep = path.parent().unwrap_or(Path::new(".")).join(super::compile::KEEP);
@@ -170,15 +172,54 @@ pub fn put(path: &Path, text: &[u8]) -> std::io::Result<()> {
     std::fs::rename(&next, path)
 }
 
-/// The pass `program args file` in `dir` by the waiting engine, when it runs that very command
+/// The pipe the engine of `keep` reads in `file`'s stead: named like it, so the job is too.
+pub fn pipe(keep: &Path, file: &str) -> PathBuf {
+    keep.join(DIR).join("in").join(file)
+}
+
+/// The pass `command` (on [`pipe`]) in `dir` by the waiting engine, when it runs that very command
 /// on the current format and started this minute: fed `file`'s text, its status said by its log
 /// (it is not this process's child). Any other engine is stopped, and the pass is left to a fresh one.
-pub fn take(keep: &Path, dir: &Path, command: &[String], file: &str, log: &Path) -> Option<ExitStatus> {
+/// The variables TeX may read (`compile::read_by_tex`) of `vars`, with `more` as a pass adds them.
+fn read_by_tex(vars: impl Iterator<Item = (OsString, OsString)>, more: &[(&str, &str)]) -> Vec<(OsString, OsString)> {
+    let mut read: Vec<(OsString, OsString)> = vars
+        .filter(|(k, _)| super::compile::read_by_tex(&k.to_string_lossy()))
+        .filter(|(k, _)| !more.iter().any(|(m, _)| k == m))
+        .chain(more.iter().map(|(k, v)| (k.into(), v.into())))
+        .collect();
+    read.sort_unstable();
+    read
+}
+
+/// What process `pid` has of them: an engine started under another search path or pinned clock
+/// is not the engine a pass would start now.
+fn environment(pid: u32) -> Option<Vec<(OsString, OsString)>> {
+    use std::os::unix::ffi::OsStringExt;
+    let all = std::fs::read(format!("/proc/{pid}/environ")).ok()?;
+    let pairs = all.split(|&b| b == 0).filter(|p| !p.is_empty()).map(|p| {
+        let at = p.iter().position(|&b| b == b'=').unwrap_or(p.len());
+        (OsString::from_vec(p[..at].to_vec()), OsString::from_vec(p[(at + 1).min(p.len())..].to_vec()))
+    });
+    Some(read_by_tex(pairs, &[]))
+}
+
+/// (`env`: what the passes add to this process's environment.)
+pub fn take(
+    keep: &Path,
+    dir: &Path,
+    command: &[String],
+    file: &str,
+    log: &Path,
+    env: &[(&str, &str)],
+) -> Option<ExitStatus> {
+    // an engine still loading its format gets to its open sooner than a fresh one would
+    settle(keep, dir);
     let r = claim(keep)?;
     let usable = r.command == command
         && runs(r.pid, command)
         && r.minute == minute()
         && r.format == format_stamp(command)
+        && environment(r.pid).is_some_and(|theirs| theirs == read_by_tex(std::env::vars_os(), env))
         && waiting(r.pid, dir)
         && std::fs::symlink_metadata(dir.join(file)).is_ok_and(|m| m.is_file());
     let text = usable.then(|| std::fs::read(dir.join(file)).ok()).flatten();
@@ -186,15 +227,26 @@ pub fn take(keep: &Path, dir: &Path, command: &[String], file: &str, log: &Path)
         end(&r);
         return None;
     };
-    let fed = feed(&keep.join(DIR).join("pipe"), &text);
+    let fed = feed(&pipe(keep, file), &text);
     if fed.is_err() {
         if runs(r.pid, command) {
             let _ = Command::new("kill").arg(r.pid.to_string()).status();
         }
         return None;
     }
+    // An engine back in a pipe's open took the text and asks for it again: no build waits for
+    // that. It is ended, and the pass is a fresh engine's.
+    let mut asked: Option<std::time::Instant> = None;
     while alive(r.pid) && runs(r.pid, command) {
         std::thread::sleep(std::time::Duration::from_millis(1));
+        match waiting(r.pid, dir) {
+            true if asked.get_or_insert_with(std::time::Instant::now).elapsed() > LOADING => {
+                end(&r);
+                return None;
+            }
+            true => {}
+            false => asked = None,
+        }
     }
     // web2c exits 1 once TeX's history is past warnings (tex.web § 76): an error in the log
     let failed = std::fs::read_to_string(log).is_ok_and(|l| l.lines().any(|l| l.starts_with("! ")));
@@ -220,137 +272,36 @@ fn feed(pipe: &Path, text: &[u8]) -> std::io::Result<()> {
     Ok(())
 }
 
-/// Starts the engine for the next build: `command` in `dir`, `file` a pipe in place of the main
-/// file until that build puts the text back. With `env` as the passes have it.
-pub fn start(keep: &Path, dir: &Path, command: &[String], file: &str, env: &[(&str, &str)]) {
+/// Starts the engine for the next build: `command` in `dir`, its input the [`pipe`] of `file`.
+/// With `env` as the passes have it. Gives the seconds it waits at most, None when none started.
+pub fn start(keep: &Path, dir: &Path, command: &[String], file: &str, env: &[(&str, &str)]) -> Option<u64> {
     stop(keep);
-    let at = keep.join(DIR);
-    let pipe = at.join("pipe");
-    let _ = std::fs::create_dir_all(&at);
+    let (at, pipe) = (keep.join(DIR), pipe(keep, file));
+    let _ = std::fs::create_dir_all(pipe.parent().unwrap_or(&at));
     let _ = std::fs::remove_file(&pipe);
-    let made = Command::new("mkfifo").arg(&pipe).status().is_ok_and(|s| s.success());
-    let link = at.join("link");
-    let _ = std::fs::remove_file(&link);
-    // the text, kept for a run that finds the pipe in its place (`reclaim`)
-    if !made
-        || std::fs::copy(dir.join(file), at.join(SOURCE)).is_err()
-        || std::fs::hard_link(&pipe, &link).is_err()
-        || std::fs::rename(&link, dir.join(file)).is_err()
-    {
-        return;
+    if !Command::new("mkfifo").arg(&pipe).status().is_ok_and(|s| s.success()) {
+        return None;
     }
-    let Ok(out) = std::fs::File::create(at.join("out")) else { return };
-    let (Some(program), Ok(err)) = (command.first(), out.try_clone()) else { return };
-    let spawned = Command::new(program)
-        .args(&command[1..])
-        .current_dir(dir)
-        .envs(env.iter().copied())
-        .stdin(std::process::Stdio::null())
-        .stdout(out)
-        .stderr(err)
-        .spawn();
-    if let Ok(child) = spawned {
-        let text = format!("{}\n{}\n{}\n{}\n", child.id(), minute(), format_stamp(command), command.join("\n"));
-        let _ = std::fs::write(record_path(keep), text);
-        // its reaper, in a group of its own: it outlives this build and who ends the build's group
-        if let Ok(satex) = std::env::current_exe() {
-            let mut reaper = Command::new(satex);
-            reaper.arg(REAP).arg(keep).stdin(std::process::Stdio::null());
-            reaper.stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null());
-            std::os::unix::process::CommandExt::process_group(&mut reaper, 0);
-            let _ = reaper.spawn();
-        }
+    let Ok(out) = std::fs::File::create(at.join("out")) else { return None };
+    let (Some(program), Ok(err)) = (command.first(), out.try_clone()) else { return None };
+    let mut engine = Command::new(program);
+    engine.args(&command[1..]).current_dir(dir).envs(env.iter().copied());
+    engine.stdin(std::process::Stdio::null()).stdout(out).stderr(err);
+    // it outlives the build: nothing the build was handed stays open with it
+    super::group::alone(&mut engine);
+    let spawned = engine.spawn();
+    let child = spawned.ok()?;
+    let text = format!("{}\n{}\n{}\n{}\n", child.id(), minute(), format_stamp(command), command.join("\n"));
+    let _ = std::fs::write(record_path(keep), text);
+    // its reaper, in a group of its own: it outlives this build and who ends the build's group
+    if let Ok(satex) = std::env::current_exe() {
+        let mut reaper = Command::new(satex);
+        reaper.arg(REAP).arg(keep).stdin(std::process::Stdio::null());
+        reaper.stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null());
+        std::os::unix::process::CommandExt::process_group(&mut reaper, 0);
+        super::group::alone(&mut reaper);
+        let _ = reaper.spawn();
     }
-}
-
-/// Where, under a project's `.satex-build`, its warm build runs: a mirror of the project, so the
-/// pipe takes the place of the mirror's main file, never of the project's own.
-pub const MIRROR: &str = "mirror";
-
-/// The project's files under `dir`, by name, but satex's build state and the history, each with
-/// where it points when it is a symbolic link (not followed: a link stands as a link).
-fn plain(dir: &Path, under: &Path, out: &mut Vec<(PathBuf, Option<PathBuf>)>) {
-    for entry in std::fs::read_dir(dir).into_iter().flatten().flatten() {
-        let name = entry.file_name();
-        if name == super::compile::KEEP || name == ".git" {
-            continue;
-        }
-        let (path, kind) = (entry.path(), entry.file_type());
-        let Some(rel) = path.strip_prefix(under).ok().map(Path::to_path_buf) else { continue };
-        match kind {
-            Ok(k) if k.is_dir() => plain(&path, under, out),
-            Ok(k) if k.is_file() => out.push((rel, None)),
-            // where the link points from its own place, so the same link anywhere reads the same file
-            Ok(k) if k.is_symlink() => {
-                let Ok(to) = std::fs::read_link(&path) else { continue };
-                let to = std::path::absolute(path.parent().unwrap_or(dir).join(to)).unwrap_or_default();
-                out.push((rel, Some(to)));
-            }
-            _ => {}
-        }
-    }
-}
-
-/// `to` as `from` is, by length and time: a file copied by [`copy`] carries its source's time.
-fn same(from: &Path, to: &Path) -> bool {
-    let stamp =
-        |p: &Path| std::fs::symlink_metadata(p).ok().filter(|m| m.is_file()).map(|m| (m.len(), m.modified().ok()));
-    stamp(from).is_some_and(|s| Some(s) == stamp(to))
-}
-
-/// `from` to `to` by rename of a new file (a pipe there is replaced, never fed), with `from`'s time:
-/// TeX reads a file's time (`\pdffilemoddate`).
-fn copy(from: &Path, to: &Path) -> std::io::Result<()> {
-    std::fs::create_dir_all(to.parent().unwrap_or(Path::new(".")))?;
-    put(to, &std::fs::read(from)?)?;
-    let time = std::fs::metadata(from)?.modified()?;
-    std::fs::File::options().write(true).open(to)?.set_modified(time)
-}
-
-/// The mirror `w` made `dir`'s project for a build: every file as `dir` has it, a symbolic link
-/// as a link to the same place (what it reaches is not copied), a file gone from `dir` gone from
-/// `w`. The engine waiting there is stopped unless it waits in its open (`settle`).
-pub fn fill(w: &Path, dir: &Path) -> Result<std::time::SystemTime, String> {
-    let since = std::time::SystemTime::now();
-    let fail = |e: std::io::Error| format!("{}: {e}", w.display());
-    std::fs::create_dir_all(w.join(super::compile::KEEP)).map_err(fail)?;
-    settle(&w.join(super::compile::KEEP), w);
-    let (mut theirs, mut ours) = (Vec::new(), Vec::new());
-    plain(dir, dir, &mut theirs);
-    plain(w, w, &mut ours);
-    for (gone, _) in ours.iter().filter(|o| !theirs.contains(o)) {
-        std::fs::remove_file(w.join(gone)).map_err(fail)?;
-    }
-    for (name, link) in &theirs {
-        let at = w.join(name);
-        match link {
-            // the main file is the pipe here: no regular file, so it goes in again
-            None if !same(&dir.join(name), &at) => copy(&dir.join(name), &at).map_err(fail)?,
-            None => {}
-            Some(to) if std::fs::read_link(&at).ok().as_ref() != Some(to) => {
-                // a directory of the mirror the project now links: its files went above
-                if at.is_dir() && !at.is_symlink() {
-                    std::fs::remove_dir_all(&at).map_err(fail)?;
-                }
-                std::fs::create_dir_all(at.parent().unwrap_or(w)).map_err(fail)?;
-                std::os::unix::fs::symlink(to, &at).map_err(fail)?;
-            }
-            Some(_) => {}
-        }
-    }
-    Ok(since)
-}
-
-/// What the build in the mirror `w` wrote `since` it was filled, into `dir`: no build state, no pipe,
-/// and no file only `fill` put there, so an edit of the project during the build stays.
-pub fn mirror(w: &Path, dir: &Path, since: std::time::SystemTime) -> Result<(), String> {
-    let mut ours = Vec::new();
-    plain(w, w, &mut ours);
-    let wrote = |n: &Path| std::fs::metadata(w.join(n)).and_then(|m| m.modified()).is_ok_and(|t| t >= since);
-    // what the build wrote through a link is in the project already
-    let files = ours.iter().filter(|(_, link)| link.is_none()).map(|(n, _)| n);
-    for name in files.filter(|n| wrote(n) && !same(&w.join(n), &dir.join(n))) {
-        copy(&w.join(name), &dir.join(name)).map_err(|e| format!("{}: {e}", dir.display()))?;
-    }
-    Ok(())
+    // the reaper ends it a second after its minute
+    Some(61 - std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs() % 60))
 }

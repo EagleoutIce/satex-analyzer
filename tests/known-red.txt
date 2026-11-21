@@ -29,7 +29,7 @@ documents::four_pgfmath_divides_of_two_intervals_stay_on_few_forks
 documents::one_pgfmath_reciprocal_of_an_interval_stays_on_few_forks
 # owner reds (one-of class): parting a one-of at `#1.#2` by dark/far/inside (sound, tagfix) forks on every pass, 1109 forks against 439. Log S/reds/log.md.
 documents::pgfmath_divides_learn_past_their_scratch_names
-# owner reds (luahang2): failed-run state loss fixed (land-01); left: tagpdf.sty:1772 ns loop under LuaTeX, alloctag writes Lua per line while hex-random paths are live -> siblings not run -> unknown text -> garbage. Next: per-path Lua state (undo journal) or read stamps; typed hex digits for \int_to_Hex of an interval. Log S/luahang2/log.md.
+# owner lua (precision land-03, 2026-11-21): string compares of unknown text now have their three results under LuaTeX (a run per outcome), Lua stops 966 -> 95 on the document, no run is out of step. Left: luaotfload.lua:103 stops at `status.safer_option ~= 0` after it wrote, so `fonts` is missing, tagpdf.lua:119 (`fonts.hashes`) stops the module and `ltx.__tag` is never made: 61 `alloctag` runs are unknown text, garbage props and messages (9.7k forks at expl3 12205 `\__iow_wrap_do:`), limits.seconds at tagpdf.sty:1770. Next: `status` values the engine fixes (safer_option), then what luaotfload meets next; reading a tainted global as the unknown value hangs lua::luacode_environments (tried). MWE S/precision/mwe/lua, log S/precision/log.md.
 tagging::lualatex_without_unicode_math_writes_no_mathml
 # owner reds (speed): l3backend-pdftex.def is an `\input`, not a package, so no cache serves it; caching library inputs needs body-time facts in the segment (12 tests differed cold vs cached).
 package_cache::the_backend_loaded_by_begin_document_is_served_from_a_cache
@@ -46,8 +46,7 @@ documents::a_breakable_blanker_box_around_a_rule_of_unknown_height_ends
 tagging::an_fp_eval_of_an_unknown_integer_stays_on_few_paths
 # owner reds-fp (pgf-round fix C): 2.5k forks, bound 1.3k. The earlier 1.2k relied on runs wrongly taken for refuted (a nested drive's last refuted rerun left `infeasible` set): `\fp_eval:n` of the unknown integer was then the certain text `0`. Now unknown text (sound); the cost is the length forks named above. MWE S/pgf-round/m/h/t1.tex.
 tagging::an_fp_eval_of_an_unknown_integer_forks_only_on_its_length
-# owner soundfable/recshape (2026-11-21, with land-01): the cover of a one-of token now keeps its control sequences (sound; before, the rest after `#1\s__str` could never hold `\s__str` again and `#2\s__str` ran through it). l3str's record list `c \s__str N \s__str …` is widened to typed text with the name `\s__str`, so a sound read cannot know the parity of its `\s__str`: possible extra-right-brace / runaway rows at expl3 23963/23969 (was gap-free only through the unsound cover), and 6.44M steps against 5.15M in the cut fixture. Root: a text widening that keeps the record shape (S/recshape/LAND.md, S/reds2/LAND.md). MWE S/recshape/mwe/h.tex, mwe/c1.tex.
-latex::converting_a_string_of_unknown_hex_digits_leaves_no_gap
+# owner reds-fp (precision 2026-11-21): not record shape (the hex conversion red went green with the one-of pass bound, precision land-02, steps here unchanged). After the line cut `\l_tmpa_fp` is unknown and each further `\fp_set:Nn` of the line forks in l3fp's parser (26k forks, limits.line_steps hit 7 times on line 6): 6.44M steps against 5.15M. Same l3fp root as the two tagging fp reds.
 documents::cut_inside_library_call_drops_the_call
 # owner pgf (Root A): 14 paths remain, arms of xcolor's clamps meet only at the line's end.
 termination::convergence::colorlet_of_an_unknown_pgfmath_result

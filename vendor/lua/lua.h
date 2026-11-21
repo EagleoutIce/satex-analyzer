@@ -324,6 +324,7 @@ LUA_API void  (lua_concat) (lua_State *L, int n);
 /* satex: write tracking (lstate.h 'satex_write') */
 LUA_API void  (satex_state_written) (lua_State *L);
 LUA_API int   (satex_track) (lua_State *L);
+LUA_API int   (satex_choices) (lua_State *L);
 LUA_API void  (lua_len)    (lua_State *L, int idx);
 
 LUA_API size_t   (lua_stringtonumber) (lua_State *L, const char *s);

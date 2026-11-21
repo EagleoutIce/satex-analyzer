@@ -214,6 +214,9 @@ pub struct Limits {
     /// recorded. Past half of it a run after an edit keeps its own numbering (`Arena::grown`):
     /// it cannot take the last run's rest and runs to the document's end.
     pub list_items: usize,
+    /// Items of one recorded list (a paragraph, a box, the page's marks). Past it that list is
+    /// not recorded: its lines and size stay unknown.
+    pub paragraph_items: usize,
     /// Macros the table plugin follows through the run's calls from an environment to find the code
     /// that splits its body at `&` (tabularray's): an editor feature, no effect on the analysis.
     pub table_reach: usize,
@@ -318,6 +321,7 @@ impl Limits {
             "facts" => self.facts as u64,
             "hyph_words" => self.hyph_words as u64,
             "list_items" => self.list_items as u64,
+            "paragraph_items" => self.paragraph_items as u64,
             "table_reach" => self.table_reach as u64,
             "trace" => self.trace as u64,
             "trace_state" => self.trace_state as u64,
@@ -428,6 +432,7 @@ impl Default for Limits {
             facts: 2_000_000,
             hyph_words: 50_000,
             list_items: 1 << 23,
+            paragraph_items: 4_000,
             table_reach: 4_000,
             trace: 200_000,
             trace_state: 32,
@@ -707,11 +712,16 @@ pub struct CompileConfig {
     /// Whether the build's messages are explained by a full analysis. Off,
     /// the build waits for none and explains by the message's rule only.
     pub explain: bool,
+    /// Whether `satex compile` waits for the analysis that explains the build's messages. Off, it
+    /// returns with the PDF, explains by rules and by what the last analysis said of the same
+    /// messages, and a detached satex analyzes for the next call.
+    pub wait: bool,
     /// Engine passes at most of the `satex` build, until the build files rest.
     pub passes: u32,
     /// The `satex` build keeps a warm engine for the next build: pdfTeX on its format, waiting to
-    /// open the main file (`src/cli/warm.rs`). The build runs in a mirror of the project under
-    /// `.satex-build`, whose main file is a named pipe between builds, never the project's own.
+    /// open a named pipe under `.satex-build` that it reads in the main file's stead
+    /// (`src/cli/warm.rs`). No file of the project is touched. The engine is of use to a build in
+    /// the clock minute it started in and ends with that minute.
     pub warm: bool,
     /// The clock a document may read, for the `satex` build's skip: a build whose read files, the
     /// directories it looked in and this clock are as its last one left them is not run again.
@@ -736,8 +746,9 @@ impl Default for CompileConfig {
             system: "auto".into(),
             viewer: "none".into(),
             explain: true,
+            wait: false,
             passes: 4,
-            warm: false,
+            warm: true,
             timeout: 600,
             clock: "minute".into(),
             memoize: true,
@@ -760,11 +771,24 @@ pub struct LspConfig {
     /// How long a run goes on at most before it pauses to answer the editor's requests
     /// from the last finished run.
     pub pause_ms: u64,
+    /// A build's run that another run follows publishes all its findings, each one a later run
+    /// may change marked provisional: the editor shows them before the build's fixpoint.
+    pub provisional: bool,
+    /// Only a run that took at least this long does ([`LspConfig::provisional`]): a short run's
+    /// final findings come soon, the extra rules' time would delay them.
+    pub provisional_after_ms: u64,
 }
 
 impl Default for LspConfig {
     fn default() -> LspConfig {
-        LspConfig { port: None, host: "127.0.0.1".into(), debounce_ms: 100, pause_ms: 10 }
+        LspConfig {
+            port: None,
+            host: "127.0.0.1".into(),
+            debounce_ms: 100,
+            pause_ms: 10,
+            provisional: true,
+            provisional_after_ms: 2000,
+        }
     }
 }
 
@@ -796,6 +820,7 @@ pub struct TypePlugins {
     pub page: Switch,
     pub font: FontPlugin,
     pub tagging: Switch,
+    pub class: Switch,
     pub comment_edit: Switch,
     pub whitespace_edit: Switch,
     pub typing: TypingPlugin,
@@ -1025,6 +1050,30 @@ pub struct SliceConfig {
 impl Default for SliceConfig {
     fn default() -> Self {
         Self { trim: true, standalone: true }
+    }
+}
+
+/// `templates:` in `satex.yaml`: where `satex new` and the New document dialog get the provider
+/// files the TeX installation lacks, and what an imported archive may hold.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct TemplatesConfig {
+    /// Fetches a template's files from its provider and an archive from its URL (HTTPS). Off,
+    /// only the cache and the TeX installation serve.
+    pub fetch: bool,
+    /// Days a fetched template is used before it is fetched again; offline the cache serves.
+    pub refresh_days: u32,
+    /// Seconds a download may take before it is given up.
+    pub timeout: u32,
+    /// The most an archive may unpack to.
+    pub max_bytes: bytesize::ByteSize,
+    /// The most files an archive may hold.
+    pub max_files: usize,
+}
+
+impl Default for TemplatesConfig {
+    fn default() -> Self {
+        Self { fetch: true, refresh_days: 7, timeout: 20, max_bytes: bytesize::ByteSize::mib(50), max_files: 2000 }
     }
 }
 
@@ -1429,8 +1478,8 @@ pub struct Conventions {
     /// out of listings, completion and the public-name lints.
     pub internal: Vec<String>,
     /// Commands besides those satex finds in the kernel whose next control
-    /// sequence is the name they define, as the package files on disk are
-    /// read for what they define.
+    /// sequence (or braced word) is the name they define, as the package files on disk are
+    /// read for what they define. `X end`: `X` also defines `end` + that name.
     pub definers: Vec<String>,
     /// What each letter after the `:` of an expl3 name says of its argument (interface3,
     /// "Function and variable names"): offered when such a name is typed.
@@ -1716,7 +1765,17 @@ impl Default for Conventions {
         ];
         Conventions {
             internal: vec!["@".into(), "^__".into(), "_.*:".into()],
-            definers: Vec::new(),
+            // ltcmd's environment definers (usrguide, "Creating document commands and environments"):
+            // the kernel never calls them itself, so no run of a document without them shows them
+            definers: [
+                "NewDocumentEnvironment",
+                "RenewDocumentEnvironment",
+                "ProvideDocumentEnvironment",
+                "DeclareDocumentEnvironment",
+            ]
+            .into_iter()
+            .flat_map(|d| [d.to_string(), format!("{d} end")])
+            .collect(),
             math_symbols: [
                 (0x000, 'Γ'),
                 (0x001, 'Δ'),
@@ -2371,6 +2430,9 @@ pub struct Config {
     /// What `satex slice` leaves out.
     #[serde(default)]
     pub slice: SliceConfig,
+    /// Where `satex new` gets provider files, and what an imported archive may hold.
+    #[serde(default)]
+    pub templates: TemplatesConfig,
     #[serde(default)]
     pub playground: PlaygroundConfig,
     /// The editor features each type plugin adds.
@@ -2435,6 +2497,7 @@ impl Default for Config {
             compile: CompileConfig::default(),
             docs: DocsConfig::default(),
             slice: SliceConfig::default(),
+            templates: TemplatesConfig::default(),
             playground: PlaygroundConfig::default(),
             type_plugins: TypePlugins::default(),
             l3build: L3buildConfig::default(),

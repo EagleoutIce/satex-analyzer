@@ -30,6 +30,7 @@ satex lsp --port 9257 --host 0.0.0.0
 | Rename | `textDocument/prepareRename`, `rename` | `satex query definitions`/`expansions`/`occurrences` |
 | Linked editing | `textDocument/linkedEditingRange` | a `\begin` name and its `\end`, paired by nesting in the open text |
 | Any query | `workspace/executeCommand` (`satex/query`) | a [query request](queries.md#json-requests). Without `file` it reads the open document |
+| New document | `satex/templates`, then `satex/newDocument` (a request, or `workspace/executeCommand`) | the templates of `src/data/templates.yaml`. `{template, options}`, `{from}` (a GitHub URL, a zip URL, a local zip or folder) or `{files}`: the project's files, its main file, its header line and where its files came from. With `dir` it writes them there |
 | Colors | `textDocument/documentColor`, `colorPresentation` | the [color plugin](type-plugins.md#color) |
 | Dialogs | `satex/view` (`{textDocument, position}`) | the [type plugins](type-plugins.md)' views: a color picker, a length converter |
 | Hyphenation | `satex/hyphenate` (`{textDocument, words}`) | per word the characters a hyphen may precede, from the last run's tables ([typesetting plugins](configuration.md#plugins)) |
