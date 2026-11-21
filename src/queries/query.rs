@@ -2720,6 +2720,10 @@ fn project(analysis: &Analysis) -> Vec<Record> {
     first.insert("detail".into(), json!(identity.kind));
     first.insert("name".into(), json!(identity.class));
     first.insert("message".into(), json!(format!("engine {} ({})", identity.engine, identity.engine_source)));
+    // the LaTeX kernel's release the run read (`\fmtversion`): what a writer may use (`\mathcolor` from 2022-06)
+    if let Some(kernel) = crate::analysis::machine::macro_text(analysis, "fmtversion") {
+        first.insert("kernel".into(), json!(kernel));
+    }
     let mut out = vec![first];
     for file in &analysis.project.files {
         let mut record = Map::new();

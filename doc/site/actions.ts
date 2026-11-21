@@ -275,7 +275,7 @@ declare global {
     const a = text.lastIndexOf('\n', from - 1) + 1, e = text.indexOf('\n', to), b = e < 0 ? text.length : e + 1;
     return text.slice(a, from).trim() || text.slice(to, b).trim() ? { from, to, now: '' } : { from: a, to: b, now: '' };
   }
-  self.satexPageActions = { register: (p) => { plugins.push(p); }, plugins, on, setOn, groups, open, close, ask, libEdit, colors, mix, fontSet, cut, styles };
+  self.satexPageActions = { register: (p) => { plugins.push(p); }, plugins, on, setOn, groups, open, close, ask, pops: POPS, libEdit, colors, mix, fontSet, cut, styles };
 
   // ---------------------------------------------------------------- the plugins
   const TM = () => self.satexTikzMove;

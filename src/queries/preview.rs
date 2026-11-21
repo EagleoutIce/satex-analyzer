@@ -54,6 +54,11 @@ const INK: &str = "#888888";
 /// A shape sample's minimum width and height (cm).
 pub const SAMPLE_W: f64 = 1.0;
 pub const SAMPLE_H: f64 = 0.5;
+/// The line an arrow sprite draws its tips on, in cm.
+const ARROW_W: f64 = 0.9;
+/// Room around an arrow sprite's line, in cm, half of it above and below: more than a thick line's tips reach
+/// (`diamond` 0.28 cm back, 0.09 cm up).
+const TIP_ROOM: f64 = 0.3;
 /// The width, in points, a dash pattern is drawn with when the run left `\pgflinewidth` unknown.
 const UNKNOWN_WIDTH: f64 = 0.4;
 
@@ -313,7 +318,8 @@ struct Sheet {
 static SHEET: Mutex<Sheet> = Mutex::new(Sheet { svgs: BTreeMap::new(), loaded: false, busy: false, failed: false });
 
 fn sheet_path() -> Option<std::path::PathBuf> {
-    crate::caches::format::default_cache_dir().map(|d| d.join("previews.json"))
+    // `-v2`: the sprites drawn since the tips' room; an older sheet holds cut-off tips
+    crate::caches::format::default_cache_dir().map(|d| d.join("previews-v2.json"))
 }
 
 fn load(sheet: &mut Sheet) {
@@ -422,7 +428,13 @@ fn render(libs: &[String], wanted: &[String]) -> Option<BTreeMap<String, String>
     let pictures: Vec<String> = wanted
         .iter()
         .map(|w| match w.split_once(':') {
-            Some(("arrow", spec)) => format!("\\tikz\\draw[ink,thick,{spec}] (0,0) -- (0.9,0);"), // not prose
+            // a tip declared the old way (`\pgfarrowsdeclare`: the `arrows` library, `hooks`, `latex'`) adds nothing to the
+            // picture's bounding box, so the sprite cut it off: the points around the line keep room for any tip
+            Some(("arrow", spec)) => format!(
+                "\\tikz{{\\path (-{TIP_ROOM}cm,-{h}cm) ({}cm,{h}cm);\\draw[ink,thick,{spec}] (0,0) -- ({ARROW_W}cm,0);}}", // not prose
+                ARROW_W + TIP_ROOM,
+                h = TIP_ROOM / 2.0
+            ),
             // twice as wide as high: a shape that keeps its own proportions shows it
             Some(("shape", name)) => format!(
                 "\\tikz\\node[draw=ink,fill=ink,fill opacity=.15,shape={{{name}}},inner sep=0pt,minimum width={SAMPLE_W}cm,minimum height={SAMPLE_H}cm] {{}};" // not prose

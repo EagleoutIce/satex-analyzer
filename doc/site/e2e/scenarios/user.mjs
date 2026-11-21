@@ -85,6 +85,12 @@ export default [
     do: [{ pdf: 'numbers.' }, INSERT, { wait: 300 }, entry, { wait: 2500 }, { do: { close: 'dialog[open]' } }, { wait: 500 }],
     expect: [{ changed: true }, { built: true }],
     steps: `a paper, built, PDF Type mode; click after "numbers.", the PDF bar's Insert, ${GROUP[row]} ▸ ${row}, close what opens: it wrote, and the document builds with pdfTeX` })),
+  // ui2's finding (shots/u-insert-aligned-written.png): right after Insert ▸ Aligned the echo drew "numbers. align*"
+  // over the row: an environment's name is a key, never set; a block begun in the typed text is no text of the row
+  { kind: 'user', name: 'u-insert-aligned-echo', pdf: true, source: PAPER, word: { word: 'numbers.' },
+    do: [{ pdf: 'numbers.' }, INSERT, { wait: 300 }, row('Aligned'), { wait: 700 }, { shot: 'echo' }],
+    expect: [{ changed: true }, { echoNot: /align/ }],
+    steps: 'a paper, built, PDF Type mode; click after "numbers.", Insert, Math ▸ Aligned: no echo spells "align*" before the build lands' },
   { kind: 'user', name: 'u-pdf-ctrl-b-then-right', pdf: true, source: PAPER, word: { word: 'bold' },
     do: [{ select: 'bold' }, { chord: 'b' }, { wait: 800 }, { key: 'ArrowRight' }, { type: 'X' }, { wait: 800 }],
     expect: [{ has: /make \\textbf\{bold\}X later/ }],

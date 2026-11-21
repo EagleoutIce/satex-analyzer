@@ -6,6 +6,9 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 
 ## Unreleased
 
+### Site
+
+- `feat` **Compile benchmarks: `satex compile` against latexmk and plain engine runs.** The benchmark page compares cold builds, rebuilds with nothing changed and rebuilds after one edit per document and toolchain (pdfTeX, LuaTeX, XeTeX), with whether the output is the same; the landing page shows the main numbers.
 ### VS Code
 
 - `fix` **A server restart no longer fails with "command 'satex/query' already exists".** The server's commands are registered once per window and run on the current client.
@@ -22,12 +25,14 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 
 ### Compile
 
+- `perf` **`satex compile` runs the analysis only for log messages it can explain.** A message with no source line (an underfull box while the output routine is active) no longer starts it: a one-word edit of a 1000-page book returns with its PDF, not 17 s later.
 - `fix` **The progress bar counts packages built into caches, not only those loaded from them.** A first run after an update shows how many packages are done.
 - `perf` **`satex compile`: the PDF first, the analysis only where a message needs it.** The build runs before the analysis, which runs only when the log has a message to explain and no stored explanation of the same messages, source, settings and read files holds: an unchanged 195-page book 1.7 s → 0.05 s with `compile.explain` on, the PDF of an edit in ~3 s instead of after the analysis. `compile.warm` works from the command line: the build runs in a mirror of the project under `.satex-build`, so no file of the project is ever a pipe.
 - `feat` **memoize: `satex compile` extracts memoize's externs itself.** No shell escape and no Perl module needed: the build runs memoize's TeX extraction between passes (`compile.memoize`).
 
 ### Analysis
 
+- `fix` **The rest of an argument that ended inside one of several texts keeps their control sequences.** Its cover took the one-of for plain text, so the next delimited argument ran through it: a certain wrong value and a certain false runaway are gone.
 - `fix` **A name built around unknown digits is spelled alike after a resume.** It embedded an internal symbol index, so a resumed run named `\__seq_map_<n>:w` differently from a fresh one.
 - `fix` **Unknown text that lists command names is never taken for one name.** Run through an undecided loop, such a list was turned into `\relax`, so the code its names stand for silently never ran; a `\def` through it may now define each name in it.
 - `fix` **A recursion that never returns is TeX's "capacity exceeded" error, and finding counts match the build.** A half-typed `\begin` or `see \ref` before `\end{document}` reports the error pdflatex gives; a lint finding at the same place hides only the raised error it quotes; `x^'` is a missing-brace error; a blank line in display math is reported on its own line.
@@ -78,6 +83,12 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 
 ### Playground
 
+- `fix` **The style prompt shows the count per file and up to three places with the spot marked before it asks.**
+- `fix` **Completion ranks common commands after the document's own uses (`\textb` offers `\textbf` first); `\mathcolor` is written from kernel 2022-06 on; the page menu has Show in source and Explain on macro-made text; old-style TikZ arrow tips render in the gallery.**
+- `fix` **Type mode: text typed into teletype (`\texttt`, listings) is drawn in a fixed-width face matching the page's.**
+- `fix` **Type mode: Up, Down, Home and End move by visual line, column by column; a click on a math glyph (−, ≤, ·) places the caret at the character it was read from; an inserted environment is no longer echoed as text.**
+- `fix` **A macro's output edges belong to its call.** A click before a macro's output types before the call, a caret after the call stands after the whole output; only inside the output does typing edit the definition.
+- `fix` **Insert ▸ Math from the page keeps the caret, every inserted block builds, and Ctrl/Cmd+B or +I wraps or unwraps a page selection.**
 - `fix` **The page settings' header and footer fields show what the page style prints (footer centre `\thepage`) and suggest it; the layers button is called View.**
 - `fix` **A playground that fails to start heals itself.** Stored layout and view choices of another shape are dropped when read; a second failed start reloads without them (text and settings kept); the message's full text and stack are in its tooltip and the console. Smart wrap keeps the page's caret on the text it typed.
 - `fix` **A typed `~` stays a tie; a double click selects a word on the page; findings of a run a widget question interrupted are published.** Before, a slides edit could leave the findings stale while the status said Ready.

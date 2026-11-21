@@ -215,6 +215,16 @@ test('controlSymbol: by the letters at the caret', () => {
 // Intuition: what the document loads ranks before what a package it does not load would define, however close the
 // name: `\textb` takes `\textbf`, not drm's `\textb` (whose item adds `\usepackage{drm}`). Pins the user's 2026-11-21
 // list with `\textb (adds \usepackage{drm})` first.
+// Intuition: the server's rank of a command that holds whatever is typed (tier, the document's uses, the seed of common
+// commands) travels with the item (`data.prior`), so a list answered from kept items (a run going, sortText dropped as
+// another word's) ranks as the server does. Pins `\textb` listing textbackslash, textbaht, textbar … before textbf.
+test('rank: the server\'s prior orders equally close names, kept lists too', () => {
+  const p = (label, prior) => ({ label, data: { prior } });
+  const items = [p('textbackslash', '1999999' + '0040'), p('textbar', '1999999' + '0040'), p('textbf', '1999999' + '0000'), { label: 'textbaht' }];
+  assert.deepEqual(labels(rank(items, 'textb')), ['textbf', 'textbar', 'textbackslash', 'textbaht']);
+  const used = [p('textbf', '1999999' + '0000'), p('textbar', '1999997' + '0040')];
+  assert.deepEqual(labels(rank(used, 'textb')), ['textbar', 'textbf'], 'the document\'s uses before the seed');
+});
 test('rank: a name of a package not loaded after the loaded ones', () => {
   const items = [{ label: 'textb', additionalTextEdits: [{ newText: '\\usepackage{drm}\n' }] }, { label: 'textbf' }, { label: 'textbullet' }];
   assert.deepEqual(labels(rank(items, 'textb')), ['textbf', 'textbullet', 'textb']);

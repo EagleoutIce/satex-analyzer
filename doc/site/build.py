@@ -1877,6 +1877,42 @@ def symbols(satex, project, env):
             "weight": {**established(dist, sorted({r[5] for r in rows})), "kernel": 1, "unicode-math": 1}}, fonts
 
 
+def compile_stats(path):
+    """The landing page's strip of compile numbers: the newest entry of bench/compile.json
+    (scripts/bench_compile.py), else a line that says none are measured yet."""
+    entries = json.loads(path.read_text()) if path.exists() else []
+    link = '<a href="bench/index.html#compile">Compile benchmarks</a>'
+    if not entries or not entries[-1].get("summary"):
+        return f'<p class="muted small">{link}: not measured yet.</p>'
+    e = entries[-1]
+    s, tiles = e["summary"], []
+    def times(x):
+        return f"{x:.2f}×" if x < 2 else f"{x:.1f}×" if x < 10 else f"{x:.0f}×"
+    def ratio(x, what):
+        if not x:
+            return
+        word = "faster" if x >= 1 else "slower"
+        tiles.append((times(x if x >= 1 else 1 / x), f"{word} than latexmk, {what}"))
+    big = s.get("big_edit")
+    if big and big.get("satex"):
+        pages = big.get("pages") or next((r["pages"] for r in e["runs"] if r["doc"] == big["doc"] and r.get("pages")), None)
+        doc = f"{pages}-page document" if pages else html.escape(big["doc"])
+        tiles.append((f'{big["satex"]:.1f} s', f'one-edit rebuild of a {doc}, latexmk {big["latexmk"]:.1f} s'))
+    for key, what in (("edit", "one-edit rebuild"), ("warm", "rebuild with nothing changed"), ("cold", "cold build")):
+        ratio(s.get("speedup", {}).get(key), what)
+    same = s.get("identical")
+    if same and "/" in same:
+        a, b = same.split("/")
+        tiles.append((f"{a} of {b}", "builds with the same pages and text as latexmk"))
+    strip = "".join(f"<div class=\"stat\"><span>{html.escape(t[:1].upper() + t[1:])}</span><b>{html.escape(v)}</b></div>" for v, t in tiles)
+    n = e.get("repeats")
+    runs = "one run each" if n == 1 else f"median of {n} runs" if n else "median of repeated runs"
+    mode = {"satex-build": " (the PDF only)", "satex-warm": " (the PDF only, warm engine)"}.get(s.get("tool"), "")
+    return (f'<div class="stat-strip">{strip}</div><p class="muted small"><code>satex compile</code>{mode} against latexmk on '
+            f'{html.escape(e.get("machine", {}).get("cpu", "one machine"))}, {runs}, SaTeX {html.escape(e["version"])} ({html.escape(e["date"])}). '
+            f'Geometric means over the benchmark documents. {link} has every document, toolchain and spread.</p>')
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--satex", type=Path, required=True, help="the native satex binary")
@@ -2072,6 +2108,7 @@ def main():
         return
     def home():
         parts["showcase"] = showcase(out, live)
+        parts["compilestats"] = compile_stats(SITE / "bench/compile.json")
         page("index.html", "Static Analysis for (La)TeX and Friends", fill((SITE / "home.html").read_text(), {
             **assets, **parts, "version": release, "versiontitle": release_title, "repository": repo, "description": html.escape(cargo["description"])}), side=False)
     home()
@@ -2079,12 +2116,13 @@ def main():
     # Draw alone, to embed: its own page without the site's chrome
     (out / "draw").mkdir(exist_ok=True)
     (out / "draw/index.html").write_text(minify_html(fill((SITE / "draw.html").read_text(), {**assets, "root": "../", "symbols": manifest["symbols"]})))
-    data = SITE / "bench/data.json"
     (out / "bench").mkdir(exist_ok=True)
-    if data.exists():
-        shutil.copy2(data, out / "bench/data.json")
-    else:
-        (out / "bench/data.json").write_text("[]\n")
+    for name in ("data.json", "compile.json"):
+        data = SITE / "bench" / name
+        if data.exists():
+            shutil.copy2(data, out / "bench" / name)
+        else:
+            (out / "bench" / name).write_text("[]\n")
     page("bench/index.html", "Benchmarks", fill((SITE / "bench.html").read_text(), {"root": "../", "repository": repo}), side=False)
     (out / ".nojekyll").write_text("")
     with stage("link check"):

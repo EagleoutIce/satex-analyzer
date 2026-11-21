@@ -44,6 +44,9 @@ documents::a_breakable_blanker_box_around_a_rule_of_unknown_height_ends
 tagging::an_fp_eval_of_an_unknown_integer_stays_on_few_paths
 # owner reds-fp (pgf-round fix C): 2.5k forks, bound 1.3k. The earlier 1.2k relied on runs wrongly taken for refuted (a nested drive's last refuted rerun left `infeasible` set): `\fp_eval:n` of the unknown integer was then the certain text `0`. Now unknown text (sound); the cost is the length forks named above. MWE S/pgf-round/m/h/t1.tex.
 tagging::an_fp_eval_of_an_unknown_integer_forks_only_on_its_length
+# owner soundfable/recshape (2026-11-21, with land-01): the cover of a one-of token now keeps its control sequences (sound; before, the rest after `#1\s__str` could never hold `\s__str` again and `#2\s__str` ran through it). l3str's record list `c \s__str N \s__str …` is widened to typed text with the name `\s__str`, so a sound read cannot know the parity of its `\s__str`: possible extra-right-brace / runaway rows at expl3 23963/23969 (was gap-free only through the unsound cover), and 6.44M steps against 5.15M in the cut fixture. Root: a text widening that keeps the record shape (S/recshape/LAND.md, S/reds2/LAND.md). MWE S/recshape/mwe/h.tex, mwe/c1.tex.
+latex::converting_a_string_of_unknown_hex_digits_leaves_no_gap
+documents::cut_inside_library_call_drops_the_call
 # owner pgf (Root A): 14 paths remain, arms of xcolor's clamps meet only at the line's end.
 termination::convergence::colorlet_of_an_unknown_pgfmath_result
 # owner pgf: in the second build run thirty nodes end with 27 paths waiting at `\clearpage`, past any time (uncharged path work of explore).

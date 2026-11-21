@@ -299,6 +299,7 @@ $ satex explain '\itshape'
 ## project
 
 The document class, engine, and build configuration SaTeX detected or was told to assume (see [profiles](configuration.md#profiles)).
+The first row's `kernel` is the LaTeX kernel's release the run read (`\fmtversion`). The playground's writers use it (`\mathcolor` from 2022-06).
 
 The rows below list what the project scan found, without what `.gitignore` excludes.
 `unreachable` lists the inputs, packages, classes and bibliographies no root reads.

@@ -94,3 +94,5 @@ The pages come from a built site: `share/satex/site` beside the binary, or `--si
 ## Benchmarks
 
 `python3 scripts/bench.py --build` builds the release binary, runs the documents of `benches/docs.txt` under every kernel and writes the entry for the current version to `doc/site/bench/data.json`. Entries of other versions stay. `cargo playground` then serves the Benchmarks page from that file, and shows a hint while it is missing. `cargo bench --bench analysis` runs the Criterion micro-benchmarks. CI appends an entry on each release.
+
+`python3 scripts/bench_compile.py` compares `satex compile --system satex` with latexmk and the plain engine on the documents of `benches/compile.txt` and, with `--big article-200,book-1000`, on generated ones. It measures a cold build, a rebuild with nothing changed and a rebuild after one changed word. For each it records the median wall time of N runs and its spread, CPU time, peak memory and engine passes. It also checks that each PDF has latexmk's page count and text. The clock is pinned for every tool. The entry goes to `doc/site/bench/compile.json`; the module docstring says which caches each scenario has.

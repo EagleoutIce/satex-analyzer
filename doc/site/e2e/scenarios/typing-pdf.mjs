@@ -1,8 +1,8 @@
 import { filler, PAGEBREAK, MARKUP, is, lastOn1, after, at, DEMO } from './sources.mjs';
 
 export default [
-  { name: 'demo-macro-row', source: DEMO.replace('falls fast.', 'falls fast. It drops by \\(x_{42}\\) per step.'), example: 'hello.tex', word: is('TinyNet,'), src: /\\newcommand\{\\model\}\{TinyNet/, keys: ['2'], expect: () => null, contains: [/\{TinyNet2\}/], math: [],  clickMs: 60000,
-    steps: 'the landing demo after its typing; click the end of "TinyNet,", type 2 (into \\model\'s definition): the row\'s other words, x₄₂ among them, are the page\'s own pixels moved, never x42 in the text font' },
+  { name: 'demo-macro-row', source: DEMO.replace('falls fast.', 'falls fast. It drops by \\(x_{42}\\) per step.'), example: 'hello.tex', word: is('TinyNet,'), src: /With \\model,/, keys: ['2'], expect: () => null, contains: [/With \\model,2 the/, /\{TinyNet\}/], math: [],  clickMs: 60000,
+    steps: 'the landing demo after its typing; click the end of "TinyNet,", type 2 (after the comma, outside \\model: caret2, the end of an output is the call\'s): the row\'s other words, x₄₂ among them, are the page\'s own pixels moved, never x42 in the text font' },
   { name: 'demo-garble', source: DEMO, example: 'hello.tex', word: is('fast.'), src: /falls fast\./, keys: [' It drops by $x_42$ per', 'Pause', ' step.', 'Pause', 'Enter', 'Pause', 'It converges.'], keyMs: [70, 130], pauseMs: 600, never: [/\(x42\)|fast\. It|^fast\. /], expect: () => null, contains: [/x_\{42\}/], ever: [/ x 42 /],
     steps: 'the landing demo; click the end of "fast."; type " It drops by $x_42$ per step.", Enter, "It converges.": the echo keeps the sentence in order, x with 42 lowered (ui-35: a garbled first row)' },
   { name: 'prose-human', word: is('Literate'), src: /Literate/, keys: [' Quokka zebu'], marker: 'Quokka', style: /^(?!.*(bold|700|italic)).*$/i, endWord: is('zebu'), forward: true,

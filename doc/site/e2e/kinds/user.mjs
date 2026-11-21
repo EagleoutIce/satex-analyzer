@@ -134,6 +134,8 @@ export async function user(p, sc) {
     if (e.has && !e.has.test(t)) fail(`the text lacks ${e.has}: ${J(t.slice(0, 300))}`);
     if (e.not && e.not.test(t)) fail(`the text has ${e.not}: ${J(t.match(e.not)[0])}`);
     if (e.changed && t === before) fail('the text is unchanged after the steps');
+    // `echoNot`: no echo draw on the pages (the typing preview) spells this
+    if (e.echoNot) { const ts = await p.eval(`[...document.querySelectorAll('#play-pdf .pdf-echo')].flatMap((x) => [x.textContent, ...(x.__texts ?? []).map((q) => q.t)]).join(' | ')`); if (e.echoNot.test(ts)) fail(`the echo draws ${J(ts.match(e.echoNot)[0])}: ${J(ts.slice(0, 200))}`); }
     if (e.once != null && t.split(e.once).length - 1 !== 1) fail(`${J(e.once)} is in the text ${t.split(e.once).length - 1} times`);
     if (e.finding || e.noFinding || e.buildErrorsCovered) {
       await d.until('quiet', 120000, 1200);

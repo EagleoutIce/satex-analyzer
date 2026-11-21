@@ -81,6 +81,9 @@ a | b \gdef\Maybe{}</code></pre>
   <ol class="refs">
     <li id="ref-dynamic">V. Novotný: “[the analyzer] cannot detect function definitions or calls that arise only through dynamic expansion and are not obvious from the surface text of the program”, <a href="https://witiko.github.io/Expl3-Linter-11.5/">Static analysis of expl3 programs (11½)</a>. The series is a careful account of what a text-based approach can do: <a href="https://witiko.github.io/Expl3-Linter-3/">related work</a>, <a href="https://witiko.github.io/Expl3-Linter-2.5/">TeX language servers</a>.</li>
   </ol>
+  <h3 id="compile">Compiling</h3>
+  <p class="sub"><code>satex compile</code> builds the PDF with the TeX engine. It reruns until the files rest, as latexmk does, and skips the build when nothing it read changed.</p>
+  {{compilestats}}
 </section>
 
 <section class="band alt" id="about">

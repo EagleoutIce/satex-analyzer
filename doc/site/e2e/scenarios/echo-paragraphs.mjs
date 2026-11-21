@@ -13,6 +13,9 @@ export default [
   // typing right after "Hello," of a macro's output (its definition's text): the comma once (user 2026-11-21 13:21)
   { kind: 'echo', name: 'macro-comma', case: 'pdf-macro-comma' },
   { kind: 'echo', name: 'macro-comma-space', case: 'pdf-macro-comma-space' },
+  { kind: 'echo', name: 'macro-edges', case: 'pdf-macro-edges' },
+  { kind: 'echo', name: 'updown-columns', case: 'pdf-updown-columns' },
+  { kind: 'echo', name: 'tt-echo', case: 'pdf-tt-echo' },
   { kind: 'echo', name: 'math-caret-below', case: 'pdf-math-caret-below' },
   { kind: 'echo', name: 'math-caret-below-slow', case: 'pdf-math-caret-below-slow' },
   { kind: 'echo', name: 'after-macro-pdf', case: 'pdf-after-macro' },

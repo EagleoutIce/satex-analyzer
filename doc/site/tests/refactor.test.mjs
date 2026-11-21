@@ -264,7 +264,7 @@ test('insert: footnote after the sentence, citation before it with a tie', () =>
 test('insert: at the caret, displays on own lines, headings at the level before', () => {
   const c = DOC.indexOf('paragraph') + 9;
   const eq = insert(DOC, 'equation', { caret: c });
-  assert.match(eq.out, /First paragraph\n\\begin\{equation\}\n  \n\\end\{equation\}\nruns on\./);
+  assert.match(eq.out, /First paragraph\n\\begin\{equation\}\n  \\end\{equation\}\nruns on\./);
   const h = insert(DOC, 'heading', { caret: c });
   assert.match(h.out, /First paragraph\n\n\\section\{\}\n\nruns on\./);
   const sub = DOC.replace('\\section{Intro}', '\\subsection{Intro}');
@@ -325,7 +325,7 @@ test('insert: a block at the caret never splits a group', () => {
   const free = text.indexOf(' and');
   assert.deepEqual(R.insertSpot(text, { caret: free }, false), { at: free, mode: 'caret' });
   const { out } = insert(text, 'equation', { caret: at });
-  assert.match(out, /\\greet\{world\} and more\n\n\\begin\{equation\}\n {2}\n\\end\{equation\}\n\nNext\./);
+  assert.match(out, /\\greet\{world\} and more\n\n\\begin\{equation\}\n {2}\\end\{equation\}\n\nNext\./);
   assert.deepEqual(R.insertSpot('\\greet{wo', { caret: 8 }, false), { at: 8, mode: 'caret' }, 'a group never closed: at the caret');
 });
 
@@ -382,4 +382,29 @@ test('format: a selection wrapped, math-aware, unwrapped', () => {
   const h = text.indexOf('hello'), um = menu(h + 1, h + 3);
   um.Format.find((r) => r.label === 'Remove formatting').run();
   assert.match(written.pop(), /Say hello world/);
+});
+
+// Intuition: every Insert row writes a document that builds before anything is typed. A body line of blanks is an
+// empty line, a \par: Insert ▸ Aligned equations wrote `\begin{align}\n  \n\end{align}` and the build failed
+// ("Paragraph ended before \align was complete"). No environment an insert opens holds a blank line.
+test('insert: no blank line inside an environment, every kind, caret and after a paragraph', () => {
+  for (const it of R.inserts) for (const t of [{ caret: DOC.indexOf('runs on') - 1 }, { block: { to: 6, what: 'paragraph' } }]) {
+    const r = insert(DOC, it.kind, t);
+    if (!r) continue;
+    for (const m of r.out.matchAll(/\\begin\{(\w+\*?)\}[^]*?\\end\{\1\}/g)) if (m[1] !== 'document') assert.ok(!/\n[ \t]*\n/.test(m[0]), `${it.kind}: ${JSON.stringify(m[0])}`);
+  }
+});
+
+// Intuition: Ctrl+B over a selection on the page bolds its source, and again unbolds it; the caret stays at the
+// argument's end inside, so Right leaves the call (`\textbf{bold}X`). Pins Ctrl+B over a page selection doing nothing.
+test('format: Ctrl+B wraps a selection and unwraps its own call', () => {
+  const t = 'make bold later', a = t.indexOf('bold'), b = a + 4;
+  const on = R.formatToggle(t, a, b, 'textbf'), w = edit(t, [on.edit]);
+  assert.equal(w, 'make \\textbf{bold} later');
+  assert.equal(w.slice(on.caret), '} later');
+  const off = R.formatToggle(w, w.indexOf('bold'), w.indexOf('bold') + 4, 'textbf');
+  assert.equal(edit(w, [off.edit]), t);
+  // another command around it, or only part of its argument: wrapped again
+  assert.equal(edit(w, [R.formatToggle(w, w.indexOf('bold'), w.indexOf('bold') + 4, 'textit').edit]), 'make \\textbf{\\textit{bold}} later');
+  assert.equal(edit(w, [R.formatToggle(w, w.indexOf('bold'), w.indexOf('bold') + 2, 'textbf').edit]), 'make \\textbf{\\textbf{bo}ld} later');
 });

@@ -994,3 +994,37 @@ fn a_name_around_unknown_digits_is_spelled_alike_after_a_resume() {
     assert_eq!(first_difference(&said(&incremental), &said(&fresh)), None, "resumed at {at:?}");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// Intuition: the status line says where the run reads (`slides.tex:13`); a line past the file's end names a place
+/// that does not exist. Pins the playground's `slides.tex:1695` on an 18-line beamer file during a build's second run
+/// after an edit (userrun j13): the innermost file frame's line climbed past the file.
+#[test]
+fn progress_never_names_a_line_past_the_file() {
+    if !installed() {
+        return;
+    }
+    let dir = crate::support::tmp_root().join(format!("satex-progress-line-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let main = dir.join("progress-line.tex");
+    let text = "\\documentclass{beamer}\n\\usetheme{Madrid}\n\\title{T}\n\\begin{document}\n\\begin{frame}\\titlepage\\end{frame}\n\\section{A}\n\\begin{frame}{One}\nText \\ref{x}.\n\\end{frame}\n\\section{B}\\label{x}\n\\begin{frame}{Two}\nMore.\n\\end{frame}\n\\end{document}\n";
+    std::fs::write(&main, text).unwrap();
+    let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let keep = seen.clone();
+    satex::util::progress::listen(Some(Box::new(move |s: &satex::util::progress::Status| {
+        if s.file == "progress-line.tex" {
+            keep.lock().unwrap().push((s.run, s.line, s.text.clone()));
+        }
+    })));
+    let cfg = crate::support::config();
+    let mut checkpoints = Checkpoints::new(&cfg);
+    let _ = Machine::build(&mut checkpoints, text, &main, &cfg, false);
+    let edited = text.replace("More.", "More, more.");
+    std::fs::write(&main, &edited).unwrap();
+    let _ = Machine::build(&mut checkpoints, &edited, &main, &cfg, false);
+    satex::util::progress::listen(None);
+    let _ = std::fs::remove_dir_all(&dir);
+    let lines = edited.lines().count() as u64 + 1;
+    let seen = seen.lock().unwrap();
+    let past: Vec<_> = seen.iter().filter(|(_, line, _)| *line > lines).collect();
+    assert!(past.is_empty(), "{} of {} statuses past line {lines}: {past:?}", past.len(), seen.len());
+}

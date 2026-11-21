@@ -298,6 +298,9 @@ conventions:  # how TeX is usually written, where the text alone does not say
     body: 80  # characters of an undocumented body its hover shows as what the command expands to
       #! affects: output
       #! example: `body: 0` hides it
+    common: [textbf, emph, textit, section, subsection, label, ref, cite, begin, end, item, includegraphics, caption, centering, usepackage, footnote, url, href, frac, sqrt, sum, int, alpha, beta, mathbf, mathrm, texttt, textsc, newcommand, hline, vspace, hspace, noindent, paragraph, chapter, subsubsection, eqref, cref, left, right]  # commands authors type most, most first: among names as close to what is typed and used as often in the document, these lead (\textb takes \textbf before \textbackslash)
+      #! affects: output
+      #! example: `common+: [SI]`
     pick: [begin, end, usepackage, documentclass, ref, cref, cite]  # commands whose argument is picked from a list, so completion opens again inside the braces
       #! affects: output
       #! example: `pick+: [autoref]`

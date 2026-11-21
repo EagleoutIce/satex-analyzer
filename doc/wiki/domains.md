@@ -231,6 +231,7 @@ typed digits     d, with an interval [lo, hi]
 - **Own rests.** A call site that ended an argument inside typed text puts the rest back. When the same site gets that rest again (a recursion that peels it), its fork is keyed by the site and the rest, so the levels are passes of one loop head and forced convergence ends them. Both arms stay (`Scratch::split_rests`).
 - **Typed digits** carry their `Num`: `\ifnum`, `\numexpr` and `\csname` read the interval back.
 - **Hex.** `h` is kept only with `l` or `o` and without `c`. A join keeps it where both sides are hex (digits-only text is). `\detokenize` keeps it unless braces or names print. One character of `h` text has a code in `0`–`f`, so `` `#1<"80`` is decided.
+- **Cover.** Text that covers several texts has the union of their kinds and names. A one-of token in them counts as what covers each of its texts, so the control sequences they hold stay in the cover: the rest put back after an argument ended inside a one-of may hold the delimiter again.
 - **Join** is the union of kinds. The text is non-empty only if both are. A run of unknown tokens collapses into one token of the run's class. Widening moves up and stops at the top.
 - **Printing.** `\detokenize` and `\string` give the printed class (tex.web § 464).
 - One constructor makes all unknown text: `Machine::unknown_text`.

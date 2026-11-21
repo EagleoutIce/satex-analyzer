@@ -824,6 +824,24 @@ fn an_argument_read_from_a_typed_rest_that_may_be_empty_keeps_its_empty_reading(
     assert!(got.iter().any(|t| t == "e") && got.iter().any(|t| t == "n"), "{got:?}");
 }
 
+/// tex.web § 392: `#1\sep#2\sep` over `\t` (one to three records
+/// `letter\sep digit\sep`, twelve texts joined) takes the first record, so
+/// `#2` is its digit and never holds the `x` after `\t`. `#1` ends inside
+/// the joined text, and the rest put back still holds `\sep`.
+/// Bug pinned: that rest was covered as text without control sequences
+/// (a one-of token counted as cs-free text), so `#2` ran through it to the
+/// `\sep` after `x`: every text of `\S` ended in `x`, silently.
+#[test]
+fn the_rest_of_one_of_several_texts_keeps_their_control_sequences() {
+    let a = analyze(
+        r"\let\sep\relax \count1=\pdfuniformdeviate 12
+\edef\t{\ifcase\count1 a\sep1\sep\or a\sep1\sep b\sep2\sep\or a\sep1\sep b\sep2\sep c\sep3\sep\or b\sep1\sep\or b\sep2\sep a\sep1\sep\or c\sep3\sep\or c\sep3\sep a\sep1\sep\or a\sep2\sep\or a\sep3\sep\or b\sep3\sep\or c\sep1\sep\or c\sep2\sep\fi}
+\def\a#1\sep#2\sep#3\end{\gdef\S{#2}}\expandafter\a\t x\sep y\sep\end",
+    );
+    let got = texts_of(&a, "S");
+    assert!(got.iter().any(|t| !t.ends_with('x')), "{got:?}");
+}
+
 /// tex.web § 392: `#1\sep` over `\t` (`a` or `b\sep c`) then `z\sep` is
 /// `az` on the first text and `b` on the second. The second read of `\t` on
 /// the line may part no budgeted paths, but a parameter follows, so the

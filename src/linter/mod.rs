@@ -924,33 +924,62 @@ pub fn cites(rule: &Rule) -> String {
 
 /// The rules whose findings in the project's own files are so many that
 /// they may be its style: one record each, with the count and the question
-/// an editor asks. Empty when `prompt` is off.
+/// an editor asks, the count per file and the places (one per line) an
+/// editor shows to judge by. Empty when `prompt` is off.
 pub fn style_candidates(records: &[Record], prompt: &crate::project::config::StylePrompt) -> Vec<Record> {
     if !prompt.enabled {
         return Vec::new();
     }
     let text = |r: &Record, key: &str| r.get(key).and_then(|v| v.as_str()).unwrap_or_default().to_string();
-    let mut by_rule: std::collections::BTreeMap<String, (Vec<String>, serde_json::Value)> = Default::default();
+    // per rule: the findings' names and places, in the order the run found them
+    let mut by_rule: std::collections::BTreeMap<String, (Vec<String>, Vec<serde_json::Value>)> = Default::default();
     // Copied code is a finding to act on, whatever the project is used to: never its style.
     let asked = |code: &str| code != "clones" && !prompt.keep.iter().any(|k| k == code);
     for r in records.iter().filter(|r| text(r, "origin") == "document") {
         if prompt.categories.contains(&text(r, "category")) && asked(&text(r, "code")) {
-            let first = || json!({ "path": r.get("path"), "line": r.get("line"), "col": r.get("col") });
-            by_rule.entry(text(r, "code")).or_insert_with(|| (Vec::new(), first())).0.push(text(r, "name"));
+            // the marked span: the finding's first edit when it stays on the line, else its column
+            let end = r
+                .get("edits")
+                .and_then(|e| e.get(0))
+                .and_then(|e| e.get("end"))
+                .filter(|e| e.get("line") == r.get("line"));
+            let at = json!({ "path": r.get("path"), "line": r.get("line"), "col": r.get("col"), "end": end.and_then(|e| e.get("col")) });
+            let entry = by_rule.entry(text(r, "code")).or_default();
+            entry.0.push(text(r, "name"));
+            entry.1.push(at);
         }
     }
     by_rule
         .into_iter()
         .filter(|(_, (names, _))| names.len() >= prompt.min_findings)
-        .filter_map(|(code, (names, first))| {
+        .filter_map(|(code, (names, spots))| {
             let rule = explanation(&code)?;
+            let mut files: Vec<(String, usize)> = Vec::new();
+            for path in spots.iter().map(|s| s["path"].as_str().unwrap_or_default().to_string()) {
+                match files.iter_mut().find(|(p, _)| *p == path) {
+                    Some((_, n)) => *n += 1,
+                    None => files.push((path, 1)),
+                }
+            }
+            // the places to judge by before answering, one per line
+            let mut examples: Vec<&serde_json::Value> = Vec::new();
+            for s in &spots {
+                if !examples.iter().any(|e| e["path"] == s["path"] && e["line"] == s["line"]) {
+                    examples.push(s);
+                }
+            }
             let mut record = serde_json::Map::new();
             record.insert("number".into(), json!(rule.number()));
             record.insert("code".into(), json!(rule.code));
             record.insert("count".into(), json!(names.len()));
             record.insert("summary".into(), json!(rule.summary));
             record.insert("question".into(), json!(style_question(&label(rule.code), &names)));
-            record.insert("first".into(), first);
+            record.insert("first".into(), spots[0].clone());
+            record.insert("examples".into(), json!(examples));
+            record.insert(
+                "files".into(),
+                json!(files.iter().map(|(path, count)| json!({ "path": path, "count": count })).collect::<Vec<_>>()),
+            );
             Some(record)
         })
         .collect()

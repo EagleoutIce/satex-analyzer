@@ -819,6 +819,29 @@ fn completion_pictures_what_tikz_keys_draw() {
     std::fs::remove_dir_all(dir).ok();
 }
 
+/// Intuition: a tip's picture in the completion list and the drawing gallery holds the whole tip. A tip declared the
+/// old way (`\\pgfarrowsdeclare`: the `arrows` library's `diamond`, `hooks`, `latex'`) adds nothing to the picture's
+/// bounding box, and its sprite was the line alone (viewBox 0.8 pt high, the gallery drew nothing).
+#[test]
+fn an_old_style_tip_s_picture_holds_the_tip() {
+    if !crate::support::installed() {
+        return;
+    }
+    let text =
+        "\\documentclass{article}\n\\usepackage{tikz}\n\\usetikzlibrary{arrows}\n\\begin{document}\n\\end{document}\n";
+    let analysis = crate::support::analyze_latex(text);
+    let sheet = satex::queries::preview::sheet(&analysis);
+    let height = |key: &str| {
+        let svg = sheet.get(key).unwrap_or_else(|| panic!("no {key} of {}", sheet.len()));
+        let view = svg.split("viewBox='").nth(1).and_then(|v| v.split('\'').next()).unwrap_or_default();
+        view.split_whitespace().nth(3).and_then(|h| h.parse::<f64>().ok()).unwrap_or_default()
+    };
+    // `diamond` reaches 2.5 pt above and below a thick line
+    for tip in ["arrow:diamond-", "arrow:hooks-", "arrow:latex'-"] {
+        assert!(height(tip) > 5.0, "{tip}: {} pt high", height(tip));
+    }
+}
+
 /// `\draw[-Ki`: a key TikZ reads as arrows offers the tips of a library not
 /// loaded yet, and picking one loads it.
 #[test]
@@ -866,6 +889,38 @@ fn open_loaded(tag: &str, text: &str) -> (Server, String, Value, std::path::Path
     let mut server = serve(&dir, true);
     let (uri, published) = open_file(&mut server, &dir, "main.tex");
     (server, uri, published, dir)
+}
+
+/// `text` with a widget's LSP `edits` applied (ASCII text: characters are UTF-16 units), built with pdflatex in a
+/// fresh directory: `Err` with the log's first error lines when the build fails. `None` without pdflatex.
+/// A widget's write must leave a document that builds (the package it needs loaded in the same write).
+fn builds_with_pdflatex(tag: &str, text: &str, edits: &Value) -> Option<Result<(), String>> {
+    satex::project::paths::which("pdflatex").ok()?;
+    let starts: Vec<usize> = std::iter::once(0).chain(text.match_indices('\n').map(|(i, _)| i + 1)).collect();
+    let at = |p: &Value| starts[p["line"].as_u64().unwrap() as usize] + p["character"].as_u64().unwrap() as usize;
+    let mut edits: Vec<(usize, usize, String)> = (edits.as_array()?.iter())
+        .map(|e| {
+            (at(&e["range"]["start"]), at(&e["range"]["end"]), e["newText"].as_str().unwrap_or_default().to_string())
+        })
+        .collect();
+    edits.sort_by_key(|e| std::cmp::Reverse(e.0));
+    let mut out = text.to_string();
+    for (a, b, now) in edits {
+        out.replace_range(a..b, &now);
+    }
+    let dir = crate::support::tmp_root().join(format!("satex-widget-build-{tag}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("w.tex"), &out).unwrap();
+    let run = std::process::Command::new("pdflatex")
+        .args(["-interaction=nonstopmode", "-halt-on-error", "w.tex"])
+        .current_dir(&dir)
+        .output()
+        .ok()?;
+    let log = std::fs::read_to_string(dir.join("w.log")).unwrap_or_default();
+    let _ = std::fs::remove_dir_all(&dir);
+    let errors: Vec<&str> = log.lines().filter(|l| l.starts_with('!')).take(3).collect();
+    Some(if run.status.success() && errors.is_empty() { Ok(()) } else { Err(format!("{errors:?} in:\n{out}")) })
 }
 
 /// An initialized server over `dir`: with the LaTeX format, classes and
@@ -2508,6 +2563,33 @@ fn usepackage_completes_with_its_braces() {
     eprintln!("textb: {:?}", labels(&bf).iter().take(5).collect::<Vec<_>>());
     server.shutdown();
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Intuition: among names equally close to what is typed, the document's uses rank first, then the commands authors
+/// type most (`completion.common`), and the rank travels with each item (`data.prior`) for lists the client keeps.
+/// Pins `\\textb` in a paper that never uses `\\textbf` listing `textbackslash`, `textbaht`, `textbar` first (e2e
+/// u-textb-first).
+#[test]
+fn a_common_command_leads_among_equally_close_names() {
+    let text = "\\documentclass{article}\n\\begin{document}\n\\textb\n\\end{document}\n";
+    let (mut server, uri, _, dir) = open_loaded("common-first", text);
+    let items = complete(&mut server, &uri, 2, 6);
+    server.shutdown();
+    let _ = std::fs::remove_dir_all(&dir);
+    assert_eq!(
+        labels(&items).first().copied(),
+        Some("textbf"),
+        "{:?}",
+        labels(&items).iter().take(5).collect::<Vec<_>>()
+    );
+    let prior =
+        |l: &str| items.iter().find(|i| i["label"] == l).and_then(|i| i["data"]["prior"].as_str()).map(str::to_string);
+    assert!(
+        prior("textbf").is_some() && prior("textbf") < prior("textbar"),
+        "{:?} {:?}",
+        prior("textbf"),
+        prior("textbar")
+    );
 }
 
 /// A hover shows what the defining package's manual says (src/plugins/docs):
@@ -4570,6 +4652,9 @@ fn a_table_column_keeps_and_writes_its_injections() {
     let loads: Vec<&Value> =
         out["edits"].as_array().unwrap().iter().filter(|e| e["newText"] == "\\usepackage{array}\n").collect();
     assert_eq!(loads.len(), 1, "array is added, the run's \\@testpach lacks `>`: {out}");
+    if let Some(built) = builds_with_pdflatex("inject", text, &out["edits"]) {
+        built.unwrap();
+    }
 }
 
 /// The dialog's booktabs conversion loads booktabs in the same edit when the run lacks it, once; a
@@ -4598,6 +4683,9 @@ fn a_booktabs_conversion_loads_booktabs() {
         assert!(out["text"].as_str().unwrap_or_default().contains("\\toprule"), "{out}");
         let n = out["edits"].as_array().unwrap().iter().filter(|e| e["newText"] == "\\usepackage{booktabs}\n").count();
         assert_eq!(n, loads, "{tag}: {out}");
+        if let Some(built) = builds_with_pdflatex(tag, &text, &out["edits"]) {
+            built.unwrap();
+        }
     }
 }
 
@@ -4632,6 +4720,9 @@ fn an_s_column_braces_its_text_and_loads_siunitx() {
     assert_eq!(loads.len(), 1, "{out}");
     assert_eq!(loads[0]["newText"], "\\usepackage{siunitx}\n", "{out}");
     assert_eq!(loads[0]["range"]["start"], json!({ "line": 1, "character": 0 }), "before \\begin{{document}}: {out}");
+    if let Some(built) = builds_with_pdflatex("scolumn", text, &out["edits"]) {
+        built.unwrap();
+    }
 }
 
 /// A table and each figure get a code lens and a hover link to their

@@ -39,8 +39,10 @@ pub struct Built {
 impl Built {
     /// Whether explaining the build needs the analysis: only findings at the logged messages
     /// explain them, and a stored explanation whose inputs did not change is the one it would give.
+    /// Only a message with a source line can be explained ([`explain`] matches a finding by its
+    /// line): bad boxes the output routine reports with none never start an analysis.
     pub fn needs_analysis(&self) -> bool {
-        !self.logged.is_empty() && self.stored.is_none()
+        self.stored.is_none() && self.logged.iter().any(|l| l.line.is_some())
     }
 }
 

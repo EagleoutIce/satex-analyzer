@@ -499,6 +499,59 @@
               ],
               "x-example": "`calls: 10`"
             },
+            "common": {
+              "default": [
+                "textbf",
+                "emph",
+                "textit",
+                "section",
+                "subsection",
+                "label",
+                "ref",
+                "cite",
+                "begin",
+                "end",
+                "item",
+                "includegraphics",
+                "caption",
+                "centering",
+                "usepackage",
+                "footnote",
+                "url",
+                "href",
+                "frac",
+                "sqrt",
+                "sum",
+                "int",
+                "alpha",
+                "beta",
+                "mathbf",
+                "mathrm",
+                "texttt",
+                "textsc",
+                "newcommand",
+                "hline",
+                "vspace",
+                "hspace",
+                "noindent",
+                "paragraph",
+                "chapter",
+                "subsubsection",
+                "eqref",
+                "cref",
+                "left",
+                "right"
+              ],
+              "description": "commands authors type most, most first: among names as close to what is typed and used as often in the document, these lead (\\textb takes \\textbf before \\textbackslash)",
+              "items": {
+                "type": "string"
+              },
+              "type": "array",
+              "x-affects": [
+                "output"
+              ],
+              "x-example": "`common+: [SI]`"
+            },
             "environment_arguments": {
               "description": "environments whose \\begin reads its arguments through an inner macro, with how many",
               "properties": {

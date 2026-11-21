@@ -33,6 +33,7 @@ declare global {
       insertSpot(text: string, t: InsTarget, flow: boolean, float?: boolean): { at: number; mode: InsMode } | null;
       insertPlan(text: string, all: string, kind: string, at: number, mode: InsMode): InsPlan | null;
       lineHabit(text: string): number; wrapLine(text: string, at: number, max: number, indent?: boolean): PaEdit | null;
+      formatToggle(text: string, a: number, b: number, cmd: string): { edit: PaEdit; caret: number };
     };
   }
 }
@@ -398,6 +399,9 @@ declare global {
       post = text.slice(at, e).trim() ? sep + ind : next.trim() && !/^\s*\\end\b/.test(next) ? sep.slice(1) : '';
       body = body.split('\n').map((l, i) => (i && l ? ind + l : l)).join('\n');
     }
+    // a line of blanks is an empty line, a \par to TeX ("Paragraph ended before \align was complete"): a caret line with
+    // nothing else on it takes the next line, so the insert builds as written before anything is typed
+    body = body.replace(/\n([ \t]*)\x01\n[ \t]*/, '\n$1\x01');
     const k = body.indexOf('\x01'), clean = body.replace('\x01', ''), start = at + pre.length;
     let now = text.slice(0, at) + pre + clean + post + text.slice(at), caret = k >= 0 ? start + k : start + clean.length, open = start;
     if (it.wrap) {
@@ -413,7 +417,7 @@ declare global {
     const edits: PaEdit[] = [{ from: p, to: text.length - s, now: now.slice(p, now.length - s) }];
     return { edits, caret, open, widget: it.widget ?? null };
   }
-  self.satexRefactor = { inserts, insertSpot, insertPlan, lineHabit, wrapLine, blank, envs, group, wrapTarget, wrap, unwrap, slug, firstWords, mathAt, rows, targets, mathTo, mathEdit, needsAms, pkgEdit, matrixAt, matrixTo, extract, occurrences };
+  self.satexRefactor = { formatToggle, inserts, insertSpot, insertPlan, lineHabit, wrapLine, blank, envs, group, wrapTarget, wrap, unwrap, slug, firstWords, mathAt, rows, targets, mathTo, mathEdit, needsAms, pkgEdit, matrixAt, matrixTo, extract, occurrences };
 
   // ---------------------------------------------------------------- the plugins
   const PA = self.satexPageActions, R = self.satexRefactor, TARGETS = ['source', 'block', 'tikz-node', 'tikz-label', 'tikz-edge', 'forest-node', 'table-column'];
@@ -497,6 +501,17 @@ declare global {
       if (!best || m.index! > best[0]) best = [m.index!, end, inner[0], inner[1]];
     }
     return best;
+  }
+  /** Ctrl/Cmd+B or +I over a selection `[a, b]` (`cmd` textbf, textit): unwraps the call of `cmd` whose argument is the
+   * selection (blanks aside), else wraps it. The edit and the caret after it, at the argument's end inside the call
+   * (Right then leaves it, as at a typed one). */
+  function formatToggle(text: string, a: number, b: number, cmd: string): { edit: PaEdit; caret: number } {
+    const around = formatAround(text, a, b), name = around && /^\\([A-Za-z]+)/.exec(text.slice(around[0]))?.[1];
+    if (around && name === cmd && !text.slice(around[2], a).trim() && !text.slice(b, around[3]).trim()) {
+      const inner = text.slice(around[2], around[3]);
+      return { edit: { from: around[0], to: around[1], now: inner }, caret: around[0] + inner.length };
+    }
+    return { edit: { from: a, to: b, now: `\\${cmd}{${text.slice(a, b)}}` }, caret: b + cmd.length + 2 };
   }
   function formatMenu(t: PaTarget, ctx: PaCtx): PaGroup[] {
     const s: [number, number] | null = t.sel;

@@ -317,7 +317,8 @@
     {"until": {"sel": ".tip-card:not([hidden]) button[data-fix]"}, "ms": 60000, "wait": 900}
    ],
    "video": [
-    {"wait": 1500},
+    {"hover": {"src": "\\textbf{Note", "k": 2}},
+    {"until": {"sel": ".tip-card:not([hidden]) button[data-fix]"}, "ms": 30000, "wait": 1200},
     {"click": {"sel": ".tip-card:not([hidden]) button[data-fix]"}},
     {"until": {"srcMatch": "time\\.\\}"}, "wait": 1200},
     {"do": {"press": {"sel": "#pdf-compile"}}, "until": ["built", {"sel": "#pdf-body .pdf-page img"}], "ms": 120000, "wait": 2500}

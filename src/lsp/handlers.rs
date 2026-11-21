@@ -3132,6 +3132,10 @@ fn command_items(
                 _ => tiers.package,
             };
             let count = analysis.interner.lookup(&label).and_then(|s| used.get(&s)).copied().unwrap_or(0);
+            // what ranks it whatever is typed: its tier, the document's uses, then the seed of common commands
+            let common = &analysis.settings.conventions.completion.common;
+            let seed = common.iter().position(|c| *c == label).unwrap_or(common.len());
+            let prior = format!("{tier}{:06}{seed:04}", 999_999u32.saturating_sub(count));
             // The argument is a name to pick: the editor asks again inside
             // the braces, and an environment brings its `\end`.
             let pick = analysis.settings.conventions.completion.pick.contains(&label);
@@ -3152,7 +3156,7 @@ fn command_items(
             // in math, math commands first: `!` sorts before the tiers' digits
             let lead = if math && is_math { "!" } else { "" };
             let it = CompletionItem {
-                sort_text: Some(format!("{lead}{tier}{:06}{label}", 999_999u32.saturating_sub(count))),
+                sort_text: Some(format!("{lead}{prior}{label}")),
                 label: label.clone(),
                 kind: Some(if tag == "primitive" { CompletionItemKind::KEYWORD } else { CompletionItemKind::FUNCTION }),
                 detail: Some(package.to_string()),
@@ -3163,7 +3167,7 @@ fn command_items(
                     command: "editor.action.triggerSuggest".into(),
                     arguments: None,
                 }),
-                data: Some(serde_json::json!({ "math": is_math, "args": args })),
+                data: Some(serde_json::json!({ "math": is_math, "args": args, "prior": prior })),
                 ..Default::default()
             };
             Some((it, row))

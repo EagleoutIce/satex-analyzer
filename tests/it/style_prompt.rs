@@ -127,3 +127,20 @@ fn the_old_top_level_style_prompt_still_loads() {
     assert_eq!(cfg.lints.style_prompt.keep, ["clones"]);
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// Intuition: a prompt that asks to turn a rule off shows where the project breaks it, so the answer is an informed
+/// one: the places (one per line, the marked span) and the count per file. Pins the bare "19 findings of …?" prompt
+/// that named no place (user 2026-11-21: all 19 were one pasted line).
+#[test]
+fn a_candidate_names_its_places_and_files() {
+    let records = satex::linter::lint(&crate::support::analyze_latex(&hskips(4)));
+    let prompt = StylePrompt { min_findings: 4, ..StylePrompt::default() };
+    let found = satex::linter::style_candidates(&records, &prompt);
+    let c = &found[0];
+    let lines: Vec<u64> = c["examples"].as_array().unwrap().iter().map(|e| e["line"].as_u64().unwrap()).collect();
+    assert_eq!(lines.len(), 4, "{c:?}");
+    assert!(lines.windows(2).all(|w| w[0] < w[1]), "one per line, in order: {lines:?}");
+    let files = c["files"].as_array().unwrap();
+    assert_eq!((files.len(), files[0]["count"].as_u64()), (1, Some(4)), "{c:?}");
+    assert_eq!(c["first"], c["examples"][0]);
+}

@@ -503,10 +503,12 @@ async function clickScenario(p, sc) {
     const text = await p.eval(`satexHealth().text`), s0 = sc.src(text);
     if (!c) { res.fails.push(`${pos}: no caret (toast: ${await p.eval(`document.getElementById('play-toast')?.textContent ?? ''`)})`); got.push(`${pos} -`); continue; }
     await sleep(150);
-    const at = (await p.eval(`satexPdfCaret()`))?.at ?? c.at, n = sc.len ?? len;
-    const ok = pos === 'start' ? at === s0 : pos === 'end' ? at === s0 + n : at > s0 && at < s0 + n;
+    // `edge`: the word is a call's output; its start and end are the call's [start, end] (the caret before or after it)
+    const at = (await p.eval(`satexPdfCaret()`))?.at ?? c.at, n = sc.len ?? len, e = sc.edge?.(text);
+    const want = pos === 'start' ? e?.[0] ?? s0 : pos === 'end' ? e?.[1] ?? s0 + n : null;
+    const ok = want != null ? at === want : at > s0 && at < s0 + n;
     got.push(`${pos} ${at - s0}/${n}`);
-    if (!ok) res.fails.push(`${pos} (click ${Math.round(x)},${Math.round((w[1] + w[3]) / 2)} on ${J(w[5])} over ${await p.eval(`(() => { const e = document.elementFromPoint(${x}, ${(w[1] + w[3]) / 2}); return e ? e.tagName + '.' + [...e.classList].join('.') : '-'; })()`)}${await p.eval(`document.getElementById('play-toast')?.textContent ?? ''`).then((t) => t ? `, toast ${J(t.slice(0, 80))}` : '')}): caret at ${at} ${J(text.slice(at - 15, at))}|, want ${pos === 'mid' ? `inside ${s0}..${s0 + n}` : pos === 'start' ? s0 : s0 + n} ${J(text.slice(s0, s0 + n))}`);
+    if (!ok) res.fails.push(`${pos} (click ${Math.round(x)},${Math.round((w[1] + w[3]) / 2)} on ${J(w[5])} over ${await p.eval(`(() => { const e = document.elementFromPoint(${x}, ${(w[1] + w[3]) / 2}); return e ? e.tagName + '.' + [...e.classList].join('.') : '-'; })()`)}${await p.eval(`document.getElementById('play-toast')?.textContent ?? ''`).then((t) => t ? `, toast ${J(t.slice(0, 80))}` : '')}): caret at ${at} ${J(text.slice(at - 15, at))}|, want ${want ?? `inside ${s0}..${s0 + n}`} ${J(want != null ? text.slice(want - 15, want) + '|' : text.slice(s0, s0 + n))}`);
   }
   res.info.offsets = got.join(' · ');
   if (res.fails.length) await shot(p, res, 'click');

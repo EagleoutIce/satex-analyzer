@@ -16737,6 +16737,14 @@ impl Machine<'_> {
                         cs.push(sym);
                         (TextClass::EMPTY, Some(1), true)
                     }
+                    // One of several texts: what covers each of them, so the
+                    // control sequences they hold stay in the cover.
+                    _ if let Some(members) = self.one_of_members(*t) => {
+                        let members: Vec<&[Token]> = members.iter().map(|m| &m[..]).collect();
+                        let (c, s, k, named) = self.cover(&members)?;
+                        cs.extend(named);
+                        (c, k, s)
+                    }
                     (Tok::Cs(_), None) => (TextClass::WIDE, None, false),
                     (tok, None) => (TextClass::of(tok), Some(1), true),
                 };

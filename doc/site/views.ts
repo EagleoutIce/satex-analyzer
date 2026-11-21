@@ -3748,7 +3748,7 @@ button.tv-spec-value { cursor: pointer; } button.tv-spec-value:hover, button.tv-
     version == null || final == null || (preview ? version > final : version >= final);
   /** Completion lists the playground answers from while the worker is busy (playground.js `completions`). */
   type Completion = { label: string; detail?: string; filterText?: string; sortText?: string; insertText?: string; insertTextFormat?: number; textEdit?: { newText: string };
-    additionalTextEdits?: unknown[]; args?: string; math?: boolean; doc?: string; data?: { math?: boolean; args?: string | null; doc?: string } };
+    additionalTextEdits?: unknown[]; args?: string; math?: boolean; doc?: string; data?: { math?: boolean; args?: string | null; doc?: string; prior?: string } };
   /** A command's snippet from its argument letters (`m` mandatory, `o` optional, `s` star: the lean scope's `args`), as the
    * server writes one: an optional argument a removable `[options]` field, a mandatory one `{}` with a field, the star left
    * out. The caret takes the first field, Tab the next. Null without arguments. */
@@ -3860,9 +3860,12 @@ button.tv-spec-value { cursor: pointer; } button.tv-spec-value:hover, button.tv-
   // a name only a package the document does not load defines (its item loads it: `\\textb` of drm) comes after every
   // name the document has, however close: what the document loads and uses first (user 2026-11-21)
   const unloaded = (i: Completion) => i.additionalTextEdits?.length || /^~/.test(i.sortText ?? '') ? 1 : 0;
+  /** The server's rank of a command whatever is typed (tier, the document's uses, the seed of common commands): kept
+   * with the item, so a list answered from kept items ranks as the server does; `~` (after digits) where none. */
+  const prior = (i: Completion): string => i.data?.prior ?? '~';
   const rank = <T extends Completion>(items: T[], typed: string, math = false): T[] => items
     .map((i) => [i, tier(i) + (math ? (mathItem(i) ? -3 : 3) : 0), closeness(i, typed.toLowerCase())] as const).filter((x) => x[2] !== null)
-    .sort((a, b) => unloaded(a[0]) - unloaded(b[0]) || a[2]! - b[2]! || a[1] - b[1] || byCode(a[0].sortText ?? '', b[0].sortText ?? '') || a[0].label.length - b[0].label.length || a[0].label.localeCompare(b[0].label)).map((x) => x[0]);
+    .sort((a, b) => unloaded(a[0]) - unloaded(b[0]) || a[2]! - b[2]! || a[1] - b[1] || byCode(prior(a[0]), prior(b[0])) || byCode(a[0].sortText ?? '', b[0].sortText ?? '') || a[0].label.length - b[0].label.length || a[0].label.localeCompare(b[0].label)).map((x) => x[0]);
   /** The kept list of a kind of place: the server's last items there, then the names in force it lacks (no snippet, they
    * add only names). An item asked elsewhere replaces no range here: its text goes in at the cursor's word, and the
    * server's order there (`sortText`, for another word) ranks nothing here: `\\emp` takes `emph` before `empty`. */

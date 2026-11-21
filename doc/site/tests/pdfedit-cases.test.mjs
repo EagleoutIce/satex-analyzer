@@ -251,7 +251,7 @@ test("The math control", async () => {
   assert.deepEqual(E.mathAt('ab', 1, 'inline'), [1, 1, '\\(\\)', 2], 'LaTeX\'s \\( by default');
   assert.deepEqual(E.mathAt('ab', 1, 'inline', '$'), [1, 1, '$ $', 1], '`$ $`: `$$` is display math');
   assert.deepEqual(E.mathAt('ab', 1, 'display'), [1, 1, '\\[\\]', 2]);
-  assert.deepEqual(E.mathAt('ab', 1, 'align'), [1, 1, '\\begin{align*}\n\n\\end{align*}', '\\begin{align*}\n'.length]);
+  assert.deepEqual(E.mathAt('ab', 1, 'align'), [1, 1, '\n\\begin{align*}\n  \\end{align*}\n', '\n\\begin{align*}\n  '.length], 'own lines, no blank line inside');
   assert.deepEqual(E.mathAt('a\\(x\\)b', 4, 'display'), [4, 4, '', 0], 'in math: nothing');
   const html = readFileSync(new URL('./play.html', SITE), 'utf8');
   // one Insert button per Type bar: its menu (refactor.ts `insertMenu`) holds the math under Math ▸
@@ -522,6 +522,17 @@ test('afterCall: the end of the call whose argument closes there', async () => {
   assert.equal(E.afterCall(t, at('} \\cmd')), null, 'a group no macro opens');
   assert.equal(E.afterCall(t, at('world')), null, 'no brace');
 });
+// The run sets a call's output at the call's last character; the call's start bounds that output on the left: a click
+// before "Hello" of `\greet{world}` goes before `\greet` (caret2, user 2026-11-21 18:15: it went into `{|Hello, #1!}`).
+test('callStart: the call whose last character ends there', () => {
+  const E = self.satexPdfEdit, t = 'With \\model, \\greet{world}! \\pair{a}[b]{c} x {\\bf y} \\{z\\}', at = (s) => t.indexOf(s);
+  assert.equal(E.callStart(t, at(', \\greet')), at('\\model'), 'a parameterless call');
+  assert.equal(E.callStart(t, at('!')), at('\\greet'), 'back over its argument');
+  assert.equal(E.callStart(t, at(' x')), at('\\pair'), 'back over brace and bracket arguments');
+  assert.equal(E.callStart(t, at(' \\{')), null, 'a group no name opens');
+  assert.equal(E.callStart(t, t.length), null, 'an escaped brace closes nothing');
+  assert.equal(E.callStart(t, at('With') + 4), null, 'text');
+});
 // A caret right after a display formula's closer takes the display's row, not the paragraph's (pdfedit.ts
 // `displayEnd`). Pins the caret 231 px off after `\[…\]` typed in the PDF (user 2026-11-19): only math displays
 // count, `\end{itemize}` or inline `\end{math}` keep the paragraph's row.
@@ -567,4 +578,16 @@ test('erased: one grapheme cluster, never half a surrogate pair', () => {
   // the arrows step the same way: the caret never lands inside 😀, where the next key would split it
   assert.equal(E.cluster('a😀b', 1, false), 3);
   assert.equal(E.cluster('a😀b', 3, true), 1);
+});
+// Insert ▸ Math ▸ Aligned at a page caret wrote `\begin{align*}\n\n\end{align*}` glued to the word: the empty line in it is
+// a \par, so the build failed ("Paragraph ended before \align* was complete"). The environment goes on lines of its own,
+// with no empty line inside, the caret on its body's line.
+test('Insert math: align* on its own lines, no blank line inside', async () => {
+  const E = self.satexPdfEdit, put = (t, at) => { const [a, b, s, c] = E.mathAt(t, at, 'align'); return [t.slice(0, a) + s + t.slice(b), a + c]; };
+  const [mid, c1] = put('Some numbers. More', 13);
+  assert.equal(mid, 'Some numbers.\n\\begin{align*}\n  \\end{align*}\n More');
+  assert.equal(mid.slice(c1), '\\end{align*}\n More');
+  assert.ok(!/\n[ \t]*\n/.test(mid), 'no blank line');
+  assert.equal(put('Some numbers.\n', 13)[0], 'Some numbers.\n\\begin{align*}\n  \\end{align*}\n');
+  assert.deepEqual(E.mathAt('a b', 1, 'display'), [1, 1, '\\[\\]', 2]);
 });

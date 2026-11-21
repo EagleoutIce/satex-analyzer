@@ -1,0 +1,20 @@
+# Compile benchmark (scripts/bench_compile.py): a document and the engine it is built with.
+benches/docs/article_basic.tex pdftex
+benches/docs/amsmath_amsthm.tex pdftex
+benches/docs/hyperref_cleveref.tex pdftex
+benches/docs/natbib_bibtex.tex pdftex
+benches/docs/biblatex_biber.tex pdftex
+benches/docs/makeidx_doc.tex pdftex
+benches/docs/glossaries_doc.tex pdftex
+benches/docs/tikz_diagrams.tex pdftex
+benches/docs/pgfplots_doc.tex pdftex
+benches/docs/beamer_overlays.tex pdftex
+benches/docs/memoir_doc.tex pdftex
+benches/docs/scrbook_doc.tex pdftex
+benches/docs/big_refs.tex pdftex
+benches/docs/big_book.tex pdftex
+benches/docs/article_basic.tex luatex
+benches/docs/fontspec_luatex.tex luatex
+benches/docs/tikz_diagrams.tex luatex
+benches/docs/article_basic.tex xetex
+benches/docs/fontspec_xetex.tex xetex

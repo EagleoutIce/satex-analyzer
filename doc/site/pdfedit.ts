@@ -102,6 +102,7 @@ declare global {
       wordAt(text: string, at: number): [number, string] | null;
       argAt(text: string, name: string, line: number): number | null;
       afterCall(text: string, at: number): number | null;
+      callStart(text: string, end: number): number | null;
       apart<B extends Flat>(boxes: B[]): B[];
       relaid(row: [number, number, string][], k: number, now: string, width: (s: string) => number): [number, number, string][];
       reflow<P extends Piece>(pieces: P[], x0: number, line: Line<P>): Flow<P>;
@@ -784,7 +785,9 @@ declare global {
   function mathAt(text: string, at: number, kind: string, inline = '\\('): [number, number, string, number] {
     if (scan(text, 0, at, start()).math) return [at, at, '', 0];
     if (kind === 'inline') return typed(text, at, '$', inline);
-    const [o, c] = kind === 'align' ? ['\\begin{align*}\n', '\n\\end{align*}'] : ['\\[', '\\]'];
+    if (kind !== 'align') return [at, at, '\\[\\]', 2];
+    // an environment on lines of its own; never an empty line in it (a blank line is \par: "Paragraph ended before \align* was complete")
+    const o = `${at && text[at - 1] !== '\n' ? '\n' : ''}\\begin{align*}\n  `, c = `\\end{align*}${/^[ \t]*(\n|$)/.test(text.slice(at)) ? '' : '\n'}`;
     return [at, at, o + c, o.length];
   }
   /** What Ctrl+Backspace (`back`) or Ctrl+Delete takes: the blanks next to the caret and the word past them, as far as
@@ -1038,6 +1041,16 @@ declare global {
       if (i >= text.length) return e;
       e = i + 1;
     }
+  }
+  /** Where the call whose last character is `text[end - 1]` starts (its `\\`): back over its brace and bracket
+   * arguments to the name (`\\greet{world}`, `\\model`). The run sets a call's output at that character (the last
+   * token TeX read), so it bounds the output in the source. Null where no call ends there (text, a group no name opens). */
+  function callStart(text: string, end: number): number | null {
+    const open = (at: number, o: string, c: string) => { for (let d = 0, i = at; i >= 0; i--) { if (text[i] === c && text[i - 1] !== '\\') d++; else if (text[i] === o && text[i - 1] !== '\\' && --d === 0) return i; } return -1; };
+    let a = end;
+    while (a > 0 && /[}\]]/.test(text[a - 1]!) && text[a - 2] !== '\\') a = text[a - 1] === '}' ? open(a - 1, '{', '}') : open(a - 1, '[', ']');
+    const m = a > 0 ? /\\[A-Za-z@]+\*?$/.exec(text.slice(Math.max(0, a - 64), a)) : null;
+    return m ? a - m[0].length : null;
   }
   /** Where the first argument of a use of macro `name` (`\greet`) starts, on line `line` (1-based) or a neighbour.
    * None for a macro the text defines without parameters: the `{}` of `\model{}` is an empty group, no argument. */
@@ -1804,7 +1817,7 @@ declare global {
     }
     return [at, at, `\\${cmd}{}`, cmd.length + 2];
   }
-  self.satexPdfEdit = { callAround, leave, toggle, onRow, run, displayEnd, offsetAt, units, treeNodes, naming, entries, shortTitle, bothTitles, renamed, leaders, checked, grow, key, broken, scan, start, cells, cellStep, rowAfter, verbatim, verbatimAt, nearest, bands, joined, place, extent, failNote, room, form, measure, respec, halign, HALIGN, padding, gap, widthBp, snapWidth, resized, stepped, plain, editable, spans, sender, typed, erased, cluster, mathAt, boundaries, boundaryAt, inkSnap, locate, columns, wordAt, argAt, afterCall, defining, relaid, reflow, prose, refFacts, refSet, auxLabels, hunks, fit, glue, centered, apart, tokens, unset, aligned, changed, paragraph, mathRuns, footArg, footBack, footShown, blankPlace };
+  self.satexPdfEdit = { callAround, leave, toggle, onRow, run, displayEnd, offsetAt, units, treeNodes, naming, entries, shortTitle, bothTitles, renamed, leaders, checked, grow, key, broken, scan, start, cells, cellStep, rowAfter, verbatim, verbatimAt, nearest, bands, joined, place, extent, failNote, room, form, measure, respec, halign, HALIGN, padding, gap, widthBp, snapWidth, resized, stepped, plain, editable, spans, sender, typed, erased, cluster, mathAt, boundaries, boundaryAt, inkSnap, locate, columns, wordAt, argAt, afterCall, callStart, defining, relaid, reflow, prose, refFacts, refSet, auxLabels, hunks, fit, glue, centered, apart, tokens, unset, aligned, changed, paragraph, mathRuns, footArg, footBack, footShown, blankPlace };
 })();
 
 // TikZ nodes moved by drag: where each `\node` and path label stands in the source, and the statement a drag

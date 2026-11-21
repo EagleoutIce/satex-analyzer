@@ -1642,6 +1642,10 @@ area! {
         math_environments: Vec<String> = strs(&["equation", "align", "gather", "multline", "flalign", "alignat", "eqnarray", "math", "displaymath", "dmath"]),
         /// Characters of an undocumented body its hover shows as what it expands to.
         body: usize = 80,
+        /// Commands authors type most, most first: among names equally close to what is typed and used equally
+        /// often in the document, these lead (`\textb` takes `\textbf` before `\textbackslash`). A seed: the
+        /// document's own uses rank before it.
+        common: Vec<String> = strs(&["textbf", "emph", "textit", "section", "subsection", "label", "ref", "cite", "begin", "end", "item", "includegraphics", "caption", "centering", "usepackage", "footnote", "url", "href", "frac", "sqrt", "sum", "int", "alpha", "beta", "mathbf", "mathrm", "texttt", "textsc", "newcommand", "hline", "vspace", "hspace", "noindent", "paragraph", "chapter", "subsubsection", "eqref", "cref", "left", "right"]),
         /// Commands whose argument is a name to pick from a list.
         pick: Vec<String> = strs(&["begin", "end", "usepackage", "documentclass", "ref", "cref", "cite"]),
         /// Environments whose `\begin` reads arguments through an inner macro, with how many.
