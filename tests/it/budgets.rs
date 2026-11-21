@@ -101,6 +101,25 @@ fn kernel_build() {
     within("kernel", format.steps, KERNEL);
 }
 
+/// A list the run no longer records (`limits.list_items` reached) has no exact lines or
+/// sizes from there on. That loss was silent: nothing named the setting, so a very large
+/// document quietly lost detail in its later part. The finding names it.
+#[test]
+fn recorded_lists_past_their_limit_are_reported() {
+    if !crate::support::installed() {
+        return;
+    }
+    let source = "\\documentclass{article}\n\\begin{document}\nSome words of a paragraph, enough of them to record.\n\\end{document}\n";
+    let named = |cfg: &satex::project::config::Config| {
+        let analysis = Machine::analyze_once(source, None, cfg);
+        analysis.facts.diagnostics.iter().any(|d| d.code == "limit-reached" && d.message.contains("limits.list_items"))
+    };
+    let mut cfg = crate::support::config();
+    assert!(!named(&cfg), "the default limit was reached by one paragraph");
+    cfg.limits.list_items = 8;
+    assert!(named(&cfg), "the reached limit was not named");
+}
+
 // termination: a kernel build is bounded by `limits.seconds` too.
 #[test]
 fn a_kernel_build_over_the_seconds_limit_stops_with_the_limit_named() {

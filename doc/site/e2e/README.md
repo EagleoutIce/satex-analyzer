@@ -45,7 +45,7 @@ Each run writes `results.md`, `results.json`, a screenshot per failure and, when
 
 - `quick`: the behaviors a push must not break, one scenario each, within about five minutes.
 - `full`: every scenario. Timing bounds are reported beside a pass but fail nothing.
-- `perf`: the typing scenarios whose timing bounds fail there: echo draw p95 ≤ 8 ms, the last key in the source ≤ 200 ms. Machine load moves these, so they are their own tier and never a correctness failure.
+- `perf`: the typing scenarios whose timing bounds fail there: echo draw p95 ≤ 8 ms, the last key in the source ≤ 200 ms. The book (`book-300-pages`): a key ≤ 100 ms and a frame ≤ 250 ms while it is analyzed, built and scrolled. Machine load moves these, so they are their own tier and never a correctness failure.
 
 ## Results
 
@@ -67,7 +67,7 @@ Each run writes `results.md`, `results.json`, a screenshot per failure and, when
 | `page.mjs` | the drivers' one step vocabulary (also `showcase/capture.mjs`): mouse, keys, drags, uploads as a person makes them; targets, conditions and actions as data |
 | `probe.js` | the page side of `page.mjs`, injected before the page's scripts, never shipped: the only thing the page is asked is `satexTest.run(<JSON>)`; words come from one index per build (playground.js `satexPdfWordIndex`) |
 | `engine.mjs` | the scenario kinds of the PDF and Typeset views: `type` (default), `click`, `tint`, `ts`, `select`, `col`, `forest`, `shift`, `complete`, `dbl`, `bare` |
-| `kinds/*.mjs` | `foot`, `echo`, `paper`, `follow`, `tikz`, `crash`, `user` (a person's actions as a list, invariants after each: scenarios/user.mjs) |
+| `kinds/*.mjs` | `foot`, `echo`, `paper`, `follow`, `tikz`, `crash`, `user` (a person's actions as a list, invariants after each: scenarios/user.mjs), `big` (a generated book of hundreds of pages: keys while it is analyzed, the build landing, layers and images only near the view, a scroll, a dropped build that frees the server: scenarios/big.mjs) |
 | `scenarios/<area>.mjs` | the scenarios of one area; `sources.mjs` the documents they share |
 | `scenarios/index.mjs` | all areas, the tiers, unique names |
 | `fixtures/titles/` | title pages of ten classes |

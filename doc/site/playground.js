@@ -957,7 +957,7 @@
   function checking() { phase(`Analyzing ${state.file}…`); checkStart = performance.now(); }
 
   /** Completion order and the lists kept for a busy worker (views.ts `complete`). */
-  const { rank, kept: keptList, reselect, controlSymbol, lettersAt, isLetter, nameBefore, typeable, whole, mathItem, docOf, plainSnippet, opensArgument, stepsOver, previewOf, tikzTarget } = self.satexViews.complete;
+  const { rank, kept: keptList, remember, shapeOf, reselect, controlSymbol, lettersAt, isLetter, nameBefore, typeable, whole, mathItem, docOf, plainSnippet, opensArgument, stepsOver, previewOf, tikzTarget } = self.satexViews.complete;
   /** Whether offset `at` of `text` is in math (`$…$`, `\\(…\\)`, `\\[…\\]`, a math environment), read from the paragraph's start
    * as pdfedit.ts `scan` reads it: math commands rank first there. */
   const inMath = (text, at) => !!self.satexPdfEdit.scan(text, Math.max(0, text.lastIndexOf('\n\n', at - 1)), at, self.satexPdfEdit.start()).math;
@@ -980,6 +980,8 @@
   /** What the server last offered in each kind of place of the project (after a `\\`, in `\begin{`, `\cite{`, …):
    * what the same kind of place completes from at once. */
   const commandItems = new Map(), scopeItems = new Map();
+  /** What the server said of each command last (its shape, description, snippet): a list from the kept items keeps them. */
+  const commandMemo = new Map();
   /** Every name in force: what a `\\` completes from at once, beyond the server's best few hundred. Asked at the first `\\` of a file,
    * after each run too while the answer is quick (`scopeMs`, the last answer's time). */
   let scopeMs = Infinity, prefetching = false;
@@ -1032,11 +1034,11 @@
   /** The commands a `\\` completed last visit, per project: the first `\\` of a visit answers before the first run ends. */
   const seedKey = () => `satex-complete:${state.root ?? state.file}`;
   function keepSeed(items) {
-    const slim = items.slice(0, 400).map(({ label, detail, kind, insertText, insertTextFormat, data }) => ({ label, detail, kind, insertText, insertTextFormat, data: data && { math: data.math, doc: data.doc, prior: data.prior } }));
+    const slim = items.slice(0, 400).map(({ label, detail, kind, insertText, insertTextFormat, labelDetails, data }) => ({ label, detail, kind, insertText, insertTextFormat, labelDetails, data: data && { math: data.math, doc: data.doc, prior: data.prior } }));
     try { localStorage.setItem(seedKey(), JSON.stringify(slim)); } catch {}
   }
   function loadSeed() {
-    try { const seed = JSON.parse(localStorage.getItem(seedKey()) ?? 'null'); if (Array.isArray(seed)) commandItems.set('\\', seed); } catch {}
+    try { const seed = JSON.parse(localStorage.getItem(seedKey()) ?? 'null'); if (Array.isArray(seed)) { commandItems.set('\\', seed); remember(commandMemo, seed); } } catch {}
   }
   /** The kept items of a kind of place (`\\`: the names in force too), or null where none were asked yet. */
   const keptFor = (place, file = uri()) => place ? keptList(commandItems.get(place), place === '\\' ? scopeItems.get(file) : undefined) : null;
@@ -1068,7 +1070,7 @@
       asked.set(k, lsp('textDocument/completion', { textDocument: { uri: file }, position }).then((r) => {
         [lastItems, lastWord] = [Object.assign((Array.isArray(r) ? r : r?.items) ?? [], { incomplete: !!r?.isIncomplete }), word];
         if (place && lastItems.length) commandItems.set(place, lastItems);
-        if (place === '\\' && lastItems.length) keepSeed(lastItems);
+        if (place === '\\' && lastItems.length) { remember(commandMemo, lastItems); keepSeed(lastItems); }
         return lastItems;
       }).catch(() => []));
     }
@@ -1160,7 +1162,7 @@
       if (sym) {
         // the server's list there is cut short for the empty name it sees: the names in force (keptFor) hold the symbol's
         const line = here, served = await completions(position(ctx.state.doc, ctx.pos), ctx.pos - 1 - line.from, '\\');
-        const items = rank(keptList(served, scopeItems.get(uri())) ?? [], sym).filter((i) => i.label.startsWith(sym));
+        const items = rank(keptList(served, scopeItems.get(uri()), commandMemo) ?? [], sym).filter((i) => i.label.startsWith(sym));
         return items.length ? { from: ctx.pos - 1, filter: false, options: items.map((i) => ({ label: i.label, detail: i.detail, doc: docOf(i), type: KIND[i.kind] ?? 'text', apply: itemApply(i) })) } : null;
       }
       // a command's name, or a key or value in a list (`/demo/mode=fa`)
@@ -1666,10 +1668,11 @@
     let holdTimer = 0;
     /** The states of the files left, by project path: their undo histories. */
     const leftStates = new Map();
-    let shownKey = '';
+    let shownKey = '', textOf = { doc: null, text: '' };
     return {
       prefs: () => { ev.dispatch({ effects: prefs.reconfigure(prefsOf()) }); scheme(); },
-      text: () => doc().toString(),
+      // one string per document state (CodeMirror's is immutable): the page asks for the text dozens of times per key
+      text: () => { const d = doc(); if (textOf.doc !== d) textOf = { doc: d, text: d.toString() }; return textOf.text; },
       // another file's text starts at its top: the last file's scroll position may lie past its end
       // another file: its text without the last one's undo history (an undo never brings another file's text back);
       // a file shown again with the text it was left with gets its own state back, its undo history with it
@@ -1903,7 +1906,10 @@
     own.forEach((r, i) => { if (!firstOf.has(file(r))) firstOf.set(file(r), i); });
     const heads = own.map((r, i) => [r, i]).filter(([r]) => r.kind === 'section');
     /** The section a record stands in: the last one before it in its file, else the last one before its file starts. */
-    const owner = (r) => heads.findLast(([s]) => file(s) === file(r) && before(s, r))?.[1] ?? heads.findLast(([, i]) => i < firstOf.get(file(r)))?.[1] ?? -1;
+    // (each file's sections in source order, searched by halving: a scan of all sections per record is quadratic in a book)
+    const lastThat = (list, ok) => { let lo = 0, hi = list.length; while (lo < hi) { const mid = (lo + hi) >> 1; if (ok(list[mid])) lo = mid + 1; else hi = mid; } return list[lo - 1]; };
+    const headsIn = new Map([...Map.groupBy(heads, ([s]) => file(s))].map(([f, hs]) => [f, [...hs].sort(([a], [b]) => (before(a, b) ? -1 : 1))]));
+    const owner = (r) => lastThat(headsIn.get(file(r)) ?? [], ([s]) => before(s, r))?.[1] ?? lastThat(heads, ([, i]) => i < firstOf.get(file(r)))?.[1] ?? -1;
     const sections = own.filter((r) => r.kind === 'section'), present = [...new Set(sections.map((r) => LEVELS.indexOf(r.detail)).filter((l) => l >= 0))].sort((x, y) => x - y);
     const lowest = present.includes(1) ? 1 : 2; // chapters count as the top level when there are some, else sections
     const at = (r) => `data-path="${escape(r.path ?? r.file ?? '')}" data-line="${r.line}" data-col="${r.col ?? 1}"`;
@@ -1919,8 +1925,13 @@
       return rootLines.findIndex((l) => new RegExp(`^[^%]*\\\\(?:input|include|subfile)\\s*\\{[^}]*\\b${stem}(?:\\.tex)?\\s*\\}`).test(l)) + 1;
     };
     let appendix = false;
+    const linesIn = new Map(), lineAt = (r) => {
+      const p = String(r.path ?? r.file);
+      if (!linesIn.has(p)) linesIn.set(p, state.texts[Object.keys(state.texts).find((n) => p.endsWith(n))]?.split('\n') ?? []);
+      return linesIn.get(p)[r.line - 1] ?? '';
+    };
     const numberOf = (r) => {
-      const l = LEVELS.indexOf(r.detail), text = state.texts[Object.keys(state.texts).find((n) => String(r.path ?? r.file).endsWith(n))]?.split('\n')[r.line - 1] ?? '';
+      const l = LEVELS.indexOf(r.detail), text = lineAt(r);
       if (l < 0 || l < lowest - 1 && l > 0 || l >= lowest + 3 || /^\\[a-z]+\*/.test(text.slice((r.col ?? 1) - 1))) return '';
       if (l === 0) return roman(++parts);
       if (appendixAt && !appendix && enters(r) > appendixAt) { appendix = true; count.length = 0; }
@@ -1952,9 +1963,8 @@
       html.push(row(open.id, open.depth, open.head + (open.first ? `<span class="o-first" title="label ${escape(open.first)}">${escape(open.first)}</span>` : ''), chips(open.labels) + chips(fileChips) + chips(cites), open.kids));
       open = null;
     };
-    const placed = own.filter((r) => r.kind !== 'section').map((r) => [r, owner(r)]);
-    const inOrder = [...placed.filter(([, o]) => o < 0).map(([r]) => r), ...heads.flatMap(([s, i]) => [s,
-      ...placed.filter(([, o]) => o === i).map(([r]) => r).sort((a, b) => file(a) === file(b) ? (before(a, b) ? -1 : 1) : 0)])];
+    const placed = Map.groupBy(own.filter((r) => r.kind !== 'section'), owner), under = (i) => placed.get(i) ?? [];
+    const inOrder = [...under(-1), ...heads.flatMap(([s, i]) => [s, ...under(i).sort((a, b) => file(a) === file(b) ? (before(a, b) ? -1 : 1) : 0)])];
     for (const r of inOrder) {
       if (r.kind === 'section') {
         const depth = Math.max(0, present.indexOf(LEVELS.indexOf(r.detail))), num = numberOf(r);
@@ -2176,7 +2186,8 @@
   function tsAnchor() {
     const top = typesetBody.getBoundingClientRect().top, key = (p) => `${p.dataset.path}|${p.dataset.line}|${p.dataset.col}`;
     const c = pdfCaret?.view === 'ts' && pdfCaret.p, ps = [...typesetBody.querySelectorAll('p.ts[data-line]')];
-    const p = (c && ps.find((q) => q.dataset.path === c.path && q.dataset.line === c.line)) || ps.find((q) => q.getBoundingClientRect().bottom > top);
+    // (the first in sight among the paragraphs near the view, `tsNear`: asking every paragraph of a book where it stands lays the whole view out)
+    const p = (c && ps.find((q) => q.dataset.path === c.path && q.dataset.line === c.line)) || tsNearNow().filter((q) => q.getBoundingClientRect().bottom > top).sort((a, b) => a.getBoundingClientRect().top - b.getBoundingClientRect().top)[0];
     if (!p) return () => {};
     const k = key(p), y = p.getBoundingClientRect().top;
     return () => {
@@ -2411,7 +2422,14 @@
   /** tsUnits of a paragraph's view text, the math taken from its row's characters where the view shows them as they are. */
   const tsViewWords = (text, row) => { const chars = row ? rowChars(row) : [], at = chars.length ? text.indexOf(chars.map((c) => c.c).join('')) : -1; return tsUnits(text, (i) => at >= 0 && !!chars[i - at]?.math); };
   /** The paragraph `p` of the view as the run set it: its row of `typesetRows`. */
-  const tsRowOf = (p) => (typesetRows ?? []).find((r) => String(r.line) === p.dataset.line && String(r.col) === p.dataset.col && String(r.path ?? '') === p.dataset.path);
+  const tsRowsBy = new WeakMap();
+  const tsRowOf = (p) => {
+    if (!typesetRows) return undefined;
+    // by place, once per run's rows: a search of all rows per paragraph is quadratic in the document
+    let by = tsRowsBy.get(typesetRows);
+    if (!by) { by = new Map(); for (const r of typesetRows) { const k = `${r.line}|${r.col}|${r.path ?? ''}`; if (!by.has(k)) by.set(k, r); } tsRowsBy.set(typesetRows, by); }
+    return by.get(`${p.dataset.line}|${p.dataset.col}|${p.dataset.path}`);
+  };
   /** The Page layout widget at its Page numbers, the numbering in force at line `line` (1-based) of `file` picked (a page
    * number clicked). A line of an included file counts as its `\\input` line in the root. */
   async function pageNumbersAt(file, line) {
@@ -2495,11 +2513,22 @@
     .observe(typesetBody, { childList: true, subtree: true, attributes: true, attributeFilter: ['class', 'hidden', 'style'] });
   document.fonts?.ready.then(tsLayoutSoon);
   /** In Type mode, the text not written where it is set, tinted by where typing would go (ORIGIN_TIPS). */
+  /** The paragraphs of the Typeset view in or near its visible part (half a view around): the ones that get tints and
+   * are asked where they stand. A book has thousands of paragraphs; one question to each lays out the whole view. */
+  const tsNear = new Set(), tsWatched = new WeakSet();
+  const tsIO = new IntersectionObserver((seen) => { for (const e of seen) if (e.isIntersecting) tsNear.add(e.target); else tsNear.delete(e.target); tsOriginsSoon(); }, { root: typesetBody, rootMargin: '50% 0px' });
+  const tsNearNow = () => {
+    for (const p of tsNear) if (!p.isConnected) tsNear.delete(p);
+    for (const p of typesetBody.querySelectorAll('p.ts[data-line]')) if (!tsWatched.has(p)) { tsWatched.add(p); tsIO.observe(p); }
+    return [...tsNear];
+  };
   function tsOriginsDraw() {
     typesetBody.querySelectorAll('.ts-orig').forEach((x) => x.remove());
     if (!tsOn.origins && !tsOn.math) return;
+    const near = tsNearNow();
+    if (!near.length) return;
     const base = typesetBody.getBoundingClientRect(), html = [];
-    for (const p of typesetBody.querySelectorAll('p.ts[data-line]')) {
+    for (const p of near) {
       const row = tsRowOf(p), box = p.querySelector('.ts-text');
       if (!row?.sites || !box) continue;
       const chars = rowOrigins(row), at = box.textContent.indexOf(chars.map((ch) => ch.c).join(''));
@@ -6089,12 +6118,24 @@
       return out;
     };
     const text = async (url, gzip) => { const r = await fetch(url); return gzip ? new Response(r.body.pipeThrough(new DecompressionStream('gzip'))).text() : r.text(); };
+    /** The answer to the page. A book's records and words (a million items) in one message held the page for seconds
+     * while it was read: past PART items the answer goes first without them (`parts` names them), then the items in
+     * messages of PART each, then `done`. The page shows the PDF at once and takes the parts between frames (pdfPart). */
+    const PART = 50000;
+    const post = (answer) => {
+      const big = ['boxes', 'wordList'].filter((k) => answer[k]?.length), lists = big.map((k) => [k, answer[k]]);
+      if (lists.reduce((n, [, l]) => n + l.length, 0) <= PART) return self.postMessage(answer);
+      const token = `${Date.now()}-${Math.random()}`;
+      self.postMessage({ ...answer, ...Object.fromEntries(big.map((k) => [k, undefined])), parts: token, partsOf: big });
+      for (const [part, list] of lists) for (let i = 0; i < list.length; i += PART) self.postMessage({ part, token, items: list.slice(i, i + PART) });
+      self.postMessage({ part: 'done', token });
+    };
     self.onmessage = async ({ data: { url, request, timeout, answer: built, gz } }) => {
       try {
         // the browser's build: only its SyncTeX data is left to read
         if (built) {
           if (gz) built.boxes = parse(await new Response(new Blob([gz]).stream().pipeThrough(new DecompressionStream('gzip'))).text());
-          self.postMessage(built);
+          post(built);
           return;
         }
         const answer = await (await fetch(url, { method: 'POST', body: JSON.stringify(request), signal: AbortSignal.timeout(timeout) })).json();
@@ -6102,7 +6143,7 @@
         if (answer.words) answer.wordList = words(await text(`${url}/${answer.base}${answer.words}`));
         // a PDF whose objects do not parse only lacks its links
         if (answer.links) answer.linkList = await text(`${url}/${answer.base}${answer.links}`).then((t) => links(JSON.parse(t))).catch(() => []);
-        self.postMessage(answer);
+        post(answer);
       } catch (e) { self.postMessage({ error: String(e?.message ?? e) }); }
     };
   }
@@ -6269,6 +6310,7 @@
     $('pdf-zip').setAttribute('aria-disabled', String(!cached));
     const dir = state.dir, sets = pdfSets();
     pdfWorker.onmessage = ({ data }) => {
+      if (data.part) return pdfPart(data);
       clearInterval(tick);
       pdfWait(null);
       pdfBusy = false;
@@ -6281,6 +6323,7 @@
       else {
         pdfSummary = data.error ? '' : `${what} in ${data.cached ? 'cache' : secs(performance.now() - start)}`;
         const gen = ++pdfGen, built = { ...data, slice, root, dir, text: pdfSent, texts: pdfSentAll, sets: sets.join('\n') };
+        if (data.parts) pdfParts.set(data.parts, { built, lists: Object.fromEntries(data.partsOf.map((k) => [k, []])) });
         pdfOpen(built).then((view) => {
           // a newer build came first: this one is never shown; its view stays open while a newer build of the same PDF
           // (from the cache) is handed it too
@@ -6376,8 +6419,24 @@
   };
   /** The build under way (its root and project) and its status timer; the open file's text the last build was sent. */
   var pdfRunning = null, pdfTick = 0, pdfSent = null, pdfSentAll = {};
-  /** Drops the build under way: its worker goes, the server stops it once the next request says it supersedes it. */
+  /** The builds whose records and words still come (the compile worker's `post`), by their token. */
+  const pdfParts = new Map();
+  /** A part of a build's records or words; with the last one the build has them, and the pane shown from it gets
+   * what waited for them: the words to click, the cursor's place, the layers. */
+  function pdfPart({ part, token, items }) {
+    const p = pdfParts.get(token);
+    if (!p) return;
+    if (part !== 'done') { for (const x of items) p.lists[part].push(x); return; }
+    pdfParts.delete(token);
+    for (const b of pdf?.parts === token ? [p.built, pdf] : [p.built]) Object.assign(b, p.lists);
+    if (pdf?.parts !== token) return;
+    const pages = pdfBody.querySelector('.pdf-pages');
+    if (pages && pdf.wordList) pages.dataset.words = '';
+    pdfSettle();
+  }
+  /** Drops the build under way: its worker goes, the server stops once the page's request is gone (the worker's). */
   function pdfStop() {
+    pdfParts.clear();
     pdfGen++;
     pdfWorker?.terminate();
     pdfWorker = null;
@@ -6642,7 +6701,10 @@
     // the pages shown so far, kept in place until redrawn: no blank flash, the same scroll
     const before = pdfBody.querySelector('.pdf-pages'), scroll = before && [before.scrollLeft, before.scrollTop];
     const old = new Map(keep && pdfViewer ? [...pdfBody.querySelectorAll('.pdf-page')].map((el) => [el.dataset.page, el.querySelector('img')]) : []);
+    // the pages near the view stay the ones wanted across a build of the same project: their layers are there at once
+    const wantWas = new Set(keep ? [...pdfWant].map((e) => e.dataset.page) : []);
     pdfIO?.disconnect();
+    pdfIO = null;
     pdfWant.clear();
     pdfBody.innerHTML = pdfFailed(records, runs) + (pdf.note ? `<p class="pdf-head pdf-note">${pdf.note}</p>` : '')
       + `<div class="pdf-pages" data-view="pages">${pdf.slice ? '<div class="pdf-sep" role="separator"><b class="pdf-badge">slice</b><span>not the full build</span></div>' : ''}${pdfFrames(pages).map((g, frame) => { frame += 1; const html = g.map((i) => `<div class="pdf-page${pdfViewer ? ' pdf-stale' : ''}" data-page="${i + 1}"><img src="${pdfViewer ? pdfBlank(pages[i]) : file(pages[i])}"${pdfViewer ? ` width="${pages[i][0]}" height="${pages[i][1]}"` : ''} alt="page ${i + 1}" draggable="false">${pdfLinks(i + 1)}</div>`).join(''); return g.length < 2 ? html : `<div class="pdf-frame" data-step="${g.length - 1}"><div class="pdf-frame-bar" role="group" aria-label="overlay steps"><span><b>frame ${frame}</b> · step <b class="pdf-step">${g.length}/${g.length}</b></span><button type="button" class="small ghost icon" data-step="-1" title="Previous step" aria-label="previous step">&#x2039;</button><button type="button" class="small ghost icon" data-step="1" title="Next step" aria-label="next step">&#x203A;</button></div>${html}</div>`; }).join('') || '<p class="muted">No pages.</p>'}</div>`
@@ -6663,6 +6725,8 @@
     // the caret at once on the swapped pages, no frame without it
     const caretNow = () => { if (pdfCaret?.view === 'pdf') pdfCaretDraw(); };
     if (!pdfViewer) { pdfBody.querySelectorAll('.pdf-page img').forEach((img) => img.addEventListener('load', () => { if (img.naturalWidth) img.classList.add('pdf-drawn'); pdfLoaded_(); }, { once: true })); caretNow(); return; }
+    pdfIO = new IntersectionObserver((seen) => { for (const e of seen) if (e.isIntersecting) pdfWant.add(e.target); else pdfWant.delete(e.target); pdfDrawNext(); pdfOverlaySoon(); }, { root: pagesNow, rootMargin: '100% 0px' });
+    pagesNow.querySelectorAll('.pdf-page').forEach((el) => { if (wantWas.has(el.dataset.page)) pdfWant.add(el); pdfIO.observe(el); });
     let kept = 0;
     // a page drawn from a build of the same texts (a second run of them: the next pass, a rebuild asked twice) is no
     // older than the source: it is redrawn but not dimmed meanwhile. Asked once per build, not per page.
@@ -6693,8 +6757,6 @@
     caretNow();
     // the layers at once over the kept pages: no frame without them
     if (keep) pdfOverlay();
-    pdfIO = new IntersectionObserver((seen) => { for (const e of seen) if (e.isIntersecting) pdfWant.add(e.target); else pdfWant.delete(e.target); pdfDrawNext(); }, { root: pagesNow, rootMargin: '100% 0px' });
-    pagesNow.querySelectorAll('.pdf-page').forEach((el) => pdfIO.observe(el));
     pdfSettle();
   }
   /** A page image loaded: the fit, the cursor's place and the layers follow, once for the pages that load together
@@ -6791,9 +6853,26 @@
   }
   /** A page's size in bp, from its image. */
   const pageSize = (img) => [img.naturalWidth * 72 / pdf.dpi, img.naturalHeight * 72 / pdf.dpi];
+  /** A build's SyncTeX records and words by page and by source line, grouped once per build (keyed by the build's
+   * own arrays: a page kept from an older build asks that build's). Every question about a page or a line reads its
+   * group: a scan of all records per question took minutes on a book (900 000 records, asked once per finding, row and key). */
+  const pdfGroups = new WeakMap(), NONE = Object.freeze([]), NO_GROUPS = new Map();
+  /** What `make` gives for `list` under `name`, made once per list. */
+  const pdfKept = (list, name, make) => {
+    if (!list) return null;
+    let ix = pdfGroups.get(list);
+    if (!ix) pdfGroups.set(list, ix = {});
+    return ix[name] ??= make();
+  };
+  const pdfBy = (list, name, key) => pdfKept(list, name, () => Map.groupBy(list, key)) ?? NO_GROUPS;
+  /** The records of `page`; of `file:line`; the files with records; the words of `page` (in the build `b`). */
+  const pdfBoxesOn = (page, b = pdf) => pdfBy(b?.boxes, 'page', (x) => x.page).get(page) ?? NONE;
+  const pdfBoxesAt = (file, line, b = pdf) => pdfBy(b?.boxes, 'line', (x) => `${x.file}\n${x.line}`).get(`${file}\n${line}`) ?? NONE;
+  const pdfBoxFiles = (b = pdf) => [...pdfBy(b?.boxes, 'file', (x) => x.file).keys()];
+  const pdfWordsOn = (page, b = pdf) => pdfBy(b?.wordList, 'page', (w) => w[0]).get(page) ?? NONE;
   /** The word of the page whose box holds the baseline `y` and is the first at or after `x` (`before`: the last ending by it). */
   function pdfWordAt(page, y, x, before = false) {
-    const row = (pdf.wordList ?? []).filter((w) => w[0] === page && w[2] - 1 <= y && y <= w[4] + 1);
+    const row = pdfWordsOn(page).filter((w) => w[2] - 1 <= y && y <= w[4] + 1);
     return before ? row.filter((w) => w[3] <= x + 3).at(-1) : row.find((w) => w[3] > x);
   }
   /** Where `file:line` stands on its first page: one rectangle per baseline, in bp. Only the points TeX set
@@ -6801,7 +6880,7 @@
    * Glue lies between words, so a row grows to the words beside its first and last point. */
   const setPoint = (b) => 'xgk$'.includes(b.kind);
   function pdfRects(file, line, all = false) {
-    const rows = new Map(), hits = (pdf.boxes ?? []).filter((b) => b.file === file && b.line === line && setPoint(b));
+    const rows = new Map(), hits = pdfBoxesAt(file, line).filter(setPoint);
     for (const b of hits.filter((b) => all || b.page === hits[0].page)) {
       const key = `${b.page}|${Math.round(b.y / 6)}`, o = rows.get(key); // one row per baseline, a lowered letter (the E of \TeX) in it
       rows.set(key, { page: b.page, y: b.y, l: Math.min(o?.l ?? b.x, b.x), r: Math.max(o?.r ?? 0, b.x + 4), t: b.y - 8, d: b.y + 2 });
@@ -6893,9 +6972,9 @@
     // the word at the cursor, its n-th occurrence in the line the n-th among the marked rows' words
     const src = state.texts[state.file]?.split('\n')[line - 1] ?? '', at = wordAt(src, pos.character);
     // the rows hug their glyphs; a row the line spells nothing of (the footer's page number) goes when others do
-    rects = self.satexViews.followRows(rects, pdf.wordList ?? [], (w) => !!wordInLine(src, w));
+    rects = self.satexViews.followRows(rects, [...new Set(rects.map((r) => r.page))].flatMap((page) => pdfWordsOn(page)), (w) => !!wordInLine(src, w));
     const nth = at && !at[3] ? [...src.slice(0, at[0]).matchAll(new RegExp(`(?<![\\p{L}\\p{N}\\\\])${at[2].replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`, 'gu'))].length : -1;
-    const same = nth < 0 || coarse ? [] : rects.flatMap((r) => (pdf.wordList ?? []).filter((w) => w[0] === r.page && w[4] >= r.t && w[2] <= r.d && w[3] > r.l && w[1] < r.r && wordInLine(w[5], at[2])));
+    const same = nth < 0 || coarse ? [] : rects.flatMap((r) => pdfWordsOn(r.page).filter((w) => w[4] >= r.t && w[2] <= r.d && w[3] > r.l && w[1] < r.r && wordInLine(w[5], at[2])));
     const mark = (page, cls, l, t, r, d) => {
       const el = pdfBody.querySelector(`.pdf-page[data-page="${page}"]`), img = el?.querySelector('img');
       if (!img?.naturalWidth) return;
@@ -6919,8 +6998,8 @@
    * Boxes carry the line where they closed, so only the points TeX set count. Over a word, only those on its row. */
   function pdfSource(page, x, y, word, fine = true, inside = !!word) {
     let best = null, score = Infinity;
-    for (const b of pdf.boxes ?? []) {
-      if (b.page !== page || !(b.file in state.texts) || fine && !'xgk$'.includes(b.kind) || word && Math.abs(b.y - word[4]) > 4) continue;
+    for (const b of pdfBoxesOn(page)) {
+      if (!(b.file in state.texts) || fine && !'xgk$'.includes(b.kind) || word && Math.abs(b.y - word[4]) > 4) continue;
       // a word's own records first (SyncTeX's stand at its right end): a nearer one may be the other column's
       if (inside && (b.x < word[1] - 0.5 || b.x > word[3] + 2)) continue;
       const s = Math.abs(x - b.x) / 4 + Math.abs(y - (b.y - 3));
@@ -7081,7 +7160,7 @@
     const word = pdfWordUnder(page, x, y), t = word?.[5].trim();
     if (!t || !/^(\d+|[ivxlcdm]+|[IVXLCDM]+|[a-zA-Z])$/.test(t) || (word[2] > h * 0.18 && word[4] < h * 0.8)) return null;
     if (pdfWordsOn(page).some((w) => w !== word && Math.abs(w[4] - word[4]) < 2)) return null;
-    const b = (pdf.boxes ?? []).filter((b) => b.page === page && /\.tex$/.test(b.file)).sort((p, q) => p.y - q.y)[0];
+    const b = pdfBoxesOn(page).filter((b) => /\.tex$/.test(b.file)).sort((p, q) => p.y - q.y)[0];
     return b ? [b.file, b.line] : [null, Infinity];
   }
   /* Selecting on the pages: a drag over the words selects them in reading order, a click stays a click (a caret, a
@@ -7215,7 +7294,7 @@
     // a word the line does not spell (a reference's number, a citation's label) is a reference set there: followed
     const refs = follow && !span && word ? occurrences.filter((o) => ['ref', 'cite'].includes(o.kind) && occFile(o) === hit.file && o.line === hit.line).sort((a, b) => (a.col ?? 0) - (b.col ?? 0)) : [];
     if (refs.length) {
-      const set = (pdf.wordList ?? []).filter((w) => w[0] === page && Math.abs(w[4] - word[4]) < 3 && !wordInLine(text, w[5])).sort((a, b) => a[1] - b[1]);
+      const set = pdfWordsOn(page).filter((w) => Math.abs(w[4] - word[4]) < 3 && !wordInLine(text, w[5])).sort((a, b) => a[1] - b[1]);
       return pdfToTarget(refs[Math.min(Math.max(set.indexOf(word), 0), refs.length - 1)]);
     }
     // a word set at the line but read elsewhere (`\title`'s argument, set by `\maketitle`): where it was read
@@ -7344,7 +7423,7 @@
     if (img?.naturalWidth && !pdf.slice) {
       // the source of the first word at or below the target
       const [w, h] = pageSize(img), y = to.y * h;
-      const below = (pdf.wordList ?? []).filter((v) => v[0] === to.page && v[4] >= y).sort((a, b) => a[4] - b[4] || a[1] - b[1]);
+      const below = pdfWordsOn(to.page).filter((v) => v[4] >= y).sort((a, b) => a[4] - b[4] || a[1] - b[1]);
       const word = below.find((v) => v[2] <= below[0][4]);
       if (word) await pdfGo(to.page, word[1] + 1, word[4] - 1, word, false);
     }
@@ -7498,8 +7577,8 @@
     const sites = widgetSites(), word = pdfWordUnder(page, x, y), block = pdfBlocks().get(page), pad = 1.5;
     let best = null, area = Infinity;
     for (const s of sites) {
-      for (const b of pdf.boxes ?? []) {
-        if (b.page !== page || b.line !== s.end || b.file !== s.file && !String(b.file).endsWith(`/${s.file}`) || !'[('.includes(b.kind) || b.w <= 0 || b.h + b.d <= 0) continue;
+      for (const b of pdfBoxesOn(page)) {
+        if (b.line !== s.end || b.file !== s.file && !String(b.file).endsWith(`/${s.file}`) || !'[('.includes(b.kind) || b.w <= 0 || b.h + b.d <= 0) continue;
         if (x < b.x - pad || x > b.x + b.w + pad || y < b.y - b.h - pad || y > b.y + b.d + pad) continue;
         const row = s.line === s.end && block && b.w >= block.r - block.l - 1;
         if (word && (s.kind === 'float' || row)) continue;
@@ -7563,6 +7642,8 @@
   function pdfFacetsDraw() {
     for (const d of $('pdf-layer-list').querySelectorAll('.layer-sub')) {
       const layer = d.dataset.sub, list = d.querySelector('.layer-sub-list');
+      // a fold nobody sees is not counted: its tallies read the whole document, and every overlay pass comes here
+      if (d.hidden || !$('pdf-layers').open) continue;
       // the grid's fields hold what was typed: drawn once, never under the cursor
       if (layer === 'grid' && list.querySelector('[data-grid]')) continue;
       const internal = layer === 'envs' ? `<div class="pdf-sub-group"><label><input type="checkbox" data-internal${pdfInternal ? ' checked' : ''}>internal (class, packages)</label></div>` : '';
@@ -7590,6 +7671,7 @@
   self.satexLayers.wire($('pdf-layer-list'), 'pdf', pdfOverlayOn, self.satexStore, () => pdfOverlay());
   // one menu for both viewers (layers.ts): double-click toggles all, a chevron folds a layer's filters open
   self.satexLayers.menu($('pdf-layers'), $('pdf-layer-list'), pdfOverlayOn, pdfFacetsDraw);
+  $('pdf-layers').addEventListener('toggle', () => { if ($('pdf-layers').open) pdfFacetsDraw(); });
   /** "Near the pointer": layers show only within a radius of the mouse, fading with distance. Off by default, kept per viewer. */
   const NEAR_PX = 110;
   var pdfNear = false;
@@ -7710,7 +7792,17 @@
    * stands beside it (approximate: set at the macro's site, not read in place), `text` text written where it is set.
    * Several letters set at one source place and read nowhere in the user's files are the text of the macro called
    * there (`\\TeX`'s T, E, X): `macro` too, with `made` set, as code satex cannot place in the files. */
+  const rowOriginsOf = new WeakMap();
   function rowOrigins(r) {
+    // once per row while the tables and the open file's text stand (what the kinds read besides the row): every
+    // overlay pass and every tint of the Typeset view asks for the rows in view again
+    const was = rowOriginsOf.get(r), text = editor.text();
+    if (was && was.cols === pdfCols && was.text === text) return was.chars;
+    const chars = rowOriginsFind(r);
+    rowOriginsOf.set(r, { cols: pdfCols, text, chars });
+    return chars;
+  }
+  function rowOriginsFind(r) {
     const chars = rowChars(r), at = (ch) => `${ch.path}:${ch.line}:${ch.col}`, calls = new Set(chars.filter((ch) => ch.from?.def).map(at));
     // letters read nowhere else, several at a place where a control sequence's name ends: that macro's own text
     // per place (one pass, `at` once per character): its first character, its letters, its text
@@ -7813,12 +7905,13 @@
     return head ? { from: col - head[0].length, to: col, name: head[0] } : null;
   };
   /** Line `n` (1-based) of the open file or another file of the project the run's `path` names. */
-  let srcLines = { text: null, lines: [] };
+  /** Each file's text split into lines, per file while its text stands: rows of several files ask in turn. */
+  const srcLines = new Map();
   const srcLine = (path, n) => {
     const file = Object.keys(state.texts).find((f) => String(path).endsWith(f)), text = file === state.file ? editor.text() : state.texts[file];
     if (typeof text !== 'string') return null;
-    if (srcLines.text !== text) srcLines = { text, lines: text.split('\n') };
-    return srcLines.lines[n - 1] ?? null;
+    if (srcLines.get(file)?.text !== text) srcLines.set(file, { text, lines: text.split('\n') });
+    return srcLines.get(file).lines[n - 1] ?? null;
   };
   /** The runs of row `r` not written in place, as [kind, first, last] indices of rowOrigins' characters: a space
    * belongs to the run of its origin (`Hello, #1!`'s space is the macro's), only the row's edge spaces are left out. */
@@ -7861,7 +7954,7 @@
     return { text: hit.trim().replace(/\s+/g, ' '), first, last };
   }
   /** The words of the rows `rects`, in reading order. */
-  const pdfRowWords = (rects) => rects.flatMap((r) => (pdf.wordList ?? []).filter((w) => w[0] === r.page && w[4] >= r.t && w[2] <= r.d && w[3] > r.l - 2 && w[1] < r.r + 2))
+  const pdfRowWords = (rects) => rects.flatMap((r) => pdfWordsOn(r.page).filter((w) => w[4] >= r.t && w[2] <= r.d && w[3] > r.l - 2 && w[1] < r.r + 2))
     .sort((a, b) => a[0] - b[0] || a[2] - b[2] || a[1] - b[1]);
   /** Where `text` (typeset words) stands among the rows' words: one box per row it covers, else null. */
   /** Page word `w` cut to the part spelled `t` (a run's text at its edge), its left and right in proportion to the
@@ -7897,7 +7990,13 @@
    * lines: as many as the run set there, the widest first and infinite glue widest. Stretched glue may be a kern record
    * (its width, ending at its x), other glue a point, up to the row's next record. Glue between lines has no record.
    * In bp: {page, l, t, r, d, file, line, kind, spec}. */
+  let pdfGlueOf = null;
   function pdfGlue() {
+    // of one build and one run's rows: asked by every overlay pass and by the layer menu
+    if (pdfGlueOf?.boxes !== pdf?.boxes || pdfGlueOf.rows !== typesetRows) pdfGlueOf = { boxes: pdf?.boxes, rows: typesetRows, list: pdfGlueFind() };
+    return pdfGlueOf.list;
+  }
+  function pdfGlueFind() {
     const want = new Map();
     for (const r of typesetRows ?? []) {
       for (const m of r.align ?? []) {
@@ -7909,14 +8008,15 @@
       }
     }
     const boxes = pdf?.boxes ?? [], out = [];
-    const near = (a, b) => a.page === b.page && Math.abs(a.y - b.y) < 0.5;
+    // a record's neighbours are on its page: each question reads that page's records only
+    const near = (a, b) => Math.abs(a.y - b.y) < 0.5, linesOn = (page) => pdfKept(pdfBoxesOn(page), 'lines', () => pdfBoxesOn(page).filter((b) => b.kind === '(' && b.w > 0));
     // glue stretched at a line's very start or end (`\centering`'s \leftskip and \rightskip, a last line's
     // \parfillskip, a footer's \hfil): SyncTeX records it at the edges of the line's box. The rows' marks lack a
     // line's skips, so these are found here, on both sides, never matched to a mark.
-    const lines = boxes.filter((b) => b.kind === '(' && b.w > 0), edge = new Set();
+    const edge = new Set();
     for (const b of boxes) {
       if (b.kind !== 'k' || b.w < 1) continue;
-      const box = lines.find((o) => near(o, b) && (Math.abs(b.x - b.w - o.x) < 0.5 || Math.abs(b.x - (o.x + o.w)) < 0.5));
+      const box = linesOn(b.page).find((o) => near(o, b) && (Math.abs(b.x - b.w - o.x) < 0.5 || Math.abs(b.x - (o.x + o.w)) < 0.5));
       if (!box) continue;
       const left = Math.abs(b.x - b.w - box.x) < 0.5;
       edge.add(b);
@@ -7924,15 +8024,17 @@
     }
     // both edges as wide: a centred line (`\centering`), said once. Only an end is a ragged line's or a paragraph's
     // last (\parfillskip; a `p` cell resets \leftskip, so `\centering` before a table centres the table, not its cells)
+    const ends = Map.groupBy(out.filter((o) => !o.left), (o) => o.box);
     for (const e of out) {
-      const twin = e.left && out.find((o) => o.box === e.box && !o.left && Math.abs((o.r - o.l) - (e.r - e.l)) < 0.6);
+      const twin = e.left && ends.get(e.box)?.find((o) => Math.abs((o.r - o.l) - (e.r - e.l)) < 0.6);
       if (twin) { e.spec = `centred · ${((e.r - e.l) * 72.27 / 72).toFixed(1)}pt each side`; twin.spec = e.spec; }
     }
     for (const e of out) { delete e.box; delete e.left; }
-    const span = (b) => b.kind === 'k' ? [b.x - b.w, b.x] : [b.x, Math.min(...boxes.filter((o) => near(o, b) && o.x > b.x + 0.01).map((o) => o.x), ...boxes.filter((o) => o.kind === '(' && near(o, b)).map((o) => o.x + o.w))];
+    const span = (b) => b.kind === 'k' ? [b.x - b.w, b.x] : [b.x, Math.min(...pdfBoxesOn(b.page).filter((o) => near(o, b) && o.x > b.x + 0.01).map((o) => o.x), ...pdfBoxesOn(b.page).filter((o) => o.kind === '(' && near(o, b)).map((o) => o.x + o.w))];
+    const files = pdfBoxFiles();
     for (const w of want.values()) {
       const marks = w.marks.sort((a, b) => (a[0] === 'fill' ? 0 : 1) - (b[0] === 'fill' ? 0 : 1));
-      const own = boxes.filter((b) => b.line === w.line && w.path.endsWith(b.file) && !edge.has(b) && (b.kind === 'k' && b.w > 0 || b.kind === 'g'));
+      const own = files.filter((f) => w.path.endsWith(f)).flatMap((f) => pdfBoxesAt(f, w.line)).filter((b) => !edge.has(b) && (b.kind === 'k' && b.w > 0 || b.kind === 'g'));
       const wide = own.map((b) => [b, span(b)]).filter(([, [l, r]]) => Number.isFinite(r) && r > l).sort((a, b) => (b[1][1] - b[1][0]) - (a[1][1] - a[1][0]));
       wide.slice(0, marks.length).forEach(([b, [l, r]], i) => {
         // a low bracket on the baseline, as the Typeset view draws it
@@ -7943,15 +8045,20 @@
   }
   /** The text block of each page, from the lines SyncTeX places: the most common left edge and width of its line boxes, from the first to the last. */
   function pdfBlocks() {
-    const out = new Map(), mode = (xs) => { const n = new Map(); for (const x of xs) n.set(x, (n.get(x) ?? 0) + 1); return [...n].sort((a, b) => b[1] - a[1])[0]?.[0]; };
-    for (const [page, lines] of Map.groupBy((pdf.boxes ?? []).filter((b) => b.kind === '(' && b.w > 0), (b) => b.page)) {
-      const left = mode(lines.map((b) => Math.round(b.x)));
-      const width = mode(lines.filter((b) => Math.round(b.x) === left).map((b) => Math.round(b.w)));
-      if (left === undefined || !width) continue;
-      out.set(page, { l: left, r: left + width, t: Math.min(...lines.map((b) => b.y - b.h)), d: Math.max(...lines.map((b) => b.y + b.d)) });
-    }
-    return out;
+    const mode = (xs) => { const n = new Map(); for (const x of xs) n.set(x, (n.get(x) ?? 0) + 1); return [...n].sort((a, b) => b[1] - a[1])[0]?.[0]; };
+    // found once per build: every overlay pass, hover and key asks for it
+    return pdfKept(pdf?.boxes, 'blocks', () => {
+      const out = new Map();
+      for (const page of pdfBy(pdf.boxes, 'page', (x) => x.page).keys()) {
+        const lines = pdfBoxesOn(page).filter((b) => b.kind === '(' && b.w > 0), left = mode(lines.map((b) => Math.round(b.x)));
+        const width = mode(lines.filter((b) => Math.round(b.x) === left).map((b) => Math.round(b.w)));
+        if (left === undefined || !width) continue;
+        out.set(page, { l: left, r: left + width, t: Math.min(...lines.map((b) => b.y - b.h)), d: Math.max(...lines.map((b) => b.y + b.d)) });
+      }
+      return out;
+    }) ?? new Map();
   }
+
   /** Over the pages, each when switched on: keys (definitions apart from references), findings on their characters,
    * environments, the text block and the bad boxes of the log. Placed by SyncTeX, so a slice has none. */
   function pdfOverlay() {
@@ -7990,8 +8097,56 @@
     }
   }
   var pdfTintsOf = null;
+  const pdfRowLinesOf = new WeakMap();
+  /** The source lines row `r`'s sites stand on, as [path, line], each once. */
+  const pdfRowLines = (r) => {
+    let lines = pdfRowLinesOf.get(r);
+    if (!lines) { const seen = new Map(); for (const s of r.sites) { const path = String(s.path ?? r.path ?? ''); seen.set(`${path}\n${s.line}`, [path, s.line]); } pdfRowLinesOf.set(r, lines = [...seen.values()]); }
+    return lines;
+  };
+  /** The pages that get their layers: those in or near the view (what `pdfIO` reports: one view height around) and
+   * the caret's. A page out of sight gets its layers when it comes near. null: every page (no viewer watches them).
+   * On a book, the layers of every page were minutes of work per run and tens of thousands of elements nobody saw. */
+  const pdfNearPages = () => {
+    if (!pdfIO) return null;
+    const near = new Set([...pdfWant].filter((e) => e.isConnected).map((e) => +e.dataset.page));
+    if (pdfCaret?.view === 'pdf') near.add(pdfCaret.page);
+    return near;
+  };
+  /** The layers drawn again in the next frame: the pages near the view changed. */
+  let pdfOverlayFrame = 0, pdfOverlayFor = '';
+  const pdfOverlaySoon = () => {
+    const near = [...pdfNearPages() ?? []].sort((a, b) => a - b).join();
+    if (near === pdfOverlayFor) return;
+    pdfOverlayFrame ||= requestAnimationFrame(() => { pdfOverlayFrame = 0; if (pdf?.boxes) pdfOverlay(); });
+  };
   function pdfOverlayBuild(put) {
-    const size = (page) => { const img = /** @type {HTMLImageElement | null} */ (pdfBody.querySelector(`.pdf-page[data-page="${page}"] img`)); return img?.naturalWidth ? pageSize(img) : null; };
+    const near = pdfNearPages(), on = (page) => !near || near.has(page), sizes = new Map();
+    pdfOverlayFor = [...near ?? []].sort((a, b) => a - b).join();
+    const sizeOf = (page) => { const img = /** @type {HTMLImageElement | null} */ (pdfBody.querySelector(`.pdf-page[data-page="${page}"] img`)); return img?.naturalWidth ? pageSize(img) : null; };
+    const size = (page) => { if (!on(page)) return null; if (!sizes.has(page)) sizes.set(page, sizeOf(page)); return sizes.get(page); };
+    // a row of the run stands on the pages its source lines were set on
+    const names = new Map(), fileOf = (path) => { if (!names.has(path)) names.set(path, Object.keys(state.texts).find((n) => path.endsWith(n)) ?? null); return names.get(path); };
+    // (one line may set many pages, a macro's text or a loop: whether it reaches a near page is found once per pass)
+    const lineNear = new Map(), lineOn = (f, line) => {
+      const k = `${f}\n${line}`;
+      if (!lineNear.has(k)) { const pages = pdfKept(pdfBoxesAt(f, line), 'pages', () => new Set(pdfBoxesAt(f, line).map((b) => b.page))); lineNear.set(k, [...near].some((p) => pages.has(p))); }
+      return lineNear.get(k);
+    };
+    // (a row's source lines, once per row: a paragraph has hundreds of sites on a few lines)
+    const rowOn = (r) => !near || pdfRowLines(r).some(([path, line]) => { const f = fileOf(path); return f && lineOn(f, line); });
+    // the rows of a line on the near pages, and the page words of a set of lines there: found once per pass, every
+    // row a line set asks for them
+    const nearRects = new Map(), rectsOf = (f, line) => { const k = `${f}\n${line}`; if (!nearRects.has(k)) nearRects.set(k, pdfRects(f, line, true).filter((r) => on(r.page))); return nearRects.get(k); };
+    const nearWords = new Map(), wordsOf = (keys) => {
+      const k = keys.join('\u0000');
+      if (!nearWords.has(k)) {
+        const rects = keys.flatMap((key) => { const [path, line] = key.split('\n'), file = fileOf(path); return file ? rectsOf(file, +line) : []; });
+        const words = [...new Set(pdfRowWords(rects))].sort((x, y) => x[0] - y[0] || (Math.abs(x[4] - y[4]) < 3 ? x[1] - y[1] : x[4] - y[4]));
+        nearWords.set(k, { words, texts: words.map((w) => w[5].normalize('NFKC').replace(/\s+/g, '')) });
+      }
+      return nearWords.get(k);
+    };
     /** A box in bp on `page`, as an overlay element of class `cls`. */
     const box = (page, cls, l, t, r, d, title = '', inner = '') => {
       const wh = size(page);
@@ -8010,7 +8165,9 @@
     }
     if (pdfOverlayOn.findings) {
       for (const [n, line, s, what, range, code] of pdfFound().filter((f) => pdfShown('findings', 'severity', f[2]) && pdfShown('findings', 'rule', f[5]))) {
-        const rows = pdfRects(n, line), text = range && rows.length ? typesetIn(n, range) : '';
+        const rows = pdfRects(n, line);
+        if (!rows.some((r) => on(r.page))) continue;
+        const text = range && rows.length ? typesetIn(n, range) : '';
         for (const r of (text && pdfWordsOf(rows, text)) || rows.slice(0, 1)) box(r.page, `pdf-finding f-${s}`, r.l - 1, r.t - 1, r.r + 1, r.d + 2, `${n}:${line}${text ? ` · ${text}` : ''}\n${what}`);
       }
     }
@@ -8032,7 +8189,7 @@
       // the extent of an environment is the box SyncTeX records on its \end line: the largest list there
       for (const [, o] of pdfEnvPairs()) {
         if (!FIGURE_ENV.test(o.key) || !pdfShown('figures', 'environment', o.key)) continue;
-        const best = (pdf.boxes ?? []).filter((b) => b.file === occFile(o) && b.line === o.line && '[('.includes(b.kind) && b.w > 0 && b.h + b.d > 0).sort((a, b) => b.w * (b.h + b.d) - a.w * (a.h + a.d))[0];
+        const best = pdfBoxesAt(occFile(o), o.line).filter((b) => '[('.includes(b.kind) && b.w > 0 && b.h + b.d > 0).sort((a, b) => b.w * (b.h + b.d) - a.w * (a.h + a.d))[0];
         if (best) box(best.page, 'pdf-fig', best.x, best.y - best.h, best.x + best.w, best.y + best.d, `bounding box of ${o.key}, ends at line ${o.line} of ${occFile(o)}`, `<b>${escape(o.key)}</b>`);
       }
     }
@@ -8072,17 +8229,20 @@
       // while the pages lag the text (typing, the echo shows) the tints stay those of the text they were built from,
       // moved with the echo (pdfRelay): the new text's runs found among the old page's words would land astray
       const lag = pdfBuiltText(pdf) != null && pdfBuiltText(pdf) !== editor.text(), kept = lag && pdfTintsOf?.pdf === pdf;
+      // the tints of one build, one run's rows and one set of near pages (each drawn or not: a drawn page gives its
+      // glyphs' edges) are found once: the passes between (a caret move, a toggle, a finding) take them as they are
+      const drawn = (page) => pdfBody.querySelector(`.pdf-page[data-page="${page}"] img`)?.classList.contains('pdf-drawn') ? 'd' : '';
+      const of = near ? [...near].sort((a, b) => a - b).map((p) => `${p}${drawn(p)}`).join() : `all${pdfBody.querySelectorAll('.pdf-page img.pdf-drawn').length}`;
+      const same = !lag && pdfTintsOf?.pdf === pdf && pdfTintsOf.rows === typesetRows && pdfTintsOf.of === of;
       // (none kept: none until the build lands, the new text's lines matched against the old pages' would tint another row)
-      const tints = kept ? [...pdfTintsOf.tints] : [];
-      for (const r of lag ? [] : typesetRows ?? []) {
-        if (!r.sites) continue;
+      const tints = kept || same ? [...pdfTintsOf.tints] : [];
+      for (const r of lag || same ? [] : typesetRows ?? []) {
+        if (!r.sites || !rowOn(r)) continue;
         const chars = rowOrigins(r), runs = originRuns(chars);
         if (!runs.length) continue;
         // each run found by its place in the row among the page words its lines set: a `!` of a macro is the one
         // after its argument, never the document's own `!` spelled the same
-        const rects = [...new Set(chars.map((ch) => `${ch.path}\n${ch.line}`))].flatMap((k) => { const [path, line] = k.split('\n'), file = Object.keys(state.texts).find((n) => path.endsWith(n)); return file ? pdfRects(file, +line, true) : []; });
-        const words = [...new Set(pdfRowWords(rects))].sort((x, y) => x[0] - y[0] || (Math.abs(x[4] - y[4]) < 3 ? x[1] - y[1] : x[4] - y[4]));
-        const texts = words.map((w) => w[5].normalize('NFKC').replace(/\s+/g, '')), solid = [], at = [];
+        const { words, texts } = wordsOf([...new Set(chars.map((ch) => `${ch.path}\n${ch.line}`))]), solid = [], at = [];
         chars.forEach((ch, i) => { at[i] = solid.length; if (ch.c.trim()) solid.push(ch.c); });
         for (const [kind, a, b] of runs) {
           const text = chars.slice(a, b + 1).map((ch) => ch.c).join(''), title = `${text}: ${chars[a].made ? MADE_TIP : ORIGIN_TIPS[kind]}${chars[a].from?.def ? ` (${chars[a].from.def}, line ${chars[a].from.defLine})` : ''}${chars[a].lib ? ` (${chars[a].generated ? 'generated, ' : ''}${chars[a].lib.def ? `${chars[a].lib.def} in ` : ''}${chars[a].lib.source} ${String(chars[a].lib.file ?? '').split('/').pop()}:${chars[a].lib.line})` : ''}`;
@@ -8099,7 +8259,7 @@
           }
         }
       }
-      if (!lag) pdfTintsOf = { pdf, tints };
+      if (!lag && !same) pdfTintsOf = { pdf, tints: [...tints], rows: typesetRows, of };
       // one tint per spot: a word set inside a wider run (an argument in its macro's text) keeps its own
       pdfOriginKinds = tints.map(originKey);
       if (pdfOverlayOn.origins) for (const q of PE.apart(tints)) if (pdfShown('origins', 'kind', originKey(q))) box(q.page, `pdf-orig pdf-orig-${q.kind}${q.key === 'generated' ? ' pdf-orig-generated' : q.made ? ` pdf-orig-made pdf-orig-${q.key}` : ''}`, q.l, q.t, q.r, q.d, q.title);
@@ -8115,7 +8275,7 @@
       }
     }
     if (pdfOverlayOn.math) {
-      for (const m of self.satexLayers.mathSpans(pdf?.boxes ?? [])) box(m.page, 'pdf-math', m.l, m.t, m.r, m.d, `math · ${m.file}:${m.line}`);
+      for (const m of pdfKept(pdf?.boxes, 'math', () => self.satexLayers.mathSpans(pdf.boxes)) ?? []) box(m.page, 'pdf-math', m.l, m.t, m.r, m.d, `math · ${m.file}:${m.line}`);
       // display math has no SyncTeX math records: the source lines the run set in display mode (its rows' `math` marks), where SyncTeX placed them
       const shown = new Set();
       for (const r of typesetRows ?? []) for (const ch of r.math?.some((m) => m.mode === 'display') ? rowChars(r) : []) {
@@ -8128,7 +8288,7 @@
     if (pdfOverlayOn.glue) {
       // glue drawn over glyphs (a box SyncTeX placed off its text) is left out: a label never covers the text
       const inked = (g) => pdfWordsOn(g.page).some((w) => w[1] < g.r - 0.5 && w[3] > g.l + 0.5 && w[2] < g.d && w[4] > g.t);
-      for (const g of pdfGlue().filter((g) => pdfShown('glue', 'kind', g.kind) && !inked(g))) box(g.page, `pdf-glue g-${g.kind}`, g.l, g.t, g.r, g.d, `${g.kind === 'fill' ? 'infinite glue' : 'glue'} ${g.spec} · ${g.file}:${g.line}`, `<span class="pdf-glue-spec">${escape(self.satexLayers.glueShort(g.spec))}</span>`);
+      for (const g of pdfGlue().filter((g) => on(g.page) && pdfShown('glue', 'kind', g.kind) && !inked(g))) box(g.page, `pdf-glue g-${g.kind}`, g.l, g.t, g.r, g.d, `${g.kind === 'fill' ? 'infinite glue' : 'glue'} ${g.spec} · ${g.file}:${g.line}`, `<span class="pdf-glue-spec">${escape(self.satexLayers.glueShort(g.spec))}</span>`);
     }
     if (pdfOverlayOn.grid) {
       // lines every step from the top left corner, stronger and labelled every `every` steps; fewer when they would crowd
@@ -8405,7 +8565,7 @@
     const list = [];
     for (const [line, here] of Map.groupBy(TM.nodes(text).filter((n) => n.text.trim()), (n) => n.line)) {
       // a node's text is one hbox; SyncTeX writes some twice
-      const seen = new Set(), all = boxes.filter((b) => { const k = `${b.page},${b.x},${b.y},${b.w}`; return b.file === state.file && b.line === line && b.kind === '(' && b.w > 0 && !seen.has(k) && seen.add(k); });
+      const seen = new Set(), all = pdfBoxesAt(state.file, line).filter((b) => { const k = `${b.page},${b.x},${b.y},${b.w}`; return b.kind === '(' && b.w > 0 && !seen.has(k) && seen.add(k); });
       // a box inside another (a logo's lowered letter) is part of that node's text
       const bs = all.filter((b) => !all.some((o) => o !== b && o.page === b.page && o.x <= b.x && b.x + b.w <= o.x + o.w && o.y - o.h <= b.y - b.h && b.y + b.d <= o.y + o.d));
       if (bs.length === here.length) here.forEach((n, i) => { const b = bs[i]; list.push({ n, page: b.page, l: b.x, t: b.y - b.h, r: b.x + b.w, d: b.y + b.d, c: [b.x + b.w / 2, b.y + (b.d - b.h) / 2] }); });
@@ -8698,8 +8858,8 @@
     const blocks = pdfBlocks(), list = [];
     for (const s of TM.sizers(text)) {
       let best = null;
-      for (const b of boxes) {
-        if (b.file !== state.file || b.line < s.line || b.line > s.end || !(b.w > 0) || !'[('.includes(b.kind)) continue;
+      for (let l = s.line; l <= s.end; l++) for (const b of pdfBoxesAt(state.file, l)) {
+        if (!(b.w > 0) || !'[('.includes(b.kind)) continue;
         const bl = blocks.get(b.page), line = bl ? bl.r - bl.l : 0, want = PE.widthBp(s.value, line), off = want == null ? Infinity : Math.abs(b.w - want);
         if (off <= 3 && (!best || off < best.off)) best = { s, page: b.page, l: b.x, t: b.y - b.h, r: b.x + b.w, d: b.y + b.d, line, off };
       }
@@ -9402,26 +9562,21 @@
   /** Why the open text's `a..b` may not be typed over, null when it may. */
   const pdfWhy = (text, a, b) => PE.editable(text, a, b, pdfKeySpans(state.file, text));
   /** The page's words per page, once per build. */
-  let pdfWords = { of: null, by: new Map() };
-  const pdfWordsOn = (page) => { if (pdfWords.of !== pdf?.wordList) pdfWords = { of: pdf?.wordList, by: Map.groupBy(pdf?.wordList ?? [], (w) => w[0]) }; return pdfWords.by.get(page) ?? []; };
+
   const pdfSame = (a, b) => a.normalize('NFKC') === b.normalize('NFKC');
   /** How many words spelled as `word` come before it on `page` (reading order) set from line `line`. */
   const pdfNth = (page, word, line) => pdfWordsOn(page).filter((w) => pdfSame(w[5], word[5]) && (w[4] < word[2] || Math.abs(w[4] - word[4]) < 1 && w[1] < word[1]) && pdfSource(page, w[1] + 1, w[4] - 1, w)?.line === line).length;
   /** The words of the build page image `img` shows, which may be an older build's than the pane's newest (`pdf`). */
-  const pdfImgWordsOf = new WeakMap();
   function pdfImgWords(img) {
     const b = img?.__build ?? pdf, page = +img?.parentElement?.dataset.page;
-    if (b === pdf) return pdfWordsOn(page);
-    let by = pdfImgWordsOf.get(b);
-    if (!by) pdfImgWordsOf.set(b, by = Map.groupBy(b?.wordList ?? [], (w) => w[0]));
-    return by.get(page) ?? [];
+    return pdfWordsOn(page, b);
   }
   /** The caret at a point of a page: the word under it, found in its source line where that is plain text. */
   async function pdfCaretAt(page, x, y) {
     pdfMarksOff();
     const word = pdfWordUnder(page, x, y), list = word && pdfListBox(page, word);
     // between a contents line's words (its dot leaders draw no word): that list's leader menu
-    const line = !word && (pdf.boxes ?? []).find((b) => b.page === page && /\.(toc|lof|lot)$/.test(b.file) && y <= b.y + 1 && y >= b.y - 9);
+    const line = !word && pdfBoxesOn(page).find((b) => /\.(toc|lof|lot)$/.test(b.file) && y <= b.y + 1 && y >= b.y - 9);
     if (line) return pdfLeaderMenu(line.file.slice(-3), x, y, page);
     // a contents line's dot leaders: what they and the page numbers look like, for the whole list
     if (list && !/[\p{L}\p{N}]/u.test(word[5])) return pdfLeaderMenu(list.file.slice(-3), x, y, page);
@@ -9503,7 +9658,7 @@
   }
   /** The SyncTeX box of a `.toc`, `.lof` or `.lot` line a word of page `page` is set on, null if none. */
   const pdfListBox = (page, word) => {
-    const on = (pdf.boxes ?? []).filter((b) => b.page === page && /\.(toc|lof|lot)$/.test(b.file) && Math.abs(b.y - word[4]) <= 4);
+    const on = pdfBoxesOn(page).filter((b) => /\.(toc|lof|lot)$/.test(b.file) && Math.abs(b.y - word[4]) <= 4);
     // dot leaders carry no box of their own: any of their line's
     return on.find((b) => b.x >= word[1] - 0.5 && b.x <= word[3] + 2) ?? (/[\p{L}\p{N}]/u.test(word[5]) ? null : on[0] ?? null);
   };
@@ -10051,19 +10206,19 @@
     const B = pdfBuiltText(b), [p0, p1] = PE.paragraph(B, at), key = `${state.file}:${p0}:${p1}`, memo = pdfParaOf.get(b) ?? new Map();
     pdfParaOf.set(b, memo);
     if (memo.has(key)) return memo.get(key);
-    const l0 = pdfPos(B, p0).line + 1, l1 = pdfPos(B, p1).line + 1, rows = new Map(), boxes = b.boxes ?? [];
-    for (const x of boxes) if (x.file === state.file && x.line >= l0 && x.line <= l1 && setPoint(x)) rows.set(`${x.page}|${Math.round(x.y)}`, x);
+    const l0 = pdfPos(B, p0).line + 1, l1 = pdfPos(B, p1).line + 1, rows = new Map();
+    for (let l = l0; l <= l1; l++) for (const x of pdfBoxesAt(state.file, l, b)) if (setPoint(x)) rows.set(`${x.page}|${Math.round(x.y)}`, x);
     // the row after a display ends the paragraph: SyncTeX gives it the line the paragraph ended on (the next one, an
     // `\end`), so the page's next set row, when it is of that line, is the paragraph's too (`\] ok`: "ok" paired with no word)
     const last = [...rows.values()].sort((p, q) => p.page - q.page || p.y - q.y).at(-1);
-    const after = last && boxes.filter((x) => setPoint(x) && x.page === last.page && x.y > last.y + 1).sort((p, q) => p.y - q.y)[0];
+    const after = last && pdfBoxesOn(last.page, b).filter((x) => setPoint(x) && x.y > last.y + 1).sort((p, q) => p.y - q.y)[0];
     if (after?.file === state.file && after.line === l1 + 1) rows.set(`${after.page}|${Math.round(after.y)}`, after);
     const words = new Set();
     for (const x of rows.values()) {
       // the line's box: the hbox on its baseline around the point (SyncTeX's `(` record)
-      const h = boxes.find((y) => y.kind === '(' && y.page === x.page && Math.abs(y.y - x.y) < 0.5 && y.x - 1 <= x.x && x.x <= y.x + y.w + 1);
+      const h = pdfBoxesOn(x.page, b).find((y) => y.kind === '(' && Math.abs(y.y - x.y) < 0.5 && y.x - 1 <= x.x && x.x <= y.x + y.w + 1);
       const [l, r] = h ? [h.x - 1, h.x + h.w + 1] : [x.x - 40, x.x + 40];
-      for (const w of b.wordList ?? []) if (w[0] === x.page && w[2] - 1 <= x.y && x.y <= w[4] + 1 && w[3] > l && w[1] < r) words.add(w);
+      for (const w of pdfWordsOn(x.page, b)) if (w[2] - 1 <= x.y && x.y <= w[4] + 1 && w[3] > l && w[1] < r) words.add(w);
     }
     const list = [...words].sort((p, q) => p[0] - q[0] || (Math.abs(p[4] - q[4]) < 2 ? p[1] - q[1] : p[4] - q[4]));
     const toks = PE.tokens(B, p0, p1), map = PE.aligned(toks.map((t) => t.t), list.map((w) => w[5]));
@@ -10633,7 +10788,8 @@
     const pic = sketches[n], end = B.indexOf('\\end{tikzpicture}', then[n]), lineOf = (i) => B.slice(0, i).split('\n').length;
     const [l0, l1] = [lineOf(then[n]), lineOf(end < 0 ? then[n] : end)];
     // where the build set it: the boxes SyncTeX gives its lines (not the indent's or a kern's), on the page most stand on
-    const hits = b.boxes.filter((x) => x.file === state.file && x.line >= l0 && x.line <= l1 && x.w > 0 && (x.kind === '(' || x.kind === '['));
+    const hits = [];
+    for (let l = l0; l <= l1; l++) hits.push(...pdfBoxesAt(state.file, l, b).filter((x) => x.w > 0 && (x.kind === '(' || x.kind === '[')));
     const page = [...Map.groupBy(hits, (x) => x.page)].sort((p, q) => q[1].length - p[1].length)[0];
     const img = page && pdfImg(page[0]);
     if (!img?.naturalWidth || (img.__build ?? pdf) !== b) return false;
@@ -10674,11 +10830,11 @@
     }
     const area = pdfAreaOf.area;
     if (pdfBlocksOf?.pdf !== pdf || pdfBlocksOf.area !== area) {
-      const map = pdfBlocks(), all = [...map.values()], top = Math.min(...all.map((b) => b.t)), low = Math.max(...all.map((b) => b.d));
+      const map = new Map(pdfBlocks()), all = [...map.values()], top = Math.min(...all.map((b) => b.t)), low = Math.max(...all.map((b) => b.d));
       for (const [pg, b] of map) {
-        const foot = !area && (pdf.wordList ?? []).filter((w) => w[0] === pg && w[2] > b.d + 18 && /^[\divxlc]+$/i.test(w[5])).sort((a, c) => c[4] - a[4])[0];
+        const foot = !area && pdfWordsOn(pg).filter((w) => w[2] > b.d + 18 && /^[\divxlc]+$/i.test(w[5])).sort((a, c) => c[4] - a[4])[0];
         // the lines whose baselines stand in the area (not the header's or footer's): their tops and depths may stick out
-        const own = area && (pdf.boxes ?? []).filter((x) => x.page === pg && x.kind === '(' && x.w > 0 && x.y >= area.top && x.y <= area.bottom + 0.5);
+        const own = area && pdfBoxesOn(pg).filter((x) => x.kind === '(' && x.w > 0 && x.y >= area.top && x.y <= area.bottom + 0.5);
         map.set(pg, area ? { ...b, t: Math.min(area.top, ...own.map((x) => x.y - x.h)), d: Math.max(area.bottom, ...own.map((x) => x.y + x.d)) } : { ...b, t: Math.min(b.t, top), d: Math.max(b.d, low, foot ? foot[4] - 2.5 * 12 : 0) });
       }
       pdfBlocksOf = { pdf, area, map };
@@ -11472,6 +11628,22 @@
     Object.assign(pdfMenu, { items, sel: fresh ? reselect(items, pdfMenu.items?.[pdfMenu.sel]?.label) : 0, from });
     pdfMenu.el.onmousedown = (e) => { e.preventDefault(); const li = e.target.closest('li'); if (li) pdfMenuPick(+li.dataset.i); };
     pdfMenuDraw();
+    // a list answered before the server (kept items, a run under way) takes the server's own once it answers
+    if (!fresh) pdfMenuLate(from, n[1]);
+  }
+  /** The server's own list at the end of `\\name` typed from `from`, asked after the list shows (it waits for a run under
+   * way): the names' shapes, descriptions and snippets for the open list, its selection kept on its item. Its answer is
+   * kept (`commandMemo`), so a later list from the kept items shows them too. */
+  async function pdfMenuLate(from, name) {
+    const p = pdfPos(pdfSeen().text, from + 1 + name.length);
+    const got = await completions(p, p.character - name.length, '\\', uri(), true);
+    const now = pdfSeen(), typed = now.text.slice(from + 1, now.at);
+    if (!pdfCaret || pdfMenu?.from !== from || pdfMenu.arg || !got?.length || !typed.startsWith(name)) return;
+    const have = new Set(got.map((i) => i.label));
+    const items = pdfMenuItems([...got, ...pdfMenu.items.filter((i) => i.label !== 'textbackslash' && !have.has(i.label))], typed);
+    if (!items.length) return;
+    Object.assign(pdfMenu, { items, sel: reselect(items, pdfMenu.items?.[pdfMenu.sel]?.label) });
+    pdfMenuDraw();
   }
   /** The list of the argument the caret stands in (`\\usepackage{|}` packages, `\\begin{` environments, `\\ref{` labels), asked
    * where the caret is: what the editor's list offers there, written over the word typed, without a `\\`. */
@@ -11523,8 +11695,11 @@
   function pdfMenuDraw() {
     const { el, items, sel } = pdfMenu, caret = document.querySelector('.pdf-caret')?.getBoundingClientRect() ?? pdfCaret?.pt;
     // each name with its symbol (a math one), its one-line description, else its detail's first line
-    const said = (i) => docOf(i) || (i.detail && i.detail !== `\\${i.label}` ? String(i.detail).split('\n')[0] : '');
-    el.innerHTML = items.map((i, k) => `<li role="option" aria-selected="${k === sel}" data-i="${k}">${symbolOf(i) ? `<span class="cm-math-symbol">${symbolOf(i)}</span>` : ''}<code>${pdfMenu.arg ? '' : '\\'}${escape(i.label)}</code>${said(i) ? ` <span class="muted">${escape(said(i))}</span>` : ''}</li>`).join('');
+    // (a usage line's arguments are the shape beside the name: only where it comes from stays)
+    const said = (i) => docOf(i) || (i.detail && i.detail !== `\\${i.label}` ? String(i.detail).split('\n')[0].replace(/^\\\S*\s+(?=\()/, '') : '');
+    // a command's arguments after its name (`\\section*[⟨options⟩]{⟨arg⟩}`), as the editor's list shows them
+    const shape = (i) => pdfMenu.arg ? '' : shapeOf(pdfServed(i));
+    el.innerHTML = items.map((i, k) => `<li role="option" aria-selected="${k === sel}" data-i="${k}">${symbolOf(i) ? `<span class="cm-math-symbol">${symbolOf(i)}</span>` : ''}<code>${pdfMenu.arg ? '' : '\\'}${escape(i.label)}${shape(i) ? `<span class="complete-shape">${escape(shape(i))}</span>` : ''}</code>${said(i) ? ` <span class="muted">${escape(said(i))}</span>` : ''}</li>`).join('');
     // kept on screen: shifted left at the right edge, above the caret where it does not fit below
     const w = el.offsetWidth, h = el.offsetHeight, top = caret && (caret.top ?? caret.bottom - 20) - h - 4, above = caret && caret.bottom + 4 + h > innerHeight && top > 0;
     if (caret) Object.assign(el.style, { left: `${Math.max(4, Math.min(caret.left, innerWidth - w - 8))}px`, top: `${above ? top : caret.bottom + 4}px` });

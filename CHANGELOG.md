@@ -15,6 +15,7 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 
 ### LSP
 
+- `fix` **Completions show a command's whole shape.** `\section` offers `*[⟨options⟩]{⟨arg⟩}`, ltcmd commands their `(…)` and `<…>` arguments, a `\def` its own delimiters; taking one writes the braces with the caret inside. The PDF page's list shows shapes and descriptions too, also while a run goes on.
 - `fix` **Editors: a name built around unknown digits is the same name after an edit.** It named its number by the token's index, which a resumed run numbers differently than a run from the start, so findings and definitions spelled other names than `satex lint`.
 - `fix` **Editors read the open `.bib` and root, not the files on disk.** An entry removed from an open `.bib` leaves its `\cite` undefined, an `\include` commented out leaves its chapter's labels undefined, and a `.bbl` or `.ind` the tool no longer makes is removed instead of kept stale.
 - `fix` **Editors: an edited `.bib` or a commented-out `\include` gives the findings a fresh lint gives.** The build's bibliography and index files, the bibliography rules and the unread-file check read the editor's texts, not the files on disk. A `.bbl` or `.ind` the tool no longer makes is removed. An entry removed from an open `.bib` leaves its `\cite` undefined, and a reference to a label in an un-`\include`d chapter is undefined.
@@ -25,6 +26,8 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 
 ### Compile
 
+- `perf` **`satex compile` runs no draft pass and never waits for the preamble format.** A fresh build starts from latexmk's seed `.aux` and runs as many passes as latexmk; the format is dumped in the background; SyncTeX is compressed beside the pass. Cold builds 1.16× and edits 1.27× latexmk's speed on the benchmark subset, PDFs identical.
+- `fix` **A build is one process group, ended when a newer one replaces it, its client goes away or `compile.timeout` passes.** Warm engines end after their minute, and a stopped server takes its build along: no orphaned pdflatex.
 - `perf` **`satex compile` runs the analysis only for log messages it can explain.** A message with no source line (an underfull box while the output routine is active) no longer starts it: a one-word edit of a 1000-page book returns with its PDF, not 17 s later.
 - `fix` **The progress bar counts packages built into caches, not only those loaded from them.** A first run after an update shows how many packages are done.
 - `perf` **`satex compile`: the PDF first, the analysis only where a message needs it.** The build runs before the analysis, which runs only when the log has a message to explain and no stored explanation of the same messages, source, settings and read files holds: an unchanged 195-page book 1.7 s → 0.05 s with `compile.explain` on, the PDF of an edit in ~3 s instead of after the analysis. `compile.warm` works from the command line: the build runs in a mirror of the project under `.satex-build`, so no file of the project is ever a pipe.
@@ -32,6 +35,9 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 
 ### Analysis
 
+- `fix` **Reaching `limits.list_items` is reported** (`limit-reached`), and a progress note names the setting once half of it is used.
+- `perf` **Edits in large documents resume at the edit and meet the last run.** A body whose lines end in a control word keeps its checkpoints, and the paragraph lists' size limit is the configurable `limits.list_items` (it was a fixed bound past which no edit of a 500-page book met the last run): a word typed mid-book reruns 2 287 steps in 0.18 s instead of 2.6M steps in 5.2 s.
+- `fix` **A printed dimension read back keeps its bound.** The fraction `\the` prints names its print, so a dimension scan of integer, point and that fraction reads the print's own interval, in any unit and either sign, without forking.
 - `fix` **The rest of an argument that ended inside one of several texts keeps their control sequences.** Its cover took the one-of for plain text, so the next delimited argument ran through it: a certain wrong value and a certain false runaway are gone.
 - `fix` **A name built around unknown digits is spelled alike after a resume.** It embedded an internal symbol index, so a resumed run named `\__seq_map_<n>:w` differently from a fresh one.
 - `fix` **Unknown text that lists command names is never taken for one name.** Run through an undecided loop, such a list was turned into `\relax`, so the code its names stand for silently never ran; a `\def` through it may now define each name in it.
@@ -83,6 +89,8 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 
 ### Playground
 
+- `perf` **A big build reaches the page in parts**, so a 737-page document lands without stalls (longest task 0.16 s).
+- `perf` **The PDF pane handles books: one SyncTeX and word index per build, layers only for the pages near the view.** A 737-page document scrolls and types without stalls (it hung for minutes after a build).
 - `fix` **The style prompt shows the count per file and up to three places with the spot marked before it asks.**
 - `fix` **Completion ranks common commands after the document's own uses (`\textb` offers `\textbf` first); `\mathcolor` is written from kernel 2022-06 on; the page menu has Show in source and Explain on macro-made text; old-style TikZ arrow tips render in the gallery.**
 - `fix` **Type mode: text typed into teletype (`\texttt`, listings) is drawn in a fixed-width face matching the page's.**

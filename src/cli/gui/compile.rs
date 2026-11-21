@@ -59,7 +59,8 @@ pub fn warm(root: &Path, examples: &Path) {
                 let _one = ONE.lock().unwrap_or_else(|e| e.into_inner());
                 let mut command = Command::new(&satex);
                 command.args(["--format", "json", "compile", "-f", &main]).current_dir(&dir);
-                if output_unless(&mut command, || WANTED.load(Relaxed) > 0).is_err() {
+                let wanted = || (WANTED.load(Relaxed) > 0).then(|| "a build of the page comes first".to_string());
+                if output_unless(&mut command, wanted).is_err() {
                     todo.push_back(main);
                 }
             }
@@ -115,7 +116,14 @@ pub fn respond(
         let one = ONE.lock().unwrap_or_else(|e| e.into_inner());
         WANTED.fetch_sub(1, Relaxed);
         let mut runs = Vec::new();
-        let answer = build(&root, body, base, &mut runs).unwrap_or_else(|e| json!({ "error": e, "commands": runs }));
+        let stop = Stop::new(stream, body);
+        // asked for no longer while it waited its turn: not built at all
+        let answer = match stop.why() {
+            Some(why) => json!({ "error": why }),
+            None => {
+                build(&root, body, base, &mut runs, &stop).unwrap_or_else(|e| json!({ "error": e, "commands": runs }))
+            }
+        };
         drop(one);
         return send(stream, method, "answer.json", "no-cache", false, answer.to_string().into_bytes());
     }
@@ -167,7 +175,7 @@ fn render(root: &Path, pdf: &[u8]) -> Option<Vec<u8>> {
 
 /// One build of the request's project in a new directory under `root`.
 /// Every command it runs goes into `runs`, the page shows them.
-fn build(root: &Path, body: &[u8], base: Option<&Path>, runs: &mut Vec<Value>) -> Result<Value, String> {
+fn build(root: &Path, body: &[u8], base: Option<&Path>, runs: &mut Vec<Value>, stop: &Stop) -> Result<Value, String> {
     let mut request: Value = serde_json::from_slice(body).map_err(|e| format!("bad request: {e}"))?;
     let main = request["main"].as_str().filter(|m| safe(m)).ok_or("no main file")?.to_string();
     let main = main.as_str();
@@ -221,6 +229,7 @@ fn build(root: &Path, body: &[u8], base: Option<&Path>, runs: &mut Vec<Value>) -
         Some(at) => {
             let out = run(
                 runs,
+                stop,
                 Command::new(&satex)
                     .args(&flags)
                     .args(["slice", "--at", at, "--out", "slice", "-f", main])
@@ -244,6 +253,7 @@ fn build(root: &Path, body: &[u8], base: Option<&Path>, runs: &mut Vec<Value>) -
     let ran = warm.clone().unwrap_or_else(|| work.clone());
     let out = run(
         runs,
+        stop,
         Command::new(&satex).args(&flags).args(["--format", "json", "compile", "-f", main]).current_dir(&ran),
     )?;
     if let Some(w) = &warm {
@@ -263,6 +273,7 @@ fn build(root: &Path, body: &[u8], base: Option<&Path>, runs: &mut Vec<Value>) -
         if request["pages"].as_bool() != Some(false) {
             run(
                 runs,
+                stop,
                 Command::new("pdftocairo")
                     .args(["-png", "-r", "144"])
                     .arg(&pdf)
@@ -276,6 +287,7 @@ fn build(root: &Path, body: &[u8], base: Option<&Path>, runs: &mut Vec<Value>) -
                 let mut r = Vec::new();
                 let out = run(
                     &mut r,
+                    stop,
                     Command::new("pdftotext").arg("-bbox").arg(&pdf).arg(work.join("words.html")).current_dir(&work),
                 );
                 (r, out)
@@ -285,6 +297,7 @@ fn build(root: &Path, body: &[u8], base: Option<&Path>, runs: &mut Vec<Value>) -
                 let mut r = Vec::new();
                 let _ = run(
                     &mut r,
+                    stop,
                     Command::new("qpdf")
                         .args(["--json=2", "--json-key=pages", "--json-key=qpdf"])
                         .arg(&pdf)
@@ -482,7 +495,7 @@ fn unb64(text: &str) -> Vec<u8> {
 
 /// Runs `command`, noted in `runs` as the page shows it: its words, paths
 /// inside the build directory relative, exit status and time.
-fn run(runs: &mut Vec<Value>, command: &mut Command) -> Result<std::process::Output, String> {
+fn run(runs: &mut Vec<Value>, stop: &Stop, command: &mut Command) -> Result<std::process::Output, String> {
     let dir = command.get_current_dir().map(Path::to_path_buf).unwrap_or_default();
     let word = |w: &std::ffi::OsStr| {
         let p = Path::new(w);
@@ -493,20 +506,76 @@ fn run(runs: &mut Vec<Value>, command: &mut Command) -> Result<std::process::Out
     };
     let line: Vec<String> = std::iter::once(command.get_program()).chain(command.get_args()).map(word).collect();
     let start = std::time::Instant::now();
-    let since = SUPERSEDED.load(Relaxed);
-    let out = output_unless(command, || SUPERSEDED.load(Relaxed) != since);
+    let out = output_unless(command, || stop.why());
     runs.push(json!({
         "command": line.join(" "),
         "status": out.as_ref().ok().and_then(|o| o.status.code()),
         "ms": start.elapsed().as_millis() as u64,
         "error": out.as_ref().err().map(ToString::to_string),
     }));
-    out.map_err(|e| format!("cannot run {}: {e}", command.get_program().to_string_lossy()))
+    out.map_err(|e| match e.kind() {
+        std::io::ErrorKind::Interrupted => e.to_string(),
+        _ => format!("cannot run {}: {e}", command.get_program().to_string_lossy()),
+    })
 }
 
-/// `command`'s output, unless `stop` turns true first: then it is killed.
-pub(super) fn output_unless(command: &mut Command, stop: impl Fn() -> bool) -> std::io::Result<std::process::Output> {
+/// When a build of the page stops before its end: a request for another root came, the page
+/// that asked is gone (its connection closed: a reload, a newer build of the same project, a
+/// closed tab), or it ran longer than `compile.timeout`. No build outlives who waits for it.
+struct Stop<'a> {
+    since: u64,
+    asker: &'a std::net::TcpStream,
+    until: Option<(std::time::Instant, u64)>,
+}
+
+impl Stop<'_> {
+    fn new<'a>(asker: &'a std::net::TcpStream, body: &[u8]) -> Stop<'a> {
+        // the page's setting, else the default (`compile.timeout` in satex.yaml); 0: no limit
+        let set = serde_json::from_slice::<Value>(body).ok().and_then(|r| {
+            let sets = r["sets"].as_array()?.iter().filter_map(Value::as_str);
+            sets.filter_map(|s| s.strip_prefix("compile.timeout=")).next_back()?.parse::<u64>().ok()
+        });
+        let secs = set.unwrap_or(u64::from(crate::project::config::CompileConfig::default().timeout));
+        let until = (secs > 0).then(|| (std::time::Instant::now() + std::time::Duration::from_secs(secs), secs));
+        Stop { since: SUPERSEDED.load(Relaxed), asker, until }
+    }
+
+    fn why(&self) -> Option<String> {
+        if SUPERSEDED.load(Relaxed) != self.since {
+            return Some("superseded by a newer request".into());
+        }
+        if gone(self.asker) {
+            return Some("stopped: the page that asked for this build no longer waits for it".into());
+        }
+        let (at, secs) = self.until?;
+        (std::time::Instant::now() > at)
+            .then(|| format!("stopped after {secs} s: the build ran longer than `compile.timeout` allows"))
+    }
+}
+
+/// Whether the other end of `stream` closed it. A request is whole before its build starts, so
+/// nothing more is sent on it: a read that would not wait is the end of the connection.
+fn gone(stream: &std::net::TcpStream) -> bool {
+    if stream.set_nonblocking(true).is_err() {
+        return false;
+    }
+    let closed = match stream.peek(&mut [0]) {
+        Ok(0) => true,
+        Ok(_) => false,
+        Err(e) => e.kind() != std::io::ErrorKind::WouldBlock,
+    };
+    let _ = stream.set_nonblocking(false);
+    closed
+}
+
+/// `command`'s output, unless `stop` gives a reason first: then it is killed with every process
+/// it started (`crate::cli::group`), and the reason is the error.
+pub(super) fn output_unless(
+    command: &mut Command,
+    stop: impl Fn() -> Option<String>,
+) -> std::io::Result<std::process::Output> {
     use std::process::Stdio;
+    crate::cli::group::lead(command);
     let mut child = command.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn()?;
     // read both pipes meanwhile: a full pipe would stall the child
     let pipe = |p: Option<Box<dyn std::io::Read + Send>>| {
@@ -522,10 +591,9 @@ pub(super) fn output_unless(command: &mut Command, stop: impl Fn() -> bool) -> s
         if let Some(status) = child.try_wait()? {
             break status;
         }
-        if stop() {
-            let _ = child.kill();
-            let _ = child.wait();
-            return Err(std::io::Error::new(std::io::ErrorKind::Interrupted, "superseded by a newer request"));
+        if let Some(why) = stop() {
+            crate::cli::group::end(&mut child);
+            return Err(std::io::Error::new(std::io::ErrorKind::Interrupted, why));
         }
         std::thread::sleep(std::time::Duration::from_millis(20));
     };
@@ -708,4 +776,79 @@ fn pagelabels(pdf: &Path) -> Value {
         .ok()
         .and_then(|o| serde_json::from_slice::<Value>(&o.stdout).ok())
         .map_or(json!([]), |v| v["pagelabels"].clone())
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod tests {
+    use super::*;
+
+    /// Whether process `pid` still runs (a zombie has ended).
+    fn runs(pid: &str) -> bool {
+        let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).unwrap_or_default();
+        stat.rsplit_once(')').and_then(|(_, rest)| rest.split_whitespace().next()).is_some_and(|s| s != "Z")
+    }
+
+    /// A build is a tree of processes (`satex compile`, latexmk, the engine). Ending only the
+    /// one the server started left the engine running without a parent: dozens gathered over a
+    /// day. A stopped build must leave no process, at any depth.
+    #[test]
+    fn a_stopped_build_leaves_no_process() {
+        let dir = std::env::temp_dir().join(format!("satex-stop-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let started = std::time::Instant::now();
+        // a child that starts a grandchild, as a build tool starts the engine; both would run a minute
+        let mut build = Command::new("sh");
+        build.args(["-c", "sh -c 'echo $$ > inner; exec sleep 60' & echo $$ > outer; wait"]).current_dir(&dir); // not prose
+        let both = || dir.join("inner").metadata().is_ok_and(|m| m.len() > 0) && dir.join("outer").is_file();
+        let out = output_unless(&mut build, || both().then(|| "stopped".to_string()));
+        assert_eq!(out.unwrap_err().to_string(), "stopped");
+        assert!(started.elapsed() < std::time::Duration::from_secs(30), "the stop waited for the build's end");
+        for name in ["inner", "outer"] {
+            let pid = std::fs::read_to_string(dir.join(name)).unwrap();
+            let gone = || !runs(pid.trim());
+            let waited = (0..200).any(|_| {
+                gone() || {
+                    std::thread::sleep(std::time::Duration::from_millis(10));
+                    false
+                }
+            });
+            assert!(waited, "the {name} process {pid} outlived the stopped build");
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A build whose page reloaded or closed has nobody to answer: before, it ran to its end and
+    /// held the next page's first build behind it. The closed connection is its stop.
+    #[test]
+    fn a_build_stops_once_its_page_is_gone() {
+        let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let page = std::net::TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+        let (asker, _) = listener.accept().unwrap();
+        let stop = Stop::new(&asker, br#"{"sets": ["engine=pdftex", "compile.timeout=0"]}"#);
+        assert_eq!(stop.why(), None, "an open page waits for its build");
+        assert!(stop.until.is_none(), "compile.timeout=0 is no limit");
+        drop(page);
+        let waited = (0..200).any(|_| {
+            stop.why().is_some() || {
+                std::thread::sleep(std::time::Duration::from_millis(10));
+                false
+            }
+        });
+        assert!(waited, "the closed connection did not stop the build");
+        assert!(stop.why().unwrap().contains("no longer waits"));
+    }
+
+    /// A build that never ends (an engine waiting for input) held the one-build-at-a-time lock
+    /// for good. `compile.timeout` ends it, and the answer says so.
+    #[test]
+    fn a_build_stops_at_its_time_limit() {
+        let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let _page = std::net::TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+        let (asker, _) = listener.accept().unwrap();
+        let limit = Stop::new(&asker, br#"{"sets": ["compile.timeout=1"]}"#);
+        let default = u64::from(crate::project::config::CompileConfig::default().timeout);
+        assert_eq!(Stop::new(&asker, b"{}").until.map(|(_, secs)| secs), Some(default));
+        let out = output_unless(Command::new("sleep").arg("60"), || limit.why());
+        assert!(out.unwrap_err().to_string().contains("compile.timeout"));
+    }
 }

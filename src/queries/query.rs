@@ -5002,48 +5002,70 @@ fn completion_fields(analysis: &Analysis, sym: Sym, mac: Option<&crate::engine::
     }
 }
 
-/// The arguments a call of `sym` reads as `m`, `o` and `s` letters ([`completion_fields`]): the
-/// probe's when one already ran, else the definition's own spec, else what calls were seen to
-/// read, else its parameter text. A macro without parameters that ends in another command
-/// (`\\textbf` is `\\protect\\textbf␣`) reads what that one reads. `None` where an argument
-/// is of another kind (delimited, a keyword).
+/// The arguments a call of `sym` reads as `m`, `o` and `s` letters ([`completion_fields`]), from
+/// [`call_items`] without a new probe. `None` where an argument is of another kind (delimited, a keyword).
 pub fn arg_letters(analysis: &Analysis, sym: Sym, mac: Option<&crate::engine::tex::MacroDef>) -> Option<String> {
     use crate::engine::tex::ArgType as A;
-    let letters = |items: &[A]| -> Option<String> {
-        items
-            .iter()
-            .map(|i| match i {
-                A::Mandatory => Some('m'),
-                A::Optional(_) | A::Delimited { open: '[', close: ']', required: false, .. } => Some('o'),
-                A::Star => Some('s'),
-                _ => None,
-            })
-            .collect()
+    (call_items(analysis, sym, mac, false)?.iter())
+        .map(|i| match i {
+            A::Mandatory => Some('m'),
+            A::Optional(_) | A::Delimited { open: '[', close: ']', required: false, .. } => Some('o'),
+            A::Star => Some('s'),
+            _ => None,
+        })
+        .collect()
+}
+
+/// What a call of `sym` reads, item by item: with `probe` what a probe call shows it reads where it can be
+/// called ([`crate::analysis::probe::probe_callable`]: an ltcmd spec, the `\@ifstar`, `\@dblarg` or
+/// `\@ifnextchar[` it hands on to, its parameter text), else a probe already run, else the definition's own
+/// spec, else the fullest call the run saw, else its parameter text. A macro without parameters that ends in
+/// another command (`\textbf` is `\protect\textbf␣`) reads what that one reads. `None` where none says.
+pub fn call_items(
+    analysis: &Analysis,
+    sym: Sym,
+    mac: Option<&crate::engine::tex::MacroDef>,
+    probe: bool,
+) -> Option<Vec<crate::engine::tex::ArgType>> {
+    use crate::engine::tex::ArgType as A;
+    let probed = match probe {
+        true => crate::analysis::probe::probe(analysis, sym, crate::analysis::probe::State::End),
+        false => analysis
+            .probes
+            .lock()
+            .ok()
+            .and_then(|p| p.get(&(sym, crate::analysis::probe::State::End)).cloned())
+            .flatten(),
     };
-    let probed = analysis.probes.lock().ok().and_then(|p| p.get(&(sym, crate::analysis::probe::State::End)).cloned());
-    if let Some(Some(p)) = probed.filter(|p| p.as_ref().is_some_and(|p| p.complete)) {
-        return letters(&p.spec.items);
+    // a primitive's probe counts only where it read some (`\def`, `\count0=` are no arguments)
+    if let Some(p) = probed.filter(|p| p.complete && (mac.is_some() || !p.spec.items.is_empty())) {
+        return Some(p.spec.items);
     }
     if let Some(spec) = mac.and_then(|m| m.arg_spec.as_ref()) {
-        return letters(&spec.items);
+        return Some(spec.items.clone());
     }
     if let Some(shape) = analysis.facts.shapes.get(&sym).filter(|s| !s.is_empty()) {
-        return shape
-            .chars()
-            .filter(|c| !matches!(c, '}' | ']'))
-            .map(|c| match c {
-                '{' => Some('m'),
-                '[' => Some('o'),
-                '*' => Some('s'),
-                _ => None,
-            })
-            .collect();
+        let mut chars = shape.chars();
+        let mut items = Vec::new();
+        while let Some(open) = chars.next() {
+            items.push(match (open, open != '*' && open != '{' && open != '[') {
+                ('*', _) => A::Star,
+                ('{', _) => A::Mandatory,
+                ('[', _) => A::Optional(None),
+                (_, _) => A::Delimited { open, close: chars.clone().next()?, required: false, default: None },
+            });
+            if open != '*' {
+                chars.next()?;
+            }
+        }
+        return Some(items);
     }
     let mac = mac?;
-    let text = &mac.parameter_text;
-    if text.arity > 0 {
-        return (!text.brace_end && text.items.iter().all(|i| matches!(i, crate::engine::tex::ParamItem::Param(..))))
-            .then(|| "m".repeat(text.arity as usize));
+    if let Some(spec) = crate::engine::tex::ArgSpec::from_parameter_text(&mac.parameter_text, &analysis.interner) {
+        return Some(spec.items);
+    }
+    if mac.parameter_text.arity > 0 {
+        return Some(vec![A::Mandatory; mac.parameter_text.arity as usize]);
     }
     // a hand-off: the last token of a body without parameters, followed a few steps
     let mut last = mac.replacement_text.last()?.tok;
@@ -5054,7 +5076,7 @@ pub fn arg_letters(analysis: &Analysis, sym: Sym, mac: Option<&crate::engine::te
             return None;
         }
         if next_mac.arg_spec.is_some() || next_mac.parameter_text.arity > 0 {
-            return arg_letters(analysis, next, Some(&next_mac));
+            return call_items(analysis, next, Some(&next_mac), false);
         }
         last = next_mac.replacement_text.last()?.tok;
     }

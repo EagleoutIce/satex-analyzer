@@ -232,7 +232,9 @@ impl Machine<'_> {
         // A lookahead in the preamble (`\@ifnextchar[`) may hold the next line's first token.
         let settled = match lookahead {
             true => opens || body,
-            false => mouth.line_mark().is_some_and(|m| !m.ended),
+            // Or where the rest of the line adds no token (a line ending in a control word):
+            // a resume there holds the whole line ([`Mouth::retext`]) and reads the next alike.
+            false => mouth.quiet_line_mark(&self.catcodes).is_some_and(|m| !m.ended),
         };
         // Not inside `\include`: TeX continues reading after the included file.
         !self.input.iter().any(|f| matches!(f, Frame::Boundary))
@@ -420,7 +422,7 @@ impl Machine<'_> {
             return;
         }
         let Some((mouth, false)) = reading_file(&self.input) else { return };
-        if !mouth.line_mark().is_some_and(|m| !m.ended) {
+        if !mouth.quiet_line_mark(&self.catcodes).is_some_and(|m| !m.ended) {
             return;
         }
         let here = files_at(&self.input);
@@ -587,7 +589,7 @@ impl Machine<'_> {
         let read = taking.edit.is_none() && (0..self.out.files.len()).any(|f| edited(f as crate::engine::tex::FileId));
         let between = self.mode == crate::engine::mode::Modes::VERTICAL
             && self.out.document_depth.is_some_and(|d| usize::from(d) == self.env.group_level());
-        let line = mouth.position().0;
+        let line = self.line_ahead(mouth);
         match open {
             true => (between && edited(mouth.file) && line > *hi).then_some(Some(line)),
             false => (between && read).then_some(None),
@@ -609,7 +611,13 @@ impl Machine<'_> {
     fn edit_gap(&self, taking: &Taking, mouth: &Mouth) -> Option<u32> {
         let (path, line) = taking.edit.as_ref()?;
         (Path::new(&self.out.files[usize::from(mouth.file)].path) == path)
-            .then(|| line.saturating_sub(mouth.position().0))
+            .then(|| line.saturating_sub(self.line_ahead(mouth)))
+    }
+
+    /// The line the run reads next: the mouth's, or the one after where the rest of the
+    /// mouth's line adds no token ([`Mouth::quiet_line_mark`]).
+    fn line_ahead(&self, mouth: &Mouth) -> u32 {
+        mouth.quiet_line_mark(&self.catcodes).map_or(mouth.position().0, |m| m.line)
     }
 }
 
@@ -937,8 +945,15 @@ impl<'a> Checkpoints<'a> {
         // and one undefined are the same to TeX), so more names change nothing.
         // After an edit only: a rerun of the same text meets nothing, and numbers as a run from the start does.
         if let Some(end) = self.end.as_ref().filter(|_| self.resumed.is_some() && change.is_some()) {
-            if let Some(lists) = m.kp.grown(&end.kp) {
-                m.kp = lists;
+            match m.kp.grown(&end.kp, self.cfg.limits.list_items) {
+                Some(lists) => m.kp = lists,
+                // This run numbers its lists apart from the last run's: it cannot take that
+                // run's rest and goes on to the document's end. Said, with the setting to raise.
+                None if end.kp.holds(&m.kp) => crate::util::progress::note!(
+                    "satex: the last run recorded over half of limits.list_items ({}) list items: this edit's run cannot reuse its rest and runs to the end. Raise limits.list_items to let it",
+                    self.cfg.limits.list_items
+                ),
+                None => {}
             }
             if end.out.interner.holds(&m.out.interner) {
                 m.out.interner = end.out.interner.clone();

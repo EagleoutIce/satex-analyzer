@@ -1760,12 +1760,14 @@ impl Mouth {
                 _ => return None,
             }
         }
-        // What the end of the line adds (tex.web § 347): nothing, or a
-        // space skipped outside state M.
+        // What the end of the line adds (tex.web § 347): nothing, a space
+        // skipped outside state M, or an end of line dropped in state S
+        // (after a control word: `skip_blanks+car_ret` finishes the line).
         let quiet = comment
             || self.line_end.char().is_none_or(|e| match cats.get(e) {
                 Catcode::Ignored | Catcode::Comment | Catcode::Invalid => true,
                 Catcode::Space => self.state != LineState::Middle,
+                Catcode::Eol => self.state == LineState::Skipping,
                 _ => false,
             });
         if !quiet {
@@ -2673,6 +2675,25 @@ mod quiet_marks {
             mouth.next_with(&cats, &mut it, EndLineChar(end_line)).expect("a token");
         }
         mouth.quiet_line_mark(&cats).map(|m| (m.line, m.col))
+    }
+
+    /// After a control word TeX skips blanks, and the end of the line with them (tex.web § 347):
+    /// a line that ends in one reads on at the next line's start. Without this a document whose
+    /// lines are commands (`\Blinddocument` thirty times) had no place for a checkpoint in its body.
+    #[test]
+    fn a_line_ending_in_a_control_word_marks_the_next_line() {
+        let after = |src: &str, tokens: usize| {
+            let (cats, mut it, mut mouth) = (CatcodeTable::latex(), Interner::default(), Mouth::file(src, 0));
+            for _ in 0..tokens {
+                mouth.next_with(&cats, &mut it, EndLineChar(13)).expect("a token");
+            }
+            mouth.quiet_line_mark(&cats).map(|m| (m.line, m.col))
+        };
+        assert_eq!(after("\\x\n\\y\n", 1), Some((2, 1)));
+        assert_eq!(after("\\x  \n\\y\n", 1), Some((2, 1)));
+        // After a group's end the line's end is a space, after a control symbol too.
+        assert_eq!(after("\\x{}\n\\y\n", 3), None);
+        assert_eq!(after("\\x\\,\n\\y\n", 2), None);
     }
 
     #[test]

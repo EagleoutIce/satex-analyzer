@@ -3748,14 +3748,29 @@ button.tv-spec-value { cursor: pointer; } button.tv-spec-value:hover, button.tv-
     version == null || final == null || (preview ? version > final : version >= final);
   /** Completion lists the playground answers from while the worker is busy (playground.js `completions`). */
   type Completion = { label: string; detail?: string; filterText?: string; sortText?: string; insertText?: string; insertTextFormat?: number; textEdit?: { newText: string };
-    additionalTextEdits?: unknown[]; args?: string; math?: boolean; doc?: string; data?: { math?: boolean; args?: string | null; doc?: string; prior?: string } };
+    additionalTextEdits?: unknown[]; args?: string; math?: boolean; doc?: string; data?: { math?: boolean; args?: string | null; doc?: string; prior?: string };
+    labelDetails?: { detail?: string; description?: string } };
   /** A command's snippet from its argument letters (`m` mandatory, `o` optional, `s` star: the lean scope's `args`), as the
-   * server writes one: an optional argument a removable `[options]` field, a mandatory one `{}` with a field, the star left
-   * out. The caret takes the first field, Tab the next. Null without arguments. */
+   * server writes one: a mandatory argument `{}` with a field, what may be left out (`[…]`, the star) left to the writer.
+   * The caret takes the first field, Tab the next. Null without a mandatory argument. */
   const snippet = (label: string, args: string | undefined | null): string | null => {
     let k = 0, out = label;
-    for (const a of args ?? '') if (a === 'm') out += `{$${++k}}`; else if (a === 'o') out += `\${${++k}:[options]}`;
+    for (const a of args ?? '') if (a === 'm') out += `{$${++k}}`;
     return k ? `${out}$0` : null;
+  };
+  /** The arguments a command item shows beside its name (`*[⟨options⟩]{⟨arg⟩}`): the server's signature. */
+  const argShape = (i: Completion): string => i.labelDetails?.detail ?? '';
+  /** What the server said of each name last (its shape, description and snippet), kept so that a list answered from the
+   * kept items during a run shows them as well: `remember` takes the items of an answer, `recall` fills an item from it. */
+  const remember = (memo: Map<string, Completion>, items: Completion[]) => {
+    for (const { textEdit: _, sortText: _s, ...i } of items) if (argShape(i) || docOf(i)) memo.set(i.label, i);
+  };
+  const recall = <T extends Completion>(memo: Map<string, Completion> | undefined, i: T): T => {
+    const m = memo?.get(i.label);
+    if (!m) return i;
+    const doc = docOf(i) || docOf(m), snip = !i.insertText && m.insertText ? { insertText: m.insertText, insertTextFormat: m.insertTextFormat } : {};
+    const bare = !i.detail || i.detail === `\\${i.label}`;
+    return { ...i, ...snip, labelDetails: i.labelDetails ?? m.labelDetails, ...(doc ? { doc } : {}), detail: bare ? m.detail ?? i.detail : i.detail };
   };
   /** Whether a completion item is a math command: the server's flag (lean `math`, an item's `data.math`), else the preview's own
    * table of math symbols (mathlayout.ts), so a list the server never flagged still ranks `\\sum` first in math. */
@@ -3869,10 +3884,10 @@ button.tv-spec-value { cursor: pointer; } button.tv-spec-value:hover, button.tv-
   /** The kept list of a kind of place: the server's last items there, then the names in force it lacks (no snippet, they
    * add only names). An item asked elsewhere replaces no range here: its text goes in at the cursor's word, and the
    * server's order there (`sortText`, for another word) ranks nothing here: `\\emp` takes `emph` before `empty`. */
-  const kept = (served: Completion[] | undefined, names: Completion[] | undefined) => {
+  const kept = (served: Completion[] | undefined, names: Completion[] | undefined, memo?: Map<string, Completion>) => {
     const have = new Set((served ?? []).map((i) => i.label)), both = [...(served ?? []), ...(names ?? []).filter((n) => !have.has(n.label))];
-    // a name in force brings its arguments' snippet from its `args`
-    const filled = (i: Completion) => { const s = !i.insertText && snippet(i.label, i.args); return s ? { ...i, insertText: s, insertTextFormat: 2 } : i; };
+    // what the server said of a name last, else a name in force's snippet from its `args`
+    const filled = (i: Completion) => { i = recall(memo, i); const s = !i.insertText && snippet(i.label, i.args); return s ? { ...i, insertText: s, insertTextFormat: 2 } : i; };
     return served || names ? both.map(({ textEdit, sortText: _, ...i }) => filled(textEdit ? { ...i, insertText: i.insertText ?? textEdit.newText } : i)) : null;
   };
   /** The selection of a list refreshed under the person's eyes: the item of the same label, else the first. */
@@ -3904,6 +3919,6 @@ button.tv-spec-value { cursor: pointer; } button.tv-spec-value:hover, button.tv-
     }
     return out;
   };
-  return { followRows, rowsWin, complete: { rank, kept, reselect, controlSymbol, lettersAt, isLetter, nameBefore, typeable, whole, snippet, mathItem, docOf, plainSnippet, opensArgument, stepsOver, previewOf, tikzTarget }, loads: { unlanded, lacked }, tipBag, yaml, history: { historyEvent }, render, RENDER, hue, passes, masterDetail, usesView, fold, SPEC, mix, colorBand, oklch, drawing: { expandStyles, STYLE_DEF, parse, emit, plain, mermaidIn, mermaidOut, mermaidLoss, layout, importMermaid, tipsOf, toMatrix, cellPlaces, toLayer, picOptions, relocate, relPos, nearestAnchor, anchorAt, tipMarker, shapeSample, shapeList, cycle, STYLE }, forest: forestFns, circuit: { parse: cParse, body: cBody, emit: cEmit }, page: { pageOf, pageBox, textArea, styleNow, taggedNote, pageNodes, numberNodes, numberInForce, headerOf, headerCalls, headerNodes, footSetup, fmtRead, fmtWrite, styleNodes, styleSet, styleEdits }, dev: { traceCsv, stateHtml }, templates: { fill, filled, chosen } };
+  return { followRows, rowsWin, complete: { rank, kept, remember, recall, shapeOf: argShape, reselect, controlSymbol, lettersAt, isLetter, nameBefore, typeable, whole, snippet, mathItem, docOf, plainSnippet, opensArgument, stepsOver, previewOf, tikzTarget }, loads: { unlanded, lacked }, tipBag, yaml, history: { historyEvent }, render, RENDER, hue, passes, masterDetail, usesView, fold, SPEC, mix, colorBand, oklch, drawing: { expandStyles, STYLE_DEF, parse, emit, plain, mermaidIn, mermaidOut, mermaidLoss, layout, importMermaid, tipsOf, toMatrix, cellPlaces, toLayer, picOptions, relocate, relPos, nearestAnchor, anchorAt, tipMarker, shapeSample, shapeList, cycle, STYLE }, forest: forestFns, circuit: { parse: cParse, body: cBody, emit: cEmit }, page: { pageOf, pageBox, textArea, styleNow, taggedNote, pageNodes, numberNodes, numberInForce, headerOf, headerCalls, headerNodes, footSetup, fmtRead, fmtWrite, styleNodes, styleSet, styleEdits }, dev: { traceCsv, stateHtml }, templates: { fill, filled, chosen } };
 })();
 self.satexViews = satexViews;

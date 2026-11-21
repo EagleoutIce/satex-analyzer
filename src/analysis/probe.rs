@@ -884,18 +884,20 @@ impl Prober<'_, '_> {
                     continue;
                 }
                 let open = c.to_string();
-                if adds(&open).is_some() {
+                // A character after which the command wants a delimiter opens a delimited argument
+                // (ltcmd `d()`): taken alone it only seems a flag, its argument running to the end.
+                let close = self.run(&prefix, &open).and_then(|(_, w)| {
+                    w.demand.clone().filter(|d| d.at == at + 1 && d.want == Want::Until).map(|d| d.text)
+                });
+                if close.is_none() && adds(&open).is_some() {
                     found = Some((ArgType::TokenFlag(c), open));
                     break;
                 }
                 let embellished = format!("{c}{ARG}");
-                if adds(&embellished).is_some() {
+                if close.is_none() && adds(&embellished).is_some() {
                     found = Some((ArgType::Embellishment(open), embellished));
                     break;
                 }
-                let close = self.run(&prefix, &open).and_then(|(_, w)| {
-                    w.demand.clone().filter(|d| d.at == at + 1 && d.want == Want::Until).map(|d| d.text)
-                });
                 if let Some(close) = close {
                     let text = format!("{c}P{close}");
                     if let Some(given) = adds(&text) {

@@ -1434,8 +1434,12 @@ declare global {
    * words `texts` (in reading order, spaces left out too): `[word, from, to]` per word they cover, by their place in
    * the row, never by their spelling alone. The run is found with as much of its row around it as the page spells
    * the same and only once (math the page writes otherwise, `−` for `-`, stays outside); null where none is unique. */
+  const located = new WeakMap<string[], { all: string; starts: number[] }>();
   function locate(texts: string[], row: string, a: number, b: number): [number, number, number][] | null {
-    const all = texts.join(''), starts = texts.map((_, i) => texts.slice(0, i).join('').length);
+    // the words joined and where each starts, once per word list: every run of every row on a page asks with the same list
+    let joined = located.get(texts);
+    if (!joined) { let n = 0; located.set(texts, joined = { all: texts.join(''), starts: texts.map((t) => (n += t.length) - t.length) }); }
+    const { all, starts } = joined;
     for (let reach = 16; reach >= 0; reach = reach ? reach >> 1 : -1) {
       for (const [l, r] of [[reach, reach], [reach, 0], [0, reach]] as const) {
         const lo = Math.max(0, a - l), probe = row.slice(lo, b + 1 + r), at = all.indexOf(probe);

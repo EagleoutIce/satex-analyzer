@@ -2721,3 +2721,4 @@ pre.out-block:hover .out-meta { opacity: .85; }
 .stat-strip .stat { display: flex; flex-direction: column; gap: .2rem; padding: .6rem .8rem; background: var(--panel); border: 1px solid var(--border); border-radius: 10px; }
 .stat-strip .stat span { font-size: .82rem; color: var(--muted); }
 .stat-strip .stat b { font-size: 1.6rem; font-weight: 600; line-height: 1.2; font-variant-numeric: tabular-nums; color: var(--fg); }
+.type-complete .complete-shape { color: var(--muted); }

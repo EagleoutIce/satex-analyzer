@@ -209,6 +209,11 @@ pub struct Limits {
     /// Words whose hyphenation points a language's patterns keep once found: a paragraph's
     /// words are hyphenated for its marks and its line breaks, and words recur. Memory only.
     pub hyph_words: usize,
+    /// Items of the lists the run records to break lines and set boxes
+    /// (`crate::engine::linebreak::Arena`; equal lists share theirs). Past it a list is not
+    /// recorded. Past half of it a run after an edit keeps its own numbering (`Arena::grown`):
+    /// it cannot take the last run's rest and runs to the document's end.
+    pub list_items: usize,
     /// Macros the table plugin follows through the run's calls from an environment to find the code
     /// that splits its body at `&` (tabularray's): an editor feature, no effect on the analysis.
     pub table_reach: usize,
@@ -312,6 +317,7 @@ impl Limits {
             "vertices" => self.vertices as u64,
             "facts" => self.facts as u64,
             "hyph_words" => self.hyph_words as u64,
+            "list_items" => self.list_items as u64,
             "table_reach" => self.table_reach as u64,
             "trace" => self.trace as u64,
             "trace_state" => self.trace_state as u64,
@@ -421,6 +427,7 @@ impl Default for Limits {
             vertices: 1_000_000,
             facts: 2_000_000,
             hyph_words: 50_000,
+            list_items: 1 << 23,
             table_reach: 4_000,
             trace: 200_000,
             trace_state: 32,
@@ -715,6 +722,9 @@ pub struct CompileConfig {
     /// TeX method, and tells memoize not to (`src/plugins/memoize`): no shell escape, no Perl or
     /// Python module. Off, memoize extracts as the document says.
     pub memoize: bool,
+    /// Seconds a build asked for by a page (`satex gui`, the playground's server) may run before
+    /// the server stops it with every process it started. 0: no limit.
+    pub timeout: u32,
     /// A PDF viewer to open after a build: `none`, `auto` (the system's
     /// default opener), or a program. Only the user's own config sets it.
     pub viewer: String,
@@ -728,6 +738,7 @@ impl Default for CompileConfig {
             explain: true,
             passes: 4,
             warm: false,
+            timeout: 600,
             clock: "minute".into(),
             memoize: true,
         }

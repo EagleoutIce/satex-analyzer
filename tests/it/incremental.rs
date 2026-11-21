@@ -795,6 +795,135 @@ fn random_edit_sequences_build_what_a_fresh_build_does() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// A book: about 500 pages of generated paragraphs in sections (doc/site/e2e/kinds/big.mjs
+/// builds the same for the playground). A word typed in its middle must not cost a run of the
+/// book: the run resumes at the edit, meets the last run a page on and takes that run's rest.
+/// Counted in steps, so the bound holds on a loaded machine; the seconds are printed.
+/// Pins the whole chain on a large input: checkpoints kept within their number and memory,
+/// placed around the edit, the splice of the rest. It was red: the book records over a
+/// million list items, past half of the old bound (2^21, now `limits.list_items`), where a
+/// run after an edit numbers its lists apart from the last run's and can never take its rest:
+/// every typed word ran the second half of the book again (2.6M steps for 2 thousand).
+#[test]
+fn a_word_typed_in_a_book_runs_a_small_share() {
+    if !installed() {
+        return;
+    }
+    /// Sections of [`PARAGRAPHS`] paragraphs, about two pages each.
+    const SECTIONS: usize = 250;
+    const PARAGRAPHS: usize = 12;
+    /// The second edit's run takes at most this share of a full run's steps.
+    const SHARE: u64 = 20;
+    let dir = crate::support::tmp_root().join("incremental-book");
+    std::fs::create_dir_all(&dir).unwrap();
+    let main = dir.join("main.tex");
+    let words: Vec<&str> =
+        "the page line word text block field rule mark note part form list item unit step case code name type"
+            .split(' ')
+            .collect();
+    let mut seed: u64 = 7;
+    let mut next = move || {
+        seed = (seed * 1_103_515_245 + 12_345) % (1 << 31);
+        seed as usize
+    };
+    let mut body = String::new();
+    for s in 0..SECTIONS {
+        body.push_str(&format!("\\section{{Part {s}}}\\label{{sec:p{s}}}\n"));
+        for _ in 0..PARAGRAPHS {
+            let text: Vec<&str> = (0..70 + next() % 40).map(|_| words[next() % words.len()]).collect();
+            body.push_str(&format!("Words {}.\n\n", text.join(" ")));
+        }
+    }
+    // The edited paragraph: the first of the middle section.
+    let marker = format!("\\section{{Part {}}}\\label{{sec:p{}}}\nWords", SECTIONS / 2, SECTIONS / 2);
+    let text = |typed: &str| {
+        let edited = marker.replace("Words", typed);
+        format!(
+            "\\documentclass{{article}}\n\\begin{{document}}\n{}\\end{{document}}\n",
+            body.replacen(&marker, &edited, 1)
+        )
+    };
+    let edited_line = 3 + text("Words").split(&marker).next().unwrap().lines().count() as u32;
+    std::fs::write(&main, text("Words")).unwrap();
+    let cfg = crate::support::config();
+    let mut checkpoints = Checkpoints::new(&cfg);
+    let clock = std::time::Instant::now();
+    checkpoints.analyze(&text("Words"), &main);
+    eprintln!(
+        "book: {} lines, full run {:.1} s, {} steps",
+        text("Words").lines().count(),
+        clock.elapsed().as_secs_f64(),
+        checkpoints.ran.1
+    );
+    // As long as the word replaced: the line breaks stay.
+    for typed in ["Wordy", "Wordz"] {
+        std::fs::write(&main, text(typed)).unwrap();
+        let clock = std::time::Instant::now();
+        let incremental = checkpoints.analyze(&text(typed), &main);
+        let (ran, all) = checkpoints.ran;
+        eprintln!(
+            "book: typed {typed}: {:.2} s, ran {ran} of {all} steps, resumed {:?}",
+            clock.elapsed().as_secs_f64(),
+            checkpoints.resumed
+        );
+        if typed == "Wordz" {
+            let resumed = checkpoints.resumed.clone().map(|(_, line)| line);
+            assert!(
+                resumed.is_some_and(|l| l <= edited_line && l + 40 >= edited_line),
+                "line {edited_line}: resumed at {resumed:?}"
+            );
+            assert!(checkpoints.converged.is_some(), "typed {typed}: the runs never met");
+            assert!(ran * SHARE <= all, "typed {typed}: ran {ran} of {all} steps");
+            let full = Machine::analyze_once(&text(typed), Some(&main), &cfg);
+            assert_eq!(first_difference(&said(&incremental), &said(&full)), None, "typed {typed}");
+        }
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A checkpoint stands where a line of the document starts. A line that ends in a control
+/// word never showed one: TeX skips the line's end with the blanks after the name (tex.web
+/// § 347), so the run goes from the end of one command straight into the next. Such an end is
+/// as good as the next line's start ([`Mouth::quiet_line_mark`]). Pins: a document whose body
+/// is commands, one per line (`\Blinddocument` many times, 470 pages), kept no checkpoint
+/// after `\begin{document}`, and a word typed near its end ran the whole body again.
+#[test]
+fn a_body_of_command_lines_resumes_near_the_edit() {
+    if !installed() {
+        return;
+    }
+    /// Lines of the body, each one command that sets a paragraph.
+    const LINES: usize = 60;
+    /// The edit's run starts within this many lines before the edit.
+    const NEAR: u32 = 12;
+    let dir = crate::support::tmp_root().join("incremental-command-lines");
+    std::fs::create_dir_all(&dir).unwrap();
+    let main = dir.join("main.tex");
+    let head = "\\documentclass{article}\n\\newcommand\\block{Some words that fill a paragraph of text, again and again.\\par}\n\\begin{document}\n";
+    let text = |typed: Option<usize>| {
+        let body: String =
+            (0..LINES).map(|i| if typed == Some(i) { "Typed here.\n\n\\block\n" } else { "\\block\n" }).collect();
+        format!("{head}{body}\\end{{document}}\n")
+    };
+    std::fs::write(&main, text(None)).unwrap();
+    let cfg = crate::support::config();
+    // Close together: the body is short, the spacing is not what is tested.
+    let mut checkpoints = Checkpoints::new(&cfg).every(64);
+    checkpoints.analyze(&text(None), &main);
+    let at = LINES - 5;
+    let edited = head.lines().count() as u32 + at as u32 + 1;
+    std::fs::write(&main, text(Some(at))).unwrap();
+    let incremental = checkpoints.analyze(&text(Some(at)), &main);
+    let full = Machine::analyze_once(&text(Some(at)), Some(&main), &cfg);
+    assert_eq!(first_difference(&said(&incremental), &said(&full)), None);
+    let resumed = checkpoints.resumed.clone().map(|(_, line)| line);
+    assert!(
+        resumed.is_some_and(|line| line + NEAR >= edited && line <= edited),
+        "the edit on line {edited} resumed at {resumed:?}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// A run after an edit keeps a checkpoint at the first line past each of the next pages it
 /// ships (`AFTER_EDIT`): the page holding the edited paragraph is where the states meet again,
 /// the page builder holds that paragraph until then (a chapter's `\clearpage` here). So the

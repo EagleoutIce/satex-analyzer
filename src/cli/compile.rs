@@ -129,6 +129,9 @@ fn stored(_: &Path, _: &str, _: &str) -> Option<Vec<Record>> {
 
 /// The build with the tools this machine has, its log read.
 pub fn build_only(context: &Context, system: Option<&str>, view: bool) -> Result<Built, String> {
+    // no tool this build starts outlives it
+    #[cfg(not(target_os = "emscripten"))]
+    super::group::die_together();
     let analysis = context.analysis;
     let main = PathBuf::from(analysis.file_name(analysis.main_file));
     let main = main.canonicalize().unwrap_or(main);
@@ -270,9 +273,14 @@ pub fn rests(ext: &str) -> bool {
 /// Where satex's build keeps its formats and the stamps of its tools' inputs.
 pub const KEEP: &str = ".satex-build";
 
+/// What LaTeX writes into the `.aux` of a one-page document without references, and what latexmk
+/// puts there before a first pass: a pass that reads it and writes it again is at rest.
+const SEED: &str = "\\relax \n\\gdef \\@abspage@last{1}\n";
+
 /// satex's own build in `at`: the engine until the build files rest (at most `passes`), BibTeX,
 /// Biber and makeindex where their inputs changed, a LaTeX preamble read from a format dumped once
-/// per preamble. A fresh build's first pass writes no PDF. With `warm`, a pass is fed to the engine
+/// per preamble, beside the first pass that needs it. A build without an `.aux` starts from
+/// [`SEED`]. SyncTeX data is compressed beside the pass ([`follow`]). With `warm`, a pass is fed to the engine
 /// the last build left waiting where it runs that pass's command (`warm.rs`), and the build leaves
 /// one for the next. A build whose inputs are as the last rested one left them runs no pass
 /// (`current`). With `memoize`, the build extracts memoize's externs itself where the document may
@@ -295,7 +303,7 @@ fn own(
     let started = std::time::Instant::now();
     let keep = at.join(KEEP);
     std::fs::create_dir_all(&keep).map_err(|e| format!("{}: {e}", keep.display()))?;
-    let mut args = vec!["-interaction=nonstopmode".to_string(), "-file-line-error".into(), "-synctex=1".into()];
+    let mut args = vec!["-interaction=nonstopmode".to_string(), "-file-line-error".into(), SYNCTEX.into()];
     // the .fls names every file a pass reads and writes, for `current`
     args.push("-recorder".into());
     if at != dir {
@@ -312,47 +320,61 @@ fn own(
     if memoize {
         args.push(format!("-jobname={job}"));
     }
-    let fmt = if latex && program == "pdflatex" && !memoize { format(source, file, job, dir, &keep) } else { None };
-    if let Some((fmt, _)) = &fmt {
-        args.push(format!("-fmt={}", fmt.display()));
-    }
+    let mut dump =
+        if latex && program == "pdflatex" && !memoize { Dump::of(source, file, job, dir, &keep) } else { None };
+    let formats = |args: &[String]| args.iter().any(|a| a.starts_with("-fmt="));
     let read = |ext: &str| std::fs::read(at.join(format!("{job}.{ext}"))).unwrap_or_default();
     let rested = || -> Vec<u8> { OWN.iter().flat_map(|e| [read(e), b"\0".to_vec()].concat()).collect() };
-    let mut dumped = fmt.as_ref().map(|(_, log)| log.clone()).unwrap_or_default();
     // a changed .bib reruns BibTeX first: its new .bbl is a changed input
     tools(job, dir, at, &keep)?;
     let done = keep.join(format!("{job}.done"));
-    let head = |args: &[String]| format!("{}\n", [program, &args.join(" "), file, &clock_key(clock)].join("\t"));
+    // a pass reads the same from the format as from the preamble: the format is no part of the key
+    let head = format!("{}\n", [program, &args.join(" "), file, &clock_key(clock)].join("\t"));
     #[cfg(unix)]
-    if let Some(raw) = current(&done, &head(&args)) {
+    if let Some(raw) = current(&done, &head) {
         eprintln!("satex: up to date, no file it reads changed ({:.2} s)", started.elapsed().as_secs_f64());
+        let read = std::fs::read_to_string(&done).is_ok_and(|key| key.contains(".fmt\t"));
+        let dumped = dump.filter(|_| read).map(|d| d.said()).unwrap_or_default();
         return Ok((std::os::unix::process::ExitStatusExt::from_raw(raw), dumped));
     }
     let _ = std::fs::remove_file(&done);
     // kpathsea's databases and search path, asked while the passes run
     let ask = |args: &[&str]| Command::new("kpsewhich").args(args).stdout(std::process::Stdio::piped()).spawn().ok();
     let asked = [ask(&["-all", "ls-R"]), ask(&["-show-path=tex"])];
+    let aux = at.join(format!("{job}.aux"));
+    if latex && !aux.exists() {
+        std::fs::write(&aux, SEED).map_err(|e| format!("{}: {e}", aux.display()))?;
+    }
     let mut was = rested();
-    // LaTeX writes an .aux: a first pass without one is never the last
-    let fresh = latex && read("aux").is_empty();
+    // a stale format is dumped aside: the passes read the preamble until it is there
+    if let Some(d) = &dump {
+        d.start();
+    }
     let (mut status, mut ran, mut rest) = (None, 0, false);
-    let mut last = Vec::new();
-    for pass in 0..passes.max(1) {
+    let command = |args: &[String]| -> Vec<String> {
+        [program].into_iter().chain(args.iter().map(String::as_str)).chain([file]).map(str::to_string).collect()
+    };
+    let mut formatted = false;
+    for _ in 0..passes.max(1) {
         ran += 1;
-        let draft = fresh && pass == 0;
-        let mut pass_args: Vec<&str> = args.iter().map(String::as_str).collect();
-        if draft {
-            pass_args.retain(|a| *a != "-synctex=1");
-            pass_args.push("-draftmode");
+        // an engine the last build left waiting on the preamble itself (its dump was not done) is taken as it is
+        #[cfg(target_os = "linux")]
+        let waits = warm && super::warm::command(&keep).is_some_and(|c| c == command(&args));
+        #[cfg(not(target_os = "linux"))]
+        let waits = false;
+        if let Some(d) = dump.as_ref().filter(|d| !waits && !formats(&args) && d.usable()) {
+            args.push(format!("-fmt={}", d.fmt.display()));
         }
-        let command: Vec<String> = [program].iter().chain(&pass_args).chain([&file]).map(|a| a.to_string()).collect();
-        status = Some(match warmed(warm, &keep, dir, &command, file, &at.join(format!("{job}.log"))) {
-            Some(status) => status,
-            None => build(program, &pass_args, file, dir)?,
-        });
-        if !draft {
-            last = command;
-        }
+        formatted = formats(&args);
+        let pass_args: Vec<&str> = args.iter().map(String::as_str).collect();
+        let followed = follow(at, job);
+        let ran_warm = warmed(warm, &keep, dir, &command(&args), file, &at.join(format!("{job}.log")));
+        let ran_pass = match ran_warm {
+            Some(status) => Ok(status),
+            None => build(program, &pass_args, file, dir),
+        };
+        followed.finish();
+        status = Some(ran_pass?);
         tools(job, dir, at, &keep)?;
         // an extern made now leaves its page in this pass's PDF: one more pass drops it
         let mut extracted = false;
@@ -365,25 +387,24 @@ fn own(
         // mylatexformat replays the preamble's \openout at \begin{document} and can break there (an
         // \openout under \if, glossaries' \makeglossaries): an error a plain run has not. The format
         // is unusable then, and the pass runs again on the preamble itself.
-        if args.iter().any(|a| a.starts_with("-fmt=")) && log.contains("\\MYLATEX@") {
-            let key = keep.join(format!("{job}.key"));
-            let _ = std::fs::write(&key, std::fs::read_to_string(&key).unwrap_or_default() + "unusable\n");
+        // the proof's case in a pass, should a body ever break what an empty one does not
+        if let Some(d) = dump.take_if(|_| formatted && log.contains(BROKEN)) {
+            d.refuse();
             args.retain(|a| !a.starts_with("-fmt="));
-            dumped.clear();
             continue;
         }
-        if !draft
-            && !extracted
-            && now == was
-            && !log.contains("Rerun to get")
-            && !log.contains("Label(s) may have changed")
-        {
+        if !extracted && now == was && !log.contains("Rerun to get") && !log.contains("Label(s) may have changed") {
             rest = true;
             break;
         }
         was = now;
     }
     let status = status.ok_or("no pass ran")?;
+    // the next build's passes read the format when it is there by now: its warm engine too
+    if let Some(d) = dump.as_ref().filter(|d| !formats(&args) && d.usable()) {
+        args.push(format!("-fmt={}", d.fmt.display()));
+    }
+    let dumped = dump.filter(|_| formatted).map(|d| d.said()).unwrap_or_default();
     // waited for also when unused: a long-lived `satex gui` keeps no zombies
     let [databases, path] = asked.map(|c| c.and_then(|c| c.wait_with_output().ok()).map(|o| o.stdout));
     let [databases, path] = [databases, path].map(|o| String::from_utf8_lossy(&o.unwrap_or_default()).into_owned());
@@ -392,16 +413,16 @@ fn own(
     if rest {
         let raw = std::os::unix::process::ExitStatusExt::into_raw(status);
         let _ =
-            std::fs::write(&done, format!("{}{raw}\n{}", head(&args), reads(dir, at, job, &keep, &databases, &path)));
+            std::fs::write(&done, format!("{head}{raw}\n{}", reads(dir, at, job, &keep, formatted, &databases, &path)));
     }
     #[cfg(not(unix))]
     let _ = (rest, head, databases, path, clock);
     eprintln!("satex: {ran} pass{} in {:.2} s", if ran == 1 { "" } else { "es" }, started.elapsed().as_secs_f64());
     #[cfg(not(target_os = "linux"))]
-    let _ = (warm, last);
+    let _ = (warm, command);
     #[cfg(target_os = "linux")]
-    if warm && !last.is_empty() {
-        super::warm::start(&keep, dir, &last, file, &[(PRINT_LINE.0, PRINT_LINE.1)]);
+    if warm {
+        super::warm::start(&keep, dir, &command(&args), file, &[(PRINT_LINE.0, PRINT_LINE.1)]);
     }
     Ok((status, dumped))
 }
@@ -461,14 +482,15 @@ fn stamp(path: &Path, deep: bool) -> String {
     format!("{}{}\t{:016x}\n", path.display(), if deep { "//" } else { "/" }, hash(out.join("\n").as_bytes()))
 }
 
-/// The key of the build just run: every file its last pass and the format's dump read or wrote
+/// The key of the build just run: every file its last pass and, when that read the format (`formatted`), the format's dump read or wrote
 /// (`-recorder`), the directories outside `dir` they are in, `dir` and the TeX search path's disk
 /// directories to every level, and kpathsea's file databases (`ls-R`): where a file found nowhere
 /// would appear.
 #[cfg(unix)]
-fn reads(dir: &Path, at: &Path, job: &str, keep: &Path, databases: &str, path: &str) -> String {
-    let fls = [at.join(format!("{job}.fls")), keep.join(format!("{job}.fls"))];
-    let text: String = fls.iter().map(|f| std::fs::read_to_string(f).unwrap_or_default()).collect();
+fn reads(dir: &Path, at: &Path, job: &str, keep: &Path, formatted: bool, databases: &str, path: &str) -> String {
+    // the dump's only when the pass read the format: one dumped aside is still being written
+    let fls = [Some(at.join(format!("{job}.fls"))), formatted.then(|| keep.join(format!("{job}.fls")))];
+    let text: String = fls.iter().flatten().map(|f| std::fs::read_to_string(f).unwrap_or_default()).collect();
     let mut files: Vec<PathBuf> = text
         .lines()
         .filter_map(|l| l.strip_prefix("INPUT ").or_else(|| l.strip_prefix("OUTPUT ")))
@@ -578,51 +600,241 @@ fn hash(bytes: &[u8]) -> u64 {
     hasher.finish()
 }
 
-/// The format of `file`'s preamble (mylatexformat), dumped again only when the preamble or a file
-/// it read changed, with the dump's log. None where the dump fails or reports an error: then the
-/// runs read the preamble themselves and report it.
-fn format(source: &str, file: &str, job: &str, dir: &Path, keep: &Path) -> Option<(PathBuf, String)> {
-    let preamble = &source[..source.find("\\begin{document}")?];
-    // a `%&format` line picks a format of its own
-    if source.starts_with("%&") {
-        return None;
+/// The format of a LaTeX preamble (mylatexformat) under the build's keep. No build waits for it:
+/// a build that finds it stale has a `satex` of its own dump it aside ([`Dump::aside`]) and reads
+/// the preamble itself until the format is there and proven. A dump that fails, reports an error or
+/// breaks at `\begin{document}` leaves it unusable: then every pass reads the preamble.
+pub struct Dump {
+    /// The format file, without its extension.
+    fmt: PathBuf,
+    /// The preamble's hash, the key's first line.
+    head: String,
+    /// The preamble, for the proof.
+    preamble: String,
+    main: Option<PathBuf>,
+    dir: PathBuf,
+    file: String,
+}
+
+/// `satex`'s first argument for [`Dump::aside`], then the directory, the main file, the job and the keep.
+pub const DUMP: &str = "--compile-dump";
+
+impl Dump {
+    /// The format of `source`'s preamble, None where it has none to dump.
+    fn of(source: &str, file: &str, job: &str, dir: &Path, keep: &Path) -> Option<Dump> {
+        let preamble = &source[..source.find("\\begin{document}")?];
+        // a `%&format` line picks a format of its own
+        if source.starts_with("%&") {
+            return None;
+        }
+        let head = format!("{:016x}\n", hash(preamble.as_bytes()));
+        let main = dir.join(file).canonicalize().ok();
+        let (preamble, dir, file) = (preamble.to_string(), dir.to_path_buf(), file.to_string());
+        Some(Dump { fmt: keep.join(job), head, preamble, main, dir, file })
     }
-    let fmt = keep.join(job);
-    let (key, log) = (keep.join(format!("{job}.key")), keep.join(format!("{job}.log")));
-    let main = dir.join(file).canonicalize().ok();
-    // every file the dump read but the main one, by content: one changed, the format is stale
-    let stamp = |path: &str| format!("{path}\t{:016x}\n", hash(&std::fs::read(path).unwrap_or_default()));
-    let head = format!("{:016x}\n", hash(preamble.as_bytes()));
-    let stored = std::fs::read_to_string(&key).unwrap_or_default();
-    let fresh = stored.strip_prefix(&head).is_some_and(|rest| {
-        rest.lines().all(|l| l == "unusable" || stamp(l.split('\t').next().unwrap_or_default()) == format!("{l}\n"))
-    });
-    if !fresh {
-        let ini = ["-ini", "-interaction=nonstopmode", "-file-line-error", "-recorder"];
+
+    fn key(&self) -> PathBuf {
+        self.fmt.with_extension("key")
+    }
+
+    /// A file's line of the key: its path and content hash.
+    fn stamp(path: &str) -> String {
+        format!("{path}\t{:016x}\n", hash(&std::fs::read(path).unwrap_or_default()))
+    }
+
+    /// The key's lines after its head, when it is of this preamble and every file the dump read
+    /// (but the main one) is as it was.
+    fn fresh(&self) -> Option<String> {
+        let stored = std::fs::read_to_string(self.key()).ok()?;
+        let rest = stored.strip_prefix(&self.head)?;
+        let same = |l: &str| l == UNUSABLE || Self::stamp(l.split('\t').next().unwrap_or_default()) == format!("{l}\n");
+        rest.lines().all(same).then(|| rest.to_string())
+    }
+
+    /// Whether passes can read the format now: its key holds and no dump is writing it.
+    fn usable(&self) -> bool {
+        self.fresh().is_some_and(|rest| !rest.lines().any(|l| l == UNUSABLE))
+            && self.fmt.with_extension("fmt").is_file()
+            && self.lock().is_some()
+    }
+
+    /// The dump's lock, None while a dump holds it.
+    fn lock(&self) -> Option<std::fs::File> {
+        super::cache::background::try_lock(&self.fmt.with_extension("dumping")).ok().flatten()
+    }
+
+    /// Has a detached `satex` dump a stale format ([`Dump::aside`]), unless one is at it.
+    fn start(&self) {
+        let Some(lock) = self.lock().filter(|_| self.fresh().is_none()) else { return };
+        drop(lock);
+        // no key until the dump is done: one that ends early is started again
+        let _ = std::fs::remove_file(self.key());
+        let Ok(satex) = std::env::current_exe() else { return };
+        let (job, keep) = (self.fmt.file_name().unwrap_or_default(), self.fmt.parent().unwrap_or(&self.dir));
+        let mut command = super::cache::background::detached(&satex, None, true);
+        command.arg(DUMP).args([self.dir.as_os_str(), self.file.as_ref(), job, keep.as_os_str()]);
+        command.stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null());
+        command.stderr(std::process::Stdio::null());
+        eprintln!("satex: dumping the preamble's format aside, for the next passes");
+        // reaped by a thread: a long-lived caller (`satex gui`) keeps no zombie
+        if let Ok(mut child) = command.spawn() {
+            std::thread::spawn(move || child.wait());
+        }
+    }
+
+    /// `satex --compile-dump DIR FILE JOB KEEP`: dumps the format of `FILE`'s preamble and proves it,
+    /// then writes its key. One at a time per job (the lock).
+    pub fn aside(dir: &Path, file: &str, job: &str, keep: &Path) {
+        let Ok(source) = std::fs::read(dir.join(file)) else { return };
+        let Some(dump) = Dump::of(&String::from_utf8_lossy(&source), file, job, dir, keep) else { return };
+        let Some(_lock) = dump.lock().filter(|_| dump.fresh().is_none()) else { return };
+        let run = |program: &str, args: &[&str]| {
+            let mut command = Command::new(program);
+            command.args(args).current_dir(dir).env(PRINT_LINE.0, PRINT_LINE.1);
+            command.stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null());
+            command.status().is_ok_and(|s| s.success())
+        };
         let out = format!("-output-directory={}", keep.display());
-        let status = build(
-            "pdftex",
-            &[&ini[..], &[&out, &format!("-jobname={job}"), "&pdflatex", "mylatexformat.ltx"]].concat(),
-            file,
-            dir,
-        );
-        let said = std::fs::read_to_string(&log).unwrap_or_default();
-        let fls = std::fs::read_to_string(keep.join(format!("{job}.fls"))).unwrap_or_default();
+        let name = format!("-jobname={job}");
+        let ini = ["-ini", "-interaction=nonstopmode", "-file-line-error", "-recorder"];
+        let dumped = run("pdftex", &[&ini[..], &[&out, &name, "&pdflatex", "mylatexformat.ltx", file]].concat());
+        let fls = std::fs::read_to_string(dump.fmt.with_extension("fls")).unwrap_or_default();
         let mut inputs: Vec<&str> = fls.lines().filter_map(|l| l.strip_prefix("INPUT ")).collect();
         inputs.sort_unstable();
         inputs.dedup();
-        inputs.retain(|p| dir.join(p).canonicalize().ok() != main);
-        let usable = status.is_ok_and(|s| s.success()) && !parse_log(&said, dir).iter().any(|l| l.error);
-        let mut text = head.clone();
-        text.extend(inputs.iter().map(|p| stamp(&dir.join(p).display().to_string())));
+        inputs.retain(|p| dir.join(p).canonicalize().ok() != dump.main);
+        let usable = dumped && !parse_log(&dump.said(), dir).iter().any(|l| l.error) && dump.proven(&run);
+        let mut text = dump.head.clone();
+        text.extend(inputs.iter().map(|p| Self::stamp(&dir.join(p).display().to_string())));
         if !usable {
-            text.push_str("unusable\n");
+            text.push_str(UNUSABLE);
+            text.push('\n');
         }
-        let _ = std::fs::write(&key, text);
+        let _ = std::fs::write(dump.key(), text);
     }
-    let stored = std::fs::read_to_string(&key).unwrap_or_default();
-    let usable = !stored.lines().any(|l| l == "unusable") && fmt.with_extension("fmt").is_file();
-    usable.then(|| (fmt, std::fs::read_to_string(&log).unwrap_or_default()))
+
+    /// Whether the format reads on into a document: mylatexformat replays the preamble's `\openout`
+    /// at `\begin{document}` and can break there (an `\openout` under `\if`, glossaries'
+    /// `\makeglossaries`), which a pass on the preamble does not. The proof is a draft pass of the
+    /// preamble with an empty body on the format, in a directory of its own with an `.aux` of its own.
+    fn proven(&self, run: &dyn Fn(&str, &[&str]) -> bool) -> bool {
+        let at = self.fmt.with_extension("proof");
+        let probe = at.join(&self.file);
+        let text = format!("{}\\begin{{document}}\\end{{document}}\n", self.preamble);
+        let job = self.fmt.file_name().map(|j| j.to_string_lossy().into_owned()).unwrap_or_default();
+        // its own `.aux`, found before the build's: a pass may be writing that one
+        let written = std::fs::create_dir_all(probe.parent().unwrap_or(&at)).is_ok()
+            && std::fs::write(&probe, text).is_ok()
+            && std::fs::write(at.join(format!("{job}.aux")), SEED).is_ok();
+        let args = [
+            "-interaction=nonstopmode".to_string(),
+            "-file-line-error".into(),
+            "-draftmode".into(),
+            format!("-output-directory={}", at.display()),
+            format!("-jobname={job}"),
+            format!("-fmt={}", self.fmt.display()),
+            probe.display().to_string(),
+        ];
+        let ran = written && run("pdflatex", &args.each_ref().map(String::as_str));
+        let log = std::fs::read_to_string(at.join(format!("{job}.log"))).unwrap_or_default();
+        let _ = std::fs::remove_dir_all(&at);
+        ran && !log.contains(BROKEN) && !parse_log(&log, &self.dir).iter().any(|l| l.error)
+    }
+
+    /// Marks the format unusable: a pass that read it broke where a pass on the preamble does not.
+    fn refuse(&self) {
+        let _ = std::fs::write(self.key(), std::fs::read_to_string(self.key()).unwrap_or_default() + UNUSABLE + "\n");
+    }
+
+    /// The dump's log: what the preamble said while the format was dumped.
+    fn said(&self) -> String {
+        std::fs::read_to_string(self.fmt.with_extension("log")).unwrap_or_default()
+    }
+}
+
+/// The key's line of a format no pass may read.
+const UNUSABLE: &str = "unusable";
+/// What a log names when the format's replay of the preamble broke.
+const BROKEN: &str = "\\MYLATEX@";
+
+/// The engine's SyncTeX option: uncompressed. pdfTeX's own gzip is a quarter of a long pass
+/// (1000 pages: 2.8 s without, 3.8 s with), [`follow`] compresses on another core meanwhile.
+const SYNCTEX: &str = "-synctex=-1";
+
+/// The compression of the SyncTeX data the next pass in `at` writes, running beside that pass.
+struct Followed {
+    done: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    thread: Option<std::thread::JoinHandle<()>>,
+}
+
+impl Followed {
+    /// The pass ended: the rest is compressed and `job.synctex.gz` is in place.
+    fn finish(mut self) {
+        self.done.store(true, std::sync::atomic::Ordering::SeqCst);
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
+    }
+}
+
+/// Follows the SyncTeX file the pass about to run writes (`job.synctex(busy)`, renamed to
+/// `job.synctex` at its end) and feeds what it reads to `gzip`: `job.synctex.gz` is whole when the
+/// pass is, as the engine itself would have written it. Without gzip the uncompressed file stays,
+/// which viewers read too. A pass that ends without SyncTeX data leaves the files as they were.
+fn follow(at: &Path, job: &str) -> Followed {
+    use std::io::{Read, Write};
+    use std::sync::atomic::Ordering;
+    let name = |ext: &str| at.join(format!("{job}.{ext}"));
+    let (busy, plain, gz, next) = (name("synctex(busy)"), name("synctex"), name("synctex.gz"), name("synctex.gz.next"));
+    let _ = (std::fs::remove_file(&busy), std::fs::remove_file(&plain));
+    let done = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let ended = done.clone();
+    let thread = std::thread::spawn(move || {
+        let pause = || std::thread::sleep(std::time::Duration::from_millis(2));
+        let open = || std::fs::File::open(&busy).or_else(|_| std::fs::File::open(&plain));
+        let mut data = loop {
+            let last = ended.load(Ordering::SeqCst);
+            match open() {
+                Ok(file) => break file,
+                Err(_) if last => return,
+                Err(_) => pause(),
+            }
+        };
+        let Ok(out) = std::fs::File::create(&next) else { return };
+        let gzip = Command::new("gzip").arg("-c").stdin(std::process::Stdio::piped()).stdout(out).spawn();
+        let Ok(mut gzip) = gzip else {
+            // the uncompressed data is the pass's: no older compressed file beside it
+            let _ = (std::fs::remove_file(&next), std::fs::remove_file(&gz));
+            return;
+        };
+        let mut pipe = gzip.stdin.take();
+        let mut chunk = vec![0; 1 << 16];
+        let mut whole = true;
+        loop {
+            let last = ended.load(Ordering::SeqCst);
+            match data.read(&mut chunk) {
+                Ok(0) if last => break,
+                Ok(0) => pause(),
+                Ok(n) => whole &= pipe.as_mut().is_some_and(|p| p.write_all(&chunk[..n]).is_ok()),
+                Err(_) => whole = false,
+            }
+            if !whole {
+                break;
+            }
+        }
+        drop(pipe.take());
+        whole &= gzip.wait().is_ok_and(|s| s.success());
+        // an aborted pass removes its data: what was read of it is no file
+        match whole && plain.is_file() {
+            true => {
+                let _ = (std::fs::rename(&next, &gz), std::fs::remove_file(&plain));
+            }
+            false => {
+                let _ = std::fs::remove_file(&next);
+            }
+        }
+    });
+    Followed { done, thread: Some(thread) }
 }
 
 /// Opens `pdf` in `viewer` (`auto`/`none`: the system's opener), detached.

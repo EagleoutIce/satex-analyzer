@@ -50,13 +50,15 @@ test('reselect: the same item after a refresh, else the first', () => {
 });
 
 // Intuition: a name from the lean scope list carries its argument letters (`args`), so the kept list writes its snippet:
-// `\textbf` with `m` takes `{}` with the caret in it, an optional argument a removable `[options]` field, a star nothing.
+// `\textbf` with `m` takes `{}` with the caret in it; what may be left out (an optional argument, a star) is left to the
+// writer, so `\section` takes `{}` with the caret in it and no `[options]` text stays behind.
 // Pins `\emph` taken from the kept list during a run without its braces (the lean records had no argument shape).
 test('snippet: from argument letters, the caret in the first field', () => {
   const { snippet } = self.satexViews.complete;
   assert.equal(snippet('textbf', 'm'), 'textbf{$1}$0');
   assert.equal(snippet('frac', 'mm'), 'frac{$1}{$2}$0');
-  assert.equal(snippet('section', 'som'), 'section${1:[options]}{$2}$0');
+  assert.equal(snippet('section', 'som'), 'section{$1}$0');
+  assert.equal(snippet('item', 'o'), null, 'only optional arguments: the name alone');
   assert.equal(snippet('relax', ''), null);
   assert.equal(snippet('relax', undefined), null);
   const k = kept(undefined, [{ label: 'emph', args: 'm' }, { label: 'today' }]);
@@ -229,4 +231,26 @@ test('rank: a name of a package not loaded after the loaded ones', () => {
   const items = [{ label: 'textb', additionalTextEdits: [{ newText: '\\usepackage{drm}\n' }] }, { label: 'textbf' }, { label: 'textbullet' }];
   assert.deepEqual(labels(rank(items, 'textb')), ['textbf', 'textbullet', 'textb']);
   assert.deepEqual(labels(rank([{ label: 'textb', sortText: '~0001textb' }, { label: 'textbf', sortText: '1textbf' }], 'textb')), ['textbf', 'textb'], 'by the server\'s `~` too');
+});
+
+// Intuition: a list answered from the kept items during a run shows what the server said of each name last: its
+// shape beside the name, its description and its snippet, never a bare name. Pins the PDF page's list for `\secti`
+// during a run: `\section` without its arguments or description while the server's own answer had both (2026-11-21).
+test('kept: a name keeps the shape, description and snippet the server gave it last', () => {
+  const { remember, recall, shapeOf, docOf } = self.satexViews.complete;
+  const memo = new Map();
+  const section = { label: 'section', detail: '\\section*[⟨options⟩]{⟨arg⟩}  (article)', insertText: 'section{${1:arg}}$0', insertTextFormat: 2,
+    labelDetails: { detail: '*[⟨options⟩]{⟨arg⟩}', description: 'article' }, data: { doc: 'Starts a section.' }, sortText: '1', textEdit: { newText: 'x' } };
+  remember(memo, [section, { label: 'relax' }]);
+  assert.deepEqual([...memo.keys()], ['section'], 'a name with nothing to say is not kept');
+  // the names in force (the lean scope list) know only the bare name and its letters
+  const k = kept(undefined, [{ label: 'section', detail: '\\section', args: 'som' }, { label: 'relax', detail: '\\relax' }], memo);
+  assert.equal(shapeOf(k[0]), '*[⟨options⟩]{⟨arg⟩}');
+  assert.equal(docOf(k[0]), 'Starts a section.');
+  assert.deepEqual([k[0].insertText, k[0].detail], ['section{${1:arg}}$0', section.detail]);
+  assert.equal(k[0].textEdit, undefined, 'a range of another place is never kept');
+  assert.deepEqual([shapeOf(k[1]), docOf(k[1]), k[1].detail], ['', '', '\\relax']);
+  // a newer answer's own fields win over the kept ones
+  const own = recall(memo, { label: 'section', detail: '\\section{⟨title⟩}  (mine)', insertText: 'section{$1}$0', labelDetails: { detail: '{⟨title⟩}' } });
+  assert.deepEqual([shapeOf(own), own.insertText, own.detail], ['{⟨title⟩}', 'section{$1}$0', '\\section{⟨title⟩}  (mine)']);
 });

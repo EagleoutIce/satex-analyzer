@@ -159,7 +159,7 @@ fn file(dir: &Path, ext: &str) -> PathBuf {
 
 /// An exclusive lock on `path`, held while the file lives. `Ok(None)` when
 /// another process holds it; `Err` when it cannot be opened at all.
-fn try_lock(path: &Path) -> std::io::Result<Option<std::fs::File>> {
+pub(crate) fn try_lock(path: &Path) -> std::io::Result<Option<std::fs::File>> {
     let file = std::fs::File::options().read(true).write(true).create(true).truncate(false).open(path)?;
     match file.try_lock() {
         Ok(()) => Ok(Some(file)),
@@ -272,7 +272,7 @@ fn creation_flags(breakaway: bool) -> u32 {
 /// under `nice -n 19` where there is one, Windows' idle class.
 // Unix reads `nice`, Windows `breakaway`.
 #[allow(unused_variables)]
-fn detached(exe: &Path, nice: Option<&Path>, breakaway: bool) -> std::process::Command {
+pub(crate) fn detached(exe: &Path, nice: Option<&Path>, breakaway: bool) -> std::process::Command {
     #[cfg(unix)]
     {
         use std::os::unix::process::CommandExt;

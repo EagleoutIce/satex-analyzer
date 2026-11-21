@@ -19,6 +19,7 @@ use regex::Regex;
 use serde_json::Value as Json;
 
 use crate::analysis::machine::Analysis;
+use crate::engine::tex::ArgType;
 use crate::linter::fix::Sources;
 use crate::queries::preview::Stroke;
 use crate::queries::query::{self, Filter, Query, Record};
@@ -3182,7 +3183,7 @@ fn command_items(
     let more = items.len() > shown;
     items.truncate(shown);
     // the usage line of the shown ones, its arguments named, else the bare shape: only these get a full row
-    let mut items: Vec<(CompletionItem, String)> = (items.into_iter())
+    let mut items: Vec<CompletionItem> = (items.into_iter())
         .map(|(mut item, row)| {
             let full = row.full(analysis);
             let effective = full.get("usage").or_else(|| full.get("effective")).and_then(Json::as_str).unwrap_or("");
@@ -3191,55 +3192,45 @@ fn command_items(
             if let (Some(doc), Some(data)) = (full.get("doc"), item.data.as_mut()) {
                 data["doc"] = doc.clone();
             }
-            // the arguments a call reads: the effective usage after the name
-            let args =
-                effective.strip_prefix('\\').unwrap_or(effective).strip_prefix(item.label.as_str()).unwrap_or("");
-            (item, args.to_string())
+            item
         })
         .collect();
     let all = {
-        let names: Vec<&str> = items.iter().map(|(i, _)| i.label.as_str()).collect();
+        let names: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
         crate::analysis::roles::roles_many(analysis, &names)
     };
     let probes = analysis.settings.conventions.completion.signatures;
-    for (i, ((item, effective), roles)) in items.iter_mut().zip(all).enumerate() {
-        // a listing gives a definition's own text: what a call reads comes from the probe
-        if i < probes
-            && !effective.contains(['{', '['])
-            && let Some(sym) = analysis.interner.lookup(&item.label)
-        {
-            let probed = query::effective_probed(analysis, sym);
-            *effective = probed
-                .strip_prefix('\\')
-                .unwrap_or(&probed)
-                .strip_prefix(item.label.as_str())
-                .unwrap_or("")
-                .to_string();
-        }
+    for (i, (item, roles)) in items.iter_mut().zip(all).enumerate() {
         item.detail = item.detail.take().map(|d| typed_usage(&d, &roles));
-        // the signature beside the label, a tab stop per argument named by its type
-        if let Some((signature, snippet)) = signature_snippet(&item.label, effective, &roles) {
-            item.label_details = Some(lsp_types::CompletionItemLabelDetails {
-                detail: Some(signature),
-                description: item
-                    .detail
-                    .as_deref()
-                    .and_then(|d| d.rsplit_once("  ("))
-                    .map(|(_, by)| by.trim_end_matches(')').to_string()),
-            });
-            if item.command.is_none() {
-                item.insert_text = Some(snippet);
-                item.insert_text_format = Some(InsertTextFormat::SNIPPET);
-                // the first argument's help opens once the name is in
-                item.command = Some(lsp_types::Command {
-                    title: "signature".into(),
-                    command: "editor.action.triggerParameterHints".into(),
-                    arguments: None,
-                });
+        // what a call reads: the best few probed where they can be called, the rest from what the run knows
+        let Some(sym) = analysis.interner.lookup(&item.label) else { continue };
+        let meaning = analysis.env.meaning(sym);
+        let read = query::call_items(analysis, sym, meaning.as_macro().map(|m| &**m), i < probes);
+        // the signature beside the label, a tab stop per argument a call needs, named by its type
+        let Some((signature, snippet)) = read.and_then(|read| signature_snippet(&item.label, &read, &roles)) else {
+            continue;
+        };
+        let split =
+            item.detail.as_deref().and_then(|d| d.rsplit_once("  (")).map(|(u, by)| (u.to_string(), by.to_string()));
+        let by = split.map(|(usage, by)| {
+            // a usage line without its arguments (`\\section`, a listing's parameter text) takes the signature
+            if usage == format!("\\{}", item.label) {
+                item.detail = Some(format!("{usage}{signature}  ({by}"));
             }
+            by.trim_end_matches(')').to_string()
+        });
+        item.label_details = Some(lsp_types::CompletionItemLabelDetails { detail: Some(signature), description: by });
+        if item.command.is_none() {
+            item.insert_text = Some(snippet);
+            item.insert_text_format = Some(InsertTextFormat::SNIPPET);
+            // the first argument's help opens once the name is in
+            item.command = Some(lsp_types::Command {
+                title: "signature".into(),
+                command: "editor.action.triggerParameterHints".into(),
+                arguments: None,
+            });
         }
     }
-    let mut items: Vec<CompletionItem> = items.into_iter().map(|(i, _)| i).collect();
     items.extend(signature.into_iter().filter(|s| !items.iter().any(|i| i.label == s.label)).collect::<Vec<_>>());
     (items, more)
 }
@@ -3385,39 +3376,60 @@ fn signature_items(analysis: &Analysis, typed: &str) -> Vec<CompletionItem> {
         .collect()
 }
 
-/// A command's signature from its effective usage (`\\usepackage[1]{2}[3]`) and the argument
-/// types its roles give: `[⟨options⟩]{⟨sty file⟩}[⟨date⟩]`, and the snippet with a tab stop per
-/// argument, an optional one with its brackets so that one key removes it. `None` for a usage
-/// with delimited arguments or none.
-fn signature_snippet(label: &str, args: &str, roles: &[crate::analysis::roles::Role]) -> Option<(String, String)> {
+/// A command's signature from what a call reads (`read`, [`query::call_items`]) and the argument types its
+/// roles give: `*[⟨options⟩]{⟨arg⟩}`, `[⟨options⟩]{⟨sty file⟩}[⟨date⟩]`, ltcmd's `(⟨arg⟩)` and `<⟨arg⟩>`, a
+/// `\\def`'s own delimiters (`(⟨arg⟩,⟨arg⟩)`). The snippet writes what a call needs: each mandatory argument
+/// with a tab stop, the first taking the caret, a required delimiter and a parameter text's literal text;
+/// what may be left out (a star, a flag, `[…]`, an optional `(…)`) the signature shows and the snippet leaves
+/// to the writer, so no default text stays behind. `None` for an item no snippet spells (a keyword, a
+/// quantity) or none at all.
+fn signature_snippet(
+    label: &str,
+    read: &[ArgType],
+    roles: &[crate::analysis::roles::Role],
+) -> Option<(String, String)> {
     let types = crate::analysis::roles::arg_types(roles);
-    let mut rest = args.trim_start_matches('*');
     let (mut signature, mut snippet, mut braced, mut stop) = (String::new(), label.to_string(), 0, 0);
-    while let Some(open) = rest.chars().next() {
-        let close = match open {
-            '{' => '}',
-            '[' => ']',
-            _ => return None,
-        };
-        let end = rest.find(close)?;
-        let name = match open {
-            '{' => {
-                let ty = types.iter().find(|(a, _)| *a == braced).map(|(_, t)| t.to_string());
-                braced += 1;
-                ty.unwrap_or_else(|| "arg".into())
-            }
-            _ => "options".into(),
-        };
-        let name = name.replace(['$', '}', '\\'], "");
+    let mut field = |name: &str| {
         stop += 1;
-        signature.push_str(&format!("{open}⟨{name}⟩{close}"));
-        snippet.push_str(&match open {
-            '{' => format!("{{${{{stop}:{name}}}}}"),
-            _ => format!("${{{stop}:[{name}]}}"),
-        });
-        rest = &rest[end + 1..];
+        format!("${{{stop}:{}}}", name.replace(['$', '}', '\\'], ""))
+    };
+    for item in read {
+        match item {
+            ArgType::Star => signature.push('*'),
+            ArgType::TokenFlag(c) => signature.push(*c),
+            ArgType::Optional(_) => signature.push_str("[⟨options⟩]"),
+            ArgType::Mandatory => {
+                let name =
+                    types.iter().find(|(a, _)| *a == braced).map_or_else(|| "arg".into(), |(_, t)| t.to_string());
+                braced += 1;
+                signature.push_str(&format!("{{⟨{name}⟩}}"));
+                snippet.push_str(&format!("{{{}}}", field(&name)));
+            }
+            ArgType::Delimited { open, close, required, .. } => {
+                signature.push_str(&format!("{open}⟨arg⟩{close}"));
+                if *required {
+                    snippet.push_str(&format!("{open}{}{close}", field("arg")));
+                }
+            }
+            ArgType::Embellishment(e) => e.chars().for_each(|c| signature.push_str(&format!("{c}{{⟨arg⟩}}"))),
+            ArgType::Literal(text) => {
+                signature.push_str(text);
+                snippet.push_str(text);
+            }
+            // `#{`: the `{` stays, what follows reads it
+            ArgType::Until(d) if d == "{" => {
+                signature.push_str("⟨arg⟩");
+                snippet.push_str(&field("arg"));
+            }
+            ArgType::Until(d) => {
+                signature.push_str(&format!("⟨arg⟩{d}"));
+                snippet.push_str(&format!("{}{d}", field("arg")));
+            }
+            ArgType::Keyword { .. } | ArgType::Quantity(_) => return None,
+        }
     }
-    (stop > 0).then(|| (signature, snippet + "$0"))
+    (!signature.is_empty()).then(|| (signature, snippet + "$0"))
 }
 
 /// A usage line with each braced argument's type after its number

@@ -3597,3 +3597,43 @@ fn a_printed_interval_dimen_read_back_keeps_its_bound() {
     assert!(!crate::support::undefined(&analysis, "within"), "the true arm is live");
     assert!(crate::support::undefined(&analysis, "high"), "\\the\\dimen0 read back may pass {top}pt");
 }
+
+/// The printed fraction belongs to the digits it was printed after
+/// (tex.web § 103): `\the` of a dimension in 3pt to 4.5pt read back is
+/// in that interval, in any unit, with either sign, and on the path a
+/// test left its integer digits. After other digits it is any fraction.
+/// Pins the link's soundness: each row names a test no run takes (`0`)
+/// or some runs take (`?`), never one all take.
+#[test]
+fn a_printed_fraction_keeps_its_bound_only_after_its_own_digits() {
+    const FROM_PT: i64 = 3;
+    const SPAN_SP: i64 = 98304;
+    let prelude = format!(
+        r"\dimen0=\pdfuniformdeviate {SPAN_SP} sp \advance\dimen0 {FROM_PT}pt \edef\x{{\the\dimen0}}\dimen2=-\dimen0 \edef\n{{\the\dimen2}}\begingroup\catcode`P=12 \catcode`T=12 \lowercase{{\endgroup\def\strip#1PT{{#1}}\def\other#1.#2PT{{7.#2}}\def\on#1#2.#3PT#4{{\ifnum#2=#1 \ifdim#2.#3pt#4 \def\hit{{}}\fi\fi}}}}"
+    );
+    let rows = [
+        (r"\ifdim\x>4.5pt \def\hit{}\fi", "0"),
+        (r"\ifdim\x<3pt \def\hit{}\fi", "0"),
+        (r"\ifdim\x>4.4pt \def\hit{}\fi", "?"),
+        (r"\ifdim\n<-4.5pt \def\hit{}\fi", "0"),
+        (r"\ifdim\n>-3pt \def\hit{}\fi", "0"),
+        (r"\ifdim\n<-4.4pt \def\hit{}\fi", "?"),
+        // 3pt to 4.5pt as centimetres: 85.3pt to 128.1pt
+        (r"\ifdim\expandafter\strip\x cm>128.1pt \def\hit{}\fi", "0"),
+        (r"\ifdim\expandafter\strip\x cm<85.3pt \def\hit{}\fi", "0"),
+        (r"\ifdim\expandafter\strip\x cm>100pt \def\hit{}\fi", "?"),
+        // its integer digits tested first
+        (r"\expandafter\on\expandafter4\x{>4.5pt}", "0"),
+        (r"\expandafter\on\expandafter4\x{<4pt}", "0"),
+        (r"\expandafter\on\expandafter4\x{>4.4pt}", "?"),
+        (r"\expandafter\on\expandafter3\x{>3.9pt}", "?"),
+        // after other digits: 7.0pt to 7.99999pt
+        (r"\ifdim\expandafter\other\x pt>7.6pt \def\hit{}\fi", "?"),
+        (r"\ifdim\expandafter\other\x pt<7.4pt \def\hit{}\fi", "?"),
+        (r"\ifdim\expandafter\other\x pt<7pt \def\hit{}\fi", "0"),
+    ];
+    for (test, expected) in rows {
+        let analysis = analyze(&format!("{prelude}{test}"));
+        assert_eq!(crate::support::presence(&analysis, "hit"), expected, "{test}");
+    }
+}

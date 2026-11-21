@@ -1435,8 +1435,17 @@ impl Machine<'_> {
                 self.digits_in(Num::range(lo, n.hi / unit), span)
             }
         };
+        // A magnitude printed as one typed number: its fraction knows it.
+        let whole = match tokens[..] {
+            [.., t] if n.lo >= 0 || n.hi < 0 => t.cs().filter(|&sym| self.typed_digits_of(sym).is_some()),
+            _ => None,
+        };
         tokens.extend(self.text_tokens(".", span));
-        tokens.push(self.unknown_text(Unk::Class(TextClass::DIGIT, true, Some(5), &[]), span));
+        let fraction = self.unknown_text(Unk::Class(TextClass::DIGIT, true, Some(5), &[]), span);
+        tokens.push(match whole {
+            Some(whole) => self.fraction_of(fraction, whole, if n.lo >= 0 { n } else { n.neg() }),
+            None => fraction,
+        });
         tokens
     }
 

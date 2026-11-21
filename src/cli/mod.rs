@@ -4,6 +4,8 @@ pub mod cache;
 pub mod compile;
 mod graph;
 #[cfg(not(target_os = "emscripten"))]
+pub mod group;
+#[cfg(not(target_os = "emscripten"))]
 pub mod gui;
 mod inspect;
 pub mod install;

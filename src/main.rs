@@ -170,6 +170,21 @@ static ALLOCATOR: satex::analysis::budget::Counted = satex::analysis::budget::Co
 const EMPTY_DOCUMENT: &str = "\\documentclass{article}\n\\begin{document}\n\\end{document}\n";
 
 fn main() {
+    // a warm engine's reaper (src/cli/warm.rs): not a command of the user's
+    #[cfg(target_os = "linux")]
+    if let (Some(flag), Some(keep)) = (std::env::args_os().nth(1), std::env::args_os().nth(2))
+        && flag == satex::cli::warm::REAP
+    {
+        return satex::cli::warm::reap(Path::new(&keep));
+    }
+    // a format dumped aside of a build (src/cli/compile.rs): not a command of the user's
+    let args: Vec<std::ffi::OsString> = std::env::args_os().skip(1).take(5).collect();
+    if let [flag, dir, file, job, keep] = &args[..]
+        && flag == satex::cli::compile::DUMP
+    {
+        let text = |s: &std::ffi::OsString| s.to_string_lossy().into_owned();
+        return satex::cli::compile::Dump::aside(Path::new(dir), &text(file), &text(job), Path::new(keep));
+    }
     if let Err(message) = run() {
         eprintln!("satex: {message}");
         std::process::exit(1);

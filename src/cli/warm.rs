@@ -8,6 +8,10 @@
 //! before the pipe is fed, for a later open by name. The engine reads the clock as it starts
 //! (§ 241): one started in another minute is not used, nor one on another format file. Linux only:
 //! the engine must be seen waiting in its open (`/proc/PID/wchan`), else it may be past it.
+//!
+//! An engine no build took is of no use once its minute is over, so it ends then: each one gets
+//! a reaper (`satex --warm-reap KEEP`, [`reap`]) that outlives the build. Who uses or ends an
+//! engine first takes its record by rename ([`claim`]): a build and the reaper never both act.
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitStatus};
 
@@ -30,7 +34,16 @@ fn record_path(keep: &Path) -> PathBuf {
 }
 
 fn read(keep: &Path) -> Option<Record> {
-    let text = std::fs::read_to_string(record_path(keep)).ok()?;
+    read_at(&record_path(keep))
+}
+
+/// The command the engine of `keep` waits to run, if one was left.
+pub fn command(keep: &Path) -> Option<Vec<String>> {
+    read(keep).map(|r| r.command)
+}
+
+fn read_at(record: &Path) -> Option<Record> {
+    let text = std::fs::read_to_string(record).ok()?;
     let mut lines = text.lines();
     let pid = lines.next()?.parse().ok()?;
     let minute = lines.next()?.parse().ok()?;
@@ -63,19 +76,47 @@ fn alive(pid: u32) -> bool {
     stat.rsplit_once(')').and_then(|(_, rest)| rest.split_whitespace().next()).is_some_and(|s| s != "Z")
 }
 
+/// The record of `keep`'s engine, taken: whoever renames it first has the engine, for use or to end it.
+fn claim(keep: &Path) -> Option<Record> {
+    let mine = keep.join(DIR).join(format!("engine.{}", std::process::id()));
+    std::fs::rename(record_path(keep), &mine).ok()?;
+    let record = read_at(&mine);
+    let _ = std::fs::remove_file(&mine);
+    record
+}
+
 /// Stops the engine of `keep`, if any, and waits for its end.
 fn stop(keep: &Path) {
-    if let Some(r) = read(keep) {
-        // the recorded process only: its number may have gone to another since
-        let ours = || alive(r.pid) && runs(r.pid, &r.command);
-        if ours() {
-            let _ = Command::new("kill").arg(r.pid.to_string()).status();
-        }
-        while ours() {
-            std::thread::sleep(std::time::Duration::from_millis(1));
-        }
+    if let Some(r) = claim(keep) {
+        end(&r);
     }
-    let _ = std::fs::remove_file(record_path(keep));
+}
+
+/// Stops the engine `r` names and waits for its end.
+fn end(r: &Record) {
+    // the recorded process only: its number may have gone to another since
+    let ours = || alive(r.pid) && runs(r.pid, &r.command);
+    if ours() {
+        let _ = Command::new("kill").arg(r.pid.to_string()).status();
+    }
+    while ours() {
+        std::thread::sleep(std::time::Duration::from_millis(1));
+    }
+}
+
+/// `satex --warm-reap KEEP`: waits until the minute of `keep`'s engine is over, then stops that
+/// engine unless a build took it. Started beside each engine ([`start`]), it outlives the build.
+pub fn reap(keep: &Path) {
+    let Some(r) = read(keep) else { return };
+    let now = || std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
+    // a second past the minute: a build that found it usable has claimed it by then
+    let over = (r.minute + 1) * 60 + 1;
+    while now() < over && read(keep).is_some_and(|e| e.pid == r.pid) {
+        std::thread::sleep(std::time::Duration::from_millis(500));
+    }
+    if read(keep).is_some_and(|e| e.pid == r.pid) {
+        stop(keep);
+    }
 }
 
 /// Whether process `pid` runs `command`.
@@ -102,6 +143,9 @@ pub fn settle(keep: &Path, dir: &Path) {
 
 /// How long a build waits for the engine to finish loading: about a fresh engine's start.
 const LOADING: std::time::Duration = std::time::Duration::from_millis(500);
+
+/// `satex`'s first argument for [`reap`], then the keep.
+pub const REAP: &str = "--warm-reap";
 
 /// The main file's text while the pipe takes its place.
 const SOURCE: &str = "source";
@@ -130,20 +174,19 @@ pub fn put(path: &Path, text: &[u8]) -> std::io::Result<()> {
 /// on the current format and started this minute: fed `file`'s text, its status said by its log
 /// (it is not this process's child). Any other engine is stopped, and the pass is left to a fresh one.
 pub fn take(keep: &Path, dir: &Path, command: &[String], file: &str, log: &Path) -> Option<ExitStatus> {
-    let r = read(keep)?;
+    let r = claim(keep)?;
     let usable = r.command == command
         && runs(r.pid, command)
         && r.minute == minute()
         && r.format == format_stamp(command)
         && waiting(r.pid, dir)
         && std::fs::symlink_metadata(dir.join(file)).is_ok_and(|m| m.is_file());
-    if !usable {
-        stop(keep);
+    let text = usable.then(|| std::fs::read(dir.join(file)).ok()).flatten();
+    let Some(text) = text else {
+        end(&r);
         return None;
-    }
-    let text = std::fs::read(dir.join(file)).ok()?;
+    };
     let fed = feed(&keep.join(DIR).join("pipe"), &text);
-    let _ = std::fs::remove_file(record_path(keep));
     if fed.is_err() {
         if runs(r.pid, command) {
             let _ = Command::new("kill").arg(r.pid.to_string()).status();
@@ -209,6 +252,14 @@ pub fn start(keep: &Path, dir: &Path, command: &[String], file: &str, env: &[(&s
     if let Ok(child) = spawned {
         let text = format!("{}\n{}\n{}\n{}\n", child.id(), minute(), format_stamp(command), command.join("\n"));
         let _ = std::fs::write(record_path(keep), text);
+        // its reaper, in a group of its own: it outlives this build and who ends the build's group
+        if let Ok(satex) = std::env::current_exe() {
+            let mut reaper = Command::new(satex);
+            reaper.arg(REAP).arg(keep).stdin(std::process::Stdio::null());
+            reaper.stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null());
+            std::os::unix::process::CommandExt::process_group(&mut reaper, 0);
+            let _ = reaper.spawn();
+        }
     }
 }
 

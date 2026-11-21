@@ -764,6 +764,8 @@ compile:  # what satex compile runs and shows
     #! affects: output
   warm: false  # keep pdfTeX started on the next build's format (Linux): the build runs in a mirror of the project under .satex-build, the mirror's main file a named pipe between builds
     #! affects: speed
+  timeout: 600  # seconds a build asked for by a page (satex gui, the playground's server) may run before the server stops it with every process it started. 0: no limit
+    #! affects: speed
   clock: minute  # the clock a document may read: a satex build whose read files, searched directories and clock are as the last rested build left them runs no pass. minute (TeX's \time, sound) or day (assumes only \today reads it). A fixed clock (SOURCE_DATE_EPOCH with FORCE_SOURCE_DATE=1) never parts builds
     #! affects: speed
   memoize: true  # the satex build extracts memoize's externs itself between passes (memoize's TeX method, no shell escape, no Perl or Python module) and tells memoize not to. false: memoize extracts as the document says
@@ -1318,6 +1320,9 @@ limits:  # what bounds the analysis: reaching one stops that part of the run, so
   hyph_words: 50000  # most words whose hyphenation points a language's patterns keep once found (a paragraph is hyphenated twice, words recur)
     #! affects: memory
     #! example: `hyph_words: 0` finds every word's points anew
+  list_items: 8388608  # most items of the lists the run records to break lines and set boxes (a paragraph's characters, glue and boxes; equal lists share theirs). Past it a list is not recorded. Past half of it a run after an edit keeps its own numbering, so it cannot take the last run's rest and runs to the document's end
+    #! affects: memory, speed, output
+    #! example: a book of 1000 pages of prose records about 2 million items: with `list_items: 2097152` every edit in it runs to the end
   table_reach: 4000  # most macros the table widget follows through the run's calls from an environment to the code that splits its body at `&` (tabularray)
     #! affects: output
     #! example: `table_reach: 0` offers the table dialog on array tables only

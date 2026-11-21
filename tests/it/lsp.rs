@@ -4963,8 +4963,9 @@ fn a_finding_s_hover_keeps_the_word_s_hover() {
     std::fs::remove_dir_all(dir).ok();
 }
 
-/// A command item carries its signature beside the label, a tab stop per argument (an optional
-/// one with its brackets), opens the signature help once accepted, and resolves to its card.
+/// A command item carries its signature beside the label, its optional argument included, a tab stop
+/// per mandatory argument (the optional one is left to the writer, so no `[options]` text stays behind),
+/// opens the signature help once accepted, and resolves to its card.
 #[test]
 fn command_items_carry_their_signature() {
     let text = "\\documentclass{article}\n\\newcommand\\greet[2][hi]{#1 #2}\n\\begin{document}\n\\greet{you}\n\\gre\n\\end{document}\n";
@@ -4974,10 +4975,9 @@ fn command_items_carry_their_signature() {
     let greet = items.iter().find(|i| i["label"] == "greet").expect("greet offered");
     let signature = greet["labelDetails"]["detail"].as_str().unwrap_or_default();
     assert!(signature.starts_with("[⟨") && signature.matches('⟨').count() == 2, "{greet}");
+    // the snippet writes what a call needs: the optional argument stays out, the caret takes the mandatory one
     let snippet = greet["insertText"].as_str().unwrap_or_default();
-    let stops = (1..=3).filter(|n| snippet.contains(&format!("${{{n}:"))).count();
-    assert_eq!(stops, 2, "{snippet}");
-    assert!(snippet.contains("${1:[") && snippet.ends_with("$0"), "{snippet}");
+    assert!(snippet.starts_with("greet{${1:") && !snippet.contains('[') && snippet.ends_with("}$0"), "{snippet}");
     assert_eq!(greet["command"]["command"], "editor.action.triggerParameterHints");
     let id = server.request("completionItem/resolve", greet.clone());
     let resolved = server.response(id)["result"].clone();
@@ -8291,4 +8291,83 @@ fn a_question_gives_way_to_a_newer_text_in_the_page_server() {
     drop(stdin);
     let _ = child.wait();
     std::fs::remove_dir_all(dir).ok();
+}
+
+/// The shape beside a command's name and its snippet, for the `completion` items of each line of `text`
+/// that ends in a name typed (`\\secti`): the label's item's `labelDetails.detail` and `insertText`.
+fn shapes_of(tag: &str, text: &str, labels: &[&str]) -> Vec<(String, String)> {
+    let (mut server, uri, dir) = open_set(tag, text, &[]);
+    let lines: Vec<&str> = text.lines().collect();
+    let found = labels
+        .iter()
+        .map(|label| {
+            let line = lines.iter().position(|l| l.starts_with('\\') && label.starts_with(&l[1..]) && l.len() > 2);
+            let line = line.unwrap_or_else(|| panic!("a line typing {label}"));
+            let items = complete(&mut server, &uri, line as u32, lines[line].len() as u32);
+            let item = items.iter().find(|i| i["label"] == *label).unwrap_or_else(|| panic!("{label} offered"));
+            let text = |v: &Value| v.as_str().unwrap_or_default().to_string();
+            (text(&item["labelDetails"]["detail"]), text(&item["insertText"]))
+        })
+        .collect();
+    server.shutdown();
+    std::fs::remove_dir_all(dir).ok();
+    found
+}
+
+/// `\\section` reads its `*`, `[…]` and `{…}` only later, through `\\@startsection`, `\\secdef` and
+/// `\\@dblarg`: its item shows that whole shape and writes the braces with the caret inside. Pins: the
+/// signature came from the macro's own (empty) parameter text, so `\\section` came bare while
+/// `\\sectionmark{⟨arg⟩}` beside it had one (the screenshot of 2026-11-21).
+#[test]
+fn sectioning_items_carry_star_optional_and_title() {
+    let text = "\\documentclass{article}\n\\begin{document}\n\\secti\n\\subsecti\n\\end{document}\n";
+    let found = shapes_of("shape-section", text, &["section", "subsection"]);
+    for ((signature, snippet), label) in found.iter().zip(["section", "subsection"]) {
+        assert_eq!(signature, "*[⟨options⟩]{⟨arg⟩}", "{label}");
+        assert_eq!(snippet, &format!("{label}{{${{1:arg}}}}$0"), "{label}");
+    }
+}
+
+/// `\\includegraphics` of graphicx takes a star and two optional arguments (its keys, or graphics'
+/// lower-left/upper-right pair) before its file: all shown, the snippet writes the file argument, named
+/// by the role the run gives it. Pins: the optional items were lost with the hand-off to `\\Gin@ii`.
+#[test]
+fn includegraphics_item_carries_its_optional_arguments() {
+    let text = "\\documentclass{article}\n\\usepackage{graphicx}\n\\begin{document}\n\\includegr\n\\end{document}\n";
+    let found = shapes_of("shape-graphics", text, &["includegraphics"]);
+    let (signature, snippet) = &found[0];
+    assert!(signature.starts_with("*[⟨options⟩][⟨options⟩]{⟨") && signature.matches('{').count() == 1, "{signature}");
+    assert!(snippet.starts_with("includegraphics{${1:") && !snippet.contains('['), "{snippet}");
+}
+
+/// An ltcmd command's arguments, each kind in its own brackets: `s O{…} m d() r<>` shows
+/// `*[⟨options⟩]{⟨arg⟩}(⟨arg⟩)<⟨arg⟩>`, and the snippet writes the mandatory and the required delimited
+/// ones. Pins: the probe took `d()`'s `(` for a flag (`t(`), since alone it reads to the end of the text.
+#[test]
+fn document_command_items_carry_their_delimiters() {
+    let text = "\\documentclass{article}\n\\NewDocumentCommand\\qx{s O{d} m d() r<>}{#3}\n\\begin{document}\n\\qx\n\\end{document}\n";
+    let found = shapes_of("shape-ltcmd", text, &["qx"]);
+    assert_eq!(found[0], ("*[⟨options⟩]{⟨arg⟩}(⟨arg⟩)<⟨arg⟩>".to_string(), "qx{${1:arg}}<${2:arg}>$0".to_string()));
+}
+
+/// A `\\def` with delimiters reads exactly its parameter text: the item shows `(⟨arg⟩,⟨arg⟩)` and writes
+/// the parentheses and the comma, a tab stop per argument. Pins: a delimited usage had no signature and
+/// the snippet was `pt{$1}{$2}`, braces the macro never reads.
+#[test]
+fn delimited_def_items_write_their_delimiters() {
+    let text = "\\documentclass{article}\n\\def\\pt(#1,#2){#1#2}\n\\begin{document}\n\\pt\n\\end{document}\n";
+    let found = shapes_of("shape-def", text, &["pt"]);
+    assert_eq!(found[0], ("(⟨arg⟩,⟨arg⟩)".to_string(), "pt(${1:arg},${2:arg})$0".to_string()));
+}
+
+/// `\\caption` outside a float raises an error and gobbles its own arguments, so a probe at the end of
+/// the run sees it read nothing; inside a figure it reads `[…]{…}`. Its item should show that shape.
+/// Red (owner complshape): the probe's environments (`candidate_environments`, by call-graph overlap)
+/// never include `figure`, and the observed call shape ends at `\\refstepcounter`'s definition
+/// (`Machine::define` calls `finish_shape`) before `\\@dblarg` reads.
+#[test]
+fn caption_item_carries_its_shape() {
+    let text = "\\documentclass{article}\n\\begin{document}\n\\begin{figure}\\caption[s]{x}\\end{figure}\n\\capti\n\\end{document}\n";
+    let found = shapes_of("shape-caption", text, &["caption"]);
+    assert_eq!(found[0].0, "[⟨options⟩]{⟨arg⟩}");
 }

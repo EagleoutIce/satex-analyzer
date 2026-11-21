@@ -380,6 +380,15 @@
           ],
           "x-example": "`system: arara`: the `% arara:` directives of the main file build it\n`system: satex`: a body edit is one pdfTeX pass from the dumped preamble, an unchanged build none"
         },
+        "timeout": {
+          "default": 600,
+          "description": "seconds a build asked for by a page (satex gui, the playground's server) may run before the server stops it with every process it started. 0: no limit",
+          "minimum": 0,
+          "type": "integer",
+          "x-affects": [
+            "speed"
+          ]
+        },
         "viewer": {
           "default": "none",
           "description": "a PDF viewer `satex compile --view` opens: none or auto (the system's opener) or a program. Only your own config sets it",
@@ -3215,6 +3224,18 @@
             "speed"
           ],
           "x-example": "a line whose `\\foreach` runs forever is cut, and the next line is read"
+        },
+        "list_items": {
+          "default": 8388608,
+          "description": "most items of the lists the run records to break lines and set boxes (a paragraph's characters, glue and boxes; equal lists share theirs). Past it a list is not recorded. Past half of it a run after an edit keeps its own numbering, so it cannot take the last run's rest and runs to the document's end",
+          "minimum": 0,
+          "type": "integer",
+          "x-affects": [
+            "memory",
+            "speed",
+            "output"
+          ],
+          "x-example": "a book of 1000 pages of prose records about 2 million items: with `list_items: 2097152` every edit in it runs to the end"
         },
         "lock_seconds": {
           "default": 60,

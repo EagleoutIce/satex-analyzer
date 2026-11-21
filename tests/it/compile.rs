@@ -115,15 +115,28 @@ fn satex_build(dir: &std::path::Path, main: &str) -> (Vec<serde_json::Value>, St
 }
 
 /// The text of a PDF, page by page (form feeds between pages).
+/// Waits until the format a build of `job` in `dir` had dumped aside is there: its key is written
+/// when the dump and its proof are done. No build waits for it, so a test that wants the next
+/// build to read the format does.
+fn dumped(dir: &std::path::Path, job: &str) {
+    let key = dir.join(".satex-build").join(format!("{job}.key"));
+    let until = std::time::Instant::now() + std::time::Duration::from_secs(60);
+    while !key.is_file() && std::time::Instant::now() < until {
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    assert!(key.is_file(), "no format key after a minute: {}", key.display());
+}
+
 fn pdf_text(pdf: &std::path::Path) -> String {
     let out = std::process::Command::new("pdftotext").arg(pdf).arg("-").output().unwrap();
     String::from_utf8_lossy(&out.stdout).into_owned()
 }
 
-/// satex's own build reads the preamble from a format it dumped once, reruns only while the
-/// build files move, and runs BibTeX and makeindex where their inputs changed. Its PDF must
-/// equal latexmk's, also after an edit of the body and of a file the preamble reads (the
-/// format is dumped again then). Pins: an incremental build that is faster but different.
+/// satex's own build reads the preamble from a format dumped aside once per preamble, reruns only
+/// while the build files move, and runs BibTeX and makeindex where their inputs changed. Its PDF
+/// must equal latexmk's, also after an edit of the body and of a file the preamble reads (the
+/// format is dumped again then, and the build that starts the dump reads the preamble itself).
+/// Pins: an incremental build that is faster but different, and a build that waits for a dump.
 #[test]
 fn the_satex_build_equals_latexmk_across_edits() {
     let tools = ["pdflatex", "latexmk", "bibtex", "makeindex", "pdftotext"];
@@ -165,15 +178,49 @@ fn the_satex_build_equals_latexmk_across_edits() {
         write(&theirs, body, greet);
         let (rows, said) = satex_build(&ours, "doc.tex");
         assert!(rows.iter().all(|r| r["severity"] != "error"), "{rows:?}\n{said}");
-        assert!(said.contains("-fmt="), "the preamble is not read from a format: {said}");
         assert_eq!(pdf_text(&ours.join("doc.pdf")), latexmk(&theirs), "step {step}: {said}");
-        let dumps = said.matches("$ pdftex -ini").count();
+        let dumps = said.matches("dumping the preamble's format aside").count();
         // dumped at the start and after the preamble's file changed, reused for a body edit
         assert_eq!(dumps, usize::from(step != 1), "step {step}: {said}");
         if step == 1 {
+            assert!(said.contains("-fmt="), "the preamble is not read from a format: {said}");
             assert_eq!(said.matches("$ pdflatex").count(), 1, "a body edit is one pass: {said}");
         }
+        dumped(&ours, "doc");
     }
+}
+
+/// A build without an `.aux` starts from the `.aux` of a one-page document without references, as
+/// latexmk does: a pass that writes that very file again is at rest, so such a document is one pass,
+/// and one with a table of contents is more. The pass writes its SyncTeX data uncompressed and satex
+/// compresses it beside the pass. Pins: a second pass that can change nothing, a first build that
+/// stops before its references rest, and SyncTeX data cut short or left in two files.
+#[test]
+fn a_fresh_build_passes_once_where_nothing_is_referred_to() {
+    let tools = ["pdflatex", "pdftotext", "gzip"];
+    if !crate::support::installed() || tools.iter().any(|t| satex::project::paths::which(t).is_err()) {
+        return;
+    }
+    let dir = crate::support::scratch_dir(crate::support::tmp_root().join("satex-compile-seed"));
+    let doc = |body: &str| format!("\\documentclass{{article}}\n\\begin{{document}}\n{body}\n\\end{{document}}\n");
+    std::fs::write(dir.join("one.tex"), doc("Just text.")).unwrap();
+    std::fs::write(dir.join("toc.tex"), doc("\\tableofcontents\n\\section{Listed}\nText.")).unwrap();
+    let passes = |said: &str| said.matches("$ pdflatex").count();
+    let (rows, said) = satex_build(&dir, "one.tex");
+    assert!(rows.is_empty(), "{rows:?}\n{said}");
+    assert_eq!(passes(&said), 1, "{said}");
+    assert!(pdf_text(&dir.join("one.pdf")).contains("Just text."), "{said}");
+    // the whole data, compressed, in one file
+    let unpacked = std::process::Command::new("gzip").arg("-dc").arg(dir.join("one.synctex.gz")).output().unwrap();
+    let data = String::from_utf8_lossy(&unpacked.stdout).into_owned();
+    assert!(
+        unpacked.status.success() && data.starts_with("SyncTeX Version:") && data.contains("Post scriptum:"),
+        "{data}"
+    );
+    assert!(!dir.join("one.synctex").exists() && !dir.join("one.synctex.gz.next").exists());
+    let (_, said) = satex_build(&dir, "toc.tex");
+    assert!(passes(&said) >= 2, "the table of contents needs its second pass: {said}");
+    assert!(pdf_text(&dir.join("toc.pdf")).matches("Listed").count() == 2, "{said}");
 }
 
 /// A build whose read files, the directories it looked in and the clock are as the last rested
@@ -264,7 +311,8 @@ fn an_unchanged_build_reuses_its_explanation_only() {
 
 /// mylatexformat replays the preamble's `\\openout`s at `\\begin{document}`, and glossaries'
 /// `\\makeglossaries` before another package breaks that replay ("Extra \\fi" in `\\MYLATEX@opens`),
-/// though a plain run has no error. Pins: the format build reporting errors pdflatex has not.
+/// though a plain run has no error. The dump proves its format on an empty body before any pass
+/// reads it. Pins: the format build reporting errors pdflatex has not, and a pass lost to finding out.
 #[test]
 fn a_preamble_the_format_breaks_is_read_by_the_run() {
     let tools = ["pdflatex", "kpsewhich"];
@@ -283,6 +331,9 @@ fn a_preamble_the_format_breaks_is_read_by_the_run() {
     for build in 0..2 {
         let (rows, said) = satex_build(&dir, "m.tex");
         assert!(rows.iter().all(|r| r["severity"] != "error"), "build {build}: {rows:?}\n{said}");
+        // the dump's proof found the break: no pass ever reads this format
+        assert!(!said.contains("-fmt="), "build {build}: {said}");
+        dumped(&dir, "m");
         std::fs::write(dir.join("m.tex"), doc.replace("Hi.", "Ho.")).unwrap();
     }
 }
@@ -309,6 +360,11 @@ fn the_satex_build_reports_what_the_preamble_says() {
     .unwrap();
     let (rows, said) = satex_build(&dir, "bad.tex");
     assert!(rows.iter().any(|r| r["severity"] == "error" && r["line"] == 2), "{rows:?}\n{said}");
+    dumped(&dir, "bad");
+    std::fs::write(dir.join("bad.tex"), std::fs::read_to_string(dir.join("bad.tex")).unwrap().replace("Hi.", "Ho."))
+        .unwrap();
+    let (rows, said) = satex_build(&dir, "bad.tex");
+    assert!(rows.iter().any(|r| r["severity"] == "error" && r["line"] == 2), "{rows:?}\n{said}");
     assert!(!said.contains("-fmt="), "a preamble with an error is read from a format: {said}");
     let warned = "\\documentclass{article}\n\\makeatletter\\PackageWarningNoLine{demo}{said in the preamble}\n\
                   \\begin{document}\nHi.\n\\end{document}\n";
@@ -316,7 +372,9 @@ fn the_satex_build_reports_what_the_preamble_says() {
         // another body each build: an unchanged one is not built again
         std::fs::write(dir.join("warn.tex"), warned.replace("Hi.", ["Hi.", "Ho."][build])).unwrap();
         let (rows, said) = satex_build(&dir, "warn.tex");
-        assert!(said.contains("-fmt="), "{said}");
+        // the first build reads the preamble itself, the second the format dumped meanwhile
+        assert_eq!(said.contains("-fmt="), build == 1, "{said}");
+        dumped(&dir, "warn");
         let found = rows.iter().any(|r| r["message"].as_str().is_some_and(|m| m.contains("said in the preamble")));
         assert!(found, "build {build}: {rows:?}\n{said}");
     }

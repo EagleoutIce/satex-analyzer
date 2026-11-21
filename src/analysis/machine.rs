@@ -16406,6 +16406,10 @@ pub(crate) const REST_SERIAL: char = '\u{4}';
 /// zero (tex.web §§ 103, 104): at least one digit, `0` only where it is
 /// alone; after a printed sign or digit, none after a `0`.
 pub(crate) const LEAD_MARK: char = '\u{6}';
+/// Marks the fraction digits `\the` prints for a dimension: between two
+/// of them the dimension's magnitude in sp, then the name of the typed
+/// number its integer digits are ([`Machine::fraction_of`]).
+pub(crate) const FRACTION_MARK: char = '\u{e}';
 /// How many serials rests of one class cycle through.
 pub(crate) const REST_SERIALS: usize = 32;
 /// Where the bounded names begin in the typed names
@@ -16786,6 +16790,38 @@ impl Machine<'_> {
             self.env.constant(lead, Binding::builtin(meaning));
         }
         lead
+    }
+
+    /// `fraction`, the digits `\the` prints after the point, as those of the
+    /// dimension whose magnitude lies in `mag` and whose integer digits are
+    /// the typed number `whole` ([`FRACTION_MARK`]). The number is made once
+    /// per print, so the name is this print's own.
+    pub(crate) fn fraction_of(&mut self, fraction: Token, whole: Sym, mag: crate::engine::value::Num) -> Token {
+        let Some(sym) = fraction.cs() else { return fraction };
+        let Some((head, len)) = self.name(sym).rsplit_once(crate::engine::env::LEN_MARK) else { return fraction };
+        let whole = &self.name(whole)[crate::engine::scan::TYPED_DIGITS.len()..];
+        let name = format!(
+            "{head}{FRACTION_MARK}{}..{}{FRACTION_MARK}{whole}{}{len}",
+            mag.lo,
+            mag.hi,
+            crate::engine::env::LEN_MARK
+        );
+        let of = self.intern(&name);
+        if self.env.slot(of).is_none() {
+            let meaning = self.env.meaning(sym);
+            self.env.constant(of, Binding::builtin(meaning));
+        }
+        Token::new(Tok::Cs(of), fraction.span)
+    }
+
+    /// The typed number and magnitude a printed fraction `sym` belongs to
+    /// ([`Machine::fraction_of`]).
+    pub(crate) fn printed_fraction(&self, sym: Sym) -> Option<(Sym, crate::engine::value::Num)> {
+        let (_, tail) = self.name(sym).split_once(FRACTION_MARK)?;
+        let (mag, whole) = tail.rsplit_once(crate::engine::env::LEN_MARK)?.0.split_once(FRACTION_MARK)?;
+        let (lo, hi) = mag.split_once("..")?;
+        let whole = self.out.interner.lookup(&format!("{}{whole}", crate::engine::scan::TYPED_DIGITS))?;
+        Some((whole, crate::engine::value::Num::range(lo.parse().ok()?, hi.parse().ok()?)))
     }
 
     /// Whether `t` is integer digits ([`LEAD_MARK`]).

@@ -177,8 +177,9 @@ declare global {
    * them. One span per pair on a line, from the first to the second; math broken over lines runs to the first line's end
    * and from the next line's start. Its height is the line box's, a 7bp ascent and 2bp descent where none is found. */
   function mathSpans(boxes: Box[]) {
-    const lines = boxes.filter((b) => b.kind === '(' && b.w > 0), out: ReturnType<Window['satexLayers']['mathSpans']> = [];
-    const lineOf = (b: Box) => lines.find((o) => o.page === b.page && Math.abs(o.y - b.y) < 0.5 && o.x - 0.5 <= b.x && b.x <= o.x + o.w + 0.5);
+    // a mark's line is on its page: looked for among that page's lines (all lines per mark is quadratic in the document)
+    const lines = Map.groupBy(boxes.filter((b) => b.kind === '(' && b.w > 0), (b) => b.page), out: ReturnType<Window['satexLayers']['mathSpans']> = [];
+    const lineOf = (b: Box) => lines.get(b.page)?.find((o) => Math.abs(o.y - b.y) < 0.5 && o.x - 0.5 <= b.x && b.x <= o.x + o.w + 0.5);
     const put = (b: Box, l: number, r: number) => { const o = lineOf(b); if (r > l) out.push({ page: b.page, l, r, t: b.y - (o?.h || 7), d: b.y + (o?.d || 2), file: b.file, line: b.line }); };
     const marks = boxes.filter((b) => b.kind === '$');
     for (let i = 0; i + 1 < marks.length; i += 2) {

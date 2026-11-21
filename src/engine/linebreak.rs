@@ -83,11 +83,11 @@ impl Arena {
     /// `self` with every list `other` holds, each under `other`'s name: a run that goes on
     /// from a state of the run that made `other` names every list that run made as it did,
     /// and its own new ones past them. Lists are only ever asked for by name, so more of
-    /// them change nothing, short of the bound on their number: `None` where `other` holds
-    /// over half of it, or is not `self` grown.
-    pub(crate) fn grown(&self, other: &Arena) -> Option<Arena> {
+    /// them change nothing, short of the bound on their number (`most`, `limits.list_items`):
+    /// `None` where `other` holds over half of it, or is not `self` grown.
+    pub(crate) fn grown(&self, other: &Arena, most: usize) -> Option<Arena> {
         let same = other.nodes.starts_with(&self.nodes) && other.texts.starts_with(&self.texts);
-        (same && other.nodes.len() <= MAX_NODES / 2).then(|| other.clone())
+        (same && other.nodes.len() <= most / 2).then(|| other.clone())
     }
 
     /// Whether `self` holds every list of `other` under the same name.
@@ -124,7 +124,6 @@ pub(crate) fn letters(c: u32, lig: u32) -> Option<Vec<u32>> {
 }
 
 pub(crate) const MAX_ITEMS: u32 = 4000;
-const MAX_NODES: usize = 1 << 21;
 const INF_BAD: i64 = 10000;
 const EJECT: i64 = -10000;
 const AWFUL: i64 = 0o7777777777;
@@ -147,7 +146,11 @@ impl Machine<'_> {
         let chars = self.out.facts.text.at.len() as u32;
         let a = &mut self.kp;
         let len = if prev == 0 { 0 } else { a.nodes[prev as usize - 1].2 };
-        if len >= MAX_ITEMS || a.nodes.len() >= MAX_NODES {
+        if len >= MAX_ITEMS || a.nodes.len() >= self.cfg.limits.list_items {
+            // No more lists are recorded from here on: said, with the setting to raise.
+            if a.nodes.len() >= self.cfg.limits.list_items {
+                self.limit_reached("list_items", self.position_span());
+            }
             *items = None;
             return;
         }

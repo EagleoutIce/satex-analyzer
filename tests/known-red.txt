@@ -14,6 +14,8 @@ tex_compliance::an_argument_read_from_a_typed_rest_that_may_be_empty_keeps_its_e
 
 
 # == precision ==
+# owner complshape (2026-11-21): \caption's completion item has no shape. Outside a float it raises an error and gobbles its arguments, so the end-state probe reads none; probe_contexts' candidate environments (call-graph overlap, closures capped at 500) never include figure; the observed call shape ends at \refstepcounter's definition (Machine::define calls finish_shape) before \@dblarg reads. Lead: rank environments by what the error branch tests (\@captype), or keep the shape open across definitions inside the call's own expansion.
+lsp::caption_item_carries_its_shape
 # owner p0-order (digits2 + land-03, 2026-11-21): unsigned digit runs now split by length (sound); pgfmath's parser then gets possible-only unsupported rows (missing-endcsname pgfmathparser:820, extra-endcsname 822/764, missing-number 803): the operation stack joined as one-of {neg, empty}, likely the class of tikz_bend. No certain error.
 documents::pgfmath_parses_a_signed_random_count_and_adds
 # owner pgf (found by cert-finish 2026-11-21): red on main without a ledger line; base and patched give the same output ({0 | ?.?}, NEG|POS). See S/cert-finish/ab.out.
@@ -51,8 +53,7 @@ documents::cut_inside_library_call_drops_the_call
 termination::convergence::colorlet_of_an_unknown_pgfmath_result
 # owner pgf: in the second build run thirty nodes end with 27 paths waiting at `\clearpage`, past any time (uncharged path work of explore).
 termination::convergence::tikz_nodes_of_unknown_width
-# owner pgf (printed dimen, pgf-parser 2026-11-20): `\the` of an interval dimen is its integer part then any 5 digits (exec.rs printed_dimen); read back, the fraction passes the interval's ends. Next: the printed text keeps its dimen (print_scaled exact, tex.web § 103). MWE S/pgf-parser/runs/d2.
+# owner pgf (precision land-01, 2026-11-21): the printed fraction now keeps its dimen when read back whole (semantics::a_printed_interval_dimen_read_back_keeps_its_bound green). Left here: pgfmath's parser walks the printed digits (2.5k forks, 39 paths for one signed count), so the result is cut to any number text. MWE S/precision/mwe/c1.
 documents::pgfmath_signed_random_count_plus_a_constant_stays_in_range
-semantics::a_printed_interval_dimen_read_back_keeps_its_bound
 # owner pgf: pgfmath's operation stack is joined at a loop head as a one-of, a pop takes `neg` or the empty operator (missing-number at pgfmathparser:803).
 documents::tikz_bend_to_a_point_of_unknown_width_closes_the_picture
