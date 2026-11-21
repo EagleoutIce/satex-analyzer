@@ -936,6 +936,49 @@ fn every_tex_error_of_the_document_is_an_error_finding() {
     }
 }
 
+/// A script with nothing after it before the math ends: `\(\sum_ \)` makes
+/// pdflatex say `Missing { inserted` and `Missing } inserted` on that line
+/// (the `\)` comes as the subscript). A person typing a formula in the
+/// playground hits it first thing; satex reported nothing there (userrun
+/// e2e u-sum-sub-errors).
+#[test]
+fn a_script_with_nothing_after_it_is_an_error_on_its_line() {
+    if !installed() {
+        return;
+    }
+    for body in [r"Sum: \(\sum_ \)", r"Power: $x^$"] {
+        let analysis =
+            analyze(&format!("\\documentclass{{article}}\n\\begin{{document}}\n{body}\n\\end{{document}}\n"));
+        let errors: Vec<_> = satex::linter::lint(&analysis)
+            .into_iter()
+            .filter(|f| f["severity"] == "error" && f["line"] == 3)
+            .map(|f| f["code"].as_str().unwrap_or_default().to_string())
+            .collect();
+        assert!(!errors.is_empty(), "{body}: no error on its line, {:?}", codes(&analysis));
+    }
+}
+
+/// A blank line inside display math (what an empty `equation` template
+/// holds) is a `\par` in math mode: pdflatex says `Missing $ inserted` on
+/// the blank line itself. satex reports it (math-still-open) on the line
+/// after, so the squiggle is not where TeX stops (userrun e2e
+/// u-par-in-math-covered).
+#[test]
+fn a_blank_line_in_display_math_is_an_error_on_the_blank_line() {
+    if !installed() {
+        return;
+    }
+    let head = "\\documentclass{article}\n\\begin{document}\n\\begin{equation}\n";
+    let blank = head.lines().count() as u64 + 1;
+    let analysis = analyze(&format!("{head}  \n\\end{{equation}}\n\\end{{document}}\n"));
+    let lines: Vec<_> = satex::linter::lint(&analysis)
+        .into_iter()
+        .filter(|f| f["severity"] == "error")
+        .filter_map(|f| f["line"].as_u64())
+        .collect();
+    assert!(lines.contains(&blank), "errors on lines {lines:?}, want one on {blank}");
+}
+
 /// tex.web §§ 785, 1129: only `align_peek`, right after a `\cr`, takes a
 /// `\noalign`; anywhere else it is "Misplaced \noalign", and so is an
 /// `\omit` past a cell's start. A row missing its `\\` puts the
@@ -5493,6 +5536,130 @@ fn errors_met_while_expanding_or_computing_are_error_findings() {
         let errors = satex::linter::lint(&analysis).into_iter().filter(|f| f["severity"] == "error" && f["line"] == 3);
         assert!(errors.count() > 0, "{body}: no error, {:?}", codes(&analysis));
     }
+}
+
+/// tex.web §§ 1151, 403 `scan_math`: a script, `\radical` (`\sqrt`),
+/// `\mathaccent` (`\bar`), `\underline` or `\mathord` takes the next token
+/// after expansion as its operand; anything but a character, a math character
+/// or a `{` is "Missing { inserted", and TeX reads it again inside the math
+/// group it opened, so the formula's `$` then finds that group open: "Missing
+/// } inserted" (both are pdflatex's `!` lines for each case). § 1161: `\left`
+/// before no delimiter is "Missing delimiter (. inserted)". Bug pinned: no
+/// rule reported these (the playground's PDF said 2 errors, its findings 0),
+/// the second error at the same place was dropped as a duplicate, and
+/// `\left{` swallowed its `{`.
+#[test]
+fn a_math_operand_tex_rejects_is_a_missing_brace_error() {
+    if !installed() {
+        return;
+    }
+    let brace = "Missing { inserted";
+    let closer = "Missing } inserted";
+    let cases: [(&str, &[&str]); 9] = [
+        (r"\(\sum_ \)", &[brace, closer]),
+        // `'` is math-active: its definition starts with `^` (tex.web § 1151)
+        (r"$x^'$", &[brace, closer]),
+        (r"$x_$", &[brace, closer]),
+        (r"$x^\hbox{a}$", &[brace]),
+        (r"$x_^2$", &[brace]),
+        (r"$\sqrt\hbox{a}$", &[brace]),
+        (r"$\bar\hbox{a}$", &[brace]),
+        (r"$\left\hbox{}\right.$", &["Missing delimiter (. inserted)"]),
+        (r"$\left{a\right.$", &["Missing delimiter (. inserted)", closer]),
+    ];
+    for (body, expected) in cases {
+        let analysis =
+            analyze(&format!("\\documentclass{{article}}\n\\begin{{document}}\n{body}\n\\end{{document}}\n"));
+        let errors: Vec<String> = satex::linter::lint(&analysis)
+            .into_iter()
+            .filter(|f| f["severity"] == "error" && f["line"] == 3)
+            .filter_map(|f| f["message"].as_str().map(str::to_string))
+            .collect();
+        for want in expected {
+            assert!(errors.iter().any(|e| e.starts_with(want)), "{body}: no {want:?} in {errors:?}");
+        }
+    }
+}
+
+/// A recursion that re-enters itself with the same arguments, in the same
+/// state, on the last round's unread input never returns: TeX's stacks
+/// overflow, "TeX capacity exceeded" (tex.web § 94), a fatal error. Typing
+/// `\begin` or `see \ref` just before `\end{document}` makes LaTeX's `\end`
+/// do that (pdflatex: "Missing \endcsname inserted", then "TeX capacity
+/// exceeded, sorry [parameter stack size=2000]"). A recursion that counts
+/// towards its end, nested deeper each round, stays clean. Bug pinned: the
+/// run widened the recursion silently, and a doubted note at the same place
+/// hid TeX's certain errors, so the findings showed none of them.
+#[test]
+fn a_recursion_that_never_returns_exceeds_tex_s_capacity() {
+    if !installed() {
+        return;
+    }
+    let doc = |body: &str| format!("\\documentclass{{article}}\n\\begin{{document}}\n{body}\n\\end{{document}}\n");
+    let errors = |body: &str| -> Vec<String> {
+        satex::linter::lint(&analyze(&doc(body)))
+            .into_iter()
+            .filter(|f| f["severity"] == "error")
+            .filter_map(|f| f["message"].as_str().map(str::to_string))
+            .collect()
+    };
+    let capacity = "TeX capacity exceeded";
+    for (body, also) in
+        [(r"\begin", Some("Missing \\endcsname inserted")), (r"see \ref", None), (r"\def\a{\a x}\a", None)]
+    {
+        let found = errors(body);
+        assert!(found.iter().any(|e| e.starts_with(capacity)), "{body}: {found:?}");
+        if let Some(also) = also {
+            assert!(found.iter().any(|e| e.starts_with(also)), "{body}: {found:?}");
+        }
+    }
+    let counted = r"\newcounter{c}\def\a{\stepcounter{c}\ifnum\value{c}<9 {\a}\fi}\a";
+    assert!(errors(counted).is_empty(), "{:?}", errors(counted));
+}
+
+/// Another rule's finding at the place of a raised TeX error stands for one
+/// TeX error, never for all of them: `\[ \frac{a}{b} = \sqrt` before
+/// `\end{document}` gives pdflatex's "Missing { inserted" beside the
+/// environment mismatch. Bug pinned: any correctness finding at the place,
+/// a doubted note too, hid every raised error there.
+#[test]
+fn a_finding_at_a_raised_error_s_place_hides_only_its_own_error() {
+    if !installed() {
+        return;
+    }
+    let source = "\\documentclass{article}\n\\usepackage{amsmath}\n\\begin{document}\n\\[ \\frac{a}{b} = \\sqrt\n\\end{document}\n";
+    let findings = satex::linter::lint(&analyze(source));
+    let has = |code: &str, text: &str| {
+        findings.iter().any(|f| f["code"] == code && f["message"].as_str().is_some_and(|m| m.starts_with(text)))
+    };
+    assert!(has("raised-error", "Missing { inserted"), "{findings:?}");
+    assert!(has("environment-mismatch", "LaTeX Error"), "{findings:?}");
+}
+
+/// The operands TeX takes (pdflatex: no error): expansion, spaces and
+/// `\relax` come first, an implicit `{`, a `\mathchardef` or `\mathchar`, a
+/// macro opening a group (`\mathrm`, amsmath's `\text`, `\frac`) and a
+/// conditional's arm all count. Pins that the `scan_math` check reports none
+/// of them, so the check reads meanings and expansion, not spelling.
+#[test]
+fn a_math_operand_tex_takes_raises_nothing() {
+    if !installed() {
+        return;
+    }
+    let body = r"$x_\mathrm{a}$ $x_\alpha$ $x^\prime$ $x_\text{a}$ $x^{ab}$ $x_\bgroup a\egroup$ $x_ 1$
+$x_\relax 1$ $x^\char`a$ $x^\mathchar'141$ $\sqrt{x}^2$ $x^{}$ $x'$ $x^\protect\alpha$ $\overline{x}_a$
+$\left(x\right)^2$ $\underline x$ $\mathbin x$ $\sqrt\relax x$ $\bar x \hat{y} \vec\alpha \sqrt[3]{x}$
+$\left\{ x \right\} \bigl( x \bigr) \left\langle x \right\rangle \left| x \right.$
+$\left\relax( x \right)$ $\frac{a}{b}^2 x_\frac12$ $x^\ifnum1=1 a\else b\fi$
+\newcommand\sq[1]{#1^2}$\sq{x}\sq\alpha$ \let\up=^ $x\up2$";
+    let analysis = analyze(&format!(
+        "\\documentclass{{article}}\n\\usepackage{{amsmath}}\n\\begin{{document}}\n{body}\n\\end{{document}}\n"
+    ));
+    let findings: Vec<_> = satex::linter::lint(&analysis)
+        .into_iter()
+        .filter(|f| f["severity"] == "error" || f["code"] == "raised-error")
+        .collect();
+    assert!(findings.is_empty(), "{findings:?}");
 }
 
 /// `\@alph` is an `\ifcase` with 26 arms and `\@ctrerr` in its `\else`:

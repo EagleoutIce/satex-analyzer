@@ -18,6 +18,11 @@ declare global {
     scratch?(b: ScBlock): void;
     /** Writes Insert's `kind` (refactor.ts `inserts`) at target `t`'s place and opens its widget. */
     insert?(kind: string, t: PaTarget): void;
+    /** Math at the Type caret (`inline`, `display`, `align`), and how inline math is written there (`\\(…\\)`, `$…$`). */
+    math?(kind: string): void;
+    mathInline?: string;
+    /** The LaTeX kernel's release (`2024-11-01`), when known: newer commands (`\\mathcolor`, 2022-06) only where it has them. */
+    kernel?: string;
     /** The open file's name, for where a style is defined. */
     file?: string;
     /** Whether the grid of the picture at offset `at` shows; with `on` it is switched (this session). */
@@ -70,8 +75,14 @@ declare global {
     self.satexStore?.set(OFF, s.size ? [...s] : null);
   }
   /** The groups of the plugins on for target `t`; groups of one title (Refactor from several plugins) are one. */
+  /** The editor's and the pages' menus share one order: a widget's own groups first, then these (Insert ▸, the
+   * selection's Format ▸ … Size ▸, Refactor ▸, Scratch ▸), each where it applies. */
+  const ORDER = ['Insert', 'Format', 'Color', 'Font', 'Size', 'Refactor', 'Scratch'];
+  const rank = (g: PaGroup) => g.inline ? 0 : ORDER.indexOf(g.title) + 1;
   const groups = (t: PaTarget, ctx: PaCtx, cfg: Record<string, unknown> = {}) => plugins.filter((p) => p.targets.includes(t.kind) && on(p.name, cfg)).flatMap((p) => p.groups(t, ctx))
-    .reduce<PaGroup[]>((out, g) => { const o = out.find((x) => x.title === g.title && !x.inline && !g.inline); if (o) o.items = [...o.items, ...g.items]; else out.push(g); return out; }, []);
+    .reduce<PaGroup[]>((out, g) => { const o = out.find((x) => x.title === g.title && !x.inline && !g.inline); if (o) o.items = [...o.items, ...g.items]; else out.push(g); return out; }, [])
+    // a widget's group named like a shared one (a node's Color ▸) keeps its place: only source and block targets sort
+    .map((g, i) => ({ g, i })).sort((a, b) => (/^(source|block|place|caret)$/.test(t.kind) ? rank(a.g) - rank(b.g) : 0) || a.i - b.i).map(({ g }) => g);
 
   // ---------------------------------------------------------------- the menu
   const POPS = '.pa-menu, .tikz-input, .pa-mix';
@@ -236,12 +247,19 @@ declare global {
     const more = [...known].filter(([n]) => !doc.some(([d]) => d === n) && !base.some(([b]) => b === n)).map(([n, c]): [string, string] => [n, hex(c)]).sort((a, b) => a[0].localeCompare(b[0]));
     return { doc, base, more };
   }
-  /** How to have TikZ library `lib`: loaded (by the run or a `\usetikzlibrary` of the files), else its load after the last
-   * `\usetikzlibrary` or the tikz `\usepackage` of this file, else the line to add by hand. */
+  /** How to have TikZ library `lib`: loaded (by the run or a `\usetikzlibrary` of the files), else joined to this file's
+   * last `\usetikzlibrary` list (`{calc}` -> `{calc,lib}`, the list's own separator), else its load after the tikz
+   * `\usepackage`, else the line to add by hand. The printer's rule (src/linter/shared.rs `preamble_load`). */
   function libEdit(text: string, all: string, loaded: string[], lib: string): { have: true } | { edit: PaEdit } | { line: string } {
     const name = lib.replace(/\./g, '\\.');
     if (loaded.includes(lib) || new RegExp(`\\\\usetikzlibrary\\s*\\{[^}]*(?<![\\w.])${name}(?![\\w.])`).test(all.replace(/(?<!\\)%.*$/gm, ''))) return { have: true };
     const line = `\\usetikzlibrary{${lib}}`, end = /\\begin\s*\{document\}/.exec(text)?.index ?? text.length;
+    const code = text.slice(0, end).replace(/(?<!\\)%.*$/gm, (c) => ' '.repeat(c.length));
+    const list = [...code.matchAll(/\\usetikzlibrary\s*\{([^}]*)\}/g)].at(-1);
+    if (list) {
+      const close = list.index! + list[0].length - 1, items = list[1]!, sep = items.includes(', ') ? ', ' : ',';
+      return { edit: { from: close, to: close, now: `${items.trim() ? sep : ''}${lib}` } };
+    }
     const anchor = [...text.slice(0, end).matchAll(/^[^%\n]*\\(?:usetikzlibrary\s*\{[^}]*\}|usepackage\s*(?:\[[^\]]*\])?\s*\{[^}]*\btikz\b[^}]*\})[^\n]*\n/gm)].at(-1);
     return anchor ? { edit: { from: anchor.index! + anchor[0].length, to: anchor.index! + anchor[0].length, now: `${line}\n` } } : { line };
   }

@@ -150,8 +150,9 @@ test('plugins: one Refactor group per target', () => {
     assert.deepEqual(gs.map((g) => g.title), ['Refactor']);
     assert.deepEqual(gs[0].items.map((i) => i.label), ['Wrap in a figure']);
     const ms = 'a \\[ x = 1 \\] b', mg = PA.groups({ kind: 'source', at: 5, sel: [5, 10] }, { ...ctx, text: ms, all: ms });
-    assert.deepEqual(mg[0].items.map((i) => i.label), ['Math', 'Extract to \\newcommand…']);
-    assert.ok(PA.plugins.filter((p) => p.category === 'refactor').length === 3);
+    assert.deepEqual(mg.map((g) => g.title), ['Format', 'Color', 'Refactor'], 'the shared order: Format ▸ before Refactor ▸');
+    assert.deepEqual(mg.find((g) => g.title === 'Refactor').items.map((i) => i.label), ['Math', 'Extract to \\newcommand…']);
+    assert.ok(PA.plugins.filter((p) => p.category === 'refactor').length === 4, 'wrap, math, extract, format');
   } finally { self.satexStore = was; }
 });
 
@@ -288,12 +289,30 @@ test('insert: every kind at every place keeps the document paired', () => {
 // none. Pins marks offered between paragraphs and a switched-off plugin still offering rows.
 test('insert: the menu rows by target, switched by the viewer', () => {
   const ctx = { text: DOC, all: DOC, x: 0, y: 0, facts: null, write() {}, toast() {}, pick() {}, colAlign() {}, insert() {} };
-  const rows = (t, cfg) => PA.groups(t, ctx, cfg).filter((g) => g.title === 'Insert').flatMap((g) => g.items.map((i) => i.label));
+  const rows = (t, cfg) => PA.groups(t, ctx, cfg).filter((g) => g.title === 'Insert').flatMap((g) => g.items.flatMap((i) => i.items.map((r) => r.label)));
   assert.equal(rows({ kind: 'block', block: { file: 'a.tex', from: 5, to: 6, what: 'paragraph' } }).length, R.inserts.length);
   assert.ok(!rows({ kind: 'block', block: { file: 'a.tex', from: 5, to: 6, what: 'figure' } }).includes('Footnote'));
   assert.ok(!rows({ kind: 'block', place: 10, block: { file: 'a.tex', from: 5, to: 6, what: 'paragraph' } }).includes('Citation'));
   assert.ok(rows({ kind: 'caret', caret: 3 }).includes('Footnote'));
   assert.equal(rows({ kind: 'caret', caret: 3 }, { 'type_plugins.insert.enabled': false }).length, 0);
+});
+
+// Intuition: Insert is nested by kind (Math, Floats, Lists, Structure, References, Pictures, in that order), each row
+// hinted with the LaTeX it writes, the heading's at the level of the last one; at the Type caret Math starts with
+// inline, display and align* math in the document's inline convention. Pins a flat menu and hints that said "same level".
+test('insert: rows nested by kind, hinted with their LaTeX', () => {
+  const text = '\\begin{document}\n\\subsection{A}\nText.\n\\end{document}\n', ran = [];
+  const ctx = { text, all: text, x: 0, y: 0, facts: null, write() {}, toast() {}, pick() {}, colAlign() {}, insert() {}, math: (k) => ran.push(k), mathInline: '$…$' };
+  const menu = PA.groups({ kind: 'caret', caret: text.indexOf('Text') }, ctx).find((g) => g.title === 'Insert').items;
+  assert.deepEqual(menu.map((g) => g.label), ['Math', 'Floats', 'Lists', 'Structure', 'References', 'Pictures']);
+  const math = menu[0].items;
+  assert.deepEqual(math.map((r) => [r.label, r.hint]).slice(0, 3), [['Inline math', '$…$'], ['Display math', '\\[…\\]'], ['Aligned', 'align*']]);
+  math[1].run();
+  assert.deepEqual(ran, ['display']);
+  assert.equal(menu[3].items.find((r) => r.label === 'Section heading').hint, '\\subsection{…}');
+  assert.equal(menu[1].items.find((r) => r.label === 'Table').hint, '\\begin{table} tabular');
+  // no caret math outside the Type caret (a right click between paragraphs)
+  assert.ok(!PA.groups({ kind: 'block', place: 3, block: { file: 'a.tex', from: 1, to: 2, what: 'paragraph' } }, ctx).find((g) => g.title === 'Insert').items[0].items.some((r) => r.label === 'Inline math'));
 });
 
 // Intuition: Insert at the caret puts a block where the caret is, unless that splits a group: a caret inside a macro's
@@ -335,4 +354,32 @@ test('insert: a block at the caret never lands in math, a table or a picture', (
   const box = 'x \\mbox{\\begin{tabular}{l} a \\end{tabular}} more\ny\n';
   assert.deepEqual(spot(box, ' a ', 'equation'), { at: box.indexOf(' more') + 5, mode: 'after' }, 'a box around the table, left too');
     assert.deepEqual(spot('x\n\\begin{itemize}\n  \\item one\n\\end{itemize}\n', 'one', 'equation').mode, 'caret', 'a list item takes it');
+});
+
+// Intuition: a selection's Format, Color, Font and Size rows wrap it in the command they name; in math the math
+// commands (bold by the loaded package: \boldsymbol with amsmath), no text sizes; a color loads xcolor; Remove formatting
+// unwraps the command around the selection. Pins the user's Format ▸ table (2026-11-21) and text commands offered in math.
+test('format: a selection wrapped, math-aware, unwrapped', () => {
+  const text = '\\documentclass{article}\n\\usepackage{amsmath}\n\\begin{document}\nSay \\textbf{hello} world and $x+y$.\n\\end{document}\n';
+  const written = [];
+  const ctx = { text, all: text, x: 0, y: 0, facts: null, write: (e) => written.push(edit(text, e)), toast() {}, pick() {}, colAlign() {} };
+  const menu = (from, to) => Object.fromEntries(PA.groups({ kind: 'source', at: from, end: to, sel: [from, to] }, ctx).filter((g) => ['Format', 'Color', 'Font', 'Size'].includes(g.title)).map((g) => [g.title, g.items]));
+  const w = text.indexOf('world'), m = menu(w, w + 5);
+  assert.deepEqual(Object.keys(m), ['Format', 'Color', 'Font', 'Size']);
+  assert.deepEqual(m.Format.map((r) => r.hint), ['\\textbf', '\\textit', '\\emph', '\\texttt', '\\textsc'], 'no underline without ulem or soul');
+  m.Format[0].run();
+  assert.match(written.pop(), /\\textbf\{world\} and/);
+  m.Size.find((r) => r.label === 'large').run();
+  assert.match(written.pop(), /\{\\large world\} and/);
+  m.Color.find((r) => r.label === 'red').run();
+  const colored = written.pop();
+  assert.match(colored, /\\textcolor\{red\}\{world\}/); assert.match(colored, /\\usepackage\{xcolor\}\n/);
+  const x = text.indexOf('x+y'), mm = menu(x, x + 3);
+  assert.deepEqual(mm.Format.map((r) => r.hint), ['\\boldsymbol', '\\mathrm', '\\mathsf', '\\mathtt']);
+  assert.ok(!mm.Size && !mm.Font, 'no text sizes or families in math');
+  mm.Color.find((r) => r.label === 'red').run();
+  assert.match(written.pop(), /\$\{\\color\{red\}x\+y\}\$/, 'a group where the kernel date is unknown');
+  const h = text.indexOf('hello'), um = menu(h + 1, h + 3);
+  um.Format.find((r) => r.label === 'Remove formatting').run();
+  assert.match(written.pop(), /Say hello world/);
 });

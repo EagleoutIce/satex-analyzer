@@ -17,6 +17,7 @@
 - [exports](#exports): the names installed packages define, each with the package or library to load (since 0.2.5)
 - [files](#files): every file read, in the order it was opened (since 0.1.0)
 - [gaps](#gaps): constructs the run could not interpret, grouped by cause (since 0.1.0)
+- [letters](#letters): where a punctuation character becomes a letter or stops being one: what names are typeable where (since 0.2.6)
 - [occurrences](#occurrences): package banners, passed options and other one-off events (since 0.1.0)
 - [options](#options): the keys an environment or command's optional argument accepts (since 0.1.0)
 - [pgfkeys](#pgfkeys): pgfkeys defined at the end of the run and what each does (since 0.1.0)
@@ -169,6 +170,10 @@ $ satex query gaps -f doc/src/wiki/challenges/06-unknown.tex
 severity     code                    count  message                        file            
 unsupported  unbalanced-conditional  1      end of 06-unknown.tex occurr…  06-unknown.tex  @ 06-unknown.tex:0:0
 ```
+
+## letters
+
+Where a punctuation character becomes a letter (catcode 11) or stops being one, per file of the project, at the user's line that caused it (`\makeatletter`, `\ExplSyntaxOn`). Line 0 holds the letters a file opened with (`@` in a package). Replayed up to a place, the records give the characters a command's name may hold there. Completion uses them to end the name typed (after `\sum_` in a body none is typed) and to offer only names typeable there, and the playground's editor colors command names by them.
 
 ## occurrences
 

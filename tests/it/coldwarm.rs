@@ -349,13 +349,15 @@ fn at_two_clocks(tag: &str, package: &str, body: &str, built: &str, served: &str
     runs
 }
 
-/// The clock is the job's, not a package's: what a package makes of `\time` and `\year` while
-/// it loads is unknown, read or served, so a cache built at one minute serves at any other. The
-/// document's own reads keep the configured date.
-/// Pins: a load stored the minute the cache was built, and a warm run replayed it at another
-/// minute (pgfmath seeds its generator from `\time*\year`: forks differed cold and warm).
+/// A package reads the job's clock, as in TeX: what it makes of `\time` and `\year` while it
+/// loads is the date of the run, read or served. A cache built at one date must not replay
+/// that date at another: the product is stored as arithmetic on the clock and computed again
+/// where it is served.
+/// Pins: a load stored the minute the cache was built and a warm run replayed it at another
+/// minute; and (clockfix land-02) loads that read an unknown clock left datetime2's date and
+/// pgfmath's seed unknown, so hyperref's `\pdfstringdef` ran away and theses lost their end.
 #[test]
-fn a_package_that_reads_the_clock_does_the_same_at_any_date() {
+fn a_package_that_reads_the_clock_reads_the_date_it_runs_at() {
     if !installed() {
         return;
     }
@@ -370,9 +372,133 @@ fn a_package_that_reads_the_clock_does_the_same_at_any_date() {
     let [built, served, alone] = at_two_clocks("clock", package, &body, "2026-01-01T12:00Z", "2027-06-15T08:30Z");
     let known =
         |a: &Analysis| ["atbuilt", "atserved", "docyear", "doctime"].map(|n| crate::support::presence(a, n)).join("");
-    assert_eq!(known(&built), "??00", "built: the load's product unknown, the document's date 2026");
-    assert_eq!(known(&served), "??11", "served: the load's product unknown, the document's date 2027");
+    assert_eq!(known(&built), "1000", "built: the load's product and the document's date are 2026's");
+    assert_eq!(known(&served), "0111", "served at 2027: the load's product is 2027's, not replayed");
     assert_eq!(difference(&said(&alone), &said(&served)), "", "served at another date vs read at it");
+}
+
+/// How the cache of `own` did in `analysis`: `cached` when all of it was served.
+fn own_cache(analysis: &Analysis) -> String {
+    let state = analysis.package_caches.iter().rev().find(|(name, ..)| name == "own");
+    state.map(|(.., state)| state.clone()).unwrap_or_default()
+}
+
+/// datetime2 takes the job's start date apart by macro arguments while it loads, so the rest
+/// of its file keys on the exact date (after tikz, whose loads leave the long lists it edits). Served at another second, the load is read again from
+/// there and stored as another branch. That branch must be served the next time at that date.
+/// Pins: a branch recorded after served segments compared a text it edited with the one from
+/// before the load, not with what the served segments left. Its stored edit never fitted
+/// ("an edited text differs"), so every run read the rest again and stored one more branch.
+#[test]
+fn a_branch_read_after_a_served_part_is_served_the_next_time() {
+    if !installed() {
+        return;
+    }
+    let dir = crate::support::tmp_root().join("coldwarm-branch");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let text = "\\documentclass{article}\n\\usepackage{tikz}\n\\usepackage{datetime2}\n\\begin{document}\n\\today\n\\end{document}\n";
+    let main = dir.join("main.tex");
+    std::fs::write(&main, text).unwrap();
+    let mut cfg = crate::support::config();
+    cfg.cache.document = false;
+    cfg.cache.dir = Some(dir.join("cache"));
+    let mut run = |clock: &str| {
+        cfg.clock = clock.parse().unwrap();
+        crate::support::seed_kernel(&cfg);
+        Machine::analyze(text, Some(&main), &cfg)
+    };
+    let runs = ["2026-01-01T12:00:01Z", "2026-01-01T12:00:02Z", "2026-01-01T12:00:02Z"].map(&mut run);
+    let _ = std::fs::remove_dir_all(&dir);
+    let state = |a: &Analysis| {
+        let found = a.package_caches.iter().rev().find(|(name, ..)| name == "datetime2");
+        found.map(|(.., state)| state.clone()).unwrap_or_default()
+    };
+    // An installation without datetime2 has nothing to pin.
+    if state(&runs[0]).is_empty() {
+        return;
+    }
+    assert_ne!(state(&runs[1]), "cached", "another second: read again from where it takes the date apart");
+    assert_eq!(state(&runs[2]), "cached", "that second again: {:?}", runs[2].package_caches);
+    assert_eq!(difference(&said(&runs[1]), &said(&runs[2])), "", "read at that date vs served at it");
+}
+
+/// A package that only stores the date (datetime2 without `\pdfcreationdate` does so: the
+/// hour and minute by arithmetic on `\time`, the year printed into a macro) does nothing
+/// that depends on which date it is. Its cache is a function of the clock: built at one
+/// date it is served whole at another, with that date's values filled in.
+/// Pins: every segment that read the clock was keyed on its value, so with `clock: now`
+/// such a load was read again every minute and stored once more each time.
+#[test]
+fn a_date_a_package_only_stores_is_filled_in_where_it_is_served() {
+    if !installed() {
+        return;
+    }
+    let package = "\\newcount\\clk \\clk=\\time \\divide\\clk by 60 \\edef\\hour{\\the\\clk}\n\
+                   \\multiply\\clk by -60 \\advance\\clk by \\time \\edef\\minute{\\the\\clk}\n\
+                   \\edef\\thisyear{in \\the\\year!}\\edef\\stamp{\\pdfcreationdate}\\clk=-\\month";
+    // 08:30 on 2027-06-15, as the package's arithmetic leaves it.
+    let body = "\\ifnum\\hour=8 \\def\\ha{}\\fi \\ifnum\\minute=30 \\def\\ma{}\\fi \\ifnum\\clk=-6 \\def\\mo{}\\fi\n\
+                \\def\\want{in 2027!}\\ifx\\thisyear\\want \\def\\ya{}\\fi\n\
+                \\edef\\want{\\pdfcreationdate}\\ifx\\stamp\\want \\def\\sa{}\\fi";
+    let [built, served, alone] =
+        at_two_clocks("clock-flow", package, body, "2026-01-01T12:00:07Z", "2027-06-15T08:30:41Z");
+    let known = |a: &Analysis| ["ha", "ma", "mo", "ya", "sa"].map(|n| crate::support::presence(a, n)).join("");
+    assert_eq!(known(&built), "00001", "built in 2026: only the stamp is the document's own");
+    assert_eq!(known(&served), "11111", "served in 2027: every stored part is 2027's");
+    assert_eq!(own_cache(&served), "cached", "no part of the load is read again: {:?}", served.package_caches);
+    assert_eq!(difference(&said(&alone), &said(&served)), "", "served at another date vs read at it");
+}
+
+/// pgfmath's seed, as its file has it: in a group, `\time` times `\year`, 1 when that is 0,
+/// printed into a global macro. The test on the product is a decision: the cache keeps how
+/// it came out, not the minute. Any minute with a product that is not 0 is served, and
+/// midnight (product 0, the other arm) is read again.
+/// Pins: the seed's segment was keyed on `\time`, so every tikz document read the rest of
+/// pgfmath again once a minute; unknown instead, the test parted every such run in two.
+#[test]
+fn a_seed_made_of_the_clock_is_served_while_its_test_comes_out_alike() {
+    if !installed() {
+        return;
+    }
+    let package = "\\newcount\\clk\n\\begingroup\n\\clk=\\time\n\\multiply\\clk by\\year\n\
+                   \\ifnum\\clk=0 \\clk=1 \\fi\n\\xdef\\seed{\\the\\clk}\n\\endgroup";
+    let body = format!("\\ifnum\\seed={} \\def\\served{{}}\\fi \\ifnum\\seed=1 \\def\\midnight{{}}\\fi", 510 * 2027);
+    let known = |a: &Analysis| ["served", "midnight"].map(|n| crate::support::presence(a, n)).join("");
+    let [_, served, alone] = at_two_clocks("clock-seed", package, &body, "2026-01-01T12:00Z", "2027-06-15T08:30Z");
+    assert_eq!(known(&served), "10", "the seed is the serving minute's");
+    assert_eq!(own_cache(&served), "cached", "the test came out alike: {:?}", served.package_caches);
+    assert_eq!(difference(&said(&alone), &said(&served)), "", "served at another minute vs read at it");
+    let [_, served, alone] = at_two_clocks("clock-seed0", package, &body, "2026-01-01T12:00Z", "2027-06-15T00:00Z");
+    assert_eq!(known(&served), "01", "at midnight the product is 0 and the seed 1");
+    assert_ne!(own_cache(&served), "cached", "the test comes out differently: read again");
+    assert_eq!(difference(&said(&alone), &said(&served)), "", "served at midnight vs read at it");
+}
+
+/// A package that looks at the date (a name built from the year, a test on it) is served
+/// only where it would do the same: the name keys the load on the year, the test on its
+/// outcome. Same year, other day: served. Next year: read again, with that year's name.
+/// Pins the fallback: whatever is not stored or tested as arithmetic keys on the exact value.
+#[test]
+fn a_date_a_package_looks_at_is_read_again_where_it_differs() {
+    if !installed() {
+        return;
+    }
+    let package = "\\expandafter\\def\\csname in\\the\\year\\endcsname{}\\ifnum\\month>6 \\def\\late{}\\fi";
+    let body = "";
+    let known = |a: &Analysis| ["in2026", "in2027", "late"].map(|n| crate::support::presence(a, n)).join("");
+    let [built, served, alone] = at_two_clocks("clock-look", package, body, "2026-01-01T12:00Z", "2026-03-09T08:30Z");
+    assert_eq!((known(&built).as_str(), known(&served).as_str()), ("100", "100"));
+    assert_eq!(own_cache(&served), "cached", "same year, same half: {:?}", served.package_caches);
+    assert_eq!(difference(&said(&alone), &said(&served)), "", "served on another day vs read on it");
+    let [_, served, alone] = at_two_clocks("clock-look2", package, body, "2026-01-01T12:00Z", "2026-09-09T08:30Z");
+    assert_eq!(known(&served), "101", "the test on the month comes out differently");
+    assert_ne!(own_cache(&served), "cached");
+    assert_eq!(difference(&said(&alone), &said(&served)), "", "served in the other half vs read in it");
+    let [_, served, alone] = at_two_clocks("clock-look3", package, body, "2026-01-01T12:00Z", "2027-01-01T12:00Z");
+    assert_eq!(known(&served), "010", "the name is the serving year's");
+    assert_ne!(own_cache(&served), "cached");
+    assert_eq!(difference(&said(&alone), &said(&served)), "", "served next year vs read then");
 }
 
 /// pgfmath seeds its random generator from the clock while it loads (`\pgfmathsetseed`).
@@ -409,4 +535,102 @@ fn pgfmath_rand_with_an_unknown_seed_reaches_the_end() {
     let a = Machine::analyze(text, None, &cfg);
     let codes = crate::support::codes(&a);
     assert!(!codes.iter().any(|c| c == "missing-end" || c == "analysis-ended-early"), "{codes:?}");
+}
+
+/// One run of [`one_cache`]: the document's file name, its text, the files beside it.
+type Run<'a> = (&'a str, &'a str, &'a [(&'a str, &'a str)]);
+
+/// Runs on one cache that holds only the kernel, one after another, each beside the package
+/// `own.sty`: per run its file name, its text and the files it finds beside it. Returns each
+/// run's analysis, and the last document analyzed from a cache of its own.
+fn one_cache(tag: &str, package: &str, runs: &[Run]) -> (Vec<Analysis>, Analysis) {
+    let dir = crate::support::tmp_root().join(format!("coldwarm-{tag}"));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("own.sty"), format!("\\ProvidesPackage{{own}}\n{package}\n\\newcommand\\after{{}}\n"))
+        .unwrap();
+    let mut cfg = crate::support::config();
+    cfg.cache.document = false;
+    let mut analyze = |cache: &str, (name, text, files): &Run| {
+        files.iter().for_each(|(file, content)| std::fs::write(dir.join(file), content).unwrap());
+        let main = dir.join(name);
+        std::fs::write(&main, text).unwrap();
+        cfg.cache.dir = Some(dir.join(cache));
+        crate::support::seed_kernel(&cfg);
+        Machine::analyze(text, Some(&main), &cfg)
+    };
+    let shared: Vec<Analysis> = runs.iter().map(|run| analyze("cache", run)).collect();
+    let alone = analyze("alone", runs.last().unwrap());
+    let _ = std::fs::remove_dir_all(&dir);
+    (shared, alone)
+}
+
+/// `\jobname` is the run's, not any file's: a package that expands it while it loads did
+/// something else in another job. Two documents load the same package on one cache, and the
+/// second must see its own job name in all that the package made of it: an `\edef`, an `\xdef`,
+/// a name built from it, a file written by it and a file looked up by it.
+/// Pins: the segment read no binding for `\jobname`, so the second document replayed the first
+/// one's load: `\JobAtLoad` was `a` in `b` (memoize's `\mmzPrefix` was `main.memo.dir/`).
+#[test]
+fn a_package_that_expands_the_job_name_sees_each_documents_own() {
+    if !installed() {
+        return;
+    }
+    let package = "\\edef\\JobAtLoad{\\jobname}\\xdef\\JobGlobal{\\jobname}\n\
+                   \\expandafter\\def\\csname at\\jobname\\endcsname{}\n\
+                   \\newwrite\\ownout \\immediate\\openout\\ownout=\\jobname.zz \\immediate\\write\\ownout{x}\\immediate\\closeout\\ownout\n\
+                   \\IfFileExists{\\jobname.cfg}{\\def\\HasCfg{}}{}";
+    let text = "\\documentclass{article}\n\\usepackage{own}\n\\edef\\here{\\jobname}\n\
+                \\ifx\\here\\JobAtLoad \\def\\okedef{}\\fi \\ifx\\here\\JobGlobal \\def\\okxdef{}\\fi\n\
+                \\expandafter\\ifx\\csname at\\jobname\\endcsname\\relax\\else\\def\\okcsname{}\\fi\n\
+                \\IfFileExists{\\jobname.zz}{\\def\\okopenout{}}{}\n\\begin{document}\n\\after\n\\end{document}\n";
+    let (runs, alone) = one_cache("jobname", package, &[("a.tex", text, &[]), ("b.tex", text, &[("b.cfg", "cfg\n")])]);
+    let names = ["okedef", "okxdef", "okcsname", "okopenout", "HasCfg"];
+    let known = |a: &Analysis| names.map(|n| crate::support::presence(a, n)).join("");
+    assert_eq!(known(&runs[0]), "11110", "a, read");
+    assert_eq!(known(&runs[1]), "11111", "b, after a on one cache");
+    assert_eq!(difference(&said(&alone), &said(&runs[1])), "", "b alone vs b after a");
+}
+
+/// A file read for its bytes (`\pdfmdfivesum file`, `\pdffilesize`) while a package loads is
+/// as much a part of what the load did as a file it reads as TeX. Its content changes between
+/// two runs of one document: the second must hash what the file holds then.
+/// Pins: only the name's lookup was kept, not the file's content, so the second run replayed
+/// the first one's digest and `\Sum` no longer matched the file.
+#[test]
+fn a_file_a_package_hashes_is_stamped_like_one_it_reads() {
+    if !installed() {
+        return;
+    }
+    let package = "\\edef\\Sum{\\pdfmdfivesum file{data.txt}}";
+    let text = "\\documentclass{article}\n\\usepackage{own}\n\\edef\\Now{\\pdfmdfivesum file{data.txt}}\n\
+                \\ifx\\Sum\\Now \\def\\same{}\\fi\n\\begin{document}\n\\after\n\\end{document}\n";
+    let runs: [Run; 2] =
+        [("main.tex", text, &[("data.txt", "one\n")]), ("main.tex", text, &[("data.txt", "another\n")])];
+    let (runs, alone) = one_cache("hashed", package, &runs);
+    assert_eq!(crate::support::presence(&runs[0], "same"), "1", "read");
+    assert_eq!(crate::support::presence(&runs[1], "same"), "1", "after the file changed");
+    assert_eq!(difference(&said(&alone), &said(&runs[1])), "", "alone vs after the edit");
+}
+
+/// A package that only stores the job name (`\edef\auxname{\jobname.aux}`) does the same in
+/// every job. On one cache the second document is served the load whole, with its own name
+/// filled in.
+/// Pins: keyed on the job name alone, such a load would be read again in every document
+/// (and unkeyed, as before, it replayed the first document's name).
+#[test]
+fn a_job_name_a_package_only_stores_is_filled_in_where_it_is_served() {
+    if !installed() {
+        return;
+    }
+    let package = "\\edef\\AuxName{\\jobname.aux}\\xdef\\JobGlobal{\\jobname}";
+    let text = "\\documentclass{article}\n\\usepackage{own}\n\\edef\\here{\\jobname.aux}\\edef\\job{\\jobname}\n\
+                \\ifx\\here\\AuxName \\def\\okedef{}\\fi \\ifx\\job\\JobGlobal \\def\\okxdef{}\\fi\n\
+                \\begin{document}\n\\after\n\\end{document}\n";
+    let (runs, alone) = one_cache("jobflow", package, &[("first.tex", text, &[]), ("b.tex", text, &[])]);
+    let known = |a: &Analysis| ["okedef", "okxdef"].map(|n| crate::support::presence(a, n)).join("");
+    assert_eq!(known(&runs[0]), "11", "first, read");
+    assert_eq!(known(&runs[1]), "11", "b, after first on one cache");
+    assert_eq!(own_cache(&runs[1]), "cached", "no part of the load is read again: {:?}", runs[1].package_caches);
+    assert_eq!(difference(&said(&alone), &said(&runs[1])), "", "b alone vs b after first");
 }

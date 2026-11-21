@@ -26,13 +26,36 @@ impl Batch {
 
     pub(super) fn message(&mut self, text: &str) -> Vec<Message> {
         let engine = &mut self.engine;
-        let mut out = match serde_json::from_str::<Message>(text) {
+        // What the last run replaced is freed before a question, not before the next text's run
+        // (the page's questions follow a run's results; a text typed meanwhile goes first).
+        let message = serde_json::from_str::<Message>(text);
+        let edit = |m: &str| matches!(m, "textDocument/didChange" | "textDocument/didOpen" | "satex/analyze");
+        if !matches!(&message, Ok(Message::Notification(n)) if edit(&n.method)) || engine.buried.len() > 2 {
+            engine.rest_buried();
+        }
+        let mut out = match message {
             Ok(Message::Request(req)) => vec![Message::Response(match req.method.as_str() {
                 "initialize" => Response::new_ok(req.id, serde_json::json!({"capabilities": server_capabilities()})),
                 "shutdown" => Response::new_ok(req.id, ()),
                 "textDocument/linkedEditingRange" => {
                     let found = super::linked(&req, |uri| engine.docs.get(uri).map(|d| &d.text));
                     Response::new_ok(req.id, found.unwrap_or(serde_json::Value::Null))
+                }
+                // A question about the text: a newer text abandons it (`probe::abandonable`), so the
+                // newer text's run never waits for it; answered `null`, as the page answers a question
+                // it dropped before it began.
+                _ if read_only(&req) => {
+                    let (id, stale) = (req.id.clone(), engine.newer_text());
+                    let answer = crate::analysis::probe::abandonable(stale, || {
+                        respond(
+                            &mut |m| {
+                                engine.step(m);
+                                true
+                            },
+                            req,
+                        )
+                    });
+                    answer.unwrap_or_else(|| Response::new_ok(id, serde_json::Value::Null))
                 }
                 _ => respond(
                     &mut |m| {
@@ -67,6 +90,9 @@ impl Batch {
                 };
                 let before = last(engine).map(|(p, _)| p);
                 engine.flush();
+                if let Some(f) = first.as_ref() {
+                    engine.publish_installed(f);
+                }
                 if let Some((mut again, version)) = last(engine).filter(|(now, _)| Some(now) == before.as_ref()) {
                     again.version = Some(version);
                     engine.send_diagnostics(vec![again]);
@@ -86,6 +112,29 @@ impl Batch {
         out.extend(self.outbox.try_iter().map(Message::Notification));
         out
     }
+}
+
+/// Whether `req` only asks about the texts: the requests the page's worker drops once a newer
+/// text came (doc/site/worker.ts `readOnly`).
+fn read_only(req: &lsp_server::Request) -> bool {
+    matches!(
+        req.method.as_str(),
+        "textDocument/completion"
+            | "textDocument/hover"
+            | "textDocument/codeLens"
+            | "textDocument/documentColor"
+            | "textDocument/inlayHint"
+            | "textDocument/codeAction"
+            | "textDocument/documentSymbol"
+            | "textDocument/documentHighlight"
+            | "textDocument/documentLink"
+            | "textDocument/foldingRange"
+            | "textDocument/signatureHelp"
+            | "satex/typeset"
+            | "satex/written"
+            | "satex/caches"
+    ) || req.method == "workspace/executeCommand"
+        && req.params.get("command").and_then(|c| c.as_str()) == Some("satex/query")
 }
 
 /// The line that stops the run under way ([`lines`]).

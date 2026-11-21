@@ -16,6 +16,10 @@ const NONE: u32 = u32::MAX;
 
 pub type NodeId = u32;
 
+/// A copy of a name's definition sites, as a macro call or a reference reads
+/// them: nearly always one or two, so the copy stays off the heap.
+pub type Defs = smallvec::SmallVec<[NodeId; 2]>;
+
 /// What a control sequence is bound to: its [`Meaning`], [`Value`], and the
 /// [`NodeId`]s that defined it. [`Env`] stores one per active [`Sym`].
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
@@ -449,6 +453,99 @@ impl ReadKind {
     }
 }
 
+/// An integer a load computed from values it found (its *leaves*: slots it has not written),
+/// by TeX's own arithmetic. A package cache stores the expression where the value only flows
+/// into what the load leaves, and fills it in from the state it is served into.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+pub enum Expr {
+    Leaf(Sym),
+    Const(i64),
+    Op(crate::engine::builtins::Arith, Rc<Expr>, Rc<Expr>),
+    Neg(Rc<Expr>),
+}
+
+impl Expr {
+    pub fn leaves(&self, out: &mut Vec<Sym>) {
+        match self {
+            Expr::Leaf(sym) => out.push(*sym),
+            Expr::Const(_) => {}
+            Expr::Op(_, a, b) => {
+                a.leaves(out);
+                b.leaves(out);
+            }
+            Expr::Neg(a) => a.leaves(out),
+        }
+    }
+
+    /// Its value where `leaf` gives each leaf's. `None` where a leaf is no known integer or
+    /// TeX reports "Arithmetic overflow" (tex.web §§ 1238-1240).
+    pub fn eval(&self, leaf: &dyn Fn(Sym) -> Option<i64>) -> Option<i64> {
+        match self {
+            Expr::Leaf(sym) => leaf(*sym),
+            Expr::Const(n) => Some(*n),
+            Expr::Op(op, a, b) => crate::engine::exec::int_arith(a.eval(leaf)?, b.eval(leaf)?, *op, false),
+            Expr::Neg(a) => Some(crate::engine::value::wrap(-a.eval(leaf)?)),
+        }
+    }
+}
+
+/// Where a hole's tokens come from: the decimal print of an integer, or the whole text of a
+/// macro the load found ([`copied_text`]).
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+pub enum Src {
+    Dec(Rc<Expr>),
+    TextOf(Sym),
+}
+
+/// Tokens `at..at + len` of a replacement text stand for `src`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct Hole {
+    pub at: u32,
+    pub len: u32,
+    pub src: Src,
+}
+
+/// What a slot the load wrote holds, as a function of the load's leaves: its value, or
+/// parts of its replacement text. The slot itself holds the concrete content.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+pub enum Amb {
+    Int(Rc<Expr>),
+    Text(Vec<Hole>),
+}
+
+impl Amb {
+    /// The slots it depends on, each with the part read of it.
+    pub fn sources(&self, out: &mut Vec<(Sym, ReadKind)>) {
+        let mut leaves = Vec::new();
+        match self {
+            Amb::Int(e) => e.leaves(&mut leaves),
+            Amb::Text(holes) => {
+                for hole in holes {
+                    match &hole.src {
+                        Src::Dec(e) => e.leaves(&mut leaves),
+                        Src::TextOf(sym) => out.push((*sym, ReadKind::Meaning)),
+                    }
+                }
+            }
+        }
+        out.extend(leaves.into_iter().map(|sym| (sym, ReadKind::Value)));
+    }
+}
+
+/// A test a load decided on its leaves: the relation between two expressions and how it came out.
+pub type Guard = (Rc<Expr>, char, Rc<Expr>, bool);
+
+/// A number scan that read exactly one integer quantity: what it is as an [`Expr`], the
+/// value read, and the exact reads the scan logged for it (to take back when the consumer
+/// keeps the expression instead, [`Env::retract`]).
+#[derive(Clone, Debug)]
+pub struct Scanned {
+    pub expr: Rc<Expr>,
+    pub value: i64,
+    undo: Vec<(u32, u8)>,
+    serial: u64,
+}
+
 /// Reads recorded while a package cache is captured. Per slot: which parts
 /// were read while they still held their value from before the load, and
 /// which parts the load has overwritten since (a later read of those does
@@ -476,6 +573,40 @@ struct Reads {
     /// Read parts added by a `\csname` that become irrelevant if the whole
     /// meaning is overwritten before any other read (`\cs_gset:cpn`).
     moot: LookupMap<u32, u8>,
+    /// Slots the load wrote whose content is a function of its leaves ([`Amb`]), and every
+    /// slot such a function names. A plain read of the slot, or a write of a leaf, turns
+    /// the function into exact reads of its leaves ([`Reads::settle`]).
+    ambient: LookupMap<u32, Amb>,
+    sources: LookupSet<u32>,
+    guards: Vec<Guard>,
+    /// Expressions whose exact reads were taken back: each read found a known integer,
+    /// which the segment still depends on.
+    kept: Vec<Rc<Expr>>,
+    /// The slots the last expression scan read exactly ([`Env::scanned`]), the scan's
+    /// number, and whether anything read one of them since: then the reads are no longer
+    /// the scan's alone to take back.
+    #[serde(skip)]
+    pending: Vec<u32>,
+    #[serde(skip)]
+    serial: u64,
+    #[serde(skip)]
+    shared: bool,
+    /// The reader accounts for the slot's [`Amb`] itself.
+    #[serde(skip)]
+    quiet: bool,
+}
+
+impl Reads {
+    /// The content `amb` describes was looked at, or may change apart from it: from here on
+    /// the segment depends on the exact leaves.
+    fn settle(&mut self, amb: &Amb) {
+        let mut sources = Vec::new();
+        amb.sources(&mut sources);
+        for (sym, kind) in sources {
+            self.shared |= self.pending.contains(&sym.0);
+            *self.read.entry(sym.0).or_insert(0) |= kind.bit();
+        }
+    }
 }
 
 /// The save stack at the point where paths split. Groups can open and close
@@ -698,6 +829,17 @@ impl Env {
         }
         let mut reads = self.reads.borrow_mut();
         reads.moot.remove(&sym.0);
+        reads.shared |= kind == ReadKind::Value && reads.pending.contains(&sym.0);
+        if !reads.quiet && !reads.ambient.is_empty() {
+            let looked = match reads.ambient.get(&sym.0) {
+                Some(Amb::Int(_)) => kind == ReadKind::Value,
+                Some(Amb::Text(_)) => matches!(kind, ReadKind::Meaning | ReadKind::Kept | ReadKind::Copy),
+                None => false,
+            };
+            if looked && let Some(amb) = reads.ambient.remove(&sym.0) {
+                reads.settle(&amb);
+            }
+        }
         let kind = match kind {
             ReadKind::Meaning if reads.copying == Some(sym.0) => ReadKind::Copy,
             kind => kind,
@@ -854,6 +996,146 @@ impl Env {
         if self.tracking.get() {
             self.reads.borrow_mut().splices.insert(sym.0, (at, len));
         }
+    }
+
+    /// Whether a load is recorded on one path: only there a value is kept as a function of
+    /// the load's leaves, as only there its writes are recorded ([`Env::note_write`]).
+    pub fn symbolic(&self) -> bool {
+        self.tracking.get() && self.paths == 0
+    }
+
+    /// What the content of `sym` is as a function of the load's leaves, if the load made it one.
+    pub fn amb(&self, sym: Sym) -> Option<Amb> {
+        self.reads.borrow().ambient.get(&sym.0).cloned()
+    }
+
+    /// The load left `sym` holding `amb`, if `holds` (said after the write, which retires
+    /// what the slot held). Else, or where a rewind may undo the write, or where the load
+    /// has written a slot `amb` names since it read it, the content is not kept as a
+    /// function: everything `amb` names is read exactly.
+    pub fn set_amb(&self, sym: Sym, amb: Amb, holds: bool) {
+        if !self.tracking.get() {
+            return;
+        }
+        let symbolic = self.symbolic();
+        let mut reads = self.reads.borrow_mut();
+        let mut sources = Vec::new();
+        amb.sources(&mut sources);
+        let written = |reads: &Reads, (s, kind): &(Sym, ReadKind)| {
+            reads.written.get(&s.0).copied().unwrap_or(0) & kind.bit() != 0
+        };
+        if !holds || !symbolic || sources.iter().any(|source| written(&reads, source)) {
+            return reads.settle(&amb);
+        }
+        reads.sources.extend(sources.into_iter().map(|(s, _)| s.0));
+        reads.ambient.insert(sym.0, amb);
+    }
+
+    /// The meaning read of `sym` since its parts read were `before` was a copy of its text
+    /// into a hole: it counts as [`ReadKind::Copy`], as a text copied through does.
+    pub fn copied_not_read(&self, sym: Sym, before: u8) {
+        if !self.tracking.get() {
+            return;
+        }
+        let mut reads = self.reads.borrow_mut();
+        let read = reads.read.entry(sym.0).or_insert(0);
+        *read = *read & (before | !ReadKind::Meaning.bit()) | ReadKind::Copy.bit();
+    }
+
+    /// A served segment left `sym` holding `amb`: the load recorded from here on holds it so
+    /// too, unless a later served segment wrote a slot it names (which that one keyed on).
+    pub fn restore_amb(&self, sym: Sym, amb: Amb) {
+        let mut reads = self.reads.borrow_mut();
+        let mut sources = Vec::new();
+        amb.sources(&mut sources);
+        if sources.iter().all(|(s, kind)| reads.written.get(&s.0).copied().unwrap_or(0) & kind.bit() == 0) {
+            reads.sources.extend(sources.into_iter().map(|(s, _)| s.0));
+            reads.ambient.insert(sym.0, amb);
+        }
+    }
+
+    /// What `amb` names is read exactly: its consumer could not keep it as a function.
+    pub fn settle_amb(&self, amb: &Amb) {
+        if self.tracking.get() {
+            self.reads.borrow_mut().settle(amb);
+        }
+    }
+
+    /// Reads of slots with an [`Amb`] while `on` are the reader's to account for.
+    pub fn quiet(&self, on: bool) {
+        self.reads.borrow_mut().quiet = on;
+    }
+
+    /// Before a read of the integer `sym` holds: what it is as an expression. The load's own
+    /// function of its leaves, or the slot as a leaf while the load has not written its
+    /// value. `None` where no load is recorded or a rewind may undo the read. The read
+    /// itself is logged as any read, then [`Env::scanned`] completes this.
+    pub fn scanning(&self, sym: Sym) -> Option<Scanned> {
+        if !self.symbolic() {
+            return None;
+        }
+        let reads = self.reads.borrow();
+        let bit = ReadKind::Value.bit();
+        let expr = match reads.ambient.get(&sym.0) {
+            Some(Amb::Int(expr)) => expr.clone(),
+            Some(Amb::Text(_)) => return None,
+            None if reads.written.get(&sym.0).copied().unwrap_or(0) & bit == 0 => Rc::new(Expr::Leaf(sym)),
+            None => return None,
+        };
+        let mut leaves = Vec::new();
+        expr.leaves(&mut leaves);
+        // The exact reads the read is about to add: those are its own to take back.
+        let undo = leaves.iter().filter(|s| reads.read.get(&s.0).copied().unwrap_or(0) & bit == 0);
+        let undo = undo.map(|s| (s.0, bit)).collect();
+        Some(Scanned { expr, value: 0, undo, serial: 0 })
+    }
+
+    /// After the read [`Env::scanning`] prepared gave `value`: the plain read settled the
+    /// slot's function, which stands again for the consumer to keep or not.
+    pub fn scanned(&self, mut scanned: Scanned, sym: Sym, value: i64) -> Scanned {
+        let mut reads = self.reads.borrow_mut();
+        if !matches!(*scanned.expr, Expr::Leaf(_)) {
+            reads.ambient.insert(sym.0, Amb::Int(scanned.expr.clone()));
+        }
+        // From here on a read of the slot or of a leaf is someone else's.
+        reads.serial += 1;
+        reads.pending = scanned.undo.iter().map(|(s, _)| *s).chain([sym.0]).collect();
+        reads.shared = false;
+        (scanned.value, scanned.serial) = (value, reads.serial);
+        scanned
+    }
+
+    /// The consumer of `scanned` keeps its expression: the exact reads its scan logged are
+    /// taken back. Only when no other scan came and nothing read those slots since, else
+    /// they stay and `false` says the expression is not worth keeping.
+    pub fn retract(&self, scanned: &Scanned) -> bool {
+        let mut reads = self.reads.borrow_mut();
+        if !self.symbolic() || reads.serial != scanned.serial || reads.shared {
+            return false;
+        }
+        reads.pending.clear();
+        reads.kept.push(scanned.expr.clone());
+        for (sym, bits) in &scanned.undo {
+            if let Some(read) = reads.read.get_mut(sym) {
+                *read &= !bits;
+                if *read == 0 {
+                    reads.read.remove(sym);
+                }
+            }
+        }
+        true
+    }
+
+    /// A test the load decided on its leaves.
+    pub fn guard(&self, guard: Guard) {
+        self.reads.borrow_mut().guards.push(guard);
+    }
+
+    /// The tests decided since the last call, and the expressions kept in place of exact
+    /// reads since then.
+    pub fn take_guards(&self) -> (Vec<Guard>, Vec<Rc<Expr>>) {
+        let mut reads = self.reads.borrow_mut();
+        (std::mem::take(&mut reads.guards), std::mem::take(&mut reads.kept))
     }
 
     /// A segment begins: nothing is assigned since.
@@ -1166,17 +1448,17 @@ impl Env {
     /// The name's definition sites, to link a dependency-graph edge to.
     /// Whatever they are, a package cache links the edge again on replay,
     /// so this reads nothing.
-    pub fn link_defs(&self, sym: Sym) -> Vec<NodeId> {
-        self.slot(sym).map(|b| b.defs.clone()).unwrap_or_default()
+    pub fn link_defs(&self, sym: Sym) -> Defs {
+        self.slot(sym).map(|b| Defs::from_slice(&b.defs)).unwrap_or_default()
     }
 
     /// The name's definition sites, when what is done depends on whether
     /// there are any.
-    pub fn defs(&self, sym: Sym) -> Vec<NodeId> {
+    pub fn defs(&self, sym: Sym) -> Defs {
         if self.tracking.get() {
             self.note_read(sym, ReadKind::Defs);
         }
-        self.slot(sym).map(|b| b.defs.clone()).unwrap_or_default()
+        self.slot(sym).map(|b| Defs::from_slice(&b.defs)).unwrap_or_default()
     }
 
     pub fn is_defined(&self, sym: Sym) -> bool {
@@ -1729,6 +2011,10 @@ impl Env {
                         None => self.aliases.remove(&Sym(sym)),
                     };
 
+                    // The group's value ends here for good ([`Env::rewind`] settles the rest).
+                    if self.tracking.get() && self.paths == 0 {
+                        self.reads.borrow_mut().ambient.remove(&sym);
+                    }
                     self.log(index);
                     self.level[index] = level;
                     self.stamp.set(index, stamp);
@@ -1925,6 +2211,34 @@ impl Env {
             let mut reads = self.reads.borrow_mut();
             reads.touched.insert(i as u32);
             reads.splices.remove(&(i as u32));
+            if !reads.ambient.is_empty() {
+                // The old content may come back (a rewind, a group's end): its leaves are
+                // read exactly. A leaf about to change: so is every function of it.
+                let back = self.paths > 0 || self.level.get(i).is_none_or(|l| *l != self.marks.len() as u32);
+                if let Some(amb) = reads.ambient.remove(&(i as u32))
+                    && back
+                {
+                    reads.settle(&amb);
+                }
+                if reads.sources.contains(&(i as u32)) {
+                    let mut named = Vec::new();
+                    let of: Vec<u32> = reads
+                        .ambient
+                        .iter()
+                        .filter(|(_, amb)| {
+                            named.clear();
+                            amb.sources(&mut named);
+                            named.iter().any(|(s, _)| s.0 == i as u32)
+                        })
+                        .map(|(slot, _)| *slot)
+                        .collect();
+                    for slot in of {
+                        if let Some(amb) = reads.ambient.remove(&slot) {
+                            reads.settle(&amb);
+                        }
+                    }
+                }
+            }
         }
         if let Some(&floor) = self.floors.last() {
             let prev = self.trailed[i];
@@ -2054,6 +2368,13 @@ impl Env {
     pub fn rewind(&mut self, fork: &Fork) {
         self.switches += 1;
         self.effective += 1;
+        // Slots go back without a write: no function of the load's leaves outlives that.
+        if self.tracking.get() && self.trail.len() > fork.trail {
+            let mut reads = self.reads.borrow_mut();
+            for (_, amb) in std::mem::take(&mut reads.ambient) {
+                reads.settle(&amb);
+            }
+        }
 
         let mut popped = Vec::new();
         while self.trail.len() > fork.trail {

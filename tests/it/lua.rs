@@ -330,6 +330,56 @@ fn a_run_that_writes_nothing_keeps_forked_paths_in_step() {
     assert!(defined(&analysis, "one"), "the pure compares left both paths in step");
 }
 
+/// Node type, whatsit subtype and mode numbers are the engine's own tables: `node.id`,
+/// `node.subtype` agree with `node.types()`, `node.whatsits()`, and `tex.getmodevalues()` names
+/// `horizontal`. lualinksplit (loaded by every `\DocumentMetadata` under LuaTeX) asks for
+/// `pdf_start_link` and the modes. Pins: a hand-written whatsit table knew 7 subtypes, with
+/// `save_pos`, `late_lua`, `user_defined` one off (LuaHBTeX 1.24 has `late_special` at 4), and the
+/// three functions were unknown, so loading lualinksplit failed.
+#[test]
+fn node_and_mode_numbers_are_the_engines() {
+    let analysis = primitives(
+        r"\directlua{local w, t = node.whatsits(), node.types()
+local ok = w[node.subtype('late_lua')] == 'late_lua' and w[node.subtype('pdf_start_link')] == 'pdf_start_link'
+  and t[node.id('glyph')] == 'glyph' and w[node.subtype('late_special')] == 'late_special'
+local horizontal for k, v in pairs(tex.getmodevalues()) do if v == 'horizontal' then horizontal = k end end
+if ok and horizontal then tex.print('\string\\gdef\string\\ok{}') end}",
+    );
+    assert!(defined(&analysis, "ok"));
+}
+
+/// A run that fails on something unknown before it writes leaves the state as it was, so the
+/// paths of an undecided choice stay in step: one arm's run stops at `status.list()`, and the
+/// runs after the join still run. The VM counts the write mlua makes when it raises the error
+/// (the metatable of a pooled error userdata), which is not the run's.
+/// Pins: every failed run counted as a change of the state; expl3 under LuaTeX then lost the
+/// state on all but one path after the first failed `\directlua`, and every later string
+/// compare (`l3kernel.strcmp`) was unknown there: 60k forks and no tagging facts in a tagged
+/// LuaLaTeX document.
+#[test]
+fn a_run_that_fails_before_writing_keeps_forked_paths_in_step() {
+    let analysis = primitives(
+        r"\directlua{n = 0}
+\ifodd\uniformdeviate 7 \directlua{tex.print(status.list().x)}\fi
+\directlua{n = n + 1}\ifnum\directlua{tex.print(n)}=1 \def\one{}\fi",
+    );
+    assert!(defined(&analysis, "one"), "the failed run wrote nothing: both paths stay in step");
+}
+
+/// The sound side of the test above: a run that writes and then fails changed the state, so
+/// the path without it does not read its write. Pins: the write count taken where the run
+/// failed must not drop the writes made before that point.
+#[test]
+fn a_run_that_writes_then_fails_puts_the_other_path_out_of_step() {
+    let analysis = primitives(
+        r"\directlua{n = 0}
+\ifodd\uniformdeviate 7 \directlua{n = 1 tex.print(status.list().x)}\fi
+\ifnum\directlua{tex.print(n)}=1 \def\one{}\else\def\zero{}\fi",
+    );
+    assert!(!defined(&analysis, "one"), "n is 0 where the arm did not run");
+    assert!(!undefined(&analysis, "zero"), "n is 0 where the arm did not run");
+}
+
 /// Every way Lua code writes state it found counts as a write: an upvalue, a raw set, a new
 /// key, a metatable, a coroutine resumed, a library table. One arm of an
 /// undecided choice writes; after the join the read is undecided, never the arm's value.

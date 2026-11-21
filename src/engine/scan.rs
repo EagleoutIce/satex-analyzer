@@ -437,8 +437,28 @@ impl Machine<'_> {
             })
     }
 
+    /// The slot that holds the value of `sym`, a count register's name or an integer
+    /// parameter. Looked up without a read.
+    pub(crate) fn count_slot(&mut self, sym: Sym) -> Option<Sym> {
+        match self.env.peek(sym.0)?.meaning {
+            Meaning::Register(RegKind::Count, index) if index != crate::engine::tex::UNNUMBERED => {
+                Some(self.register_sym(RegKind::Count, i64::from(index)))
+            }
+            Meaning::Primitive(Primitive::IntegerParameter) => Some(self.env.aliases.get(&sym).copied().unwrap_or(sym)),
+            _ => None,
+        }
+    }
+
     pub fn scan_int(&mut self) -> Option<i64> {
+        self.amb = None;
         let (negative, token) = self.scan_signs()?;
+        // One count register or integer parameter named outright is the whole number:
+        // only then the number is the expression its read left ([`Machine::amb`]).
+        let slot = token.cs().filter(|_| self.env.symbolic()).and_then(|sym| self.count_slot(sym));
+        let direct = slot.is_some();
+        // Prepared before the scan looks at the slot: all it reads of it from here is its own.
+        self.amb_base = slot.and_then(|slot| self.env.scanning(slot).map(|scanning| (slot, scanning)));
+        self.amb = None;
         self.probe_scans(token, "number");
         // Only a register read as the whole number leaves its members to
         // the test that scans it (see `Machine::register_value`).
@@ -466,9 +486,15 @@ impl Machine<'_> {
         if negative || self.abs.is_none() {
             self.abs_from = None;
         }
+        self.amb_base = None;
+        self.amb = self.amb.take().filter(|a| direct && magnitude == Some(a.value));
         let magnitude = magnitude?;
         // tex.web § 440 `negate` on a 32-bit integer: -(-2^31) is -2^31.
-        Some(if negative { crate::engine::value::wrap(-magnitude) } else { magnitude })
+        let value = if negative { crate::engine::value::wrap(-magnitude) } else { magnitude };
+        if negative && let Some(a) = self.amb.as_mut() {
+            (a.expr, a.value) = (std::rc::Rc::new(crate::engine::env::Expr::Neg(a.expr.clone())), value);
+        }
+        Some(value)
     }
 
     /// The unsigned part of a ⟨number⟩, starting at `token`, and whether it
@@ -1885,7 +1911,7 @@ fn step(
     ideal: impl Fn(&[i64]) -> Option<i64>,
     err: &mut (bool, bool),
 ) -> (Num, Option<Vec<i64>>) {
-    if let Some(sets) = points.iter().copied().collect::<Option<Vec<&[i64]>>>()
+    if let Some(sets) = points.iter().copied().collect::<Option<smallvec::SmallVec<[&[i64]; 4]>>>()
         && let Some((mut out, any_err)) = Num::lift_points(&sets, members, &exact)
     {
         err.0 |= any_err;

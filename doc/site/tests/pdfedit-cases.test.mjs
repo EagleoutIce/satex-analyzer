@@ -92,7 +92,7 @@ test("Editing in the PDF (pdfedit.ts)", async () => {
     const type = (text, at, keys, inline) => { let t = text, f = null; for (const c of keys) { const [a, b, body, step] = E.typed(t, at, c, inline, false, f); f = E.grow(f, a, b, body.length); t = t.slice(0, a) + body + t.slice(b); at = a + step; } return [t, at]; };
     // the caret ends before the text's `b`, or inside the pair just opened
     const ends = (want, at = want.lastIndexOf('b')) => [want, at];
-    assert.deepEqual(type('ab', 1, '_%&#{}~^'), ends('a\\_\\%\\&\\#\\{\\}\\textasciitilde{}\\textasciicircum{}b'));
+    assert.deepEqual(type('ab', 1, '_%&#{}~^'), ends('a\\_\\%\\&\\#\\{\\}~\\textasciicircum{}b'), 'a tie stays a tie');
     assert.deepEqual(type('ab', 1, '$x_1$ y'), ends('a\\(x_1\\) yb'), 'default: `$` types LaTeX\'s `\\(`, `$` steps over `\\)`');
     assert.deepEqual(type('ab', 1, '$x_1$ y', '$'), ends('a$x_1$ yb'), 'math typed raw, the closer stepped over');
     const opened = '\\(p\\) a\\(\\)b';
@@ -244,7 +244,7 @@ test("A tint on the PDF marks the glyphs a run of the row set, found by their pl
   assert.deepEqual(E.locate(texts, row, g, g + 8), [[6, 2, 11]], 'after math the page spells otherwise');
   assert.equal(E.locate(['x!', 'x!'], 'x!', 1, 1), null, 'a row the page spells twice: no guess');
 });
-// The math control: one Insert menu per Type bar (inline, display and align*), inline in the convention's
+// The math control: one Insert menu per Type bar (Math ▸ inline, display and align*), inline in the convention's
 // delimiters, nothing inside math. Pins the two `$x$`/`\[x\]` buttons inside the Type legend.
 test("The math control", async () => {
   const E = self.satexPdfEdit;
@@ -254,10 +254,11 @@ test("The math control", async () => {
   assert.deepEqual(E.mathAt('ab', 1, 'align'), [1, 1, '\\begin{align*}\n\n\\end{align*}', '\\begin{align*}\n'.length]);
   assert.deepEqual(E.mathAt('a\\(x\\)b', 4, 'display'), [4, 4, '', 0], 'in math: nothing');
   const html = readFileSync(new URL('./play.html', SITE), 'utf8');
-  const groups = [...html.matchAll(/<span class="math-group"[^]*?<\/details><\/span>/g)].map((m) => m[0]);
+  // one Insert button per Type bar: its menu (refactor.ts `insertMenu`) holds the math under Math ▸
+  const groups = [...html.matchAll(/<span class="math-group"[^]*?<\/span>/g)].map((m) => m[0]);
   assert.equal(groups.length, 2, 'one in the Typeset bar, one in the PDF bar');
-  for (const g of groups) assert.deepEqual([...g.matchAll(/data-math="(\w+)"/g)].map((m) => m[1]), ['inline', 'display', 'align'], 'each once, in the Insert menu');
-  assert.ok(!/data-math="[$\\]/.test(html), 'the old $x$ and \\[x\\] buttons are gone');
+  for (const g of groups) assert.match(g, /<button type="button" class="small ins-open" aria-haspopup="menu"/);
+  assert.ok(!/data-math=/.test(html), 'the old math buttons are gone: Math ▸ in the Insert menu');
 });
 // One origin tint per spot: an argument's word inside its macro's run keeps its tint, the run is cut around it
 // (pins the double box "Helmlo [World]"); rows apart and other pages stay whole.

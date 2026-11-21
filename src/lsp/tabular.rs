@@ -85,6 +85,19 @@ pub struct Table {
     pub head_tail: String,
     #[serde(default)]
     pub end_indent: String,
+    /// A tabularray spec written as keys (`colspec={lX}, hlines`): `cols` and `seps` are its `colspec`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub inner: Option<Inner>,
+}
+
+/// The text of a key-list spec around its `colspec` value; `implied`: the whole spec where it names
+/// no `colspec` (the columns are then tabularray's default `Q`, one per cell of the widest row).
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Default)]
+pub struct Inner {
+    pub before: String,
+    pub after: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub implied: Option<String>,
 }
 
 /// Rules a row may have before it.
@@ -134,13 +147,61 @@ fn skip_ws(s: &str, mut i: usize) -> usize {
 
 /// The table environments the run knows: `\begin{name}` runs into `\@array`'s code, not through a
 /// saved copy; array.sty's `\@tabarray` calls it by another name (`\let\@@array\@array`).
-pub(super) fn is_table(analysis: &crate::analysis::machine::Analysis, name: &str) -> bool {
+pub(super) fn is_table(analysis: &crate::analysis::machine::Analysis, name: &str, calls: &Calls) -> bool {
     let Some(array) = analysis.interner.lookup("@array") else { return false };
     let code = analysis.env.meaning(array);
     let reached = super::handlers::body_reach(analysis, name, 400, false);
     // only a macro's code: an undefined `\@array` would equal every undefined name reached
     let copy = |s: &crate::engine::tex::Sym| code.as_macro().is_some() && analysis.env.meaning(*s) == code;
-    reached.contains(&array) || reached.iter().any(copy)
+    reached.contains(&array) || reached.iter().any(copy) || splits_at_tabs(analysis, name, calls)
+}
+
+/// The calls library code made in the run, by caller (`within`), built once when first asked.
+#[derive(Default)]
+pub(super) struct Calls(std::cell::OnceCell<std::collections::HashMap<Sym, Vec<Sym>>>);
+
+impl Calls {
+    fn of(&self, analysis: &crate::analysis::machine::Analysis) -> &std::collections::HashMap<Sym, Vec<Sym>> {
+        self.0.get_or_init(|| {
+            let mut callees: std::collections::HashMap<Sym, Vec<Sym>> = Default::default();
+            for e in &analysis.facts.expansions {
+                if let Some(w) = e.within
+                    && crate::queries::query::origin(analysis, e.span.file) != "document"
+                {
+                    callees.entry(w).or_default().push(e.name);
+                }
+            }
+            callees
+        })
+    }
+}
+
+type Sym = crate::engine::tex::Sym;
+
+/// Whether the code the run expanded from `\name` on holds an alignment tab `&` as data: a table that
+/// splits its body into cells at `&` itself (tabularray's `\seq_set_split`) instead of reaching `\@array`.
+/// The walk follows the calls the run recorded (`within`), not the names a body spells (an environment
+/// that collects its body, as ltcmd's `+b`, runs it by a built name), and only calls made by library
+/// code: a tabular in a frame's body is the frame's content, not the frame's own split.
+fn splits_at_tabs(analysis: &crate::analysis::machine::Analysis, name: &str, calls: &Calls) -> bool {
+    use crate::engine::tex::{Catcode, Tok};
+    let Some(start) = analysis.interner.lookup(name) else { return false };
+    let callees = calls.of(analysis);
+    let mut seen = std::collections::BTreeSet::from([start]);
+    let mut queue = std::collections::VecDeque::from([start]);
+    while let Some(sym) = queue.pop_front() {
+        let holds_tab = (analysis.env.meaning(sym).as_macro())
+            .is_some_and(|m| m.replacement_text.iter().any(|t| matches!(t.tok, Tok::Chr('&', Catcode::Tab))));
+        if holds_tab {
+            return true;
+        }
+        for &c in callees.get(&sym).into_iter().flatten() {
+            if seen.len() < analysis.settings.limits.table_reach && seen.insert(c) {
+                queue.push_back(c);
+            }
+        }
+    }
+    false
 }
 
 /// The `\begin{name}` at or before `at` on its line (else after it), and
@@ -248,7 +309,8 @@ fn spec_at(spec: &str) -> (Vec<Spanned>, Vec<String>) {
                 let mut col = Col { align: c.to_string(), pre: std::mem::take(&mut pre), ..Default::default() };
                 let (open, wants) = (s[i..].chars().next(), matches!(c, 'p' | 'm' | 'b' | 'w' | 'W'));
                 let mut at = None;
-                if ((wants && open == Some('{')) || (c == 'S' && open == Some('[')))
+                // a width in braces (`p{3cm}`), options in brackets (siunitx's `S[…]`, tabularray's `X[2,c]`, `Q[r]`)
+                if ((wants && open == Some('{')) || (!wants && open == Some('[')))
                     && let Some((a, e)) = arg(i)
                 {
                     col.arg = a;
@@ -282,8 +344,9 @@ impl Col {
 
 fn col_text(c: &Col) -> String {
     match (c.align.as_str(), c.arg.is_empty()) {
-        ("S", false) => format!("S[{}]", c.arg),
         ("p" | "m" | "b" | "w" | "W", _) => format!("{}{{{}}}", c.align, c.arg),
+        ("l" | "c" | "r", _) => c.align.clone(),
+        (a, false) => format!("{a}[{}]", c.arg),
         (a, _) => a.to_string(),
     }
 }
@@ -302,9 +365,13 @@ fn rule_at(s: &str) -> Option<usize> {
     Some(i)
 }
 
-/// A cell's text as a cell: a `\multicolumn{n}{spec}{text}` spans.
-fn cell(text: &str) -> Cell {
+/// A cell's text as a cell: a `\multicolumn{n}{spec}{text}` spans; in a tabularray table (`keyed`) a
+/// `\SetCell[c=n]{spec} text` does (its `spec` tabularray's key list there), other options stay text.
+fn cell(text: &str, keyed: bool) -> Cell {
     let t = text.trim();
+    if keyed {
+        return set_cell(t).unwrap_or_else(|| Cell { text: t.to_string(), span: 1, spec: String::new() });
+    }
     let multi = t.strip_prefix("\\multicolumn").and_then(|r| {
         let at = t.len() - r.len();
         let mut groups = Vec::new();
@@ -322,10 +389,37 @@ fn cell(text: &str) -> Cell {
     }
 }
 
-fn cell_text(c: &Cell) -> String {
-    match c.span > 1 || !c.spec.is_empty() {
-        true => format!("\\multicolumn{{{}}}{{{}}}{{{}}}", c.span, c.spec, c.text),
-        false => c.text.clone(),
+/// `\SetCell[c=n]{spec} text` (the `[…]` holding at most `c`) as a cell spanning `n` columns.
+fn set_cell(t: &str) -> Option<Cell> {
+    let r = t.strip_prefix("\\SetCell")?;
+    let at = skip_ws(t, t.len() - r.len());
+    let mut span = 1;
+    let mut i = at;
+    if t[i..].starts_with('[') {
+        let e = group_end(t, i)?;
+        for (a, b) in top_items(&t[i + 1..e - 1]) {
+            match key_value(&t[i + 1 + a..i + 1 + b]) {
+                ("c", Some((n, _))) => span = n.trim().parse().ok().filter(|&n| n >= 1)?,
+                _ => return None,
+            }
+        }
+        i = skip_ws(t, e);
+    }
+    let e = group_end(t, i).filter(|_| t[i..].starts_with('{'))?;
+    let spec = t[i + 1..e - 1].to_string();
+    // a cell spec of `1` and none at all are the same cell
+    (span > 1 || !spec.trim().is_empty()).then(|| Cell { text: t[e..].trim_start().to_string(), span, spec })
+}
+
+fn cell_text(c: &Cell, keyed: bool) -> String {
+    match (c.span > 1 || !c.spec.is_empty(), keyed) {
+        (false, _) => c.text.clone(),
+        (true, false) => format!("\\multicolumn{{{}}}{{{}}}{{{}}}", c.span, c.spec, c.text),
+        (true, true) => {
+            let n = if c.span > 1 { format!("[c={}]", c.span) } else { String::new() };
+            // tabularray's rules are keys of their own: an array spec's `|` has no place here
+            format!("\\SetCell{n}{{{}}} {}", c.spec.replace('|', "").trim(), c.text)
+        }
     }
 }
 
@@ -362,19 +456,120 @@ fn head(s: &str) -> Option<(String, Vec<Span>, Option<String>, usize)> {
 /// with the bytes of its argument (`p{3cm}`'s `3cm`), all in `text`.
 pub fn widths(text: &str) -> Option<(Option<Span>, Vec<Spanned>)> {
     let (_, mut groups, _, _) = head(text)?;
-    let (a, b) = groups.pop()?;
+    let (mut a, mut b) = groups.pop()?;
+    // a key-list spec: its `colspec` value; none written, no widths
+    if let Some((inner, colspec)) = inner_spec(&text[a..b], &|_| false) {
+        if inner.implied.is_some() {
+            return Some((None, Vec::new()));
+        }
+        (a, b) = (a + inner.before.len(), a + inner.before.len() + colspec.len());
+    }
     let cols =
         spec_at(&text[a..b]).0.into_iter().map(|(c, at, (x, y))| (c, at.map(|(p, q)| (a + p, a + q)), (a + x, a + y)));
     Some((groups.pop(), cols.collect()))
 }
 
-/// The table at `text[start..end]` (from `\begin` to past `\end`).
+/// The items of a key list at its top level (commas in groups belong to their item), as byte ranges.
+pub(super) fn top_items(s: &str) -> Vec<Span> {
+    let (mut out, mut from, mut i) = (Vec::new(), 0, 0);
+    while i < s.len() {
+        match s.as_bytes()[i] {
+            b'{' | b'[' => i = group_end(s, i).unwrap_or(s.len()),
+            b'\\' => i += 2,
+            b',' => {
+                out.push((from, i));
+                from = i + 1;
+                i += 1;
+            }
+            _ => i += 1,
+        }
+    }
+    out.push((from, s.len()));
+    out.into_iter().filter(|&(a, b)| !s[a..b].trim().is_empty()).collect()
+}
+
+/// An item's key and value (`key = {v}` gives `v` unbraced), the value's bytes in the item.
+pub(super) fn key_value(item: &str) -> (&str, Option<(&str, Span)>) {
+    let mut i = 0;
+    while i < item.len() {
+        match item.as_bytes()[i] {
+            b'{' | b'[' => i = group_end(item, i).unwrap_or(item.len()),
+            b'\\' => i += 2,
+            b'=' => {
+                let lead = item[i + 1..].len() - item[i + 1..].trim_start().len();
+                let (mut a, mut b) = (i + 1 + lead, item.trim_end().len());
+                if item[a..b].starts_with('{') && group_end(item, a) == Some(b) {
+                    (a, b) = (a + 1, b - 1);
+                }
+                return (item[..i].trim(), Some((&item[a..b], (a, b))));
+            }
+            _ => i += 1,
+        }
+    }
+    (item.trim(), None)
+}
+
+/// A spec written as keys, as tabularray reads it (`\__tblr_parse_table_spec:n`): its first item has a value
+/// or names a key (`is_key`), else it is a column spec. The text around its `colspec` value, and that value.
+pub(super) fn inner_spec(spec: &str, is_key: &dyn Fn(&str) -> bool) -> Option<(Inner, String)> {
+    let items = top_items(spec);
+    let &(a, b) = items.first()?;
+    let (name, value) = key_value(&spec[a..b]);
+    let name = &name[..name.find(['{', '[']).unwrap_or(name.len())];
+    if value.is_none() && !is_key(name) {
+        return None;
+    }
+    for (a, b) in items {
+        if let (key, Some((v, (x, y)))) = key_value(&spec[a..b])
+            && key == "colspec"
+        {
+            let inner = Inner { before: spec[..a + x].into(), after: spec[a + y..].into(), implied: None };
+            return Some((inner, v.to_string()));
+        }
+    }
+    let sep = if spec.trim().is_empty() { "" } else { ", " };
+    let before = format!("{}{sep}colspec={{", spec.trim_end());
+    Some((Inner { before, after: "}".into(), implied: Some(spec.into()) }, String::new()))
+}
+
+/// The table's spec as written: a key list's `colspec` in its keys.
+fn spec_written(t: &Table) -> String {
+    let own = spec_text(&t.cols, &t.seps);
+    match &t.inner {
+        None => own,
+        Some(Inner { implied: Some(spec), .. })
+            if t.cols.iter().all(|c| *c == Col::implied()) && own.chars().all(|c| c == 'Q') =>
+        {
+            spec.clone()
+        }
+        Some(i) => format!("{}{own}{}", i.before, i.after),
+    }
+}
+
+impl Col {
+    /// tabularray's default column, what a spec without `colspec` has.
+    fn implied() -> Col {
+        Col { align: "Q".into(), ..Col::default() }
+    }
+}
+
+/// The table at `text[start..end]` (from `\begin` to past `\end`), its spec read as columns.
+#[cfg(test)]
 pub fn parse(text: &str) -> Option<Table> {
+    parse_with(text, &|_| false)
+}
+
+/// [`parse`], a spec whose first item `is_key` read as a key list.
+pub fn parse_with(text: &str, is_key: &dyn Fn(&str) -> bool) -> Option<Table> {
     let s = text;
     let (env, groups, pos, i) = head(s)?;
     let mut groups: Vec<String> = groups.into_iter().map(|(a, b)| s[a..b].to_string()).collect();
     let spec = groups.pop()?;
     let width = groups.pop();
+    let (inner, spec) = match inner_spec(&spec, is_key) {
+        Some((inner, colspec)) => (Some(inner), colspec),
+        None => (None, spec),
+    };
     let (cols, seps) = parse_spec(&spec);
     let end_at = s.rfind("\\end{")?;
     let line_end = s[i..end_at].find('\n').map_or(end_at, |n| i + n);
@@ -382,13 +577,18 @@ pub fn parse(text: &str) -> Option<Table> {
     let end_indent: String = s[..end_at].rsplit('\n').next().unwrap_or("").to_string();
     let end_indent = if end_indent.trim().is_empty() { end_indent } else { String::new() };
     let body = &s[(line_end + 1).min(end_at)..end_at - end_indent.len()];
-    let mut t = Table { env, width, pos, cols, seps, head_tail, end_indent, ..Default::default() };
+    let mut t = Table { env, width, pos, cols, seps, head_tail, end_indent, inner, ..Default::default() };
     body_rows(body, &mut t);
+    if t.inner.as_ref().is_some_and(|i| i.implied.is_some()) {
+        let n = t.rows.iter().map(|r| r.cells.iter().map(|c| c.span.max(1)).sum::<usize>()).max().unwrap_or(1);
+        (t.cols, t.seps) = (vec![Col::implied(); n], vec![String::new(); n + 1]);
+    }
     Some(t)
 }
 
 /// Splits the body into rows at `\\`, cells at `&`, outside groups.
 fn body_rows(b: &str, t: &mut Table) {
+    let keyed = t.inner.is_some();
     let mut row = Row::default();
     let (mut cur, mut cells) = (String::new(), Vec::<String>::new());
     let (mut row_start, mut i, mut line_has_row) = (None::<usize>, 0, false);
@@ -472,7 +672,7 @@ fn body_rows(b: &str, t: &mut Table) {
                     e = ce;
                 }
                 row.raw = b[row_start.take().unwrap_or(i)..e].to_string();
-                row.cells = cells.drain(..).map(|c| cell(&c)).collect();
+                row.cells = spans(cells.drain(..).map(|c| cell(&c, keyed)).collect(), keyed);
                 t.rows.push(std::mem::take(&mut row));
                 line_has_row = true;
                 i = e;
@@ -498,7 +698,7 @@ fn body_rows(b: &str, t: &mut Table) {
     if !cells.is_empty() || !cur.trim().is_empty() {
         cells.push(cur);
         row.raw = b[row_start.unwrap_or(0)..].trim_end().to_string();
-        row.cells = cells.into_iter().map(|c| cell(&c)).collect();
+        row.cells = spans(cells.into_iter().map(|c| cell(&c, keyed)).collect(), keyed);
         t.rows.push(row);
     } else {
         t.after_inline = row.inline;
@@ -508,6 +708,36 @@ fn body_rows(b: &str, t: &mut Table) {
     t.style.inline_rules = seen_inline;
     t.style.spaced = t.rows.iter().any(|r| r.raw.contains(" & ")) || !t.rows.iter().any(|r| r.raw.contains('&'));
     t.style.aligned = aligned(&t.rows);
+}
+
+/// A tabularray row's cells with the empty ones a `\SetCell[c=n]` covers taken into it; a covered cell
+/// with text keeps its place (tabularray hides it, the dialog shows it).
+fn spans(cells: Vec<Cell>, keyed: bool) -> Vec<Cell> {
+    if !keyed {
+        return cells;
+    }
+    let mut out: Vec<Cell> = Vec::new();
+    let mut cover = 0;
+    for c in cells {
+        if cover > 0 && c.text.is_empty() && c.span == 1 && c.spec.is_empty() {
+            cover -= 1;
+            continue;
+        }
+        if cover > 0
+            && let Some(last) = out.last_mut()
+        {
+            // text under a span: the span shrinks to what is free
+            last.span -= cover;
+        }
+        cover = c.span - 1;
+        out.push(c);
+    }
+    if cover > 0
+        && let Some(last) = out.last_mut()
+    {
+        last.span -= cover;
+    }
+    out
 }
 
 /// Whether the rows pad their cells so the `&`s line up.
@@ -521,9 +751,9 @@ fn aligned(rows: &[Row]) -> bool {
 }
 
 /// The row's text: its own while its cells are as it has them.
-fn row_text(r: &Row, widths: &[usize], style: &Style) -> String {
+fn row_text(r: &Row, widths: &[usize], style: &Style, keyed: bool) -> String {
     if !r.raw.is_empty()
-        && let Some(old) = parse_row(&r.raw)
+        && let Some(old) = parse_row(&r.raw, keyed)
         && old.cells == r.cells
         && old.end == r.end
         && old.comment == r.comment
@@ -531,20 +761,34 @@ fn row_text(r: &Row, widths: &[usize], style: &Style) -> String {
         return r.raw.clone();
     }
     let amp = if style.spaced { " & " } else { "&" };
+    // the texts between `&`s: a tabularray span writes the cells it covers, empty
+    let mut texts: Vec<(String, usize, bool)> = Vec::new();
+    for c in &r.cells {
+        match keyed {
+            true => {
+                texts.push((cell_text(c, keyed), 1, c.span == 1));
+                texts.extend((1..c.span).map(|_| (String::new(), 1, false)));
+            }
+            false => texts.push((cell_text(c, keyed), c.span.max(1), c.span == 1)),
+        }
+    }
     let mut out = String::new();
     let mut col = 0;
-    let n = r.cells.len();
-    for (k, c) in r.cells.iter().enumerate() {
-        let text = cell_text(c);
-        out.push_str(&text);
+    let n = texts.len();
+    for (k, (text, cols, single)) in texts.iter().enumerate() {
+        // an empty cell between two: `a & & b`, one space each side of the `&`s
+        if text.is_empty() && !style.aligned && k > 0 && out.ends_with("& ") {
+            out.pop();
+        }
+        out.push_str(text);
         if k + 1 < n {
-            if style.aligned && c.span == 1 {
+            if style.aligned && *single {
                 let w = widths.get(col).copied().unwrap_or(0);
                 out.push_str(&" ".repeat(w.saturating_sub(text.chars().count())));
             }
             out.push_str(amp);
         }
-        col += c.span.max(1);
+        col += cols;
     }
     if !r.end.is_empty() {
         out.push_str(if style.spaced { " " } else { "" });
@@ -558,8 +802,8 @@ fn row_text(r: &Row, widths: &[usize], style: &Style) -> String {
 }
 
 /// One row's text read back as a row, to tell an edited row from its text.
-fn parse_row(raw: &str) -> Option<Row> {
-    let mut t = Table::default();
+fn parse_row(raw: &str, keyed: bool) -> Option<Row> {
+    let mut t = Table { inner: keyed.then(Inner::default), ..Table::default() };
     body_rows(raw, &mut t);
     (t.rows.len() == 1).then(|| t.rows.remove(0))
 }
@@ -573,7 +817,7 @@ pub fn emit(t: &Table) -> String {
     if let Some(p) = &t.pos {
         out.push_str(&format!("[{p}]"));
     }
-    out.push_str(&format!("{{{}}}{}", spec_text(&t.cols, &t.seps), t.head_tail));
+    out.push_str(&format!("{{{}}}{}", spec_written(t), t.head_tail));
     let ncols = t.cols.len();
     let mut widths = vec![0; ncols];
     for r in t.rows.iter().filter(|r| r.cells.iter().all(|c| c.span == 1)) {
@@ -600,7 +844,7 @@ pub fn emit(t: &Table) -> String {
         rules(&mut out, &r.before, r.inline);
         out.push('\n');
         out.push_str(ind);
-        out.push_str(&row_text(r, &widths, &t.style));
+        out.push_str(&row_text(r, &widths, &t.style, t.inner.is_some()));
     }
     rules(&mut out, &t.after, t.after_inline);
     out.push('\n');
@@ -771,6 +1015,27 @@ mod tests {
         // a `\begin` without its `\end` stays text, the rows after it are read as before
         let open = parse("\\begin{tabular}{ll}\na & \\begin{x} \\\\\nc & d \\\\\n\\end{tabular}").unwrap();
         assert_eq!(open.rows.len(), 2);
+    }
+
+    /// Intuition: in a tabularray table `\SetCell[c=2]{c}` is a merged cell, as `\multicolumn` is in
+    /// a tabular: the grid holds one cell spanning two columns and writes the covered `&` back; a
+    /// `\SetCell` with other options (`r=`) stays the cell's text. Pins the dialog showing the raw
+    /// `\SetCell[c=2]{c} Both` as text in the first cell and an empty one beside it.
+    #[test]
+    fn a_tabularray_span_is_a_merged_cell() {
+        let src = "\\begin{tblr}{colspec={lrc}, hlines}\n\\SetCell[c=2]{c} Both & & x \\\\\n\\SetCell[r=2]{l} a & 1 & y \\\\\n\\end{tblr}";
+        let t = parse_with(src, &|k| k == "hlines").unwrap();
+        let first = &t.rows[0].cells;
+        assert_eq!((first.len(), first[0].span, first[0].spec.as_str(), first[0].text.as_str()), (2, 2, "c", "Both"));
+        assert_eq!(t.rows[1].cells[0].text, "\\SetCell[r=2]{l} a");
+        assert_eq!(emit(&t), src);
+        // split in the dialog: two plain cells, written as such
+        let mut s = t.clone();
+        s.rows[0].cells = vec![cell("Both", false), cell("", false), cell("x", false)];
+        assert!(emit(&s).contains("\nBoth & & x \\\\\n"), "{}", emit(&s));
+        // merged in the dialog: a span with the array spec's rules dropped
+        s.rows[1].cells = vec![Cell { text: "a".into(), span: 2, spec: "|l|".into() }, cell("y", false)];
+        assert!(emit(&s).contains("\n\\SetCell[c=2]{l} a & & y \\\\\n"), "{}", emit(&s));
     }
 
     #[test]

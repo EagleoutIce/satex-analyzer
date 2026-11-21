@@ -198,10 +198,12 @@ fn unused_package(report: &mut Report) {
         let Some(file) = binding.defs.last().and_then(|&n| analysis.graph.vertex(n)).map(|v| v.span.file) else {
             continue;
         };
+        // only a binding a package's files made counts: the comparison with the format's after that
+        let Some(packages) = readers.get(&file) else { continue };
         let format = analysis.kernel.as_ref().and_then(|k| k.slot(sym));
         let changed = format.is_none_or(|f| f.meaning != binding.meaning || f.value != binding.value);
         let parameter = matches!(binding.meaning.prim(), Some(p) if p.is_parameter());
-        for &package in readers.get(&file).into_iter().flatten() {
+        for &package in packages {
             match (changed, parameter) {
                 (true, true) => _ = acts.insert(package),
                 (true, false) if analysis.env.is_defined(sym) => _ = bound.entry(package).or_default().insert(sym),

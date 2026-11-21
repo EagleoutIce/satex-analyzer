@@ -626,6 +626,7 @@ expansions        how often each macro was expanded during the run
 exports           the names installed packages define, each with the package or library to load                         
 files             every file read, in the order it was opened                                                           
 gaps              constructs the run could not interpret, grouped by cause                                              
+letters           where a punctuation character becomes a letter or stops being one: what names are typeable where      
 occurrences       package banners, passed options and other one-off events                                              
 options           the keys an environment or command's optional argument accepts                                        
 pgfkeys           pgfkeys defined at the end of the run and what each does                                              

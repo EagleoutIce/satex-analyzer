@@ -39,7 +39,14 @@ pub(super) struct Taker<'a> {
     resume: Option<Box<Drive>>,
     /// A paragraph preview's end: the file, its last line, and whether the run has read the file yet.
     stop: Option<(crate::engine::tex::FileId, u32, bool)>,
+    /// What gets the preview once the run reaches `stop`, which then goes on: a copy is concluded
+    /// there ([`Machine::hand_preview`]). Without it the run halts at `stop`.
+    preview: Option<Box<Pending>>,
 }
+
+/// A paragraph preview the run hands on at its end: the hook, the main file and its text, the
+/// paragraph's file name and its first and last line.
+struct Pending(Preview, crate::engine::tex::FileId, Rc<str>, String, u32, u32);
 
 /// What a paragraph preview hands on: the run up to the edited paragraph's end, the
 /// paragraph's file and its first and last line.
@@ -248,6 +255,39 @@ impl Machine<'_> {
         (seen && !open) || past
     }
 
+    /// Whether the run hands a paragraph preview on here, at its end ([`Taker::preview`]).
+    pub(super) fn preview_due(&mut self) -> bool {
+        self.checkpoints.preview.is_some() && self.preview_done()
+    }
+
+    /// Concludes a copy of the run at the paragraph preview's end and hands it on; the run goes
+    /// on. The copy halts where a separate run from the same checkpoint would have, with the
+    /// same state: the run itself is that run up to here.
+    pub(super) fn hand_preview(&mut self, drive: Drive) {
+        let (Some(pending), stop) = (self.checkpoints.preview.take(), self.checkpoints.stop.take()) else { return };
+        let Pending(then, id, source, path, lo, hi) = *pending;
+        let clock = std::time::Instant::now();
+        let mut p = self.clone();
+        p.checkpoints.resume = Some(Box::new(drive));
+        p.checkpoints.stop = stop;
+        let cloned = clock.elapsed();
+        p.run_guarded();
+        if p.out.exhausted {
+            return;
+        }
+        let analysis = p.conclude(id, &source);
+        let concluded = clock.elapsed();
+        then(analysis, &path, lo, hi);
+        if self.cfg.verbose >= 2 {
+            crate::util::progress::note!(
+                "satex: paragraph {lo}-{hi} first: clone {:.3}s, conclude {:.3}s, rows {:.3}s",
+                cloned.as_secs_f64(),
+                (concluded - cloned).as_secs_f64(),
+                (clock.elapsed() - concluded).as_secs_f64()
+            );
+        }
+    }
+
     /// Saves the run's state and `drive` as a checkpoint.
     pub(super) fn take_checkpoint(&mut self, drive: Drive) {
         // No step since the last one (the run just resumed from it): that one stands for this state.
@@ -267,6 +307,12 @@ impl Machine<'_> {
             v.extend(self.env.probe());
             v.sort_by_key(|p| std::cmp::Reverse(p.1));
             eprintln!("PROBE step {} {:?}", self.out.steps, &v[..v.len().min(30)]);
+        }
+        if !again {
+            // The copy shares the site tables whole.
+            self.expansion_sites.settle();
+            self.call_runs.settle();
+            self.out.graph.settle();
         }
         let (before, clock) = (crate::analysis::budget::in_use(), std::time::Instant::now());
         let machine = (!again).then(|| self.clone());
@@ -722,9 +768,18 @@ pub struct Checkpoints<'a> {
     pub pending: Option<super::Unfinished>,
     /// What the next runs hand on early.
     pub hooks: RunHooks,
+    /// Set by a server that answers between its messages: what a run kept of the one before is
+    /// dropped by [`Checkpoints::rest`], after the run's results went out, not before.
+    pub defer_drops: bool,
+    buried: Option<Prior<'a>>,
 }
 
 impl<'a> Checkpoints<'a> {
+    /// Drops what the last run kept of the one before it ([`Checkpoints::defer_drops`]).
+    pub fn rest(&mut self) {
+        self.buried = None;
+    }
+
     /// Files outside the documents landed (a package bundle). A checkpoint holds while every
     /// name its run looked up resolves as before: the first that resolves otherwise goes, and
     /// every later one with it. What a run read is checked at its resume ([`reread`]).
@@ -800,6 +855,8 @@ impl<'a> Checkpoints<'a> {
             between_runs: None,
             pending: None,
             hooks: RunHooks::default(),
+            defer_drops: false,
+            buried: None,
         }
     }
 
@@ -894,7 +951,7 @@ impl<'a> Checkpoints<'a> {
         let edit = change.as_ref().map(|c| (at(c), c.lo)).or(edit);
         let past = change.as_ref().map(|c| (at(c), c.hi.1, self.cfg.limits.checkpoints_after_edit));
         if let (Some(then), Some((path, line))) = (self.hooks.preview.take(), &edit) {
-            self.preview(&m, id, source, path, *line, then);
+            self.preview(&mut m, id, source, path, *line, then);
         }
         let next = m.out.steps + self.every;
         let edited = edit.as_ref().map(|(path, _)| path.clone());
@@ -948,6 +1005,9 @@ impl<'a> Checkpoints<'a> {
             self.hooks.provisional = taking.provisional.take().map(|(.., then)| then);
             (self.list, self.log, self.every) = (taking.list, taking.log, taking.every);
             self.converged = taking.converged;
+            if self.defer_drops {
+                self.buried = Some(std::mem::take(&mut taking.prior));
+            }
             match taking.spliced.take() {
                 Some(end) => {
                     m = *end;
@@ -1017,9 +1077,17 @@ impl<'a> Checkpoints<'a> {
     /// `old` are the last run's checkpoints that no longer hold, `log` what it read.
     fn plant(&mut self, change: &Change, old: &[Checkpoint<'a>], log: &[crate::project::overlay::Read]) -> bool {
         let Some(last) = self.list.last() else { return false };
+        // The last one that holds stands on the line before the edit's (or on it): no line start
+        // lies between for a run of the old text to place one at.
+        let out = &last.machine.out;
+        let adjacent = reading_file_after(&last.machine.input, 1).is_some_and(|(mouth, _)| {
+            let path = Path::new(&out.files[usize::from(mouth.file)].path);
+            let edited = change.path.as_deref().map_or(mouth.file == out.main_file, |p| p == path);
+            edited && mouth.position().0 + 1 >= change.lo
+        });
         // The last run's own checkpoints surround the edit already.
         if self.cfg.limits.checkpoint_meet_steps == 0
-            || (last.pinned || last.toward) && old.first().is_some_and(|c| c.pinned)
+            || (last.pinned || last.toward || adjacent) && old.first().is_some_and(|c| c.pinned)
         {
             return false;
         }
@@ -1094,11 +1162,11 @@ impl<'a> Checkpoints<'a> {
         true
     }
 
-    /// Runs a copy of the resumed `m` to the end of the paragraph edited at `path`'s `line`, if that
-    /// line is in one of a file the run reads, and hands the result to `then`.
+    /// Sets the resumed `m` to hand on the paragraph edited at `path`'s `line` once it reaches
+    /// the paragraph's end ([`Machine::hand_preview`]), if that line is in one of a file the run reads.
     fn preview(
         &self,
-        m: &Machine<'a>,
+        m: &mut Machine<'a>,
         id: crate::engine::tex::FileId,
         source: &str,
         path: &Path,
@@ -1114,28 +1182,13 @@ impl<'a> Checkpoints<'a> {
             },
         };
         let Some((lo, hi)) = paragraph_at(&text, line) else { return };
-        let clock = std::time::Instant::now();
-        let mut p = m.clone();
-        p.checkpoints.resume = m.checkpoints.resume.clone();
-        p.checkpoints.stop = Some((file as crate::engine::tex::FileId, hi, false));
-        let (cloned, from) = (clock.elapsed(), p.out.steps);
-        p.run_guarded();
-        let (ran, steps) = (clock.elapsed(), p.out.steps - from);
-        let at = p.checkpoints.stop.is_some_and(|(.., seen)| seen);
-        if at && !p.out.exhausted {
-            let analysis = p.conclude(id, source);
-            let concluded = clock.elapsed();
-            then(analysis, &m.out.files[file].path.clone(), lo, hi);
-            if self.cfg.verbose >= 2 {
-                crate::util::progress::note!(
-                    "satex: paragraph {lo}-{hi} first: clone {:.3}s, run {:.3}s for {steps} steps, conclude {:.3}s, rows {:.3}s",
-                    cloned.as_secs_f64(),
-                    (ran - cloned).as_secs_f64(),
-                    (concluded - ran).as_secs_f64(),
-                    (clock.elapsed() - concluded).as_secs_f64()
-                );
-            }
+        // The main file's last paragraph ends with the run: the run's own result is its preview.
+        if file == usize::from(id) && text.split('\n').skip(hi as usize).all(|l| l.trim().is_empty()) {
+            return;
         }
+        m.checkpoints.stop = Some((file as crate::engine::tex::FileId, hi, false));
+        let name = m.out.files[file].path.clone();
+        m.checkpoints.preview = Some(Box::new(Pending(then, id, Rc::from(source), name, lo, hi)));
     }
 
     /// The machine of the last checkpoint that is still valid, set up to read

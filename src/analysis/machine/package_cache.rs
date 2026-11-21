@@ -45,7 +45,7 @@ use crate::analysis::facts::{
 use crate::analysis::graph::{ControlDep, EdgeKind, Vertex, VertexTag};
 use crate::caches::format::{Fnv, SEVERITIES, leak};
 use crate::engine::builtins::{DefMode, LoadKind, OccKind};
-use crate::engine::env::{Binding, NodeId, ReadKind};
+use crate::engine::env::{Amb, Binding, Expr, Guard, Hole, NodeId, ReadKind, Src};
 use crate::engine::tex::codec::{self, Mode};
 use crate::engine::tex::{
     CatcodeTable, EndLineChar, FileId, LineMark, MacroDef, Meaning, Mouth, RegKind, Span, Sym, Token,
@@ -292,6 +292,8 @@ struct CachedBinding {
     edit: Option<(u32, u32, u64)>,
     /// The meanings a join left it, one of which it holds.
     may: Option<Vec<Meaning>>,
+    /// Its value, or parts of its text, as a function of what the serving state holds.
+    amb: Option<Amb>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -311,6 +313,8 @@ struct CachedDefinition {
     splice: Option<u32>,
     /// As [`CachedBinding::edit`], for `mac`.
     edit: Option<(u32, u32, u64)>,
+    /// As [`CachedBinding::amb`], for `mac`'s text.
+    holes: Vec<Hole>,
     depth: u16,
     global: bool,
     redefines: bool,
@@ -379,13 +383,20 @@ struct Reads {
     gaps: Vec<(String, Sym)>,
     /// Text copies (by `[ReadKind::Copy]`): name, original length, growth room.
     copies: Vec<(Sym, u32, i64)>,
+    /// Tests decided on values the segment did not key on: each must come out the same.
+    guards: Vec<Guard>,
+    /// Values the segment only passes on, as expressions over what it found: each must
+    /// have a value here ([`Expr::eval`]).
+    flows: Vec<Rc<Expr>>,
 }
 
 /// Checkpoint state that changes on almost every line.
 #[derive(Serialize, Deserialize, Default)]
 struct Scalars {
-    /// Steps, progress, assignments since the load began.
+    /// Steps, undecided choices, progress, assignments since the load began: a replay counts
+    /// the work its read did, so a served load leaves the counts a read leaves.
     steps: u64,
+    forks: u64,
     progress: u64,
     assignments: u64,
     recent: Vec<Sym>,
@@ -838,6 +849,8 @@ pub(super) struct Log {
     spoiled: Option<&'static str>,
     /// Definitions with text from before the segment: position and length.
     def_splices: HashMap<usize, (usize, usize)>,
+    /// Definitions whose text holds values the load only passes on ([`Machine::keep_holes`]).
+    def_holes: HashMap<usize, Vec<crate::engine::env::Hole>>,
 }
 
 /// Initial state of a load; reads are compared against it.
@@ -853,6 +866,7 @@ struct Before {
     loads: usize,
     counters: Vec<(u8, Option<i64>)>,
     steps: u64,
+    forks: u64,
     progress: u64,
     assignments: u64,
     /// [`Machine::line_seq`] and [`Machine::digits_made`].
@@ -1211,19 +1225,6 @@ const DEFS: u8 = 32;
 const COPY: u8 = 64;
 const SHAPE: u8 = 128;
 
-/// tex.web § 241: the parameters a job sets from the clock. Their values
-/// are the run's, not the document's: a segment that read one is keyed on
-/// the read, not the value, and replays the effect of the run that made it,
-/// as that run's clock had it. A replay says so as an assumption.
-fn is_clock(name: &str) -> bool {
-    matches!(name, "time" | "day" | "month" | "year")
-}
-
-/// The parts of a read of `name` its digest covers.
-fn digested_kinds(name: &str, kinds: u8) -> u8 {
-    if is_clock(name) { kinds & !VALUE } else { kinds }
-}
-
 /// What each kind bit reads, lowest bit first, for saying which read a stale
 /// segment made.
 const KINDS: [&str; 8] =
@@ -1437,6 +1438,11 @@ impl Machine<'_> {
             // kept call arguments are a report (completion reads them), not interpretation
             settings.record_arguments = false;
             settings.engine = None;
+            // the `\write18` access in effect, which build files may set (`\shellescape`)
+            settings.shell_escape = Some(self.out.plugins.shell_escape);
+            // a segment keys on what it makes of the clock, not on the setting: one tree
+            // serves every date
+            settings.clock = Default::default();
             // Where the trees are is no part of what a package does: each
             // segment checks its lookups and file contents itself.
             let roots = self.cache_roots();
@@ -1590,6 +1596,7 @@ impl Machine<'_> {
             loads: self.out.facts.loads.len(),
             counters,
             steps: self.out.steps,
+            forks: self.out.forks,
             progress: self.source_progress,
             assignments: self.env.assignments,
             names: (self.line_seq, self.digits_made),
@@ -1704,7 +1711,6 @@ impl Machine<'_> {
             minted: _,
             clock: _,
             clock_read_at: _,
-            clock_cached: _,
             stubs: _,
             stub_said: _,
             // Recorded (facts, graph, names, files, bindings).
@@ -1717,6 +1723,8 @@ impl Machine<'_> {
             site_writes: _,
             shape_memo: _,
             spare_frame: _,
+            spare_box: _,
+            spare_start: _,
             cond_sites: _,
             // In segment's lists and scalars.
             catcodes: _,
@@ -1835,6 +1843,8 @@ impl Machine<'_> {
             graph_full_noted: _,
             abs_parts: _,
             abs_from: _,
+            amb: _,
+            amb_base: _,
             compared: _,
             abs_whole: _,
             abs_spell: _,
@@ -1882,6 +1892,7 @@ impl Machine<'_> {
             // Only during `\edef` body scan.
             copy_target: _,
             copies: _,
+            holes: _,
             popping_in_read: _,
             reading_command: _,
             head_call: _,
@@ -1915,6 +1926,7 @@ impl Machine<'_> {
             carried_chars: _,
             aside: _,
             script_pending: _,
+            math_operand: _,
             script_groups: _,
             redefines_hint: _,
             text_apart: _,
@@ -2006,9 +2018,6 @@ impl Machine<'_> {
         let roots = self.cache_roots();
         let mut key = Fnv::new();
         key.put(&(crate::caches::format::cache_key(), name, kind, roots.canonical(&path)));
-        // A segment that read the clock replays that run's clock: only
-        // under the same `clock:` setting.
-        key.put(&self.cfg.clock.to_string());
         let frame = self.live_below(self.input.len());
         let load = Suspended {
             started: std::time::Instant::now(),
@@ -2171,6 +2180,7 @@ impl Machine<'_> {
         let mut written: Vec<(Sym, u8)> = Vec::new();
         let mut origins: Vec<((RegKind, u16), u8)> = Vec::new();
         let mut carried: Vec<Sym> = Vec::new();
+        let mut ambs: HashMap<Sym, Amb> = HashMap::default();
         let replaying = !self.cfg.cache.rebuild && !self.cfg.cache.index.refresh;
         let bytes = replaying.then(|| std::fs::read(&cache).ok()).flatten();
         match bytes.as_deref().map(|bytes| decode(&cache, bytes)) {
@@ -2204,8 +2214,8 @@ impl Machine<'_> {
                         let mut chosen = None;
                         for &k in kids.iter().filter(|&&k| tree.nodes[k as usize].resume == want) {
                             let node = &tree.nodes[k as usize];
-                            let clock = match self.segment_fits(node, &base) {
-                                Ok(clock) => clock,
+                            match self.segment_fits(node, &base) {
+                                Ok(()) => {}
                                 Err(why) => {
                                     reason.get_or_insert(why);
                                     continue;
@@ -2215,10 +2225,10 @@ impl Machine<'_> {
                                 reason = Some("the run could not afford it within its budgets".into());
                                 break 'chain;
                             }
-                            match self.apply_segment(node, span, &before, &mut origins, &mut carried) {
+                            match self.apply_segment(node, span, &before, &mut origins, &mut carried, &mut ambs) {
                                 Ok(marks) => {
                                     written.extend(marks);
-                                    chosen = Some((k, clock));
+                                    chosen = Some(k);
                                     break;
                                 }
                                 Err((why, false)) => {
@@ -2230,13 +2240,9 @@ impl Machine<'_> {
                                 }
                             }
                         }
-                        let Some((k, clock)) = chosen else { break };
+                        let Some(k) = chosen else { break };
                         want = None;
                         reason = None;
-                        if clock {
-                            self.clock_read(span);
-                            self.clock_cached.get_or_insert_with(|| name.to_string());
-                        }
                         let node = &tree.nodes[k as usize];
                         served += node.steps;
                         at = Some(k);
@@ -2311,7 +2317,9 @@ impl Machine<'_> {
             seg_call_finished: false,
             seg_start: HashMap::default(),
             seg_prior: HashMap::default(),
-            seg_assigned: Vec::new(),
+            // What the served segments assigned stands as they left it where the first read
+            // segment begins ([`Machine::start_segment`]), as after segments read.
+            seg_assigned: written.iter().map(|(sym, _)| *sym).collect(),
             seg_copies: HashMap::default(),
             served,
             kind,
@@ -2327,6 +2335,9 @@ impl Machine<'_> {
         for sym in carried {
             self.env.note_carrying(sym);
         }
+        for (sym, amb) in ambs {
+            self.env.restore_amb(sym, amb);
+        }
         self.out.interner.record_touches(true);
         self.out.graph.record_touches(true);
         self.out.graph.record_log(true);
@@ -2337,9 +2348,8 @@ impl Machine<'_> {
     }
 
     /// Whether segment's files are unchanged and this run agrees with what it read.
-    /// Whether the segment can be replayed here, and if so whether it read
-    /// the clock ([`is_clock`]); else why not.
-    fn segment_fits(&self, node: &Node, base: &Path) -> Result<bool, String> {
+    /// Whether the segment can be replayed here; else why not.
+    fn segment_fits(&self, node: &Node, base: &Path) -> Result<(), String> {
         let roots = self.cache_roots();
         for (path, hash) in &node.stamps {
             let path = roots.decode(path);
@@ -2366,16 +2376,13 @@ impl Machine<'_> {
                 return Err("a gap it relied on being reported is not".into());
             }
         }
-        let name_of = |sym: Sym| node.names.get(sym.0 as usize).map_or("", String::as_str);
-        let clock = reads.bindings.iter().any(|(sym, kinds, _)| kinds & VALUE != 0 && is_clock(name_of(*sym)));
         let (mismatch, _) = codec::with(hash_mode(self), || {
             for (sym, kinds, digest) in &reads.bindings {
-                let digested = digested_kinds(name_of(*sym), *kinds);
                 let sym = here(*sym);
                 let binding = sym.and_then(|sym| self.env.get(sym));
                 let alias =
                     sym.and_then(|sym| self.env.aliases.get(&sym)).map(|a| self.out.interner.name(*a).to_string());
-                if binding_digest(binding, alias.as_deref(), digested) != *digest {
+                if binding_digest(binding, alias.as_deref(), *kinds) != *digest {
                     let name = sym.map_or_else(|| "a name".to_string(), |sym| self.out.interner.cs(sym));
                     let read: Vec<&str> =
                         KINDS.iter().enumerate().filter(|(bit, _)| kinds >> bit & 1 != 0).map(|(_, k)| *k).collect();
@@ -2387,6 +2394,22 @@ impl Machine<'_> {
         if let Some(reason) = mismatch {
             return Err(reason);
         }
+        // Tests on values it did not key on come out as they did, and what it passes on
+        // has a value here.
+        let leaf = |sym: Sym| here(sym).and_then(|sym| self.env.slot(sym)).and_then(|b| b.value.as_int());
+        for (a, relation, b, out) in &reads.guards {
+            let holds = a.eval(&leaf).zip(b.eval(&leaf)).map(|(a, b)| match relation {
+                '<' => a < b,
+                '>' => a > b,
+                _ => a == b,
+            });
+            if holds != Some(*out) {
+                return Err("a test on a value it passes on comes out differently".into());
+            }
+        }
+        if reads.flows.iter().any(|e| e.eval(&leaf).is_none()) {
+            return Err("a value it passes on is not known here".into());
+        }
         // Copied text may grow up to the limits its copies allow.
         for (sym, len, room) in &reads.copies {
             let Some(sym) = here(*sym) else { return Err("a text it copied is gone".into()) };
@@ -2397,7 +2420,7 @@ impl Machine<'_> {
                 return Err(format!("{} is too long to copy", self.out.interner.cs(sym)));
             }
         }
-        Ok(clock)
+        Ok(())
     }
 
     /// This run's file numbers for a segment's paths (unregistered).
@@ -2432,6 +2455,7 @@ impl Machine<'_> {
         before: &Before,
         origins: &mut Vec<((RegKind, u16), u8)>,
         carried: &mut Vec<Sym>,
+        ambs: &mut HashMap<Sym, Amb>,
     ) -> Result<Vec<(Sym, u8)>, (&'static str, bool)> {
         // Read with segment's numbers (for allocations and name order).
         let local: Vec<Sym> = (0..node.names.len() as u32).map(Sym).collect();
@@ -2516,6 +2540,29 @@ impl Machine<'_> {
                 return Err(("an edited text differs", false));
             }
             bases.insert(*sym, base);
+        }
+        // What the segment passes on, from the state here (before anything changes).
+        let leaf = |sym: Sym| self.env.slot(sym).and_then(|b| b.value.as_int());
+        let source = |sym: Sym| self.env.slot(sym).and_then(|b| crate::engine::env::copied_text(&b.meaning)).cloned();
+        let unknown = ("a value it passes on is not known here", false);
+        let mut values: HashMap<Sym, i64> = HashMap::default();
+        let mut texts: HashMap<Sym, (Rc<[Token]>, Vec<Hole>)> = HashMap::default();
+        for (sym, b, _) in &st.bindings {
+            match b.as_ref().and_then(|b| Some((b, b.amb.as_ref()?))) {
+                Some((_, Amb::Int(expr))) => _ = values.insert(*sym, expr.eval(&leaf).ok_or(unknown)?),
+                Some((b, Amb::Text(holes))) => {
+                    let text = b.meaning.as_macro().ok_or(unknown)?;
+                    texts.insert(*sym, fill(&text.replacement_text, holes, &leaf, &source).ok_or(unknown)?);
+                }
+                None => {}
+            }
+        }
+        let mut def_texts: Vec<Option<Rc<[Token]>>> = Vec::with_capacity(st.definitions.len());
+        for d in &st.definitions {
+            def_texts.push(match (&d.mac, d.holes.is_empty()) {
+                (Some(mac), false) => Some(fill(&mac.replacement_text, &d.holes, &leaf, &source).ok_or(unknown)?.0),
+                _ => None,
+            });
         }
         origins.extend(st.origins.iter().copied());
         for (path, _, entry) in &st.files {
@@ -2621,7 +2668,10 @@ impl Machine<'_> {
         let mut written = Vec::with_capacity(st.bindings.len());
         for (sym, binding, bits) in &st.bindings {
             written.push((*sym, *bits));
-            let Some(b) = binding else { continue };
+            let Some(b) = binding else {
+                ambs.remove(sym);
+                continue;
+            };
             let mut meaning = match (b.splice, origs.get(sym), b.edit, bases.get(sym)) {
                 (Some(at), Some(orig), ..) => with_text(&b.meaning, |text| splice_in(text, at as usize, orig))
                     .ok_or(("a copied text differs", true))?,
@@ -2635,7 +2685,16 @@ impl Machine<'_> {
             if b.splice.is_some() {
                 carried.push(*sym);
             }
-            let mut value = b.value.clone();
+            match (&b.amb, texts.remove(sym)) {
+                (Some(Amb::Text(_)), Some((text, holes))) => {
+                    meaning =
+                        with_text(&meaning, |_| Some(text)).ok_or(("a value it passes on is not known here", true))?;
+                    ambs.insert(*sym, Amb::Text(holes));
+                }
+                (Some(amb), _) => _ = ambs.insert(*sym, amb.clone()),
+                (None, _) => _ = ambs.remove(sym),
+            }
+            let mut value = values.get(sym).map_or_else(|| b.value.clone(), |v| Value::Int(*v));
             if let Meaning::Register(kind, index) = meaning {
                 let new = relocate(kind, i64::from(index));
                 if let Value::Int(v) = value
@@ -2644,8 +2703,9 @@ impl Machine<'_> {
                     value = Value::Int(new);
                 }
                 meaning = Meaning::Register(kind, u16::try_from(new).unwrap_or(index));
-            } else if let (Some((RegKind::Count, _)), Value::Int(v)) =
-                (storage_register(self.out.interner.name(*sym)), &value)
+            } else if !values.contains_key(sym)
+                && let (Some((RegKind::Count, _)), Value::Int(v)) =
+                    (storage_register(self.out.interner.name(*sym)), &value)
                 && let [(after, delta)] = lasts.iter().filter(|(after, _)| after == v).copied().collect::<Vec<_>>()[..]
             {
                 value = Value::Int(after + delta);
@@ -2673,12 +2733,18 @@ impl Machine<'_> {
                 resolved.extend(self.resolve_vertex(&st, &mut ids, &reached, before, site, *d, 0));
             }
             binding.defs = resolved;
+            ambs.remove(&sym);
             self.env.set(sym, binding, true);
         }
 
         // Facts in order made.
-        for d in &st.definitions {
+        for (d, text) in st.definitions.iter().zip(def_texts) {
             let mac = match (d.splice, &d.mac, origs.get(&d.name)) {
+                _ if text.is_some() => d.mac.as_ref().map(|mac| {
+                    let mut mac = (**mac).clone();
+                    mac.replacement_text = text.clone().unwrap_or_default();
+                    Rc::new(mac)
+                }),
                 (Some(at), Some(mac), Some(orig)) => {
                     let mut mac = (**mac).clone();
                     mac.replacement_text =
@@ -2983,6 +3049,7 @@ impl Machine<'_> {
         recent.drain(..excess);
         self.recent_file_spans = recent;
         self.out.steps = before.steps + s.steps;
+        self.out.forks = before.forks + s.forks;
         self.names_in(before, &s.names, site);
         self.skip_replayed_steps(s.steps);
         self.source_progress = before.progress + s.progress;
@@ -3251,6 +3318,55 @@ impl Machine<'_> {
         Some((copy.at + start, len))
     }
 
+    /// `name` was just defined by an `\edef` whose body met `holes`: its text keeps them
+    /// where it holds what each stands for (`plain`: no copy of its own old text shifts
+    /// them), as does the definition fact. Else what the holes name is read exactly.
+    pub(crate) fn keep_holes(&mut self, name: Sym, holes: &[crate::engine::env::Hole], plain: bool) {
+        use crate::engine::env::{Amb, Src};
+        if holes.is_empty() {
+            return;
+        }
+        let amb = Amb::Text(holes.to_vec());
+        let text = self.env.peek(name.0).and_then(|b| b.meaning.as_macro()).map(|m| m.replacement_text.clone());
+        let leaf = |sym: Sym| self.env.peek(sym.0).and_then(|b| b.value.as_int());
+        let stands = |hole: &crate::engine::env::Hole| -> Option<bool> {
+            let found = text.as_ref()?.get(hole.at as usize..(hole.at + hole.len) as usize)?;
+            Some(match &hole.src {
+                Src::Dec(expr) => {
+                    let digits = expr.eval(&leaf)?.to_string();
+                    digits
+                        .chars()
+                        .map(|c| crate::engine::tex::Tok::Chr(c, crate::engine::tex::Catcode::Other))
+                        .eq(found.iter().map(|t| t.tok))
+                }
+                Src::TextOf(sym) => {
+                    let source = self.env.peek(sym.0).and_then(|b| crate::engine::env::copied_text(&b.meaning))?;
+                    source.iter().map(|t| t.tok).eq(found.iter().map(|t| t.tok))
+                }
+            })
+        };
+        let sorted = holes.windows(2).all(|w| w[0].at + w[0].len <= w[1].at);
+        let holds = plain && sorted && self.package_capture.is_some() && holes.iter().all(|h| stands(h) == Some(true));
+        let last = self.package_capture.as_ref().map_or(0, |rec| rec.log.definitions.len().wrapping_sub(1));
+        let defined = self
+            .package_capture
+            .as_ref()
+            .is_some_and(|rec| rec.log.definitions.last().is_some_and(|(d, _)| d.name == name));
+        self.env.set_amb(name, amb, holds && defined);
+        if self.env.amb(name).is_none() {
+            return;
+        }
+        let limit = self.cfg.limits.expansion_tokens as i64 - 1 - text.map_or(0, |t| t.len()) as i64;
+        let Some(rec) = self.package_capture.as_mut() else { return };
+        rec.log.def_holes.insert(last, holes.to_vec());
+        for hole in holes {
+            if let Src::TextOf(sym) = hole.src {
+                let entry = rec.seg_copies.entry(sym).or_insert((hole.len as usize, limit));
+                entry.1 = entry.1.min(limit);
+            }
+        }
+    }
+
     /// Definition used text from start of segment at offset `at`, length `len`.
     pub(crate) fn note_copied(&mut self, name: Sym, at: usize, len: usize) {
         self.env.set_splice(name, at, len);
@@ -3514,6 +3630,9 @@ impl Machine<'_> {
             return None;
         }
         // A load that waits for a nested one is stored in parts: said once, when it ends.
+        if !suspend {
+            crate::util::progress::cache_built();
+        }
         if !suspend && self.cfg.verbose >= 1 {
             crate::util::progress::done(&format!("cached {}", rec.label), rec.started.elapsed());
         }
@@ -3661,7 +3780,9 @@ impl Machine<'_> {
             .filter(|(sym, bits)| *bits != 0 && !moved_syms.contains(sym))
             .map(|(sym, bits)| {
                 let own = before.slots.get(sym.0 as usize).and_then(|b| b.as_ref()).map(|b| &b.defs);
-                let spliced = self.env.slot(*sym).and_then(|b| {
+                // Held as a function of what the load found: stored whole, filled in when served.
+                let amb = self.env.amb(*sym);
+                let spliced = self.env.slot(*sym).filter(|_| amb.is_none()).and_then(|b| {
                     let (at, len) = self.env.splice(*sym)?;
                     let orig = seg_text(*sym)?;
                     Some((with_text(&b.meaning, |text| cut(text, at, len, &orig))?, at as u32))
@@ -3670,7 +3791,7 @@ impl Machine<'_> {
                     whole.borrow_mut().push(*sym);
                 }
                 // A text grown or edited where it stood: only the change is stored.
-                let edited = self.env.slot(*sym).filter(|_| spliced.is_none()).and_then(|b| {
+                let edited = self.env.slot(*sym).filter(|_| spliced.is_none() && amb.is_none()).and_then(|b| {
                     let base = seg_binding(*sym)?.meaning.as_macro()?.replacement_text.clone();
                     let (head, tail) = edit_of(&b.meaning.as_macro()?.replacement_text, &base)?;
                     let middle = with_text(&b.meaning, |t| Some(t[head..t.len() - tail].iter().copied().collect()))?;
@@ -3707,6 +3828,7 @@ impl Machine<'_> {
                     certain: b.certain,
                     global: b.global,
                     local: local(*sym, b),
+                    amb: amb.clone(),
                 });
                 (*sym, b, *bits)
             })
@@ -3718,7 +3840,8 @@ impl Machine<'_> {
             .iter()
             .enumerate()
             .map(|(i, (d, relative))| {
-                let splice = rec.log.def_splices.get(&(m.definitions + i));
+                let holes = rec.log.def_holes.get(&(m.definitions + i)).cloned().unwrap_or_default();
+                let splice = rec.log.def_splices.get(&(m.definitions + i)).filter(|_| holes.is_empty());
                 let spliced = splice.and_then(|&(at, len)| {
                     let orig = seg_text(d.name)?;
                     let mac = d.mac.as_ref()?;
@@ -3730,7 +3853,7 @@ impl Machine<'_> {
                 if spliced.is_none() && splice.is_some() {
                     whole.borrow_mut().push(d.name);
                 }
-                let edited = d.mac.as_ref().filter(|_| spliced.is_none()).and_then(|mac| {
+                let edited = d.mac.as_ref().filter(|_| spliced.is_none() && holes.is_empty()).and_then(|mac| {
                     let base = seg_binding(d.name)?.meaning.as_macro()?.replacement_text.clone();
                     let (head, tail) = edit_of(&mac.replacement_text, &base)?;
                     let mut mac = (**mac).clone();
@@ -3738,11 +3861,12 @@ impl Machine<'_> {
                     mac.replacement_text = text[head..text.len() - tail].iter().copied().collect();
                     Some((Rc::new(mac), (head as u32, tail as u32, self.text_digest(&base))))
                 });
-                (d, relative, spliced, edited)
+                (d, relative, spliced, edited, holes)
             })
-            .map(|(d, relative, spliced, edited)| CachedDefinition {
+            .map(|(d, relative, spliced, edited, holes)| CachedDefinition {
                 splice: spliced.as_ref().map(|(_, at)| *at),
                 edit: edited.as_ref().map(|(_, e)| *e),
+                holes,
                 relative: *relative,
                 name: d.name,
                 by: d.by,
@@ -3909,6 +4033,7 @@ impl Machine<'_> {
         let identifying = self.identifying.map(|i| i as i64 - before.loads as i64);
         let scalars = Scalars {
             steps: self.out.steps - before.steps,
+            forks: self.out.forks - before.forks,
             progress: self.source_progress - before.progress,
             assignments: self.env.assignments - before.assignments,
             recent: self.env.recent(),
@@ -4023,7 +4148,6 @@ impl Machine<'_> {
                 .map(|(sym, bits)| {
                     let before_binding = seg_binding(*sym);
                     let alias = before.aliases.get(sym).map(|a| self.out.interner.name(*a).to_string());
-                    let digested = digested_kinds(self.out.interner.name(*sym), *bits);
                     // A name the analysis makes is written where it is made: one
                     // read here and absent at the start would key on this run alone.
                     // An empty register slot is a register never assigned (zero).
@@ -4034,7 +4158,7 @@ impl Machine<'_> {
                         "key on a name this load made unwritten: {}",
                         self.out.interner.cs(*sym)
                     );
-                    (*sym, *bits, binding_digest(before_binding, alias.as_deref(), digested))
+                    (*sym, *bits, binding_digest(before_binding, alias.as_deref(), *bits))
                 })
                 .collect::<Vec<(Sym, u8, u64)>>()
         });
@@ -4043,7 +4167,29 @@ impl Machine<'_> {
             .filter(|g| rec.seg_gaps.contains(g))
             .map(|(code, sym)| (code.to_string(), *sym))
             .collect();
-        let reads = Reads { copies, bindings: read_bindings, gaps };
+        // What the segment passes on must have a value where it is served.
+        let dec = |h: &Hole| match &h.src {
+            Src::Dec(expr) => Some(expr.clone()),
+            Src::TextOf(_) => None,
+        };
+        let mut flows: Vec<Rc<Expr>> = effect.definitions.iter().flat_map(|d| &d.holes).filter_map(dec).collect();
+        for amb in effect.bindings.iter().filter_map(|(_, b, _)| b.as_ref()?.amb.as_ref()) {
+            match amb {
+                Amb::Int(expr) => flows.push(expr.clone()),
+                Amb::Text(holes) => flows.extend(holes.iter().filter_map(dec)),
+            }
+        }
+        // So must every value read as an expression, wherever it went.
+        let (guards, kept) = self.env.take_guards();
+        flows.extend(kept);
+        // A plain leaf read many times is checked once.
+        let mut leaves: Vec<Sym> =
+            flows.iter().filter_map(|e| if let Expr::Leaf(sym) = **e { Some(sym) } else { None }).collect();
+        leaves.sort();
+        leaves.dedup();
+        flows.retain(|e| !matches!(**e, Expr::Leaf(_)));
+        flows.extend(leaves.into_iter().map(|sym| Rc::new(Expr::Leaf(sym))));
+        let reads = Reads { copies, bindings: read_bindings, gaps, guards, flows };
 
         // Files opened and new ones, and first-time name lookups.
         let mut stamps = Vec::new();
@@ -4158,7 +4304,7 @@ fn merge_sites(definitions: Vec<CachedDefinition>) -> Vec<CachedDefinition> {
             Some(&i) => {
                 let first = &mut out[i];
                 first.certain &= d.certain;
-                (first.mac, first.splice, first.edit) = (d.mac, d.splice, d.edit);
+                (first.mac, first.splice, first.edit, first.holes) = (d.mac, d.splice, d.edit, d.holes);
             }
             None => {
                 at.insert((d.span, d.name, d.package), out.len());
@@ -4184,6 +4330,38 @@ fn edit_of(text: &[Token], base: &[Token]) -> Option<(usize, usize)> {
 fn splice_in(text: &[Token], at: usize, orig: &[Token]) -> Option<Rc<[Token]>> {
     let head = text.get(..at)?;
     Some(head.iter().chain(orig).chain(&text[at..]).copied().collect())
+}
+
+/// `text` with each of its `holes` (in order) filled from the state it is served into, and
+/// where the holes stand in the result.
+fn fill(
+    text: &[Token],
+    holes: &[Hole],
+    leaf: &dyn Fn(Sym) -> Option<i64>,
+    source: &dyn Fn(Sym) -> Option<Rc<[Token]>>,
+) -> Option<(Rc<[Token]>, Vec<Hole>)> {
+    let mut out: Vec<Token> = Vec::with_capacity(text.len());
+    let (mut from, mut filled) = (0, Vec::with_capacity(holes.len()));
+    for hole in holes {
+        let (at, end) = (hole.at as usize, (hole.at + hole.len) as usize);
+        out.extend_from_slice(text.get(from..at)?);
+        // Printed where the stored ones were: theirs is the place it is read at.
+        let span = text.get(at..end)?.first()?.span;
+        let start = out.len();
+        match &hole.src {
+            Src::Dec(expr) => out.extend(
+                expr.eval(leaf)?
+                    .to_string()
+                    .chars()
+                    .map(|c| Token::new(crate::engine::tex::Tok::Chr(c, crate::engine::tex::Catcode::Other), span)),
+            ),
+            Src::TextOf(sym) => out.extend(source(*sym)?.iter().map(|t| Token::new(t.tok, span))),
+        }
+        filled.push(Hole { at: start as u32, len: (out.len() - start) as u32, src: hole.src.clone() });
+        from = end;
+    }
+    out.extend_from_slice(text.get(from..)?);
+    Some((out.into(), filled))
 }
 
 /// `meaning` with its replacement text changed by `f`.

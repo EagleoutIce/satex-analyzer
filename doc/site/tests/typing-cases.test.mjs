@@ -143,7 +143,9 @@ test("Type mode's rules at the spots that broke", async () => {
   // `\)` takes its last character, and a formula of one character whole; Delete before `\(` the same from the front.
   // Pins Backspace taking the `\)` alone (refused by the gate, so it did nothing) and a lone delimiter left behind.
   const typeKeys = (text, at, keys) => { let f = null; for (const k of keys) { const e = E.key(text, at, k, { fresh: f }); if (typeof e === 'string') continue; const [a, b, body, step] = e; text = text.slice(0, a) + body + text.slice(b); f = E.grow(f, a, b, body.length); at = a + step; } return [text, at]; };
-  assert.equal(typeKeys(t, at('}'), [...' new', 'Enter', '}', '{', '$', 'x', '$', 'Backspace'])[0].split('\n')[0], '\\section{Background new\\}\\{}\\label{sec:b}');
+  // (Enter at the heading's end starts a paragraph after it; the keys after go there)
+  const keyed = typeKeys(t, at('}'), [...' new', 'Enter', '}', '{', '$', 'x', '$', 'Backspace'])[0].split('\n');
+  assert.deepEqual([keyed[0], keyed[1], keyed[2]], ['\\section{Background new}', '', '\\}\\{\\label{sec:b}']);
   const xy = 'a \\(xy\\) b', close = xy.indexOf('\\)') + 2, open = xy.indexOf('\\(');
   assert.equal(typeKeys(xy, close, ['Backspace'])[0], 'a \\(x\\) b', 'Backspace after `\\)`: the last character inside');
   assert.equal(typeKeys(xy, close, ['Backspace', 'Backspace'])[0], 'a  b', 'then the formula of one character whole');
@@ -158,6 +160,11 @@ test("Type mode's rules at the spots that broke", async () => {
   const envd = typeKeys('Some text.\n\nMore.', 10, ['Enter', ...'\\begin{itemize}', 'Enter']);
   assert.deepEqual(envd, ['Some text.\n\n\\begin{itemize}\n\n\\end{itemize}\n\nMore.', 28], 'the pair, the caret inside');
   assert.equal(typeof E.key('a \\begin{x} b \\end{x}', 9, 'y'), 'string', 'a name not being typed stays a name');
+  // a reference typed by hand: its key goes into the fresh \\ref{…} (and a citation's list into \\cite{…}); a key
+  // not typed since the caret was put stays a key. Pins the key refused (`\\ref{}`, preview wish 4, 2026-11-21).
+  assert.equal(typeKeys('See it.', 3, [...' \\ref{sec:a}'])[0], 'See \\ref{sec:a} it.', 'a fresh key takes its name');
+  assert.equal(typeKeys('See it.', 3, [...' \\cite{a, b}'])[0], 'See \\cite{a, b} it.', 'a citation list');
+  assert.equal(typeof E.key('a \\ref{x} b', 8, 'y'), 'string', 'a key not being typed stays a key');
   assert.equal(typeKeys('a \\[z\\] b', 'a \\[z\\]'.length, ['Backspace'])[0], 'a  b', 'a display `\\[z\\]` the same');
   assert.equal(typeKeys(t, at('}'), [...'$x', 'Backspace'])[0].split('\n')[0], '\\section{Background}\\label{sec:b}', 'the last character of a formula takes it');
   assert.equal(typeKeys('a pipeline. b', 'a pipeline'.length, [...'\\emph{q}'])[0], 'a pipeline\\emph{q}. b', '`\\` before `.`: its space goes once `{` ends the name');
@@ -249,4 +256,20 @@ test('blankPlace: empty page space mapped to the source', () => {
   // written where shown: the text with the body in place keeps the paragraphs apart by blank lines
   const w = t.slice(0, b.at) + b.body + 'New' + t.slice(b.at);
   assert.ok(w.includes('line two.\n\nNew\n\nSecond'));
+});
+// Intuition: Enter in the page is a new paragraph as TeX sets one (a blank line in the source). At the end of a command's
+// argument (`\textbf{world|}`) the paragraph starts after the command, never inside its argument (refused there: the
+// key did nothing and the next text went into the bold); on an item's last line of a list the next `\item`; in math a
+// line of source only. Pins user report 2026-11-21 13:15 (Enter "does a newline in the code editor").
+test('Enter: a paragraph where TeX takes one', () => {
+  const E = self.satexPdfEdit, ed = (t, e) => t.slice(0, e[0]) + e[2] + t.slice(e[1]);
+  const bold = 'a \\textbf{world}\n';
+  const e1 = E.key(bold, bold.indexOf('}'), 'Enter');
+  assert.equal(ed(bold, e1), 'a \\textbf{world}\n\n\n', 'after the command');
+  assert.equal(e1[0] + e1[3], bold.indexOf('}') + 3, 'the caret on the new paragraph');
+  const list = '\\begin{itemize}\n\\item one\n\\end{itemize}', at = list.indexOf('one') + 3;
+  assert.equal(ed(list, E.key(list, at, 'Enter')), '\\begin{itemize}\n\\item one\n\\item \n\\end{itemize}', 'the next item');
+  const mid = 'Hello there friend.';
+  assert.equal(ed(mid, E.key(mid, 5, 'Enter')), 'Hello\n\n there friend.', 'prose: a blank line');
+  assert.equal(typeof E.key('a \\textbf{wor ld}', 9, 'Enter'), 'string', 'inside an argument: refused');
 });

@@ -1070,6 +1070,148 @@ mod roots {
         def["result"][0]["uri"].as_str().unwrap_or_else(|| panic!("no definition: {def:?}")).to_string()
     }
 
+    /// Intuition: a widget's write in a file the root `\\input`s (a table's column dragged in chapter.tex) that needs a
+    /// package the run lacks (`>{\\raggedleft\\arraybackslash}p{…}` needs array) loads it in the root's preamble, before
+    /// the line where the run met `\\begin{document}`: the included file has none, and the build stopped at "Undefined
+    /// control sequence" in the table (user report 2026-11-21 13:26).
+    #[test]
+    fn a_write_in_an_included_file_loads_its_package_in_the_root() {
+        if !crate::support::installed() {
+            return;
+        }
+        let main = "\\documentclass{article}\n\\begin{document}\n\\input{chap}\n\\end{document}\n".to_string();
+        let chap = "\\begin{tabular}{lr}\na & 1\\\\\n\\end{tabular}\n";
+        let dir = crate::support::tmp_root().join("satex-lsp-root-load");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("main.tex"), &main).unwrap();
+        std::fs::write(dir.join("chap.tex"), chap).unwrap();
+        // the kernel loaded: the run meets `\\begin{document}`
+        let mut server = serve(&dir, true);
+        let (uri, _) = open_file(&mut server, &dir, "chap.tex");
+        let range = json!({ "start": { "line": 0, "character": 16 }, "end": { "line": 0, "character": 18 } });
+        let node = json!({ "kind": "text", "name": "", "star": false, "args": [], "range": range, "text": "lr", "body_at": [0, 2],
+            "body": "l>{\\raggedleft\\arraybackslash}p{2cm}", "package": { "name": "array", "options": "" } });
+        let id = server.request(
+            "satex/dialogApply",
+            json!({ "textDocument": { "uri": uri }, "kind": "snapshot", "nodes": [node] }),
+        );
+        let out = server.response(id)["result"].clone();
+        server.shutdown();
+        let _ = std::fs::remove_dir_all(&dir);
+        let roots = out["roots"].as_array().cloned().unwrap_or_default();
+        assert_eq!(roots.len(), 1, "{out}");
+        assert_eq!(roots[0]["file"], "main.tex", "{out}");
+        assert_eq!(roots[0]["text"], "\\usepackage{array}\n", "{out}");
+        let begin = main.lines().position(|l| l.contains("\\begin{document}")).unwrap();
+        assert_eq!(roots[0]["line"], begin, "{out}");
+    }
+
+    /// A project of `main.tex` reading `chap.tex` after `\\begin{document}`, served with the kernel loaded and `open` opened.
+    fn rooted(tag: &str, main: &str, chap: &str, open: &str) -> (Server, String, std::path::PathBuf) {
+        let dir = crate::support::tmp_root().join(format!("satex-lsp-rooted-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("main.tex"), main).unwrap();
+        std::fs::write(dir.join("chap.tex"), chap).unwrap();
+        let mut server = serve(&dir, true);
+        let (uri, _) = open_file(&mut server, &dir, open);
+        (server, uri, dir)
+    }
+
+    /// A root whose `\\usetikzlibrary` is a no-op (the printer reads the text, not TikZ): `{calc}` on line 2.
+    const LIBS: &str = "\\documentclass{article}\n\\newcommand\\usetikzlibrary[1]{}\n\\usetikzlibrary{calc}\n\\begin{document}\n\\input{chap}\n\\end{document}\n";
+
+    /// A widget's new `\\usetikzlibrary` node, as the drawing view sends it.
+    fn library_node(libs: &str) -> Value {
+        json!({ "kind": "call", "name": "usetikzlibrary", "args": [{ "open": "{", "text": libs }], "at": { "line": 0, "character": 0 }, "line": true })
+    }
+
+    /// Intuition: a TikZ library a widget needs joins the preamble's existing `\\usetikzlibrary` list, comma-separated,
+    /// listed ones not repeated; in an `\\input` file the root's list (user 2026-11-21: one `\\usetikzlibrary` line,
+    /// not a new line per write). Pins the printer's library path for writes from an included file.
+    #[test]
+    fn a_library_joins_the_root_s_list() {
+        if !crate::support::installed() {
+            return;
+        }
+        let (mut server, uri, dir) = rooted("lib", LIBS, "Text.\n", "chap.tex");
+        let id = server.request(
+            "satex/dialogApply",
+            json!({ "textDocument": { "uri": uri }, "kind": "snapshot", "nodes": [library_node("calc,positioning,matrix,positioning")] }),
+        );
+        let out = server.response(id)["result"].clone();
+        server.shutdown();
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(out["edits"].as_array().is_some_and(Vec::is_empty), "nothing written into chap.tex: {out}");
+        let roots = out["roots"].as_array().cloned().unwrap_or_default();
+        assert_eq!(roots.len(), 1, "{out}");
+        let line = LIBS.lines().position(|l| l.starts_with("\\usetikzlibrary")).unwrap();
+        assert_eq!(roots[0]["line"], line, "{out}");
+        assert_eq!(roots[0]["character"], LIBS.lines().nth(line).unwrap().len() - 1, "before the list's `}}`: {out}");
+        assert_eq!(roots[0]["text"], ",positioning,matrix", "{out}");
+    }
+
+    /// Intuition: the same rule in the root itself: the edit joins the list there, and a library listed already
+    /// writes nothing (no second `\\usetikzlibrary{calc}`).
+    #[test]
+    fn a_library_joins_the_file_s_own_list() {
+        if !crate::support::installed() {
+            return;
+        }
+        let (mut server, uri, dir) = rooted("own", LIBS, "Text.\n", "main.tex");
+        let ask = |server: &mut Server, libs: &str| {
+            let nodes = json!([library_node(libs)]);
+            let id = server.request(
+                "satex/dialogApply",
+                json!({ "textDocument": { "uri": uri }, "kind": "snapshot", "nodes": nodes }),
+            );
+            server.response(id)["result"].clone()
+        };
+        let (fresh, listed) = (ask(&mut server, "positioning"), ask(&mut server, "calc"));
+        server.shutdown();
+        let _ = std::fs::remove_dir_all(&dir);
+        let edits = fresh["edits"].as_array().cloned().unwrap_or_default();
+        assert_eq!(edits.len(), 1, "{fresh}");
+        assert_eq!(edits[0]["newText"], ",positioning", "{fresh}");
+        assert!(
+            listed["edits"].as_array().is_some_and(Vec::is_empty)
+                && listed["roots"].as_array().is_some_and(Vec::is_empty),
+            "{listed}"
+        );
+    }
+
+    /// Intuition: "Insert tikzpicture" on a blank line of an `\\input` file read in the body is offered, and its workspace
+    /// edit loads tikz in the root's preamble (before: no action there, the body test only knew the root's
+    /// `\\begin{document}`; a write would have stopped the build at `\\begin{tikzpicture}`).
+    #[test]
+    fn inserting_a_picture_in_an_included_file_loads_tikz_in_the_root() {
+        if !crate::support::installed() {
+            return;
+        }
+        let main = "\\documentclass{article}\n\\begin{document}\n\\input{chap}\n\\end{document}\n";
+        let (mut server, uri, dir) = rooted("pic", main, "Text.\n\n\nMore.\n", "chap.tex");
+        let p = json!({ "line": 1, "character": 0 });
+        let id = server.request(
+            "textDocument/codeAction",
+            json!({ "textDocument": { "uri": uri }, "range": { "start": p, "end": p }, "context": { "diagnostics": [] } }),
+        );
+        let actions = server.response(id)["result"].clone();
+        server.shutdown();
+        let _ = std::fs::remove_dir_all(&dir);
+        let pic = actions
+            .as_array()
+            .into_iter()
+            .flatten()
+            .find(|a| a["title"].as_str().is_some_and(|t| t.starts_with("Insert tikzpicture")));
+        let changes = &pic.unwrap_or_else(|| panic!("no picture action: {actions}"))["edit"]["changes"];
+        let root =
+            changes.as_object().and_then(|c| c.iter().find(|(u, _)| u.ends_with("/main.tex"))).map(|(_, e)| e.clone());
+        let root = root.unwrap_or_else(|| panic!("no edit of main.tex: {changes}"));
+        assert_eq!(root[0]["newText"], "\\usepackage{tikz}\n", "{changes}");
+        assert_eq!(root[0]["range"]["start"]["line"], 1, "before `\\begin{{document}}`: {changes}");
+    }
+
     /// A file no root reads says so; one a root reads does not.
     #[test]
     fn a_file_no_root_reads_is_marked() {
@@ -1117,6 +1259,46 @@ mod roots {
         let _ = std::fs::remove_dir_all(&dir);
         let text = published.to_string();
         assert!(!text.contains("only in preamble") && !text.contains("undefined-control-sequence"), "{text}");
+    }
+
+    /// A package the root loads is read with `@` a letter (LaTeX's `\\usepackage`): completion in
+    /// it takes the letters of that file at the caret, not the root's at the same line, so `\\my@`
+    /// offers the package's own `\\my@a`. Pins `letters_at` being asked of the main file only.
+    #[test]
+    fn a_loaded_package_completes_its_at_names() {
+        if !crate::support::installed() {
+            return;
+        }
+        let main = "\\documentclass{article}\n\\usepackage{mine}\n\\begin{document}\nx\n\\end{document}\n";
+        let sty = "\\ProvidesPackage{mine}\n\\def\\my@a{a}\n\\my@\n";
+        let (mut server, uri, dir) =
+            project_with("sty-letters", &[("main.tex", main), ("mine.sty", sty)], "mine.sty", true);
+        let items = super::complete(&mut server, &uri, 2, 4);
+        assert!(super::labels(&items).contains(&"my@a"), "{:?}", super::labels(&items));
+        server.shutdown();
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Intuition: a root emptied (Ctrl+A, Backspace) is no document a while, so no root reads it;
+    /// written again it is its own root. Pins the playground flagging the ROOT "No root document
+    /// reads this file" (unreachable-file) after clearing it and pasting a new document, for good
+    /// (user 2026-11-21, u-root-from-scratch): the orphan mark of the empty text stayed.
+    #[test]
+    fn a_root_cleared_and_written_again_is_no_orphan() {
+        let main = format!("{PRELUDE}Hi there.\n");
+        let (mut server, uri, dir) = project("refill", &[("main.tex", &main)], "main.tex");
+        for (version, text) in [(2, String::new()), (3, main.clone())] {
+            server.notify(
+                "textDocument/didChange",
+                json!({ "textDocument": { "uri": uri, "version": version }, "contentChanges": [{ "text": text }] }),
+            );
+            let published = server.published();
+            if version == 3 {
+                assert!(!published.to_string().contains("unreachable-file"), "{published}");
+            }
+        }
+        server.shutdown();
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
@@ -2270,6 +2452,62 @@ fn completion_offers_at_names_only_where_at_is_a_letter() {
     assert!(at(&mut server, inside), "no @ names after \\makeatletter");
     drop(server);
     std::fs::remove_dir_all(dir).ok();
+}
+
+/// The name typed at the caret ends where the catcodes in force there say (tex.web §356), and
+/// only names typeable there are offered. In the body `_` is a subscript (catcode 8): after
+/// `\(\sum_` no name is being typed, so nothing completes, and `\c` offers no name with `_`,
+/// `:`, `@` or `/`. Under `\ExplSyntaxOn` `_` and `:` are letters: `\c__` goes on as a name and
+/// offers expl3 internals, still none with `/` (no catcode makes it a letter). Pins the playground
+/// listing `\c__socket_tagsupport/mc_args_int` after `\(\sum_`.
+#[test]
+fn a_name_ends_where_the_catcodes_say() {
+    let lines = [
+        "\\documentclass{article}",
+        "\\begin{document}",
+        "\\(\\sum_ \\)",
+        "\\c x",
+        "\\ExplSyntaxOn",
+        "\\c__",
+        "\\ExplSyntaxOff",
+        "\\end{document}",
+    ];
+    let text = lines.join("\n") + "\n";
+    let (mut server, uri, _, dir) = open_loaded("catcode-word", &text);
+    let row = |s: &str| lines.iter().position(|l| *l == s).unwrap() as u32;
+    let sub = complete(&mut server, &uri, row("\\(\\sum_ \\)"), "\\(\\sum_".len() as u32);
+    assert!(sub.is_empty(), "after `\\sum_` no name is typed: {:?}", labels(&sub));
+    let body = complete(&mut server, &uri, row("\\c x"), 2);
+    assert!(!body.is_empty(), "`\\c` completes in the body");
+    let odd: Vec<&str> =
+        labels(&body).into_iter().filter(|l| l.len() > 1 && l.contains(['_', ':', '@', '/'])).collect();
+    assert!(odd.is_empty(), "names not typeable in the body: {odd:?}");
+    let expl = complete(&mut server, &uri, row("\\c__"), 4);
+    assert!(
+        labels(&expl).iter().any(|l| l.starts_with("c__")),
+        "expl3 names under \\ExplSyntaxOn: {:?}",
+        labels(&expl)
+    );
+    assert!(!labels(&expl).iter().any(|l| l.contains('/')), "`/` is no letter there either: {:?}", labels(&expl));
+    server.shutdown();
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// `\\usepackage` completes with its braces and the caret in them, as `\\textbf` does: its
+/// item's snippet holds the mandatory `{…}` (the options as an optional field). Pins the playground
+/// writing a bare `\\usepackage` after `\\usepa` + Enter (user 2026-11-21).
+#[test]
+fn usepackage_completes_with_its_braces() {
+    let text = "\\documentclass{article}\n\\usepa\n\\begin{document}\n\\textb\n\\end{document}\n";
+    let (mut server, uri, _, dir) = open_loaded("usepackage-snippet", text);
+    let items = complete(&mut server, &uri, 1, 6);
+    let it = items.iter().find(|i| i["label"] == "usepackage").cloned().unwrap_or_default();
+    let body = it["insertText"].as_str().or(it["textEdit"]["newText"].as_str()).unwrap_or_default().to_string();
+    assert!(body.contains('{') && it["insertTextFormat"] == 2, "{it}");
+    let bf = complete(&mut server, &uri, 3, 6);
+    eprintln!("textb: {:?}", labels(&bf).iter().take(5).collect::<Vec<_>>());
+    server.shutdown();
+    let _ = std::fs::remove_dir_all(&dir);
 }
 
 /// A hover shows what the defining package's manual says (src/plugins/docs):
@@ -4536,6 +4774,56 @@ fn switched_off_dialog_plugins_offer_nothing() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// Intuition: tabularray's tables are tables to the widget though no `\@array` runs: the run's calls
+/// from `\tblr` reach the code that splits its body at `&`. The dialog reads the key-list spec's
+/// `colspec`, and the conversions write tabularray and back through the printer: booktabs' rules get
+/// one `\UseTblrLibrary` line after the package, `X[r]` becomes tabularx's ragged `X`. Pins the tblr
+/// lens and dialog (none before: no `\@array`) and both conversions' text.
+#[test]
+fn tblr_tables_open_the_dialog_and_convert() {
+    let text = "\\documentclass{article}\n\\usepackage{booktabs}\n\\usepackage{tabularray}\n\\begin{document}\n\\begin{tblr}{colspec={lX[r]}, hlines}\na & b \\\\\nc & d \\\\\n\\end{tblr}\n\n\\begin{tabular}{lr}\n\\toprule\nx & 1 \\\\\n\\midrule\ny & 2 \\\\\n\\bottomrule\n\\end{tabular}\n\\end{document}\n";
+    let (tblr, tabular) = (4, 9);
+    let (mut server, uri, dir) = open_set("tblr-dialog", text, &[]);
+    let id = server.request("textDocument/codeLens", json!({ "textDocument": { "uri": uri } }));
+    let lenses = server.response(id)["result"].clone();
+    let lines: Vec<u64> = (lenses.as_array().unwrap().iter())
+        .filter(|l| l["command"]["command"] == "satex.openDialog")
+        .map(|l| l["range"]["start"]["line"].as_u64().unwrap())
+        .collect();
+    assert_eq!(lines, [tblr, tabular], "{lenses}");
+    let id = server.request(
+        "satex/dialog",
+        json!({ "textDocument": { "uri": uri }, "position": { "line": tblr, "character": 1 } }),
+    );
+    let view = server.response(id)["result"].clone();
+    let cols: Vec<(&str, &str)> = (view["state"]["cols"].as_array().unwrap().iter())
+        .map(|c| (c["align"].as_str().unwrap(), c["arg"].as_str().unwrap()))
+        .collect();
+    assert_eq!(cols, [("l", ""), ("X", "r")], "{view}");
+    let rewrite = |server: &mut Server, line: u64, title: &str| {
+        let range = json!({ "start": { "line": line, "character": 0 }, "end": { "line": line, "character": 0 } });
+        let id = server.request(
+            "textDocument/codeAction",
+            json!({ "textDocument": { "uri": uri }, "range": range, "context": { "diagnostics": [] } }),
+        );
+        let actions = server.response(id)["result"].clone();
+        let a = (actions.as_array().unwrap().iter()).find(|a| a["title"].as_str().unwrap().starts_with(title));
+        applied(text, &uri, &a.unwrap_or_else(|| panic!("{title}: {actions}"))["edit"], &[])
+    };
+    let back = rewrite(&mut server, tblr, "Convert table to tabular");
+    assert!(
+        back.contains(
+            "\\begin{tabularx}{\\linewidth}{l>{\\raggedleft\\arraybackslash}X}\n\\hline\na & b \\\\\n\\hline\nc & d"
+        ),
+        "{back}"
+    );
+    let to = rewrite(&mut server, tabular, "Convert table to tabularray");
+    assert!(to.contains("\\usepackage{tabularray}\n\\UseTblrLibrary{booktabs}\n\\begin{document}"), "{to}");
+    assert!(to.contains("\\begin{tblr}{colspec={lr}}\n\\toprule\nx & 1 \\\\\n\\midrule"), "{to}");
+    server.shutdown();
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// `satex query type-plugins` counts where each plugin shows on the run's main file (the site's
 /// tiles take a plugin's demo from it), and nothing where no plugin applies.
 #[test]
@@ -4965,7 +5253,7 @@ fn tikz_plugin_offers_every_shape() {
     );
     assert!(keys("star").iter().any(|(k, v)| k == "star points" && v == "5"), "{:?}", keys("star"));
     assert!(keys("rectangle").is_empty() && shape("star")["load"].is_null(), "loaded: {}", shape("star"));
-    // a shape of a library the document does not load, and its load printed in the preamble
+    // a shape of a library the document does not load, and its load joined to the preamble's `\\usetikzlibrary` list
     let cloud = shape("cloud");
     assert_eq!(cloud["load"], "\\usetikzlibrary{shapes.symbols}", "{cloud}");
     let lib = cloud["load"].as_str().unwrap().strip_prefix("\\usetikzlibrary{").unwrap().trim_end_matches('}');
@@ -4975,7 +5263,8 @@ fn tikz_plugin_offers_every_shape() {
         .request("satex/dialogApply", json!({ "textDocument": { "uri": uri }, "kind": "snapshot", "nodes": [call] }));
     let out = server.response(id)["result"].clone();
     let written = applied(text, &uri, &json!({ "changes": { uri.clone(): out["edits"] } }), &[]);
-    assert!(written.contains("\\usetikzlibrary{shapes.symbols}\n\\begin{document}"), "{written}");
+    assert!(written.contains("\\usetikzlibrary{shapes.geometric,shapes.symbols}\n\\begin{document}"), "{written}");
+    assert_eq!(written.matches("\\usetikzlibrary").count(), 1, "one list, no second line: {written}");
     server.shutdown();
     std::fs::remove_dir_all(dir).ok();
 }
@@ -6977,6 +7266,33 @@ fn hyphenate_gives_the_points_the_run_marks() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// `satex/mathwidths` (the PDF echo's typed math): a symbol's box comes from the run's math fonts, through its math
+/// code (`a`: family 1, cmmi10), a `\mathchardef` (`\alpha`, `\le`: cmmi10, cmsy10) and the family's `\textfont`;
+/// cmmi10's `a` is 0.52859 em wide (its TFM), `=` cmr10's 0.77779 em. A name that is no math character (`\frac`)
+/// and an active math code have none. Pins the echo measuring a fallback font wider than cmmi10, whose formula then
+/// broke a part early (e2e math-break-inline).
+#[test]
+fn mathwidths_reads_the_run_s_math_fonts() {
+    let text = "\\documentclass{article}\n\\begin{document}\nSo $a=\\alpha\\le b$ holds.\n\\end{document}\n";
+    let (mut server, uri, dir) = open_set("mathwidths", text, &[]);
+    let id = server.request("satex/typeset", json!({ "textDocument": { "uri": uri } }));
+    let _ = server.response(id);
+    let id = server.request(
+        "satex/mathwidths",
+        json!({ "textDocument": { "uri": uri }, "symbols": ["a", "=", "\\alpha", "\\le", "\\frac", "'"], "size": 0 }),
+    );
+    let got = server.response(id)["result"].clone();
+    let w = |i: usize| got[i][0].as_f64();
+    let near = |x: Option<f64>, want: f64| x.is_some_and(|x| (x - want).abs() < 1e-3);
+    assert!(near(w(0), 0.52859), "a: {got}");
+    assert!(near(w(1), 0.77779), "=: {got}");
+    assert!(w(2).is_some_and(|x| x > 0.5 && x < 0.7), "alpha: {got}");
+    assert!(w(3).is_some_and(|x| x > 0.7 && x < 0.8), "le: {got}");
+    assert!(got[4].is_null() && got[5].is_null(), "no math character: {got}");
+    server.shutdown();
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// `satex/break` (the PDF echo's line breaking): the thesis example's paragraphs, their words as the page shows
 /// them, break where pdfTeX broke them (doc/site/tests/fixtures/thesis-paragraphs.json holds pdfTeX's rows). The
 /// breaker is the run's own Knuth–Plass over a list of the run's TFM widths, ligatures and kerns, interword glue by
@@ -7764,6 +8080,36 @@ fn an_entry_removed_from_an_open_bib_file_leaves_its_citation_undefined() {
     std::fs::remove_dir_all(dir).ok();
 }
 
+/// Intuition: an `\include` commented out no longer brings its chapter's `.aux` in, so
+/// a reference to a label there is undefined, as a fresh `satex lint` says. Pins the
+/// editor's build keeping the last build's files as they were: a reference to the
+/// chapter's label stayed defined (big40: 32 undefined references missing).
+#[test]
+fn an_include_commented_out_leaves_its_labels_undefined() {
+    let dir = crate::support::tmp_root().join(format!("satex-lsp-include-off-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let main = "\\documentclass{article}\n\\begin{document}\nSee \\ref{sec:ch}.\n\\include{ch}\n\\end{document}\n";
+    std::fs::write(dir.join("main.tex"), main).unwrap();
+    std::fs::write(dir.join("ch.tex"), "\\section{Ch}\\label{sec:ch}\n").unwrap();
+    let mut server = serve(&dir, true);
+    let (uri, first) = open_file(&mut server, &dir, "main.tex");
+    let undefined = |p: &Value| p["params"]["diagnostics"].to_string().contains("undefined-reference");
+    assert!(!undefined(&first), "{first}");
+    server.notify(
+        "textDocument/didChange",
+        json!({ "textDocument": { "uri": uri, "version": 2 }, "contentChanges": [{ "text": main.replace("\\include", "%\\include") }] }),
+    );
+    let after = loop {
+        let p = server.published();
+        if p["params"]["uri"] == uri {
+            break p;
+        }
+    };
+    assert!(undefined(&after), "ch.tex is no longer included: {after}");
+    server.shutdown();
+    std::fs::remove_dir_all(dir).ok();
+}
+
 /// Intuition: a definition history names the `\let` copy a package keeps of
 /// the meaning it replaces, whether the package ran or was replayed from its
 /// cache. Pins the copy found by pointer identity only: replayed bodies are
@@ -7780,5 +8126,78 @@ fn a_definition_history_names_the_saved_copy_from_a_cached_package() {
     let hover = server.response(id)["result"]["contents"]["value"].as_str().unwrap_or_default().to_string();
     assert!(hover.contains("saves the old meaning as `\\HyOrg@maketitle`"), "{hover}");
     server.shutdown();
+    std::fs::remove_dir_all(dir).ok();
+}
+
+/// Intuition: in the page's server (`satex lsp --lines`, the browser's one thread) a question
+/// about the text gives way to a newer text: the newer text's run never waits for it. Pins
+/// `probe::abandonable` in the batch server: a scope query of a text a newer one replaced answers
+/// `null` (begun, it would unwind at its next pause: in the playground a hover or a completion
+/// held the next keystroke's run up to 0.3 s), and the same query after the newest text's run
+/// answers in full.
+#[test]
+fn a_question_gives_way_to_a_newer_text_in_the_page_server() {
+    let dir = crate::support::tmp_root().join("lsp-abandoned-question");
+    std::fs::create_dir_all(&dir).unwrap();
+    let main = dir.join("main.tex");
+    let text = |word: &str| format!("\\def\\greet{{{word}}}\n\\greet\n\\bye\n");
+    std::fs::write(&main, text("hi")).unwrap();
+    let mut child = crate::support::satex()
+        .args(["lsp", "--lines", "--no-packages", "--no-classes", "--set", "load.format=false"])
+        .args(["--set", "texmf.kpsewhich=false"])
+        .current_dir(&dir)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("satex lsp --lines starts");
+    let mut stdin = child.stdin.take().unwrap();
+    let mut stdout = BufReader::new(child.stdout.take().unwrap());
+    // one JSON array of replies per line sent, after its status lines
+    let mut replies = || loop {
+        let mut line = String::new();
+        assert!(stdout.read_line(&mut line).unwrap() > 0, "the server ended");
+        if let Ok(Value::Array(out)) = serde_json::from_str::<Value>(&line) {
+            return out;
+        }
+    };
+    let uri = format!("file://{}", main.display());
+    let lines = |messages: &[Value]| messages.iter().map(|m| format!("{m}\n")).collect::<String>();
+    let query = |id: i64| {
+        let arguments = json!([{ "file": main.display().to_string(), "queries": [{ "type": "scope", "all": true }] }]);
+        json!({ "jsonrpc": "2.0", "id": id, "method": "workspace/executeCommand", "params": { "command": "satex/query", "arguments": arguments } })
+    };
+    let open = json!({ "jsonrpc": "2.0", "method": "textDocument/didOpen", "params": { "textDocument": { "uri": uri, "languageId": "latex", "version": 1, "text": text("hi") } } });
+    let analyze = json!({ "jsonrpc": "2.0", "method": "satex/analyze", "params": { "first": uri } });
+    let change = |version: i64, word: &str| json!({ "jsonrpc": "2.0", "method": "textDocument/didChange", "params": { "textDocument": { "uri": uri, "version": version }, "contentChanges": [{ "text": text(word) }] } });
+    stdin
+        .write_all(
+            lines(&[
+                json!({ "jsonrpc": "2.0", "id": 1, "method": "initialize", "params": { "capabilities": {} } }),
+                open,
+                analyze.clone(),
+            ])
+            .as_bytes(),
+        )
+        .unwrap();
+    stdin.flush().unwrap();
+    (0..3).for_each(|_| _ = replies());
+    // an edit's run, a question about its text and a newer text, sent together: the newer text is
+    // counted while the run goes (and stops it), so the question is stale before it is taken
+    stdin.write_all(lines(&[change(2, "ho"), analyze.clone(), query(2), change(3, "hu")]).as_bytes()).unwrap();
+    stdin.flush().unwrap();
+    (0..2).for_each(|_| _ = replies());
+    let abandoned = replies();
+    let answer = |out: &[Value], id: i64| out.iter().find(|m| m["id"] == id).map(|m| m["result"].clone());
+    assert_eq!(answer(&abandoned, 2), Some(Value::Null), "{abandoned:?}");
+    replies();
+    stdin.write_all(lines(&[analyze, query(3)]).as_bytes()).unwrap();
+    stdin.flush().unwrap();
+    replies();
+    let full = answer(&replies(), 3).unwrap_or_default();
+    let records = full[0]["records"].as_array().map_or(0, Vec::len);
+    assert!(records > 0, "{full}");
+    drop(stdin);
+    let _ = child.wait();
     std::fs::remove_dir_all(dir).ok();
 }

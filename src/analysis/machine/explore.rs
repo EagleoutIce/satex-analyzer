@@ -305,6 +305,12 @@ impl Machine<'_> {
         self.branch_at(by, arms, span, false)
     }
 
+    /// [`Machine::branch`] where no one-path summary is sound: a hot site
+    /// does not refuse it ([`Machine::branch_at`]).
+    pub(crate) fn branch_needed(&mut self, by: Sym, arms: usize, span: Span) -> Option<usize> {
+        self.branch_at(by, arms, span, true)
+    }
+
     /// [`Machine::branch`]. `needed` means no other handling is sound (the
     /// paths cannot be merged), so the fork backstop of a hot site, which only
     /// bounds work, does not refuse it.
@@ -467,6 +473,10 @@ impl Machine<'_> {
             if !ended && paths.top && (spliced || self.checkpoint_due()) {
                 let (outer, paths) = (outer.clone(), paths.clone());
                 self.take_checkpoint(Drive { outer, outer_unit, nested, paths, keep_errors, mark, commands });
+            }
+            if !ended && paths.top && self.preview_due() {
+                let (outer, paths) = (outer.clone(), paths.clone());
+                self.hand_preview(Drive { outer, outer_unit, nested, paths, keep_errors, mark, commands });
             }
             self.halted |= spliced || (!ended && paths.top && (self.preview_done() || self.planted()));
             self.charge(&mut mark);
@@ -890,7 +900,7 @@ impl Machine<'_> {
     /// arms its choices allow. Without `head` it is not checked against the
     /// loop heads, because it starts from one.
     fn explore(&mut self, paths: &mut Paths, head: bool) -> Next {
-        let start = self.save_path();
+        let start = self.save_start();
         let file = self.file_level();
         let mut fork = self.env.fork();
         let own = paths.fork.is_none();
@@ -977,7 +987,7 @@ impl Machine<'_> {
                     let (state, env, at) = (self.save_path(), self.env.path(base), self.position_span());
                     let counts = self.made_counts(counters.0);
                     paths.shelved.push(Shelved { config: Config::new(state, env, !going), error, at, counts, rows });
-                    self.restore_path(start);
+                    self.restore_path(*start);
                     self.env.rewind(&fork);
                     // If this run created `paths.fork`, the shelved path still needs it.
                     if !own || paths.fork.is_none() {
@@ -991,6 +1001,7 @@ impl Machine<'_> {
                     paths.fork = None;
                 }
                 self.env.unfork(fork);
+                self.spare_start.0.push(start);
                 return match (self.infeasible, going) {
                     (true, _) => Next::None,
                     (false, true) => Next::One,
@@ -1013,7 +1024,7 @@ impl Machine<'_> {
                     None => outcomes.push(config),
                 }
             }
-            self.restore_path(start.clone());
+            self.restore_path(PathState::clone(&start));
             self.env.rewind(&fork);
             self.undo_counters(counters);
             match next {
@@ -1036,6 +1047,7 @@ impl Machine<'_> {
             paths.shelved.push(Shelved { config, error, at, counts, rows });
         }
         if outcomes.is_empty() {
+            self.spare_start.0.push(start);
             return Next::None;
         }
         // The flags tell of the last run, which may be a refuted arm. The
@@ -1043,8 +1055,11 @@ impl Machine<'_> {
         // must not take it for refuted.
         (self.infeasible, self.ended_run, self.absent) = (false, false, false);
         match first {
-            Some(choice) if head => self.loop_head(paths, choice, start, outcomes),
-            _ => Next::Many(outcomes),
+            Some(choice) if head => self.loop_head(paths, choice, *start, outcomes),
+            _ => {
+                self.spare_start.0.push(start);
+                Next::Many(outcomes)
+            }
         }
     }
 

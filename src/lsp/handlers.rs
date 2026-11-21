@@ -1592,7 +1592,20 @@ pub fn workspace_symbols(analysis: &Analysis, query_text: &str) -> Vec<SymbolInf
 /// citations, graphics), or the key family its optional argument feeds.
 /// Elsewhere, the commands in scope, ranked for a document author.
 pub fn completion(analysis: &Analysis, doc: &Text, path: &str, position: Position) -> CompletionResponse {
-    completion_at(analysis, doc, path, position)
+    let mut out = completion_at(analysis, doc, path, position);
+    // an item that loads a library (`data.load`, an arrow tip's): its load joins this file's list
+    // ([`crate::linter::shared::preamble_load`]); a file without a preamble gets none
+    let (CompletionResponse::Array(items) | CompletionResponse::List(lsp_types::CompletionList { items, .. })) =
+        &mut out;
+    for it in items.iter_mut() {
+        let Some(load) = it.data.as_ref().and_then(|d| d["load"].as_str()).map(str::to_string) else { continue };
+        let Some((cmd, lib)) = crate::linter::shared::load_parts(&load) else { continue };
+        if let Ok(Some((at, new_text))) = crate::linter::shared::preamble_load(doc.body(), cmd, &[lib], "") {
+            let at = to_lsp(doc, doc.pos(at));
+            it.additional_text_edits = Some(vec![TextEdit { range: Range { start: at, end: at }, new_text }]);
+        }
+    }
+    out
 }
 
 fn completion_at(analysis: &Analysis, doc: &Text, path: &str, position: Position) -> CompletionResponse {
@@ -1673,8 +1686,10 @@ fn completion_at(analysis: &Analysis, doc: &Text, path: &str, position: Position
         // a name of a known kind outside an argument (`\draw (`, `2.5c`): no `\` typed
         _ if !items.is_empty() => CompletionResponse::Array(items),
         _ => {
-            // the name typed, with the letters of that place (`_` and `:` under `\ExplSyntaxOn`)
-            let letters = analysis.facts.letters_at(analysis.main_file, pos.line, pos.col);
+            // the name typed, with the letters of that place in that file (`_` and `:` under `\ExplSyntaxOn`, `@` in
+            // a package the root loads)
+            let file = super::type_at::file_of(analysis, path).unwrap_or(analysis.main_file);
+            let letters = analysis.facts.letters_at(file, pos.line, pos.col);
             // a command completes only where one is being typed: its `\` right before the letters, or a whole
             // control symbol (`\\`, `\,`: a `\` and one non-letter, tex.web §354) as the name typed
             let word = before.chars().rev().take_while(|c| c.is_alphabetic() || letters.contains(c)).count();
@@ -1690,7 +1705,7 @@ fn completion_at(analysis: &Analysis, doc: &Text, path: &str, position: Position
                     .unwrap_or("")
             });
             let math = in_math(doc, pos, &analysis.settings.conventions.completion.math_environments);
-            let (mut items, more) = command_items(analysis, pos, typed, math);
+            let (mut items, more) = command_items(analysis, file, pos, typed, math);
             // what a package not loaded yet would define, last (`\\tikz` before tikz is loaded)
             let unloaded = unloaded_items(analysis, doc, typed, false);
             items.extend(unloaded.into_iter().map(|(i, _)| i));
@@ -2203,16 +2218,14 @@ fn drawn_items(analysis: &Analysis, path: &str, kinds: &[Stroke]) -> Vec<Complet
         // the tips a library of the installation declares, not loaded yet: picking one loads it
         if kind == Stroke::Arrows {
             let have: BTreeSet<String> = out.iter().map(|i| i.label.clone()).collect();
-            let start =
-                crate::linter::shared::document_start(analysis).map(|s| Position::new(s.line.saturating_sub(1), 0));
             for (tip, load) in crate::linter::shared::library_declared(analysis, "arrow") {
                 let label = if tip.contains(char::is_whitespace) { format!("-{{{tip}}}") } else { format!("-{tip}") };
                 if have.contains(&label) {
                     continue;
                 }
                 let mut it = item(label, CompletionItemKind::ENUM_MEMBER, Some(format!("arrow tip of {load}")), 60_000);
-                it.additional_text_edits = start
-                    .map(|at| vec![TextEdit { range: Range { start: at, end: at }, new_text: format!("{load}\n") }]);
+                // its edit is made over the document's text ([`completion`])
+                it.data = Some(serde_json::json!({ "load": load }));
                 out.push(it);
             }
         }
@@ -3062,7 +3075,13 @@ fn written_by(analysis: &Analysis, record: &crate::queries::query::Record) -> Op
 /// the best `conventions.completion.shown` of them, and whether there were more.
 /// The project's own first, then documented names from packages and the
 /// kernel (no `@`, `_` or `:`), more used ones first, internals last.
-fn command_items(analysis: &Analysis, pos: Pos, typed: &str, math: bool) -> (Vec<CompletionItem>, bool) {
+fn command_items(
+    analysis: &Analysis,
+    file: crate::engine::tex::FileId,
+    pos: Pos,
+    typed: &str,
+    math: bool,
+) -> (Vec<CompletionItem>, bool) {
     let takes = takes(analysis);
     let signature = signature_items(analysis, typed);
     let typed = typed.to_lowercase();
@@ -3075,13 +3094,13 @@ fn command_items(analysis: &Analysis, pos: Pos, typed: &str, math: bool) -> (Vec
         }
     }
     // a name with `@` only where `@` is a letter (`\makeatletter`, a package)
-    let letters = analysis.facts.letters_at(analysis.main_file, pos.line, pos.col);
+    let letters = analysis.facts.letters_at(file, pos.line, pos.col);
     let tiers = &analysis.settings.conventions.completion.tiers;
     let typeable =
         |label: &str| label.chars().count() < 2 || label.chars().all(|c| c.is_alphabetic() || letters.contains(&c));
     let rows = {
         let named = |name: &str| crate::engine::tex::bare_name(name).to_lowercase().contains(&typed);
-        query::scope_named(analysis, Some((analysis.main_file, pos.line, pos.col)), true, named)
+        query::scope_named(analysis, Some((file, pos.line, pos.col)), true, named)
     };
     // `\X` with a defined `\endX` is environment X's own code, run by `\begin{X}`
     // (latex.ltx `\begin`): typed as a command it is the kernel's internals.

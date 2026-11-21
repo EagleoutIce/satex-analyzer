@@ -1184,10 +1184,14 @@ tr:hover > .sd-rh .sd-del, .sd-colh:hover .sd-del, .sd-del:focus-visible { opaci
     const styleSeg = h('span', { class: 'sd-seg', role: 'group', 'aria-label': 'how the rows are written' },
       seg('format', 'Format', 'Write one row per line with the & lined up'), seg('compact', 'Compact', 'Write one row per line without padding'));
     const msg = h('span', { class: 'sd-note', role: 'status' });
+    /** tabularray's form and back (server `tblr`/`tabular`): its label follows the table's environment. */
+    const tabularray = () => /^(long|tall)?tblr$/.test(t().env);
+    const convert = h('button', { type: 'button', 'data-op': 'convert', onclick: () => f.refresh(tabularray() ? 'tabular' : 'tblr') });
     main.append(h('div', { class: 'sd-bar' },
       styleSeg, h('span', { class: 'sd-sep' }),
       h('button', { type: 'button', title: `Use booktabs rules (\\toprule, \\midrule, \\bottomrule) and drop vertical rules${pkg('booktabs')}`, onclick: () => f.refresh('booktabs') }, 'booktabs'),
       h('button', { type: 'button', title: `Align numeric columns at the decimal mark with siunitx S columns${pkg('siunitx')}`, onclick: () => f.refresh('siunitx') }, 'Numbers → S'),
+      convert,
       h('span', { class: 'sd-sep' }),
       msg));
     const grid = h('table', { class: 'sd-grid', role: 'grid', 'aria-label': 'the table\'s cells', 'aria-multiselectable': 'true' });
@@ -1269,6 +1273,8 @@ tr:hover > .sd-rh .sd-del, .sd-colh:hover .sd-del, .sd-del:focus-visible { opaci
     function draw() {
       const s = t(), map = T.layout(s), n = s.cols.length;
       for (const b of styleSeg.children) b.setAttribute('aria-pressed', String(b.dataset.style === T.styleOf(s)));
+      convert.textContent = tabularray() ? '→ tabular' : '→ tblr';
+      convert.title = tabularray() ? 'Write the table as tabular (refused where tabular cannot say the same)' : `Write the table as tabularray's tblr: columns as colspec, spans as \\SetCell${pkg('tabularray')}`;
       const vbar = (k: number, tag: 'th' | 'td' = 'th') => {
         const label = k === 0 ? 'Insert a column at the start' : k === n ? 'Insert a column at the end' : `Insert a column between ${k} and ${k + 1}`;
         const ins = tag === 'th' ? h('button', { type: 'button', class: 'sd-ins', title: label, 'aria-label': label, onclick: (e: Event) => { e.stopPropagation(); change((s) => T.insertCol(s, k)); select([focus[0], k]); } }, '+') : null;

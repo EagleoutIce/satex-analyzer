@@ -500,7 +500,7 @@ fn print(
 ) -> Result<Vec<String>, String> {
     let (analysis, sources) = cx;
     let text = sources.get(file).ok_or_else(|| format!("{file} cannot be read"))?;
-    let (edits, notes) = snapshot::printed(analysis, &text, None, nodes)?;
+    let (edits, notes, _) = snapshot::printed(analysis, &text, None, nodes)?;
     let uri = path_uri(file).as_str().to_string();
     let own = json!(snapshot::lsp_edits(&text, edits));
     match into.get_mut(&uri).and_then(Json::as_array_mut) {

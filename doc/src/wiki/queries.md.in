@@ -68,6 +68,10 @@ Lists the places the run could not interpret, grouped by cause. Widened recursio
 
 {{run(6): satex query gaps -f doc/src/wiki/challenges/06-unknown.tex}}
 
+## letters
+
+Where a punctuation character becomes a letter (catcode 11) or stops being one, per file of the project, at the user's line that caused it (`\makeatletter`, `\ExplSyntaxOn`). Line 0 holds the letters a file opened with (`@` in a package). Replayed up to a place, the records give the characters a command's name may hold there. Completion uses them to end the name typed (after `\sum_` in a body none is typed) and to offer only names typeable there, and the playground's editor colors command names by them.
+
 ## occurrences
 
 Package and class identification banners, passed options, and other one-off events.

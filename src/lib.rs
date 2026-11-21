@@ -83,6 +83,115 @@ pub mod fixed {
     /// A map a clone shares: one place to pick the pointer kind.
     pub type SharedMap<K, V> = rpds::HashTrieMap<K, V, archery::RcK, crate::engine::tex::NameHash>;
 
+    /// A [`SharedMap`] with a plain hash table in front for what was written or
+    /// updated lately. A trie lookup chases about five pointers, a table probe
+    /// one: the per-call site tables are looked up several times per macro
+    /// call. `hot` overrides `base`. It moves into `base` when it is full and
+    /// before a checkpoint copies the map ([`HotMap::settle`]), so a copy still
+    /// shares nearly everything.
+    pub struct HotMap<K, V> {
+        base: SharedMap<K, V>,
+        hot: LookupMap<K, V>,
+    }
+
+    /// Entries [`HotMap::hot`] holds before they move to the trie.
+    const HOT: usize = 1 << 16;
+
+    impl<K: Eq + std::hash::Hash + Clone, V: Clone> HotMap<K, V> {
+        pub fn get(&self, key: &K) -> Option<&V> {
+            self.hot.get(key).or_else(|| self.base.get(key))
+        }
+
+        /// The entry, moved to the front table: the next lookup is one probe.
+        pub fn get_mut(&mut self, key: &K) -> Option<&mut V> {
+            if self.hot.len() >= HOT {
+                self.settle();
+            }
+            match self.hot.entry(key.clone()) {
+                std::collections::hash_map::Entry::Occupied(e) => Some(e.into_mut()),
+                std::collections::hash_map::Entry::Vacant(e) => Some(e.insert(self.base.get(key)?.clone())),
+            }
+        }
+
+        pub fn insert_mut(&mut self, key: K, value: V) {
+            if self.hot.len() >= HOT {
+                self.settle();
+            }
+            self.hot.insert(key, value);
+        }
+
+        /// Moves the front table into the trie.
+        pub fn settle(&mut self) {
+            for (k, v) in self.hot.drain() {
+                self.base.insert_mut(k, v);
+            }
+        }
+
+        pub fn size(&self) -> usize {
+            self.base.size() + self.hot.keys().filter(|k| !self.base.contains_key(k)).count()
+        }
+
+        /// Every entry once, in no fixed order.
+        pub fn iter(&self) -> impl Iterator<Item = (&K, &V)> {
+            self.hot.iter().chain(self.base.iter().filter(|(k, _)| !self.hot.contains_key(k)))
+        }
+
+        /// The trie with the front table in it: what the map was before it had one.
+        fn whole(&self) -> std::borrow::Cow<'_, SharedMap<K, V>> {
+            if self.hot.is_empty() {
+                return std::borrow::Cow::Borrowed(&self.base);
+            }
+            let mut all = self.base.clone();
+            for (k, v) in &self.hot {
+                all.insert_mut(k.clone(), v.clone());
+            }
+            std::borrow::Cow::Owned(all)
+        }
+    }
+
+    impl<K: Eq + std::hash::Hash + Clone, V: Clone> Clone for HotMap<K, V> {
+        fn clone(&self) -> Self {
+            HotMap { base: self.base.clone(), hot: self.hot.clone() }
+        }
+    }
+
+    impl<K: Eq + std::hash::Hash, V> Default for HotMap<K, V> {
+        fn default() -> Self {
+            HotMap { base: SharedMap::default(), hot: Default::default() }
+        }
+    }
+
+    impl<K: Eq + std::hash::Hash + Clone, V: Clone> FromIterator<(K, V)> for HotMap<K, V> {
+        fn from_iter<I: IntoIterator<Item = (K, V)>>(entries: I) -> Self {
+            HotMap { base: entries.into_iter().collect(), hot: Default::default() }
+        }
+    }
+
+    impl<K: Eq + std::hash::Hash + Clone, V: Clone + PartialEq> PartialEq for HotMap<K, V> {
+        fn eq(&self, other: &Self) -> bool {
+            if self.hot.is_empty() && other.hot.is_empty() {
+                return self.base == other.base;
+            }
+            self.size() == other.size() && self.iter().all(|(k, v)| other.get(k) == Some(v))
+        }
+    }
+
+    impl<K: Eq + std::hash::Hash + Clone + serde::Serialize, V: Clone + serde::Serialize> serde::Serialize
+        for HotMap<K, V>
+    {
+        fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+            self.whole().serialize(s)
+        }
+    }
+
+    impl<'de, K: Eq + std::hash::Hash + Clone + serde::Deserialize<'de>, V: Clone + serde::Deserialize<'de>>
+        serde::Deserialize<'de> for HotMap<K, V>
+    {
+        fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+            Ok(HotMap { base: serde::Deserialize::deserialize(d)?, hot: Default::default() })
+        }
+    }
+
     /// A mutex whose clone holds a copy of its value: an [`crate::analysis::machine::Analysis`] is cloned whole.
     #[derive(Default, Debug)]
     pub struct Mutex<T>(pub std::sync::Mutex<T>);
@@ -478,6 +587,47 @@ pub mod fixed {
         type IntoIter = Iter<'a, T>;
         fn into_iter(self) -> Iter<'a, T> {
             self.iter()
+        }
+    }
+
+    /// A [`HotMap`] is the trie it fronts: every lookup, size, iteration, comparison and
+    /// encoding agrees with a plain [`SharedMap`] given the same writes, across settles and
+    /// copies. Pins the per-call site tables: a stale trie entry shadowing a newer front one
+    /// would bring back a site's old repeat count, and the format cache's bytes would change.
+    #[cfg(test)]
+    #[test]
+    fn hot_map_is_the_trie_it_fronts() {
+        let (mut hot, mut plain): (HotMap<u32, u64>, SharedMap<u32, u64>) = Default::default();
+        let mut copies = Vec::new();
+        for i in 0..3 * HOT as u64 + 7 {
+            let key = (i.wrapping_mul(2_654_435_761) % (HOT as u64 + 300)) as u32;
+            match i % 5 {
+                0 => {
+                    hot.insert_mut(key, i);
+                    plain.insert_mut(key, i);
+                }
+                1 => {
+                    if let Some(v) = hot.get_mut(&key) {
+                        *v += 1;
+                    }
+                    if let Some(v) = plain.get_mut(&key) {
+                        *v += 1;
+                    }
+                }
+                2 if i % 7919 == 2 => {
+                    copies.push((hot.clone(), plain.clone()));
+                    hot.settle();
+                }
+                _ => assert_eq!(hot.get(&key), plain.get(&key), "lookup {key}"),
+            }
+        }
+        copies.push((hot, plain));
+        for (hot, plain) in &copies {
+            assert_eq!(hot.size(), plain.size());
+            assert_eq!(hot.iter().count(), plain.size(), "each entry once");
+            assert!(hot.iter().all(|(k, v)| plain.get(k) == Some(v)));
+            assert!(*hot == hot.iter().map(|(k, v)| (*k, *v)).collect::<HotMap<_, _>>());
+            assert_eq!(postcard::to_allocvec(hot).expect("encodes"), postcard::to_allocvec(plain).expect("encodes"));
         }
     }
 

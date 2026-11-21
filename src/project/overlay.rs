@@ -222,14 +222,26 @@ pub fn remove(path: &Path) {
     FILES.with(|files| files.borrow_mut().remove(&key(path)));
 }
 
+/// `path`'s [`key`] where the overlay may hold it. A key keeps the file's own name, so a
+/// name no entry has is no entry's: most files a run reads are told apart without resolving
+/// their directory, which costs a system call per component (in the browser a walk of its
+/// file system, at every file a resumed run checks).
+fn held_key(files: &HashMap<PathBuf, String>, path: &Path) -> Option<PathBuf> {
+    let name = path.file_name().filter(|n| !files.is_empty() && *n != "." && *n != "..");
+    if name.is_some_and(|n| !files.keys().any(|k| k.file_name() == Some(n))) {
+        return None;
+    }
+    (!files.is_empty()).then(|| key(path))
+}
+
 /// What the overlay holds at `path`, never what is on disk.
 pub fn text(path: &Path) -> Option<String> {
-    FILES.with_borrow(|files| (!files.is_empty()).then(|| files.get(&key(path)).cloned()).flatten())
+    FILES.with_borrow(|files| files.get(&held_key(files, path)?).cloned())
 }
 
 /// Whether the overlay holds `path`.
 pub fn holds(path: &Path) -> bool {
-    FILES.with_borrow(|files| !files.is_empty() && files.contains_key(&key(path)))
+    FILES.with_borrow(|files| held_key(files, path).is_some_and(|k| files.contains_key(&k)))
 }
 
 pub fn clear() {
@@ -256,6 +268,23 @@ mod tests {
         assert_eq!(read_to_string(&dir.join("f.tex")).unwrap(), "x");
         remove(&resolved);
         assert!(!holds(&dir.join("f.tex")));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Intuition: a resumed run asks the overlay about every file it read, and a name no entry
+    /// has is told apart without resolving its directory (`held_key`). Pins that shortcut: a file
+    /// of the same name in another directory is not held, every spelling of the held one still is.
+    #[test]
+    fn a_file_named_like_no_entry_is_told_apart_and_the_entry_still_found() {
+        let dir = scratch("named");
+        std::fs::create_dir_all(dir.join("sub")).unwrap();
+        set(&dir.join("a.tex"), "x".into());
+        assert!(holds(&dir.join("sub/../a.tex")));
+        assert_eq!(text(&dir.join("./a.tex")).as_deref(), Some("x"));
+        assert!(!holds(&dir.join("sub/a.tex")));
+        assert!(!holds(&dir.join("b.tex")));
+        assert_eq!(text(&dir.join("b.tex")), None);
+        remove(&dir.join("a.tex"));
         let _ = std::fs::remove_dir_all(&dir);
     }
 

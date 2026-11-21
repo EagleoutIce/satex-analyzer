@@ -743,6 +743,120 @@ fn a_delimiter_of_several_values_matches_where_it_first_may_or_later() {
     }
 }
 
+/// `source` with at most one undecided choice per site and line, so a
+/// second read at a site takes no more paths: what its one path keeps must
+/// still cover every text.
+fn analyze_one_fork(source: &str) -> Analysis {
+    let mut cfg = crate::support::bare();
+    cfg.limits.site_forks = 1;
+    Machine::analyze(&format!("{PRELUDE}{source}"), None, &cfg)
+}
+
+/// Every text `\name` may hold: each definition, a one-of body split into its texts.
+fn texts_of(analysis: &Analysis, name: &str) -> Vec<String> {
+    (analysis.facts.defs.iter())
+        .filter(|d| analysis.interner.name(d.name) == name)
+        .flat_map(|d| crate::support::site_bodies(analysis, d))
+        .map(|t| t.split_whitespace().collect())
+        .collect()
+}
+
+/// tex.web § 392: on the empty text of `\t` (empty, `x` or `xx`) the
+/// undelimited `#1` is the token after it, `\stop`; else it is `x`. The
+/// second read of `\t` on the line may part no paths. Bug pinned: that read
+/// took the one-of whole as `#1` (assumption "one-of-read-as-one-token"),
+/// so `\S` was one of the texts (empty, `x`, `xx`), never `\stop`.
+#[test]
+fn an_argument_read_from_one_of_texts_with_an_empty_one_is_the_next_token_there_without_a_fork() {
+    let a = analyze_one_fork(
+        r"\count1=\pdfuniformdeviate 3 \edef\t{\ifcase\count1 \or x\or xx\fi}
+\def\c#1#2\end{}\def\d#1#2\end{\gdef\S{#1}}\expandafter\c\t\stop\end\expandafter\d\t\stop\end",
+    );
+    let got = texts_of(&a, "S");
+    assert!(got.iter().any(|t| t == "\\stop") && got.iter().any(|t| t == "x"), "{got:?}");
+    assert!(got.iter().all(|t| t == "\\stop" || t == "x"), "{got:?}");
+}
+
+/// tex.web § 392: `#1\sep 1` after `x\sep` and a number of 1000..19999 ends
+/// at that `\sep` where the number begins with `1`, else at the second: on
+/// the first end `\setF` (in `#2`'s place on the other) is left to run, so
+/// `\F` may be `\relax`. The second call on the line may part no paths at
+/// the number's site. Bug pinned: the read took the read-on arm alone and
+/// `\F` stayed undefined on every path (`\R` certainly `n`).
+#[test]
+fn an_argument_end_no_path_may_take_still_leaves_its_text_to_run() {
+    let a = analyze_one_fork(
+        r"\let\sep\relax \def\setF{\global\let\F\relax}\count1=\pdfuniformdeviate 19000 \advance\count1 by 1000
+\def\b#1{\def\a##1\sep 1##2\sep{}\edef\x{\noexpand\a x\noexpand\sep\the\count1 \noexpand\sep 1\noexpand#1\noexpand\sep}\x}
+\b\relax\b\setF\edef\R{\ifx\F\relax y\else n\fi}",
+    );
+    let got = texts_of(&a, "R");
+    assert!(got.iter().any(|t| t == "y") && got.iter().any(|t| t == "n"), "{got:?}");
+}
+
+/// [`an_argument_end_no_path_may_take_still_leaves_its_text_to_run`] for the
+/// call's last parameter, `#1\sep 1`: the read-on arm takes `\setF` into
+/// `#1`, the other end leaves it to run. One path covers both (the argument
+/// unknown, what the other end leaves may run). Bug pinned: as there.
+#[test]
+fn a_last_argument_end_no_path_may_take_still_leaves_its_text_to_run() {
+    let a = analyze_one_fork(
+        r"\let\sep\relax \def\setF{\global\let\F\relax}\count1=\pdfuniformdeviate 19000 \advance\count1 by 1000
+\def\b#1{\def\a##1\sep 1{}\edef\x{\noexpand\a x\noexpand\sep\the\count1 \noexpand#1\noexpand\sep 1}\x}
+\b\relax\b\setF\edef\R{\ifx\F\relax y\else n\fi}",
+    );
+    let got = texts_of(&a, "R");
+    assert!(got.iter().any(|t| t == "y") && got.iter().any(|t| t == "n"), "{got:?}");
+}
+
+/// tex.web § 392: on the empty text of typed `\t` (letters, perhaps none:
+/// twelve texts join into it) the undelimited `#1` is the `\stop` after it,
+/// else a letter. The second read at the site may part no more paths.
+/// Bug pinned: the read took the typed text whole as `#1`, so `\S` was
+/// certainly `n` and the empty text's `e` was lost.
+#[test]
+fn an_argument_read_from_a_typed_rest_that_may_be_empty_keeps_its_empty_reading() {
+    let a = analyze_one_fork(
+        r"\count1=\pdfuniformdeviate 12 \edef\t{\ifcase\count1 \or a\or aa\or ab\or b\or ba\or bb\or c\or ca\or cb\or cc\or d\fi}
+\def\c#1#2\end{}\def\d#1#2\end{\ifx\stop#1\gdef\S{e}\else\gdef\S{n}\fi}\expandafter\c\t\stop\end\expandafter\d\t\stop\end",
+    );
+    let got = texts_of(&a, "S");
+    assert!(got.iter().any(|t| t == "e") && got.iter().any(|t| t == "n"), "{got:?}");
+}
+
+/// tex.web § 392: `#1\sep` over `\t` (`a` or `b\sep c`) then `z\sep` is
+/// `az` on the first text and `b` on the second. The second read of `\t` on
+/// the line may part no budgeted paths, but a parameter follows, so the
+/// two ends leave the input at different places and it parts anyway.
+/// Bug pinned: the read ended at the one-of on every text, so `#1` was
+/// `a` or `b`, never `az`.
+#[test]
+fn a_one_of_that_may_hold_the_delimiter_before_another_parameter_parts_past_the_site_budget() {
+    let a = analyze_one_fork(
+        r"\let\sep\relax \count1=\pdfuniformdeviate 2 \edef\t{\ifcase\count1 a\or b\noexpand\sep c\fi}
+\def\c#1\sep#2\end{}\def\d#1\sep#2\end{\gdef\S{#1}}\expandafter\c\t z\sep w\end\expandafter\d\t z\sep w\end",
+    );
+    let got = texts_of(&a, "S");
+    assert!(got.iter().any(|t| t == "az") && got.iter().any(|t| t == "b"), "{got:?}");
+    assert!(!got.iter().any(|t| t == "a"), "{got:?}");
+}
+
+/// tex.web § 398: `\d.` over typed `\t` (letters, perhaps none) then `.`
+/// matches only where `\t` is empty; else TeX says "Use of \d doesn't match
+/// its definition". The second call on the line may part no budgeted paths,
+/// but the arms leave the input at different places, so it parts anyway.
+/// Bug pinned: the read kept the matching arm alone, and the possible
+/// error was never reported.
+#[test]
+fn a_literal_after_text_that_may_be_empty_keeps_its_mismatch_past_the_site_budget() {
+    let a = analyze_one_fork(
+        r"\count1=\pdfuniformdeviate 12 \edef\t{\ifcase\count1 \or a\or aa\or ab\or b\or ba\or bb\or c\or ca\or cb\or cc\or d\fi}
+\def\c.#1\end{}\def\d.#1\end{}\expandafter\c\t.\end\expandafter\d\t.\end",
+    );
+    let errors = crate::support::diagnosed(&a, "runaway-argument");
+    assert!(errors.iter().any(|m| m.contains("\\d doesn't match")), "{errors:?}");
+}
+
 /// tex.web § 392: an undelimited argument read from text that is one of
 /// several (empty, `x` or `xx`) is that text's first token, or the token after
 /// it when the text is empty, so the count of arguments a macro takes from

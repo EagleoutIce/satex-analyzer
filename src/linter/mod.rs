@@ -737,10 +737,16 @@ pub(crate) fn lint_run(analysis: &Analysis, document: bool, wanted: impl Fn(&Rul
         (rule.run)(&mut report);
         analysis.timings.rule(rule.code, since.elapsed(), report.out.len());
         // One finding per source site: a rule met again there (a macro body
-        // used several times) says nothing new.
+        // used several times) says nothing new. TeX's errors are its own list:
+        // two messages at one place are two errors (`Missing { inserted`, then
+        // its `Missing } inserted`).
         let mut sites = crate::fixed::HashSet::default();
+        let raised_rule = rule.code == "raised-error";
         report.out.retain(|r| match (r.get("path"), r.get("line").and_then(|v| v.as_u64())) {
-            (Some(path), Some(line)) => sites.insert((path.clone(), line, r.get("col").and_then(|v| v.as_u64()))),
+            (Some(path), Some(line)) => {
+                let message = r.get("message").filter(|_| raised_rule).cloned();
+                sites.insert((path.clone(), line, r.get("col").and_then(|v| v.as_u64()), message))
+            }
             _ => true,
         });
         let start = out.len();
@@ -760,9 +766,11 @@ pub(crate) fn lint_run(analysis: &Analysis, document: bool, wanted: impl Fn(&Rul
     // A raised error another rule explains at the same place is its: that
     // rule's error, or a correctness note that the error follows from an
     // earlier one. Never a warning or a style note that happens to stand there
-    // (`\count` is plain TeX), which would hide TeX's error.  The places
-    // a raised error stands at are few, so the line alone sieves the rest out
-    // before any place is built.
+    // (`\count` is plain TeX), which would hide TeX's error.  Each such finding
+    // stands for one of TeX's errors, so it hides one raised error there (the
+    // one its message quotes, else the first), and never a surer one: an
+    // error is not hidden behind a note. The places a raised error stands at
+    // are few, so the line alone sieves the rest out before any place is built.
     if !raised.is_empty() {
         fn place(r: &Record) -> (Option<&str>, Option<u64>, Option<u64>) {
             (
@@ -771,24 +779,48 @@ pub(crate) fn lint_run(analysis: &Analysis, document: bool, wanted: impl Fn(&Rul
                 r.get("col").and_then(|v| v.as_u64()),
             )
         }
+        let rank = |r: &Record| match r.get("severity").and_then(|v| v.as_str()) {
+            Some("error") => 2,
+            Some("warning") => 1,
+            _ => 0,
+        };
+        // Spacing aside: a rule may print a name's trailing space twice.
+        let text = |r: &Record| {
+            let m = r.get("message").and_then(|v| v.as_str()).unwrap_or_default();
+            m.split_whitespace().collect::<Vec<_>>().join(" ").trim_end_matches('.').to_string()
+        };
         let line = |r: &Record| r.get("line").and_then(|v| v.as_u64());
         let lines: crate::fixed::HashSet<_> = raised.iter().map(|i| line(&out[*i])).collect();
-        let mut explained: crate::fixed::HashSet<_> = crate::fixed::HashSet::default();
+        let mut order: Vec<usize> = raised.iter().copied().collect();
+        order.sort_unstable();
+        let mut keep = vec![true; out.len()];
+        // A note that quotes a surer raised error takes its severity: one finding names both.
+        let mut lift = Vec::new();
         for (i, record) in out.iter().enumerate() {
             let severity = record.get("severity").and_then(|v| v.as_str());
             let correctness = record.get("category").and_then(|v| v.as_str()) == Some("correctness")
                 && severity != Some("warning")
                 || severity == Some("error");
             let correctness = correctness || record.contains_key(POSSIBLE);
-            if correctness && !raised.contains(&i) && lines.contains(&line(record)) {
-                explained.insert(place(record));
+            if !correctness || raised.contains(&i) || !lines.contains(&line(record)) {
+                continue;
+            }
+            let (at, said) = (place(record), text(record));
+            let open = |j: &usize| keep[*j] && place(&out[*j]) == at;
+            let quoted = order.iter().copied().filter(open).find(|j| said.contains(text(&out[*j]).as_str()));
+            let weaker = |j: &usize| rank(&out[*j]) <= rank(record);
+            if let Some(j) = quoted.filter(|j| !weaker(j)) {
+                lift.push((i, out[j].get("severity").cloned()));
+                keep[j] = false;
+            } else if let Some(j) = quoted.or_else(|| order.iter().copied().filter(open).find(weaker)) {
+                keep[j] = false;
             }
         }
-        let mut keep = vec![true; out.len()];
-        for &i in &raised {
-            keep[i] = !explained.contains(&place(&out[i]));
+        for (i, severity) in lift {
+            if let Some(severity) = severity {
+                out[i].insert("severity".into(), severity);
+            }
         }
-        drop(explained);
         let mut at = 0;
         out.retain(|_| {
             at += 1;

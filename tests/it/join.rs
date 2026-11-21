@@ -1194,6 +1194,23 @@ fn lists_of_names_through_an_undecided_loop_keep_their_names() {
     assert!(crate::support::maybe_defined(&analysis, "got"));
 }
 
+/// `\def` through such a list: the token `\def` reads is the list's first,
+/// one of the names it holds, so each of them may now mean the definition.
+/// Bug pinned: typed text listing names was taken for a name built around a
+/// gap (its names follow gap markers), so the `\def` gave the list token
+/// itself a meaning and `\elt` stayed `\relax` on every path, silently.
+#[test]
+fn a_definition_through_a_list_of_names_may_define_each_name() {
+    let analysis = analyze(
+        r"\chardef\bA=1 \chardef\bB=2 \def\F{}\let\elt\relax
+          \def\loop{\ifnum\pdfuniformdeviate2=0
+            \ifnum\pdfuniformdeviate2=0 \xdef\F{\F\elt\bA}\else\xdef\F{\F\elt\bB}\fi
+            \expandafter\loop\fi}\loop
+          \expandafter\def\F{x}\def\X{x}\ifx\elt\X\def\hit{}\fi",
+    );
+    assert!(crate::support::maybe_defined(&analysis, "hit"), "\\elt may now mean x");
+}
+
 /// A loop whose body holds a second undecided `\ifnum` before it calls
 /// itself has two heads, met in turns. Covered by its summary with no
 /// source read since, each meeting must drop one more input level, or

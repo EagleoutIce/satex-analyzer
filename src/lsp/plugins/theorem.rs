@@ -297,7 +297,7 @@ fn render(cx: &Cx, all: &[Kind]) -> Option<Json> {
             // unread, nothing prints and no choice is offered
             let base = snapshot::read(cx.doc, call.0, &keyed, false).unwrap_or_default();
             let print = |n: Node| {
-                snapshot::printed(cx.analysis, cx.doc, cx.file(), &[n]).map(|(e, _)| snapshot::lsp_edits(cx.doc, e))
+                snapshot::printed(cx.analysis, cx.doc, cx.file(), &[n]).map(|(e, ..)| snapshot::lsp_edits(cx.doc, e))
             };
             let mut choices: Vec<(String, Vec<lsp_types::TextEdit>)> = Vec::new();
             let mut own = base.clone();

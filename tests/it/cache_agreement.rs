@@ -230,6 +230,38 @@ fn learned_call_effects_do_not_depend_on_the_package_cache() {
     );
 }
 
+/// A package that makes an undecided choice while it loads: pgfmath's seed test
+/// `\ifnum\time*\year=0`, here with the clock unknown (in a load it always is). A replay of the
+/// package's cache must count the choices its read made, as it counts the read's steps.
+/// Pins: the cold run counted the choice and the warm one did not (95 against 93 forks in the
+/// test above once the clock was unknown in loads).
+#[test]
+fn a_choice_a_package_makes_while_it_loads_counts_the_same_served() {
+    if !installed() {
+        return;
+    }
+    let dir = seeded("load-choice");
+    std::fs::write(
+        dir.join("choosy.sty"),
+        "\\ProvidesPackage{choosy}\n\\newcount\\choosy \\begingroup\n\\choosy=\\time\n\\multiply\\choosy by\\year\n\
+         \\ifnum\\choosy=0\n  \\choosy=1\n\\fi\n\\xdef\\choosyseed{\\the\\choosy}\\endgroup\n\\def\\choosyname{choosy}\n",
+    )
+    .expect("choosy.sty");
+    let doc = "\\documentclass{article}\n\\usepackage{choosy}\n\\begin{document}\\choosyname\\end{document}\n";
+    let cfg = Config { clock: satex::project::config::Clock::Unknown, ..config(&dir) };
+    let cold = analyze(&dir, doc, &cfg);
+    let warm = analyze(&dir, doc, &cfg);
+    assert!(
+        warm.package_caches
+            .iter()
+            .any(|(name, .., state)| name == "choosy" && satex::analysis::machine::cache_served(state)),
+        "choosy was replayed: {:?}",
+        warm.package_caches
+    );
+    assert_eq!(cold.forks, warm.forks, "the choice is counted read or replayed");
+    same_rows(&cold, &warm, "a choice in a load");
+}
+
 #[test]
 fn a_gap_inside_a_package_survives_being_cached() {
     if !installed() {

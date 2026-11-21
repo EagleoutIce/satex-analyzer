@@ -601,7 +601,7 @@ fn tight(text: &str, s: usize, e: usize, new: &str) -> Edit {
 }
 
 /// `node` as written, edited to read as `printed`, a text of the same call or environment:
-/// arguments matched from the last, those `printed` lacks emptied, its new ones unwritten.
+/// arguments matched from the last, those `printed` lacks dropped, its new ones unwritten.
 pub fn retarget(node: &Node, printed: &str) -> Option<Node> {
     let fresh = read(&Text::new(printed.to_string()), 0, &[], false)?;
     let mut out = Node { name: fresh.name, star: fresh.star, body: fresh.body, ..node.clone() };
@@ -611,7 +611,8 @@ pub fn retarget(node: &Node, printed: &str) -> Option<Node> {
         let old = was.next_if(|o| o.open == a.open);
         args.push(Arg { inner: old.and_then(|o| o.inner), ..a.clone() });
     }
-    args.extend(was.map(|o| Arg { text: String::new(), keys: o.keys.as_ref().map(|_| Vec::new()), ..o.clone() }));
+    // an argument the printed form lacks goes with its delimiters (`tabularx`'s width as a `tblr`)
+    args.extend(was.map(|o| Arg { drop: true, ..o.clone() }));
     args.reverse();
     out.args = args;
     Some(out)
@@ -710,13 +711,16 @@ pub(super) fn reads(text: &str, from: usize, to: usize, edits: &[Edit]) -> Strin
 /// A name a written node adds that the run does not define loads its package: a new node's
 /// `package` hint for its own name, else the installation's provider. A written node's hint
 /// is loaded too (what the run cannot name, as a column letter).
+/// What [`printed`] writes: the edits, the notes, and the loads the root's preamble takes.
+pub type Printed = (Vec<Edit>, Vec<String>, Vec<RootLoad>);
+
 pub fn printed(
     analysis: &Analysis,
     doc: &Text,
     file: Option<crate::engine::tex::FileId>,
     nodes: &[Node],
-) -> Result<(Vec<Edit>, Vec<String>), String> {
-    let (mut edits, mut notes) = (Vec::new(), Vec::new());
+) -> Result<Printed, String> {
+    let (mut edits, mut notes, mut roots) = (Vec::new(), Vec::new(), Vec::new());
     // packages wanted in order, and names asked of the installation, by the node that wants them
     let (mut wanted, mut asked): (Vec<Package>, Vec<(String, bool, String)>) = Default::default();
     // a name the written text defines itself (`\newcommand{\x}` beside its use, an extract) loads no package: the
@@ -732,7 +736,16 @@ pub fn printed(
             .iter()
             .any(|d| d == m)
     };
+    // libraries new nodes load (`\\usetikzlibrary{matrix}`), by command: they join the preamble's list (preamble_load)
+    let mut libs: Vec<(String, Vec<String>)> = Vec::new();
     for n in nodes {
+        if let Some(list) = library_node(n) {
+            match libs.iter_mut().find(|(c, _)| *c == n.name) {
+                Some((_, l)) => l.extend(list),
+                None => libs.push((n.name.clone(), list)),
+            }
+            continue;
+        }
         let own = edits_of(doc, n)?;
         // a `.bib` entry loads no package
         if n.kind == Kind::Entry {
@@ -787,14 +800,115 @@ pub fn printed(
                 loads.push((at, at, e.new_text));
             }
             Ok(None) => {}
-            Err(why) => notes.push(why),
+            // a file the root reads (`\\input{chapter}`) has no preamble: the load goes to the root's, where the run
+            // met `\\begin{document}` (else the written code would stop the build at an undefined name)
+            Err(why) => match root_load(analysis, "usepackage", &[p.name.as_str()], &p.options) {
+                Ok(Some(load)) => {
+                    notes.push(format!("adds \\usepackage{{{}}} to {}", p.name, load.file));
+                    roots.push(load);
+                }
+                Ok(None) => {}
+                Err(()) => notes.push(why),
+            },
+        }
+    }
+    let run = crate::queries::preview::libraries(analysis);
+    for (cmd, list) in &libs {
+        // loaded by the run under either command: `\\usetikzlibrary` reads pgf's libraries too
+        let new: Vec<&str> = (list.iter().map(String::as_str))
+            .filter(|l| !["usetikzlibrary", "usepgflibrary"].iter().any(|c| run.contains(&format!("\\{c}{{{l}}}"))))
+            .collect();
+        if new.is_empty() {
+            continue;
+        }
+        match crate::linter::shared::preamble_load(doc.body(), cmd, &new, "") {
+            Ok(Some((at, text))) => {
+                notes.push(format!("loads {} with \\{cmd}", new.join(", ")));
+                loads.push((at, at, text));
+            }
+            Ok(None) => {}
+            Err(why) => match root_load(analysis, cmd, &new, "") {
+                Ok(Some(load)) => {
+                    notes.push(format!("loads {} with \\{cmd} in {}", new.join(", "), load.file));
+                    roots.push(load);
+                }
+                Ok(None) => {}
+                Err(()) => notes.push(why),
+            },
         }
     }
     // a load goes first where it shares a place
     loads.append(&mut edits);
     let (edits, more) = super::writing::clean(analysis, doc, file, merged(loads)?);
     notes.extend(more);
-    Ok((edits, notes))
+    Ok((edits, notes, roots))
+}
+
+/// A load the root document's preamble gets: `text` inserted at `line`, `character` (LSP units) of its file, joining a
+/// library list there (`,calc`) or a line of its own before the line where the run met `\\begin{document}`.
+#[derive(Debug, serde::Serialize)]
+pub struct RootLoad {
+    /// The root's file, as the run names it.
+    pub file: String,
+    /// Its path, for a workspace edit's URI.
+    #[serde(skip)]
+    pub path: String,
+    /// The 0-based line the load goes in.
+    pub line: u32,
+    pub character: u32,
+    pub text: String,
+}
+
+thread_local! {
+    /// The open buffers a write may also change (the root's, for its preamble), by the run's path: newer than the disk.
+    static OPEN: std::cell::RefCell<Vec<(String, String)>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// `f` with `open` (run path, text) as the buffers [`RootLoad`]s read.
+pub fn with_open<T>(open: Vec<(String, String)>, f: impl FnOnce() -> T) -> T {
+    let old = OPEN.replace(open);
+    let out = f();
+    OPEN.set(old);
+    out
+}
+
+/// The load of `items` by `\\cmd` the root's preamble gets, unless the run loaded the package or the root's text lists
+/// them ([`crate::linter::shared::preamble_load`] over its open buffer, else its file); none where the run met no
+/// `\\begin{document}` (`Err`). A root whose text is not at hand gets the call on a line before `\\begin{document}`.
+fn root_load(analysis: &Analysis, cmd: &str, items: &[&str], options: &str) -> Result<Option<RootLoad>, ()> {
+    if cmd == "usepackage" && items.iter().all(|p| crate::linter::shared::loaded(analysis, p)) {
+        return Ok(None);
+    }
+    let begin = crate::linter::shared::document_start(analysis).ok_or(())?;
+    let (file, path) = (analysis.short_name(begin.file).to_string(), analysis.file_name(begin.file).to_string());
+    let text = OPEN
+        .with_borrow(|o| o.iter().find(|(p, _)| *p == path).map(|(_, t)| t.clone()))
+        .or_else(|| std::fs::read_to_string(&path).ok());
+    if let Some(root) = text
+        && let Ok(load) = crate::linter::shared::preamble_load(&root, cmd, items, options)
+    {
+        let Some((at, text)) = load else { return Ok(None) };
+        let t = Text::new(root);
+        let p = super::handlers::to_lsp(&t, t.pos(at));
+        return Ok(Some(RootLoad { file, path, line: p.line, character: p.character, text }));
+    }
+    let options = if options.is_empty() { String::new() } else { format!("[{options}]") };
+    let text = format!("\\{cmd}{options}{{{}}}\n", items.join(","));
+    Ok(Some(RootLoad { file, path, line: begin.line.saturating_sub(1), character: 0, text }))
+}
+
+/// The libraries a new `\\usetikzlibrary` or `\\usepgflibrary` node loads: the printer joins them to the preamble's list.
+fn library_node(n: &Node) -> Option<Vec<String>> {
+    if n.range.is_some()
+        || n.drop
+        || n.kind != Kind::Call
+        || !matches!(n.name.as_str(), "usetikzlibrary" | "usepgflibrary")
+    {
+        return None;
+    }
+    let text = canonical(n);
+    let (_, list) = crate::linter::shared::load_parts(&text)?;
+    Some(list.split(',').map(|l| l.trim().to_string()).filter(|l| !l.is_empty()).collect())
 }
 
 /// Byte edits as LSP edits.
@@ -809,18 +923,18 @@ pub fn edits(
     file: Option<crate::engine::tex::FileId>,
     nodes: &[Node],
 ) -> Vec<lsp_types::TextEdit> {
-    printed(analysis, doc, file, nodes).map(|(e, _)| lsp_edits(doc, e)).unwrap_or_default()
+    printed(analysis, doc, file, nodes).map(|(e, ..)| lsp_edits(doc, e)).unwrap_or_default()
 }
 
-/// The edits that write `nodes` as LSP edits: `{edits, notes}`.
+/// The edits that write `nodes` as LSP edits: `{edits, notes, roots}` (`roots`: package loads for the root's preamble, [`RootLoad`]).
 pub fn print(
     analysis: &Analysis,
     doc: &Text,
     file: Option<crate::engine::tex::FileId>,
     nodes: &[Node],
 ) -> Result<Json, String> {
-    let (edits, notes) = printed(analysis, doc, file, nodes)?;
-    Ok(json!({ "edits": lsp_edits(doc, edits), "notes": notes }))
+    let (edits, notes, roots) = printed(analysis, doc, file, nodes)?;
+    Ok(json!({ "edits": lsp_edits(doc, edits), "notes": notes, "roots": roots }))
 }
 
 /// A `satex/dialogApply` of kind `snapshot`: the edits that write its `nodes`.

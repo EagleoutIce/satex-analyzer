@@ -59,7 +59,7 @@ export default [
     steps: 'click the end of the listing line "\\twice{ab}"; type Z' },
   { name: 'tikz-node', word: is('findings'), src: /\{findings(?=\})/, keys: ['X'], endWord: is('findingsX'),
     steps: 'click the end of the tikz node text "findings" (Figure 1); type X' },
-  { name: 'toc-entry', word: `(t, w) => t === 'Background' && w[4] - w[2] < 11`, src: /\\section\[Background/, keys: ['Q'], expect: () => null,
+  { name: 'toc-entry', word: { word: 'Background', maxH: 11 }, src: /\\section\[Background/, keys: ['Q'], expect: () => null,
     steps: 'click the end of "Background" in the table of contents; type Q: goes to the section title or is refused, never breaks the build' },
   { name: 'bold', source: MARKUP, example: 'hello.tex', word: is('bold'), src: /\{bold/, keys: [' Quokka'], marker: 'Quokka', style: /bold|700|Bold|bx/, endWord: is('Quokka'), forward: true,
     steps: 'a doc with \\textbf{bold words}; click the end of "bold"; type " Quokka"' },
@@ -78,8 +78,26 @@ export default [
   { name: 'fz-enter-mid', source: MARKUP, example: 'hello.tex', word: is('plain'), src: /More plain/, keys: ['Enter', 'qdaqum'], marker: 'qdaqum', endWord: is('qdaqum'),
     steps: 'MARKUP; click the end of "plain" in "More plain text"; Enter, then "qdaqum" at 30-120 ms: all six letters land (fuzz: only "qda" did, the caret gone)' },
   { name: 'fz-hyphen', source: `\\documentclass{article}\n\\usepackage[textwidth=5cm]{geometry}\n\\begin{document}\n${Array.from({ length: 14 }, (_, i) => `Sentence ${i} carries several plain words, like river${i} and stone${i}.`).join(' ')}\n\\end{document}\n`, example: 'hello.tex',
-    word: `(t) => /^\\p{L}{2,}-$/u.test(t)`, src: (t, w) => { const m = new RegExp(w.slice(0, -1) + '\\p{L}+', 'u').exec(t); return m ? m.index + w.length - 1 : -1; }, keys: ['Q'], expect: () => null, contains: [/\p{L}Q\p{L}/u],
+    word: { match: '^\\p{L}{2,}-$' }, src: (t, w) => { const m = new RegExp(w.slice(0, -1) + '\\p{L}+', 'u').exec(t); return m ? m.index + w.length - 1 : -1; }, keys: ['Q'], expect: () => null, contains: [/\p{L}Q\p{L}/u],
     steps: 'a paragraph TeX hyphenates; click the end of a hyphenated word\'s first part ("car-"); type Q: it lands at the break, inside the source word (was: refused, "comes from code satex cannot place")' },
   { kind: 'shift', name: 'compile-shift', source: MARKUP, example: 'hello.tex',
     steps: 'a small doc built once; Compile again: the pages never move while the status and timer change (user report 16:40)' },
+  // references typed after their labels (preview wish 4, 2026-11-21): the echo shows the number the run set, never the
+  // key's letters, a \label sets nothing
+  { name: 'ref-from-label', source: `\\documentclass{article}\n\\begin{document}\n\\section{Intro}\\label{sec:a}\nThe intro ends here.\n\\section{Method}\\label{sec:b}\nSee \\ref{sec:a} above.\n\\end{document}\n`, example: 'hello.tex',
+    word: is('here.'), src: /ends here\./, keys: [' As in \\ref{sec:b}\\label{z} done'], marker: 'done', ever: [/As in 2/], never: [/sec:b|sec|\bz\b/], expect: () => null, contains: [/\\ref\{sec:b\}\\label\{z\} done/],
+    steps: 'two sections, each labelled; click the end of "here."; type " As in \\ref{sec:b}\\label{z} done": the echo reads "As in 2 done" before the build, never "sec:b" or "z"' },
+  // a formula in text at a row's end (preview wish 3, 2026-11-21): TeX breaks it after a relation or binary operator,
+  // the echo too, so the build lands where the echo set it (was: the whole formula on the next row)
+  { name: 'math-break-inline', source: `\\documentclass{article}\n\\setlength\\textwidth{200pt}\n\\begin{document}\nA narrow column of text where a formula typed at the end must break. It ends here\n\nAfter it another paragraph follows.\n\\end{document}\n`, example: 'hello.tex',
+    word: is('here'), src: /ends here/, keys: [' then $a+b+c+d+e+f+g+h=k+m+n$ holds.'], marker: 'holds', endWord: is('holds.'), expect: () => null, contains: [/a\+b\+c\+d\+e\+f\+g\+h=k\+m\+n\S* holds\./],
+    steps: 'a 200pt column; click the end of "here"; type " then $a+b+…=k+m+n$ holds.": the echo breaks the formula after an operator as pdfTeX does, no jump when the build lands' },
+  // Enter in the page is a new paragraph as TeX sets one (user report 2026-11-21 13:15): at the end of a bold word the
+  // paragraph starts after `\\textbf{…}` (was: refused, the next keys went into the bold); on an item's line the next item
+  { name: 'enter-after-bold', source: `\\documentclass{article}\n\\begin{document}\nHello there, this is a first paragraph of words.\n\nI think it is nice to consider a \\textbf{world}\n\\end{document}\n`, example: 'hello.tex',
+    word: is('world'), src: (t) => t.indexOf('world}') + 5, keys: ['Enter', 'then words'], marker: 'then', expect: () => null, contains: [/\\textbf\{world\}\n\nthen words/],
+    steps: 'click the end of the bold "world"; Enter, type "then words" (letters the page face holds: the fallback font width is another check): a new paragraph after the bold command, the words not bold' },
+  { name: 'enter-in-list', source: `\\documentclass{article}\n\\begin{document}\n\\begin{itemize}\n\\item First thing here\n\\end{itemize}\n\\end{document}\n`, example: 'hello.tex',
+    word: is('here'), src: /First thing here/, keys: ['Enter', 'Second'], marker: 'Second', expect: () => null, contains: [/\\item First thing here\n\\item Second/],
+    steps: 'click the end of an item; Enter, type "Second": the next item' },
 ];

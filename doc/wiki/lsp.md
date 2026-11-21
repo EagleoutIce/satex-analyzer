@@ -33,6 +33,7 @@ satex lsp --port 9257 --host 0.0.0.0
 | Colors | `textDocument/documentColor`, `colorPresentation` | the [color plugin](type-plugins.md#color) |
 | Dialogs | `satex/view` (`{textDocument, position}`) | the [type plugins](type-plugins.md)' views: a color picker, a length converter |
 | Hyphenation | `satex/hyphenate` (`{textDocument, words}`) | per word the characters a hyphen may precede, from the last run's tables ([typesetting plugins](configuration.md#plugins)) |
+| Math symbols | `satex/mathwidths` (`{textDocument, symbols, size}`) | per symbol `[width, height, depth, italic]` in em of its font, from the run's math codes and family fonts (`size` 0 text, 1 script, 2 scriptscript), `null` where not known |
 | Line breaking | `satex/break` (`{textDocument, path, line, words, indent}`) | the lines the words break into: per line the word and character it ends before, whether at a hyphen, its glue ratio and order. `indent` is a box in sp, or `true` for `\parindent` |
 
 **Roots.** A file is analyzed through the root document that reads it. A file no root reads gets an information diagnostic `unreachable-file`. It is then read after a root's preamble, apart from that root's results.

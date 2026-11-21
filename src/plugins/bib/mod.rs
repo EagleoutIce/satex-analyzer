@@ -57,7 +57,7 @@ pub fn resolve(analysis: &Analysis, name: &str) -> Option<PathBuf> {
         .unwrap_or_default();
     let file = if name.ends_with(".bib") { name.to_string() } else { format!("{name}.bib") };
     let beside = base.join(&file);
-    if beside.is_file() {
+    if beside.is_file() || crate::project::overlay::holds(&beside) {
         return Some(beside);
     }
     if let found @ Some(_) =

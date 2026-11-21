@@ -159,3 +159,23 @@ test('prose and reflow: a forced line break', () => {
   assert.ok(!E.prose('a \\, b').some((q) => q.brk), 'a thin space is no break');
   assert.deepEqual(shape(E.reflow([p(10, 0), p(10, 3, { brk: true })], 0, { ...LINE, parskip: 4 })), ['-2@0:0', '-1@0:0 dy12']);
 });
+// Intuition: a paragraph typed after Enter is broken by TeX's total fit too (not greedily): a formula in it breaks
+// after its relation at the lower penalty, its operators' spaces shrunk, as pdfTeX did in the probe
+// (target/scratch/preview/probe/math3: greedy broke after `h+`, pdfTeX after `=`). Pins preview wish 3.
+spec('a typed last paragraph takes the total fit', () => {
+  // the new paragraph: a word of 44, `a+` `b+` `c=` (10, 10, 16 wide, operator spaces 2 that shrink to 0), `d` after
+  // the relation's space (3, no shrink), a word of 20; 85 bp after the indent: up to `=` is 87, 2 to shrink
+  const pieces = [p(30, 0), p(44, 3, { par: true }), { gap: 3, n: 10, pen: 700 }, { gap: 2, n: 10, pen: 700, mg: true, st: 1, sh: 2 }, { gap: 2, n: 16, pen: 500, mg: true, st: 1, sh: 2 }, { gap: 3, n: 10, mg: true, st: 3, sh: 0 }, p(20)];
+  const f = E.reflow(pieces, 30, { ...LINE, rows: [], fit: true });
+  assert.equal(f.rows.length, 3, 'the old row, then the paragraph in two rows');
+  assert.equal(f.rows[1].out.at(-1).pen, 500, 'its first row ends after the relation');
+  const end = (r) => r.out.at(-1).x + r.out.at(-1).n;
+  assert.ok(Math.abs(end(f.rows[1]) - 100) < 1e-9, 'justified to the edge');
+});
+// Intuition: text typed inside a command's argument keeps that command's font, text after its `}` the paragraph's:
+// prose starts in the groups the caret stands in (`outer`). Pins "Next words" echoed bold after Enter at `\textbf{world|}`.
+test('prose: the groups the typed text starts in', () => {
+  const ctx = (raw, outer) => E.prose(raw, undefined, outer).map((q) => `${q.t}:${q.ctx}`).join(' ');
+  assert.equal(ctx('ld}\n\nNext', ['textbf']), 'ld:textbf Next:');
+  assert.equal(ctx('more', ['emph']), 'more:emph');
+});

@@ -3,7 +3,7 @@
 //! per node (`\forestOset` stores option `o` of node `n` as `fRsTn/o`): content, name and the
 //! position its packing found. On a blank line of the document body, "Insert forest tree".
 
-use super::{Cx, Hit, TypePlugin, rewrite};
+use super::{Cx, Hit, TypePlugin, rewrite_rooted};
 use crate::analysis::machine::Analysis;
 use crate::analysis::roles::Ty;
 use crate::lsp::handlers::to_pos;
@@ -45,9 +45,11 @@ impl TypePlugin for Forest {
     fn actions(&self, cx: &Cx, _hit: &Hit) -> Vec<CodeAction> {
         let Some(new) = super::blank(cx, ENV, ENV) else { return Vec::new() };
         let node = snapshot::Node { body: format!("  {TEMPLATE}"), ..snapshot::new_env(ENV, new.at.start, ENV) };
-        let Ok((edits, notes)) = snapshot::printed(cx.analysis, cx.doc, cx.file(), &[node]) else { return Vec::new() };
+        let Ok((edits, notes, roots)) = snapshot::printed(cx.analysis, cx.doc, cx.file(), &[node]) else {
+            return Vec::new();
+        };
         let note: String = notes.iter().map(|n| format!(" ({n})")).collect();
-        vec![rewrite(cx, format!("Insert forest tree{note}"), snapshot::lsp_edits(cx.doc, edits))]
+        vec![rewrite_rooted(cx, format!("Insert forest tree{note}"), snapshot::lsp_edits(cx.doc, edits), roots)]
     }
 
     fn view(&self, cx: &Cx, _hit: &Hit) -> Option<Json> {

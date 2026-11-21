@@ -337,6 +337,13 @@ export const CASES = {
   'pdf-new-para': () => newPara('pdf-new-para', 25),
   // a person's pace: builds land between the keys (the open-paragraph branch, then the paragraph the build sets)
   'pdf-new-para-slow': () => newPara('pdf-new-para-slow', 160),
+  // the screenshot of 2026-11-21: `\(\sum \)` typed into a new paragraph, the caret on the sum's row, the editor alike
+  'pdf-math-caret': () => mathCaret('pdf-math-caret', 60),
+  'pdf-math-caret-slow': () => mathCaret('pdf-math-caret-slow', 400),
+  'pdf-macro-comma': () => macroComma('pdf-macro-comma', ['x', 'y']),
+  'pdf-macro-comma-space': () => macroComma('pdf-macro-comma-space', [' ', 'x']),
+  'pdf-math-caret-below': () => mathCaret('pdf-math-caret-below', 60, true),
+  'pdf-math-caret-below-slow': () => mathCaret('pdf-math-caret-below-slow', 400, true),
   // the editor: type the paragraph in the source while the PDF shows (Type on, caret in the PDF follows the editor?)
   async 'pdf-editor-para'() {
     const p = await open(T0, 'play-pdf');
@@ -360,6 +367,92 @@ export const CASES = {
     await p.close();
   },
 };
+
+// The PDF caret against the source caret: the editor's cursor at the caret's offset, and the caret drawn on a row
+// SyncTeX sets from the caret's source line (where it sets any: a macro's definition is set at its calls) once a build of the text as typed shows, else marked pending (never on
+// another paragraph's row). `{line, built, pending, onRow, editor, at}`; null where no caret is drawn.
+const caretState = (p) => p.eval(`(() => {
+  const c = document.querySelector('#play-pdf .pdf-caret'), pc = satexPdfCaret(), h = satexHealth();
+  if (!c || !pc) return null;
+  const pg = c.closest('.pdf-page'), img = pg?.querySelector('img');
+  if (!img) return null;
+  const r = img.getBoundingClientRect(), cr = c.getBoundingClientRect(), ws = satexPdfWords(), k = r.height / (img.naturalHeight * 72 / ws.dpi);
+  const line = h.text.slice(0, pc.at).split('\\n').length, built = img.__build?.text === h.text, y = (cr.top + cr.height / 2 - r.top) / k;
+  const rows = satexPdfBoxes().filter((b) => b.line === line && b.page === +pg.dataset.page).map((b) => b.y);
+  return { line, built, pending: c.classList.contains('pdf-caret-stale'), onRow: rows.some((b) => y > b - 9 && y < b + 2), y: Math.round(y), rows: [...new Set(rows.map(Math.round))], editor: h.cursor?.[1] ?? null, at: pc.at, ghost: pc.ghost, own: pc.own };
+})()`);
+/** The checks of one caret sample: the editor at the caret's offset; a landed build's caret on its line's row or pending. */
+function caretCheck(name, st, what) {
+  if (!st) return;
+  if (st.editor != null && st.editor !== st.at) fails.push(`${name}: ${what}: editor cursor ${st.editor}, PDF caret ${st.at}`);
+  if (st.built && !st.pending && st.rows.length && !st.onRow) fails.push(`${name}: ${what}: caret on y ${st.y} bp, line ${st.line} is set on ${J(st.rows)}`);
+}
+/** The screenshot of 2026-11-21 13:16: a paragraph after `\textbf{world}`, `\(\sum \)` typed into a new paragraph from
+ * the pages. The caret stayed on "I think…" (the word it was put in) while the build set the sum a row below. */
+async function mathCaret(name, ms, below = false) {
+  const T = '\\documentclass{article}\n\\begin{document}\nHello, world! This is an amazing concept\n\nWhat do you say?\n\nI think it is nice to consider a \\textbf{world}\n\\end{document}\n';
+  const p = await open(T, 'play-pdf');
+  await p.eval(`document.getElementById('pdf-compile').click()`);
+  if (!await compiled(p, 'world')) { fails.push(name + ': no build'); return p.close(); }
+  await sleep(800);
+  if (await p.eval(`document.getElementById('pdf-type').getAttribute('aria-pressed')`) !== 'true') await p.eval(`document.getElementById('pdf-type').click()`);
+  await sleep(400);
+  const w = await wordBox(p, 'world', 1) ?? await wordBox(p, 'world');
+  // `below`: a click on the empty page under the last paragraph, a new paragraph the first key writes; else the end of
+  // "world" and Enter
+  if (below) await p.mouse(w[0] + 2, w[3] + 3 * (w[3] - w[1])); else await p.mouse(w[2] - 0.5, (w[1] + w[3]) / 2);
+  await p.until(`satexPdfCaret()`, 3000);
+  await sleep(300);
+  // the editor's cursor follows once the keys rest (150 ms, pdfCaretDraw): sampled after that
+  const sample = async (what) => { await sleep(250); const st = await caretState(p); log(what, J(st)); caretCheck(name, st, what); };
+  if (!below) await key(p, 'Enter', ms);
+  for (const k of ['\\', '(', '\\', 's', 'u', 'm']) { await key(p, k, ms); await sample(`key ${k}`); }
+  await key(p, 'Escape', ms);
+  await key(p, ' ', ms);
+  await sample('space');
+  // the build of the text as typed lands: the caret on the sum's row, the source's cursor at the same offset
+  await p.until(`(() => { const i = document.querySelector('#play-pdf .pdf-page img'); return i?.__build?.text === satexHealth().text && !document.querySelector('#play-pdf.pdf-running'); })()`, 20000);
+  await sleep(800);
+  await sample('landed');
+  log('text', J((await p.eval('satexHealth().text')).slice(-60)));
+  await p.shot(name + '.png', await p.eval(`(() => { const r = document.querySelector('#play-pdf .pdf-page').getBoundingClientRect(); return { x: r.left, y: r.top, width: r.width, height: Math.min(r.height, 300) }; })()`));
+  // typing on in text after the formula, then a new paragraph: each landed build's caret on its row
+  for (const k of ['a', 'n', 'd']) { await key(p, k, ms); await sample(`after ${k}`); }
+  await p.until(`(() => { const i = document.querySelector('#play-pdf .pdf-page img'); return i?.__build?.text === satexHealth().text && !document.querySelector('#play-pdf.pdf-running'); })()`, 20000);
+  await sleep(800);
+  await sample('landed 2');
+  await p.close();
+}
+
+/** The screenshot of 2026-11-21 13:21: a click right after "Hello," of `\greet{world}` (its definition's text
+ * `{Hello, #1!}`), then keys: the row as drawn must hold the comma once ("Hello,x, world!" was drawn). */
+async function macroComma(name, keys) {
+  const T = '\\documentclass{article}\n\\newcommand{\\greet}[1]{Hello, #1!}\n\\begin{document}\n\\greet{world} This is an amazing concept\n\\end{document}\n';
+  const p = await open(T, 'play-pdf');
+  await p.eval(`document.getElementById('pdf-compile').click()`);
+  if (!await compiled(p, 'amazing')) { fails.push(name + ': no build'); return p.close(); }
+  await sleep(800);
+  if (await p.eval(`document.getElementById('pdf-type').getAttribute('aria-pressed')`) !== 'true') await p.eval(`document.getElementById('pdf-type').click()`);
+  await sleep(400);
+  const w = await wordBox(p, 'Hello,');
+  if (!w) { fails.push(`${name}: no "Hello," on the page: ${J(await p.eval('satexPdfWords().map((x) => x[5]).join(" ")'))}`); return p.close(); }
+  await p.mouse(w[2] - 0.5, (w[1] + w[3]) / 2);
+  await p.until(`satexPdfCaret()`, 3000);
+  await sleep(400);
+  const row = async (what) => {
+    // the echo's row as drawn: its words' texts (the page's own pixels moved carry their text hidden)
+    const txt = await p.eval(`[...document.querySelectorAll('#play-pdf .pdf-echo:not(.pdf-push)')].map((e) => e.textContent).join('|')`);
+    const st = await caretState(p);
+    log(what, J(txt), J(st));
+    if ((txt.match(/,/g) ?? []).length > 1) fails.push(`${name}: ${what}: the comma drawn twice: ${J(txt)}`);
+    caretCheck(name, st, what);
+  };
+  await row('clicked');
+  for (const k of keys) { await key(p, k, 60); await row(`key ${k}`); await p.shot(`${name}-${keys.indexOf(k)}.png`, { x: w[0] - 10, y: w[1] - 15, width: 260, height: 50 }, 4); }
+  log('text', J((await p.eval('satexHealth().text')).split('\n')[1]));
+  await p.shot(name + '.png', { x: w[0] - 10, y: w[1] - 15, width: 260, height: 50 }, 4);
+  await p.close();
+}
 
 export async function echo(p, sc) {
   const res = { name: sc.name, fails: [], perf: [], info: { log: [] } };

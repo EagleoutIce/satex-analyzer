@@ -118,8 +118,9 @@ fn an_environment_never_closed_is_reported() {
     assert!(found[0].contains(r"\begin{itemize}") && found[0].contains(r"ended by \end{document}"), "{found:?}");
 }
 
-/// An error inside the environment may have ended it: the mismatch after
-/// it is a note that names the error, never a certain warning.
+/// An error inside the environment comes first: the mismatch after it names that error. TeX
+/// recovers from `\count0=x` (zero) and still raises the mismatch, as pdflatex does, so the
+/// finding is an error. Before, the note kept the info level while the build failed with it.
 #[test]
 fn a_mismatch_after_an_error_names_the_error() {
     let Some(analysis) = latex(
@@ -130,7 +131,7 @@ fn a_mismatch_after_an_error_names_the_error() {
     let rows: Vec<_> =
         satex::linter::lint(&analysis).into_iter().filter(|r| r["code"] == "environment-mismatch").collect();
     assert_eq!(rows.len(), 1, "{rows:?}");
-    assert_eq!(rows[0]["severity"], "info", "{rows:?}");
+    assert_eq!(rows[0]["severity"], "error", "{rows:?}");
     assert!(rows[0]["message"].as_str().is_some_and(|m| m.contains("may follow from the error at")), "{rows:?}");
 }
 

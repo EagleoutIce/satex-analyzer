@@ -395,46 +395,43 @@ pub(super) fn ensure_package(
     name: &str,
     options: &str,
 ) -> Result<Option<TextEdit>, String> {
-    let text = doc.body();
-    // each line without its comment, at its offset
-    let lines = text.split_inclusive('\n').scan(0, |at, l| {
-        let start = *at;
-        *at += l.len();
-        Some((start, l.match_indices('%').find(|(i, _)| !l[..*i].ends_with('\\')).map_or(l, |(i, _)| &l[..i])))
-    });
-    let mut begin = None;
-    for (at, code) in lines {
-        if code.contains("\\begin{document}") {
-            begin = Some(at);
-            break;
-        }
-        let loads = ["\\usepackage", "\\RequirePackage"].iter().any(|c| {
-            code.match_indices(c).any(|(i, _)| {
-                let rest = code[i + c.len()..].trim_start();
-                let rest = if rest.starts_with('[') { rest.find(']').map_or("", |j| &rest[j + 1..]) } else { rest }
-                    .trim_start();
-                rest.strip_prefix('{')
-                    .and_then(|r| r.split('}').next())
-                    .is_some_and(|list| list.split(',').any(|p| p.trim() == name))
-            })
-        });
-        if loads {
-            return Ok(None);
-        }
-    }
     if crate::linter::shared::loaded(analysis, name) {
         return Ok(None);
     }
-    let at = begin.ok_or_else(|| format!("needs \\usepackage{{{name}}} in the preamble"))?;
+    let Some((at, new_text)) = crate::linter::shared::preamble_load(doc.body(), "usepackage", &[name], options)? else {
+        return Ok(None);
+    };
     let p = super::handlers::to_lsp(doc, doc.pos(at));
-    let options = if options.is_empty() { String::new() } else { format!("[{options}]") };
-    Ok(Some(TextEdit { range: Range { start: p, end: p }, new_text: format!("\\usepackage{options}{{{name}}}\n") }))
+    Ok(Some(TextEdit { range: Range { start: p, end: p }, new_text }))
+}
+
+/// Whether the run read `file` in the document's body: an `\input` after `\begin{document}`, itself or through the
+/// files that read it (a chapter's blank line takes a new picture as the root's body does).
+fn read_in_body(analysis: &Analysis, file: crate::engine::tex::FileId) -> bool {
+    let Some(begin) = crate::linter::shared::document_start(analysis) else { return false };
+    let mut f = file;
+    // loads form a tree: at most one step per file
+    for _ in 0..analysis.files.len() {
+        let Some(load) = analysis.facts.loads.iter().find(|l| l.file == Some(f) && l.span.file != f) else {
+            return false;
+        };
+        if load.span.file == begin.file {
+            return (load.span.line, load.span.col) > (begin.line, begin.col);
+        }
+        f = load.span.file;
+    }
+    false
 }
 
 pub(super) fn blank(cx: &Cx, env: &str, package: &str) -> Option<New> {
     let line = cx.pos.line;
     let inside = |(b, e): &(&Occurrence, &Occurrence)| b.span.line < line && line < e.span.line;
-    pairs(cx.analysis, cx.path, "document").into_iter().find(inside)?;
+    let documents = pairs(cx.analysis, cx.path, "document");
+    let body = documents.iter().any(inside)
+        || (documents.is_empty() && cx.file().is_some_and(|f| read_in_body(cx.analysis, f)));
+    if !body {
+        return None;
+    }
     if !cx.doc.line(line).trim().is_empty() || pairs(cx.analysis, cx.path, env).iter().any(inside) {
         return None;
     }
@@ -592,6 +589,25 @@ pub(super) fn rewrite(cx: &Cx, title: String, edits: Vec<lsp_types::TextEdit>) -
         edit: Some(lsp_types::WorkspaceEdit { changes: Some(changes), ..Default::default() }),
         ..Default::default()
     }
+}
+
+/// [`rewrite`] that also writes the root's preamble loads (`roots`, [`snapshot::RootLoad`]): a picture inserted in an
+/// `\\input` file loads its package in the root, which the action's workspace edit changes too.
+pub(super) fn rewrite_rooted(
+    cx: &Cx,
+    title: String,
+    edits: Vec<lsp_types::TextEdit>,
+    roots: Vec<super::snapshot::RootLoad>,
+) -> CodeAction {
+    let mut action = rewrite(cx, title, edits);
+    if let Some(changes) = action.edit.as_mut().and_then(|e| e.changes.as_mut()) {
+        for r in roots {
+            let at = lsp_types::Position::new(r.line, r.character);
+            let edit = TextEdit { range: Range { start: at, end: at }, new_text: r.text };
+            changes.entry(super::handlers::path_uri(&r.path)).or_default().push(edit);
+        }
+    }
+    action
 }
 
 /// A view's button: an action's title and its edits, as the view JSON writes them.

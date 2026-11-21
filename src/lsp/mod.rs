@@ -41,6 +41,7 @@ mod search;
 mod snapshot;
 pub use plugins::{INTEGRATIONS, plugin_features, works_in};
 mod tabular;
+mod tblr;
 mod type_at;
 mod typeset_stream;
 mod unreached;
@@ -543,7 +544,7 @@ fn dispatch(engine_tx: Send<'_>, req: Request) -> Result<Json, String> {
             Ok(Json::Array(ask(engine_tx, |reply| EngineMsg::Typeset(uri, reply))?))
         }
         // The typesetting plugins (`crate::plugins::typeset`), from the last finished run: never wait for a run.
-        "satex/hyphenate" | "satex/break" => {
+        "satex/hyphenate" | "satex/break" | "satex/mathwidths" => {
             let uri: Uri = serde_json::from_value(params["textDocument"]["uri"].clone()).map_err(|e| e.to_string())?;
             let method = req.method.clone();
             Ok(ask(engine_tx, |reply| EngineMsg::Typesetting(uri, method, params, reply))?)
@@ -973,6 +974,9 @@ struct Engine {
     checkpoints: HashMap<PathBuf, crate::analysis::machine::Checkpoints<'static>>,
     /// Where messages arrive while a run goes on, and those that wait for its end.
     inbox: Option<Receiver<EngineMsg>>,
+    /// Runs replaced by newer ones, dropped once the newer one's results went out ([`Engine::rest`]):
+    /// freeing a whole analysis took a twentieth of an edit in the browser.
+    buried: Vec<Rc<Analysis>>,
     deferred: std::collections::VecDeque<EngineMsg>,
     /// Texts opened or changed that the engine took ([`Kept::edits`]).
     taken: u64,
@@ -1044,6 +1048,7 @@ impl Engine {
             stores: HashMap::default(),
             checkpoints: HashMap::default(),
             inbox: None,
+            buried: Vec::new(),
             deferred: Default::default(),
             taken: 0,
             cancelled: false,
@@ -1148,6 +1153,10 @@ impl Engine {
             if let Some(prior) = &prior {
                 self.serving(|_| crate::queries::query::carry_scope(prior, &analysis));
             }
+            // a server between messages frees the replaced run after this one's results went out
+            if self.inbox.is_none() {
+                self.buried.extend(prior);
+            }
         } else if !self
             .published
             .get(uri)
@@ -1175,6 +1184,23 @@ impl Engine {
             self.send_diagnostics(again);
         }
         crate::util::progress::idle();
+    }
+
+    /// Publishes `uri`'s installed run where its findings never went out: a run installed and then
+    /// stopped before its rules ended (the page's shared counter moved for a widget's question
+    /// while the rules ran) left the page waiting for findings no later run sends, as the
+    /// texts it would run for are that run's (slides.tex in the playground, user 2026-11-21).
+    pub(super) fn publish_installed(&mut self, uri: &Uri) {
+        let Some(doc) = self.docs.get(uri) else { return };
+        let Some(analysis) = doc.analysis.clone() else { return };
+        let out =
+            self.published.get(uri).is_some_and(|(run, _)| run.upgrade().is_some_and(|r| Rc::ptr_eq(&r, &analysis)));
+        if out || self.dirty.contains(uri) {
+            return;
+        }
+        let path = doc.path.clone();
+        let versions: Vec<(PathBuf, i32)> = self.docs.values().map(|d| (d.path.clone(), d.version)).collect();
+        self.publish_run(&analysis, &path, &versions, None);
     }
 
     /// `analysis` of `text`, the one `uri`'s requests are answered from.
@@ -1298,6 +1324,25 @@ impl Engine {
         eprintln!("satex: {text}");
         crate::util::progress::tell(crate::util::progress::Status { text, ..Default::default() });
         true
+    }
+
+    /// Drops the runs replaced since the last rest ([`Engine::buried`], [`Checkpoints::rest`]): between
+    /// messages, once the results they were replaced by went out.
+    fn rest_buried(&mut self) {
+        self.buried.clear();
+        self.checkpoints.values_mut().for_each(crate::analysis::machine::Checkpoints::rest);
+    }
+
+    /// Whether a newer text, of any open file, came since the one taken last: it makes a run or a
+    /// question about the older one stale.
+    fn newer_text(&self) -> Box<dyn Fn() -> bool> {
+        #[cfg(not(target_os = "emscripten"))]
+        {
+            let (kept, taken) = (self.hovers.clone(), self.taken);
+            Box::new(move || kept.edits.load(std::sync::atomic::Ordering::Relaxed) > taken)
+        }
+        #[cfg(target_os = "emscripten")]
+        Box::new(wasm::cancelled)
     }
 
     /// What a build tells the editor between its runs ([`SETTLED_NOTIFICATION`]).
@@ -1504,14 +1549,7 @@ impl Engine {
         // The files not open are read from disk: logged, as the document cache does.
         let recording = crate::project::overlay::record();
         let source = crate::project::overlay::read_to_string(root).unwrap_or_default();
-        // A newer text, of any open file, makes this run stale: it stops, the next one starts.
-        #[cfg(not(target_os = "emscripten"))]
-        let stale: Box<dyn Fn() -> bool> = {
-            let (kept, taken) = (self.hovers.clone(), self.taken);
-            Box::new(move || kept.edits.load(std::sync::atomic::Ordering::Relaxed) > taken)
-        };
-        #[cfg(target_os = "emscripten")]
-        let stale: Box<dyn Fn() -> bool> = Box::new(wasm::cancelled);
+        let stale = self.newer_text();
         let between_runs = self.between_runs(root);
         let (analysis, cancelled) = crate::analysis::probe::cancellable(stale, || {
             self.serving(|engine| {
@@ -1522,6 +1560,7 @@ impl Engine {
                         let checkpoints = (engine.checkpoints.entry(key.clone()))
                             .or_insert_with(|| crate::analysis::machine::Checkpoints::new(cfg));
                         checkpoints.between_runs = Some(between_runs);
+                        checkpoints.defer_drops = engine.inbox.is_none();
                         checkpoints.hooks = std::mem::take(hooks);
                         let analysis = Machine::build(checkpoints, &source, root, cfg, true);
                         *hooks = std::mem::take(&mut checkpoints.hooks);
@@ -1565,7 +1604,10 @@ impl Engine {
             let (docs, hovers, blank) = (self.docs.clone(), self.hovers.clone(), self.blank.clone());
             let pause = Box::new(move || {
                 while let Some(req) = wasm::mail() {
-                    if !matches!(req.method.as_str(), "satex/hyphenate" | "satex/break" | "satex/holds") {
+                    if !matches!(
+                        req.method.as_str(),
+                        "satex/hyphenate" | "satex/break" | "satex/mathwidths" | "satex/holds"
+                    ) {
                         wasm::reply(&Response::new_err(
                             req.id,
                             ErrorCode::RequestCanceled as i32,
@@ -1811,6 +1853,12 @@ impl Engine {
                 // so a request never waits out a whole run.
                 if let Some(doc) = self.docs.get_mut(&uri) {
                     self.edited.insert(uri.clone(), std::time::Instant::now());
+                    // A document is its own root: one that was no document a while (emptied, then
+                    // written or pasted again) is no orphan any more, whichever way its findings
+                    // come next (a run, or the last run reused for the edit).
+                    if discovery::is_document(&text) {
+                        self.orphans.remove(&canonical(&doc.path));
+                    }
                     doc.text = text;
                     doc.version = version.unwrap_or(doc.version);
                     self.first(&uri);
@@ -1907,8 +1955,11 @@ impl Engine {
                 self.fresh(&uri);
                 let mut out = self.actions.get(&uri).cloned().unwrap_or_default();
                 let path = self.docs.get(&uri).map(|d| d.path.display().to_string()).unwrap_or_default();
-                let typed = with_doc(&self.docs, &uri, |analysis, text| {
-                    plugins::actions(analysis, text, &path, handlers::to_pos(text, pos))
+                let docs = &self.docs;
+                let typed = with_doc(docs, &uri, |analysis, text| {
+                    snapshot::with_open(root_open(docs, analysis, &path), || {
+                        plugins::actions(analysis, text, &path, handlers::to_pos(text, pos))
+                    })
                 });
                 out.extend(typed.into_iter().flatten().map(|a| serde_json::to_value(a).unwrap_or_default()));
                 let _ = reply.send(out);
@@ -2172,26 +2223,30 @@ fn answer(docs: &HashMap<Uri, Doc>, hovers: &Hovers, blank: Option<&Analysis>, m
                 Ask::Actions(u, _) | Ask::Open(u, _) | Ask::Apply(u, _) => u.clone(),
             };
             let path = docs.get(&uri).map(|d| d.path.display().to_string()).unwrap_or_default();
-            let result = with_doc(docs, &uri, |analysis, text| match ask {
-                Ask::Actions(_, range) => Ok(Json::Array(dialogs::actions(analysis, text, &path, uri.as_str(), range))),
-                Ask::Open(_, pos) => Ok(dialogs::dialog(analysis, text, &path, pos).unwrap_or(Json::Null)),
-                Ask::Apply(_, p) if p["kind"] == "snapshot" => {
-                    snapshot::apply(analysis, text, type_at::file_of(analysis, &path), &p)
-                }
-                Ask::Apply(_, p) if p["kind"] == "columns" => Ok(dialogs::widths(analysis, text, &path)),
-                Ask::Apply(_, p) => {
-                    let range = serde_json::from_value(p["range"].clone()).map_err(|e| e.to_string())?;
-                    let kind = p["kind"].as_str().unwrap_or_default();
-                    dialogs::apply(
-                        analysis,
-                        text,
-                        type_at::file_of(analysis, &path),
-                        kind,
-                        range,
-                        &p["state"],
-                        p["op"].as_str(),
-                    )
-                }
+            let result = with_doc(docs, &uri, |analysis, text| {
+                snapshot::with_open(root_open(docs, analysis, &path), || match ask {
+                    Ask::Actions(_, range) => {
+                        Ok(Json::Array(dialogs::actions(analysis, text, &path, uri.as_str(), range)))
+                    }
+                    Ask::Open(_, pos) => Ok(dialogs::dialog(analysis, text, &path, pos).unwrap_or(Json::Null)),
+                    Ask::Apply(_, p) if p["kind"] == "snapshot" => {
+                        snapshot::apply(analysis, text, type_at::file_of(analysis, &path), &p)
+                    }
+                    Ask::Apply(_, p) if p["kind"] == "columns" => Ok(dialogs::widths(analysis, text, &path)),
+                    Ask::Apply(_, p) => {
+                        let range = serde_json::from_value(p["range"].clone()).map_err(|e| e.to_string())?;
+                        let kind = p["kind"].as_str().unwrap_or_default();
+                        dialogs::apply(
+                            analysis,
+                            text,
+                            type_at::file_of(analysis, &path),
+                            kind,
+                            range,
+                            &p["state"],
+                            p["op"].as_str(),
+                        )
+                    }
+                })
             });
             let _ = reply.send(result.unwrap_or(Ok(Json::Null)));
         }
@@ -2365,6 +2420,17 @@ fn publish(
         published.push(PublishDiagnosticsParams { uri: group_uri, diagnostics, version: None });
     }
     published
+}
+
+/// The root's open buffer when `path` is another file of its run (an `\\input` one), by the run's path: a write's root
+/// loads read it ([`snapshot::with_open`]), not the disk's older text.
+fn root_open(docs: &HashMap<Uri, Doc>, analysis: &Analysis, path: &str) -> Vec<(String, String)> {
+    let Some(begin) = crate::linter::shared::document_start(analysis) else { return Vec::new() };
+    let root = analysis.file_name(begin.file);
+    if Path::new(root) == Path::new(path) {
+        return Vec::new();
+    }
+    docs.values().filter(|d| d.path == Path::new(root)).take(1).map(|d| (root.to_string(), d.text.clone())).collect()
 }
 
 /// Runs `f` against `uri`'s [`Analysis`] and a [`Text`] of its current

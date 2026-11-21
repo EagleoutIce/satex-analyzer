@@ -449,7 +449,9 @@ fn rows_in(analysis: &Analysis, path: &str, lo: u32, hi: u32) -> Vec<satex::quer
 /// from the state at its start and its own text, so its rows are the full run's. Pins: the
 /// playground waited for the whole run (and the page builder holds the paragraph until the
 /// page ships, so the runs never meet earlier); a longer word and a word in the last
-/// paragraph are covered too.
+/// paragraph are covered too. The preview is the run itself up to the paragraph's end, handed on
+/// there while the run goes on (it ran the paragraph twice before); the main file's last paragraph
+/// ends with the run, so the run's own rows are its preview and none is handed on early.
 #[test]
 fn a_paragraph_run_first_typesets_the_edited_paragraph_as_the_full_run() {
     if !installed() {
@@ -462,8 +464,12 @@ fn a_paragraph_run_first_typesets_the_edited_paragraph_as_the_full_run() {
     std::fs::write(&main, PARAGRAPHS).unwrap();
     let mut checkpoints = Checkpoints::new(&cfg).every(64);
     checkpoints.analyze(PARAGRAPHS, &main);
-    let edits =
-        [("the edits change", "an edit changed"), ("the last one", "the very last one"), ("a few words", "few words")];
+    let edits = [
+        ("the edits change", "an edit changed"),
+        ("A third paragraph", "The third paragraph"),
+        ("the last one", "the very last one"),
+        ("a few words", "few words"),
+    ];
     let mut text = PARAGRAPHS.to_string();
     for (was, now) in edits {
         text = text.replacen(was, now, 1);
@@ -473,12 +479,18 @@ fn a_paragraph_run_first_typesets_the_edited_paragraph_as_the_full_run() {
         checkpoints.hooks.preview = Some(Box::new(move |run, path, lo, hi| {
             *sink.borrow_mut() = Some((rows_in(&run, path, lo, hi), path.to_string(), lo, hi));
         }));
-        checkpoints.analyze(&text, &main);
+        let result = checkpoints.analyze(&text, &main);
+        let full = Machine::analyze_once(&text, Some(&main), &cfg);
+        // handing the preview on leaves the run as it was
+        assert_eq!(paragraph_rows(&result), paragraph_rows(&full), "{now}: the run after its preview");
+        if now.contains("last") {
+            assert!(got.take().is_none(), "{now}: the last paragraph ends with the run, no preview before it");
+            continue;
+        }
         let (rows, path, lo, hi) = got.take().unwrap_or_else(|| panic!("no paragraph run for {now}"));
         let edited = 1 + text.lines().position(|l| l.contains(now)).unwrap() as u32;
         assert!(lo <= edited && edited <= hi, "{now}: lines {lo}-{hi}");
         assert!(!rows.is_empty(), "{now}: no rows");
-        let full = Machine::analyze_once(&text, Some(&main), &cfg);
         assert_eq!(rows, rows_in(&full, &path, lo, hi), "{now}");
     }
     let _ = std::fs::remove_dir_all(&dir);
@@ -921,5 +933,64 @@ fn a_resumed_beamer_build_after_an_overlay_edit_says_what_a_fresh_build_says() {
     let at = checkpoints.resumed.clone();
     let full = Machine::build(&mut Checkpoints::new(&cfg), &edited, &main, &cfg, true);
     assert_eq!(first_difference(&said(&incremental), &said(&full)), None, "resumed at {at:?}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Intuition: the editor's build after an edit starts from the files the
+/// last build left, and must say what a build from no files says. Pins an
+/// `\include` commented out: the chapter's label stayed in the run's facts
+/// (no undefined reference), which a fresh `satex lint` reports.
+#[test]
+fn an_include_commented_out_builds_what_a_fresh_build_does() {
+    if !installed() {
+        return;
+    }
+    let dir = crate::support::tmp_root().join("incremental-include-off");
+    std::fs::create_dir_all(&dir).unwrap();
+    let main = dir.join("main.tex");
+    let text = "\\documentclass{article}\n\\begin{document}\nSee \\ref{sec:ch}.\n\\include{ch}\n\\end{document}\n";
+    std::fs::write(&main, text).unwrap();
+    std::fs::write(dir.join("ch.tex"), "\\section{Ch}\\label{sec:ch}\n").unwrap();
+    let cfg = crate::support::config();
+    let mut checkpoints = Checkpoints::new(&cfg);
+    Machine::build(&mut checkpoints, text, &main, &cfg, true);
+    let edited = text.replace("\\include", "%\\include");
+    std::fs::write(&main, &edited).unwrap();
+    let incremental = Machine::build(&mut checkpoints, &edited, &main, &cfg, true);
+    let at = checkpoints.resumed.clone();
+    satex::project::overlay::clear();
+    let fresh = Machine::build(&mut Checkpoints::new(&cfg), &edited, &main, &cfg, false);
+    assert_eq!(first_difference(&said(&incremental), &said(&fresh)), None, "resumed at {at:?}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Intuition: a name built around a number's unknown digits is one name per
+/// number, whichever run builds it. Pins the name spelling the number
+/// token's index: a run resumed after an edit numbers its new names after
+/// the last run's, so `\__seq_map_<n>:w` was another name than in a fresh
+/// build (the beamer red's first difference).
+#[test]
+fn a_name_around_unknown_digits_is_spelled_alike_after_a_resume() {
+    if !installed() {
+        return;
+    }
+    let dir = crate::support::tmp_root().join("incremental-digit-name");
+    std::fs::create_dir_all(&dir).unwrap();
+    let main = dir.join("main.tex");
+    let text = "\\documentclass{article}\n\\begin{document}\nOne.\n\n\\ExplSyntaxOn\n\\int_gset:Nn \\g__kernel_prg_map_int { \\pdfelapsedtime }\n\\seq_set_from_clist:Nn \\l_tmpa_seq { a, b }\n\\seq_map_inline:Nn \\l_tmpa_seq { #1 }\n\\ExplSyntaxOff\n\\end{document}\n";
+    std::fs::write(&main, text).unwrap();
+    let cfg = crate::support::config();
+    let mut checkpoints = Checkpoints::new(&cfg).every(64);
+    Machine::build(&mut checkpoints, text, &main, &cfg, true);
+    // New names before the map: a fresh run numbers the later ones one up.
+    let edited = text.replace("One.", "\\def\\one{1}\\def\\two{2}Two.");
+    std::fs::write(&main, &edited).unwrap();
+    let incremental = Machine::build(&mut checkpoints, &edited, &main, &cfg, true);
+    let at = checkpoints.resumed.clone();
+    satex::project::overlay::clear();
+    let fresh = Machine::build(&mut Checkpoints::new(&cfg), &edited, &main, &cfg, false);
+    let numbered = said(&fresh).iter().any(|l| l.contains("__seq_map_") && l.contains('\u{5}'));
+    assert!(numbered, "the map's name is built around the unknown digits");
+    assert_eq!(first_difference(&said(&incremental), &said(&fresh)), None, "resumed at {at:?}");
     let _ = std::fs::remove_dir_all(&dir);
 }

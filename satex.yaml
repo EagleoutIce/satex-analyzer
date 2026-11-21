@@ -1003,7 +1003,7 @@ playground:  # what only the web playground reads
   smart_scripts: true  # typing `_` or `^` into math in the PDF or Typeset view opens a group a space or operator closes
     #! affects: output
     #! example: `x_42` types `x_{42}`
-  smart_wrap: false  # a line typed past conventions.lines.length breaks at its best space: a sentence's end, after a closing brace, after a comma, else the last space
+  smart_wrap: true  # a line typed past conventions.lines.length breaks at its best space: a sentence's end, after a closing brace, after a comma, else the last space
     #! affects: output
 
 slice:  # what satex slice leaves out
@@ -1293,6 +1293,12 @@ limits:  # what bounds the analysis: reaching one stops that part of the run, so
   facts: 2000000  # most definitions, uses and other facts recorded
     #! affects: memory, output
     #! example: queries miss facts past this on huge documents
+  hyph_words: 50000  # most words whose hyphenation points a language's patterns keep once found (a paragraph is hyphenated twice, words recur)
+    #! affects: memory
+    #! example: `hyph_words: 0` finds every word's points anew
+  table_reach: 4000  # most macros the table widget follows through the run's calls from an environment to the code that splits its body at `&` (tabularray)
+    #! affects: output
+    #! example: `table_reach: 0` offers the table dialog on array tables only
   trace: 200000  # most events satex trace records
     #! affects: memory, output
     #! example: a trace of a long run shows only its start

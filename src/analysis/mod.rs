@@ -1,3 +1,5 @@
+#[cfg(feature = "alloc-sites")]
+pub mod alloc_sites;
 pub mod budget;
 pub mod facts;
 pub mod graph;

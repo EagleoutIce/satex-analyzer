@@ -838,6 +838,7 @@ dependencies = [
  "serde_bytes",
  "serde_json",
  "serde_yaml_ng",
+ "smallvec",
  "terminal_size",
  "time",
  "ttf-parser",

@@ -21,6 +21,6 @@ export default [
     steps: 'hello.tex as MARKUP; click the end of "paragraph."; type " so", the display-math control, the integral formula, Escape, " ok": a display integral with its limits beside, \\lim with n→∞ below, a over b' },
   { name: 'display-math', source: MARKUP, example: 'hello.tex', word: is('paragraph.'), src: /second paragraph\./, keys: [' so', 'Enter', '\\[', 'y=2', 'Escape'], expect: () => null, contains: [/\\\[\s*y=2/], math: [['so', 'y', 'below']],
     steps: 'a small doc; click the end of "paragraph."; type " so", Enter, \\[ y=2: a display formula, echoed on its own centered row' },
-  { name: 'math', word: (`(t) => t === 'n' || t === 'n,'`), src: /of \$n/, keys: ['2'], expect: (t, a) => t.slice(0, a) + '2' + t.slice(a),
+  { name: 'math', word: { word: ['n', 'n,'] }, src: /of \$n/, keys: ['2'], expect: (t, a) => t.slice(0, a) + '2' + t.slice(a),
     steps: 'click the end of the math "n" in "A run of $n$ lines"; type 2' },
 ];

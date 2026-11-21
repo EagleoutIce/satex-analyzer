@@ -455,8 +455,12 @@ impl Machine<'_> {
     /// recorded runs instead of running it. Returns `true` when it did.
     pub(crate) fn summarize_call(&mut self, key: CallKey, arguments: &[Vec<Token>]) -> bool {
         let needed = self.summary_after();
+        // Nested in a scan no call is summarized: no lookup.
+        if needed == 0 {
+            return false;
+        }
         let Some(runs) = self.call_runs.get(&key) else { return false };
-        if needed == 0 || runs.leaky || runs.runs.len() < needed {
+        if runs.leaky || runs.runs.len() < needed {
             return false;
         }
         // Runs that wrote different names chose them from data, so a third

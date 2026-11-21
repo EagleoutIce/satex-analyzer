@@ -126,8 +126,13 @@ test('libraries, colors, mixes, cuts', () => {
   const doc = '\\documentclass{article}\n\\usepackage{tikz}\n\\usetikzlibrary{arrows.meta}\n\\begin{document}\n\\usetikzlibrary{x}\n\\end{document}\n';
   assert.deepEqual(PA.libEdit(doc, doc, [], 'arrows.meta'), { have: true });
   assert.deepEqual(PA.libEdit(doc, doc, ['shapes.geometric'], 'shapes.geometric'), { have: true }, 'the run loaded it');
-  const at = doc.indexOf('\\begin{document}');
-  assert.deepEqual(PA.libEdit(doc, doc, [], 'shapes.symbols'), { edit: { from: at, to: at, now: '\\usetikzlibrary{shapes.symbols}\n' } });
+  // joined to the file's list (its `}`), comma-separated in the list's style; a file with none gets a line
+  const at = doc.indexOf('arrows.meta}') + 'arrows.meta'.length;
+  assert.deepEqual(PA.libEdit(doc, doc, [], 'shapes.symbols'), { edit: { from: at, to: at, now: ',shapes.symbols' } });
+  const spaced = doc.replace('{arrows.meta}', '{arrows.meta, calc}'), at2 = spaced.indexOf('calc}') + 4;
+  assert.deepEqual(PA.libEdit(spaced, spaced, [], 'matrix'), { edit: { from: at2, to: at2, now: ', matrix' } });
+  const bare = '\\documentclass{article}\n\\usepackage{tikz}\n\\begin{document}\n\\end{document}\n', at3 = bare.indexOf('\\begin');
+  assert.deepEqual(PA.libEdit(bare, bare, [], 'shapes.symbols'), { edit: { from: at3, to: at3, now: '\\usetikzlibrary{shapes.symbols}\n' } });
   const commented = '\\usepackage{tikz}\n% \\usetikzlibrary{shapes.arrows}\n';
   assert.ok('edit' in PA.libEdit(commented, commented, [], 'shapes.arrows'), 'a comment loads nothing');
   assert.deepEqual(PA.libEdit('\\section{A}\n', doc + '\\section{A}', [], 'shapes.symbols'), { line: '\\usetikzlibrary{shapes.symbols}' }, 'chapter.tex: the line to add');
@@ -463,7 +468,7 @@ test('plugins switched per viewer and with their type plugin', withStore(() => {
   assert.equal(PA.groups(t, ctxOf(text)).length, 0);
   PA.setOn('tikz-node', true);
   assert.ok(PA.groups(t, ctxOf(text)).length);
-  assert.deepEqual(PA.plugins.map((p) => p.name), ['tikz-node', 'tikz-label', 'tikz-edge', 'tikz-bend', 'tikz-grid', 'forest-node', 'table-column', 'slice', 'refactor-float', 'refactor-math', 'refactor-extract', 'insert']);
+  assert.deepEqual(PA.plugins.map((p) => p.name), ['tikz-node', 'tikz-label', 'tikz-edge', 'tikz-bend', 'tikz-grid', 'forest-node', 'table-column', 'slice', 'refactor-float', 'refactor-math', 'refactor-extract', 'format', 'insert']);
 }));
 
 // Intuition: a dragged node is written beside its reference as positioning does: a side when the centres line up, a

@@ -10,14 +10,14 @@ export default [
   // a click at the start, middle and end of a word in each kind of box: the caret at that offset of its source
   ...[['caption', 'Captioned', /\\caption\{(Captioned)/], ['footnote', 'Footnoted', /\\footnote\{(Footnoted)/], ['heading', 'Heading', /\{Plain (Heading)/],
     ['item', 'Second', /\\item (Second)/], ['cell', 'cellword', /\n(cellword)/], ['node', 'Nodetext', /\{(Nodetext)/], ['math', 'n', /\$(n)\$/], ['above-float', 'here.', /float ends (here)/]]
-    .map(([kind, word, re]) => ({ kind: 'click', name: `click-${kind}`, source: KINDS, example: 'hello.tex', word: `(t) => t === ${JSON.stringify(word)}`, src: at(re),
+    .map(([kind, word, re]) => ({ kind: 'click', name: `click-${kind}`, source: KINDS, example: 'hello.tex', word: { word }, src: at(re),
       steps: `a doc with each kind of box; click the start, middle and end of "${word}" (${kind}): the caret at that offset of its source` })),
   // the user's 18:18 report: the inline math n of "A run of $n$ lines" (thesis chapter.tex, before a display formula) was refused
-  { kind: 'click', name: 'click-math-thesis', word: `(t, w, ws) => t === 'n' && ws.some((v) => v[5] === 'of' && v[0] === w[0] && Math.abs(v[4] - w[4]) < 1 && v[3] < w[1] && w[1] - v[3] < 8)`, src: at(/A run of \$(n)\$/),
+  { kind: 'click', name: 'click-math-thesis', word: { word: 'n', after: 'of' }, src: at(/A run of \$(n)\$/),
     steps: 'thesis.tex, PDF, Type on; click the start and end of the math n in "A run of n lines with k paths costs": the caret in $n$ of chapter.tex' },
   // display math in thesis chapter.tex: a click in the equation and in an align row puts the caret into the source math
-  { kind: 'click', name: 'click-eq-thesis', word: `(t, w, ws) => t === 'T' && ws.some((v) => v[5] === '(n,' && v[0] === w[0] && Math.abs(v[4] - w[4]) < 1)`, src: at(/\n  (T)\(n, k\)/),
+  { kind: 'click', name: 'click-eq-thesis', word: { word: 'T', beside: '(n,' }, src: at(/\n  (T)\(n, k\)/),
     steps: 'thesis.tex, PDF, Type on; click the start and end of T in the displayed T(n, k) = …: the caret before and after the T of chapter.tex\'s equation' },
-  { kind: 'click', name: 'click-align-thesis', word: `(t, w, ws) => t === 'm(p' && ws.some((v) => v[5] === '⊔' && v[0] === w[0] && Math.abs(v[4] - w[4]) < 1)`, src: at(/\n  (m\(p) \\sqcup q\) &=/),
+  { kind: 'click', name: 'click-align-thesis', word: { word: 'm(p', beside: '⊔' }, src: at(/\n  (m\(p) \\sqcup q\) &=/),
     steps: 'thesis.tex, PDF, Type on; click the start, middle and end of m(p in the first align row: the caret in m(p of chapter.tex\'s align' },
 ];

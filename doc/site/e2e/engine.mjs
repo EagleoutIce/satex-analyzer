@@ -36,67 +36,47 @@ const keysOf = (seq) => seq.flatMap((x) => (NAMED.test(x) ? [x] : [...x]));
 const J = JSON.stringify;
 /** The served roots, read once at the start before any edit. */
 const ROOTS = {};
+/** The scenario's example opened (its text `source` when given), built, Type mode on. `sc.word`: a word target
+ * (probe.js) the build must show. */
 async function load(p, sc) {
-  await p.eval(`document.querySelector('[data-example=${J(sc.example ?? 'thesis.tex')}]').click()`);
-  await p.until(`satexHealth().example === ${J(sc.example ?? 'thesis.tex')} && satexHealth().file === ${J(sc.example ?? 'thesis.tex')} && satexHealth().text?.length > 10`, 20000);
+  const ex = sc.example ?? 'thesis.tex', d = p.drv;
+  await d.act({ press: { sel: `[data-example="${ex}"]` } });
+  await d.until([{ health: { example: ex, file: ex } }, { srcMatch: '^[^]{11}' }], 20000);
   await sleep(400);
   // the example's root file as given (an earlier scenario may have left it edited), else the scenario's own text
   if (sc.source) await setText(p, sc.source);
   // `settle`: the first run (a fresh profile builds the kernel cache first, ~90 s) ends before the typing: what the
   // page keeps from it (the completion lists) is there, and the typing's own run is the one going on
   if ((sc.settle || process.env.E2E_SETTLE) && !await settled(p)) throw new Error('the first run never ended');
-  await p.eval(`document.getElementById('play-toast') && (document.getElementById('play-toast').textContent = '')`);
-  await p.eval(`document.querySelector('.side-tabs [data-panel=play-pdf]').click()`);
+  await d.act({ clear: '#play-toast' });
+  await d.act({ press: { sel: '.side-tabs [data-panel=play-pdf]' } });
   await sleep(200);
-  const before = await p.eval(`(self.__e2eL = document.querySelector('#play-pdf .pdf-page img')?.__build ?? null, 0)`);
-  await p.eval(`document.getElementById('pdf-compile').click()`);
-  const ok = await p.until(`(() => { const i = document.querySelector('#play-pdf .pdf-page img'); return satexPdfWords().length && i?.naturalWidth > 100 && i.__build && (i.__build !== self.__e2eL || /in cache/.test(document.getElementById('pdf-status').textContent)) && !document.querySelector('#play-pdf.pdf-running') && (() => { const ws = satexPdfWords(), test = ${sc.word ?? '() => true'}; return ws.some((w) => test(w[5], w, ws)) && [...document.querySelectorAll('#play-pdf .pdf-page img')].every((x) => x.__build === i.__build || !x.__build); })(); })()`, 40000);
+  await d.act({ mark: 'builds' });
+  await d.act({ press: { sel: '#pdf-compile' } });
+  const ok = await d.until(['pdf', 'drawn', 'newBuild', 'built', 'oneBuild', ...(sc.word ? [sc.word] : [])], 40000);
   await sleep(800);
-  if (!ok) throw new Error(`no build of the scenario's text (status: ${await p.eval(`document.getElementById('pdf-status').textContent`)})`);
-  if (await p.eval(`document.getElementById('pdf-type').getAttribute('aria-pressed')`) !== 'true') await p.eval(`document.getElementById('pdf-type').click()`);
+  if (!ok) throw new Error(`no build of the scenario's text (status: ${(await d.run({ buildState: true })).status})`);
+  await d.act({ toggle: { sel: '#pdf-type', want: true } });
   await sleep(600);
-  return before;
 }
 
 /** The page's checks done (a fresh context fetches the TeX bundle first, slow on a loaded machine): what a widget or
  * menu asks of the language server is answered at once, not queued behind the fetch. */
-async function idle(p, ms = 240000) { if (!await p.until(`!satexHealth().busy`, ms)) throw new Error('setup: the page stayed busy (its first check never ended)'); }
+async function idle(p, ms = 240000) { if (!await p.drv.until({ health: { busy: false } }, ms)) throw new Error('setup: the page stayed busy (its first check never ended)'); }
 /** No run going on, due or queued for 1.5 s (a fresh profile's first run builds the kernel cache: minutes at most). */
-const settled = (p, ms = 240000) => p.until(`(() => { const h = satexHealth(); if (h.running || h.busy || h.due || h.queued) { self.__e2eQ = null; return false; } self.__e2eQ ??= performance.now(); return performance.now() - self.__e2eQ > 1500; })()`, ms);
-/** A word on the pages in client px: [x0, y0, x1, y1, page, text] with the page scrolled to show it. */
-async function wordAt(p, test, nth = 0, pageNo = null) {
-  return p.eval(`(async () => {
-    const ws = satexPdfWords(), dpi = ws.dpi, test = ${test};
-    const hits = ws.filter((w) => (${pageNo ?? 'null'} == null || w[0] === ${pageNo ?? 'null'}) && test(w[5], w, ws));
-    const w = hits[${nth}]; if (!w) return null;
-    const img = document.querySelector('#play-pdf .pdf-page[data-page="' + w[0] + '"] img'), sc = document.querySelector('#play-pdf .pdf-pages');
-    let r = img.getBoundingClientRect(), k = r.width / (img.naturalWidth * 72 / dpi);
-    const scr = sc.getBoundingClientRect(), y = r.top + w[2] * k;
-    if (y < scr.top + 80 || y > scr.bottom - 200) { sc.scrollTop += y - (scr.top + scr.height * 0.4); await new Promise((ok) => setTimeout(ok, 400)); }
-    // the image again: a page drawn meanwhile replaced it (a detached one measures 0)
-    const im = document.querySelector('#play-pdf .pdf-page[data-page="' + w[0] + '"] img'); r = im.getBoundingClientRect(); k = r.width / (im.naturalWidth * 72 / dpi);
-    return [r.left + w[1] * k, r.top + w[2] * k, r.left + w[3] * k, r.top + w[4] * k, w[0], w[5], k];
-  })()`);
+const settled = (p, ms = 240000) => p.drv.until('quiet', ms, 1500);
+/** A page word (a probe.js word target, `nth` of them, on page `pageNo`) in client px: [x0, y0, x1, y1, page, text,
+ * scale], its page scrolled into view first. */
+const wordAt = (p, t, nth = 0, pageNo = null) => p.drv.word({ nth, ...t, ...(pageNo != null ? { page: pageNo } : {}), scroll: [80, 200] });
+
+/** Settled: a build newer than the marked ones is shown (or 10 s passed), then nothing compiles, no echo, no edit due, for 1.2 s. */
+async function settle(p, ms = 25000) {
+  const t0 = Date.now();
+  await p.drv.until('newBuild', 10000);
+  return p.drv.until(['built', { not: 'echo' }, { health: { due: false } }], Math.max(0, ms - (Date.now() - t0)), 1200);
 }
 
-/** Settled: the build shows the editor's text, nothing compiles, no echo is drawn. */
-// Settled: a build newer than the click's is shown, then nothing compiles, no echo, no edit due, for 1.2 s.
-const settle = (p, ms = 25000) => p.eval(`new Promise((ok) => { const t0 = performance.now(); let idle = null;
-  const tick = () => { const now = performance.now(), i = [...document.querySelectorAll('#play-pdf .pdf-page img')];
-    const fresh = i.some((x) => x.__build && !self.__e2eB.has(x.__build)) || now - t0 > 10000;
-    const busy = !fresh || !!document.querySelector('#play-pdf.pdf-running') || !!document.querySelector('.pdf-echo') || satexHealth().due;
-    if (busy) idle = null; else idle ??= now;
-    if (idle != null && now - idle > 1200) ok(true); else if (now - t0 > ${ms}) ok(false); else setTimeout(tick, 50); };
-  tick(); })`);
-
-async function compileState(p) {
-  return p.eval(`(() => {
-    const st = document.getElementById('pdf-status').textContent, err = !!document.querySelector('#play-pdf .pdf-err, #play-pdf [data-view=messages].pdf-err');
-    const cmds = [...document.querySelectorAll('.pdf-cmds li')].map((l) => l.textContent).filter((t) => /exit [1-9]/.test(t));
-    const built = [...document.querySelectorAll('#play-pdf .pdf-page img')].some((x) => x.__build && !self.__e2eB?.has(x.__build));
-    return { ok: !err && !cmds.length && built && !/error|fail/i.test(st), status: st.slice(0, 80), err, exit: cmds.length, built };
-  })()`);
-}
+const compileState = (p) => p.drv.run({ buildState: true });
 
 /** Analysis of the frames of one typing run. */
 function analyse(frames, keyTimes, sc, ins, marker) {
@@ -155,8 +135,8 @@ async function typeScenario(p, sc) {
   await sleep(300);
   // the word placed after the layout settled
   const w = await wordAt(p, sc.word, sc.nth ?? 0, sc.page);
-  if (!w) { if (sc.optional) { res.skip = true; res.info.note = 'no such word in this build'; return res; } res.fails.push(`setup: no page word for ${sc.word}`); return res; }
-  const builds0 = await p.eval(`(self.__e2eB = new Set([...document.querySelectorAll('#play-pdf .pdf-page img')].map((i) => i.__build))).size`);
+  if (!w) { if (sc.optional) { res.skip = true; res.info.note = 'no such word in this build'; return res; } res.fails.push(`setup: no page word for ${J(sc.word)}`); return res; }
+  const builds0 = await p.drv.act({ mark: 'builds' });
   // `gap`: in the space after the word, past its 1 bp of slack (the user's click at a word's right edge)
   const x = sc.at === 'start' ? w[0] + 0.6 : sc.at === 'gap' ? w[2] + 1.4 * w[6] : w[2] - 0.6 * w[6];
   await p.eval(`document.getElementById('play-toast') && (document.getElementById('play-toast').textContent = '')`);
@@ -207,7 +187,7 @@ async function typeScenario(p, sc) {
   for (const k of keys) {
     if (k === 'Pause') { await sleep(sc.pauseMs ?? 1500); continue; }
     keyTimes.push(Date.now());
-    if (k === 'MathDisplay') await p.eval(`self.__e2e.keys++, document.querySelector('#play-pdf .type-math[data-math=display]').click()`); else await p.key(k);
+    if (k === 'MathDisplay') await p.eval(`self.__e2e.keys++, satexTypeMath('display')`); else await p.key(k);
     // `keyMs` [lo, hi]: a slower hand (the showcase types at 70-130 ms)
     if (sc.speed !== 'burst') await sleep(sc.keyMs ? sc.keyMs[0] + Math.round(rand() * (sc.keyMs[1] - sc.keyMs[0])) : 20 + Math.round(rand() * 40));
   }
@@ -300,12 +280,14 @@ async function typeScenario(p, sc) {
   if (/language server stopped|unreachable/i.test(toast + frames.map((f) => f.toast).join(' ') + logs.join(' ') + p.workerLog.join(' '))) await saveCrash(p, sc.name, logs);
   res.info.toast = toast.slice(0, 160); res.info.console = logs.slice(-3);
   if (res.info.writeMs > (sc.writeMs ?? 200)) res.perf.push(`source write lag: the last key reached the source ${res.info.writeMs} ms after it was typed`);
+  // a single line break is a space to TeX: smart wrap (on by default) may break a typed line; a blank line still counts
+  const same = (x, y) => x === y || x.replace(/(?<!\n)[ \t]*\n[ \t]*(?!\n)/g, ' ') === y.replace(/(?<!\n)[ \t]*\n[ \t]*(?!\n)/g, ' ');
   if (plan) {
-    if (text !== plan.text) res.fails.push(`source: ${diff(plan.text, text)}${toast ? ` (toast: ${J(toast.slice(0, 120))})` : ''}${logs.length ? ` (console: ${J(logs.slice(-2))})` : ''}`);
+    if (!same(text, plan.text)) res.fails.push(`source: ${diff(plan.text, text)}${toast ? ` (toast: ${J(toast.slice(0, 120))})` : ''}${logs.length ? ` (console: ${J(logs.slice(-2))})` : ''}`);
     if (c1 && c1.at !== plan.at) res.fails.push(`caret offset ${c1.at}, want ${plan.at}`);
   } else if (sc.expect) {
     const want = sc.expect(base, at0);
-    if (want != null && text !== want) res.fails.push(`source: ${diff(want, text)}`);
+    if (want != null && !same(text, want)) res.fails.push(`source: ${diff(want, text)}`);
   }
   // the build landed: the words `sc.land` stand where the preview drew them (left edge, baseline within a glyph's descent)
   for (const t of sc.land ?? []) {
@@ -344,7 +326,10 @@ async function typeScenario(p, sc) {
   // math scenarios check their fonts by the glyphs' faces (sc.italic): a formula's fonts are not the word's
   if (a.fonts.length && !sc.math) {
     const pageW = w[2] - w[0], ratio = (f) => (a.fits.get(f) ?? 0) / pageW;
-    const bad = a.fonts.filter((f) => Math.abs(ratio(f) - 1) > (sc.fit ?? 0.12));
+    // (another of the page's own faces beside the clicked word's, which measures true, is other text's: a paragraph
+    // started after the clicked bold word is set in the paragraph's face, not the word's)
+    const off = (f) => Math.abs(ratio(f) - 1) > (sc.fit ?? 0.12), face = (f) => /px '?"?g_/.test(f);
+    const bad = a.fonts.filter((f) => off(f) && !(face(f) && a.fonts.some((o) => o !== f && face(o) && !off(o))));
     const style = sc.style ? a.fonts.filter((f) => !sc.style.test(f) && !/px '?"?g_/.test(f)) : [];
     if (bad.length || style.length) { a.fontBad = bad.length + style.length; res.fails.push(`echo font: ${J(a.fonts.map((f) => f.slice(0, 60)))} width ratio ${a.fonts.map((f) => ratio(f).toFixed(2)).join('/')}${style.length && sc.style ? ` not ${sc.style}` : ''}`); }
   }
@@ -358,7 +343,7 @@ async function typeScenario(p, sc) {
   if (sc.endWord && c1) {
     const e = await wordAt(p, sc.endWord, 0, null);
     const cr = await p.eval(`(() => { const e = document.querySelector('#play-pdf .pdf-caret'); if (!e) return null; const r = e.getBoundingClientRect(); return [r.left, r.top + r.height / 2]; })()`);
-    if (!e) res.fails.push(`final: no page word ${sc.endWord}`);
+    if (!e) res.fails.push(`final: no page word ${J(sc.endWord)}`);
     else res.info.endRect = e.slice(0, 4).map((v) => Math.round(v * 10) / 10);
     if (e && cr) {
       // `endBack`: bp before the word's end (a `.` after the caret: cmr10's is 2.78pt)
@@ -393,11 +378,10 @@ async function restore(p, text) {
   await setText(p, text);
 }
 async function setText(p, text) {
-  await p.eval(`document.querySelector('.cm-content').focus()`);
-  await p.s('Input.dispatchKeyEvent', { type: 'rawKeyDown', key: 'a', code: 'KeyA', modifiers: 2, windowsVirtualKeyCode: 65 });
-  await p.s('Input.dispatchKeyEvent', { type: 'keyUp', key: 'a', code: 'KeyA', modifiers: 2, windowsVirtualKeyCode: 65 });
+  await p.drv.act({ focus: '.cm-content' });
+  await p.drv.key('a', { ctrl: true });
   await p.s('Input.insertText', { text });
-  await p.until(`satexHealth().text === ${J(text)}`, 5000);
+  await p.drv.until({ health: { text } }, 5000);
 }
 function diff(want, got) {
   let i = 0; while (i < want.length && want[i] === got[i]) i++;
@@ -508,7 +492,7 @@ async function clickScenario(p, sc) {
     await p.key('Escape');
     await sleep(600);
     const w = await wordAt(p, sc.word, sc.nth ?? 0, sc.page);
-    if (!w) { res.fails.push(`setup: no page word for ${sc.word}`); return res; }
+    if (!w) { res.fails.push(`setup: no page word for ${J(sc.word)}`); return res; }
     const len = [...w[5]].length;
     if (pos === 'mid' && len < 3) continue;
     await p.key('Escape');
@@ -577,7 +561,7 @@ async function selectScenario(p, sc) {
   const a = await wordAt(p, sc.from), b = await wordAt(p, sc.to);
   if (!a || !b) { res.fails.push('setup: no page words'); return res; }
   const text0 = await p.eval(`satexHealth().text`);
-  await p.eval(`(self.__e2eB = new Set([...document.querySelectorAll('#play-pdf .pdf-page img')].map((i) => i.__build))).size`);
+  await p.drv.act({ mark: 'builds' });
   const y = (w) => (w[1] + w[3]) / 2;
   await p.s('Input.dispatchMouseEvent', { type: 'mouseMoved', x: a[0] + 1, y: y(a) });
   await p.s('Input.dispatchMouseEvent', { type: 'mousePressed', x: a[0] + 1, y: y(a), button: 'left', clickCount: 1 });
@@ -852,7 +836,7 @@ async function dblScenario(p, sc) {
     // a place of page 1 by its share of the page (`page`: [x, y]): a margin, the header band
     at = await p.eval(`(() => { const i = document.querySelector('#play-pdf .pdf-page[data-page="1"] img'); if (!i) return null; i.scrollIntoView({ block: 'start' }); const r = i.getBoundingClientRect(); return [r.left + r.width * ${sc.page[0]}, r.top + r.height * ${sc.page[1]}]; })()`);
   } else if (sc.text) {
-    const w = await wordAt(p, `(t) => t === ${J(sc.text)}`);
+    const w = await wordAt(p, { word: sc.text });
     at = w && [(w[0] + w[2]) / 2, (w[1] + w[3]) / 2];
   } else {
     // the largest box SyncTeX records on the site's last line, at its middle

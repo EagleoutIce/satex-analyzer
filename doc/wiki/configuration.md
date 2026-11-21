@@ -1022,7 +1022,7 @@ playground:  # what only the web playground reads
   smart_scripts: true  # typing `_` or `^` into math in the PDF or Typeset view opens a group a space or operator closes
     #! affects: output
     #! example: `x_42` types `x_{42}`
-  smart_wrap: false  # a line typed past conventions.lines.length breaks at its best space: a sentence's end, after a closing brace, after a comma, else the last space
+  smart_wrap: true  # a line typed past conventions.lines.length breaks at its best space: a sentence's end, after a closing brace, after a comma, else the last space
     #! affects: output
 
 slice:  # what satex slice leaves out
@@ -1312,6 +1312,12 @@ limits:  # what bounds the analysis: reaching one stops that part of the run, so
   facts: 2000000  # most definitions, uses and other facts recorded
     #! affects: memory, output
     #! example: queries miss facts past this on huge documents
+  hyph_words: 50000  # most words whose hyphenation points a language's patterns keep once found (a paragraph is hyphenated twice, words recur)
+    #! affects: memory
+    #! example: `hyph_words: 0` finds every word's points anew
+  table_reach: 4000  # most macros the table widget follows through the run's calls from an environment to the code that splits its body at `&` (tabularray)
+    #! affects: output
+    #! example: `table_reach: 0` offers the table dialog on array tables only
   trace: 200000  # most events satex trace records
     #! affects: memory, output
     #! example: a trace of a long run shows only its start
@@ -1341,7 +1347,7 @@ A plugin picks a default from the machine, the installation and the build files.
 - **l3build.** A `build.lua` runs in a sandboxed `texlua` (else its plain assignments are read). Its source dirs are searched, `.ins`/`.dtx` pairs read through docstrip, and `typesetexe`/`stdengine` pick the engine. `l3build:` in `satex.yaml` says which build files to look for (`files`), which `--config` files to read after it (`config`), and overrides the `module`, the test patterns (`tests`) and the check engines (`engines`). `checks: true` analyzes the regression tests as documents too. Empty values keep what the bundle says.
 - **depp.** Every file read maps to its TeX Live package by TDS path. With depp loaded or its file present, `missing-dependency` and `unused-dependency` compare against it. Rules: `depp.rules`, `depp.renames`, `depp.file`.
 - **Package augmentations.** What SaTeX knows about one package lives in one module, not in the lint rules. A rule asks the module, which can veto a finding or rewrite its message and fix. It reads the package's state from the run. siunitx is the first: an `S` column that rounds keeps `inconsistent-precision` quiet, and the fix names `\sisetup{round-mode = ...}`. `plugins.augment` lists the modules that are on.
-- **Typesetting.** `plugins.typeset` holds plugins that run TeX's own algorithms again on text the last run did not set, for the playground's echo of typed text. Each reads only the run's end state: fonts, parameters, codes and hyphenation tables. `hyphenate` answers `satex/hyphenate`: where each word may take a hyphen, from the patterns, exceptions, hyphen mins and `\lccode`s in force. `linebreak` answers `satex/break`: the lines a paragraph's words break into, by the run's own Knuth–Plass breaker ([tex.web §§ 813](https://github.com/TeX-Live/texlive-source/blob/69cabeea43cf685d86cb7b58216f3a9e57fe055c/texk/web2c/tex.web#L15997)–[890](https://github.com/TeX-Live/texlive-source/blob/69cabeea43cf685d86cb7b58216f3a9e57fe055c/texk/web2c/tex.web#L17438)). It builds the list as TeX's main loop does: TFM widths, ligatures and kerns, interword glue by space factor. Fonts come from the run's paragraph at the line given, and the parameters from where the run broke that paragraph. Anything not known gives `null`. Both are on by default.
+- **Typesetting.** `plugins.typeset` holds plugins that run TeX's own algorithms again on text the last run did not set, for the playground's echo of typed text. Each reads only the run's end state: fonts, parameters, codes and hyphenation tables. `hyphenate` answers `satex/hyphenate`: where each word may take a hyphen, from the patterns, exceptions, hyphen mins and `\lccode`s in force. `linebreak` answers `satex/break`: the lines a paragraph's words break into, by the run's own Knuth–Plass breaker ([tex.web §§ 813](https://github.com/TeX-Live/texlive-source/blob/69cabeea43cf685d86cb7b58216f3a9e57fe055c/texk/web2c/tex.web#L15997)–[890](https://github.com/TeX-Live/texlive-source/blob/69cabeea43cf685d86cb7b58216f3a9e57fe055c/texk/web2c/tex.web#L17438)). It builds the list as TeX's main loop does: TFM widths, ligatures and kerns, interword glue by space factor. Fonts come from the run's paragraph at the line given, and the parameters from where the run broke that paragraph. `mathwidths` answers `satex/mathwidths`: each math symbol typed (`a`, `+`, `\alpha`) as the run's math fonts set it. Its math code or `\mathchardef` names a family and a slot, the family's `\textfont` the font, and its TFM gives width, height, depth and italic correction. Anything not known gives `null`. All three are on by default.
 - **Preloaded format.** A `%&fmt` line, `-fmt=` or `preload:` names a dumped preamble. SaTeX interprets that preamble instead (up to `\endofdump`). `pretex:` is code read before the first line (latexmk's `-usepretex`).
 
 ### Format and package caches
@@ -1498,7 +1504,13 @@ A rule's own settings live under `lints.⟨code⟩`. [Lint rules](lints.md) list
 | `2026-09-29`, `2026-09-29T14:30+02:00` | a pinned date |
 | `unknown` | every digit unknown: date-dependent code is analyzed for every outcome |
 
-Package caches that read the clock are kept per setting. So are document caches.
+A package reads the same clock as the document, as in a TeX job. A package cache is a function of what its load found, the clock and the job name among it:
+
+- A value the load only stores is filled in where the cache is served. `\count@=\time`, arithmetic on it (`\advance`, `\multiply`, `\divide`), and `\the` of it, `\jobname` or `\pdfcreationdate` inside an `\edef` are stored as what they compute.
+- A test on such a value (`\ifnum`) is stored with its outcome. The cache is served where the test comes out the same (pgfmath's random seed at any minute but midnight).
+- Anything else that looks at the value keys that part of the load on the exact value. It is read again where the value differs.
+
+One cache file serves every date and every job name. Document caches are kept per setting.
 
 ## Where paths join
 

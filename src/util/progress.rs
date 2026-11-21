@@ -182,12 +182,17 @@ pub struct Sub {
 static RUN: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(1);
 static RUNS: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(1);
 
-/// Package caches this process loaded instead of reading the package.
-static CACHES: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+/// Package caches this process loaded instead of reading the package, and built.
+static CACHES: [std::sync::atomic::AtomicU32; 2] = [const { std::sync::atomic::AtomicU32::new(0) }; 2];
 
 /// One more package cache was loaded: the bar counts them.
 pub fn cache_loaded() {
-    CACHES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    CACHES[0].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// One more package cache was built: the bar counts them too.
+pub fn cache_built() {
+    CACHES[1].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 }
 
 pub fn set_run(run: u32, runs: u32) {
@@ -224,9 +229,11 @@ pub fn bar(
         (all, 0) => format!(" {} lines", count(all)),
         (all, cached) => format!(" {} lines ({} cached)", count(all), count(cached)),
     };
-    let caches = match CACHES.load(std::sync::atomic::Ordering::Relaxed) {
-        0 => String::new(),
-        n => format!(" {n} caches loaded"),
+    let caches = match CACHES.each_ref().map(|n| n.load(std::sync::atomic::Ordering::Relaxed)) {
+        [0, 0] => String::new(),
+        [n, 0] => format!(" {n} packages from caches"),
+        [0, b] => format!(" {b} packages cached"),
+        [n, b] => format!(" {} packages: {n} from caches, {b} cached", n + b),
     };
     let tokens = if steps.0 > 0 { format!("{caches} {} steps", count(steps.0)) } else { caches };
     let here = if steps.1 >= 100_000 { format!(" {} on this line", count(steps.1)) } else { String::new() };
@@ -385,7 +392,7 @@ thread_local! {
 }
 
 /// What runs between two commands of a document's run on this thread.
-type Pause = Box<dyn FnMut()>;
+pub type Pause = Box<dyn FnMut()>;
 
 thread_local! {
     static PAUSE: std::cell::RefCell<Option<Pause>> = const { std::cell::RefCell::new(None) };

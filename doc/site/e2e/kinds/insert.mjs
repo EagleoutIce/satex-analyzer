@@ -2,7 +2,7 @@
 // right click on the paragraph in the PDF, Insert, Table: the table goes after the paragraph and its widget opens; the
 // PDF bar's Insert menu writes a figure at the editor's caret, graphicx loaded with it by the snapshot printer (the run lacks it), the image dialog open. Each is
 // built and undone by one Ctrl+Z. The planners are unit-tested (tests/refactor.test.mjs). Field: none.
-import { sleep } from '../lib.mjs';
+import { sleep, insertRow } from '../lib.mjs';
 import { open, build, word, mid, act0, undo, text, written } from './tikz.mjs';
 
 const J = JSON.stringify;
@@ -21,8 +21,8 @@ export async function insert(p, sc) {
   if (!first.ok) throw new Error(`no first build (${first.status.slice(0, 120)})`);
   // hello.tex's own error (its \newcommand{\section}) stays: a build counts as clean with no more errors than that
   const errs = (st) => +(/(\d+) errors?/.exec(st)?.[1] ?? 0), base = errs(first.status);
-  // the PDF's right click on the paragraph: Insert ▸ Table after it, the table widget open on it
-  await act0(results, p, 'ins-table-pdf', async () => mid(await word(p, 'Hello,')), ['Insert', 'Table'],
+  // the PDF's right click on the paragraph: Insert ▸ Floats ▸ Table after it, the table widget open on it
+  await act0(results, p, 'ins-table-pdf', async () => mid(await word(p, 'Hello,')), ['Insert', 'Floats', 'Table'],
     /\\greet\{world\}\n\n\\begin\{table\}\[htbp\]\n  \\centering\n  \\caption\{\}\n  \\label\{tab:name\}\n  \\begin\{tabular\}\{ll\}[^]*\\end\{tabular\}\n\\end\{table\}\n\\end\{document\}/, {
       excerpt: (t) => t.slice(t.indexOf('\\begin{document}')),
       after: async () => {
@@ -39,9 +39,7 @@ export async function insert(p, sc) {
     const t0 = await text(p), at = t0.indexOf('\\greet{world}') + 13;
     await p.eval(`(() => { const v = ${view}; v.dispatch({ selection: { anchor: ${at} } }); v.focus(); })()`);
     await sleep(200);
-    await p.eval(`(() => { const d = document.querySelector('#play-pdf .math-menu'); d.open = true; })()`);
-    if (!await p.until(`!!document.querySelector('#play-pdf .math-menu .ins-row[data-insert="Figure with an image"]')`, 3000)) throw new Error('the Insert menu has no figure row');
-    await p.eval(`document.querySelector('#play-pdf .math-menu .ins-row[data-insert="Figure with an image"]').click()`);
+    if (!await insertRow(p, '#play-pdf', 'Figure with an image')) throw new Error('the Insert menu has no figure row');
     const t1 = await written(p, t0);
     if (!t1) throw new Error(`text unchanged (toast: ${await p.eval(`document.getElementById('play-toast')?.textContent ?? ''`)})`);
     if (!/\\documentclass\{article\}\n\\usepackage\{graphicx\}\n/.test(t1)) r.fails.push(`no graphicx load: ${J(t1.slice(0, 200))}`);

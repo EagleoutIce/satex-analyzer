@@ -187,7 +187,7 @@ fn bibliography(analysis: &Analysis) -> Bibliography {
                 if !read.insert(path.clone()) {
                     continue;
                 }
-                let Ok(text) = std::fs::read_to_string(&path) else {
+                let Ok(text) = crate::project::overlay::read_to_string(&path) else {
                     complete = false;
                     continue;
                 };

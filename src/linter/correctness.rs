@@ -697,21 +697,33 @@ const END_FIX: Applicability = Applicability::Safe;
 /// The run's `missing-end`, with the ending its kernel takes appended.
 fn missing_end(report: &mut Report) {
     let analysis = report.analysis();
-    let found: Vec<(Span, String)> = (analysis.facts.diagnostics.iter())
+    // A row the run gave on a path it approximated (not a warning) is no
+    // certain end: noted, its fix left to the author.
+    let found: Vec<(Span, String, bool)> = (analysis.facts.diagnostics.iter())
         .filter(|d| d.code == "missing-end")
-        .map(|d| (d.span, d.message.clone()))
+        .map(|d| (d.span, d.message.clone(), d.severity == crate::analysis::facts::Severity::Warning))
         .collect();
     let ending = match analysis.plugins.kernel == crate::plugins::Kernel::Latex {
         true => "\\end{document}",
         false => "\\bye",
     };
-    for (span, message) in found {
+    for (span, message, exact) in found {
         let edits = report.edits().text(span.file).map(|(path, text)| {
             let end = text.end();
             let lead = if text.body().ends_with('\n') || text.body().is_empty() { "" } else { "\n" };
             vec![crate::linter::fix::Edit { path, start: end, end, replacement: format!("{lead}{ending}\n") }]
         });
-        report.add_fix(span, ending, message, Fix::new(format!("append `{ending}`"), END_FIX, edits));
+        let fix = |applicability| Fix::new(format!("append `{ending}`"), applicability, edits);
+        match exact {
+            true => report.add_fix(span, ending, message, fix(END_FIX)),
+            false => report.add_fix_as(
+                crate::linter::Severity::Info,
+                span,
+                ending,
+                format!("{message} (the analysis approximated on the way: may not be TeX's)"),
+                fix(Applicability::Unsafe),
+            ),
+        }
     }
 }
 
@@ -763,9 +775,9 @@ fn raised_errors(report: &mut Report) {
         match (crate::linter::shared::doubt(analysis, i), library) {
             (Some(cause), _) => report.add_doubted(span, "", message, &cause),
             (None, Some(load)) => {
-                let edits = report
-                    .edits()
-                    .insert_before(crate::linter::shared::document_start(analysis).unwrap_or(span), &load);
+                let begin = crate::linter::shared::document_start(analysis);
+                let edits = library_fix(&report.edits(), begin, &load)
+                    .or_else(|| report.edits().insert_before(begin.unwrap_or(span), &load));
                 let fix = Fix::new(format!("add `{load}`, which declares it"), Applicability::Safe, edits);
                 report.add_fix(span, "", format!("{message} `{load}` declares it"), fix);
             }
@@ -1666,4 +1678,18 @@ fn package_call_error(report: &mut Report) {
         let error = error.lines().next().unwrap_or_default().to_string();
         report.add(span, &name, format!("`{name}` called on unknown arguments raises: {error}"), None);
     }
+}
+
+/// The fix that loads `load` (`\\usetikzlibrary{calc}`) in the preamble of the file `begin` stands in: joined to its
+/// list, else a line before `\\begin{document}` ([`crate::linter::shared::preamble_load`]); none when it lists it.
+fn library_fix(
+    edits: &super::fix::Edits,
+    begin: Option<crate::engine::tex::Span>,
+    load: &str,
+) -> Option<Vec<super::fix::Edit>> {
+    let (path, text) = edits.text(begin?.file)?;
+    let (cmd, lib) = crate::linter::shared::load_parts(load)?;
+    let (at, replacement) = crate::linter::shared::preamble_load(text.body(), cmd, &[lib], "").ok()??;
+    let start = text.pos(at);
+    Some(vec![super::fix::Edit { path, start, end: start, replacement }])
 }

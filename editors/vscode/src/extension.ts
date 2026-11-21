@@ -3,7 +3,7 @@ import { execFile, spawn } from 'child_process';
 import { existsSync } from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { CloseAction, ErrorHandler, LanguageClient, ResponseError, State, StreamInfo } from 'vscode-languageclient/node';
+import { CloseAction, ErrorHandler, ExecuteCommandRequest, LanguageClient, ResponseError, State, StreamInfo } from 'vscode-languageclient/node';
 import { openDialog } from './dialogs';
 import { Revive } from './revive';
 import { capMiB } from './memory';
@@ -335,6 +335,19 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
                 },
             },
         });
+    // The server's commands (`satex/query`, `satex/style`) are registered once per window and run on
+    // the client of the moment. The client's own registration is redone at each start, and a
+    // restart whose earlier client was not cleared failed with "command 'satex/query' already exists".
+    const held = new Set<string>();
+    const execute = client.getFeature(ExecuteCommandRequest.method);
+    execute.register = (data) => {
+        for (const id of data.registerOptions.commands ?? []) {
+            if (held.has(id)) { continue; }
+            held.add(id);
+            context.subscriptions.push(command(id, (...args: never[]) =>
+                client?.sendRequest(ExecuteCommandRequest.type, { command: id, arguments: args })));
+        }
+    };
     const revive = new Revive(() => {
         log('satex: the server stopped; starting it again');
         void client?.restart().catch(error => log(`satex: ${String(error)}`));

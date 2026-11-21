@@ -3104,6 +3104,16 @@
           ],
           "x-example": "a macro that keeps pushing input stops here"
         },
+        "hyph_words": {
+          "default": 50000,
+          "description": "most words whose hyphenation points a language's patterns keep once found (a paragraph is hyphenated twice, words recur)",
+          "minimum": 0,
+          "type": "integer",
+          "x-affects": [
+            "memory"
+          ],
+          "x-example": "`hyph_words: 0` finds every word's points anew"
+        },
         "interval_set": {
           "default": 4,
           "description": "how many ranges a number keeps before they are merged into one",
@@ -3377,6 +3387,16 @@
             "speed"
           ],
           "x-example": "a 1000-page thesis with TikZ may need more"
+        },
+        "table_reach": {
+          "default": 4000,
+          "description": "most macros the table widget follows through the run's calls from an environment to the code that splits its body at `&` (tabularray)",
+          "minimum": 0,
+          "type": "integer",
+          "x-affects": [
+            "output"
+          ],
+          "x-example": "`table_reach: 0` offers the table dialog on array tables only"
         },
         "text_line_steps": {
           "default": 0,
@@ -4799,7 +4819,7 @@
           "x-example": "`x_42` types `x_{42}`"
         },
         "smart_wrap": {
-          "default": false,
+          "default": true,
           "description": "a line typed past conventions.lines.length breaks at its best space: a sentence's end, after a closing brace, after a comma, else the last space",
           "type": "boolean",
           "x-affects": [
@@ -5002,6 +5022,10 @@
               "type": "boolean"
             },
             "linebreak": {
+              "default": true,
+              "type": "boolean"
+            },
+            "mathwidths": {
               "default": true,
               "type": "boolean"
             }

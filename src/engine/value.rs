@@ -334,7 +334,9 @@ impl Num {
         if count > 64 {
             return None;
         }
-        let (mut out, mut err, mut c) = (Vec::new(), false, vec![0; sets.len()]);
+        let (mut out, mut err) = (Vec::new(), false);
+        // An operator takes one to three operands: the combination stays off the heap.
+        let mut c: smallvec::SmallVec<[i64; 4]> = smallvec::smallvec![0; sets.len()];
         // The combinations in order, the last set's member changing fastest.
         for k in 0..count {
             let mut rest = k;

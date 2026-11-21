@@ -704,6 +704,78 @@ fn library_load(file: &str, tikz: bool) -> Option<String> {
     Some(format!("\\use{}library{{{lib}}}", if pgf { "pgf" } else { "tikz" }))
 }
 
+/// A load string's command and item: `\\usetikzlibrary{calc}` -> (`usetikzlibrary`, `calc`).
+pub fn load_parts(load: &str) -> Option<(&str, &str)> {
+    let (cmd, rest) = load.trim().strip_prefix('\\')?.split_once('{')?;
+    Some((cmd, rest.strip_suffix('}')?))
+}
+
+/// `text` with every comment blanked (same bytes, a `%` to the line's end as spaces): offsets stay.
+fn uncommented(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    for line in text.split_inclusive('\n') {
+        let cut = line.match_indices('%').find(|(i, _)| !line[..*i].ends_with('\\')).map_or(line.len(), |(i, _)| i);
+        out.push_str(&line[..cut]);
+        let rest = &line[cut..];
+        out.extend(rest.chars().map(|c| if c == '\n' { "\n".to_string() } else { " ".repeat(c.len_utf8()) }));
+    }
+    out
+}
+
+/// Where the load of `items` by `\\cmd` (`usepackage`, `usetikzlibrary`, `usepgflibrary`) goes in `text`'s preamble, as
+/// (byte offset, text to insert); `None` when its calls list every item already. Packages are seen by `\\usepackage` and
+/// `\\RequirePackage`, libraries by either library command (TikZ's reads pgf's). A library missing joins the last call of
+/// its command, comma-separated in the list's own style (`{calc}` -> `{calc,positioning}`); else, and for a package, the
+/// call goes on a line of its own before `\\begin{document}`. `Err` when `text` has no `\\begin{document}` and no call to
+/// join: an `\\input` file, whose loads go in the root's preamble.
+pub fn preamble_load(text: &str, cmd: &str, items: &[&str], options: &str) -> Result<Option<(usize, String)>, String> {
+    let code = uncommented(text);
+    let begin = code.find("\\begin{document}");
+    let pre = &code[..begin.unwrap_or(code.len())];
+    let package = cmd == "usepackage";
+    let kinds: &[&str] = if package { &["usepackage", "RequirePackage"] } else { &["usetikzlibrary", "usepgflibrary"] };
+    let (mut have, mut last) = (Vec::new(), None);
+    for k in kinds {
+        for (i, _) in pre.match_indices(&format!("\\{k}")) {
+            let rest = &pre[i + 1 + k.len()..];
+            if rest.starts_with(|c: char| c.is_ascii_alphabetic()) {
+                continue;
+            }
+            let mut r = rest.trim_start();
+            if let Some(o) = r.strip_prefix('[') {
+                r = o.find(']').map_or("", |j| &o[j + 1..]).trim_start();
+            }
+            let Some(list) = r.strip_prefix('{') else { continue };
+            let Some(close) = list.find('}') else { continue };
+            have.extend(list[..close].split(',').map(str::trim));
+            if *k == cmd && !package {
+                last = Some((pre.len() - list.len() + close, &list[..close]));
+            }
+        }
+    }
+    let mut missing: Vec<&str> = Vec::new();
+    for i in items.iter().map(|i| i.trim()).filter(|i| !i.is_empty() && !have.contains(i)) {
+        if !missing.contains(&i) {
+            missing.push(i);
+        }
+    }
+    if missing.is_empty() {
+        return Ok(None);
+    }
+    if let Some((close, list)) = last {
+        let sep = if list.contains(", ") { ", " } else { "," };
+        let lead = if list.trim().is_empty() { "" } else { sep };
+        return Ok(Some((close, format!("{lead}{}", missing.join(sep)))));
+    }
+    let call = format!(
+        "\\{cmd}{}{{{}}}",
+        if options.is_empty() { String::new() } else { format!("[{options}]") },
+        missing.join(",")
+    );
+    let begin = begin.ok_or_else(|| format!("needs {call} in the preamble"))?;
+    Ok(Some((code[..begin].rfind('\n').map_or(0, |i| i + 1), format!("{call}\n"))))
+}
+
 /// The installation's index of what each file defines, built once and cached. The playground's
 /// bundle holds a few packages only: it reads the names of every installed one from its
 /// `exports.tsv`, which the site build ships beside `ls-R`.
@@ -728,4 +800,42 @@ fn exports(analysis: &Analysis) -> Option<std::sync::Arc<crate::caches::exports:
     });
     *held = Some((roots.clone(), exports.clone()));
     Some(exports)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::preamble_load;
+
+    /// Intuition: a library joins the last list of its command in the list's own style, listed ones (by either library
+    /// command, a commented one not) are not repeated, a package or a first library goes on a line before
+    /// `\\begin{document}`, and a file without one (an `\\input` file) is an `Err`: the user's rule for every writer.
+    #[test]
+    fn loads_join_the_preamble_s_list() {
+        let doc = |pre: &str| format!("\\documentclass{{article}}\n{pre}\\begin{{document}}\nx\n\\end{{document}}\n");
+        let at = |text: &str, cmd: &str, items: &[&str]| {
+            preamble_load(text, cmd, items, "").map(|e| e.map(|(at, t)| format!("{}|{t}|{}", &text[..at], &text[at..])))
+        };
+        let t = doc("\\usetikzlibrary{calc}\n");
+        let joined = at(&t, "usetikzlibrary", &["positioning", "calc", "positioning"]).unwrap().unwrap();
+        assert!(joined.contains("\\usetikzlibrary{calc|,positioning|}"), "{joined}");
+        let spaced = doc("\\usetikzlibrary{calc, arrows.meta}\n");
+        assert!(at(&spaced, "usetikzlibrary", &["matrix"]).unwrap().unwrap().contains("arrows.meta|, matrix|}"));
+        assert_eq!(at(&doc("\\usepgflibrary{arrows.meta}\n"), "usetikzlibrary", &["arrows.meta"]), Ok(None));
+        let commented = doc("% \\usetikzlibrary{calc}\n");
+        assert!(
+            at(&commented, "usetikzlibrary", &["calc"])
+                .unwrap()
+                .unwrap()
+                .ends_with("|\\usetikzlibrary{calc}\n|\\begin{document}\nx\n\\end{document}\n")
+        );
+        let pkg = at(&doc("\\usepackage{amsmath,array}\n"), "usepackage", &["array"]);
+        assert_eq!(pkg, Ok(None));
+        assert!(
+            at(&doc(""), "usepackage", &["array"])
+                .unwrap()
+                .unwrap()
+                .contains("|\\usepackage{array}\n|\\begin{document}")
+        );
+        assert!(at("\\begin{tabular}{l}\n\\end{tabular}\n", "usetikzlibrary", &["calc"]).is_err());
+    }
 }

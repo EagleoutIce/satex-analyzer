@@ -72,6 +72,10 @@ pub(crate) struct Arena {
     /// in the text. A note, not part of the node: lists stay shared.
     chars: crate::fixed::Chunked<u32>,
     index: crate::fixed::SharedMap<(Kp, u32), u32>,
+    /// Per list (the empty one first): the list a push onto it gave last. A run pushes
+    /// what it pushed before (a second pass, a repeated text), so the next push mostly
+    /// finds its node here, checked against the node, without the walk through `index`.
+    next: crate::fixed::Chunked<u32>,
     pub(crate) texts: crate::fixed::Chunked<std::rc::Rc<[crate::engine::tex::Token]>>,
 }
 
@@ -148,13 +152,25 @@ impl Machine<'_> {
             return;
         }
         let next = a.nodes.len() as u32 + 1;
-        let id = match a.index.get(&(item, prev)) {
-            Some(&id) => id,
-            None => {
-                a.index.insert_mut((item, prev), next);
-                a.nodes.push((item, prev, len + 1));
-                a.chars.push(0);
-                next
+        if a.next.len() < next as usize {
+            a.next.resize(next as usize, 0);
+        }
+        let hint = a.next[prev as usize];
+        let id = match hint.checked_sub(1).map(|h| a.nodes[h as usize]) {
+            Some((k, p, _)) if k == item && p == prev => hint,
+            _ => {
+                let id = match a.index.get(&(item, prev)) {
+                    Some(&id) => id,
+                    None => {
+                        a.index.insert_mut((item, prev), next);
+                        a.nodes.push((item, prev, len + 1));
+                        a.chars.push(0);
+                        a.next.push(0);
+                        next
+                    }
+                };
+                a.next[prev as usize] = id;
+                id
             }
         };
         // Only a new count unshares the chunk.
@@ -294,7 +310,7 @@ pub(crate) trait Tables {
     /// A font's metrics and size.
     fn metrics(&mut self, font: u32) -> Option<(Rc<crate::engine::tfm::Metrics>, Scaled)>;
     /// The current language's patterns and exceptions.
-    fn patterns(&mut self) -> Option<(Rc<crate::engine::hyph::Patterns>, crate::engine::hyph::Patterns)>;
+    fn patterns(&mut self) -> Option<crate::engine::hyph::HyphTables>;
     /// `\lefthyphenmin` and `\righthyphenmin` (§ 1091).
     fn mins(&mut self) -> (usize, usize);
 }
@@ -309,7 +325,7 @@ impl Tables for Machine<'_> {
     fn metrics(&mut self, font: u32) -> Option<(Rc<crate::engine::tfm::Metrics>, Scaled)> {
         Some((self.font_metrics(font)?, self.font_size(font)?))
     }
-    fn patterns(&mut self) -> Option<(Rc<crate::engine::hyph::Patterns>, crate::engine::hyph::Patterns)> {
+    fn patterns(&mut self) -> Option<crate::engine::hyph::HyphTables> {
         self.hyph_tables()
     }
     fn mins(&mut self) -> (usize, usize) {

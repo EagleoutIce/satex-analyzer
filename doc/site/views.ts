@@ -1923,16 +1923,17 @@ const satexViews = (() => {
     const preamble = () => {
       const out = structuredClone(R.defs ?? []), tikz = { name: 'tikz', options: '' };
       for (const d of docStyles.filter((d: Rec) => d.def != null && (d.deleted || d.body !== d.orig))) d.deleted ? S.setKeys(out[d.def], [d.key], []) : S.set(out[d.def], d.key, d.body);
-      if (!R.load_at) return out;
       // a shape of a library not loaded: its load as the run's shapes name it (`\usetikzlibrary{shapes.geometric}`)
       const shapeLoads = own().map((n) => shapeInfo.get(shapeName(n))?.load?.match(/^\\use(tikz|pgf)library\{(.+)\}$/)).filter((m): m is RegExpMatchArray => !!m);
       const need = ([['matrix', live().some((i) => i.type === 'matrix')], ['positioning', own().some((n) => n.place && !n.place.centers)], ...shapeLoads.filter((m) => m[1] === 'tikz').map((m) => [m[2]!, true])] as [string, boolean][])
         .filter(([l, used]) => used && !(R.libraries ?? []).includes(l)).map(([l]) => l);
       const made = docStyles.filter((d: Rec) => d.isNew && !d.deleted).map((d: Rec) => ({ key: `${d.name}/.style`, value: d.body }));
-      if (need.length) out.push(S.call('usetikzlibrary', [S.keys('{', [...new Set(need)].map((l) => [l, '']))], R.load_at, tikz));
+      // library loads: the printer joins them to the preamble's list, the root's for an `\input` file (no place needed)
+      const at = R.load_at ?? { line: 0, character: 0 };
+      if (need.length) out.push(S.call('usetikzlibrary', [S.keys('{', [...new Set(need)].map((l) => [l, '']))], at, tikz));
       const pgfLibs = [...new Set(shapeLoads.filter((m) => m[1] === 'pgf').map((m) => m[2]))];
-      if (pgfLibs.length) out.push(S.call('usepgflibrary', [S.keys('{', pgfLibs.map((l) => [l, '']))], R.load_at, tikz));
-      if (made.length) out.push(S.call('tikzset', [{ ...S.keys('{'), keys: made }], R.load_at, tikz));
+      if (pgfLibs.length) out.push(S.call('usepgflibrary', [S.keys('{', pgfLibs.map((l) => [l, '']))], at, tikz));
+      if (made.length && R.load_at) out.push(S.call('tikzset', [{ ...S.keys('{'), keys: made }], R.load_at, tikz));
       return out;
     };
     const writeIt = () => {
@@ -3112,12 +3113,28 @@ const satexViews = (() => {
       const now = styleNow(s.styles, two);
       if (now) out.push(el('div', 'tv-text tv-now', ctx.markdown(now)));
       const used = () => ['head', 'foot'].some((part) => Object.values(m[part]).some((v) => String(v ?? '').trim()));
+      // the fields' texts the run's page style prints, by part, side and spot (`styles`: head/foot, odd/even, left/center/right)
+      const SPOT: Record<string, string> = { L: 'left', C: 'center', R: 'right', i: 'left', c: 'center', o: 'right' };
+      const inForce = (part: string, side: string, spot: string) => String(s.styles?.[part]?.[side === 'E' ? 'even' : 'odd']?.[SPOT[spot]!] ?? '').trim();
+      // completion: every text the page style in force prints and every text a field holds, as the field's suggestions
+      const fieldsList = el('datalist', '') as HTMLDataListElement;
+      fieldsList.id = `tv-hf-${Math.random().toString(36).slice(2)}`;
+      const texts = new Set<string>();
+      for (const part of ['head', 'foot']) for (const side of ['odd', 'even']) for (const k of ['left', 'center', 'right']) { const t = String(s.styles?.[part]?.[side]?.[k] ?? '').trim(); if (t) texts.add(t); }
+      for (const part of ['head', 'foot']) for (const v of Object.values(m[part])) if (String(v ?? '').trim()) texts.add(String(v).trim());
+      fieldsList.append(...[...texts].map((t) => Object.assign(document.createElement('option'), { value: t })));
+      out.push(fieldsList);
       const spots = SPOTS[m.package ?? 'fancyhdr']!, names: Record<string, string> = { L: 'Left', C: 'Center', R: 'Right', i: 'Inner', c: 'Center', o: 'Outer' };
       const sides = (m.package ?? 'fancyhdr') === 'fancyhdr' && two ? [['O', 'odd pages'], ['E', 'even pages']] : [['O', '']];
       for (const part of ['head', 'foot']) for (const [side, on] of sides) {
         const rows = spots.map((spot) => {
           const row = el('label', 'tv-field');
-          const input = Object.assign(el('input', 'tv-input'), { value: m[part][side + spot] ?? '', spellcheck: false, ariaLabel: `${part} ${names[spot]} ${on}`.trim() });
+          // what the page style in force prints in this field stands in it, grey, until a text is typed (footer centre `\\thepage`)
+          const now = inForce(part, side, spot);
+          const input = Object.assign(el('input', 'tv-input'), { value: m[part][side + spot] ?? '', placeholder: now, spellcheck: false, ariaLabel: `${part} ${names[spot]} ${on}`.trim() });
+          input.setAttribute('list', fieldsList.id);
+          // Tab or → on an empty field takes the text in force, to edit from there
+          input.onkeydown = (e) => { if (!input.value && now && (e.key === 'Tab' || e.key === 'ArrowRight') && !e.shiftKey) { e.preventDefault(); input.value = now; input.oninput?.(new Event('input')); } };
           input.oninput = () => { m[part][side + spot] = input.value; if (!loaded) m.package = used() ? 'fancyhdr' : null; paint(); };
           input.onchange = touch;
           row.append(el('span', '', names[spot]), input);
@@ -3793,11 +3810,34 @@ button.tv-spec-value { cursor: pointer; } button.tv-spec-value:hover, button.tv-
   };
   /** The control symbol the caret stands right after (`\\\\`, `\\,`), else null: a `\\` and one non-letter are a whole name
    * (tex.web §354), so no longer name is being typed there. The `\\` must not be the second half of a `\\\\`. */
-  const controlSymbol = (before: string): string | null => {
+  const controlSymbol = (before: string, letters = ''): string | null => {
     const x = before.at(-1);
-    if (!x || /[A-Za-z@\s]/.test(x)) return null;
+    if (!x || /\s/.test(x) || isLetter(x, letters)) return null;
     return /\\*$/.exec(before.slice(0, -1))![0].length % 2 ? x : null;
   };
+  /** The run's letter changes of one file (query `letters`: `{line, col, char, letter}`, line 0 the letters the file
+   * opened with), replayed up to 1-based `line`:`col`: the non-alphabetic characters that are letters there, as the
+   * server's `letters_at`. A file the run never read has none: TeX's own letters only. */
+  type LetterChange = { line: number; col: number; char: string; letter: boolean };
+  const lettersAt = (changes: LetterChange[] | null | undefined, line: number, col: number): string => {
+    let out = '';
+    // in the run's order, as the server replays them (a file read twice is not in place order)
+    for (const c of changes ?? []) if (c.line < line || c.line === line && c.col < col) out = out.replace(c.char, '') + (c.letter ? c.char : '');
+    return out;
+  };
+  /** Whether `c` is a letter (catcode 11) where `letters` are the non-alphabetic ones: a name goes on through it. */
+  const isLetter = (c: string, letters: string) => /\p{Alphabetic}/u.test(c) || letters.includes(c);
+  /** The command name being typed at the end of `before` (`\\su` gives `su`, a lone `\\` gives ''), else null: its
+   * letters are the letters there (tex.web §356), so after `\\sum_` in a document's body (`_` a subscript) no name is
+   * typed. The `\\` must not be the second half of a `\\\\`. */
+  const nameBefore = (before: string, letters: string): string | null => {
+    let k = before.length;
+    while (k > 0 && isLetter(before[k - 1]!, letters)) k--;
+    return k > 0 && before[k - 1] === '\\' && /\\*$/.exec(before.slice(0, k))![0].length % 2 ? before.slice(k) : null;
+  };
+  /** Whether a command named `label` can be typed where `letters` are the letters: every character of a longer name a
+   * letter there (`\\c__fp_…` under `\\ExplSyntaxOn` only, `\\c__socket_x/y` nowhere), a control symbol always. */
+  const typeable = (label: string, letters: string) => [...label].length < 2 || [...label].every((c) => isLetter(c, letters));
   /** `name` typed in full, and taking item `i` (the server's, with its snippet) writes nothing more (`\\noindent`: no
    * braces, no load): Enter after it is the key's own new line, not the item. A prefix or a name with arguments takes it. */
   const whole = (i: Completion | undefined | null | false, name: string): boolean => !!i && i.label === name
@@ -3817,9 +3857,12 @@ button.tv-spec-value { cursor: pointer; } button.tv-spec-value:hover, button.tv-
   /** LSP's `sortText` order: by code point, as the server sorts (`~` after digits); `localeCompare` puts `~` first. */
   const byCode = (a: string, b: string) => a < b ? -1 : a > b ? 1 : 0;
   /** `math`: the caret is in math, so math commands come first among equally close ones, text ones after them. */
+  // a name only a package the document does not load defines (its item loads it: `\\textb` of drm) comes after every
+  // name the document has, however close: what the document loads and uses first (user 2026-11-21)
+  const unloaded = (i: Completion) => i.additionalTextEdits?.length || /^~/.test(i.sortText ?? '') ? 1 : 0;
   const rank = <T extends Completion>(items: T[], typed: string, math = false): T[] => items
     .map((i) => [i, tier(i) + (math ? (mathItem(i) ? -3 : 3) : 0), closeness(i, typed.toLowerCase())] as const).filter((x) => x[2] !== null)
-    .sort((a, b) => a[2]! - b[2]! || a[1] - b[1] || byCode(a[0].sortText ?? '', b[0].sortText ?? '') || a[0].label.length - b[0].label.length || a[0].label.localeCompare(b[0].label)).map((x) => x[0]);
+    .sort((a, b) => unloaded(a[0]) - unloaded(b[0]) || a[2]! - b[2]! || a[1] - b[1] || byCode(a[0].sortText ?? '', b[0].sortText ?? '') || a[0].label.length - b[0].label.length || a[0].label.localeCompare(b[0].label)).map((x) => x[0]);
   /** The kept list of a kind of place: the server's last items there, then the names in force it lacks (no snippet, they
    * add only names). An item asked elsewhere replaces no range here: its text goes in at the cursor's word, and the
    * server's order there (`sortText`, for another word) ranks nothing here: `\\emp` takes `emph` before `empty`. */
@@ -3858,6 +3901,6 @@ button.tv-spec-value { cursor: pointer; } button.tv-spec-value:hover, button.tv-
     }
     return out;
   };
-  return { followRows, rowsWin, complete: { rank, kept, reselect, controlSymbol, whole, snippet, mathItem, docOf, plainSnippet, opensArgument, stepsOver, previewOf, tikzTarget }, loads: { unlanded, lacked }, tipBag, yaml, history: { historyEvent }, render, RENDER, hue, passes, masterDetail, usesView, fold, SPEC, mix, colorBand, oklch, drawing: { expandStyles, STYLE_DEF, parse, emit, plain, mermaidIn, mermaidOut, mermaidLoss, layout, importMermaid, tipsOf, toMatrix, cellPlaces, toLayer, picOptions, relocate, relPos, nearestAnchor, anchorAt, tipMarker, shapeSample, shapeList, cycle, STYLE }, forest: forestFns, circuit: { parse: cParse, body: cBody, emit: cEmit }, page: { pageOf, pageBox, textArea, styleNow, taggedNote, pageNodes, numberNodes, numberInForce, headerOf, headerCalls, headerNodes, footSetup, fmtRead, fmtWrite, styleNodes, styleSet, styleEdits }, dev: { traceCsv, stateHtml }, templates: { fill, filled, chosen } };
+  return { followRows, rowsWin, complete: { rank, kept, reselect, controlSymbol, lettersAt, isLetter, nameBefore, typeable, whole, snippet, mathItem, docOf, plainSnippet, opensArgument, stepsOver, previewOf, tikzTarget }, loads: { unlanded, lacked }, tipBag, yaml, history: { historyEvent }, render, RENDER, hue, passes, masterDetail, usesView, fold, SPEC, mix, colorBand, oklch, drawing: { expandStyles, STYLE_DEF, parse, emit, plain, mermaidIn, mermaidOut, mermaidLoss, layout, importMermaid, tipsOf, toMatrix, cellPlaces, toLayer, picOptions, relocate, relPos, nearestAnchor, anchorAt, tipMarker, shapeSample, shapeList, cycle, STYLE }, forest: forestFns, circuit: { parse: cParse, body: cBody, emit: cEmit }, page: { pageOf, pageBox, textArea, styleNow, taggedNote, pageNodes, numberNodes, numberInForce, headerOf, headerCalls, headerNodes, footSetup, fmtRead, fmtWrite, styleNodes, styleSet, styleEdits }, dev: { traceCsv, stateHtml }, templates: { fill, filled, chosen } };
 })();
 self.satexViews = satexViews;

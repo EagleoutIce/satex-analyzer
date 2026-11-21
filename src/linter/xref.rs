@@ -484,7 +484,7 @@ fn hand_written_author(report: &mut Report) {
         if !read.insert(path.clone()) {
             continue;
         }
-        let Ok(text) = std::fs::read_to_string(&path) else { continue };
+        let Ok(text) = crate::project::overlay::read_to_string(&path) else { continue };
         for entry in crate::plugins::bib::entries(&text) {
             authors.entry(entry.key).or_insert(entry.author);
         }

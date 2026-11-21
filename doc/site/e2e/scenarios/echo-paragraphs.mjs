@@ -7,6 +7,14 @@ export default [
   { kind: 'echo', name: 'newpara-pdf-slow', case: 'pdf-new-para-slow' },
   { kind: 'echo', name: 'newpara-editor', case: 'pdf-editor-para' },
   { kind: 'echo', name: 'arrows-pdf', case: 'pdf-arrows' },
+  // the PDF caret and the editor's agree while `\(\sum \)` is typed into a new paragraph, before and after builds land
+  { kind: 'echo', name: 'math-caret-pdf', case: 'pdf-math-caret' },
+  { kind: 'echo', name: 'math-caret-pdf-slow', case: 'pdf-math-caret-slow' },
+  // typing right after "Hello," of a macro's output (its definition's text): the comma once (user 2026-11-21 13:21)
+  { kind: 'echo', name: 'macro-comma', case: 'pdf-macro-comma' },
+  { kind: 'echo', name: 'macro-comma-space', case: 'pdf-macro-comma-space' },
+  { kind: 'echo', name: 'math-caret-below', case: 'pdf-math-caret-below' },
+  { kind: 'echo', name: 'math-caret-below-slow', case: 'pdf-math-caret-below-slow' },
   { kind: 'echo', name: 'after-macro-pdf', case: 'pdf-after-macro' },
   { kind: 'echo', name: 'newpara-ts', case: 'ts-new-para' },
   { kind: 'echo', name: 'mid-word-ts', case: 'ts-mid' },

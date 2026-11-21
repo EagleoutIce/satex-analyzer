@@ -725,7 +725,7 @@ impl Machine<'_> {
         let outer = std::mem::replace(&mut self.scanner, crate::analysis::machine::Scanner::Defining);
         // The name's own text met in its `\edef` body is copied through.
         let target = std::mem::replace(&mut self.copy_target, expand.then_some((name, self.edef_depth + 1)));
-        let mark = self.copies.len();
+        let (mark, hole_mark) = (self.copies.len(), self.holes.len());
         let id = self.scan_begin();
         let mut bodies = match expand {
             true => vec![self.scan_expanded_body(true)],
@@ -737,6 +737,7 @@ impl Machine<'_> {
         }
         self.copy_target = target;
         let copies = self.copies.split_off(mark.min(self.copies.len()));
+        let holes = self.holes.split_off(hole_mark.min(self.holes.len()));
         self.scanner = outer;
         if global && self.global_defs() >= 0 {
             self.prefixes.global = true;
@@ -751,6 +752,7 @@ impl Machine<'_> {
             if let Some((at, len)) = splice {
                 self.note_copied(name, at, len);
             }
+            self.keep_holes(name, &holes, splice.is_none());
         }
     }
 
@@ -1006,7 +1008,19 @@ impl Machine<'_> {
     fn produce_text(&mut self, kind: TextOf, by: Sym, span: Span) {
         let mut at = span;
         let text = match kind {
-            TextOf::JobName => self.job_name(),
+            TextOf::JobName => {
+                let text = self.ambient_text(crate::analysis::machine::JOB_NAME, span);
+                text.map_or_else(
+                    || self.job_name(),
+                    |text| {
+                        let chars = text.iter().filter_map(|t| match t.tok {
+                            Tok::Chr(c, _) => Some(c),
+                            _ => None,
+                        });
+                        chars.collect()
+                    },
+                )
+            }
             // Arms of a test inside the scan join at its end.
             TextOf::Number | TextOf::Roman => match self.scan_number_joined() {
                 Some(value) if kind == TextOf::Roman => roman(value),
@@ -1274,6 +1288,7 @@ impl Machine<'_> {
     /// What `\the` yields (tex.web § 465): a token register gives back its
     /// tokens themselves, anything else the characters of its value.
     pub fn the_tokens(&mut self, span: Span) -> Vec<Token> {
+        self.amb = None;
         // `the_toks` reads its operand with `get_x_token`, so
         // `\the\csname c@page\endcsname` reaches the register.
         let sym = loop {
@@ -1311,10 +1326,14 @@ impl Machine<'_> {
                 _ => vec![self.unknown_text(Unk::Any, span)],
             };
         }
+        // Prepared before the slot is looked at, as a number scan does.
+        self.amb_base = self.count_slot(sym).and_then(|slot| self.env.scanning(slot).map(|scanning| (slot, scanning)));
         let level = self.read_level(sym);
         // Only the interval this quantity leaves may type its digits.
         self.abs = None;
         let value = self.internal_quantity(sym, span);
+        self.amb_base = None;
+        self.amb = self.amb.take().filter(|a| matches!(value, Some(Value::Int(n)) if n == a.value));
         // Glue prints its `plus` and `minus` parts where they may be nonzero (tex.web § 178).
         let zero = Num::exact(0);
         let (parts, width) = match &value {
@@ -1641,12 +1660,12 @@ impl Machine<'_> {
             let token = self.one_of_names(&name, at);
             return self.unread(token);
         }
-        self.last_named_cs = Some(self.intern(&name));
+        let sym = self.intern(&name);
+        self.last_named_cs = Some(sym);
         crate::analysis::observe::csname(self, &name, span);
         if let Some((from, at)) = self.name_slot.take() {
             crate::analysis::observe::slot(self, &name, from, at);
         }
-        let sym = self.intern(&name);
         let before = self.env.read_parts(sym);
         let register = if let Meaning::Register(kind, _) = self.env.shape(sym) {
             crate::analysis::observe::arg_type(self, at, crate::analysis::roles::Ty::Named(kind));
@@ -3225,6 +3244,12 @@ impl Machine<'_> {
                 self.abs_from = None;
                 self.abs_odd = None;
                 let a = self.scan_number();
+                // A side the recorded load knows as an expression over its leaves: the test's
+                // outcome is kept as a guard on them, not their exact values.
+                let scanned = |m: &mut Self, n: Option<i64>| {
+                    n.filter(|_| cond == Cond::Num).and_then(|n| m.scanned_kept(RegKind::Count, &Value::Int(n)))
+                };
+                let kept_a = scanned(self, a);
                 let odd = self.abs_odd.take();
                 let xs = a.map(Num::exact).or_else(|| self.abs.take());
                 let from = self.abs_from.take();
@@ -3251,9 +3276,28 @@ impl Machine<'_> {
                     };
                     self.compared = Some(format!("{} {} {}", shown(a, &xs), relation.unwrap_or('?'), shown(b, &ys)));
                 }
+                let kept_b = scanned(self, b);
                 let ((xs, xs_exact, a, from), (ys, ys_exact, b, from_b)) =
                     absolute(cond == Cond::AbsNum, [(xs, xs_exact, a, from), (ys, ys_exact, b, from_b)]);
-                self.decide_numbers(xs, xs_exact, relation, ys, ys_exact, (a, b), (from, from_b))
+                let decided = self.decide_numbers(xs, xs_exact, relation, ys, ys_exact, (a, b), (from, from_b));
+                if kept_a.is_some() || kept_b.is_some() {
+                    use crate::engine::env::Expr;
+                    let side = |kept: Option<crate::engine::env::Scanned>, n: Option<i64>| {
+                        kept.map(|k| k.expr).or_else(|| n.map(|n| Rc::new(Expr::Const(n))))
+                    };
+                    let exprs = [kept_a.as_ref().map(|k| k.expr.clone()), kept_b.as_ref().map(|k| k.expr.clone())];
+                    match (side(kept_a, a), relation, side(kept_b, b), decided) {
+                        (Some(x), Some(relation), Some(y), Some(out)) if self.env.symbolic() => {
+                            self.env.guard((x, relation, y, out));
+                        }
+                        _ => {
+                            for e in exprs.into_iter().flatten() {
+                                self.env.settle_amb(&crate::engine::env::Amb::Int(e));
+                            }
+                        }
+                    }
+                }
+                decided
             }
             Cond::IfX => {
                 // Read untracked: what of each meaning counts as read is
@@ -3737,6 +3781,25 @@ impl Machine<'_> {
     }
 
     pub(crate) fn internal_quantity(&mut self, sym: Sym, span: Span) -> Option<Value> {
+        self.amb = None;
+        let value = self.internal_quantity_read(sym, span);
+        // Only a count register or integer parameter read as such is the expression its
+        // read left: any other quantity only used one on its way.
+        // (Looked at without a read: the expression's reads must stay the last ones.)
+        if self.amb.is_some()
+            && !self.env.peek(sym.0).is_some_and(|b| match &b.meaning {
+                Meaning::Register(RegKind::Count, _) => true,
+                meaning => {
+                    matches!(meaning.prim(), Some(Primitive::IntegerParameter | Primitive::Register(RegKind::Count)))
+                }
+            })
+        {
+            self.amb = None;
+        }
+        value
+    }
+
+    fn internal_quantity_read(&mut self, sym: Sym, span: Span) -> Option<Value> {
         if let Some(p) = self.env.meaning(sym).prim()
             && Machine::extra_level(p).is_some()
         {
@@ -3763,9 +3826,7 @@ impl Machine<'_> {
             if let Some(owned) = crate::engine::builtins::owned(self.name(named)) {
                 return self.owned_value(owned, named).and_then(|v| self.read_abstract(v));
             }
-            if matches!(self.name(named), "year" | "month" | "day" | "time") {
-                self.clock_read(span);
-            }
+            self.note_clock(named, span);
         }
         match self.env.meaning(sym).prim() {
             // An expression of unknown value leaves its interval, and, while
@@ -3820,6 +3881,7 @@ impl Machine<'_> {
                 self.abs = None;
                 self.abs_exact = None;
                 self.abs_from = None;
+                self.amb = None;
                 // An unpinned number names any register. It reads whatever any may hold.
                 let Some(sym) = index.and_then(|n| self.one_register(kind, n)) else {
                     return Some(self.any_register_value(kind));
@@ -4083,6 +4145,16 @@ impl Machine<'_> {
     /// while a join left it one of a few exact values, [`Machine::abs_exact`]
     /// for those (the set lift).
     fn register_value(&mut self, sym: Sym, kind: RegKind) -> Value {
+        let scanning = match self.amb_base.take() {
+            Some((slot, scanning)) if slot == sym => Some(scanning),
+            _ => (kind == RegKind::Count).then(|| self.env.scanning(sym)).flatten(),
+        };
+        let value = self.register_value_read(sym, kind);
+        self.amb = scanning.zip(value.as_int()).map(|(scanning, n)| self.env.scanned(scanning, sym, n));
+        value
+    }
+
+    fn register_value_read(&mut self, sym: Sym, kind: RegKind) -> Value {
         let raw = self.env.get(sym).map(|b| &b.value);
         // A join's token lists stay what they are: `\the` reads them one by one.
         if kind == RegKind::Toks
@@ -4288,9 +4360,29 @@ impl Machine<'_> {
         crate::analysis::observe::arg_type(self, span, crate::analysis::roles::Ty::Reg(kind));
         self.read_equals();
         let value = self.scan_register_value(kind);
+        let kept = self.scanned_kept(kind, &value);
         let global = self.take_global();
         let target = self.storage(name);
         self.assign_through(name, target, value, global, span);
+        self.keep_expr(kept.map(|a| (a.expr, a.value)), target);
+    }
+
+    /// The count just scanned as an expression over the recorded load's leaves, its exact
+    /// reads taken back: the caller keeps it with the value ([`Machine::keep_expr`]).
+    fn scanned_kept(&mut self, kind: RegKind, value: &Value) -> Option<crate::engine::env::Scanned> {
+        let scanned = self.amb.take()?;
+        (kind == RegKind::Count && value.as_int() == Some(scanned.value) && self.env.retract(&scanned))
+            .then_some(scanned)
+    }
+
+    /// `target` was just assigned `value`, which is `expr` over the recorded load's leaves:
+    /// its slot keeps the expression. Where the write did not leave that value there, the
+    /// leaves are read exactly after all.
+    fn keep_expr(&mut self, kept: Option<(Rc<crate::engine::env::Expr>, i64)>, target: Sym) {
+        let Some((expr, value)) = kept else { return };
+        let amb = crate::engine::env::Amb::Int(expr);
+        let holds = self.env.peek(target.0).is_some_and(|b| b.value.as_int() == Some(value));
+        self.env.set_amb(target, amb, holds);
     }
 
     /// The value a register of `kind` is set to, read after its optional `=`.
@@ -4455,9 +4547,17 @@ impl Machine<'_> {
         let spread = spread.flatten();
         self.read_equals();
         let value = self.scan_register_value(kind);
+        let kept = self.scanned_kept(kind, &value).map(|a| (a.expr, a.value));
         let global = self.take_global();
+        // Kept only by the one register the number names.
+        if let (None, Some((expr, _))) = (target, &kept) {
+            self.env.settle_amb(&crate::engine::env::Amb::Int(expr.clone()));
+        }
         match target {
-            Some(target) => self.assign(target, value, global, span),
+            Some(target) => {
+                self.assign(target, value, global, span);
+                self.keep_expr(kept, target);
+            }
             // A cut dropped the number: the write is part of the skipped rest.
             None if self.cutting() => {}
             None => self.weaken_registers(kind, spread.as_deref(), value, global),
@@ -4491,11 +4591,18 @@ impl Machine<'_> {
         };
         // tex.web § 1236: the `by` is an optional keyword.
         self.scan_keyword("by");
+        // A count the recorded load holds as an expression over its leaves is read as that.
+        let old = match self.env.amb(target).filter(|_| kind == RegKind::Count && self.env.symbolic()) {
+            Some(crate::engine::env::Amb::Int(expr)) => Some(expr),
+            _ => None,
+        };
+        self.env.quiet(old.is_some());
         // Unassigned register holds zero (tex.web § 222).
         let current = match self.env.get(target) {
             Some(_) => self.env.value(target),
             None => self.unseen_register(kind, target),
         };
+        let mut kept = None;
         let value = match kind {
             // tex.web § 1240: `\advance` on glue takes a ⟨glue⟩. `\multiply` and
             // `\divide` take an integer and scale all three components.
@@ -4542,14 +4649,35 @@ impl Machine<'_> {
             }
             _ => {
                 let (cur, cur_x) = self.current_abs(target, &current);
+                self.env.quiet(false);
                 let n = self.scan_number();
+                let by = n.and_then(|n| self.scanned_kept(kind, &Value::Int(n)));
                 let (operand, operand_x) = self.scanned_abs_num(n);
-                self.abs_arith(Quantity::Int, cur, cur_x, operand, operand_x, op, span)
+                let value = self.abs_arith(Quantity::Int, cur, cur_x, operand, operand_x, op, span);
+                // The result as an expression, where either side is one and all is known.
+                if old.is_some() || by.is_some() {
+                    use crate::engine::env::Expr;
+                    let side = |e: Option<Rc<Expr>>, n: Option<i64>| e.or_else(|| n.map(|n| Rc::new(Expr::Const(n))));
+                    let sides = side(old.clone(), current.as_int()).zip(side(by.as_ref().map(|a| a.expr.clone()), n));
+                    kept = match (sides, value.as_int()) {
+                        (Some((a, b)), Some(v)) => Some((Rc::new(Expr::Op(op, a, b)), v)),
+                        // Unknown after all: what either side was is read exactly.
+                        _ => {
+                            for e in old.iter().chain(by.as_ref().map(|a| &a.expr)) {
+                                self.env.settle_amb(&crate::engine::env::Amb::Int(e.clone()));
+                            }
+                            None
+                        }
+                    };
+                }
+                value
             }
         };
+        self.env.quiet(false);
         let value = value::trap_zero_glue(value);
         let global = self.take_global();
         self.assign_from_old(via, target, value, global, span);
+        self.keep_expr(kept, target);
     }
 
     /// The abstract number a register named `target` holds before
@@ -4815,13 +4943,19 @@ impl Machine<'_> {
     }
 
     pub(crate) fn char_code_sym(&mut self, table: CodeTable, c: char) -> Sym {
-        self.intern(&format!("{CODE}{}{c}", table.as_str()))
+        let t = table.as_str();
+        self.intern_keyed((crate::engine::tex::KeyKind::Code, crate::engine::tex::StaticText(t), c.into()), |s| {
+            *s = format!("{CODE}{t}{c}")
+        })
     }
 
     /// The slot for every character of a table. Real entries are one
     /// character long, so `{CODE}any` is none of them.
     fn any_code_sym(&mut self, table: CodeTable) -> Sym {
-        self.intern(&format!("{CODE}{}{CODE}any", table.as_str()))
+        let t = table.as_str();
+        self.intern_keyed((crate::engine::tex::KeyKind::AnyCode, crate::engine::tex::StaticText(t), 0), |s| {
+            *s = format!("{CODE}{t}{CODE}any")
+        })
     }
 
     /// A write through an unpinned character number may reach any entry
@@ -5410,7 +5544,7 @@ fn char_meaning_text(c: char, cat: Catcode) -> String {
 /// tex.web §§ 1238-1240: `\advance` is 32-bit addition, which wraps.
 /// `\multiply` uses `mult_integers` (count) or `nx_plus_y` (dimension, up to
 /// `\maxdimen`), `\divide` uses `x_over_n`. `None` is "Arithmetic overflow".
-fn int_arith(a: i64, b: i64, op: Arith, dimen: bool) -> Option<i64> {
+pub(crate) fn int_arith(a: i64, b: i64, op: Arith, dimen: bool) -> Option<i64> {
     match op {
         Arith::Advance => Some(value::wrap(a + b)),
         Arith::Multiply => value::mult_and_add(a, b, 0, if dimen { value::MAX_DIMEN } else { value::MAX_INT }),

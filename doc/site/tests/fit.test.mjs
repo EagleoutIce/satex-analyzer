@@ -114,3 +114,16 @@ test('reflow takes given breaks', () => {
   const stale = E.reflow(ps, 0, { ...line, breaks: { breaks: [9], ratios: [0, 0] } }).rows.map((r) => r.out.length);
   assert.deepEqual(stale, own, 'a break past the pieces: the echo fits itself');
 });
+// Intuition: TeX's total fit breaks a formula after its operator when the line needs it, paying the penalty, and never
+// at a formula's own space before a part without a break before it (`mg`). Pins the echo pushing a whole formula to the
+// next row where pdfTeX breaks it after `=` (preview wish 3, 2026-11-21).
+test('fit: a formula breaks at its penalties only', () => {
+  const E = self.satexPdfEdit;
+  // two words, then a formula `a+` | `b` (a break after `+` at 700): the first row fits up to the `+` (47 of 50), the
+  // words alone leave it too loose
+  const word = (n) => ({ gap: 3, n }), q = [{ gap: 0, n: 16 }, word(17), { gap: 3, n: 8, pen: 700 }, { gap: 2, n: 8, mg: true, st: 1, sh: 2 }];
+  const f = E.fit(q, 50, 50);
+  assert.deepEqual(f?.breaks, [3], 'after the operator');
+  const noPen = q.map((p) => ({ ...p, pen: undefined }));
+  assert.equal(E.fit(noPen, 50, 50), null, 'without its penalty no break inside the formula: no fit in tolerance (the greedy flow takes over)');
+});

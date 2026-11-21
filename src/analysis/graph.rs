@@ -122,7 +122,7 @@ pub struct DependencyGraph {
     /// because a package is analyzed under both arms of an undecided
     /// conditional, or because a loop is unrolled — describes the same
     /// program point every time.
-    sites: crate::fixed::SharedMap<(Span, Sym, VertexTag), NodeId>,
+    sites: crate::fixed::HotMap<(Span, Sym, VertexTag), NodeId>,
     /// The last line a construct that began at a span reached, for the ones
     /// whose arguments ran past their own line.  Only spans that reach
     /// further than their own line are in here.
@@ -206,7 +206,7 @@ impl DependencyGraph {
             |a: &Vertex, b: &Vertex| edited(&a.span) && edited(&b.span) && Vertex { span: b.span, ..a.clone() } == *b;
         let n = at.vertices.len();
         let moves: Vec<usize> = (0..n.min(new.vertices.len())).filter(|&i| new.vertices[i] != at.vertices[i]).collect();
-        type Sites = crate::fixed::SharedMap<(Span, Sym, VertexTag), NodeId>;
+        type Sites = crate::fixed::HotMap<(Span, Sym, VertexTag), NodeId>;
         let keyed = |a: &Sites, b: &Sites| a.iter().all(|(k, v)| edited(&k.0) || b.get(k) == Some(v));
         let extents =
             |a: &HashMap<Span, u32>, b: &HashMap<Span, u32>| a.iter().all(|(k, v)| edited(k) || b.get(k) == Some(v));
@@ -336,7 +336,7 @@ impl DependencyGraph {
         within: Option<NodeId>,
         cds: &[ControlDep],
     ) -> NodeId {
-        if let Some(&id) = self.sites.get(&(span, name, tag)) {
+        if let Some(id) = self.sites.get_mut(&(span, name, tag)).map(|id| *id) {
             // Only a change unshares the vertex's chunk.
             if self.vertices[id as usize].cds != cds {
                 let vertex = &mut self.vertices[id as usize];
@@ -406,6 +406,11 @@ impl DependencyGraph {
 
     pub fn extents(&self) -> &HashMap<Span, u32> {
         &self.extents
+    }
+
+    /// Moves the recent sites into the shared table, before a checkpoint copies the graph.
+    pub fn settle(&mut self) {
+        self.sites.settle();
     }
 
     /// The vertex already standing for this source site, if any.
@@ -821,16 +826,14 @@ impl CallGraph {
     /// being a cycle of macros calling one another.
     pub fn recursive(&self) -> Vec<(Sym, Vec<Sym>)> {
         let mut out = Vec::new();
-        for component in strongly_connected(&self.edges) {
-            match component[..] {
-                [only] if self.edges[only].contains(&only) => out.push((self.nodes[only], vec![self.nodes[only]])),
-                [_] => {}
-                _ => {
-                    let cycle: Vec<Sym> = component.iter().map(|&node| self.nodes[node]).collect();
-                    out.extend(component.iter().map(|&node| (self.nodes[node], cycle.clone())));
-                }
+        strongly_connected(&self.edges, |component| match *component {
+            [only] if self.edges[only].contains(&only) => out.push((self.nodes[only], vec![self.nodes[only]])),
+            [_] => {}
+            _ => {
+                let cycle: Vec<Sym> = component.iter().map(|&node| self.nodes[node]).collect();
+                out.extend(component.iter().map(|&node| (self.nodes[node], cycle.clone())));
             }
-        }
+        });
         out
     }
 }
@@ -839,20 +842,21 @@ fn escape(s: &str) -> String {
     s.replace('\\', "\\\\").replace('"', "\\\"")
 }
 
-/// The strongly connected components of `edges` (Tarjan), each closed
-/// before the ones that reach it, iteratively so a long chain of calls
-/// cannot overflow the stack.
-fn strongly_connected(edges: &crate::fixed::Chunked<Vec<usize>>) -> Vec<Vec<usize>> {
+/// The strongly connected components of `edges` (Tarjan), each handed to `each` (in the order
+/// its nodes leave the stack) before the ones that reach it, iteratively so a long chain of
+/// calls cannot overflow the stack. One buffer for all of them: most components are one node,
+/// and a vector each cost the lint rule reading them most of its time in the browser.
+fn strongly_connected(edges: &crate::fixed::Chunked<Vec<usize>>, mut each: impl FnMut(&[usize])) {
     const NONE: usize = usize::MAX;
     let n = edges.len();
     let (mut index, mut low, mut on) = (vec![NONE; n], vec![0; n], vec![false; n]);
-    let (mut next, mut stack, mut out) = (0, Vec::new(), Vec::new());
+    let (mut next, mut stack, mut frames, mut component) = (0, Vec::new(), Vec::new(), Vec::new());
     for root in 0..n {
         if index[root] != NONE {
             continue;
         }
         // A frame: the node and how many of its edges are done.
-        let mut frames = vec![(root, 0)];
+        frames.push((root, 0));
         (index[root], low[root], next) = (next, next, next + 1);
         stack.push(root);
         on[root] = true;
@@ -874,7 +878,7 @@ fn strongly_connected(edges: &crate::fixed::Chunked<Vec<usize>>) -> Vec<Vec<usiz
                 low[parent] = low[parent].min(low[v]);
             }
             if low[v] == index[v] {
-                let mut component = Vec::new();
+                component.clear();
                 while let Some(w) = stack.pop() {
                     on[w] = false;
                     component.push(w);
@@ -882,11 +886,10 @@ fn strongly_connected(edges: &crate::fixed::Chunked<Vec<usize>>) -> Vec<Vec<usiz
                         break;
                     }
                 }
-                out.push(component);
+                each(&component);
             }
         }
     }
-    out
 }
 
 #[cfg(test)]
@@ -895,7 +898,8 @@ mod scc_tests {
     fn components_close_before_what_reaches_them() {
         // 0 -> 1 <-> 2, 3 -> 3, 4 alone.
         let edges = vec![vec![1], vec![2], vec![1], vec![3], vec![]];
-        let mut found = super::strongly_connected(&edges.into());
+        let mut found: Vec<Vec<usize>> = Vec::new();
+        super::strongly_connected(&edges.into(), |c| found.push(c.to_vec()));
         found.iter_mut().for_each(|c| c.sort());
         assert_eq!(found, [vec![1, 2], vec![0], vec![3], vec![4]]);
     }

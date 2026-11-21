@@ -218,6 +218,40 @@ test("The editor's TeX tokenizer (site.js `siteTex`)", async () => {
   assert.deepEqual(toks('$\\alpha_i: x$').slice(0, 2), ['$:keyword', '\\alpha:tag']);
 });
 
+// The tokenizer over the run's letters (`withLetters`, the playground's table of the file): a command's name is the `\`
+// and the letters at its place, as completion reads it. Pins `\make@x` colored as one name in a body (`@` other there),
+// `\l_tmpa_tl` colored whole in a body by the expl3 guess, and `\begin{…}` losing stex's own argument colors.
+test('the tokenizer reads names by the run\'s letters', async () => {
+  const cm = await import('../codemirror.js');
+  self.siteCM = () => Promise.resolve(cm);
+  // lines 1-2 a body, line 3 on `\ExplSyntaxOn` (`_`, `:` letters), `@` a letter from line 5
+  const at = (line) => (line >= 3 ? '_:' : '') + (line >= 5 ? '@' : '');
+  const p = (await self.siteTex()).withLetters((line) => at(line)).streamParser, st = p.startState(2);
+  const toks = (line) => {
+    const s = new cm.language.StringStream(line, 2, 2), out = [];
+    while (!s.eol()) { const t = p.token(s, st); if (t) out.push(`${s.current()}:${t}`); s.start = s.pos; }
+    return out;
+  };
+  assert.deepEqual(toks('\\make@x \\l_tmpa_tl'), ['\\make:tag', '\\l:tag'], 'line 1: `@` and `_` end the names');
+  assert.ok(toks('\\begin{center}').includes('center:atom'), 'line 2: stex keeps its `\\begin` argument');
+  assert.ok(toks('\\l_tmpa_tl \\c__fp_x:n').includes('\\c__fp_x:n:tag'), 'line 3: expl3 names whole');
+  p.blankLine(st, 2);
+  assert.deepEqual(toks('\\make@x \\@'), ['\\make@x:tag', '\\@:tag'], 'line 5: `@` a letter');
+});
+
+// The same through CodeMirror's own parse of a whole text (blank lines counted by `blankLine`): the line numbers the
+// tokenizer gives the letters are the text's. Pins a blank line shifting every later line's letters.
+test('the tokenizer counts lines as the editor parses them', async () => {
+  const cm = await import('../codemirror.js');
+  self.siteCM = () => Promise.resolve(cm);
+  const tex = await self.siteTex(), at = (line) => (line >= 5 ? '_:' : '');
+  const doc = '\\documentclass{article}\n\\begin{document}\n\\l_tmpa_tl\n\n\\ExplSyntaxOn\n\\c__x \\tl_set:Nn\n';
+  const st = cm.state.EditorState.create({ doc, extensions: [tex.withLetters((line) => at(line))] });
+  const tree = cm.language.ensureSyntaxTree(st, doc.length, 1e9), out = [];
+  cm.highlight.highlightTree(tree, tex.highlighter, (from, to, cls) => { if (cls.includes('tok-cmd')) out.push(doc.slice(from, to)); });
+  assert.ok(out.includes('\\l') && out.includes('\\c__x') && out.includes('\\tl_set:Nn'), JSON.stringify(out));
+});
+
 // A number is one token wherever TeX or pgf reads one: after `(`, `,` and a sign, with a fraction or exponent, and
 // never a word's start. Pins `(2.75,0.0)` split into `(2` plain, `.75` number, `,0` plain, `.0` number, and the
 // `0` of the HTML spec `0B3D91` colored alone.
@@ -304,6 +338,18 @@ test('sketchSvg: the view holds every text, the run\'s box smaller', async () =>
   assert.ok(at(80 + 6 * size * 0.3) <= vb, `Walter's right end inside: ${svg}`);
 });
 
+// Intuition: the PDF's sketch of a picture typed in (playground.js pdfSketchDraw) lays the run's drawing over the
+// build's picture at the page's scale: pt as they are, no padding, the drawn area's origin and size named so the page
+// can place the run's box where the build's stood. Pins preview wish 2 (TikZ drawn roughly while typing).
+test('sketchSvg: a fixed scale for the PDF', async () => {
+  const { sketchSvg } = self.satexCards;
+  const pic = { box: [-13, -7, 103, 28], approximate: true, paths: [{ d: 'M -13 7 L 13 7 L 13 -7 L -13 -7 Z', stroke: true, width: 0.4 }], texts: [{ base: true, x: -10, y: 3.5, text: 'data' }] };
+  const svg = sketchSvg(pic, 1), num = (a) => +new RegExp(`${a}="(-?[\\d.]+)"`).exec(svg)[1];
+  assert.match(svg, /class="ts-sketch approximate"/, 'approximate where the run did not know a number');
+  assert.match(svg, /translate\(0 0\) scale\(1\)/, 'no padding, pt as they are');
+  assert.ok(num('data-x') <= -13 && num('data-y') <= -7, 'the origin holds the run\'s box');
+  assert.equal(num('width'), +num('data-w').toFixed(2), 'as wide as the drawn area');
+});
 // Intuition: `\node (a) {\TeX{} file}; \node (b) [right=of a] {findings}; \draw[->] (a) -- (b);` has no frames: each text
 // stands at its node's centre, the edge starts at a's east border. The sketch's font is wider than TeX's, so a text
 // laid out by its own estimate ran into the edge ("TEX file" struck through by the arrow); it is squeezed to the gap.

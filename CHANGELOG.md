@@ -6,18 +6,44 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 
 ## Unreleased
 
+### VS Code
+
+- `fix` **A server restart no longer fails with "command 'satex/query' already exists".** The server's commands are registered once per window and run on the current client.
+
 ### LSP
 
+- `fix` **Editors: a name built around unknown digits is the same name after an edit.** It named its number by the token's index, which a resumed run numbers differently than a run from the start, so findings and definitions spelled other names than `satex lint`.
+- `fix` **Editors read the open `.bib` and root, not the files on disk.** An entry removed from an open `.bib` leaves its `\cite` undefined, an `\include` commented out leaves its chapter's labels undefined, and a `.bbl` or `.ind` the tool no longer makes is removed instead of kept stale.
+- `fix` **Editors: an edited `.bib` or a commented-out `\include` gives the findings a fresh lint gives.** The build's bibliography and index files, the bibliography rules and the unread-file check read the editor's texts, not the files on disk. A `.bbl` or `.ind` the tool no longer makes is removed. An entry removed from an open `.bib` leaves its `\cite` undefined, and a reference to a label in an un-`\include`d chapter is undefined.
+- `perf` **Playground edits about a fifth faster again.** A question a newer text made stale stops and answers nothing, the replaced run is freed after the reply, no checkpoint is replanted next to the edit, and the recursion and unused-package lints do less per run with identical findings.
+- `perf` **Edits in the playground show findings twice as fast.** The edited paragraph's preview is the run itself up to the paragraph's end, not a second run; scope rows carried over an edit share their records; the typeset view indexes definition texts per file it needs; file lookups skip resolving directories no open buffer is in. A word typed in the spacing example: findings 0.8–1.15 s → 0.43–0.56 s, identical.
 - `fix` **Editors rerun when a file the document reads changes on disk.** A kept run is reused only if the open texts match and every file it read or looked for is unchanged (the document cache's read log), so an edited `.bib` or `\input` file, or a file that now exists, is no longer served from a stale run.
 - `fix` **Editors: findings follow edits, closes and reopens.** Closing an unsaved buffer reads the file from disk again, a reopened document gets its findings back, a file the document stops reading (an un-`\include`d chapter) runs again unless the run was cut short, and a file outside the root no longer overwrites the root's findings.
 
 ### Compile
 
+- `fix` **The progress bar counts packages built into caches, not only those loaded from them.** A first run after an update shows how many packages are done.
 - `perf` **`satex compile`: the PDF first, the analysis only where a message needs it.** The build runs before the analysis, which runs only when the log has a message to explain and no stored explanation of the same messages, source, settings and read files holds: an unchanged 195-page book 1.7 s → 0.05 s with `compile.explain` on, the PDF of an edit in ~3 s instead of after the analysis. `compile.warm` works from the command line: the build runs in a mirror of the project under `.satex-build`, so no file of the project is ever a pipe.
 - `feat` **memoize: `satex compile` extracts memoize's externs itself.** No shell escape and no Perl module needed: the build runs memoize's TeX extraction between passes (`compile.memoize`).
 
 ### Analysis
 
+- `fix` **A name built around unknown digits is spelled alike after a resume.** It embedded an internal symbol index, so a resumed run named `\__seq_map_<n>:w` differently from a fresh one.
+- `fix` **Unknown text that lists command names is never taken for one name.** Run through an undecided loop, such a list was turned into `\relax`, so the code its names stand for silently never ran; a `\def` through it may now define each name in it.
+- `fix` **A recursion that never returns is TeX's "capacity exceeded" error, and finding counts match the build.** A half-typed `\begin` or `see \ref` before `\end{document}` reports the error pdflatex gives; a lint finding at the same place hides only the raised error it quotes; `x^'` is a missing-brace error; a blank line in display math is reported on its own line.
+- `fix` **Package caches are parameterized by the clock and the job name.** A value a package only passes on (a count set from `\time`, `\jobname` or `\pdfcreationdate` in an `\edef`) is filled in when the cache is served, and an `\ifnum` on it keeps its outcome, so a cache built at another date or for another job serves without a re-read; `\jobname`, the seconds and zone of `\pdfcreationdate`, file hashes and sizes and the shell escape in effect now key what they did not.
+- `fix` **Missing braces after `^`, `_`, `\sqrt`, `\bar` and `\left` are errors.** satex checks the operand TeX scans: `\(\sum_ \)` reports "Missing { inserted" and "Missing } inserted" as pdflatex does, `\left\hbox` reports "Missing delimiter (. inserted)", and `\left{` keeps its brace.
+- `perf` **Hyphenation finds a word's points once per pattern set.** A paragraph's words are hyphenated for its marks and its line breaks from one memo (`limits.hyph_words`), and a font's fields and character codes sit in a grid: findings identical.
+- `perf` **Macro calls allocate a third less.** Definition-site lists, a command's start state, input frames and arithmetic scratch reuse their memory instead of copying to the heap: cold kernel build 4% fewer instructions; results unchanged.
+- `perf` **Typesetting reads font and code tables without building their names.** A font's fields, `\fontdimen`s and character codes are found by key, recorded lists by their last push, and hyphenation stops where no pattern goes on: a 1000-page article runs 27% fewer instructions, a 200-page scrbook 11%, findings identical.
+- `perf` **Macro calls look up their site in one probe.** The per-call site tables keep recent entries in a plain hash table in front of the shared trie, and a command's start state reuses the last one: cold kernel build 6% fewer instructions, big documents 2–4%; results unchanged.
+- `fix` **A missing `\end{document}` met only on a path the analysis approximated is a note with an unsafe fix, never an error.** The lint honours the run's row as other raised errors do.
+- `fix` **Package caches never replay another date.** A package's reads of `\year`, `\month`, `\day`, `\time` and `\pdfcreationdate` key its cached segment on their value, so a segment built at another date is read again; served segments also count the choices their load made.
+- `fix` **A one-of or a literal whose arms leave the input at different places is followed on each arm past a site's fork budget.** At a call's last parameter a refused one-of split reads on and covers the other end.
+- `perf` **Cold kernel build 5% fewer instructions, big documents 2–3%.** Macro calls skip bookkeeping no exact path reads: one site lookup fewer per call, a loose call hash only on approximated paths, csnames interned once. Results unchanged.
+- `perf` **Typesetting no longer looks up the font file per character.** The file a font's last character registered is checked by its id: a 1000-page article runs 8% fewer instructions, findings identical.
+- `fix` **An argument end the fork limit refuses is still covered.** The call's last argument is read as unknown text and what the other end leaves may still run; before another parameter the fork is always taken; a one-of with an empty text takes the next argument. A split one-of argument is no longer treated as unknown.
+- `fix` **LuaLaTeX: a `\directlua` that stops on an unknown value no longer costs the other paths their Lua state.** Only a run that wrote the state puts other paths out of step. Node, whatsit and mode numbers come from the engine (whatsit subtypes were off by one).
 - `fix` **fp products of unknown integers keep their values.** A delimiter match over typed digits that every value already decides ends the argument there instead of forking, so a refused fork no longer leaves only the impossible arm.
 - `fix` **Package caches are no longer keyed by open `\read` streams through loop bounds.** A loop head counts a stream use only when two compared bounds differ in their stream half.
 - `fix` **An unknown run of digits is no longer one argument.** A number nothing bounds (`\the` of a random count) read by undelimited parameters splits by length, so a macro taking four digits gets four, the real run keeps a path, and no false certain missing `\end{document}` follows. pgfmath's `rand` under an unknown clock reaches the end.
@@ -52,6 +78,25 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 
 ### Playground
 
+- `fix` **The page settings' header and footer fields show what the page style prints (footer centre `\thepage`) and suggest it; the layers button is called View.**
+- `fix` **A playground that fails to start heals itself.** Stored layout and view choices of another shape are dropped when read; a second failed start reloads without them (text and settings kept); the message's full text and stack are in its tooltip and the console. Smart wrap keeps the page's caret on the text it typed.
+- `fix` **A typed `~` stays a tie; a double click selects a word on the page; findings of a run a widget question interrupted are published.** Before, a slides edit could leave the findings stale while the status said Ready.
+- `fix` **A root cleared and written again is no longer flagged as a file no root reads.**
+- `feat` **Insert, Format, Color, Font and Size menus in the page and the editor alike.** Insert is nested (Math, Floats, Lists, Structure, References, Pictures) with each row's LaTeX beside it; a selection gets Bold, Italic, Emphasis, Mono, Small caps (math forms in math), colors and sizes; Ctrl/Cmd+B and +I start, leave or split bold and italic, and the arrow keys leave a command at its edges; a gray hint shows the command around the caret.
+- `fix` **A widget's package or TikZ library joins the preamble's existing list** (`\usetikzlibrary{a, b}`), never twice, in the root document also from an `\input` file.
+- `fix` **The PDF toolbar is narrower:** View sits in the layers popover, the page select fits its content, the download icon is clear, the run panel shows its stat cards again and the progress no longer jumps back.
+- `feat` **tabularray: `tblr` and `longtblr` open the table widget (merged cells included), and a table converts between tabular, tabularx, longtable and tblr.** Spans, booktabs rules (one `\UseTblrLibrary` line) and captions carry over; a conversion that cannot is refused with the reason.
+- `fix` **Type mode: text typed into a line re-spaces the whole line as pdfTeX does, and inline math breaks and spaces by TeX's rules with the run's own math font widths** (`satex/mathwidths`).
+- `fix` **Completion and command colors follow the catcodes where you type.** After `\sum_` no name is being typed, and internal names such as `\c__socket_…` are offered only where `_` or `@` is a letter (`\ExplSyntaxOn`, `\makeatletter`, a package); a `.sty` completes its `@` names.
+- `fix` **The page's caret stays on the line you type in.** In a new paragraph or a formula it no longer sits on the previous paragraph's row, and the editor's caret lands inside what the page wrote.
+- `fix` **Typing after a macro's punctuation (`Hello,`) no longer draws the comma twice; a listing takes clicks and typing.**
+- `fix` **The landing page's live demo shows the typeset paragraph again.** A streamed note from the worker was taken as the answer to the next question.
+- `fix` **Enter at the end of a command's argument starts a new paragraph after the command; in a list it starts a new `\item`.** Inside an argument it is refused, as TeX would error.
+- `fix` **A widget's write in an `\input` file loads its package in the root document's preamble** (a column width needs `array`), so the build no longer fails.
+- `feat` **Type mode: a `\ref`, `\eqref`, `\pageref` or `\cite` typed shows its number at once.** Learned from the last run and satex's own aux, never LaTeX's; a guess is drawn faint, and the key itself takes typing.
+- `fix` **Type mode: text typed at a full page's foot goes over to the next page's top and pushes its text down, as pdfTeX does.** The pages an edit spans switch to the new build together, without a blink.
+- `fix` **Type mode: a formula in text breaks after a relation or binary operator as TeX does.** A paragraph typed after Enter is justified by TeX's total fit.
+- `feat` **Type mode: typing in a TikZ picture draws it as the run computed it** (frames, edges, node texts, dashed where approximate) until the build lands.
 - `fix` **Widgets write the document's macros only where the run typeset that text as prose** (off by default): never in math, verbatim, `\url`, labels or comments, and only in the inserted text. The warm build's mirror keeps symbolic links.
 - `fix` **Drawing on an indented line (in a minipage) is written at that indent; Unicode symbols typed into the formula bar (α, ≤) are written as commands.** The standalone Draw page gets the formula bar too.
 - `feat` **Drawing builds formulas.** The ∑ toggle in the draw widget opens a formula bar: templates with slots (fraction, scripts, root, sum, integral, parentheses, a 2×2 matrix), Tab to the next slot, drawn symbols go into the formula, and a live preview. Insert writes clean inline math at the cursor through the snapshot printer, loading `amsmath` when a matrix needs it.

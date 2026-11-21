@@ -237,3 +237,62 @@ export async function typeundo(p, sc) {
   if (t4 === t0) res.fails.push('the key after the undo did not type');
   return res;
 }
+
+/** `catcomplete`: the editor's completion and command colors follow the catcodes at the caret (user 2026-11-21 13:16).
+ * In a document's body `\(\sum_` names nothing (`_` a subscript): no list opens, and `\sum` lists no name a body cannot
+ * type (`\c__socket_…/…`); under `\ExplSyntaxOn` `\c__` lists expl3 names. The colors: `\l_tmpa_tl` in the body is
+ * `\l` alone, under `\ExplSyntaxOn` one name. */
+export async function catcomplete(p, sc) {
+  const res = { name: sc.name, fails: [], perf: [], info: {} };
+  const fail = (m) => res.fails.push(m);
+  if (!await started(p) || !await example(p, 'hello.tex')) { fail('the playground did not start'); return res; }
+  const T = '\\documentclass{article}\n\\begin{document}\nBody \\l_tmpa_tl here.\n\n\\ExplSyntaxOn\n\\tl_set:Nn \\l_tmpa_tl {x}\n\\ExplSyntaxOff\nEnd.\n\\end{document}\n';
+  await p.eval(`(() => { const v = document.querySelector('.cm-content'); v.focus(); })()`);
+  // the whole text replaced as a person would: select all, type it
+  await p.s('Input.dispatchKeyEvent', { type: 'rawKeyDown', key: 'a', code: 'KeyA', windowsVirtualKeyCode: 65, modifiers: 2 });
+  await p.s('Input.dispatchKeyEvent', { type: 'keyUp', key: 'a', code: 'KeyA', windowsVirtualKeyCode: 65, modifiers: 2 });
+  await p.s('Input.insertText', { text: T });
+  // the run of this text, its letter table with it
+  await p.until(`satexHealth().shown === satexHealth().version && !satexHealth().busy`, 120000);
+  await sleep(1500);
+  const list = () => p.eval(`[...document.querySelectorAll('.cm-tooltip-autocomplete li')].map((l) => l.querySelector('.cm-completionLabel')?.textContent ?? l.textContent)`);
+  const typeAt = async (needle, text) => {
+    // the caret right after `needle`, then the keys
+    const at = await p.eval(`(() => { const t = satexHealth().text; return t.indexOf(${J(needle)}) + ${J(needle)}.length; })()`);
+    await p.eval(`satexEditorSelect(${at})`);
+    for (const ch of text) { await p.s('Input.insertText', { text: ch }); await sleep(120); }
+    await sleep(900);
+  };
+  // body: a new line before `End.`, `\(\sum` then `_`
+  await typeAt('ExplSyntaxOff\n', '\\(\\sum');
+  const sum = await list();
+  res.info.sum = sum.slice(0, 8);
+  if (!sum.length) fail('`\\sum` opens no list in the body');
+  const odd = sum.filter((l) => l.length > 1 && /[_:@/]/.test(l));
+  if (odd.length) fail(`names a body cannot type: ${J(odd.slice(0, 5))}`);
+  await p.shot(`${sc.name}-sum.png`);
+  await p.s('Input.insertText', { text: '_' });
+  await sleep(900);
+  const sub = await list();
+  res.info.sub = sub.slice(0, 5);
+  if (sub.length) fail(`after \`\\sum_\` a list opened: ${J(sub.slice(0, 5))}`);
+  await p.shot(`${sc.name}-sub.png`);
+  await p.key('Escape');
+  // expl3: a new line after `\ExplSyntaxOn`, `\c__`
+  await typeAt('\\ExplSyntaxOn\n', '\\c__');
+  const expl = await list();
+  res.info.expl = expl.slice(0, 5);
+  if (!expl.some((l) => /^c__/.test(l))) fail(`\`\\c__\` under \\ExplSyntaxOn lists no expl3 name: ${J(expl.slice(0, 5))}`);
+  if (expl.some((l) => l.includes('/'))) fail('a name with `/` listed under \\ExplSyntaxOn');
+  await p.shot(`${sc.name}-expl.png`);
+  await p.key('Escape');
+  // the colors: the command tokens of each line
+  res.info.letters = await p.eval(`satexLetters()`);
+  // the colors: each line's text with the command-colored characters upper-cased in a mask (a finding's underline
+  // splits a token's DOM spans, so characters, not spans, are compared)
+  res.info.masks = await p.eval(`[...document.querySelectorAll('.cm-line')].map((l) => { let m = ''; const w = document.createTreeWalker(l, NodeFilter.SHOW_TEXT); for (let t = w.nextNode(); t; t = w.nextNode()) m += t.parentElement.closest('.tok-cmd') ? t.data.replace(/./g, 'C') : t.data.replace(/./g, '.'); return [l.textContent, m]; })`);
+  const colored = (needle, nth) => { const rows = res.info.masks.filter(([t]) => t.includes(needle)), r = rows[nth]; if (!r) return null; const i = r[0].indexOf(needle); return r[1].slice(i, i + needle.length); };
+  if (colored('\\l_tmpa_tl', 0) !== 'CC........') fail(`body \\l_tmpa_tl colored ${colored('\\l_tmpa_tl', 0)} (want only \\l)`);
+  if (colored('\\l_tmpa_tl', 1) !== 'CCCCCCCCCC') fail(`expl3 \\l_tmpa_tl colored ${colored('\\l_tmpa_tl', 1)} (want whole)`);
+  return res;
+}

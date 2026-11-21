@@ -97,6 +97,10 @@ struct Shared {
     limit: Cell<u64>,
     /// The current run has met something unknown.
     failed: Cell<bool>,
+    /// The VM's write count when the current run failed. No Lua code catches an unknown (the
+    /// prelude's `pcall`, `xpcall`, `coroutine.resume` rethrow it), so what the VM counts later
+    /// is the error's way out (mlua sets the metatable of a pooled error userdata), not the run's.
+    failed_writes: Cell<Option<i64>>,
     /// Globals a run satex could not finish may have set: missing, they
     /// are unknown, not nil.  `all` stands for every name.
     tainted: RefCell<crate::fixed::HashSet<String>>,
@@ -141,10 +145,18 @@ pub(super) fn fresh(m: &mut Machine) {
 
 /// Fails the run.
 fn unknown<T>(lua: &State) -> R<T> {
-    if let Some(shared) = lua.app_data_ref::<Shared>() {
-        shared.failed.set(true);
-    }
+    fail(lua);
     Err(mlua::Error::runtime("satex: unknown"))
+}
+
+/// Marks the run failed, keeping the VM's write count at its first failure.
+fn fail(lua: &State) {
+    let writes = lua.named_registry_value::<mlua::Function>(TRACK).and_then(|t| t.call::<i64>(())).ok();
+    if let Some(shared) = lua.app_data_ref::<Shared>()
+        && !shared.failed.replace(true)
+    {
+        shared.failed_writes.set(writes);
+    }
 }
 
 /// A token object (LuaTeX manual, "The token library"); its fields are
@@ -254,7 +266,8 @@ fn new_state(memory: u64, steps: u64) -> R<State> {
         let shared = lua.app_data_ref::<Shared>().expect("shared");
         shared.used.set(shared.used.get() + 1);
         if shared.used.get() > shared.limit.get() {
-            shared.failed.set(true);
+            drop(shared);
+            fail(lua);
             return Err(mlua::Error::runtime("satex: step limit"));
         }
         Ok(VmState::Continue)
@@ -492,7 +505,7 @@ fn enter(
     // No cache holds the state: a load that runs Lua is read from here on by every run.
     m.spoil_recording("it runs Lua, whose state no cache holds");
     let outer = m.lua.depth == 0;
-    let failed_before = {
+    let (failed_before, failed_writes_before) = {
         if !in_step(m) {
             if m.cfg.verbose >= 3 {
                 let at = (m.out.file_name(span.file).to_string(), span.line);
@@ -506,7 +519,7 @@ fn enter(
             shared.used.set(0);
             shared.limit.set(left.min(m.cfg.lua.steps));
         }
-        shared.failed.replace(false)
+        (shared.failed.replace(false), shared.failed_writes.take())
     };
     let track: mlua::Function = lua.named_registry_value(TRACK).ok()?;
     // Whether the run wrote state it found: unless the VM's count says it did not, it did.
@@ -531,9 +544,10 @@ fn enter(
         let after = track.call::<i64>(outer.then_some(false));
         if let Some(shared) = lua.app_data_ref::<Shared>() {
             shared.dispatch.borrow_mut().pop();
-        }
-        if let (Ok(before), Ok(after)) = (before, after) {
-            wrote = after != before;
+            let at_failure = shared.failed_writes.replace(failed_writes_before);
+            if let (Ok(before), Ok(after)) = (before, after) {
+                wrote = at_failure.unwrap_or(after) != before;
+            }
         }
         result
     });
@@ -545,9 +559,10 @@ fn enter(
             m.out.steps += shared.used.get();
         }
         let failed = result.is_err() || shared.failed.replace(failed_before);
-        // A run that changed the state (a failed one taints it) is now the state's last, and
-        // this path's. One that wrote nothing leaves both: paths that forked stay in step.
-        if wrote || failed {
+        // A run that changed the state is now the state's last, and this path's. One that wrote
+        // nothing leaves both, failed or not: its taint only makes missing globals unknown, which
+        // over-approximates them for its siblings too, so paths that forked stay in step.
+        if wrote {
             use std::hash::BuildHasher;
             let h = crate::engine::tex::NameHash.hash_one((shared.last.get(), &text, span.line, span.col));
             shared.last.set((h >> 1) as i64 | 1);

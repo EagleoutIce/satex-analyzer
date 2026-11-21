@@ -8,10 +8,10 @@ interface SiteFloat {
   el: HTMLDivElement; show(at: At, html: string, host?: Element | null): void; hide(ms?: number): void; later(f: () => void, ms: number): void;
 }
 /** The syntax highlighters built from the vendored CodeMirror (its modules are not typed here). */
-interface SiteTex { language: any; bib: any; highlighter: any; unbreakable: RegExp }
+interface SiteTex { language: any; withLetters: (lettersAt: ((line: number, col: number) => string) | null) => any; bib: any; highlighter: any; unbreakable: RegExp }
 /** The cards the pages and the playground render with. */
 interface SiteCards {
-  sketchSvg(pic: Rec): string;
+  sketchSvg(pic: Rec, fixed?: number): string;
   sketchBounds(box: number[], exts: number[][], margin: number): number[];
   keyTitle(k: Rec): string;
   chipList(names: string[], chip: (name: string) => string, shown?: number): string;
@@ -57,7 +57,7 @@ declare global {
 /** CodeMirror's stream and the language states the tokenizers keep. */
 interface Stream {
   match(re: RegExp | string, consume?: boolean): RegExpMatchArray | boolean | null; eatSpace(): boolean; skipTo(ch: string): boolean; skipToEnd(): void; next(): string | void;
-  sol(): boolean; string: string; pos: number; current(): string; backUp(n: number): void;
+  sol(): boolean; peek(): string | undefined; string: string; pos: number; current(): string; backUp(n: number): void;
 }
 (() => {
   const root = document.documentElement;
@@ -180,13 +180,21 @@ interface Stream {
       s.next();
       return null;
     };
-    const tex = {
+    // stex's own reading of a command name, in text (its math reads a subset)
+    const STEX_NAME = /^\\[a-zA-Z@\xc0-\u1fff\u2060-\uffff]+/;
+    /** The TeX mode over the letters at each place of the file from the run (`lettersAt(line, col)`, 1-based, the
+     * playground's views.ts `lettersAt` over the run's letter changes): a command's name is the
+     * `\\` and the letters at its place (`\\make@x` in a body is `\\make` then `@x`, `\\l_tmpa_tl` under `\\ExplSyntaxOn`
+     * one name), as completion reads it. Null: no run read the file yet, so the text's own `\\ExplSyntaxOn` and a few
+     * unmistakable expl3 shapes guess, as before a run. */
+    const texFor = (lettersAt: ((line: number, col: number) => string) | null) => ({
       ...stex,
       tokenTable: { ...stex.tokenTable, ...Object.fromEntries(PARAMS.map((tag, i) => [`param${i + 1}`, tag])) },
-      startState: () => ({ ...stex.startState(), magic: false, verb: null, opening: null, expl: false }),
-      copyState: (st: Rec) => ({ ...stex.copyState(st), magic: st.magic, verb: st.verb, opening: st.opening, expl: st.expl }),
+      startState: () => ({ ...stex.startState(), magic: false, verb: null, opening: null, expl: false, line: 0 }),
+      copyState: (st: Rec) => ({ ...stex.copyState(st), magic: st.magic, verb: st.verb, opening: st.opening, expl: st.expl, line: st.line }),
+      blankLine: (st: Rec) => { st.line++; },
       token: (s: Stream, st: Rec) => {
-        if (s.sol()) { st.magic = false; if (st.opening) [st.verb, st.opening] = [st.opening, null]; }
+        if (s.sol()) { st.line++; st.magic = false; if (st.opening) [st.verb, st.opening] = [st.opening, null]; }
         if (st.verb) {
           if (s.sol() && s.match(new RegExp(`^\\s*\\\\end\\{${st.verb.env.replace('*', '\\*')}\\}`), false)) st.verb = null;
           else if (!/^(tex|latex)$/i.test(st.verb.lang ?? '')) return code(s, st.verb.lang);
@@ -200,9 +208,17 @@ interface Stream {
         if (s.match(/^%\s*\\satex@[A-Za-z]+/)) return 'processingInstruction';
         // a space alone, so a number after it starts its own token (`- 0.05pt`)
         if (s.eatSpace()) return null;
-        const on = s.match(EXPL_ON);
+        if (lettersAt && s.peek() === '\\') {
+          // the name by the letters there; where stex reads it alike, stex goes on (its `\\begin{…}` arguments)
+          const letters = lettersAt(st.line, s.pos + 1), rest = s.string.slice(s.pos + 1);
+          let n = 0;
+          while (n < rest.length && (/\p{Alphabetic}/u.test(rest[n]!) || letters.includes(rest[n]!))) n++;
+          const ours = s.string.slice(s.pos, s.pos + 1 + Math.max(n, 1));
+          if (ours !== (s.string.slice(s.pos).match(STEX_NAME)?.[0] ?? ours)) { s.pos += ours.length; return 'tag'; }
+        }
+        const on = !lettersAt && s.match(EXPL_ON);
         if (on) { st.expl = (on as RegExpMatchArray)[1] !== 'ff'; return 'tag'; }
-        if (s.match(st.expl ? /^\\[A-Za-z@_:]+/ : EXPL)) return 'tag';
+        if (!lettersAt && s.match(st.expl ? /^\\[A-Za-z@_:]+/ : EXPL)) return 'tag';
         // a parameter `#1`…`#9` (`##1` inside a nested definition) keeps its number's tint wherever it stands
         const param = s.match(/^#+([1-9])/);
         if (param) return `param${(param as RegExpMatchArray)[1]}`;
@@ -214,10 +230,11 @@ interface Stream {
         if (cut > 0) s.backUp(s.current().length - cut);
         return style;
       },
-    };
+    });
     // what soft wrapping never breaks: a control sequence (`\(`, `\name*`, `\\`) and a short inline math run
     const unbreakable = /\\\((?:(?!\\\))[^\n]){0,40}\\\)|\$(?:[^$\\\n]|\\.){1,40}\$|\\(?:[A-Za-z@]+\*?|[^\sA-Za-z@])/g;
-    return { language: StreamLanguage.define(tex), bib, highlighter, unbreakable };
+    const withLetters = (changes: Parameters<typeof texFor>[0]) => StreamLanguage.define(texFor(changes));
+    return { language: withLetters(null), withLetters, bib, highlighter, unbreakable };
   })());
 
   // One renderer for `satex explain --format json`: the landing page's cards, the
@@ -823,7 +840,9 @@ interface Stream {
   };
   /** A picture as the run drew it (`satex typeset` records it in `sketches`): the paths pgf's driver wrote, in pt, and the node texts where the run set them. */
   const PICTURE_SCALE = 1.4, PICTURE_MAX = 560, PICTURE_PAD = 6;
-  function sketchSvg(pic: Rec) {
+  /** `fixed`: pt to px at that scale, no padding, the drawn area's origin (pt) in `data-x`, `data-y` (the PDF's sketch over
+   * a page, pdfSketchDraw), else fit to the view. */
+  function sketchSvg(pic: Rec, fixed?: number) {
     // the run's colours, black as the theme's text colour
     const ink = (c?: string) => !c || c === '#000000' ? 'currentColor' : esc(c);
     const boxOf = (d: string) => { const v = (d.match(/-?\d+(?:\.\d+)?/g) ?? []).map(Number), xs = v.filter((_: number, i: number) => i % 2 === 0), ys = v.filter((_: number, i: number) => i % 2 === 1); return [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)]; };
@@ -862,11 +881,11 @@ interface Stream {
       return [t.x - hw, t.y - size / 2, t.x + hw, t.y + size / 2];
     });
     const [x, y, w, h] = sketchBounds(pic.box, [...frames, ...ext], 2);
-    const scale = Math.min(PICTURE_SCALE, (PICTURE_MAX - 2 * PICTURE_PAD) / Math.max(w, 1));
-    const width = (w * scale + 2 * PICTURE_PAD).toFixed(0), height = (h * scale + 2 * PICTURE_PAD).toFixed(0);
+    const pad = fixed ? 0 : PICTURE_PAD, scale = fixed ?? Math.min(PICTURE_SCALE, (PICTURE_MAX - 2 * PICTURE_PAD) / Math.max(w, 1));
+    const width = fixed ? (w * scale).toFixed(2) : (w * scale + 2 * pad).toFixed(0), height = fixed ? (h * scale).toFixed(2) : (h * scale + 2 * pad).toFixed(0);
     const label = pic.approximate ? 'TikZ picture as the run drew it, approximate where it did not know a number' : 'TikZ picture as the run drew it';
-    return `<svg class="ts-sketch${pic.approximate ? ' approximate' : ''}" role="img" aria-label="${label}" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">` +
-      `<g transform="translate(${PICTURE_PAD} ${PICTURE_PAD}) scale(${scale}) translate(${-x} ${-y})">${paths}${texts}</g></svg>`;
+    return `<svg class="ts-sketch${pic.approximate ? ' approximate' : ''}" role="img" aria-label="${label}" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}"${fixed ? ` data-x="${x}" data-y="${y}" data-w="${w}" data-h="${h}"` : ''}>` +
+      `<g transform="translate(${pad} ${pad}) scale(${scale}) translate(${-x} ${-y})">${paths}${texts}</g></svg>`;
   }
   /** A subscript right next to a superscript (`x_i^2`) stacked in one column, as TeX sets them (rule 18), not one
    * after the other. */
@@ -1508,7 +1527,11 @@ interface Stream {
         return say(`${self.satexProgress.html(data.total ? data.loaded / data.total : null, 'loading SaTeX')} ${step ?? `Loading SaTeX${data.loaded ? `: ${MiB(data.loaded)}${data.total ? ` of ${MiB(data.total)}` : ''} MiB` : '…'}`}`);
       }
       if (data.type === 'status') return;
-      if (data.type === 'lsp') for (const m of data.out) if (m.method === 'textDocument/publishDiagnostics') found.set(m.params.uri, m.params.diagnostics);
+      if (data.type === 'lsp' || data.type === 'note') for (const m of data.out) if (m.method === 'textDocument/publishDiagnostics') found.set(m.params.uri, m.params.diagnostics);
+      // what the engine sends while a message runs (`note`: `satex/typesetRows`, findings as they settle; `mail`: a
+      // request answered at a run's pause) answers no message: taken as the answer, it shifted every later one by one
+      // (the typeset question got the analysis's reply: "It sets no paragraph.")
+      if (data.type === 'note' || data.type === 'mail') return;
       const w = waiting;
       waiting = null;
       if (data.type === 'error') w?.reject(new Error(data.message.split('\n')[0])); else w?.resolve(data);

@@ -299,11 +299,14 @@ pub enum Query {
     /// The names installed packages define, each with the file to load for it
     /// ([`crate::linter::shared::export_names`]).
     Exports,
+    /// Where a punctuation character became a letter or stopped being one,
+    /// per user file: what names can be typed where ([`letters`]).
+    Letters,
 }
 
 impl Query {
     /// Sorted by name: `--list`, the wiki and the playground show this order.
-    pub const ALL: [(&'static str, Query); 24] = [
+    pub const ALL: [(&'static str, Query); 25] = [
         ("calls", Query::Calls),
         ("catcodes", Query::Catcodes),
         ("definitions", Query::Definitions),
@@ -315,6 +318,7 @@ impl Query {
         ("exports", Query::Exports),
         ("files", Query::Files),
         ("gaps", Query::Gaps),
+        ("letters", Query::Letters),
         ("occurrences", Query::Occurrences),
         ("options", Query::Options),
         ("pgfkeys", Query::Pgfkeys),
@@ -362,6 +366,7 @@ impl Query {
             | Query::Trace => "0.1.0",
             Query::Previews | Query::TypePlugins | Query::Typeset => "0.2.0",
             Query::Tagging | Query::Exports => "0.2.5",
+            Query::Letters => "0.2.6",
         }
     }
 
@@ -394,6 +399,9 @@ impl Query {
             Query::TypePlugins => "the editor's type plugins: the types each triggers on and its features",
             Query::Tagging => "PDF tagging: whether it is on, the standard, language, title and each package's status",
             Query::Exports => "the names installed packages define, each with the package or library to load",
+            Query::Letters => {
+                "where a punctuation character becomes a letter or stops being one: what names are typeable where"
+            }
         }
     }
 }
@@ -650,19 +658,7 @@ fn typeset(analysis: &Analysis) -> Vec<Record> {
     // where the paragraph's and its footnotes' characters stand, and which files the user wrote (no `.aux`)
     let (mut places, mut foot_places, mut foot_keys) = (Places::default(), Places::default(), Keys::new());
     let mut documents: HashMap<FileId, &'static str> = HashMap::default();
-    // each replacement-text token written in the definition's own file: the macro, its line and whether
-    // the token is a control sequence (a character read there was made by expanding it: `\number`,
-    // `\the`). A token from elsewhere (`\title`'s argument kept in `\@title`) is no text of the macro's.
-    let bodies: HashMap<Span, (Sym, u32, bool)> = analysis
-        .facts
-        .defs
-        .iter()
-        .filter_map(|d| d.mac.as_ref().map(|m| (d, m)))
-        .flat_map(|(d, m)| {
-            let own = m.replacement_text.iter().filter(move |t| t.span.file == d.span.file);
-            own.map(move |t| (t.span, (d.name, d.span.line, t.cs().is_some())))
-        })
-        .collect();
+    let bodies = Bodies::new(analysis);
     // the paragraph's lines as the run's breaker set them, where all are known
     let linebreaks = |began: u32, end: u32, record: &mut Record| {
         let off = |k: usize| lost[k] || text.inserts.iter().any(|&(a, b)| (a..b).contains(&(k as u32)));
@@ -1610,6 +1606,50 @@ struct Places {
     last_math: &'static str,
 }
 
+/// Each replacement-text token written in its definition's own file: the macro, its line and
+/// whether the token is a control sequence (a character read there was made by expanding it:
+/// `\number`, `\the`). A token from elsewhere (`\title`'s argument kept in `\@title`) is no text
+/// of the macro's. Indexed per file on the first lookup there: a typeset view looks up only the
+/// few files its characters were read in, not every package's definitions.
+/// A file's macro texts by the span they were made at: name, parameter count, long.
+type FileBodies = HashMap<Span, (Sym, u32, bool)>;
+
+struct Bodies<'a> {
+    analysis: &'a Analysis,
+    /// The definitions with a macro text, by the file they were made in.
+    by_file: std::cell::OnceCell<HashMap<FileId, Vec<usize>>>,
+    files: std::cell::RefCell<HashMap<FileId, FileBodies>>,
+}
+
+impl<'a> Bodies<'a> {
+    fn new(analysis: &'a Analysis) -> Self {
+        Bodies { analysis, by_file: Default::default(), files: Default::default() }
+    }
+
+    fn get(&self, at: Span) -> Option<(Sym, u32, bool)> {
+        let defs = &self.analysis.facts.defs;
+        let mut files = self.files.borrow_mut();
+        let file = files.entry(at.file).or_insert_with(|| {
+            let by_file = self.by_file.get_or_init(|| {
+                let mut by: HashMap<FileId, Vec<usize>> = HashMap::default();
+                for (i, d) in defs.iter().enumerate().filter(|(_, d)| d.mac.is_some()) {
+                    by.entry(d.span.file).or_default().push(i);
+                }
+                by
+            });
+            // in definition order, so a later definition's token wins as in one map of all
+            let own = by_file.get(&at.file).into_iter().flatten().map(|&i| &defs[i]);
+            own.filter_map(|d| Some((d, d.mac.as_ref()?)))
+                .flat_map(|(d, m)| {
+                    let own = m.replacement_text.iter().filter(move |t| t.span.file == d.span.file);
+                    own.map(move |t| (t.span, (d.name, d.span.line, t.cs().is_some())))
+                })
+                .collect()
+        });
+        file.get(&at).copied()
+    }
+}
+
 impl Places {
     /// Marks `piece` (no blank), set at `site` and read at `read`: its line, its site and, read in
     /// the user's files elsewhere than set (`\title`'s argument by `\maketitle`), where it was read.
@@ -1618,7 +1658,7 @@ impl Places {
         &mut self,
         analysis: &Analysis,
         documents: &mut HashMap<FileId, &'static str>,
-        bodies: &HashMap<Span, (Sym, u32, bool)>,
+        bodies: &Bodies,
         site: Span,
         spot: &crate::analysis::facts::Spot,
         piece: &str,
@@ -1669,7 +1709,7 @@ impl Places {
             line.push(KEY);
             let at = own.map(|o| {
                 let kind = *documents.entry(o.file).or_insert_with(|| source_kind(analysis, o.file));
-                let def = bodies.get(&o).map_or(String::new(), |&(name, line, made)| {
+                let def = bodies.get(o).map_or(String::new(), |(name, line, made)| {
                     format!("\u{1}{}\u{1}{line}{}", analysis.interner.cs(name), if made { "\u{1}g" } else { "" })
                 });
                 format!("{}\u{1}{}:{}\u{1}{kind}{def}", analysis.file_name(o.file), o.line, o.col)
@@ -2192,6 +2232,7 @@ pub fn run(analysis: &Analysis, query: Query, filter: &Filter) -> Vec<Record> {
         Query::Diagnostics => diagnostics(analysis),
         Query::Distribution => distribution(analysis),
         Query::Catcodes => catcodes(analysis),
+        Query::Letters => letters(analysis),
         Query::SideEffects => side_effects(analysis),
         Query::Project => project(analysis),
         Query::Plugins => plugins(analysis),
@@ -2586,6 +2627,20 @@ fn catcodes(analysis: &Analysis) -> Vec<Record> {
             record.insert("code".into(), json!(code));
             record.insert("kind".into(), json!(crate::engine::tex::Catcode::from_u8(code).map(|c| format!("{c:?}"))));
             record.insert("detail".into(), json!(format!("was {:?}", base.get(character))));
+            record
+        })
+        .collect()
+}
+
+/// The run's letter changes in user files, in order: `char` became a letter (`letter`) or stopped
+/// being one at `file:line:col` (line 0: the letters the file opened with). Replayed up to a place
+/// they give the non-alphabetic letters there, as [`crate::analysis::facts::Facts::letters_at`].
+fn letters(analysis: &Analysis) -> Vec<Record> {
+    (analysis.facts.letters.iter())
+        .map(|&(span, character, letter)| {
+            let mut record = place(analysis, span);
+            record.insert("char".into(), json!(character.to_string()));
+            record.insert("letter".into(), json!(letter));
             record
         })
         .collect()
@@ -4711,10 +4766,11 @@ pub fn scope_named(
 pub struct ScopeRow {
     name: String,
     tier: u8,
-    record: Record,
+    /// Shared, so a row carried into the next run costs no copy.
+    record: std::sync::Arc<Record>,
     plain: bool,
     of: RowOf,
-    more: std::sync::OnceLock<Record>,
+    more: std::sync::OnceLock<std::sync::Arc<Record>>,
 }
 
 /// What a [`ScopeRow`] shows: a definition (its index in `facts.defs`) or a name only the
@@ -4733,7 +4789,7 @@ impl ScopeRow {
 
     /// The lean record with its short `doc` where the full row was made already: never made for it.
     pub fn lean_known(&self) -> Record {
-        let mut record = self.record.clone();
+        let mut record = (*self.record).clone();
         if let Some(doc) = self.more.get().and_then(|m| m.get("doc")) {
             record.insert("doc".into(), doc.clone());
         }
@@ -4742,42 +4798,43 @@ impl ScopeRow {
 
     /// The whole record: the lean one with the place, `usage` and what the documentation says.
     pub fn full(&self, analysis: &Analysis) -> Record {
-        let mut record = self.record.clone();
+        let mut record = (*self.record).clone();
         record.extend(self.more(analysis).clone());
         record
     }
 
     /// What [`ScopeRow::full`] adds to the lean record.
     pub fn more(&self, analysis: &Analysis) -> &Record {
-        self.more.get_or_init(|| {
-            let held;
-            let (sym, mac, span) = match self.of {
-                RowOf::Def(i) => {
-                    let def = &analysis.facts.defs[i];
-                    (def.name, def.mac.as_deref(), Some(def.span))
-                }
-                RowOf::Held(sym) => {
-                    held = analysis.env.meaning(sym);
-                    (sym, held.as_macro().map(|m| &**m), None)
-                }
-            };
-            let mut record = span.map(|span| place(analysis, span)).unwrap_or_default();
-            if span.is_none() {
-                record.insert("provider".into(), json!("kernel"));
+        self.more.get_or_init(|| std::sync::Arc::new(self.more_of(analysis)))
+    }
+
+    fn more_of(&self, analysis: &Analysis) -> Record {
+        let held;
+        let (sym, mac, span) = match self.of {
+            RowOf::Def(i) => {
+                let def = &analysis.facts.defs[i];
+                (def.name, def.mac.as_deref(), Some(def.span))
             }
-            let file =
-                span.and_then(|s| Some((analysis.files.get(usize::from(s.file))?.path.as_str(), s.line as usize)));
-            let said = super::said::said(analysis, &self.name, file, true);
-            // the comment block above a definition in the project's files names its arguments
-            let comment = span.and_then(|s| source_comment(analysis, s));
-            let params = comment.as_ref().map_or(&[][..], |c| &c.params[..]);
-            record.insert("usage".into(), json!(usage_of(analysis, sym, mac, None, said.usage.as_deref(), params)));
-            super::said::insert(&mut record, &said);
-            if let Some(does) = record.get("does").and_then(Json::as_str) {
-                record.insert("doc".into(), json!(short_doc(does)));
+            RowOf::Held(sym) => {
+                held = analysis.env.meaning(sym);
+                (sym, held.as_macro().map(|m| &**m), None)
             }
-            record
-        })
+        };
+        let mut record = span.map(|span| place(analysis, span)).unwrap_or_default();
+        if span.is_none() {
+            record.insert("provider".into(), json!("kernel"));
+        }
+        let file = span.and_then(|s| Some((analysis.files.get(usize::from(s.file))?.path.as_str(), s.line as usize)));
+        let said = super::said::said(analysis, &self.name, file, true);
+        // the comment block above a definition in the project's files names its arguments
+        let comment = span.and_then(|s| source_comment(analysis, s));
+        let params = comment.as_ref().map_or(&[][..], |c| &c.params[..]);
+        record.insert("usage".into(), json!(usage_of(analysis, sym, mac, None, said.usage.as_deref(), params)));
+        super::said::insert(&mut record, &said);
+        if let Some(does) = record.get("does").and_then(Json::as_str) {
+            record.insert("doc".into(), json!(short_doc(does)));
+        }
+        record
     }
 }
 
@@ -4806,6 +4863,7 @@ fn def_row(analysis: &Analysis, i: usize) -> Option<ScopeRow> {
     if plain {
         completion_fields(analysis, def.name, def.mac.as_deref(), &mut record);
     }
+    let record = std::sync::Arc::new(record);
     Some(ScopeRow { name: name.to_string(), tier, record, plain, of: RowOf::Def(i), more: Default::default() })
 }
 
@@ -4823,11 +4881,7 @@ pub fn carry_scope(prior: &Analysis, analysis: &Analysis) {
 
 fn scope_rows_from(analysis: &Analysis, prior: Option<(&Analysis, &ScopeRows)>) -> ScopeRows {
     // the names both runs number alike: a meaning that names others means the same in both
-    let same = prior.map_or(0, |(p, _)| {
-        (0..analysis.interner.len().min(p.interner.len()) as u32)
-            .find(|&i| analysis.interner.name(Sym(i)) != p.interner.name(Sym(i)))
-            .unwrap_or(analysis.interner.len().min(p.interner.len()) as u32)
-    });
+    let same = prior.map_or(0, |(p, _)| analysis.interner.alike(&p.interner) as u32);
     let kept: HashMap<&str, &ScopeRow> =
         prior.map(|(_, rows)| rows.rest.iter().map(|r| (r.name.as_str(), r)).collect()).unwrap_or_default();
     // a definition's row, from the prior run's where a file outside the project made the same
@@ -4925,6 +4979,7 @@ fn scope_rows_from(analysis: &Analysis, prior: Option<(&Analysis, &ScopeRows)>) 
             completion_fields(analysis, sym, meaning.as_macro().map(|m| &**m), &mut record);
         }
         let (of, more) = (RowOf::Held(sym), Default::default());
+        let record = std::sync::Arc::new(record);
         rest.push(ScopeRow { name: name.to_string(), tier: 2, record, plain, of, more });
     }
     ScopeRows { defs, rest }

@@ -169,3 +169,54 @@ test('whole: a complete name with nothing more to write', () => {
   assert.equal(whole({ label: 'toprule', insertText: 'toprule', additionalTextEdits: [{}] }, 'toprule'), false, 'a load to write');
   assert.equal(whole(null, 'x'), false);
 });
+
+// Intuition: the name typed at the caret is the `\` and the letters at that place (tex.web §356), the run's letters
+// (query `letters`, replayed in run order). In a document's body `_` is a subscript and `@` other: after `\sum_` no name
+// is typed and no list opens; under `\ExplSyntaxOn` (`_`, `:` letters) `\c__fp` goes on as one name, and only names
+// typeable there are offered. Pins `\(\sum_` opening `\c__socket_tagsupport/mc_args_int` in the editor and the pages.
+test('nameBefore, typeable, lettersAt: the name ends where the letters there end', () => {
+  const { nameBefore, typeable, lettersAt } = self.satexViews.complete;
+  const body = '', expl = '_:';
+  assert.equal(nameBefore('\\(\\sum', body), 'sum');
+  assert.equal(nameBefore('\\(\\sum_', body), null, '`_` ends the name: none typed');
+  assert.equal(nameBefore('\\(\\sum_', expl), 'sum_', 'under expl3 `_` is a letter: the name goes on');
+  assert.equal(nameBefore('x \\c__fp', expl), 'c__fp');
+  assert.equal(nameBefore('x \\c__fp', body), null);
+  assert.equal(nameBefore('\\make@', body), null, '`@` is other in a body');
+  assert.equal(nameBefore('\\make@', '@'), 'make@');
+  assert.equal(nameBefore('a \\', body), '', 'a lone `\\` starts a name');
+  assert.equal(nameBefore('a \\\\sum', body), null, '`\\\\` is a control symbol, `sum` text');
+  assert.equal(nameBefore('\\ä', body), 'ä', 'a non-ASCII letter goes on');
+  assert.ok(typeable('sum', body) && typeable(',', body) && typeable('@', body), 'a control symbol is always typeable');
+  assert.ok(!typeable('c__socket_tagsupport/mc_args_int', expl), '`/` is a letter nowhere here');
+  assert.ok(!typeable('l_tmpa_tl', body) && typeable('l_tmpa_tl', expl));
+  assert.ok(!typeable('@empty', body) && typeable('@empty', '@'));
+  // a file opened with `@` a letter (line 0), `\ExplSyntaxOn` on line 4, `\ExplSyntaxOff` on line 6 col 3
+  const changes = [{ line: 0, col: 0, char: '@', letter: true }, { line: 4, col: 1, char: '_', letter: true }, { line: 4, col: 1, char: ':', letter: true },
+    { line: 6, col: 3, char: '_', letter: false }, { line: 6, col: 3, char: ':', letter: false }];
+  assert.equal(lettersAt(changes, 1, 1), '@');
+  assert.equal(lettersAt(changes, 4, 1), '@', 'the change takes effect after its place');
+  assert.equal(lettersAt(changes, 5, 1), '@_:');
+  assert.equal(lettersAt(changes, 6, 3), '@_:');
+  assert.equal(lettersAt(changes, 6, 4), '@');
+  assert.equal(lettersAt(null, 3, 1), '', 'no run read the file: TeX\'s letters only');
+});
+
+// Intuition: a control symbol is `\` and one non-letter *there*: `\@` in a body is one (the space factor), in a package
+// `@` is a letter and a name goes on. Pins `@` counted a letter everywhere.
+test('controlSymbol: by the letters at the caret', () => {
+  const { controlSymbol } = self.satexViews.complete;
+  assert.equal(controlSymbol('x\\@'), '@');
+  assert.equal(controlSymbol('x\\@', '@'), null);
+  assert.equal(controlSymbol('x\\_', '_:'), null);
+  assert.equal(controlSymbol('x\\_'), '_');
+});
+
+// Intuition: what the document loads ranks before what a package it does not load would define, however close the
+// name: `\textb` takes `\textbf`, not drm's `\textb` (whose item adds `\usepackage{drm}`). Pins the user's 2026-11-21
+// list with `\textb (adds \usepackage{drm})` first.
+test('rank: a name of a package not loaded after the loaded ones', () => {
+  const items = [{ label: 'textb', additionalTextEdits: [{ newText: '\\usepackage{drm}\n' }] }, { label: 'textbf' }, { label: 'textbullet' }];
+  assert.deepEqual(labels(rank(items, 'textb')), ['textbf', 'textbullet', 'textb']);
+  assert.deepEqual(labels(rank([{ label: 'textb', sortText: '~0001textb' }, { label: 'textbf', sortText: '1textbf' }], 'textb')), ['textbf', 'textb'], 'by the server\'s `~` too');
+});

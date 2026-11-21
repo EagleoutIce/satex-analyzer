@@ -109,7 +109,8 @@ test('characters: escaped in text, raw in math', () => table([
   ['a b', 1, '#', 'a\\#| b'],
   ['a b', 1, '&', 'a\\&| b'],
   ['a b', 1, '%', 'a\\%| b'],
-  ['a b', 1, '~', 'a\\textasciitilde{}| b'],
+  // a tie is what a LaTeX author types `~` for (`See~\\ref`): kept (user 2026-11-21, u-tilde-pdf)
+  ['a b', 1, '~', 'a~| b'],
   ['a b', 1, '^', 'a\\textasciicircum{}| b'],
   ['a b', 1, '_', 'a\\_| b'],
   ['a b', 1, '{', 'a\\{| b'],
@@ -153,4 +154,20 @@ test('tables: Enter adds a row, cells step', () => {
   assert.deepEqual(E.broken('a b', 1, false), [1, 1, '\n\n', 2]);
   assert.deepEqual(E.broken('a b', 1, true), [1, 1, '\n', 1]);
   assert.match(E.broken('\\verb|ab| c', 7, false), /one line/);
+});
+
+// Intuition: Type mode's Right at a command argument's end leaves the command (caret after `}`), Left at its start leaves
+// before it; Ctrl+B outside bold starts `\textbf{|}`, in it splits it in the middle and leaves it at either end. Pins a
+// caret stuck at `}` (user 2026-11-21: "Right does not get me out of \textbf{world}").
+test('a command argument: arrows leave it, Ctrl+B toggles', () => {
+  const E = self.satexPdfEdit, t = 'Say \\textbf{world} now', open = t.indexOf('{') + 1, close = t.indexOf('}');
+  assert.equal(E.leave(t, close, 1), close + 1);
+  assert.equal(E.leave(t, open, -1), t.indexOf('\\textbf'));
+  assert.equal(E.leave(t, open + 2, 1), null, 'inside the word: a plain step');
+  assert.deepEqual(E.toggle(t, close, 'textbf'), [close, close, '', 1]);
+  assert.deepEqual(E.toggle(t, open, 'textbf'), [t.indexOf('\\textbf'), t.indexOf('\\textbf'), '', 0]);
+  assert.deepEqual(E.toggle(t, open + 2, 'textbf'), [open + 2, open + 2, '}\\textbf{', 1]);
+  assert.deepEqual(E.toggle(t, 2, 'textbf'), [2, 2, '\\textbf{}', 8]);
+  assert.deepEqual(E.toggle(t, open + 2, 'textit'), [open + 2, open + 2, '\\textit{}', 8], 'italic inside bold: nested');
+  assert.equal(E.callAround('\\a{\\{x}', 5)?.name, 'a', 'an escaped brace is no group');
 });

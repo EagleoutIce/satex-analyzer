@@ -4,7 +4,7 @@
 //! nodes and arrows and writes back the text it did not touch as it was. On a blank line of the
 //! document body, "New drawing…" and "Insert tikzpicture".
 
-use super::{Cx, Hit, TypePlugin, rewrite};
+use super::{Cx, Hit, TypePlugin, rewrite_rooted};
 use crate::analysis::machine::Analysis;
 use crate::analysis::roles::{Ty, braced_groups};
 use crate::lsp::handlers::to_pos;
@@ -46,9 +46,11 @@ impl TypePlugin for Tikz {
     fn actions(&self, cx: &Cx, _hit: &Hit) -> Vec<CodeAction> {
         let Some(new) = super::blank(cx, ENV, "tikz") else { return Vec::new() };
         let node = Node { body: format!("  {TEMPLATE}"), ..snapshot::new_env(ENV, new.at.start, "tikz") };
-        let Ok((edits, notes)) = snapshot::printed(cx.analysis, cx.doc, cx.file(), &[node]) else { return Vec::new() };
+        let Ok((edits, notes, roots)) = snapshot::printed(cx.analysis, cx.doc, cx.file(), &[node]) else {
+            return Vec::new();
+        };
         let note: String = notes.iter().map(|n| format!(" ({n})")).collect();
-        vec![rewrite(cx, format!("Insert tikzpicture{note}"), snapshot::lsp_edits(cx.doc, edits))]
+        vec![rewrite_rooted(cx, format!("Insert tikzpicture{note}"), snapshot::lsp_edits(cx.doc, edits), roots)]
     }
 
     fn view(&self, cx: &Cx, _hit: &Hit) -> Option<Json> {

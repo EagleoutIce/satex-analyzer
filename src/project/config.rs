@@ -206,6 +206,12 @@ pub struct Limits {
     /// Ceilings on what the run records.
     pub vertices: usize,
     pub facts: usize,
+    /// Words whose hyphenation points a language's patterns keep once found: a paragraph's
+    /// words are hyphenated for its marks and its line breaks, and words recur. Memory only.
+    pub hyph_words: usize,
+    /// Macros the table plugin follows through the run's calls from an environment to find the code
+    /// that splits its body at `&` (tabularray's): an editor feature, no effect on the analysis.
+    pub table_reach: usize,
     pub trace: usize,
     /// Dev mode: the most entries each list of a step's state holds.
     pub trace_state: usize,
@@ -305,6 +311,8 @@ impl Limits {
             "expansion_stack" => self.expansion_stack as u64,
             "vertices" => self.vertices as u64,
             "facts" => self.facts as u64,
+            "hyph_words" => self.hyph_words as u64,
+            "table_reach" => self.table_reach as u64,
             "trace" => self.trace as u64,
             "trace_state" => self.trace_state as u64,
             "save_stack" => self.save_stack as u64,
@@ -412,6 +420,8 @@ impl Default for Limits {
             expansion_stack: 4_000,
             vertices: 1_000_000,
             facts: 2_000_000,
+            hyph_words: 50_000,
+            table_reach: 4_000,
             trace: 200_000,
             trace_state: 32,
             save_stack: 2_000_000,
@@ -470,11 +480,13 @@ pub struct TypesetSwitches {
     pub hyphenate: bool,
     /// `satex/break`: a paragraph's lines from the run's fonts and parameters.
     pub linebreak: bool,
+    /// `satex/mathwidths`: math symbols' widths from the run's math fonts.
+    pub mathwidths: bool,
 }
 
 impl Default for TypesetSwitches {
     fn default() -> TypesetSwitches {
-        TypesetSwitches { hyphenate: true, linebreak: true }
+        TypesetSwitches { hyphenate: true, linebreak: true, mathwidths: true }
     }
 }
 
@@ -1087,7 +1099,7 @@ impl Default for PlaygroundConfig {
             math_inline: "\\(".into(),
             smart_scripts: true,
             tex_breaks: false,
-            smart_wrap: false,
+            smart_wrap: true,
         }
     }
 }

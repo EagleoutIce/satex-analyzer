@@ -439,7 +439,7 @@ pub(super) fn presentations(
             .flatten()
             .collect(),
     };
-    let Ok((edits, _)) = snapshot::printed(analysis, doc, super::super::type_at::file_of(analysis, path), &nodes)
+    let Ok((edits, ..)) = snapshot::printed(analysis, doc, super::super::type_at::file_of(analysis, path), &nodes)
     else {
         return Vec::new();
     };

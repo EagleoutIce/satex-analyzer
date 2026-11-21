@@ -208,6 +208,8 @@ fn give(bytes: usize) {
 
 unsafe impl GlobalAlloc for Counted {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+        #[cfg(feature = "alloc-sites")]
+        super::alloc_sites::note(layout.size());
         let bytes = footprint(layout.size());
         if !take(bytes) {
             return std::ptr::null_mut();

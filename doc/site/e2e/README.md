@@ -64,8 +64,10 @@ Each run writes `results.md`, `results.json`, a screenshot per failure and, when
 | file | what |
 |---|---|
 | `lib.mjs` | the browser over the DevTools protocol, a page per scenario, the in-page frame sampler and draw recorders |
+| `page.mjs` | the drivers' one step vocabulary (also `showcase/capture.mjs`): mouse, keys, drags, uploads as a person makes them; targets, conditions and actions as data |
+| `probe.js` | the page side of `page.mjs`, injected before the page's scripts, never shipped: the only thing the page is asked is `satexTest.run(<JSON>)`; words come from one index per build (playground.js `satexPdfWordIndex`) |
 | `engine.mjs` | the scenario kinds of the PDF and Typeset views: `type` (default), `click`, `tint`, `ts`, `select`, `col`, `forest`, `shift`, `complete`, `dbl`, `bare` |
-| `kinds/*.mjs` | `foot`, `echo`, `paper`, `follow`, `tikz`, `crash` |
+| `kinds/*.mjs` | `foot`, `echo`, `paper`, `follow`, `tikz`, `crash`, `user` (a person's actions as a list, invariants after each: scenarios/user.mjs) |
 | `scenarios/<area>.mjs` | the scenarios of one area; `sources.mjs` the documents they share |
 | `scenarios/index.mjs` | all areas, the tiers, unique names |
 | `fixtures/titles/` | title pages of ten classes |
@@ -75,6 +77,9 @@ Each run writes `results.md`, `results.json`, a screenshot per failure and, when
 A typing scenario names the word to click, where the caret must land in the source, the keys and what must hold after: the source, the final caret, the echo's font and rows, no duplicated or stray echo text, no caret jump without a key. The field list is at the top of `scenarios/sources.mjs` and in each kind's comment.
 
 ## Robustness rules
+
+- No code goes to the page: a step names a target (`{ word: 'fast.', fx: .95 }`, `{ sel, starts: 'Insert' }`, `{ src: '\\begin{table}', k: 2 }`), a condition (`'quiet'`, `{ srcMatch }`, `{ word }`) or an action (`{ press }`, `{ replace: [from, to] }`) as data, and `probe.js` answers it. A scenario's word is a word target too (`is('here.')`, `{ word: 'n', after: 'of' }`). A new need is a new verb in `probe.js`, listed in its head comment.
+- `p.eval` stays only for the frame sampler's and the measuring kinds' in-page probes not yet moved to `probe.js` (land-02 report lists them by file).
 
 - Wait on readiness, never on time alone: `#play-status[data-done=ready]`, `satexHealth()` (busy, running, due, queued, recovering, as `../quiet.mjs`), a new build's image, a page word. A fixed sleep only lets a frame or a transition pass after such a wait.
 - Typing delays come from a seeded generator reset per scenario, so a scenario types the same keys at the same pace whatever ran before it.

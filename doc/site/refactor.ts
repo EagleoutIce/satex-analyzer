@@ -9,7 +9,7 @@ declare global {
   type RfMath = RfSpan & { open: string; close: string; body: string };
   /** A thing Insert writes: its text (`\x01` the caret), the float it goes into, the widget opened on it; `flow` a mark in the running text, `tight` a display that may stand inside a paragraph, `before` a mark
    * set before the sentence's end. */
-  type InsItem = { kind: string; label: string; hint?: string; body: string | ((text: string, at: number) => string); wrap?: boolean; widget?: string; flow?: boolean; tight?: boolean; before?: boolean };
+  type InsItem = { kind: string; label: string; group: string; hint?: string; body: string | ((text: string, at: number) => string); wrap?: boolean; widget?: string; flow?: boolean; tight?: boolean; before?: boolean };
   /** Where Insert goes: the caret (`caret`), a blank place between paragraphs (`place`, PE.blankPlace), the block clicked (its last line `to`). */
   type InsTarget = { caret?: number | null; place?: number | null; block?: { to: number; what: string } | null };
   /** `caret` at the caret; `after` a block of its own after the line ending at `at`; `end` a mark at a paragraph's end. */
@@ -338,19 +338,19 @@ declare global {
   const level = (text: string, at: number) => [...blank(text.slice(0, at)).matchAll(/\\(part|chapter|(?:sub)*section|(?:sub)?paragraph)\*?\s*[[{]/g)].at(-1)?.[1] ?? 'section';
   /** What Insert offers, in menu order. Figures and tables go into a float by `wrap` (caption, label, the caret in the caption). */
   const inserts: InsItem[] = [
-    { kind: 'figure-image', label: 'Figure with an image', hint: 'alt text', body: '\\includegraphics[width=0.8\\linewidth]{example-image}', wrap: true, widget: 'image' },
-    { kind: 'figure-drawing', label: 'Figure with a drawing', hint: 'TikZ', body: TIKZ, wrap: true, widget: 'tikz' },
-    { kind: 'table', label: 'Table', hint: 'caption above', body: '\\begin{tabular}{ll}\n  Name & Value \\\\\n  \\hline\n  a & 1 \\\\\n\\end{tabular}', wrap: true, widget: 'table' },
-    { kind: 'itemize', label: 'Bulleted list', hint: 'itemize', body: '\\begin{itemize}\n  \\item \x01\n\\end{itemize}', tight: true },
-    { kind: 'enumerate', label: 'Numbered list', hint: 'enumerate', body: '\\begin{enumerate}\n  \\item \x01\n\\end{enumerate}', tight: true },
-    { kind: 'equation', label: 'Equation', hint: 'equation', body: '\\begin{equation}\n  \x01\n\\end{equation}', tight: true },
-    { kind: 'align', label: 'Aligned equations', hint: 'align', body: '\\begin{align}\n  \x01\n\\end{align}', tight: true },
-    { kind: 'heading', label: 'Section heading', hint: 'same level', body: (text, at) => `\\${level(text, at)}{\x01}` },
-    { kind: 'footnote', label: 'Footnote', hint: '\\footnote', body: '\\footnote{\x01}', flow: true },
-    { kind: 'cite', label: 'Citation', hint: '\\cite', body: '~\\cite{\x01}', flow: true, before: true },
-    { kind: 'ref', label: 'Reference', hint: '\\ref', body: '~\\ref{\x01}', flow: true, before: true },
-    { kind: 'tikz', label: 'TikZ picture', hint: 'tikzpicture', body: TIKZ, widget: 'tikz' },
-    { kind: 'forest', label: 'Forest tree', hint: 'forest', body: '\\begin{forest}\n  [Root\n    [Child]\n    [Child]\n  ]\n\\end{forest}', widget: 'forest' },
+    { kind: 'figure-image', label: 'Figure with an image', group: 'Floats', hint: '\\begin{figure} \\includegraphics', body: '\\includegraphics[width=0.8\\linewidth]{example-image}', wrap: true, widget: 'image' },
+    { kind: 'figure-drawing', label: 'Figure with a drawing', group: 'Floats', hint: '\\begin{figure} tikzpicture', body: TIKZ, wrap: true, widget: 'tikz' },
+    { kind: 'table', label: 'Table', group: 'Floats', hint: '\\begin{table} tabular', body: '\\begin{tabular}{ll}\n  Name & Value \\\\\n  \\hline\n  a & 1 \\\\\n\\end{tabular}', wrap: true, widget: 'table' },
+    { kind: 'itemize', label: 'Bulleted list', group: 'Lists', hint: '\\begin{itemize}', body: '\\begin{itemize}\n  \\item \x01\n\\end{itemize}', tight: true },
+    { kind: 'enumerate', label: 'Numbered list', group: 'Lists', hint: '\\begin{enumerate}', body: '\\begin{enumerate}\n  \\item \x01\n\\end{enumerate}', tight: true },
+    { kind: 'equation', label: 'Equation', group: 'Math', hint: '\\begin{equation}', body: '\\begin{equation}\n  \x01\n\\end{equation}', tight: true },
+    { kind: 'align', label: 'Aligned equations', group: 'Math', hint: '\\begin{align}', body: '\\begin{align}\n  \x01\n\\end{align}', tight: true },
+    { kind: 'heading', label: 'Section heading', group: 'Structure', hint: '\\section{…}', body: (text, at) => `\\${level(text, at)}{\x01}` },
+    { kind: 'footnote', label: 'Footnote', group: 'Structure', hint: '\\footnote{…}', body: '\\footnote{\x01}', flow: true },
+    { kind: 'cite', label: 'Citation', group: 'References', hint: '~\\cite{…}', body: '~\\cite{\x01}', flow: true, before: true },
+    { kind: 'ref', label: 'Reference', group: 'References', hint: '~\\ref{…}', body: '~\\ref{\x01}', flow: true, before: true },
+    { kind: 'tikz', label: 'TikZ picture', group: 'Pictures', hint: '\\begin{tikzpicture}', body: TIKZ, widget: 'tikz' },
+    { kind: 'forest', label: 'Forest tree', group: 'Pictures', hint: '\\begin{forest}', body: '\\begin{forest}\n  [Root\n    [Child]\n    [Child]\n  ]\n\\end{forest}', widget: 'forest' },
   ];
   /** The innermost box around `at` that holds no paragraph: math, a picture or tabular (WRAP), an alignment (a body
    * with a top-level `&`, which TeX takes only in one, tex.web § 1128); a float too for a `float`, which needs outer
@@ -478,6 +478,66 @@ declare global {
         ...(n > 1 ? [{ label: `Extract to \\newcommand, ${n} places…`, hint: 'each', run: () => go(true) }] : [])] }];
     },
   });
+  /** A selection's format commands, text or math (the run's mode at it, as the source spells it): each wraps `\cmd{…}`.
+   * Bold in math is `\bm` with bm loaded, `\boldsymbol` with amsmath, else `\mathbf`; Underline needs ulem (`\uline`) or
+   * soul (`\ul`). A selection inside or around one of them unwraps it (Remove formatting). */
+  const TEXT_FMT: [string, string][] = [['Bold', 'textbf'], ['Italic', 'textit'], ['Emphasis', 'emph'], ['Monospace', 'texttt'], ['Small caps', 'textsc']];
+  const FMT_CMDS = /^(textbf|textit|emph|texttt|textsc|textrm|textsf|uline|ul|underline|mathbf|bm|boldsymbol|mathrm|mathsf|mathtt|textcolor|mathcolor|tiny|scriptsize|footnotesize|small|normalsize|large|Large|LARGE|huge|Huge)$/;
+  /** The format command whose argument (or `{\size …}` group) is exactly `a`..`b` or holds it: [from, to, inner from, inner to]. */
+  function formatAround(text: string, a: number, b: number): [number, number, number, number] | null {
+    let best: [number, number, number, number] | null = null;
+    for (const m of blank(text).matchAll(/\\([A-Za-z]+)(\{[^{}]*\})?\{|\{\\(tiny|scriptsize|footnotesize|small|normalsize|large|Large|LARGE|huge|Huge)\s/g)) {
+      const name = m[1] ?? m[3]!;
+      if (!FMT_CMDS.test(name) || m.index! > a) continue;
+      // `group` gives the offset after the closing brace
+      const open = m[3] ? m.index! : m.index! + m[0].length - 1, end = group(text, open);
+      if (end === open || end - 1 < b) continue;
+      const inner: [number, number] = [m[3] ? m.index! + m[0].length : open + 1, end - 1];
+      if (inner[0] > a) continue;
+      if (!best || m.index! > best[0]) best = [m.index!, end, inner[0], inner[1]];
+    }
+    return best;
+  }
+  function formatMenu(t: PaTarget, ctx: PaCtx): PaGroup[] {
+    const s: [number, number] | null = t.sel;
+    if (!s || s[0] === s[1]) return [];
+    const [a, b] = s, body = ctx.text.slice(a, b), all = blank(ctx.all), has = (p: string) => new RegExp(`\\\\(?:usepackage|RequirePackage)\\s*(?:\\[[^\\]]*\\])?\\s*\\{[^}]*\\b${p}\\b`).test(all);
+    const math = !!R.mathAt(ctx.text, a, b);
+    const wrap = (pre: string, post = '}', pkg: string | null = null) => () => {
+      const load = pkg ? pkgEdit(ctx.text, ctx.all, pkg) : { have: true as const };
+      if ('line' in load) ctx.toast(`Needs ${load.line} in the preamble`);
+      ctx.write([...'edit' in load ? [load.edit] : [], { from: a, to: b, now: `${pre}${body}${post}` }]);
+    };
+    const fmt: PaItem[] = math
+      ? [{ label: 'Bold', hint: has('bm') ? '\\bm' : has('(?:amsmath|amsbsy|mathtools)') ? '\\boldsymbol' : '\\mathbf' }, { label: 'Roman', hint: '\\mathrm' }, { label: 'Sans serif', hint: '\\mathsf' }, { label: 'Monospace', hint: '\\mathtt' }]
+        .map((r) => ({ ...r, run: wrap(`${r.hint}{`) }))
+      : [...TEXT_FMT.map(([label, c]) => ({ label, hint: `\\${c}`, run: wrap(`\\${c}{`) })),
+        ...has('ulem') ? [{ label: 'Underline', hint: '\\uline', run: wrap('\\uline{') }] : has('soul') ? [{ label: 'Underline', hint: '\\ul', run: wrap('\\ul{') }] : []];
+    const around = formatAround(ctx.text, a, b);
+    if (around) fmt.push({ label: 'Remove formatting', hint: ctx.text.slice(around[0], around[2]).trim(), run: () => ctx.write([{ from: around[0], to: around[1], now: ctx.text.slice(around[2], around[3]) }]) });
+    const c = PA.colors(ctx.all, ctx.facts);
+    // color in math: \mathcolor where the kernel has it (2022-06 on), else a group, which every kernel takes
+    const mc = (ctx.kernel ?? '') >= '2022-06';
+    const color = [...c.doc, ...c.base].map(([n, css]): PaItem => ({ label: n, swatch: css, run: math ? wrap(mc ? `\\mathcolor{${n}}{` : `{\\color{${n}}`, '}', 'xcolor') : wrap(`\\textcolor{${n}}{`, '}', 'xcolor') }));
+    const font: PaItem[] = math ? [] : [['Roman', 'textrm'], ['Sans serif', 'textsf'], ['Typewriter', 'texttt']].map(([label, cmd]) => ({ label: label!, hint: `\\${cmd}`, run: wrap(`\\${cmd}{`) }));
+    const size: PaItem[] = math ? [] : ['tiny', 'scriptsize', 'footnotesize', 'small', 'normalsize', 'large', 'Large', 'LARGE', 'huge', 'Huge'].map((z) => ({ label: z, hint: `{\\${z} …}`, run: wrap(`{\\${z} `) }));
+    return [{ title: 'Format', items: fmt }, { title: 'Color', items: color }, { title: 'Font', items: font }, { title: 'Size', items: size }].filter((g) => g.items.length);
+  }
+  PA.register({
+    name: 'format', title: 'Format', category: 'refactor', type: 'refactor', targets: ['source'],
+    about: 'The selection bold, italic, emphasized, monospace, small caps or underlined (with ulem or soul), in a color (xcolor loaded), a font family or a size; in math \\bm, \\boldsymbol or \\mathbf, \\mathrm, \\mathsf, \\mathtt and \\mathcolor. Remove formatting unwraps the command around it',
+    groups: formatMenu,
+  });
+  /** Insert's rows by group (Math ▸, Floats ▸, Lists ▸, Structure ▸, References ▸, Pictures ▸), each hinted with the LaTeX
+   * it writes; Math starts with the Type caret's inline, display and align* math when the caret is there (`ctx.math`). */
+  function insertMenu(t: PaTarget, ctx: PaCtx, para: boolean): PaItem[] {
+    const at = t.caret ?? t.place ?? t.at ?? 0;
+    const math: PaItem[] = ctx.math && t.kind === 'caret' ? [['inline', 'Inline math', ctx.mathInline ?? '\\(…\\)'], ['display', 'Display math', '\\[…\\]'], ['align', 'Aligned', 'align*']]
+      .map(([k, label, hint]) => ({ label: label!, hint, run: () => ctx.math!(k!) })) : [];
+    const rows = R.inserts.filter((k) => para || !k.flow).map((k) => ({ group: k.group, label: k.label, hint: k.kind === 'heading' ? `\\${level(ctx.text, at)}{…}` : k.hint, run: () => ctx.insert!(k.kind, t) }));
+    return ['Math', 'Floats', 'Lists', 'Structure', 'References', 'Pictures'].map((g) => ({ label: g, items: [...g === 'Math' ? math : [], ...rows.filter((r) => r.group === g).map(({ group: _, ...r }) => r)] }))
+      .filter((g) => g.items.length);
+  }
   PA.register({
     name: 'insert', title: 'Insert', type: 'insert', targets: ['block', 'place', 'caret'],
     about: 'New content where the PDF or the Typeset view is right-clicked (after the paragraph, or between paragraphs) and at the caret from the Type bar\'s Insert menu: a figure with an image or a drawing, a table, a list, an equation, a heading, a footnote, a citation or reference, a TikZ picture, a forest tree. Its widget opens at once, the package it needs is loaded, one undo step',
@@ -485,7 +545,7 @@ declare global {
       if (!ctx.insert) return [];
       // a mark of the running text (a footnote, a citation) only where a paragraph is
       const para = t.kind === 'caret' || t.place == null && t.block?.what === 'paragraph';
-      return [{ title: 'Insert', items: R.inserts.filter((k) => para || !k.flow).map((k) => ({ label: k.label, hint: k.hint, run: () => ctx.insert!(k.kind, t) })) }];
+      return [{ title: 'Insert', items: insertMenu(t, ctx, para) }];
     },
   });
 })();

@@ -4,24 +4,18 @@
 # entry: owner, root guess, MWE. S = target/scratch. Clean with target/scratch/reds/ledger-clean.py.
 
 # == soundness ==
-# owner p0-cache (clock decision b, from h-job): a cached package segment replays the clock the cache was built at. Fix ready: Machine::clock_frozen (S/p0-cache/h-job/clock.patch), blocked by 2 cold/warm reds it exposes (learned_call_effects forks 95 vs 93, the_examples facts at 21; guess h-shared class A) and by the rand red below.
-coldwarm::a_package_that_reads_the_clock_does_the_same_at_any_date
 # owner p0-order (P0.1 order lot, from lars): `\relax` tokens before an `\includegraphics` of an EPS with its converted PDF change the rows (up to a possible graphics "Division by 0"): typed-digit names carry steps, one-of members sort by their hash, the 64-forks-per-site budget cuts elsewhere. Domain root: compare two typed digit strings without parting per digit. MWE S/lars/mwe-g (r0 vs r15, sweep.txt).
 join::tokens_tex_ignores_before_a_date_comparison_do_not_change_the_rows
-# owner p0-order (gatefix, proposed): typed text that names control sequences (`text of:*` + `\x03bA\x03elt`) lists its names after UNKNOWN_NAME_GAP, so name_pattern reads it as a name built around a gap; run as a command, split_family refines it to `\relax` (the never-defined arm) and the code its names stand for never runs, silently (`\got` never defined). Making it unknown text (name_pattern None) runs may_run over the names and is right here, but on termination::convergence::tikz_nodes_of_unknown_width's document the run collapses (1.5k mismatched-group, 8 GiB, CLI 150 s; base: 0). Next: may_run of a typed text's names bounded like D11's joined code, then land. MWE S/gatefix/mwe/jt.tex.
-join::lists_of_names_through_an_undecided_loop_keep_their_names
 # Open (2026-11-20, owner: Fable p0-cache, from cex-edit): a beamer build resumed at \begin{document} after `\only<2>{two}` is put into the title frame differs from a fresh build from the .aux on (first difference: an unknown-text-run assumption at main.aux:10 vs :7). Slow: 3 beamer builds, ~35 min under load 40. LSP replay: target/scratch/cex-edit/mwe/beamer-4.json via session.py.
 incremental::a_resumed_beamer_build_after_an_overlay_edit_says_what_a_fresh_build_says
-# Open (2026-11-20, owner: Fable p0-cache, from cex-edit): the LSP build keeps the last .bbl/.aux after an edit changes what an external tool reads: an entry removed from an open .bib leaves its \cite defined (fresh lint: undefined-citation); an \include commented out keeps its chapter's labels (big40: 32 undefined-reference missing). The build fixpoint must rerun bibtex/LaTeX when its inputs changed. MWEs target/scratch/cex-edit/mwe/bib.py, runs/big40-1-script.json.
-lsp::an_entry_removed_from_an_open_bib_file_leaves_its_citation_undefined
-# owner pgf (H7): an undelimited argument read from a one-of with an empty text, where no more paths may part (branch refused at the one-of's site), takes the one-of whole as one argument (machine.rs read_undelimited, one_of_first None arm): counts lose the empty reading, silently (no diagnostic). Plain MWE in the test.
-tex_compliance::arguments_read_from_one_of_several_texts_count_as_each_text_does
+
+# owner argfork (2026-11-21): a typed rest that may be empty, read undelimited where no more paths may part, is taken whole: the empty text's next-token argument is lost (machine.rs read_undelimited, typed branch). Tried: a needed split (walks over typed text such as \str_set_convert fork every pass: latex::a_package_stays_cacheable_past_a_line_that_joined_paths 72 % cached) and an unpaired one-path cover (each pass appends the next argument again: 43 % cached). Needs a paired representation. Notes: target/scratch/argfork/log.md.
+tex_compliance::an_argument_read_from_a_typed_rest_that_may_be_empty_keeps_its_empty_reading
+
 
 # == precision ==
 # owner p0-order (digits2 + land-03, 2026-11-21): unsigned digit runs now split by length (sound); pgfmath's parser then gets possible-only unsupported rows (missing-endcsname pgfmathparser:820, extra-endcsname 822/764, missing-number 803): the operation stack joined as one-of {neg, empty}, likely the class of tikz_bend. No certain error.
 documents::pgfmath_parses_a_signed_random_count_and_adds
-# owner main (next round): differs only in C039's message text, "47457 files indexed (cached)" vs "... indexed": the file index's cache status leaks into a finding's message; compare rows without it or drop the status from the message.
-package_cache::a_truncated_kernel_starts_the_document_alike_with_or_without_a_cache
 # owner pgf (found by cert-finish 2026-11-21): red on main without a ledger line; base and patched give the same output ({0 | ?.?}, NEG|POS). See S/cert-finish/ab.out.
 documents::rounding_math_of_an_interval_dimension_ends_bounded
 # owner pgf (Root L/W2): rounding a path at an unknown or interval dimension never ends bounded (unmerged again: one test per bug)
@@ -31,11 +25,9 @@ documents::rounding_a_path_at_an_interval_dimension_ends_bounded
 documents::one_pgfmath_divide_of_two_intervals_stays_on_few_forks
 documents::four_pgfmath_divides_of_two_intervals_stay_on_few_forks
 documents::one_pgfmath_reciprocal_of_an_interval_stays_on_few_forks
-# owner p0-order (P0.1 b, sound pruning of assumed arms): assume_arm arms are no longer pruned, the tikz loop meets the time budget on TeX Live 2025. MWE S/hang/main.tex.
-observed::literals_around_skipped_code_have_unknown_balance
 # owner reds (one-of class): parting a one-of at `#1.#2` by dark/far/inside (sound, tagfix) forks on every pass, 1109 forks against 439. Log S/reds/log.md.
 documents::pgfmath_divides_learn_past_their_scratch_names
-# owner reds (luahang): tagpdf under LuaTeX never ends: `\int_to_Hex:n` of `\int_rand` forks per digit, Lua state shared across paths. Log S/round-0740/luahang/log.md.
+# owner reds (luahang2): failed-run state loss fixed (land-01); left: tagpdf.sty:1772 ns loop under LuaTeX, alloctag writes Lua per line while hex-random paths are live -> siblings not run -> unknown text -> garbage. Next: per-path Lua state (undo journal) or read stamps; typed hex digits for \int_to_Hex of an interval. Log S/luahang2/log.md.
 tagging::lualatex_without_unicode_math_writes_no_mathml
 # owner reds (speed): l3backend-pdftex.def is an `\input`, not a package, so no cache serves it; caching library inputs needs body-time facts in the segment (12 tests differed cold vs cached).
 package_cache::the_backend_loaded_by_begin_document_is_served_from_a_cache
@@ -61,5 +53,3 @@ documents::pgfmath_signed_random_count_plus_a_constant_stays_in_range
 semantics::a_printed_interval_dimen_read_back_keeps_its_bound
 # owner pgf: pgfmath's operation stack is joined at a loop head as a one-of, a pop takes `neg` or the empty operator (missing-number at pgfmathparser:803).
 documents::tikz_bend_to_a_point_of_unknown_width_closes_the_picture
-# owner p0-order (hang-h): a 4-token walk over widened unknown text never meets its end marker. Repro S/p0-order/hang-h/p1.tex.
-termination::a_walk_over_unknown_text_reaches_its_end_marker

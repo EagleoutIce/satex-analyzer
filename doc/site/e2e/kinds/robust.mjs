@@ -7,7 +7,7 @@
 //   typed: they land in the source (`contains`) within `ms`.
 // `screen`: `width` x `height`, `theme`, widget `widget` at `at` opened: no page-wide horizontal scroll, the dialog
 //   or view inside the screen, a screenshot each.
-import { sleep } from '../lib.mjs';
+import { sleep, insertRow } from '../lib.mjs';
 import { setText, keysOf } from '../engine.mjs';
 import { open, build, word, undo, text, written } from './tikz.mjs';
 
@@ -31,10 +31,7 @@ async function insert(p, sc, res) {
   const t0 = await text(p), at = t0.indexOf(sc.caret) + (sc.k ?? 0);
   await caretAt(p, at);
   await sleep(200);
-  await p.eval(`document.querySelector('#play-pdf .math-menu').open = true`);
-  const row = `#play-pdf .math-menu .ins-row[data-insert=${J(sc.item)}]`;
-  if (!await p.until(`!!document.querySelector(${J(row)})`, 3000)) throw new Error(`the Insert menu has no ${sc.item}`);
-  await p.eval(`document.querySelector(${J(row)}).click()`);
+  if (!await insertRow(p, '#play-pdf', sc.item)) throw new Error(`the Insert menu has no ${sc.item}`);
   let t1 = await written(p, t0);
   // `type`: keys at the caret the insert left (an empty equation's body), as the person goes on
   if (t1 && sc.type) { await p.eval(`document.querySelectorAll('dialog.sd-dialog[open]').forEach((d) => d.close()); ${view}.focus()`); for (const k of sc.type) await p.key(k); t1 = await written(p, t1); }
@@ -93,7 +90,7 @@ async function big(p, sc, res) {
   if (res.info.pages < sc.pages) res.fails.push(`${res.info.pages} pages, want >= ${sc.pages}`);
   if (await p.eval(`document.getElementById('pdf-type').getAttribute('aria-pressed')`) !== 'true') await p.eval(`document.getElementById('pdf-type').click()`);
   const w = await word(p, sc.word);
-  if (!w) { res.fails.push(`no page word ${sc.word}: ${J(await p.eval('self.__missing'))}`); return; }
+  if (!w) { res.fails.push(`no page word ${sc.word}`); return; }
   await p.mouse(w.r - 1, (w.t + w.b) / 2);
   if (!await p.until(`satexPdfCaret()`, 5000)) { res.fails.push('the click placed no Type caret'); return; }
   const k0 = Date.now();

@@ -34,6 +34,8 @@ struct Context {
     started: Option<std::time::Instant>,
     /// Whether the run is no longer wanted (a newer edit came): [`cancellable`].
     cancel: Option<Rc<dyn Fn() -> bool>>,
+    /// A stale [`cancel`](Context::cancel) unwinds the work whole: [`abandonable`].
+    abandon: bool,
 }
 
 thread_local! {
@@ -88,6 +90,45 @@ pub fn cancellable<T>(cancelled: Box<dyn Fn() -> bool>, f: impl FnOnce() -> T) -
     )
 }
 
+/// What unwinds a request [`abandonable`] once a newer text made it stale.
+pub struct Abandoned;
+
+/// `f`, a question nobody waits for once `cancelled` says a newer text came: `None` then, and
+/// not begun when it says so already. It unwinds at its next budget check or pause instead of returning what its stopped probes
+/// found, so no cache along the way keeps a half answer (a `OnceLock` whose init unwinds stays
+/// empty), and the newer text's run starts at once.
+pub fn abandonable<T>(cancelled: Box<dyn Fn() -> bool>, f: impl FnOnce() -> T) -> Option<T> {
+    // stale before it began: not begun
+    if cancelled() {
+        return None;
+    }
+    let set = |c: &mut Context| (c.cancel, c.abandon) = (Some(cancelled.into()), true);
+    let pause: crate::util::progress::Pause = Box::new(abandon_if_stale);
+    let run = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        within(set, || crate::util::progress::pausing(pause, f))
+    }));
+    match run {
+        Ok(out) => Some(out),
+        Err(payload) if payload.is::<Abandoned>() => None,
+        Err(payload) => std::panic::resume_unwind(payload),
+    }
+}
+
+/// Unwinds an [`abandonable`] question that went stale. `resume_unwind` runs no panic hook.
+fn abandon_if_stale() {
+    if CONTEXT.with_borrow(|c| c.abandon) && stale() {
+        std::panic::resume_unwind(Box::new(Abandoned));
+    }
+}
+
+/// A catch of all panics lets an [`Abandoned`] question's unwinding through.
+pub(crate) fn pass_abandoned(payload: Box<dyn std::any::Any + Send>) -> Box<dyn std::any::Any + Send> {
+    if payload.is::<Abandoned>() {
+        std::panic::resume_unwind(payload);
+    }
+    payload
+}
+
 /// `f`, a request answered in a pause of other work: none of that work's background,
 /// deadline or cancellation holds for it.
 pub fn apart<T>(f: impl FnOnce() -> T) -> T {
@@ -103,7 +144,11 @@ fn stale() -> bool {
 pub(crate) fn run_cancelled() -> bool {
     let n = POLLS.get().wrapping_add(1);
     POLLS.set(n);
-    n.is_multiple_of(16) && stale()
+    let stale = n.is_multiple_of(16) && stale();
+    if stale {
+        abandon_if_stale();
+    }
+    stale
 }
 
 /// Stops every run at its next budget check (the server's `exit`).
@@ -1099,4 +1144,33 @@ fn default(given: &Watch, plain: &Watch, at: usize) -> Option<String> {
     let text = left_out.text.as_deref()?;
     let marker = matches!(text.trim(), r"\NoValue" | r"\c_novalue_tl");
     (left_out.positions.is_empty() && !text.trim().is_empty() && !marker).then(|| text.trim_end().to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Intuition: a question about an older text gives way to the newer text at its next pause,
+    /// whole: nothing it was building is kept. Pins [`abandonable`]: before, a hover or a
+    /// completion asked after a run held the page's single worker up to 0.3 s while the next
+    /// keystroke's run waited; a `OnceLock` filled on the way stays empty, a fresh question answers.
+    #[test]
+    fn a_question_a_newer_text_made_stale_unwinds_whole() {
+        let cell = std::sync::OnceLock::<u32>::new();
+        let stale = Rc::new(Cell::new(false));
+        let flag = stale.clone();
+        let asked = abandonable(Box::new(move || flag.get()), || {
+            *cell.get_or_init(|| {
+                stale.set(true);
+                loop {
+                    crate::util::progress::pause();
+                }
+            })
+        });
+        assert!(asked.is_none());
+        assert!(cell.get().is_none(), "a half answer was kept");
+        assert_eq!(abandonable(Box::new(|| false), || 7), Some(7));
+        // the context is the caller's again: an outer run is not abandoned
+        assert!(!CONTEXT.with_borrow(|c| c.abandon));
+    }
 }

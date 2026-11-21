@@ -28,7 +28,7 @@ export default [
     steps: 'MARKUP, Type mode; click the end of "second"; type " \\textb", Tab, "Quokka": \\textbf{Quokka} (was: \\textbfQuokka, its robust definition takes no argument itself)' },
   { name: 'tc-type-textbf-run', example: 'thesis.tex', word: is('Literate'), src: /Literate/, keys: [' ', 'Pause', '\\textb', 'Tab', 'Quokka'], pauseMs: 900, speed: 'burst', settle: true, expect: () => null, contains: [/Literate \\textbf\{Quokka\}/],
     steps: 'thesis.tex, Type mode; click the end of "Literate"; a space starts a run; during it "\\textb", Tab, "Quokka": \\textbf{Quokka} from the kept list' },
-  { name: 'tc-type-sum-math', source: KINDS, example: 'hello.tex', word: (`(t) => t === 'n' || t === 'n,'`), src: /of \$n/, keys: [' - \\sum', 'Tab', ' k'], speed: 'burst', settle: true, expect: () => null, contains: [/\$n - \\sum k ?\$/],
+  { name: 'tc-type-sum-math', source: KINDS, example: 'hello.tex', word: { word: ['n', 'n,'] }, src: /of \$n/, keys: [' - \\sum', 'Tab', ' k'], speed: 'burst', settle: true, expect: () => null, contains: [/\$n - \\sum k ?\$/],
     steps: 'KINDS, Type mode; click the math "n" in "A run of $n$ lines"; type " - \\sum", Tab, " k": $n - \\sum k$ (was: Tab took \\NeedsDocumentMetadata)' },
   // user 2026-11-19: `\\` at a row's end opened the list with `\greet` first and Enter wrote `\greet`; a `\` and one
   // non-letter are a whole name (tex.web §354), so Enter there is a new line

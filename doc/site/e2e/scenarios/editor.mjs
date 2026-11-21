@@ -14,6 +14,8 @@ export default [
   { kind: 'close', name: 'close-edited-esc', example: 'hello.tex', widget: 'page', at: '\\documentclass', k: 1, edit: ['top', '3cm'], how: 'escape',
     steps: 'hello.tex; Page layout, top margin 3cm, Esc: the question; Esc again: closed, nothing written' },
   // user 2026-11-19: auto-compile on by default once Compile was pressed in the PDF tab; paused while the PDF is hidden
+  // completion and command colors by the catcodes at the caret (user 2026-11-21: `\(\sum_` listed `\c__socket_…`)
+  { kind: 'catcomplete', name: 'catcode-complete', steps: 'a body line and an \\ExplSyntaxOn block; type `\\(\\sum` then `_` in the body, `\\c__` in expl3: no list after `_`, only typeable names' },
   { kind: 'auto', name: 'auto-after-compile', steps: 'hello.tex, PDF tab; Compile once; type a line in the editor: its build lands without a second press' },
   { kind: 'auto', name: 'auto-paused-hidden', hidden: true, steps: 'hello.tex; Compile once; Typeset tab; type a line: no build for 4 s; PDF tab: the build lands' },
   // user 2026-11-19: "Environment align undefined (hello.tex:16)" stayed on the PDF while line 16 was a tabular and Findings said 0

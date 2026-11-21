@@ -13,7 +13,7 @@ use crate::engine::builtins::DefMode;
 use crate::engine::builtins::{CodeTable, Cond, Convert, FontParam, LastItem, Primitive, Special, Syntax};
 use crate::engine::env::GroupKind;
 use crate::engine::mode::group;
-use crate::engine::tex::{Catcode, FROZEN, Meaning, RegKind, Span, Sym, Tok, Token};
+use crate::engine::tex::{Catcode, FROZEN, KeyKind, Meaning, RegKind, Span, Sym, Tok, Token};
 use crate::engine::value::{Scaled, UNIT, Value};
 
 /// Keeps font tables and other engine state out of the control-sequence namespace.
@@ -124,16 +124,94 @@ fn chars(text: &str, span: Span) -> Vec<Token> {
 /// The family of font table entries one write may reach: a font's
 /// `\fontdimen`s, its `\lpcode`s, or one `\hyphenchar`/`\skewchar` entry.
 fn font_field_family(font: u32, field: &str) -> String {
-    if let Some(rest) = field.strip_prefix('p')
-        && !rest.is_empty()
-        && rest.bytes().all(|b| b.is_ascii_digit())
-    {
-        return format!("font{font}.p");
+    Family(font, Key::Text(field)).to_string()
+}
+
+/// [`font_field_family`], written where asked for.
+struct Family<'a>(u32, Key<'a>);
+
+impl std::fmt::Display for Family<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        let font = self.0;
+        let field = match self.1 {
+            Key::Param(_) => return write!(f, "font{font}.p"),
+            Key::Static(s) | Key::Text(s) => s,
+        };
+        if let Some(rest) = field.strip_prefix('p')
+            && !rest.is_empty()
+            && rest.bytes().all(|b| b.is_ascii_digit())
+        {
+            return write!(f, "font{font}.p");
+        }
+        match field.split_once('.') {
+            Some((name, _)) => write!(f, "font{font}.{name}."),
+            None => write!(f, "font{font}.{field}"),
+        }
     }
-    match field.split_once('.') {
-        Some((name, _)) => format!("font{font}.{name}."),
-        None => format!("font{font}.{field}"),
+}
+
+/// An engine key's or font field's text. A static one, and a `\fontdimen` by its
+/// number, names its symbol once per interner ([`crate::engine::tex::Interner::keyed`]).
+#[derive(Clone, Copy)]
+pub(crate) enum Key<'a> {
+    Static(&'static str),
+    /// Font parameter `p⟨n⟩`.
+    Param(u32),
+    Text(&'a str),
+}
+
+impl From<&'static str> for Key<'static> {
+    fn from(s: &'static str) -> Self {
+        Key::Static(s)
     }
+}
+
+impl<'a> From<&'a String> for Key<'a> {
+    fn from(s: &'a String) -> Self {
+        Key::Text(s)
+    }
+}
+
+impl std::fmt::Display for Key<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        match self {
+            Key::Static(s) => f.write_str(s),
+            Key::Param(n) => write!(f, "p{n}"),
+            Key::Text(s) => f.write_str(s),
+        }
+    }
+}
+
+/// The static font fields [`name_cell`] gives a row each, `p` the parameters' family.
+const FONT_FIELDS: [&str; 11] =
+    ["name", "size", "dsize", "request", "native", "exists", "params", "hyphenchar", "skewchar", "cs", "p"];
+const FONT_ROWS: usize = FONT_FIELDS.len();
+/// The code tables [`name_cell`] gives a row each.
+const CODE_TABLES: [&str; 5] = ["lccode", "uccode", "sfcode", "mathcode", "delcode"];
+
+/// `\fontdimen`s with a row each, fonts and characters with a column each.
+const CELL_PARAMS: u64 = 16;
+const CELL_FONTS: u64 = 1024;
+const CELL_CHARS: u64 = 256;
+
+/// Where [`crate::engine::tex::Interner::keyed`] keeps the hottest keys (one cell per key):
+/// a font's static fields, its unpinned field slots and first parameters by font, the code
+/// tables' entries by character. Others go to the map.
+pub(crate) fn name_cell((kind, text, n): &crate::engine::tex::NameKey) -> Option<(usize, usize)> {
+    const PARAMS: usize = 2 * FONT_ROWS;
+    const CODES: usize = PARAMS + CELL_PARAMS as usize;
+    let font_field_row = |f: &str| FONT_FIELDS.iter().position(|x| *x == f);
+    let code_row = |t: &str| CODE_TABLES.iter().position(|x| *x == t);
+    let (row, col, limit) = match kind {
+        KeyKind::FontField => (font_field_row(text.0)?, *n, CELL_FONTS),
+        KeyKind::FontUnpinned => (FONT_ROWS + font_field_row(text.0)?, *n, CELL_FONTS),
+        KeyKind::FontParam if (n & 0xffff_ffff) < CELL_PARAMS => {
+            (PARAMS + (n & 0xffff_ffff) as usize, n >> 32, CELL_FONTS)
+        }
+        KeyKind::Code => (CODES + code_row(text.0)?, *n, CELL_CHARS),
+        _ => return None,
+    };
+    (col < limit).then_some((row, col as usize))
 }
 
 fn text_of_value(value: &Value) -> Option<String> {
@@ -177,6 +255,21 @@ impl Machine<'_> {
         let sym = self.intern(&name);
         NAME.set(name);
         sym
+    }
+
+    /// [`Machine::engine_sym`] of `key` of kind `kind` and number `n`: a static or parameter
+    /// key formats and hashes no text once its name was asked for.
+    fn engine_key(&mut self, kind: crate::engine::tex::KeyKind, key: Key, n: u64, name: std::fmt::Arguments) -> Sym {
+        let parts = match key {
+            Key::Static(s) => (s, n),
+            Key::Param(k) => ("", n << 32 | u64::from(k)),
+            Key::Text(_) => return self.engine_sym_fmt(name),
+        };
+        self.intern_keyed((kind, crate::engine::tex::StaticText(parts.0), parts.1), |s| {
+            use std::fmt::Write;
+            s.push(ENGINE);
+            _ = s.write_fmt(name);
+        })
     }
 
     pub(crate) fn engine_int(&mut self, key: &str) -> Option<i64> {
@@ -248,18 +341,24 @@ impl Machine<'_> {
     }
 
     /// Whether such a write may have reached this family.
-    fn engine_unpinned(&mut self, family: &str) -> bool {
-        let sym = self.unpinned_sym(family);
+    fn engine_unpinned<'a>(&mut self, family: impl Into<Key<'a>>) -> bool {
+        let family = family.into();
+        let sym = self.engine_key(KeyKind::Unpinned, family, 0, format_args!("{family}{ENGINE}any"));
         self.env.get(sym).is_some()
     }
 
     /// An engine integer, 0 for a never-set key.
     /// `None` if the key, or an unpinned write, left it unknown.
-    pub(crate) fn engine_slot_int(&mut self, family: &str, key: &str) -> Option<i64> {
+    pub(crate) fn engine_slot_int<'a, 'b>(
+        &mut self,
+        family: impl Into<Key<'a>>,
+        key: impl Into<Key<'b>>,
+    ) -> Option<i64> {
         if self.engine_unpinned(family) {
             return None;
         }
-        let sym = self.engine_sym(key);
+        let key = key.into();
+        let sym = self.engine_key(KeyKind::Engine, key, 0, format_args!("{key}"));
         match self.env.get(sym) {
             None => Some(0),
             Some(_) => self.env.value(sym).as_int(),
@@ -1006,20 +1105,25 @@ impl Machine<'_> {
 
     // ---- fonts -------------------------------------------------------------
 
-    fn font_key(&mut self, font: u32, field: &str) -> Sym {
-        self.engine_sym_fmt(format_args!("font{font}.{field}"))
+    fn font_key(&mut self, font: u32, field: Key) -> Sym {
+        let kind = if matches!(field, Key::Param(_)) { KeyKind::FontParam } else { KeyKind::FontField };
+        self.engine_key(kind, field, font.into(), format_args!("font{font}.{field}"))
     }
 
-    pub(crate) fn font_field(&mut self, font: u32, field: &str) -> Value {
-        let sym = self.font_key(font, field);
+    pub(crate) fn font_field<'a>(&mut self, font: u32, field: impl Into<Key<'a>>) -> Value {
+        let sym = self.font_key(font, field.into());
         self.env.value(sym)
     }
 
     /// Whether the entry was assigned at all. An entry set to an unknown
     /// value, or reachable by an unpinned write, is no longer the font
     /// file's value.
-    fn font_field_set(&mut self, font: u32, field: &str) -> bool {
-        if self.engine_unpinned(&font_field_family(font, field)) {
+    fn font_field_set(&mut self, font: u32, field: Key) -> bool {
+        // Every parameter's family is the font's `p`.
+        let family = if let Key::Param(_) = field { Key::Static("p") } else { field };
+        let name = Family(font, field);
+        let unpinned = self.engine_key(KeyKind::FontUnpinned, family, font.into(), format_args!("{name}{ENGINE}any"));
+        if self.env.get(unpinned).is_some() {
             return true;
         }
         let sym = self.font_key(font, field);
@@ -1027,8 +1131,8 @@ impl Machine<'_> {
     }
 
     /// Font data is not subject to grouping (tex.web § 1253).
-    fn set_font_field(&mut self, font: u32, field: &str, value: Value) {
-        let sym = self.font_key(font, field);
+    fn set_font_field<'a>(&mut self, font: u32, field: impl Into<Key<'a>>, value: Value) {
+        let sym = self.font_key(font, field.into());
         self.env.set_value(sym, value, true);
     }
 
@@ -1054,8 +1158,23 @@ impl Machine<'_> {
         if font == 0 || self.font_native(font) != Some(false) {
             return None;
         }
-        let name = self.font_name(font)?;
-        self.find_tfm(&name)
+        let Value::Toks(toks) = self.font_field(font, "name") else { return None };
+        if !self.capturing_package()
+            && let Some((last, found)) = &self.scratch.tfm_last
+            && Rc::ptr_eq(last, &toks)
+        {
+            let (path, metrics) = found.as_ref()?;
+            if self.scratch.tfm_file.is_some_and(|id| self.out.files.get(id as usize).is_some_and(|f| f.path == *path))
+            {
+                return metrics.clone();
+            }
+        }
+        let name = text_of_value(&Value::Toks(toks.clone()))?;
+        let metrics = self.find_tfm(&name);
+        if let Some(found) = self.scratch.tfm.get(&name).filter(|_| !self.capturing_package()) {
+            self.scratch.tfm_last = Some((toks, found.clone()));
+        }
+        metrics
     }
 
     /// The character map of a native font loaded by file name
@@ -1086,6 +1205,17 @@ impl Machine<'_> {
 
     fn find_tfm(&mut self, name: &str) -> Option<Rc<crate::engine::tfm::Metrics>> {
         // A package being cached looks again: its record must hold the lookup's probes.
+        // The file registered last is the one a font's next character finds again.
+        if !self.capturing_package()
+            && let Some(found) = self.scratch.tfm.get(name)
+        {
+            let (path, metrics) = found.as_ref()?;
+            let id =
+                self.scratch.tfm_file.filter(|&id| self.out.files.get(id as usize).is_some_and(|f| f.path == *path));
+            if id.is_some() {
+                return metrics.clone();
+            }
+        }
         let found = match self.scratch.tfm.get(name) {
             Some(found) if !self.capturing_package() => found.clone(),
             _ => {
@@ -1094,12 +1224,13 @@ impl Machine<'_> {
                 let found = crate::engine::tfm::locate(&base, &roots, name, "tfm")
                     .map(|path| (path.display().to_string(), crate::engine::tfm::load(&path)));
                 self.scratch.tfm.insert(name.to_string(), found.clone());
+                self.scratch.tfm_last = None;
                 found
             }
         };
         let (path, metrics) = found?;
         // A file the run reads, as `satex query files` lists it.
-        self.register_file(path, crate::engine::builtins::LoadKind::Font);
+        self.scratch.tfm_file = Some(self.register_file(path, crate::engine::builtins::LoadKind::Font));
         metrics
     }
 
@@ -1160,17 +1291,23 @@ impl Machine<'_> {
         u32::try_from(self.engine_slot_int("font", "font")?).ok()
     }
 
+    /// The `font` slot where it has a name, by the key [`Machine::current_font`] reads it by.
+    fn font_slot(&mut self) -> Option<Sym> {
+        let key = (KeyKind::Engine, crate::engine::tex::StaticText("font"), 0);
+        self.out.interner.lookup_keyed(key, name_cell(&key), FONT_SLOT)
+    }
+
     /// Whether the current font is known to be `\nullfont`: no character
     /// set in it shows.
     pub(crate) fn in_nullfont(&mut self) -> bool {
-        let Some(sym) = self.out.interner.lookup(FONT_SLOT) else { return false };
+        let Some(sym) = self.font_slot() else { return false };
         self.env.slot_value(sym) == Some(0)
     }
 
     /// The font id for [`crate::analysis::facts::FontState`]. Read with
     /// `Env::slot_value` so observing adds no read a package cache would depend on.
     fn observed_font(&mut self) -> u16 {
-        let Some(sym) = self.out.interner.lookup(FONT_SLOT) else { return 0 };
+        let Some(sym) = self.font_slot() else { return 0 };
         self.env.slot_value(sym).and_then(|f| u16::try_from(f).ok()).unwrap_or(0)
     }
 
@@ -1463,14 +1600,21 @@ impl Machine<'_> {
     }
 
     pub(crate) fn font_dimen(&mut self, font: u32, k: usize) -> Option<Value> {
-        let field = format!("p{k}");
-        let stored = self.font_field(font, &field);
+        let text;
+        let field = match u32::try_from(k) {
+            Ok(k) => Key::Param(k),
+            Err(_) => {
+                text = format!("p{k}");
+                Key::Text(&text)
+            }
+        };
+        let stored = self.font_field(font, field);
         if !matches!(stored, Value::Unknown) {
             return Some(stored);
         }
         // An assignment satex could not follow put the font file's own
         // parameter out of reach (tex.web § 580).
-        if self.font_field_set(font, &field) {
+        if self.font_field_set(font, field) {
             return Some(Value::Unknown);
         }
         // luaotfload gives a text font seven parameters (`fontloader-font-otl.lua`).
@@ -1522,11 +1666,11 @@ impl Machine<'_> {
     }
 
     fn font_entry_value(&mut self, param: FontParam, font: u32, field: &str) -> Option<Value> {
-        let stored = self.font_field(font, field);
+        let stored = self.font_field(font, Key::Text(field));
         if !matches!(stored, Value::Unknown) {
             return Some(stored);
         }
-        if self.font_field_set(font, field) {
+        if self.font_field_set(font, Key::Text(field)) {
             return Some(Value::Unknown);
         }
         match param {
@@ -1701,6 +1845,10 @@ impl Machine<'_> {
 
     pub(crate) fn obey_command(&mut self, syntax: Syntax, by: Sym, span: Span) {
         match syntax {
+            // tex.web § 1158: `\underline` and `\overline` take an operand.
+            Syntax::Nothing if matches!(self.name(self.env.identity(by)), "underline" | "overline") => {
+                self.await_math_operand(span);
+            }
             Syntax::Nothing | Syntax::Whatsit | Syntax::NonScript => {}
             // `\displaylimits` is what an operator has unless told
             Syntax::Limits => {
@@ -1719,6 +1867,7 @@ impl Machine<'_> {
                 if self.mode.meets(crate::engine::mode::Modes::ANY_MATH) {
                     self.math_comp(t);
                 }
+                self.await_math_operand(span);
             }
             Syntax::Number if self.name(self.env.identity(by)) == "pdfrefximage" => {
                 let n = self.scan_int();
@@ -1733,11 +1882,14 @@ impl Machine<'_> {
                     self.math_code_char(code);
                 }
             }
-            Syntax::Number if self.name(self.env.identity(by)) == "mathaccent" => {
+            // tex.web §§ 1163, 1165: a radical and an accent take an operand after their code.
+            Syntax::Number if matches!(self.name(self.env.identity(by)), "mathaccent" | "radical") => {
+                let accent = self.name(self.env.identity(by)) == "mathaccent";
                 let code = self.scan_int();
-                if self.mode.within(crate::engine::mode::Modes::ANY_MATH) {
+                if accent && self.mode.within(crate::engine::mode::Modes::ANY_MATH) {
                     self.math_accent(code);
                 }
+                self.await_math_operand(span);
             }
             Syntax::Number => {
                 self.scan_int();
@@ -2116,17 +2268,40 @@ impl Machine<'_> {
     pub(crate) fn scan_delimiter(&mut self) -> Option<i64> {
         loop {
             let token = self.next_non_blank_x_token()?;
-            let meaning = token.cs().map(|sym| self.env.meaning(sym));
-            return match (meaning, token.tok) {
+            let sym = token.cs().or_else(|| self.active_cs(token));
+            if sym.is_some_and(|s| self.is_unknown_marker(s)) {
+                return None;
+            }
+            let meaning = sym.map(|s| self.env.meaning(s));
+            let c = match (meaning, token.tok) {
                 (Some(Meaning::Primitive(Primitive::Relax)), _) => continue,
-                (Some(Meaning::Primitive(Primitive::Command(Syntax::Number))), _) => {
-                    self.scan_int().map(|v| v & 0xff_ffff)
+                (Some(Meaning::Primitive(Primitive::Command(Syntax::Number))), _)
+                    if self.name(self.env.identity(sym?)) == "delimiter" =>
+                {
+                    return self.scan_int().map(|v| v & 0xff_ffff);
                 }
-                (_, Tok::Chr(c, Catcode::Letter | Catcode::Other)) => {
-                    self.char_code_known(crate::engine::builtins::CodeTable::Delimiter, c).filter(|&d| d >= 0)
-                }
+                (Some(Meaning::Unknown), _) => return None,
+                (Some(Meaning::Char(c, Catcode::Letter | Catcode::Other)), _) => Some(c),
+                (None, Tok::Chr(c, Catcode::Letter | Catcode::Other)) => Some(c),
                 _ => None,
             };
+            let code = match c {
+                Some(c) => self.char_code_known(crate::engine::builtins::CodeTable::Delimiter, c)?,
+                None => -1,
+            };
+            if code >= 0 {
+                return Some(code);
+            }
+            // tex.web § 1161: "Missing delimiter (. inserted)", the token read
+            // again, the delimiter null.
+            self.unread(token);
+            self.diagnose(
+                crate::analysis::facts::Severity::Warning,
+                "missing-delimiter",
+                token.span,
+                "missing delimiter (. inserted)".into(),
+            );
+            return Some(0);
         }
     }
 
@@ -2580,6 +2755,8 @@ impl Machine<'_> {
                 if self.out.facts.found.len() < self.cfg.limits.facts {
                     self.out.facts.found.insert(path.display().to_string());
                 }
+                // read for its bytes (`\pdfmdfivesum file`, `\pdffilesize`): a package cache stamps it
+                self.note_opened(&path.display().to_string());
                 Some(crate::project::overlay::read_bytes(&path).ok())
             }
             (Some(None), None) => None,
@@ -2609,6 +2786,8 @@ impl Machine<'_> {
         if self.out.facts.found.len() < self.cfg.limits.facts {
             self.out.facts.found.insert(path.display().to_string());
         }
+        // whether it is empty is in its content
+        self.note_opened(&path.display().to_string());
         Some(crate::project::overlay::sized(&path)).filter(|&class| class > 0).map(|class| (class, path))
     }
 

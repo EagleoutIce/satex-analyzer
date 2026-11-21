@@ -128,7 +128,7 @@ declare global {
       t.setAttribute('aria-expanded', String(open));
       if (open) onFold?.();
     });
-    const draw = () => { const n = Object.values(on).filter(Boolean).length; summary.innerHTML = `&#x25A4; <span>${n ? `layers ${n}` : 'layers'}</span>`; };
+    const draw = () => { const n = Object.values(on).filter(Boolean).length; summary.innerHTML = `&#x25A4; <span>View</span>${n ? ` <b class="count" title="${n} layers on">${n}</b>` : ''}`; };
     list.addEventListener('change', draw);
     draw();
     return draw;
