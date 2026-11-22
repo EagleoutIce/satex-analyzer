@@ -188,6 +188,30 @@ fn a_name_around_unknown_digits_is_one_argument() {
     assert!(definition(&analysis, "wrong").is_none(), "#2 was not the \\relax after the name");
 }
 
+/// A name that holds an unknown character is a family: the first letter of an unknown roman
+/// numeral may be `i`, and `a@i` is defined as `5`, so the count read after `0` may be 5. Bug
+/// (2026-11-22, digitwalk): past `limits.meaning_set` splits at one `\csname` per line, the names
+/// `a@-` and `a@<unknown char>` stay one token (`one_of_spelled`). It looked the second up as
+/// spelled, found it undefined and made it `\relax`, so the count was 0 on every path.
+/// pgfmath's `pgfmath@operation@<unknown>@arity` became a missing number the same way.
+#[test]
+fn a_spelled_name_with_an_unknown_character_may_be_any_name_of_its_family() {
+    // Calls that use up the `\csname`'s splits on this line, over names spelled in full.
+    let warm = r"\t{-}{+}".repeat(12);
+    // Summaries off: each call runs, so the last decides by its own name.
+    let mut cfg = crate::support::bare();
+    cfg.limits.call_summary_after = 0;
+    let source = format!(
+        r"\expandafter\def\csname a@i\endcsname{{5}}\def\first#1#2\end{{#1}}\count1=\pdfuniformdeviate 200
+          \advance\count1 1 \edef\r{{\expandafter\first\romannumeral\count1\end}}
+          \def\t#1#2{{\ifnum\pdfuniformdeviate 2=0 \edef\x{{#1}}\else\edef\x{{#2}}\fi
+            \count2=0\csname a@\x\endcsname\relax \ifnum\count2=5 \gdef\yes{{}}\fi}}
+          {warm}\t{{-}}{{\r}}"
+    );
+    let a = Machine::analyze(&format!("{PRELUDE}{source}"), None, &cfg);
+    assert!(crate::support::maybe_defined(&a, "yes"), "`a@\\r` may be `a@i`, which gives 5");
+}
+
 /// A `\csname` over one unknown digit asks the same of every name it may build where those names
 /// hold one meaning (a dispatch table, as pgfmath's `pgfmath@token@numeric@0` to `9`): a test of the
 /// built name against `\relax` is decided and no path parts. A digit of ten values parts none, so
@@ -2219,6 +2243,15 @@ fn an_argument_scan_that_ran_into_a_brace_drops_the_call() {
     }
     assert!(diagnosed(&analysis, "unbalanced-argument").is_empty());
     assert!(!analysis.facts.defs.iter().any(|d| analysis.interner.name(d.name) == "got"), "the call was dropped");
+}
+
+/// The extra `}` names the macro whose argument is read (TeX's
+/// `warning_index`), not the call the line started: `\grab` called from
+/// `\zcall`'s body is "Argument of \grab". Pins the outer call's name.
+#[test]
+fn an_extra_brace_names_the_macro_reading_the_argument() {
+    let analysis = analyze(r"\def\grab#1\stop{}\def\zcall{\grab}{\zcall abc}");
+    assert_eq!(diagnosed(&analysis, "extra-right-brace"), ["Argument of \\grab has an extra }"]);
 }
 
 /// tex.web § 392: an argument is read by counting braces, and text satex

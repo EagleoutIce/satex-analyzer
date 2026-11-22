@@ -1771,6 +1771,24 @@ impl Machine<'_> {
             let sym = self.intern(candidate);
             let binding = match self.env.meaning(sym) {
                 Meaning::Undefined if self.may_be_real(sym) => self.wild_binding(sym),
+                // An unknown character makes the name a family: `\relax` or
+                // a meaning of a name it may be (tex.web § 372).
+                Meaning::Undefined
+                    if let Some((prefix, rest)) = candidate.split_once(crate::engine::tex::is_unknown_char) =>
+                {
+                    let suffix = rest.rsplit_once(crate::engine::tex::is_unknown_char).map_or(rest, |(_, s)| s);
+                    let letters = candidate
+                        .chars()
+                        .filter(|c| crate::engine::tex::is_unknown_char(*c))
+                        .all(|c| c == crate::engine::tex::UNKNOWN_LETTER);
+                    let gap = if letters { TextClass::LETTER } else { TextClass::ANY };
+                    let mut b = Binding::builtin(Meaning::Unknown);
+                    b.may = self.family_meanings(prefix, suffix, gap, None).map(|mut ms| {
+                        ms.insert(0, Meaning::Primitive(Primitive::Relax));
+                        ms.into()
+                    });
+                    b
+                }
                 Meaning::Undefined => {
                     if let Some((prefix, suffix)) =
                         name.split_once(|c| crate::engine::tex::unknown_number_chars(c).is_some())

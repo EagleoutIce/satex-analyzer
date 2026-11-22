@@ -1214,7 +1214,8 @@ pub enum Scanner {
     Normal,
     Skipping,
     Defining,
-    Matching,
+    /// The macro whose arguments are read: TeX's `warning_index`.
+    Matching(Sym),
     Absorbing,
 }
 
@@ -1536,6 +1537,7 @@ const MAX_STACK_BYTES: usize = 1 << 20;
 
 /// The stack nested steps leave free where the thread's stack is known: at
 /// most half of it, so a 2 MiB thread nests too.
+#[cfg(target_os = "linux")]
 const STACK_MARGIN: usize = 1 << 20;
 
 /// The address nested steps and scans stay above on this thread's stack,
@@ -5947,18 +5949,22 @@ will look undefined",
             Scanner::Normal => return None,
             Scanner::Skipping => ("conditional text", Tok::Cs(self.intern("fi"))),
             Scanner::Defining => ("definition", Tok::Chr('}', Catcode::End)),
-            Scanner::Matching => ("use", Tok::Cs(self.intern("par"))),
+            Scanner::Matching(_) => ("use", Tok::Cs(self.intern("par"))),
             Scanner::Absorbing => ("text", Tok::Chr('}', Catcode::End)),
         };
-        if self.scanner == Scanner::Matching {
-            self.runaway = Runaway::Outer;
-        }
+        let of = match self.scanner {
+            Scanner::Matching(call) => {
+                self.runaway = Runaway::Outer;
+                format!(" of \\{}", self.name(call))
+            }
+            _ => String::new(),
+        };
         let name = sym.map_or_else(|| "endtemplate".to_string(), |sym| self.name(sym).to_string());
         self.diagnose(
             Severity::Warning,
             "forbidden-outer",
             token.span,
-            format!("\\{name} is \\outer, so scanning a {what} stops where it was met"),
+            format!("Forbidden control sequence found while scanning {what}{of}: \\{name} is \\outer, so the scan stops here"),
         );
         self.unread(token);
         self.unread(Token::new(recovery, token.span));
@@ -5977,11 +5983,11 @@ will look undefined",
             Scanner::Normal => return false,
             Scanner::Skipping => ("conditional text", "\\fi"),
             Scanner::Defining => ("definition", "}"),
-            Scanner::Matching => ("use", "\\par"),
+            Scanner::Matching(_) => ("use", "\\par"),
             Scanner::Absorbing => ("text", "}"),
         };
         // A macro call reports it at the call, named (tex.web § 338).
-        if self.scanner == Scanner::Matching {
+        if matches!(self.scanner, Scanner::Matching(_)) {
             self.runaway = Runaway::FileEnded;
             return false;
         }
@@ -8980,7 +8986,10 @@ will look undefined",
         let par = self.intern("par");
         self.unread(Token::new(Tok::Cs(par), t.span));
         self.long_argument = false;
-        let of = self.call_shape.as_ref().map(|cs| format!(" of \\{}", self.name(cs.0))).unwrap_or_default();
+        let of = match self.scanner {
+            Scanner::Matching(call) => format!(" of \\{}", self.name(call)),
+            _ => String::new(),
+        };
         self.diagnose(Severity::Warning, "extra-right-brace", t.span, format!("Argument{of} has an extra }}"));
     }
 
@@ -11924,7 +11933,7 @@ will look undefined",
         let site = self.scratch.arg_site.replace(at);
         let outer_reading = self.reading.replace(span);
         self.scratch.family_call = self.is_unknown_name(sym);
-        let mut arguments = self.read_arguments(&m);
+        let mut arguments = self.read_arguments(sym, &m);
         self.mark_one_choice(&m, &mut arguments);
         self.reading = outer_reading;
         self.scratch.arg_site = site;
@@ -12491,10 +12500,10 @@ will look undefined",
         }
     }
 
-    fn read_arguments(&mut self, m: &MacroDef) -> Vec<Vec<Token>> {
+    fn read_arguments(&mut self, sym: Sym, m: &MacroDef) -> Vec<Vec<Token>> {
         let outer = std::mem::replace(&mut self.long_argument, m.long);
         let interrupted = std::mem::take(&mut self.runaway);
-        let scanner = std::mem::replace(&mut self.scanner, Scanner::Matching);
+        let scanner = std::mem::replace(&mut self.scanner, Scanner::Matching(sym));
         let id = self.scan_begin();
         let mut arguments = match &m.arg_spec {
             Some(spec) => self.read_signature(spec),
@@ -12528,7 +12537,7 @@ will look undefined",
     pub(crate) fn read_call_arguments(&mut self, sym: Sym, n: usize, span: Span) -> Option<Vec<Vec<Token>>> {
         let outer = std::mem::replace(&mut self.long_argument, true);
         let interrupted = std::mem::take(&mut self.runaway);
-        let scanner = std::mem::replace(&mut self.scanner, Scanner::Matching);
+        let scanner = std::mem::replace(&mut self.scanner, Scanner::Matching(sym));
         let id = self.scan_begin();
         let mut arguments: Vec<Vec<Token>> = Vec::with_capacity(n);
         for _ in 0..n {
@@ -12564,8 +12573,11 @@ will look undefined",
     /// in an argument.  TeX puts the `\par` back, reports "Paragraph ended
     /// before … was complete", and abandons the call, so nothing is
     /// substituted and the tokens read so far are dropped.
+    /// After an `\outer` token (`long_state = outer_call`) the inserted `\par`
+    /// ends even a `\long` call, silently: the outer token was reported.
     fn runaway_argument(&mut self, t: Token) -> bool {
-        if self.long_argument {
+        let outer = self.runaway == Runaway::Outer;
+        if self.long_argument && !outer {
             return false;
         }
         let Tok::Cs(sym) = t.tok else { return false };
@@ -12573,7 +12585,9 @@ will look undefined",
             return false;
         }
         self.unread(t);
-        self.runaway = Runaway::Par;
+        if !outer {
+            self.runaway = Runaway::Par;
+        }
         true
     }
 
@@ -15276,16 +15290,34 @@ will look undefined",
             return false;
         }
         let Some((prefix, suffix)) = self.name_pattern(sym) else { return false };
-        let gap = self.name_gap_class(sym);
-        let num = self.name_number(sym);
-        let limit = usize::from(self.limits.meaning_set);
-        // What names of unknown text were given: any is no split.
-        let Some(given) = self.wild.overlap_meanings(&prefix, &suffix) else { return false };
-        let mut members = given;
-        if members.len() > limit {
+        let Some(members) = self.family_meanings(&prefix, &suffix, self.name_gap_class(sym), self.name_number(sym))
+        else {
             return false;
+        };
+        self.split(sym, span, members.len() + 1, |m, arm| {
+            let meaning = members.get(arm).map_or(Meaning::Primitive(Primitive::Relax), Meaning::clone);
+            m.refine(sym, meaning);
+            true
+        })
+    }
+
+    /// The meanings besides `\relax` of the names `prefix`, a gap of `gap`
+    /// and `suffix` spell: those given to names of unknown text and those
+    /// of the names bound that fit. `None` when any meaning was given or
+    /// past `limits.meaning_set`.
+    pub(crate) fn family_meanings(
+        &self,
+        prefix: &str,
+        suffix: &str,
+        gap: TextClass,
+        num: Option<crate::engine::value::Num>,
+    ) -> Option<Vec<Meaning>> {
+        let limit = usize::from(self.limits.meaning_set);
+        let mut members = self.wild.overlap_meanings(prefix, suffix)?;
+        if members.len() > limit {
+            return None;
         }
-        for s in self.bound_names(&prefix, &suffix) {
+        for s in self.bound_names(prefix, suffix) {
             let name = self.out.interner.name(s);
             if self.is_unknown_name(s) || !gap_fits(&name[prefix.len()..name.len() - suffix.len()], gap, num) {
                 continue;
@@ -15295,15 +15327,11 @@ will look undefined",
                 continue;
             }
             if members.len() == limit {
-                return false;
+                return None;
             }
             members.push(meaning);
         }
-        self.split(sym, span, members.len() + 1, |m, arm| {
-            let meaning = members.get(arm).map_or(Meaning::Primitive(Primitive::Relax), Meaning::clone);
-            m.refine(sym, meaning);
-            true
-        })
+        Some(members)
     }
 
     /// A token for one of several texts ([`Machine::one_of`]), met where a

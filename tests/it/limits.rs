@@ -843,6 +843,26 @@ fn an_outer_name_ending_a_scan_is_read_again() {
     assert_eq!((body(&run, "zR"), body(&run, "zS")), ("undefined".into(), "\\outer macro:#1->[#1]".into()));
 }
 
+/// An `\outer` name in a macro's argument ends the call with TeX's inserted
+/// `\par` as `long_state = outer_call` (tex.web §§ 339, 392): the call is
+/// abandoned silently, `\long` or not, and only the outer name is reported.
+/// Pins a second, false "Paragraph ended" and a `\long` call taking the `\par`.
+#[test]
+fn an_outer_name_in_an_argument_abandons_the_call_once() {
+    for long in ["", "\\long"] {
+        let source =
+            format!("\\outer\\def\\zo{{}}{long}\\def\\za#1{{\\def\\zR{{taken}}}}\\def\\zR{{dropped}}\\za{{x\\zo}}");
+        let run = analyze(Engine::PdfTeX, &source);
+        assert_eq!(body(&run, "zR"), "dropped", "{long}");
+        let codes: Vec<_> = run.facts.diagnostics.iter().map(|d| (d.code, d.message.as_str())).collect();
+        assert!(
+            codes.iter().any(|(c, m)| *c == "forbidden-outer" && m.starts_with("Forbidden control sequence")),
+            "{codes:?}"
+        );
+        assert!(!codes.iter().any(|(c, _)| *c == "runaway-argument"), "{long}: {codes:?}");
+    }
+}
+
 /// Past `limits.degrade_at_percent` of `limits.steps` the run lowers its
 /// precision limits once and says so; at 100 it never does.
 #[test]

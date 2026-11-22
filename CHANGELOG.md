@@ -8,6 +8,8 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 
 ### Site
 
+- `feat` **Typing in a table also wraps paragraph cells and moves `\multicolumn` spans and the column chips.** A `p`, `m`, `b` or `X` cell rewraps to its width and the rows below move down. A span keeps its place in its columns, and a span typed wider widens its last column. The column chips follow the echo.
+- `feat` **Typing in a table cell moves the whole table at once.** The column widens or narrows for every row, the columns after it and the rules follow, and a centered table stays centered, so nothing jumps when the build lands.
 - `feat` **Compile benchmarks: `satex compile` against latexmk and plain engine runs.** The benchmark page compares cold builds, rebuilds with nothing changed and rebuilds after one edit per document and toolchain (pdfTeX, LuaTeX, XeTeX), with whether the output is the same; the landing page shows the main numbers.
 ### VS Code
 
@@ -43,8 +45,14 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 - `perf` **`satex compile`: the PDF first, the analysis only where a message needs it.** The build runs before the analysis, which runs only when the log has a message to explain and no stored explanation of the same messages, source, settings and read files holds: an unchanged 195-page book 1.7 s → 0.05 s with `compile.explain` on, the PDF of an edit in ~3 s instead of after the analysis. `compile.warm` works from the command line: the engine waits on a named pipe under `.satex-build` that it reads in the main file's stead, in the project's own directory, so no file of the project is touched and `\input{../shared}` reads as in a fresh build.
 - `feat` **memoize: `satex compile` extracts memoize's externs itself.** No shell escape and no Perl module needed: the build runs memoize's TeX extraction between passes (`compile.memoize`).
 
+### CLI
+
+- `fix` **`--set` before the command and after it both apply.** `satex --set limits.steps=500 lint --set load.inputs=true` kept only the second, so the first limit was lost.
+
 ### Analysis
 
+- `fix` **A `\csname` name with an unknown character keeps every meaning of the names it may spell, never just `\relax`.** Past the per-line split bound such a name read as undefined although a name of its family was defined.
+- `fix` **An `\outer` name in a macro's argument gives TeX's one error.** It reads "Forbidden control sequence found while scanning use of \\end", the call ends without a second "Paragraph ended" error, `\long` or not, and "Argument of … has an extra }" names the macro reading the argument.
 - `fix` **ACM papers end again, in seconds** (`acmart` with `\email` under `sigconf`: 9.6 s for the sample paper, where the run stopped at a limit). A command that puts nothing on a list (`\pdfnobuiltintounicode`, `\pdffontattr`, `\pdfcatalog`, `\afterassignment`) adds no atom to a formula, so the first formula of a size keeps its size with `cmap` loaded. The title box has its height and acmart's title loop is decided.
 - `fix` **A test assumed while a page is made teaches no value** (`page-one-arm`): the shipout's comparison of the page count with the last page's number made a widened count exactly 2^30, written to the `.aux` run after run. The count stays an interval.
 - `fix` **No false "loaded after `\begin{document}`" (P001) for a class on a cold cache.** A file that gave back more than 64 of its own tokens while the main file's peeked `\begin` waited (hyperxmp does) made `\begin{document}` stand at the `\documentclass` line. Each file has its own window now.
@@ -134,6 +142,9 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 
 ### Playground
 
+- `feat-fix` **A command name half typed on the page no longer flashes "1 error".** Typing `\su` on the way to `\sum` started a build of the unfinished name, and its error showed until the next build. Builds and findings now wait until the name is finished, 1.5 s at most.
+- `perf-fix` **Typing into the PDF: the pages follow each key also with automatic compile on.** A build landed 1-3 s after the last key, now 0.35 s: builds up to the auto-compile delay count as live, and each key no longer restarts the timer.
+- `feat` **tikzpingus comes with the first download**, cached like tikz, so a penguin draws without a fetch.
 - `feat-fix` **The envs layer frames a picture, minipage or float whole**: an environment's extent takes the box it closed, as SyncTeX records it on its `\end` line, beside the rows set inside it.
 - `feat-fix` **`\end{` completes at once** with the environments still open at the caret, innermost first, also while a run is busy.
 - `feat-fix` **Enter in the editor no longer scrolls the PDF away**: following the caret maps editor lines to the built text's lines.
