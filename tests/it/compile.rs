@@ -724,8 +724,24 @@ fn a_warm_build_writes_what_a_fresh_build_writes() {
     assert!(!build("true").contains("(warm)"), "a first build has no engine waiting");
     dumped(&dir, "doc");
     // an edit each time, so no build is skipped; the engine reads the clock's minute as it starts
+    // Under load the engine may still be loading its format: wait until it is seen in its open.
+    let record = dir.join(".satex-build/warm/engine");
+    let waits = || {
+        for _ in 0..300 {
+            let pid = std::fs::read_to_string(&record).ok().and_then(|r| r.lines().next().map(str::to_string));
+            // No engine, one gone, or one waiting: nothing to wait for.
+            let Some(wchan) = pid.and_then(|p| std::fs::read_to_string(format!("/proc/{p}/wchan")).ok()) else {
+                return;
+            };
+            if wchan.trim() == "wait_for_partner" {
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
+    };
     let mut warm = None;
     for i in 0..4 {
+        waits();
         std::fs::write(dir.join("doc.tex"), doc(&format!("Edit {i}."))).unwrap();
         if build("true").contains("(warm)") {
             warm = Some((i, wrote()));
@@ -738,7 +754,6 @@ fn a_warm_build_writes_what_a_fresh_build_writes() {
         let said = build_under("true", ".:..:");
         assert!(said.contains("$ pdflatex") && !said.contains("(warm)"), "{said}");
     }
-    let record = dir.join(".satex-build/warm/engine");
     if let Some(pid) = std::fs::read_to_string(&record).ok().and_then(|r| r.lines().next().map(str::to_string)) {
         let _ = std::process::Command::new("kill").arg(pid).status();
     }
