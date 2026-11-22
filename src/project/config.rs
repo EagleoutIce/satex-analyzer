@@ -217,6 +217,9 @@ pub struct Limits {
     /// Items of one recorded list (a paragraph, a box, the page's marks). Past it that list is
     /// not recorded: its lines and size stay unknown.
     pub paragraph_items: usize,
+    /// How deeply steps nest inside scans, and quantities inside quantities, before the
+    /// nesting is widened (`nesting-widened`): wasm's stack has no address to ask.
+    pub nesting: u32,
     /// Environments a completion's probe tries a command in when alone it raises an error
     /// before reading its arguments (`\caption` outside a float). Editor only.
     pub probe_contexts: usize,
@@ -325,6 +328,7 @@ impl Limits {
             "hyph_words" => self.hyph_words as u64,
             "list_items" => self.list_items as u64,
             "paragraph_items" => self.paragraph_items as u64,
+            "nesting" => self.nesting.into(),
             "probe_contexts" => self.probe_contexts as u64,
             "table_reach" => self.table_reach as u64,
             "trace" => self.trace as u64,
@@ -437,6 +441,7 @@ impl Default for Limits {
             hyph_words: 50_000,
             list_items: 1 << 23,
             paragraph_items: 4_000,
+            nesting: 300,
             probe_contexts: 4,
             table_reach: 4_000,
             trace: 200_000,

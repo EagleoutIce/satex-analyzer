@@ -3801,7 +3801,7 @@ impl Machine<'_> {
         // A quantity that scans a quantity (`\numexpr` in `\numexpr`) nests on
         // the Rust stack without a step: past the bound of nested steps its
         // value is unknown. By depth too: wasm's call stack has no address.
-        if self.quantity_depth >= crate::analysis::machine::MAX_NESTING || self.stack_spent() {
+        if self.quantity_depth >= self.cfg.limits.nesting || self.stack_spent() {
             self.abandon_nesting();
             return Some(Value::Unknown);
         }

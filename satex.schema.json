@@ -3327,6 +3327,16 @@
           ],
           "x-example": "`memory: 2GiB` stops a runaway run before it slows the machine"
         },
+        "nesting": {
+          "default": 300,
+          "description": "how deeply steps nest inside scans, and quantities inside quantities (`\\numexpr(\\numexpr(…`), before the nesting is widened; the stack bounds it too",
+          "minimum": 0,
+          "type": "integer",
+          "x-affects": [
+            "output"
+          ],
+          "x-example": "`nesting: 1000` follows deeper nesting where the stack allows it"
+        },
         "output_forks": {
           "default": 0,
           "description": "how many choices in output routines may part paths in a run before analysis.assume_page_one_arm applies",

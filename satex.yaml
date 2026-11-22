@@ -1344,6 +1344,9 @@ limits:  # what bounds the analysis: reaching one stops that part of the run, so
   paragraph_items: 4000  # most items of one recorded list (a paragraph's characters, glue and boxes; a box; the page's marks). Past it that list is not recorded and its lines and size stay unknown
     #! affects: speed, output
     #! example: a paragraph of 800 words is about 5000 items: with the default its line breaks stay unknown
+  nesting: 300  # how deeply steps nest inside scans, and quantities inside quantities (`\numexpr(\numexpr(…`), before the nesting is widened; the stack bounds it too
+    #! affects: output
+    #! example: `nesting: 1000` follows deeper nesting where the stack allows it
   probe_contexts: 4  # environments a completion's probe tries a command in when alone it raises an error before reading its arguments (`\caption` outside a float); editor only
     #! affects: output, speed
     #! example: `probe_contexts: 0` leaves `\caption` without a completion shape

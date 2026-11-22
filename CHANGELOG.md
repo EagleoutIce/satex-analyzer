@@ -42,6 +42,8 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 
 ### Analysis
 
+- `feat` **`limits.nesting` (300)**: how deeply steps nest inside scans and quantities inside quantities before the nesting is widened, configurable like every other limit.
+- `fix` **An argument the document begins and never closes is an error** (`\cite[p.~3` before `\end{document}`): pdflatex stops with "File ended while scanning use of …"; satex said nothing, since the end was met inside library code.
 - `fix` **A negative integer's printed digits stay in its own range** when zero is not parted off: pgfmath's signed random counts and a cut inside a library call no longer leave gaps (two precision reds green).
 - `fix` **A long run's logs of raised findings and memo uses stay bounded**: a beamer overlay document no longer aborts with a 1 GiB allocation at the end of its run.
 - `feat` **`-vv` names the sites with the most undecided choices** (`satex: choices N at file:line`, the top 20).

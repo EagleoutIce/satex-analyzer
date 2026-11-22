@@ -5261,6 +5261,20 @@ Text.
     assert!(raised.is_empty(), "{raised:?}");
 }
 
+/// `\cite[p.~3` never closed: the optional argument the document began runs to the end of the
+/// file inside library code (`\@citex`), and pdflatex stops with "File ended while scanning use
+/// of \@citex@checkblank". Bug pinned (errcover): library code is assumed to compile, so the run
+/// gave the text back and said nothing. The document opened what never closes: its error.
+#[test]
+fn an_optional_argument_the_document_never_closes_is_an_error() {
+    if !installed() {
+        return;
+    }
+    let analysis = analyze("\\documentclass{article}\n\\begin{document}\nSee \\cite[p.~3 here.\n\\end{document}\n");
+    let raised = raised(&analysis);
+    assert!(raised.iter().any(|s| s == "error"), "{raised:?}");
+}
+
 /// A here-float the output routine puts on its own list (`\box\@currbox` in `\@addtocurcol`)
 /// reaches the page with that list: its caption is typeset, not lost to the next box built.
 #[test]

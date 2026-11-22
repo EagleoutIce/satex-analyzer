@@ -1395,9 +1395,6 @@ impl Accum {
     }
 }
 
-/// How deeply expansion may nest inside scans before the run stops.
-pub(crate) const MAX_NESTING: u32 = 300;
-
 /// How much of the Rust stack nested steps may take before the run stops,
 /// whatever each level costs: half the 2 MiB a spawned thread gets.
 /// Only where the thread's own stack is not known.
@@ -8559,7 +8556,7 @@ will look undefined",
         if self.step_depth == 0 {
             self.stack_base = stack_here();
         }
-        if self.step_depth >= MAX_NESTING || self.stack_spent() {
+        if self.step_depth >= self.cfg.limits.nesting || self.stack_spent() {
             // This is satex's own nesting bound, not the document's. The
             // expansion that nests too deeply is given up like a stalled loop,
             // and the run continues. Returning `false` ends this nested step,
@@ -13294,6 +13291,11 @@ will look undefined",
                 // a run TeX would stop with an error: never the document's.
                 if let Some(k) = source_at.filter(|_| self.runaway == Runaway::FileEnded) {
                     let span = out[k].span;
+                    // An argument the document's own text began (`\cite[p.~3` never closed): the
+                    // document opened what never closes, and TeX stops there (tex.web § 338).
+                    if k == 0 {
+                        self.tex_error("File ended while scanning use of an argument begun here", span);
+                    }
                     // Past the main file's end the document's end was read as
                     // an argument, not run: that is where the analysis ends.
                     if !self.input.iter().any(|f| matches!(f, Frame::File { .. })) {
