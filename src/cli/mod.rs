@@ -431,7 +431,7 @@ pub enum CacheAction {
     /// variant (what keys it), its segments, and the bytes they take.
     /// Then the documents an analysis is stored of, with size and age.
     Show {
-        /// Packages or classes (`scrbook.cls`) to show, or `document`; none lists every cache.
+        /// Packages or classes (`scrbook.cls`) to show, or `document`. Without one, every cache is listed.
         packages: Vec<String>,
     },
 }

@@ -346,10 +346,26 @@ fn command_json(cmd: &clap::Command) -> serde_json::Value {
     })
 }
 
+/// Every `--set` in the order given: clap keeps only the last level's values of a global
+/// argument, so `satex --set a=1 lint --set b=2` lost `a=1`. `parsed` when the words hold no more.
+fn every_set(args: impl Iterator<Item = String>, parsed: Vec<String>) -> Vec<String> {
+    let mut sets = Vec::new();
+    let mut args = args.take_while(|a| a != "--");
+    while let Some(arg) = args.next() {
+        if arg == "--set" {
+            sets.extend(args.next());
+        } else if let Some(value) = arg.strip_prefix("--set=") {
+            sets.push(value.to_string());
+        }
+    }
+    if sets.len() > parsed.len() { sets } else { parsed }
+}
+
 fn run() -> Result<(), String> {
     #[cfg(not(target_os = "emscripten"))]
     clap_complete::CompleteEnv::with_factory(<Cli as clap::CommandFactory>::command).complete();
     let mut cli = Cli::parse();
+    cli.set = every_set(std::env::args().skip(1), std::mem::take(&mut cli.set));
     if let Some(command) = &cli.command
         && !cli.version
     {
@@ -1229,6 +1245,14 @@ mod tests {
         assert_eq!(super::config_flags(&cli), ["--no-packages", "--set", "a.b=1", "--max-steps", "9"]);
         let plain = super::Cli::parse_from(["satex", "gui"]);
         assert!(super::config_flags(&plain).is_empty());
+    }
+
+    /// A `--set` before the subcommand stays when another follows it. Bug pinned:
+    /// clap kept only the subcommand's, so `--set limits.steps=500 lint --set x=y` ran unbounded.
+    #[test]
+    fn every_set_keeps_both_levels() {
+        let words = ["--set", "a=1", "lint", "--set=b=2", "--", "--set", "c"].map(String::from);
+        assert_eq!(super::every_set(words.into_iter(), vec!["b=2".into()]), ["a=1", "b=2"]);
     }
 
     /// `--help` is short sentences: no `;` or `—` joins two clauses.
