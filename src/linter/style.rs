@@ -284,7 +284,8 @@ fn group_local_definition(report: &mut Report) {
         // how TeX code keeps its work local.  Only a definition written
         // straight in the document can be meant to outlive the group.
         let from_macro = analysis.graph.vertices.get(def.node as usize).is_some_and(|v| v.within.is_some());
-        if from_macro {
+        // Read before the group closes (`\begingroup\edef\x{…\endgroup…}\x`): it did its work.
+        if from_macro || report.index().used_definition(def) {
             continue;
         }
         let name = report.cs(def.name);

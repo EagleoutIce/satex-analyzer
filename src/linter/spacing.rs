@@ -547,6 +547,11 @@ fn sentence_capital(report: &mut Report) {
         if !view.is_word_prose(i) || !plain_space(report, i + 1) || !view.beside(i + 1) || !view.beside(i + 2) {
             continue;
         }
+        // A mark with no word before it ends no sentence: `\enquote{! object not found}` opens with it.
+        let closes = |c: char| c.is_alphanumeric() || matches!(c, ')' | ']' | '\'' | '"' | '’' | '”' | '»' | '›');
+        if !view.char_at(i.wrapping_sub(1)).is_some_and(closes) {
+            continue;
+        }
         if mark == "." && (view.char_at(i.wrapping_sub(1)) == Some('.') || !ends_sentence(report, i)) {
             continue;
         }

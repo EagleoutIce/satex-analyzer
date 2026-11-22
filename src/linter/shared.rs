@@ -662,7 +662,7 @@ pub fn requests_packages(analysis: &Analysis, name: Sym) -> bool {
 /// The names a document can write, each with the file to load for it
 /// ([`crate::caches::exports::Exports::names`]): `satex query exports`, which the site build ships.
 pub fn export_names(analysis: &Analysis) -> Vec<(String, String)> {
-    exports(analysis).map(|e| e.names()).unwrap_or_default()
+    exports(analysis).map(|e| e.names(analysis.settings.limits.provider_probes as usize)).unwrap_or_default()
 }
 
 /// Whether package `name` is installed: the installation's index lists `name.sty`.

@@ -1948,6 +1948,37 @@ fn a_bare_reference_gets_a_name_the_document_uses() {
     assert_eq!(found.iter().flat_map(replacements).collect::<Vec<_>>(), [r"\secref{sec:a}"], "{found:?}");
 }
 
+/// A `\ref` in a table's cell needs no name: the column's header says what it numbers, and a
+/// cell is no sentence (user, 2026-11-22). The same `\ref` in prose still gets one.
+#[test]
+fn a_bare_reference_in_a_table_cell_is_no_finding() {
+    if !crate::support::installed() {
+        return;
+    }
+    let source = "\\documentclass{article}\n\\usepackage{hyperref}\n\\begin{document}\n\\section{A}\\label{sec:a}\n\
+                  \\begin{tabular}{ll}\nSection & Topic\\\\\n\\ref{sec:a} & intro\\\\\n\\end{tabular}\n\
+                  see \\ref{sec:a}.\n\\end{document}\n";
+    let found = records("bare-cell", source, "bare-reference");
+    let lines: Vec<u64> = found.iter().filter_map(|r| r["line"].as_u64()).collect();
+    assert_eq!(lines, [9], "{found:?}");
+}
+
+/// A definition in a group that nothing reads is lost when the group closes; one read before
+/// it closes did its work: hyperref's `\begingroup\edef\x{…\endgroup…}\x`, which ends the group
+/// from inside `\x` (found linting hyperref.sty itself).
+#[test]
+fn a_group_local_definition_read_before_its_group_closes_is_no_finding() {
+    if !crate::support::installed() {
+        return;
+    }
+    let source = "\\documentclass{article}\n\\begin{document}\n{\\def\\lost{a}}\n\
+                  \\begingroup\\edef\\x{\\noexpand\\endgroup\\noexpand\\def\\noexpand\\kept{b}}\\x\n\
+                  \\kept\n\\end{document}\n";
+    let found = records("group-local", source, "group-local-definition");
+    let names: Vec<&str> = found.iter().filter_map(|r| r["name"].as_str()).collect();
+    assert_eq!(names, ["\\lost"], "{found:?}");
+}
+
 /// A section called a subsection or a chapter, a table called a figure; a
 /// subsection called a section is fine.
 #[test]
@@ -1971,8 +2002,9 @@ fn a_sentence_that_starts_in_lowercase_is_reported() {
         return;
     }
     // `$x$` after `?` is a formula, no sentence start
+    // a mark with no word before it ends nothing: the quoted `! object` (user, 2026-11-22)
     let body = "We stop here. then we go. Words like iPhone. iPhone works. Ask approx. the same. \
-                It runs! next one. Wait... and so etc. and so. Funny? $x_{42}$ grows.";
+                It runs! next one. Wait... and so etc. and so. Funny? $x_{42}$ grows. It said ``! object not found''.";
     let found = records("capital", &math_document(body), "sentence-capital");
     assert_eq!(found.iter().flat_map(replacements).collect::<Vec<_>>(), ["T", "N"], "{found:?}");
     // The two rules split the periods: `approx.` and `etc.` ask for a word space, `here.` does not.

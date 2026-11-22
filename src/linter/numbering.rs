@@ -570,6 +570,10 @@ fn bare_reference(report: &mut Report) {
         if !has_name(analysis, cleveref, kind) {
             continue;
         }
+        // In a table the column's header names what its cells number.
+        if report.text().in_alignment(site.span) {
+            continue;
+        }
         let before: String = site.line[..site.at].iter().collect();
         let before = before.trim_end_matches([' ', '~']);
         if before.ends_with('(') || before.ends_with("\\S") || before.ends_with('§') {

@@ -21,6 +21,9 @@ pub struct Exports {
     /// that starts its line and that the index knows as no definer (url's `\\DeclareUrlCommand\\url`): candidates a run confirms.
     mentions: HashMap<String, Vec<u32>>,
     loads: Vec<Vec<u32>>,
+    /// Per name, the shipped index's other packages that may provide it (`+name` in `exports.tsv`).
+    #[serde(skip)]
+    alternatives: HashMap<String, Vec<u32>>,
     /// Per file, the files that load it: `loads` reversed, made once.
     #[serde(skip)]
     loaded_by: std::sync::OnceLock<Vec<Vec<u32>>>,
@@ -318,6 +321,7 @@ impl Exports {
         let definers: Vec<u32> = files.iter().copied().filter(sty).collect();
         let mut all = definers.clone();
         all.extend(definers.iter().flat_map(|&f| self.loaded_by()[f as usize].iter().copied()).filter(sty));
+        all.extend(self.alternatives.get(name).into_iter().flatten().copied());
         all.sort_unstable();
         all.dedup();
         let mut ranked: Vec<_> =
@@ -369,13 +373,24 @@ impl Exports {
     /// The names a document can write (no `@` or `_`: no internals), each with the file to load
     /// for it: [`Exports::package_for`]'s package, else the library that declares it. This is
     /// what the playground ships ([`Exports::of_names`]): the browser has no installation to read.
-    pub fn names(&self) -> Vec<(String, String)> {
+    /// With them, up to `alternatives` other packages that may provide a name ([`Exports::candidates`]):
+    /// a call the usual one rejects (graphics' `\includegraphics[width=…]`) is tried with those.
+    pub fn names(&self, alternatives: usize) -> Vec<(String, String)> {
         let mut out: Vec<(String, String)> = (self.defines.iter())
             .filter(|(name, _)| !name.contains(['@', '_']))
-            .filter_map(|(name, files)| {
+            .flat_map(|(name, files)| {
                 let library =
                     || files.iter().map(|&f| &self.files[f as usize]).find(|f| f.ends_with(".code.tex")).cloned();
-                Some((name.clone(), self.package_for(name).map(|p| format!("{p}.sty")).or_else(library)?))
+                let first = self.package_for(name).map(|p| format!("{p}.sty")).or_else(library);
+                let others: Vec<String> = self
+                    .candidates(name)
+                    .into_iter()
+                    .filter(|c| Some(c) != first.as_ref())
+                    .take(alternatives)
+                    .collect();
+                // an alternative is marked `+`: tried for a call the usual one rejects, never offered first
+                let first = first.into_iter().map(|f| (name.clone(), f));
+                first.chain(others.into_iter().map(|f| (format!("+{name}"), f))).collect::<Vec<_>>()
             })
             .collect();
         out.sort();
@@ -383,7 +398,8 @@ impl Exports {
     }
 
     /// The index of [`Exports::names`] written one file a line, its names after it:
-    /// `file<TAB>name<TAB>name…`. Each name is defined by its one file.
+    /// `file<TAB>name<TAB>name…`. Each name is defined by its one file; `+name` names another
+    /// package that may provide it.
     pub fn of_names(text: &str) -> Exports {
         let mut exports = Exports { version: VERSION, ..Exports::default() };
         for line in text.lines() {
@@ -392,7 +408,13 @@ impl Exports {
             let i = exports.files.len() as u32;
             exports.files.push(file.to_string());
             exports.loads.push(Vec::new());
-            fields.for_each(|name| _ = exports.defines.insert(name.to_string(), vec![i]));
+            for name in fields {
+                match name.strip_prefix('+') {
+                    // another package that may provide it ([`Exports::names`]' alternatives)
+                    Some(name) => exports.alternatives.entry(name.to_string()).or_default().push(i),
+                    None => _ = exports.defines.insert(name.to_string(), vec![i]),
+                }
+            }
         }
         exports
     }
@@ -590,6 +612,21 @@ mod tests {
             super::scan("\\DeclareUrlCommand\\url{}\n\\let\\a@b\\relax\n\\def\\path{}\\x\\y", &definers);
         assert_eq!(defined, ["path"]);
         assert_eq!(mentioned, ["url"]);
+    }
+
+    /// Intuition: the playground's index ships one file per name, plus `+name` for another
+    /// package that may provide it. Pins graphicx being no candidate there for
+    /// `\\includegraphics[width=…]` (the snapshot printer loaded graphics, the build failed), and
+    /// an alternative never becoming the usual provider (`tikzpicture` stays tikz's).
+    #[test]
+    fn the_shipped_index_keeps_alternatives_apart() {
+        let e = super::Exports::of_names(
+            "graphics.sty\tincludegraphics\ngraphicx.sty\t+includegraphics\ntikz.sty\ttikzpicture\nforest.sty\t+tikzpicture\n",
+        );
+        assert_eq!(e.provider("includegraphics").as_deref(), Some("graphics.sty"));
+        assert_eq!(e.candidates("includegraphics"), ["graphics.sty", "graphicx.sty"]);
+        assert_eq!(e.provider("tikzpicture").as_deref(), Some("tikz.sty"));
+        assert!(e.names(0).iter().all(|(n, _)| !n.starts_with('+')));
     }
 
     /// Intuition: `\\newenvironment{align}` defines `\\align` and `\\endalign` (ltdefns.dtx), learned from runs as

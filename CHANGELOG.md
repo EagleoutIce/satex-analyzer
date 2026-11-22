@@ -114,6 +114,7 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 
 ### Playground
 
+- `fix` **A figure inserted in the playground loads graphicx, a forest tree loads forest**: the shipped package index lists the other packages that may provide a name (`+name`), tried when the usual one rejects the call, and the site build reads `conventions.definers`.
 - `perf` **Typeset rows a run sets as the last one did are not sent again**: a word typed at the end of a 737-page document is quiet after about 10 s instead of 11-12 s.
 - `fix` **The playground no longer runs out of memory on very long documents (700+ pages)**: the Typeset view's rows arrive in parts, and typing in a paragraph sends only that paragraph's rows (peak 6.1 GB to 1.9 GB natively at 737 pages).
 - `fix` **The playground builds again**: the browser build no longer calls native-only process-group and warm-engine code.
@@ -175,6 +176,10 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 
 ### Lints
 
+- `fix` **A definition read before its group closes is not "lost"** (`\begingroup\edef\x{…\endgroup…}\x`): no group-local-definition finding.
+- `fix` **No early "File not found" for an `\input` the installation has**: early findings look the file up in TeX's input path as `\input` does (`hyperref.sty`'s `\input{pd1enc.def}`).
+- `fix` **A `!`, `?` or `.` with no word before it ends no sentence** (`\enquote{! object not found}`): no lowercase-start finding after it.
+- `fix` **No bare-reference finding in a table cell**: a `\ref` in an alignment's cell (by the run's alignment marks: tabular, tblr, any `\halign`) needs no name, the column's header gives it.
 - `fix` **No false "lacks `editor`, required for `@article`" with ACM's bibliography style**: a single field a `.bst` checks inside one branch of an `if$` is no requirement (the branch for an entry without `crossref` still is).
 - `feat-fix` **Table precision with TeX Live 2025.** The `S`-column rule reads siunitx's round mode under its 2025 name too, so rounding columns stay quiet there.
 - `feat-fix` **No false "never defined" after a missing package.** A name a missing or misspelled package would define is a warning that names the missing file, not a certain error: pdflatex stops at the file instead.

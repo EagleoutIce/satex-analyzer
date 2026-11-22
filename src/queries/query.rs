@@ -6907,7 +6907,7 @@ pub fn providers(analysis: &Analysis, names: &[String]) -> Vec<Record> {
     let exports = crate::caches::exports::Exports::of(
         &analysis.distribution.roots,
         crate::caches::format::default_cache_dir().as_deref(),
-        &crate::caches::exports::definers(analysis, &[]),
+        &crate::caches::exports::definers(analysis, &analysis.settings.conventions.definers),
     );
     names
         .iter()

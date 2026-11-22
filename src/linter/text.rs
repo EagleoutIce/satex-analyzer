@@ -225,6 +225,26 @@ impl<'a> View<'a> {
         self.char_at(index).filter(|_| self.is_text(index))
     }
 
+    /// Whether what the run set at `span` stands in a cell of an alignment (`\\halign`, a
+    /// `tabular`'s): between an alignment's begin and its end, by the run's marks.
+    pub fn in_alignment(&self, span: Span) -> bool {
+        use crate::analysis::facts::Align;
+        // A call's own characters may carry no place (`\\ref`'s number): the first character the
+        // run set from the same line at or after it stands in the same cell.
+        let near =
+            || (span.col..span.col.saturating_add(200)).find_map(|c| self.at_span(Span::new(span.file, span.line, c)));
+        let Some(at) = self.at_span(span).or_else(near) else { return false };
+        let mut depth = 0i32;
+        for (_, mark) in self.text.align.iter().take_while(|(before, _)| *before as usize <= at) {
+            match mark {
+                Align::Begin => depth += 1,
+                Align::End => depth -= 1,
+                _ => {}
+            }
+        }
+        depth > 0
+    }
+
     /// Whether the document wrote prose at a source position: no code, and
     /// [`View::is_text`] of the character set there, else not in math by
     /// the mode the command read there was in.

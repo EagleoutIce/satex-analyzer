@@ -860,7 +860,8 @@ def exports(satex, work, dist):
     """Every name the installed packages define, with the file to load for it (`satex query exports`), one
     `file<TAB>name<TAB>name…` line per file: the bundle holds a few packages only, so the browser's fixes and
     completion read the rest here (linter/shared.rs `exports`)."""
-    return memo(work, "exports", [str(dist)], lambda: exports_run(satex, work), key=KEY, later=b"")
+    # the index is what this binary's code reads off the trees (caches/exports.rs), not cached analysis: its key
+    return memo(work, "exports", [str(dist)], lambda: exports_run(satex, work), key=BINARY, later=b"")
 
 
 def exports_run(satex, work):
@@ -1931,6 +1932,9 @@ def main():
                     help="reuse the files each package was listed to read across satex builds (a development loop: "
                          "a file a changed interpreter reads besides is missing from the bundle until --fresh)")
     args = ap.parse_args()
+    # The build makes the caches it ships itself: no satex run of it starts a background builder that
+    # outlives the build (`satex cache build --background`, cli/cache/background.rs).
+    os.environ["SATEX_NO_SETUP"] = "1"
     # Ctrl+C stops the build: the terminal signals the satex runs too, and worker threads must not
     # start more of them, so the process ends at once instead of unwinding the main thread only.
     for stop in (signal.SIGINT, signal.SIGTERM):
