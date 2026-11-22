@@ -79,6 +79,11 @@ fn targets(analysis: &Analysis, doc: &Text, path: &str) -> Vec<Target> {
         else {
             continue;
         };
+        // code that reaches `\@array` is not yet a table (amsmath's `equation`): it takes a column spec
+        // (`{lr}` after `\begin{tabular}`), or its own body splits into cells or rows (`align`)
+        if !spec_follows(&text[start..end], &name) && !splits(&text[start..end]) {
+            continue;
+        }
         out.push(Target { kind: Kind::Table, start, end, detail: Some(name) });
     }
     // a figure is a call naming a file the run's graphics read: the driver reads a file once, so
@@ -105,6 +110,36 @@ fn targets(analysis: &Analysis, doc: &Text, path: &str) -> Vec<Target> {
     out.sort_by_key(|t| (t.start, t.end));
     out.dedup_by_key(|t| t.start);
     out
+}
+
+/// Whether `\begin{name}` at the start of `env` is followed by a braced argument (a column spec), after an
+/// optional `[…]` position.
+fn spec_follows(env: &str, name: &str) -> bool {
+    let rest = env.get(format!("\\begin{{{name}}}").len()..).unwrap_or_default().trim_start();
+    let rest = match rest.strip_prefix('[') {
+        Some(r) => r.split_once(']').map_or("", |(_, r)| r).trim_start(),
+        None => rest,
+    };
+    rest.starts_with('{')
+}
+
+/// Whether environment text `env` (`\begin{…}` to its `\end{…}`) holds `&` or `\\` of its own: outside the
+/// environments nested in it and outside comments.
+fn splits(env: &str) -> bool {
+    let (b, mut depth, mut i) = (env.as_bytes(), 0usize, 0);
+    while i < b.len() {
+        match b[i] {
+            b'%' => i = env[i..].find('\n').map_or(b.len(), |n| i + n),
+            b'\\' if env[i..].starts_with("\\begin{") => depth += 1,
+            b'\\' if env[i..].starts_with("\\end{") => depth = depth.saturating_sub(1),
+            b'\\' if depth == 1 && b.get(i + 1) == Some(&b'\\') => return true,
+            b'\\' => i += 1,
+            b'&' if depth == 1 => return true,
+            _ => {}
+        }
+        i += 1;
+    }
+    false
 }
 
 fn lsp_range(doc: &Text, start: usize, end: usize) -> Range {

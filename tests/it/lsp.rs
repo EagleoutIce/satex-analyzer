@@ -5119,9 +5119,11 @@ fn table_lens_marks_tables_not_drawings() {
 /// The way VS Code asks: lenses right at `didOpen`, before any analysis, then again on
 /// `workspace/codeLens/refresh`, which the server sends once the run is in. The table, the
 /// figure's placement and image, and the drawing get theirs without an edit of the document.
+/// An `equation` gets no table lens though amsmath's code reaches `\@array` (user 2026-11-22): its body has no
+/// cells; an `align`'s has.
 #[test]
 fn lenses_asked_before_the_run_come_with_its_refresh() {
-    let text = "\\documentclass{article}\n\\usepackage{tikz}\n\\usepackage{graphicx}\n\\begin{document}\n\\begin{figure}[ht]\n\\includegraphics{example-image}\n\\end{figure}\n\\begin{tabular}{lr}\na & b \\\\\n\\end{tabular}\n\\begin{tikzpicture}\n\\node (a) {x};\n\\end{tikzpicture}\n\\end{document}\n";
+    let text = "\\documentclass{article}\n\\usepackage{amsmath}\n\\usepackage{tikz}\n\\usepackage{graphicx}\n\\begin{document}\n\\begin{equation}\nx = 1\n\\end{equation}\n\\begin{align}\na &= b\n\\end{align}\n\\begin{figure}[ht]\n\\includegraphics{example-image}\n\\end{figure}\n\\begin{tabular}{lr}\na & b \\\\\n\\end{tabular}\n\\begin{tikzpicture}\n\\node (a) {x};\n\\end{tikzpicture}\n\\end{document}\n";
     let dir = crate::support::tmp_root().join(format!("satex-lsp-lens-refresh-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("main.tex"), text).unwrap();
@@ -5158,6 +5160,7 @@ fn lenses_asked_before_the_run_come_with_its_refresh() {
             .collect()
     };
     assert_eq!(titles("\\begin{tabular}"), ["Edit table…"], "{lenses}");
+    assert!(!titles("\\begin{equation}").contains(&"Edit table…"), "{lenses}");
     assert_eq!(titles("\\begin{figure}"), ["Edit placement…"], "{lenses}");
     assert_eq!(titles("\\includegraphics"), ["Edit image…"], "{lenses}");
     assert!(!titles("\\begin{tikzpicture}").is_empty(), "{lenses}");
