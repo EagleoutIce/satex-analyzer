@@ -17,6 +17,16 @@ export default [
   { kind: 'echo', name: 'updown-columns', case: 'pdf-updown-columns' },
   { kind: 'echo', name: 'tt-echo', case: 'pdf-tt-echo' },
   { kind: 'echo', name: 'math-caret-below', case: 'pdf-math-caret-below' },
+  // typing in a table cell lays out the whole table: the other rows' cells where the build then sets them
+  // a command name half typed shows no error while it is unfinished
+  { kind: 'echo', name: 'naming-quiet', case: 'pdf-naming-quiet' },
+  { kind: 'echo', name: 'table-rows-l', case: 'pdf-table-rows-l' },
+  { kind: 'echo', name: 'table-rows-c', case: 'pdf-table-rows-c' },
+  { kind: 'echo', name: 'table-span-under', case: 'pdf-table-span-under' },
+  { kind: 'echo', name: 'table-span-typed', case: 'pdf-table-span-typed' },
+  { kind: 'echo', name: 'table-par-p', case: 'pdf-table-par-p' },
+  { kind: 'echo', name: 'table-par-m', case: 'pdf-table-par-m' },
+  { kind: 'echo', name: 'table-par-x', case: 'pdf-table-par-x' },
   { kind: 'echo', name: 'math-caret-below-slow', case: 'pdf-math-caret-below-slow' },
   { kind: 'echo', name: 'after-macro-pdf', case: 'pdf-after-macro' },
   { kind: 'echo', name: 'newpara-ts', case: 'ts-new-para' },

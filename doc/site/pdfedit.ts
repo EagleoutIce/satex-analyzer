@@ -93,6 +93,7 @@ declare global {
       verbatimAt(text: string, at: number): Verb | null;
       columns(boxes: Box[], file: string, table: Table, tables: Table[], words?: Word[]): (Placed & { approx?: boolean; measured?: boolean })[];
       measure(words: Word[], box: Box, n: number, aligns?: string): ([number, number] | null)[];
+      tableShift(words: Word[], box: Box, cols: Placed[], aligns: string, at: Word, nw: number, centered?: boolean): { k: number; a: number; delta: number; s: number; g: number; kl: number; x: (v: number) => number; left: number; own: Word[]; col: Word[]; dx: Map<Word, number>; rows: [number, number][] } | null;
       snapWidth(text: string | null, was: number, now: number, line: number, fine: boolean, conv?: { unit: string; dec: number }): string | null;
       widthBp(text: string, line: number): number | null;
       respec(align: string, width: string | null, spec?: string, h?: string): Respec | null;
@@ -223,6 +224,61 @@ declare global {
       }
     }
     return out;
+  }
+  /** A table laid out again with one cell's ink `nw` bp wide: the cell of word `at` in an `l`, `c` or `r` column (`aligns`,
+   * a letter a column) of the table in `box`, its columns' places `cols` (columns). TeX sets a column as wide as its
+   * widest cell (tex.web § 801), so the column grows or shrinks by `delta`, the columns after it move by that, the
+   * column's other cells by its alignment's share (`a`: 0, ½, 1), a `centered` table by half of it back (`s`).
+   * A span (`\multicolumn`: a cell's words over two columns or more) counts for no column; one wider than its columns
+   * widens the last (§ 801), so a typed span is column `k`'s cell by what it needs past the columns before. A span keeps
+   * its place in its columns (left, centre or right, as the page sets it): its share of what they grow by.
+   * The cut `g` right of the column (in its padding, before a rule) is where the rules stretch; `x(v)` moves an edge.
+   * `left`: the edited cell's new left edge, `own` its words, `col` the words drawn again (the column's other cells and
+   * every span), `dx` every other word's move, `rows` the rows' bands. Null for another column type (`p`, `X`: their
+   * width is not their cells') or a word outside the table. */
+  function tableShift(words: Word[], box: Box, cols: Placed[], aligns: string, at: Word, nw: number, centered = false) {
+    const inside = words.filter((w) => w[0] === box.page && w[1] >= box.x - 1 && w[3] <= box.x + box.w + 1 && w[4] >= box.y - box.h - 1 && w[4] <= box.y + box.d + 1);
+    at = inside.find((w) => w[1] === at[1] && w[4] === at[4] && w[5] === at[5]) ?? at;
+    if (!inside.includes(at) || /X/.test(aligns) || !cols.length) return null;
+    const rows: Word[][] = [];
+    for (const w of [...inside].sort((p, q) => p[4] - q[4])) { const r = rows.find((r) => Math.abs(r[0]![4] - w[4]) < 2); if (r) r.push(w); else rows.push([w]); }
+    // a row's runs of words (a cell's), apart by more than a word space (measure's GAP); a run over two columns is a span
+    const span = new Map<Word, { i: number; j: number; l: number; r: number; run: Word[] }>();
+    for (const r of rows) {
+      const runs: Word[][] = [];
+      for (const w of [...r].sort((p, q) => p[1] - q[1])) { const last = runs.at(-1); if (last && w[1] - last.at(-1)![3] <= 7) last.push(w); else runs.push([w]); }
+      for (const run of runs) {
+        const l = run[0]![1], rr = Math.max(...run.map((w) => w[3])), hit = cols.filter((c) => rr > c.x + 1 && l < c.x + c.w - 1).map((c) => c.k);
+        if (hit.length > 1) for (const w of run) span.set(w, { i: Math.min(...hit), j: Math.max(...hit), l, r: rr, run });
+      }
+    }
+    const colOf = (w: Word) => { const m = (w[1] + w[3]) / 2; return [...cols].sort((p, q) => Math.max(p.x - m, m - p.x - p.w) - Math.max(q.x - m, m - q.x - q.w))[0]?.k ?? -1; };
+    const sp = span.get(at), k = sp ? sp.j : colOf(at), a = ({ l: 0, c: 0.5, r: 1 } as Record<string, number>)[aligns[k] ?? ''];
+    if (a == null) return null;
+    const of = new Map(inside.map((w) => [w, span.has(w) ? -1 : colOf(w)])), mine = rows.find((r) => r.includes(at))!;
+    const own = sp ? sp.run : mine.filter((w) => of.get(w) === k);
+    const ink = rows.map((r) => r.filter((w) => of.get(w) === k && !own.includes(w))).filter((c) => c.length), place = cols.find((c) => c.k === k)!;
+    const width = (c: Word[]) => Math.max(...c.map((w) => w[3])) - Math.min(...c.map((w) => w[1]));
+    const all = [...ink.flat(), ...(sp ? [] : own)], L = all.length ? Math.min(...all.map((w) => w[1])) : place.x, R = all.length ? Math.max(...all.map((w) => w[3])) : place.x + place.w;
+    // a span needs from column k what it is wider than the columns before it (from the span's first column's left)
+    const before = sp ? L - (cols.find((c) => c.k === sp.i)?.x ?? L) : 0, need = (n: number) => sp ? n - before : n;
+    const cells = Math.max(0, ...ink.map(width)), oldW = Math.max(R - L, need(sp ? sp.r - sp.l : 0)), newW = Math.max(cells, need(nw)), delta = newW - oldW;
+    const s = centered ? -delta / 2 : 0;
+    const next = Math.min(box.x + box.w, ...inside.filter((w) => of.get(w)! > k).map((w) => w[1])), prev = Math.max(box.x, ...inside.filter((w) => of.get(w)! < k && of.get(w)! >= 0).map((w) => w[3]));
+    const g = R + Math.min(1, Math.max(0, (next - R) / 4)), kl = L - Math.min(1, Math.max(0, (L - prev) / 4)), x = (v: number) => v + s + (v > (kl + g) / 2 ? delta : 0);
+    // a span's share: where it stands in its columns' room (its first's left to its last's right), of what that grows by
+    const lo = (q: { i: number; l: number }) => cols.find((c) => c.k === q.i)?.x ?? q.l;
+    const side = (l: number, r: number, a0: number, b0: number) => l - a0 < 1 ? 0 : b0 - r < 1 ? 1 : 0.5;
+    const share = (q: { i: number; j: number; l: number; r: number }) => {
+      if (q.j < k || q.i > k) return q.i > k ? delta : 0;
+      const c = cols.find((c) => c.k === q.j), hi = q.j === k ? L + oldW : c ? c.x + c.w : q.r;
+      return side(q.l, q.r, lo(q), hi) * delta;
+    };
+    const dx = new Map<Word, number>();
+    for (const w of inside) if (!own.includes(w)) { const j = of.get(w)!, q = span.get(w); dx.set(w, s + (q ? share(q) : j < k ? 0 : j > k ? delta : a * delta)); }
+    const bands = rows.map((r) => [Math.min(...r.map((w) => w[2])), Math.max(...r.map((w) => w[4]))] as [number, number]);
+    const left = sp ? lo(sp) + s + side(sp.l, sp.r, lo(sp), lo(sp) + before + oldW) * (before + newW - nw) : L + s + a * (newW - nw);
+    return { k, a, delta, s, g, kl, x, left, own, col: inside.filter((w) => !own.includes(w) && (of.get(w) === k || span.has(w))), dx, rows: bands };
   }
   /** A paragraph column's horizontal alignment and the declaration array's `>{…}` puts before each of its cells
    * (`\arraybackslash` gives `\\` back its row end): `j` justified, a plain `p`. One table, read and written. */
@@ -1873,7 +1929,7 @@ declare global {
     }
     return [at, at, `\\${cmd}{}`, cmd.length + 2];
   }
-  self.satexPdfEdit = { callAround, styleAt, centeredAt, leave, toggle, onRow, run, displayEnd, offsetAt, units, treeNodes, naming, entries, shortTitle, bothTitles, renamed, leaders, checked, grow, key, broken, scan, start, cells, cellStep, rowAfter, verbatim, verbatimAt, nearest, bands, joined, place, extent, failNote, room, form, measure, respec, halign, HALIGN, padding, gap, widthBp, snapWidth, resized, stepped, plain, editable, spans, sender, typed, erased, cluster, mathAt, boundaries, boundaryAt, inkSnap, locate, columns, wordAt, argAt, afterCall, callStart, defining, relaid, reflow, prose, refFacts, refSet, auxLabels, hunks, fit, glue, centered, apart, tokens, unset, aligned, changed, paragraph, mathRuns, footArg, footBack, footShown, blankPlace };
+  self.satexPdfEdit = { callAround, styleAt, centeredAt, leave, toggle, onRow, run, displayEnd, offsetAt, units, treeNodes, naming, entries, shortTitle, bothTitles, renamed, leaders, checked, grow, key, broken, scan, start, cells, cellStep, rowAfter, verbatim, verbatimAt, nearest, bands, joined, place, extent, failNote, room, form, measure, tableShift, respec, halign, HALIGN, padding, gap, widthBp, snapWidth, resized, stepped, plain, editable, spans, sender, typed, erased, cluster, mathAt, boundaries, boundaryAt, inkSnap, locate, columns, wordAt, argAt, afterCall, callStart, defining, relaid, reflow, prose, refFacts, refSet, auxLabels, hunks, fit, glue, centered, apart, tokens, unset, aligned, changed, paragraph, mathRuns, footArg, footBack, footShown, blankPlace };
 })();
 
 // TikZ nodes moved by drag: where each `\node` and path label stands in the source, and the statement a drag

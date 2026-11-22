@@ -6434,7 +6434,8 @@
       const files = next && !next[0] && next[2] === null && alone === null && !slice && !cached && pdfFiles((d) => d);
       const again = files && root === (state.root ?? state.file) && dir === state.dir && sets.join('\n') === pdfSets().join('\n') && editor.text() === state.texts[state.file]
         && Object.keys({ ...files, ...pdfSentAll }).every((k) => files[k] === pdfSentAll[k]);
-      if (next && !again) compile(...next);
+      // (a build nobody clicked for waits while a name is typed, as pdfRebuild's: `\\s` of `\\sum` is no command)
+      if (next && !again) next[3] && !next[0] && next[2] === null ? pdfRebuild(true) : compile(...next);
     };
     if (!onServer) {
       const parser = pdfWorker;
@@ -8556,7 +8557,10 @@
   /** The last build's round trip, from Compile to its first page shown: live typing needs it short. */
   var pdfRound = { start: 0, ms: Infinity };
   const LIVE_MS = 300;
-  const pdfLive = () => pdfRound.ms <= LIVE_MS;
+  /** The longest round trip the pages follow each key with: LIVE_MS, or the auto-compile delay when longer (a build that
+   * lands before the keys' rest would even start one is never later). One build runs at once, the newest waits (`compile`). */
+  const pdfLiveMs = () => Math.max(LIVE_MS, pdfAuto?.on ? pdfAuto.delay : 0);
+  const pdfLive = () => pdfRound.ms <= pdfLiveMs();
   const PE = self.satexPdfEdit;
   function pdfColsAsk() {
     const asked = uri(), file = state.file, v = version;
@@ -8597,7 +8601,10 @@
   /** A build for a live edit: at once (`now`), else once edits rest for the auto-compile delay (TYPE_MS without one). */
   const TYPE_MS = 30;
   /** A command name half typed at the Type caret (`\\su`): a build of it would only stop at an undefined command. */
-  const pdfNaming = () => !!pdfCaret && PE.naming(editor.text(), pdfCaret.at, pdfCaret.fresh);
+  /** Whether offset `at` of `text` ends a command name being typed: PE.naming, or any `\\name` (a lone `\\` too) right
+   * before it (a snippet's text, `\\(\\s|\\)`, keeps no fresh span): a build or finding of it is of half a name. */
+  const nameAt = (text, at, fresh = null) => PE.naming(text, at, fresh) || /\\[A-Za-z@]*$/.test(text.slice(Math.max(0, at - 64), at)) && !/^[A-Za-z@]/.test(text.slice(at, at + 1));
+  const pdfNaming = () => !!pdfCaret && nameAt(editor.text(), pdfCaret.at, pdfCaret.fresh);
   const pdfRebuild = (now) => {
     clearTimeout(pdfAuto.timer);
     // a build due while a name is typed waits for the name to end, 1.5 s at most (`\\LaTeX` typed last stays a name)
@@ -9714,7 +9721,7 @@
   const pdfTypeTip = pdfTypeButton.title;
   function pdfLiveShow() {
     const ms = Number.isFinite(pdfRound.ms) ? `${Math.round(pdfRound.ms)} ms` : 'not measured yet';
-    pdfTypeButton.title = `${pdfTypeTip}. ${pdfLive() ? `The pages follow each key: a build takes ${ms}` : `The pages follow once typing rests: a build takes ${ms}, each key needs ${LIVE_MS} ms or less`}`;
+    pdfTypeButton.title = `${pdfTypeTip}. ${pdfLive() ? `The pages follow each key: a build takes ${ms}` : `The pages follow once typing rests: a build takes ${ms}, each key needs ${pdfLiveMs()} ms or less`}`;
   }
   pdfLiveShow();
   const pdfCaretOff = () => { pdfMenuOff(); pdfCaret = pdfGhost = null; document.body.classList.remove('type-sync'); document.querySelectorAll('.pdf-caret, .pdf-caret-ghost, .type-note').forEach((c) => c.remove()); };
@@ -10372,7 +10379,7 @@
     while (q < now.length - p && q < before.length - p && now.at(-1 - q) === before.at(-1 - q)) q++;
     editor.apply([{ range: { start: pdfPos(now, p), end: pdfPos(now, now.length - q) }, newText: before.slice(p, before.length - q) }]);
     push();
-    if (c.view === 'pdf') pdfRebuild(pdfLive() && !pdfAuto.on);
+    if (c.view === 'pdf') pdfRebuild(pdfLive());
   }
   /** Caret `c` in a contents entry whose heading (`head`, its `\`) has no short title: the first key writes one, the
    * title copied (PE.shortTitle), and the caret moves into the copy; a note offers the heading the same text. */
@@ -10395,7 +10402,7 @@
         Object.assign(c, { at: c.at - shift, anchor: c.anchor == null ? null : c.anchor - shift, v: version });
         pdfTypeIn.focus({ preventScroll: true });
         pdfCaretDraw();
-        if (c.view === 'pdf') pdfRebuild(pdfLive() && !pdfAuto.on);
+        if (c.view === 'pdf') pdfRebuild(pdfLive());
       });
   };
   /** The caret if its text is the one it was put into: an edit elsewhere or another file ends it. */
@@ -11453,7 +11460,8 @@
     const c = pdfCaret, img = c && pdfImg(c.page);
     if (!img?.naturalWidth || state.file !== c.file) return;
     // verbatim is set as written: its word is the run of non-blanks around the caret, `\twice{ab}` whole
-    const [pw, ph] = pageSize(img), g = pdfSeen(), verb = !!PE.verbatimAt(g.text, g.at), pre = /\S*$/.exec(g.text.slice(0, g.at))[0];
+    // (a table is centered as its `\\begin` is, not as its cell's text)
+    const [pw, ph] = pageSize(img), g = pdfSeen(), verb = !!PE.verbatimAt(g.text, g.at), pre = /\S*$/.exec(g.text.slice(0, g.at))[0], cells = PE.cells(g.text, g.at);
     const m = verb ? [g.at - pre.length, pre + /^\S*/.exec(g.text.slice(g.at))[0]] : PE.wordAt(g.text, g.at), now = m?.[1];
     // the word around the caret, found again on the page after a build: the nearest one so spelled
     const bare = (w) => w[5].normalize('NFKC').replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, ''), dist = (w) => Math.hypot(w[1] - c.word[1], w[4] - c.word[4]);
@@ -11477,11 +11485,11 @@
     // verbatim is set as written, one fixed-width column a character: nothing to strip, the caret at its column
     const w = c.word, shown = w[5].normalize('NFKC'), plain = (t) => verb ? t : t.replace(PDF_ENV_MARK, '').replace(/\\[A-Za-z@]+\s*|\\[()[\]]|[{}$\\^_~]/g, '').replace(/\s+/g, ' ');
     const typed = g.text.slice(c.anchor, Math.max(g.at, m ? m[0] + m[1].length : g.at)), into = m ? g.at - m[0] : 0, col = Math.min(shown.length, (m ? Math.max(0, shown.indexOf(now)) : 0) + into);
-    let cx = verb ? w[1] + (w[3] - w[1]) / Math.max(1, shown.length) * col : pdfBounds(img, w)[col];
+    let cx = verb ? w[1] + (w[3] - w[1]) / Math.max(1, shown.length) * col : pdfBounds(img, w)[col], cy = 0;
     // the pages lag the text: the row is laid out again at once with the text as now written, until the build lands
     // an environment begun in the typed text (Insert ▸ Aligned) is a block of its own, no text of the word's row
-    if (!set && typed !== bare(w) && !(verb && pdf?.text === g.text) && (verb || !/\\begin\s*\{/.test(typed)) && (verb || !/\\[A-Za-z@]*$/.test(g.text.slice(c.anchor, g.at)))) { cx = pdfEcho(img, w, plain(typed), plain(g.text.slice(c.anchor, g.at)).length, verb, verb ? null : pdfStyleShift(g.text, c.anchor, g.at), PE.centeredAt(g.text, g.at)) ?? cx; pdfRelay(); }
-    img.parentElement.insertAdjacentHTML('beforeend', `<span class="pdf-caret" style="left:${cx / pw * 100}%;top:${w[2] / ph * 100}%;height:${(w[4] - w[2]) / ph * 100}%"></span>`);
+    if (!set && typed !== bare(w) && !(verb && pdf?.text === g.text) && (verb || !/\\begin\s*\{/.test(typed)) && (verb || !/\\[A-Za-z@]*$/.test(g.text.slice(c.anchor, g.at)))) { const e = pdfEcho(img, w, plain(typed), plain(g.text.slice(c.anchor, g.at)).length, verb, verb ? null : pdfStyleShift(g.text, c.anchor, g.at), PE.centeredAt(g.text, cells?.rows[0]?.[0] ? g.text.lastIndexOf('\\begin', cells.rows[0][0][0]) : g.at)); [cx, cy] = Array.isArray(e) ? e : [e ?? cx, 0]; pdfRelay(); }
+    img.parentElement.insertAdjacentHTML('beforeend', `<span class="pdf-caret" style="left:${cx / pw * 100}%;top:${(w[2] + cy) / ph * 100}%;height:${(w[4] - w[2]) / ph * 100}%"></span>`);
     pdfCaretAnchor();
   }
   /** The source lines of the paragraph around offset `at` of `text` (1-based, blank lines apart). */
@@ -11547,11 +11555,131 @@
     if (on('it') === was('it') && on('bf') === was('bf') && on('tt') === was('tt') && (b.size ?? 10) === (a.size ?? 10)) return null;
     return { it: on('it'), bf: on('bf'), tt: on('tt'), scale: (b.size ?? 10) / (a.size ?? 10) };
   }
+  /** The table page word `w` of `img` stands in (the innermost of pdfCols's), its box, columns placed, the columns'
+   * letters: null outside one, or with no columns of this file's build. */
+  function pdfTableOf(img, w) {
+    const b = img.__build ?? pdf;
+    if (pdfCols?.file !== state.file || !b?.boxes) return null;
+    const hits = pdfCols.tables.map((t) => [t, PE.extent(b.boxes, state.file, t)]).filter(([, x]) => x && x.page === w[0] && w[1] >= x.x - 1 && w[3] <= x.x + x.w + 1 && w[4] >= x.y - x.h - 1 && w[4] <= x.y + x.d + 1);
+    const [t, box] = hits.sort((p, q) => p[1].w - q[1].w)[0] ?? [];
+    return t ? { t, box, cols: PE.columns(b.boxes, state.file, t, pdfCols.tables, b.wordList ?? []), aligns: t.cols.map((c) => c.align[0] ?? 'l').join('') } : null;
+  }
+  /** Table `box` of page `img` drawn again as `S` (PE.tableShift) lays it out, in bands: a row's columns before the
+   * edited one moved by `s`, its column's other cells by their share, the columns after by `delta` more; between rows
+   * (the rules) all up to the cut `g` by `s`. What the column grows by takes the cut's pixel column stretched (rules,
+   * a cell's colour), the edited column's slot in a row too: the cell's own echo goes over it. */
+  function pdfTableDraw(img, box, S) {
+    const [pw, ph] = pageSize(img), k = img.naturalWidth / pw, { s, delta, g, kl } = S, L = box.x - 1, R = box.x + box.w + 1;
+    const x0 = Math.min(L, L + s), x1 = Math.max(R, R + s + delta), t0 = box.y - box.h - 1, d0 = box.y + box.d + 1;
+    const cv = Object.assign(document.createElement('canvas'), { width: Math.ceil((x1 - x0) * k), height: Math.ceil((d0 - t0) * k), className: 'pdf-echo' }), cg = cv.getContext('2d');
+    cg.fillStyle = pdfRgb(pdfColours(img, L, t0, R, d0)?.paper);
+    cg.fillRect(0, 0, cv.width, cv.height);
+    // the page's x a..b, y t..d (bp) drawn at x `to`, `n` wide
+    const put = (a, b, t, d, to, n = b - a) => { if (b > a && d > t && n > 0) cg.drawImage(img, a * k, t * k, (b - a) * k, (d - t) * k, (to - x0) * k, (t - t0) * k, n * k, (d - t) * k); };
+    const bands = [];
+    let y = t0;
+    for (const [t, d] of S.rows.map(([t, d]) => [t - 1, d + 1.5]).sort((p, q) => p[0] - q[0])) { if (t > y) bands.push([y, t, false]); if (d > y) bands.push([Math.max(y, t), d, true]); y = Math.max(y, d); }
+    if (y < d0) bands.push([y, d0, false]);
+    for (const [t, d, row] of bands) {
+      put(L, row ? kl : g, t, d, L + s);
+      if (row) put(g, g + 0.5, t, d, kl + s, g - kl + Math.max(0, delta)); else if (delta > 0) put(g, g + 0.5, t, d, g + s, delta);
+      put(g, R, t, d, g + s + delta);
+    }
+    // a word over the cut or the column's left (a span) left pieces where the bands moved them, and the cut's stretched
+    // pixels hold its glyphs: paper over its place and the column's, then it whole
+    const wipe = (a, b, v) => { if (b > a) cg.fillRect((a - x0) * k, (v[2] - 1 - t0) * k, (b - a) * k, (v[4] - v[2] + 2.5) * k); };
+    for (const v of [...S.col, ...S.own]) if (v[1] < kl || v[3] > g) wipe(Math.min(v[1], kl) - 0.5 + s + Math.min(0, delta), Math.max(v[3], g) + 0.5 + s + Math.max(0, delta), v);
+    for (const v of S.col) put(v[1] - 0.5, v[3] + 0.5, v[2] - 1, v[4] + 1.5, v[1] - 0.5 + S.dx.get(v));
+    const pg = +img.parentElement.dataset.page;
+    pdfTableChips(img, box, S.x, 0);
+    for (const [v, dx] of S.dx) if (Math.abs(dx) > 0.01) pdfMoved.push({ from: v, page: pg, dx, dy: 0 });
+    cv.style.cssText = `left:${x0 / pw * 100}%;top:${t0 / ph * 100}%;width:${(x1 - x0) / pw * 100}%;height:${(d0 - t0) / ph * 100}%`;
+    pdfUnder(img.parentElement, cv);
+  }
+  /** The column layer's chips and gap knobs on table `box` of `img` moved with the echo: copies, edges through `x`, the
+   * table `dy` taller (a knob below it moves down); the originals hidden until the next draw. */
+  function pdfTableChips(img, box, x, dy) {
+    const [pw, ph] = pageSize(img), host = img.parentElement, t0 = box.y - box.h - 1, d0 = box.y + box.d + 1;
+    for (const el of host.querySelectorAll(':scope > .pdf-col, :scope > .pdf-col-gap')) {
+      const st = el.style, l = parseFloat(st.left) / 100 * pw, r = l + parseFloat(st.width) / 100 * pw, t = parseFloat(st.top) / 100 * ph, h = parseFloat(st.height) / 100 * ph;
+      if (!(l >= box.x - 3 && r <= box.x + box.w + 3 && t >= t0 - 30 && t <= d0 + 2)) continue;
+      const c = el.cloneNode(true), below = t > d0 - 2;
+      c.classList.add('pdf-relaid');
+      delete c.dataset.ovKey;
+      Object.assign(c.style, { left: `${x(l) / pw * 100}%`, width: `${Math.max(0.5, x(r) - x(l)) / pw * 100}%`, top: `${(t + (below ? dy : 0)) / ph * 100}%`, height: `${(h + (below ? 0 : dy)) / ph * 100}%` });
+      host.append(c);
+      el.classList.add('pdf-relay-hid');
+    }
+  }
+  /** A paragraph cell (`p`, `m`, `b`) typed in: its words, `now` in `w`'s place, broken again into lines as wide as the
+   * cell's box (SyncTeX's vbox; an `X` column's too), from its first line on. Lines it gains push what is below it down (pdfEchoPush, the
+   * table's rules stretched over the gap), the row's other cells by the column's share (`p` 0, `m` ½, `b` all: their
+   * baseline is the cell's first, middle or last line). The caret's [x, dy] from `w`'s row, null where no cell box holds `w`. */
+  function pdfCellWrap(img, T, w, now, into) {
+    const b = img.__build ?? pdf, mid = (w[1] + w[3]) / 2, k = T.cols.reduce((m, c) => Math.abs(c.x + c.w / 2 - mid) < Math.abs(m.x + m.w / 2 - mid) ? c : m).k;
+    const v = { p: 0, X: 0, m: 0.5, b: 1 }[T.aligns[k]], inBox = (x, q) => x[0] === q.page && q.x - 0.5 <= x[1] && x[3] <= q.x + q.w + 0.5 && q.y - q.h - 2 <= x[2] && x[4] <= q.y + q.d + 2;
+    // the cell's box: a vbox as wide as the column around `w` (an `m` cell's is centred on the row's axis: nearest by its middle)
+    const colW = T.cols.find((c) => c.k === k)?.w ?? Infinity, near = (q) => Math.abs((q.y - q.h + q.y + q.d) / 2 - (w[2] + w[4]) / 2);
+    const cell = (b?.boxes ?? []).filter((q) => q.kind === '[' && q.w > 0 && q.w < colW + 3 && q.page === w[0] && q.x - 0.5 <= w[1] && w[3] <= q.x + q.w + 0.5 && near(q) < q.h + q.d + 12).sort((p, q) => near(p) - near(q))[0];
+    if (v == null || !cell) return null;
+    const [pw, ph] = pageSize(img), kk = img.naturalWidth / pw, words = pdfImgWords(img), own = words.filter((x) => inBox(x, { ...cell, h: cell.h + 4, d: cell.d + 4 })).sort((p, q) => p[4] - q[4] || p[1] - q[1]);
+    const bases = [...new Set(own.map((x) => Math.round(x[4] * 2) / 2))], f = pdfFontOf(img, w), ctx = pdfEchoCtx ??= document.createElement('canvas').getContext('2d');
+    ctx.font = `${f.size}px ${f.family}`;
+    const width = (t) => pdfTextWidth(ctx, f, t, f.size), sp = width(' ') || f.size / 3, skip = bases.length > 1 ? (bases.at(-1) - bases[0]) / (bases.length - 1) : f.size * 1.2;
+    // the cell's words, the typed one as its words now, in lines of the cell's width: TeX's total fit (PE.fit), else (no
+    // line within \tolerance, TeX's last pass) as many words a line as fit with spaces shrunk by a third (Computer Modern's)
+    const typed = now.split(/\s+/).filter(Boolean), last = now.lastIndexOf(typed.at(-1) ?? '');
+    const toks = own.flatMap((x) => x[1] === w[1] && x[4] === w[4] ? typed.map((t, i) => ({ t, n: width(t), caret: i === typed.length - 1 })) : [{ w: x, n: x[3] - x[1] }]);
+    // the width as written (`p{2cm}`; SyncTeX's box of a cell may hold the padding), else the box's (`X`)
+    const len = T.t.cols[k]?.width && self.satexLayers.length(T.t.cols[k].width), cw = len ? len.pt * 72 / 72.27 : cell.w;
+    const fit = PE.fit(toks.map((q, i) => ({ gap: i ? sp : 0, n: q.n })), cw, cw), lines = [[]];
+    let used = 0;
+    if (fit) toks.forEach((q, i) => { if (i && fit.breaks.includes(i)) lines.push([]); lines.at(-1).push(q); });
+    else for (const q of toks) { if (lines.at(-1).length && used + sp + q.n - lines.at(-1).length * sp / 3 > cw + 0.01) { lines.push([]); used = 0; } used += (lines.at(-1).length ? sp : 0) + q.n; lines.at(-1).push(q); }
+    const dy = (lines.length - bases.length) * skip, box = T.box, pg = +img.parentElement.dataset.page, L = box.x - 1, R = box.x + box.w + 1;
+    // the cut: the palest pixel row under the cell's last line (no glyph, no rule: the vertical rules only)
+    let cut = Math.max(...own.map((x) => x[4])) + 1;
+    try {
+      const g2 = (pdfInkCanvas ??= document.createElement('canvas')).getContext('2d', { willReadFrequently: true }), W = Math.ceil((R - L) * kk), H = Math.ceil(6 * kk);
+      Object.assign(pdfInkCanvas, { width: W, height: H });
+      g2.drawImage(img, L * kk, cut * kk, W, H, 0, 0, W, H);
+      const d = g2.getImageData(0, 0, W, H).data, row = (y) => { let n = 0; for (let i = y * W * 4; i < (y + 1) * W * 4; i += 4) n += d[i] + d[i + 1] + d[i + 2]; return n; };
+      let best = 0;
+      for (let y = 1; y < H; y++) if (row(y) > row(best)) best = y;
+      cut += (best + 0.5) / kk;
+    } catch {} // a page that cannot be read: just under the last line
+    if (dy) {
+      pdfEchoPush(img, cut, dy);
+      // the table's rules and colours across the gap: its pixel row at the cut, stretched
+      const cv = Object.assign(document.createElement('canvas'), { width: Math.ceil((R - L) * kk), height: Math.max(1, Math.ceil(Math.abs(dy) * kk)), className: 'pdf-echo' });
+      if (dy > 0 && cut < box.y + box.d) { cv.getContext('2d').drawImage(img, L * kk, (cut - 0.25) * kk, (R - L) * kk, 0.5, 0, 0, cv.width, cv.height); cv.style.cssText = `left:${L / pw * 100}%;top:${cut / ph * 100}%;width:${(R - L) / pw * 100}%;height:${dy / ph * 100}%`; pdfUnder(img.parentElement, cv); }
+      // the row's other cells: down by the column's share
+      const lo = Math.min(...T.cols.map((c) => c.x)) - 20, hi = Math.max(...T.cols.map((c) => c.x + c.w)) + 20;
+      if (v) for (const x of words.filter((x) => x[0] === w[0] && !own.includes(x) && x[4] >= bases[0] - 1 && x[4] <= cut && x[1] >= lo && x[3] <= hi)) {
+        const n = [x[0], x[1], x[2] + v * dy, x[3], x[4] + v * dy, ''];
+        pdfEchoPaint({ img, w: null, row: [{ w: x }], x: x[1] - 0.5, f: { ...f, base: n[4] }, k: kk, out: [{ w: x, x: x[1], n: x[3] - x[1], ride: x[4] }], n });
+      }
+    }
+    pdfTableChips(img, box, (x) => x, dy);
+    let cx = cell.x, cy = 0;
+    lines.forEach((ln, i) => {
+      // justified as TeX sets a paragraph, all lines but the last
+      const base = bases[0] + i * skip, out = [], gap = sp + (i < lines.length - 1 && ln.length > 1 ? (cw - ln.reduce((m, q) => m + q.n, 0) - sp * (ln.length - 1)) / (ln.length - 1) : 0);
+      let x = cell.x;
+      for (const q of ln) { if (out.length) x += gap; out.push({ ...q, x }); if (q.caret) [cx, cy] = [x + width(q.t.slice(0, Math.max(0, into - last))), base - w[4]]; x += q.n; }
+      pdfEchoPaint({ img, w: null, row: i ? [] : own.map((u) => ({ w: u })), x: cell.x - 0.5, f: { ...f, base }, k: kk, out, n: [pg, cell.x, base - (w[4] - w[2]), cell.x + cell.w, base, ''] });
+    });
+    return [cx, cy];
+  }
   function pdfEcho(img, w, now, into, verb = false, shift = null, centered = false) {
     const [pw, ph] = pageSize(img), px = img.getBoundingClientRect().height / ph;
     // a TikZ node's text grows about the node's centre: its row is the node's words, never another node's beside it
     const node = tikzPlaced().find((q) => q.page === w[0] && q.l - 1 <= w[1] && w[3] <= q.r + 1 && q.t - 1 <= w[2] && w[4] <= q.d + 1);
-    const line = pdfImgWords(img).filter((x) => Math.abs(x[4] - w[4]) < 1 && (!node || node.l - 1 <= x[1] && x[3] <= node.r + 1)).sort((a, b) => a[1] - b[1]);
+    // a table's cell: its row is the cell's words, the table laid out again around it (pdfTableDraw)
+    const T = !node && !verb && pdfTableOf(img, w), shiftOf = (nw) => T && PE.tableShift(pdfImgWords(img), T.box, T.cols, T.aligns, w, nw, centered);
+    const T0 = shiftOf(0);
+    if (T && !T0) { const x = pdfCellWrap(img, T, w, now, into); if (x != null) return x; }
+    const line = (T0 ? T0.own : pdfImgWords(img).filter((x) => Math.abs(x[4] - w[4]) < 1 && (!node || node.l - 1 <= x[1] && x[3] <= node.r + 1))).sort((a, b) => a[1] - b[1]);
     const row = line.filter((x) => x[1] >= w[1] - 0.5);
     const k = row.findIndex((x) => x[1] === w[1] && x[5] === w[5]);
     if (k < 0) return null;
@@ -11577,15 +11705,19 @@
     const all = line, before = all.filter((x) => x[1] < w[1] - 0.5);
     // (the source says so where the build's line boxes are not known: a row clear of the page's left margin)
     const margin = () => Math.min(...pdfImgWords(img).map((x) => x[1]));
-    const c = node || pdfCentered(pdfLineBox((img.__build ?? pdf)?.boxes, all), all) || centered && all[0][1] - margin() > 4 ? (laid.at(-1)[1] - row.at(-1)[3]) / 2 : 0;
-    const set = (c ? [...before.map((x) => [x[1], x[3], x[5]]), ...laid] : laid.slice(k)).map(([a, b, t]) => [a - c, b - c, t]);
-    const [l, r] = [Math.min(c ? all[0][1] : w[1], set[0][0]), Math.max(row.at(-1)[3], set.at(-1)[1])];
+    // a cell moves to where its column now aligns it: the whole cell redrawn
+    const S = T0 && shiftOf(laid.at(-1)[1] - (before[0]?.[1] ?? laid[0][0])), x0 = before[0]?.[1] ?? w[1];
+    const c = S ? x0 - S.left : node || pdfCentered(pdfLineBox((img.__build ?? pdf)?.boxes, all), all) || centered && all[0][1] - margin() > 4 ? (laid.at(-1)[1] - row.at(-1)[3]) / 2 : 0;
+    const whole = !!(c || S), set = (whole ? [...before.map((x) => [x[1], x[3], x[5]]), ...laid] : laid.slice(k)).map(([a, b, t]) => [a - c, b - c, t]);
+    // (a cell's old place is the table's paper already: its patch covers the cell as now laid)
+    const [l, r] = S ? [set[0][0], set.at(-1)[1]] : [Math.min(c ? all[0][1] : w[1], set[0][0]), Math.max(row.at(-1)[3], set.at(-1)[1])];
+    if (S) pdfTableDraw(img, T.box, S);
     // a word the change only moves is the page's own pixels, moved (an inline formula stays math, never `x42` in the
     // text font); the word typed into is drawn as text
-    const src = (j) => dots > 0 ? null : c ? (j < before.length ? before[j] : row[j - before.length]) : row[k + j], hh = w[4] - w[2];
+    const src = (j) => dots > 0 ? null : whole ? (j < before.length ? before[j] : row[j - before.length]) : row[k + j], hh = w[4] - w[2];
     const pix = (v, a, b) => `;background:url('${img.currentSrc}') ${v[1] / Math.max(0.1, pw - (b - a)) * 100}% ${w[2] / Math.max(0.1, ph - hh) * 100}% / ${pw / (b - a) * 100}% ${ph / hh * 100}% no-repeat`;
     // what moved and what was typed, for the overlays (pdfRelay)
-    const pg = +img.parentElement.dataset.page, ti = c ? before.length + k : 0;
+    const pg = +img.parentElement.dataset.page, ti = whole ? before.length + k : 0;
     set.forEach(([a, b, t], j) => { const v = src(j); if (j !== ti && v && v !== row[k]) pdfMoved.push({ from: v, page: pg, dx: a - v[1], dy: 0 }); });
     if (set[ti]) pdfPainted.push({ page: pg, x0: set[ti][0], t: w[2], d: w[4], end: set[ti][1] });
     const words = set.map(([a, b, t], j) => { const v = src(j), moved = v && v !== row[k] && v[5] === t && Math.abs(v[3] - v[1] - (b - a)) < 0.01;
@@ -11677,7 +11809,7 @@
     Object.assign(c, { at: a + step, v: version, fresh: PE.grow(c.fresh, a, b, body.length) });
     pdfCaretDraw();
     // the pages follow the text; a command's name half typed (`\em`) is no build: it waits for the name's end
-    if (c.view === 'pdf' && (a !== b || body) && pdfSent !== editor.text() && !PE.naming(editor.text(), c.at, c.fresh)) pdfRebuild(pdfLive() && !pdfAuto.on);
+    if (c.view === 'pdf' && (a !== b || body) && pdfSent !== editor.text() && !PE.naming(editor.text(), c.at, c.fresh)) pdfRebuild(pdfLive());
   };
   /** The inline math delimiters typing writes: `playground.math_inline` (`\(`, `$`, `auto`). */
   const pdfInline = () => configSet['playground.math_inline'] ?? '\\(';
@@ -11694,7 +11826,7 @@
     if (c && c === pdfCaret && c.file === state.file && c.target === uri()) {
       Object.assign(c, { at: editor.cursor()[1], anchor: null, fresh: null, v: version });
       pdfCaretDraw();
-      if (c.view === 'pdf') pdfRebuild(pdfLive() && !pdfAuto.on);
+      if (c.view === 'pdf') pdfRebuild(pdfLive());
     }
   });
   /** A key at the caret: Backspace and Delete take a character (an escape, an empty pair whole), arrows move over plain text, Enter breaks the line, Escape ends. */
@@ -13154,11 +13286,25 @@
   /** The packages a run lacked: the files it could not resolve, those probed `absent`, those the texts name, and those still loading. */
   const lackedBy = (unresolved, absent, saw) => self.satexViews.loads.lacked([...new Set([...missing(unresolved, true), ...absent, ...wanted_(named(projectTexts()), state.kernel, true), ...inFlight])],
     fetchedPackages, [inFlight, background], landedAt, saw);
+  /** Findings of the open file at a command name the caret is still typing (`\\su` on the way to `\\sum`): held until
+   * the name ends or 1.5 s pass, then shown as they are (a run of the finished name replaces them before). */
+  let namingP = null, namingSince = 0;
+  function namingHold(p) {
+    const text = editor.text(), at = pdfCaret?.at ?? editor.cursor?.()[1], from = at == null ? -1 : at - (/\\[A-Za-z@]*$/.exec(text.slice(0, at))?.[0].length ?? 0);
+    const hit = p.uri === uri() && from >= 0 && nameAt(text, at, pdfCaret?.fresh) && p.diagnostics.some((d) => offsetIn(text, d.range.start) <= at && offsetIn(text, d.range.end) >= from);
+    if (!hit || namingSince && performance.now() - namingSince > 1500) { namingP = null; namingSince = 0; return false; }
+    namingSince ||= performance.now();
+    namingP = p;
+    setTimeout(() => { if (namingP === p && !outdated(p)) publish(p); }, 250);
+    return true;
+  }
   async function publish(p, ended = false, final = false) {
+    namingP = null;
     // of a text the server no longer has: its analysis of the newer one follows, else is asked for
     if (outdated(p)) { if (p.uri === uri() && timer === null) analyze(); return; }
     if (running > 0 && p.uri === uri() && !ended) { heldFindings = p; return; }
     heldFindings = null;
+    if (!final && namingHold(p)) return;
     // The rule's number is the LSP code: the page keys rules by name.
     for (const d of p.diagnostics) [d.number, d.code] = [d.code, d.data?.rule ?? d.code];
     // A run that lacked a file a bundle holds is never shown: a package said missing, one the project names
@@ -13374,7 +13520,7 @@
   self.satexPdfBoxes = () => [...(pdf?.boxes ?? [])];
   /** The PDF caret's offset in the text as typed so far, its page: what the typing tests measure. Read-only. */
   /** The text area pdfBlock reads on page `p` of the shown build (bp), and the last push of the echo (pdfEchoPush). */
-  self.satexPdfBlock = (p) => ({ block: pdfBlock(p), area: pdfAreaOf.area, pushed: pdfPushed });
+  self.satexPdfBlock = (p) => ({ block: pdfBlock(p), area: pdfAreaOf.area, pushed: pdfPushed, moved: pdfMoved.map((m) => ({ ...m })) });
   /** The run's letter changes of the open file (query `letters`): what the catcode tests read. Read-only. */
   self.satexLetters = () => letterTables.has(state.file) ? letterTables.get(state.file).map((c) => ({ ...c })) : null;
   /** The editor's caret put at offset `at`, the editor focused: where the completion tests type. */

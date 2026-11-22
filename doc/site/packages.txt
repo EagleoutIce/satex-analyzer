@@ -9,7 +9,7 @@ tikz listings minted scrartcl.cls scrreprt.cls scrbook.cls scrlayer-scrpage
 amsmath amssymb amsthm graphicx hyperref geometry xcolor babel fontenc inputenc
 booktabs float caption subcaption natbib multirow siunitx fancyhdr
 glossaries makeidx imakeidx cleveref enumitem biblatex
-lipsum blindtext
+lipsum blindtext tikzpingus
 
 # slides
 beamer.cls
@@ -23,7 +23,7 @@ setspace todonotes algorithm2e algpseudocode wrapfig titlesec parskip
 etoolbox pgfplots lmodern fontspec unicode-math polyglossia acronym pdflscape
 
 # asked for by name
-tikzducks tikzpingus microtype forest accsupp tcolorbox enumitem cleveref mwe xcolor-material
+tikzducks microtype forest accsupp tcolorbox enumitem cleveref mwe xcolor-material
 tikz-cd mhchem chemfig physics braket cancel ulem textcomp amsfonts
 threeparttable dcolumn colortbl hhline nicematrix tocloft appendix
 framed mdframed upquote footmisc placeins afterpage qrcode

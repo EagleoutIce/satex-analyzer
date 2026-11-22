@@ -621,3 +621,47 @@ test('centeredAt: center, \\centering in its group or environment, captions', ()
   assert.equal(at('% \\begin{center}\nX', 'X'), false, 'a comment counts for nothing');
   assert.equal(at('\\centering\\raggedright X', 'X'), false);
 });
+// Typing in a table cell widens its column for every row (tex.web § 801): `{lcr}` rows `ab & mid & z`, `abc & m & zz`,
+// `a & middle & zzz`; `ab` typed to 40 bp makes column 0 16 bp wider than its widest cell `abc` (24 bp). The columns
+// after it move by that, a `c` column's cells by half, an `r` one's by all; a centered table moves back by half; a
+// shorter cell than the column's widest leaves it. Pins the echo moving only the typed row (was: other rows stayed).
+test("Table laid out again around a typed cell (pdfedit.ts tableShift)", async () => {
+  const E = self.satexPdfEdit;
+  const box = { page: 1, file: 'a.tex', line: 9, kind: '(', x: 100, y: 200, w: 160, h: 50, d: 2 };
+  const w = (x, r, y, t) => [1, x, y - 7, r, y, t];
+  const words = [w(106, 122, 160, 'ab'), w(150, 170, 160, 'mid'), w(230, 236, 160, 'z'), w(106, 130, 175, 'abc'), w(156, 164, 175, 'm'), w(226, 236, 175, 'zz'),
+    w(106, 112, 190, 'a'), w(144, 176, 190, 'middle'), w(222, 236, 190, 'zzz')];
+  const cols = [{ k: 0, x: 106, w: 24 }, { k: 1, x: 144, w: 32 }, { k: 2, x: 222, w: 14 }].map((c) => ({ ...c, page: 1, t: 150, d: 202, n: 0 }));
+  const S = E.tableShift(words, box, cols, 'lcr', words[0], 40, null);
+  assert.equal(S.k, 0); assert.equal(S.delta, 16, 'the column as wide as the typed cell now');
+  assert.deepEqual(S.own, [words[0]]);
+  assert.deepEqual([3, 6].map((i) => S.dx.get(words[i])), [0, 0], 'the column is `l`: its other cells stay');
+  assert.deepEqual([1, 4, 7, 2, 5, 8].map((i) => S.dx.get(words[i])), [16, 16, 16, 16, 16, 16], 'the columns after move by the growth');
+  assert.equal(S.left, 106);
+  const C = E.tableShift(words, box, cols, 'lcr', words[4], 44, null);
+  assert.deepEqual([C.delta, C.dx.get(words[1]), C.dx.get(words[7]), C.dx.get(words[2]), C.left], [12, 6, 6, 12, 144 + (44 - 44) / 2], '`c`: half the growth');
+  const R = E.tableShift(words, box, cols, 'lcr', words[2], 20, null);
+  assert.deepEqual([R.delta, R.dx.get(words[5]), R.left], [6, 6, 222], '`r`: all of it, the cell right-aligned');
+  const M = E.tableShift(words, box, cols, 'lcr', words[0], 40, true);
+  assert.deepEqual([M.s, M.dx.get(words[3]), M.dx.get(words[2])], [-8, -8, 8], 'a centered table: half back');
+  assert.equal(E.tableShift(words, box, cols, 'lcr', words[0], 18, null).delta, 0, 'shorter than `abc`: the column keeps its width');
+  assert.equal(E.tableShift(words, box, cols, 'pcr', words[0], 40, null), null, 'a `p` column keeps its width');
+});
+// A `\multicolumn` span (a cell's words over two columns) counts for no column (tex.web § 801): a column it covers growing
+// by 16 bp moves a centered span by 8; a span typed wider than its columns widens its last one by what it needs past the
+// first one's left. Pins the echo cutting a span at the column's edges (was: its halves drawn apart).
+test("Spans in a table laid out again (pdfedit.ts tableShift)", async () => {
+  const E = self.satexPdfEdit;
+  const box = { page: 1, file: 'a.tex', line: 9, kind: '(', x: 100, y: 200, w: 160, h: 65, d: 2 };
+  const w = (x, r, y, t) => [1, x, y - 7, r, y, t];
+  const head = w(110, 170, 145, 'Heading');
+  const words = [head, w(230, 236, 145, 'q'), w(106, 122, 160, 'ab'), w(150, 170, 160, 'mid'), w(230, 236, 160, 'z'), w(106, 130, 175, 'abc'), w(156, 164, 175, 'm'), w(226, 236, 175, 'zz'),
+    w(106, 112, 190, 'a'), w(144, 176, 190, 'middle'), w(222, 236, 190, 'zzz')];
+  const cols = [{ k: 0, x: 106, w: 24 }, { k: 1, x: 144, w: 32 }, { k: 2, x: 222, w: 14 }].map((c) => ({ ...c, page: 1, t: 135, d: 202, n: 0 }));
+  const S = E.tableShift(words, box, cols, 'lcr', words[2], 40, false);
+  assert.deepEqual([S.delta, S.dx.get(head), S.dx.get(words[1])], [16, 8, 16], 'a centered span over the grown column: half');
+  assert.ok(S.col.includes(head), 'a span is drawn again whole');
+  const H = E.tableShift(words, box, cols, 'lcr', head, 100, false);
+  assert.deepEqual([H.k, H.delta, H.left, H.dx.get(words[4]), H.dx.get(words[9])], [1, 30, 106, 30, 15], 'a typed span widens its last column');
+  assert.equal(E.tableShift(words, box, cols, 'lcr', head, 50, false).delta, 0, 'a span within its columns changes none');
+});

@@ -9,6 +9,14 @@ import { ctx, setText } from '../engine.mjs';
 const J = JSON.stringify;
 const HEAD = '\\documentclass{article}\n\\newcommand{\\greet}[1]{Hello, #1!}\n\\begin{document}\n\\greet{world}\n\nWhat do you thing\n\nabout\n';
 const T0 = HEAD + '\\end{document}\n';
+// a centered table of `l`, `c` and `r` columns with rules: typing widens a column for all its rows
+// the column chips shown, left and right edges in px
+const CHIPS = `[...document.querySelectorAll('#play-pdf .pdf-col')].filter((e) => getComputedStyle(e).visibility !== 'hidden').map((e) => { const r = e.getBoundingClientRect(); return [r.left, r.right]; }).sort((a, b) => a[0] - b[0])`;
+const TABLE_DOC = '\\documentclass{article}\n\\begin{document}\nBefore the table.\n\\begin{center}\n\\begin{tabular}{|l|c|r|}\n\\hline\napple & mid & zed \\\\\napricot & m & zz \\\\\n\\hline\nap & middle & zzz \\\\\n\\hline\n\\end{tabular}\n\\end{center}\nAfter it.\n\\end{document}\n';
+// a centered table whose first row is a `\\multicolumn{2}{c}` span over the `l` and `c` columns
+const SPAN_DOC = TABLE_DOC.replace('\\hline\napple', '\\hline\n\\multicolumn{2}{|c|}{Heading} & top \\\\\n\\hline\napple');
+// a table with a paragraph column (`p`, `m` with array, `X` in a tabularx of 6cm) of 2cm between an `l` and an `r` one
+const PAR_DOC = (c) => `\\documentclass{article}\n\\usepackage{array,tabularx}\n\\begin{document}\nBefore the table.\n\n${c === 'X' ? '\\begin{tabularx}{6cm}{|l|X|r|}' : `\\begin{tabular}{|l|${c}{2cm}|r|}`}\n\\hline\nleft & one two & right \\\\\n\\hline\nbelow & cell & here \\\\\n\\hline\n\\end{${c === 'X' ? 'tabularx' : 'tabular'}}\n\nAfter it.\n\\end{document}\n`;
 let fails = [], log = () => {}, first = null;
 /** The runner's page for the case's first `open`, a fresh one for each later one. */
 const fresh = async () => {
@@ -156,6 +164,77 @@ async function paraPicture(name, ms) {
   { const a = await wordBox(p, 'With'); if (a) await p.shot(name + '.png', { x: a[0] - 20, y: a[1] - 30, width: 360, height: 220 }, 2); }
   log(name, 'builds seen', builds.size, bad.length ? J(bad.slice(0, 3)) : 'no overlap', J((await p.eval('satexHealth().text')).split('\n').slice(11, 14)));
   if (bad.length) fails.push(`${name}: a typed row over the unpushed picture ${bad.length}x: ${J(bad[0])}`);
+  await p.close();
+}
+
+/** A table's other rows follow a typed cell: the end of `word` clicked, `keys` typed fast. The echo
+ * moves every other word of the table (satexPdfBlock's `moved`) where Compile's build then sets it, within 2.5 bp, and
+ * the caret stays put when that build lands. Red before 2026-11-22: only the typed row moved. */
+async function tableRows(name, word, keys, doc = TABLE_DOC, skip = []) {
+  const p = await open(doc, 'play-pdf');
+  const build = async () => { await p.eval(`(self.__e2eG = document.querySelector('#play-pdf .pdf-page img')?.__build ?? null, document.getElementById('pdf-compile').click())`); return p.until(`(() => { const i = document.querySelector('#play-pdf .pdf-page img'); return i?.__build && i.__build !== self.__e2eG && i.naturalWidth > 100 && !document.querySelector('#play-pdf.pdf-running'); })()`, 90000); };
+  if (!await build()) { fails.push(name + ': no build'); return p.close(); }
+  await sleep(800);
+  if (await p.eval(`document.getElementById('pdf-type').getAttribute('aria-pressed')`) !== 'true') await p.eval(`document.getElementById('pdf-type').click()`);
+  await sleep(400);
+  // the table's words: between "table." and "After"
+  const table = (ws) => { const a = ws.find((w) => w[5] === 'table.'), b = ws.find((w) => w[5] === 'After'); return ws.filter((w) => a && b && w[0] === a[0] && w[4] > a[4] + 2 && w[4] < b[4] - 2); };
+  const before = table(await p.eval(`satexPdfWords()`));
+  const w = await wordBox(p, word);
+  if (!w || before.length < 6) { fails.push(`${name}: table words ${J(before.map((v) => v[5]))}`); return p.close(); }
+  await p.mouse(w[2] - 0.5, (w[1] + w[3]) / 2);
+  await p.until(`satexPdfCaret()`, 3000);
+  await sleep(300);
+  // fast keys: the echo is read before a build of them lands (Type mode builds whatever the automatic compile says)
+  await type(p, keys, 20);
+  const moved = await p.eval(`satexPdfBlock(1).moved ?? []`), pushed = await p.eval(`satexPdfBlock(1).pushed`), chips0 = await p.eval(CHIPS), x0 = await p.eval(`document.querySelector('#play-pdf .pdf-caret')?.getBoundingClientRect().left ?? null`);
+  const early = await p.eval(`!document.querySelector('#play-pdf .pdf-page img').__build?.text?.includes(${J(keys)})`);
+  await p.shot(name + '-echo.png', { x: w[0] - 160, y: w[1] - 40, width: 420, height: 110 }, 3);
+  if (!early) fails.push(`${name}: a build of the keys landed before the echo was read`);
+  if (!await p.until(`(() => { const i = document.querySelector('#play-pdf .pdf-page img'); return i?.__build?.text === satexHealth().text && !document.querySelector('#play-pdf.pdf-running'); })()`, 30000) && !await build()) { fails.push(name + ': the typed text was never built'); return p.close(); }
+  await sleep(1500);
+  await p.shot(name + '-landed.png', { x: w[0] - 160, y: w[1] - 40, width: 420, height: 110 }, 3);
+  const after = table(await p.eval(`satexPdfWords()`)), chips1 = await p.eval(CHIPS), x1 = await p.eval(`document.querySelector('#play-pdf .pdf-caret')?.getBoundingClientRect().left ?? null`);
+  const same = (a, b) => a.every((v, i) => v === b[i]), off = [];
+  for (const v of before) {
+    if (v[5] === word || skip.includes(v[5])) continue;
+    // where the echo drew it: moved (dx, dy), else pushed down with what is below the push's top
+    const m = moved.find((m) => same(m.from, v)), want = v[1] + (m?.dx ?? 0), wantY = v[4] + (m ? m.dy : pushed && v[4] > pushed.top ? pushed.dy : 0);
+    const got = after.filter((u) => u[5] === v[5]).sort((a, b) => Math.hypot(a[1] - want, a[4] - wantY) - Math.hypot(b[1] - want, b[4] - wantY))[0];
+    if (!got) { off.push(`${v[5]} gone`); continue; }
+    if (Math.abs(got[1] - want) > 2.5 || Math.abs(got[4] - wantY) > 2.5) off.push(`${v[5]} echoed at ${want.toFixed(1)},${wantY.toFixed(1)}, built at ${got[1].toFixed(1)},${got[4].toFixed(1)} bp`);
+  }
+  log(name, J({ words: before.length, moved: moved.length, off, caret: [x0, x1] }));
+  if (off.length) fails.push(`${name}: the table's other words jump when the build lands: ${off.join('; ')}`);
+  // the column chips (the pointer rests on the table) stand where the build then puts them
+  const chipOff = chips0.length !== chips1.length ? [`${chips0.length} chips, then ${chips1.length}`] : chips0.flatMap((c, i) => c.some((v, j) => Math.abs(v - chips1[i][j]) > 4) ? [`${c.map(Math.round)} -> ${chips1[i].map(Math.round)}`] : []);
+  if (chipOff.length) fails.push(`${name}: the column chips jump when the build lands: ${chipOff.join('; ')}`);
+  if (x0 == null || x1 == null || Math.abs(x1 - x0) > 4) fails.push(`${name}: the caret moved ${x0?.toFixed(1)} -> ${x1?.toFixed(1)} px when the build landed`);
+  await p.close();
+}
+
+/** A command name typed in the PDF (`\su` on the way to `\sum`): no "1 error" while the name is unfinished. Samples the
+ * status lines every 50 ms through a 1 s pause after `\su`. Red before 2026-11-22: the run of `\su` showed its
+ * undefined-name finding until the name was done. */
+async function namingQuiet(name) {
+  const p = await open(T0, 'play-pdf');
+  await p.eval(`document.getElementById('pdf-compile').click()`);
+  if (!await compiled(p)) { fails.push(name + ': no build'); return p.close(); }
+  await sleep(1500);
+  if (await p.eval(`document.getElementById('pdf-type').getAttribute('aria-pressed')`) !== 'true') await p.eval(`document.getElementById('pdf-type').click()`);
+  await sleep(400);
+  const w = await wordBox(p, 'about');
+  await p.mouse(w[2] - 0.5, (w[1] + w[3]) / 2);
+  await p.until(`satexPdfCaret()`, 3000);
+  await sleep(300);
+  await type(p, ' $\\su', 80);
+  const seen = [];
+  for (let t = 0; t < 20; t++) { seen.push(await p.eval(`(document.getElementById('play-status')?.textContent ?? '') + ' | ' + (document.getElementById('pdf-status')?.textContent ?? '')`)); await sleep(50); }
+  log('built', J(await p.eval(`(() => { const t = document.querySelector('#play-pdf .pdf-page img')?.__build?.text ?? ''; const i = t.indexOf('about'); return t.slice(i, i + 20); })()`)));
+  await type(p, 'm x$', 80);
+  const bad = seen.filter((t) => /\b\d+ errors?\b/.test(t));
+  log(name, J({ samples: seen.length, bad: bad.slice(0, 2) }));
+  if (bad.length) fails.push(`${name}: an error shown while \\su was typed (${bad.length} of ${seen.length} samples): ${J(bad[0])}`);
   await p.close();
 }
 
@@ -349,6 +428,18 @@ export const CASES = {
   // caret2 (user 2026-11-21): typing into teletype text echoes in its fixed-width face
   'pdf-tt-echo': () => ttEcho('pdf-tt-echo'),
   'pdf-math-caret-below': () => mathCaret('pdf-math-caret-below', 60, true),
+  // a cell typed wider than its column's widest: the column grows in every row, the columns after it move (`l`, `c`)
+  'pdf-naming-quiet': () => namingQuiet('pdf-naming-quiet'),
+  'pdf-table-rows-l': () => tableRows('pdf-table-rows-l', 'apple', 'sauce'),
+  'pdf-table-rows-c': () => tableRows('pdf-table-rows-c', 'm', 'agnificent'),
+  // a `\multicolumn` span over the grown column moves by its share; a span typed wider widens its last column
+  // a paragraph cell typed past its width: its lines wrap, the rows below and the rules move down; `m`: the row's other
+  // cells by half; an `X` column of tabularx alike
+  'pdf-table-par-p': () => tableRows('pdf-table-par-p', 'two', ' more words to wrap', PAR_DOC('p'), ['one', 'more', 'words', 'to', 'wrap']),
+  'pdf-table-par-m': () => tableRows('pdf-table-par-m', 'two', ' more words to wrap', PAR_DOC('m'), ['one', 'more', 'words', 'to', 'wrap']),
+  'pdf-table-par-x': () => tableRows('pdf-table-par-x', 'two', ' more words to wrap', PAR_DOC('X'), ['one', 'more', 'words', 'to', 'wrap']),
+  'pdf-table-span-under': () => tableRows('pdf-table-span-under', 'apple', 'sauce', SPAN_DOC),
+  'pdf-table-span-typed': () => tableRows('pdf-table-span-typed', 'Heading', 'sverylong', SPAN_DOC),
   'pdf-math-caret-below-slow': () => mathCaret('pdf-math-caret-below-slow', 400, true),
   // the editor: type the paragraph in the source while the PDF shows (Type on, caret in the PDF follows the editor?)
   async 'pdf-editor-para'() {
