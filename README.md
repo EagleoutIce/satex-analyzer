@@ -31,6 +31,15 @@ cargo build --release
 ./target/release/satex --help
 ```
 
+With Docker, `ghcr.io/eagleoutice/satex` holds `satex` and TeX Live (LaTeX with the recommended packages and fonts, latexmk). The interpreted kernel is built into the image, about 420 MB in all. Mount the project as the working directory:
+
+```sh
+docker run --rm -v "$PWD:/work" ghcr.io/eagleoutice/satex lint -f main.tex
+docker run --rm -p 2087:2087 -v "$PWD:/work" ghcr.io/eagleoutice/satex lsp --host 0.0.0.0 --port 2087
+```
+
+The second line serves the language server over TCP. `docker build -t satex .` builds the image from the repository. `--build-arg TEX_PACKAGES=texlive-full` installs every TeX Live package, at about 5 GB more.
+
 Shell completion: after installing, run `satex completions install` once. It adds the hook to the startup file of your shell (bash, zsh or fish). `satex completions <shell>` prints the script for bash, zsh, fish, elvish or powershell. Query names and `--set` keys complete from the program itself. See the [command line page](doc/wiki/cli.md).
 
 ```sh
