@@ -522,7 +522,7 @@ fn a_quantity_set_on_only_some_paths_is_not_reported() {
 
 fix_cases! {
     hand_set_quantity_becomes_a_siunitx_call("hand-set-quantity", "\\documentclass{article}\n\\begin{document}\nA delay of 2ms and growth of 5\\%.\n\\end{document}\n", "hand-set-quantity", true, "\\documentclass{article}\n\\usepackage{siunitx}\n\\begin{document}\nA delay of \\qty{2}{\\milli\\second} and growth of \\qty{5}{\\percent}.\n\\end{document}\n");
-    hand_set_quantity_rewrites_a_macro_that_holds_the_unit("hand-set-quantity-macro", "\\documentclass{article}\n\\newcommand{\\ms}{\\,\\mathrm{ms}}\n\\begin{document}\nA delay of \\(3\\ms\\).\n\\end{document}\n", "hand-set-quantity", true, "\\documentclass{article}\n\\newcommand{\\ms}{\\,\\mathrm{ms}}\n\\usepackage{siunitx}\n\\begin{document}\nA delay of \\(\\qty{3}{\\milli\\second}\\).\n\\end{document}\n");
+    hand_set_quantity_rewrites_a_macro_that_holds_the_unit("hand-set-quantity-macro", "\\documentclass{article}\n\\newcommand{\\ms}{\\,\\mathrm{ms}}\n\\begin{document}\nA delay of \\(3\\ms\\).\n\\end{document}\n", "hand-set-quantity", true, "\\documentclass{article}\n\\usepackage{siunitx}\n\\newcommand{\\ms}{\\,\\mathrm{ms}}\n\\begin{document}\nA delay of \\(\\qty{3}{\\milli\\second}\\).\n\\end{document}\n");
 }
 
 /// Documents exercising the typography lints that could plausibly disagree

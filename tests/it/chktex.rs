@@ -901,9 +901,10 @@ fn a_plain_document_is_told_to_load_cleveref_for_a_named_reference() {
     let found = cleveref_records("cleveref-plain", body);
     assert_eq!(found.len(), 1, "{found:?}");
     assert!(found[0]["fix"].as_str().unwrap().contains("load cleveref"), "{found:?}");
-    // No `\usepackage` to follow: the load goes before `\begin{document}`.
-    assert_eq!(replacements(&found[0]), ["\\usepackage{cleveref}\n", r"\Cref{sec:a}"], "{found:?}");
-    assert_eq!(found[0]["edits"][0]["start"]["line"], 2, "{found:?}");
+    // No `\usepackage` to follow: the load goes at the end of the `\documentclass` line,
+    // before anything the document defines.
+    assert_eq!(replacements(&found[0]), ["\n\\usepackage{cleveref}", r"\Cref{sec:a}"], "{found:?}");
+    assert_eq!(found[0]["edits"][0]["start"]["line"], 1, "{found:?}");
 }
 
 #[test]

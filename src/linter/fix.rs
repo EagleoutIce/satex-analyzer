@@ -471,8 +471,10 @@ impl<'a> Edits<'a> {
     }
 
     /// Load `package` in the preamble: on a line after the document's last
-    /// `\usepackage` (after hyperref, which asks to come late), else before
-    /// `\begin{document}`. No edit where it is loaded already.
+    /// `\usepackage` (after hyperref, which asks to come late), else after its
+    /// `\documentclass` (before the document's own definitions, which a package
+    /// loaded after them may clash with), else before `\begin{document}`. No edit
+    /// where it is loaded already.
     pub fn ensure_package(&self, package: &str) -> Option<Vec<Edit>> {
         if crate::linter::shared::loaded(self.analysis, package) {
             return Some(Vec::new());
@@ -481,13 +483,17 @@ impl<'a> Edits<'a> {
         let mut loads =
             self.analysis.facts.loads.iter().rev().filter(|l| l.kind == LoadKind::Package && l.by.is_none());
         let last = loads.find_map(|l| self.insert_after_load(l, &line));
-        last.or_else(|| self.insert_before(crate::linter::shared::document_start(self.analysis)?, &line))
+        let class = || {
+            let mut classes = self.analysis.facts.loads.iter().filter(|l| l.kind == LoadKind::Class && l.by.is_none());
+            classes.find_map(|l| self.insert_after_load(l, &line))
+        };
+        last.or_else(class).or_else(|| self.insert_before(crate::linter::shared::document_start(self.analysis)?, &line))
     }
 
-    /// A line of its own after the `\usepackage` line that made `load`.
+    /// A line of its own after the `\usepackage` or `\documentclass` line that made `load`.
     pub fn insert_after_load(&self, load: &Load, line: &str) -> Option<Vec<Edit>> {
         let (path, text, mut scan, cs) = self.command(load.span)?;
-        scan.name(&cs).filter(|n| *n == "usepackage")?;
+        scan.name(&cs).filter(|n| matches!(*n, "usepackage" | "documentclass"))?;
         scan.optional();
         let end = scan.group()?.end;
         let at = Pos::new(end.line, text.columns(end.line).len() as u32 + 1);
