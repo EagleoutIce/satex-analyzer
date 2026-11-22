@@ -436,6 +436,10 @@ pub struct Analysis {
     /// When the run's time budget began (`limits.seconds`).
     #[serde(skip)]
     pub started: Option<std::time::Instant>,
+    /// The time this run spent building package caches, one-time work: no part of
+    /// `limits.seconds`, which bounds the analysis (a cold start caches every package).
+    #[serde(skip)]
+    pub caching: std::time::Duration,
     /// Final sizes of the interpreter's working sets.
     pub journal_size: usize,
     pub held_tokens_left: usize,
@@ -2159,6 +2163,9 @@ pub struct Machine<'a> {
     /// Changes outside the slots no kept effect replays: boxes' text,
     /// outputs, streams, reads of the clock, the generator, the input line.
     pub(crate) side_effects: u64,
+    /// Unknown values given a name of their own so far ([`Machine::digits_in`], a rest of
+    /// unknown text): a kept effect that named one stands for that value alone.
+    pub(crate) mints: u64,
     /// Lines written to output files (not the terminal or log): a call that
     /// wrote one is no summary of its name writes.
     pub(crate) file_writes: u64,
@@ -3109,6 +3116,7 @@ impl<'a> Machine<'a> {
                 lines: 0,
                 exhausted: false,
                 started: None,
+                caching: std::time::Duration::ZERO,
                 journal_size: 0,
                 held_tokens_left: 0,
                 loop_heads: 0,
@@ -3265,6 +3273,7 @@ impl<'a> Machine<'a> {
             memo_uses: Vec::new(),
             memo_uses_base: 0,
             side_effects: 0,
+            mints: 0,
             file_writes: 0,
             call_recs: Rc::default(),
             learn_forks: 0,
@@ -3547,7 +3556,11 @@ impl<'a> Machine<'a> {
         // while the time left would let one more as long as the last finish.
         // The clock starts once the first run has its kernel in place.
         checkpoints.build_started = None;
-        let elapsed = |c: &Checkpoints| c.build_started.map_or(std::time::Duration::ZERO, |s| s.elapsed());
+        // Package caching is one-time work, no part of the budget ([`Analysis::caching`]).
+        let mut caching = std::time::Duration::ZERO;
+        let elapsed = |c: &Checkpoints, caching: std::time::Duration| {
+            c.build_started.map_or(std::time::Duration::ZERO, |s| s.elapsed()).saturating_sub(caching)
+        };
         let budget = std::time::Duration::from_secs(cfg.limits.seconds);
         // Later runs replay the caches the first stored: the build reports the first.
         let mut caches = None;
@@ -3568,7 +3581,7 @@ impl<'a> Machine<'a> {
             complete = earlier.map(|e| *e);
         }
         let mut analysis = loop {
-            let before = elapsed(checkpoints);
+            let before = elapsed(checkpoints, caching);
             crate::util::progress::set_run(run, runs);
             let mut analysis = checkpoints.analyze(source, path);
             analysis.build_runs = run;
@@ -3617,7 +3630,8 @@ impl<'a> Machine<'a> {
                 });
                 break earlier;
             }
-            let took = elapsed(checkpoints) - before;
+            caching += analysis.caching;
+            let took = elapsed(checkpoints, caching).saturating_sub(before);
             // What this run read that a build file defines: the keys it
             // referenced (`\ref` tests `\r@⟨key⟩`) and the macros it expanded
             // (`\@abspage@last` at each shipout) or defined (a note column's
@@ -3740,7 +3754,7 @@ impl<'a> Machine<'a> {
             }
             // No time for a run as long as the last: the build stops between
             // two runs, and a later process goes on from its files.
-            if cfg.limits.seconds > 0 && (elapsed(checkpoints) + took > budget || BUILD_CUT.get() == run) {
+            if cfg.limits.seconds > 0 && (elapsed(checkpoints, caching) + took > budget || BUILD_CUT.get() == run) {
                 analysis.limits.push(LimitHit {
                     key: "seconds",
                     value: cfg.limits.seconds,
@@ -8390,7 +8404,7 @@ will look undefined",
             let (read, all) = if past { (0, 0) } else { (read, all) };
             let label = if past { format!("{label} · {} steps", compact_count(self.out.steps)) } else { label };
             let limit = self.cfg.limits.seconds;
-            let clock = (limit > 0).then(|| (self.started.elapsed().as_secs(), limit));
+            let clock = (limit > 0).then(|| (self.started.elapsed().saturating_sub(self.out.caching).as_secs(), limit));
             // Lines read so far: the furthest line seen in every file.
             for f in &self.input {
                 if let Frame::File { mouth, .. } = f {
@@ -9329,7 +9343,9 @@ will look undefined",
             ("token budget", if self.budget.is_some() { "format_steps" } else { "steps" })
         } else if used >= self.cfg.limits.facts {
             ("fact budget", "facts")
-        } else if self.cfg.limits.seconds > 0 && self.started.elapsed().as_secs() >= self.cfg.limits.seconds {
+        } else if self.cfg.limits.seconds > 0
+            && self.started.elapsed().saturating_sub(self.out.caching).as_secs() >= self.cfg.limits.seconds
+        {
             ("time limit", "seconds")
         } else if self.cfg.limits.memory.as_u64() > 0
             && crate::analysis::budget::charged() as u64 >= self.cfg.limits.memory.as_u64()
@@ -16845,6 +16861,7 @@ impl Machine<'_> {
             }
         };
         // Serials cycle, skipping one still waiting to be read.
+        self.mints += 1;
         let pending = self.pending_lists();
         let mut rest = pool[0];
         for _ in 0..REST_SERIALS {
@@ -16913,6 +16930,7 @@ impl Machine<'_> {
     fn untyped(&mut self, span: Span) -> Token {
         let at = std::panic::Location::caller();
         self.out.untyped += 1;
+        self.mints += 1;
         if let Some(hot) = &mut self.out.hot {
             *hot.untyped.entry((at.file(), at.line())).or_insert(0) += 1;
         }

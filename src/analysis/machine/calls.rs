@@ -73,6 +73,23 @@ struct Stand {
     pending: (Option<crate::engine::tex::Tok>, [bool; 5], i64),
     /// Whether what it defines is certain ([`Machine::exact`], no choice open).
     certain: (bool, bool),
+    /// [`Machine::cell_base`]: `pending`'s brace count is read against it, and only in a cell.
+    cell: Option<i64>,
+}
+
+impl Stand {
+    /// Whether a run that began in `self` and left it as it was runs alike in `now`: what
+    /// such a run can read of it is the same. The conditionals open around it and its
+    /// group's `\aftergroup` tokens are not: reading the former is a side effect
+    /// (`\currentiflevel`), the latter only the group's end reads, which a run that
+    /// `closes` it is.
+    fn fits(&self, now: &Stand, closes: bool) -> bool {
+        let braces = |s: &Stand| s.cell.map(|base| s.pending.2 - base);
+        (self.mode == now.mode && self.page == now.page && self.natural == now.natural && self.tail == now.tail)
+            && (self.catcodes == now.catcodes && self.certain == now.certain)
+            && (self.pending.0 == now.pending.0 && self.pending.1 == now.pending.1 && braces(self) == braces(now))
+            && (!closes || self.after == now.after)
+    }
 }
 
 /// What a run may have done besides assignments: reports, files, outputs,
@@ -90,6 +107,8 @@ struct Counts {
 pub(crate) struct MemoStart {
     mark: crate::engine::env::MemoMark,
     assignments: u64,
+    /// TeX's steps at the start ([`super::Analysis::tex_steps`]): a run counts what the
+    /// replays inside it stood for, so a replay of it stands for all a run takes.
     steps: u64,
     counts: Counts,
     stand: Stand,
@@ -100,6 +119,8 @@ pub(crate) struct MemoStart {
     said: usize,
     /// [`Machine::memo_uses`]'s length at the start.
     uses: usize,
+    /// [`Machine::mints`] at the start.
+    mints: u64,
 }
 
 /// What decides where a run's occurrences stand ([`Machine::raised_at`]).
@@ -135,6 +156,9 @@ pub(crate) struct Memo {
     rest: Option<(Token, Rc<[Token]>)>,
     steps: u64,
     approximated: bool,
+    /// Whether the run named an unknown value ([`Machine::mints`]): a replay counts as one
+    /// naming too, for the runs around it.
+    minted: bool,
 }
 
 impl CallRec {
@@ -398,7 +422,7 @@ impl Machine<'_> {
             }
             // A run past `limits.call_memo_longest` keeps nothing: what
             // it said and read grows with it, and its log costs every read.
-            let (now, longest) = (self.out.steps, self.limits.call_memo_longest);
+            let (now, longest) = (self.out.tex_steps(), self.limits.call_memo_longest);
             if memo && self.call_recs.iter().any(|r| r.memo.as_ref().is_some_and(|m| now - m.steps > longest)) {
                 for rec in Rc::make_mut(&mut self.call_recs) {
                     if rec.memo.as_ref().is_some_and(|m| now - m.steps > longest) {
@@ -432,13 +456,14 @@ impl Machine<'_> {
                     Rc::new(MemoStart {
                         mark: self.env.memo_open(),
                         assignments: self.env.assignments,
-                        steps: self.out.steps,
+                        steps: self.out.tex_steps(),
                         counts: self.memo_counts(),
                         stand: self.stand(),
                         facts: self.fact_lens(),
                         verify: self.memo_verify.take(),
                         said: self.memo_said.len(),
                         uses: self.memo_uses_base + self.memo_uses.len(),
+                        mints: self.mints,
                     })
                 }),
             };
@@ -1194,7 +1219,7 @@ impl Machine<'_> {
                 _ => rest = None,
             }
         }
-        let steps = self.out.steps - start.steps;
+        let steps = self.out.tex_steps() - start.steps;
         let kept = rest.is_some_and(|rest| {
             steps >= u64::from(self.limits.call_memo_steps)
                 && self.keep_memo(&rec, &start, steps, Some((token, rest.into())))
@@ -1264,6 +1289,7 @@ impl Machine<'_> {
             conds: (self.conds.len(), self.conds.last().map(|c| c.at)),
             catcodes: self.catcodes.clone(),
             certain: (self.exact(), self.cds.is_empty()),
+            cell: self.cell_base,
             pending: (
                 self.after_assignment.map(|t| t.tok),
                 [p.global, p.long, p.outer, p.protected, p.immediate],
@@ -1316,7 +1342,7 @@ impl Machine<'_> {
     /// effect is kept when it ran `limits.call_memo_steps`, did nothing but
     /// assignments, and left everything else as it found it.
     fn end_memo_run(&mut self, rec: &CallRec, start: &MemoStart, clean: bool) {
-        let steps = self.out.steps - start.steps;
+        let steps = self.out.tex_steps() - start.steps;
         if let Some(want) = &start.verify {
             let got = if clean { self.memo_effect(rec, start, steps, false, None) } else { Err("unclean") };
             self.verify_memo(rec, want, got);
@@ -1467,17 +1493,34 @@ impl Machine<'_> {
             // Unbound again, or written both globally and locally: no one
             // assignment says that at another group level.
             let Some(now) = self.env.peek(sym.0).cloned() else { return Err("unbound") };
-            let global = globals.binary_search(&sym.0).is_ok();
-            if global == locals.binary_search(&sym.0).is_ok() {
+            let (global, local) = (globals.binary_search(&sym.0).is_ok(), locals.binary_search(&sym.0).is_ok());
+            // Written both ways, the global write last: it holds at every level (tex.web
+            // § 283), whatever the local one saved. A local one after it needs both.
+            let last_global = self.env.level_of(sym.0) == 0;
+            if global == local && !(global && last_global) {
                 return Err("global and local");
             }
             writes.push((sym, now, global));
         }
         let held = |sym: u32| pre.get(&sym).map_or_else(|| self.env.peek(sym), Option::as_ref);
-        if strict && reads.iter().any(|&(sym, value)| held(sym).is_some_and(|b| self.vague(Sym(sym), value, b))) {
+        // A value the run could not know stands for any of several: the run holds for each
+        // of them (it met no choice: `Counts`), so its writes do. But an unknown it named
+        // itself is that run's own value: a replay would call another call's value the same.
+        if strict
+            && self.mints != start.mints
+            && reads.iter().any(|&(sym, value)| held(sym).is_some_and(|b| self.vague(Sym(sym), value, b)))
+        {
             return Err("vague read");
         }
-        let reads: Vec<_> = reads.into_iter().map(|(sym, value)| (sym, value, held(sym).cloned())).collect();
+        // What a replay compares ([`crate::engine::env::same_part`]): not where it was defined.
+        let part = |b: &Binding| Binding {
+            defs: Vec::new(),
+            meaning: b.meaning.clone(),
+            value: b.value.clone(),
+            may: b.may.clone(),
+            ..*b
+        };
+        let reads: Vec<_> = reads.into_iter().map(|(sym, value)| (sym, value, held(sym).map(part))).collect();
         // The user's tokens of its arguments that what it wrote carries:
         // such a call is the same only at the same place.
         let mut spans: Vec<Span> = Vec::new();
@@ -1502,6 +1545,7 @@ impl Machine<'_> {
             rest,
             steps,
             approximated: self.approximated,
+            minted: self.mints != start.mints,
         })
     }
 
@@ -1530,7 +1574,7 @@ impl Machine<'_> {
             let same = |a: &Token, b: &Token| a.tok == b.tok && (!m.own || a.span == b.span);
             m.args.len() == args.len()
                 && m.args.iter().zip(args).all(|(x, y)| x.len() == y.len() && x.iter().zip(y).all(|(a, b)| same(a, b)))
-                && m.stand == stand
+                && m.stand.fits(&stand, m.rest.is_some())
                 && m.reads
                     .iter()
                     .all(|(sym, value, b)| crate::engine::env::same_part(env.peek(*sym), b.as_ref(), *value))
@@ -1571,6 +1615,7 @@ impl Machine<'_> {
             self.push_tokens(rest.clone());
         }
         self.approximated |= memo.approximated;
+        self.mints += u64::from(memo.minted);
         self.sync_end_line();
         self.out.call_memo[1] += 1;
         self.out.call_memo[2] += memo.steps;

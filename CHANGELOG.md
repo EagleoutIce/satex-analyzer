@@ -44,6 +44,7 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 
 ### Analysis
 
+- `fix` **Building package caches no longer counts toward `limits.seconds`**: a cold start caches every package once, and that one-time work no longer makes a big document's first run stop at the time limit.
 - `fix` **Code that assigns for long without reading source (a `\foreach` over many TikZ nodes) no longer aborts on memory**: the write log keeps one entry per name and group depth past `limits.write_log`.
 - `fix` **The allocation that takes a run past `limits.memory` is granted**, so the run stops with `limit-reached` instead of the process aborting.
 - `feat` **`limits.nesting` (300)**: how deeply steps nest inside scans and quantities inside quantities before the nesting is widened, configurable like every other limit.
@@ -53,6 +54,7 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 - `feat` **`-vv` names the sites with the most undecided choices** (`satex: choices N at file:line`, the top 20).
 - `fix` **A deeply nested `\numexpr` no longer overflows the stack** (also in the playground), and the language server survives a failed request.
 - `fix` **A graphic named with a folder (`thumbnails/x.jpeg`) is found in the TeX installation**, as kpathsea finds it: no false missing-graphic on Elsevier CAS.
+- `perf` **A thesis with unknown box sizes and marks replays its repeated calls: a third fewer instructions.** A call kept its effect only when every value it read was known. One that read an unknown value without meeting a choice keeps it too (unless it named an unknown number itself), a replay no longer asks for the same number of open conditionals and `\aftergroup` tokens, and a name written locally and then globally replays as the global write. A 60-page thesis runs 1958 G → 1304 G instructions per build run (247 s → 161 s), its introduction alone 596 G → 453 G, with the same findings; the build-cost findings count the steps of replays inside a replayed call.
 - `perf` **`\csname` of wholly unknown text no longer walks every known name.**
 - `fix` **A Lua run that stops leaves what its rest would have written unknown.** Globals the stopped rest assigns read as unknown after it; reads such as `pcall(require, …)` or `t.f =` no longer count as writes.
 - `fix` **The package index reads the code files a package inputs, and ltcmd's environments.** `tikzpicture` is tikz's (forest only `\let`s it), `\begin{forest}` is forest's: an inserted TikZ picture no longer loads forest, a forest tree loads forest, and a `conventions.definers` entry written with its backslash counts.

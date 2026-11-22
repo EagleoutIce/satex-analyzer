@@ -1698,6 +1698,7 @@ impl Machine<'_> {
             memo_uses: _,
             memo_uses_base: _,
             side_effects: _,
+            mints: _,
             file_writes: _,
             call_recs: _,
             learn_forks: _,
@@ -3557,6 +3558,11 @@ impl Machine<'_> {
     /// the stored chain ends at, for a `suspend`ed recording to resume from.
     pub(super) fn finish_recording(&mut self, suspend: bool) -> Option<(Option<u32>, Option<u64>)> {
         let rec = self.package_capture.take()?;
+        // one-time work, outside `limits.seconds`: counted once, when the outermost load's recording
+        // ends (its span holds the loads it waited for, which resume it with its first start)
+        if !suspend && self.suspended.is_empty() {
+            self.out.caching += rec.started.elapsed();
+        }
         // The bar stays until the outer work draws its own: clearing it here blanked the line.
         self.env.end_tracking();
         self.out.interner.record_touches(false);

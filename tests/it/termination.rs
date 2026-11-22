@@ -1486,6 +1486,92 @@ fn early_misses_do_not_stop_recording_for_good() {
     assert!(kept.call_memo[1] >= 3, "{:?} kept, replayed, saved", kept.call_memo);
 }
 
+/// A run is a function of what it read, also where a value it read is only known to
+/// lie in an interval: it met no choice, so what it wrote holds for each value the
+/// interval stands for. Such runs kept nothing ("vague read"), and in a thesis whose
+/// box sizes, marks and page numbers are unknown that was most repeated calls (a third
+/// of all steps). `\r` is 300 plus the unknown `\k`, replayed or run.
+#[test]
+fn a_call_that_reads_an_unknown_value_without_a_choice_keeps_its_effect() {
+    let [kept, ran] = memo_runs(
+        "\\countdef\\n=10 \\countdef\\k=11 \\countdef\\r=12 \\k=\\pdfuniformdeviate 5
+\\def\\upto{{\\n=0 \\def\\step{\\advance\\n 1 \\ifnum\\n<300 \\expandafter\\step\\fi}\\step\\global\\r=\\k \\global\\advance\\r\\n}}
+\\upto\\upto\\upto\\upto\\upto
+\\ifnum\\r>299 \\ifnum\\r<305 \\def\\Kept{}\\else\\def\\Lost{}\\fi\\else\\def\\Lost{}\\fi
+",
+    );
+    for a in [&kept, &ran] {
+        assert!(crate::support::defined(a, "Kept") && !crate::support::maybe_defined(a, "Lost"));
+    }
+    assert_eq!(kept.call_memo[1], 3, "{:?} kept, replayed, saved", kept.call_memo);
+}
+
+/// The other side of the rule above: a run that gave an unknown value a name of its own
+/// (the digits `\the` prints of an interval) wrote that one value. Replayed, a later
+/// call's digits would carry the same name, and `\ifx` would take two numbers drawn
+/// apart for equal. So such a run keeps nothing: `\a` and `\b` may differ.
+#[test]
+fn a_run_that_names_an_unknown_value_is_not_replayed_for_another() {
+    let [kept, ran] = memo_runs(
+        "\\countdef\\n=10 \\countdef\\k=11
+\\def\\upto{{\\n=0 \\def\\step{\\advance\\n 1 \\ifnum\\n<300 \\expandafter\\step\\fi}\\step\\xdef\\got{\\the\\k}}}
+\\k=\\pdfuniformdeviate 5 \\upto\\upto\\upto \\let\\a\\got
+\\k=\\pdfuniformdeviate 5 \\upto \\let\\b\\got
+\\ifx\\a\\b \\def\\Same{}\\else\\def\\Differ{}\\fi
+",
+    );
+    for a in [&kept, &ran] {
+        assert!(crate::support::maybe_defined(a, "Differ"), "two draws were taken for one number");
+    }
+}
+
+/// What a run can read of where it stands is the mode, the lists, the categories and the
+/// pending prefixes, not how many conditionals or `\aftergroup` tokens are open around
+/// it (`\currentiflevel` is a side effect that keeps nothing). A replay asked for the
+/// same count of both, so a call kept at the top level ran again inside every `\if`.
+#[test]
+fn a_kept_effect_replays_inside_another_conditional_and_group() {
+    let [kept, ran] = memo_runs(
+        "\\countdef\\n=10
+\\def\\upto#1{{\\n=0 \\def\\step{\\advance\\n 1 \\ifnum\\n<#1 \\expandafter\\step\\fi}\\step\\xdef\\got{\\the\\n}}}
+\\upto{300}\\upto{300}
+\\iftrue\\ifnum1=1 \\upto{300}\\fi\\fi
+\\def\\three{300}\\ifx\\got\\three\\def\\Kept{}\\else\\def\\Lost{}\\fi
+\\begingroup\\aftergroup\\relax\\aftergroup\\relax\\upto{300}\\endgroup
+\\ifx\\got\\three\\def\\Grouped{}\\else\\def\\Lost{}\\fi
+",
+    );
+    for a in [&kept, &ran] {
+        assert!(crate::support::defined(a, "Kept") && crate::support::defined(a, "Grouped"));
+        assert!(!crate::support::maybe_defined(a, "Lost"));
+    }
+    assert_eq!(kept.call_memo[1], 2, "{:?} kept, replayed, saved", kept.call_memo);
+}
+
+/// A name written locally and then globally holds the global value at every level
+/// (tex.web § 283), so one global assignment replays it: pgf's point macros work in a
+/// group and hand the result out with `\global`, and none of them kept its effect
+/// ("global and local"). A local write after the global one needs both values and is
+/// still refused: `\m` must be 1 after the group, not 9 or 300.
+#[test]
+fn a_name_written_locally_then_globally_replays_as_the_global_write() {
+    let [kept, ran] = memo_runs(
+        "\\countdef\\n=10 \\countdef\\m=11
+\\def\\upto{\\begingroup\\n=0 \\def\\step{\\advance\\n 1 \\ifnum\\n<300 \\expandafter\\step\\fi}\\step\\m=7 \\global\\m=\\n \\endgroup}
+\\upto\\upto \\m=5 {\\upto}
+\\ifnum\\m=300 \\def\\Kept{}\\else\\def\\Lost{}\\fi
+\\def\\both{\\n=0 \\def\\step{\\advance\\n 1 \\ifnum\\n<300 \\expandafter\\step\\fi}\\step\\global\\m=1 \\m=\\n}
+{\\both}{\\both}\\global\\m=9 {\\both}
+\\ifnum\\m=1 \\def\\Outer{}\\else\\def\\Lost{}\\fi
+",
+    );
+    for a in [&kept, &ran] {
+        assert!(crate::support::defined(a, "Kept") && crate::support::defined(a, "Outer"));
+        assert!(!crate::support::maybe_defined(a, "Lost"));
+    }
+    assert!(kept.call_memo[1] >= 1, "{:?} kept, replayed, saved", kept.call_memo);
+}
+
 /// A `\chardef` is one assignment, also when satex writes its number into
 /// the binding after defining it. That second write was taken for a change
 /// no assignment replays, so no call that made a `\chardef` kept its effect

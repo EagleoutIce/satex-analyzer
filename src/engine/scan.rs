@@ -1426,6 +1426,7 @@ impl Machine<'_> {
         // One name per number made: a test that narrows it narrows this
         // number on its path, never another one with the same interval.
         // Counted in TeX's steps, so a replayed call names alike.
+        self.mints += 1;
         let steps = self.out.tex_steps();
         let n = if self.digits_made.0 == steps { self.digits_made.1 + 1 } else { 0 };
         self.digits_made = (steps, n);

@@ -52,7 +52,13 @@ fn main() {
     // working tree) may differ in what a cache holds, and must not read or
     // overwrite each other's.
     let src = std::path::Path::new("src");
-    let guard = format!("d{:016x}", source_digest(src, REPORTING, code_only));
+    // `SATEX_CACHE_GUARD=<guard>` at build time pins it (the `d…` part of an earlier
+    // build's `cache_key`): a developer who knows an edit (a speed-up, a refactor) leaves
+    // every cache's meaning as it was keeps that build's kernel and package caches. The
+    // pin is theirs to drop with the next edit that changes what a cache holds.
+    println!("cargo:rerun-if-env-changed=SATEX_CACHE_GUARD");
+    let guard = std::env::var("SATEX_CACHE_GUARD")
+        .unwrap_or_else(|_| format!("d{:016x}", source_digest(src, REPORTING, code_only)));
     println!("cargo:rustc-env=SATEX_CACHE_GUARD={guard}");
     // Every byte of src: two binaries with one id come from the same source
     // (satex-doc refuses a `satex` built from other source).

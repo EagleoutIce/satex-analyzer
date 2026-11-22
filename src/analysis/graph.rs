@@ -723,11 +723,35 @@ pub struct CallGraph {
     #[serde(with = "crate::fixed::flat")]
     pub nodes: crate::fixed::Chunked<Sym>,
     index: crate::fixed::SharedMap<Sym, usize>,
+    /// The nodes looked up lately, one table probe each (the trie takes about five
+    /// pointers, twice per macro call). `index` never drops a name, so an entry holds.
+    #[serde(skip)]
+    front: Front,
     #[serde(with = "crate::fixed::flat")]
     pub edges: crate::fixed::Chunked<Vec<usize>>,
     /// While a package cache is being captured: every distinct `node` and
     /// `add` since the last `clear` of its name, and every `clear`, in order.
     log: Option<(crate::fixed::LookupSet<CallEvent>, Vec<CallEvent>)>,
+}
+
+/// [`CallGraph::index`] entries in front of it. No part of the graph: a copy starts
+/// without, and any two are equal.
+#[derive(Default)]
+struct Front(crate::fixed::LookupMap<Sym, usize>);
+
+/// Entries [`Front`] holds before it starts over.
+const FRONT: usize = 1 << 12;
+
+impl Clone for Front {
+    fn clone(&self) -> Self {
+        Front::default()
+    }
+}
+
+impl PartialEq for Front {
+    fn eq(&self, _: &Self) -> bool {
+        true
+    }
 }
 
 /// One change to a [`CallGraph`], as a package cache replays it.
@@ -759,8 +783,21 @@ impl CallGraph {
     }
 
     /// Forget what `s` calls: a redefinition replaces it.
+    /// Where `s` is, if it is a node.
+    fn at(&mut self, s: Sym) -> Option<usize> {
+        if let Some(&i) = self.front.0.get(&s) {
+            return Some(i);
+        }
+        let i = *self.index.get(&s)?;
+        if self.front.0.len() >= FRONT {
+            self.front.0.clear();
+        }
+        self.front.0.insert(s, i);
+        Some(i)
+    }
+
     pub fn clear(&mut self, s: Sym) {
-        if let Some(&i) = self.index.get(&s) {
+        if let Some(i) = self.at(s) {
             let targets = std::mem::take(&mut self.edges[i]);
             if let Some((seen, _)) = &mut self.log {
                 for t in targets {
@@ -784,7 +821,7 @@ impl CallGraph {
 
     pub fn node(&mut self, s: Sym) -> usize {
         self.note(CallEvent::Node(s));
-        if let Some(&i) = self.index.get(&s) {
+        if let Some(i) = self.at(s) {
             return i;
         }
         let i = self.nodes.len();
@@ -795,9 +832,8 @@ impl CallGraph {
     }
 
     /// Whether `from` calls `to` already and no log waits for the edge.
-    pub fn has(&self, from: Sym, to: Sym) -> bool {
-        let at = |s| self.index.get(&s).copied();
-        self.log.is_none() && at(from).zip(at(to)).is_some_and(|(a, b)| self.edges[a].contains(&b))
+    pub fn has(&mut self, from: Sym, to: Sym) -> bool {
+        self.log.is_none() && self.at(from).zip(self.at(to)).is_some_and(|(a, b)| self.edges[a].contains(&b))
     }
 
     pub fn add(&mut self, from: Sym, to: Sym) {

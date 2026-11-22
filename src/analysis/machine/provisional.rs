@@ -451,7 +451,7 @@ pub(super) fn splice_out(new: &Analysis, at: &Analysis, end: &mut Analysis, wind
         font_states, env, catcodes, facts, trace, typeset, steps, load_steps, served_steps, limits, lines, exhausted,
         journal_size, held_tokens_left, loop_heads, peak_paths, peak_output_paths, forks, output_forks, call_memo,
         joined_slots, memory_reported, untyped, package_caches, written, written_runs, build_runs, class_caches,
-        cached_files, preamble, kernel, timings: _, started: _, hot: _, probes: _, context_probes: _, takes: _,
+        cached_files, preamble, kernel, timings: _, started: _, caching: _, hot: _, probes: _, context_probes: _, takes: _,
         role_sources: _, tagging: _, probed_roles: _, bib: _, scope_rows: _, said: _, build_pending: _, build_files: _ } = end;
     let crate::analysis::facts::Facts { defs, written_files, absent, found, shapes, types, length_fonts, vars,
         letters, expansions, loads, occurrences, literals, diagnostics, csnames, slots, groups, raised, spaces,
