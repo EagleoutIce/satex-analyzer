@@ -994,7 +994,7 @@ struct Engine {
     /// Runs replaced by newer ones, dropped once the newer one's results went out ([`Engine::rest`]):
     /// freeing a whole analysis took a twentieth of an edit in the browser.
     buried: Vec<Rc<Analysis>>,
-    deferred: std::collections::VecDeque<EngineMsg>,
+    deferred: Rc<std::cell::RefCell<std::collections::VecDeque<EngineMsg>>>,
     /// Texts opened or changed that the engine took ([`Kept::edits`]).
     taken: u64,
     /// The last run stopped for a newer text.
@@ -1017,6 +1017,11 @@ struct Engine {
     caret: Option<(Uri, u32)>,
     /// The caret line last placed for, and the run it was placed in.
     placed: Option<(Uri, u32, std::rc::Weak<Analysis>)>,
+    /// The run whose findings went out last: what requests read of the whole of it is built
+    /// while the engine is idle ([`Engine::settle`]).
+    settle: Option<Rc<Analysis>>,
+    /// Per root, the run linted last and what its lint leaves for the next ([`crate::linter::Kept`]).
+    lints: HashMap<PathBuf, (Rc<Analysis>, crate::linter::Kept)>,
 }
 
 impl EngineMsg {
@@ -1083,6 +1088,8 @@ impl Engine {
             heard: None,
             caret: None,
             placed: None,
+            settle: None,
+            lints: HashMap::default(),
         }
     }
 
@@ -1117,7 +1124,7 @@ impl Engine {
         }
         self.cancelled = false;
         // -vv: what each part of serving the edit took, the run aside.
-        let mut phases = Phases::new(self.cfg.verbose >= 2);
+        let mut phases = crate::util::progress::Laps::new(self.cfg.verbose >= 2, "served");
         self.send_early(&path, &text);
         phases.lap("early findings");
         let mut hooks = self.typeset.hooks(uri, version_of(&versions, uri), &self.outbox);
@@ -1147,8 +1154,9 @@ impl Engine {
         let preamble = text.split("\\begin{document}").next().unwrap_or_default().to_string();
         let same = self.preamble_texts.insert(uri.clone(), preamble.clone()).is_some_and(|p| p == preamble);
         if changed
-            && same
             && let Some(old) = &doc.analysis
+            && !analysis.carry(old)
+            && same
         {
             carry_probes(old, &analysis);
         }
@@ -1160,20 +1168,31 @@ impl Engine {
         }
         phases.lap("rows");
         if fresh {
-            // Findings before the completion data: they are what the user waits for. The names
-            // carried over from the last run follow: until then a completion answers from the last run. The playground's server answers only
-            // once a message is done: there the first completion builds the rest.
-            // what a hover shows of the new run (its roles, what a name typesets) before the findings
-            if !cfg!(target_os = "emscripten") {
-                self.serving(|_| handlers::warm(&analysis));
-            }
-            phases.lap("warm");
+            // Findings first: they are what the user waits for. What a completion and a hover
+            // read of the whole run ([`handlers::warm`]) is built once the engine is idle
+            // ([`Engine::settle`]), or by the first request that reads it.
             // the run whose findings `uri` showed until now
             let before = self.published.get(uri).and_then(|(run, _)| run.upgrade());
             self.install(uri, &analysis, &text, changed);
             phases.lap("install");
-            self.publish_run(&analysis, &path, &versions, None);
+            // A newer text ends the rules at the next one: its run never waits for findings no
+            // editor shows any more. The run stays installed, its findings follow with the newer text's.
+            let stale = self.newer_text();
+            let published = crate::analysis::probe::abandonable(stale, || {
+                self.publish_run(&analysis, &path, &versions, None);
+            });
             phases.lap("findings");
+            if published.is_none() {
+                crate::util::progress::note!("satex: findings stopped for a newer text");
+                self.cancelled = true;
+                if !self.dirty.contains(uri) {
+                    self.dirty.push(uri.clone());
+                }
+                return;
+            }
+            if !cfg!(target_os = "emscripten") {
+                self.settle = Some(analysis.clone());
+            }
             if self.cfg.verbose >= 2 {
                 let slow: Vec<String> = (analysis.timings.rules().iter().take(SLOW_RULES))
                     .map(|(code, took, _)| format!("{code} {:.2}s", took.as_secs_f64()))
@@ -1191,10 +1210,12 @@ impl Engine {
                     .collect();
                 self.dirty.extend(unread);
             }
-            if let Some(prior) = &prior {
+            // The playground's server builds a completion's rows with the first one: from the last run's where it can.
+            if cfg!(target_os = "emscripten")
+                && let Some(prior) = &prior
+            {
                 self.serving(|_| crate::queries::query::carry_scope(prior, &analysis));
             }
-            phases.lap("scope");
             // a server between messages frees the replaced run after this one's results went out
             if self.inbox.is_none() {
                 self.buried.extend(prior);
@@ -1276,10 +1297,23 @@ impl Engine {
         // there are context, their findings are their own root's run's.
         let open: Vec<PathBuf> = self.docs.values().map(|d| d.path.clone()).filter(|_| !orphan).collect();
         let open: Vec<&Path> = open.iter().map(PathBuf::as_path).collect();
+        // the lint of the run this one may be apart from an edit: its findings stand where the edit left them
+        let root = canonical(Path::new(analysis.file_name(analysis.main_file)));
         let (mut published, candidates) = self.serving(|engine| {
-            let records = unsilenced(&engine.silenced, handlers::findings(analysis));
+            let mut laps = crate::util::progress::Laps::new(engine.cfg.verbose >= 2, "findings");
+            let last = engine.lints.get(&root).map(|(run, kept)| (&**run, kept));
+            let (records, kept) = handlers::findings_keeping(analysis, last);
+            if engine.cfg.verbose >= 2 {
+                crate::util::progress::note!("satex: findings kept from the last run: {}", kept.stood.join(", "));
+            }
+            engine.lints.insert(root, (analysis.clone(), kept));
+            let records = unsilenced(&engine.silenced, records);
+            laps.lap("rules");
             let candidates = crate::linter::style_candidates(&records, &analysis.settings.lints.style_prompt);
-            (publish(&mut engine.actions, analysis, &records, path, &open), candidates)
+            laps.lap("style");
+            let published = publish(&mut engine.actions, analysis, &records, path, &open);
+            laps.lap("diagnostics");
+            (published, candidates)
         });
         let own = handlers::path_uri(&path.display().to_string());
         if let Some(own) = published.iter_mut().find(|p| orphan && p.uri == own) {
@@ -1619,7 +1653,7 @@ impl Engine {
         if let Some(run) = self.runs.get(&key).filter(stands) {
             return (run.analysis.clone(), false);
         }
-        let mut phases = Phases::new(self.cfg.verbose >= 2);
+        let mut phases = crate::util::progress::Laps::new(self.cfg.verbose >= 2, "served");
         // The files not open are read from disk: logged, as the document cache does.
         let recording = crate::project::overlay::record();
         let source = crate::project::overlay::read_to_string(root).unwrap_or_default();
@@ -1668,6 +1702,7 @@ impl Engine {
         self.runs.insert(key, Run { texts, analysis: analysis.clone(), reads, outside });
         let runs = &self.runs;
         self.checkpoints.retain(|root, _| runs.contains_key(root));
+        self.lints.retain(|root, _| runs.contains_key(root));
         (analysis, true)
     }
 
@@ -1703,8 +1738,8 @@ impl Engine {
         }
         let Some(inbox) = self.inbox.clone() else { return f(self) };
         let (mut docs, hovers, blank) = (self.docs.clone(), self.hovers.clone(), self.blank.clone());
-        let deferred = Rc::new(std::cell::RefCell::new(Vec::new()));
-        let waiting = deferred.clone();
+        // shared with the pause: work that unwinds for a newer text ([`probe::abandonable`]) loses none
+        let waiting = self.deferred.clone();
         let pause = Box::new(move || {
             while let Ok(msg) = inbox.try_recv() {
                 match msg {
@@ -1712,20 +1747,19 @@ impl Engine {
                         if let Some(doc) = docs.get_mut(uri) {
                             doc.text = text.clone();
                         }
-                        waiting.borrow_mut().push(msg);
+                        waiting.borrow_mut().push_back(msg);
                     }
                     msg => {
                         let answered = crate::analysis::probe::apart(|| answer(&docs, &hovers, blank.as_deref(), msg));
                         if let Some(msg) = answered {
-                            waiting.borrow_mut().push(msg);
+                            waiting.borrow_mut().push_back(msg);
                         }
                     }
                 }
             }
+            crate::analysis::probe::abandon_if_stale();
         });
-        let out = crate::util::progress::pausing(pause, || f(self));
-        self.deferred.extend(deferred.take());
-        out
+        crate::util::progress::pausing(pause, || f(self))
     }
 
     /// After `uri` was analyzed: its hovers of names the document defines
@@ -1764,7 +1798,10 @@ impl Engine {
         // a called name's hover says what this document's calls typeset: asked again each run
         let called: std::collections::HashSet<String> = used.iter().map(|(_, n)| n.clone()).collect();
         used.sort_by(|a, b| b.cmp(a));
-        let store = hover_store(self.cfg, analysis, &dir);
+        // A run that is the last one apart from an edit read the installation's files as that
+        // one did ([`crate::analysis::machine::Since`]): the store named after them stands.
+        let known = self.stores.get(uri).filter(|_| same && analysis.since.is_some()).map(|(path, _)| path.clone());
+        let store = known.or_else(|| hover_store(self.cfg, analysis, &dir));
         let docs = crate::plugins::docs::index(&self.cfg.docs);
         let mut dirs = std::collections::HashSet::new();
         for file in analysis.file_names().iter().map(Path::new).filter(|_| self.cfg.plugins.docs) {
@@ -1823,6 +1860,25 @@ impl Engine {
         let pause = Duration::from_millis(self.cfg.type_plugins.typing.pause_ms);
         let rest = pause.checked_sub(self.heard?.elapsed())?;
         (!self.prefill.is_empty() && !rest.is_zero()).then_some(rest)
+    }
+
+    /// Idle work after a run's findings went out: what a completion and a hover read of the
+    /// whole run ([`handlers::warm`]). Stops at its next pause for a message the engine must
+    /// take itself (one that only reads is answered in the pause), and is then tried again; a
+    /// part it finished stays. A run replaced meanwhile is not built for.
+    fn settle(&mut self) {
+        let Some(analysis) = self.settle.take() else { return };
+        if !self.docs.values().any(|d| d.analysis.as_ref().is_some_and(|a| Rc::ptr_eq(a, &analysis))) {
+            return;
+        }
+        let (queue, had) = (self.deferred.clone(), self.deferred.borrow().len());
+        let waits = move || queue.borrow().len() > had;
+        let done = crate::analysis::probe::abandonable(Box::new(waits), || {
+            self.serving(|_| handlers::warm(&analysis));
+        });
+        if done.is_none() {
+            self.settle = Some(analysis);
+        }
     }
 
     /// Idle work for the next edit: places the checkpoints an edit on the caret's line resumes
@@ -2445,19 +2501,24 @@ fn with_link(markdown: Option<String>, link: Option<String>) -> Option<String> {
 
 fn engine_loop(rx: Receiver<EngineMsg>, mut engine: Engine, debounce: Duration) {
     loop {
-        let received = if let Some(msg) = engine.deferred.pop_front() {
+        let deferred = engine.deferred.borrow_mut().pop_front();
+        let received = if let Some(msg) = deferred {
             Ok(msg)
         } else if !engine.dirty.is_empty() {
             // Only the rest of the window since the last run: typing after a pause runs at once.
             rx.recv_timeout(debounce.saturating_sub(engine.flushed.map_or(debounce, |t| t.elapsed())))
-        } else if engine.caret.is_some() {
-            // Idle: the caret's checkpoints, unless a message waits. No pause first: the run
-            // stops for the next message, and the first key may come soon.
+        } else if engine.caret.is_some() || engine.settle.is_some() {
+            // Idle: the last run's data for requests, then the caret's checkpoints, unless a
+            // message waits. No pause first: both stop for the next message, and the first key
+            // may come soon.
             crate::analysis::probe::WANTED.store(false, std::sync::atomic::Ordering::Relaxed);
             match rx.try_recv() {
                 Ok(msg) => Ok(msg),
                 Err(TryRecvError::Empty) => {
-                    engine.place_ahead();
+                    match engine.settle.is_some() {
+                        true => engine.settle(),
+                        false => engine.place_ahead(),
+                    }
                     if engine.prefill.is_empty() {
                         crate::util::progress::idle();
                     }
@@ -2499,32 +2560,6 @@ fn engine_loop(rx: Receiver<EngineMsg>, mut engine: Engine, debounce: Duration) 
 
 /// How many rules the `-vv` note after a run names, slowest first.
 const SLOW_RULES: usize = 8;
-
-/// The seconds each part of serving an edit took, written as one note when dropped (`-vv`).
-struct Phases(Option<(std::time::Instant, String)>);
-
-impl Phases {
-    fn new(on: bool) -> Self {
-        Phases(on.then(|| (std::time::Instant::now(), String::new())))
-    }
-
-    /// The time since the last lap went to `what`.
-    fn lap(&mut self, what: &str) {
-        if let Some((clock, said)) = &mut self.0 {
-            use std::fmt::Write;
-            let _ = write!(said, " {what} {:.2}s,", clock.elapsed().as_secs_f64());
-            *clock = std::time::Instant::now();
-        }
-    }
-}
-
-impl Drop for Phases {
-    fn drop(&mut self) {
-        if let Some((_, said)) = &self.0 {
-            crate::util::progress::note!("satex: served:{}", said.trim_end_matches(','));
-        }
-    }
-}
 
 /// [`Engine::notify_now`] through `outbox`.
 fn notify_to(outbox: &Sender<Notification>, note: Notification) {

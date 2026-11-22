@@ -3035,11 +3035,15 @@ pub(super) fn material(analysis: &Analysis, name: &str) -> Option<usize> {
 
 /// Builds what completion reads of `analysis` once, ahead of the first request.
 pub fn warm(analysis: &Analysis) {
+    let mut laps = crate::util::progress::Laps::new(analysis.settings.verbose >= 2, "warm");
     takes(analysis);
+    laps.lap("takes");
     crate::util::progress::pause_now();
     crate::analysis::roles::roles(analysis, "documentclass");
+    laps.lap("roles");
     crate::util::progress::pause_now();
     query::scope_named(analysis, None, false, |_| false);
+    laps.lap("scope");
 }
 
 /// The fewest arguments each defined name takes, once per analysis.
@@ -3577,6 +3581,16 @@ pub fn document_symbols(analysis: &Analysis, path: &str, doc: &Text) -> Option<V
 /// analysis's, not the document's: an editor hides them.
 pub fn findings(analysis: &Analysis) -> Vec<Record> {
     of_document(crate::linter::lint_document(analysis))
+}
+
+/// [`findings`], keeping what the lint of the run before found where it stands
+/// ([`crate::linter::Kept`]); with what this lint leaves for the next.
+pub fn findings_keeping(
+    analysis: &Analysis,
+    prior: Option<(&Analysis, &crate::linter::Kept)>,
+) -> (Vec<Record>, crate::linter::Kept) {
+    let (records, kept) = crate::linter::lint_document_keeping(analysis, prior);
+    (of_document(records), kept)
 }
 
 /// [`findings`] that no later pass and no more precision changes.

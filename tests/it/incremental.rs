@@ -31,7 +31,32 @@ fn said(analysis: &Analysis) -> Vec<String> {
     let occurrences =
         analysis.facts.occurrences.iter().map(|o| format!("occ|{:?}|{}|{}", o.kind, o.key, at(analysis, o.span)));
     let summary = [format!("steps|{}", analysis.steps), format!("typeset|{}", analysis.typeset)];
-    diagnostics.chain(defs).chain(expansions).chain(occurrences).chain(summary).collect()
+    diagnostics.chain(defs).chain(expansions).chain(occurrences).chain(summary).chain(keyed(analysis)).collect()
+}
+
+/// The facts kept by place in the project's own files, in the order of their places: a resumed
+/// run writes the edited lines' entries into the last run's tables where they stand. (Those in
+/// a package's files depend on what a cache served, which other tests compare.) And every
+/// vertex of the graph is found at its site: the sites follow the vertices the edit moved.
+fn keyed(analysis: &Analysis) -> Vec<String> {
+    let facts = &analysis.facts;
+    let own = |at: &satex::engine::tex::Span| analysis.project_file(at.file);
+    let mut out: Vec<String> = Vec::new();
+    let place = |at: &satex::engine::tex::Span| self::at(analysis, *at);
+    out.extend(facts.types.iter().filter(|(at, _)| own(at)).map(|(at, ty)| format!("type|{}|{ty:?}", place(at))));
+    out.extend(facts.csnames.iter().filter(|(at, _)| own(at)).map(|(at, r)| format!("csname|{}|{r:?}", place(at))));
+    out.extend(facts.slots.iter().filter(|(at, _)| own(at)).map(|(at, slot)| format!("slot|{}|{slot}", place(at))));
+    out.extend(facts.spaces.iter().filter(|(at, _)| own(at)).map(|(at, m)| format!("space|{}|{m:?}", place(at))));
+    out.extend(facts.kept_spaces.iter().filter(|at| own(at)).map(|at| format!("kept space|{}", place(at))));
+    let read = facts.lines.keys().filter(|(file, _)| analysis.project_file(*file));
+    out.extend(read.map(|(file, line)| format!("line|{}:{line}", analysis.file_name(*file))));
+    out.sort();
+    let graph = &analysis.graph;
+    let lost = (graph.vertices.iter().enumerate())
+        .filter(|(i, v)| graph.find(v.span, v.name, v.tag).map(|id| id as usize) != Some(*i))
+        .map(|(i, v)| format!("vertex {i} not at its site {}", self::at(analysis, v.span)));
+    out.extend(lost);
+    out
 }
 
 /// The first place `a` and `b` differ, if they do.
@@ -758,12 +783,15 @@ fn random_edit_sequences_build_what_a_fresh_build_does() {
     let dir = crate::support::tmp_root().join("incremental-random");
     let report = report(3, 2);
     let report: Vec<(&str, &str)> = report.iter().map(|(name, text)| (name.as_str(), text.as_str())).collect();
-    let fixtures: [&[(&str, &str)]; 3] = [
+    let fixtures: [&[(&str, &str)]; 4] = [
         &[("main.tex", MAIN), ("chapter.tex", CHAPTER), ("appendix.tex", APPENDIX)],
         &[("main.tex", PARAGRAPHS)],
         &report,
+        &FOUND,
     ];
     let cfg = crate::support::config();
+    // how often a rule's findings stood from the lint before
+    let mut stood = 0;
     for (k, files) in fixtures.iter().enumerate() {
         for seed in 0..SEEDS {
             let _ = std::fs::remove_dir_all(&dir);
@@ -776,6 +804,7 @@ fn random_edit_sequences_build_what_a_fresh_build_does() {
             let mut checkpoints = Checkpoints::new(&cfg).every(64);
             Machine::build(&mut checkpoints, &read(&main), &main, &cfg, true);
             let mut rng = Lcg(seed * 7919 + k as u64);
+            let mut linted: Option<(Analysis, satex::linter::Kept)> = None;
             for n in 1..=EDITS {
                 let (name, _) = files[rng.below(files.len())];
                 let path = dir.join(name);
@@ -789,8 +818,94 @@ fn random_edit_sequences_build_what_a_fresh_build_does() {
                     differs, None,
                     "fixture {k}, seed {seed}, edit {n} in {name} (resumed, met: {at:?}):\n{edited}"
                 );
+                // The findings kept from the last lint are those a lint of this run alone makes.
+                let last = linted.as_ref().map(|(run, kept)| (run, kept));
+                let (found, kept) = satex::linter::lint_document_keeping(&incremental, last);
+                assert_eq!(
+                    found,
+                    satex::linter::lint_document(&incremental),
+                    "fixture {k}, seed {seed}, edit {n} in {name}: kept {:?}\n{edited}",
+                    kept.stood
+                );
+                stood += kept.stood.len();
+                linted = Some((incremental, kept));
             }
         }
+    }
+    assert!(stood > 0, "no finding stood across any edit");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A document the rules whose findings stand across an edit ([`satex::linter::Kept`]) each
+/// find something in: a macro nothing uses and one that calls itself with no test, in the
+/// main file, and a label given twice, in the chapter the edits are typed into.
+const FOUND: [(&str, &str); 2] = [
+    (
+        "main.tex",
+        "\\documentclass{article}\n\\newcommand\\never{unused}\n\\def\\again{a\\again}\n\\begin{document}\n\\section{One}\\label{one}\n\\input{chapter}\n\\end{document}\n",
+    ),
+    (
+        "chapter.tex",
+        "A paragraph of a few words, see Section~\\ref{one}, and then some more of them.\n\nA second one\\label{two} with \\emph{words} in it, named twice\\label{two} on one line.\n\nThe last paragraph of the chapter.\n",
+    ),
+];
+
+/// Intuition: a word typed into a paragraph changes what is typeset, nothing a rule about
+/// definitions, recursion or labels reads. Their findings are kept from the lint before
+/// ([`satex::linter::Kept`]), also where the word moves a `\ref` on its line. They are found
+/// anew where the edit touches what they read: a finding on the edited line (its place
+/// moved), a file the rule read for a fix, a label or a definition typed. Each time the
+/// findings are those of a lint that keeps nothing.
+/// Pins: every rule ran over the whole document after each typed character.
+#[test]
+fn findings_stand_across_a_typed_word_only_where_it_left_what_they_read() {
+    if !installed() {
+        return;
+    }
+    let dir = crate::support::tmp_root().join("incremental-found");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    for (name, text) in FOUND {
+        std::fs::write(dir.join(name), text).unwrap();
+    }
+    let (main, chapter) = (dir.join("main.tex"), dir.join("chapter.tex"));
+    let cfg = crate::support::config();
+    let read = |p: &Path| std::fs::read_to_string(p).unwrap();
+    let mut checkpoints = Checkpoints::new(&cfg).every(64);
+    let first = Machine::build(&mut checkpoints, &read(&main), &main, &cfg, true);
+    let (found, kept) = satex::linter::lint_document_keeping(&first, None);
+    let codes = |found: &[satex::queries::query::Record]| -> Vec<String> {
+        found.iter().filter_map(|r| r.get("code")?.as_str().map(String::from)).collect()
+    };
+    for code in ["unused-definition", "unguarded-recursion", "duplicate-label"] {
+        assert!(codes(&found).iter().any(|c| c == code), "{code} finds nothing in the fixture: {:?}", codes(&found));
+    }
+    let mut linted = (first, kept);
+    // (file, text replaced, its replacement, the rules whose findings may stand)
+    let all = vec!["unused-definition", "unguarded-recursion", "duplicate-label"];
+    let edits: [(&Path, &str, &str, Vec<&str>); 6] = [
+        // a word before a `\ref` on its line: the reference moves, no rule reads where it stands
+        (&chapter, "A paragraph of", "A typed paragraph of", all.clone()),
+        (&chapter, "The last paragraph", "The very last paragraph", all.clone()),
+        // on the line of the label given twice: its finding stands there, and is found anew
+        (&chapter, "A second one", "A second, typed one", vec!["unused-definition", "unguarded-recursion"]),
+        // a label typed: an occurrence more
+        (&chapter, "The very last paragraph", "The very last\\label{three} paragraph", vec![]),
+        // the file the unused macro's fix reads
+        (&main, "\\section{One}", "\\section{One typed}", vec![]),
+        (&chapter, "of the chapter.", "of the typed chapter.", all.clone()),
+    ];
+    for (path, was, now, stand) in edits {
+        let text = read(path);
+        assert!(text.contains(was), "{was} is not in {path:?}");
+        std::fs::write(path, text.replacen(was, now, 1)).unwrap();
+        let run = Machine::build(&mut checkpoints, &read(&main), &main, &cfg, true);
+        let (found, kept) = satex::linter::lint_document_keeping(&run, Some((&linted.0, &linted.1)));
+        assert_eq!(found, satex::linter::lint_document(&run), "typed {now}");
+        // never more than may stand; fewer where the runs number their names apart
+        let wrong: Vec<_> = kept.stood.iter().filter(|code| !stand.contains(code)).collect();
+        assert!(wrong.is_empty(), "typed {now}: findings stood that the edit touched: {wrong:?}");
+        linted = (run, kept);
     }
     let _ = std::fs::remove_dir_all(&dir);
 }

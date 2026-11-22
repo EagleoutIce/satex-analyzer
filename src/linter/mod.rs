@@ -697,16 +697,89 @@ pub fn lint_settled(analysis: &Analysis) -> Vec<Record> {
 
 /// [`lint`]'s findings in the document's own files (`origin` `document`), the others never built.
 pub fn lint_document(analysis: &Analysis) -> Vec<Record> {
-    crate::analysis::probe::within_run(analysis.started, || lint_run(analysis, true, |_| true))
+    lint_document_keeping(analysis, None).0
+}
+
+/// [`lint_document`], with the findings the lint of the run before (`prior`) left for this one
+/// kept where they stand ([`Kept`]), and what this lint leaves for the next.
+pub fn lint_document_keeping(analysis: &Analysis, prior: Option<(&Analysis, &Kept)>) -> (Vec<Record>, Kept) {
+    let mut kept = Kept::of(analysis);
+    let lint = || lint_kept(analysis, true, |_| true, prior, &mut kept);
+    let records = crate::analysis::probe::within_run(analysis.started, lint);
+    (records, kept)
+}
+
+/// The rules whose findings stand across an edit that changed only what is typeset. Each
+/// reads the run's bindings, calls, graph (never where a vertex stands), definitions, loads,
+/// diagnostics, expansions and occurrences, comparing places only with each other, and source
+/// text only through [`fix::Sources`]: what [`Analysis::same_but_text`] and [`Kept`] check.
+/// Not the text as set ([`text::View`]), nor a table that check leaves out.
+const KEPT: [&str; 3] = ["unused-definition", "unguarded-recursion", "duplicate-label"];
+
+/// What a lint leaves for the lint of the next run: per rule of [`KEPT`] its findings and the
+/// source files it read, as they were.
+pub struct Kept {
+    /// The [`Analysis::run`] linted.
+    run: u64,
+    rules: crate::fixed::HashMap<&'static str, (Vec<Record>, Vec<fix::Read>)>,
+    /// The rules whose findings this lint took from the last one.
+    pub stood: Vec<&'static str>,
+}
+
+impl Kept {
+    fn of(analysis: &Analysis) -> Kept {
+        Kept { run: analysis.run, rules: Default::default(), stood: Vec::new() }
+    }
+
+    /// `rule`'s findings of the last lint, where they are this run's too: the run is `prior`
+    /// apart from the text typeset, the files the rule read are as they were, and no finding
+    /// names an edited line (a place there moved, and what a fix writes there changed).
+    fn stands(
+        &self,
+        rule: &Rule,
+        analysis: &Analysis,
+        sources: &fix::Sources,
+    ) -> Option<&(Vec<Record>, Vec<fix::Read>)> {
+        let found = self.rules.get(rule.code)?;
+        let window = analysis.since.as_ref()?.window;
+        let edited = |line: u64| window.is_some_and(|(_, lo, hi)| (u64::from(lo)..=u64::from(hi)).contains(&line));
+        // any line number of an edited line, of whichever file, and any place written out (`file:line:col`)
+        fn names(value: &serde_json::Value, edited: &dyn Fn(u64) -> bool) -> bool {
+            match value {
+                serde_json::Value::Object(map) => (map.iter())
+                    .any(|(key, v)| key.ends_with("line") && v.as_u64().is_some_and(edited) || names(v, edited)),
+                serde_json::Value::Array(list) => list.iter().any(|v| names(v, edited)),
+                serde_json::Value::String(text) => {
+                    (text.split(':').skip(1)).any(|part| !part.is_empty() && part.parse().is_ok_and(edited))
+                }
+                _ => false,
+            }
+        }
+        let unread = found.1.iter().all(|(path, text)| sources.same(path, text.as_deref()));
+        (unread && !found.0.iter().any(|r| r.values().any(|v| names(v, &edited)))).then_some(found)
+    }
 }
 
 pub(crate) fn lint_run(analysis: &Analysis, document: bool, wanted: impl Fn(&Rule) -> bool) -> Vec<Record> {
+    lint_kept(analysis, document, wanted, None, &mut Kept::of(analysis))
+}
+
+fn lint_kept(
+    analysis: &Analysis,
+    document: bool,
+    wanted: impl Fn(&Rule) -> bool,
+    prior: Option<(&Analysis, &Kept)>,
+    kept: &mut Kept,
+) -> Vec<Record> {
     let mut out = Vec::new();
+    let mut laps = crate::util::progress::Laps::new(analysis.settings.verbose >= 2, "lint");
     let sources = fix::Sources::default();
     crate::util::progress::bar("lint: the text as set", 0, 2, (0, 0), (0, 0), None, &[]);
     let text = text::View::of(analysis, &sources);
+    laps.lap("text view");
     crate::util::progress::bar("lint: what the run defined and used", 1, 2, (0, 0), (0, 0), None, &[]);
     let index = Index::of(analysis);
+    laps.lap("index");
     let mut raised: crate::fixed::HashSet<usize> = crate::fixed::HashSet::default();
     let rules: Vec<&Rule> = all()
         .filter(|rule| wanted(rule) && !analysis.settings.lint_off.iter().any(|c| c == rule.code || c == rule.number()))
@@ -715,6 +788,9 @@ pub(crate) fn lint_run(analysis: &Analysis, document: bool, wanted: impl Fn(&Rul
     let seconds = analysis.settings.limits.seconds;
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(seconds);
     let mut skipped = Vec::new();
+    // The last lint's findings, where this run is that one apart from the text typeset.
+    let prior = prior.filter(|(run, last)| last.run == run.run && analysis.same_but_text(run)).map(|(_, last)| last);
+    laps.lap("same but text");
     for (i, &rule) in rules.iter().enumerate() {
         if seconds > 0 && std::time::Instant::now() > deadline {
             skipped.push(rule.code);
@@ -739,7 +815,19 @@ pub(crate) fn lint_run(analysis: &Analysis, document: bool, wanted: impl Fn(&Rul
             out: Vec::new(),
         };
         let since = std::time::Instant::now();
-        (rule.run)(&mut report);
+        let keeps = KEPT.contains(&rule.code);
+        let stands = prior.filter(|_| keeps).and_then(|last| last.stands(rule, analysis, &sources));
+        let read = match stands {
+            Some((found, read)) => {
+                report.out = found.clone();
+                read.clone()
+            }
+            None => {
+                sources.read();
+                (rule.run)(&mut report);
+                sources.read()
+            }
+        };
         analysis.timings.rule(rule.code, since.elapsed(), report.out.len());
         // One finding per source site: a rule met again there (a macro body
         // used several times) says nothing new. TeX's errors are its own list:
@@ -754,6 +842,12 @@ pub(crate) fn lint_run(analysis: &Analysis, document: bool, wanted: impl Fn(&Rul
             }
             _ => true,
         });
+        if keeps && stands.is_none() {
+            kept.rules.insert(rule.code, (report.out.clone(), read));
+        } else if let Some(found) = stands {
+            kept.rules.insert(rule.code, found.clone());
+            kept.stood.push(rule.code);
+        }
         let start = out.len();
         out.append(&mut report.out);
         if rule.code == "raised-error" {
@@ -761,6 +855,7 @@ pub(crate) fn lint_run(analysis: &Analysis, document: bool, wanted: impl Fn(&Rul
         }
     }
     crate::util::progress::clear();
+    laps.lap("rules");
     // One fact, one finding: where a finding of the first rule stands at a related place,
     // the second rule's finding there is part of it.
     const COVERS: [(&str, &str); 1] = [("unreferenced-numbered-display", "unused-label")];
@@ -867,7 +962,10 @@ pub(crate) fn lint_run(analysis: &Analysis, document: bool, wanted: impl Fn(&Rul
             matches!(r.get("code").and_then(|v| v.as_str()), Some("limit-reached" | "analysis-ended-early"))
         });
     }
-    suppress::apply(analysis, out)
+    laps.lap("sieve");
+    let out = suppress::apply(analysis, out);
+    laps.lap("suppress");
+    out
 }
 
 /// The files a project takes as given, never its own to fix: those its

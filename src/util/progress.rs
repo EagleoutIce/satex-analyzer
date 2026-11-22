@@ -471,6 +471,33 @@ pub fn pause_if_due() {
     }
 }
 
+/// The seconds each part of some work took, written as one note (`satex: <what>: a 0.01s, …`)
+/// when dropped (`-vv`).
+pub struct Laps(Option<(std::time::Instant, String)>);
+
+impl Laps {
+    pub fn new(on: bool, what: &str) -> Self {
+        Laps(on.then(|| (std::time::Instant::now(), format!("satex: {what}:"))))
+    }
+
+    /// The time since the last lap went to `what`.
+    pub fn lap(&mut self, what: &str) {
+        if let Some((clock, said)) = &mut self.0 {
+            use std::fmt::Write;
+            let _ = write!(said, " {what} {:.2}s,", clock.elapsed().as_secs_f64());
+            *clock = std::time::Instant::now();
+        }
+    }
+}
+
+impl Drop for Laps {
+    fn drop(&mut self) {
+        if let Some((_, said)) = &self.0 {
+            message(format_args!("{}", said.trim_end_matches(',')));
+        }
+    }
+}
+
 /// Runs `f` with `why` added to what this thread's work is for.
 pub fn because<T>(why: impl Into<String>, f: impl FnOnce() -> T) -> T {
     struct Pop;

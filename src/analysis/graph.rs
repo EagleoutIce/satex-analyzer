@@ -201,43 +201,56 @@ impl DependencyGraph {
     /// to where both runs met (`new`) for the ones the last run had there (`at`). The runs made
     /// the same vertices and edges up to there, apart from where on the `edited` lines a vertex
     /// sits, and the rest changed none of those. `false`, with `self` unchanged, otherwise.
+    ///
+    /// `sites` and `wide` are not compared: both follow from what is. A site is its vertex's
+    /// span, name and tag ([`DependencyGraph::push_site`], vertices are never removed or renamed),
+    /// so the sites differ exactly where the vertices do; `wide` indexes `out`. Only the
+    /// vertices that differ are read and written, so the cost is the edit's, not the graph's.
     pub(crate) fn splice(&mut self, new: &Self, at: &Self, edited: impl Fn(&Span) -> bool) -> bool {
         let moved =
             |a: &Vertex, b: &Vertex| edited(&a.span) && edited(&b.span) && Vertex { span: b.span, ..a.clone() } == *b;
         let n = at.vertices.len();
-        let moves: Vec<usize> = (0..n.min(new.vertices.len())).filter(|&i| new.vertices[i] != at.vertices[i]).collect();
-        type Sites = crate::fixed::HotMap<(Span, Sym, VertexTag), NodeId>;
-        let keyed = |a: &Sites, b: &Sites| a.iter().all(|(k, v)| edited(&k.0) || b.get(k) == Some(v));
+        if new.vertices.len() != n || self.vertices.len() < n {
+            return false;
+        }
+        let moves = new.vertices.differing(&at.vertices, |a, b| a == b);
         let extents =
             |a: &HashMap<Span, u32>, b: &HashMap<Span, u32>| a.iter().all(|(k, v)| edited(k) || b.get(k) == Some(v));
-        let alike = new.vertices.len() == n
-            && self.vertices.len() >= n
-            && moves.iter().all(|&i| moved(&new.vertices[i], &at.vertices[i]) && self.vertices[i] == at.vertices[i])
-            && (new.cap, new.overflow, new.reader) == (at.cap, at.overflow, at.reader)
-            && new.out == at.out
-            && new.wide == at.wide
-            && new.made_by == at.made_by
-            && new.defs_of == at.defs_of
-            && new.ends == at.ends
-            && new.touched == at.touched
-            && new.touched_readers == at.touched_readers
-            && new.log == at.log
-            && (new.sites.size(), new.extents.len()) == (at.sites.size(), at.extents.len())
-            && keyed(&new.sites, &at.sites)
-            && keyed(&at.sites, &new.sites)
-            && extents(&new.extents, &at.extents)
-            && extents(&at.extents, &new.extents);
+        let alike =
+            moves.iter().all(|&i| moved(&new.vertices[i], &at.vertices[i]) && self.vertices[i] == at.vertices[i])
+                && (new.cap, new.overflow, new.reader) == (at.cap, at.overflow, at.reader)
+                && new.out == at.out
+                && new.made_by == at.made_by
+                && new.defs_of == at.defs_of
+                && new.ends == at.ends
+                && new.touched == at.touched
+                && new.touched_readers == at.touched_readers
+                && new.log == at.log
+                && new.extents.len() == at.extents.len()
+                && extents(&new.extents, &at.extents)
+                && extents(&at.extents, &new.extents);
         if !alike {
             return false;
         }
+        let site = |v: &Vertex| (v.span, v.name, v.tag);
+        for &i in &moves {
+            self.sites.remove(&site(&at.vertices[i]));
+        }
         for i in moves {
             self.vertices[i].span = new.vertices[i].span;
+            self.sites.insert_mut(site(&new.vertices[i]), i as NodeId);
         }
-        let kept = self.sites.iter().filter(|(k, _)| !edited(&k.0));
-        self.sites = kept.chain(new.sites.iter().filter(|(k, _)| edited(&k.0))).map(|(k, v)| (*k, *v)).collect();
         self.extents.retain(|k, _| !edited(k));
         self.extents.extend(new.extents.iter().filter(|(k, _)| edited(k)).map(|(k, v)| (*k, *v)));
         true
+    }
+
+    /// Whether the graph is `old` apart from where a vertex stands: the same vertices and edges.
+    pub fn alike_but_places(&self, old: &Self) -> bool {
+        let moved = |i: usize| Vertex { span: old.vertices[i].span, ..self.vertices[i].clone() } == old.vertices[i];
+        self.vertices.len() == old.vertices.len()
+            && self.vertices.differing(&old.vertices, |a, b| a == b).into_iter().all(moved)
+            && self.out == old.out
     }
 
     pub fn push(
@@ -718,7 +731,7 @@ impl DependencyGraph {
 /// definitions rather than from the [`DependencyGraph`], so that macros that
 /// are never invoked are still covered. [`crate::analysis::machine::Analysis::calls`]
 /// holds the one for a run.
-#[derive(PartialEq, Clone, Default, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct CallGraph {
     #[serde(with = "crate::fixed::flat")]
     pub nodes: crate::fixed::Chunked<Sym>,
@@ -751,6 +764,14 @@ impl Clone for Front {
 impl PartialEq for Front {
     fn eq(&self, _: &Self) -> bool {
         true
+    }
+}
+
+/// `index` says where each of `nodes` stands ([`CallGraph::node`], the only writer of both):
+/// equal nodes have equal indices, and the lists skip the chunks two copies share.
+impl PartialEq for CallGraph {
+    fn eq(&self, other: &Self) -> bool {
+        self.nodes == other.nodes && self.edges == other.edges && self.log == other.log
     }
 }
 

@@ -119,6 +119,10 @@ pub(super) struct Taking<'a> {
     converged: Option<(String, u32, u64)>,
     /// The last run's end with this run's facts before the meeting line: this run's end.
     spliced: Option<Box<Machine<'a>>>,
+    /// With `spliced`: how its run differs from the last one ([`super::Since`], its run not yet named).
+    edited: Option<super::Since>,
+    /// The expansions, occurrences and definitions recorded when this run resumed.
+    rows: [usize; 3],
     /// What the last run read after the meeting line.
     tail: Vec<crate::project::overlay::Read>,
     /// After a splice: when this run and the last run's rest last read or wrote each slot.
@@ -415,15 +419,18 @@ impl Machine<'_> {
         let Some(old) = old.pop() else { return };
         let (reads, old) = (old.reads, old.machine);
         let clock = std::time::Instant::now();
-        let differs = self.differs_from(&old, false).or_else(|| self.splice(&old, reads).err());
+        let differs = self.differs_from(&old, false);
+        let compared = clock.elapsed();
+        let differs = differs.or_else(|| self.splice(&old, reads).err());
         if matches!(differs, Some("page so far" | "mode or pages" | "path state")) {
             self.lax_splice(&old, reads);
         }
         if self.cfg.verbose >= 2 {
             crate::util::progress::note!(
-                "satex: state at {path}:{line} vs the last run's: {} ({:.3}s)",
+                "satex: state at {path}:{line} vs the last run's: {} ({:.3}s, of it comparing {:.3}s)",
                 differs.unwrap_or("alike"),
-                clock.elapsed().as_secs_f64()
+                clock.elapsed().as_secs_f64(),
+                compared.as_secs_f64()
             );
         }
         if let Some(taking) = self.checkpoints.on.as_mut() {
@@ -439,6 +446,7 @@ impl Machine<'_> {
     /// Sound when the states are equal here and the edited lines left no token
     /// behind: the rest then runs alike, and records alike, in both runs.
     fn splice(&mut self, old: &Machine, reads: usize) -> Result<(), &'static str> {
+        let mut laps = crate::util::progress::Laps::new(self.cfg.verbose >= 2, "splice");
         let prior = self.checkpoints.on.as_mut().map(|t| &mut t.prior).ok_or("no checkpoints")?;
         let (Some(edit), true) = (prior.edit.clone(), prior.end.is_some()) else {
             return Err("no end of the last run");
@@ -447,6 +455,7 @@ impl Machine<'_> {
         if !prior.rest_holds(reads) {
             return Err("the rest reads a changed file");
         }
+        laps.lap("files the rest reads");
         let window = edited_lines(&self.input, &old.input, &self.out.files, &edit, window).ok_or("edit elsewhere")?;
         // Between paragraphs: one going on would be broken into lines with the edited text.
         if self.mode != crate::engine::mode::Modes::VERTICAL {
@@ -470,6 +479,7 @@ impl Machine<'_> {
             [Option<crate::engine::tex::Span>; 5],
             Option<(crate::engine::tex::Span, crate::engine::tex::Span)>,
         )| { l.0.iter().flatten().chain(l.1.iter().flat_map(|p| [&p.0, &p.1])).any(on_edit) };
+        laps.lap("edited lines");
         if mine != theirs || places(&mine) {
             return Err("a place on the edited lines");
         }
@@ -487,6 +497,7 @@ impl Machine<'_> {
         let parted = self.checkpoints.on.as_ref().map_or((0, 0, 0), |t| t.parted);
         let (mine, theirs) =
             (provisional::comparable_path(self, false, parted), provisional::comparable_path(old, false, parted));
+        laps.lap("path");
         if mine != theirs {
             return Err("path state");
         }
@@ -494,6 +505,7 @@ impl Machine<'_> {
         // only if it never read or wrote one of them ([`crate::engine::env::Env::touched`]).
         // They then end as this run binds them here.
         let delta = self.env.differing(&old.env);
+        laps.lap("bindings");
         let prior = self.checkpoints.on.as_ref().map(|t| &t.prior).ok_or("no checkpoints")?;
         if delta.iter().any(|&s| prior.used.get(s as usize).is_some_and(|&at| at >= old.out.steps)) {
             return Err("bindings the rest reads");
@@ -514,15 +526,19 @@ impl Machine<'_> {
         let since = self.checkpoints.on.as_ref().map_or((0, 0, 0), |t| t.since);
         let traces =
             [mine, self.env.trace((since.0, since.1), &delta), theirs, old.env.trace((since.0, since.1), &delta)];
+        laps.lap("traces");
         if traces.iter().any(|t| mentions(t, window)) {
             return Err("tokens of the edited lines");
         }
         // On a copy of the end: where a record does not splice here, a later line may still meet it.
         let end = self.checkpoints.on.as_ref().and_then(|t| t.prior.end.as_ref()).ok_or("no end of the last run")?;
         let mut end = Box::new((**end).clone());
+        laps.lap("copy of the end");
         provisional::splice_out(&self.out, &old.out, &mut end.out, window, since.2, false)?;
+        laps.lap("record");
         provisional::splice_records(self, old, &mut end, window)?;
         end.env.carry(&self.env, &delta);
+        laps.lap("records, carry");
         end.kp = self.kp.clone();
         end.started = self.started;
         // The rest used what the last run used from here on.
@@ -531,7 +547,19 @@ impl Machine<'_> {
         taking.used = Some(crate::engine::env::LastUse::joined(mine, &taking.prior.used, was, now));
         taking.tail = taking.prior.log.get(reads..).unwrap_or_default().to_vec();
         taking.prior.end = None;
+        let (new, at) = (&self.out.facts, &old.out.facts);
+        let met = [new.expansions.len(), new.occurrences.len(), new.defs.len()];
+        taking.edited = Some(super::Since {
+            run: 0,
+            window: Some(window),
+            bindings: !delta.is_empty(),
+            // The rows the edited lines recorded, one for one in both runs; else none are told apart.
+            rows: (met == [at.expansions.len(), at.occurrences.len(), at.defs.len()])
+                .then(|| [0, 1, 2].map(|i| (taking.rows[i], met[i]))),
+            lines: line_shapes(&self.input, &old.input, window).unwrap_or_default().into(),
+        });
         taking.spliced = Some(end);
+        laps.lap("uses, log");
         Ok(())
     }
 
@@ -716,6 +744,26 @@ pub(super) fn edited_lines(
     }
     let differ: Vec<u32> = (0..now.len()).filter(|&i| now[i] != then[i]).map(|i| i as u32 + 1).collect();
     Some((top.file, *differ.first()?, *differ.last()?))
+}
+
+/// How each line of `window` differs between the file `new` reads on top and the one `old`
+/// read there ([`super::LineShape`]). `None` unless both read the window's file.
+fn line_shapes(new: &super::Input, old: &super::Input, window: Window) -> Option<Vec<super::LineShape>> {
+    let top = |input: &super::Input| {
+        input.iter().rev().find_map(|f| if let Frame::File { mouth, .. } = f { Some(mouth.clone()) } else { None })
+    };
+    let (now, then) = (top(new).filter(|m| m.file == window.0)?, top(old).filter(|m| m.file == window.0)?);
+    let lines = |m: &Mouth, n: usize| m.source().split(|&c| c == '\n').nth(n).map(<[char]>::to_vec);
+    (window.1..=window.2)
+        .map(|line| {
+            let (now, then) = (lines(&now, line as usize - 1)?, lines(&then, line as usize - 1)?);
+            let kept = now.iter().zip(&then).take_while(|(a, b)| a == b).count();
+            let most = now.len().min(then.len()) - kept;
+            let tail = now.iter().rev().zip(then.iter().rev()).take(most).take_while(|(a, b)| a == b).count();
+            let by = now.len() as i64 - then.len() as i64;
+            Some(super::LineShape { line, kept: kept as u32, gone: (then.len() - kept - tail) as u32, by })
+        })
+        .collect()
 }
 
 /// Whether `text`, a state written with [`std::fmt::Debug`], holds a place in `window`.
@@ -920,13 +968,14 @@ impl<'a> Checkpoints<'a> {
         if let Some(end) = self.end.as_ref().filter(|e| !e.out.exhausted && self.source == source)
             && self.log.iter().all(crate::project::overlay::Read::holds)
         {
-            let m = (**end).clone();
+            let mut m = (**end).clone();
             let id = m.out.main_file;
             if self.cfg.verbose >= 2 {
                 crate::util::progress::note!("satex: nothing the last run read changed ({} files)", self.log.len());
             }
             self.ran = (0, m.out.steps);
-            return m.conclude(id, source);
+            m.out.since = Some(super::Since { run: m.out.run, ..Default::default() });
+            return self.concluded(m, id, source);
         }
         let clock = std::time::Instant::now();
         let log = self.log.clone();
@@ -1021,6 +1070,11 @@ impl<'a> Checkpoints<'a> {
             },
             converged: None,
             spliced: None,
+            edited: None,
+            rows: {
+                let facts = &m.out.facts;
+                [facts.expansions.len(), facts.occurrences.len(), facts.defs.len()]
+            },
             tail: Vec::new(),
             used: None,
             since: (m.env.assignments, m.env.journal_len(), m.out.facts.text.at.len() as u32),
@@ -1033,6 +1087,7 @@ impl<'a> Checkpoints<'a> {
         m.run_guarded();
         self.used = m.env.touched.times();
         let ran = (clock.elapsed(), m.out.steps - from);
+        let mut laps = crate::util::progress::Laps::new(self.cfg.verbose >= 2, "after the run");
         self.ran = (ran.1, m.out.steps);
         // Reads after the last checkpoint. No resume depends on them, but the build's reruns do.
         let after = crate::project::overlay::log(false);
@@ -1044,15 +1099,18 @@ impl<'a> Checkpoints<'a> {
             if self.defer_drops {
                 self.buried = Some(std::mem::take(&mut taking.prior));
             }
+            m.out.since = None;
             match taking.spliced.take() {
                 Some(end) => {
                     m = *end;
+                    m.out.since = taking.edited.take().map(|since| super::Since { run: m.out.run, ..since });
                     self.log.extend(taking.tail);
                     self.used = taking.used.take().unwrap_or_default();
                 }
                 None => self.log.extend(after),
             }
         }
+        laps.lap("end taken");
         self.steps = m.out.steps;
         // The project's files as this run read them: the next edit is told from them ([`Checkpoints::change`]).
         self.texts = (0..m.out.files.len() as crate::engine::tex::FileId)
@@ -1066,9 +1124,12 @@ impl<'a> Checkpoints<'a> {
         if self.resumed.is_none() {
             self.ran = (m.out.steps, m.out.steps);
         }
+        laps.lap("texts");
         self.end = Some(Box::new(m.clone()));
+        laps.lap("end kept");
+        drop(laps);
         let (clock, verbose) = (std::time::Instant::now(), self.cfg.verbose >= 2);
-        let analysis = m.conclude(id, source);
+        let analysis = self.concluded(m, id, source);
         if verbose {
             crate::util::progress::note!(
                 "satex: resume {:.2}s, run {:.2}s for {} steps, conclude {:.2}s",
@@ -1077,6 +1138,16 @@ impl<'a> Checkpoints<'a> {
                 ran.1,
                 clock.elapsed().as_secs_f64()
             );
+        }
+        analysis
+    }
+
+    /// `m` concluded, the run this call returns: the kept end is numbered as it is, so the next
+    /// run that takes its rest names it ([`super::Since::run`]).
+    fn concluded(&mut self, m: Machine<'a>, id: crate::engine::tex::FileId, source: &str) -> Analysis {
+        let analysis = m.conclude(id, source);
+        if let Some(end) = &mut self.end {
+            end.out.run = analysis.run;
         }
         analysis
     }
@@ -1176,6 +1247,11 @@ impl<'a> Checkpoints<'a> {
             prior: Prior::default(),
             converged: None,
             spliced: None,
+            edited: None,
+            rows: {
+                let facts = &m.out.facts;
+                [facts.expansions.len(), facts.occurrences.len(), facts.defs.len()]
+            },
             tail: Vec::new(),
             used: None,
             since: (m.env.assignments, m.env.journal_len(), m.out.facts.text.at.len() as u32),

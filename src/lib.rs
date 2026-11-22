@@ -120,6 +120,11 @@ pub mod fixed {
             self.hot.insert(key, value);
         }
 
+        pub fn remove(&mut self, key: &K) {
+            self.hot.remove(key);
+            self.base.remove_mut(key);
+        }
+
         /// Moves the front table into the trie.
         pub fn settle(&mut self) {
             for (k, v) in self.hot.drain() {

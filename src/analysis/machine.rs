@@ -37,6 +37,7 @@ fn guard_panics() {
     });
 }
 
+use crate::analysis::facts::Placed;
 use crate::analysis::facts::{
     Definition, Diagnostic, Expansion, Facts, Load, LoadStatus, MeaningKind, Occurrence, Severity,
 };
@@ -530,7 +531,90 @@ pub struct Analysis {
     /// What [`crate::queries::said`] reads of the run: built once.
     #[serde(skip)]
     pub said: std::sync::OnceLock<crate::queries::said::Run>,
+    /// The run's number among this process's runs, from 1: what [`Since::run`] names.
+    #[serde(skip)]
+    pub run: u64,
+    /// How the run differs from the one before it, when it is that run apart from an edit
+    /// ([`Checkpoints::analyze`]): what the last run built of its whole document may be kept.
+    #[serde(skip)]
+    pub since: Option<Since>,
 }
+
+/// A run that took the last run's rest after an edit ([`Machine::splice`]), or its whole end
+/// (nothing it read changed): it holds what that run held apart from what the edited lines
+/// recorded and where on them a place stands.
+#[derive(Clone, Default, PartialEq, Debug)]
+pub struct Since {
+    /// That run's [`Analysis::run`].
+    pub run: u64,
+    /// The edited lines of one file, first and last. `None`: no line changed.
+    pub window: Option<(FileId, u32, u32)>,
+    /// Whether the edited lines left a name bound otherwise than that run had it at its end.
+    pub bindings: bool,
+    /// The expansions, occurrences and definitions the edited lines recorded, as index ranges,
+    /// when both runs recorded as many: every other row is the last run's.
+    pub rows: Option<[(usize, usize); 3]>,
+    /// How each edited line changed. Empty when the runs' texts were not at hand.
+    pub lines: Rc<[LineShape]>,
+}
+
+/// One edited line: its first `kept` characters stand, the last run's next `gone` are replaced,
+/// and what follows them stands `by` columns further on.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub struct LineShape {
+    pub line: u32,
+    pub kept: u32,
+    pub gone: u32,
+    pub by: i64,
+}
+
+impl Since {
+    /// Whether a place the last run had at `was` is the one this run has at `now`: off the
+    /// edited lines, before the edit where it was, or after it and moved with the text. Places
+    /// that all hold this stand in both runs in the same order.
+    pub fn moved(&self, was: Span, now: Span) -> bool {
+        let edited = |s: Span| self.window.is_some_and(|(file, lo, hi)| s.file == file && (lo..=hi).contains(&s.line));
+        if !edited(was) && !edited(now) {
+            return was == now;
+        }
+        let Some(shape) = self.lines.iter().find(|s| s.line == was.line) else { return false };
+        (was.file, was.line) == (now.file, now.line)
+            && match was.col <= shape.kept {
+                true => now.col == was.col,
+                false => was.col > shape.kept + shape.gone && i64::from(now.col) == i64::from(was.col) + shape.by,
+            }
+    }
+
+    /// Whether `new` holds `old`'s rows, apart from where on the edited lines a row of
+    /// `rows` stands: there each place moved with the text ([`Since::moved`]).
+    fn alike<T: Placed + Clone + PartialEq>(
+        &self,
+        new: &crate::fixed::Chunked<T>,
+        old: &crate::fixed::Chunked<T>,
+        rows: (usize, usize),
+    ) -> bool {
+        new.differing(old, |a, b| a == b).iter().all(|i| (rows.0..rows.1).contains(i))
+            && (rows.0..rows.1).all(|i| new.get(i).zip(old.get(i)).is_some_and(|(a, b)| self.moved_row(a, b)))
+    }
+
+    /// [`Since::alike`] for a short list, every row of it looked at.
+    fn listed<T: Placed + Clone + PartialEq>(&self, new: &[T], old: &[T]) -> bool {
+        new.len() == old.len() && new.iter().zip(old).all(|(a, b)| self.moved_row(a, b))
+    }
+
+    /// Whether `new` is `old` with each place moved with the text.
+    fn moved_row<T: Placed + Clone + PartialEq>(&self, new: &T, old: &T) -> bool {
+        let (mut a, mut b) = (new.clone(), old.clone());
+        let (mut now, mut was) = (Vec::new(), Vec::new());
+        for (row, at) in [(&mut a, &mut now), (&mut b, &mut was)] {
+            row.places(&mut |s| at.push(std::mem::take(s)));
+        }
+        a == b && now.len() == was.len() && was.iter().zip(&now).all(|(was, now)| self.moved(*was, *now))
+    }
+}
+
+/// How many runs this process concluded: the next [`Analysis::run`].
+static RUNS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 /// Collection sizes change slowly. Checking them on every token would
 /// cost more than it saves.
@@ -722,6 +806,52 @@ impl Analysis {
     /// document, or left the build's passes unsettled.
     pub fn stopped(&self) -> bool {
         self.exhausted || self.limits.iter().any(|l| matches!(l.key, "seconds" | "memory"))
+    }
+
+    /// Whether this run is `prior` apart from what its edited lines typeset: it took `prior`'s
+    /// rest ([`Since`]), names and binds every name as `prior` does, and holds `prior`'s
+    /// calls, graph (vertices and edges), definitions, loads, diagnostics, expansions and
+    /// occurrences, apart from places on the edited lines, which moved with the text
+    /// ([`Since::moved`]). What is built from those alone, reading places only to compare them
+    /// with each other, is built alike for both runs, and so is what it says off the edited lines.
+    pub fn same_but_text(&self, prior: &Analysis) -> bool {
+        let Some(since) = self.since.as_ref().filter(|s| s.run == prior.run && !s.bindings) else { return false };
+        let (new, old) = (&self.facts, &prior.facts);
+        let rows = since.rows.unwrap_or_default();
+        (since.window.is_none() || since.rows.is_some())
+            && self.interner.len() == prior.interner.len()
+            && self.interner.holds(&prior.interner)
+            && self.calls == prior.calls
+            && self.observed == prior.observed
+            && self.graph.alike_but_places(&prior.graph)
+            && since.alike(&new.expansions, &old.expansions, rows[0])
+            && since.alike(&new.occurrences, &old.occurrences, rows[1])
+            && since.alike(&new.defs, &old.defs, rows[2])
+            && since.listed(&new.loads, &old.loads)
+            && since.listed(&new.diagnostics, &old.diagnostics)
+    }
+
+    /// Takes over what `prior` built of its whole run for requests (the probes, the fewest
+    /// arguments each name takes, the tagging state, the rows of the names in scope), where
+    /// this run is `prior` apart from the text typeset ([`Analysis::same_but_text`]): each reads
+    /// the bindings, the definitions, the loads and the calls, and places only in their order.
+    /// Whether it did.
+    pub fn carry(&self, prior: &Analysis) -> bool {
+        if !self.same_but_text(prior) {
+            return false;
+        }
+        if let (Ok(from), Ok(mut to)) = (prior.probes.lock(), self.probes.lock()) {
+            from.iter().for_each(|(key, probed)| _ = to.entry(*key).or_insert_with(|| probed.clone()));
+        }
+        fn take<T: Clone>(to: &std::sync::OnceLock<T>, from: &std::sync::OnceLock<T>) {
+            if let Some(built) = from.get() {
+                let _ = to.set(built.clone());
+            }
+        }
+        take(&self.takes, &prior.takes);
+        take(&self.tagging, &prior.tagging);
+        take(&self.scope_rows, &prior.scope_rows);
+        true
     }
 
     /// Kernels and package caches this run built: one-time work the next run reuses.
@@ -3150,6 +3280,8 @@ impl<'a> Machine<'a> {
                 bib: Default::default(),
                 scope_rows: Default::default(),
                 said: Default::default(),
+                run: 0,
+                since: None,
             },
             env,
             catcodes,
@@ -3585,7 +3717,9 @@ impl<'a> Machine<'a> {
         let mut analysis = loop {
             let before = elapsed(checkpoints, caching);
             crate::util::progress::set_run(run, runs);
+            let mut laps = crate::util::progress::Laps::new(cfg.verbose >= 2, "build run");
             let mut analysis = checkpoints.analyze(source, path);
+            laps.lap("run");
             analysis.build_runs = run;
             // The bibliography tool's and makeindex's files, made from what the run wrote. One a
             // tool makes no more is gone, as in a fresh build: a copy an earlier build left stays
@@ -3601,6 +3735,7 @@ impl<'a> Machine<'a> {
                     _ => {}
                 }
             }
+            laps.lap("bibliography, index");
             history.push(analysis.written.clone());
             caches.get_or_insert_with(|| (analysis.package_caches.clone(), analysis.format.clone()));
             // A budget stopped it: no other run, and the last one that ran
@@ -3639,17 +3774,17 @@ impl<'a> Machine<'a> {
             // (`\@abspage@last` at each shipout) or defined (a note column's
             // `\slnc@note`, for the lines its read loop would execute). A
             // changed line naming none of them changes nothing the run depends on.
-            let referenced: crate::fixed::HashSet<String> = analysis
-                .facts
-                .occurrences
-                .iter()
-                .filter(|o| matches!(o.kind, OccKind::Ref | OccKind::Cite | OccKind::KeyUse))
-                .map(|o| format!("{{{}}}", o.key))
-                .collect();
-            let expanded: crate::fixed::HashSet<&str> = (analysis.facts.expansions.iter().map(|e| e.name))
-                .chain(analysis.facts.defs.iter().map(|d| d.name))
-                .map(|n| analysis.interner.name(n))
-                .collect();
+            // Built for the first changed line: a run that left its files as they were asks for neither.
+            let referenced = std::cell::LazyCell::new(|| -> crate::fixed::HashSet<String> {
+                let read = |o: &&Occurrence| matches!(o.kind, OccKind::Ref | OccKind::Cite | OccKind::KeyUse);
+                analysis.facts.occurrences.iter().filter(read).map(|o| format!("{{{}}}", o.key)).collect()
+            });
+            let expanded = std::cell::LazyCell::new(|| -> crate::fixed::HashSet<&str> {
+                (analysis.facts.expansions.iter().map(|e| e.name))
+                    .chain(analysis.facts.defs.iter().map(|d| d.name))
+                    .map(|n| analysis.interner.name(n))
+                    .collect()
+            });
             // A line that names nothing (counttexruns' run count) is data a `\read`
             // takes as it stands: what the run made of it is not seen here.
             let reads = |line: &str| {
@@ -3724,6 +3859,8 @@ impl<'a> Machine<'a> {
                 let again = looked.iter().any(|p| p.components().eq(at.components()));
                 changed.push((at, None, again));
             }
+            laps.lap("files changed");
+            drop(laps);
             if cfg.verbose >= 1 {
                 let names: Vec<_> = (changed.iter().filter(|c| c.2).filter_map(|(at, ..)| at.file_name()))
                     .map(|n| n.to_string_lossy())
@@ -4054,6 +4191,8 @@ impl<'a> Machine<'a> {
     /// and the facts drawn from all it recorded.
     fn conclude(self, id: FileId, source: &str) -> Analysis {
         let mut m = self;
+        let mut laps = crate::util::progress::Laps::new(m.cfg.verbose >= 2, "conclude");
+        m.out.run = RUNS.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
         m.out.started = Some(m.started);
         m.report_missing_end(source);
         // tex.web § 1054: `\end` ships out what is left, deferred writes too.
@@ -4065,6 +4204,7 @@ impl<'a> Machine<'a> {
         // The document's own run only: nested runs read part of it.
         m.report_unread_inputs();
         crate::analysis::observe::text_break(&mut m);
+        laps.lap("end");
         m.out.timings.enter_file(id);
         m.out.timings.leave_file();
         m.out.timings.start(Phase::Hooks);
@@ -4099,20 +4239,29 @@ impl<'a> Machine<'a> {
                 ),
             );
         }
+        laps.lap("tools");
         m.out.plugins.depp = crate::plugins::depp::Depp::read(&m.out);
         m.say_clock();
         m.out.timings.finish();
+        laps.lap("depp");
         m.link_csname_calls();
+        laps.lap("csname calls");
         m.out.calls.finish();
         m.out.observed.finish();
+        laps.lap("call graphs");
         crate::analysis::observe::relate(&mut m);
+        laps.lap("relate");
         m.link_cross_references();
+        laps.lap("cross references");
         m.collect_fonts();
+        laps.lap("fonts");
         m.out.env = std::mem::take(&mut m.env);
         m.out.catcodes = m.catcodes.clone();
         let live = std::mem::take(&mut m.diag_live);
         let mut row = 0..;
         m.out.facts.diagnostics.retain(|_| live.get(row.next().unwrap_or_default()).is_none_or(|&n| n > 0));
+        laps.lap("diagnostics");
+        drop(laps);
         m.out
     }
 

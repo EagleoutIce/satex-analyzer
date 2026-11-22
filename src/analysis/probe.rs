@@ -115,7 +115,7 @@ pub fn abandonable<T>(cancelled: Box<dyn Fn() -> bool>, f: impl FnOnce() -> T) -
 }
 
 /// Unwinds an [`abandonable`] question that went stale. `resume_unwind` runs no panic hook.
-fn abandon_if_stale() {
+pub(crate) fn abandon_if_stale() {
     if CONTEXT.with_borrow(|c| c.abandon) && stale() {
         std::panic::resume_unwind(Box::new(Abandoned));
     }

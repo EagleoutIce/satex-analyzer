@@ -43,7 +43,7 @@ impl Machine<'_> {
         for page in end.out.facts.text.pages.iter_mut().filter(|p| p.0 >= since.2) {
             page.2 = false;
         }
-        end.started = self.started;
+        (end.started, end.out.since) = (self.started, None);
         let Some((.., then)) = self.checkpoints.on.as_mut().and_then(|t| t.provisional.take()) else { return };
         then(end.conclude(id, &source));
     }
@@ -108,42 +108,42 @@ fn same<T: serde::Serialize + ?Sized>(a: &T, b: &T) -> bool {
 /// `at`, and the rows it added. Rows are kept per index (a site's row is
 /// updated in place), so a row both runs hold differently must be one the
 /// rest cannot touch: placed on an edited line, of which no token is left.
-/// Whether `new` holds the rows `at` holds, each alike.
-fn alike<T: PartialEq>(new: &impl Rows<T>, at: &impl Rows<T>) -> bool {
-    new.count() == at.count() && (0..at.count()).all(|i| new.row(i) == at.row(i))
-}
-
-fn rows<T: PartialEq + Clone>(
-    new: &impl Rows<T>,
-    at: &impl Rows<T>,
-    end: &mut impl Rows<T>,
-    edited: impl Fn(&T) -> bool,
-) -> bool {
+/// Only the rows that differ are read and written: the end keeps the others, and the
+/// chunks it shares with the last run's end.
+fn rows<T: PartialEq + Clone, R: Rows<T>>(new: &R, at: &R, end: &mut R, edited: impl Fn(&T) -> bool) -> bool {
     if end.count() < at.count() {
         return false;
     }
+    let differing = new.differing(at);
     // This run holds the rows the last one held here: the end's stand as they are, none is copied.
-    if alike(new, at) {
+    let Some(&first) = differing.first() else { return true };
+    // The row this run holds at `i`, if the end may take it: the rest left the last run's alone.
+    let mine = |i: usize, end: &dyn Fn(usize) -> Option<T>| match (new.row(i), at.row(i)) {
+        (Some(mine), Some(was)) if mine == was => Some(end(i)),
+        (Some(mine), Some(was)) if end(i).as_ref() == Some(was) && edited(mine) && edited(was) => {
+            Some(Some(mine.clone()))
+        }
+        (None, Some(was)) if end(i).as_ref() == Some(was) && edited(was) => Some(None),
+        (Some(mine), None) if edited(mine) => Some(Some(mine.clone())),
+        _ => None,
+    };
+    // No row came or went: each one that differs is set where it stands.
+    if new.count() == at.count() {
+        let read = |i: usize| end.row(i).cloned();
+        let Some(set) = differing.iter().map(|&i| mine(i, &read)).collect::<Option<Vec<_>>>() else { return false };
+        for (i, row) in differing.into_iter().zip(set.into_iter().flatten()) {
+            end.put(i, row);
+        }
         return true;
     }
-    let mut out = Vec::with_capacity(new.count() + end.count() - at.count());
-    for i in 0..at.count() {
-        let (was, mine, last) = (at.row(i).expect("in range"), new.row(i), end.row(i).expect("longer"));
-        let rest_changed = last != was;
-        match mine {
-            Some(mine) if mine == was => out.push(last.clone()),
-            Some(mine) if !rest_changed && edited(mine) && edited(was) => out.push(mine.clone()),
-            None if !rest_changed && edited(was) => {}
-            _ => return false,
-        }
-    }
-    let added = (at.count()..new.count()).filter_map(|i| new.row(i));
-    if !added.clone().all(&edited) {
+    // Rows came or went: the end's rows from the first that differs are placed anew.
+    let read = |i: usize| end.row(i).cloned();
+    let Some(head) = (first..new.count().max(at.count())).map(|i| mine(i, &read)).collect::<Option<Vec<_>>>() else {
         return false;
-    }
-    out.extend(added.cloned());
-    out.extend((at.count()..end.count()).filter_map(|i| end.row(i)).cloned());
-    end.set(out);
+    };
+    let rest: Vec<T> = (at.count()..end.count()).filter_map(|i| end.row(i)).cloned().collect();
+    end.cut(first);
+    end.add(head.into_iter().flatten().chain(rest));
     true
 }
 
@@ -151,59 +151,77 @@ fn rows<T: PartialEq + Clone>(
 trait Rows<T> {
     fn row(&self, i: usize) -> Option<&T>;
     fn count(&self) -> usize;
-    fn set(&mut self, rows: Vec<T>);
+    fn put(&mut self, i: usize, row: T);
+    /// Keeps the first `n` rows.
+    fn cut(&mut self, n: usize);
+    fn add(&mut self, rows: impl Iterator<Item = T>);
+    /// Where the rows are not `at`'s, in order; a longer one's rest too.
+    fn differing(&self, at: &Self) -> Vec<usize>;
 }
 
-impl<T> Rows<T> for Vec<T> {
+impl<T: PartialEq> Rows<T> for Vec<T> {
     fn row(&self, i: usize) -> Option<&T> {
         self.get(i)
     }
     fn count(&self) -> usize {
         self.len()
     }
-    fn set(&mut self, rows: Vec<T>) {
-        *self = rows;
+    fn put(&mut self, i: usize, row: T) {
+        self[i] = row;
+    }
+    fn cut(&mut self, n: usize) {
+        self.truncate(n);
+    }
+    fn add(&mut self, rows: impl Iterator<Item = T>) {
+        self.extend(rows);
+    }
+    fn differing(&self, at: &Self) -> Vec<usize> {
+        (0..self.len().max(at.len())).filter(|&i| self.get(i) != at.get(i)).collect()
     }
 }
 
-impl<T: Clone> Rows<T> for crate::fixed::Chunked<T> {
+impl<T: Clone + PartialEq> Rows<T> for crate::fixed::Chunked<T> {
     fn row(&self, i: usize) -> Option<&T> {
         self.get(i)
     }
     fn count(&self) -> usize {
         self.len()
     }
-    fn set(&mut self, rows: Vec<T>) {
-        *self = rows.into();
+    fn put(&mut self, i: usize, row: T) {
+        self[i] = row;
+    }
+    fn cut(&mut self, n: usize) {
+        self.truncate(n);
+    }
+    fn add(&mut self, rows: impl Iterator<Item = T>) {
+        self.extend(rows);
+    }
+    fn differing(&self, at: &Self) -> Vec<usize> {
+        crate::fixed::Chunked::differing(self, at, |a, b| a == b)
     }
 }
 
 /// `end` becomes `new` with the entries the last run changed after `at`. An
 /// entry this run holds differently from the last must be one the rest of the
 /// run cannot touch: on an edited line (`window`), when no token of it is left.
+/// Written where it stands: the end takes this run's entries that differ, nothing is copied.
 fn keyed<K: std::hash::Hash + Eq + Clone, V: PartialEq + Clone>(
     new: &HashMap<K, V>,
     at: &HashMap<K, V>,
     end: &mut HashMap<K, V>,
     window: impl Fn(&K) -> bool,
 ) -> bool {
-    let mut out = new.clone();
-    for k in end.keys().chain(at.keys()) {
-        if end.get(k) != at.get(k) {
-            if new.get(k) != at.get(k) {
-                return false;
-            }
-            match end.get(k) {
-                Some(v) => out.insert(k.clone(), v.clone()),
-                None => out.remove(k),
-            };
-        }
-    }
-    let untouched = |k: &K| end.get(k) == at.get(k);
-    if new.keys().chain(at.keys()).any(|k| new.get(k) != at.get(k) && untouched(k) && !window(k)) {
+    let gone = at.keys().filter(|k| !new.contains_key(k));
+    let differing: Vec<&K> = new.iter().filter(|(k, v)| at.get(k) != Some(v)).map(|(k, _)| k).chain(gone).collect();
+    if !differing.iter().all(|k| end.get(k) == at.get(k) && window(k)) {
         return false;
     }
-    *end = out;
+    for k in differing {
+        match new.get(k) {
+            Some(v) => end.insert(k.clone(), v.clone()),
+            None => end.remove(k),
+        };
+    }
     true
 }
 
@@ -401,16 +419,16 @@ pub(super) fn splice_records(
 ) -> Result<(), &'static str> {
     let span = |s: Span| s.file == window.0 && (window.1..=window.2).contains(&s.line);
     // The names read are indexed: left as they are where this run read what the last one had.
-    let reindex = !alike(&new.name_reads.list, &at.name_reads.list);
+    let reindex = !Rows::differing(&new.name_reads.list, &at.name_reads.list).is_empty();
     let mut reads = if reindex { std::mem::take(&mut end.name_reads).list } else { Default::default() };
+    let a = rows(&new.written_lines, &at.written_lines, &mut end.written_lines, |r| span(r.place()));
+    let b = !reindex && end.name_reads.list.count() >= at.name_reads.list.count()
+        || rows(&new.name_reads.list, &at.name_reads.list, &mut reads, |r| span(r.place()));
+    let c = rows(&new.key_names, &at.key_names, &mut end.key_names, |r| span(r.3));
     let checks = [
-        (rows(&new.written_lines, &at.written_lines, &mut end.written_lines, |r| span(r.place())), "lines written"),
-        (
-            !reindex && end.name_reads.list.count() >= at.name_reads.list.count()
-                || rows(&new.name_reads.list, &at.name_reads.list, &mut reads, |r| span(r.place())),
-            "names read",
-        ),
-        (rows(&new.key_names, &at.key_names, &mut end.key_names, |r| span(r.3)), "names from keys"),
+        (a, "lines written"),
+        (b, "names read"),
+        (c, "names from keys"),
         (new.stream_files == at.stream_files, "stream files"),
     ];
     if reindex {
@@ -425,19 +443,50 @@ fn never<K>(_: &K) -> bool {
 }
 
 /// [`keyed`] for a set.
-fn members<K: std::hash::Hash + Eq + Clone, S>(new: &S, at: &S, end: &mut S, window: impl Fn(&K) -> bool) -> bool
-where
-    for<'s> &'s S: IntoIterator<Item = &'s K>,
-    S: FromIterator<K>,
-{
-    let map = |s: &S| s.into_iter().map(|k| (k.clone(), ())).collect::<HashMap<K, ()>>();
-    let mut out = map(end);
-    let ok = keyed(&map(new), &map(at), &mut out, window);
-    if ok {
-        *end = out.into_keys().collect();
+fn members<K: Clone, S: Members<K>>(new: &S, at: &S, end: &mut S, window: impl Fn(&K) -> bool) -> bool {
+    let differing: Vec<(&K, bool)> = (new.all().filter(|k| !at.has(k)).map(|k| (k, true)))
+        .chain(at.all().filter(|k| !new.has(k)).map(|k| (k, false)))
+        .collect();
+    if !differing.iter().all(|(k, _)| end.has(k) == at.has(k) && window(k)) {
+        return false;
     }
-    ok
+    for (k, held) in differing {
+        end.hold(k, held);
+    }
+    true
 }
+
+/// A set [`members`] reads and writes by member.
+trait Members<K> {
+    fn all<'s>(&'s self) -> impl Iterator<Item = &'s K>
+    where
+        K: 's;
+    fn has(&self, k: &K) -> bool;
+    /// `k` in the set, or out of it.
+    fn hold(&mut self, k: &K, held: bool);
+}
+
+macro_rules! members {
+    ($($set:ident: $($bound:path),+;)+) => {$(
+        impl<K: Clone $(+ $bound)+> Members<K> for $set<K> {
+            fn all<'s>(&'s self) -> impl Iterator<Item = &'s K> where K: 's {
+                self.iter()
+            }
+            fn has(&self, k: &K) -> bool {
+                self.contains(k)
+            }
+            fn hold(&mut self, k: &K, held: bool) {
+                match held {
+                    true => self.insert(k.clone()),
+                    false => self.remove(k),
+                };
+            }
+        }
+    )+};
+}
+use crate::fixed::HashSet;
+use std::collections::BTreeSet;
+members! { HashSet: std::hash::Hash, Eq; BTreeSet: Ord; }
 
 /// The last run's end `end` with this run's record up to here (`new`) in
 /// place of its own (`at`). Every field is listed: a new one must say how.
@@ -451,7 +500,7 @@ pub(super) fn splice_out(new: &Analysis, at: &Analysis, end: &mut Analysis, wind
         font_states, env, catcodes, facts, trace, typeset, steps, load_steps, served_steps, limits, lines, exhausted,
         journal_size, held_tokens_left, loop_heads, peak_paths, peak_output_paths, forks, output_forks, call_memo,
         joined_slots, memory_reported, untyped, package_caches, written, written_runs, build_runs, class_caches,
-        cached_files, preamble, kernel, timings: _, started: _, caching: _, hot: _, probes: _, context_probes: _, takes: _,
+        cached_files, preamble, kernel, timings: _, started: _, caching: _, hot: _, probes: _, context_probes: _, takes: _, run: _, since: _,
         role_sources: _, tagging: _, probed_roles: _, bib: _, scope_rows: _, said: _, build_pending: _, build_files: _ } = end;
     let crate::analysis::facts::Facts { defs, written_files, absent, found, shapes, types, length_fonts, vars,
         letters, expansions, loads, occurrences, literals, diagnostics, csnames, slots, groups, raised, spaces,
@@ -486,7 +535,7 @@ pub(super) fn splice_out(new: &Analysis, at: &Analysis, end: &mut Analysis, wind
     // A literal holds the characters set before it. The rest's move with them; the last
     // run's before the meeting line are compared as this run would have set them.
     let moved = |c: u32| if c < by.1 { c } else { u32::try_from(i64::from(c) + by.2).unwrap_or(u32::MAX) };
-    let at_literals: Vec<_> = (a.literals.iter().cloned()).map(|l| crate::analysis::facts::Literal { chars: moved(l.chars), ..l }).collect();
+    let at_literals: crate::fixed::Chunked<_> = (a.literals.iter().cloned()).map(|l| crate::analysis::facts::Literal { chars: moved(l.chars), ..l }).collect();
     for (i, l) in literals.iter_mut().enumerate() {
         l.chars = match i < a.literals.len() { true => moved(l.chars), false => shift(l.chars, by).ok_or("literals")? };
     }

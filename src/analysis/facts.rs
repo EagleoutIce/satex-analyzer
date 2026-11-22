@@ -764,6 +764,44 @@ impl Diagnostic {
     }
 }
 
+/// A row that says where in the source it stands: each of its places, writable. Two runs that
+/// differ by an edit hold such rows alike apart from the places on the edited lines
+/// ([`crate::analysis::machine::Since`]).
+pub trait Placed {
+    fn places(&mut self, f: &mut dyn FnMut(&mut Span));
+}
+
+impl Placed for Expansion {
+    fn places(&mut self, f: &mut dyn FnMut(&mut Span)) {
+        f(&mut self.span);
+    }
+}
+
+impl Placed for Definition {
+    fn places(&mut self, f: &mut dyn FnMut(&mut Span)) {
+        f(&mut self.span);
+    }
+}
+
+impl Placed for Load {
+    fn places(&mut self, f: &mut dyn FnMut(&mut Span)) {
+        std::iter::once(&mut self.span).chain(&mut self.call).for_each(f);
+    }
+}
+
+impl Placed for Diagnostic {
+    fn places(&mut self, f: &mut dyn FnMut(&mut Span)) {
+        std::iter::once(&mut self.span).chain(&mut self.origin).for_each(f);
+    }
+}
+
+impl Placed for Occurrence {
+    fn places(&mut self, f: &mut dyn FnMut(&mut Span)) {
+        let Occurrence { span, expanded, call, site, .. } = self;
+        (std::iter::once(span).chain(expanded).chain(call.iter_mut().chain(site).map(|c| &mut c.1))).for_each(f);
+    }
+}
+
 /// What a run observed: [`Definition`]s, [`Expansion`]s, [`Occurrence`]s and
 /// [`Load`]s, which every query and lint reads.
 #[derive(Clone, Default, serde::Serialize, serde::Deserialize)]

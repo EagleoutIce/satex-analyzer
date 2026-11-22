@@ -56,6 +56,8 @@ impl Fix {
 /// rerun after an edit sees the edited text.
 #[derive(Default)]
 pub struct Sources {
+    /// The files asked for since the last [`Sources::read`], with their texts.
+    read: RefCell<Vec<Read>>,
     texts: RefCell<HashMap<String, Option<Rc<Text>>>>,
     /// [`editable`] canonicalizes the file and every root of the
     /// installation, so it is asked once per path, not once per fix.
@@ -63,14 +65,35 @@ pub struct Sources {
     cats: RefCell<HashMap<FileId, CatcodeTable>>,
 }
 
+/// A file a rule read, and its text then (`None`: not there).
+pub type Read = (String, Option<Rc<Text>>);
+
 impl Sources {
     pub fn get(&self, path: &str) -> Option<Rc<Text>> {
-        if let Some(text) = self.texts.borrow().get(path) {
-            return text.clone();
+        let known = self.texts.borrow().get(path).cloned();
+        let text = known.unwrap_or_else(|| {
+            let text = crate::project::overlay::read_to_string(Path::new(path)).ok().map(|t| Rc::new(Text::new(t)));
+            self.texts.borrow_mut().insert(path.to_string(), text.clone());
+            text
+        });
+        let mut read = self.read.borrow_mut();
+        if !read.iter().any(|(p, _)| p == path) {
+            read.push((path.to_string(), text.clone()));
         }
-        let text = crate::project::overlay::read_to_string(Path::new(path)).ok().map(|t| Rc::new(Text::new(t)));
-        self.texts.borrow_mut().insert(path.to_string(), text.clone());
         text
+    }
+
+    /// The files asked for since the last call: what the rule that ran meanwhile read.
+    pub(crate) fn read(&self) -> Vec<Read> {
+        self.read.take()
+    }
+
+    /// Whether the file at `path` reads `was` now (asked without noting it as read).
+    pub(crate) fn same(&self, path: &str, was: Option<&Text>) -> bool {
+        let read = self.read();
+        let now = self.get(path);
+        self.read.replace(read);
+        now.as_deref().map(Text::body) == was.map(Text::body)
     }
 
     pub(crate) fn editable(&self, analysis: &Analysis, path: &str) -> bool {
