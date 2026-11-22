@@ -4,18 +4,12 @@
 # entry: owner, root guess, MWE. S = target/scratch. Clean with target/scratch/reds/ledger-clean.py.
 
 # == soundness ==
-# owner p0-order (P0.1 order lot, from lars): `\relax` tokens before an `\includegraphics` of an EPS with its converted PDF change the rows (up to a possible graphics "Division by 0"): typed-digit names carry steps, one-of members sort by their hash, the 64-forks-per-site budget cuts elsewhere. Domain root: compare two typed digit strings without parting per digit. MWE S/lars/mwe-g (r0 vs r15, sweep.txt).
-join::tokens_tex_ignores_before_a_date_comparison_do_not_change_the_rows
 # Open (2026-11-20, owner: Fable p0-cache, from cex-edit): a beamer build resumed at \begin{document} after `\only<2>{two}` is put into the title frame differs from a fresh build from the .aux on (first difference: an unknown-text-run assumption at main.aux:10 vs :7). Slow: 3 beamer builds, ~35 min under load 40. LSP replay: target/scratch/cex-edit/mwe/beamer-4.json via session.py.
 incremental::a_resumed_beamer_build_after_an_overlay_edit_says_what_a_fresh_build_says
 
-# owner argfork (2026-11-21): a typed rest that may be empty, read undelimited where no more paths may part, is taken whole: the empty text's next-token argument is lost (machine.rs read_undelimited, typed branch). Tried: a needed split (walks over typed text such as \str_set_convert fork every pass: latex::a_package_stays_cacheable_past_a_line_that_joined_paths 72 % cached) and an unpaired one-path cover (each pass appends the next argument again: 43 % cached). Needs a paired representation. Notes: target/scratch/argfork/log.md.
-tex_compliance::an_argument_read_from_a_typed_rest_that_may_be_empty_keeps_its_empty_reading
 
 
 # == precision ==
-# owner sound5 (acmfix 2026-11-22, S/acmfix/LAND.md): acm-sigconf build run 2 forks ~95k times: loop_head (explore.rs) counts sibling arrivals at a conditional (exits of acmart's title loop meeting latex.ltx:20480/20494, acmart.cls:2931) as passes of a loop and summarizes, making page/box/shipout state unknown. cand-02-descent.patch (a pass = a path carrying the head in loop_bounds) ends it but turns 3 digit-walk tests red (the false summary is a path brake there): land with the digit-walk design.
-templates::each_template_reaches_its_end_without_an_error
 # owner pgf (found by night 2026-11-22, root of the digit-walk cluster): `\csname` over a typed digit in a small interval parts a path per value (exec.rs name_step) and per name (scan_csname_chars) at every lookup, though the names hold one meaning: 40 forks for 3 lookups of a digit in 0..3, 0 for one in 0..9. Keeping such names one token (one_of_spelled) takes the ledger's signed count from 2548 to 259 forks but lets arms join earlier and lose their pairing (tikz_bend 7 s -> 58 s). Experiment + traces: S/night/p2-experiment.patch, S/night/LAND.md.
 semantics::a_name_over_a_digit_of_few_values_parts_no_more_paths_than_one_of_ten
 # owner pgf (found by cert-finish 2026-11-21): red on main without a ledger line; base and patched give the same output ({0 | ?.?}, NEG|POS). See S/cert-finish/ab.out.

@@ -767,6 +767,16 @@ pub(crate) fn vlist(value: Value) -> Option<VList> {
     }
 }
 
+/// `a` then `b` as one list, the marks of `b` pointing past the texts of `a`.
+pub(crate) fn vlist_cat((items, texts): VList, b: Option<VList>) -> VList {
+    let Some((more, more_texts)) = b else { return (items, texts) };
+    let moved = more.iter().map(|k| match *k {
+        Kp::Mark(c, t) => Kp::Mark(c, t + texts.len() as u32),
+        k => k,
+    });
+    (items.iter().copied().chain(moved).collect(), texts.iter().chain(more_texts.iter()).cloned().collect())
+}
+
 pub(crate) fn list_value(list: Option<VList>) -> Value {
     list.map_or(Value::Unknown, |(items, texts)| Value::List(items, texts))
 }

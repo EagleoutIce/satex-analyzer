@@ -1282,6 +1282,62 @@ A\par\xdef\one{\the\deadcycles}
     }
 }
 
+/// A test undecided while a page is made takes its first arm, no path parted
+/// (`page-one-arm`). The arm must not learn the test's outcome as a value: `\n` is any of
+/// 0..4 after the page, and it read 3 for certain. LaTeX's shipout compares the page count
+/// with `\@abspage@last` this way: a count a loop had widened became 2^30 and was written
+/// to the `.aux` as that, a build run after the other.
+#[test]
+fn an_arm_taken_by_assumption_learns_no_value() {
+    if !installed() {
+        return;
+    }
+    let analysis = document(
+        r"\documentclass{article}
+\newcount\n
+\AddToHook{shipout/before}{\ifnum\n=3 \fi}
+\begin{document}
+\n=\pdfuniformdeviate 5 x\clearpage
+\xdef\after{\the\n}
+\end{document}",
+    );
+    for n in 0..5 {
+        let n = n.to_string();
+        assert!(covers(&analysis, "after", &n), "\\after is {:?}, which leaves out {n}", last_body(&analysis, "after"));
+    }
+}
+
+/// tex.web § 1026: what an output routine leaves on its list goes before the
+/// contributions, and the page builder goes on over it, so a forced penalty there
+/// fires `\output` again. LaTeX's `\@doclearpage` leaves `\vbox{}\clearpage` in the
+/// second column, and that ships the page. It never fired: page 1 and no page
+/// shipped after `\clearpage`, where pdflatex has 2 and 1 (2 and 2 at the end).
+#[test]
+fn a_forced_break_the_output_routine_leaves_fires_it_again() {
+    if !installed() {
+        return;
+    }
+    for (class, after) in [("[twocolumn]", "2/1"), ("", "2/1")] {
+        let analysis = document(&format!(
+            r"\documentclass{class}{{article}}
+\AddToHook{{enddocument/afterlastpage}}{{\xdef\last{{\the\count0/\the\ReadonlyShipoutCounter}}}}
+\begin{{document}}
+x
+\clearpage
+\xdef\after{{\the\count0/\the\ReadonlyShipoutCounter}}
+y
+\end{{document}}"
+        ));
+        for (name, pages) in [("after", after), ("last", "2/2")] {
+            assert!(
+                covers(&analysis, name, pages),
+                "{class} \\{name} is {:?}, pdflatex gives {pages}",
+                last_body(&analysis, name)
+            );
+        }
+    }
+}
+
 /// tex.web §§ 1056, 1060: a rule, glue or kern in vertical mode only joins
 /// the contribution list. `build_page` runs after a box, a penalty or a
 /// paragraph, so `\pagetotal` right after `\hrule` is still the page before

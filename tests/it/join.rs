@@ -1498,6 +1498,32 @@ Text.
     assert!(raised.iter().any(|r| r.text.starts_with("Missing number") && !r.certain), "no possible error raised");
 }
 
+/// Intuition: the texts a joined macro may hold are the arms of every read
+/// that parts them, and their order is the run's order. Typed digits are named
+/// by the steps of their line, so a `\relax` more renames them. Bug pinned:
+/// the texts stood in the order of a hash of those names, so the same
+/// document read its arms in another order after some `\relax`, and budgets
+/// cut elsewhere ([`tokens_tex_ignores_before_a_date_comparison_do_not_change_the_rows`]).
+#[test]
+fn the_texts_of_a_joined_macro_keep_their_order_after_tokens_tex_ignores() {
+    let order = |relaxes: usize| {
+        let a = analyze(&format!(
+            "{}\\count1=\\pdfuniformdeviate 2 \\count2=\\pdfuniformdeviate 1000 \\count3=\\pdfuniformdeviate 1000 \\edef\\t{{\\ifcase\\count1 x\\the\\count2 \\or \\the\\count3 y\\fi}}",
+            "\\relax".repeat(relaxes)
+        ));
+        (a.facts.defs.iter())
+            .filter(|d| a.interner.name(d.name) == "t")
+            .flat_map(|d| crate::support::site_bodies(&a, d))
+            .map(|t| t.chars().take(1).collect())
+            .collect::<Vec<String>>()
+    };
+    let plain = order(0);
+    assert_eq!(plain.len(), 2, "{plain:?}");
+    for relaxes in 1..=12 {
+        assert_eq!(plain, order(relaxes), "{relaxes} `\\relax` before change the order");
+    }
+}
+
 /// Tokens TeX ignores must not change what the run reports. `\includegraphics` of an EPS with
 /// its converted PDF beside it makes pdftex.def compare two unknown file dates digit by digit
 /// (`\GPT@ZapLeadingZeros`, pdftex.def; `\rem@pt`, latex.ltx): hundreds of undecided choices.

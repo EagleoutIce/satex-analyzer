@@ -765,6 +765,27 @@ fn begin_document_stands_at_its_own_line_after_any_number_of_packages() {
     }
 }
 
+/// The window of given-back positions is each file's own. A file read while the main
+/// file's peeked token waits may give back any number of its own: here `\the\toks0`
+/// puts back 70 tokens that stand in `burst.tex`. One window for all pushed the main
+/// file's `\begin` out, the `document` environment began at `\peek`'s line, and with a
+/// class in that place (acmart, hyperxmp does the same) the class was "loaded after
+/// `\begin{document}`".
+#[test]
+fn a_file_read_under_a_peeked_token_keeps_that_token_the_main_file_s() {
+    if !installed() {
+        return;
+    }
+    let burst = ["a"; 70].join(" ");
+    let preamble = format!(
+        "\\documentclass{{article}}\n\\begin{{filecontents}}[overwrite]{{burst.tex}}\n\\toks0{{{burst}}}\\expandafter\\toks\\expandafter0\\expandafter{{\\the\\toks0 b}}\n\\end{{filecontents}}\n\\newcommand\\peek[1][]{{\\input{{burst}}}}\n\\peek\n"
+    );
+    let begin_line = preamble.lines().count() as u32 + 1;
+    let analysis = analyze(&format!("{preamble}\\begin{{document}}\nx\n\\end{{document}}\n"));
+    let begin: Vec<(String, u32, u32)> = places(&analysis, OccKind::BeginEnvironment);
+    assert_eq!(begin.last(), Some(&("document".to_string(), begin_line, 1)), "{begin:?}");
+}
+
 /// BibTeX writes the `.bbl`: its typography is the style's, not the
 /// author's, so no warning stands there; the document's own text still has
 /// them.

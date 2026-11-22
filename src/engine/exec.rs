@@ -2493,7 +2493,7 @@ impl Machine<'_> {
             None => lo.checked_add(arm as i64).filter(|&n| n <= hi),
         };
         // Each arm narrows the selector's register to the values it takes.
-        if let (Some(n), Some(range), Some(last)) = (n, range, ors.map(|o| o as i64)) {
+        if let (Some(n), Some(range), Some(last), false) = (n, range, ors.map(|o| o as i64), self.scratch.assumed_arm) {
             let part = match (n, lo < 0, hi > last) {
                 (0.., _, _) if n <= last => Num::exact(n),
                 (_, true, false) => Num::range(range.lo, -1),
@@ -2583,7 +2583,8 @@ impl Machine<'_> {
             if let Some((yes, no)) = modes {
                 self.mode = if holds { yes } else { no };
             }
-            if let Some((sym, yes, no)) = narrow
+            // An arm taken by assumption learns no value from the test: no path took the other.
+            if let Some((sym, yes, no)) = narrow.filter(|_| !self.scratch.assumed_arm)
                 && let Some(value) = if holds { yes } else { no }
             {
                 self.refine_value(sym, value);
@@ -2787,11 +2788,20 @@ impl Machine<'_> {
         t.cs().is_some_and(|cs| matches!(self.env.meaning(cs).prim(), Some(Primitive::ExpandAfter)))
     }
 
-    /// Whether `text` leaves conditionals and groups as it found them.
+    /// Whether `text` leaves conditionals and groups as it found them, on
+    /// every text a token of it stands for: a one-of token with a member
+    /// that closes a conditional (`\fi` read with a rest that may be empty)
+    /// is no data to read past.
     fn balanced(&self, text: &[Token]) -> bool {
+        use crate::analysis::machine::explore::Nested;
         let (mut conds, mut braces) = (crate::analysis::machine::CondDepth::default(), 0i64);
         for &t in text {
-            if conds.feed(self.cond_prim(t)).is_some() {
+            let whole = match self.one_of_nested(t) {
+                Nested::No | Nested::Again => true,
+                Nested::Deep => false,
+                Nested::Open(inner) => inner.texts.iter().all(|m| self.balanced(m)),
+            };
+            if !whole || conds.feed(self.cond_prim(t)).is_some() {
                 return false;
             }
             braces += i64::from(t.is_cat(Catcode::Begin)) - i64::from(t.is_cat(Catcode::End));

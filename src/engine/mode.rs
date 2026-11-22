@@ -2636,7 +2636,12 @@ impl Machine<'_> {
         // tex.web § 1100: what the output routine left on its list goes
         // back onto the page, ahead of what waits.
         if nest.code == Some(group::OUTPUT) {
-            self.page_touched |= material & BOXED != 0;
+            use crate::engine::linebreak::Kp;
+            // what it left with a forced break in it, or behind one that waits, goes item by item
+            let list = natural.and_then(|o| o.para.items).map(|id| self.vlist_of(id));
+            let waits = self.list_slot("output.back").filter(|w| !w.0.is_empty());
+            let list = list.filter(|l| waits.is_some() || l.0.iter().any(|k| matches!(k, Kp::Penalty(..=-10000))));
+            self.page_touched |= list.is_none() && material & BOXED != 0;
             // the boxes it put on its list (a here-float's `\box\@currbox`) reach the page with it:
             // no box encloses an output routine
             self.place_chars(Vec::new(), false);
@@ -2650,15 +2655,23 @@ impl Machine<'_> {
             self.set_list_slot("disc.page", Some(Default::default()));
             let main = self.natural.and_then(|n| n.para.items);
             self.save_discard(main.map(|_| crate::engine::linebreak::Kp::Penalty(10000)));
-            // the page holds it again: its length counts toward the next break
-            if material != 0 {
-                let along = natural.map_or(Dim::ANY, |o| o.along);
-                self.set_page_length(self.page_length().extended_by(along));
-            }
             // § 1026: the page builder resumes where the routine was
             // fired, whichever way its code went: paths parted inside it
             // meet there.
             self.at_join = Some(crate::analysis::machine::JoinAt::Output);
+            // the page holds it again: its length counts toward the next break
+            match list {
+                Some(list) => self.page_resumes(crate::engine::linebreak::vlist_cat(list, waits), span),
+                None => {
+                    if material != 0 {
+                        let along = natural.map_or(Dim::ANY, |o| o.along);
+                        self.set_page_length(self.page_length().extended_by(along));
+                    }
+                    if let Some(waits) = waits {
+                        self.page_resumes(waits, span);
+                    }
+                }
+            }
             return;
         }
         let kind = match nest.code {
@@ -4906,6 +4919,39 @@ impl Machine<'_> {
                 )
             }
         }
+    }
+
+    /// tex.web § 1026: the list an output routine leaves goes before the contributions, and
+    /// the page builder goes on over it (§§ 1000, 1005): glue, kerns and penalties on an
+    /// empty page are dropped, and a forced penalty on a page that holds a box fires the
+    /// routine again. What follows that penalty waits in `output.back` for the routine's end.
+    fn page_resumes(&mut self, (items, texts): crate::engine::linebreak::VList, span: Span) {
+        use crate::engine::linebreak::{Kp, vpack};
+        let holds = |m: &mut Self, part: &mut Vec<Kp>| {
+            let [_, x, d] = vpack(part, crate::engine::value::MAX_DIMEN);
+            // the depth of its last box counts once something follows
+            m.set_page_length(m.page_length().extended_by(Dim::range(x.min(x + d), x.max(x + d))));
+            part.clear();
+        };
+        let mut part = Vec::new();
+        for (i, k) in items.iter().enumerate() {
+            match *k {
+                Kp::Glue { .. } | Kp::Kern { .. } | Kp::Penalty(_) if !self.page_touched => {}
+                Kp::Penalty(p @ ..=-10000) => {
+                    holds(self, &mut part);
+                    self.fire_up(p, [Last::UNKNOWN; TAIL], span);
+                    if self.output_active() {
+                        return self.set_list_slot("output.back", Some((items[i + 1..].into(), texts)));
+                    }
+                }
+                k => {
+                    self.page_touched |= matches!(k, Kp::Box { .. });
+                    part.push(k);
+                }
+            }
+        }
+        holds(self, &mut part);
+        self.set_list_slot("output.back", Some(Default::default()));
     }
 
     /// The list of `\box255` at a forced break (tex.web § 1017), from the page's record: without
@@ -7292,7 +7338,7 @@ impl Machine<'_> {
     /// Commands that put nothing on the current list, so its tail stays: `\setbox` (an
     /// assignment, tex.web § 1241), font and code assignments, messages (§ 1293), the
     /// document-level PDF objects (pdfTeX manual) and an `\immediate` file operation (§ 1375).
-    fn appends_nothing(&self, p: crate::engine::builtins::Primitive) -> bool {
+    pub(crate) fn appends_nothing(&self, p: crate::engine::builtins::Primitive) -> bool {
         use crate::engine::builtins::{Primitive as P, Syntax as S};
         match p {
             P::Write | P::Command(S::OpenOut | S::CloseOut) => self.prefixes.immediate,

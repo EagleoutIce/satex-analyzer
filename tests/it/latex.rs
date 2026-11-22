@@ -3773,6 +3773,26 @@ fn math_sizes(cases: &[(&str, &str)]) {
     }
 }
 
+/// A command that puts nothing on a list puts no atom into a formula: a font's
+/// settings (pdfTeX manual: `\pdfnobuiltintounicode`, `\pdffontattr`), the catalog,
+/// `\afterassignment`. cmap sets the first two for every font it loads, the math fonts
+/// at the first formula of a size: that formula's size was given up, and with it the
+/// box around it (acmart's title box, whose unknown height ran its page loop). Sizes as
+/// `pdflatex` prints.
+#[test]
+fn a_command_that_appends_nothing_keeps_a_formula_s_size() {
+    if !installed() {
+        return;
+    }
+    let cases = [
+        (r"\pdfnobuiltintounicode\font a", "5.28589pt/4.30554pt/0.0pt"),
+        (r"a\pdffontattr\font{}b", "9.57755pt/6.94444pt/0.0pt"),
+        (r"a\pdfcatalog{}b", "9.57755pt/6.94444pt/0.0pt"),
+        (r"a\afterassignment\relax b", "9.57755pt/6.94444pt/0.0pt"),
+    ];
+    math_sizes(&cases);
+}
+
 /// tex.web §§ 719, 756-758: scripts of any length and depth are set in the
 /// script and scriptscript fonts, shifted by the parameters of the size
 /// they sit in. Widths, heights and depths as `pdflatex` prints.

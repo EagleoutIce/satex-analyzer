@@ -860,9 +860,9 @@ impl Analysis {
     }
 }
 
-/// How many positions of tokens given back are remembered: the window a
-/// lookahead's token has to be read again within to still count as the
-/// file's.
+/// How many positions of tokens given back are remembered per file: the
+/// window a lookahead's token has to be read again within to still count
+/// as the file's.
 pub(crate) const RECENT_FILE_SPANS: usize = 64;
 
 /// Records which primitive each of the engine's second spellings copies,
@@ -1723,6 +1723,8 @@ pub(crate) struct Scratch {
     /// The test just read a box whose kind the run does not know: its arms
     /// rest on contents the run cannot see.
     pub(crate) blind_box: bool,
+    /// The arm [`Machine::branch`] gave last was assumed (`page-one-arm`), no path parted.
+    pub(crate) assumed_arm: bool,
     pub(crate) split_rests: HashMap<(Span, Tok), u16>,
     /// The marks of one-of arguments used more than once
     /// ([`Machine::mark_one_choice`]).
@@ -6090,8 +6092,12 @@ will look undefined",
         if self.recent_file_spans.contains(&span) {
             return;
         }
-        if self.recent_file_spans.len() == RECENT_FILE_SPANS {
-            self.recent_file_spans.remove(0);
+        // A file waiting below keeps its peeks: the window is each file's own.
+        let mut own = self.recent_file_spans.iter().enumerate().filter(|(_, s)| s.file == span.file).map(|(i, _)| i);
+        if let Some(oldest) = own.next()
+            && own.count() + 1 >= RECENT_FILE_SPANS
+        {
+            self.recent_file_spans.remove(oldest);
         }
         self.recent_file_spans.push(span);
     }
@@ -10108,11 +10114,8 @@ will look undefined",
                 | P::Write,
             ) => true,
             // tex.web §§ 1275, 1285-1288: `\openin`, `\closein` and a case
-            // change act at once and leave no node, as `\pdffontexpand`
-            // (pdfTeX manual, "Character spacing") does.
-            Meaning::Primitive(
-                P::OpenIn | P::CloseIn | P::CaseShift(_) | P::Command(crate::engine::builtins::Syntax::FontExpand),
-            ) => true,
+            // change act at once and leave no node.
+            Meaning::Primitive(P::OpenIn | P::CloseIn | P::CaseShift(_)) => true,
             // A type for the next atom, or limits on the last (tex.web §§ 1156, 1159), or a
             // fraction of the list so far, which `math_fraction` follows (§ 1181).
             Meaning::Primitive(P::Command(
@@ -10178,7 +10181,13 @@ will look undefined",
                 )
                 | crate::engine::builtins::ModeCmd::Shift { vertical: true },
             )) => true,
-            Meaning::Primitive(p) => crate::engine::builtins::expandable(p) || crate::engine::builtins::assignment(p),
+            // What puts nothing on any list puts none on a math list: a font's settings
+            // (`\pdfnobuiltintounicode`, `\pdffontattr`, `\pdffontexpand`; pdfTeX manual).
+            Meaning::Primitive(p) => {
+                crate::engine::builtins::expandable(p)
+                    || crate::engine::builtins::assignment(p)
+                    || self.appends_nothing(p)
+            }
             Meaning::Register(kind, _) => {
                 !matches!(kind, crate::engine::tex::RegKind::MathChar | crate::engine::tex::RegKind::UMathChar)
             }
@@ -12617,16 +12626,35 @@ will look undefined",
                     self.unread(full);
                     return self.read_undelimited();
                 }
-                // Read whole, the token is gone: progress, not a scan given up.
-                // On its empty text TeX's argument is the next token's (tex.web
-                // § 392), which this path leaves to be read: said, not silent.
+                // No more paths may part. TeX's argument is the text's first
+                // token or, on its empty text, the next argument (tex.web
+                // § 392): one argument covers both. Nothing behind the text
+                // is taken, which may hold more: the next argument stays to
+                // be read, a second time where the text was empty.
+                let whole = class.meets(TextClass::new(TextClass::BRACE.0 | TextClass::CS.0));
+                let first = match whole {
+                    true => self.unknown_text(Unk::Of(&[&[t]]), t.span),
+                    false => self.unknown_text(Unk::Class(class, true, Some(1), &[]), t.span),
+                };
+                let next = self.next_argument();
+                if let Some((_, text)) = &next {
+                    self.unread_all(text);
+                }
+                let len = self.text_len(t).map(|n| n.saturating_sub(1));
+                if len != Some(0) {
+                    let rest = self.unknown_text(Unk::Class(class, false, len, &[]), t.span);
+                    self.unread(rest);
+                }
                 self.diagnose(
                     Severity::Assumption,
-                    "rest-read-as-one-token",
+                    "rest-or-next-argument",
                     t.span,
-                    "unknown text that may be empty was read as one argument, since no more paths may part; it is assumed not to be empty".into(),
+                    "unknown text that may be empty was read as an argument where no more paths may part: the argument is its first token or the argument after it, which stays to be read".into(),
                 );
-                vec![self.unknown_text(Unk::Of(&[&[t]]), t.span)]
+                match next {
+                    Some((read, _)) => vec![self.unknown_text(Unk::Of(&[&[first], &read]), t.span)],
+                    None => vec![first],
+                }
             }
             // One of several texts: the argument is that text's first token.
             Some(t) if self.one_of_matters(t) => match self.split_one_of(t) {

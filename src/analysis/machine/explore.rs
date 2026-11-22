@@ -351,10 +351,12 @@ impl Machine<'_> {
         if arms < 2 {
             return (arms == 1).then_some(0);
         }
+        self.scratch.assumed_arm = false;
         if !needed
             && self.script.len() <= self.choices.len()
             && let Some(arm) = self.page_arm(span)
         {
+            self.scratch.assumed_arm = true;
             return Some(arm);
         }
         if !self.cutting() && self.learned_cut() {
@@ -2056,19 +2058,22 @@ impl Machine<'_> {
     }
 
     /// Settles paths dropped for an error in a file the running path has since
-    /// closed. The running path got through that file without the error, so the
-    /// dropped paths are settled as at the drive's end ([`Machine::settle`]).
-    /// Keeping them would hold the fork open, and every later load would run
-    /// as if on several paths.
+    /// closed, or reads on in a line after the one they stood in. TeX reads
+    /// the next line only once the lists above the file are used up (tex.web
+    /// §§ 357-360), so the running path got through that line without the
+    /// error, and the dropped paths are
+    /// settled as at the drive's end ([`Machine::settle`]). Keeping them would
+    /// hold the fork open: every later load would run as if on several paths,
+    /// and no later line of a package would be a checkpoint of its cache.
     fn settle_closed(&mut self, paths: &mut Paths) {
         if paths.failed || paths.shelved.is_empty() {
             return;
         }
-        let open: Vec<FileId> = self
+        let open: Vec<(FileId, usize)> = self
             .input
             .iter()
             .filter_map(|f| match f {
-                Frame::File { mouth, .. } => Some(mouth.file),
+                Frame::File { mouth, .. } => Some((mouth.file, mouth.offset())),
                 _ => None,
             })
             .collect();
@@ -2079,10 +2084,16 @@ impl Machine<'_> {
                 .iter()
                 .rev()
                 .find_map(|p| match p {
-                    Place::File(file, ..) => Some(*file),
+                    Place::File(file, offset, _, source) => Some((*file, *offset, source)),
                     _ => None,
                 })
-                .is_some_and(|file| !open.contains(&file))
+                .is_some_and(|(file, offset, source)| match open.iter().rev().find(|o| o.0 == file) {
+                    // Read on into a later line: the dropped path's line is done.
+                    Some(&(_, read)) => {
+                        source.get(offset..read.saturating_sub(1)).is_some_and(|text| text.contains(&'\n'))
+                    }
+                    None => true,
+                })
         };
         let (gone, kept): (Vec<Shelved>, Vec<Shelved>) =
             std::mem::take(&mut paths.shelved).into_iter().partition(closed);
@@ -2722,7 +2733,38 @@ impl Machine<'_> {
         let class = self.class_name(named.iter().map(|n| &n.1[..]));
         let ids = named.iter().map(|n| n.0).collect::<Vec<_>>();
         let sym = self.intern(&format!("{UNKNOWN_NAME}{ONE_OF}{ids:x?}{class}"));
+        // The name spells the set. The arms stand in the order of their texts,
+        // which tokens TeX ignores before the command leave as it is.
+        named.sort_by(|a, b| self.text_order(&a.1, &b.1, 0).then(a.0.cmp(&b.0)));
         (sym, named.into_iter().map(|(_, text)| text_meaning(text)).collect())
+    }
+
+    /// The order of two texts by what they spell: characters before names, a
+    /// one-of token by its texts, other names by their spelling with numbers
+    /// as numbers ([`natural_order`]). A number's name counts the steps of its
+    /// line, so a hash of the names would order the same texts another way
+    /// after a `\relax` more.
+    fn text_order(&self, a: &[Token], b: &[Token], depth: u16) -> std::cmp::Ordering {
+        use std::cmp::Ordering;
+        for (x, y) in a.iter().zip(b) {
+            let order = match (x.tok, y.tok) {
+                (Tok::Cs(s), Tok::Cs(t)) if s == t => Ordering::Equal,
+                (Tok::Cs(s), Tok::Cs(t)) => match (self.one_of_members(*x), self.one_of_members(*y)) {
+                    (Some(xs), Some(ys)) if depth < self.limits.meaning_set => (xs.iter().zip(&ys))
+                        .map(|(x, y)| self.text_order(x, y, depth + 1))
+                        .find(|o| o.is_ne())
+                        .unwrap_or(xs.len().cmp(&ys.len())),
+                    (Some(_), None) => Ordering::Greater,
+                    (None, Some(_)) => Ordering::Less,
+                    _ => natural_order(self.name(s), self.name(t)),
+                },
+                (x, y) => x.word().cmp(&y.word()),
+            };
+            if order.is_ne() {
+                return order;
+            }
+        }
+        a.len().cmp(&b.len())
     }
 
     /// One token for either of two balanced texts. Data with unknown parts
@@ -3598,6 +3640,30 @@ fn text_hash(text: &[Token], name: impl Fn(Sym) -> String) -> u128 {
     (u128::from(half(0)) << 64) | u128::from(half(1))
 }
 
+/// Two names in order, their runs of digits compared as numbers.
+fn natural_order(a: &str, b: &str) -> std::cmp::Ordering {
+    let (mut x, mut y) = (a.as_bytes(), b.as_bytes());
+    let digits = |s: &[u8]| s.iter().take_while(|c| c.is_ascii_digit()).count();
+    loop {
+        let (i, j) = (digits(x), digits(y));
+        let order = match (i, j) {
+            (0, _) | (_, 0) => match (x.first(), y.first()) {
+                (Some(c), Some(d)) => c.cmp(d),
+                (c, d) => return c.cmp(&d),
+            },
+            _ => {
+                let lead = |s: &[u8]| s.iter().take_while(|&&c| c == b'0').count();
+                let (p, q) = (&x[lead(&x[..i]).min(i)..i], &y[lead(&y[..j]).min(j)..j]);
+                p.len().cmp(&q.len()).then_with(|| p.cmp(q))
+            }
+        };
+        if order.is_ne() {
+            return order;
+        }
+        (x, y) = (&x[i.max(1)..], &y[j.max(1)..]);
+    }
+}
+
 /// Splits a name that ends in digits (a loop counter, `l_test_flag12`)
 /// before the digits: the prefix, and an empty suffix.
 fn digit_run(name: &str) -> Option<(String, String)> {
@@ -3960,4 +4026,23 @@ fn keep_list(x: &Frame, y: &Frame, text: &mut Vec<Token>) -> Option<Frame> {
     }
     text.truncate(text.len() - rest.len());
     Some(if i >= j { x.clone() } else { y.clone() })
+}
+
+#[cfg(test)]
+mod order_tests {
+    use super::natural_order;
+    use std::cmp::Ordering;
+
+    /// Intuition: a number's name counts steps (`#6.99.0`), and one step more
+    /// must not reorder two names: runs of digits compare as numbers, not as
+    /// text (`99` before `100`), so a shift of both keeps their order.
+    #[test]
+    fn names_order_by_their_numbers() {
+        assert_eq!(natural_order("0..9#6.99.0", "0..9#6.100.0"), Ordering::Less);
+        assert_eq!(natural_order("0..9#6.100.0", "0..9#6.101.0"), Ordering::Less);
+        assert_eq!(natural_order("0..9#6.007.0", "0..9#6.7.0"), Ordering::Equal);
+        assert_eq!(natural_order("a1", "a"), Ordering::Greater);
+        assert_eq!(natural_order("a1b", "a1c"), Ordering::Less);
+        assert_eq!(natural_order("x", "x"), Ordering::Equal);
+    }
 }
