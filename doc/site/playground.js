@@ -668,6 +668,11 @@
   const sentVersions = new Map();
   /** The last texts sent, by `uri@version`: the Typeset view diffs the editor against the one its rows are of. */
   const sentTexts = new Map();
+  /** Per kind of a run's facts (each lands on its own: the findings after their fixes, the occurrences and the typeset
+   * rows as asked) and uri, the text the shown ones are of: the layers place them on a build of another text by it
+   * (`pdfBuiltLine`). */
+  const runTexts = { findings: {}, keys: {}, rows: {} };
+  const ranOn = (facts, target, of) => { const text = sentTexts.get(`${target}@${of}`); if (text != null) runTexts[facts][target] = text; };
   let typedSincePush = false;
   /** Findings of a text older than the server's: the editor no longer has it. */
   const outdated = (p) => p.version != null && (sentVersions.get(p.uri) ?? -Infinity) > p.version;
@@ -1904,7 +1909,7 @@
   var occurrences = []; // var: the PDF code reads it before this line may run
   /** The last ask's number and root, the failed asks in a row: only the newest answer for the project shown lands. */
   let outlineAsk = 0, outlineRoot = null, outlineFails = 0;
-  async function outline() {
+  async function outline(target, of) {
     const ask = ++outlineAsk, root = state.root;
     // another project's keys never stay on this one's pages
     if (outlineRoot !== root) { occurrences = []; outlineRoot = root; }
@@ -1913,11 +1918,12 @@
     const rs = (await lsp('workspace/executeCommand', { command: 'satex/query', arguments: [request] }).catch(() => null))?.[0]?.records;
     if (ask !== outlineAsk || root !== state.root) return;
     // a failed ask (a worker restarting, a run stopped) is asked again, a few times with a growing pause
-    if (!rs) { if (outlineFails < 3) setTimeout(() => { if (ask === outlineAsk) outline(); }, 1000 * 2 ** outlineFails++); return; }
+    if (!rs) { if (outlineFails < 3) setTimeout(() => { if (ask === outlineAsk) outline(target, of); }, 1000 * 2 ** outlineFails++); return; }
     outlineFails = 0;
     // sections in the run's order; labels, citations and the rest come after them, each placed by its source position
     const own = rs.filter((r) => !r.origin || r.origin === 'document'), file = (r) => r.path ?? r.file;
     occurrences = own;
+    ranOn('keys', target, of);
     pdfOverlay();
     const before = (a, b) => a.line < b.line || a.line === b.line && (a.col ?? 0) <= (b.col ?? 0);
     const firstOf = new Map();
@@ -2156,6 +2162,10 @@
   const withKeys = cards.withKeys;
   /** The paragraphs of the last typeset, with the source site of their characters: the PDF's findings mark only theirs. */
   var typesetRows = null;
+  /** The last whole rows of a run, what the PDF's layers place (origins, macros, display math). Not a preview's: it
+   * patches the edited paragraph into the last run's rows, whose lines stay the older text's, so its rows are of
+   * two texts and a line that moved (a typed line wrapped) would place the rows below it a line off. */
+  var finalRows = null;
   async function typeset(target, of = diagnosticVersions[target]) {
     if (target !== uri()) return;
     // a slow answer shows in the status line as any question (`questionOf`)
@@ -2175,13 +2185,15 @@
    * or anything older never replaces them, so the page hints are always the final run's. */
   var tsFinal = new Map();
   /** `rows` of `target`'s run of version `of` in the Typeset view. */
-  function typesetShow(target, of, rows) {
+  function typesetShow(target, of, rows, preview = false) {
     if (!rows || target !== uri()) return;
     typesetRows = rows;
     tsShown = `${target}@${of}`;
+    if (!preview) { finalRows = rows; ranOn('rows', target, of); }
     // never dimmed while typed in: a thin bar says a run is under way (H)
     shownFor(typesetBody, target, of, 'ts-stale');
-    if (pdfOverlayOn?.findings || pdfOverlayOn?.glue || pdfTyping) pdfOverlay();
+    // the layers are placed from the rows (origins, macros, math, glue, the findings' words): drawn again with them
+    pdfOverlay();
     const lines = state.texts[state.file]?.split('\n') ?? [];
     const html = cards.typesetView(rows, { file: state.file, closed: tsClosed, plural, lineOf: (n) => lines[n - 1] });
     tsUnpend();
@@ -2706,6 +2718,7 @@
     // a newer text was sent while the fixes were asked for
     if (outdated({ uri: target, version: of })) return;
     diagnosticVersions[target] = of;
+    ranOn('findings', target, of);
     const by = new Map();
     fixAlls[target] = (actions ?? []).filter((a) => a.data?.scope);
     for (const a of (actions ?? []).filter((x) => !x.data?.scope)) for (const d of a.diagnostics ?? []) {
@@ -2736,6 +2749,7 @@
     if (p.uri === uri()) loadingFor = '';
     diagnostics[p.uri] = p.diagnostics.map((d) => ({ ...d, fixes: [] }));
     diagnosticVersions[p.uri] = p.version;
+    ranOn('findings', p.uri, p.version);
     provisionalRun = { run: p.run, runs: p.runs };
     render();
     drawTree();
@@ -6360,19 +6374,26 @@
       if (data.none || cached && pdf?.slice) pdfStatus.textContent = pdfSummary;
       else {
         pdfSummary = data.error ? '' : `${what} in ${data.cached ? 'cache' : secs(performance.now() - start)}`;
-        const gen = ++pdfGen, built = { ...data, slice, root, dir, text: pdfSent, texts: pdfSentAll, sets: sets.join('\n') };
+        const gen = ++pdfGen, built = { ...data, gen, slice, root, dir, text: pdfSent, texts: pdfSentAll, sets: sets.join('\n') };
         if (data.parts) pdfParts.set(data.parts, { built, lists: Object.fromEntries(data.partsOf.map((k) => [k, []])) });
-        pdfOpen(built).then((view) => {
+        const land = () => pdfOpen(built).then((view) => {
           // a newer build came first: this one is never shown; its view stays open while a newer build of the same PDF
           // (from the cache) is handed it too
           if (gen !== pdfGen) { if (view !== pdfViewer && pdfOpening?.v !== view) pdfClose(view); for (const url of Object.values(built.blobs ?? {})) URL.revokeObjectURL(/** @type {string} */ (url)); return; }
-          for (const url of Object.values(pdf?.blobs ?? {})) URL.revokeObjectURL(/** @type {string} */ (url));
           const same = pdf && pdf.root === root && pdf.dir === dir;
-          // the same PDF again (a kept build) opens once: its view is the one shown
-          if (pdfViewer !== view) pdfClose(pdfViewer);
-          pdfViewer = view;
+          // a build that gave no PDF (TeX stopped before a page, the server did not answer) leaves the pages shown:
+          // they stay the last build's that gave one (`kept`), with what places things on them (PDF_PAGES) and its
+          // open view, under this build's failure, messages, log and commands
+          const kept = same && !built.pdf && pdfViewer && !pdf.slice ? pdf : null;
+          if (!kept) {
+            for (const url of Object.values(pdf?.blobs ?? {})) URL.revokeObjectURL(/** @type {string} */ (url));
+            // the same PDF again (a kept build) opens once: its view is the one shown
+            if (pdfViewer !== view) pdfClose(pdfViewer);
+            pdfViewer = view;
+          }
           if (!view && built.pdf && TEX) built.note = `The PDF <code>${escape(built.pdf)}</code> was built but did not open: ${escape(pdfOpening?.error || 'no answer')}.`;
-          pdf = view ? { ...built, pagelabels: built.pagelabels ?? view.pagelabels } : built;
+          pdf = kept ? { ...built, ...Object.fromEntries(PDF_PAGES.filter((k) => k in kept).map((k) => [k, kept[k]])), blobs: { ...kept.blobs, ...built.blobs }, kept: true, of: built.texts }
+            : view ? { ...built, pagelabels: built.pagelabels ?? view.pagelabels } : built;
           pdfMarksOff();
           pdfShow(same);
           pdfOwner();
@@ -6380,6 +6401,9 @@
           // a failed request may be the server gone: say so plainly
           if (data.error && !TEX) probeServer().then((up) => { if (!up) { pdfStatus.innerHTML = `needs ${GUI}`; toast('Compiling needs satex gui'); } });
         });
+        // a build that replaces the pages shown lands whole, its records and words in (pdfPart): the layers and words
+        // of the pages never lack between. The first build of a project shows at once, its PDF opens meanwhile
+        if (data.parts && pdf && pdf.root === root && pdf.dir === dir) { pdfParts.get(data.parts).land = land; pdfOpen(built); } else land();
       }
       // a queued build of the very texts, settings and root this one built (a write that asked for a build while its
       // own auto build ran) would only draw the same pages again: dropped. Any difference, or a slice, builds.
@@ -6431,9 +6455,10 @@
     pdfStatus.textContent = pdfSummary;
     $('play-pdf').classList.remove('pdf-running');
     pdfWait(null);
-    pdfHoldEnd();
     pdfLoaded(true);
   }
+  /** What of a build is its pages': the PDF, the texts it shows, where SyncTeX and the words place things on it. */
+  const PDF_PAGES = ['pdf', 'text', 'texts', 'boxes', 'wordList', 'linkList', 'pagekeys', 'pagelabels', 'dpi', 'pages'];
   /** The files query of the root's last run: `{file, records}`. */
   var rootFiles = null; // var: a run may publish before this line
   /** The files the analysis saw the root read past its kernel (from its class on) and its fonts: the browser's
@@ -6459,14 +6484,15 @@
   var pdfRunning = null, pdfTick = 0, pdfSent = null, pdfSentAll = {};
   /** The builds whose records and words still come (the compile worker's `post`), by their token. */
   const pdfParts = new Map();
-  /** A part of a build's records or words; with the last one the build has them, and the pane shown from it gets
-   * what waited for them: the words to click, the cursor's place, the layers. */
+  /** A part of a build's records or words; with the last one the build has them: a build that waited for them lands
+   * (`land`), the pane already shown from it gets what waited for them: the words to click, the cursor's place, the layers. */
   function pdfPart({ part, token, items }) {
     const p = pdfParts.get(token);
     if (!p) return;
     if (part !== 'done') { for (const x of items) p.lists[part].push(x); return; }
     pdfParts.delete(token);
     for (const b of pdf?.parts === token ? [p.built, pdf] : [p.built]) Object.assign(b, p.lists);
+    if (p.land) return void p.land();
     if (pdf?.parts !== token) return;
     const pages = pdfBody.querySelector('.pdf-pages');
     if (pages && pdf.wordList) pages.dataset.words = '';
@@ -6599,7 +6625,9 @@
   const pdfPlace = (l, t, w, h) => `left:${l * 100}%;top:${t * 100}%;width:${w * 100}%;height:${h * 100}%`;
   /** The places left by following links, the latest last: Back returns to them. */
   const pdfBack = [], pdfBackButton = $('pdf-back');
-  /** The shown build's PDF opened in pdf.js (tex.ts `open`), its number, the pages wanted drawn (in or near view). */
+  /** The shown build's PDF opened in pdf.js (tex.ts `open`), the number of the newest build answered (each build
+   * keeps its own as `gen`: an answer that lands after a newer one is dropped, a page shows the image of the build
+   * `data-shown` names and is drawn again only for a newer one), the pages wanted drawn (in or near view). */
   var pdfViewer = null, pdfGen = 0, pdfIO = null, pdfDrawing = null, pdfTexted = 0;
   /** The last key typed into the pages, and how long a page typed on waits after it before a build swaps in. */
   var pdfKeyAt = -Infinity, pdfHoldTimer = 0;
@@ -6621,7 +6649,9 @@
   const pdfBlank = ([w, h]) => `data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='${w}' height='${h}'/%3E`;
   /** Draws the wanted page nearest the middle of the view, one at a time, newest build only; then the text of a browser build. */
   async function pdfDrawNext() {
-    const view = pdfViewer, gen = pdfGen, pages = pdfBody.querySelector('.pdf-pages');
+    // (the shown build's number: `pdfGen` is ahead of it while a newer answer opens its PDF or waits for its parts,
+    // and a page drawn then is still the shown build's)
+    const view = pdfViewer, gen = pdf?.gen, shown = () => gen === pdf?.gen, pages = pdfBody.querySelector('.pdf-pages');
     // a draw is waited for per build: a closed build's draw that never settles holds no newer page
     if (pdfDrawing === view || !view || !pages) return;
     const r = pages.getBoundingClientRect(), mid = (r.top + r.bottom) / 2, away = (el) => { const b = el.getBoundingClientRect(); return Math.abs((b.top + b.bottom) / 2 - mid); };
@@ -6639,9 +6669,8 @@
     const held = hold && due.some((e) => typed(e) < 0) ? new Set([...due.filter((e) => typed(e) < 0), ...echo]) : new Set();
     const el = due.filter((e) => !held.has(e)).sort((a, b) => typed(a) - typed(b) || away(a) - away(b))[0];
     if (!el) {
-      pdfHoldEnd();
       // words and links of a browser build come from pdf.js, after the pages in view
-      if (pdf?.browser && pdfTexted !== gen) { pdfTexted = gen; view.text().then((t) => { if (gen === pdfGen) { Object.assign(pdf, t); pdfLinksDraw(); pdfOverlay(); pages.dataset.words = ''; } }).catch(() => {}); }
+      if (pdf?.browser && pdfTexted !== gen) { pdfTexted = gen; view.text().then((t) => { if (shown()) { Object.assign(pdf, t); pdfLinksDraw(); pdfOverlay(); pages.dataset.words = ''; } }).catch(() => {}); }
       return;
     }
     pdfDrawing = view;
@@ -6654,11 +6683,11 @@
           // image): asked again forever it would hold the drawing; a newer build closed this one meanwhile: no fault, the
           // newer one draws
           if ((e.__fails = (e.__fails ?? 0) + 1) >= 3) e.dataset.shown = String(gen);
-          if (view === pdfViewer && gen === pdfGen) console.warn('pdf page', err);
+          if (view === pdfViewer && shown()) console.warn('pdf page', err);
         }
-        if (gen !== pdfGen) break;
+        if (!shown()) break;
       }
-      if (gen !== pdfGen) { for (const d of drawn) URL.revokeObjectURL(d.img.__url); return; }
+      if (!shown()) { for (const d of drawn) URL.revokeObjectURL(d.img.__url); return; }
       for (const d of drawn) pdfPageSwap(d, typed(d.el) < 0, gen);
       if (drawn.length && pdfCaret?.view === 'pdf') pdfCaretDraw();
       if (drawn.length) { pdfFacesPrune(); pdfLoaded_(); }
@@ -6695,7 +6724,6 @@
     pdfPaperMark(el);
     if (old?.__url) URL.revokeObjectURL(old.__url);
     el.dataset.shown = String(gen);
-    el.classList.remove('pdf-stale');
   }
   /** The links of the pages, again: a browser build learns them after its pages show. */
   function pdfLinksDraw() {
@@ -6704,7 +6732,10 @@
       el.querySelector('img')?.insertAdjacentHTML('afterend', pdfLinks(+el.dataset.page));
     }
   }
-  /** `keep`: a new build of the shown project. Its pages start as the last build's (marked stale) and are redrawn as they come into view. */
+  /** The build `pdf` in the pane. `keep`: a new build of the shown project replaces the last one's pages in place:
+   * the page list and each page's element stay, with the last image and the layers on it, until the page's new image
+   * is drawn and decoded off screen and swapped in (pdfDrawNext, pdfPageSwap). No page is blank, dimmed or made anew
+   * between, the list keeps its scroll place. A page the build no longer has goes, a new one starts empty at the end. */
   function pdfShow(keep = false) {
     pdfLine = '';
     pdfBack.length = 0;
@@ -6715,14 +6746,15 @@
     // the title line: what the build gave, its views, its files as one zip
     $('play-pdf').classList.toggle('pdf-is-slice', !!pdf.slice);
     pdfStatus.innerHTML = (pdf.slice ? '<b class="pdf-badge" title="Only what the cursor\'s line needs, built alone. Its lines are not the file\'s.">slice</b> ' : '') + (pdf.error ? `<span class="x-err" title="${escape(pdf.error)}">${escape(pdf.error)}</span>`
-      : `${pdf.pdf ? `${plural(pages.length, 'page')} <a class="pdf-open" href="${file(pdf.pdf)}" target="_blank" rel="noopener" title="open ${escape(pdf.pdf)} in a new tab" aria-label="open ${escape(pdf.pdf)}">&#x2197;</a>` : '<span class="x-err">no PDF</span>'}`
+      : `${pdf.kept ? '<span class="x-err">no PDF</span> <span class="muted">· the pages are the last build\'s</span>' : pdf.pdf ? `${plural(pages.length, 'page')} <a class="pdf-open" href="${file(pdf.pdf)}" target="_blank" rel="noopener" title="open ${escape(pdf.pdf)} in a new tab" aria-label="open ${escape(pdf.pdf)}">&#x2197;</a>` : '<span class="x-err">no PDF</span>'}`
       + [errors && `<span class="x-err">${plural(errors, 'error')}</span>`, records.length - errors && plural(records.length - errors, 'warning')].filter(Boolean).map((t, i) => (i ? ', ' : ' · ') + t).join('') + `${pdfSummary ? ` <span class="muted">· ${escape(pdfSummary)}</span>` : ''}`);
     const zip = /** @type {HTMLAnchorElement} */ ($('pdf-zip'));
     zip.hidden = !pdf.base;
     if (pdf.base) { zip.href = `${COMPILE}/${pdf.base.replace(/\/$/, '')}.zip`; zip.download = `${pdf.root.replace(/\.tex$/, '')}${pdf.slice ? '-slice' : ''}-build.zip`; }
     // one view at a time: the pages, the messages, the log, the commands run
     const views = [['pages', 'Pages', pages.length || ''], ['messages', 'Messages', records.length || ''], ['log', 'Logs', ''], ['files', 'Files', (pdf.outputs ?? []).length || ''], ['commands', 'Commands', runs.length || '']];
-    if (pdf.error && pdfView === 'pages') pdfView = 'commands';
+    // (never away from pages that stay shown)
+    if (pdf.error && pdfView === 'pages' && !pdf.kept) pdfView = 'commands';
     const tab = ([id, label, n]) => `<button type="button" role="tab" data-view="${id}" aria-selected="${id === pdfView}"${id === 'messages' && errors ? ' class="pdf-err"' : ''}>${label}${n !== '' ? ` <b class="count">${n}</b>` : ''}</button>`;
     const log = (title, text) => text ? `<h4>${title}</h4><pre>${escape(text)}</pre>` : '';
     $('pdf-views').innerHTML = views.map(tab).join('');
@@ -6734,24 +6766,51 @@
     // the builds after a drag (pdfHold: until the viewer scrolls or clicks, at most 15 s) too: the pages stay at the
     // table, they do not follow the editor's cursor
     const was = (pdfCaret || pdfDrag || pdfHeld()) && pdfBody.querySelector('.pdf-pages');
-    // a restore still pending keeps its place: it is where the viewer looked
-    if (!pdfKeep && was) pdfKeep = [was.scrollLeft, was.scrollTop];
-    // the pages shown so far, kept in place until redrawn: no blank flash, the same scroll
-    const before = pdfBody.querySelector('.pdf-pages'), scroll = before && [before.scrollLeft, before.scrollTop];
-    const old = new Map(keep && pdfViewer ? [...pdfBody.querySelectorAll('.pdf-page')].map((el) => [el.dataset.page, el.querySelector('img')]) : []);
-    // the pages near the view stay the ones wanted across a build of the same project: their layers are there at once
-    const wantWas = new Set(keep ? [...pdfWant].map((e) => e.dataset.page) : []);
+    // the page list shown so far and its pages, by number
+    const list = keep && pdfViewer ? pdfBody.querySelector('.pdf-pages') : null, scroll = list && [list.scrollLeft, list.scrollTop];
+    const old = new Map([...list?.querySelectorAll('.pdf-page') ?? []].map((el) => [el.dataset.page, el]));
+    // pages made anew are put back where they stood once they load (pdfSettle); a restore still pending keeps its
+    // place: it is where the viewer looked. A list that stays never leaves its place: a scroll of the viewer's
+    // while the build draws is theirs
+    if (!pdfKeep && was && !list) pdfKeep = [was.scrollLeft, was.scrollTop];
     pdfIO?.disconnect();
     pdfIO = null;
-    pdfWant.clear();
-    pdfBody.innerHTML = pdfFailed(records, runs) + (pdf.note ? `<p class="pdf-head pdf-note">${pdf.note}</p>` : '')
-      + `<div class="pdf-pages" data-view="pages">${pdf.slice ? '<div class="pdf-sep" role="separator"><b class="pdf-badge">slice</b><span>not the full build</span></div>' : ''}${pdfFrames(pages).map((g, frame) => { frame += 1; const html = g.map((i) => `<div class="pdf-page${pdfViewer ? ' pdf-stale' : ''}" data-page="${i + 1}"><img src="${pdfViewer ? pdfBlank(pages[i]) : file(pages[i])}"${pdfViewer ? ` width="${pages[i][0]}" height="${pages[i][1]}"` : ''} alt="page ${i + 1}" draggable="false">${pdfLinks(i + 1)}</div>`).join(''); return g.length < 2 ? html : `<div class="pdf-frame" data-step="${g.length - 1}"><div class="pdf-frame-bar" role="group" aria-label="overlay steps"><span><b>frame ${frame}</b> · step <b class="pdf-step">${g.length}/${g.length}</b></span><button type="button" class="small ghost icon" data-step="-1" title="Previous step" aria-label="previous step">&#x2039;</button><button type="button" class="small ghost icon" data-step="1" title="Next step" aria-label="next step">&#x203A;</button></div>${html}</div>`; }).join('') || '<p class="muted">No pages.</p>'}</div>`
+    const made = document.createElement('template');
+    made.innerHTML = pdfFailed(records, runs) + (pdf.note ? `<p class="pdf-head pdf-note">${pdf.note}</p>` : '')
+      + `<div class="pdf-pages" data-view="pages">${pdf.slice ? '<div class="pdf-sep" role="separator"><b class="pdf-badge">slice</b><span>not the full build</span></div>' : ''}${pdfFrames(pages).map((g, frame) => { frame += 1; const html = g.map((i) => `<div class="pdf-page" data-page="${i + 1}"><img src="${pdfViewer ? pdfBlank(pages[i]) : file(pages[i])}"${pdfViewer ? ` width="${pages[i][0]}" height="${pages[i][1]}"` : ''} alt="page ${i + 1}" draggable="false">${pdfLinks(i + 1)}</div>`).join(''); return g.length < 2 ? html : `<div class="pdf-frame" data-step="${g.length - 1}"><div class="pdf-frame-bar" role="group" aria-label="overlay steps"><span><b>frame ${frame}</b> · step <b class="pdf-step">${g.length}/${g.length}</b></span><button type="button" class="small ghost icon" data-step="-1" title="Previous step" aria-label="previous step">&#x2039;</button><button type="button" class="small ghost icon" data-step="1" title="Next step" aria-label="next step">&#x203A;</button></div>${html}</div>`; }).join('') || '<p class="muted">No pages.</p>'}</div>`
       + `<div class="pdf-text" data-view="messages">${records.length ? `<ul class="diagnostics pdf-records">${records.map(pdfRecord).join('')}</ul>` : '<p class="muted">The log has no error or warning.</p>'}</div>`
       + `<div class="pdf-text pdf-log" data-view="log">${(pdf.logs ? Object.entries(pdf.logs).map(([n, t]) => log(escape(n), t)).join('') : log('TeX log', pdf.log)) + log('Console: what satex compile and latexmk printed', pdf.stderr) || '<p class="muted">The build wrote no log.</p>'}</div>`
       + `<div class="pdf-text" data-view="files"><p class="muted">What the build wrote beside the sources. Each opens in a new tab, ↓ saves it.${pdf.base ? ` <a href="${escape(zip.href)}" download="${escape(zip.download)}">All of them with the sources as compiled, as one zip</a>.` : ''}</p><ul class="pdf-cmds">${(pdf.outputs ?? []).map((o) => `<li><a href="${file(o.name)}" target="_blank" rel="noopener">${escape(o.name)}</a> <a href="${file(o.name)}" download="${escape(o.name.split('/').pop())}" title="save ${escape(o.name)}" aria-label="save ${escape(o.name)}">↓</a> <span class="muted">${size(o.size)}</span></li>`).join('')}</ul></div>`
       + `<div class="pdf-text" data-view="commands"><p class="muted">${pdf.browser ? `Run in this browser by pdfTeX, with TeX Live 2026. No latexmkrc, no programs through shell escape. ${pdf.asked?.length ? `Asked in order: ${escape(pdf.asked.join(', '))}.` : 'Downloads are off.'} ${(pdf.from ?? []).map(([h, n]) => `${plural(n, 'file')} newly fetched from ${escape(h)}.`).join(' ')} ${pdf.dead?.length ? `No answer from ${escape(pdf.dead.join(', '))}.` : ''} ${GUI} builds with your own TeX and packages.` : `Run in a fresh directory on this machine${pdfSetsShown()}. <code>satex compile</code> runs latexmk where it is installed, else the engine, and reads the project's latexmkrc and satex.yaml.`}</p>`
       + `<ol class="pdf-cmds">${runs.map(pdfCommand).join('')}</ol>`
       + (shows.length ? `<details class="pdf-shows"><summary class="muted">How the playground shows the build (${shows.length})</summary><ol class="pdf-cmds">${shows.map(pdfCommand).join('')}</ol></details>` : '') + '</div>';
+    // each page in or near the view (the wanted ones: a page out of sight holds no image or layer, a book has
+    // hundreds) keeps its element: its image and layers stay, what else stood on it (links, marks, the caret and
+    // echo: drawn again below) goes; whether it is drawn again is asked per page below
+    const fresh = made.content.querySelector('.pdf-pages'), kept = new Map();
+    for (const el of fresh.querySelectorAll('.pdf-page')) {
+      const was = old.get(el.dataset.page), img = was?.querySelector(':scope > img:not(.pdf-fade)');
+      if (!img?.classList.contains('pdf-drawn') || !pdfWant.has(was)) continue;
+      for (const c of [...was.children]) if (c !== img && !c.classList.contains('pdf-ov')) c.remove();
+      img.insertAdjacentHTML('afterend', pdfLinks(+el.dataset.page));
+      was.__fails = 0;
+      was.hidden = false;
+      el.replaceWith(was);
+      old.delete(el.dataset.page);
+      kept.set(was, img);
+    }
+    for (const el of old.values()) { const url = el.querySelector('img')?.__url; if (url) URL.revokeObjectURL(url); }
+    // the list itself stays in the pane (its scroll place with it), what stands around it is the new build's
+    if (list) {
+      const around = [...made.content.childNodes], at = around.findIndex((n) => n === fresh);
+      list.replaceChildren(...fresh.childNodes);
+      for (const n of [...pdfBody.childNodes]) if (n !== list) n.remove();
+      list.before(...around.slice(0, at));
+      list.after(...around.slice(at + 1));
+      [list.scrollLeft, list.scrollTop] = scroll;
+    } else pdfBody.replaceChildren(made.content);
+    // the pages near the view stay the ones wanted: their layers are there at once
+    for (const el of [...pdfWant]) if (!el.isConnected) pdfWant.delete(el);
     pdfViewShow();
     pdfWroteNote(records);
     pdfUndoWire();
@@ -6764,36 +6823,24 @@
     const caretNow = () => { if (pdfCaret?.view === 'pdf') pdfCaretDraw(); };
     if (!pdfViewer) { pdfBody.querySelectorAll('.pdf-page img').forEach((img) => img.addEventListener('load', () => { if (img.naturalWidth) img.classList.add('pdf-drawn'); pdfLoaded_(); }, { once: true })); caretNow(); return; }
     pdfIO = new IntersectionObserver((seen) => { for (const e of seen) if (e.isIntersecting) pdfWant.add(e.target); else pdfWant.delete(e.target); pdfDrawNext(); pdfOverlaySoon(); }, { root: pagesNow, rootMargin: '100% 0px' });
-    pagesNow.querySelectorAll('.pdf-page').forEach((el) => { if (wantWas.has(el.dataset.page)) pdfWant.add(el); pdfIO.observe(el); });
-    let kept = 0;
-    // a page drawn from a build of the same texts (a second run of them: the next pass, a rebuild asked twice) is no
-    // older than the source: it is redrawn but not dimmed meanwhile. Asked once per build, not per page.
-    const same = new Map(), sameTexts = (b) => {
-      if (!same.has(b)) same.set(b, !!b && b.text === pdf.text && Object.keys({ ...b.texts, ...pdf.texts }).every((k) => b.texts?.[k] === pdf.texts?.[k]));
-      return same.get(b);
-    };
-    for (const el of pdfBody.querySelectorAll('.pdf-page')) {
-      const img = el.querySelector('img'), was = old.get(el.dataset.page);
-      if (was && `${was.naturalWidth}x${was.naturalHeight}` === `${img.getAttribute('width')}x${img.getAttribute('height')}`) {
-        img.replaceWith(was);
-        old.delete(el.dataset.page);
-        // a page whose key (compile.rs `pagekeys`) is the one its image was drawn from draws alike: it stays, not redrawn
-        const key = pdf.pagekeys?.[+el.dataset.page - 1];
-        if (key && key === was.__build?.pagekeys?.[+el.dataset.page - 1]) {
-          was.__build = pdf;
-          el.dataset.shown = String(pdfGen);
-          el.classList.remove('pdf-stale');
-          pdfRastersDraw(el, was, was.__rasters ?? []);
-          pdfPaperMark(el);
-          kept++;
-        } else if (sameTexts(was.__build)) el.classList.remove('pdf-stale');
-      } else img.addEventListener('load', pdfSettle, { once: true });
+    pagesNow.querySelectorAll('.pdf-page').forEach((el) => pdfIO.observe(el));
+    let alike = 0;
+    for (const el of pagesNow.querySelectorAll('.pdf-page')) {
+      const was = kept.get(el);
+      if (!was) { el.querySelector('img').addEventListener('load', pdfSettle, { once: true }); continue; }
+      // a page whose key (compile.rs `pagekeys`) is the one its image was drawn from draws alike: it is this build's
+      // as it stands, not drawn again
+      const key = pdf.pagekeys?.[+el.dataset.page - 1];
+      if (!key || key !== was.__build?.pagekeys?.[+el.dataset.page - 1]) continue;
+      was.__build = pdf;
+      el.dataset.shown = String(pdf.gen);
+      pdfRastersDraw(el, was, was.__rasters ?? []);
+      pdfPaperMark(el);
+      alike++;
     }
-    if (kept) pdfLoaded_();
-    for (const img of old.values()) if (img?.__url) URL.revokeObjectURL(img.__url);
-    if (scroll && keep) [pagesNow.scrollLeft, pagesNow.scrollTop] = scroll;
+    if (alike) pdfLoaded_();
     caretNow();
-    // the layers at once over the kept pages: no frame without them
+    // the layers at once, placed by this build: no frame without them
     if (keep) pdfOverlay();
     pdfSettle();
   }
@@ -6813,7 +6860,7 @@
   const pdfUndoWire = () => { const undo = pdfBody.querySelector('.pdf-fail [data-do="undo"]'); if (undo) { undo.onmousedown = (e) => e.preventDefault(); undo.onclick = () => pdfTypeUndo(); } };
   /** Whether the build shown is of an older text of the open file than the editor's, and no newer one is on its way: its
    * failure and counts are then the old text's (an align at a line that is a tabular now), and say so. */
-  const pdfDated = () => { const built = pdf && !pdf.slice && pdf.texts?.[state.file]; return typeof built === 'string' && built !== editor.text() && !pdfAuto?.want && !pdfBusy; };
+  const pdfDated = () => { const built = pdf && !pdf.slice && (pdf.of ?? pdf.texts)?.[state.file]; return typeof built === 'string' && built !== editor.text() && !pdfAuto?.want && !pdfBusy; };
   let pdfDatedWas = false;
   /** On an edit and a build: the banner and the bar's counts marked as the older text's once the text moved on. */
   function pdfDatedMark() {
@@ -6831,14 +6878,15 @@
   function pdfFailed(records, runs) {
     const status = runs.find((r) => r.status)?.status, rec = records.find((r) => r.severity === 'error');
     // a TeX error after a Type edit counts though pages came out: TeX went on past it
-    if (!pdf.error && !status && pdf.pdf && !(rec && pdfLastType)) { if (!rec) pdfLastType = null; return ''; }
+    const gave = pdf.pdf && !pdf.kept;
+    if (!pdf.error && !status && gave && !(rec && pdfLastType)) { if (!rec) pdfLastType = null; return ''; }
     // a build that ran while a command name was half typed: its error is the half name, gone once the name ends
-    if (pdf.pdf && pdfNaming()) return '';
+    if (gave && pdfNaming()) return '';
     const text = `${pdf.log ?? Object.values(pdf.logs ?? {}).join('\n')}\n${pdf.stderr ?? ''}`;
     const bang = /^! (.+)$/m.exec(text), at = bang && /^l\.(\d+)/m.exec(text.slice(bang.index));
     const what = rec ? `${rec.message} (${rec.line ? `${rec.path}:${rec.line}` : rec.path})` : bang ? `${bang[1]}${at ? ` (line ${at[1]})` : ''}` : pdf.error ?? `the build stopped (exit ${status})`;
     const undo = pdfLastType && state.file === pdfLastType.file && pdfLastType.after === editor.text() ? '<button type="button" class="small" data-do="undo">Undo typing since the last good build</button>' : '';
-    return `<p class="pdf-head pdf-fail x-err" role="alert"><span>${pdfDated() ? '<b>The last build, of an older text:</b> ' : ''}${pdf.error && rec ? `${escape(pdf.error)}: ` : status || !pdf.pdf ? 'The build failed: ' : 'TeX stopped at an error: '}${escape(what)}</span> ${undo}</p>`;
+    return `<p class="pdf-head pdf-fail x-err" role="alert"><span>${pdfDated() ? '<b>The last build, of an older text:</b> ' : ''}${pdf.error && rec ? `${escape(pdf.error)}: ` : status || !gave ? 'The build failed: ' : 'TeX stopped at an error: '}${escape(what)}${pdf.kept ? '. The pages below are the last build\'s' : ''}</span> ${undo}</p>`;
   }
   /** The builds after a widget wrote a table (pdfWrote): an error they end with shows at the table, saying whether
    * the change broke it or it was there before; without its place on a page, at the head of the pages. Each build's
@@ -7478,6 +7526,18 @@
     pdfScroll(spot.page, spot.y);
   }
   pdfBackButton.onclick = (e) => { e.preventDefault(); pdfReturn(); };
+  /** Line `line` of `file` in the text the run's `facts` are of (`runTexts`), as the shown build's line (layers.ts
+   * lineMap): the layers place the run's facts on the build's pages, whose text is another while a build lands
+   * under the keys or before its run. */
+  const lineMaps = new Map();
+  function pdfLineMap(file, facts) {
+    const from = runTexts[facts][uri(file)], to = pdf?.texts?.[file], key = `${facts}\n${file}`;
+    if (typeof from !== 'string' || typeof to !== 'string' || from === to) return null;
+    let m = lineMaps.get(key);
+    if (m?.[0] !== from || m[1] !== to) lineMaps.set(key, m = [from, to, self.satexLayers.lineMap(from, to)]);
+    return m[2];
+  }
+  const pdfBuiltLine = (file, line, facts) => pdfLineMap(file, facts)?.(line) ?? line;
   /** An occurrence's file as the project names it, else its base name (a .bbl the build wrote). */
   const occFile = (o) => { const p = String(o.path ?? o.file ?? ''); return Object.keys(state.texts).find((n) => !(n in state.ro) && p.endsWith(n)) ?? p.split('/').pop(); };
   /** The lines of each file SyncTeX set points for, ascending, per build. */
@@ -7498,7 +7558,7 @@
     if (!kept.has(key)) kept.set(key, pdfRects(file, line));
     return kept.get(key);
   };
-  const occLine = (o) => linesOf(occFile(o)).findLast((l) => l <= o.line);
+  const occLine = (o) => { const file = occFile(o), line = pdfBuiltLine(file, o.line, 'keys'); return linesOf(file).findLast((l) => l <= line); };
   const split = new Map(), sourceLine = (file, n) => {
     const text = state.texts[file] ?? '';
     if (split.get(file)?.[0] !== text) split.set(file, [text, text.split('\n')]);
@@ -7507,7 +7567,7 @@
   /** Of the rows its line set, the one the key stands on by its column (a `\label` after a caption, not the float's top); past its line, the last. */
   const occRect = (o) => {
     const at = occLine(o), rows = at ? pdfRowsOf(occFile(o), at) : [];
-    const text = sourceLine(occFile(o), at), share = at < o.line ? 1 : text.length ? ((o.col ?? 1) - 1) / text.length : 0;
+    const text = sourceLine(occFile(o), at), share = at < pdfBuiltLine(occFile(o), o.line, 'keys') ? 1 : text.length ? ((o.col ?? 1) - 1) / text.length : 0;
     return rows[Math.min(rows.length - 1, Math.floor(share * rows.length))];
   };
   /** The keys placed on the pages, as the overlay's chips index them. */
@@ -7556,7 +7616,7 @@
   const facetTally = (items) => [...Map.groupBy(items, (x) => x[0])].map(([key, xs]) => [key, xs[0][1] ?? key, xs.length]).sort((a, b) => b[2] - a[2] || String(a[0]).localeCompare(String(b[0])));
   /** The findings drawn over the pages: the check's, then the build's, as [file, line, severity, text, range, code]. */
   const pdfFound = () => Object.keys(state.texts).filter((n) => !(n in state.ro)).flatMap((n) => (diagnostics[uri(n)] ?? []).map((d) => [n, d.range.start.line + 1, sev(d), `${d.code}: ${d.message}`, d.range, d.code]))
-    .concat((pdf?.records ?? []).filter((r) => r.line).map((r) => [occFile(r), r.line, r.severity === 'error' ? 'error' : 'warning', `${r.code}: ${r.message} (the build)`, null, r.code]));
+    .concat((pdf?.records ?? []).filter((r) => r.line).map((r) => [occFile(r), r.line, r.severity === 'error' ? 'error' : 'warning', `${r.code}: ${r.message} (the build)`, null, r.code, true]));
   /** A project file's text as now: the editor's for the open file (its kept copy lags behind typing). */
   const liveText = (name) => (name === state.file ? editor?.text() : state.texts[name]) ?? '';
   /** The environments' extents, from the begin and end occurrences: [begin, end, file]. */
@@ -7564,7 +7624,8 @@
     const open = [], out = [];
     // a begin the user wrote has its \begin{name} in their file at the place the run read it (a macro's, like beamer's frame handling, only borders it);
     // a place that spells no \begin or \end of it is a macro's (forest's \end read in a style of \forestset)
-    const split = new Map(), line = (f, n) => { if (!split.has(f)) split.set(f, liveText(f).split('\n')); return split.get(f)[n - 1] ?? ''; };
+    // (the occurrences' lines are the run's text's: the editor's may have moved on)
+    const split = new Map(), text = (f) => { if (!split.has(f)) split.set(f, (runTexts.keys[uri(f)] ?? liveText(f)).split('\n')); return split.get(f); }, line = (f, n) => text(f)[n - 1] ?? '';
     const spells = (o, n) => line(occFile(o), n).includes(`\\${o.kind === 'begin-environment' ? 'begin' : 'end'}{${o.key}}`);
     const at = (o) => (o.expanded && occFile(o.expanded) === occFile(o) && spells(o, o.expanded.line) ? { ...o, line: o.expanded.line, col: o.expanded.col } : o);
     const own = (b) => spells(b, b.line);
@@ -7575,7 +7636,6 @@
     }
     // beamer reads a frame's body again and again (once per overlay pass) and ends it where it began: the end is then the \end in the source,
     // a begin seen again is one environment, and the depth is the nesting of what is left
-    const text = (f) => liveText(f).split('\n');
     const endOf = (b, o) => {
       if (o.line > b.line) return o;
       let depth = 0;
@@ -8100,7 +8160,6 @@
   /** Over the pages, each when switched on: keys (definitions apart from references), findings on their characters,
    * environments, the text block and the bad boxes of the log. Placed by SyncTeX, so a slice has none. */
   function pdfOverlay() {
-    shownFor(pdfBody, uri(), diagnosticVersions[uri()], 'ov-stale');
     pdfFacetsDraw();
     pdfOverlayDraw();
     tikzGridDraw();
@@ -8108,7 +8167,6 @@
       self.satexLayers.count($('pdf-layer-list'), k, pdfOverlayOn[k] && pdfBody.querySelectorAll(`.pdf-ov.${cls}`).length);
     }
     pdfLabelsFit();
-    pdfHoldEnd();
     if (pdfNear) pdfNearSoon();
     pdfCaretDraw();
     if (pdfGripFocus) pdfBody.querySelector(`.pdf-col-grip[data-t="${pdfGripFocus[0]}"][data-k="${pdfGripFocus[1]}"]`)?.focus({ preventScroll: true });
@@ -8176,14 +8234,14 @@
     // (one line may set many pages, a macro's text or a loop: whether it reaches a near page is found once per pass)
     const lineNear = new Map(), lineOn = (f, line) => {
       const k = `${f}\n${line}`;
-      if (!lineNear.has(k)) { const pages = pdfKept(pdfBoxesAt(f, line), 'pages', () => new Set(pdfBoxesAt(f, line).map((b) => b.page))); lineNear.set(k, [...near].some((p) => pages.has(p))); }
+      if (!lineNear.has(k)) { const at = pdfBoxesAt(f, pdfBuiltLine(f, line, 'rows')), pages = pdfKept(at, 'pages', () => new Set(at.map((b) => b.page))); lineNear.set(k, [...near].some((p) => pages.has(p))); }
       return lineNear.get(k);
     };
     // (a row's source lines, once per row: a paragraph has hundreds of sites on a few lines)
     const rowOn = (r) => !near || pdfRowLines(r).some(([path, line]) => { const f = fileOf(path); return f && lineOn(f, line); });
     // the rows of a line on the near pages, and the page words of a set of lines there: found once per pass, every
     // row a line set asks for them
-    const nearRects = new Map(), rectsOf = (f, line) => { const k = `${f}\n${line}`; if (!nearRects.has(k)) nearRects.set(k, pdfRects(f, line, true).filter((r) => on(r.page))); return nearRects.get(k); };
+    const nearRects = new Map(), rectsOf = (f, line) => { const k = `${f}\n${line}`; if (!nearRects.has(k)) nearRects.set(k, pdfRects(f, pdfBuiltLine(f, line, 'rows'), true).filter((r) => on(r.page))); return nearRects.get(k); };
     const nearWords = new Map(), wordsOf = (keys) => {
       const k = keys.join('\u0000');
       if (!nearWords.has(k)) {
@@ -8210,8 +8268,8 @@
       put(r.page, `<span class="pdf-ov pdf-keys" style="left:${r.l / wh[0] * 100}%;top:${r.t / wh[1] * 100}%">${chips}</span>`);
     }
     if (pdfOverlayOn.findings) {
-      for (const [n, line, s, what, range, code] of pdfFound().filter((f) => pdfShown('findings', 'severity', f[2]) && pdfShown('findings', 'rule', f[5]))) {
-        const rows = pdfRects(n, line);
+      for (const [n, line, s, what, range, code, built] of pdfFound().filter((f) => pdfShown('findings', 'severity', f[2]) && pdfShown('findings', 'rule', f[5]))) {
+        const rows = pdfRects(n, built ? line : pdfBuiltLine(n, line, 'findings'));
         if (!rows.some((r) => on(r.page))) continue;
         const text = range && rows.length ? typesetIn(n, range) : '';
         for (const r of (text && pdfWordsOf(rows, text)) || rows.slice(0, 1)) box(r.page, `pdf-finding f-${s}`, r.l - 1, r.t - 1, r.r + 1, r.d + 2, `${n}:${line}${text ? ` · ${text}` : ''}\n${what}`);
@@ -8222,7 +8280,8 @@
         const file = occFile(o);
         if (b.key === 'document' || !pdfShown('envs', 'name', b.key)) continue;
         // the lines inside: the begin and end lines carry what closed there (a whole float)
-        const inner = o.line - b.line > 1 ? rowsOf(file, b.line + 1, o.line - 1) : [], rows = inner.length ? inner : rowsOf(file, b.line, o.line);
+        const from = pdfBuiltLine(file, b.line, 'keys'), to = pdfBuiltLine(file, o.line, 'keys');
+        const inner = to - from > 1 ? rowsOf(file, from + 1, to - 1) : [], rows = inner.length ? inner : rowsOf(file, from, to);
         if (!rows.length) continue;
         for (const [page, rs] of Map.groupBy(rows, (r) => r.page)) {
           const g = blocks.get(page), t = Math.min(...rs.map((r) => r.t)) - 2, d = Math.max(...rs.map((r) => r.d)) + 2;
@@ -8235,7 +8294,7 @@
       // the extent of an environment is the box SyncTeX records on its \end line: the largest list there
       for (const [, o] of pdfEnvPairs()) {
         if (!FIGURE_ENV.test(o.key) || !pdfShown('figures', 'environment', o.key)) continue;
-        const best = pdfBoxesAt(occFile(o), o.line).filter((b) => '[('.includes(b.kind) && b.w > 0 && b.h + b.d > 0).sort((a, b) => b.w * (b.h + b.d) - a.w * (a.h + a.d))[0];
+        const best = pdfBoxesAt(occFile(o), pdfBuiltLine(occFile(o), o.line, 'keys')).filter((b) => '[('.includes(b.kind) && b.w > 0 && b.h + b.d > 0).sort((a, b) => b.w * (b.h + b.d) - a.w * (a.h + a.d))[0];
         if (best) box(best.page, 'pdf-fig', best.x, best.y - best.h, best.x + best.w, best.y + best.d, `bounding box of ${o.key}, ends at line ${o.line} of ${occFile(o)}`, `<b>${escape(o.key)}</b>`);
       }
     }
@@ -8279,11 +8338,12 @@
       // glyphs' edges) are found once: the passes between (a caret move, a toggle, a finding) take them as they are
       const drawn = (page) => pdfBody.querySelector(`.pdf-page[data-page="${page}"] img`)?.classList.contains('pdf-drawn') ? 'd' : '';
       const of = near ? [...near].sort((a, b) => a - b).map((p) => `${p}${drawn(p)}`).join() : `all${pdfBody.querySelectorAll('.pdf-page img.pdf-drawn').length}`;
-      const same = !lag && pdfTintsOf?.pdf === pdf && pdfTintsOf.rows === typesetRows && pdfTintsOf.of === of;
-      // (none kept: none until the build lands, the new text's lines matched against the old pages' would tint another row)
-      const tints = kept || same ? [...pdfTintsOf.tints] : [];
-      for (const r of lag || same ? [] : typesetRows ?? []) {
-        if (!r.sites || !rowOn(r)) continue;
+      const same = !lag && pdfTintsOf?.pdf === pdf && pdfTintsOf.rows === finalRows && pdfTintsOf.of === of;
+      // (none kept, a build that landed under the keys: the run's rows on its pages by their lines there (pdfBuiltLine), but
+      // those of the lines edited between the two texts, whose words are other ones)
+      const tints = kept || same ? [...pdfTintsOf.tints] : [], edited = (r) => pdfRowLines(r).some(([path, line]) => { const f = fileOf(path); return f && pdfLineMap(f, 'rows')?.changed(line); });
+      for (const r of kept || same ? [] : finalRows ?? []) {
+        if (!r.sites || !rowOn(r) || edited(r)) continue;
         const chars = rowOrigins(r), runs = originRuns(chars);
         if (!runs.length) continue;
         // each run found by its place in the row among the page words its lines set: a `!` of a macro is the one
@@ -8305,7 +8365,7 @@
           }
         }
       }
-      if (!lag && !same) pdfTintsOf = { pdf, tints: [...tints], rows: typesetRows, of };
+      if (!lag && !same) pdfTintsOf = { pdf, tints: [...tints], rows: finalRows, of };
       // one tint per spot: a word set inside a wider run (an argument in its macro's text) keeps its own
       pdfOriginKinds = tints.map(originKey);
       if (pdfOverlayOn.origins) for (const q of PE.apart(tints)) if (pdfShown('origins', 'kind', originKey(q))) box(q.page, `pdf-orig pdf-orig-${q.kind}${q.key === 'generated' ? ' pdf-orig-generated' : q.made ? ` pdf-orig-made pdf-orig-${q.key}` : ''}`, q.l, q.t, q.r, q.d, q.title);
@@ -8324,11 +8384,11 @@
       for (const m of pdfKept(pdf?.boxes, 'math', () => self.satexLayers.mathSpans(pdf.boxes)) ?? []) box(m.page, 'pdf-math', m.l, m.t, m.r, m.d, `math · ${m.file}:${m.line}`);
       // display math has no SyncTeX math records: the source lines the run set in display mode (its rows' `math` marks), where SyncTeX placed them
       const shown = new Set();
-      for (const r of typesetRows ?? []) for (const ch of r.math?.some((m) => m.mode === 'display') ? rowChars(r) : []) {
+      for (const r of finalRows ?? []) for (const ch of r.math?.some((m) => m.mode === 'display') ? rowChars(r) : []) {
         const file = ch.mode === 'display' && Object.keys(state.texts).find((n) => ch.path.endsWith(n)), at = `${file}:${ch.line}`;
         if (!file || shown.has(at)) continue;
         shown.add(at);
-        for (const q of pdfRects(file, ch.line, true)) box(q.page, 'pdf-math pdf-math-display', q.l, q.t, q.r, q.d, `display math · ${at}`);
+        for (const q of pdfRects(file, pdfBuiltLine(file, ch.line, 'rows'), true)) box(q.page, 'pdf-math pdf-math-display', q.l, q.t, q.r, q.d, `display math · ${at}`);
       }
     }
     if (pdfOverlayOn.glue) {
@@ -9540,25 +9600,13 @@
     pdfHoverFrame = requestAnimationFrame(() => { pdfHoverFrame = 0; pdfHoverAt(pdfHoverLast); });
   });
   pdfBody.addEventListener('pointerleave', () => { pdfHoverLast = null; });
-  /** The hold of a column change ends once the pages show the text as now, the layers are not stale and no page in
-   * view still shows the last build's image (the overlay redrawn first let the pages dim before they were drawn). */
-  function pdfHoldEnd() {
-    if (!document.body.classList.contains('pdf-hold') || pdf?.text !== editor.text() || pdfBody.classList.contains('ov-stale')) return;
-    const v = pdfBody.querySelector('.pdf-pages')?.getBoundingClientRect();
-    if (v && [...pdfBody.querySelectorAll('.pdf-page.pdf-stale')].some((e) => { const b = e.getBoundingClientRect(); return b.bottom > v.top && b.top < v.bottom; })) return;
-    document.body.classList.remove('pdf-hold');
-  }
   /** A column's letter rewritten from the layer: `l`, `c`, `r`, or `p`, `m`, `b` keeping its width. */
   async function pdfColAlign(b) {
     const t = pdfCols?.tables[+b.dataset.t], col = t?.cols[+b.dataset.k];
     // one rewrite of the spec (pdfedit.ts respec): letter, width and the paragraph's alignment, array loaded where needed
     const w = b.dataset.w ?? col?.width ?? '', r = col?.spec && PE.respec(b.dataset.a, w || null, col.spec.text, b.dataset.h);
     if (!r || r.body === col.spec.text) return;
-    // applied like typing: the old pages and chips stay as they are (no dimming) until the new build is drawn and its findings are in
-    document.body.classList.add('pdf-hold');
-    setTimeout(() => document.body.classList.remove('pdf-hold'), 20000);
     if (await pdfWrite(uri(), { ...col.spec, ...(r.array ? { package: { name: 'array', options: '' } } : {}) }, r.body, { userEvent: 'input.type' })) { pdfColsAsk(); pdfRebuild(true); }
-    else document.body.classList.remove('pdf-hold');
   }
   /** Typing in the PDF: on, a click on a word puts the caret there; off, a click opens its source. */
   const pdfTypeButton = $('pdf-type'), pdfTypeIn = Object.assign(document.createElement('textarea'), { className: 'pdf-type-in', ariaLabel: 'typed into the PDF', spellcheck: false });
@@ -12978,7 +13026,7 @@
     defIndex.clear(); editor?.forget?.();
     show(p.uri, p.diagnostics, p.version);
     typeset(p.uri, p.version); // tagged with this run's version: `show` sets the shown one only after its code-action round trip
-    outline();
+    outline(p.uri, p.version);
     if (p.uri === uri()) {
       lensify();
       colorize();
@@ -13016,7 +13064,7 @@
       if (rows === 'lost') { if (!m.params.preview) typeset(m.params.uri, m.params.version); }
       else if (rows && !outdated(m.params) && self.satexViews.rowsWin(tsFinal.get(m.params.uri), m.params.version, !!m.params.preview)) {
         if (!m.params.preview) { tsEarly = `${m.params.uri}@${m.params.version}`; tsFinal.set(m.params.uri, m.params.version); }
-        typesetShow(m.params.uri, m.params.version, rows);
+        typesetShow(m.params.uri, m.params.version, rows, !!m.params.preview);
       }
     }
   }

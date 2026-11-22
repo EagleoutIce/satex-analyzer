@@ -7,7 +7,7 @@
 // Conditions (`until`): 'quiet' 'built' 'ready' 'caret' 'dialog' 'pdf' 'words' 'echo' 'drawn' 'newBuild' 'oneBuild', { sel, …, visible, count }, { none: element },
 // { src: text } / { srcMatch: regex } the editor's text, { word }, { diag: regex } a finding, { open: sel } a dialog
 // open, { hidden: sel }, { pressed: [sel, bool] }, { health: { key: value } }, { not }, { all: […] }, { any: […] }.
-// Actions (`act`): { press } an element's click(), { toggle: { sel, attr, want } }, { check: sel }, { inputs: { sel,
+// Actions (`act`): { press } an element's click(), { toggle: { sel, attr, want } }, { check: sel, want = true } (each box set, with its change event), { inputs: { sel,
 // values: { label: value } } }, { text } / { replace: [from, to] } / { insert: { at, k, text } } the editor's text,
 // { tab: file }, { caret: { src, k } }, { select: { from, to, k } }, { scroll: { src, top } | 0 }, { css: text },
 // { size: { sel, width, height } }, { highlight: { match, color } | null }, { blur }, { focus: sel }, { keydown: { key, keyCode, shift, on } }, { fill: { sel, value } }, { remove: sel }, { clear: sel } (its text emptied), { close: sel }, { mark: 'builds' }, { cursor }, { open: { widget, at, k } }.
@@ -133,7 +133,7 @@
     const v = view();
     if (a.press) { const e = element(a.press); if (!e) return false; e.click(); return true; }
     if (a.toggle) { const e = element(a.toggle); if (e && (e.getAttribute(a.toggle.attr ?? 'aria-pressed') === 'true') !== a.toggle.want) e.click(); return !!e; }
-    if (a.check) { for (const e of elements(a.check)) if (!e.checked) { e.checked = true; e.dispatchEvent(new Event('change', { bubbles: true })); } return true; }
+    if (a.check) { for (const e of elements(a.check)) if (e.checked !== (a.want ?? true)) { e.checked = a.want ?? true; e.dispatchEvent(new Event('change', { bubbles: true })); } return true; }
     if (a.inputs) {
       const d = element(a.inputs), find = (n) => [...d.querySelectorAll('input')].find((i) => (i.closest('label')?.textContent ?? i.previousElementSibling?.textContent ?? '').trim() === n);
       for (const [n, x] of Object.entries(a.inputs.values)) { const i = find(n); if (!i) continue; i.value = x; i.dispatchEvent(new Event('input', { bubbles: true })); i.dispatchEvent(new Event('change', { bubbles: true })); }

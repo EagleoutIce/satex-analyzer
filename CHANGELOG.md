@@ -114,6 +114,7 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 
 ### Playground
 
+- `fix` **The PDF no longer blanks, dims or loses its layers while you type.** A build replaces the pages in place: each page keeps its last image until the new one is drawn, a build that gives no PDF leaves the last pages under its error, and the layers stay at full strength, placed on the build's own lines also while the text has moved on.
 - `fix` **A package the playground has not fetched yet is preferred to one that rejects the call**: an inserted `\includegraphics[width=…]` loads graphicx, not graphics, also before graphicx is in the bundle.
 - `fix` **The page's first command list after `\` is the right one**: it is asked where the document's own commands are in force, and one typed letter is a prefix (`\t` puts `\textbf` first), so the list no longer reorders after ~1 s.
 - `fix` **The caret stays in a new paragraph begun by a command** (`\textbf{}` on a line of its own) instead of jumping to the end of the line above, and text typed there is echoed.

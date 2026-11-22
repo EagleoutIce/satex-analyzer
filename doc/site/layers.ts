@@ -20,6 +20,7 @@ declare global {
       runsBy<T>(items: T[], key: (x: T) => string | null | undefined): [string, number, number][];
       mathSpans(boxes: Box[]): { page: number; l: number; t: number; r: number; d: number; file: string; line: number }[];
       fitLabels(labels: Rect[], fixed: Rect[], ink: Rect[]): (number | null)[];
+      lineMap(from: string, to: string): ((n: number) => number) & { changed(n: number): boolean };
       SHOW: Record<string, [string, string, boolean, boolean]>;
       showClasses(on: On): string[]; showDefaults(): On; showHtml(on: On): string;
     };
@@ -198,5 +199,17 @@ declare global {
     items.forEach((x, i) => { const k = key(x), o = out.at(-1); if (!k) return; if (o && o[0] === k && o[2] === i - 1) o[2] = i; else out.push([k, i, i]); });
     return out;
   }
-  self.satexLayers = { GROUPS, LAYERS, groups, html, state, wire, count, menu, length, SHOW, showClasses, showDefaults, showHtml, indentOf, glueShort, fitLabels, mathSpans, runsBy };
+  /** Where the lines of the text `from` stand in the text `to` (1-based): the same line while the two agree from the
+   * top, the same counted from the end while they agree from the bottom, and between (the edit) the nearest line of
+   * the edit in `to`; `changed(n)`: line `n` is of the edit. A layer places a run's facts on a build's pages with
+   * it: the run's text and the built one differ while a build lands under the keys, or a run before its build. */
+  function lineMap(from: string, to: string) {
+    const a = from === to ? [] : from.split('\n'), b = from === to ? [] : to.split('\n');
+    let top = 0, end = 0;
+    while (top < a.length && top < b.length && a[top] === b[top]) top++;
+    while (end < a.length - top && end < b.length - top && a[a.length - 1 - end] === b[b.length - 1 - end]) end++;
+    const changed = (n: number) => from !== to && n > top && n <= a.length - end;
+    return Object.assign((n: number) => from === to || n <= top ? n : n > a.length - end ? n + b.length - a.length : Math.min(n, Math.max(top + 1, b.length - end)), { changed });
+  }
+  self.satexLayers = { GROUPS, LAYERS, groups, html, state, wire, count, menu, length, SHOW, showClasses, showDefaults, showHtml, indentOf, glueShort, fitLabels, mathSpans, runsBy, lineMap };
 })();

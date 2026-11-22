@@ -68,7 +68,7 @@ Each run writes `results.md`, `results.json`, a screenshot per failure and, when
 | `probe.js` | the page side of `page.mjs`, injected before the page's scripts, never shipped: the only thing the page is asked is `satexTest.run(<JSON>)`; words come from one index per build (playground.js `satexPdfWordIndex`) |
 | `engine.mjs` | the scenario kinds of the PDF and Typeset views: `type` (default), `click`, `tint`, `ts`, `select`, `col`, `forest`, `shift`, `complete`, `dbl`, `bare` |
 | `crash.mjs` | no browser: the crash shapes of `tests/it/crash.rs` on the wasm build under node (`SATEX_CRASH_SHAPES=DIR scripts/t.sh crash::hostile`, then `node doc/site/e2e/crash.mjs target/site/play DIR`). Exit 1 on a stack overflow, an abort or a panic |
-| `kinds/*.mjs` | `foot`, `echo`, `paper`, `follow`, `tikz`, `crash`, `user` (a person's actions as a list, invariants after each: scenarios/user.mjs), `big` (a generated book of hundreds of pages: keys while it is analyzed, the build landing, layers and images only near the view, a scroll, a dropped build that frees the server: scenarios/big.mjs) |
+| `kinds/*.mjs` | `foot`, `echo`, `paper`, `follow`, `tikz`, `crash`, `user` (a person's actions as a list, invariants after each: scenarios/user.mjs), `big` (a generated book of hundreds of pages: keys while it is analyzed, the build landing, layers and images only near the view, a scroll, a dropped build that frees the server: scenarios/big.mjs), `swap` (a build's pages replacing the shown ones under the keys, every frame sampled: no page blank, dimmed or made anew, no older build after a newer one, no scroll, no layer gone or dimmed, also across a build that gives no PDF: scenarios/swap.mjs) |
 | `scenarios/<area>.mjs` | the scenarios of one area; `sources.mjs` the documents they share |
 | `scenarios/index.mjs` | all areas, the tiers, unique names |
 | `fixtures/titles/` | title pages of ten classes |
@@ -88,6 +88,7 @@ A typing scenario names the word to click, where the caret must land in the sour
 - A fresh browser context per scenario: no caret, cache, edited file or stopped server leaks into the next one.
 - Bounds tolerate load: waits are long (a cold kernel cache takes minutes), timing bounds live in the perf tier.
 - Every frame of every scenario checks that no overlay shows over a page whose image is not drawn.
+- The `swap` scenarios sample every frame while builds land under typed keys (`kinds/swap.mjs` `judge`); `E2E_DUMPFRAMES=1` writes their frames and a screenshot every 100 ms.
 - A failure says what was expected, what was seen and where (source offsets with context, client px), with a screenshot.
 
 ## Adding a scenario

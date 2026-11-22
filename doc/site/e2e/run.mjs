@@ -25,6 +25,7 @@ import { soak } from './kinds/soak.mjs';
 import { draw } from './kinds/draw.mjs';
 import { user } from './kinds/user.mjs';
 import { big } from './kinds/big.mjs';
+import { swap } from './kinds/swap.mjs';
 import { SCENARIOS, TIERS } from './scenarios/index.mjs';
 
 const ROOT = fileURLToPath(new URL('../../../', import.meta.url));
@@ -38,7 +39,7 @@ const OUT = arg('out', join(ROOT, 'target/e2e', `${tier}-${stamp}`));
 mkdirSync(OUT, { recursive: true });
 ctx.out = OUT;
 const KNOWN = JSON.parse(readFileSync(new URL('known-red.json', import.meta.url), 'utf8'));
-const RUN = { ...KINDS, foot, echo, paper, follow, tikz, refactor, crash, gutter, close, auto, dated, hoverlate, heldback, fixfile, gutterkey, typeundo, catcomplete, scratch, insert, robust, fuzz, sync, soak, kernelCut, draw, landing, user, big };
+const RUN = { ...KINDS, foot, echo, paper, follow, tikz, refactor, crash, gutter, close, auto, dated, hoverlate, heldback, fixfile, gutterkey, typeundo, catcomplete, scratch, insert, robust, fuzz, sync, soak, kernelCut, draw, landing, user, big, swap };
 
 const picked = SCENARIOS.filter((sc) => only.length ? only.includes(sc.name)
   : (!areas.length || areas.includes(sc.area)) && (tier === 'full' || TIERS[tier].includes(sc.name)));

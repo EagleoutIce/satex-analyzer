@@ -117,3 +117,26 @@ test('runs of one key', async () => {
   assert.deepEqual(L.runsBy(['inline', 'inline', null, 'display', 'display', 'inline'], (x) => x), [['inline', 0, 1], ['display', 3, 4], ['inline', 5, 5]]);
   assert.deepEqual(L.runsBy([null, ''], (x) => x), []);
 });
+// The layers place a run's facts (lines of the run's text) on a build's pages (lines of the built text). The two
+// differ while a build lands under the keys: the environments went from the pages when the editor wrapped a typed line
+// (their lines one off), the origins until the keys rested (typeswap 2026-11-22). Pins lineMap: lines above an edit
+// keep their number, lines below move by the lines the edit added or took, the edit's own lines are `changed`.
+test('a line of one text in another: above, below and inside an edit', async () => {
+  const { lineMap } = self.satexLayers, text = (...l) => l.join('\n');
+  const from = text('a', 'b', 'c', 'd', 'e'), same = lineMap(from, from);
+  assert.deepEqual([1, 3, 5].map((n) => [same(n), same.changed(n)]), [[1, false], [3, false], [5, false]], 'the same text: every line its own');
+  // a line typed in and wrapped: one line became two
+  const grown = lineMap(from, text('a', 'b', 'c typed', 'and wrapped', 'd', 'e'));
+  assert.deepEqual([1, 2, 3, 4, 5].map(grown), [1, 2, 3, 5, 6]);
+  assert.deepEqual([1, 2, 3, 4, 5].map(grown.changed), [false, false, true, false, false]);
+  // lines taken out: those below move up, the ones gone stand at the nearest line left
+  const cut = lineMap(from, text('a', 'e'));
+  assert.deepEqual([1, 2, 3, 4, 5].map(cut), [1, 2, 2, 2, 2]);
+  assert.deepEqual([1, 2, 3, 4, 5].map(cut.changed), [false, true, true, true, false]);
+  // an edit inside one line: no line moves
+  const typed = lineMap(from, text('a', 'b', 'c!', 'd', 'e'));
+  assert.deepEqual([2, 3, 4].map((n) => [typed(n), typed.changed(n)]), [[2, false], [3, true], [4, false]]);
+  // repeated lines around the edit: the count of lines is kept from both ends
+  const rep = lineMap(text('x', 'x', 'x'), text('x', 'x', 'x', 'x'));
+  assert.ok([1, 2, 3].every((n) => rep(n) >= n && rep(n) <= n + 1), 'a line among equals stays or moves by the one added');
+});

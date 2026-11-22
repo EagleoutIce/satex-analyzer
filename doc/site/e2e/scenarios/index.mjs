@@ -28,10 +28,11 @@ import draw from './draw.mjs';
 import landing from './landing.mjs';
 import user from './user.mjs';
 import big from './big.mjs';
+import swap from './swap.mjs';
 
 const AREAS = { 'typing-pdf': typingPdf, 'titles-footnotes': titles, math, clicks, select, 'tints-typeset': tints, widgets,
   completion, 'double-click': dbl, 'footer-blank': foot, 'echo-paragraphs': newpara, 'follow-highlight': follow,
-  'dark-mode': dark, 'tikz-actions': tikz, refactor, 'crash-recovery': crash, editor, fuzz, sync, scratch, 'cold-start': cold, insert, robust, draw, landing, user, big };
+  'dark-mode': dark, 'tikz-actions': tikz, refactor, 'crash-recovery': crash, editor, fuzz, sync, scratch, 'cold-start': cold, insert, robust, draw, landing, user, big, swap };
 
 export const SCENARIOS = Object.entries(AREAS).flatMap(([area, list]) => list.map((sc) => ({ area, ...sc })));
 

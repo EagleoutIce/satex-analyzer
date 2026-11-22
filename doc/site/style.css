@@ -271,7 +271,6 @@ code .arg { font-size: 12px; padding: 0 .3rem; }
 .stale { opacity: .55; transition: opacity var(--quick); }
 /* a dimmed panel the reader points at or works in is read again: full strength while hovered or focused */
 .stale:hover, .stale:focus-within { opacity: 1; }
-.ov-stale .pdf-ov { opacity: .35; }
 #explain-body .xcard + .xcard, .output .xcard + .xcard { margin-top: .7rem; padding-top: .6rem; border-top: 1px dashed var(--border); }
 .output .xcard { white-space: normal; } .upstream { font-size: .8rem; white-space: nowrap; }
 .b { font-weight: 700; } .d { opacity: .7; } .i { font-style: italic; } .u { text-decoration: underline; }
@@ -1658,11 +1657,8 @@ p.ts.ts-foot::before { content: ""; position: absolute; top: 0; left: 0; width: 
 .pdf .pdf-page img { display: block; width: 100%; height: auto; cursor: crosshair; background: #fff; }
 /* overlays (tints, chips, layers, caret, echo) only over a drawn page image, never over a blank page */
 .pdf .pdf-page:not(:has(> img.pdf-drawn)) > :not(img) { visibility: hidden; }
-/* a page of an older build until redrawn: dimmed after a moment, so a quick redraw does not blink */
-.pdf .pdf-page.pdf-stale img { animation: pdf-stale 0s .25s forwards; }
-@keyframes pdf-stale { to { opacity: .45; } }
-/* typing: the last pages stay at full strength until the new ones are decoded and swapped in, no dim frame */
-:is(.type-sync, .pdf-hold) .pdf .pdf-page.pdf-stale img { animation: none; } :is(.type-sync, .pdf-hold) .ov-stale .pdf-ov { opacity: 1; }
+/* a page and its layers stay at full strength while a build or a run is under way: the last image shows until the
+   next one is decoded and swapped in (playground.js pdfShow), no dimmed or blank frame; the toolbar says what runs */
 /* "you are here": a faint tint behind the line's glyphs, no frame; blended so the ink stays on top; fades when the cursor rests */
 .pdf .pdf-mark { position: absolute; pointer-events: none; background: color-mix(in srgb, var(--accent) 12%, transparent); border-radius: 3px; mix-blend-mode: multiply; transition: opacity .4s; }
 #play-pdf:is([data-pdf-mode=invert], [data-pdf-mode=dark]) .pdf-mark { mix-blend-mode: screen; background: color-mix(in srgb, var(--accent) 22%, transparent); }
@@ -1727,7 +1723,7 @@ p.ts.ts-foot::before { content: ""; position: absolute; top: 0; left: 0; width: 
 .pdf .pdf-col-grip:hover, .pdf .pdf-col-drag .pdf-col-grip { opacity: 1; }
 /* a gap's knob under the table: drags the column spacing; the value shows while it moves */
 .pdf .pdf-gap-grip { position: absolute; inset: 0; min-width: 10px; min-height: 10px; cursor: ew-resize; touch-action: none; pointer-events: auto; border-radius: 0 0 4px 4px; background: #0e749040; } .pdf .pdf-gap-grip:hover { background: #0e7490a0; }
-.pdf .pdf-col-gap[data-v]::after { content: attr(data-v); position: absolute; top: 100%; left: 50%; translate: -50% 2px; padding: 0 .3em; font: 11px ui-monospace, monospace; white-space: nowrap; color: #fff; background: #0e7490; border-radius: 3px; } .pdf .pdf-col-drag, .ov-stale .pdf-ov.pdf-col-drag { opacity: 1; background: #0e74901f; }
+.pdf .pdf-col-gap[data-v]::after { content: attr(data-v); position: absolute; top: 100%; left: 50%; translate: -50% 2px; padding: 0 .3em; font: 11px ui-monospace, monospace; white-space: nowrap; color: #fff; background: #0e7490; border-radius: 3px; } .pdf .pdf-col-drag { opacity: 1; background: #0e74901f; }
 .pdf-type-in { position: absolute; left: 0; top: 0; width: 1px; height: 1px; opacity: 0; pointer-events: none; resize: none; border: 0; padding: 0; }
 .pdf-typing .pdf-page img { cursor: text; }
 /* Type mode at a glance: the button pressed, "Typing" and the pages framed while a caret is in them (Esc ends it) */
