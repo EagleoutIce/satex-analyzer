@@ -110,4 +110,9 @@ export default [
   { name: 'demo-sum', source: DEMO.replace('the loss falls fast.', '$\\sum_k y_k$ falls.'), example: 'hello.tex', word: is('falls.'), src: /\$ falls\./, keys: [' ', 'Pause', '$\\sum_i x_42$'], pauseMs: 3000, keyMs: [70, 130],
     expect: () => null, contains: [/\\sum_\{?i\}? ?x_\{?42\}?/], math: [['∑', 'i', 'sub'], ['x', '42', 'sub']], italic: ['x', 'i'], inked: ['∑'],
     steps: 'the landing demo with a sum already built (CMEX on the page); click the end of "falls."; type " $\\sum_i x_42$": the echo draws ∑ (not another CMEX slot) with i lowered, x italic with 42 lowered' },
+  // the typing showcase (user 2026-11-22): builds land while `$\\sum_i x_i$` is typed after "fast.", the echo jittered
+  // and drew the sum garbled (a bar with i lowered) until the build of the whole formula landed
+  { name: 'demo-sum-typed', source: DEMO, example: 'hello.tex', word: is('fast.'), src: /falls fast\./, keys: [' It drops by $\\su', 'Pause', 'm_i', 'Pause', ' x_i$ per step.'], pauseMs: 3000, keyMs: [70, 130],
+    expect: () => null, contains: [/\\sum_\{?i\}? ?x_\{?i\}? ?(\$|\\\)) per step\./],
+    steps: 'the landing demo; click the end of "fast."; type " It drops by $\\su", wait for a build, "m_i", wait, " x_i$ per step.": the echo stays put and draws the formula as math' },
 ];

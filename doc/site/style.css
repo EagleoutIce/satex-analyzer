@@ -1651,6 +1651,7 @@ p.ts.ts-foot::before { content: ""; position: absolute; top: 0; left: 0; width: 
 .pdf { display: flex; flex-direction: column; overflow-wrap: anywhere; } .pdf > * { flex: none; }
 .pdf > .pdf-pages { flex: 1 0 16rem; overflow: auto; display: flex; flex-direction: column; align-items: safe center; background: var(--sunk); padding: .4rem; border-radius: 6px; }
 .pdf .pdf-page { position: relative; flex: none; width: calc(var(--pdf-zoom, 1) * 100%); margin-bottom: .5rem; box-shadow: var(--shadow); }
+.pdf .pdf-page.pdf-current { box-shadow: var(--shadow), 0 0 0 2px var(--accent, #7aa2f7); }
 /* the last build's image of the page typed on, fading over the new one (playground.js pdfDrawNext) */
 .pdf .pdf-page img.pdf-fade { position: absolute; left: 0; top: 0; width: 100%; height: 100%; pointer-events: none; animation: pdf-fade .12s ease-out forwards; }
 @keyframes pdf-fade { to { opacity: 0; } }

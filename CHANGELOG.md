@@ -17,6 +17,7 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 
 - `perf` **A word typed into a paragraph of a long chapter is analyzed in its paragraph.** A paragraph whose lines are not known (a box or kern of unknown width in it) counts 1 to n lines, n its breakpoints: every typed word raised n, and the page's length with it, so the run after the edit met the last one only past the next forced page break. The bound is now rounded up to a power of two and stays as it was. A 150-page thesis: 12M → 0.84M steps per typed word (6.6–8.1 s → 4.2–4.6 s). A splice that fails at one line no longer keeps every later line from meeting the last run. `-vv` says what each part of serving an edit took and names the slowest rules.
 - `perf` **The first word typed at a place no longer waits for the text before it.** The server places the states an edit resumes from and meets the last run at for the line of the caret (the last code action, highlight or completion request) while it is idle, and stops for any message. The same thesis: the first edit at a place 137M steps (29.9 s) → 0.84M, as every later one. `satex/runInfo` says what an edit's run still placed itself (`placedSteps`). The placing run passes states inside a paragraph, where no run can meet: a first edit in a 250-page document 5.8M → 4.0M steps and 4.2 → 0.9 s. Meeting the last run copies only the fact rows the edit changed.
+- `perf` **A typed character no longer waits for the last one's findings.** The rules of a run stop at the next rule once a newer text came, and what a completion reads of the whole run is built while the server is idle (or by the first request that reads it), not before the findings. Meeting the last run after an edit writes only the rows, graph vertices and table entries the edit changed (a 150-page thesis: 0.5 s → 0.03 s of each edit). `-vv` says what each part of a splice, of concluding a run and of the lint took.
 - `fix` **An alias's hover shows its manual once mined** (`\let\myspace\xspace`): a hover kept before the manual was read is asked again, and a hover that found no documentation is not kept for the next session.
 - `fix` **`\caption` completes with its shape** (`[⟨options⟩]{⟨arg⟩}`): a command that errs alone is probed in the environment the document calls it in, else the one whose code it reads (`limits.probe_contexts`), and an environment entered for a probe gets the token its lookahead needs.
 - `fix` **A chapter whose root stopped at a budget keeps its root.** The editor ran the chapter alone in a made-up document and reported its references as undefined.
@@ -133,8 +134,16 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 
 ### Playground
 
+- `feat-fix` **The envs layer frames a picture, minipage or float whole**: an environment's extent takes the box it closed, as SyncTeX records it on its `\end` line, beside the rows set inside it.
+- `feat-fix` **`\end{` completes at once** with the environments still open at the caret, innermost first, also while a run is busy.
+- `feat-fix` **Enter in the editor no longer scrolls the PDF away**: following the caret maps editor lines to the built text's lines.
+- `feat-fix` **Keys with spaces complete** in a key list: `pingu[left wi` offers `left wing wave`.
+- `feat-fix` **No table widget on `\begin{equation}`**: an environment gets the table dialog only when its own body splits into cells or rows.
+- `feat-fix` **The math layer tints displayed formulas too** (`equation`, `align`, `\[…\]`): SyncTeX marks only inline math, so a display takes the boxes of its source lines.
+- `feat` **A typing preview stays when the caret moves on**: the row keeps what was typed until the build of that text is shown.
+- `feat-fix` **Math typed on the page previews once**: a newer preview of a row replaces the kept one, so a formula no longer shows a second ∑ or a bar of one beside it.
 - `feat-fix` **Typing on the page keeps centered text centered** (`center`, `\centering`, captions) also before the build's line boxes are known, leaves an equation's number or `\tag` where it stands, and never pushes the page number down.
-- `feat` **Go to a page directly**: a page field beside the `Pages` menu scrolls to the number typed (Enter) and shows the page in view while scrolling.
+- `feat` **Go to a page directly**: a page field beside the `Pages` menu scrolls to the number typed (Enter) and shows the page in view while scrolling; that page gets a frame.
 - `feat` **The build status names the file the analysis is in**: `(chapter2.tex line 106 of 182, 57.8 s)`.
 - `feat-fix` **`\usepackage{…}` completion offers every bundled package while a run goes on**, not only the last list kept for another prefix.
 - `feat` **blindtext and lipsum come with the first download**, so `\usepackage{blindtext}` completes and loads at once.
@@ -199,6 +208,10 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 - `feat` **Font and size widget.** "Font and size…" on `\documentclass` shows the base size and main font the run set, and writes another: a class option (`fontsize=` for KOMA-Script), a font package with T1 on pdfLaTeX, `\setmainfont` on LuaLaTeX and XeLaTeX (`type_plugins.font`). The same choices are code actions in every editor.
 - `feat` **Widgets write the document's own LaTeX (`conventions.writing.macros`, off by default).** Text that is the body of your command without arguments is written as that command (`TinyNet` → `\model`), never in a label, file or key list. A written call that then stands twice gets a note offering to extract it (`conventions.writing`).
 - `fix` **Table dialog: a tabular nested in a cell stays one cell.**
+
+### Build and infrastructure
+
+- `feat` **A container image: `docker run --rm -v "$PWD:/work" ghcr.io/eagleoutice/satex lint`.** It holds `satex`, TeX Live with the recommended LaTeX packages, latexmk and the interpreted kernel. Each release publishes it to GHCR. `lsp --host 0.0.0.0 --port 2087` serves the language server from it.
 
 ## v0.2.5 (2026-11-20)
 
