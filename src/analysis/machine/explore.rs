@@ -280,8 +280,8 @@ struct Shelved {
     error: String,
     at: Span,
     counts: Counts,
-    /// The diagnostics its run raised ([`Machine::retract`]), removed if it stays dropped.
-    rows: std::ops::Range<usize>,
+    /// The rows of the diagnostics its run raised ([`Machine::retract`]), removed if it stays dropped.
+    rows: Vec<usize>,
 }
 
 /// Diagnostic counts, as (counter, how many).
@@ -866,7 +866,7 @@ impl Machine<'_> {
         let shelved = std::mem::take(&mut paths.shelved);
         if !paths.failed {
             for s in shelved {
-                self.retract(s.rows);
+                self.retract(&s.rows);
                 self.report_dropped(&s.error, s.at);
             }
             return;
@@ -942,7 +942,7 @@ impl Machine<'_> {
         self.runs = 0;
         let mut outcomes = Vec::new();
         let mut first = None;
-        let mut dropped: Vec<(Config, String, Counts, std::ops::Range<usize>)> = Vec::new();
+        let mut dropped: Vec<(Config, String, Counts, Vec<usize>)> = Vec::new();
         // Each rerun and each re-entry after a cut is charged, as in the drive.
         let mut mark = if head { self.out.steps.wrapping_sub(1) } else { self.out.steps };
         loop {
@@ -960,6 +960,11 @@ impl Machine<'_> {
                 false => start.dropping.clone(),
             };
             let rows_from = self.raised_mark();
+            self.raise_run(true);
+            // Before a top-level run no raise may be retracted by its place in the log any more.
+            if paths.top {
+                self.trim_raised(rows_from);
+            }
             let run_from = self.out.steps;
             let going = match self.unit {
                 Unit::Command => self.command(),
@@ -977,10 +982,12 @@ impl Machine<'_> {
             // of its last choice are tried next (see `next_script`).
             let refuted = self.infeasible && !self.ended_run;
             let next = next_script(&self.choices, refuted && self.absent);
+            self.raise_run(false);
             let rows = rows_from..self.raised_mark();
             // A refuted run raised no diagnostics.
             if refuted {
-                self.retract(rows.clone());
+                let raised = self.raised_rows(rows.clone());
+                self.retract(&raised);
             }
             // In a nested drive, a path keeps an error only if TeX's recovery
             // would break library code's brackets. The enclosing command's run
@@ -1019,6 +1026,7 @@ impl Machine<'_> {
                     let base = paths.fork.as_ref().expect("others wait");
                     let (state, env, at) = (self.save_path(), self.env.path(base), self.position_span());
                     let counts = self.made_counts(counters.0);
+                    let rows = self.raised_rows(rows.clone());
                     paths.shelved.push(Shelved { config: Config::new(state, env, !going), error, at, counts, rows });
                     self.restore_path(*start);
                     self.env.rewind(&fork);
@@ -1053,7 +1061,7 @@ impl Machine<'_> {
                 let (state, env) = (self.save_path(), self.env.path(base));
                 let config = Config::new(state, env, !going);
                 match error {
-                    Some(error) => dropped.push((config, error, self.made_counts(counters.0), rows)),
+                    Some(error) => dropped.push((config, error, self.made_counts(counters.0), self.raised_rows(rows))),
                     None => outcomes.push(config),
                 }
             }
@@ -2080,7 +2088,7 @@ impl Machine<'_> {
             std::mem::take(&mut paths.shelved).into_iter().partition(closed);
         paths.shelved = kept;
         for s in gone {
-            self.retract(s.rows);
+            self.retract(&s.rows);
             self.report_dropped(&s.error, s.at);
         }
     }

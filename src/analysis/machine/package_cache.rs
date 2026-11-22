@@ -1457,6 +1457,8 @@ impl Machine<'_> {
             let l = &mut settings.limits;
             (l.seconds, l.memory, l.threads, l.cache_size) = (0, Default::default(), 0, Default::default());
             (l.degrade_at_percent, l.facts, l.vertices, l.trace, l.steps) = (0, 0, 0, 0, 0);
+            // the editor's probes only: no part of what a package does
+            l.probe_contexts = 0;
             hash.write(serde_json::to_string(&settings).unwrap_or_default().as_bytes());
             parts.push(("configuration".into(), std::mem::replace(&mut hash, Fnv::new()).0));
             hash.put(&(self.prefixes.global, self.prefixes.long, self.prefixes.outer, self.prefixes.protected));
@@ -1694,6 +1696,7 @@ impl Machine<'_> {
             memo_verify: _,
             memo_said: _,
             memo_uses: _,
+            memo_uses_base: _,
             side_effects: _,
             file_writes: _,
             call_recs: _,
@@ -1900,6 +1903,7 @@ impl Machine<'_> {
             trace_full: _,
             started: _,
             step_depth: _,
+            quantity_depth: _,
             stack_base: _,
             scanner: _,
             pseudo_file: _,
@@ -1917,6 +1921,10 @@ impl Machine<'_> {
             // Output bookkeeping, not runtime state.
             diag_seen: _,
             diag_raised: _,
+            diag_raised_base: _,
+            raise_marks: _,
+            row_logged_at: _,
+            last_raised: _,
             diag_live: _,
             quantity: _,
             text_broken: _,

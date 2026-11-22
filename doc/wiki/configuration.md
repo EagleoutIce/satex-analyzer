@@ -795,6 +795,9 @@ lsp:  # how satex lsp serves an editor
   provisional_after_ms: 2000  # only a run that took at least this long publishes provisional findings: a short build's final ones come soon anyway
     #! affects: speed
     #! example: `0`: every run of a build publishes its findings
+  rows_per_message: 256  # the Typeset view's rows go out in messages of at most this many, each built, sent and dropped before the next: the server never holds a whole document's rows. 0 sends them in one message
+    #! affects: memory, speed
+    #! example: `64`: smaller messages, a big document's rows come in more steps
   # port: 2087  # a TCP port to serve on instead of stdio
     #! affects: output
 
@@ -1360,6 +1363,9 @@ limits:  # what bounds the analysis: reaching one stops that part of the run, so
   paragraph_items: 4000  # most items of one recorded list (a paragraph's characters, glue and boxes; a box; the page's marks). Past it that list is not recorded and its lines and size stay unknown
     #! affects: speed, output
     #! example: a paragraph of 800 words is about 5000 items: with the default its line breaks stay unknown
+  probe_contexts: 4  # environments a completion's probe tries a command in when alone it raises an error before reading its arguments (`\caption` outside a float); editor only
+    #! affects: output, speed
+    #! example: `probe_contexts: 0` leaves `\caption` without a completion shape
   table_reach: 4000  # most macros the table widget follows through the run's calls from an environment to the code that splits its body at `&` (tabularray)
     #! affects: output
     #! example: `table_reach: 0` offers the table dialog on array tables only

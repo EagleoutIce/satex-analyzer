@@ -217,6 +217,9 @@ pub struct Limits {
     /// Items of one recorded list (a paragraph, a box, the page's marks). Past it that list is
     /// not recorded: its lines and size stay unknown.
     pub paragraph_items: usize,
+    /// Environments a completion's probe tries a command in when alone it raises an error
+    /// before reading its arguments (`\caption` outside a float). Editor only.
+    pub probe_contexts: usize,
     /// Macros the table plugin follows through the run's calls from an environment to find the code
     /// that splits its body at `&` (tabularray's): an editor feature, no effect on the analysis.
     pub table_reach: usize,
@@ -322,6 +325,7 @@ impl Limits {
             "hyph_words" => self.hyph_words as u64,
             "list_items" => self.list_items as u64,
             "paragraph_items" => self.paragraph_items as u64,
+            "probe_contexts" => self.probe_contexts as u64,
             "table_reach" => self.table_reach as u64,
             "trace" => self.trace as u64,
             "trace_state" => self.trace_state as u64,
@@ -433,6 +437,7 @@ impl Default for Limits {
             hyph_words: 50_000,
             list_items: 1 << 23,
             paragraph_items: 4_000,
+            probe_contexts: 4,
             table_reach: 4_000,
             trace: 200_000,
             trace_state: 32,
@@ -777,6 +782,10 @@ pub struct LspConfig {
     /// Only a run that took at least this long does ([`LspConfig::provisional`]): a short run's
     /// final findings come soon, the extra rules' time would delay them.
     pub provisional_after_ms: u64,
+    /// The Typeset view's rows go out in messages of at most this many (`satex/typesetRows`),
+    /// each built, sent and dropped before the next, so the server never holds a whole
+    /// document's rows. 0 sends them in one message.
+    pub rows_per_message: usize,
 }
 
 impl Default for LspConfig {
@@ -788,6 +797,7 @@ impl Default for LspConfig {
             pause_ms: 10,
             provisional: true,
             provisional_after_ms: 2000,
+            rows_per_message: 256,
         }
     }
 }

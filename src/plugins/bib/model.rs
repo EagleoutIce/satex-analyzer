@@ -183,9 +183,29 @@ pub fn bst(text: &str) -> Model {
         let body = bodies.iter().find(|b| b.0 == *t).map_or("", |b| b.1);
         let mut needs: Vec<Vec<String>> = Vec::new();
         for (at, _) in body.match_indices("output.check") {
+            // one field checked in a branch (`{ … } { … } if$`, ACM's editor where the author is
+            // empty) is no requirement
+            // The branch for an entry without `crossref` stays a requirement: one with it inherits
+            // its fields and is not reported.
+            let (mut open, mut quoted): (Vec<bool>, bool) = (Vec::new(), false);
+            for (i, c) in body[..at].char_indices() {
+                match c {
+                    '"' => quoted = !quoted,
+                    '{' if !quoted => open.push(!body[..i].trim_end().ends_with("crossref missing$")),
+                    '}' if !quoted => _ = open.pop(),
+                    _ => {}
+                }
+            }
+            let branch = open.iter().any(|&branch| branch);
             let Some(q) = body[..at].trim_end().strip_suffix('"') else { continue };
             let Some(open) = q.rfind('"') else { continue };
             let names: Vec<String> = q[open + 1..].split(" and ").map(|n| n.trim().to_string()).collect();
+            // `"author and editor"` states the alternative itself, in any branch; one field checked
+            // in both arms of an `if$` (plain's `year` either side of `address empty$`) is required
+            let again = body.matches(&format!("\"{}\" output.check", names[0])).count() > 1;
+            if branch && names.len() == 1 && !again {
+                continue;
+            }
             if names.iter().all(|n| fields.contains(n)) && !needs.contains(&names) {
                 needs.push(names);
             }
@@ -326,6 +346,16 @@ mod tests {
         }
         assert!(m.required_of("book").contains(&vec!["author".into(), "editor".into()]), "{:?}", m.required_of("book"));
         assert!(m.macros.iter().any(|(n, v)| n == "jan" && v == "January"), "{:?}", m.macros);
+    }
+
+    /// Intuition: a check in one branch of an `if$` runs only on that branch: ACM's `article`
+    /// checks `editor` only where the author is empty. Pins C052 saying "lacks `editor`,
+    /// required for `@article`" on every ACM article with an author.
+    #[test]
+    fn a_check_in_a_branch_is_no_requirement() {
+        let text = "ENTRY { author editor title } {} {}\nFUNCTION {article}\n{ output.bibitem\n  author empty.or.unknown\n    { editor empty.or.unknown { \"neither {x}\" warning$ } { format.editors \"editor\" output.check } if$ }\n    { format.authors \"author\" output.check }\n  if$\n  format.title \"title\" output.check\n}\n";
+        let m = bst(text);
+        assert_eq!(m.required_of("article"), [vec!["title".to_string()]]);
     }
 
     #[test]

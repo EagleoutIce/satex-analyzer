@@ -114,7 +114,9 @@ fn an_escaping_archive_writes_nothing() {
 }
 
 /// Intuition: offline, a template the provider serves comes from the cache, however old, and says
-/// so. Pins `templates.fetch: false` never reaching the network and the cache being read back.
+/// so. Pins `templates.fetch: false` never reaching the network and the cache being read back,
+/// and the fetched style being frozen in the new project's `satex.yaml` (robust: S053/C010/C061
+/// inside acl.sty and neurips_2025.sty were reported as the project's own).
 #[test]
 fn a_fetched_template_serves_from_the_cache_offline() {
     let base = folder("cache");
@@ -133,4 +135,7 @@ fn a_fetched_template_serves_from_the_cache_offline() {
     let main = std::fs::read_to_string(dir.join("main.tex")).unwrap();
     assert!(main.contains("\\usepackage[preprint]{neurips_2025}"), "{main}");
     assert_eq!(std::fs::read_to_string(dir.join("neurips_2025.sty")).unwrap(), sty);
+    // the provider's style is the provider's: frozen, so its findings are not the project's
+    let yaml = std::fs::read_to_string(dir.join("satex.yaml")).unwrap_or_default();
+    assert!(yaml.contains("frozen: ['neurips_2025.sty']"), "{yaml}");
 }

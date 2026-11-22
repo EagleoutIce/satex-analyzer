@@ -3798,8 +3798,17 @@ impl Machine<'_> {
     }
 
     pub(crate) fn internal_quantity(&mut self, sym: Sym, span: Span) -> Option<Value> {
+        // A quantity that scans a quantity (`\numexpr` in `\numexpr`) nests on
+        // the Rust stack without a step: past the bound of nested steps its
+        // value is unknown. By depth too: wasm's call stack has no address.
+        if self.quantity_depth >= crate::analysis::machine::MAX_NESTING || self.stack_spent() {
+            self.abandon_nesting();
+            return Some(Value::Unknown);
+        }
         self.amb = None;
+        self.quantity_depth += 1;
         let value = self.internal_quantity_read(sym, span);
+        self.quantity_depth -= 1;
         // Only a count register or integer parameter read as such is the expression its
         // read left: any other quantity only used one on its way.
         // (Looked at without a read: the expression's reads must stay the last ones.)

@@ -159,8 +159,19 @@ impl Template {
         let (main, header) = self.main_file(year, options)?;
         let mut files: BTreeMap<String, Vec<u8>> =
             self.files.iter().map(|(k, v)| (k.clone(), v.clone().into_bytes())).collect();
+        // the provider's own files are the provider's: read and analyzed, no findings of the project's
+        let provided: Vec<String> =
+            fetched.keys().filter(|f| !files.contains_key(*f)).map(|f| format!("'{f}'")).collect();
         files.extend(fetched);
         files.insert("main.tex".into(), main.into_bytes());
+        if !provided.is_empty() && !files.contains_key("satex.yaml") {
+            let yaml = format!(
+                "# The files {} gives as they are: satex reads them, and reports nothing in them.\nproject:\n  frozen: [{}]\n",
+                self.provider,
+                provided.join(", ")
+            );
+            files.insert("satex.yaml".into(), yaml.into_bytes());
+        }
         sources.sort_by(|a, b| a.file.cmp(&b.file));
         Ok(Project { files, main: "main.tex".into(), header, sources })
     }

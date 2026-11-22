@@ -2167,6 +2167,8 @@
   }
   /** The rows a run sent before its findings, of the text with version `of`. */
   var tsEarly = null, tsShown = null;
+  /** `satex/typesetRows` on its way in (views.ts `rowsOf`): the parts so far, and the final rows a preview patches. */
+  var tsWire = { parts: null, base: null };
   /** Per file, the newest version whose final rows are shown: a preview (lax rows, page breaks maybe) of that text
    * or anything older never replaces them, so the page hints are always the final run's. */
   var tsFinal = new Map();
@@ -12980,9 +12982,15 @@
     else if (m.method === 'satex/settled' && m.params.run && m.params.uri.startsWith(`file://${state.dir}/`)) showProvisional(m.params);
     else if (m.method === 'satex/runInfo' && m.params.uri === uri()) runInfoShow(m.params);
     // `preview`: the edited paragraph's rows, run first; the run's own rows follow
-    else if (m.method === 'satex/typesetRows' && !outdated(m.params) && self.satexViews.rowsWin(tsFinal.get(m.params.uri), m.params.version, !!m.params.preview)) {
-      if (!m.params.preview) { tsEarly = `${m.params.uri}@${m.params.version}`; tsFinal.set(m.params.uri, m.params.version); }
-      typesetShow(m.params.uri, m.params.version, m.params.rows);
+    else if (m.method === 'satex/typesetRows') {
+      // whole only once its last part is in; a preview's patch needs the final rows it names
+      const rows = self.satexViews.rowsOf(tsWire, m.params);
+      // rows that name a base this page does not hold (it outlived its server): asked for once the run is done
+      if (rows === 'lost') { if (!m.params.preview) typeset(m.params.uri, m.params.version); }
+      else if (rows && !outdated(m.params) && self.satexViews.rowsWin(tsFinal.get(m.params.uri), m.params.version, !!m.params.preview)) {
+        if (!m.params.preview) { tsEarly = `${m.params.uri}@${m.params.version}`; tsFinal.set(m.params.uri, m.params.version); }
+        typesetShow(m.params.uri, m.params.version, rows);
+      }
     }
   }
   async function onWorkerMessage({ data }) {

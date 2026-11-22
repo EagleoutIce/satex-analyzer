@@ -548,13 +548,47 @@ pub fn compact_trace(rows: &[Record], file: &str, source: &str) -> Vec<String> {
 /// `\title`'s argument). Boxes lost unused (a measurement) set nothing.
 /// `linebreaks` lists a paragraph's lines as the run's breaker set them, where all are known.
 fn typeset(analysis: &Analysis) -> Vec<Record> {
+    let mut out = Vec::new();
+    typeset_each(analysis, &mut |row| out.push(row));
+    out
+}
+
+/// The rows of [`typeset_each`] on their way out, one at a time: a reader that keeps none
+/// (a message per part, one paragraph's rows) never holds the document's.
+struct Rows<'a> {
+    sink: &'a mut dyn FnMut(Record),
+    /// Set while the rows are of no use: those of a kernel read only partly.
+    cut: bool,
+}
+
+impl Rows<'_> {
+    fn push(&mut self, row: Record) {
+        let is = |k: &str, v: Json| row.get(k) == Some(&v);
+        // a paragraph that set nothing and stands on no line (`\end{document}`'s closing `\par`) is no row
+        let blank = is("kind", json!("paragraph")) && is("line", json!(0)) && is("detail", json!(""));
+        if !self.cut && !blank {
+            (self.sink)(row);
+        }
+    }
+}
+
+/// [`typeset`]'s rows, each handed to `sink` as soon as it is whole.
+pub fn typeset_each(analysis: &Analysis, sink: &mut dyn FnMut(Record)) {
     let text = &analysis.facts.text;
     let mut arms = text.arms.iter().peekable();
     let mut math = math_atoms(text, &analysis.settings.conventions.math_symbols, 0..text.at.len());
     let marks = script_marks(text, &mut math);
     // each mark with its place in `text.align`: rules set before it go first
     let mut aligns = text.align.iter().zip(&marks).enumerate().filter(|(_, (_, m))| !m.is_empty()).peekable();
-    let mut out = Vec::new();
+    // A kernel read only partly leaves the document names the engine's
+    // format defines (`\documentclass` set as text), so none of the text is
+    // sure; a run that stopped early never set the rest.
+    let kernel_cut = analysis
+        .facts
+        .diagnostics
+        .iter()
+        .any(|d| matches!(d.code, "format-truncated" | "format-incomplete" | "preload-truncated"));
+    let mut out = Rows { sink, cut: kernel_cut };
     let (mut line, mut first, mut choice) = (String::new(), None, None::<Choice>);
     let mut causes: Vec<Cause> = Vec::new();
     let close = |line: &mut String, choice: &mut Option<Choice>, causes: &mut Vec<Cause>| {
@@ -645,7 +679,7 @@ fn typeset(analysis: &Analysis) -> Vec<Record> {
     // (a frame's title box goes above its body, though set after it)
     let rank = |i: u32| text.placed.iter().position(|r| r.0 <= i && i < r.1);
     let mut foot = String::new();
-    let push_foot = |out: &mut Vec<Record>, foot: &mut String, at: Span, keys: &mut Keys<'_>| {
+    let push_foot = |out: &mut Rows, foot: &mut String, at: Span, keys: &mut Keys<'_>| {
         if foot.trim().is_empty() {
             foot.clear();
             keys.clear();
@@ -723,7 +757,7 @@ fn typeset(analysis: &Analysis) -> Vec<Record> {
     // the pages shipped and filled before the character at `i`, in the order they came: a fill
     // before the page shipped after it
     let total = text.pages.len();
-    let mut breaks = |out: &mut Vec<Record>, i: usize, site: Span| loop {
+    let mut breaks = |out: &mut Rows, i: usize, site: Span| loop {
         let page = pages.peek().filter(|(_, p)| p.0 as usize <= i).map(|(k, _)| *k);
         if let Some((k, &(_, sure, _))) =
             fills.next_if(|(_, f)| f.0 as usize <= i && page.is_none_or(|p| f.2 as usize <= p))
@@ -1070,17 +1104,7 @@ fn typeset(analysis: &Analysis) -> Vec<Record> {
     }
     push_foot(&mut out, &mut foot, first.unwrap_or_default(), &mut foot_keys);
     breaks(&mut out, usize::MAX, first.unwrap_or_default());
-    // A kernel read only partly leaves the document names the engine's
-    // format defines (`\documentclass` set as text), so none of the text is
-    // sure; a run that stopped early never set the rest.
-    let kernel_cut = analysis
-        .facts
-        .diagnostics
-        .iter()
-        .any(|d| matches!(d.code, "format-truncated" | "format-incomplete" | "preload-truncated"));
-    if kernel_cut {
-        out.clear();
-    }
+    out.cut = false;
     if kernel_cut || analysis.exhausted {
         let mut rest = paragraph(
             analysis,
@@ -1103,12 +1127,6 @@ fn typeset(analysis: &Analysis) -> Vec<Record> {
             out.push(record);
         }
     }
-    // a paragraph that set nothing and stands on no line (`\end{document}`'s closing `\par`) is no row
-    out.retain(|r| {
-        let is = |k: &str, v: Json| r.get(k) == Some(&v);
-        !(is("kind", json!("paragraph")) && is("line", json!(0)) && is("detail", json!("")))
-    });
-    out
 }
 
 /// Keys marked where the text stands: in the first arm of a choice being set, else in the line.
@@ -1600,6 +1618,8 @@ struct Places {
     on_line: Option<(FileId, u32)>,
     /// The site of the last character set: the next one marks its own unless it follows.
     last_site: Option<Span>,
+    /// The last site mark stands for every character up to the next mark (`same`), not for a run of columns.
+    stays: bool,
     /// The same for where the last character was read.
     last_origin: Option<Span>,
     /// The math mode of the last character: [`MATH_MODE`]'s value.
@@ -1684,17 +1704,22 @@ impl Places {
             keys.push_back((LINE, site.line.to_string().into()));
         }
         self.on_line = Some(here);
-        // a piece of several characters (a note, a math atom) shares its site
+        // a piece of several characters (a note, a math atom) shares its site, and so do the
+        // characters a macro's use set one after the other: one mark for all of them
         let single = unmarked(piece).chars().count() == 1;
-        let follows = self.last_site.is_some_and(|l| (l.file, l.line, l.col + 1) == (site.file, site.line, site.col));
-        if !(single && follows) {
+        let last = self.last_site.filter(|_| single);
+        let follows =
+            !self.stays && last.is_some_and(|l| (l.file, l.line, l.col + 1) == (site.file, site.line, site.col));
+        let stays = last == Some(site);
+        if !(follows || stays && self.stays) {
             line.push(KEY);
             let file = analysis.file_name(site.file);
-            let step = if single { "" } else { ":0" };
+            let step = if single && !stays { "" } else { ":0" };
             // the site is where reading stood after the character: one column back is its own
             // (a macro's text: the last letter of its name)
             let col = site.col.saturating_sub(1).max(1);
             keys.push_back((SITE, format!("{file}\u{1}{}:{col}{step}", site.line).into()));
+            self.stays = stays;
         }
         self.last_site = single.then_some(site);
         // a character read elsewhere than where it was set (the user's files or library code): where
@@ -2382,10 +2407,16 @@ fn dependencies(analysis: &Analysis) -> Vec<Record> {
 }
 
 fn occurrences(analysis: &Analysis) -> Vec<Record> {
+    occurrences_of(analysis, |_| true)
+}
+
+/// The `occurrences` records of one kind: a reader of the sections builds no record of the rest.
+pub fn occurrences_of(analysis: &Analysis, keep: impl Fn(OccKind) -> bool) -> Vec<Record> {
     analysis
         .facts
         .occurrences
         .iter()
+        .filter(|occ| keep(occ.kind))
         .map(|occ| {
             let mut record = place(analysis, occ.span);
             record.insert("kind".into(), json!(occ.kind.as_str()));
@@ -5029,7 +5060,7 @@ pub fn call_items(
 ) -> Option<Vec<crate::engine::tex::ArgType>> {
     use crate::engine::tex::ArgType as A;
     let probed = match probe {
-        true => crate::analysis::probe::probe(analysis, sym, crate::analysis::probe::State::End),
+        true => crate::analysis::probe::probe_inside(analysis, sym),
         false => analysis
             .probes
             .lock()

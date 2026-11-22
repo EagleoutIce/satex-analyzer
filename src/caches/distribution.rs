@@ -107,6 +107,21 @@ impl Trees {
     pub fn get(&self, file: &str) -> Option<&PathBuf> {
         self.index.get(file)?.iter().find(|path| path.is_file())
     }
+
+    /// Where a name with folders in it is (`thumbnails/x.jpeg`): the first
+    /// file of that name whose path ends in those folders, as kpathsea
+    /// matches such a name against the directories of its `ls-R`. A name
+    /// that leaves its folder (`../x`, `/x`) is no tree's. Of the one file
+    /// per name and tree the index keeps: a namesake elsewhere in the tree
+    /// can hide it, and the name is then not found (as before).
+    pub fn get_under(&self, name: &str) -> Option<&PathBuf> {
+        use std::path::Component::Normal;
+        let rel = Path::new(name);
+        if !rel.components().all(|c| matches!(c, Normal(_))) {
+            return None;
+        }
+        self.index.get(rel.file_name()?.to_str()?)?.iter().find(|path| path.ends_with(rel) && path.is_file())
+    }
 }
 
 /// The installation's file names ending in `ext` (`.cls`) under `dir` of
@@ -651,6 +666,24 @@ mod tests {
         std::fs::write(real.join("ls-R"), "./tex/latex/x:\nx.sty\n").unwrap();
         let trees = discover(&Request { roots: vec![stale, real.clone()], ..Request::default() });
         assert_eq!(trees.get("x.sty"), Some(&real.join("tex/latex/x/x.sty")));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Intuition: kpathsea finds `thumbnails/x.jpeg` in a tree by the
+    /// folders the name spells, wherever they hang. Pins a false
+    /// missing-graphic on Elsevier's CAS class, which loads its e-mail icon
+    /// that way; a name that climbs out (`../x`) stays no tree's.
+    #[test]
+    fn a_name_with_folders_is_found_under_them() {
+        let dir = std::env::temp_dir().join(format!("satex-under-{}", std::process::id()));
+        let at = dir.join("tex/latex/pack/thumbnails");
+        std::fs::create_dir_all(&at).unwrap();
+        std::fs::write(at.join("x.jpeg"), "").unwrap();
+        let trees = discover(&Request { roots: vec![dir.clone()], ..Request::default() });
+        assert_eq!(trees.get_under("thumbnails/x.jpeg"), Some(&at.join("x.jpeg")));
+        assert_eq!(trees.get_under("pack/thumbnails/x.jpeg"), Some(&at.join("x.jpeg")));
+        assert_eq!(trees.get_under("nails/x.jpeg"), None);
+        assert_eq!(trees.get_under("../thumbnails/x.jpeg"), None);
         let _ = std::fs::remove_dir_all(&dir);
     }
 

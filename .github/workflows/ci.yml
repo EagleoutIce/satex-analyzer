@@ -237,6 +237,12 @@ jobs:
         continue-on-error: true
         run: bash scripts/ci-test.sh reds
 
+      # A red may fail, never crash: a red that ended the test binary hid a stack overflow once.
+      - name: No crash in the known reds
+        if: matrix.shard == 'compliance'
+        run: |
+          ! grep -E 'has overflowed its stack|\(signal: (4|6|7|8|11),|memory allocation of [0-9]+ bytes failed' "${CI_LOG_DIR:-target}/ci-test-reds.log"
+
   # The newest TeX Live, reported but not blocking: the main jobs pin
   # TL2025-historic, and this shows how far satex is from the current kernel.
   newest-texlive:

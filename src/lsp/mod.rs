@@ -159,8 +159,11 @@ pub fn serve(cfg: Config, root: PathBuf, main: Option<PathBuf>) -> Result<(), St
     let weak = std::sync::Arc::downgrade(&hovers);
     crate::plugins::docs::index(&cfg.docs).subscribe(Box::new(move |names| {
         let names: std::collections::HashSet<&String> = names.iter().collect();
+        // also a hover that took or tried a mined name's documentation (an alias: "of `\\xspace`")
+        let names_one =
+            |m: &Option<String>| m.as_ref().is_some_and(|m| names.iter().any(|n| m.contains(&format!("`\\{n}`"))));
         if let Some(Ok(mut hovers)) = weak.upgrade().as_ref().map(|h| h.lock()) {
-            hovers.retain(|(_, n), _| !names.contains(n));
+            hovers.retain(|(_, n), m| !names.contains(n) && !names_one(m));
         }
     }));
     // The stack the command line's main thread has: deep expansion nests that far.
@@ -520,7 +523,8 @@ fn respond(send: Send<'_>, req: Request) -> Response {
     let id = req.id.clone();
     let method = req.method.clone();
     match dispatch(send, req) {
-        Ok(value) => Response::new_ok(id, value),
+        // the answer moves in: `new_ok` would build a second tree of it
+        Ok(value) => Response { id, response_result: Ok(value) },
         Err(message) => Response::new_err(id, ErrorCode::InternalError as i32, format!("{method}: {message}")),
     }
 }
@@ -1035,6 +1039,7 @@ impl Engine {
         // Completion reads the key family an argument feeds off the calls.
         cfg.record_arguments = true;
         crate::util::progress::pause_every(cfg.lsp.pause_ms);
+        let part = cfg.lsp.rows_per_message;
         // One spelling per file: a run cached under a canonical key keeps the
         // name it was started with, so a relative `-f` would leave the open
         // document's own file unmatched by every per-file feature.
@@ -1065,7 +1070,7 @@ impl Engine {
             deferred: Default::default(),
             taken: 0,
             cancelled: false,
-            typeset: Default::default(),
+            typeset: typeset_stream::TypesetStream::new(part),
             blank: None,
             published: HashMap::default(),
             edited: HashMap::default(),
@@ -1746,9 +1751,10 @@ impl Engine {
             let kept: HashMap<String, Option<String>> =
                 std::fs::read(path).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default();
             // A name a manual mined since documents may have been kept without it.
-            for (name, markdown) in
-                kept.into_iter().filter(|(name, _)| !own.contains(name) && !called.contains(name) && !docs.knows(name))
-            {
+            for (name, markdown) in kept.into_iter().filter(|(name, markdown)| {
+                let none = markdown.as_ref().is_some_and(|m| m.contains(crate::queries::said::NONE));
+                !own.contains(name) && !called.contains(name) && !docs.knows(name) && !none
+            }) {
                 hovers.entry((uri.clone(), name)).or_insert(markdown);
             }
         }
@@ -1769,8 +1775,12 @@ impl Engine {
     fn store_hovers(&self, uri: &Uri) {
         let Some((path, own)) = self.stores.get(uri) else { return };
         let Ok(hovers) = self.hovers.lock() else { return };
-        let kept: std::collections::BTreeMap<&String, &Option<String>> =
-            hovers.iter().filter(|((u, n), _)| u == uri && !own.contains(n)).map(|((_, n), m)| (n, m)).collect();
+        let kept: std::collections::BTreeMap<&String, &Option<String>> = (hovers.iter())
+            .filter(|((u, n), _)| u == uri && !own.contains(n))
+            // one that found no documentation may find it once a manual is mined: not kept for later
+            .filter(|(_, m)| !m.as_ref().is_some_and(|m| m.contains(crate::queries::said::NONE)))
+            .map(|((_, n), m)| (n, m))
+            .collect();
         if let Ok(bytes) = serde_json::to_vec(&kept) {
             let temporary = path.with_extension("tmp");
             if std::fs::write(&temporary, bytes).is_ok() {
@@ -1875,7 +1885,20 @@ impl Engine {
         self.analyze(uri);
     }
 
+    /// One message. A panic in it ends that message, not the server: it is
+    /// reported, the asker gets an error (its reply channel is dropped), and
+    /// the next message is served from the state the engine has.
     fn step(&mut self, msg: EngineMsg) {
+        let run = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| self.serve(msg)));
+        if let Err(payload) = run {
+            let payload = crate::analysis::probe::pass_abandoned(payload);
+            let what = payload.downcast_ref::<&str>().map(|s| s.to_string());
+            let what = what.or_else(|| payload.downcast_ref::<String>().cloned()).unwrap_or_default();
+            eprintln!("satex hit a bug serving a message and goes on ({what}). Please report it");
+        }
+    }
+
+    fn serve(&mut self, msg: EngineMsg) {
         self.heard = Some(std::time::Instant::now());
         if matches!(msg, EngineMsg::Open(..) | EngineMsg::Change(..)) {
             self.taken += 1;

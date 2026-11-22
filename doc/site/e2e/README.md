@@ -67,6 +67,7 @@ Each run writes `results.md`, `results.json`, a screenshot per failure and, when
 | `page.mjs` | the drivers' one step vocabulary (also `showcase/capture.mjs`): mouse, keys, drags, uploads as a person makes them; targets, conditions and actions as data |
 | `probe.js` | the page side of `page.mjs`, injected before the page's scripts, never shipped: the only thing the page is asked is `satexTest.run(<JSON>)`; words come from one index per build (playground.js `satexPdfWordIndex`) |
 | `engine.mjs` | the scenario kinds of the PDF and Typeset views: `type` (default), `click`, `tint`, `ts`, `select`, `col`, `forest`, `shift`, `complete`, `dbl`, `bare` |
+| `crash.mjs` | no browser: the crash shapes of `tests/it/crash.rs` on the wasm build under node (`SATEX_CRASH_SHAPES=DIR scripts/t.sh crash::hostile`, then `node doc/site/e2e/crash.mjs target/site/play DIR`). Exit 1 on a stack overflow, an abort or a panic |
 | `kinds/*.mjs` | `foot`, `echo`, `paper`, `follow`, `tikz`, `crash`, `user` (a person's actions as a list, invariants after each: scenarios/user.mjs), `big` (a generated book of hundreds of pages: keys while it is analyzed, the build landing, layers and images only near the view, a scroll, a dropped build that frees the server: scenarios/big.mjs) |
 | `scenarios/<area>.mjs` | the scenarios of one area; `sources.mjs` the documents they share |
 | `scenarios/index.mjs` | all areas, the tiers, unique names |

@@ -395,10 +395,7 @@ impl Machine<'_> {
             // A log that ran over holds for no open record: they keep
             // nothing, and it starts again.
             if memo && self.env.memo_full() {
-                for rec in Rc::make_mut(&mut self.call_recs) {
-                    Rc::make_mut(rec).memo = None;
-                }
-                self.env.memo_floor(None);
+                self.drop_memos();
             }
             // A run past `limits.call_memo_longest` keeps nothing: what
             // it said and read grows with it, and its log costs every read.
@@ -410,7 +407,7 @@ impl Machine<'_> {
                     }
                 }
                 let floor = self.call_recs.iter().rev().find_map(|r| r.memo_mark());
-                self.env.memo_floor(floor);
+                self.set_memo_floor(floor);
             }
             let rec = CallRec {
                 key,
@@ -443,7 +440,7 @@ impl Machine<'_> {
                         facts: self.fact_lens(),
                         verify: self.memo_verify.take(),
                         said: self.memo_said.len(),
-                        uses: self.memo_uses.len(),
+                        uses: self.memo_uses_base + self.memo_uses.len(),
                     })
                 }),
             };
@@ -702,11 +699,7 @@ impl Machine<'_> {
                     && self.learn_forks == rec.forks_at;
                 self.end_memo_run(&rec, start, clean);
                 let floor = self.call_recs.iter().rev().find_map(|r| r.memo_mark());
-                if floor.is_none() {
-                    self.memo_said.clear();
-                    self.memo_uses.clear();
-                }
-                self.env.memo_floor(floor);
+                self.set_memo_floor(floor);
             }
             self.learn_run(&rec, ended && (listed || rec.soft) && (balanced || closes), closes, peeks, typeset);
             if !rec.site {
@@ -1037,13 +1030,49 @@ impl Machine<'_> {
     fn imprecise(&self, b: &Binding) -> bool {
         b.may.is_some() || matches!(&b.meaning, Meaning::Macro(d) if self.has_unknown(&d.replacement_text))
     }
+    /// Every open recording keeps nothing, and its logs go.
+    pub(crate) fn drop_memos(&mut self) {
+        for rec in Rc::make_mut(&mut self.call_recs) {
+            Rc::make_mut(rec).memo = None;
+        }
+        self.set_memo_floor(None);
+    }
+
+    /// Where the open recordings' logs begin ([`crate::engine::env::Env::memo_floor`]).
+    /// The uses before the oldest open recording began go, and with none open
+    /// what they said goes too: the logs hold only what open recordings may
+    /// keep, so they never outgrow them.
+    pub(crate) fn set_memo_floor(&mut self, floor: Option<crate::engine::env::MemoMark>) {
+        // A recording a resumed path holds whose uses were dropped keeps nothing.
+        let base = self.memo_uses_base;
+        if self.call_recs.iter().any(|r| r.memo.as_ref().is_some_and(|m| m.uses < base)) {
+            for rec in Rc::make_mut(&mut self.call_recs) {
+                if rec.memo.as_ref().is_some_and(|m| m.uses < base) {
+                    Rc::make_mut(rec).memo = None;
+                }
+            }
+        }
+        let floor = floor.and_then(|_| self.call_recs.iter().rev().find_map(|r| r.memo_mark()));
+        let end = self.memo_uses_base + self.memo_uses.len();
+        let oldest = self.call_recs.iter().filter_map(|r| r.memo.as_ref().map(|m| m.uses)).min().unwrap_or(end);
+        let drop = oldest.saturating_sub(self.memo_uses_base).min(self.memo_uses.len());
+        if drop > 0 {
+            self.memo_uses.drain(..drop);
+            self.memo_uses_base += drop;
+        }
+        if floor.is_none() {
+            self.memo_said.clear();
+            self.memo_uses_base += self.memo_uses.len();
+            self.memo_uses.clear();
+        }
+        self.env.memo_floor(floor);
+    }
+
     /// Drops every open call recording at the start or end of a cacheable
     /// load. A replayed load runs none of these calls, so a read load must
     /// keep nothing from them either, or cold and warm runs differ.
     pub(crate) fn drop_call_recs(&mut self) {
-        self.env.memo_floor(None);
-        self.memo_said.clear();
-        self.memo_uses.clear();
+        self.set_memo_floor(None);
         for rec in std::mem::take(Rc::make_mut(&mut self.call_recs)) {
             if rec.site
                 && let Some(entry) = self.call_runs.get_mut(&rec.key)
@@ -1180,11 +1209,7 @@ impl Machine<'_> {
             }
         }
         let floor = self.call_recs.iter().rev().find_map(|r| r.memo_mark());
-        if floor.is_none() {
-            self.memo_said.clear();
-            self.memo_uses.clear();
-        }
-        self.env.memo_floor(floor);
+        self.set_memo_floor(floor);
     }
 
     /// Whether a call of `code` is recorded for a kept effect: from the
@@ -1469,7 +1494,7 @@ impl Machine<'_> {
         let said = self.memo_said.get(start.said..).filter(|s| !s.is_empty()).map(|s| (self.raise(), s.into()));
         Ok(Memo {
             said,
-            uses: self.memo_uses.get(start.uses..).unwrap_or_default().into(),
+            uses: self.memo_uses.get(start.uses.saturating_sub(self.memo_uses_base)..).unwrap_or_default().into(),
             logged,
             own,
             args: rec.args.clone(),

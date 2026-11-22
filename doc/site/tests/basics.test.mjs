@@ -31,6 +31,32 @@ test("Typeset rows", async () => {
   assert.equal(rowsWin(5, 5, false), true);
   assert.equal(rowsWin(5, 6, true), true, 'a newer text\'s preview');
 });
+// Typeset rows on the wire: a run's rows come in parts and are whole with the last one; a preview is a patch of the
+// final rows it names. Pins the out-of-memory of a 737-page document (its rows as one message, and all of them again
+// per paragraph preview): no message holds the document's rows, a patch of rows the page lacks says nothing.
+test("Typeset rows in parts and patches", async () => {
+  const { rowsOf } = self.satexViews;
+  const wire = { parts: null, base: null }, u = 'file:///a.tex', row = (n) => ({ line: n });
+  assert.equal(rowsOf(wire, { uri: u, version: 1, serial: 1, part: 0, more: true, rows: [row(1), row(2)] }), null, 'not whole yet');
+  assert.deepEqual(rowsOf(wire, { uri: u, version: 1, serial: 1, part: 1, more: false, rows: [row(3)] }), [row(1), row(2), row(3)]);
+  // the edited paragraph's rows replace the base's rows `drop`, at `at`
+  const patch = (base) => ({ uri: u, version: 2, preview: true, patch: { base, at: 1, drop: [1] }, rows: [row(20), row(21)] });
+  assert.deepEqual(rowsOf(wire, patch(1)), [row(1), row(20), row(21), row(3)]);
+  assert.deepEqual(rowsOf(wire, patch(1)), [row(1), row(20), row(21), row(3)], 'a patch leaves its base as it was');
+  assert.equal(rowsOf(wire, patch(2)), null, 'a patch of final rows the page never got');
+  // a lax run's whole rows (a preview) are no base; a part out of turn drops its set
+  assert.deepEqual(rowsOf(wire, { uri: u, version: 2, preview: true, part: 0, more: false, rows: [row(9)] }), [row(9)]);
+  assert.deepEqual(rowsOf(wire, patch(1)), [row(1), row(20), row(21), row(3)]);
+  assert.equal(rowsOf(wire, { uri: u, version: 3, serial: 2, part: 1, more: false, rows: [row(5)] }), 'lost', 'its first part never came');
+  // the next run's rows begin with the base's first `keep` rows; a base this page does not hold loses the set
+  assert.deepEqual(rowsOf(wire, { uri: u, version: 3, serial: 5, base: 1, keep: 2, part: 0, more: false, rows: [row(30)] }), [row(1), row(2), row(30)]);
+  assert.deepEqual(rowsOf(wire, { uri: u, version: 4, serial: 6, base: 5, keep: 3, part: 0, more: false, rows: [] }), [row(1), row(2), row(30)], 'all rows stand');
+  assert.equal(rowsOf(wire, { uri: u, version: 5, serial: 9, base: 7, keep: 1, part: 0, more: true, rows: [row(4)] }), null);
+  assert.equal(rowsOf(wire, { uri: u, version: 5, serial: 9, base: 7, keep: 1, part: 1, more: false, rows: [row(5)] }), 'lost', 'said with the last part');
+  assert.deepEqual(rowsOf(wire, patch(6)), [row(1), row(20), row(21), row(30)], 'the last whole set is still the base');
+  assert.deepEqual(rowsOf(wire, { uri: u, version: 6, serial: 10, part: 0, more: false, rows: [] }), [], 'no rows is a whole set too');
+  assert.deepEqual(rowsOf(wire, { uri: u, rows: [row(7)] }), [row(7)], 'a message without parts is whole');
+});
 // Tips (tips.json): each stays true, its evidence still stands where it says.
 test("Tips (tips.json)", async () => {
   const tips = JSON.parse(readFileSync(new URL('./tips.json', SITE), 'utf8'));

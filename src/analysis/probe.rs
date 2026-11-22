@@ -402,6 +402,103 @@ pub fn probe(analysis: &Analysis, sym: Sym, at: State) -> Option<Probed> {
     found
 }
 
+/// [`probe`] at the run's end, and for a command that raises an error alone before it reads its
+/// arguments (`\caption` outside a float) the first complete probe inside the environments whose
+/// code shares the rarest part of its reach: what a completion shows. Kept as that probe.
+pub fn probe_inside(analysis: &Analysis, sym: Sym) -> Option<Probed> {
+    let bare = probe(analysis, sym, State::End);
+    if !bare.as_ref().is_some_and(|p| p.error.is_some() && (!p.complete || p.spec.items.is_empty())) {
+        return bare;
+    }
+    let cfg = sandbox_config(&analysis.settings);
+    let inside = |env: Sym| {
+        Prober {
+            cfg: &cfg,
+            analysis,
+            sym,
+            at: State::End,
+            context: Some(env),
+            seen: Default::default(),
+            spent: Spent::of(&cfg),
+        }
+        .derive()
+        .filter(|p| p.complete)
+    };
+    // where the document calls it first, then the closest by code
+    let tried = called_in(analysis, sym).into_iter().chain(rare_environments(analysis, sym));
+    let found = tried.take(analysis.settings.limits.probe_contexts).find_map(inside)?;
+    if whole(&cfg)
+        && let Ok(mut probes) = analysis.probes.lock()
+    {
+        probes.insert((sym, State::End), Some(found.clone()));
+    }
+    Some(found)
+}
+
+/// The innermost environments the document's own calls of `sym` stand in: each call's place
+/// inside the `\begin`/`\end` pairs of its file.
+fn called_in(analysis: &Analysis, sym: Sym) -> Vec<Sym> {
+    use crate::engine::builtins::OccKind;
+    let key = |s: crate::engine::tex::Span| (s.line, s.col);
+    let mut out: Vec<Sym> = Vec::new();
+    for call in analysis.facts.expansions.iter().filter(|e| e.name == sym && e.package.is_none()) {
+        let mut open: Vec<&str> = Vec::new();
+        for o in
+            analysis.facts.occurrences.iter().filter(|o| o.span.file == call.span.file && key(o.span) < key(call.span))
+        {
+            match o.kind {
+                OccKind::BeginEnvironment => open.push(&o.key),
+                OccKind::EndEnvironment => _ = open.pop(),
+                _ => {}
+            }
+        }
+        let env = open.iter().rev().find(|e| **e != "document").and_then(|e| analysis.interner.lookup(e));
+        if let Some(env) = env.filter(|e| !out.contains(e)) {
+            out.push(env);
+        }
+    }
+    out
+}
+
+/// The environments whose code sets up what `sym` reads: names their reach defines (`\@float`
+/// defines `\@captype`) or calls that `sym`'s reach expands, each weighted by how few
+/// environments reach it, so machinery every one reaches (`\@ifnextchar`) says little.
+fn rare_environments(analysis: &Analysis, sym: Sym) -> Vec<Sym> {
+    let mut reach = closure(analysis, sym);
+    // and the names its macros' texts name without calling them (`\ifx\@captype\@undefined`)
+    let named: Vec<Sym> = (reach.iter())
+        .filter_map(|&m| analysis.env.meaning(m).as_macro().cloned())
+        .flat_map(|m| m.replacement_text.iter().filter_map(|t| t.cs()).collect::<Vec<_>>())
+        .collect();
+    reach.extend(named);
+    // the names each macro defines while it expands (`via`)
+    let mut defines: crate::fixed::HashMap<Sym, Vec<Sym>> = crate::fixed::HashMap::default();
+    for def in &analysis.facts.defs {
+        if let Some(via) = def.via.filter(|_| reach.contains(&def.name)) {
+            defines.entry(via).or_default().push(def.name);
+        }
+    }
+    let envs: Vec<(Sym, crate::fixed::HashSet<Sym>)> = (all_environments(analysis).into_iter())
+        .filter(|&env| env != sym)
+        .map(|env| {
+            let mut c = closure(analysis, env);
+            let made: Vec<Sym> = c.iter().filter_map(|m| defines.get(m)).flatten().copied().collect();
+            c.extend(made);
+            (env, c.intersection(&reach).copied().collect())
+        })
+        .collect();
+    let mut reached: crate::fixed::HashMap<Sym, u64> = crate::fixed::HashMap::default();
+    for n in envs.iter().flat_map(|(_, c)| c) {
+        *reached.entry(*n).or_default() += 1;
+    }
+    let mut ranked: Vec<(u64, Sym)> = (envs.iter())
+        .map(|(env, c)| (c.iter().map(|n| 1_000_000 / reached[n]).sum(), *env))
+        .filter(|&(shared, _)| shared > 0)
+        .collect();
+    ranked.sort_by_key(|&(shared, env)| (std::cmp::Reverse(shared), analysis.interner.name(env).to_string()));
+    ranked.into_iter().map(|(_, env)| env).collect()
+}
+
 /// What `sym`'s braced arguments are, for a command the run never called:
 /// one probe call with a marker in each argument, and what it made of the
 /// text that holds a marker, with what the code put around it: an
@@ -654,7 +751,8 @@ pub fn probe_contexts(analysis: &Analysis, sym: Sym) -> Vec<(Option<Sym>, Option
 fn enter_environment(machine: &mut Machine, env: Sym) {
     let Some(begin) = machine.out.interner.lookup("begin") else { return };
     let name = machine.out.interner.name(env).to_string();
-    machine.run_probe(begin, &format!("{{{name}}}"));
+    // a lookahead (`\@ifnextchar[` in `\@float`) needs a token to compare, as in `probe_bare_error`
+    machine.run_probe(begin, &format!("{{{name}}}\\relax "));
 }
 
 fn sandbox_config(base: &Config) -> Config {

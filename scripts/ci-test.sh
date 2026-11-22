@@ -11,7 +11,9 @@
 # non-blocking; being short, it also runs the unit tests (`lib`), blocking.
 # A shard fails on any failing test; the ones tests/known-red.txt lists run
 # only in `reds` (non-blocking, time-boxed: an open one may hang), where one
-# that passes is named so the list shrinks.  A known-red test that tests/green-baseline.txt records
+# that passes is named so the list shrinks.  A red that ends the test binary (stack overflow,
+# abort) is a crash: `reds` then exits 2, which the workflow does not forgive, and no
+# `crash::` test may be listed at all.  A known-red test that tests/green-baseline.txt records
 # as once green is flagged "REGRESSION": it broke, it was not always open.
 # tests/known-red-tl<year>.txt lists reds of one TeX Live only; they count as known there.
 # Logs go to ${CI_LOG_DIR:-target}; passing document and budget tests append
@@ -55,6 +57,13 @@ gated() {
         local reg
         reg=$(comm -12 <(comm -12 <(printf '%s\n' "$failed") <(printf '%s\n' "$known")) <(LC_ALL=C sort -u tests/green-baseline.txt))
         [[ -z "$reg" ]] || { echo "REGRESSION, green in tests/green-baseline.txt, now red (fix it, do not list it):"; printf '  %s\n' $reg; }
+    fi
+    # A crash is never a known red: the crash tests are not listed, and a binary that died
+    # (stack overflow, abort, out of memory) fails the job whatever it was running.
+    if grep -q '^crash::' <<<"$known"; then echo "$0: tests/known-red.txt lists a crash:: test: fix the crash" >&2; return 1; fi
+    if grep -qE 'has overflowed its stack|\(signal: (4|6|7|8|11),|memory allocation of [0-9]+ bytes failed' "$log"; then
+        echo "$0: CRASH: the test binary died (see $log): the test it ran last is a crash, not a red" >&2
+        return 2
     fi
     grep -q '^test result: ' "$log" || { echo "$0: the test binary did not finish" >&2; return 1; }
     [[ -z "$new" ]] || { echo "failing, not known red:"; printf '  %s\n' $new; return 1; }

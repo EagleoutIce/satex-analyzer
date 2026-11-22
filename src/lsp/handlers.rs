@@ -3459,49 +3459,78 @@ fn typed_usage(usage: &str, roles: &[crate::analysis::roles::Role]) -> String {
 /// paragraph kept with what follows) carries the sectioning command of its
 /// line as `heading`, else `heading`.
 pub fn typeset(analysis: &Analysis) -> Vec<Json> {
+    let mut rows = Vec::new();
+    typeset_each(analysis, |row| rows.push(row));
+    rows
+}
+
+/// [`typeset`]'s rows, each handed to `sink` as soon as it is whole: a sender in parts or of one
+/// paragraph never holds the document's rows.
+pub fn typeset_each(analysis: &Analysis, mut sink: impl FnMut(Json)) {
     let at = |r: &query::Record| {
         (r.get("path").and_then(Json::as_str).map(str::to_owned), r.get("line").and_then(Json::as_u64))
     };
-    let headings: std::collections::HashMap<_, _> = query::run(analysis, Query::Occurrences, &Filter::Always)
+    let headings: std::collections::HashMap<_, _> = query::occurrences_of(analysis, |k| k.as_str() == "section")
         .into_iter()
-        .filter(|r| r.get("kind").and_then(Json::as_str) == Some("section"))
         .filter_map(|r| Some((at(&r), r.get("detail")?.clone())))
         .collect();
-    query::run(analysis, Query::Typeset, &Filter::Always)
-        .into_iter()
-        .filter(|r| {
-            r.get("origin").is_none_or(|o| o == "document")
-                && r.get("kind").and_then(Json::as_str) != Some("assumption")
-        })
-        .map(|mut r| {
-            if r.remove("kept").is_some() {
-                r.insert("heading".into(), headings.get(&at(&r)).cloned().unwrap_or_else(|| Json::from("heading")));
-            }
-            Json::Object(r)
-        })
-        .collect()
+    query::typeset_each(analysis, &mut |mut r| {
+        if r.get("origin").is_some_and(|o| o != "document")
+            || r.get("kind").and_then(Json::as_str) == Some("assumption")
+        {
+            return;
+        }
+        if r.remove("kept").is_some() {
+            r.insert("heading".into(), headings.get(&at(&r)).cloned().unwrap_or_else(|| Json::from("heading")));
+        }
+        sink(Json::Object(r));
+    });
 }
 
-/// [`typeset`] of `old` with the rows of `path`'s lines `lo..=hi` taken from `new`, a run up
-/// to that paragraph's end. A paragraph not shipped yet has no place on a page: it keeps the
-/// place of the row it replaces.
-pub fn typeset_preview(old: &[Json], new: &Analysis, path: &str, lo: u32, hi: u32) -> Vec<Json> {
-    let within = |r: &Json| {
-        r.get("path").and_then(Json::as_str) == Some(path)
-            && r.get("line").and_then(Json::as_u64).is_some_and(|l| (u64::from(lo)..=u64::from(hi)).contains(&l))
-    };
-    let mut fresh: Vec<Json> = typeset(new).into_iter().filter(|r| within(r)).collect();
-    let Some(at) = old.iter().position(within) else { return old.to_vec() };
-    let gone: Vec<&Json> = old.iter().filter(|r| within(r)).collect();
-    for (row, was) in fresh.iter_mut().zip(&gone) {
-        if let (Some(row), Some(placed)) = (row.as_object_mut(), was.get("placed")) {
+/// What a later message needs of a row sent before: where it stands and its place on a page (a
+/// preview's patch), and its hash (rows the next run sets alike are not sent again).
+pub struct RowAt {
+    path: Option<String>,
+    line: Option<u64>,
+    placed: Option<Json>,
+    pub hash: u64,
+}
+
+impl RowAt {
+    pub fn of(row: &Json) -> RowAt {
+        use std::hash::{Hash, Hasher};
+        let mut hasher = std::hash::DefaultHasher::new();
+        row.hash(&mut hasher);
+        RowAt {
+            path: row.get("path").and_then(Json::as_str).map(str::to_owned),
+            line: row.get("line").and_then(Json::as_u64),
+            placed: row.get("placed").cloned(),
+            hash: hasher.finish(),
+        }
+    }
+}
+
+/// What turns the rows `old` into those with `path`'s lines `lo..=hi` taken from `new`, a run up
+/// to that paragraph's end: `rows` go in at row `at`, the rows `drop` of `old` go. A paragraph
+/// not shipped yet has no place on a page: it keeps the place of the row it replaces. None where
+/// `old` has no row there.
+pub fn typeset_patch(old: &[RowAt], new: &Analysis, path: &str, lo: u32, hi: u32) -> Option<Json> {
+    let lines = u64::from(lo)..=u64::from(hi);
+    let within = |p: Option<&str>, l: Option<u64>| p == Some(path) && l.is_some_and(|l| lines.contains(&l));
+    let drop: Vec<usize> = (0..old.len()).filter(|&k| within(old[k].path.as_deref(), old[k].line)).collect();
+    let at = *drop.first()?;
+    let mut fresh = Vec::new();
+    typeset_each(new, |row| {
+        if within(row.get("path").and_then(Json::as_str), row.get("line").and_then(Json::as_u64)) {
+            fresh.push(row);
+        }
+    });
+    for (row, &was) in fresh.iter_mut().zip(&drop) {
+        if let (Some(row), Some(placed)) = (row.as_object_mut(), &old[was].placed) {
             row.entry("placed").or_insert_with(|| placed.clone());
         }
     }
-    let mut out: Vec<Json> = old[..at].to_vec();
-    out.append(&mut fresh);
-    out.extend(old[at..].iter().filter(|r| !within(r)).cloned());
-    out
+    Some(serde_json::json!({"at": at, "drop": drop, "rows": fresh}))
 }
 
 /// `textDocument/documentSymbol`: sections, labels and environments from

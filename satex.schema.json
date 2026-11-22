@@ -3361,6 +3361,17 @@
           ],
           "x-example": "`\\ifdraft ... \\fi` many times over: more paths keep each combination apart"
         },
+        "probe_contexts": {
+          "default": 4,
+          "description": "environments a completion's probe tries a command in when alone it raises an error before reading its arguments (`\\caption` outside a float); editor only",
+          "minimum": 0,
+          "type": "integer",
+          "x-affects": [
+            "output",
+            "speed"
+          ],
+          "x-example": "`probe_contexts: 0` leaves `\\caption` without a completion shape"
+        },
         "probe_steps": {
           "default": 2000000,
           "description": "tokens one trial run may read when a hover learns what a command does. Eight runs answer one question",
@@ -4616,6 +4627,17 @@
             "speed"
           ],
           "x-example": "`0`: every run of a build publishes its findings"
+        },
+        "rows_per_message": {
+          "default": 256,
+          "description": "the Typeset view's rows go out in messages of at most this many, each built, sent and dropped before the next: the server never holds a whole document's rows. 0 sends them in one message",
+          "minimum": 0,
+          "type": "integer",
+          "x-affects": [
+            "memory",
+            "speed"
+          ],
+          "x-example": "`64`: smaller messages, a big document's rows come in more steps"
         }
       },
       "type": "object"

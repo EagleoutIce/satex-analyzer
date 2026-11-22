@@ -15,6 +15,8 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 
 ### LSP
 
+- `fix` **An alias's hover shows its manual once mined** (`\let\myspace\xspace`): a hover kept before the manual was read is asked again, and a hover that found no documentation is not kept for the next session.
+- `fix` **`\caption` completes with its shape** (`[⟨options⟩]{⟨arg⟩}`): a command that errs alone is probed in the environment the document calls it in, else the one whose code it reads (`limits.probe_contexts`), and an environment entered for a probe gets the token its lookahead needs.
 - `fix` **A chapter whose root stopped at a budget keeps its root.** The editor ran the chapter alone in a made-up document and reported its references as undefined.
 - `perf` **Each build run's findings reach the editor at once, marked provisional** (`lsp.provisional`, on): a 737-page document shows its first findings after 11.6 s instead of 32 s; the final set is unchanged and replaces them.
 - `fix` **Completions show a command's whole shape.** `\section` offers `*[⟨options⟩]{⟨arg⟩}`, ltcmd commands their `(…)` and `<…>` arguments, a `\def` its own delimiters; taking one writes the braces with the caret inside. The PDF page's list shows shapes and descriptions too, also while a run goes on.
@@ -40,6 +42,12 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 
 ### Analysis
 
+- `fix` **A negative integer's printed digits stay in its own range** when zero is not parted off: pgfmath's signed random counts and a cut inside a library call no longer leave gaps (two precision reds green).
+- `fix` **A long run's logs of raised findings and memo uses stay bounded**: a beamer overlay document no longer aborts with a 1 GiB allocation at the end of its run.
+- `feat` **`-vv` names the sites with the most undecided choices** (`satex: choices N at file:line`, the top 20).
+- `fix` **A deeply nested `\numexpr` no longer overflows the stack** (also in the playground), and the language server survives a failed request.
+- `fix` **A graphic named with a folder (`thumbnails/x.jpeg`) is found in the TeX installation**, as kpathsea finds it: no false missing-graphic on Elsevier CAS.
+- `perf` **`\csname` of wholly unknown text no longer walks every known name.**
 - `fix` **A Lua run that stops leaves what its rest would have written unknown.** Globals the stopped rest assigns read as unknown after it; reads such as `pcall(require, …)` or `t.f =` no longer count as writes.
 - `fix` **The package index reads the code files a package inputs, and ltcmd's environments.** `tikzpicture` is tikz's (forest only `\let`s it), `\begin{forest}` is forest's: an inserted TikZ picture no longer loads forest, a forest tree loads forest, and a `conventions.definers` entry written with its backslash counts.
 - `fix` **No "`\` is never used" for a name the run could not decide** (`\csname\romannumeral\count1\endcsname`): that name is built, not written on the line.
@@ -104,6 +112,8 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 
 ### Playground
 
+- `perf` **Typeset rows a run sets as the last one did are not sent again**: a word typed at the end of a 737-page document is quiet after about 10 s instead of 11-12 s.
+- `fix` **The playground no longer runs out of memory on very long documents (700+ pages)**: the Typeset view's rows arrive in parts, and typing in a paragraph sends only that paragraph's rows (peak 6.1 GB to 1.9 GB natively at 737 pages).
 - `fix` **The playground builds again**: the browser build no longer calls native-only process-group and warm-engine code.
 - `feat` **Templates and a New document dialog.** ACM, IEEE, Springer LNCS, Elsevier, APS REVTeX from TeX Live and ACL, NeurIPS, ICML fetched from their providers (version and source reported); a Class options lens on `\documentclass` with a live, copyable header line; `satex new` and the editor's New document command, also from a GitHub repository or a zip.
 - `perf` **A big build reaches the page in parts**, so a 737-page document lands without stalls (longest task 0.16 s).
@@ -163,6 +173,7 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 
 ### Lints
 
+- `fix` **No false "lacks `editor`, required for `@article`" with ACM's bibliography style**: a single field a `.bst` checks inside one branch of an `if$` is no requirement (the branch for an entry without `crossref` still is).
 - `feat-fix` **Table precision with TeX Live 2025.** The `S`-column rule reads siunitx's round mode under its 2025 name too, so rounding columns stay quiet there.
 - `feat-fix` **No false "never defined" after a missing package.** A name a missing or misspelled package would define is a warning that names the missing file, not a certain error: pdflatex stops at the file instead.
 - `feat` **Quick fixes for package, reference and citation errors.** `unresolved-file` deletes the load of a package no installed name is near. `undefined-reference` and `undefined-citation` respell a key one typo off a label or entry. `duplicate-label` renames the later label (unsafe: its references then resolve to the first). The new `missing-bibliography` names the `.bib` files beside the document when citations have no bibliography. A command without its package loads the package most files use that defines it itself (`graphics` for `\includegraphics`, was `chickenize`).
@@ -274,6 +285,7 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 
 ### CLI
 
+- `fix` **`satex new` freezes the provider's fetched files** (`project.frozen` in the new `satex.yaml`): findings inside `acl.sty` or `neurips_2025.sty` are not the project's.
 - `fix` **The verdict names where the run gave up.** `satex lint` says "incomplete" with the first places instead of "complete".
 - `fix` **One rule for the input.** An empty stdin (`</dev/null`) reads the folder's root documents, `-f -` reads stdin, an open stdin says so on stderr. `satex cache` never reads stdin.
 - `fix` **A lint filter on a field no finding has says so.** `satex lint --filter rule=…` names the fields (`code=unused-label`) instead of printing "no findings".

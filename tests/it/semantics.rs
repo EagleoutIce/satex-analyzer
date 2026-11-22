@@ -188,6 +188,28 @@ fn a_name_around_unknown_digits_is_one_argument() {
     assert!(definition(&analysis, "wrong").is_none(), "#2 was not the \\relax after the name");
 }
 
+/// A `\csname` over one unknown digit asks the same of every name it may build where those names
+/// hold one meaning (a dispatch table, as pgfmath's `pgfmath@token@numeric@0` to `9`): a test of the
+/// built name against `\relax` is decided and no path parts. A digit of ten values parts none, so
+/// one of four values must cost no more. Pins the root of pgfmath's digit forks (2548 for one signed
+/// count): `name_step` parts a path per value of a number in a small interval and
+/// `scan_csname_chars` a path per name, again at every lookup of the same digit.
+#[test]
+fn a_name_over_a_digit_of_few_values_parts_no_more_paths_than_one_of_ten() {
+    let run = |values: u32| {
+        let table: String = (0..values).map(|d| format!(r"\expandafter\let\csname tok@{d}\endcsname\e ")).collect();
+        analyze(&format!(
+            r"\def\e{{}}{table}\def\test#1{{\expandafter\ifx\csname tok@\string#1\endcsname\relax\def\no{{}}\else\def\yes{{}}\fi}}
+              \count1=\pdfuniformdeviate {values} \expandafter\test\the\count1 \expandafter\test\the\count1 \expandafter\test\the\count1"
+        ))
+    };
+    let (few, ten) = (run(4), run(10));
+    for a in [&few, &ten] {
+        assert!(definition(a, "yes").is_some() && definition(a, "no").is_none(), "every name is in the table");
+    }
+    assert!(few.forks <= ten.forks, "{} forks for a digit of 4 values, {} for one of 10", few.forks, ten.forks);
+}
+
 #[test]
 fn csname_builds_a_control_sequence() {
     let analysis = analyze(r"\expandafter\def\csname myname\endcsname{body}");

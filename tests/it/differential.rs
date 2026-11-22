@@ -1402,6 +1402,42 @@ fn a_paragraph_records_the_source_site_of_its_characters() {
     assert_eq!(site(find("and")), (body, and), "{row}");
 }
 
+/// The characters a macro's use sets all stand at its call: the site is said once for all of them
+/// (`same`), not once per character. Pins the rows of a document of generated text (blindtext, 737
+/// pages): 99.7 % of its `sites` entries repeated the one before, half of 110 MB of rows, which the
+/// playground's worker ran out of memory on.
+#[test]
+fn the_characters_a_macro_sets_share_one_site_mark() {
+    let name = "Lorem ipsum dolor sit amet consectetuer";
+    let rows = typeset_rows("site-runs", &format!("\\def\\name{{{name}}}"), "Hello \\name{} and \\name{} you");
+    let row = rows.iter().find(|r| r["detail"].as_str().is_some_and(|d| d.contains("Hello"))).expect("paragraph");
+    let body = row["line"].as_u64().unwrap();
+    let text: Vec<char> = row["detail"].as_str().unwrap().chars().collect();
+    let sites = row["sites"].as_array().expect("sites");
+    let place = |s: &serde_json::Value| (s["line"].as_u64().unwrap(), s["col"].as_u64().unwrap());
+    let site = |at: usize| {
+        let s = sites.iter().rev().find(|s| s["at"].as_u64().unwrap() as usize <= at).expect("an entry");
+        let step = if s["same"] == true { 0 } else { at - s["at"].as_u64().unwrap() as usize };
+        (place(s).0, place(s).1 + step as u64)
+    };
+    let calls = ["Hello \\name".len() as u64, "Hello \\name{} and \\name".len() as u64];
+    // every character of both uses at its own call, hyphen marks and blanks aside
+    let plain: String = text.iter().collect();
+    let mut from = 0;
+    for call in calls {
+        let lorem = from + plain[from..].find("Lorem").expect("the macro's text");
+        let at = text_offset(&text, lorem);
+        assert!((at..at + 20).filter(|&k| text[k].is_alphabetic()).all(|k| site(k) == (body, call)), "{row}");
+        from = lorem + 5;
+    }
+    // at most two marks per use: where it begins, and that the rest stays there
+    for call in calls {
+        let marks = sites.iter().filter(|s| place(s) == (body, call)).count();
+        assert!((1..=2).contains(&marks), "{marks} marks for a use at column {call}: {row}");
+    }
+    assert_eq!(site(text_offset(&text, plain.rfind("you").unwrap())).0, body, "{row}");
+}
+
 /// A picture is drawn from what the run wrote for it: its two node frames,
 /// the line between them and the arrow tip pgf drew as a curve, with each
 /// node's text in its frame and with `yshift` where TikZ put the node.

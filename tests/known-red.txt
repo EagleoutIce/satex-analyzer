@@ -14,10 +14,8 @@ tex_compliance::an_argument_read_from_a_typed_rest_that_may_be_empty_keeps_its_e
 
 
 # == precision ==
-# owner complshape (2026-11-21): \caption's completion item has no shape. Outside a float it raises an error and gobbles its arguments, so the end-state probe reads none; probe_contexts' candidate environments (call-graph overlap, closures capped at 500) never include figure; the observed call shape ends at \refstepcounter's definition (Machine::define calls finish_shape) before \@dblarg reads. Lead: rank environments by what the error branch tests (\@captype), or keep the shape open across definitions inside the call's own expansion.
-lsp::caption_item_carries_its_shape
-# owner p0-order (digits2 + land-03, 2026-11-21): unsigned digit runs now split by length (sound); pgfmath's parser then gets possible-only unsupported rows (missing-endcsname pgfmathparser:820, extra-endcsname 822/764, missing-number 803): the operation stack joined as one-of {neg, empty}, likely the class of tikz_bend. No certain error.
-documents::pgfmath_parses_a_signed_random_count_and_adds
+# owner pgf (found by night 2026-11-22, root of the digit-walk cluster): `\csname` over a typed digit in a small interval parts a path per value (exec.rs name_step) and per name (scan_csname_chars) at every lookup, though the names hold one meaning: 40 forks for 3 lookups of a digit in 0..3, 0 for one in 0..9. Keeping such names one token (one_of_spelled) takes the ledger's signed count from 2548 to 259 forks but lets arms join earlier and lose their pairing (tikz_bend 7 s -> 58 s). Experiment + traces: S/night/p2-experiment.patch, S/night/LAND.md.
+semantics::a_name_over_a_digit_of_few_values_parts_no_more_paths_than_one_of_ten
 # owner pgf (found by cert-finish 2026-11-21): red on main without a ledger line; base and patched give the same output ({0 | ?.?}, NEG|POS). See S/cert-finish/ab.out.
 documents::rounding_math_of_an_interval_dimension_ends_bounded
 # owner pgf (Root L/W2): rounding a path at an unknown or interval dimension never ends bounded (unmerged again: one test per bug)
@@ -46,8 +44,6 @@ documents::a_breakable_blanker_box_around_a_rule_of_unknown_height_ends
 tagging::an_fp_eval_of_an_unknown_integer_stays_on_few_paths
 # owner reds-fp (pgf-round fix C): 2.5k forks, bound 1.3k. The earlier 1.2k relied on runs wrongly taken for refuted (a nested drive's last refuted rerun left `infeasible` set): `\fp_eval:n` of the unknown integer was then the certain text `0`. Now unknown text (sound); the cost is the length forks named above. MWE S/pgf-round/m/h/t1.tex.
 tagging::an_fp_eval_of_an_unknown_integer_forks_only_on_its_length
-# owner reds-fp (precision 2026-11-21): not record shape (the hex conversion red went green with the one-of pass bound, precision land-02, steps here unchanged). After the line cut `\l_tmpa_fp` is unknown and each further `\fp_set:Nn` of the line forks in l3fp's parser (26k forks, limits.line_steps hit 7 times on line 6): 6.44M steps against 5.15M. Same l3fp root as the two tagging fp reds.
-documents::cut_inside_library_call_drops_the_call
 # owner pgf (Root A): 14 paths remain, arms of xcolor's clamps meet only at the line's end.
 termination::convergence::colorlet_of_an_unknown_pgfmath_result
 # owner pgf: in the second build run thirty nodes end with 27 paths waiting at `\clearpage`, past any time (uncharged path work of explore).

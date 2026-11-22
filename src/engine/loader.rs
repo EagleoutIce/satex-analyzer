@@ -171,9 +171,12 @@ impl Resolver {
         if let Some((dtx, _)) = candidates.iter().find_map(|file| self.unpacked.get(file)) {
             return Some(dtx.clone());
         }
-        // The distribution index is keyed by bare file names, so a name that
-        // spells a path names nothing in it and must not be searched for.
-        candidates.iter().filter(|file| !spells_a_path(file)).find_map(|file| self.trees().get(file).cloned())
+        // The distribution index is keyed by bare file names: a name that
+        // spells folders is the file under those folders.
+        candidates.iter().find_map(|file| match spells_a_path(file) {
+            true => self.trees().get_under(file).cloned(),
+            false => self.trees().get(file).cloned(),
+        })
     }
 }
 

@@ -27,6 +27,7 @@ mod completions;
 mod compliance_matrix;
 mod corpus;
 mod counterexamples;
+mod crash;
 mod depp;
 mod determinism;
 mod differential;

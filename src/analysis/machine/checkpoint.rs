@@ -494,7 +494,9 @@ impl Machine<'_> {
         if self.out.document_depth.is_none() {
             return Err("before the document");
         }
-        if (&self.diag_seen, &self.diag_raised, &self.diag_live) != (&old.diag_seen, &old.diag_raised, &old.diag_live) {
+        if (&self.diag_seen, &self.diag_raised, self.diag_raised_base, &self.diag_live)
+            != (&old.diag_seen, &old.diag_raised, old.diag_raised_base, &old.diag_live)
+        {
             return Err("diagnostics raised");
         }
         // Counts of tokens taken and assignments made differ by the edit's. They are compared

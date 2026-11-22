@@ -3791,6 +3791,40 @@ button.tv-spec-value { cursor: pointer; } button.tv-spec-value:hover, button.tv-
    * the newest version whose final rows are shown): never older rows, never a preview of a text already final. */
   const rowsWin = (final: number | undefined, version: number | null | undefined, preview: boolean) =>
     version == null || final == null || (preview ? version > final : version >= final);
+  /** One `satex/typesetRows` message (src/lsp/typeset_stream.rs) taken into `wire`: the rows it completes, null while
+   * they are not whole, or 'lost' where they cannot be made (the caller asks for them).
+   * Rows come in parts (`part` from 0, `more` on all but the last); a set is whole once its last part is in, and a part
+   * out of turn loses the set. Final rows (`serial`) are kept as the base later messages name (`base`): the next run's
+   * rows begin with the base's first `keep` rows, which are not sent again; a preview's `patch` puts its `rows` in at
+   * row `at` and drops the base's rows `drop`. A patch of another base says nothing: the final rows follow. */
+  type RowsWire = { parts: { key: string; next: number; rows: Rec[] } | null; base: { uri: string; serial: number; rows: Rec[] } | null };
+  const rowsOf = (wire: RowsWire, p: { uri: string; version?: number | null; rows: Rec[]; preview?: boolean; part?: number; more?: boolean; serial?: number;
+    base?: number; keep?: number; patch?: { base: number; at: number; drop: number[] } }): Rec[] | null | 'lost' => {
+    const based = (serial: number | undefined) => wire.base && wire.base.uri === p.uri && wire.base.serial === serial ? wire.base.rows : null;
+    if (p.patch) {
+      const b = based(p.patch.base), { at } = p.patch;
+      if (!b) return null;
+      const drop = new Set(p.patch.drop);
+      return [...b.slice(0, at), ...p.rows, ...b.slice(at).filter((_, i) => !drop.has(at + i))];
+    }
+    let rows = p.rows;
+    if (p.part !== undefined) {
+      const key = `${p.uri}@${p.version}@${p.serial}@${!!p.preview}`;
+      if (p.part === 0) {
+        const kept = p.keep === undefined ? [] : based(p.base)?.slice(0, p.keep);
+        wire.parts = kept ? { key, next: 0, rows: kept } : null;
+      }
+      const set = wire.parts;
+      if (!set || set.key !== key || set.next !== p.part) { wire.parts = null; return p.more ? null : 'lost'; }
+      set.next++;
+      for (const r of p.rows) set.rows.push(r);
+      if (p.more) return null;
+      wire.parts = null;
+      rows = set.rows;
+    }
+    if (p.serial !== undefined && !p.preview) wire.base = { uri: p.uri, serial: p.serial, rows };
+    return rows;
+  };
   /** Completion lists the playground answers from while the worker is busy (playground.js `completions`). */
   type Completion = { label: string; detail?: string; filterText?: string; sortText?: string; insertText?: string; insertTextFormat?: number; textEdit?: { newText: string };
     additionalTextEdits?: unknown[]; args?: string; math?: boolean; doc?: string; data?: { math?: boolean; args?: string | null; doc?: string; prior?: string };
@@ -3964,6 +3998,6 @@ button.tv-spec-value { cursor: pointer; } button.tv-spec-value:hover, button.tv-
     }
     return out;
   };
-  return { followRows, rowsWin, complete: { rank, kept, remember, recall, shapeOf: argShape, reselect, controlSymbol, lettersAt, isLetter, nameBefore, typeable, whole, snippet, mathItem, docOf, plainSnippet, opensArgument, stepsOver, previewOf, tikzTarget }, loads: { unlanded, lacked }, tipBag, yaml, history: { historyEvent }, render, RENDER, hue, passes, masterDetail, usesView, fold, SPEC, mix, colorBand, oklch, drawing: { expandStyles, STYLE_DEF, parse, emit, plain, mermaidIn, mermaidOut, mermaidLoss, layout, importMermaid, tipsOf, toMatrix, cellPlaces, toLayer, picOptions, relocate, relPos, nearestAnchor, anchorAt, tipMarker, shapeSample, shapeList, cycle, STYLE }, forest: forestFns, circuit: { parse: cParse, body: cBody, emit: cEmit }, page: { pageOf, pageBox, textArea, styleNow, taggedNote, pageNodes, numberNodes, numberInForce, headerOf, headerCalls, headerNodes, footSetup, fmtRead, fmtWrite, styleNodes, styleSet, styleEdits }, dev: { traceCsv, stateHtml }, templates: { fill, filled, chosen } };
+  return { followRows, rowsWin, rowsOf, complete: { rank, kept, remember, recall, shapeOf: argShape, reselect, controlSymbol, lettersAt, isLetter, nameBefore, typeable, whole, snippet, mathItem, docOf, plainSnippet, opensArgument, stepsOver, previewOf, tikzTarget }, loads: { unlanded, lacked }, tipBag, yaml, history: { historyEvent }, render, RENDER, hue, passes, masterDetail, usesView, fold, SPEC, mix, colorBand, oklch, drawing: { expandStyles, STYLE_DEF, parse, emit, plain, mermaidIn, mermaidOut, mermaidLoss, layout, importMermaid, tipsOf, toMatrix, cellPlaces, toLayer, picOptions, relocate, relPos, nearestAnchor, anchorAt, tipMarker, shapeSample, shapeList, cycle, STYLE }, forest: forestFns, circuit: { parse: cParse, body: cBody, emit: cEmit }, page: { pageOf, pageBox, textArea, styleNow, taggedNote, pageNodes, numberNodes, numberInForce, headerOf, headerCalls, headerNodes, footSetup, fmtRead, fmtWrite, styleNodes, styleSet, styleEdits }, dev: { traceCsv, stateHtml }, templates: { fill, filled, chosen } };
 })();
 self.satexViews = satexViews;

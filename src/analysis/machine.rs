@@ -1396,17 +1396,19 @@ impl Accum {
 }
 
 /// How deeply expansion may nest inside scans before the run stops.
-const MAX_NESTING: u32 = 300;
+pub(crate) const MAX_NESTING: u32 = 300;
 
 /// How much of the Rust stack nested steps may take before the run stops,
 /// whatever each level costs: half the 2 MiB a spawned thread gets.
 /// Only where the thread's own stack is not known.
 const MAX_STACK_BYTES: usize = 1 << 20;
 
-/// The stack nested steps leave free where the thread's stack is known.
+/// The stack nested steps leave free where the thread's stack is known: at
+/// most half of it, so a 2 MiB thread nests too.
 const STACK_MARGIN: usize = 1 << 20;
 
-/// The lowest address of this thread's stack, where the platform tells.
+/// The address nested steps and scans stay above on this thread's stack,
+/// where the platform tells where it ends.
 /// A level costs about 13 KiB, so the 8 MiB main stack holds ~500 levels.
 fn stack_low() -> Option<usize> {
     thread_local! {
@@ -1433,13 +1435,20 @@ fn stack_low_os() -> Option<usize> {
         let (mut addr, mut size) = (std::ptr::null_mut(), 0usize);
         let ok = libc::pthread_attr_getstack(&attr, &mut addr, &mut size) == 0;
         libc::pthread_attr_destroy(&mut attr);
-        (ok && size > 2 * STACK_MARGIN).then_some(addr as usize)
+        ok.then(|| addr as usize + STACK_MARGIN.min(size / 2))
     }
 }
 
 #[cfg(not(target_os = "linux"))]
 fn stack_low_os() -> Option<usize> {
     None
+}
+
+/// Where the stack is now: the address of a local.
+#[inline(always)]
+fn stack_here() -> usize {
+    let marker = 0u8;
+    std::hint::black_box(std::ptr::addr_of!(marker)) as usize
 }
 
 /// Prefix for the names under which registers addressed by number are kept.
@@ -2022,7 +2031,19 @@ pub struct Machine<'a> {
     /// hash, so that a repeat is counted and not stored again.
     pub(crate) diag_seen: crate::fixed::LookupMap<(&'static str, Span, u64), usize>,
     /// The row of every raise, in order: a run's raises are a range of it.
+    /// Raises before [`Machine::diag_raised_base`] no range reaches any more
+    /// are dropped ([`Machine::trim_raised`]), so the log is bounded by what
+    /// runs in flight raised, not by the length of the document.
     diag_raised: Vec<usize>,
+    /// How many raises were dropped from the front of `diag_raised`.
+    diag_raised_base: usize,
+    /// Where each run in flight began in `diag_raised`, innermost last.
+    raise_marks: Vec<usize>,
+    /// Per row, where it was last put in `diag_raised`: a row raised again
+    /// in the innermost run in flight is not logged again ([`Machine::log_raise`]).
+    row_logged_at: Vec<usize>,
+    /// The row the last raise counted into.
+    last_raised: usize,
     /// Per row, its raises on paths not refuted ([`Machine::retract`]).
     diag_live: Vec<u32>,
     pub(crate) halted: bool,
@@ -2132,6 +2153,9 @@ pub struct Machine<'a> {
     memo_said: Vec<(OccKind, String, Span)>,
     /// Call sites recorded calls counted, once per use: a replay counts them again ([`calls`]).
     memo_uses: Vec<(Span, Sym)>,
+    /// How many uses were dropped from the front of `memo_uses`: the ones
+    /// before every open recording began ([`Machine::set_memo_floor`]).
+    memo_uses_base: usize,
     /// Changes outside the slots no kept effect replays: boxes' text,
     /// outputs, streams, reads of the clock, the generator, the input line.
     pub(crate) side_effects: u64,
@@ -2453,6 +2477,8 @@ pub struct Machine<'a> {
     pub(crate) wild: Wild,
     /// How deeply `step` is nested on the Rust stack.
     step_depth: u32,
+    /// How many quantities are being read inside one another ([`Machine::internal_quantity`]).
+    pub(crate) quantity_depth: u32,
     /// Where on the stack the outermost `step` runs.
     stack_base: usize,
     pub(crate) scanner: Scanner,
@@ -2842,6 +2868,8 @@ struct LineGuard {
     peak: u64,
     /// Steps per source line over the run, never reset, for `-vv`.
     tally: LookupMap<(FileId, u32), u64>,
+    /// Undecided choices per site over the run, never reset, for `-vv`.
+    choices: LookupMap<(FileId, u32), u64>,
 }
 
 /// A path's view of the guard: the line it stands on, the overruns of it
@@ -3186,6 +3214,10 @@ impl<'a> Machine<'a> {
             narrowing: None,
             diag_seen: Default::default(),
             diag_raised: Vec::new(),
+            diag_raised_base: 0,
+            raise_marks: Vec::new(),
+            row_logged_at: Vec::new(),
+            last_raised: 0,
             diag_live: Vec::new(),
             conds: Rc::default(),
             testing: Vec::new(),
@@ -3230,6 +3262,7 @@ impl<'a> Machine<'a> {
             memo_verify: None,
             memo_said: Vec::new(),
             memo_uses: Vec::new(),
+            memo_uses_base: 0,
             side_effects: 0,
             file_writes: 0,
             call_recs: Rc::default(),
@@ -3339,6 +3372,7 @@ impl<'a> Machine<'a> {
             par_inserted: None,
             list: crate::engine::mode::Modes::VERTICAL,
             step_depth: 0,
+            quantity_depth: 0,
             stack_base: 0,
             scanner: Scanner::Normal,
             pseudo_file,
@@ -4878,7 +4912,11 @@ will look undefined",
         self.out.exhausted = false;
         (self.out.steps, self.out.load_steps, self.out.served_steps) = (0, 0, 0);
         // A cached kernel brings no charged lines: the guard starts as it does there.
-        self.guard = LineGuard { tally: std::mem::take(&mut self.guard.tally), ..Default::default() };
+        self.guard = LineGuard {
+            tally: std::mem::take(&mut self.guard.tally),
+            choices: std::mem::take(&mut self.guard.choices),
+            ..Default::default()
+        };
         self.settle_guard();
         // Steps of the kernel's: a build would otherwise leave the document's
         // loops open to the stall check a cached kernel leaves them closed to.
@@ -4905,10 +4943,8 @@ will look undefined",
         // a built run forked 50x more than a cached one on the same document).
         self.call_runs = Default::default();
         (self.memos, self.memo_codes, self.memo_seen, self.memo_count) = Default::default();
-        self.memo_said.clear();
-        self.memo_uses.clear();
         self.call_recs = Rc::default();
-        self.env.memo_floor(None);
+        self.set_memo_floor(None);
         self.scratch = Scratch::default();
         self.carried = Carried::default();
         self.unknown_chars.clear();
@@ -6784,7 +6820,7 @@ will look undefined",
             return;
         }
         self.diagnose(severity, code, span, message);
-        let row = self.diag_raised.last().copied().unwrap_or_default();
+        let row = self.last_raised;
         if let Some(capture) = &mut self.package_capture {
             capture.log.gaps_new.push((code, name, row));
         }
@@ -6873,6 +6909,7 @@ will look undefined",
         let key = diag_key(code, span, &message, origin);
         if let Some(i) = self.diag_row(key, severity, &message) {
             self.note_row(i);
+            self.log_raise(i);
             let d = &mut self.out.facts.diagnostics[i];
             // The same gap at the same place over and over is one path
             // repeating itself, not new information: it is counted up to
@@ -6881,8 +6918,6 @@ will look undefined",
             let cuts =
                 matches!(severity, Severity::Unsupported | Severity::Assumption) || CUT_IMPRECISE.contains(&code);
             self.undo.push(Undo::Count(i, d.count));
-            self.diag_raised.push(i);
-            self.diag_live[i] += 1;
             if cuts && bound > 0 && !CUT_EXEMPT.contains(&code) {
                 if d.count >= bound {
                     return;
@@ -6899,7 +6934,7 @@ will look undefined",
             return;
         }
         let n = self.out.facts.diagnostics.len();
-        self.diag_raised.push(n);
+        self.log_raise(n);
         let after = self.out.facts.occurrences.len();
         self.push_row(key, Diagnostic { severity, code, message, span, count: 1, origin, after });
     }
@@ -6920,14 +6955,20 @@ will look undefined",
         (d.severity == severity && d.message == message).then_some(i)
     }
 
-    /// The raises `raised` ([`Machine::raised_mark`] on) were made on a
+    /// The raises of `rows` ([`Machine::raised_rows`]) were made on a
     /// path refuted as no run of the document: a row only such raises
     /// made is not reported. Rows still count, so repeats are cut as before.
-    pub(crate) fn retract(&mut self, raised: std::ops::Range<usize>) {
-        for k in raised {
-            let i = self.diag_raised[k];
+    pub(crate) fn retract(&mut self, rows: &[usize]) {
+        for &i in rows {
             self.diag_live[i] = self.diag_live[i].saturating_sub(1);
         }
+    }
+
+    /// The rows of the raises `raised` ([`Machine::raised_mark`] on), kept by a
+    /// path that is shelved, so the log need not keep them.
+    pub(crate) fn raised_rows(&self, raised: std::ops::Range<usize>) -> Vec<usize> {
+        let base = self.diag_raised_base;
+        self.diag_raised[raised.start - base..raised.end - base].to_vec()
     }
 
     /// The row just pushed is reported only if a raise later makes it live.
@@ -6939,7 +6980,47 @@ will look undefined",
 
     /// Where the next raise goes in the log [`Machine::retract`] reads.
     pub(crate) fn raised_mark(&self) -> usize {
-        self.diag_raised.len()
+        self.diag_raised_base + self.diag_raised.len()
+    }
+
+    /// Logs a raise of row `i` for [`Machine::retract`]. Only whether a row has
+    /// a raise left counts, so a row the innermost run in flight already
+    /// logged is not logged or counted again: a run's log holds each row once,
+    /// however often its code repeats the raise.
+    fn log_raise(&mut self, i: usize) {
+        self.last_raised = i;
+        if self.row_logged_at.len() <= i {
+            self.row_logged_at.resize(i + 1, usize::MAX);
+        }
+        let mark = self.raise_marks.last().copied();
+        if mark.is_some_and(|m| self.row_logged_at[i] != usize::MAX && self.row_logged_at[i] >= m) {
+            return;
+        }
+        self.row_logged_at[i] = self.raised_mark();
+        self.diag_raised.push(i);
+        if let Some(n) = self.diag_live.get_mut(i) {
+            *n += 1;
+        }
+    }
+
+    /// A run begins (`true`) or ends: its raises are a range of the log.
+    pub(crate) fn raise_run(&mut self, begins: bool) {
+        match begins {
+            true => self.raise_marks.push(self.raised_mark()),
+            false => {
+                self.raise_marks.pop();
+            }
+        }
+    }
+
+    /// Drops the raises before mark `floor`, which no range to retract
+    /// reaches any more. The last raise stays: it names the row just raised.
+    pub(crate) fn trim_raised(&mut self, floor: usize) {
+        let drop = floor.saturating_sub(self.diag_raised_base).min(self.diag_raised.len().saturating_sub(1));
+        if drop > 0 {
+            self.diag_raised.drain(..drop);
+            self.diag_raised_base += drop;
+        }
     }
 
     /// The innermost place in the user's own files on the input stack:
@@ -8029,6 +8110,11 @@ will look undefined",
             for (steps, (file, line)) in lines.into_iter().take(20) {
                 crate::util::progress::note!("satex: line steps {steps} at {}:{line}", self.out.short_name(file));
             }
+            let mut sites: Vec<_> = self.guard.choices.iter().map(|(k, v)| (*v, *k)).collect();
+            sites.sort_unstable_by(|a, b| b.cmp(a));
+            for (choices, (file, line)) in sites.into_iter().take(20) {
+                crate::util::progress::note!("satex: choices {choices} at {}:{line}", self.out.short_name(file));
+            }
         }
         if self.cfg.verbose >= 4 {
             crate::util::progress::note!(
@@ -8470,16 +8556,10 @@ will look undefined",
         // nests without end. TeX runs out of input stack there (tex.web § 321,
         // "TeX capacity exceeded"), and so does the run. The cost per level
         // varies, so bound the stack bytes too, not just the depth.
-        let marker = 0u8;
-        let here = std::hint::black_box(std::ptr::addr_of!(marker)) as usize;
         if self.step_depth == 0 {
-            self.stack_base = here;
+            self.stack_base = stack_here();
         }
-        let deep = match stack_low() {
-            Some(low) => here < low + STACK_MARGIN,
-            None => self.stack_base.saturating_sub(here) > MAX_STACK_BYTES,
-        };
-        if self.step_depth >= MAX_NESTING || deep {
+        if self.step_depth >= MAX_NESTING || self.stack_spent() {
             // This is satex's own nesting bound, not the document's. The
             // expansion that nests too deeply is given up like a stalled loop,
             // and the run continues. Returning `false` ends this nested step,
@@ -9498,9 +9578,22 @@ will look undefined",
         self.push_tokens(Rc::from(vec![unknown]));
     }
 
+    /// Whether the Rust stack is used up to its margin here. Every recursion
+    /// that follows the document's own nesting asks this at its head and
+    /// gives up there ([`Machine::abandon_nesting`]): a step inside a scan
+    /// ([`Machine::step`]), a quantity inside a quantity
+    /// ([`Machine::internal_quantity`]).
+    pub(crate) fn stack_spent(&self) -> bool {
+        let here = stack_here();
+        match stack_low() {
+            Some(low) => here < low,
+            None => self.stack_base.saturating_sub(here) > MAX_STACK_BYTES,
+        }
+    }
+
     /// An expansion nested deeper than satex follows: its assignments become
     /// unknown, its pending lists are dropped, and the run continues.
-    fn abandon_nesting(&mut self) {
+    pub(crate) fn abandon_nesting(&mut self) {
         let balanced = Self::closed_note(self.give_up_lists(false, true));
         let (file, line) = self.position();
         self.diagnose(
@@ -9639,6 +9732,9 @@ will look undefined",
     pub(crate) fn hot_site(&mut self, site: Span) -> bool {
         // An undecided choice is decided by counts of the line, not by names read.
         self.env.memo_odd();
+        if self.cfg.verbose >= 2 {
+            *self.guard.choices.entry((site.file, site.line)).or_default() += 1;
+        }
         let limit = self.limits.site_forks;
         // A choice inside a value scan may fork more, since its arms join where
         // the scan ends. A walker over unknown text forks per token, so even
@@ -12625,8 +12721,9 @@ will look undefined",
         let arm_of = |m: &mut Self, arm: u8| match arm {
             0 => {
                 let mut text = m.text_tokens("-", t.span);
-                // A negative integer's magnitude is 1 or more: `\number` never prints `-0`.
-                let negative = if zero { Num::range(num.lo, -1) } else { num };
+                // A negative integer's magnitude is 1 or more: `\number` never prints `-0`. The
+                // values from 0 up are the other arms', with zero parted off or not.
+                let negative = Num::range(num.lo, num.hi.min(-1));
                 text.extend(m.digits_in(crate::engine::scan::magnitude(negative), t.span));
                 // Not narrowed: pgfmath's parser reads the same digits again
                 // where a narrowed copy loses its operator (tikz bend).
@@ -14767,7 +14864,7 @@ will look undefined",
         self.cut_taint = state.cut_taint;
         self.call_recs = state.call_recs;
         let floor = self.call_recs.iter().rev().find_map(|r| r.memo_mark());
-        self.env.memo_floor(floor);
+        self.set_memo_floor(floor);
         self.learn_forks = state.learn_forks;
         self.guard_seen = state.guard_seen;
         self.job_ended = state.job_ended;
@@ -18290,5 +18387,32 @@ mod cover_tests {
         /// Commands run per layout: each is about ten tokens.
         const STEPS: u32 = 64;
         std::thread::Builder::new().stack_size(2 << 20).spawn(run).expect("a thread").join().expect("no panic");
+    }
+}
+
+#[cfg(test)]
+mod log_bound_tests {
+    use super::{Config, Machine};
+
+    /// Intuition: what a run logs per raise of a diagnostic serves only to
+    /// retract the raises of paths still in flight, so a long run's log stays
+    /// as short as its open paths. Pins `diag_raised`, which kept every raise
+    /// of the run: a beamer build's 33M raises of repeated rows made it a
+    /// 1 GiB copy at the run's end, and the allocation aborted the process.
+    #[test]
+    fn the_raise_log_stays_bounded_over_a_long_run() {
+        let cfg = Config {
+            load: crate::project::config::Load { format: false, ..Default::default() },
+            texmf: crate::project::config::Texmf { kpsewhich: false, ..Default::default() },
+            ..Config::default()
+        };
+        const PASSES: usize = 2000;
+        // One stray `\endcsname` per line: one row, raised on every line.
+        let source = "\\endcsname\n".repeat(PASSES);
+        let (mut m, _) = Machine::begin(&source, None, &cfg);
+        m.run_guarded();
+        let raised = m.raised_mark();
+        assert!(raised >= PASSES, "every line raised: {raised}");
+        assert!(m.diag_raised.len() < PASSES / 10, "{} raises kept of {raised}", m.diag_raised.len());
     }
 }

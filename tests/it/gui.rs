@@ -263,3 +263,96 @@ fn gui_sends_the_typeset_rows_before_the_findings() {
     assert_eq!(out[rows]["params"]["rows"], answer["result"]);
     assert!(answer["result"].to_string().contains("Some words"), "{answer:?}");
 }
+
+/// A run's Typeset rows go out in parts of `lsp.rows_per_message`, whole with the last one, a paragraph preview as a
+/// patch of the final rows it names, and the next run's rows without those that stand before the edit: no message
+/// holds the document's rows, and none sends them again per key.
+/// Pins the playground's out-of-memory at 737 pages (2026-11-21): the rows went out as one message (one JSON tree of
+/// the document, copied twice to send it, 4.5 GB there), and every paragraph preview sent all of them again.
+#[test]
+fn gui_sends_the_typeset_rows_in_parts_and_a_preview_as_a_patch() {
+    if !crate::support::installed() {
+        return;
+    }
+    const PART: usize = 2;
+    let text = "\\documentclass{article}\n\\begin{document}\nA first paragraph with a few words in it.\n\nA second \
+                paragraph that the edits change.\n\nA third paragraph that follows it.\n\nA fourth paragraph.\n\nA \
+                fifth paragraph, the last one.\n\\end{document}\n";
+    let gui = Gui::start("parts", &[("main.tex", text)]);
+    let uri = format!("file://{}", gui.dir.join("main.tex").to_string_lossy());
+    let part = format!("lsp.rows_per_message={PART}");
+    let reset = serde_json::json!({ "args": ["--set", part, "--set", "clock=2026-11-20T12:00", "-f", "main.tex"], "cwd": gui.dir });
+    gui.page("POST", "/__satex/lsp/reset?s=t", &reset.to_string());
+    gui.lsp(serde_json::json!({ "jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {} }));
+    let analyze = |method: &str, version: u32, text: &str| {
+        let doc = match method {
+            "textDocument/didOpen" => {
+                serde_json::json!({ "textDocument": { "uri": uri, "languageId": "latex", "version": version, "text": text } })
+            }
+            _ => {
+                serde_json::json!({ "textDocument": { "uri": uri, "version": version }, "contentChanges": [{ "text": text }] })
+            }
+        };
+        gui.lsp(serde_json::json!({ "jsonrpc": "2.0", "method": method, "params": doc }));
+        let all = gui.lsp(
+            serde_json::json!({ "jsonrpc": "2.0", "method": "satex/analyze", "params": { "first": uri, "typeset": uri } }),
+        );
+        let rows = all.into_iter().filter(|m| m["method"] == "satex/typesetRows" && m["params"]["uri"] == uri.as_str());
+        rows.map(|m| m["params"].clone()).collect::<Vec<_>>()
+    };
+    let rows_of = |m: &serde_json::Value| m["rows"].as_array().cloned().unwrap_or_default();
+    // the final rows of the messages `sent`: parts in turn, none over the limit, the last one says so
+    let whole = |sent: &[serde_json::Value]| -> (u64, Vec<serde_json::Value>) {
+        let parts: Vec<_> = sent.iter().filter(|m| m["preview"].is_null()).collect();
+        assert!(parts.len() > 1, "more rows than one part holds: {sent:?}");
+        for (k, m) in parts.iter().enumerate() {
+            assert_eq!((m["part"].as_u64(), m["more"].as_bool()), (Some(k as u64), Some(k + 1 < parts.len())), "{m}");
+            assert!(rows_of(m).len() <= PART && m["serial"] == parts[0]["serial"], "{m}");
+        }
+        (parts[0]["serial"].as_u64().expect("a serial"), parts.iter().flat_map(|m| rows_of(m)).collect())
+    };
+    let asked = |id: u32| {
+        let out = gui.lsp(serde_json::json!({ "jsonrpc": "2.0", "id": id, "method": "satex/typeset",
+            "params": { "textDocument": { "uri": uri } } }));
+        out.iter().find(|m| m["id"] == id).unwrap()["result"].clone()
+    };
+    let (serial, base) = whole(&analyze("textDocument/didOpen", 1, text));
+    assert_eq!(serde_json::Value::Array(base.clone()), asked(2), "the parts are the run's rows");
+    // a word typed in the second paragraph: its rows come first, as a patch of the rows above
+    let edited = text.replacen("the edits change", "an edit changed", 1);
+    let sent = analyze("textDocument/didChange", 2, &edited);
+    let patch = sent.iter().find(|m| !m["patch"].is_null()).unwrap_or_else(|| panic!("no patch: {sent:?}"));
+    let (at, fresh) = (patch["patch"]["at"].as_u64().unwrap() as usize, rows_of(patch));
+    let drop: Vec<usize> =
+        patch["patch"]["drop"].as_array().unwrap().iter().map(|k| k.as_u64().unwrap() as usize).collect();
+    assert_eq!((patch["patch"]["base"].as_u64(), patch["preview"].as_bool()), (Some(serial), Some(true)), "{patch}");
+    assert!(
+        fresh.len() < base.len() / 2 && fresh.iter().any(|r| r["detail"].to_string().contains("an edit changed")),
+        "{patch}"
+    );
+    assert!(
+        !drop.is_empty()
+            && drop.contains(&at)
+            && drop.iter().all(|&k| base[k]["detail"].to_string().contains("second")),
+        "{patch}"
+    );
+    // laid over the base it gives the edited run's own rows (a place on a page aside: the preview's run shipped none)
+    let unplaced = |rows: Vec<serde_json::Value>| -> Vec<serde_json::Value> {
+        let strip = |mut r: serde_json::Value| {
+            r.as_object_mut().map(|o| o.remove("placed"));
+            r
+        };
+        rows.into_iter().map(strip).collect()
+    };
+    let kept = base[at..].iter().enumerate().filter(|(k, _)| !drop.contains(&(at + k))).map(|(_, r)| r.clone());
+    let patched: Vec<_> = base[..at].iter().cloned().chain(fresh).chain(kept).collect();
+    // the edited run's own rows: those before the edit stand (`keep` of the rows `base`), the rest come
+    let (next, rest) = whole(&sent);
+    let last = sent.iter().find(|m| m["preview"].is_null()).unwrap();
+    let keep = last["keep"].as_u64().expect("rows kept") as usize;
+    assert_eq!((next, last["base"].as_u64()), (serial + 1, Some(serial)), "each final set has its own serial: {last}");
+    assert!(keep >= 1 && keep <= at, "the rows before the edited paragraph stand: {keep}, edit at row {at}");
+    let now: Vec<_> = base[..keep].iter().cloned().chain(rest).collect();
+    assert_eq!(serde_json::Value::Array(now.clone()), asked(3), "kept rows and sent rows are the run's rows");
+    assert_eq!(unplaced(patched), unplaced(now), "{sent:?}");
+}
