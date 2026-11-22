@@ -24,6 +24,7 @@ Every rule, with a link to its explanation below. The shape gives the severity: 
 | C007 | [`caused-library-error`](#caused-library-error) | <span class="sev sev-error" title="default: error">◆</span> <span class="cat cat-correctness">correctness</span> | — | — | package error caused by the document | 0.2.0 | — |
 | C025 | [`environment-mismatch`](#environment-mismatch) | <span class="sev sev-error" title="default: error">◆</span> <span class="cat cat-correctness">correctness</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix may change the meaning, only --unsafe-fixes applies it">U</span> | wrong environment closed | 0.1.0 | <a class="from" href="Chktex-Coverage" title="follows chktex warning 9, 10, 15">chktex 9, 10, 15</a> |
 | C046 | [`invalid-directive`](#invalid-directive) | <span class="sev sev-error" title="default: error">◆</span> <span class="cat cat-correctness">correctness</span> | — | — | unreadable satex directive | 0.2.0 | — |
+| C066 | [`malformed-bibliography-entry`](#malformed-bibliography-entry) | <span class="sev sev-error" title="default: error">◆</span> <span class="cat cat-correctness">correctness</span> | — | <span class="fix fix-safe" title="safe: the fix keeps the document's meaning, --fix applies it">S</span> | entry breaks the database's grammar | 0.2.6 | — |
 | C008 | [`math-still-open`](#math-still-open) | <span class="sev sev-error" title="default: error">◆</span> <span class="cat cat-correctness">correctness</span> | — | — | math mode left open | 0.2.0 | <a class="from" href="Chktex-Coverage" title="follows chktex warning 16">chktex 16</a> |
 | C055 | [`metadata-after-class`](#metadata-after-class) | <span class="sev sev-error" title="default: error">◆</span> <span class="cat cat-correctness">correctness</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix may change the meaning, only --unsafe-fixes applies it">U</span> | DocumentMetadata after documentclass | 0.2.5 | — |
 | C047 | [`missing-end`](#missing-end) | <span class="sev sev-error" title="default: error">◆</span> <span class="cat cat-correctness">correctness</span> | — | <span class="fix fix-safe" title="safe: the fix keeps the document's meaning, --fix applies it">S</span> | document has no end | 0.2.0 | — |
@@ -38,11 +39,14 @@ Every rule, with a link to its explanation below. The shape gives the severity: 
 | C017 | [`undefined-glossary-entry`](#undefined-glossary-entry) | <span class="sev sev-error" title="default: error">◆</span> <span class="cat cat-correctness">correctness</span> | — | — | glossary entry never declared | 0.1.0 | — |
 | C018 | [`unguarded-recursion`](#unguarded-recursion) | <span class="sev sev-error" title="default: error">◆</span> <span class="cat cat-correctness">correctness</span> | — | — | recursion that never stops | 0.1.0 | — |
 | C052 | [`bibliography-entry-missing-field`](#bibliography-entry-missing-field) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | — | — | cited entry lacks a required field | 0.2.0 | — |
+| C071 | [`broken-bibliography-crossref`](#broken-bibliography-crossref) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | — | — | crossref to no entry, or to an earlier one | 0.2.6 | — |
 | C019 | [`build-missing-custom-dependency`](#build-missing-custom-dependency) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | — | — | glossary files have no latexmk rule | 0.1.0 | — |
 | C020 | [`catcode-escapes-group`](#catcode-escapes-group) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | — | — | category code change outlives its group | 0.1.0 | — |
+| C069 | [`conflicting-bibliography-fields`](#conflicting-bibliography-fields) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | — | <span class="fix fix-safe" title="safe: the fix keeps the document's meaning, --fix applies it">S</span> <span class="fix fix-unsafe" title="unsafe: the fix may change the meaning, only --unsafe-fixes applies it">U</span> | fields that exclude each other | 0.2.6 | — |
 | C021 | [`conflicting-color-definition`](#conflicting-color-definition) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | — | — | color name defined twice | 0.2.0 | — |
 | C022 | [`delimiter-not-followed`](#delimiter-not-followed) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix may change the meaning, only --unsafe-fixes applies it">U</span> | \left or \right before a brace | 0.2.0 | <a class="from" href="Chktex-Coverage" title="follows chktex warning 43">chktex 43</a> |
 | C023 | [`duplicate-bibliography-entry`](#duplicate-bibliography-entry) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | — | — | key declared twice | 0.1.0 | — |
+| C067 | [`duplicate-bibliography-field`](#duplicate-bibliography-field) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | — | <span class="fix fix-safe" title="safe: the fix keeps the document's meaning, --fix applies it">S</span> | field given twice in one entry | 0.2.6 | — |
 | C050 | [`duplicate-bibliography-load`](#duplicate-bibliography-load) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | — | <span class="fix fix-safe" title="safe: the fix keeps the document's meaning, --fix applies it">S</span> | database loaded twice | 0.2.0 | — |
 | C051 | [`duplicate-bibliography-work`](#duplicate-bibliography-work) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix may change the meaning, only --unsafe-fixes applies it">U</span> | one work under two keys | 0.2.0 | — |
 | C024 | [`duplicate-label`](#duplicate-label) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix may change the meaning, only --unsafe-fixes applies it">U</span> | label defined twice | 0.1.0 | — |
@@ -51,6 +55,7 @@ Every rule, with a link to its explanation below. The shape gives the severity: 
 | C028 | [`expl3-signature-mismatch`](#expl3-signature-mismatch) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | — | — | expl3 argument signature mismatch | 0.1.0 | — |
 | C057 | [`graphic-without-alt`](#graphic-without-alt) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | — | — | graphic without alternative text | 0.2.5 | — |
 | C029 | [`ignored-verbatim-tail`](#ignored-verbatim-tail) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix may change the meaning, only --unsafe-fixes applies it">U</span> | text lost after verbatim end | 0.2.0 | <a class="from" href="Chktex-Coverage" title="follows chktex warning 31">chktex 31</a> |
+| C068 | [`invalid-bibliography-field-value`](#invalid-bibliography-field-value) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | — | <span class="fix fix-safe" title="safe: the fix keeps the document's meaning, --fix applies it">S</span> | value is not what the field takes | 0.2.6 | — |
 | C030 | [`math-script-braces`](#math-script-braces) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | — | <span class="fix fix-safe" title="safe: the fix keeps the document's meaning, --fix applies it">S</span> | script needs braces | 0.2.0 | <a class="from" href="Chktex-Coverage" title="follows chktex warning 3, 25">chktex 3, 25</a> |
 | C065 | [`missing-bibliography`](#missing-bibliography) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix may change the meaning, only --unsafe-fixes applies it">U</span> | citations without a bibliography | 0.2.5 | — |
 | C031 | [`missing-dependency`](#missing-dependency) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | — | <span class="fix fix-safe" title="safe: the fix keeps the document's meaning, --fix applies it">S</span> | package missing from the dependency file | 0.1.0 | — |
@@ -71,6 +76,7 @@ Every rule, with a link to its explanation below. The shape gives the severity: 
 | C036 | [`undefined-optional-content`](#undefined-optional-content) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | — | — | unknown optional content group | 0.1.0 | — |
 | C037 | [`undefined-reference`](#undefined-reference) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix may change the meaning, only --unsafe-fixes applies it">U</span> | reference to an undefined label | 0.1.0 | — |
 | C038 | [`uninstalled-package`](#uninstalled-package) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | — | — | package not installed | 0.2.0 | — |
+| C070 | [`unknown-bibliography-entry-type`](#unknown-bibliography-entry-type) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | — | — | entry type the style does not define | 0.2.6 | — |
 | C049 | [`unknown-code-language`](#unknown-code-language) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | — | — | unknown listings language | 0.2.0 | — |
 | C062 | [`unknown-package-name`](#unknown-package-name) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix may change the meaning, only --unsafe-fixes applies it">U</span> | package name misspelled | 0.2.5 | — |
 | C039 | [`unresolved-file`](#unresolved-file) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix may change the meaning, only --unsafe-fixes applies it">U</span> | file not installed | 0.1.0 | <a class="from" href="Chktex-Coverage" title="follows chktex warning 27">chktex 27</a> |
@@ -124,6 +130,7 @@ Every rule, with a link to its explanation below. The shape gives the severity: 
 | S032 | [`hand-set-quantity`](#hand-set-quantity) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-style">style</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix may change the meaning, only --unsafe-fixes applies it">U</span> | hand-set number and unit | 0.2.0 | — |
 | S052 | [`hand-written-author`](#hand-written-author) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-style">style</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix may change the meaning, only --unsafe-fixes applies it">U</span> | author name typed before a citation | 0.2.0 | — |
 | S051 | [`hand-written-reference`](#hand-written-reference) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-style">style</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix may change the meaning, only --unsafe-fixes applies it">U</span> | number typed after a reference name | 0.2.0 | — |
+| S069 | [`ignored-bibliography-field`](#ignored-bibliography-field) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-style">style</span> | — | <span class="fix fix-safe" title="safe: the fix keeps the document's meaning, --fix applies it">S</span> | field the style never reads of this type | 0.2.6 | — |
 | S033 | [`inconsistent-precision`](#inconsistent-precision) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-style">style</span> | — | — | different decimals in a column | 0.2.0 | — |
 | S068 | [`indistinct-colors`](#indistinct-colors) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-style">style</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix may change the meaning, only --unsafe-fixes applies it">U</span> | colors alike with color blindness | 0.2.5 | — |
 | S057 | [`itemize-described`](#itemize-described) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-style">style</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix may change the meaning, only --unsafe-fixes applies it">U</span> | labelled items in an itemize | 0.2.1 | — |
@@ -244,7 +251,7 @@ In the rule list, `S` marks a rule with a safe fix and `U` one with an unsafe fi
 One group per category, each with its first rules. A group's button shows the rest.
 
 <div class="fold" id="category-correctness">
-<h3 class="fold-head"><b>correctness</b> (65 rules)</h3>
+<h3 class="fold-head"><b>correctness</b> (71 rules)</h3>
 
 ### already-defined
 
@@ -365,6 +372,20 @@ See [chktex 9](https://www.nongnu.org/chktex/), [chktex 10](https://www.nongnu.o
 A directive is a comment, so TeX skips it: `%\satex@assert{cond}`, `%\satex@assume{cond}` or `%\satex@configure{key=value, ...}`. A condition compares two TeX numbers (`\thepage < 5`, `\value{section} >= 2`) or two dimensions when one has a unit (`\wd0 <= 3cm`), with `<`, `<=`, `=`, `!=`, `>=` or `>`. It may also be a TeX conditional such as `\ifdefined\foo`. `and`, `or` and `not` combine tests. `\the<counter>` is the counter's value, however `\pagenumbering` prints it.
 
 See [Assertions](#assertions).
+
+### malformed-bibliography-entry
+
+<p class="badges"><code class="num" title="rule number">C066</code> <span class="sev sev-error" title="default: error">default: error</span> <span class="cat cat-correctness">correctness</span> <span class="fix fix-safe" title="safe: the fix keeps the document's meaning, --fix applies it">S</span> <span class="since" title="first release">since 0.2.6</span></p>
+
+**entry breaks the database's grammar**
+
+An entry is `@type{key, name = value, …}`. A value is a number, a constant, `{…}` or `"…"` with balanced braces, or several joined by `#`. Where an entry breaks this (a missing comma, a brace or quote that never closes, a `}` too many inside quotes), BibTeX says `I was expecting a `,' or a `}'` and skips the rest of the entry: the fields after the break are lost, and an unclosed brace swallows the entries that follow. biber stops with a syntax error. biber also wants the comma after the key: `@misc{key}` is an error to it, not to BibTeX.
+
+Every entry of a loaded database is checked, cited or not. The message names the line where the reader gives up, which may be after the slip.
+
+Fix by repairing the entry. The quick fix adds the comma after a lone key.
+
+See [btxdoc § The database files](https://ctan.org/pkg/bibtex).
 
 ### math-still-open
 
@@ -526,11 +547,27 @@ Fix by adding the test that stops it, or by removing the self-reference.
 
 **cited entry lacks a required field**
 
-The style's data model requires fields per entry type: the `.bst`'s `output.check`s (BibTeX warns `empty journal in knuth84`), or biblatex's mandatory constraints (biber warns under `--validate-datamodel`). An entry with `crossref` or `xref` inherits fields and is not reported. Only cited entries are checked.
+The style's data model requires fields per entry type: the `.bst`'s `output.check`s (BibTeX warns `empty journal in knuth84`), or biblatex's mandatory constraints (biber warns under `--validate-datamodel`). An empty field counts as missing. A field counts under the name biber gives it (`journal` is `journaltitle`, `school` is `institution`), and a type under the one biber reads it as (`@phdthesis` is a `@thesis`). BibTeX renames nothing.
+
+A `crossref` parent hands its fields down: all of them with BibTeX, what biblatex's inheritance rules say with biber (a `@proceedings`' `title` arrives as `booktitle`, not as `title`). `xref` hands down nothing. Nothing is reported for biber while the document declares a source map or inheritance rules of its own. Only cited entries are checked.
 
 Fix by adding the field.
 
 See [btxdoc § Using BibTeX](https://ctan.org/pkg/bibtex), [biblatex §2.1](https://ctan.org/pkg/biblatex).
+
+### broken-bibliography-crossref
+
+<p class="badges"><code class="num" title="rule number">C071</code> <span class="sev sev-warning" title="default: warning">default: warning</span> <span class="cat cat-correctness">correctness</span> <span class="since" title="first release">since 0.2.6</span></p>
+
+**crossref to no entry, or to an earlier one**
+
+`crossref` names the entry a cited one inherits its missing fields from. Where no database declares that key, BibTeX stops with `A bad cross reference` and biber warns `I didn't find a database entry for crossref`: nothing is inherited. BibTeX compares keys without case, biber with it.
+
+BibTeX reads the databases once, in order. A parent that stands before its child and is not cited itself is passed by before the child names it, and BibTeX reports the same bad cross reference. [btxdoc](https://ctan.org/pkg/bibtex) asks for the parent after every entry that refers to it. biber has no such order.
+
+Fix by adding the entry, by correcting the key, or by moving the parent below its children.
+
+See [btxdoc § The entries](https://ctan.org/pkg/bibtex), [biblatex §2.4.1](https://ctan.org/pkg/biblatex).
 
 ### build-missing-custom-dependency
 
@@ -558,6 +595,20 @@ See [latexmk § CUSTOM DEPENDENCIES](https://ctan.org/pkg/latexmk), [glossaries 
 Fix by wrapping the change in `{…}` or `\begingroup…\endgroup`, or by restoring the old value explicitly. `satex query catcodes` shows the current table.
 
 See [The TeXbook, chapter 5](https://ctan.org/pkg/texbook).
+
+### conflicting-bibliography-fields
+
+<p class="badges"><code class="num" title="rule number">C069</code> <span class="sev sev-warning" title="default: warning">default: warning</span> <span class="cat cat-correctness">correctness</span> <span class="fix fix-safe" title="safe: the fix keeps the document's meaning, --fix applies it">S</span> <span class="fix fix-unsafe" title="unsafe: the fix may change the meaning, only --unsafe-fixes applies it">U</span> <span class="since" title="first release">since 0.2.6</span></p>
+
+**fields that exclude each other**
+
+Some fields say the same thing twice, and the reader takes one. A `.bst` checks its pairs itself (`either.or.check`): BibTeX warns `can't use both author and editor fields` for a `@book`, and `can't use both volume and number fields`. biber renames BibTeX's field names to biblatex's (`journal` to `journaltitle`): where an entry gives both, the old name is dropped. A `date` carries the year and the month: biber warns `Overwriting field 'year' with year value from field 'date'` where a `year` or `month` beside it says something else.
+
+The pairs come from the style: the `.bst`'s checks, biblatex's source map.
+
+Fix by keeping one. The quick fix deletes the field biber drops, safely where both say the same.
+
+See [btxdoc § The entries](https://ctan.org/pkg/bibtex), [biblatex §2.2.5](https://ctan.org/pkg/biblatex).
 
 ### conflicting-color-definition
 
@@ -596,6 +647,18 @@ Two `\bibitem`s with one key make LaTeX warn `Label … multiply defined` and ev
 Fix by renaming or deleting one of them.
 
 See [btxdoc § Using BibTeX](https://ctan.org/pkg/bibtex).
+
+### duplicate-bibliography-field
+
+<p class="badges"><code class="num" title="rule number">C067</code> <span class="sev sev-warning" title="default: warning">default: warning</span> <span class="cat cat-correctness">correctness</span> <span class="fix fix-safe" title="safe: the fix keeps the document's meaning, --fix applies it">S</span> <span class="since" title="first release">since 0.2.6</span></p>
+
+**field given twice in one entry**
+
+An entry that gives a field twice keeps one of the two. BibTeX reads the first and warns `I'm ignoring knuth84's extra "title" field`. biber reads the last and says nothing. A database moved between the two changes what is printed.
+
+Fix by deleting one. The quick fix deletes the one the document's reader does not read, so the output stays as it is.
+
+See [btxdoc § The database files](https://ctan.org/pkg/bibtex).
 
 ### duplicate-bibliography-load
 
@@ -696,6 +759,20 @@ satex reports only where the text was really lost. It knows which environments t
 Fix by moving the text to the next line.
 
 See [chktex 31](https://www.nongnu.org/chktex/).
+
+### invalid-bibliography-field-value
+
+<p class="badges"><code class="num" title="rule number">C068</code> <span class="sev sev-warning" title="default: warning">default: warning</span> <span class="cat cat-correctness">correctness</span> <span class="fix fix-safe" title="safe: the fix keeps the document's meaning, --fix applies it">S</span> <span class="since" title="first release">since 0.2.6</span></p>
+
+**value is not what the field takes**
+
+A name list is names joined by `and`, each `First Last`, `Last, First` or `Last, Jr, First`. BibTeX warns `Too many commas in name` at a third comma and `has a comma at the end` at a closing one. biber skips the entry at a third comma or at two in a row. An `and` at the start, at the end or twice in a row joins no name: BibTeX prints it as part of a name, biber skips the entry. `others` stands for the rest only as the last name.
+
+With biblatex a value must also fit the datatype the data model declares for its field. biber warns about a `date` it cannot read (`2001-05-21`, a `/` range, ISO 8601-2), about a `year` or `month` that is no number (`month = {jan}` in braces is a word, bare it is the month constant), and about an ISBN whose check digit fails. Under `--validate-datamodel` it also rejects an `integer` field that is no number (`volume = {IV}`), an ISSN or ISMN with a wrong check digit and a value outside its field's pattern: these are notes. A value with a macro or braces in it is not judged.
+
+The quick fix drops stray `and`s and closing commas, and unbraces a month constant.
+
+See [btxdoc § The entries](https://ctan.org/pkg/bibtex), [biblatex §2.3](https://ctan.org/pkg/biblatex).
 
 ### math-script-braces
 
@@ -939,6 +1016,18 @@ Fix by running the command the finding gives, or `satex install`, which never ru
 
 See [TeX Live manual § tlmgr](https://tug.org/texlive/doc.html), [MiKTeX manual § miktex packages](https://docs.miktex.org/manual/).
 
+### unknown-bibliography-entry-type
+
+<p class="badges"><code class="num" title="rule number">C070</code> <span class="sev sev-warning" title="default: warning">default: warning</span> <span class="cat cat-correctness">correctness</span> <span class="since" title="first release">since 0.2.6</span></p>
+
+**entry type the style does not define**
+
+A `.bst` defines a function per entry type. For any other type BibTeX warns `entry type for "key" isn't style-file defined` and formats the entry with the style's fallback, if it has one. The standard styles know no `@online`. biblatex's data model declares its types, and biber reads some BibTeX types as one of them (`@phdthesis` as `@thesis`): any other becomes a `@misc`, with a warning under `--validate-datamodel`.
+
+Fix by using a type of the style.
+
+See [btxdoc § Entry types](https://ctan.org/pkg/bibtex), [biblatex §2.1](https://ctan.org/pkg/biblatex).
+
 ### unknown-code-language
 
 <p class="badges"><code class="num" title="rule number">C049</code> <span class="sev sev-warning" title="default: warning">default: warning</span> <span class="cat cat-correctness">correctness</span> <span class="since" title="first release">since 0.2.0</span></p>
@@ -1065,7 +1154,7 @@ See [pdftex § -shell-escape](https://ctan.org/pkg/pdftex).
 </div>
 
 <div class="fold" id="category-style">
-<h3 class="fold-head"><b>style</b> (68 rules)</h3>
+<h3 class="fold-head"><b>style</b> (69 rules)</h3>
 
 ### accent-on-dotted-letter
 
@@ -1638,6 +1727,20 @@ Where one label of that kind prints that very number, the fix writes `\cref` (`\
 An `\item` of a numbered list counts too, labelled or not, in enumitem's inline lists as well: `see item (b)` or `in step 2`, where one item prints `(b)` or `Step~2`. Its words are the list counter's (`enumi`, its cleveref name `item`) and the word its label format writes (`Step`). The fix puts a `\label` right after that `\item` and refers to it. A number with no word before it, `in 3.)`, is never read.
 
 See [The LaTeX Companion § 2.4](https://ctan.org/pkg/tlc3-examples), [cleveref § 2](https://ctan.org/pkg/cleveref).
+
+### ignored-bibliography-field
+
+<p class="badges"><code class="num" title="rule number">S069</code> <span class="sev sev-info" title="default: info">default: info</span> <span class="cat cat-style">style</span> <span class="fix fix-safe" title="safe: the fix keeps the document's meaning, --fix applies it">S</span> <span class="since" title="first release">since 0.2.6</span></p>
+
+**field the style never reads of this type**
+
+A style reads a fixed set of fields per entry type: what the `.bst`'s function for the type and the functions it calls name, or what biblatex's data model lists for the type. A field the style knows but does not read of this type is left out without a word: the `booktitle` of an `@article`, the `journal` of a `@book`. biber says `Invalid field 'booktitle' for entrytype 'article'` under `--validate-datamodel`. Often the entry has the wrong type.
+
+With BibTeX a field under biblatex's name is not read either (`journaltitle` where the style reads `journal`). A field no part of the style knows (`abstract`, `file`, a reference manager's own) is a note to yourself and not reported.
+
+Fix by deleting the field or by changing the type. The quick fix renames a field to the name the style reads.
+
+See [btxdoc § The entries](https://ctan.org/pkg/bibtex), [biblatex §2.1](https://ctan.org/pkg/biblatex).
 
 ### inconsistent-precision
 

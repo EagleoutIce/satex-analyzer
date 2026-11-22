@@ -8,6 +8,7 @@ static ALLOCATOR: satex::analysis::budget::Counted = satex::analysis::budget::Co
 // test across all cores and cargo links one test binary instead of 49.
 
 mod assertions;
+mod bibdb;
 mod budgets;
 mod build_lints;
 mod cache_agreement;

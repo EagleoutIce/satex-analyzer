@@ -230,6 +230,7 @@ error     correctness  C006    build-shell-escape-missing        build forbids n
 error     correctness  C007    caused-library-error              package error caused by the document        
 error     correctness  C025    environment-mismatch              wrong environment closed                    
 error     correctness  C046    invalid-directive                 unreadable satex directive                  
+error     correctness  C066    malformed-bibliography-entry      entry breaks the database's grammar         
 error     correctness  C008    math-still-open                   math mode left open                         
 error     correctness  C055    metadata-after-class              DocumentMetadata after documentclass        
 error     correctness  C047    missing-end                       document has no end                         
@@ -244,11 +245,14 @@ error     correctness  C016    undefined-environment             undefined envir
 error     correctness  C017    undefined-glossary-entry          glossary entry never declared               
 error     correctness  C018    unguarded-recursion               recursion that never stops                  
 warning   correctness  C052    bibliography-entry-missing-field  cited entry lacks a required field          
+warning   correctness  C071    broken-bibliography-crossref      crossref to no entry, or to an earlier one  
 warning   correctness  C019    build-missing-custom-dependency   glossary files have no latexmk rule         
 warning   correctness  C020    catcode-escapes-group             category code change outlives its group     
+warning   correctness  C069    conflicting-bibliography-fields   fields that exclude each other              
 warning   correctness  C021    conflicting-color-definition      color name defined twice                    
 warning   correctness  C022    delimiter-not-followed            \left or \right before a brace              
 warning   correctness  C023    duplicate-bibliography-entry      key declared twice                          
+warning   correctness  C067    duplicate-bibliography-field      field given twice in one entry              
 warning   correctness  C050    duplicate-bibliography-load       database loaded twice                       
 warning   correctness  C051    duplicate-bibliography-work       one work under two keys                     
 warning   correctness  C024    duplicate-label                   label defined twice                         
@@ -257,6 +261,7 @@ warning   correctness  C027    expl3-constant-set                expl3 constant 
 warning   correctness  C028    expl3-signature-mismatch          expl3 argument signature mismatch           
 warning   correctness  C057    graphic-without-alt               graphic without alternative text            
 warning   correctness  C029    ignored-verbatim-tail             text lost after verbatim end                
+warning   correctness  C068    invalid-bibliography-field-value  value is not what the field takes           
 warning   correctness  C030    math-script-braces                script needs braces                         
 warning   correctness  C065    missing-bibliography              citations without a bibliography            
 warning   correctness  C031    missing-dependency                package missing from the dependency file    
@@ -277,6 +282,7 @@ warning   correctness  C048    undefined-cref-format             cleveref has no
 warning   correctness  C036    undefined-optional-content        unknown optional content group              
 warning   correctness  C037    undefined-reference               reference to an undefined label             
 warning   correctness  C038    uninstalled-package               package not installed                       
+warning   correctness  C070    unknown-bibliography-entry-type   entry type the style does not define        
 warning   correctness  C049    unknown-code-language             unknown listings language                   
 warning   correctness  C062    unknown-package-name              package name misspelled                     
 warning   correctness  C039    unresolved-file                   file not installed                          
@@ -330,6 +336,7 @@ info      style        S031    duplicate-package                 package loaded 
 info      style        S032    hand-set-quantity                 hand-set number and unit                    
 info      style        S052    hand-written-author               author name typed before a citation         
 info      style        S051    hand-written-reference            number typed after a reference name         
+info      style        S069    ignored-bibliography-field        field the style never reads of this type    
 info      style        S033    inconsistent-precision            different decimals in a column              
 info      style        S068    indistinct-colors                 colors alike with color blindness           
 info      style        S057    itemize-described                 labelled items in an itemize                

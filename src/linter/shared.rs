@@ -199,6 +199,8 @@ pub struct Index<'a> {
     origins: RefCell<Vec<Option<&'static str>>>,
     live: OnceCell<Vec<bool>>,
     objects: OnceCell<Vec<(Span, Span, &'static str)>>,
+    /// The `.bib` databases and the style's model, for the rules on them.
+    pub(crate) bib: OnceCell<crate::linter::bibdb::Bib>,
 }
 
 impl<'a> Index<'a> {
@@ -227,6 +229,7 @@ impl<'a> Index<'a> {
             origins: RefCell::new(vec![None; analysis.files.len()]),
             live: OnceCell::new(),
             objects: OnceCell::new(),
+            bib: OnceCell::new(),
         }
     }
 

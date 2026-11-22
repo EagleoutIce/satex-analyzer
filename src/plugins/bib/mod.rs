@@ -43,6 +43,13 @@ pub struct Entry {
     pub file: String,
     /// The fields written bare: a number, a constant or a `#` concatenation.
     pub bare: Vec<String>,
+    /// Per field, its bytes in the database: where its name starts, and its value with
+    /// the delimiters.
+    pub at: Vec<(usize, usize, usize)>,
+    /// The entry's bytes, from its `@` to its close or its fault.
+    pub span: (usize, usize),
+    /// Where the entry breaks BibTeX's grammar: the byte, and what was expected there.
+    pub fault: Option<(usize, &'static str)>,
 }
 
 /// A database as BibTeX finds it: `⟨name⟩.bib` beside the document, or the
@@ -78,16 +85,17 @@ pub fn resolve(analysis: &Analysis, name: &str) -> Option<PathBuf> {
     bibinputs.dirs.iter().map(|dir| dir.join(&file)).find(|path| path.is_file())
 }
 
-/// The entries of a `.bib` file.  `@string`, `@preamble` and `@comment`
-/// declare no key; everything else is an entry whose key runs from the
-/// opening delimiter to the first comma (btxdoc, "The database files").
+/// The entries of a `.bib` file, read as BibTeX reads them (bibtex.web, "Reading the
+/// database file(s)").  `@string`, `@preamble` and `@comment` declare no key; everything
+/// else is an entry whose key runs from the opening delimiter to the first comma (btxdoc,
+/// "The database files").  An entry that breaks the grammar keeps the fields before the
+/// break, as BibTeX does, and says where it broke.
 pub fn entries(text: &str) -> Vec<Entry> {
     let mut out = Vec::new();
-    let mut line = 1u32;
-    let mut rest = text;
-    while let Some(at) = rest.find('@') {
-        line += count_lines(&rest[..at]);
-        rest = &rest[at + 1..];
+    let (mut line, mut counted, mut from) = (1u32, 0, 0);
+    while let Some(at) = text[from..].find('@').map(|i| from + i) {
+        from = at + 1;
+        let rest = &text[from..];
         let kind_len = rest.find(|c: char| !c.is_ascii_alphanumeric()).unwrap_or(rest.len());
         let kind = rest[..kind_len].to_ascii_lowercase();
         let after = rest[kind_len..].trim_start();
@@ -95,77 +103,141 @@ pub fn entries(text: &str) -> Vec<Entry> {
         if kind.is_empty() || matches!(kind.as_str(), "string" | "preamble" | "comment") {
             continue;
         }
-        let body = &after[open.len_utf8()..];
-        let end = body.find([',', '}', ')', '\n']).unwrap_or(body.len());
-        let key = body[..end].trim();
-        if !key.is_empty() {
-            let mut entry = Entry { key: key.to_string(), line, kind, ..Default::default() };
-            (entry.fields, entry.bare) = fields(&body[end..], if open == '(' { ')' } else { '}' });
-            for (name, value) in &entry.fields {
-                match name.as_str() {
-                    "title" => entry.title = unbraced(value),
-                    "author" => entry.author = unbraced(value),
-                    "year" => entry.year = value.clone(),
-                    "date" if entry.year.is_empty() => entry.year = value.chars().take(4).collect(),
-                    _ => {}
-                }
-            }
-            out.push(entry);
+        let close = if open == '(' { ')' } else { '}' };
+        let mut scan = Scan { text, at: text.len() - after.len() + 1, close };
+        scan.space();
+        let key = scan.take(|c| !c.is_whitespace() && c != ',' && (c != '}' || close == ')'));
+        if key.is_empty() {
+            continue;
         }
+        line += count_lines(&text[counted..at]);
+        counted = at;
+        let mut entry = Entry { key: key.to_string(), line, kind, ..Default::default() };
+        entry.fault = scan.fields(&mut entry).err().map(|expected| (scan.at, expected));
+        entry.span = (at, scan.at);
+        from = scan.at.max(from);
+        for (name, value) in &entry.fields {
+            match name.as_str() {
+                "title" if entry.title.is_empty() => entry.title = unbraced(value),
+                "author" if entry.author.is_empty() => entry.author = unbraced(value),
+                "year" if entry.year.is_empty() => entry.year = value.clone(),
+                _ => {}
+            }
+        }
+        if entry.year.is_empty() {
+            entry.year = field(&entry, &["date"]).unwrap_or_default().chars().take(4).collect();
+        }
+        out.push(entry);
     }
     out
 }
 
-/// The `name = value` fields of an entry's body, up to its `close`: a
-/// value in braces or quotes without them, or a bare word. Inner braces
-/// stay: `{\TeX}book` is not `\TeXbook`.
-fn fields(body: &str, close: char) -> (Vec<(String, String)>, Vec<String>) {
-    let (mut out, mut bare) = (Vec::new(), Vec::new());
-    let mut chars = body.char_indices().peekable();
-    loop {
-        while chars.next_if(|(_, c)| c.is_whitespace() || *c == ',').is_some() {}
-        let Some(&(_, c)) = chars.peek() else { break };
-        if c == close {
-            break;
-        }
-        let mut name = String::new();
-        while let Some((_, c)) = chars.next_if(|(_, c)| c.is_alphanumeric() || "-_".contains(*c)) {
-            name.push(c);
-        }
-        while chars.next_if(|(_, c)| c.is_whitespace()).is_some() {}
-        if name.is_empty() || chars.next_if(|(_, c)| *c == '=').is_none() {
-            break;
-        }
-        while chars.next_if(|(_, c)| c.is_whitespace()).is_some() {}
-        let mut value = String::new();
-        let mut depth = 0;
-        let quoted = chars.next_if(|(_, c)| *c == '"').is_some();
-        let outer = usize::from(!quoted && chars.next_if(|(_, c)| *c == '{').is_some());
-        depth += outer;
-        if !quoted && outer == 0 {
-            bare.push(name.to_ascii_lowercase());
-        }
-        for (_, c) in chars.by_ref() {
+/// A reader over one entry's body, after its key.
+struct Scan<'a> {
+    text: &'a str,
+    at: usize,
+    close: char,
+}
+
+impl<'a> Scan<'a> {
+    fn peek(&self) -> Option<char> {
+        self.text[self.at..].chars().next()
+    }
+    fn take(&mut self, keep: impl Fn(char) -> bool) -> &'a str {
+        let rest = &self.text[self.at..];
+        let len = rest.find(|c| !keep(c)).unwrap_or(rest.len());
+        self.at += len;
+        &rest[..len]
+    }
+    fn space(&mut self) {
+        self.take(char::is_whitespace);
+    }
+    fn eat(&mut self, c: char) -> bool {
+        let found = self.peek() == Some(c);
+        self.at += if found { c.len_utf8() } else { 0 };
+        found
+    }
+    /// A field name or constant: BibTeX's identifier.
+    fn name(&mut self) -> &'a str {
+        self.take(|c| !c.is_whitespace() && !"\"#%'(),={}".contains(c))
+    }
+    /// A `{…}` or `"…"` piece without its delimiters. Braces balance in both, and count
+    /// whatever stands before them: BibTeX knows no `\{`.
+    fn delimited(&mut self, quoted: bool) -> Result<&'a str, &'static str> {
+        let start = self.at + 1;
+        let mut depth = 0i32;
+        for (i, c) in self.text[self.at..].char_indices() {
             match c {
-                '}' if depth == outer && outer == 1 => break,
-                '{' => {
-                    depth += 1;
-                    value.push(c);
-                }
-                '}' if depth > 0 => {
-                    depth -= 1;
-                    value.push(c);
-                }
-                '"' if quoted && depth == 0 => break,
-                c if !quoted && depth == 0 && (c == ',' || c == close) => break,
-                c => value.push(c),
+                '{' => depth += 1,
+                '}' => depth -= 1,
+                '"' if quoted && depth == 0 && i > 0 => depth = -1,
+                _ => continue,
+            }
+            if depth < 0 || (depth == 0 && !quoted) {
+                self.at += i + 1;
+                // a `}` that closes nothing inside quotes
+                return if quoted && c == '}' { Err("balanced braces") } else { Ok(&self.text[start..self.at - 1]) };
             }
         }
-        let value = value.split_whitespace().collect::<Vec<_>>().join(" ");
-        out.push((name.to_ascii_lowercase(), value));
+        self.at = self.text.len();
+        Err(if quoted { "a closing `\"`" } else { "a closing `}`" })
     }
-    (out, bare)
+    /// The `, name = value` fields up to the entry's close, into `entry`. `Err` names
+    /// what BibTeX expected where the entry breaks.
+    fn fields(&mut self, entry: &mut Entry) -> Result<(), &'static str> {
+        loop {
+            self.space();
+            if self.eat(self.close) {
+                return Ok(());
+            }
+            if !self.eat(',') {
+                return Err("`,` or the entry's close");
+            }
+            self.space();
+            if self.eat(self.close) {
+                return Ok(());
+            }
+            let name_at = self.at;
+            let name = self.name().to_ascii_lowercase();
+            if name.is_empty() || name.starts_with(|c: char| c.is_ascii_digit()) {
+                return Err("a field name");
+            }
+            self.space();
+            if !self.eat('=') {
+                return Err("`=`");
+            }
+            self.space();
+            let value_at = self.at;
+            let (mut pieces, mut inner, mut bare) = (0, "", false);
+            loop {
+                pieces += 1;
+                match self.peek() {
+                    Some(c @ ('{' | '"')) => inner = self.delimited(c == '"')?,
+                    _ => {
+                        bare = true;
+                        if self.name().is_empty() {
+                            return Err("a field value");
+                        }
+                    }
+                }
+                let end = self.at;
+                self.space();
+                if !self.eat('#') {
+                    // a constant, a number or a concatenation stays as written
+                    let value = if bare || pieces > 1 { &self.text[value_at..end] } else { inner };
+                    if bare || pieces > 1 {
+                        entry.bare.push(name.clone());
+                    }
+                    entry.fields.push((name, value.split_whitespace().collect::<Vec<_>>().join(" ")));
+                    entry.at.push((name_at, value_at, end));
+                    break;
+                }
+                self.space();
+            }
+        }
+    }
 }
+
 /// What the bibliography tool would hand the typesetting pass: a `.bbl`
 /// of the cited `entries`, written by satex itself and never read from a
 /// build. With `datalist` (biblatex's list name, from its `.bcf`) it is
@@ -486,5 +558,46 @@ mod tests {
         assert!(bbl.contains("giveni={A\\bibinitperiod\\bibinitdelim B\\bibinitperiod}"), "{bbl}");
         assert!(bbl.contains("familyi={{\\\"U}\\bibinitperiod}"), "{bbl}");
         assert!(bbl.contains("giveni={\\'E\\bibinitperiod}"), "{bbl}");
+    }
+
+    /// Intuition: the reader follows BibTeX's grammar, so an entry breaks exactly where BibTeX
+    /// says `I was expecting a `,' or a `}'`, keeps the fields before the break, and the next
+    /// `@` starts over. Pins the old reader, which stopped without a word at a missing comma
+    /// and at `"a" # b`, losing every field after it.
+    #[test]
+    fn entries_break_where_bibtex_does() {
+        let text = "@article{ok, journal = \"J\" # jan, year = 2001}\n\
+                    @article{nocomma, author = {A} title = {T}}\n\
+                    @article{quote, author = \"A }\", title = {T}}\n\
+                    @article{open, author = {A {B}, title = {T}}\n\
+                    @article{eaten, title = {T}}\n";
+        let e = entries(text);
+        let keys: Vec<&str> = e.iter().map(|e| e.key.as_str()).collect();
+        // the unclosed brace takes its entry's close, so BibTeX gives up at the next `@`: `eaten` is read
+        assert_eq!(keys, ["ok", "nocomma", "quote", "open", "eaten"]);
+        assert_eq!(e[0].fault, None);
+        assert_eq!(e[0].fields, [("journal".into(), "\"J\" # jan".into()), ("year".into(), "2001".into())]);
+        assert_eq!(e[0].bare, ["journal", "year"]);
+        let expected: Vec<Option<&str>> = e.iter().map(|e| e.fault.map(|f| f.1)).collect();
+        let comma = Some("`,` or the entry's close");
+        assert_eq!(expected, [None, comma, Some("balanced braces"), comma, None]);
+        assert_eq!(e[1].fields, [("author".into(), "A".into())]);
+        // the break is where the reader stands: the `t` of `title`, the `@` of the next entry
+        assert_eq!(e[1].fault.map(|f| &text[f.0..f.0 + 5]), Some("title"));
+        assert_eq!(e[3].fault.map(|f| &text[f.0..f.0 + 5]), Some("@arti"));
+    }
+
+    /// Intuition: a fix edits a field in place, so each field knows its bytes: where its name
+    /// starts and its value with the delimiters. A lone key is an entry to BibTeX.
+    #[test]
+    fn fields_know_their_bytes() {
+        let text = "@Book(k, Title = {A  {B}},\n  year=1984 )\n@misc{lone}";
+        let e = entries(text);
+        assert_eq!(e[0].fields, [("title".into(), "A {B}".into()), ("year".into(), "1984".into())]);
+        let (name, from, to) = e[0].at[0];
+        assert_eq!((&text[name..name + 5], &text[from..to]), ("Title", "{A  {B}}"));
+        assert_eq!(&text[e[0].at[1].1..e[0].at[1].2], "1984");
+        assert_eq!(&text[e[0].span.0..e[0].span.1], "@Book(k, Title = {A  {B}},\n  year=1984 )");
+        assert_eq!((e[1].key.as_str(), e[1].fault, e[1].fields.len()), ("lone", None, 0));
     }
 }

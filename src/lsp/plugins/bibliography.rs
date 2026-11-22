@@ -151,7 +151,7 @@ fn references(cx: &Cx, loads: &[Load], dbs: &[Db]) -> Json {
                 "author": author.replace(['{', '}'], ""), "year": e.year, "title": e.title,
                 "cited": cited.len(), "places": places(&cited), "sites": super::sites(cited.iter().map(|(f, l)| (f.as_str(), *l))),
                 "node": node,
-                "missing": crate::linter::bibdb::missing(e, &model),
+                "missing": crate::linter::bibdb::missing(e, dbs, &model),
                 "undefined": crate::linter::bibdb::undefined(e, dbs, &model),
                 "constants": constants,
                 "duplicates": dups,

@@ -478,6 +478,11 @@ impl<'a> Report<'a> {
         self.index
     }
 
+    /// The `.bib` databases the document loads and its style's data model.
+    pub fn bib(&self) -> &'a bibdb::Bib {
+        self.index.bib.get_or_init(|| bibdb::Bib::of(self.analysis, self.sources))
+    }
+
     pub fn edits(&self) -> fix::Edits<'a> {
         fix::Edits { analysis: self.analysis, sources: self.sources }
     }
