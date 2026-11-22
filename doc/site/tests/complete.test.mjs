@@ -17,6 +17,9 @@ test('rank: exact, prefix by tier, part, characters in order', () => {
   assert.deepEqual(labels(rank(items, 'emh')), ['myemph', 'emphasis', 'emph', 'eqmph'], 'characters in order: the own commands first');
   // case does not matter; the server's own order (sortText) breaks ties before length
   assert.deepEqual(labels(rank([{ label: 'labelb', sortText: '2' }, { label: 'LabelA', sortText: '1' }], 'LAB')), ['LabelA', 'labelb']);
+  // the case typed breaks a tie of equally close names: `\\Blind` offers `Blinddocument` before `blinddocument` (user 2026-11-22)
+  assert.deepEqual(labels(rank([{ label: 'blinddocument', sortText: '1' }, { label: 'Blinddocument', sortText: '2' }], 'Blind')), ['Blinddocument', 'blinddocument']);
+  assert.deepEqual(labels(rank([{ label: 'blinddocument', sortText: '2' }, { label: 'Blinddocument', sortText: '1' }], 'blind')), ['blinddocument', 'Blinddocument']);
   // a label's part, then what it is found by (a citation's title)
   assert.deepEqual(labels(rank([{ label: 'knuth84', filterText: 'The TeXbook' }, { label: 'texbook-notes' }], 'texbook')), ['texbook-notes', 'knuth84']);
 });

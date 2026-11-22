@@ -117,6 +117,16 @@ export default [
     do: [{ pdf: 'numbers.' }, INSERT, { wait: 300 }, row('Aligned'), { wait: 700 }, { shot: 'echo' }],
     expect: [{ changed: true }, { echoNot: /align/ }],
     steps: 'a paper, built, PDF Type mode; click after "numbers.", Insert, Math ▸ Aligned: no echo spells "align*" before the build lands' },
+  // a color over a word inside \textit from the page's menu: xcolor loaded, the word wrapped, the build clean (user 2026-11-22)
+  { kind: 'user', name: 'u-pdf-color-in-textit', pdf: true, source: '\\documentclass{article}\n\\begin{document}\n\\textit{In the end everything we} do has its benefits.\n\\end{document}\n', word: { word: 'everything' },
+    do: [{ select: 'end' }, { click: { word: 'end' }, right: true }, { wait: 300 }, { menu: ['Color', 'olive'] }, { wait: 1500 }, { build: true }],
+    expect: [{ has: /\\usepackage\{xcolor\}/ }, { has: /\\textit\{In the \\textcolor\{olive\}\{end\} everything we\}/ }, { built: true }],
+    steps: 'a line in \\textit, built, PDF Type mode; drag over "end", right-click, Color ▸ olive: xcolor loaded, \\textcolor{olive}{end} inside \\textit, builds' },
+  // Ctrl+M on the page: an inline formula begun at the caret, x typed in it, Right leaves it, y typed after (user 2026-11-22)
+  { kind: 'user', name: 'u-pdf-ctrl-m-then-right', pdf: true, source: '\\documentclass{article}\n\\begin{document}\nSome plain words here.\n\\end{document}\n', word: { word: 'plain' },
+    do: [{ pdf: 'plain', at: 'end' }, { chord: 'm' }, { wait: 600 }, { type: 'x' }, { wait: 600 }, { key: 'ArrowRight' }, { type: 'y' }, { wait: 800 }],
+    expect: [{ has: /plain\\\(x\\\)y words/ }],
+    steps: 'click after "plain", Ctrl+M, type x, Right, type y: plain\\(x\\)y' },
   { kind: 'user', name: 'u-pdf-ctrl-b-then-right', pdf: true, source: PAPER, word: { word: 'bold' },
     do: [{ select: 'bold' }, { chord: 'b' }, { wait: 800 }, { key: 'ArrowRight' }, { type: 'X' }, { wait: 800 }],
     expect: [{ has: /make \\textbf\{bold\}X later/ }],

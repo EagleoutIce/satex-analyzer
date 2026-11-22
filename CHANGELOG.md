@@ -44,6 +44,11 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 
 ### Analysis
 
+- `fix` **ACM papers end again, in seconds** (`acmart` with `\email` under `sigconf`: 9.6 s for the sample paper, where the run stopped at a limit). A command that puts nothing on a list (`\pdfnobuiltintounicode`, `\pdffontattr`, `\pdfcatalog`, `\afterassignment`) adds no atom to a formula, so the first formula of a size keeps its size with `cmap` loaded. The title box has its height and acmart's title loop is decided.
+- `fix` **A test assumed while a page is made teaches no value** (`page-one-arm`): the shipout's comparison of the page count with the last page's number made a widened count exactly 2^30, written to the `.aux` run after run. The count stays an interval.
+- `fix` **No false "loaded after `\begin{document}`" (P001) for a class on a cold cache.** A file that gave back more than 64 of its own tokens while the main file's peeked `\begin` waited (hyperxmp does) made `\begin{document}` stand at the `\documentclass` line. Each file has its own window now.
+- `fix` **Two-column classes ship the page at `\clearpage`.** What the output routine leaves on its list goes back to the page builder item by item, and a forced penalty there fires the routine again (tex.web § 1026): `\documentclass[twocolumn]{article}` with `x\clearpage` is on page 2 with one page shipped, as pdflatex has it, where satex said page 1 and none.
+- `fix` **Tokens TeX ignores (`\relax`) before a command no longer change the findings**; an argument read from unknown text that may be empty keeps both readings and never swallows the text behind it; a path dropped as not compiling no longer keeps the rest of a package out of its cache.
 - `fix` **Building package caches no longer counts toward `limits.seconds`**: a cold start caches every package once, and that one-time work no longer makes a big document's first run stop at the time limit.
 - `fix` **Code that assigns for long without reading source (a `\foreach` over many TikZ nodes) no longer aborts on memory**: the write log keeps one entry per name and group depth past `limits.write_log`.
 - `fix` **The allocation that takes a run past `limits.memory` is granted**, so the run stops with `limit-reached` instead of the process aborting.
@@ -118,8 +123,31 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 - `fix` **An error on one arm of a choice satex could not decide is a possible error, never a certain one.** False certain `never defined in this run` and library errors on such arms are gone.
 - `feat` **memoize: memoized pictures are read from their memos.** With the memos and externs of the last build present, satex runs memoize's own code on them and skips the picture's code; an edited picture is compiled again, the others stay memoized. A braced file name in `\openout` expands like `\edef`, so memoize's `\jobname.mmz` is found. A primitive behind `\pdfprimitive` runs once.
 
+### Lints
+
+- `fix` **`bibliography-entry-missing-field` follows each reader's rules.** An entry with `crossref` is checked against what its parent hands down: every field with BibTeX, what biblatex's inheritance rules say with biber (a `@proceedings`' `title` arrives as `booktitle`). `xref` hands down nothing, and a parent that is not there leaves the child as it is. Before, any entry with `crossref` or `xref` went unchecked. biber's `type` of a `@phdthesis` or `@techreport` is no longer asked for, a `@set` is not asked for its members' fields, and with BibTeX `journaltitle` no longer counts as `journal`. Two broken entries cited in one `\cite{a,b}` are both named.
+- `fix` **A `.bib` entry is read by BibTeX's grammar**: fields after `"a" # b` are no longer lost, and an `@` inside a value starts no entry.
+- `fix` **`\nocite{*}` with biblatex cites every entry** for the rules on databases.
+- `feat` **Six rules for broken `.bib` entries, checked against BibTeX and biber.** `malformed-bibliography-entry`: a missing comma, an unclosed brace or quote, and for biber a key without its comma. `duplicate-bibliography-field`: a field given twice, where BibTeX reads the first and biber the last. `invalid-bibliography-field-value`: name lists with a stray `and`, a closing comma or too many commas, and with biber a date, year, month, ISBN, ISSN or number that is none. `conflicting-bibliography-fields`: `author` beside `editor` or `volume` beside `number` where the `.bst` takes one, `journal` beside `journaltitle`, a `year` that disagrees with `date`. `unknown-bibliography-entry-type`: a type the style does not define. `broken-bibliography-crossref`: a `crossref` to no entry, or with BibTeX to a parent that stands before its child and is not cited. Quick fixes add the comma, delete the field that is not read, repair the name list and unbrace a month constant.
+- `feat` **`ignored-bibliography-field`** notes a field the style knows but never reads of the entry's type (`booktitle` of an `@article`), from the `.bst`'s functions or biblatex's data model. With BibTeX it renames `journaltitle` to the `journal` the style reads.
+
 ### Playground
 
+- `feat-fix` **Typing on the page keeps centered text centered** (`center`, `\centering`, captions) also before the build's line boxes are known, leaves an equation's number or `\tag` where it stands, and never pushes the page number down.
+- `feat` **Go to a page directly**: a page field beside the `Pages` menu scrolls to the number typed (Enter) and shows the page in view while scrolling.
+- `feat` **The build status names the file the analysis is in**: `(chapter2.tex line 106 of 182, 57.8 s)`.
+- `feat-fix` **`\usepackage{…}` completion offers every bundled package while a run goes on**, not only the last list kept for another prefix.
+- `feat` **blindtext and lipsum come with the first download**, so `\usepackage{blindtext}` completes and loads at once.
+- `feat` **Completion prefers the case typed**: `\Blind` offers `\Blinddocument` before `\blinddocument`.
+- `feat` **The color widget's mix field completes color names** at each `!` and has a slider for the first color's share.
+- `feat` **A drag on the page can start and end inside a word**: the selection takes those characters (the `m` and `p` of `example`), where the source spells the word as set.
+- `feat` **One color menu everywhere**: a selection's Color offers what TikZ's does: the document's colors, xcolor's, More colors, Mix… and Custom…; xcolor is loaded when missing.
+- `feat` **The typing echo follows the style typed at the caret**: a word typed into `\textit{…}`, `\textbf{…}`, `\texttt{…}`, after `\small` or `\fontsize`, or in a heading shows in that style and size before the build lands.
+- `feat` **Math ▸ Selection as text / Back to text / To inline math** in the editor's and the page's menu.
+- `feat` **Size ▸ Custom size…** asks for any size with its unit and writes `{\fontsize{v}{1.2v}\selectfont …}`.
+- `fix` **Coloring, formatting or resizing a selection that crosses the end of a group no longer breaks the source**: each balanced part is wrapped on its own (`\textit{… \textcolor{olive}{everything we}}\textcolor{olive}{ do}`).
+- `feat` **Ctrl/Cmd+M toggles math**, in the editor and on the pages: a selection goes into `\(…\)` (or its whole formula is unwrapped), at the caret an empty formula starts, or the caret leaves the formula past its closer. On the pages, Right just before a formula's closer steps out of the formula.
+- `fix` **The status line says what the probe phase is for**: "Learning command arguments (for completion and hovers)" instead of "Trying commands out".
 - `fix` **A graphic the playground has not fetched yet no longer makes Insert load graphics**: the package probed for `\includegraphics[width=…]` is judged by the call, not by whether the graphic's file is there.
 - `fix` **The PDF no longer blanks, dims or loses its layers while you type.** A build replaces the pages in place: each page keeps its last image until the new one is drawn, a build that gives no PDF leaves the last pages under its error, and the layers stay at full strength, placed on the build's own lines also while the text has moved on.
 - `fix` **A package the playground has not fetched yet is preferred to one that rejects the call**: an inserted `\includegraphics[width=…]` loads graphicx, not graphics, also before graphicx is in the bundle.

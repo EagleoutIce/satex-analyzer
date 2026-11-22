@@ -47,6 +47,8 @@ declare global {
       ask(x: number, y: number, value: string, what: string, done: (v: string) => void, always?: boolean): void;
       libEdit(text: string, all: string, loaded: string[], lib: string): { have: true } | { edit: PaEdit } | { line: string };
       colors(all: string, facts: Rec | null): { doc: [string, string][]; base: [string, string][]; more: [string, string][] };
+      /** One color menu for every place that picks a color: none, the document's, xcolor's, More, Mix…, Custom…. */
+      colorRows(ctx: PaCtx, now: string | null, pick: (c: string | null) => void, none?: string): PaItem[];
       mix(expr: string, known: Map<string, number[]>): number[] | null; fontSet(font: string | undefined, size: string | null): string | null;
       cut(text: string, from: number, to: number): PaEdit;
       styles(text: string): { name: string; body: string; line: number; note: string }[];
@@ -275,7 +277,7 @@ declare global {
     const a = text.lastIndexOf('\n', from - 1) + 1, e = text.indexOf('\n', to), b = e < 0 ? text.length : e + 1;
     return text.slice(a, from).trim() || text.slice(to, b).trim() ? { from, to, now: '' } : { from: a, to: b, now: '' };
   }
-  self.satexPageActions = { register: (p) => { plugins.push(p); }, plugins, on, setOn, groups, open, close, ask, pops: POPS, libEdit, colors, mix, fontSet, cut, styles };
+  self.satexPageActions = { register: (p) => { plugins.push(p); }, plugins, on, setOn, groups, open, close, ask, pops: POPS, libEdit, colors, colorRows, mix, fontSet, cut, styles };
 
   // ---------------------------------------------------------------- the plugins
   const TM = () => self.satexTikzMove;

@@ -34,6 +34,8 @@ declare global {
       insertPlan(text: string, all: string, kind: string, at: number, mode: InsMode): InsPlan | null;
       lineHabit(text: string): number; wrapLine(text: string, at: number, max: number, indent?: boolean): PaEdit | null;
       formatToggle(text: string, a: number, b: number, cmd: string): { edit: PaEdit; caret: number };
+      mathToggle(text: string, a: number, b: number): { edit: PaEdit; caret: number } | null;
+      pieces(text: string, a: number, b: number): [number, number][];
     };
   }
 }
@@ -210,7 +212,7 @@ declare global {
     const b = now.endsWith('\n' + indentAt(text, m.from)) && m.kind === 'inline' ? m.to + /^[ \t]*/.exec(text.slice(m.to))![0].length : m.to;
     return { from: a, to: b, now };
   }
-  const needsAms = (to: string) => /^(?:align|gather|multline|flalign)\*?$|^equation\*$|^[pbBvV]matrix$|^cases$/.test(to);
+  const needsAms = (to: string) => /^(?:align|gather|multline|flalign)\*?$|^equation\*$|^[pbBvV]matrix$|^cases$|^text$/.test(to);
   /** Math `m` as form `to`: the body kept, `&` before each row's first top-level relation into `align`, the `&` out of it. */
   function mathTo(text: string, m: RfMath, to: string) {
     let body = m.body;
@@ -418,7 +420,7 @@ declare global {
     const edits: PaEdit[] = [{ from: p, to: text.length - s, now: now.slice(p, now.length - s) }];
     return { edits, caret, open, widget: it.widget ?? null };
   }
-  self.satexRefactor = { formatToggle, inserts, insertSpot, insertPlan, lineHabit, wrapLine, blank, envs, group, wrapTarget, wrap, unwrap, slug, firstWords, mathAt, rows, targets, mathTo, mathEdit, needsAms, pkgEdit, matrixAt, matrixTo, extract, occurrences };
+  self.satexRefactor = { formatToggle, mathToggle, pieces, inserts, insertSpot, insertPlan, lineHabit, wrapLine, blank, envs, group, wrapTarget, wrap, unwrap, slug, firstWords, mathAt, rows, targets, mathTo, mathEdit, needsAms, pkgEdit, matrixAt, matrixTo, extract, occurrences };
 
   // ---------------------------------------------------------------- the plugins
   const PA = self.satexPageActions, R = self.satexRefactor, TARGETS = ['source', 'block', 'tikz-node', 'tikz-label', 'tikz-edge', 'forest-node', 'table-column'];
@@ -460,6 +462,12 @@ declare global {
       if (t.at == null) return [];
       const m = R.mathAt(ctx.text, t.at, t.end ?? t.at), x = R.matrixAt(ctx.text, t.at, t.end ?? t.at), items: PaItem[] = [];
       if (m) for (const to of R.targets(m)) items.push({ label: `To ${LABELS[to] ?? to}`, run: () => ctx.write([...ams(ctx, to), R.mathEdit(ctx.text, m, to)]) });
+      // text mode in and out (Ctrl/Cmd+M, mathToggle): a selection in math as upright text `\text{…}` (amsmath), the
+      // formula back to text; a text selection into inline math
+      const a = t.sel?.[0] ?? t.at, b = t.sel?.[1] ?? t.end ?? t.at, flip = R.mathToggle(ctx.text, m ? m.from + m.open.length : a, m ? m.to - m.close.length : b);
+      if (m && t.sel && a < b) items.push({ label: 'Selection as text', hint: '\\text{…}', run: () => ctx.write([...ams(ctx, 'text'), ...pieces(ctx.text, a, b).map(([x0, y0]) => ({ from: x0, to: y0, now: `\\text{${ctx.text.slice(x0, y0)}}` }))]) });
+      if (m && flip) items.push({ label: 'Back to text', hint: 'Ctrl+M', run: () => ctx.write([flip.edit]) });
+      if (!m && t.sel && a < b) items.push({ label: 'To inline math', hint: 'Ctrl+M', run: () => { const r = R.mathToggle(ctx.text, a, b); if (r) ctx.write([r.edit]); } });
       if (x) {
         const now = x.grid ? null : x.env, cols = Math.max(...R.rows(x.body).map((r) => r.split('&').length));
         const kinds = ['pmatrix', 'bmatrix', 'vmatrix', 'array', ...(cols <= 2 ? ['cases'] : [])].filter((k) => k !== now);
@@ -514,6 +522,55 @@ declare global {
     }
     return { edit: { from: a, to: b, now: `\\${cmd}{${text.slice(a, b)}}` }, caret: b + cmd.length + 2 };
   }
+  /** The parts of `a`..`b` that are balanced groups of their own: the selection is cut at a `}` that closes a group
+   * opened before it (`\\textit{In the end everything we} do`: `everything we`, ` do`), and before a `\\name{` whose
+   * group closes after it (the rest inside that group is a part of its own). A command wrapped around each part keeps
+   * every brace matched; blank parts go. */
+  function pieces(text: string, a: number, b: number): [number, number][] {
+    const out: [number, number][] = [];
+    const keep = (x: number, y: number) => { if (text.slice(x, y).trim()) out.push([x, y]); };
+    let start = a;
+    const open: number[] = [];
+    for (let i = a; i < b; i++) {
+      const c = text[i];
+      if (c === '\\') { i++; continue; }
+      if (c === '%') { const e = text.indexOf('\n', i); i = e < 0 ? b : e; continue; }
+      if (c === '{') open.push(i);
+      else if (c === '}') {
+        if (open.length) open.pop();
+        else { keep(start, i); start = i + 1; }
+      }
+    }
+    if (open.length) {
+      // the first group still open at the end: the part before it ends at its command, the rest is inside it
+      const u = open[0]!;
+      let cmd = u;
+      while (cmd > start && /[A-Za-z@*]/.test(text[cmd - 1]!)) cmd--;
+      if (text[cmd - 1] === '\\') cmd--;
+      keep(start, cmd);
+      for (const [x, y] of pieces(text, u + 1, b)) keep(x, y);
+      return out;
+    }
+    keep(start, b);
+    return out;
+  }
+  /** Ctrl/Cmd+M: math in and out. Outside math the selection goes into `\\(…\\)` (none: an empty one, the caret
+   * inside); inside, the caret leaves the formula past its closer (an empty one goes), and a selection of the whole
+   * body unwraps it. Null for a selection of part of a formula. */
+  function mathToggle(text: string, a: number, b: number): { edit: PaEdit; caret: number } | null {
+    const m = mathAt(text, a, b);
+    if (!m) {
+      const body = text.slice(a, b);
+      return { edit: { from: a, to: b, now: `\\(${body}\\)` }, caret: a + 2 + body.length };
+    }
+    if (a === b) {
+      if (!m.body.trim()) return { edit: { from: m.from, to: m.to, now: '' }, caret: m.from };
+      return { edit: { from: a, to: a, now: '' }, caret: m.to };
+    }
+    const head = m.from + m.open.length, foot = m.to - m.close.length;
+    if (text.slice(head, a).trim() || text.slice(b, foot).trim()) return null;
+    return { edit: { from: m.from, to: m.to, now: m.body.trim() }, caret: m.from + m.body.trim().length };
+  }
   function formatMenu(t: PaTarget, ctx: PaCtx): PaGroup[] {
     const s: [number, number] | null = t.sel;
     if (!s || s[0] === s[1]) return [];
@@ -522,7 +579,9 @@ declare global {
     const wrap = (pre: string, post = '}', pkg: string | null = null) => () => {
       const load = pkg ? pkgEdit(ctx.text, ctx.all, pkg) : { have: true as const };
       if ('line' in load) ctx.toast(`Needs ${load.line} in the preamble`);
-      ctx.write([...'edit' in load ? [load.edit] : [], { from: a, to: b, now: `${pre}${body}${post}` }]);
+      // each balanced part on its own: a selection across a group's end keeps every brace matched
+      const parts = pieces(ctx.text, a, b).map(([x, y]) => ({ from: x, to: y, now: `${pre}${ctx.text.slice(x, y)}${post}` }));
+      ctx.write([...'edit' in load ? [load.edit] : [], ...parts]);
     };
     const fmt: PaItem[] = math
       ? [{ label: 'Bold', hint: has('bm') ? '\\bm' : has('(?:amsmath|amsbsy|mathtools)') ? '\\boldsymbol' : '\\mathbf' }, { label: 'Roman', hint: '\\mathrm' }, { label: 'Sans serif', hint: '\\mathsf' }, { label: 'Monospace', hint: '\\mathtt' }]
@@ -531,12 +590,19 @@ declare global {
         ...has('ulem') ? [{ label: 'Underline', hint: '\\uline', run: wrap('\\uline{') }] : has('soul') ? [{ label: 'Underline', hint: '\\ul', run: wrap('\\ul{') }] : []];
     const around = formatAround(ctx.text, a, b);
     if (around) fmt.push({ label: 'Remove formatting', hint: ctx.text.slice(around[0], around[2]).trim(), run: () => ctx.write([{ from: around[0], to: around[1], now: ctx.text.slice(around[2], around[3]) }]) });
-    const c = PA.colors(ctx.all, ctx.facts);
     // color in math: \mathcolor where the kernel has it (2022-06 on), else a group, which every kernel takes
     const mc = (ctx.kernel ?? '') >= '2022-06';
-    const color = [...c.doc, ...c.base].map(([n, css]): PaItem => ({ label: n, swatch: css, run: math ? wrap(mc ? `\\mathcolor{${n}}{` : `{\\color{${n}}`, '}', 'xcolor') : wrap(`\\textcolor{${n}}{`, '}', 'xcolor') }));
+    // the one color menu (PA.colorRows, as TikZ's): the document's colors, xcolor's, More, Mix…, Custom…; none takes none
+    const color = PA.colorRows(ctx, null, (n) => { if (n) (math ? wrap(mc ? `\\mathcolor{${n}}{` : `{\\color{${n}}`, '}', 'xcolor') : wrap(`\\textcolor{${n}}{`, '}', 'xcolor'))(); }).slice(1);
     const font: PaItem[] = math ? [] : [['Roman', 'textrm'], ['Sans serif', 'textsf'], ['Typewriter', 'texttt']].map(([label, cmd]) => ({ label: label!, hint: `\\${cmd}`, run: wrap(`\\${cmd}{`) }));
     const size: PaItem[] = math ? [] : ['tiny', 'scriptsize', 'footnotesize', 'small', 'normalsize', 'large', 'Large', 'LARGE', 'huge', 'Huge'].map((z) => ({ label: z, hint: `{\\${z} …}`, run: wrap(`{\\${z} `) }));
+    // any size: `\fontsize{v}{1.2v}\selectfont`, the baseline at LaTeX's usual 1.2 of the size
+    if (!math) size.push({ label: 'Custom size…', hint: '\\fontsize', run: () => PA.ask(ctx.x, ctx.y, '12pt', 'the font size with its unit (12pt, 1.2em)', (v) => {
+      const m = /^\s*(\d+(?:\.\d+)?)\s*(pt|bp|mm|cm|in|em|ex|pc)\s*$/.exec(v);
+      if (!m) { ctx.toast('A size is a number with a unit: 12pt, 4mm, 1.2em'); return; }
+      const base = `${+(Number(m[1]) * 1.2).toFixed(2)}${m[2]}`;
+      wrap(`{\\fontsize{${m[1]}${m[2]}}{${base}}\\selectfont `)();
+    }) });
     return [{ title: 'Format', items: fmt }, { title: 'Color', items: color }, { title: 'Font', items: font }, { title: 'Size', items: size }].filter((g) => g.items.length);
   }
   PA.register({

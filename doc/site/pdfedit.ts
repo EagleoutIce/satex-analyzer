@@ -76,6 +76,7 @@ declare global {
       start(): object;
       mathAt(text: string, at: number, kind: string, inline?: string): [number, number, string, number];
       callAround(text: string, at: number): { name: string; from: number; open: number; close: number } | null;
+      styleAt(text: string, at: number): { it: boolean | null; bf: boolean | null; tt: boolean | null; size: number | null };
       leave(text: string, at: number, step: number): number | null;
       toggle(text: string, at: number, cmd: string): [number, number, string, number];
       displayEnd(text: string, at: number): boolean;
@@ -114,6 +115,7 @@ declare global {
       fit(pieces: Piece[], first: number, width: number, tolerance?: number): { breaks: number[]; ratios: number[] } | null;
       glue(before: string, space: number): { gap: number; st: number; sh: number };
       centered(box: [number, number], row: [number, number], growth: number): number;
+      centeredAt(text: string, at: number): boolean;
       tokens(text: string, from: number, to: number): Tok[];
       unset(text: string, from: number, to: number): string;
       aligned(toks: string[], words: string[]): number[];
@@ -1263,6 +1265,24 @@ declare global {
   }
   /** How far a centered row moves when it grows by `growth`: half of it, for a row as far from both edges of its line
    * box `box` (more than 4 bp, within 2 bp of each other); else 0. */
+  /** Whether the source centers the line at `at`: inside `center`, after `\\centering` in the group or environment in force,
+   * or in a caption's text (a one-line caption is centered). `flushleft`, `flushright`, `minipage`, `\\raggedright` and
+   * `\\raggedleft` end it. Comments are skipped. The typing echo moves a centered row by half its change. */
+  function centeredAt(text: string, at: number): boolean {
+    const s = text.slice(0, at).replace(/(^|[^\\])%.*$/gm, (m, a) => a + ' '.repeat(m.length - a.length));
+    const stack: { env?: string; on: boolean }[] = [{ on: false }];
+    const re = /\\(begin|end)\s*\{([^{}]*)\}|\\(centering|raggedright|raggedleft)(?![A-Za-z@])|\\caption\*?\s*(?:\[[^\]]*\])?\s*\{|\\[{}]|\\[A-Za-z@]+|[{}]/g;
+    for (let m; (m = re.exec(s));) {
+      const top = stack[stack.length - 1]!, t = m[0];
+      if (m[1] === 'begin') stack.push({ env: m[2], on: m[2] === 'center' ? true : /^(flushleft|flushright|minipage|tabular\*?|tabularx|verbatim)$/.test(m[2]!) ? false : top.on });
+      else if (m[1] === 'end') { const k = stack.map((f) => f.env).lastIndexOf(m[2]); if (k > 0) stack.length = k; }
+      else if (m[3]) top.on = m[3] === 'centering';
+      else if (/^\\caption/.test(t)) stack.push({ on: true });
+      else if (t === '{') stack.push({ on: top.on });
+      else if (t === '}' && stack.length > 1 && !top.env) stack.pop();
+    }
+    return stack[stack.length - 1]!.on;
+  }
   function centered(box: [number, number], row: [number, number], growth: number): number {
     const l = row[0] - box[0], r = box[1] - row[1];
     return l > 4 && Math.abs(l - r) < 2 ? growth / 2 : 0;
@@ -1800,6 +1820,38 @@ declare global {
     }
     return null;
   }
+  /** The text style at `at` as the source sets it: the calls around it (`\textit{`, `\emph{`, `\section{` …) and the
+   * switches before it in its group (`\itshape`, `\small`, `\fontsize{14pt}`), the nearest of each kind winning.
+   * `size` in pt (normalsize 10), `null` where nothing sets it. The typing echo draws in it until the build lands. */
+  const STYLE_CALL: Record<string, Partial<PeStyle>> = { textit: { it: true }, emph: { it: true }, textsl: { it: true }, textbf: { bf: true }, texttt: { tt: true }, textrm: { it: false, bf: false, tt: false }, textup: { it: false }, textmd: { bf: false }, textnormal: { it: false, bf: false, tt: false },
+    part: { bf: true, size: 24.88 }, chapter: { bf: true, size: 20.74 }, section: { bf: true, size: 14.4 }, subsection: { bf: true, size: 12 }, subsubsection: { bf: true, size: 10 }, paragraph: { bf: true }, title: { size: 17.28 } };
+  const STYLE_SWITCH: Record<string, Partial<PeStyle>> = { itshape: { it: true }, em: { it: true }, slshape: { it: true }, upshape: { it: false }, bfseries: { bf: true }, mdseries: { bf: false }, ttfamily: { tt: true }, rmfamily: { tt: false }, normalfont: { it: false, bf: false, tt: false },
+    tiny: { size: 5 }, scriptsize: { size: 7 }, footnotesize: { size: 8 }, small: { size: 9 }, normalsize: { size: 10 }, large: { size: 12 }, Large: { size: 14.4 }, LARGE: { size: 17.28 }, huge: { size: 20.74 }, Huge: { size: 24.88 } };
+  type PeStyle = { it: boolean | null; bf: boolean | null; tt: boolean | null; size: number | null };
+  function styleAt(text: string, at: number): PeStyle {
+    const s: PeStyle = { it: null, bf: null, tt: null, size: null };
+    const take = (o: Partial<PeStyle>) => { for (const k of Object.keys(o) as (keyof PeStyle)[]) if (s[k] === null) (s as any)[k] = o[k]; };
+    const pt = (v: string) => { const m = /^\s*([\d.]+)\s*(pt|bp|mm|cm|in)?/.exec(v); return m ? +m[1]! * ({ pt: 1, bp: 1.00375, mm: 2.845, cm: 28.45, in: 72.27 } as Record<string, number>)[m[2] ?? 'pt']! : null; };
+    let d = 0;
+    for (let i = at - 1; i >= Math.max(0, at - 4000); i--) {
+      const c = text[i];
+      if (text[i - 1] === '\\' && (c === '{' || c === '}')) continue;
+      if (c === '}') { d++; continue; }
+      if (c === '{') {
+        if (d > 0) { d--; continue; }
+        const m = /\\([A-Za-z@]+)\*?\s*(?:\[[^\]]*\])?$/.exec(text.slice(Math.max(0, i - 80), i));
+        if (m && STYLE_CALL[m[1]!]) take(STYLE_CALL[m[1]!]!);
+        continue;
+      }
+      if (d === 0 && c === '\\') {
+        const m = /^\\([A-Za-z]+)/.exec(text.slice(i, i + 24));
+        if (m?.[1] === 'fontsize' && s.size === null) s.size = pt(/^\\fontsize\s*\{([^}]*)\}/.exec(text.slice(i, i + 40))?.[1] ?? '');
+        else if (m && STYLE_SWITCH[m[1]!]) take(STYLE_SWITCH[m[1]!]!);
+        if (m?.[1] === 'begin' && /^\\begin\s*\{document\}/.test(text.slice(i, i + 20))) break;
+      }
+    }
+    return s;
+  }
   /** Right at the end of a command's argument leaves the command (the caret after its `}`), Left at its start leaves before
    * it (before its `\\`): the caret's next place, null when `at` is at neither. */
   function leave(text: string, at: number, step: number) {
@@ -1821,7 +1873,7 @@ declare global {
     }
     return [at, at, `\\${cmd}{}`, cmd.length + 2];
   }
-  self.satexPdfEdit = { callAround, leave, toggle, onRow, run, displayEnd, offsetAt, units, treeNodes, naming, entries, shortTitle, bothTitles, renamed, leaders, checked, grow, key, broken, scan, start, cells, cellStep, rowAfter, verbatim, verbatimAt, nearest, bands, joined, place, extent, failNote, room, form, measure, respec, halign, HALIGN, padding, gap, widthBp, snapWidth, resized, stepped, plain, editable, spans, sender, typed, erased, cluster, mathAt, boundaries, boundaryAt, inkSnap, locate, columns, wordAt, argAt, afterCall, callStart, defining, relaid, reflow, prose, refFacts, refSet, auxLabels, hunks, fit, glue, centered, apart, tokens, unset, aligned, changed, paragraph, mathRuns, footArg, footBack, footShown, blankPlace };
+  self.satexPdfEdit = { callAround, styleAt, centeredAt, leave, toggle, onRow, run, displayEnd, offsetAt, units, treeNodes, naming, entries, shortTitle, bothTitles, renamed, leaders, checked, grow, key, broken, scan, start, cells, cellStep, rowAfter, verbatim, verbatimAt, nearest, bands, joined, place, extent, failNote, room, form, measure, respec, halign, HALIGN, padding, gap, widthBp, snapWidth, resized, stepped, plain, editable, spans, sender, typed, erased, cluster, mathAt, boundaries, boundaryAt, inkSnap, locate, columns, wordAt, argAt, afterCall, callStart, defining, relaid, reflow, prose, refFacts, refSet, auxLabels, hunks, fit, glue, centered, apart, tokens, unset, aligned, changed, paragraph, mathRuns, footArg, footBack, footShown, blankPlace };
 })();
 
 // TikZ nodes moved by drag: where each `\node` and path label stands in the source, and the statement a drag

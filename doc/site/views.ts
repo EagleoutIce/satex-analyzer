@@ -581,8 +581,20 @@ const satexViews = (() => {
       if (s.expressions) {
         const row = el('label', 'tv-expr', '<span>mix</span>');
         const input = Object.assign(el('input', 'tv-input'), { placeholder: 'red!40!blue', spellcheck: false, value: s.name.includes('!') ? s.name : '' });
-        input.oninput = () => { const c = mix(input.value, s.defined); expr = c ? input.value.trim() : null; input.classList.toggle('tv-bad', !c && !!input.value); if (c) { hsb = toHsb(c); draw(false); } };
-        row.append(input);
+        // the defined colors offered at each name of the expression (`red!40!ora` completes the last name), a slider for the share
+        const names = el('datalist', '') as HTMLDataListElement, id = `tv-names-${Math.random().toString(36).slice(2, 8)}`;
+        names.id = id;
+        input.setAttribute('list', id);
+        const offer = () => { const head = /^(.*!)?[^!]*$/.exec(input.value)?.[1] ?? ''; names.innerHTML = s.defined.map((d: Rec) => `<option value="${esc(head + d.name)}"></option>`).join(''); };
+        const share = Object.assign(el('input', 'tv-share'), { type: 'range', min: '0', max: '100', step: '5', title: 'the share of the first color (red!40!blue: 40 % red)' });
+        const shareOf = () => { const m = /^([^!]+)!(\d+)(?:!(.*))?$/.exec(input.value.trim()); share.disabled = !m && !/^[^!]+$/.test(input.value.trim()); share.value = m ? m[2]! : '100'; };
+        share.oninput = () => { const m = /^([^!]+)(?:!\d+(?:!(.*))?)?$/.exec(input.value.trim()); if (!m) return; input.value = `${m[1]}!${share.value}${m[2] ? `!${m[2]}` : ''}`; input.oninput!(new Event('input')); };
+        share.onchange = () => settle();
+        const run = () => { const c = mix(input.value, s.defined); expr = c ? input.value.trim() : null; input.classList.toggle('tv-bad', !c && !!input.value); if (c) { hsb = toHsb(c); draw(false); } };
+        input.oninput = () => { run(); offer(); shareOf(); };
+        offer();
+        shareOf();
+        row.append(input, names, share);
         side.append(row);
       }
       box.append(pick, side);
@@ -3473,7 +3485,7 @@ button.tv-spec-value { cursor: pointer; } button.tv-spec-value:hover, button.tv-
 .tv-spec { font-family: ui-monospace, monospace; }
 .tv-specs { display: grid; gap: .1rem; font-family: ui-monospace, monospace; font-size: .75rem; color: var(--tv-muted); }
 .tv-specs b { display: inline-block; min-width: 3.2rem; color: var(--tv-fg); font-weight: 600; }
-.tv-expr { display: flex; align-items: center; gap: .4rem; font-size: .8rem; color: var(--tv-muted); } .tv-expr input { flex: 1; font-family: ui-monospace, monospace; }
+.tv-expr { display: flex; align-items: center; gap: .4rem; font-size: .8rem; color: var(--tv-muted); } .tv-expr input { flex: 1; font-family: ui-monospace, monospace; } .tv-expr input.tv-share { flex: 0 0 6rem; accent-color: var(--tv-accent, currentColor); } .tv-expr input.tv-share:disabled { opacity: .35; }
 .tv-defined { display: grid; gap: .45rem; max-height: 16rem; overflow: auto; }
 .tv-band { display: flex; flex-wrap: wrap; gap: .3rem; align-items: center; } .tv-band-name { flex: 0 0 100%; font-size: .72rem; color: var(--tv-muted); } .tv-band-name small { opacity: .7; }
 .tv-more { padding-left: .5rem; color: var(--tv-muted); }
@@ -3958,9 +3970,11 @@ button.tv-spec-value { cursor: pointer; } button.tv-spec-value:hover, button.tv-
   /** The server's rank of a command whatever is typed (tier, the document's uses, the seed of common commands): kept
    * with the item, so a list answered from kept items ranks as the server does; `~` (after digits) where none. */
   const prior = (i: Completion): string => i.data?.prior ?? '~';
+  const cased = (i: Completion, typed: string) => i.label.startsWith(typed) ? 2 : i.label.includes(typed) ? 1 : 0;
   const rank = <T extends Completion>(items: T[], typed: string, math = false): T[] => items
     .map((i) => [i, tier(i) + (math ? (mathItem(i) ? -3 : 3) : 0), closeness(i, typed.toLowerCase())] as const).filter((x) => x[2] !== null)
-    .sort((a, b) => unloaded(a[0]) - unloaded(b[0]) || a[2]! - b[2]! || a[1] - b[1] || byCode(prior(a[0]), prior(b[0])) || byCode(a[0].sortText ?? '', b[0].sortText ?? '') || a[0].label.length - b[0].label.length || a[0].label.localeCompare(b[0].label)).map((x) => x[0]);
+    // the case typed decides between equally close names: `\\Blind` takes `Blinddocument` before `blinddocument`
+    .sort((a, b) => unloaded(a[0]) - unloaded(b[0]) || a[2]! - b[2]! || cased(b[0], typed) - cased(a[0], typed) || a[1] - b[1] || byCode(prior(a[0]), prior(b[0])) || byCode(a[0].sortText ?? '', b[0].sortText ?? '') || a[0].label.length - b[0].label.length || a[0].label.localeCompare(b[0].label)).map((x) => x[0]);
   /** The kept list of a kind of place: the server's last items there, then the names in force it lacks (no snippet, they
    * add only names). An item asked elsewhere replaces no range here: its text goes in at the cursor's word, and the
    * server's order there (`sortText`, for another word) ranks nothing here: `\\emp` takes `emph` before `empty`. */

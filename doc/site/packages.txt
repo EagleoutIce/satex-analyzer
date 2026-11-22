@@ -9,6 +9,7 @@ tikz listings minted scrartcl.cls scrreprt.cls scrbook.cls scrlayer-scrpage
 amsmath amssymb amsthm graphicx hyperref geometry xcolor babel fontenc inputenc
 booktabs float caption subcaption natbib multirow siunitx fancyhdr
 glossaries makeidx imakeidx cleveref enumitem biblatex
+lipsum blindtext
 
 # slides
 beamer.cls
@@ -18,7 +19,7 @@ acmart.cls IEEEtran.cls llncs.cls elsarticle.cls cas-dc.cls revtex4-2.cls
 
 # often next to them
 biblatex csquotes mathtools bm tabularx longtable makecell array url xspace
-setspace lipsum todonotes algorithm2e algpseudocode wrapfig titlesec parskip
+setspace todonotes algorithm2e algpseudocode wrapfig titlesec parskip
 etoolbox pgfplots lmodern fontspec unicode-math polyglossia acronym pdflscape
 
 # asked for by name

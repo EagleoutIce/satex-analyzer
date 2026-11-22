@@ -397,6 +397,40 @@ test('insert: no blank line inside an environment, every kind, caret and after a
 
 // Intuition: Ctrl+B over a selection on the page bolds its source, and again unbolds it; the caret stays at the
 // argument's end inside, so Right leaves the call (`\textbf{bold}X`). Pins Ctrl+B over a page selection doing nothing.
+test('math: Ctrl+M enters math, leaves it past its closer, unwraps a whole body', () => {
+  // at a caret outside math: an empty inline formula, the caret inside
+  const t = 'Let x be big.', at = t.indexOf('x');
+  const on = R.mathToggle(t, at, at), w = edit(t, [on.edit]);
+  assert.equal(w, 'Let \\(\\)x be big.');
+  assert.equal(w.slice(on.caret), '\\)x be big.');
+  // inside an empty one: it goes
+  const off = R.mathToggle(w, on.caret, on.caret);
+  assert.equal(edit(w, [off.edit]), t);
+  // inside a formula with a body: the caret leaves past `\)`
+  const f = 'see \\(x+y\\) here', inside = f.indexOf('+');
+  const out = R.mathToggle(f, inside, inside);
+  assert.equal(edit(f, [out.edit]), f);
+  assert.equal(f.slice(out.caret), ' here');
+  // a selection: wrapped, and its whole body unwrapped again
+  const s = 'take x+y now', a = s.indexOf('x'), b = a + 3, wr = edit(s, [R.mathToggle(s, a, b).edit]);
+  assert.equal(wr, 'take \\(x+y\\) now');
+  const un = R.mathToggle(wr, wr.indexOf('x'), wr.indexOf('x') + 3);
+  assert.equal(edit(wr, [un.edit]), s);
+  // part of a body: nothing
+  assert.equal(R.mathToggle(wr, wr.indexOf('x'), wr.indexOf('x') + 1), null);
+});
+
+test('format: a selection across a group end is wrapped in balanced parts (user 2026-11-22)', () => {
+  const t = '\\textit{In the end everything we} do has its benefits', a = t.indexOf('everything'), b = t.indexOf(' has');
+  const parts = R.pieces(t, a, b).map(([x, y]) => t.slice(x, y));
+  assert.deepEqual(parts, ['everything we', ' do']);
+  // one that ends inside a later group: the part before its command, the rest inside it
+  const u = 'plain words \\textbf{bold part} tail', c = u.indexOf('words'), d = u.indexOf(' part');
+  assert.deepEqual(R.pieces(u, c, d).map(([x, y]) => u.slice(x, y)), ['words ', 'bold']);
+  // balanced: one part, as before
+  assert.deepEqual(R.pieces(u, 0, u.length).map(([x, y]) => u.slice(x, y)), [u]);
+});
+
 test('format: Ctrl+B wraps a selection and unwraps its own call', () => {
   const t = 'make bold later', a = t.indexOf('bold'), b = a + 4;
   const on = R.formatToggle(t, a, b, 'textbf'), w = edit(t, [on.edit]);

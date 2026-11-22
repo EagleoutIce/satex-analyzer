@@ -18,7 +18,7 @@ declare global {
       indentOf(r: { indented?: boolean; indent?: number; parindent?: number }): number | null;
       glueShort(spec: string): string;
       runsBy<T>(items: T[], key: (x: T) => string | null | undefined): [string, number, number][];
-      mathSpans(boxes: Box[]): { page: number; l: number; t: number; r: number; d: number; file: string; line: number }[];
+      mathSpans(boxes: Box[], displays?: [string, number, number][]): { page: number; l: number; t: number; r: number; d: number; file: string; line: number }[];
       fitLabels(labels: Rect[], fixed: Rect[], ink: Rect[]): (number | null)[];
       lineMap(from: string, to: string): ((n: number) => number) & { changed(n: number): boolean };
       SHOW: Record<string, [string, string, boolean, boolean]>;
@@ -177,7 +177,7 @@ declare global {
   /** Inline math as SyncTeX records it: a `$` record where math begins and one where it ends, in the order TeX shipped
    * them. One span per pair on a line, from the first to the second; math broken over lines runs to the first line's end
    * and from the next line's start. Its height is the line box's, a 7bp ascent and 2bp descent where none is found. */
-  function mathSpans(boxes: Box[]) {
+  function mathSpans(boxes: Box[], displays: [string, number, number][] = []) {
     // a mark's line is on its page: looked for among that page's lines (all lines per mark is quadratic in the document)
     const lines = Map.groupBy(boxes.filter((b) => b.kind === '(' && b.w > 0), (b) => b.page), out: ReturnType<Window['satexLayers']['mathSpans']> = [];
     const lineOf = (b: Box) => lines.get(b.page)?.find((o) => Math.abs(o.y - b.y) < 0.5 && o.x - 0.5 <= b.x && b.x <= o.x + o.w + 0.5);
@@ -190,6 +190,15 @@ declare global {
       const la = lineOf(a), lb = lineOf(b);
       put(a, a.x, la ? la.x + la.w : a.x);
       put(b, lb ? lb.x : b.x, b.x);
+    }
+    // a displayed formula leaves no `$` record: its boxes from its source lines (`displays`: file, first and last line),
+    // per page, without the widest where others stand in it (the display's line, out to its equation number)
+    for (const [file, from, to] of displays ?? []) {
+      const own = boxes.filter((b) => b.kind === '(' && b.w > 0 && b.line >= from && b.line <= to && (b.file === file || b.file.endsWith(`/${file}`) || file.endsWith(`/${b.file}`)));
+      for (const [page, bs] of Map.groupBy(own, (b) => b.page)) {
+        const wide = bs.length > 1 ? bs.reduce((m, b) => b.w > m.w ? b : m) : null, kept = bs.filter((b) => b !== wide);
+        out.push({ page, l: Math.min(...kept.map((b) => b.x)), r: Math.max(...kept.map((b) => b.x + b.w)), t: Math.min(...kept.map((b) => b.y - b.h)), d: Math.max(...kept.map((b) => b.y + b.d)), file, line: from });
+      }
     }
     return out;
   }

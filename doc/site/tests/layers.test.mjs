@@ -99,6 +99,10 @@ test('math layer: spans from the SyncTeX math records', async () => {
   const boxes = [B('(', 70, 100, 300, 7, 2), B('(', 70, 112, 300, 7, 2), B('$', 100, 100), B('$', 130, 100), B('$', 340, 100), B('$', 90, 112)];
   assert.deepEqual(L.mathSpans(boxes).map((s) => [s.l, s.r, s.t, s.d]), [[100, 130, 93, 102], [340, 370, 93, 102], [70, 90, 105, 114]]);
   assert.deepEqual(L.mathSpans([B('$', 10, 50)]), [], 'an unpaired record: no span');
+  // a display has no `$` records (user 2026-11-22: an equation stayed untinted): its source lines' boxes, the widest
+  // (the display's line out to its number) dropped
+  const D = (x, y, w, line) => ({ page: 2, file: 'ch/a.tex', line, kind: '(', x, y, w, h: 8, d: 3 });
+  assert.deepEqual(L.mathSpans([D(70, 200, 300, 33), D(150, 200, 100, 33), D(160, 195, 20, 33), D(70, 300, 300, 40)], [['a.tex', 31, 33]]).map((s) => [s.page, s.l, s.r, s.t, s.d]), [[2, 150, 250, 187, 203]]);
 });
 // The legend (user 2026-11-19): every layer's switch shows a swatch in its colour, read from a theme token so it follows
 // light and dark as its overlay does (pins: no layer without a `.sw-<id>` rule, no swatch with a bare hex colour).

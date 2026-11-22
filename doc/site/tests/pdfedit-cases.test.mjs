@@ -591,3 +591,33 @@ test('Insert math: align* on its own lines, no blank line inside', async () => {
   assert.equal(put('Some numbers.\n', 13)[0], 'Some numbers.\n\\begin{align*}\n  \\end{align*}\n');
   assert.deepEqual(E.mathAt('a b', 1, 'display'), [1, 1, '\\[\\]', 2]);
 });
+
+// Intuition: the typing echo draws a word typed into `\textit{` or after `\small` in that style before the build sets it
+// (user 2026-11-22: "the typeset preview is not doing italic, fontsize"). Pins the source-side style at the caret.
+test('styleAt: calls around the caret and switches before it in its group', () => {
+  const S = self.satexPdfEdit, at = (t, n) => S.styleAt(t, t.indexOf(n));
+  assert.deepEqual(at('a \\textit{b X} c', 'X'), { it: true, bf: null, tt: null, size: null });
+  assert.deepEqual(at('a \\textit{b} X', 'X'), { it: null, bf: null, tt: null, size: null });
+  assert.equal(at('{\\small a \\textbf{X}}', 'X').size, 9);
+  assert.equal(at('{\\small a \\textbf{X}}', 'X').bf, true);
+  assert.equal(at('{\\fontsize{14pt}{17pt}\\selectfont X}', 'X').size, 14);
+  assert.equal(at('\\section{Intro X}', 'X').size, 14.4);
+  assert.equal(at('\\textit{\\textup{X}}', 'X').it, false);
+  assert.equal(at('{\\small a} X', 'X').size, null);
+});
+
+// The typing echo keeps a centered row centered (user 2026-11-22): the source decides where the build's line boxes are
+// not known. `center` and `\centering` in force, a caption's text; `flushleft`, `minipage`, a closed group end it.
+test('centeredAt: center, \\centering in its group or environment, captions', () => {
+  const S = self.satexPdfEdit, at = (t, n) => S.centeredAt(t, t.indexOf(n));
+  assert.equal(at('\\begin{center}Hello X\\end{center}', 'X'), true);
+  assert.equal(at('\\begin{center}a\\end{center} X', 'X'), false, 'after the environment');
+  assert.equal(at('\\begin{figure}\\centering X\\end{figure}', 'X'), true);
+  assert.equal(at('\\begin{figure}\\centering\\end{figure} X', 'X'), false, '\\centering ends with its environment');
+  assert.equal(at('{\\centering a} X', 'X'), false, 'and with its group');
+  assert.equal(at('\\begin{figure}\\caption{A X}\\end{figure}', 'X'), true);
+  assert.equal(at('\\begin{center}\\begin{minipage}{3cm}X\\end{minipage}\\end{center}', 'X'), false);
+  assert.equal(at('\\begin{center}\\begin{itemize}\\item X\\end{itemize}\\end{center}', 'X'), true, 'a list inherits');
+  assert.equal(at('% \\begin{center}\nX', 'X'), false, 'a comment counts for nothing');
+  assert.equal(at('\\centering\\raggedright X', 'X'), false);
+});

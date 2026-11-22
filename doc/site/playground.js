@@ -1069,9 +1069,11 @@
     // A run keeps the worker busy, so a question would wait behind it. The last items answer,
     // else the bundle's classes and packages, else nothing, and the server's answer is kept for next time.
     const seeds = { documentclass: NAMES.classes, LoadClass: NAMES.classes, usepackage: NAMES.packages, RequirePackage: NAMES.packages }[place];
-    const now = kept ?? seeds?.map((label) => ({ label, kind: 17 })) ?? [];
+    // a load's name: the kept items (another prefix's answer) plus every bundled name, so a run never hides one
+    const named = kept?.map((i) => i.label);
+    const now = seeds ? [...(kept ?? []), ...seeds.filter((l) => !named?.includes(l)).map((label) => ({ label, kind: 17 }))] : kept ?? [];
     // the server is asked once the run ends, and an open list then takes its items (`refreshKept`)
-    if (running && kept && !patient) { keptShown = true; return kept; }
+    if (running && kept && !patient) { keptShown = true; return now; }
     if (!asked.has(k)) {
       asked.clear();
       asked.set(k, lsp('textDocument/completion', { textDocument: { uri: file }, position }).then((r) => {
@@ -1438,6 +1440,13 @@
       v.dispatch({ changes: [{ from, insert: '}' }, { from: a, to: b }], selection: { anchor: from + 1 }, userEvent: 'input.type' });
       return true;
     };
+    // Ctrl/Cmd+M in the editor: math in and out (R.mathToggle), as on the pages
+    const mathToggleKey = (v) => {
+      const sel = v.state.selection.main, r = self.satexRefactor.mathToggle(v.state.doc.toString(), sel.from, sel.to);
+      if (!r) return false;
+      v.dispatch({ changes: { from: r.edit.from, to: r.edit.to, insert: r.edit.now }, selection: { anchor: r.caret }, userEvent: 'input' });
+      return true;
+    };
     const closeEnvironment = view.EditorView.inputHandler.of((v, from, to, text) => {
       if (text !== '}' || from !== to || state.file in state.ro) return false;
       const s = v.state, line = s.doc.lineAt(from);
@@ -1553,7 +1562,7 @@
         if (c.doc) span.append(Object.assign(document.createElement('span'), { className: 'cm-doc', textContent: c.doc }));
         return span;
       } }, { position: 20, render: (c) => c.symbol ? Object.assign(document.createElement('span'), { className: 'cm-math-symbol', innerHTML: c.symbol }) : null }] }),
-        linkField, markField, flashField, swatchField, lensField, linkedField, heatField, mirror, st.Prec.high(closeEnvironment), view.keymap.of([{ key: 'Tab', run: tabCompletes }, { key: 'F2', run: () => { renameBox(); return true; } }, { key: 'Shift-F10', run: () => { const c = editor.coords() ?? { left: 40, bottom: 80 }; menuAt(c.left, c.bottom); return true; } }]),
+        linkField, markField, flashField, swatchField, lensField, linkedField, heatField, mirror, st.Prec.high(closeEnvironment), view.keymap.of([{ key: 'Tab', run: tabCompletes }, { key: 'Mod-m', run: mathToggleKey }, { key: 'F2', run: () => { renameBox(); return true; } }, { key: 'Shift-F10', run: () => { const c = editor.coords() ?? { left: 40, bottom: 80 }; menuAt(c.left, c.bottom); return true; } }]),
         EditorView.updateListener.of(smartWrap),
         EditorView.updateListener.of((u) => { if (u.docChanged) { resolves.clear(); changed(); } else if (u.selectionSet) explainSoon(); if (u.docChanged || u.selectionSet) { linkAround(u.view); scratchBubble(); } }), theme.of([]), lock.of([]), prefs.of(prefsOf())],
     });
@@ -6478,7 +6487,7 @@
   const pdfBeside = () => {
     if (!(running > 0 || act.phase === 'Analyzing')) return '';
     const [file, line] = (act.where ?? '').split(/:(?=\d*$)/), n = state.texts[Object.keys(state.texts).find((f) => file && file.endsWith(f)) ?? '']?.split('\n').length;
-    return ` · the analysis runs alongside${line ? ` (line ${line}${n ? ` of ${n}` : ''}, ${secs(performance.now() - act.started)})` : ''}`;
+    return ` · the analysis runs alongside${line ? ` (${file.split('/').pop()} line ${line}${n ? ` of ${n}` : ''}, ${secs(performance.now() - act.started)})` : ''}`;
   };
   /** The build under way (its root and project) and its status timer; the open file's text the last build was sent. */
   var pdfRunning = null, pdfTick = 0, pdfSent = null, pdfSentAll = {};
@@ -6944,6 +6953,13 @@
    * group: a scan of all records per question took minutes on a book (900 000 records, asked once per finding, row and key). */
   const pdfGroups = new WeakMap(), NONE = Object.freeze([]), NO_GROUPS = new Map();
   /** What `make` gives for `list` under `name`, made once per list. */
+  /** The displayed formulas of the open files: [file, first line, last line] (1-based), for the math layer. */
+  const pdfDisplays = () => Object.entries(state.texts ?? {}).flatMap(([file, text]) => {
+    const nl = [];
+    for (let i = text.indexOf('\n'); i >= 0; i = text.indexOf('\n', i + 1)) nl.push(i);
+    const line = (at) => { let lo = 0, hi = nl.length; while (lo < hi) { const m = (lo + hi) >> 1; if (nl[m] < at) lo = m + 1; else hi = m; } return lo + 1; };
+    return PE.mathRuns(text, 0, text.length).filter((r) => r.kind === 'display').map((r) => [file, line(r.s), line(r.e)]);
+  });
   const pdfKept = (list, name, make) => {
     if (!list) return null;
     let ix = pdfGroups.get(list);
@@ -7259,21 +7275,36 @@
     const el = pdfSel && pdfBody.querySelector(`.pdf-page[data-page="${pdfSel.page}"]`), img = el?.querySelector('img');
     if (!img?.naturalWidth) return;
     const [w, h] = pageSize(img);
-    el.insertAdjacentHTML('beforeend', PE.bands(pdfSel.words).map((b) => `<span class="pdf-sel" style="${pdfPlace((b.l - 0.5) / w, (b.t - 0.5) / h, (b.r - b.l + 1) / w, (b.d - b.t + 2) / h)}"></span>`).join(''));
+    el.insertAdjacentHTML('beforeend', PE.bands(pdfSelShown(img)).map((b) => `<span class="pdf-sel" style="${pdfPlace((b.l - 0.5) / w, (b.t - 0.5) / h, (b.r - b.l + 1) / w, (b.d - b.t + 2) / h)}"></span>`).join(''));
+  }
+  /** The selection's words as drawn: the first from its cut's first character, the last to its cut's end. */
+  function pdfSelShown(img) {
+    const ws = pdfSel.words, cut = pdfSel.cut;
+    if (!cut) return ws;
+    const out = ws.map((w) => [...w]), first = pdfBounds(img, ws[0]), last = pdfBounds(img, ws.at(-1));
+    out[0][1] = first[cut[0]] ?? out[0][1];
+    out[out.length - 1][3] = last[cut[1]] ?? out[out.length - 1][3];
+    return out;
   }
   pdfBody.addEventListener('pointerdown', (e) => {
     const img = e.button === 0 && !pdf?.slice && (e.target.closest('.pdf-page img') ?? (e.target.closest('.pdf-ov:not(.pdf-keys)') && e.target.closest('.pdf-page')?.querySelector('img')));
     if (!img?.naturalWidth || !pdf?.wordList) return;
     const page = +img.parentElement.dataset.page, words = pdfWordsOn(page), id = e.pointerId, [x0, y0] = [e.clientX, e.clientY];
     const at = (m) => { const [w, h] = pageSize(img), r = img.getBoundingClientRect(); return PE.nearest(words, (m.clientX - r.left) / r.width * w, (m.clientY - r.top) / r.height * h); };
-    const a = at(e);
+    // the character boundary of word `k` nearest the pointer (pdfBounds): a drag may start or end inside a word
+    const col = (k, m) => { const [w] = pageSize(img), r = img.getBoundingClientRect(), x = (m.clientX - r.left) / r.width * w, xs = pdfBounds(img, words[k]);
+      let best = 0; xs.forEach((v, i) => { if (Math.abs(v - x) < Math.abs(xs[best] - x)) best = i; }); return best; };
+    const a = at(e), ca = a >= 0 ? col(a, e) : 0;
     let on = false;
     const move = (m) => {
       if (m.pointerId !== id || !on && Math.hypot(m.clientX - x0, m.clientY - y0) < 5) return;
       if (!on) { on = true; pdfCaretOff(); }
       const b = at(m);
       if (a < 0 || b < 0) return;
-      pdfSel = { page, words: words.slice(Math.min(a, b), Math.max(a, b) + 1), of: pdf.wordList };
+      const cb = col(b, m), [c0, c1] = a < b ? [ca, cb] : a > b ? [cb, ca] : [Math.min(ca, cb), Math.max(ca, cb)];
+      if (a === b && c0 === c1) return;
+      const n = words[Math.max(a, b)][5].length;
+      pdfSel = { page, words: words.slice(Math.min(a, b), Math.max(a, b) + 1), of: pdf.wordList, cut: c0 > 0 || c1 < n ? [c0, c1] : null };
       pdfSelDraw();
     };
     const end = (u) => {
@@ -7314,6 +7345,14 @@
     const ws = pdfSel.words, text = editor.text(), from = pdfWordSrc(ws[0]), to = from && pdfWordSrc(ws.at(-1), from[0]);
     if (!to || to[1] - from[0] > 64 * ws.reduce((n, w) => n + w[5].length + 1, 0)) return null;
     const lead = /^[^\p{L}\p{N}]*/u.exec(ws[0][5])[0], tail = /[^\p{L}\p{N}]*$/u.exec(ws.at(-1)[5])[0];
+    // a cut inside a word: the source's characters, where it spells the word as set (no command inside it)
+    const cut = pdfSel.cut, edge = (w) => [/^[^\p{L}\p{N}]*/u.exec(w[5])[0].length, /[^\p{L}\p{N}]*$/u.exec(w[5])[0].length];
+    const whole = (w, s) => { const [l, t] = edge(w); return text.slice(s[0], s[1]) === w[5].normalize('NFKC').slice(l, w[5].length - t); };
+    if (cut && whole(ws[0], from) && whole(ws.at(-1), to)) {
+      const [l0] = edge(ws[0]), [, t1] = edge(ws.at(-1)), z = ws.at(-1)[5].length - t1;
+      const a = from[0] + Math.max(0, cut[0] - l0), b = to[1] - Math.max(0, z - cut[1]);
+      if (a < b) return [a, b];
+    }
     return [text.startsWith(lead, from[0] - lead.length) ? from[0] - lead.length : from[0], text.startsWith(tail, to[1]) ? to[1] + tail.length : to[1]];
   }
   /** The selection's text: its source where both ends are found in order, else the words as set. */
@@ -7578,9 +7617,29 @@
   pdfViewsSel.setAttribute('aria-label', 'view');
   pdfViewsSel.onchange = () => { pdfView = pdfViewsSel.value; pdfViewShow(); pdfViewsLabel(); };
   $('pdf-views').after(pdfViewsSel);
+  /** Go to page n: a number and Enter scrolls there; while scrolling it shows the page in view (`page 12 / 2086`). */
+  const pdfPageGo = Object.assign(document.createElement('input'), { id: 'pdf-page-go', type: 'number', min: '1', title: 'Go to page (Enter)', placeholder: 'page' });
+  pdfPageGo.setAttribute('aria-label', 'go to page');
+  pdfPageGo.style.width = '5.5em';
+  pdfViewsSel.after(pdfPageGo);
+  const pdfGoPage = (n) => {
+    const all = pdfBody.querySelectorAll('.pdf-page'), page = all[Math.min(Math.max(1, n), all.length) - 1];
+    page?.scrollIntoView({ block: 'start' });
+  };
+  pdfPageGo.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); pdfGoPage(Math.round(+pdfPageGo.value)); } });
+  pdfPageGo.addEventListener('change', () => pdfGoPage(Math.round(+pdfPageGo.value)));
+  /** The page whose top is nearest the list's top, shown in the field unless it is being typed in. */
+  pdfBody.addEventListener('scroll', (e) => {
+    const list = /** @type {HTMLElement} */ (e.target);
+    if (!list.classList?.contains('pdf-pages') || document.activeElement === pdfPageGo) return;
+    const top = list.getBoundingClientRect().top + 8, all = list.querySelectorAll('.pdf-page');
+    let lo = 0, hi = all.length - 1;
+    while (lo < hi) { const mid = (lo + hi + 1) >> 1; if (all[mid].getBoundingClientRect().top <= top) lo = mid; else hi = mid - 1; }
+    if (all.length) { pdfPageGo.value = String(lo + 1); pdfPageGo.max = String(all.length); }
+  }, { capture: true, passive: true });
   $('pdf-views').parentElement.classList.add('views-menu');
   /** The shown view's option says the build's errors too while another view is shown. */
-  const pdfViewsLabel = () => { for (const o of pdfViewsSel.options) o.textContent = o.dataset.label + (o.value === pdfViewsSel.value && o.value !== 'messages' && +pdfViewsSel.dataset.errors ? ` · ${plural(+pdfViewsSel.dataset.errors, 'error')}` : ''); };
+  const pdfViewsLabel = () => { pdfPageGo.hidden = pdfViewsSel.value !== 'pages'; for (const o of pdfViewsSel.options) o.textContent = o.dataset.label + (o.value === pdfViewsSel.value && o.value !== 'messages' && +pdfViewsSel.dataset.errors ? ` · ${plural(+pdfViewsSel.dataset.errors, 'error')}` : ''); };
   /** The layers drawn over the pages, each switched on its own and remembered per viewer. */
   const PDF_LAYERS = {
     envs: 'Where each environment begins and ends',
@@ -8381,7 +8440,7 @@
       }
     }
     if (pdfOverlayOn.math) {
-      for (const m of pdfKept(pdf?.boxes, 'math', () => self.satexLayers.mathSpans(pdf.boxes)) ?? []) box(m.page, 'pdf-math', m.l, m.t, m.r, m.d, `math · ${m.file}:${m.line}`);
+      for (const m of pdfKept(pdf?.boxes, 'math', () => self.satexLayers.mathSpans(pdf.boxes, pdfDisplays())) ?? []) box(m.page, 'pdf-math', m.l, m.t, m.r, m.d, `math · ${m.file}:${m.line}`);
       // display math has no SyncTeX math records: the source lines the run set in display mode (its rows' `math` marks), where SyncTeX placed them
       const shown = new Set();
       for (const r of finalRows ?? []) for (const ch of r.math?.some((m) => m.mode === 'display') ? rowChars(r) : []) {
@@ -10928,10 +10987,13 @@
     if (pdfBlocksOf?.pdf !== pdf || pdfBlocksOf.area !== area) {
       const map = new Map(pdfBlocks()), all = [...map.values()], top = Math.min(...all.map((b) => b.t)), low = Math.max(...all.map((b) => b.d));
       for (const [pg, b] of map) {
-        const foot = !area && pdfWordsOn(pg).filter((w) => w[2] > b.d + 18 && /^[\divxlc]+$/i.test(w[5])).sort((a, c) => c[4] - a[4])[0];
+        // the folio: the page's lowest word, a number alone on its line; the area ends above it, whatever other pages' rows reach
+        const words = area ? [] : pdfWordsOn(pg), last = words.reduce((m, w) => !m || w[4] > m[4] ? w : m, null);
+        const folio = last && /^[\divxlc]+$/i.test(last[5]) && !words.some((w) => w !== last && w[2] < last[4] && w[4] > last[2]) ? last : null;
+        const foot = folio && folio[2] > b.d + 18 ? folio : null;
         // the lines whose baselines stand in the area (not the header's or footer's): their tops and depths may stick out
         const own = area && pdfBoxesOn(pg).filter((x) => x.kind === '(' && x.w > 0 && x.y >= area.top && x.y <= area.bottom + 0.5);
-        map.set(pg, area ? { ...b, t: Math.min(area.top, ...own.map((x) => x.y - x.h)), d: Math.max(area.bottom, ...own.map((x) => x.y + x.d)) } : { ...b, t: Math.min(b.t, top), d: Math.max(b.d, low, foot ? foot[4] - 2.5 * 12 : 0) });
+        map.set(pg, area ? { ...b, t: Math.min(area.top, ...own.map((x) => x.y - x.h)), d: Math.max(area.bottom, ...own.map((x) => x.y + x.d)) } : { ...b, t: Math.min(b.t, top), d: Math.min(Math.max(b.d, low, foot ? foot[4] - 2.5 * 12 : 0), folio ? folio[2] - 1 : Infinity) });
       }
       pdfBlocksOf = { pdf, area, map };
     }
@@ -11346,7 +11408,7 @@
     let cx = verb ? w[1] + (w[3] - w[1]) / Math.max(1, shown.length) * col : pdfBounds(img, w)[col];
     // the pages lag the text: the row is laid out again at once with the text as now written, until the build lands
     // an environment begun in the typed text (Insert ▸ Aligned) is a block of its own, no text of the word's row
-    if (!set && typed !== bare(w) && !(verb && pdf?.text === g.text) && (verb || !/\\begin\s*\{/.test(typed)) && (verb || !/\\[A-Za-z@]*$/.test(g.text.slice(c.anchor, g.at)))) { cx = pdfEcho(img, w, plain(typed), plain(g.text.slice(c.anchor, g.at)).length, verb) ?? cx; pdfRelay(); }
+    if (!set && typed !== bare(w) && !(verb && pdf?.text === g.text) && (verb || !/\\begin\s*\{/.test(typed)) && (verb || !/\\[A-Za-z@]*$/.test(g.text.slice(c.anchor, g.at)))) { cx = pdfEcho(img, w, plain(typed), plain(g.text.slice(c.anchor, g.at)).length, verb, verb ? null : pdfStyleShift(g.text, c.anchor, g.at), PE.centeredAt(g.text, g.at)) ?? cx; pdfRelay(); }
     img.parentElement.insertAdjacentHTML('beforeend', `<span class="pdf-caret" style="left:${cx / pw * 100}%;top:${w[2] / ph * 100}%;height:${(w[4] - w[2]) / ph * 100}%"></span>`);
     pdfCaretAnchor();
   }
@@ -11406,7 +11468,14 @@
   }
   /** Draws word `w`'s row with `now` in its place (its edge punctuation kept): the row's words over a patch of the
    * page, each as wide as the page set it, the ones after moved by the change. The caret's x (`into` in `now`), in bp. */
-  function pdfEcho(img, w, now, into, verb = false) {
+  /** What the source sets at the caret that the page's word (at `from`) lacks: `\textit{`, `\textbf{`, `\small` …
+   * typed since the build (PE.styleAt). Null where both stand alike: the page's own face then. */
+  function pdfStyleShift(text, from, at) {
+    const a = PE.styleAt(text, from), b = PE.styleAt(text, at), on = (k) => b[k] ?? false, was = (k) => a[k] ?? false;
+    if (on('it') === was('it') && on('bf') === was('bf') && on('tt') === was('tt') && (b.size ?? 10) === (a.size ?? 10)) return null;
+    return { it: on('it'), bf: on('bf'), tt: on('tt'), scale: (b.size ?? 10) / (a.size ?? 10) };
+  }
+  function pdfEcho(img, w, now, into, verb = false, shift = null, centered = false) {
     const [pw, ph] = pageSize(img), px = img.getBoundingClientRect().height / ph;
     // a TikZ node's text grows about the node's centre: its row is the node's words, never another node's beside it
     const node = tikzPlaced().find((q) => q.page === w[0] && q.l - 1 <= w[1] && w[3] <= q.r + 1 && q.t - 1 <= w[2] && w[4] <= q.d + 1);
@@ -11418,20 +11487,25 @@
     // (an edge `now` already holds is written in the source it was read from: a caret past the word's comma,
     // `Hello,|`, types after it and never draws it twice)
     const lead0 = verb ? '' : /^[^\p{L}\p{N}]*/u.exec(w[5])[0], tail0 = verb ? '' : /[^\p{L}\p{N}]*$/u.exec(w[5])[0], core = w[5].slice(lead0.length, w[5].length - tail0.length);
-    const lead = now.startsWith(lead0 + core) ? '' : lead0, tail = now.startsWith(lead0 + core + tail0) || now.startsWith(core + tail0) ? '' : tail0, f = pdfFontOf(img, w), size = f.size;
+    const f0 = pdfFontOf(img, w);
+    // a style typed since the build (shift): the fallback face in it, scaled, until the build sets the word
+    const f = shift ? { family: shift.tt ? PDF_MONO_FONT : PDF_ECHO_FONT, fb: `${shift.bf ? 'bold ' : ''}${shift.it ? 'italic ' : ''}`, size: f0.size * shift.scale, base: f0.base, own: false } : f0;
+    const lead = now.startsWith(lead0 + core) ? '' : lead0, tail = now.startsWith(lead0 + core + tail0) || now.startsWith(core + tail0) ? '' : tail0, size = f.size;
     const ctx = pdfEchoCtx ??= document.createElement('canvas').getContext('2d');
-    const font = f.family;
-    ctx.font = `${size}px ${font}`;
+    const font = f.family, style = f.own ? '' : f.fb ?? '';
+    ctx.font = `${style}${size}px ${font}`;
     const width = (t) => pdfTextWidth(ctx, f, t, size);
     let laid = PE.relaid(row.map((x) => [x[1], x[3], x[5]]), k, lead + now + tail, width);
-    // a fill takes up the change (a contents line's dot leaders, the wide space before its page number at the row's
-    // end): what follows it stays, a dot the text now reaches goes
-    const dots = laid.findIndex(([, , t], i) => i > k && (/^[.·]+$/.test(t) || i === row.length - 1 && /^[\dixvlc]+$/i.test(t) && row[i][1] - row[i - 1][3] > 1.5 * size));
+    // a fill takes up the change (a contents line's dot leaders, the wide space before its page number or before an
+    // equation's number or \\tag at the row's end): what follows it stays, a dot the text now reaches goes
+    const dots = laid.findIndex(([, , t], i) => i > k && (/^[.·]+$/.test(t) || i === row.length - 1 && /^([\dixvlc]+|\(.*\))$/i.test(t) && row[i][1] - row[i - 1][3] > 1.5 * size));
     if (dots > 0) laid = laid.flatMap((q, i) => i < dots ? [q] : /^[.·]+$/.test(row[i][5]) && row[i][1] < laid[dots - 1][1] + 2 ? [] : [[row[i][1], row[i][3], row[i][5]]]);
     // a centered row (a caption, `\centering`, a node's text) stays centered: the whole row moves by half the change,
     // the words before the caret's redrawn too
     const all = line, before = all.filter((x) => x[1] < w[1] - 0.5);
-    const c = node || pdfCentered(pdfLineBox((img.__build ?? pdf)?.boxes, all), all) ? (laid.at(-1)[1] - row.at(-1)[3]) / 2 : 0;
+    // (the source says so where the build's line boxes are not known: a row clear of the page's left margin)
+    const margin = () => Math.min(...pdfImgWords(img).map((x) => x[1]));
+    const c = node || pdfCentered(pdfLineBox((img.__build ?? pdf)?.boxes, all), all) || centered && all[0][1] - margin() > 4 ? (laid.at(-1)[1] - row.at(-1)[3]) / 2 : 0;
     const set = (c ? [...before.map((x) => [x[1], x[3], x[5]]), ...laid] : laid.slice(k)).map(([a, b, t]) => [a - c, b - c, t]);
     const [l, r] = [Math.min(c ? all[0][1] : w[1], set[0][0]), Math.max(row.at(-1)[3], set.at(-1)[1])];
     // a word the change only moves is the page's own pixels, moved (an inline formula stays math, never `x42` in the
@@ -11443,9 +11517,9 @@
     set.forEach(([a, b, t], j) => { const v = src(j); if (j !== ti && v && v !== row[k]) pdfMoved.push({ from: v, page: pg, dx: a - v[1], dy: 0 }); });
     if (set[ti]) pdfPainted.push({ page: pg, x0: set[ti][0], t: w[2], d: w[4], end: set[ti][1] });
     const words = set.map(([a, b, t], j) => { const v = src(j), moved = v && v !== row[k] && v[5] === t && Math.abs(v[3] - v[1] - (b - a)) < 0.01;
-      return `<i style="left:${(a - l) / (r - l) * 100}%;width:${(b - a) / (r - l) * 100}%${moved ? pix(v, a, b) : ''}">${moved ? `<span style="visibility:hidden">${escape(t)}</span>` : (() => { const own = pdfOwns(ctx, f, t), wf = pdfWordFont(ctx, f, t, size); ctx.font = wf; const m = ctx.measureText(t).width; ctx.font = `${size}px ${font}`; return `<span style="transform:scaleX(${(b - a) / Math.max(0.1, m)})${own ? '' : `;font:${f.fb ?? ''}${size * (f.xs ?? 1) * px}px/1 ${PDF_ECHO_FONT}`}">${escape(t)}</span>`; })()}</i>`; }).join('');
+      return `<i style="left:${(a - l) / (r - l) * 100}%;width:${(b - a) / (r - l) * 100}%${moved ? pix(v, a, b) : ''}">${moved ? `<span style="visibility:hidden">${escape(t)}</span>` : (() => { const own = pdfOwns(ctx, f, t), wf = pdfWordFont(ctx, f, t, size); ctx.font = wf; const m = ctx.measureText(t).width; ctx.font = `${style}${size}px ${font}`; return `<span style="transform:scaleX(${(b - a) / Math.max(0.1, m)})${own ? '' : `;font:${f.fb ?? ''}${size * (f.xs ?? 1) * px}px/1 ${PDF_ECHO_FONT}`}">${escape(t)}</span>`; })()}</i>`; }).join('');
     const hue = pdfColours(img, l - 12, w[2], r + 12, w[4]);
-    pdfUnder(img.parentElement, `<span class="pdf-echo" style="left:${l / pw * 100}%;top:${w[2] / ph * 100}%;width:${(r - l + 1) / pw * 100}%;height:${(w[4] - w[2]) / ph * 100}%;font:${size * px}px/1 ${font};background:${pdfRgb(hue?.paper)};color:${pdfRgb(hue?.ink, '#000')}">${words}</span>`);
+    pdfUnder(img.parentElement, `<span class="pdf-echo" style="left:${l / pw * 100}%;top:${w[2] / ph * 100}%;width:${(r - l + 1) / pw * 100}%;height:${(w[4] - w[2]) / ph * 100}%;font:${style}${size * px}px/1 ${font};background:${pdfRgb(hue?.paper)};color:${pdfRgb(hue?.ink, '#000')}">${words}</span>`);
     const [a, b, t] = laid[k];
     return a - c + (b - a) * width(lead + now.slice(0, into)) / Math.max(0.1, width(t));
   }
@@ -11560,6 +11634,15 @@
     // middle), over a page selection its source wrapped or unwrapped (R.formatToggle)
     const fmt = (e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && { b: 'textbf', i: 'textit' }[e.key.toLowerCase()];
     if (fmt && pdfSel && !e.isComposing) { e.preventDefault(); pdfSelFormat(fmt); return; }
+    // Ctrl/Cmd+M: math in and out (R.mathToggle): over a selection its source wrapped in `\(…\)` or its whole
+    // formula unwrapped; at the caret an empty formula started, or the caret out past the formula's closer
+    const mathKey = (e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === 'm' && !e.isComposing;
+    if (mathKey && pdfSel) {
+      e.preventDefault();
+      const edit = pdfSelTake(pdfSel, (span, text) => { const r = self.satexRefactor.mathToggle(text, span[0], span[1]); return r ? [r.edit.from, r.edit.to, r.edit.now, r.caret - r.edit.from] : [span[0], span[0], '', 0]; });
+      if (edit) { pdfSelOff(); pdfEdit(() => edit); }
+      return;
+    }
     if (!pdfCaret || e.isComposing) return;
     const step = { ArrowLeft: -1, ArrowRight: 1 }[e.key];
     // the completion list: Up and Down choose, Enter or Tab takes, Escape closes
@@ -11615,6 +11698,17 @@
     }
     if (/^(Home|End|ArrowUp|ArrowDown)$/.test(e.key)) { e.preventDefault(); pdfQueue(() => caretLine(e.key)); return; }
     if (fmt) { e.preventDefault(); pdfEdit((text, at) => PE.toggle(text, at, fmt)); return; }
+    if (mathKey) { e.preventDefault(); pdfEdit((text, at) => { const r = self.satexRefactor.mathToggle(text, at, at); return r ? [r.edit.from, r.edit.to, r.edit.now, r.caret - r.edit.from] : [at, at, '', 0]; }); return; }
+    // Right just before a formula's closer (`\)`, `\]`, `$`, `$$`): out of the formula, past it
+    const closerAt = (text, at) => /^(?:\\\)|\\\]|\$\$?)/.exec(text.slice(at));
+    if (e.key === 'ArrowRight' && !e.shiftKey && !e.ctrlKey && !e.metaKey) {
+      const g = pdfSeen();
+      if (closerAt(g.text, g.at) && /math/.test(pdfWhy(g.text, g.at, g.at) ?? '')) {
+        e.preventDefault();
+        pdfEdit((text, at) => { const k = closerAt(text, at); return [at, at, '', k ? k[0].length : 0]; });
+        return;
+      }
+    }
     if (step || e.key === 'Backspace' || e.key === 'Delete') setTimeout(() => pdfMenu && pdfMenuShow());
     // Escape in math leaves the formula: the caret goes past its closer; else typing ends
     const closer = (text, at) => /\$\$?|\\\)|\\\]|\\end\{[^}]*\}/.exec(text.slice(at)), g = pdfSeen();
@@ -12841,9 +12935,9 @@
   }
   bootOpen('Loading the playground');
   /** The engine's phases (`Status::phase`, src/util/progress.rs) as the card names them. */
-  const STAGE = { format: 'kernel cache', package: 'package caches', preamble: 'preamble', document: 'document', lint: 'lint', probe: 'trying commands out' };
+  const STAGE = { format: 'kernel cache', package: 'package caches', preamble: 'preamble', document: 'document', lint: 'lint', probe: 'learning command arguments' };
   /** The same phases as the status line says them. */
-  const STAGE_LINE = { format: 'Building the kernel cache', package: 'Caching packages', preamble: 'Analyzing the preamble', document: 'Analyzing the document', lint: 'Checking the lint rules', probe: 'Trying commands out' };
+  const STAGE_LINE = { format: 'Building the kernel cache', package: 'Caching packages', preamble: 'Analyzing the preamble', document: 'Analyzing the document', lint: 'Checking the lint rules', probe: 'Learning command arguments (for completion and hovers)' };
   /** Work that starts this soon after other work ended, with no edit between, goes on in its timeline (a package fetched, the server restarted for it). */
   const FOLLOW_MS = 1500;
   function busy(name, text, { done = null, got = 0, all = 0, stage = null } = {}) {

@@ -3085,7 +3085,7 @@ fn command_items(
 ) -> (Vec<CompletionItem>, bool) {
     let takes = takes(analysis);
     let signature = signature_items(analysis, typed);
-    let typed = typed.to_lowercase();
+    let (cased, typed) = (typed, typed.to_lowercase());
     let mut used: crate::fixed::HashMap<crate::engine::tex::Sym, u32> = crate::fixed::HashMap::default();
     let mut document: crate::fixed::HashMap<crate::engine::tex::FileId, bool> = crate::fixed::HashMap::default();
     for e in &analysis.facts.expansions {
@@ -3174,10 +3174,11 @@ fn command_items(
             Some((it, row))
         })
         .collect();
-    // A name that starts with what is typed before one that only holds it, in math a math one first.
+    // A name that starts with what is typed before one that only holds it, in math a math one first,
+    // then the case typed (`\\Blind`: `Blinddocument` before `blinddocument`).
     items.sort_by_cached_key(|(i, _)| {
         let first = math && i.sort_text.as_deref().is_some_and(|s| s.starts_with('!'));
-        (!first, !i.label.to_lowercase().starts_with(&typed), i.sort_text.clone())
+        (!first, !i.label.to_lowercase().starts_with(&typed), !i.label.starts_with(cased), i.sort_text.clone())
     });
     let shown = analysis.settings.conventions.completion.shown;
     let more = items.len() > shown;
