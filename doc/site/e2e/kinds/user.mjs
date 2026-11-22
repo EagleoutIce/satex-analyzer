@@ -7,7 +7,8 @@
 //   the first `needle` · { type } keys typed one by one · { key } a named key · { chord: 'b', mods = 2 } Ctrl+key
 //   { paste } text inserted as one paste · { pdf: word, at: 'end'|'start'|'mid', clicks = 1 } a click on a page word
 //   (Type mode, after a build) · { ts: text } a click at the end of `text` in the Typeset view, Type mode on
-//   { select: word } a mouse drag over a page word · { drag: word, dx, dy } a mouse drag from a page word
+//   { select: word } a mouse drag over a page word · { js: expr } the page's answer kept (`expect: [{ js: regex }]`)
+//   · { watch: target, ms } the first text of `target` as it changes · { drag: word, dx, dy } a mouse drag from a page word
 //   { build: true } Compile, wait · { settle: true } the checks done · { findingsWithin: ms } the edit's findings shown
 //   in time · { wait: ms } · { shot: tag } · any other step of the drivers' vocabulary (page.mjs: { do: action },
 //   { click: target }, { until: cond } …)
@@ -111,6 +112,16 @@ export async function user(p, sc) {
         await sleep(800);
       } else if (a.build) last = await build(p);
       else if (a.wait) await sleep(a.wait);
+      else if (a.js) (res.info.js ??= []).push(await p.eval(a.js));
+      else if (a.watch) {
+        // the first item of a list as it changes for `ms`, sampled every frame: [ms since the step, text]
+        const seen = res.info.watched = [];
+        for (const t1 = Date.now(); Date.now() - t1 < (a.ms ?? 2000);) {
+          const v = (await d.run({ texts: a.watch }))[0] ?? null;
+          if (v !== (seen.at(-1)?.[1] ?? null)) seen.push([Date.now() - t1, v]);
+          await sleep(16);
+        }
+      }
       else if (a.findingsWithin) {
         // the findings of the text as it is now shown within `findingsWithin` ms of the last key
         const ok = await d.until({ findingsCurrent: true }, 120000), ms = Date.now() - t0;
@@ -125,7 +136,7 @@ export async function user(p, sc) {
     } catch (e) { fail(`step ${i + 1} ${J(a).slice(0, 80)}: ${String(e?.message ?? e).slice(0, 200)}`); await p.shot(`${sc.name}-step${i + 1}.png`).catch(() => {}); return res; }
     await sleep(a.pause ?? 150);
     const ms = Date.now() - t0;
-    if (!a.build && !a.settle && !a.wait && !a.findingsWithin && a.type == null && !a.until && ms > (sc.stepMs ?? 2000)) fail(`step ${i + 1} ${J(a).slice(0, 60)} took ${ms} ms`);
+    if (!a.build && !a.settle && !a.wait && !a.watch && !a.findingsWithin && a.type == null && !a.until && ms > (sc.stepMs ?? 2000)) fail(`step ${i + 1} ${J(a).slice(0, 60)} took ${ms} ms`);
     if (p.errors.length > errs0) fail(`step ${i + 1} ${J(a).slice(0, 60)}: page error ${J(p.errors.slice(errs0)[0])}`);
   }
   const t = await d.text();
@@ -152,6 +163,10 @@ export async function user(p, sc) {
       }
     }
     if (e.built) { last ??= await build(p); if (last.errors.length || /error/.test(last.status)) fail(`the build fails: ${J(last.status)} ${J(last.errors)}`); }
+    // `firstSeen` (a text or a regex): the list a `watch` step saw opened with it first and kept it there
+    if (e.firstSeen) { const w = res.info.watched ?? [], shown = w.filter((x) => x[1] != null); const ok = (v) => e.firstSeen instanceof RegExp ? e.firstSeen.test(v) : v === e.firstSeen; if (!shown.length || shown.some((x) => !ok(x[1]))) fail(`the first item went ${J(w)}, want ${J(e.firstSeen)} from the start`); }
+    // `js`: the last `js` step's answer matches
+    if (e.js && !e.js.test(String(res.info.js?.at(-1)))) fail(`the page answered ${J(res.info.js?.at(-1))}, want ${e.js}`);
     if (e.first) { const v = (await d.run({ texts: e.first }))[0] ?? null; if (v !== e.want) fail(`the first ${J(e.first.sel)} is ${J(v)}, want ${J(e.want)}`); }
     if (e.selected != null) { const v = (await d.run({ carets: true })).selected; if (v !== e.selected) fail(`the selection is ${J(v)}, want ${J(e.selected)}`); }
     if (e.caretSync) {

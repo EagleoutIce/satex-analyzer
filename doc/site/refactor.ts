@@ -344,6 +344,7 @@ declare global {
     { kind: 'table', label: 'Table', group: 'Floats', hint: '\\begin{table} tabular', body: '\\begin{tabular}{ll}\n  Name & Value \\\\\n  \\hline\n  a & 1 \\\\\n\\end{tabular}', wrap: true, widget: 'table' },
     { kind: 'itemize', label: 'Bulleted list', group: 'Lists', hint: '\\begin{itemize}', body: '\\begin{itemize}\n  \\item \x01\n\\end{itemize}', tight: true },
     { kind: 'enumerate', label: 'Numbered list', group: 'Lists', hint: '\\begin{enumerate}', body: '\\begin{enumerate}\n  \\item \x01\n\\end{enumerate}', tight: true },
+    { kind: 'description', label: 'Description list', group: 'Lists', hint: '\\begin{description}', body: '\\begin{description}\n  \\item[\x01] \n\\end{description}', tight: true },
     { kind: 'equation', label: 'Equation', group: 'Math', hint: '\\begin{equation}', body: '\\begin{equation}\n  \x01\n\\end{equation}', tight: true },
     { kind: 'align', label: 'Aligned equations', group: 'Math', hint: '\\begin{align}', body: '\\begin{align}\n  \x01\n\\end{align}', tight: true },
     { kind: 'heading', label: 'Section heading', group: 'Structure', hint: '\\section{…}', body: (text, at) => `\\${level(text, at)}{\x01}` },

@@ -861,7 +861,9 @@ def exports(satex, work, dist):
     `file<TAB>name<TAB>name…` line per file: the bundle holds a few packages only, so the browser's fixes and
     completion read the rest here (linter/shared.rs `exports`)."""
     # the index is what this binary's code reads off the trees (caches/exports.rs), not cached analysis: its key
-    return memo(work, "exports", [str(dist)], lambda: exports_run(satex, work), key=BINARY, later=b"")
+    # a fast build takes the last index, and makes one where there is none: without it the page's
+    # package fixes and completion know no package outside the bundle
+    return memo(work, "exports", [str(dist)], lambda: exports_run(satex, work), key=BINARY, stale=True)
 
 
 def exports_run(satex, work):

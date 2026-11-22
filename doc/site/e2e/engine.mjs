@@ -211,6 +211,16 @@ async function typeScenario(p, sc) {
         : how === 'over' ? A.y < B.y - 0.4 * A.px && Math.abs(A.x - B.x) < A.px : B.y > A.y + A.px;
       if (!ok) res.fails.push(`math preview: ${b} not ${how} ${a}: ${J([A, B].map((g) => [g.t, Math.round(g.x), Math.round(g.y), +g.px.toFixed(1), g.font.slice(0, 40)]))}`);
     }
+    // `inked`: glyphs whose ink, as their font draws them, stands inside the echo's row and is as tall as a glyph
+    // (a CMEX slot drawn for ∑ is a sliver above the row, `⌣`/`▁`)
+    for (const t of sc.inked ?? []) {
+      const g = at(t);
+      const ink = g && await p.eval(`(() => { const c = document.createElement('canvas').getContext('2d'); c.font = ${J(g.font)}; const m = c.measureText(${J(g.t)}), px = parseFloat(/([\\d.]+)px/.exec(${J(g.font)})[1]);
+        const cv = [...document.querySelectorAll('#play-pdf canvas.pdf-echo')].find((e) => (e.__texts ?? []).some((q) => q.t === ${J(g.t)})), r = cv.getBoundingClientRect(), k = r.width / Math.max(1, cv.width);
+        return { h: (m.actualBoundingBoxAscent + m.actualBoundingBoxDescent) / px, top: ${g.y} - m.actualBoundingBoxAscent * k, bottom: ${g.y} + m.actualBoundingBoxDescent * k, rt: r.top, rb: r.bottom }; })()`);
+      if (!ink) { res.fails.push(`math preview: no ${t} drawn`); continue; }
+      if (ink.h < 0.6 || ink.top < ink.rt - 1 || ink.bottom > ink.rb + 1) res.fails.push(`math preview: ${t} inked ${ink.h.toFixed(2)} em at ${ink.top.toFixed(0)}..${ink.bottom.toFixed(0)}, its row ${ink.rt.toFixed(0)}..${ink.rb.toFixed(0)} (${g.font.slice(0, 40)})`);
+    }
     for (const t of sc.italic ?? []) { const g = at(t); if (g && !/italic/.test(g.font) && g.font.includes(prose ?? '\0')) res.fails.push(`math preview: ${t} upright in the prose face (${g.font.slice(0, 50)})`); }
     const c = await p.eval(`(() => { const r = document.querySelector('#play-pdf .pdf-caret')?.getBoundingClientRect(); return r && [r.left, r.top]; })()`);
     const col = await p.eval(`(() => { const r = document.querySelector('#play-pdf .pdf-caret')?.closest('.pdf-page')?.getBoundingClientRect(); return r && [r.left, r.width]; })()`);

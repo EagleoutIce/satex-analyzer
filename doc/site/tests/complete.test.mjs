@@ -21,6 +21,15 @@ test('rank: exact, prefix by tier, part, characters in order', () => {
   assert.deepEqual(labels(rank([{ label: 'knuth84', filterText: 'The TeXbook' }, { label: 'texbook-notes' }], 'texbook')), ['texbook-notes', 'knuth84']);
 });
 
+// Intuition: one letter typed is the start of a name, not the one-letter accent of that name: `\t` lists `\textbf`
+// (the server's prior: the seed of common commands) before the tie accent `\t`. Pins the page's list after `\t`
+// opening with the accent (user 2026-11-22: useless names first, `\textbf` only later).
+test('rank: one letter typed is a prefix, never an exact name', () => {
+  const items = [{ label: 't', data: { prior: '1999999~' } }, { label: 'textbf', data: { prior: '19999990000' } }, { label: 'tt', data: { prior: '1999999~' } }];
+  assert.deepEqual(labels(rank(items, 't')), ['textbf', 't', 'tt']);
+  assert.deepEqual(labels(rank(items, 'tt')), ['tt', 'textbf'], 'two letters: the exact name first');
+});
+
 // Intuition: during a run a `\` completes from the server's last list there plus every name in force it lacks, each
 // once, the server's item (its snippet) winning. Pins names from the scope list hiding a snippet, or listed twice.
 test('kept: served items first, names in force added once, ranges dropped', () => {

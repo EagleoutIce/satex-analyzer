@@ -100,4 +100,14 @@ export default [
   { name: 'enter-in-list', source: `\\documentclass{article}\n\\begin{document}\n\\begin{itemize}\n\\item First thing here\n\\end{itemize}\n\\end{document}\n`, example: 'hello.tex',
     word: is('here'), src: /First thing here/, keys: ['Enter', 'Second'], marker: 'Second', expect: () => null, contains: [/\\item First thing here\n\\item Second/],
     steps: 'click the end of an item; Enter, type "Second": the next item' },
+  // user screenshot 2026-11-22 (Screenshot_20261122_095719): Enter after the last word, `\\textb`, Tab: the caret and the
+  // `\\textbf{…}` hint stood at the right end of the line above, not at the new paragraph's start (indented)
+  { name: 'par-textbf', source: '\\documentclass{article}\n\\newcommand{\\greet}[1]{Hello, #1!}\n\\begin{document}\n\\greet{world}\n\nThis is an example that i have thought about long and intense you know?\n\\end{document}\n', example: 'hello.tex',
+    word: is('know?'), src: /you know\?/, keys: ['Enter', '\\textbf{', 'Pause', 'Bold'], pauseMs: 2500, speed: 'human', keyMs: [90, 140], settle: true, expect: () => null, contains: [/know\?\n\n\\textbf\{Bold\}/],
+    steps: 'hello.tex with a sentence after the greeting; click after "know?", Enter, type \\textbf{ (its } follows), wait for the build of the empty \\textbf{}, type Bold: the caret stays where the new paragraph\'s first line starts (after its indent; was: the build of the empty paragraph put it under the end of the line above)' },
+  // the typing showcase (target/scratch/main-vid, 2026-11-22): `\\sum` echoed as `⌣` or `▁` (a glyph of the page's
+  // CMEX subset at another slot) and `x_42` upright as `x42` until the build lands
+  { name: 'demo-sum', source: DEMO.replace('the loss falls fast.', '$\\sum_k y_k$ falls.'), example: 'hello.tex', word: is('falls.'), src: /\$ falls\./, keys: [' ', 'Pause', '$\\sum_i x_42$'], pauseMs: 3000, keyMs: [70, 130],
+    expect: () => null, contains: [/\\sum_\{?i\}? ?x_\{?42\}?/], math: [['∑', 'i', 'sub'], ['x', '42', 'sub']], italic: ['x', 'i'], inked: ['∑'],
+    steps: 'the landing demo with a sum already built (CMEX on the page); click the end of "falls."; type " $\\sum_i x_42$": the echo draws ∑ (not another CMEX slot) with i lowered, x italic with 42 lowered' },
 ];

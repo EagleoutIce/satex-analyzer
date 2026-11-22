@@ -114,6 +114,11 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 
 ### Playground
 
+- `fix` **The page's first command list after `\` is the right one**: it is asked where the document's own commands are in force, and one typed letter is a prefix (`\t` puts `\textbf` first), so the list no longer reorders after ~1 s.
+- `fix` **The caret stays in a new paragraph begun by a command** (`\textbf{}` on a line of its own) instead of jumping to the end of the line above, and text typed there is echoed.
+- `fix` **`\sum` is no longer echoed as a wrong glyph while typing**: the echo draws math operators from the math fallback font, not the page's extension font, which holds several sizes per operator.
+- `fix` **Hover cards stay put while a build lands**: overlays move in place and a card follows its element at once.
+- `feat` **Insert ▸ Lists offers a description list.**
 - `fix` **A figure inserted in the playground loads graphicx, a forest tree loads forest**: the shipped package index lists the other packages that may provide a name (`+name`), tried when the usual one rejects the call, and the site build reads `conventions.definers`.
 - `perf` **Typeset rows a run sets as the last one did are not sent again**: a word typed at the end of a 737-page document is quiet after about 10 s instead of 11-12 s.
 - `fix` **The playground no longer runs out of memory on very long documents (700+ pages)**: the Typeset view's rows arrive in parts, and typing in a paragraph sends only that paragraph's rows (peak 6.1 GB to 1.9 GB natively at 737 pages).

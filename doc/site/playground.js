@@ -859,13 +859,15 @@
     const at = version;
     (async () => { for (const q of asks) { if (version !== at || pendingRun()) return; prefetching = true; completions(...q); prefetching = false; await asked.get(`${q[3]}|${version}|${q[0].line}:${q[0].character}`); } })().catch(() => {});
   }
-  /** The kinds of place the text offers a completion in, each with one offset to ask at: after a `\\`,
-   * and after the first `{` or `[` of each command (`ref{`, `cite{`, `color{`, `usepackage[`…). */
+  /** The kinds of place the text offers a completion in, each with one offset to ask at: after the last `\\` (the
+   * names in force where the body ends: the document's own commands, its uses; at the first, `\\documentclass`, only the
+   * kernel's are, and the list typed in the body was reordered once its own answer came), and after the first `{` or `[`
+   * of each command (`ref{`, `cite{`, `color{`, `usepackage[`…). */
   const PREFETCH_PLACES = 40;
   function askablePlaces(text) {
     const places = new Map();
-    const first = text.search(/\\[A-Za-z@]/);
-    if (first >= 0) places.set('\\', first + 1);
+    const last = [...text.matchAll(/\\[A-Za-z@]/g)].at(-1);
+    if (last) places.set('\\', last.index + 1);
     for (const m of text.matchAll(/\\([A-Za-z@]+)\*?([{[])/g)) {
       const place = argumentPlace(m[1], m[2]);
       if (!places.has(place) && places.size < PREFETCH_PLACES) places.set(place, m.index + m[0].length);
@@ -8111,26 +8113,34 @@
     pdfCaretDraw();
     if (pdfGripFocus) pdfBody.querySelector(`.pdf-col-grip[data-t="${pdfGripFocus[0]}"][data-k="${pdfGripFocus[1]}"]`)?.focus({ preventScroll: true });
   }
-  /** The overlay as a diff: an element whose page and markup are unchanged stays, so a toggled layer or an update that changes nothing touches nothing else. */
+  /** The overlay as a diff: an element whose page and markup are unchanged stays, so a toggled layer or an update that
+   * changes nothing touches nothing else. One that only moved (a build landed, the text reflowed: the same markup but
+   * its `style`) is moved in place, never replaced: the pointer's `:hover`, its cursor and the note its title opened
+   * stay on it (was: each landing swapped the hovered tint, the note closed and opened again, the cursor flickered). */
+  const pdfOvSame = (key) => key.replace(/^([^|]*\|<\w+[^>]*?) style="[^"]*"/, '$1');
   function pdfOverlayDraw() {
     if (!pdf?.boxes || !pdfBody.querySelector('.pdf-pages')) return;
     const wanted = [];
     if (!pdf.slice) pdfOverlayBuild((page, html) => wanted.push([page, html]));
-    const left = new Map();
+    const left = new Map(), gone = new Map();
     for (const [page, html] of wanted) left.set(`${page}|${html}`, (left.get(`${page}|${html}`) ?? 0) + 1);
     for (const el of pdfBody.querySelectorAll('.pdf-ov')) {
       const key = el.dataset.ovKey ?? '', n = left.get(key) ?? 0;
-      if (n > 0) left.set(key, n - 1); else el.remove();
+      if (n > 0) left.set(key, n - 1);
+      else { const same = pdfOvSame(key); if (!gone.has(same)) gone.set(same, []); gone.get(same).push(el); }
     }
     for (const [page, html] of wanted) {
       const key = `${page}|${html}`;
       if (!left.get(key)) continue;
       left.set(key, left.get(key) - 1);
+      const was = gone.get(pdfOvSame(key))?.shift();
+      if (was) { was.setAttribute('style', /^<\w+[^>]* style="([^"]*)"/.exec(html)?.[1] ?? ''); was.dataset.ovKey = key; continue; }
       const host = pdfBody.querySelector(`.pdf-page[data-page="${page}"]`);
       host?.insertAdjacentHTML('beforeend', html);
       const el = host?.lastElementChild;
       if (el) el.dataset.ovKey = key;
     }
+    for (const els of gone.values()) for (const el of els) el.remove();
   }
   var pdfTintsOf = null;
   const pdfRowLinesOf = new WeakMap();
@@ -10558,7 +10568,9 @@
     let para = words(p);
     // a new paragraph the build sets no word of yet (Enter at a paragraph's end, built before the next key): the
     // paragraph before goes on with the break typed, as before that build landed, the change at the caret
-    const back = B.slice(0, p).trimEnd().length, open = !para.length && /\n[ \t]*\n/.test(B.slice(back, p));
+    // (also one begun by commands that set no word yet: `\\textbf{|}` alone after the blank line)
+    const head = B.slice(0, p).search(/\n[ \t]*\n(?:[ \t]*\\[A-Za-z@]+\*?\{)*[ \t]*$/), back = head < 0 ? p : B.slice(0, head).trimEnd().length;
+    const open = !para.length && head >= 0;
     // the change starts at the caret at the latest, the text after it alike in both stays out of it (a build that
     // holds the text has no change: never the rest of the file, echoed as prose)
     if (open) { para = words(back); [P, S] = PE.changed(B, g.text, g.at); }
@@ -11147,7 +11159,10 @@
     if (pdfMathFor.get(img)?.key === key) return pdfMathFor.get(img);
     const ctx = pdfMathCtx ??= document.createElement('canvas').getContext('2d'), runs = [img, ...pdfBody.querySelectorAll('.pdf-page img')].flatMap((i) => i.__runs ?? []);
     const faceOf = (re) => { const r = runs.find((r) => re.test(pdfFaceName(r)) && pdfFaceUp(r)); return r ? `'${r.font}'` : null; };
-    const own = { it: faceOf(/CMMI|LMMathItalic|MathItalic/i), sy: faceOf(/CMSY|LMMathSymbols|MathSymbols/i), ex: faceOf(/CMEX|LMMathExtension|MathExtension/i), bf: faceOf(/CMBX|LMRoman\d*-Bold\b/i), rm: f.own ? f.face : null };
+    // no own extension face: CMEX holds each operator and delimiter in several sizes, and pdf.js gives the glyphs of one
+    // Unicode value (∑ text and display) one character between them, the rest moved away: `∑` drawn in it is another slot
+    // (`⌣`, `▁` in the typing showcase), cut by the row
+    const own = { it: faceOf(/CMMI|LMMathItalic|MathItalic/i), sy: faceOf(/CMSY|LMMathSymbols|MathSymbols/i), ex: null, bf: faceOf(/CMBX|LMRoman\d*-Bold\b/i), rm: f.own ? f.face : null };
     const xh = (font) => { ctx.font = `100px ${font}`; return ctx.measureText('x').actualBoundingBoxAscent; };
     const ratio = (fb) => { const r = own.rm && pdfHas(ctx, own.rm, 'x') ? xh(own.rm) / xh(fb) : 1; return r > 0.8 && r < 1.25 ? r : 1; };
     const fit = { rm: ratio(PDF_ECHO_FONT), sy: ratio(PDF_MATH_FONT) }, memo = new Map();
@@ -11159,10 +11174,12 @@
     };
     const metric = (t, face) => {
       const m = `${face} ${t}`, run = pdfMathRun.by.get(m);
-      // the run's own font metrics where it answered (pdfMathWidths), the canvas's ink otherwise
-      if (run) return [run[0], run[1], run[2]];
       if (!memo.has(m)) { ctx.font = font(face, t, 100); const v = ctx.measureText(t); memo.set(m, [v.width / 100, v.actualBoundingBoxAscent / 100, v.actualBoundingBoxDescent / 100]); }
-      return memo.get(m);
+      // the run's own font metrics where it answered (pdfMathWidths) and the glyph is drawn in that font; drawn in a
+      // fallback, the run's width (where TeX sets what follows) with the drawn glyph's own height and depth (TeX's cmex
+      // ∑ hangs below the baseline, a Unicode font's stands on it: centered on the axis by the wrong one, it floats)
+      const ink = memo.get(m);
+      return run ? own[face] && [...t].every((c) => pdfHas(ctx, own[face], c)) ? [run[0], run[1], run[2]] : [run[0], ink[1], ink[2]] : ink;
     };
     const M = { key, own, font, metric, em: f.size };
     pdfMathFor.set(img, M);
@@ -11301,23 +11318,33 @@
     if (wl == null || wl >= l0 && wl <= l1) return false;
     const [pw, ph] = pageSize(img), line = pdfPos(g.text, g.at).line + 1, built = pdfBuiltText(img.__build ?? pdf) === g.text;
     const draw = (page, x, t, d, stale) => pdfImg(page)?.parentElement.insertAdjacentHTML('beforeend', `<span class="pdf-caret${stale ? ' pdf-caret-stale' : ''}" style="left:${x / pw * 100}%;top:${t / ph * 100}%;height:${(d - t) / ph * 100}%"></span>`);
-    // the caret's line, else the last line of its paragraph before it that the build set
+    // the caret's line, else the last line of its paragraph before it that the build set; a line that set no glyph,
+    // glue or kern (`\\textbf{}` alone in a new paragraph) sets its paragraph's indent box: after that box
     for (let l = line; l >= l0; l--) {
-      const row = pdfRects(state.file, l, true).at(-1);
+      const row = pdfRects(state.file, l, true).at(-1) ?? pdfBoxRow(state.file, l);
       if (!row) continue;
       const ink = pdfImgWords(pdfImg(row.page)).filter((v) => pdfOnRow(v, [row.page, row.l, row.t, row.r, row.d, '']) && v[1] < row.r && v[3] > row.l).map((v) => v[3]);
       draw(row.page, ink.length ? Math.max(...ink) : row.r, row.t, row.d, !built || l !== line);
       return true;
     }
-    // no row of its paragraph yet: a new row under the paragraph before it, at that paragraph's left edge
+    // no row of its paragraph yet: a new row under the paragraph before it, where that paragraph's first row starts
+    // (its indent; the rows of the blank line hold only the paragraph's end, `\\parfillskip` at the right margin)
     for (let l = l0 - 1; l >= 1; l--) {
       const rows = pdfRects(state.file, l, true);
       if (!rows.length) continue;
-      const r = rows.at(-1), h = r.d - r.t;
-      draw(r.page, Math.min(...rows.filter((x) => x.page === r.page).map((x) => x.l)), r.t + 1.5 * h, r.d + 1.5 * h, true);
+      const r = rows.at(-1), h = r.d - r.t, [a] = pdfParaLines(g.text, pdfLineStarts(g.text)[l - 1] ?? 0);
+      const first = [...Array(l - a + 1).keys()].flatMap((k) => pdfRects(state.file, a + k, true)).filter((x) => x.page === r.page).sort((x, y) => x.y - y.y)[0] ?? r;
+      const left = pdfWordsOn(r.page).filter((v) => pdfOnRow(v, [first.page, first.l, first.t, first.r, first.d, ''])).reduce((m, v) => Math.min(m, v[1]), first.l);
+      draw(r.page, left, r.t + 1.5 * h, r.d + 1.5 * h, true);
       return true;
     }
     return false;
+  }
+  /** The last hbox SyncTeX records from `line` (a paragraph's indent box, an empty `\\mbox{}`) as a row ending at the
+   * box's right edge, for a line that set no point of its own (pdfRects); null where it set none. */
+  function pdfBoxRow(file, line) {
+    const b = pdfBoxesAt(file, line).findLast((x) => x.kind === 'h');
+    return b ? { page: b.page, y: b.y, l: b.x, r: b.x + b.w, t: b.y - 8, d: b.y + 2 } : null;
   }
   /** A caret whose text is not written yet (a name's line the first key writes): at the clicked character of its word. */
   function pdfBlindDraw(c) {

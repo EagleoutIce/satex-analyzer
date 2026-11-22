@@ -467,12 +467,16 @@ interface Stream {
       const t = !html && ((e.target as Element).closest?.('[title]') ?? (titled?.contains(e.target) ? titled : null));
       if (t) {
         if (t === titled) return;
+        // the element the open note is about drawn again under the pointer (a build landed, its layer redrawn): the
+        // note moves to the new one at once, never closed and opened again after the delay
+        const again = !note.el.hidden && !!titled && !titled.isConnected && t.title === titled.dataset.title;
         untitle();
         if (!t.title.trim()) return;
         titled = t as HTMLElement;
         t.dataset.title = t.title;
         t.removeAttribute('title');
-        note.later(() => { if (titled === t) note.show(t, esc(t.dataset.title), t.closest('.tip')); }, 450);
+        const open = () => { if (titled === t) note.show(t, esc(t.dataset.title), t.closest('.tip')); };
+        if (again) open(); else note.later(open, 450);
         return;
       }
       untitle();

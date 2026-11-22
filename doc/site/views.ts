@@ -3946,7 +3946,8 @@ button.tv-spec-value { cursor: pointer; } button.tv-spec-value:hover, button.tv-
   const subsequence = (text: string, typed: string) => { let k = 0; for (const c of text) if (c === typed[k]) k++; return k === typed.length; };
   const closeness = (i: Completion, typed: string) => {
     const label = i.label.toLowerCase(), found = (i.filterText ?? '').toLowerCase();
-    return label === typed ? -1 : label.startsWith(typed) ? 0 : label.includes(typed) ? 1 : found.includes(typed) ? 2 : subsequence(label, typed) ? 3 : null;
+    // one letter typed starts a name: `\\t` is the start of `\\textbf` far more often than the tie accent `\\t`
+    return label === typed && typed.length > 1 ? -1 : label.startsWith(typed) ? 0 : label.includes(typed) ? 1 : found.includes(typed) ? 2 : subsequence(label, typed) ? 3 : null;
   };
   /** LSP's `sortText` order: by code point, as the server sorts (`~` after digits); `localeCompare` puts `~` first. */
   const byCode = (a: string, b: string) => a < b ? -1 : a > b ? 1 : 0;

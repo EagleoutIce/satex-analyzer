@@ -79,6 +79,32 @@ export default [
   { kind: 'user', name: 'u-textb-first', source: PAPER, do: [{ text: PAPER }, { wait: 400 }, { editor: 'numbers.' }, { type: ' \\textb' }, { wait: 1200 }],
     expect: [{ first: { sel: '.cm-tooltip-autocomplete li .cm-completionLabel' }, want: 'textbf' }],
     steps: 'a paper; after "numbers." type \\textb: the list starts with textbf (it started with drm\'s textb)' },
+  // user 2026-11-22: a `\\` typed on the page first listed useless names, `\\textbf` only ~1200 ms later (the server's
+  // answer): the first list the page shows is the one it keeps, its first item where the server puts it
+  { kind: 'user', name: 'u-pdf-backslash-first', pdf: true, source: PAPER, word: { word: 'numbers.' },
+    do: [{ pdf: 'numbers.' }, { type: ' \\' }, { watch: { sel: '.type-complete li code' }, ms: 2500 }],
+    expect: [{ firstSeen: '\\section*[⟨options⟩]{⟨key⟩}' }],
+    steps: 'a paper, built, PDF Type mode; click after "numbers.", type ` \\`: the list opens with what the paper uses most (\\section) and keeps it' },
+  { kind: 'user', name: 'u-pdf-par-backslash-first', pdf: true, word: { word: 'world!' },
+    do: [{ pdf: 'world!' }, { key: 'Enter' }, { type: '\\' }, { watch: { sel: '.type-complete li code' }, ms: 6000 }],
+    expect: [{ firstSeen: '\\greet{⟨arg⟩}' }],
+    steps: 'hello.tex, built, PDF Type mode; click after "world!", Enter (a new paragraph, a run starts), `\\`: the list opens with \\textbf first and keeps it (user screenshot 2026-11-22)' },
+  { kind: 'user', name: 'u-pdf-par-textb-first', pdf: true, word: { word: 'world!' },
+    do: [{ pdf: 'world!' }, { key: 'Enter' }, { type: '\\t', delay: 120 }, { watch: { sel: '.type-complete li code' }, ms: 4000 }],
+    expect: [{ firstSeen: /^\\textbf\{/ }],
+    steps: 'hello.tex, built, PDF Type mode; click after "world!", Enter, `\\t` at a hand\'s pace: \\textbf first from the list\'s first draw' },
+  // user 2026-11-22: the page's hover is flaky while builds land. A guard (not reproduced red here; the pages' own swap
+  // on landing is typeswap's): under the resting pointer the same tint after a landing, its note open throughout
+  { kind: 'user', name: 'u-pdf-hover-stays', pdf: true, source: '\\documentclass{article}\n\\newcommand{\\greet}[1]{Hello, #1!}\n\\begin{document}\nSo \\greet{world} and more words here.\n\\end{document}\n', word: { word: 'world!' },
+    do: [{ hover: { sel: '#play-pdf .pdf-orig-macro' } }, { wait: 900 },
+      { js: `(() => { const el = document.querySelector('#play-pdf .pdf-orig-macro'), r = el.getBoundingClientRect(), n = self.satexTip.note.el;
+        self.__hov = { x: r.left + r.width * 0.6, y: r.top + r.height / 2, flips: [], title: el.dataset.title ?? el.title };
+        new MutationObserver(() => self.__hov.flips.push(n.hidden)).observe(n, { attributes: true, attributeFilter: ['hidden'] }); return !n.hidden; })()` },
+      { do: { mark: 'builds' } }, { text: '\\documentclass{article}\n\\newcommand{\\greet}[1]{Hello, #1!}\n\\begin{document}\nSo, \\greet{world} and more words here.\n\\end{document}\n' }, { until: 'newBuild', ms: 60000 }, { wait: 1500 },
+      { js: `(() => { const h = self.__hov, under = document.elementFromPoint(h.x, h.y)?.closest('.pdf-orig-macro'), n = self.satexTip.note.el;
+        return JSON.stringify({ under: (under?.dataset.title ?? under?.title) === h.title, open: !n.hidden, closed: h.flips.filter(Boolean).length }); })()` }],
+    expect: [{ js: /^\{"under":true,"open":true,"closed":0\}$/ }],
+    steps: 'a sentence with \\greet{world}, built; rest the pointer on the tint of "Hello, world!" until its note shows; the text gains a comma before the call, the build lands: under the resting pointer the same tint, its note open throughout' },
   // every row of the PDF bar's Insert menu at a caret in prose: what it writes must build (packages loaded with it)
   ...['Inline math', 'Display math', 'Aligned', 'Figure with a drawing', 'Bulleted list', 'Numbered list', 'Equation', 'Aligned equations', 'Section heading', 'Footnote', 'Citation', 'Reference', 'TikZ picture', 'Forest tree'].map((label) => ({ entry: row(label), label })).map(({ entry, label: row }) => ({
     kind: 'user', name: `u-insert-${row.toLowerCase().replace(/\W+/g, '-')}`, pdf: true, source: PAPER, word: { word: 'numbers.' },
