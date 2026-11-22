@@ -1705,6 +1705,8 @@ impl Machine<'_> {
             job_ended: _,
             // Set only where the main file ends, which no cached load reads.
             ran_off: _,
+            // The main file's text: no cached load reads it.
+            alone: _,
             path_id: _,
             path_ids: _,
             checked_at: _,

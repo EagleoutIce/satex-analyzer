@@ -38,8 +38,9 @@ fn bounded(mut cfg: Config) -> Config {
         satex::project::config::Clock::At(time::OffsetDateTime::from_unix_timestamp(1_767_268_800).expect("a date"));
     cfg.limits.steps = 300_000_000;
     // Counted for the whole test process (tests/it/main.rs): the run stops
-    // itself at 4 GiB, and an allocation past 6 GiB aborts the process, so
-    // the test cgroup (10 GB) never has to kill it.
+    // itself at 4 GiB at its next token, and what one step takes past that
+    // is bounded (one block, then half the limit: `Counter::admit`), so the
+    // test cgroup never has to kill it.
     cfg.limits.memory = bytesize::ByteSize::gib(4);
     satex::analysis::budget::set_limit(cfg.limits.memory.as_u64());
     cfg.limits.facts = 1_000_000;

@@ -496,6 +496,48 @@ fn a_theme_is_read_after_the_class_it_expects() {
     assert!(undefined(&Machine::analyze(source, Some(&path), &off)) > 0);
 }
 
+/// A package analyzed alone is read as a document loads it (`load.alone`): under a class, by
+/// `\usepackage`, before an empty body. Read by itself it ran outside every package, as nothing
+/// in LaTeX does: `\ProcessOptions` and `\@currname` had no package (todonotes: `Unknown option
+/// \opt@.`), no class had set the page (geometry: `\paperwidth (0.0pt) too short`), and the
+/// kernel never took expl3 syntax back at the file's end (siunitx: `expl-syntax-left-on`).
+/// The file stays the run's own: its definitions are no package's, and its findings are reported.
+#[test]
+fn a_package_alone_is_read_as_a_document_loads_it() {
+    if !installed() {
+        return;
+    }
+    let dir =
+        crate::support::scratch_dir(crate::support::tmp_root().join(format!("satex-alone-{}", std::process::id())));
+    let path = dir.join("alonedemo.sty");
+    let source = "\\ProvidesExplPackage{alonedemo}{2024-01-01}{1.0}{demo}
+\\DeclareOption*{\\PackageWarning{alonedemo}{Unknown~option~`\\CurrentOption'}}
+\\ProcessOptions\\relax
+\\RequirePackage{geometry}
+\\tl_const:Ne \\c__alonedemo_name_tl { \\@currname . \\@currext }
+\\cs_new:Npn \\__alonedemo_orphan: { }
+";
+    std::fs::write(&path, source).unwrap();
+    let mut cfg = crate::support::config();
+    cfg.apply_profile(satex::project::config::Profile::Package).unwrap();
+    let errors = |a: &Analysis| -> Vec<String> {
+        let wrong = |r: &&satex::queries::query::Record| {
+            r["severity"] == "error" || r["code"] == "expl-syntax-left-on" || r["code"] == "catcode-escapes-group"
+        };
+        satex::linter::lint(a).iter().filter(wrong).map(|r| format!("{} {}", r["code"], r["message"])).collect()
+    };
+    let loaded = Machine::analyze(source, Some(&path), &cfg);
+    assert_eq!(errors(&loaded), Vec::<String>::new());
+    let name = loaded.interner.lookup("c__alonedemo_name_tl").and_then(|s| loaded.env.meaning(s).as_macro().cloned());
+    let text = name.map(|m| satex::engine::tex::detokenize(&m.replacement_text, &loaded.interner));
+    assert_eq!(text.as_deref(), Some("alonedemo.sty"));
+    let own = loaded.facts.defs.iter().find(|d| loaded.interner.name(d.name) == "__alonedemo_orphan:").unwrap();
+    assert_eq!((own.package, own.span.file), (None, loaded.main_file));
+    // By itself, as before: no document, no package.
+    let bare = Config { load: Load { alone: String::new(), ..cfg.load.clone() }, ..cfg };
+    assert!(!errors(&Machine::analyze(source, Some(&path), &bare)).is_empty());
+}
+
 /// A package that uses a command it never loads is read again with the
 /// package on disk that defines it, found by the names their definers
 /// define: the commands the kernel's own definitions are written with,

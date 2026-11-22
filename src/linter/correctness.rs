@@ -113,8 +113,12 @@ text.",
         explanation: "\
 The run saw the macro's expansion reach the macro again, could not see the
 recursion end, and found no conditional (no `\\if…`, `\\else` or `\\fi`) to
-end it.  A macro nothing expands is judged by the names its replacement text
-holds.  A real run expands until TeX runs out of memory:
+end it, in any macro of the cycle or in one their replacement texts name.  A
+macro nothing expands is judged by the names its replacement text holds, and
+it calls a name only where the name stands to be expanded: not inside braces,
+not as the target of a definition or after `\\string`, and not as a quark
+(`\\def\\q{\\q}`, compared and never expanded).  A real run expands until
+TeX runs out of memory:
 `TeX capacity exceeded, sorry [main memory size]`.
 
 Fix by adding the test that stops it, or by removing the self-reference.",
@@ -440,39 +444,58 @@ Fix by adding `\\ExplSyntaxOff` after the code that needs it.",
 ];
 
 fn unguarded_recursion(report: &mut Report) {
-    use crate::engine::builtins::Primitive;
     use crate::engine::tex::Tok;
 
     let analysis = report.analysis();
-    let recursive: std::collections::BTreeMap<Sym, bool> =
-        report.index().recursion().iter().map(|r| (r.name, r.observed)).collect();
+    let recursive: std::collections::BTreeMap<Sym, (bool, &[Sym])> =
+        report.index().recursion().iter().map(|r| (r.name, (r.observed, &r.cycle[..]))).collect();
+    let prim = |token: &crate::engine::tex::Token| token.cs().and_then(|cs| analysis.env.meaning(cs).prim());
     // Where the run cut a recursion or met a loop that never ends, per name.
     let cut = |d: &&crate::analysis::facts::Diagnostic| matches!(d.code, "recursion-widened" | "endless-loop");
     let sites: crate::fixed::HashSet<crate::engine::tex::Span> =
         analysis.facts.diagnostics.iter().filter(cut).map(|d| d.span).collect();
     let widened: crate::fixed::HashMap<Sym, Span> =
         analysis.facts.expansions.iter().filter(|e| sites.contains(&e.span)).map(|e| (e.name, e.span)).collect();
+    let mut testing = crate::fixed::HashMap::default();
     for def in &analysis.facts.defs {
-        let Some(&observed) = recursive.get(&def.name) else { continue };
+        let Some(&(observed, cycle)) = recursive.get(&def.name) else { continue };
         // A recursion the run saw end had something to stop it.
         if observed && !widened.contains_key(&def.name) {
             continue;
         }
         let Some(mac) = &def.mac else { continue };
-        // An optional-argument command's dispatcher (`\@xargdef`:
-        // `\def\foo{\@protected@testopt \foo \\foo {default}}`) names
-        // itself only as data, never as a call.
-        if !observed && only_optarg_wrapper_self_reference(analysis, def.name, mac) {
+        // A test anywhere the cycle's texts lead can end it: in another macro of the cycle
+        // (hyperref's `\HyPsd@GetTwoBytes` hands on to `\HyPsd@DoConvert`, which tests), or in
+        // one a text calls or hands its own name to (`\@protected@testopt \foo \\foo {default}`
+        // of an optional argument, expl3's `\str_if_eq:nnTF`, `\quark_if_recursion_tail_stop:N`).
+        // What the run went round and could not see end is held to its own text.
+        let guarded = match observed {
+            true => mac.replacement_text.iter().any(|t| prim(t).is_some_and(is_test)),
+            false => cycle.iter().any(|&name| reaches_test(analysis, name, &mut testing)),
+        };
+        if guarded {
             continue;
         }
-        let guarded = mac.replacement_text.iter().any(|token| match token.tok {
-            Tok::Cs(sym) => matches!(
-                analysis.env.meaning(sym).prim(),
-                Some(Primitive::If(_) | Primitive::Else | Primitive::Fi | Primitive::Unless)
-            ),
-            _ => false,
-        });
-        if guarded {
+        // Read off the texts, the cycle is real only where each name calls the next
+        // ([`called`]), from this definition back to its name.
+        let text = &mac.replacement_text;
+        let mut reached: Vec<Sym> = called(analysis, text, cycle);
+        let mut at = 0;
+        while let Some(&next) = reached.get(at).filter(|&&next| next != def.name) {
+            let text = analysis.env.meaning(next).as_macro().map(|m| m.replacement_text.clone());
+            for further in text.iter().flat_map(|t| called(analysis, t, cycle)) {
+                if !reached.contains(&further) {
+                    reached.push(further);
+                }
+            }
+            at += 1;
+        }
+        // A quark stands for itself and is compared, never expanded (the TeXbook's `\def\q{\q}`,
+        // expl3's `\quark_new:N`): a name whose text is itself alone and that other texts hold.
+        let own = |t: &crate::engine::tex::Token| t.tok == Tok::Cs(def.name);
+        let space = |t: &crate::engine::tex::Token| matches!(t.tok, Tok::Chr(_, crate::engine::tex::Catcode::Space));
+        let quark = text.iter().all(|t| own(t) || space(t)) && held_elsewhere(analysis, def.name);
+        if !observed && (at == reached.len() || quark) {
             continue;
         }
         let name = report.cs(def.name);
@@ -499,43 +522,79 @@ fn unguarded_recursion(report: &mut Report) {
     }
 }
 
-/// Whether every occurrence of `name` in `mac`'s body is the optional-argument
-/// dispatch pairing ltdefns and ltcmd both generate: the plain name right
-/// after the kernel's own optional-argument dispatcher, immediately followed
-/// by the name's internal counterpart (`\csname\string\name\endcsname`,
-/// which carries a literal `\` as the first character of its own name).
-/// A `false` here means some other occurrence is a real call.
-fn only_optarg_wrapper_self_reference(
+/// The names of `cycle` that `text` calls, read off the text: where a name stands to be
+/// expanded. Not inside braces, where it is part of what another command is handed
+/// (`\unexpanded{\name}`), nor after a primitive that takes the name itself
+/// (`\global\let\name\relax`, how a warning is given once, `\string\name` in a message).
+fn called(
+    analysis: &crate::analysis::machine::Analysis,
+    text: &[crate::engine::tex::Token],
+    cycle: &[Sym],
+) -> Vec<Sym> {
+    use crate::engine::tex::{Catcode, Tok};
+    let prim = |token: &crate::engine::tex::Token| token.cs().and_then(|cs| analysis.env.meaning(cs).prim());
+    let (mut depth, mut out) = (0usize, Vec::new());
+    for (i, token) in text.iter().enumerate() {
+        match token.tok {
+            Tok::Chr(_, Catcode::Begin) => depth += 1,
+            Tok::Chr(_, Catcode::End) => depth = depth.saturating_sub(1),
+            Tok::Cs(name)
+                if depth == 0
+                    && cycle.contains(&name)
+                    && !i.checked_sub(1).and_then(|before| prim(&text[before])).is_some_and(takes_name) =>
+            {
+                out.push(name);
+            }
+            _ => {}
+        }
+    }
+    out
+}
+
+/// A primitive that takes the name after it as a name, not as a call: a definition's target
+/// (tex.web § 1215), and what `\string`, `\meaning` and `\noexpand` are given (§§ 358, 468).
+fn takes_name(p: crate::engine::builtins::Primitive) -> bool {
+    use crate::engine::builtins::{Primitive, TextOf};
+    let printed = matches!(p, Primitive::Text(TextOf::String | TextOf::Meaning));
+    printed || matches!(p, Primitive::Def { .. } | Primitive::Let { .. } | Primitive::NoExpand)
+}
+
+/// Whether the text or the parameter text of a macro of another name holds `name`.
+fn held_elsewhere(analysis: &crate::analysis::machine::Analysis, name: Sym) -> bool {
+    use crate::engine::tex::{ParamItem, Tok};
+    let holds = |m: &crate::engine::tex::MacroDef| {
+        m.replacement_text.iter().any(|t| t.cs() == Some(name))
+            || m.parameter_text.items.iter().any(|item| matches!(item, ParamItem::Lit(Tok::Cs(cs)) if *cs == name))
+    };
+    analysis.facts.defs.iter().any(|d| d.name != name && d.mac.as_deref().is_some_and(holds))
+}
+
+/// A primitive of a conditional (tex.web § 487).
+fn is_test(p: crate::engine::builtins::Primitive) -> bool {
+    use crate::engine::builtins::Primitive;
+    matches!(p, Primitive::If(_) | Primitive::Else | Primitive::Fi | Primitive::Unless)
+}
+
+/// Whether the expansion of `name` can reach a conditional, through the macros its text names,
+/// by the meanings the run ends with. `known` keeps each answer.
+fn reaches_test(
     analysis: &crate::analysis::machine::Analysis,
     name: Sym,
-    mac: &crate::engine::tex::MacroDef,
+    known: &mut crate::fixed::HashMap<Sym, bool>,
 ) -> bool {
-    use crate::engine::tex::Tok;
-    // `\@protected@testopt` (ltdefns, current kernel) and its predecessor
-    // `\@testopt`, which a format without the merged definition still uses.
-    fn is_dispatcher(n: &str) -> bool {
-        matches!(n, "@protected@testopt" | "@testopt")
+    if let Some(&answer) = known.get(&name) {
+        return answer;
     }
-    let own = analysis.interner.name(name);
-    let is_internal_counterpart = |n: &str| n.len() == own.len() + 1 && n.as_bytes()[0] == b'\\' && &n[1..] == own;
-    let text = &mac.replacement_text;
-    let mut any = false;
-    for (i, token) in text.iter().enumerate() {
-        let Tok::Cs(sym) = token.tok else { continue };
-        if sym != name {
-            continue;
-        }
-        let dispatched =
-            i > 0 && matches!(text[i - 1].tok, Tok::Cs(prev) if is_dispatcher(analysis.interner.name(prev)));
-        let paired = text.get(i + 1).is_some_and(
-            |next| matches!(next.tok, Tok::Cs(sym) if is_internal_counterpart(analysis.interner.name(sym))),
-        );
-        if !(dispatched && paired) {
-            return false;
-        }
-        any = true;
+    let (mut seen, mut work) = (crate::fixed::HashSet::default(), vec![name]);
+    let mut answer = false;
+    while let Some(next) = work.pop().filter(|_| !answer) {
+        let meaning = analysis.env.meaning(next);
+        answer = meaning.prim().is_some_and(is_test);
+        let text = meaning.as_macro().map(|m| m.replacement_text.clone());
+        work.extend(text.iter().flat_map(|t| t.iter()).filter_map(|t| t.cs()).filter(|&cs| seen.insert(cs)));
     }
-    any
+    known.insert(name, answer);
+    answer
 }
 
 fn undefined_control_sequences(report: &mut Report) {
@@ -1353,11 +1412,7 @@ fn missing_graphic(report: &mut Report) {
         // `\@missingfileerror`'s prompt is a file `\input` could not find,
         // which `unresolved-file` reports.
         .filter(|o| !o.key.contains("Default extension"))
-        .filter_map(|o| {
-            let rest = &o.key[o.key.find("File `")? + "File `".len()..];
-            let name = &rest[..rest.find("' not found")?];
-            Some((o.span, name.to_string()))
-        })
+        .filter_map(|o| Some((o.span, super::shared::missing_file(&o.key)?.to_string())))
         .filter(|found| seen.insert(found.clone()))
         .collect();
     for (span, name) in missing {

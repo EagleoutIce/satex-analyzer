@@ -18,6 +18,11 @@ ROOT = Path(__file__).resolve().parents[2]
 SITE = ROOT / "doc" / "site"
 
 
+# The site build runs satex as a tool: never the first-start question, and never the detached
+# background cache builder, which outlives this build and fills the user's cache for every satex built.
+os.environ.setdefault("SATEX_NO_SETUP", "1")
+
+
 def proc(cmd, **kw):
     """`subprocess.run`, with a satex run holding one of the JOBS slots: every step's pool may be
     as wide as it likes, never more than JOBS satex processes run at once. Its seconds go to RUNS."""

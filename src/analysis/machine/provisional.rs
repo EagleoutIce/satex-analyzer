@@ -108,6 +108,11 @@ fn same<T: serde::Serialize + ?Sized>(a: &T, b: &T) -> bool {
 /// `at`, and the rows it added. Rows are kept per index (a site's row is
 /// updated in place), so a row both runs hold differently must be one the
 /// rest cannot touch: placed on an edited line, of which no token is left.
+/// Whether `new` holds the rows `at` holds, each alike.
+fn alike<T: PartialEq>(new: &impl Rows<T>, at: &impl Rows<T>) -> bool {
+    new.count() == at.count() && (0..at.count()).all(|i| new.row(i) == at.row(i))
+}
+
 fn rows<T: PartialEq + Clone>(
     new: &impl Rows<T>,
     at: &impl Rows<T>,
@@ -116,6 +121,10 @@ fn rows<T: PartialEq + Clone>(
 ) -> bool {
     if end.count() < at.count() {
         return false;
+    }
+    // This run holds the rows the last one held here: the end's stand as they are, none is copied.
+    if alike(new, at) {
+        return true;
     }
     let mut out = Vec::with_capacity(new.count() + end.count() - at.count());
     for i in 0..at.count() {
@@ -391,13 +400,23 @@ pub(super) fn splice_records(
     window: Window,
 ) -> Result<(), &'static str> {
     let span = |s: Span| s.file == window.0 && (window.1..=window.2).contains(&s.line);
-    let mut reads = std::mem::take(&mut end.name_reads).list;
-    let ok = rows(&new.written_lines, &at.written_lines, &mut end.written_lines, |r| span(r.place()))
-        && rows(&new.name_reads.list, &at.name_reads.list, &mut reads, |r| span(r.place()))
-        && rows(&new.key_names, &at.key_names, &mut end.key_names, |r| span(r.3))
-        && new.stream_files == at.stream_files;
-    end.name_reads = crate::analysis::observe::NameReads::of(reads);
-    ok.then_some(()).ok_or("records")
+    // The names read are indexed: left as they are where this run read what the last one had.
+    let reindex = !alike(&new.name_reads.list, &at.name_reads.list);
+    let mut reads = if reindex { std::mem::take(&mut end.name_reads).list } else { Default::default() };
+    let checks = [
+        (rows(&new.written_lines, &at.written_lines, &mut end.written_lines, |r| span(r.place())), "lines written"),
+        (
+            !reindex && end.name_reads.list.count() >= at.name_reads.list.count()
+                || rows(&new.name_reads.list, &at.name_reads.list, &mut reads, |r| span(r.place())),
+            "names read",
+        ),
+        (rows(&new.key_names, &at.key_names, &mut end.key_names, |r| span(r.3)), "names from keys"),
+        (new.stream_files == at.stream_files, "stream files"),
+    ];
+    if reindex {
+        end.name_reads = crate::analysis::observe::NameReads::of(reads);
+    }
+    checks.into_iter().find(|(ok, _)| !ok).map_or(Ok(()), |(_, what)| Err(what))
 }
 
 /// No key is on an edited line.

@@ -510,3 +510,32 @@ fn more_outcomes_than_runs_allowed_is_unknown() {
     );
     assert!(!defined(&analysis, "done"), "the run was given up");
 }
+
+/// LuaLaTeX looks a package up with `kpse.find_file` and reads the path it gets back. The run's
+/// directory is the document's, so a file found there is named from there. Named from satex's
+/// own directory it was looked for at `dir/dir/foo.sty`: `satex -f dir/main.tex lint` gave
+/// "`foo.sty` is not in this installation" for a package beside the document, and only under
+/// LuaTeX and only from another directory.
+#[test]
+#[cfg(unix)]
+fn a_package_beside_a_lualatex_document_is_found_from_another_directory() {
+    if !crate::support::installed() {
+        return;
+    }
+    let dir = crate::support::scratch_dir(
+        crate::support::tmp_root().join(format!("satex-lua-beside-{}", std::process::id())),
+    );
+    std::fs::write(dir.join("besidedoc.sty"), "\\ProvidesPackage{besidedoc}\n\\newcommand\\beside{x}\n").unwrap();
+    let source = "\\documentclass{article}\n\\usepackage{besidedoc}\n\\begin{document}\n\\beside\n\\end{document}\n";
+    std::fs::write(dir.join("main.tex"), source).unwrap();
+    // The document by a relative path: up to the root, then down.
+    let here = std::env::current_dir().unwrap();
+    let up: std::path::PathBuf = here.components().skip(1).map(|_| "..").collect();
+    let main = up.join(dir.strip_prefix("/").unwrap()).join("main.tex");
+    let mut cfg = Config { engine: Some(Engine::LuaTeX), ..crate::support::config() };
+    cfg.load.classes = true;
+    let analysis = Machine::analyze(source, Some(&main), &cfg);
+    let load = analysis.facts.loads.iter().find(|l| l.name == "besidedoc").expect("the load");
+    assert_eq!(load.status, satex::analysis::facts::LoadStatus::Read);
+    assert!(defined(&analysis, "beside"));
+}

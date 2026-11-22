@@ -3616,6 +3616,17 @@
             "speed"
           ],
           "x-example": "`\\loop\\advance\\c by1 ... \\repeat` with unknown bound: c becomes a range after 3 rounds"
+        },
+        "write_log": {
+          "default": 1048576,
+          "description": "writes logged since the last token read from a file before the log keeps one entry per name and group depth. A call or loop that began before reads as one that wrote any of them",
+          "minimum": 0,
+          "type": "integer",
+          "x-affects": [
+            "memory",
+            "precision"
+          ],
+          "x-example": "a `\\foreach` that assigns for minutes holds a few MiB of log, not GiBs"
         }
       },
       "type": "object"
@@ -4335,6 +4346,21 @@
               ],
               "x-example": "`\\tikzset{mystyle/.style={red}}` never used: reported when on"
             },
+            "private": {
+              "default": [
+                "@",
+                "__"
+              ],
+              "description": "patterns on the names that are private, which the rule reports also with report_public off",
+              "items": {
+                "type": "string"
+              },
+              "type": "array",
+              "x-affects": [
+                "output"
+              ],
+              "x-example": "in a package `\\__my_helper:n` never used is reported, `\\my_function:n` is its interface"
+            },
             "report_public": {
               "default": true,
               "description": "also report an unused command with a public name. Off for packages, whose commands are their interface",
@@ -4450,6 +4476,16 @@
     "load": {
       "description": "which files the run follows from the document",
       "properties": {
+        "alone": {
+          "default": "article",
+          "description": "the class a package analyzed alone is loaded under. The file is read as a document loads it. Empty reads it by itself",
+          "type": "string",
+          "x-affects": [
+            "soundness",
+            "precision"
+          ],
+          "x-example": "`satex -f my.sty lint` runs `\\documentclass{article}\\usepackage{my}` and an empty body\n`alone: ''`: `\\ProcessOptions` in `my.sty` runs outside any package, as nothing in LaTeX does"
+        },
         "build_extensions": {
           "default": [
             "aux",
@@ -5257,6 +5293,11 @@
                 "microtype-available",
                 "preamble-cost",
                 "comment-marker",
+                "primitive-tex-command",
+                "unused-package",
+                "redundant-package-load",
+                "unused-color",
+                "unintended-escape",
                 "user-pattern",
                 "unreferenced-numbered-display",
                 "build-shell-escape-missing",
@@ -5276,6 +5317,15 @@
             },
             "lints": {
               "properties": {
+                "clones": {
+                  "properties": {
+                    "enabled": {
+                      "default": false,
+                      "type": "boolean"
+                    }
+                  },
+                  "type": "object"
+                },
                 "unused-definition": {
                   "properties": {
                     "report_public": {
@@ -5308,6 +5358,11 @@
                 "microtype-available",
                 "preamble-cost",
                 "comment-marker",
+                "primitive-tex-command",
+                "unused-package",
+                "redundant-package-load",
+                "unused-color",
+                "unintended-escape",
                 "user-pattern",
                 "unreferenced-numbered-display",
                 "build-shell-escape-missing",
@@ -5327,6 +5382,15 @@
             },
             "lints": {
               "properties": {
+                "clones": {
+                  "properties": {
+                    "enabled": {
+                      "default": false,
+                      "type": "boolean"
+                    }
+                  },
+                  "type": "object"
+                },
                 "unused-definition": {
                   "properties": {
                     "report_public": {
@@ -5356,6 +5420,11 @@
                 "microtype-available",
                 "preamble-cost",
                 "comment-marker",
+                "primitive-tex-command",
+                "unused-package",
+                "redundant-package-load",
+                "unused-color",
+                "unintended-escape",
                 "user-pattern",
                 "unreferenced-numbered-display",
                 "build-shell-escape-missing",
@@ -5374,9 +5443,19 @@
               "type": "array"
             },
             "lints": {
-              "description": "a public name is the package's own interface",
               "properties": {
+                "clones": {
+                  "description": "a macro in place of repeated library code changes when it expands no document of its own to build or typeset. And a library programs in primitives, states each package it needs and loads them for the macros its users call, and defines colors for them",
+                  "properties": {
+                    "enabled": {
+                      "default": false,
+                      "type": "boolean"
+                    }
+                  },
+                  "type": "object"
+                },
                 "unused-definition": {
+                  "description": "a public name is the package's own interface",
                   "properties": {
                     "report_public": {
                       "default": false,

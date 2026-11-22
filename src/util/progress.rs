@@ -22,6 +22,8 @@ struct Bars {
 
 static BARS: Mutex<Bars> = Mutex::new(Bars { lines: Vec::new(), head: None, shown: Vec::new(), last_draw_ms: 0 });
 const THROTTLE_MS: u64 = 100;
+/// Columns and rows of a terminal that does not say its size.
+const SIZE: (usize, usize) = (80, 24);
 /// Longest label shown, so a bar never wraps on an 80-column terminal.
 const LABEL: usize = 48;
 
@@ -49,10 +51,12 @@ pub fn terminal(stream: impl IsTerminal) -> bool {
 }
 
 impl Bars {
-    /// The rows to show: the headline, then every bar, each cut to `width`.
-    fn rows(&self, width: usize) -> Vec<String> {
+    /// The rows to show: the headline, then every bar, each cut to `width`, and no more than
+    /// `height` of them. A frame taller than the screen pushes its first rows into the
+    /// scrollback, where the next frame cannot overwrite them: each would stay there for good.
+    fn rows(&self, (width, height): (usize, usize)) -> Vec<String> {
         let bars = self.lines.iter().flat_map(|(_, lines)| lines);
-        self.head.iter().chain(bars).map(|line| fit(line, width.saturating_sub(1))).collect()
+        self.head.iter().chain(bars).take(height.max(1)).map(|line| fit(line, width.saturating_sub(1))).collect()
     }
 
     /// Prints `above` (lines that stay) and then the rows over the old ones,
@@ -64,8 +68,8 @@ impl Bars {
     /// cut to the terminal's width: one that wrapped would leave the next
     /// frame one row short.
     fn draw(&mut self, out: &mut impl Write, above: &str) {
-        let width = terminal_size::terminal_size_of(std::io::stderr()).map_or(80, |(w, _)| w.0 as usize);
-        let rows = self.rows(width);
+        let size = terminal_size::terminal_size_of(std::io::stderr()).map_or(SIZE, |(w, h)| (w.0.into(), h.0.into()));
+        let rows = self.rows(size);
         if above.is_empty() && rows == self.shown {
             return;
         }
@@ -631,6 +635,18 @@ mod tests {
         assert!(!before.contains("\x1b[J"), "erased before writing: {text:?}");
         assert_eq!(rows.matches("\x1b[J").count(), 1, "only the rows past the frame go: {text:?}");
         assert!(rows.find("early findings") < rows.find("satex: a"), "the headline stands first: {text:?}");
+    }
+
+    /// A frame has no more rows than the screen. One row more scrolled the headline into the
+    /// scrollback, where no later frame reaches it: `N early findings so far` stayed there
+    /// once for each time a deep `\\input` chain made the bars taller than a small terminal.
+    #[test]
+    fn a_frame_is_no_taller_than_the_screen() {
+        let mut bars = bars(&["satex: a", "  b", "  c"]);
+        bars.head = Some("head".into());
+        let all = bars.lines[0].1.len() + 1;
+        assert_eq!(bars.rows((super::SIZE.0, all)).len(), all);
+        assert_eq!(bars.rows((super::SIZE.0, all - 1)), ["head", "satex: a", "  b"]);
     }
 
     #[test]

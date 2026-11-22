@@ -1141,6 +1141,43 @@ fn a_definition_read_through_an_alias_or_a_package_is_used() {
     assert_eq!(names, [r"\lonelier", r"\lonely"]);
 }
 
+/// `\meaning` reads the definition it prints: `\@onelevel@sanitize\host` is
+/// `\edef\host{\expandafter\strip@prefix\meaning\host}`, so the `\def` before it is used and not
+/// dead (hyperref's `\Hy@StringLocalhost`). Nor is a name declared empty and then defined:
+/// `\newcommand\x{}` checks that the name is free before a `\def` with delimiters (acronym,
+/// natbib, amsmath), and expl3 wants `\tl_new:N` before `\tl_set:Nn` (siunitx, tabularray).
+/// A definition replaced with no read in between still is.
+#[test]
+fn a_definition_meaning_prints_is_read() {
+    if !installed() {
+        return;
+    }
+    let analysis = analyze(
+        r"\documentclass{article}
+\makeatletter
+\def\host{localhost}
+\@onelevel@sanitize\host
+\def\dead{a}
+\def\dead{b}
+\newcommand\declared{}
+\def\declared#1[#2]{#1#2}
+\ExplSyntaxOn
+\tl_new:N \l_demo_tl
+\tl_set:Nn \l_demo_tl { x }
+\ExplSyntaxOff
+\makeatother
+\begin{document}
+\host\dead\declared a[b]
+\end{document}",
+    );
+    let names: Vec<String> = satex::linter::lint(&analysis)
+        .iter()
+        .filter(|f| f["code"] == "dead-definition" && f["origin"] == "document")
+        .filter_map(|f| f["name"].as_str().map(str::to_string))
+        .collect();
+    assert_eq!(names, [r"\dead"]);
+}
+
 /// An overhang is between characters TeX set next to each other, not ones
 /// the source lists next to each other: a `\title` set upright in the
 /// heading and in italics elsewhere is two runs, each ended where LaTeX's

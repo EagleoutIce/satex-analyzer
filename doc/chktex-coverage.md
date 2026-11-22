@@ -33,9 +33,9 @@ Source: [ChkTeX 1.7.9 manual, § 8](https://www.nongnu.org/chktex/).
 | 17 | Number of one character doesn't match the number of another. | on | [`unbalanced-brackets`](Lints#unbalanced-brackets) | yes |
 | 18 | You should use either ``` `` ``` or `''` as an alternative to `"`. | on | [`wrong-quote-character`](Lints#wrong-quote-character), [`csquotes-available`](Lints#csquotes-available) | `wrong-quote-character`: yes, `csquotes-available`: yes |
 | 19 | You should use `'` (ASCII 39) instead of `´` (ASCII 180). | off | [`wrong-quote-character`](Lints#wrong-quote-character) | yes |
-| 20 | User-specified pattern found. | on | [`user-pattern`](Lints#user-pattern) | yes |
-| 21 | This command might not be intended. | off | [`unintended-escape`](Lints#unintended-escape) | yes |
-| 22 | Comment displayed. | off | [`comment-marker`](Lints#comment-marker) | yes |
+| 20 | User-specified pattern found. | on | [`user-pattern`](Lints#user-pattern) | yes, off for package/class/literate |
+| 21 | This command might not be intended. | off | [`unintended-escape`](Lints#unintended-escape) | yes, off for package/class/literate |
+| 22 | Comment displayed. | off | [`comment-marker`](Lints#comment-marker) | yes, off for package/class/literate |
 | 23 | Either ``` `` ``` or `''` will look better. | on | [`quote-ligature`](Lints#quote-ligature) | yes |
 | 24 | Delete this space to maintain correct page references. | on | [`space-before-command`](Lints#space-before-command) | yes |
 | 25 | You might wish to put this between a pair of `{}`. | on | [`math-script-braces`](Lints#math-script-braces) | yes |
@@ -54,10 +54,10 @@ Source: [ChkTeX 1.7.9 manual, § 8](https://www.nongnu.org/chktex/).
 | 38 | You should not use punctuation in front of/after quotes. | on | [`quote-punctuation`](Lints#quote-punctuation) | yes |
 | 39 | Double space found. | on | [`double-space`](Lints#double-space) | yes |
 | 40 | You should put punctuation outside inner/inside display math mode. | on | [`math-punctuation`](Lints#math-punctuation) | yes |
-| 41 | You ought to not use primitive TeX in LaTeX code. | off | [`primitive-tex-command`](Lints#primitive-tex-command) | yes |
+| 41 | You ought to not use primitive TeX in LaTeX code. | off | [`primitive-tex-command`](Lints#primitive-tex-command) | yes, off for package/class/literate |
 | 42 | You should remove spaces in front of a command. | on | [`space-before-command`](Lints#space-before-command) | yes |
 | 43 | A command is normally not followed by this character. | on | [`delimiter-not-followed`](Lints#delimiter-not-followed) | yes |
-| 44 | User regex matched. | on | [`user-pattern`](Lints#user-pattern) | yes |
+| 44 | User regex matched. | on | [`user-pattern`](Lints#user-pattern) | yes, off for package/class/literate |
 | 45 | Use `\[ … \]` instead of `$$ … $$`. | on | [`math-shift-dollars`](Lints#math-shift-dollars) | yes |
 | 46 | Use `\( … \)` instead of `$ … $`. | off | [`math-shift-dollars`](Lints#math-shift-dollars) | yes |
 | 47 | `'%s'` expected, found `'%s'` (ConTeXt). | off | — | — |

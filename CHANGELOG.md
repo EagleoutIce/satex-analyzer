@@ -15,6 +15,8 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 
 ### LSP
 
+- `perf` **A word typed into a paragraph of a long chapter is analyzed in its paragraph.** A paragraph whose lines are not known (a box or kern of unknown width in it) counts 1 to n lines, n its breakpoints: every typed word raised n, and the page's length with it, so the run after the edit met the last one only past the next forced page break. The bound is now rounded up to a power of two and stays as it was. A 150-page thesis: 12M → 0.84M steps per typed word (6.6–8.1 s → 4.2–4.6 s). A splice that fails at one line no longer keeps every later line from meeting the last run. `-vv` says what each part of serving an edit took and names the slowest rules.
+- `perf` **The first word typed at a place no longer waits for the text before it.** The server places the states an edit resumes from and meets the last run at for the line of the caret (the last code action, highlight or completion request) while it is idle, and stops for any message. The same thesis: the first edit at a place 137M steps (29.9 s) → 0.84M, as every later one. `satex/runInfo` says what an edit's run still placed itself (`placedSteps`). The placing run passes states inside a paragraph, where no run can meet: a first edit in a 250-page document 5.8M → 4.0M steps and 4.2 → 0.9 s. Meeting the last run copies only the fact rows the edit changed.
 - `fix` **An alias's hover shows its manual once mined** (`\let\myspace\xspace`): a hover kept before the manual was read is asked again, and a hover that found no documentation is not kept for the next session.
 - `fix` **`\caption` completes with its shape** (`[⟨options⟩]{⟨arg⟩}`): a command that errs alone is probed in the environment the document calls it in, else the one whose code it reads (`limits.probe_contexts`), and an environment entered for a probe gets the token its lookahead needs.
 - `fix` **A chapter whose root stopped at a budget keeps its root.** The editor ran the chapter alone in a made-up document and reported its references as undefined.
@@ -42,6 +44,8 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 
 ### Analysis
 
+- `fix` **Code that assigns for long without reading source (a `\foreach` over many TikZ nodes) no longer aborts on memory**: the write log keeps one entry per name and group depth past `limits.write_log`.
+- `fix` **The allocation that takes a run past `limits.memory` is granted**, so the run stops with `limit-reached` instead of the process aborting.
 - `feat` **`limits.nesting` (300)**: how deeply steps nest inside scans and quantities inside quantities before the nesting is widened, configurable like every other limit.
 - `fix` **An argument the document begins and never closes is an error** (`\cite[p.~3` before `\end{document}`): pdflatex stops with "File ended while scanning use of …"; satex said nothing, since the end was met inside library code.
 - `fix` **A negative integer's printed digits stay in its own range** when zero is not parted off: pgfmath's signed random counts and a cut inside a library call no longer leave gaps (two precision reds green).
@@ -114,6 +118,7 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 
 ### Playground
 
+- `fix` **A graphic the playground has not fetched yet no longer makes Insert load graphics**: the package probed for `\includegraphics[width=…]` is judged by the call, not by whether the graphic's file is there.
 - `fix` **The PDF no longer blanks, dims or loses its layers while you type.** A build replaces the pages in place: each page keeps its last image until the new one is drawn, a build that gives no PDF leaves the last pages under its error, and the layers stay at full strength, placed on the build's own lines also while the text has moved on.
 - `fix` **A package the playground has not fetched yet is preferred to one that rejects the call**: an inserted `\includegraphics[width=…]` loads graphicx, not graphics, also before graphicx is in the bundle.
 - `fix` **The page's first command list after `\` is the right one**: it is asked where the document's own commands are in force, and one typed letter is a prefix (`\t` puts `\textbf` first), so the list no longer reorders after ~1 s.
@@ -183,6 +188,14 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 
 ### Lints
 
+- `fix` **A package or class analyzed alone is read as a document loads it** (`load.alone`, `article`): `satex -f my.sty lint` runs `\documentclass{article}\usepackage{my}` and an empty body, a class its `\documentclass`. Read by itself the file ran outside every package: no more "Unknown option", "\paperwidth (0.0pt) too short", "xkeyval loaded before \documentclass" or "expl3 syntax is still in force" for todonotes, glossaries, geometry, microtype, biblatex, siunitx. `load.alone: ''` reads the file by itself as before.
+- `fix` **No "recursion that never stops" where the texts do not say so**: a cycle nothing expands is guarded by a test in any of its macros or in one their texts name (hyperref's `\HyPsd@GetTwoBytes`, expl3's `\str_if_eq:nnTF` and `\quark_if_recursion_tail_stop:N`, suffix's `\WithSuffix`). A name is called only where it stands to be expanded: not inside braces, not after `\let` or `\string` (`\global\let\name\relax`), and not as a quark (`\def\q{\q}` that another text holds). Over 220 findings in 17 packages are gone.
+- `fix` **A library's private name is used where a text names it**: a package read alone calls none of its commands, so a private macro counts as used when a public command, a key or a hook names it, also before it is defined, and when a text builds its name (`\csname demo@get@#1\endcsname`, `\use:c { __demo_get_#1:n }`). What is private is `lints.unused-definition.private` (`['@', '__']`): a public expl3 function is other packages' interface. What a public name copies (`\let`, `\cs_new_eq:NN`) is used too. siunitx had 442 "never used", now 3.
+- `fix` **Package and class files get no document-only findings**: `primitive-tex-command`, `unused-package`, `redundant-package-load`, `unused-color`, `unintended-escape` and `clones` are off in the `package`, `class` and `literate` profiles (hyperref.sty alone: 31, 8, 1, 0, 0 and 89 findings). `profiles.package` in `satex.yaml` turns them back on.
+- `fix` **No dead-definition for a definition `\meaning` reads or an empty declaration**: `\def\x{…}\@onelevel@sanitize\x` reads `\x`, and `\newcommand\x{}` before `\def\x#1[#2]{…}` or `\tl_new:N` before `\tl_set:Nn` declares the name.
+- `fix` **No package-load-order finding for a scratch name or an unchanged meaning**: a name the document defines itself (`\@tempa`, `\do`) and one the later package gives the same meaning again (`\Gin@driver` by xcolor and graphics) are no override.
+- `fix` **LuaLaTeX finds a package beside the document from any directory.** `satex -f dir/main.tex lint` gave "`my.sty` is not in this installation" for `dir/my.sty` under LuaTeX: the path `kpse.find_file` returned was read from the document's directory a second time.
+- `fix` **The progress lines are never taller than the terminal.** A frame with more rows than the screen pushed its first row into the scrollback, where the next frame could not overwrite it: "N early findings so far, press l to list them" stayed there once per such frame.
 - `fix` **A definition read before its group closes is not "lost"** (`\begingroup\edef\x{…\endgroup…}\x`): no group-local-definition finding.
 - `fix` **No early "File not found" for an `\input` the installation has**: early findings look the file up in TeX's input path as `\input` does (`hyperref.sty`'s `\input{pd1enc.def}`).
 - `fix` **A `!`, `?` or `.` with no word before it ends no sentence** (`\enquote{! object not found}`): no lowercase-start finding after it.

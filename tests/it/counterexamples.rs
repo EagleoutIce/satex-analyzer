@@ -601,24 +601,100 @@ fn a_mutually_recursive_pair_is_reported_for_both_names() {
     );
 }
 
-/// A `\newcommand` with an optional argument whose body genuinely calls
-/// itself with no conditional is still real recursion: `\foo`'s own
-/// wrapper is exempted, but its internal counterpart, which actually calls
-/// `\foo` back, is not.
+/// A cycle nothing expands is judged by its texts, all of them: the test that ends it may stand
+/// in another macro of the cycle. hyperref's `\HyPsd@GetTwoBytes` only hands on to
+/// `\HyPsd@DoConvert`, which tests `\ifx#1\@empty` before it calls back.
 #[test]
-fn a_genuinely_recursive_newcommand_with_an_optional_argument_is_still_reported() {
+fn a_cycle_one_of_whose_macros_tests_is_guarded() {
     if !installed() {
         return;
     }
     let analysis = document(
         r"\documentclass{article}
-\newcommand\realrec[1][x]{\realrec{#1}}
+\def\stepA#1{#1\stepB}
+\def\stepB#1{\ifx#1\relax\else\expandafter\stepA\fi}
 \begin{document}
 \end{document}",
     );
     let findings = recursion_findings(&analysis);
-    assert_eq!(findings.len(), 1, "{findings:?}");
-    assert_eq!(findings[0].0, "unguarded-recursion");
+    assert!(findings.is_empty(), "a test on the cycle ends it: {findings:?}");
+}
+
+/// A text calls a name only where the name stands to be expanded. Not where it redefines the
+/// name: `\global\let\once\relax` is how a warning is given once (hyperref's
+/// `\Hy@WarningPageColor`), and amsmath's `\eqno` and `\leqno` each disable both. Not after
+/// `\string`, in a message (caption's `\flushsubcaptionlistentries`), nor inside braces, where
+/// another command is handed it (minted's `\FVExtraAlwaysUnexpanded{\minted@read…}`). And a
+/// cycle of names is one of calls only if each name calls the next (`\flush` calls `\addsub`,
+/// which only prints `\flush`'s name). A text that also calls the name is still reported.
+#[test]
+fn a_macro_that_only_names_itself_is_no_recursion() {
+    if !installed() {
+        return;
+    }
+    let analysis = document(
+        r"\documentclass{article}
+\def\once{x\global\let\once\relax}
+\def\eqA{\let\eqA\relax\let\eqB\relax}
+\def\eqB{\let\eqB\relax\let\eqA\relax}
+\def\named{\typeout\string\named}
+\def\handed{\unexpanded{\handed}}
+\def\flush{\addsub\relax}
+\def\addsub#1{\typeout{\string\flush}}
+\def\twice{\def\twice{}\twice}
+\begin{document}
+\end{document}",
+    );
+    let findings = recursion_findings(&analysis);
+    assert_eq!(findings.iter().map(|f| f.1.as_str()).collect::<Vec<_>>(), ["\\twice"], "{findings:?}");
+}
+
+/// A quark is a macro that expands to itself, compared and never expanded (the TeXbook's
+/// `\def\q{\q}`, forest's `\def\Q@END{\Q@END}` and `\def\forest@spacegen{ \forest@spacegen}`,
+/// expl3's `\quark_new:N`): another macro's text
+/// or parameter text holds it. The same definition nothing else names is a loop waiting for its
+/// first call ([`a_directly_recursive_def_is_still_reported`]).
+#[test]
+fn a_quark_is_no_recursion() {
+    if !installed() {
+        return;
+    }
+    let analysis = document(
+        r"\documentclass{article}
+\def\qend{\qend}
+\def\upto#1\qend{#1}
+\def\qmark{\qmark}
+\def\ismark#1{\ifx#1\qmark yes\fi}
+\def\qspace{ \qspace}
+\def\tospace#1\qspace{#1}
+\def\lonely{\lonely}
+\begin{document}
+\end{document}",
+    );
+    let findings = recursion_findings(&analysis);
+    assert_eq!(findings.iter().map(|f| f.1.as_str()).collect::<Vec<_>>(), ["\\lonely"], "{findings:?}");
+}
+
+/// A `\newcommand` with an optional argument whose body genuinely calls
+/// itself with no conditional is real recursion, and a run that calls it
+/// says so: TeX's memory runs out. Read off the texts alone it is not
+/// claimed: the wrapper hands both names to `\@protected@testopt`, which
+/// tests, and only a run sees that its test does not end the cycle.
+#[test]
+fn a_genuinely_recursive_newcommand_with_an_optional_argument_is_reported_by_its_run() {
+    if !installed() {
+        return;
+    }
+    let source = |body: &str| {
+        format!(
+            "\\documentclass{{article}}\n\\newcommand\\realrec[1][x]{{\\realrec{{#1}}}}\n\\begin{{document}}\n{body}\\end{{document}}"
+        )
+    };
+    let called = findings(&document(&source("\\realrec\n")));
+    let endless = |f: &String| f.starts_with("unguarded-recursion") || f.starts_with("raised-error");
+    assert!(called.iter().any(endless), "the run goes round the cycle: {called:?}");
+    let unread = recursion_findings(&document(&source("")));
+    assert!(unread.is_empty(), "{unread:?}");
 }
 
 /// A `\newcommand` with no optional argument whose body calls itself is the

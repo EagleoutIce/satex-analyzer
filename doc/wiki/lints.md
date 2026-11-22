@@ -516,7 +516,7 @@ See [glossaries § Defining glossary entries](https://ctan.org/pkg/glossaries).
 
 **recursion that never stops**
 
-The run saw the macro's expansion reach the macro again, could not see the recursion end, and found no conditional (no `\if…`, `\else` or `\fi`) to end it. A macro nothing expands is judged by the names its replacement text holds. A real run expands until TeX runs out of memory: `TeX capacity exceeded, sorry [main memory size]`.
+The run saw the macro's expansion reach the macro again, could not see the recursion end, and found no conditional (no `\if…`, `\else` or `\fi`) to end it, in any macro of the cycle or in one their replacement texts name. A macro nothing expands is judged by the names its replacement text holds, and it calls a name only where the name stands to be expanded: not inside braces, not as the target of a definition or after `\string`, and not as a quark (`\def\q{\q}`, compared and never expanded). A real run expands until TeX runs out of memory: `TeX capacity exceeded, sorry [main memory size]`.
 
 Fix by adding the test that stops it, or by removing the self-reference.
 
@@ -759,7 +759,7 @@ The rule reports it at the definition, with TeX's message. Unknown text over-app
 
 **package overrides an earlier one**
 
-A package loaded later redefines a command an earlier package made, and the document uses that command. The later definition wins, often by accident. The finding names the command and both packages, as the run saw them.
+A package loaded later redefines a command an earlier package made, and the document uses that command. The later definition wins, often by accident. The finding names the command and both packages, as the run saw them. A command the document defines itself, or one the later package gives the same meaning again, is none.
 
 Where the earlier package defines the command without checking that it is new, loading the later package first keeps the earlier version. The fix then moves the later `\usepackage` above the earlier one. The rule stays quiet where the later package names the earlier one in its own file: it adapts it on purpose, often after `\@ifpackageloaded`.
 
@@ -1565,7 +1565,7 @@ See [chktex 18](https://www.nongnu.org/chktex/), [csquotes § 3.1](https://ctan.
 
 **definition replaced before use**
 
-The name is defined, and defined again, with no use in between: the first replacement text never reaches the typesetter. Both definitions are made on every path, so this is not a conditional fallback. The first is no `\providecommand`, which yields to a later definition on purpose, and both are statements the file reads in order: a definition inside a macro body runs whenever the macro is called, so a default that a key handler or a later call overrides is left alone.
+The name is defined, and defined again, with no use in between: the first replacement text never reaches the typesetter. Both definitions are made on every path, so this is not a conditional fallback. The first is no `\providecommand`, which yields to a later definition on purpose, and no empty declaration (`\newcommand\x{}` before a `\def\x`, `\tl_new:N`), and both are statements the file reads in order: a definition inside a macro body runs whenever the macro is called, so a default that a key handler or a later call overrides is left alone.
 
 Fix by deleting the first definition, or by checking which one was meant.
 

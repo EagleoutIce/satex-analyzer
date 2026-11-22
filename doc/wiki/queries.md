@@ -158,7 +158,7 @@ id   kind     file
 2    input    texsys.cfg                                
 3    input    texsys.aux                                
 4    input    expl3.ltx                                 
-… 295 more lines omitted
+… 307 more lines omitted
 ```
 
 ## gaps
@@ -404,7 +404,7 @@ widget       environment      environment name                            change
 widget       table            environment the run met                     a grid dialog for each tabular, booktabs an…  
 widget       image            graphic file                                a crop, rotate and size dialog for each fig…  
 widget       float            environment the run met                     a float's placement: what each letter lets …  
-… 21 more lines omitted
+… 22 more lines omitted
 ```
 
 ## typeset
@@ -567,23 +567,19 @@ Each answer is `{"type": …, "records": […]}`, or `{"type": …, "error": …
 $ satex query --request doc/src/wiki/request-example.json
 [
   {
-    "hints": [],
-    "records": [
-      {
-        "arguments": [
-          "⟨arg1⟩ the text to box"
-        ],
-        "arity": 1,
-        "body": "\\fbox {#1}",
-        "by": "\\newcommand",
-        "certain": true,
-        "col": 13,
-        "comment": "Draws a frame around its argument.",
-        "context": "outside environments",
-        "effective": "\\mybox{1}",
-        "file": "mypackage.sty",
-        "line": 21,
-        "name": "\\mybox",
-        "package": null,
-… 28 more lines omitted
+    "hints": [
+      "`\\mybox` has no meaning the run gave it"
+    ],
+    "records": [],
+    "type": "explain"
+  },
+  {
+    "records": [],
+    "type": "controls"
+  },
+  {
+    "records": [],
+    "type": "options"
+  }
+]
 ```

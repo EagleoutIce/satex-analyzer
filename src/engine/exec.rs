@@ -1252,6 +1252,8 @@ impl Machine<'_> {
                             Tok::Chr(c, _) => self.active_sym(c),
                             _ => token.cs().unwrap_or(self.unknown),
                         };
+                        // Printing a meaning reads the definition (`\@onelevel@sanitize`).
+                        self.reference(sym, token.span);
                         // Unknown text in a body prints as typed text, never
                         // as the name that stands for it (tex.web § 294).
                         if let Meaning::Macro(m) = self.env.meaning(sym)

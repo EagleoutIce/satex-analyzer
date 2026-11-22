@@ -1546,7 +1546,9 @@ fn os_date<'r, 'a>(_: &RefCell<Run<'r, 'a>>, lua: &State, args: MultiValue) -> R
 
 // ---- files -------------------------------------------------------------
 
-/// `kpse.find_file(name, format)`: the path satex's resolver finds.
+/// `kpse.find_file(name, format)`: the path satex's resolver finds, as the run names it. The
+/// run's directory is the document's: a file there is named from there, as every path the
+/// code then hands back is read ([`attributes`]).
 fn find_file<'r, 'a>(run: &RefCell<Run<'r, 'a>>, lua: &State, args: MultiValue) -> R<MultiValue> {
     let name = text(lua, &arg(&args, 0))?;
     let kind = match arg(&args, 1) {
@@ -1556,7 +1558,7 @@ fn find_file<'r, 'a>(run: &RefCell<Run<'r, 'a>>, lua: &State, args: MultiValue) 
     let mut run = run.borrow_mut();
     let base = run.m.base().to_path_buf();
     let path = run.m.resolver_mut().resolve(&name, kind, &base);
-    ret(lua, path.map(|p| p.display().to_string()))
+    ret(lua, path.map(|p| p.strip_prefix(&base).unwrap_or(&p).display().to_string()))
 }
 
 /// `lfs.attributes(path [, name])`: size, modification time and mode.

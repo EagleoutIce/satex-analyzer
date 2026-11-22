@@ -136,6 +136,9 @@ pub struct Limits {
     pub call_memo_steps: u32,
     /// A run longer than this keeps no effect, and stops being recorded.
     pub call_memo_longest: u64,
+    /// Writes logged since the last token read from a file before the log
+    /// is folded to one entry per name and group depth.
+    pub write_log: u64,
     /// Runs of one definition that may stay below `call_memo_steps` or
     /// unclean before its calls are no longer recorded, until it is probed
     /// again after `probes << n` such calls (`n`: times it ran out).
@@ -312,6 +315,7 @@ impl Limits {
             "call_learn_forks" => self.call_learn_forks.into(),
             "call_memo_steps" => self.call_memo_steps.into(),
             "call_memo_longest" => self.call_memo_longest,
+            "write_log" => self.write_log,
             "call_memo_probes" => self.call_memo_probes.into(),
             "call_memo_variants" => self.call_memo_variants.into(),
             "call_memo_entries" => self.call_memo_entries.into(),
@@ -416,6 +420,7 @@ impl Default for Limits {
             call_learn_forks: 2,
             call_memo_steps: 200,
             call_memo_longest: 200_000,
+            write_log: 1 << 20,
             call_memo_probes: 8,
             call_memo_variants: 4,
             call_memo_entries: 100_000,
@@ -1968,6 +1973,11 @@ pub struct Load {
     /// Find what a package or class file expects loaded from the names it
     /// uses and the packages on disk that define them.
     pub expect_detect: bool,
+    /// The class a package analyzed alone is loaded under. Such a file is
+    /// read as a document loads it: a package by `\usepackage` under this
+    /// class, a class by `\documentclass`, then an empty document body.
+    /// Empty reads the file by itself, with no document around it.
+    pub alone: String,
     /// Read the files an earlier build wrote (`build_extensions`) as they
     /// are on disk. Off, they count as absent: the run over-approximates
     /// them by what it writes itself.
@@ -2000,6 +2010,7 @@ impl Default for Load {
             skip: Vec::new(),
             expect: Vec::new(),
             expect_detect: true,
+            alone: "article".into(),
             build_files: false,
             build_extensions: [
                 "aux",
@@ -2734,7 +2745,11 @@ impl Default for Profiles {
     /// all: a package or class is read as its author sees it — `@` a
     /// letter, its own definitions not flagged for missing a use outside
     /// what it defines, and the lints that only make sense for a document
-    /// with a build of its own to check turned off. A `.dtx`/`.ins` unpacks
+    /// with a build of its own to check turned off. So are those that read
+    /// a library as a document: it programs in TeX's primitives, states
+    /// each package it needs itself and loads them for the macros its users
+    /// call, defines colors for them, and repeats code where a macro would
+    /// change when it expands. A `.dtx`/`.ins` unpacks
     /// to one of those, so it gets the same defaults. Plain TeX has no
     /// LaTeX packages or classes to follow, and none of its own labels or
     /// microtype to suggest.
@@ -2744,9 +2759,10 @@ impl Default for Profiles {
         }
         let package = parse(
             "at_letter: true\n\
-             lints: {unused-definition: {report_public: false}}\n\
+             lints: {unused-definition: {report_public: false}, clones: {enabled: false}}\n\
              lint_off: [analysis-imprecision, unused-label, microtype-available, preamble-cost, \
-               comment-marker, \
+               comment-marker, primitive-tex-command, unused-package, redundant-package-load, unused-color, \
+               unintended-escape, \
                user-pattern, unreferenced-numbered-display, build-shell-escape-missing, \
              build-shell-escape-unneeded, build-engine-mismatch, build-bibliography-disabled, \
              build-bibliography-unneeded, build-missing-custom-dependency, \
@@ -3200,11 +3216,16 @@ impl Default for WrongDash {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct UnusedDefinition {
-    /// Whether the rule also reports a name with no `@` and no
-    /// expl3-style `module_function:signature`. The package and class
-    /// profiles turn it off, since such a name is the package's public
-    /// interface, and the caller, not this run, is the one to use it.
+    /// Whether the rule also reports a name that is not `private`. The
+    /// package and class profiles turn it off, since such a name is the
+    /// package's public interface, and the caller, not this run, is the one
+    /// to use it.
     pub report_public: bool,
+    /// Regexes on the name (no backslash) of what is private: an `@`
+    /// (source2e `classes.dtx`), expl3's `__` (interface3, "The naming
+    /// scheme": `\__module_function:n`, `\l__module_name_tl`). A public
+    /// expl3 function (`\module_function:n`) is other packages' interface.
+    pub private: Vec<String>,
     /// Regexes on the name as written (`\\my@hook`). A match is never reported.
     pub ignore: Vec<String>,
     /// Whether the rule also reports a pgf key nothing uses. Off by
@@ -3214,7 +3235,12 @@ pub struct UnusedDefinition {
 
 impl Default for UnusedDefinition {
     fn default() -> UnusedDefinition {
-        UnusedDefinition { report_public: true, ignore: Vec::new(), pgf_keys: false }
+        UnusedDefinition {
+            report_public: true,
+            private: vec!["@".into(), "__".into()],
+            ignore: Vec::new(),
+            pgf_keys: false,
+        }
     }
 }
 

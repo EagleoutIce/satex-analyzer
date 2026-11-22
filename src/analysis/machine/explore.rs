@@ -176,8 +176,8 @@ struct Loop {
     passes: u32,
     /// Number of output routines fired when last met ([`Machine::pages`]).
     pages: u64,
-    /// Number of names assigned before the entry.
-    recent: usize,
+    /// [`crate::engine::env::Env::assignments`] at the entry.
+    recent: u64,
     /// The input levels below the loop body, by identity and by place. A pass
     /// reaches its next call without consuming any of them.
     levels: Vec<Level>,
@@ -1314,7 +1314,7 @@ impl Machine<'_> {
                     depth,
                     passes: 0,
                     pages,
-                    recent: self.env.recent_len(),
+                    recent: self.env.assignments,
                     levels,
                     places,
                     top,

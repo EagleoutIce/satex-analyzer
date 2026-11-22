@@ -1878,12 +1878,15 @@ pub struct Machine<'a> {
     pub docstrip_dir: Option<String>,
     /// Whether the docstrip commands are the ones satex models.
     docstrip: bool,
+    /// The main file's text where a document made for it loads it (`load.alone`), and the
+    /// calls that load is made within: none of them is the file's own while it is read.
+    alone: Option<(Rc<str>, Calls)>,
     /// Names whose modeled meaning stands whatever a file defines: interfaces
     /// satex implements itself because their own definition is written in a
     /// dialect it would have to typeset to follow.
     pinned: crate::fixed::HashSet<Sym>,
     /// The macro whose replacement text is currently being read.
-    within: Rc<Vec<(Sym, NodeId)>>,
+    within: Calls,
     /// Environments open on this path, outermost first (`document` excluded:
     /// `document_depth` already answers that axis). What `explain` reads to
     /// tell a definition made inside `enumerate` from one made outside.
@@ -2619,7 +2622,7 @@ struct PathState {
     cds: Rc<Vec<ControlDep>>,
     parted_by: Option<ControlDep>,
     conds: Rc<Vec<CondFrame>>,
-    within: Rc<Vec<(Sym, NodeId)>>,
+    within: Calls,
     env_stack: Rc<Vec<Sym>>,
     packages: Rc<Vec<(Sym, Vec<String>)>>,
     align_state: i64,
@@ -2775,8 +2778,8 @@ struct Site {
     /// fresh rests differed: a loop over unknown text.
     vague: u64,
     vagued: u32,
-    /// [`Env::effective`] less its slot writes, [`Env::recent_len`] and
-    /// [`Env::assignments`] at the last expansion here.
+    /// [`Env::effective`] less its slot writes and [`Env::assignments`]
+    /// at the last expansion here.
     other: u64,
     assigned: u64,
     /// [`Env::assignments`] when the recursion through this site began:
@@ -3227,6 +3230,7 @@ impl<'a> Machine<'a> {
             pending: Rc::default(),
             docstrip_dir: None,
             docstrip: false,
+            alone: None,
             lua: Default::default(),
             pinned: crate::fixed::HashSet::default(),
             halted: false,
@@ -3989,15 +3993,26 @@ impl<'a> Machine<'a> {
         }
         m.out.timings.start(Phase::Document);
         m.out.timings.enter_file(id);
+        // A package or class alone is loaded by a document made for it, which the load then reads.
+        let around = path.filter(|_| literate.is_none()).and_then(|path| m.document_around(path, kind));
+        let (text, file) = match &around {
+            Some(document) => {
+                m.alone = Some((code.into(), Rc::default()));
+                (document.as_str(), m.register_file(ALONE.to_string(), LoadKind::Input))
+            }
+            None => (code, id),
+        };
         m.input.push(Frame::File {
-            mouth: Rc::new(Mouth::file(code, id)),
+            mouth: Rc::new(Mouth::file(text, file)),
             package: None,
             depth: 0,
             conds: 0,
             eof_seen: false,
             ends_at: None,
         });
-        m.push_expected(kind);
+        if around.is_none() {
+            m.push_expected(kind);
+        }
         // tex.web § 1337: `\everyjob` is read first, after the format is in
         // place: what it sets from the clock (expl3's `\c_sys_year_int`) is
         // the run's, not the kernel cache's.
@@ -4792,14 +4807,34 @@ will look undefined",
     /// Interpret the preamble a project dumps into its own format (what a `.fmt`
     /// built by `mylatexformat` holds), so its definitions are in place before the
     /// document is read. Returns whether it was cut short, leaving the format incomplete.
-    /// What the file expects loaded before it (`load.expect`), read first:
-    /// a class by `\documentclass` where the file is no document itself,
-    /// the rest by `\RequirePackage`.
-    fn push_expected(&mut self, kind: LoadKind) {
-        let expect = self.cfg.load.expect.clone();
-        if expect.is_empty() {
-            return;
+    /// The document that loads the package or class at `path` as any document does
+    /// (`load.alone`): what the file expects first, a package under a class, then an empty
+    /// body. `None` where the setting is empty, or the name does not find this very file.
+    fn document_around(&mut self, path: &Path, kind: LoadKind) -> Option<String> {
+        let class = self.cfg.load.alone.clone();
+        let name = path.file_stem().filter(|_| kind.is_package() || kind == LoadKind::Class)?.to_str()?.to_string();
+        let found = self.resolver.resolve(&name, kind, &self.base.clone()).filter(|_| !class.is_empty())?;
+        let same = |a: &Path, b: &Path| a.canonicalize().ok().zip(b.canonicalize().ok()).is_some_and(|(a, b)| a == b);
+        if !same(&found, path) {
+            return None;
         }
+        let mut text = self.expected(kind);
+        if kind == LoadKind::Class {
+            text.push_str(&format!("\\documentclass{{{name}}}\n"));
+        } else {
+            if !text.starts_with("\\documentclass") {
+                text.insert_str(0, &format!("\\documentclass{{{class}}}\n"));
+            }
+            text.push_str(&format!("\\usepackage{{{name}}}\n"));
+        }
+        Some(text + "\\begin{document}\n\\end{document}\n")
+    }
+
+    /// What the file expects loaded before it (`load.expect`), as a document
+    /// would write it: a class by `\documentclass` where the file is no
+    /// document itself, the rest by `\RequirePackage`.
+    fn expected(&mut self, kind: LoadKind) -> String {
+        let expect = self.cfg.load.expect.clone();
         let base = self.base.clone();
         let mut text = String::new();
         for name in &expect {
@@ -4808,6 +4843,15 @@ will look undefined",
                 && self.resolver.resolve(name, LoadKind::Class, &base).is_some();
             let command = if class { "documentclass" } else { "RequirePackage" };
             text.push_str(&format!("\\{command}{{{name}}}\n"));
+        }
+        text
+    }
+
+    /// [`Machine::expected`], read first.
+    fn push_expected(&mut self, kind: LoadKind) {
+        let text = self.expected(kind);
+        if text.is_empty() {
+            return;
         }
         let id = self.register_file("<load.expect>".to_string(), LoadKind::Input);
         self.input.push(Frame::File {
@@ -5854,6 +5898,9 @@ will look undefined",
                 self.out.lines += u64::from(mouth.here().line);
                 self.balance_file(mouth.file, depth);
                 self.balance_conditionals(mouth.file, conds);
+                if let Some((_, outer)) = self.alone.as_ref().filter(|_| mouth.file == self.out.main_file) {
+                    self.within = outer.clone();
+                }
                 if package.is_some() {
                     Rc::make_mut(&mut self.packages).pop();
                     if self.packages.is_empty()
@@ -15511,6 +15558,10 @@ will look undefined",
             let display = path.display().to_string();
             self.register_file(display, kind)
         });
+        // The file the run is about, loaded by the document made for it: the text it was
+        // given, and no package to its own definitions.
+        let about = self.alone.as_ref().map(|(text, _)| text.clone()).filter(|_| file == Some(self.out.main_file));
+        let source = about.as_ref().map(|text| text.to_string()).or(source);
         let call = self.file_call.map(|(_, at)| at).filter(|at| self.own_file(at.file));
         self.out.facts.loads.push(Load {
             name: name.to_string(),
@@ -15542,7 +15593,7 @@ will look undefined",
         if kind == LoadKind::Class && self.class_options.is_empty() {
             self.class_options = options.clone();
         }
-        let package = kind.is_package().then(|| self.intern(name));
+        let package = (kind.is_package() && about.is_none()).then(|| self.intern(name));
         if let Some(sym) = package {
             if self.packages.is_empty() {
                 self.load_start.get_or_insert(self.out.steps);
@@ -15550,7 +15601,8 @@ will look undefined",
             Rc::make_mut(&mut self.packages).push((sym, options));
         }
         self.identifying = Some(load);
-        self.file_depth += 1;
+        // The file the run is about stands where a main file does: what it loads is its own.
+        self.file_depth += u16::from(about.is_none());
         self.out.timings.enter_file(id);
         if self.own_file(id) {
             let opened = Span { file: id, line: 0, col: 0 };
@@ -15569,12 +15621,16 @@ will look undefined",
         // belongs to this file now (tex.web § 362), so the file ends after
         // its first line.  The package cache replays a file whole and would
         // record a truncated one, so a pending flag reads the file itself.
-        let mut mouth = match self.pending_eof() {
+        let mut mouth = match self.pending_eof() || about.is_some() {
             true => Mouth::file(&source, id),
             false => self.open_package(&source, id, name, kind, span),
         };
         if self.take_pending_eof() {
             mouth.inherit_eof(false);
+        }
+        // Its statements stand at the top, as a main file's do, until the file ends.
+        if let Some((_, outer)) = self.alone.as_mut().filter(|_| about.is_some()) {
+            *outer = std::mem::take(&mut self.within);
         }
         self.input.push(Frame::File { mouth: Rc::new(mouth), package, depth, conds, eof_seen: false, ends_at });
     }
@@ -16396,6 +16452,10 @@ fn read_out(f: &Frame) -> bool {
 
 /// The name of a source read from no file.
 pub(crate) const NO_FILE: &str = "<input>";
+/// The macros being expanded, outermost first, each with its call's vertex.
+type Calls = Rc<Vec<(Sym, NodeId)>>;
+/// The document made for a package or class analyzed alone (`load.alone`).
+const ALONE: &str = "<load.alone>";
 /// A [`Scratch::cond_gaps`] record no state matches: the skip is unsure.
 pub(crate) const UNSURE: (u64, u64) = (u64::MAX, u64::MAX);
 /// The env's set bounds from the run's limits.
@@ -16407,6 +16467,7 @@ fn set_limits(limits: &crate::project::config::Limits) -> crate::engine::env::Se
         values: usize::from(limits.value_set).max(1),
         intervals: usize::from(limits.interval_set).max(1),
         text_names: usize::from(limits.text_names),
+        write_log: usize::try_from(limits.write_log).unwrap_or(usize::MAX),
     }
 }
 
@@ -16625,7 +16686,7 @@ impl Machine<'_> {
 
     /// What was written since [`crate::engine::env::Env::clear_recent`] may hold anything.
     pub(crate) fn widen_recent(&mut self) {
-        let written = self.env.recent_since(0);
+        let written = self.env.recent_all();
         self.widen_names(&written);
     }
 
@@ -18416,5 +18477,41 @@ mod log_bound_tests {
         let raised = m.raised_mark();
         assert!(raised >= PASSES, "every line raised: {raised}");
         assert!(m.diag_raised.len() < PASSES / 10, "{} raises kept of {raised}", m.diag_raised.len());
+    }
+
+    /// Intuition: the log of writes serves the calls and loops in flight,
+    /// which ask for names, not for every write, so code that assigns for
+    /// long holds a log as short as the names it writes. Pins the write
+    /// log, one entry per assignment until the next token read from a
+    /// file: thirty TikZ nodes made by one `\foreach` took it to 2 GiB,
+    /// and the allocation that doubled it aborted the process.
+    #[test]
+    fn the_write_log_stays_bounded_over_a_long_call() {
+        const WRITES: usize = 3000;
+        const LOG: u64 = 64;
+        // One call whose text assigns to two registers WRITES times each
+        // and reads no source meanwhile.
+        let define = format!("\\def\\a{{{}}}", "\\count1=1 \\count2=2 ".repeat(WRITES));
+        let ran = |source: &str, write_log: u64, steps: Option<u64>| {
+            let mut cfg = Config {
+                load: crate::project::config::Load { format: false, ..Default::default() },
+                texmf: crate::project::config::Texmf { kpsewhich: false, ..Default::default() },
+                ..Config::default()
+            };
+            cfg.limits.write_log = write_log;
+            cfg.limits.steps = steps.unwrap_or(cfg.limits.steps);
+            let (mut m, _) = Machine::begin(source, None, &cfg);
+            let before = m.env.assignments;
+            m.run_guarded();
+            (m.env.assignments - before, m.out.steps, m.env.sizes()[2])
+        };
+        // Stopped halfway through the call: a token read from the file
+        // after it starts the log over.
+        let call = format!("{define}\\a");
+        let inside = Some((ran(&define, u64::MAX, None).1 + ran(&call, u64::MAX, None).1) / 2);
+        let (whole, folded) = (ran(&call, u64::MAX, inside), ran(&call, LOG, inside));
+        assert!(whole.0 > 4 * LOG && whole.2 as u64 >= whole.0, "every write was logged: {whole:?}");
+        assert_eq!((folded.0, folded.1), (whole.0, whole.1), "the same run");
+        assert!(folded.2 as u64 <= 2 * LOG, "{} writes kept of {}", folded.2, folded.0);
     }
 }

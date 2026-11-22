@@ -2592,15 +2592,17 @@ fn a_minipage_of_two_lines_has_its_exact_size() {
 
 /// Where the line width is not known, the breaks are not either: the
 /// height is a range from one line to one per breakpoint (four words, nine
-/// breakpoints with hyphenation, ten lines of 12pt at most), never one
-/// number and never negative.
+/// breakpoints with hyphenation, ten lines), that count rounded up to a power of
+/// two (16 lines of 12pt at most: a word typed into the paragraph then leaves the
+/// bound as it was, see `incremental::letters_typed_into_a_paragraph_of_unknown_lines…`),
+/// never one number and never negative.
 #[test]
 fn a_paragraph_of_uncertain_breaks_has_a_bounded_height() {
     let cfg = Config { load: Load { classes: true, ..Default::default() }, ..crate::support::config() };
     let analysis = Machine::analyze(
         r"\documentclass{article}\begin{document}
           \setbox0\vbox{\hsize=\pdfuniformdeviate 300pt aa bb cc dd}
-          \ifdim\ht0<0pt \gdef\negative{}\fi \ifdim\ht0>120pt \gdef\high{}\fi
+          \ifdim\ht0<0pt \gdef\negative{}\fi \ifdim\ht0>192pt \gdef\high{}\fi
           \xdef\out{\the\ht0}\end{document}",
         None,
         &cfg,

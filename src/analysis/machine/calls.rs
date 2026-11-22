@@ -24,7 +24,6 @@ pub(crate) type CallKey = (NodeId, Span, u64);
 pub(crate) struct CallRec {
     key: CallKey,
     base: usize,
-    recent: usize,
     reads: usize,
     /// [`crate::engine::env::Env::assignments`] at the start.
     assigned: u64,
@@ -412,7 +411,6 @@ impl Machine<'_> {
             let rec = CallRec {
                 key,
                 base: self.input.len(),
-                recent: self.env.recent_len(),
                 reads: self.env.read_log_len(),
                 assigned: self.env.assignments,
                 groups: self.env.group_level(),
@@ -680,7 +678,7 @@ impl Machine<'_> {
             let ended = main
                 && intact
                 && !rec.leaky
-                && self.env.recent_len() >= rec.recent
+                && self.env.logged_since(rec.assigned)
                 && self.conds.len() == rec.conds
                 && self.mode == rec.mode
                 && self.file_writes == rec.side;
@@ -695,7 +693,7 @@ impl Machine<'_> {
                     && intact
                     && !peeks
                     && balanced
-                    && self.env.recent_len() >= rec.recent
+                    && self.env.logged_since(rec.assigned)
                     && self.learn_forks == rec.forks_at;
                 self.end_memo_run(&rec, start, clean);
                 let floor = self.call_recs.iter().rev().find_map(|r| r.memo_mark());
@@ -726,7 +724,7 @@ impl Machine<'_> {
                 continue;
             }
             let writes: Vec<_> =
-                self.env.recent_since(rec.recent).into_iter().map(|sym| (sym, self.env.slot_at(sym.0))).collect();
+                self.env.recent_since(rec.assigned).into_iter().map(|sym| (sym, self.env.slot_at(sym.0))).collect();
             // A run that wrote nothing acted only through the tokens it left
             // or consumed, which a summary cannot replay.
             if writes.is_empty() {
@@ -783,7 +781,7 @@ impl Machine<'_> {
         // A partial run teaches nothing: decided before its writes are collected,
         // which costs as much as the run wrote.
         let writes: Vec<_> = match whole {
-            true => (self.env.recent_within(rec.recent, self.env.depth() as u32).into_iter())
+            true => (self.env.recent_within(rec.assigned, self.env.depth() as u32).into_iter())
                 .map(|sym| (sym, self.env.slot_at(sym.0)))
                 .collect(),
             false => Vec::new(),
@@ -1184,7 +1182,7 @@ impl Machine<'_> {
         let mut rest: Option<Vec<Token>> = (plain
             && self.step_depth == 1
             && below == rec.below
-            && self.env.recent_len() >= rec.recent
+            && self.env.logged_since(rec.assigned)
             && self.learn_forks == rec.forks_at
             && start.verify.is_none())
         .then(Vec::new);
@@ -1465,7 +1463,7 @@ impl Machine<'_> {
         let Some((reads, pre, [globals, locals])) = self.env.memo_since(start.mark) else { return Err("full") };
         let logged = self.env.reads_since(rec.reads);
         let mut writes = Vec::new();
-        for sym in self.env.recent_since(rec.recent) {
+        for sym in self.env.recent_since(rec.assigned) {
             // Unbound again, or written both globally and locally: no one
             // assignment says that at another group level.
             let Some(now) = self.env.peek(sym.0).cloned() else { return Err("unbound") };

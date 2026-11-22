@@ -19,7 +19,8 @@ pub static RULES: &[Rule] = &[
 The name is defined, and defined again, with no use in between: the first
 replacement text never reaches the typesetter.  Both definitions are made on
 every path, so this is not a conditional fallback.  The first is no
-`\\providecommand`, which yields to a later definition on purpose, and both
+`\\providecommand`, which yields to a later definition on purpose, and no empty
+declaration (`\\newcommand\\x{}` before a `\\def\\x`, `\\tl_new:N`), and both
 are statements the file reads in order: a definition inside a macro body runs
 whenever the macro is called, so a default that a key handler or a later call
 overrides is left alone.
@@ -430,12 +431,10 @@ fn interface(analysis: &Analysis, sym: crate::engine::tex::Sym) -> String {
     format!("`{}`{}", analysis.interner.cs(sym), package.unwrap_or_default())
 }
 
-/// Whether `name` (a control word, as [`Report::cs`] writes it) is one a
-/// package or class author would not want the public to rely on, by
-/// `conventions.internal`: an `@` (source2e `classes.dtx`), expl3's
-/// `module_function:signature` (interface3, "The naming scheme").
-fn looks_private(analysis: &Analysis, name: &str) -> bool {
-    analysis.settings.conventions.is_internal(crate::engine::tex::bare_name(name))
+/// Whether `name` is private by `lints.unused-definition.private`.
+fn looks_private(private: &[regex::Regex], name: &str) -> bool {
+    let name = crate::engine::tex::bare_name(name);
+    private.iter().any(|pattern| pattern.is_match(name))
 }
 
 /// pgfkeys stores a key as `\pgfk@/path/key/.@body` etc.: the user sets it.
@@ -443,13 +442,144 @@ fn is_pgf_key(name: &str) -> bool {
     name.starts_with("\\pgfk@")
 }
 
+/// The names replacement texts hold, whether or not a run expands them: a library read alone
+/// calls none of its commands, and a text names what is defined only after it.
+struct NamedByText {
+    /// Reached over the call graph from the names given.
+    reached: crate::fixed::HashSet<Sym>,
+    /// Names built from pieces: `\csname foo@#1\endcsname`, `\use:c { __foo_#1:n }`.
+    built: regex::RegexSet,
+}
+
+impl NamedByText {
+    /// What the texts of every name outside `reportable` name, and of every name those name.
+    fn of<'a>(
+        analysis: &Analysis,
+        reportable: &crate::fixed::HashSet<Sym>,
+        texts: impl Iterator<Item = &'a crate::analysis::facts::Definition>,
+    ) -> NamedByText {
+        let graph = &analysis.calls;
+        let built = texts.filter_map(|def| def.mac.as_deref()).flat_map(|m| built_names(analysis, &m.replacement_text));
+        let built = regex::RegexSet::new(built).unwrap_or_else(|_| regex::RegexSet::empty());
+        // The token that names a macro in its own definition is no use of it, wherever the
+        // definer's plumbing keeps it (`\reserved@a` holds the name `\newcommand` defines).
+        let mut sites: crate::fixed::HashMap<Sym, Vec<Span>> = crate::fixed::HashMap::default();
+        for def in &analysis.facts.defs {
+            sites.entry(def.name).or_default().push(def.span);
+        }
+        let plumbing = |i: usize, j: usize| {
+            let (holder, name) = (graph.nodes[i], graph.nodes[j]);
+            if !reportable.contains(&name) {
+                return false;
+            }
+            let text = analysis.env.meaning(holder).as_macro().map(|m| m.replacement_text.clone());
+            let defined = |span: &Span| sites.get(&name).is_some_and(|at| at.contains(span));
+            let mut written = text.iter().flat_map(|t| t.iter()).filter(|t| t.cs() == Some(name)).peekable();
+            written.peek().is_some() && written.all(|t| defined(&t.span))
+        };
+        // A name a text builds is used as one outside is.
+        let outside = |name: &Sym| !reportable.contains(name) || built.is_match(analysis.interner.name(*name));
+        let mut reached = crate::fixed::HashSet::default();
+        let mut work: Vec<usize> = (0..graph.nodes.len()).filter(|&i| outside(&graph.nodes[i])).collect();
+        // What a name outside copies is used as that name is (`\cs_new_eq:NN \mod_public:n
+        // \__mod_private:n`): the copy reads the meaning, and nothing reads the copy in this run.
+        use crate::analysis::graph::{EdgeKind, VertexTag};
+        for def in analysis.facts.defs.iter().filter(|def| outside(&def.name)) {
+            let copied =
+                analysis.graph.outgoing(def.node).iter().filter(|(_, kind)| kind.intersects(EdgeKind::DEFINED_BY));
+            let sources = copied.filter_map(|&(to, _)| analysis.graph.vertex(to)).filter(|v| v.tag == VertexTag::Use);
+            for source in sources.map(|v| v.name).filter(|source| *source != def.name) {
+                reached.insert(source);
+                work.extend(graph.get(source));
+            }
+        }
+        while let Some(i) = work.pop() {
+            let named = graph.edges[i].iter().copied().filter(|&j| !plumbing(i, j));
+            work.extend(named.filter(|&j| reached.insert(graph.nodes[j])));
+        }
+        NamedByText { reached, built }
+    }
+
+    fn has(&self, analysis: &Analysis, name: Sym) -> bool {
+        self.reached.contains(&name) || self.built.is_match(analysis.interner.name(name))
+    }
+}
+
+/// The names `text` builds, each as a regex on the whole name: between `\csname` and
+/// `\endcsname`, and in an expl3 argument of type `c` (interface3, "The naming scheme").
+/// A character stands for itself, a parameter or a command for any text. A name with no
+/// character of its own says nothing and is left out.
+fn built_names(analysis: &Analysis, text: &[Token]) -> Vec<String> {
+    let prim = |t: &Token| t.cs().and_then(|cs| analysis.env.meaning(cs).prim());
+    let pattern = |name: &[Token]| {
+        let mut out = String::from("^");
+        let mut literal = false;
+        for token in name {
+            match token.tok {
+                Tok::Chr(c, _) => {
+                    literal = true;
+                    out.push_str(&regex::escape(c.encode_utf8(&mut [0; 4])));
+                }
+                _ if out.ends_with(".*") => {}
+                _ => out.push_str(".*"),
+            }
+        }
+        out.push('$');
+        literal.then_some(out)
+    };
+    let mut out = Vec::new();
+    for (i, token) in text.iter().enumerate() {
+        let rest = &text[i + 1..];
+        if prim(token) == Some(Primitive::Csname) {
+            let end = rest.iter().position(|t| prim(t) == Some(Primitive::Endcsname)).unwrap_or(rest.len());
+            out.extend(pattern(&rest[..end]));
+            continue;
+        }
+        let Some((_, signature)) = token.cs().and_then(|cs| analysis.interner.name(cs).split_once(':')) else {
+            continue;
+        };
+        let mut at = 0;
+        // `p` and `w` take text no signature describes: what follows them is not counted.
+        for kind in signature.chars().take_while(|k| !matches!(k, 'p' | 'w')) {
+            let Some(first) = rest.get(at) else { break };
+            let argument = match first.tok {
+                Tok::Chr(_, Catcode::Begin) => {
+                    let mut depth = 0usize;
+                    let close = rest[at..].iter().position(|t| {
+                        match t.tok {
+                            Tok::Chr(_, Catcode::Begin) => depth += 1,
+                            Tok::Chr(_, Catcode::End) => depth -= 1,
+                            _ => {}
+                        }
+                        depth == 0
+                    });
+                    let Some(close) = close else { break };
+                    at += close + 1;
+                    &rest[at - close..at - 1]
+                }
+                _ => {
+                    at += 1;
+                    &rest[at - 1..at]
+                }
+            };
+            if kind == 'c' {
+                out.extend(pattern(argument));
+            }
+        }
+    }
+    out
+}
+
 fn unused_definition(report: &mut Report) {
     let analysis = report.analysis();
     let index = report.index();
     let rule = &analysis.settings.lints.unused_definition;
     let ignore: Vec<regex::Regex> = rule.ignore.iter().filter_map(|p| regex::Regex::new(p).ok()).collect();
+    let private: Vec<regex::Regex> = rule.private.iter().filter_map(|p| regex::Regex::new(p).ok()).collect();
     let read: BTreeSet<Sym> =
         analysis.facts.defs.iter().filter(|def| index.used_definition(def)).map(|def| def.name).collect();
+    // What the rule may report: own macros no run read, a library's private ones only.
+    let mut candidates = Vec::new();
     for def in &analysis.facts.defs {
         // A name one call defines for another it defines, whose text calls
         // it (ltcmd's `\fd code`), is that name's implementation.
@@ -489,9 +619,20 @@ fn unused_definition(report: &mut Report) {
             continue;
         }
         if (!rule.pgf_keys && is_pgf_key(&name))
-            || (!rule.report_public && !looks_private(analysis, &name))
+            || (!rule.report_public && !looks_private(&private, &name))
             || ignore.iter().any(|re| re.is_match(&name))
         {
+            continue;
+        }
+        candidates.push((def, name));
+    }
+    // Every other name is there to be used, by the document, the kernel's hooks or a library's
+    // users: what its text names is used too, whether or not this run expanded it.
+    let reportable: crate::fixed::HashSet<Sym> = candidates.iter().map(|(def, _)| def.name).collect();
+    let own = || analysis.facts.defs.iter().filter(|def| index.own_definition(def));
+    let named = NamedByText::of(analysis, &reportable, own());
+    for (def, name) in candidates {
+        if named.has(analysis, def.name) {
             continue;
         }
         if report.unread("used").is_some() {
@@ -529,8 +670,17 @@ fn dead_definition(report: &mut Report) {
             // Whatever reads the first definition, through any name, reads
             // it before the second replaces it.
             // A `\providecommand`-family definition is a fallback that yields on purpose.
-            let fallback = analysis.interner.name(first.by).to_ascii_lowercase().starts_with("provide");
-            if first.span == second.span || first.depth != second.depth || fallback || index.used_definition(first) {
+            let by = analysis.interner.name(first.by).to_ascii_lowercase();
+            let fallback = by.starts_with("provide");
+            // A name declared empty and then defined: `\newcommand\x{}` checks that the name is
+            // free before a `\def\x#1[#2]{…}`, and expl3 wants `\tl_new:N` before `\tl_set:Nn`.
+            let declared = by.contains("new") && first.mac.as_ref().is_some_and(|m| m.replacement_text.is_empty());
+            if first.span == second.span
+                || first.depth != second.depth
+                || fallback
+                || declared
+                || index.used_definition(first)
+            {
                 continue;
             }
             let rendered = analysis.interner.cs(name);

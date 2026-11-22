@@ -563,6 +563,13 @@ struct Probed {
 /// process for that text and the settings it runs under. It runs without wall-clock limit: what
 /// it says depends on the installation and the settings, never on the machine's load. Its step
 /// limits bound it.
+/// The file a LaTeX "File `⟨name⟩' not found" error names: a lookup that found nothing, not a
+/// fault of the code that made it.
+pub(crate) fn missing_file(message: &str) -> Option<&str> {
+    let rest = &message[message.find("File `")? + "File `".len()..];
+    Some(&rest[..rest.find("' not found")?])
+}
+
 fn probe(analysis: &Analysis, with: &[String], package: &str, call: &str) -> Probed {
     use crate::engine::builtins::LoadKind;
     type Runs = HashMap<(u64, Vec<std::path::PathBuf>, String), Probed>;
@@ -581,8 +588,10 @@ fn probe(analysis: &Analysis, with: &[String], package: &str, call: &str) -> Pro
         return p;
     }
     let run = crate::analyze(&key.2, None, &settings);
-    let clean =
-        !run.facts.raised.iter().any(|e| e.certain) && !run.facts.diagnostics.iter().any(|d| d.code == "missing-end");
+    // a file the probe's document does not have (`example-image` where the playground's bundle
+    // has not fetched it) says nothing about whether the package takes the call
+    let fault = |e: &crate::analysis::facts::RaisedError| e.certain && missing_file(&e.text).is_none();
+    let clean = !run.facts.raised.iter().any(fault) && !run.facts.diagnostics.iter().any(|d| d.code == "missing-end");
     let base =
         |file: FileId| run.files.get(usize::from(file)).map_or("", |f| f.path.rsplit('/').next().unwrap_or(&f.path));
     // a file is the package's own when the nearest package or class up its chain of loads is it

@@ -154,6 +154,16 @@ impl Journal {
     }
 }
 
+/// A logged write: the name, the group depth of a local write (0 for a
+/// global one: a local one is undone once fewer groups are open), and
+/// [`Env::assignments`] when it was made (0 when unknown).
+#[derive(Clone, Copy, Debug, serde::Serialize, serde::Deserialize)]
+struct Write {
+    sym: u32,
+    depth: u32,
+    at: u64,
+}
+
 /// Open group: journal start, opener kind, saved `\aftergroup` tokens.
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 struct Mark {
@@ -207,18 +217,16 @@ pub struct Env {
     /// Forks that several paths continued from. A package load's record of
     /// what it wrote does not follow them.
     paths: usize,
-    /// Names assigned since [`Env::clear_recent`], for widening a loop that
-    /// does not end to every state it could have left.
-    recent: Vec<u32>,
-    /// Per `recent` entry, [`Env::assignments`] when it was made; 0 when
-    /// unknown.
-    recent_at: Vec<u64>,
-    /// Per `recent` entry, the group depth a local write was made at (0 for
-    /// a global one): it is undone once fewer groups are open.
-    #[serde(default)]
-    recent_depth: Vec<u32>,
-    /// [`Env::assignments`] when the log was last cleared or set.
+    /// Writes since [`Env::clear_recent`], for widening a loop that does
+    /// not end to every state it could have left. Read from a mark on
+    /// ([`Env::assignments`] then); [`Env::fold_recent`] bounds it.
+    recent: Vec<Write>,
+    /// [`Env::assignments`] when the log was last cleared, set or folded:
+    /// it answers exactly for marks from then on.
     recent_from: u64,
+    /// Entries the last fold kept, 0 since a clear.
+    #[serde(skip)]
+    recent_kept: usize,
     /// Per slot, [`Env::assignments`] at the write its binding came from.
     /// A group end puts back the old one, so a name whose write a group
     /// end undid is not widened.
@@ -724,7 +732,7 @@ fn distinct_sorted(names: &[u32]) -> Vec<u32> {
 
 impl Env {
     pub fn probe(&self) -> Vec<(&'static str, usize)> {
-        crate::probe_sz!("e.slots" => self.slots, "e.level" => self.level, "e.journal" => self.journal, "e.marks" => self.marks, "e.trail" => self.trail, "e.trailed" => self.trailed, "e.lows" => self.lows, "e.floors" => self.floors, "e.changed" => self.changed, "e.recent" => self.recent, "e.recent_at" => self.recent_at, "e.stamp" => self.stamp, "e.aliases" => self.aliases, "e.read_log" => self.read_log, "e.reads" => self.reads)
+        crate::probe_sz!("e.slots" => self.slots, "e.level" => self.level, "e.journal" => self.journal, "e.marks" => self.marks, "e.trail" => self.trail, "e.trailed" => self.trailed, "e.lows" => self.lows, "e.floors" => self.floors, "e.changed" => self.changed, "e.recent" => self.recent, "e.stamp" => self.stamp, "e.aliases" => self.aliases, "e.read_log" => self.read_log, "e.reads" => self.reads)
     }
 }
 
@@ -1610,8 +1618,9 @@ impl Env {
     pub fn merge_recent(&mut self, top: usize, to: usize) {
         let (top, to) = (top as u32, to as u32);
         if to > top {
-            for d in &mut self.recent_depth {
-                *d = match *d {
+            // Monotone in the depth, so a folded log stays one ([`Env::fold_recent`]).
+            for w in &mut self.recent {
+                w.depth = match w.depth {
                     d if d <= top => d,
                     d if d <= to => top,
                     d => d - (to - top),
@@ -1705,9 +1714,7 @@ impl Env {
             self.effective += 1;
             self.slot_changes += 1;
         }
-        self.recent.push(sym.0);
-        self.recent_at.push(self.assignments);
-        self.recent_depth.push(if global { 0 } else { self.marks.len() as u32 });
+        self.log_write(sym.0, if global { 0 } else { self.marks.len() as u32 });
         let stamp = self.stamp.set(i, self.assignments);
         if (global || self.marks.is_empty()) && writes & ReadKind::Meaning.bit() != 0 && self.paths == 0 {
             self.drop_moot(sym.0);
@@ -2046,62 +2053,105 @@ impl Env {
     /// The names assigned since [`Env::clear_recent`], and a way to put them
     /// back, for a package cache that replays a load.
     pub fn recent(&self) -> Vec<Sym> {
-        self.recent.iter().map(|s| Sym(*s)).collect()
+        self.recent.iter().map(|w| Sym(w.sym)).collect()
     }
 
     pub fn set_recent(&mut self, recent: Vec<Sym>) {
-        self.recent = recent.into_iter().map(|s| s.0).collect();
-        self.recent_at = vec![0; self.recent.len()];
-        self.recent_depth = vec![0; self.recent.len()];
-        self.recent_from = self.assignments;
+        self.clear_recent();
+        self.recent = recent.into_iter().map(|s| Write { sym: s.0, depth: 0, at: 0 }).collect();
     }
 
     pub fn clear_recent(&mut self) {
         self.recent.clear();
-        self.recent_at.clear();
-        self.recent_depth.clear();
         self.recent_from = self.assignments;
+        self.recent_kept = 0;
+    }
+
+    /// Logs the write of `sym` made now. A log past `limits.write_log`
+    /// that doubled since its last fold is folded first.
+    fn log_write(&mut self, sym: u32, depth: u32) {
+        if self.recent.len() >= self.sets.write_log.max(2 * self.recent_kept) {
+            self.fold_recent();
+        }
+        self.recent.push(Write { sym, depth, at: self.assignments });
+    }
+
+    /// Bounds the log by the names it holds, not by the writes of code
+    /// that reads no source for long: of each name its first write stays, and each
+    /// later one made less deep than all before it. The first write of a
+    /// name at most some depth deep is always one of these, so the log
+    /// still says what was written since it began. A mark made before the
+    /// fold reads as one made before a clear: its own first writes may be
+    /// gone (dropping a later write is not sound for a mark between the
+    /// two, whose name a rewind may since have put back).
+    fn fold_recent(&mut self) {
+        let mut least: std::collections::HashMap<u32, u32, crate::engine::tex::NameHash> = Default::default();
+        self.recent.retain(|w| match least.entry(w.sym) {
+            std::collections::hash_map::Entry::Vacant(e) => {
+                e.insert(w.depth);
+                true
+            }
+            std::collections::hash_map::Entry::Occupied(mut e) => {
+                let less = w.depth < *e.get();
+                if less {
+                    e.insert(w.depth);
+                }
+                less
+            }
+        });
+        self.recent.shrink_to(2 * self.recent.len());
+        self.recent_from = self.assignments;
+        self.recent_kept = self.recent.len();
+    }
+
+    /// Whether the log holds every write made after assignment `mark`: it
+    /// was not cleared, set or folded since.
+    pub fn logged_since(&self, mark: u64) -> bool {
+        self.recent_from <= mark
+    }
+
+    /// The log's part after assignment `mark`, all of it for a mark the
+    /// log no longer answers for ([`Env::logged_since`]): never too little.
+    fn recent_after(&self, mark: u64) -> &[Write] {
+        match self.logged_since(mark) {
+            true => &self.recent[self.recent.partition_point(|w| w.at <= mark)..],
+            false => &self.recent,
+        }
     }
 
     /// The names written after assignment `at`, sorted and deduplicated,
     /// including writes undone since. `None` when the log was cleared since.
     pub fn written_since(&self, at: u64) -> Option<Vec<Sym>> {
-        if self.recent_from > at {
-            return None;
-        }
-        Some(
-            distinct_sorted(&self.recent[self.recent_at.partition_point(|&s| s <= at)..])
-                .into_iter()
-                .map(Sym)
-                .collect(),
-        )
+        let names: Vec<u32> = self.logged_since(at).then(|| self.recent_after(at).iter().map(|w| w.sym).collect())?;
+        Some(distinct_sorted(&names).into_iter().map(Sym).collect())
     }
 
-    pub fn recent_len(&self) -> usize {
-        self.recent.len()
+    /// The names assigned after assignment `mark`, each once (all in the
+    /// log for a mark it no longer answers for). Writes undone by a group
+    /// end or a rewind are left out.
+    pub fn recent_since(&self, mark: u64) -> Vec<Sym> {
+        self.recent_within(mark, u32::MAX)
     }
 
-    /// The names assigned since `recent_len` was `from`, each once (all of them
-    /// if the list was cleared since). Writes undone by a group end or a
-    /// rewind are left out.
-    pub fn recent_since(&self, from: usize) -> Vec<Sym> {
-        self.recent_within(from, u32::MAX)
+    /// The names in the whole log, as [`Env::recent_since`] gives them.
+    pub fn recent_all(&self) -> Vec<Sym> {
+        self.recent_names(&self.recent, u32::MAX)
     }
 
     /// Like [`Env::recent_since`], but only writes that outlive the groups
     /// above `depth`: global ones and local ones made at most `depth` groups
     /// deep. A local write deeper was undone when its group ended (tex.web
     /// § 283), whatever stamp a resume gave the name since.
-    pub fn recent_within(&self, from: usize, depth: u32) -> Vec<Sym> {
-        let from = if from > self.recent.len() { 0 } else { from };
+    pub fn recent_within(&self, mark: u64, depth: u32) -> Vec<Sym> {
+        self.recent_names(self.recent_after(mark), depth)
+    }
+
+    fn recent_names(&self, log: &[Write], depth: u32) -> Vec<Sym> {
         // Loops write the same few names over and over: keep each name's
         // first write in one pass, then sort only the distinct names.
         let mut first: std::collections::HashMap<u32, u64, crate::engine::tex::NameHash> = Default::default();
-        let depths = self.recent_depth.get(from..).unwrap_or_default().iter().chain(std::iter::repeat(&0));
-        for ((&sym, &at), &d) in self.recent[from..].iter().zip(&self.recent_at[from..]).zip(depths) {
-            if d <= depth {
-                first.entry(sym).or_insert(at);
-            }
+        for w in log.iter().filter(|w| w.depth <= depth) {
+            first.entry(w.sym).or_insert(w.at);
         }
         let mut syms: Vec<Sym> = first
             .into_iter()
@@ -2169,9 +2219,7 @@ impl Env {
         self.assignments += 1;
         self.effective += 1;
         self.slot_changes += 1;
-        self.recent.push(i as u32);
-        self.recent_at.push(self.assignments);
-        self.recent_depth.push(self.level[i]);
+        self.log_write(i as u32, self.level[i]);
         self.stamp.set(i, self.assignments);
     }
 
@@ -3076,6 +3124,8 @@ pub struct SetLimits {
     pub intervals: usize,
     /// Control sequences typed text names ([`Typed::named`]).
     pub text_names: usize,
+    /// Writes the log holds before it is folded ([`Env::fold_recent`]).
+    pub write_log: usize,
 }
 
 impl Default for SetLimits {
@@ -3087,6 +3137,7 @@ impl Default for SetLimits {
             values: crate::engine::value::MAY_VALUES,
             intervals: crate::engine::value::MAY_INTERVALS,
             text_names: 8,
+            write_log: 1 << 20,
         }
     }
 }
@@ -4524,6 +4575,64 @@ mod tests {
         assert_eq!(reads(inner), [(1, true), (2, false)], "the inner record logs its own reads");
         env.memo_read(3, false);
         assert_eq!(reads(outer), [(1, true), (2, true), (3, false)]);
+    }
+
+    /// The write log is bounded by the names and group depths it holds, not
+    /// by how often code assigns, and folding it loses nothing: read from
+    /// its start it says what the whole log says, read from a mark made
+    /// before a fold never less, from a later one the same. Pins the abort
+    /// of a `\foreach` that assigned for minutes (one entry per write: 2 GiB).
+    #[test]
+    fn a_folded_write_log_says_what_the_whole_one_says() {
+        const NAMES: u32 = 6;
+        const DEPTHS: u32 = 3;
+        const WRITES: u64 = 1500;
+        const CLEAR: u64 = 5;
+        let mut cats = crate::engine::tex::CatcodeTable::default();
+        let mut whole = Env::with_capacity(8);
+        let mut folded = whole.clone();
+        whole.sets.write_log = usize::MAX;
+        folded.sets.write_log = 4;
+        let (mut marks, mut forks, mut seed) = (vec![0u64], Vec::new(), 1u64);
+        let (bound, mut grown, mut shallower) = (2 * (NAMES * (DEPTHS + 1)) as usize, 0, 0);
+        for n in 0..WRITES {
+            seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            let (pick, sym) = ((seed >> 33) % 16, Sym(1 + (seed >> 40) as u32 % NAMES));
+            for (i, env) in [&mut whole, &mut folded].into_iter().enumerate() {
+                match pick {
+                    0 if (env.marks.len() as u32) < DEPTHS => env.push_group(GroupKind::Simple, Span::default()),
+                    1 if !env.marks.is_empty() => _ = env.pop_group(&mut cats),
+                    2 => forks.push(env.fork()),
+                    3 => env.merge_recent(1, DEPTHS as usize),
+                    // A token read from a file: the log starts over, inside groups too.
+                    5 if n % CLEAR == 0 => env.clear_recent(),
+                    // A rewind puts back what the fork saw, stamps too: a later write is undone.
+                    4 if !forks.is_empty() => {
+                        let fork = forks.remove(forks.len() - 2 + i);
+                        env.rewind(&fork);
+                        env.unfork(fork);
+                    }
+                    _ => env.set(sym, int(n as i64), pick % 2 == 0),
+                }
+            }
+            assert_eq!(whole.assignments, folded.assignments);
+            marks.push(whole.assignments);
+            assert_eq!(folded.recent_all(), whole.recent_all(), "after {n} steps");
+            for &mark in marks.iter().rev().step_by(31) {
+                let exact = folded.logged_since(mark);
+                assert!(!exact || folded.written_since(mark) == whole.written_since(mark));
+                for depth in 0..=DEPTHS {
+                    let (f, w) = (folded.recent_within(mark, depth), whole.recent_within(mark, depth));
+                    assert!(if exact { f == w } else { w.iter().all(|s| f.contains(s)) }, "mark {mark}, depth {depth}");
+                }
+            }
+            assert!(folded.recent.len() <= bound, "{} entries", folded.recent.len());
+            grown = grown.max(whole.recent.len());
+            let first = |sym: u32| whole.recent.iter().find(|w| w.sym == sym).map_or(0, |w| w.depth);
+            shallower += usize::from(whole.recent.last().is_some_and(|w| w.depth < first(w.sym)));
+        }
+        assert!(grown > 4 * bound, "the whole log grows with the writes: {grown}");
+        assert!(shallower > 0, "the case a fold must keep: a name written again less deep than its first write");
     }
 
     /// A path rebased onto where the running path stands resumes from a

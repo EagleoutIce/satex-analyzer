@@ -1970,7 +1970,11 @@ impl Machine<'_> {
         } else {
             n.para.fit = crate::engine::linebreak::UNFIT;
             let zero = Dim::exact(0);
-            n.stack_lines((1, n.para.breakpoints.saturating_add(1)), zero.join(h), zero.join(d), skips);
+            // The bound is rounded up to a power of two: a word typed into the line then
+            // leaves it, and the page's length with it, as it was, so the run after the
+            // edit meets the last one past the paragraph, not past the page.
+            let most = n.para.breakpoints.saturating_add(1).checked_next_power_of_two().unwrap_or(u32::MAX);
+            n.stack_lines((1, most), zero.join(h), zero.join(d), skips);
             n.para.rough = true;
         }
     }

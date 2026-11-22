@@ -30,11 +30,40 @@ pub struct Counter {
     /// Set once the run holds more than `limits.memory`: it stops at its
     /// next step instead of its next periodic check.
     over: std::sync::atomic::AtomicBool,
+    /// What the run held when it first passed `limits.memory` ([`Counter::admit`]).
+    crossed: AtomicUsize,
 }
 
 impl Counter {
     const fn new() -> Counter {
-        Counter { live: AtomicI64::new(0), peak: AtomicUsize::new(0), over: std::sync::atomic::AtomicBool::new(false) }
+        Counter {
+            live: AtomicI64::new(0),
+            peak: AtomicUsize::new(0),
+            over: std::sync::atomic::AtomicBool::new(false),
+            crossed: AtomicUsize::new(0),
+        }
+    }
+
+    /// Whether the run may hold `now` bytes after an allocation of `last`
+    /// under `limit`, noting when it first holds more than the limit.
+    ///
+    /// The interpreter stops itself at the limit between tokens. A refused
+    /// allocation ends the process with Rust's "memory allocation failed"
+    /// (Rust cannot unwind from one), so the block that takes a run past
+    /// its limit is granted, up to the limit's own size (a table that
+    /// doubles, one copy): the run stops at its next token ([`over`]).
+    /// Refused, instead of the machine swapping, is what a run goes on to
+    /// take inside that one step past half the limit more, and a block no
+    /// run under the limit could hold.
+    fn admit(&self, now: usize, last: usize, limit: usize) -> bool {
+        if limit == 0 || now <= limit {
+            return true;
+        }
+        if !self.over.swap(true, Ordering::Relaxed) {
+            self.crossed.store(now, Ordering::Relaxed);
+            return last <= limit;
+        }
+        now <= self.crossed.load(Ordering::Relaxed).saturating_add(limit / 2)
     }
 
     fn live(&self) -> usize {
@@ -109,15 +138,6 @@ pub fn set_limit(bytes: u64) {
     LIMIT.store(usize::try_from(bytes).unwrap_or(usize::MAX), Ordering::Relaxed);
 }
 
-/// One and a half times `limits.memory`, 0 for none. The interpreter stops
-/// itself at the limit between tokens; this catches whatever grows past it
-/// inside one step: the allocation fails and the process aborts with Rust's
-/// "memory allocation failed" message instead of the machine swapping.
-fn ceiling() -> usize {
-    let limit = LIMIT.load(Ordering::Relaxed);
-    limit.saturating_add(limit / 2)
-}
-
 /// The system allocator, counting what is live.  Only the binary installs it,
 /// so a library user gets a count of zero and no memory limit.
 pub struct Counted;
@@ -133,7 +153,7 @@ thread_local! {
 const BATCH: isize = 256 << 10;
 
 /// Counts `bytes` more as live (negative: freed); false, counting nothing,
-/// when that would pass the ceiling.
+/// when the run may not hold them ([`Counter::admit`]).
 fn count(bytes: isize) -> bool {
     match PENDING.try_with(|p| {
         let now = p.get() + bytes;
@@ -158,29 +178,20 @@ fn settle() {
     }
 }
 
-/// Adds `bytes` to the counter; past the ceiling it takes back `last`, the
-/// allocation that crossed it, and says no.
+/// Adds `bytes` to the counter; where the run may not hold them
+/// ([`Counter::admit`]) it takes back `last`, the allocation asked for, and says no.
 fn flush(bytes: isize, last: isize) -> bool {
     let counter = current();
     let (bytes, last) = (bytes as i64, last as i64);
     let now = counter.live.fetch_add(bytes, Ordering::Relaxed) + bytes;
     TOTAL.fetch_add(bytes, Ordering::Relaxed);
-    let ceiling = ceiling();
-    if last > 0
-        && ceiling > 0
-        && !std::ptr::eq(counter, &PROCESS)
-        // The run's own bytes only: a run past the limit stops between
-        // tokens ([`charged`]), never by failing another's allocation.
-        // A ceiling past `isize::MAX` (on wasm32) is no ceiling, not a negative one.
-        && now > isize::try_from(ceiling).map_or(i64::MAX, |c| c as i64)
-    {
+    // The run's own bytes only: a run past the limit stops between
+    // tokens ([`charged`]), never by failing another's allocation.
+    let admitted = counter.admit(now.max(0) as usize, last.max(0) as usize, LIMIT.load(Ordering::Relaxed));
+    if !admitted && last > 0 && !std::ptr::eq(counter, &PROCESS) {
         counter.live.fetch_sub(last, Ordering::Relaxed);
         TOTAL.fetch_sub(last, Ordering::Relaxed);
         return false;
-    }
-    let limit = LIMIT.load(Ordering::Relaxed);
-    if limit > 0 && now > 0 && now as usize > limit {
-        counter.over.store(true, Ordering::Relaxed);
     }
     if now > 0 && now as usize > counter.peak.load(Ordering::Relaxed) {
         counter.peak.fetch_max(now as usize, Ordering::Relaxed);
@@ -322,6 +333,31 @@ mod tests {
         drop(block);
         assert!(held >= before);
         assert!(peak() >= held);
+    }
+
+    /// The block that takes a run past its limit is granted, so the run can
+    /// stop at its next token; what it takes after that is bounded. Pins
+    /// the aborts "memory allocation of 536870996 bytes failed": one table
+    /// that doubled from under the limit to past one and a half times it.
+    #[test]
+    fn the_block_that_passes_the_limit_is_granted() {
+        const LIMIT: usize = 1000;
+        let run = Counter::new();
+        assert!(run.admit(LIMIT, 10, LIMIT) && !run.over.load(Ordering::Relaxed));
+        // One block from under the limit to twice it: granted.
+        assert!(run.admit(2 * LIMIT, LIMIT, LIMIT));
+        assert!(run.over.load(Ordering::Relaxed), "the run stops at its next token");
+        // Until then it may take half the limit more, and no more.
+        assert!(run.admit(2 * LIMIT + LIMIT / 2, 1, LIMIT));
+        assert!(!run.admit(2 * LIMIT + LIMIT / 2 + 1, 1, LIMIT));
+        // A run that passed the limit by one byte is held to half the limit more as well.
+        let run = Counter::new();
+        assert!(run.admit(LIMIT + 1, 1, LIMIT) && run.admit(LIMIT + 1 + LIMIT / 2, LIMIT / 2, LIMIT));
+        assert!(!run.admit(LIMIT + 2 + LIMIT / 2, 1, LIMIT));
+        // A block no run under the limit could hold is refused at once.
+        assert!(!Counter::new().admit(LIMIT + 2, LIMIT + 1, LIMIT));
+        // No limit, no refusal.
+        assert!(Counter::new().admit(usize::MAX, usize::MAX, 0));
     }
 
     #[test]

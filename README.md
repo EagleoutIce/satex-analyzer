@@ -377,8 +377,12 @@ recursion that never stops
 
 The run saw the macro's expansion reach the macro again, could not see the
 recursion end, and found no conditional (no `\if…`, `\else` or `\fi`) to
-end it.  A macro nothing expands is judged by the names its replacement text
-holds.  A real run expands until TeX runs out of memory:
+end it, in any macro of the cycle or in one their replacement texts name.  A
+macro nothing expands is judged by the names its replacement text holds, and
+it calls a name only where the name stands to be expanded: not inside braces,
+not as the target of a definition or after `\string`, and not as a quark
+(`\def\q{\q}`, compared and never expanded).  A real run expands until
+TeX runs out of memory:
 `TeX capacity exceeded, sorry [main memory size]`.
 
 Fix by adding the test that stops it, or by removing the self-reference.

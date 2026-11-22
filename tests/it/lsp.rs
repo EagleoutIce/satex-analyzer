@@ -4253,6 +4253,10 @@ fn snapshot_load_follows_the_call_shape() {
     assert!(keyed.contains("\\usepackage{graphicx}\n"), "{keyed}");
     let plain = write(&mut server, "\\includegraphics{example-image}\n");
     assert!(plain.contains("\\usepackage{graphics}\n"), "{plain}");
+    // a graphic no tree holds (the playground's bundle before it fetched `example-image`): the
+    // call's keys still decide, not the missing file
+    let missing = write(&mut server, "\\includegraphics[width=1cm]{no-such-graphic-anywhere}\n");
+    assert!(missing.contains("\\usepackage{graphicx}\n"), "{missing}");
     server.shutdown();
     std::fs::remove_dir_all(dir).ok();
 }
@@ -8561,6 +8565,51 @@ fn new_document_command() {
     let wrote = server.response(id)["result"].clone();
     assert_eq!(wrote["written"], target.join("main.tex").display().to_string(), "{wrote}");
     assert!(target.join("references.bib").is_file());
+    server.shutdown();
+    std::fs::remove_dir_all(dir).ok();
+}
+
+/// Intuition: the caret tells where the next edit comes. A request at the caret (a code action,
+/// as an editor sends when it moves) has the idle server place that line's checkpoints, so
+/// the first word typed there runs none of the text before it (`placedSteps` of
+/// `satex/runInfo` is 0, the run resumed at the edited line). Without the request the same
+/// edit first runs the text from the last checkpoint before it.
+/// Pins: the first edit at a place paid for that run while the user waited (5 s on a thesis).
+#[test]
+fn a_request_at_the_caret_places_the_checkpoints_of_the_next_edit() {
+    let words = "Some words that fill a paragraph of text across a few lines on the page here";
+    let body: String = (0..40).map(|i| format!("Paragraph {i}. {words}, {words}, {words}.\n\n")).collect();
+    let text = format!("\\documentclass{{article}}\n\\begin{{document}}\n{body}\\end{{document}}\n");
+    let (mut server, uri, dir) = open_set("caret", &text, &[]);
+    let line_of = |text: &str, part: &str| text.lines().position(|l| l.starts_with(part)).unwrap() as u64;
+    // the run of one edit: (`resumedLine`, `placedSteps`)
+    let mut version = 1;
+    let mut edit = |server: &mut Server, text: &str| {
+        version += 1;
+        server.notify(
+            "textDocument/didChange",
+            json!({ "textDocument": { "uri": uri, "version": version }, "contentChanges": [{ "text": text }] }),
+        );
+        loop {
+            let msg = server.read();
+            if msg.get("method").and_then(Value::as_str) == Some("satex/runInfo") {
+                let p = &msg["params"];
+                break (p["resumedLine"].as_u64(), p["placedSteps"].as_u64());
+            }
+        }
+    };
+    // no request first: the edit's run places them itself
+    let first = text.replacen("Paragraph 12.", "Paragraph 12, typed.", 1);
+    let (resumed, placed) = edit(&mut server, &first);
+    assert_eq!(resumed, Some(line_of(&first, "Paragraph 12,") + 1));
+    assert!(placed.is_some_and(|steps| steps > 0), "the first edit placed {placed:?} steps");
+    // the caret moves on, and the server is idle for a while
+    let line = line_of(&first, "Paragraph 30.");
+    at(&mut server, &uri, "textDocument/codeAction", line as u32, 0);
+    std::thread::sleep(std::time::Duration::from_millis(satex::project::config::LspConfig::default().debounce_ms) * 20);
+    let second = first.replacen("Paragraph 30.", "Paragraph 30, typed.", 1);
+    let (resumed, placed) = edit(&mut server, &second);
+    assert_eq!((resumed, placed), (Some(line + 1), Some(0)), "the edit at the caret (resumed line, placed steps)");
     server.shutdown();
     std::fs::remove_dir_all(dir).ok();
 }

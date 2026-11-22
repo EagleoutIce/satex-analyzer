@@ -1011,6 +1011,12 @@ struct Engine {
     edited: HashMap<Uri, std::time::Instant>,
     /// When the engine last took a message: the hovers computed ahead wait for a pause after it.
     heard: Option<std::time::Instant>,
+    /// The line the editor's caret was last asked about (a code action, a highlight, a
+    /// completion): the next edit is likely there, so its checkpoints are placed while the
+    /// engine is idle ([`Engine::place_ahead`]).
+    caret: Option<(Uri, u32)>,
+    /// The caret line last placed for, and the run it was placed in.
+    placed: Option<(Uri, u32, std::rc::Weak<Analysis>)>,
 }
 
 impl EngineMsg {
@@ -1075,6 +1081,8 @@ impl Engine {
             published: HashMap::default(),
             edited: HashMap::default(),
             heard: None,
+            caret: None,
+            placed: None,
         }
     }
 
@@ -1108,15 +1116,20 @@ impl Engine {
             crate::project::overlay::set(&doc.path, doc.text.clone());
         }
         self.cancelled = false;
+        // -vv: what each part of serving the edit took, the run aside.
+        let mut phases = Phases::new(self.cfg.verbose >= 2);
         self.send_early(&path, &text);
+        phases.lap("early findings");
         let mut hooks = self.typeset.hooks(uri, version_of(&versions, uri), &self.outbox);
         let started = std::time::Instant::now();
         let (analysis, fresh) = self.run_for(&path, &text, &mut hooks);
+        phases.lap("run");
         // How incremental the run was, for the status line: where it resumed, the steps it took itself.
         if fresh && let Some(c) = self.checkpoints.get(&path).or_else(|| self.checkpoints.values().next()) {
             let info = serde_json::json!({
                 "uri": uri, "version": version_of(&versions, uri), "ms": started.elapsed().as_millis() as u64,
                 "resumedLine": c.resumed.as_ref().map(|r| r.1), "ranSteps": c.ran.0, "steps": c.ran.1,
+                "placedSteps": c.placed,
             });
             self.notify_now(Notification::new("satex/runInfo".into(), info));
         }
@@ -1145,6 +1158,7 @@ impl Engine {
         if fresh && kept {
             self.typeset.finished(uri, version_of(&versions, uri), &analysis, &self.outbox);
         }
+        phases.lap("rows");
         if fresh {
             // Findings before the completion data: they are what the user waits for. The names
             // carried over from the last run follow: until then a completion answers from the last run. The playground's server answers only
@@ -1153,10 +1167,19 @@ impl Engine {
             if !cfg!(target_os = "emscripten") {
                 self.serving(|_| handlers::warm(&analysis));
             }
+            phases.lap("warm");
             // the run whose findings `uri` showed until now
             let before = self.published.get(uri).and_then(|(run, _)| run.upgrade());
             self.install(uri, &analysis, &text, changed);
+            phases.lap("install");
             self.publish_run(&analysis, &path, &versions, None);
+            phases.lap("findings");
+            if self.cfg.verbose >= 2 {
+                let slow: Vec<String> = (analysis.timings.rules().iter().take(SLOW_RULES))
+                    .map(|(code, took, _)| format!("{code} {:.2}s", took.as_secs_f64()))
+                    .collect();
+                crate::util::progress::note!("satex: slowest rules: {}", slow.join(", "));
+            }
             // An open file that run read and this one no longer does keeps its findings:
             // it runs again, through another root or as no root's.
             // A run cut short read only part of the document: what it did not read says nothing.
@@ -1171,6 +1194,7 @@ impl Engine {
             if let Some(prior) = &prior {
                 self.serving(|_| crate::queries::query::carry_scope(prior, &analysis));
             }
+            phases.lap("scope");
             // a server between messages frees the replaced run after this one's results went out
             if self.inbox.is_none() {
                 self.buried.extend(prior);
@@ -1595,6 +1619,7 @@ impl Engine {
         if let Some(run) = self.runs.get(&key).filter(stands) {
             return (run.analysis.clone(), false);
         }
+        let mut phases = Phases::new(self.cfg.verbose >= 2);
         // The files not open are read from disk: logged, as the document cache does.
         let recording = crate::project::overlay::record();
         let source = crate::project::overlay::read_to_string(root).unwrap_or_default();
@@ -1619,8 +1644,10 @@ impl Engine {
                 }
             })
         });
+        phases.lap("build");
         let outside =
             recording.then(|| crate::caches::document::reads_of(&analysis, crate::project::overlay::recorded()));
+        phases.lap("reads");
         let analysis = Rc::new(analysis);
         if cancelled {
             self.cancelled = true;
@@ -1637,6 +1664,7 @@ impl Engine {
                 self.owners.entry(file.clone()).or_insert_with(|| root.to_path_buf());
             }
         }
+        phases.lap("owners");
         self.runs.insert(key, Run { texts, analysis: analysis.clone(), reads, outside });
         let runs = &self.runs;
         self.checkpoints.retain(|root, _| runs.contains_key(root));
@@ -1797,6 +1825,46 @@ impl Engine {
         (!self.prefill.is_empty() && !rest.is_zero()).then_some(rest)
     }
 
+    /// Idle work for the next edit: places the checkpoints an edit on the caret's line resumes
+    /// from and meets the last run at ([`crate::analysis::machine::Checkpoints::place_at`]),
+    /// so the first word typed at a place runs its paragraph, not the text from the last
+    /// checkpoint before it. Stops for any message, and is then tried again.
+    fn place_ahead(&mut self) {
+        let Some((uri, line)) = self.caret.take() else { return };
+        let Some(doc) = self.docs.get(&uri) else { return };
+        let Some(analysis) = doc.analysis.clone().filter(|_| doc.analyzed.as_ref() == Some(&doc.text)) else { return };
+        let same = |p: &(Uri, u32, std::rc::Weak<Analysis>)| {
+            p.0 == uri && p.1 == line && p.2.upgrade().is_some_and(|a| Rc::ptr_eq(&a, &analysis))
+        };
+        if self.placed.as_ref().is_some_and(same) || !self.dirty.is_empty() {
+            return;
+        }
+        let file = doc.path.clone();
+        let key = canonical(&file);
+        let root = match self.checkpoints.contains_key(&key) {
+            true => Some(key),
+            false => self.owners.get(&key).map(|root| canonical(root)).filter(|r| self.checkpoints.contains_key(r)),
+        };
+        let Some(root) = root else { return };
+        for doc in self.docs.values() {
+            crate::project::overlay::set(&doc.path, doc.text.clone());
+        }
+        let source = crate::project::overlay::read_to_string(&root).unwrap_or_default();
+        let done = self.serving(|engine| {
+            let checkpoints = engine.checkpoints.get_mut(&root)?;
+            crate::analysis::probe::background(|| {
+                crate::util::progress::because("checkpoints placed at the caret", || {
+                    checkpoints.place_at(&source, &file, line)
+                })
+            })
+        });
+        match done {
+            Some(_) => self.placed = Some((uri, line, Rc::downgrade(&analysis))),
+            // A message came first: placed once the engine is idle again.
+            None => self.caret = self.caret.take().or(Some((uri, line))),
+        }
+    }
+
     /// One queued hover, computed and kept; once the queue of a document is
     /// done, its hovers are stored for the next session.
     fn prefill_one(&mut self) {
@@ -1900,6 +1968,13 @@ impl Engine {
 
     fn serve(&mut self, msg: EngineMsg) {
         self.heard = Some(std::time::Instant::now());
+        if let EngineMsg::CodeAction(uri, at, _)
+        | EngineMsg::Highlight(uri, at, _)
+        | EngineMsg::Completion(uri, at, _)
+        | EngineMsg::SignatureHelp(uri, at, _) = &msg
+        {
+            self.caret = Some((uri.clone(), at.line + 1));
+        }
         if matches!(msg, EngineMsg::Open(..) | EngineMsg::Change(..)) {
             self.taken += 1;
         }
@@ -2375,6 +2450,21 @@ fn engine_loop(rx: Receiver<EngineMsg>, mut engine: Engine, debounce: Duration) 
         } else if !engine.dirty.is_empty() {
             // Only the rest of the window since the last run: typing after a pause runs at once.
             rx.recv_timeout(debounce.saturating_sub(engine.flushed.map_or(debounce, |t| t.elapsed())))
+        } else if engine.caret.is_some() {
+            // Idle: the caret's checkpoints, unless a message waits. No pause first: the run
+            // stops for the next message, and the first key may come soon.
+            crate::analysis::probe::WANTED.store(false, std::sync::atomic::Ordering::Relaxed);
+            match rx.try_recv() {
+                Ok(msg) => Ok(msg),
+                Err(TryRecvError::Empty) => {
+                    engine.place_ahead();
+                    if engine.prefill.is_empty() {
+                        crate::util::progress::idle();
+                    }
+                    continue;
+                }
+                Err(TryRecvError::Disconnected) => Err(RecvTimeoutError::Disconnected),
+            }
         } else if let Some(rest) = engine.prefill_waits() {
             // Typing or asking: a hover computed ahead would hold the next request.
             match rx.recv_timeout(rest) {
@@ -2404,6 +2494,35 @@ fn engine_loop(rx: Receiver<EngineMsg>, mut engine: Engine, debounce: Duration) 
             Err(RecvTimeoutError::Timeout) => engine.flush(),
         }
         engine.rest();
+    }
+}
+
+/// How many rules the `-vv` note after a run names, slowest first.
+const SLOW_RULES: usize = 8;
+
+/// The seconds each part of serving an edit took, written as one note when dropped (`-vv`).
+struct Phases(Option<(std::time::Instant, String)>);
+
+impl Phases {
+    fn new(on: bool) -> Self {
+        Phases(on.then(|| (std::time::Instant::now(), String::new())))
+    }
+
+    /// The time since the last lap went to `what`.
+    fn lap(&mut self, what: &str) {
+        if let Some((clock, said)) = &mut self.0 {
+            use std::fmt::Write;
+            let _ = write!(said, " {what} {:.2}s,", clock.elapsed().as_secs_f64());
+            *clock = std::time::Instant::now();
+        }
+    }
+}
+
+impl Drop for Phases {
+    fn drop(&mut self) {
+        if let Some((_, said)) = &self.0 {
+            crate::util::progress::note!("satex: served:{}", said.trim_end_matches(','));
+        }
     }
 }
 

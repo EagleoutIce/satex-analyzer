@@ -77,7 +77,9 @@ clears the list.",
         explanation: "\
 A package loaded later redefines a command an earlier package made, and the
 document uses that command.  The later definition wins, often by accident.
-The finding names the command and both packages, as the run saw them.
+The finding names the command and both packages, as the run saw them.  A
+command the document defines itself, or one the later package gives the same
+meaning again, is none.
 
 Where the earlier package defines the command without checking that it is
 new, loading the later package first keeps the earlier version.  The fix
@@ -287,10 +289,16 @@ fn package_load_order(report: &mut Report) {
     // by the later package's load, then the earlier one's: their places in `loads`
     let mut pairs: BTreeMap<(usize, usize), Vec<Sym>> = BTreeMap::new();
     let place = |l: &Load| loads.iter().position(|x| std::ptr::eq(x, l)).unwrap_or_default();
+    // A name the document defines itself is its own by the time it uses it: a scratch name
+    // (`\\@tempa`, `\\do`) every file defines before use.
+    let here = |d: &&Definition| d.package.is_none() && index.origin(d.span.file) == "document";
+    let defined_here: HashSet<Sym> = analysis.facts.defs.iter().filter(here).map(|d| d.name).collect();
     for def in defs {
         let made = *first.entry(def.name).or_insert(def);
         let (Some(a), Some(b)) = (own(made), own(def)) else { continue };
-        if a.name != b.name && def.redefines && def.certain && seen.insert(def.name) {
+        // The same meaning again changes nothing (`\\Gin@driver` by xcolor and by graphics).
+        let changes = made.mac != def.mac && !defined_here.contains(&def.name);
+        if a.name != b.name && def.redefines && def.certain && changes && seen.insert(def.name) {
             pairs.entry((place(b), place(a))).or_default().push(def.name);
         }
     }

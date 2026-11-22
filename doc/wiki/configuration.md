@@ -51,6 +51,10 @@ load:  # which files the run follows from the document
   expect_detect: true  # guess those from what the installed packages define, and say which it picked
     #! affects: precision
     #! example: a `.sty` that uses `\setbeamercolor` gets beamer loaded first
+  alone: article  # the class a package analyzed alone is loaded under. The file is read as a document loads it. Empty reads it by itself
+    #! affects: soundness, precision
+    #! example: `satex -f my.sty lint` runs `\documentclass{article}\usepackage{my}` and an empty body
+    #! example: `alone: ''`: `\ProcessOptions` in `my.sty` runs outside any package, as nothing in LaTeX does
   build_files: false  # read the .aux, .toc, .bbl and others an earlier build left. Off, satex works them out itself
     #! affects: soundness, precision
     #! example: on: `\ref{x}` reads the number a stale `.aux` holds
@@ -325,6 +329,9 @@ lints:  # what a single rule reads, under its code
     report_public: true  # also report an unused command with a public name. Off for packages, whose commands are their interface
       #! affects: output
       #! example: `\newcommand\Hello{hi}` never used: reported only when on
+    private: ['@', '__']  # patterns on the names that are private, which the rule reports also with report_public off
+      #! affects: output
+      #! example: in a package `\__my_helper:n` never used is reported, `\my_function:n` is its interface
     ignore: []  # patterns on command names the rule leaves alone
       #! affects: output
       #! example: `ignore: ['^todo']`
@@ -482,8 +489,15 @@ profiles:  # the settings each kind of input (document, package, class, literate
   document: {}  # a LaTeX document: every default above already fits it
   package: &library  # a .sty, read as its own author sees it
     at_letter: true
-    lints: {unused-definition: {report_public: false}}  # a public name is the package's own interface
-    lint_off: [analysis-imprecision, unused-label, microtype-available, build-shell-escape-missing,
+    lints:
+      unused-definition: {report_public: false}  # a public name is the package's own interface
+      clones: {enabled: false}  # a macro in place of repeated library code changes when it expands
+    # no document of its own to build or typeset. And a library programs in primitives, states
+    # each package it needs and loads them for the macros its users call, and defines colors for them
+    lint_off: [analysis-imprecision, unused-label, microtype-available, preamble-cost, comment-marker,
+               primitive-tex-command, unused-package, redundant-package-load, unused-color,
+               unintended-escape,
+               user-pattern, unreferenced-numbered-display, build-shell-escape-missing,
                build-shell-escape-unneeded, build-engine-mismatch,
                build-bibliography-disabled, build-bibliography-unneeded,
                build-missing-custom-dependency, build-unused-custom-dependency,
@@ -1295,6 +1309,9 @@ limits:  # what bounds the analysis: reaching one stops that part of the run, so
   call_memo_longest: 200000  # a run longer than this keeps no effect and stops being recorded, so its log costs nothing
     #! affects: speed
     #! example: a whole `tikzpicture` is not recorded, the point computations in it are
+  write_log: 1048576  # writes logged since the last token read from a file before the log keeps one entry per name and group depth. A call or loop that began before reads as one that wrote any of them
+    #! affects: memory, precision
+    #! example: a `\foreach` that assigns for minutes holds a few MiB of log, not GiBs
   call_memo_probes: 8  # runs of a definition that may stay short or unclean before its calls are no longer recorded for call_memo_steps. Probed again after probes << n such calls (n: times it ran out)
     #! affects: speed
     #! example: 0 records every call, which costs on every call
@@ -1474,7 +1491,9 @@ profiles:
 
 A rule's own settings live under `lints.⟨code⟩`. [Lint rules](lints.md) lists the rules, and `lint_off` turns one off.
 
-`lints.unused-definition.report_public` (default `true`): Whether the rule also reports a name with no `@` and no expl3-style `module_function:signature`. The package and class profiles turn it off, since such a name is the package's public interface, and the caller, not this run, is the one to use it.
+`lints.unused-definition.report_public` (default `true`): Whether the rule also reports a name that is not `private`. The package and class profiles turn it off, since such a name is the package's public interface, and the caller, not this run, is the one to use it.
+
+`lints.unused-definition.private` (default `[@, __]`): Regexes on the name (no backslash) of what is private: an `@` ([source2e](https://ctan.org/pkg/source2e) `classes.dtx`), expl3's `__` ([interface3, "The naming scheme"](https://ctan.org/pkg/l3kernel): `\__module_function:n`, `\l__module_name_tl`). A public expl3 function (`\module_function:n`) is other packages' interface.
 
 `lints.unused-definition.ignore` (default `[]`): Regexes on the name as written (`\\my@hook`). A match is never reported.
 
