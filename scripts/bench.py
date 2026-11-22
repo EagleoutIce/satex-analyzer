@@ -11,7 +11,11 @@ and the current commit. `--build` builds the release binary first. An entry
 replaces the one of the same version in the data file. `--merge` only folds
 the entries of another file in (CI does this on main).
 
-Per run: a cold run builds the caches, the second run is measured."""
+Per run: a cold run builds the caches, the second run is measured.
+
+The run fails (exit 1, the entry is still written) when a document and kernel that reached
+the end in the newest entry of another version in `--baseline` (default: `--data`'s file in
+the repository) no longer does, or takes more than STEPS_FACTOR times its steps there."""
 import argparse, json, re, subprocess, sys, time
 from pathlib import Path
 
@@ -73,6 +77,30 @@ def run(satex, doc, kernel, timeout):
     return result
 
 
+# Steps are the same on every machine: past this factor a run got dearer, not noisier.
+STEPS_FACTOR = 2
+
+
+def regressions(baseline, version, runs):
+    """What `runs` lost against the newest entry of another version in `baseline`."""
+    entries = [e for e in (json.loads(baseline.read_text()) if baseline.exists() else []) if e["version"] != version]
+    if not entries:
+        return []
+    last = max(entries, key=lambda e: e["date"])
+    before = {(r["doc"], r["kernel"]): r for r in last["runs"] if r.get("end")}
+    lost = []
+    for r in runs:
+        old = before.get((r["doc"], r["kernel"]))
+        if old is None:
+            continue
+        where = f"{r['doc']} ({r['kernel']})"
+        if not r.get("end"):
+            lost.append(f"{where}: reached the end in {last['version']}, not now")
+        elif old.get("steps") and (r.get("steps") or 0) > STEPS_FACTOR * old["steps"]:
+            lost.append(f"{where}: {r['steps']} steps, {old['steps']} in {last['version']}")
+    return lost
+
+
 def merge(data, new):
     old = json.loads(data.read_text()) if data.exists() else []
     keep = {e["version"] for e in new}
@@ -90,6 +118,7 @@ def main():
     ap.add_argument("--commit", default=None)
     ap.add_argument("--docs", default="benches/docs.txt")
     ap.add_argument("--data", default="doc/site/bench/data.json")
+    ap.add_argument("--baseline", default="doc/site/bench/data.json", help="the entries to compare with")
     ap.add_argument("--kernels", nargs="*", default=KERNELS)
     ap.add_argument("--timeout", type=int, default=120)
     args = ap.parse_args()
@@ -117,8 +146,12 @@ def main():
             print(json.dumps(r), file=sys.stderr, flush=True)
             runs.append(r)
 
+    # compared before the merge: --data may be the baseline itself
+    lost = regressions(Path(args.baseline), args.version, runs)
     merge(data, [{"version": args.version, "date": args.date, "commit": args.commit, "runs": runs}])
     print(f"wrote {data}", file=sys.stderr)
+    if lost:
+        sys.exit("REGRESSION against the last benchmarked version:\n  " + "\n  ".join(lost))
 
 
 if __name__ == "__main__":

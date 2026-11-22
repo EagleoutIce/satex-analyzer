@@ -61,6 +61,73 @@ fn each_installed_template_builds() {
     assert!(failed.is_empty(), "{failed:?}");
 }
 
+/// Steps of the dearest template's last build run (acm-sigconf, measured 2026-11-22).
+/// A shipped document fails past +20% of it, as the budgets do.
+const DEAREST: u64 = 106_000_000;
+const SLACK: u64 = 120;
+
+/// `satex lint` on `dir/main.tex` the way a user runs it: the whole build, each run reading
+/// the files the run before wrote, on the default stack. No stored run, and no wall clock:
+/// only the step limits can stop it, so a loaded machine fails nothing. Says why this was
+/// no run to the end within the budget or, where the document builds (`clean`), one
+/// with an error.
+fn reaches_its_end(tag: &str, dir: &Path, clean: bool) -> Result<(), String> {
+    let args = ["lint", "-f", "main.tex", "--format", "json", "--stats-json"];
+    let limits = ["--set", "limits.seconds=0", "--set", "cache.document=false"];
+    let (out, err) = crate::crash::child(dir, &[&args[..], &limits[..]].concat(), "", None)?;
+    let stats = err.lines().rev().find_map(|l| serde_json::from_str::<serde_json::Value>(l).ok());
+    let stats = stats.filter(|s| s["steps"].is_u64()).ok_or_else(|| format!("no statistics: {err}"))?;
+    let steps = stats["steps"].as_u64().unwrap_or(u64::MAX);
+    if stats["exhausted"] != false || stats["limits_hit"] != 0 {
+        return Err(format!("a limit stopped or cut the run ({} hit, {steps} steps)", stats["limits_hit"]));
+    }
+    crate::support::record_steps(&format!("templates::{tag}"), steps);
+    if steps * 100 > DEAREST * SLACK {
+        return Err(format!("{steps} steps, over the budget of {DEAREST} + {}%", SLACK - 100));
+    }
+    let findings: Vec<serde_json::Value> = serde_json::from_str(&out).map_err(|e| format!("findings: {e}"))?;
+    let errors: Vec<String> = (findings.iter().filter(|f| clean && f["severity"] == "error"))
+        .map(|f| format!("{}:{} {} {}", f["file"], f["line"], f["number"], f["message"]))
+        .collect();
+    match errors.is_empty() {
+        true => Ok(()),
+        false => Err(format!("errors in a document that builds: {}", errors.join(" | "))),
+    }
+}
+
+/// Intuition: a template is the first document a user analyses, so each must reach its end,
+/// within a budget, with no error (each builds: `each_installed_template_builds`), on the
+/// path the user is on: the whole build, where run 2 reads what run 1 wrote. Pins acm-sigconf,
+/// whose second run (the page count read back from the `.aux`, unknown) forked 95k times at
+/// `\maketitle` until `limits.line_steps` cut it, unseen by every test: none ran a template
+/// through its build.
+#[test]
+fn each_template_reaches_its_end_without_an_error() {
+    if !crate::support::installed() {
+        return;
+    }
+    let failed: Vec<String> = (crate::crash::templates("templates-end").iter())
+        .filter_map(|(id, dir)| reaches_its_end(id, dir, true).err().map(|why| format!("{id}: {why}")))
+        .collect();
+    assert!(failed.is_empty(), "{}", failed.join("\n"));
+}
+
+/// Intuition: the playground's examples are what a visitor runs first. Each reaches its end
+/// within the budget. Several show an error on purpose, so errors are not counted here.
+#[test]
+fn each_site_example_reaches_its_end() {
+    if !crate::support::installed() {
+        return;
+    }
+    let mut failed = Vec::new();
+    for (name, path) in crate::crash::site_examples() {
+        let dir = crate::crash::folder(&format!("templates-site-{name}"), path.parent());
+        std::fs::copy(&path, dir.join("main.tex")).expect("the example is copied");
+        failed.extend(reaches_its_end(&format!("site-{name}"), &dir, false).err().map(|why| format!("{name}: {why}")));
+    }
+    assert!(failed.is_empty(), "{}", failed.join("\n"));
+}
+
 /// Intuition: options given to `satex new` are what the written header line passes, and the
 /// run that reads the new project reports the class it loaded with the version its file says.
 /// Pins the round trip options in, header line out, class seeing them.

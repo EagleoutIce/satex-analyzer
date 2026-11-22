@@ -299,23 +299,33 @@ fn mutants_of_kernel_documents_end_in_order() {
 const DEATHS: [&str; 5] =
     ["panicked at", "has overflowed its stack", "memory allocation of", "internal-error", "satex hit a bug"];
 
-/// `satex args` in `dir` with a 2 MiB main stack and thread stacks, `stdin`
-/// fed, ended by itself within [`LIMIT`], by no signal and with none of
-/// [`DEATHS`] in what it printed. Returns its stdout.
+/// [`child`] on a 2 MiB stack: its stdout.
 fn survives(dir: &Path, args: &[&str], stdin: &str) -> Result<String, String> {
+    child(dir, args, stdin, Some(STACK)).map(|(out, _)| out)
+}
+
+/// `satex args` in `dir` with `stack` bytes of main stack and thread stacks
+/// (`None`: what a user's run has), `stdin` fed, ended by itself within
+/// [`LIMIT`], by no signal and with none of [`DEATHS`] in what it printed.
+/// Returns its stdout and stderr.
+pub(crate) fn child(dir: &Path, args: &[&str], stdin: &str, stack: Option<usize>) -> Result<(String, String), String> {
     use std::io::Write;
     use std::process::Stdio;
-    let mut command = if cfg!(unix) {
+    let mut command = match stack {
         // The main thread's stack is the shell's limit.
-        let mut sh = std::process::Command::new("sh");
-        let exe = satex();
-        sh.args(["-c", &format!("ulimit -s {}; exec \"$0\" \"$@\"", STACK >> 10)]).arg(exe.get_program());
-        sh.envs(exe.get_envs().filter_map(|(k, v)| Some((k, v?))));
-        sh
-    } else {
-        satex()
+        Some(stack) if cfg!(unix) => {
+            let mut sh = std::process::Command::new("sh");
+            let exe = satex();
+            sh.args(["-c", &format!("ulimit -s {}; exec \"$0\" \"$@\"", stack >> 10)]).arg(exe.get_program());
+            sh.envs(exe.get_envs().filter_map(|(k, v)| Some((k, v?))));
+            sh
+        }
+        _ => satex(),
     };
-    command.args(args).current_dir(dir).env("RUST_MIN_STACK", STACK.to_string());
+    command.args(args).current_dir(dir);
+    if let Some(stack) = stack {
+        command.env("RUST_MIN_STACK", stack.to_string());
+    }
     let mut child =
         command.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().expect("satex starts");
     let mut input = child.stdin.take().expect("a pipe");
@@ -349,7 +359,7 @@ fn survives(dir: &Path, args: &[&str], stdin: &str) -> Result<String, String> {
     }
     match DEATHS.iter().find(|d| err.contains(**d) || out.contains(**d)) {
         Some(death) => Err(format!("`satex {}` said `{death}`: {}", args.join(" "), tail(&err))),
-        None => Ok(out),
+        None => Ok((out, err)),
     }
 }
 
@@ -417,16 +427,57 @@ fn session(dir: &Path, text: &str, edits: &[String]) -> Result<(), String> {
 /// Places per text a session asks at, besides its corners.
 const PLACES: usize = 6;
 
-/// `lint` and a session with a few mutants on `text`, as `main.tex` in a copy of `from`'s folder.
-fn document_survives(tag: &str, from: Option<&Path>, text: &str, engine: &[&str]) -> Vec<String> {
-    let dir = crate::support::scratch_dir(tmp_root().join(format!("crash-{tag}")));
-    if let Some(from) = from {
-        for entry in std::fs::read_dir(from).into_iter().flatten().flatten() {
-            if entry.path().is_file() {
-                let _ = std::fs::copy(entry.path(), dir.join(entry.file_name()));
-            }
+/// A fresh folder with the files of `from`'s: a document's own, beside its `main.tex`.
+pub(crate) fn folder(tag: &str, from: Option<&Path>) -> PathBuf {
+    let dir = crate::support::scratch_dir(tmp_root().join(tag));
+    for entry in from.into_iter().flat_map(std::fs::read_dir).flatten().flatten() {
+        if entry.path().is_file() {
+            let _ = std::fs::copy(entry.path(), dir.join(entry.file_name()));
         }
     }
+    dir
+}
+
+/// The playground's examples: each one's name and path.
+pub(crate) fn site_examples() -> Vec<(String, PathBuf)> {
+    let examples = Path::new(env!("CARGO_MANIFEST_DIR")).join("doc/site/examples");
+    let mut paths: Vec<PathBuf> =
+        std::fs::read_dir(&examples).expect("the examples").flatten().map(|e| e.path()).collect();
+    paths.sort();
+    paths.retain(|p| p.extension().is_some_and(|e| e == "tex"));
+    paths.into_iter().map(|p| (p.file_stem().and_then(|s| s.to_str()).unwrap_or_default().to_string(), p)).collect()
+}
+
+/// The benchmark documents (benches/docs.txt): each one's name and path.
+pub(crate) fn benchmarks() -> Vec<(String, PathBuf)> {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let list = std::fs::read_to_string(root.join("benches/docs.txt")).expect("the benchmark list");
+    let paths = list.lines().filter(|l| !l.trim().is_empty() && !l.starts_with('#'));
+    let paths = paths.map(|l| root.join(l.split_whitespace().next().expect("a path")));
+    paths.map(|p| (p.file_stem().and_then(|s| s.to_str()).unwrap_or_default().to_string(), p)).collect()
+}
+
+/// Every template this installation can write (`satex new`, offline), each written to a
+/// folder of its own under `tag`: its id and that folder. A class the installation lacks,
+/// or a template only its provider has, is left out.
+pub(crate) fn templates(tag: &str) -> Vec<(String, PathBuf)> {
+    let listed = satex().args(["new", "--list", "--format", "json"]).output().expect("satex runs");
+    let listed: serde_json::Value = serde_json::from_slice(&listed.stdout).expect("the templates as JSON");
+    let ids = listed.as_array().expect("a list").iter().map(|t| t["id"].as_str().expect("an id").to_string());
+    ids.filter_map(|id| {
+        let dir = crate::support::scratch_dir(tmp_root().join(format!("{tag}-{id}")));
+        let made = satex()
+            .args(["new", "-t", &id, "--no-check", "--force", "--set", "templates.fetch=false"])
+            .arg(&dir)
+            .output();
+        (made.is_ok_and(|o| o.status.success()) && dir.join("main.tex").exists()).then_some((id, dir))
+    })
+    .collect()
+}
+
+/// `lint` and a session with a few mutants on `text`, as `main.tex` in a copy of `from`'s folder.
+fn document_survives(tag: &str, from: Option<&Path>, text: &str, engine: &[&str]) -> Vec<String> {
+    let dir = folder(&format!("crash-{tag}"), from);
     let all = mutants(text, tag.len() as u64);
     // A cut in the preamble, one in the body, and two with stray tokens.
     let picked: Vec<String> =
@@ -457,15 +508,10 @@ fn the_site_examples_survive_lint_and_a_session() {
     if !installed() {
         return;
     }
-    let examples = Path::new(env!("CARGO_MANIFEST_DIR")).join("doc/site/examples");
     let mut failed = Vec::new();
-    let mut names: Vec<PathBuf> =
-        std::fs::read_dir(&examples).expect("the examples").flatten().map(|e| e.path()).collect();
-    names.sort();
-    for path in names.iter().filter(|p| p.extension().is_some_and(|e| e == "tex")) {
-        let text = std::fs::read_to_string(path).expect("an example");
-        let tag = format!("site-{}", path.file_stem().and_then(|s| s.to_str()).unwrap_or_default());
-        failed.extend(document_survives(&tag, Some(&examples), &text, &[]));
+    for (name, path) in site_examples() {
+        let text = std::fs::read_to_string(&path).expect("an example");
+        failed.extend(document_survives(&format!("site-{name}"), path.parent(), &text, &[]));
     }
     assert!(failed.is_empty(), "{}", failed.join("\n"));
 }
@@ -478,20 +524,8 @@ fn the_templates_survive_lint_and_a_session() {
     if !installed() {
         return;
     }
-    let listed = satex().args(["new", "--list", "--format", "json"]).output().expect("satex runs");
-    let listed: serde_json::Value = serde_json::from_slice(&listed.stdout).expect("the templates as JSON");
     let mut failed = Vec::new();
-    for template in listed.as_array().expect("a list") {
-        let id = template["id"].as_str().expect("an id");
-        let dir = crate::support::scratch_dir(tmp_root().join(format!("crash-new-{id}")));
-        let made = satex()
-            .args(["new", "-t", id, "--no-check", "--force", "--set", "templates.fetch=false"])
-            .arg(&dir)
-            .output();
-        // A class this installation lacks, or a template only its provider has.
-        if !made.is_ok_and(|o| o.status.success()) || !dir.join("main.tex").exists() {
-            continue;
-        }
+    for (id, dir) in templates("crash-new") {
         let text = std::fs::read_to_string(dir.join("main.tex")).expect("the template");
         failed.extend(document_survives(&format!("template-{id}"), Some(&dir), &text, &[]));
     }
@@ -505,19 +539,11 @@ fn the_benchmark_documents_survive_lint() {
     if !installed() {
         return;
     }
-    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let list = std::fs::read_to_string(root.join("benches/docs.txt")).expect("the benchmark list");
     let mut failed = Vec::new();
-    for line in list.lines().filter(|l| !l.trim().is_empty() && !l.starts_with('#')) {
-        let path = root.join(line.split_whitespace().next().expect("a path"));
+    for (name, path) in benchmarks() {
         let Ok(text) = std::fs::read_to_string(&path) else { continue };
-        let tag = format!("bench-{}", path.file_stem().and_then(|s| s.to_str()).unwrap_or_default());
-        let dir = crate::support::scratch_dir(tmp_root().join(format!("crash-{tag}")));
-        for entry in std::fs::read_dir(path.parent().expect("a folder")).into_iter().flatten().flatten() {
-            if entry.path().is_file() {
-                let _ = std::fs::copy(entry.path(), dir.join(entry.file_name()));
-            }
-        }
+        let tag = format!("bench-{name}");
+        let dir = folder(&format!("crash-{tag}"), path.parent());
         let all = mutants(&text, tag.len() as u64);
         for (k, source) in [text.clone(), all[all.len() / 3].clone(), all[MUTANTS - 1].clone()].iter().enumerate() {
             std::fs::write(dir.join("main.tex"), source).expect("the document is written");

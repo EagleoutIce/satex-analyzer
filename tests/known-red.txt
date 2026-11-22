@@ -14,6 +14,8 @@ tex_compliance::an_argument_read_from_a_typed_rest_that_may_be_empty_keeps_its_e
 
 
 # == precision ==
+# owner sound5 (acmfix 2026-11-22, S/acmfix/LAND.md): acm-sigconf build run 2 forks ~95k times: loop_head (explore.rs) counts sibling arrivals at a conditional (exits of acmart's title loop meeting latex.ltx:20480/20494, acmart.cls:2931) as passes of a loop and summarizes, making page/box/shipout state unknown. cand-02-descent.patch (a pass = a path carrying the head in loop_bounds) ends it but turns 3 digit-walk tests red (the false summary is a path brake there): land with the digit-walk design.
+templates::each_template_reaches_its_end_without_an_error
 # owner pgf (found by night 2026-11-22, root of the digit-walk cluster): `\csname` over a typed digit in a small interval parts a path per value (exec.rs name_step) and per name (scan_csname_chars) at every lookup, though the names hold one meaning: 40 forks for 3 lookups of a digit in 0..3, 0 for one in 0..9. Keeping such names one token (one_of_spelled) takes the ledger's signed count from 2548 to 259 forks but lets arms join earlier and lose their pairing (tikz_bend 7 s -> 58 s). Experiment + traces: S/night/p2-experiment.patch, S/night/LAND.md.
 semantics::a_name_over_a_digit_of_few_values_parts_no_more_paths_than_one_of_ten
 # owner pgf (found by cert-finish 2026-11-21): red on main without a ledger line; base and patched give the same output ({0 | ?.?}, NEG|POS). See S/cert-finish/ab.out.

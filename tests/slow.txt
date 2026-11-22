@@ -111,4 +111,6 @@ tagging::metadata_without_tagging_is_inactive
 tagging::pdfua_without_any_title_is_reported
 tagging::the_body_after_a_tagged_title_is_followed
 tagging::the_run_says_what_tagging_it_set_up
+templates::each_site_example_reaches_its_end
+templates::each_template_reaches_its_end_without_an_error
 warm::the_suite_s_kernels_build

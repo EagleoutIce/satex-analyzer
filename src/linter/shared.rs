@@ -554,6 +554,8 @@ fn own_names(analysis: &Analysis, package: &str) -> std::sync::Arc<HashSet<Strin
 #[derive(Clone)]
 struct Probed {
     clean: bool,
+    /// The package's file was not there to load (a bundle that fetches on demand): the call untried.
+    absent: bool,
     own: std::sync::Arc<HashSet<String>>,
 }
 
@@ -599,7 +601,11 @@ fn probe(analysis: &Analysis, with: &[String], package: &str, call: &str) -> Pro
     let made: HashSet<Sym> = run.facts.defs.iter().filter(|d| mine(d.span.file)).map(|d| d.name).collect();
     let held = made.into_iter().filter(|&s| !matches!(run.env.meaning(s), crate::engine::tex::Meaning::Undefined));
     let own = std::sync::Arc::new(held.map(|s| run.interner.name(s).to_string()).collect::<HashSet<_>>());
-    let probed = Probed { clean, own };
+    let absent =
+        run.facts.loads.iter().any(|l| {
+            l.name == package && l.kind.is_package() && l.status == crate::analysis::facts::LoadStatus::NotFound
+        });
+    let probed = Probed { clean, absent, own };
     if let Ok(mut runs) = RUNS.lock() {
         runs.get_or_insert_with(HashMap::default).insert(key, probed.clone());
     }
@@ -615,23 +621,30 @@ pub fn provider(analysis: &Analysis, name: &str) -> Option<String> {
 
 /// The installed package to load for `call`, a call of `name` the run lacks: of the packages that
 /// may provide it ([`crate::caches::exports::Exports::candidates`]), the most loaded under which the
-/// call runs clean ([`takes`]), at most `limits.provider_probes` tried; else [`provider`].
+/// call runs clean, at most `limits.provider_probes` tried; else [`provider`]. Clean: a document of
+/// the run's class that loads it and makes the call reaches `\end{document}` with no certain error,
+/// TeX's verdict on the package's real code (graphics' `\includegraphics[width=1cm]{x}` reads to the
+/// end for `[llx,lly]`'s comma). `with`: the packages the same write loads for the call's other names.
 pub fn provider_for(analysis: &Analysis, name: &str, call: &str, with: &[String]) -> Option<String> {
     let tries = analysis.settings.limits.provider_probes as usize;
     let first = provider(analysis, name);
     let others =
         exports(analysis)?.candidates(name).into_iter().filter_map(|f| f.strip_suffix(".sty").map(str::to_string));
     // The usual provider first: the others are tried only when the call fails under it.
-    let mut packages = first.clone().into_iter().chain(others.filter(|p| Some(p) != first.as_ref()));
-    packages.by_ref().take(tries).find(|p| takes(analysis, p, call, with)).or(first)
-}
-
-/// Whether `call` runs clean with `package` loaded: a document of the run's class that loads it and
-/// makes the call reaches `\end{document}` with no certain error. TeX's verdict on the package's
-/// real code: graphics' `\includegraphics[width=1cm]{x}` reads to the end for `[llx,lly]`'s comma.
-/// `with`: the packages the same write loads for the call's other names.
-fn takes(analysis: &Analysis, package: &str, call: &str, with: &[String]) -> bool {
-    probe(analysis, with, package, call).clean
+    let packages = first.clone().into_iter().chain(others.filter(|p| Some(p) != first.as_ref())).take(tries);
+    // The first the call runs clean under; else the first that could not be tried (not in a bundle
+    // yet) before one under which it failed: an untried package may take it, a failed one does not.
+    let mut untried = None;
+    for p in packages {
+        let run = probe(analysis, with, &p, call);
+        if run.clean {
+            return Some(p);
+        }
+        if run.absent && untried.is_none() {
+            untried = Some(p);
+        }
+    }
+    untried.or(first)
 }
 
 /// Names the installed packages define that `keep` takes (`env`: environments only), the `n` best by `rank`

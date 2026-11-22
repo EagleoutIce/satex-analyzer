@@ -114,6 +114,7 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 
 ### Playground
 
+- `fix` **A package the playground has not fetched yet is preferred to one that rejects the call**: an inserted `\includegraphics[width=…]` loads graphicx, not graphics, also before graphicx is in the bundle.
 - `fix` **The page's first command list after `\` is the right one**: it is asked where the document's own commands are in force, and one typed letter is a prefix (`\t` puts `\textbf` first), so the list no longer reorders after ~1 s.
 - `fix` **The caret stays in a new paragraph begun by a command** (`\textbf{}` on a line of its own) instead of jumping to the end of the line above, and text typed there is echoed.
 - `fix` **`\sum` is no longer echoed as a wrong glyph while typing**: the echo draws math operators from the math fallback font, not the page's extension font, which holds several sizes per operator.
