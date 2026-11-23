@@ -594,6 +594,13 @@ fn a_script_on_a_closing_bracket_is_reported() {
     let found = findings(&doc.analysis, "math-script-braces");
     assert!(found.iter().any(|m| m.contains("`^` attaches only to the `)`")), "{found:?}");
     assert!(found.iter().any(|m| m.contains("`_` attaches only to the `]`")), "{found:?}");
+    // the usual notation `(a+b)^2` sets as meant: a note, never a warning
+    let levels: Vec<String> = satex::linter::lint(&doc.analysis)
+        .into_iter()
+        .filter(|r| r["code"] == "math-script-braces")
+        .filter_map(|r| r["severity"].as_str().map(str::to_string))
+        .collect();
+    assert!(!levels.is_empty() && levels.iter().all(|s| s == "info"), "{levels:?}");
 }
 
 math_none! {
@@ -687,6 +694,9 @@ math_none! {
     /// chktex reports `\mathrm{sin}`, which is already upright.
     an_operator_set_by_its_command_is_not_reported("upright", r"Write $\sin(x)$ and $\mathrm{sin}(x)$ here.", "math-operator-name");
     letters_with_no_command_behind_them_are_not_reported("letters", r"Write $abc$ here.", "math-operator-name");
+    /// `\section`'s body holds the word `section` too, but sets no `\mathop`: the bug
+    /// was the advice to write `\section` in a formula.
+    a_command_that_is_no_operator_is_not_suggested("no-operator", r"Write $section$ here.", "math-operator-name");
 }
 
 // chktex warning 11: `You should use '%s' to achieve an ellipsis.`
@@ -1181,6 +1191,9 @@ fn leaving_a_slanted_shape_without_a_correction_is_reported() {
 }
 
 file_none! {
+    /// A slanted letter at the end of a box (a forest or TikZ node, `\\mbox`) leans over nothing: the next
+    /// character stands in another box. Pins the false finding on forest's `[Car, …]` nodes.
+    a_slanted_letter_ending_a_box_is_not_reported("boxed.tex", "\\documentclass{article}\n\\begin{document}\nThe \\mbox{\\em f}\\mbox{x} roman\n\\end{document}\n", "missing-italic-correction");
     a_slanted_shape_that_ends_with_a_correction_is_not_reported("corrected.tex", "\\documentclass{article}\n\\begin{document}\nThe \\emph{f\\/} before roman text\n\\end{document}\n", "missing-italic-correction");
     /// A correction in front of a period or a comma is chktex 28's business.
     a_slanted_shape_before_small_punctuation_is_not_reported("punctuated.tex", "\\documentclass{article}\n\\begin{document}\nThe \\emph{word}, and \\emph{another}.\n\\end{document}\n", "missing-italic-correction");
@@ -1677,6 +1690,22 @@ fn a_label_from_a_macro_body_is_reported_at_the_call() {
     assert!(found[0].starts_with("4:1 ") && found[0].contains("via `\\greet`"), "{found:?}");
 }
 
+/// Intuition: one macro that labels and refers (`\\label{sec:#1} \\ref{sec:#1}`), or a `\\foreach` body,
+/// uses its labels: "never referenced" there is false. Pins three drops of such a use: the key not
+/// spelled in the call's source (`\\body{1}`), the read at the label's own call, and the label's own
+/// site counted as the use. A label the macro never refers to is still reported.
+#[test]
+fn a_label_a_macro_refers_to_is_used() {
+    let body = "\\documentclass{article}\n\\begin{document}\n\\def\\body#1{\\section{S#1}\\label{sec:#1} See \\ref{sec:#1}.}\\body{1}\\body{2}\n\\end{document}\n";
+    let Some(analysis) = latex(body) else { return };
+    let found = placed(&analysis, "unused-label");
+    assert!(found.is_empty(), "{found:?}");
+    let some = "\\documentclass{article}\n\\begin{document}\n\\def\\body#1{\\section{S#1}\\label{sec:#1} Text.}\\body{1}\\body{2}\nSee \\ref{sec:1}.\n\\end{document}\n";
+    let Some(analysis) = latex(some) else { return };
+    let found = placed(&analysis, "unused-label");
+    assert!(found.len() == 1 && found[0].contains("sec:2"), "{found:?}");
+}
+
 #[test]
 fn a_label_written_in_the_text_is_reported_where_it_stands() {
     let Some(analysis) = latex("\\documentclass{article}\n\\begin{document}\nx \\label{own}\n\\end{document}\n") else {
@@ -2124,4 +2153,26 @@ fn a_contents_line_read_back_from_the_aux_is_no_entry() {
         .map(|o| o.key.as_str())
         .collect();
     assert!(entries.is_empty(), "{entries:?}");
+}
+
+/// Intuition: a package or class of the project is code, where `\csname` and `\hskip` are its tools; the
+/// plain-TeX advice is for the document's text. Pins 35 findings on a thesis's own `xlistings.sty`.
+#[test]
+fn a_primitive_in_a_project_package_is_not_reported() {
+    if !crate::support::installed() {
+        return;
+    }
+    let dir = crate::support::scratch_dir(crate::support::tmp_root().join("primitive-in-package"));
+    std::fs::write(dir.join("mine.sty"), "\\ProvidesPackage{mine}\n\\def\\mine{\\hskip 1pt}\n").unwrap();
+    let main =
+        "\\documentclass{article}\n\\usepackage{mine}\n\\begin{document}\nA\\mine B \\hskip 2pt C\n\\end{document}\n";
+    std::fs::write(dir.join("main.tex"), main).unwrap();
+    let analysis =
+        satex::analysis::machine::Machine::analyze(main, Some(&dir.join("main.tex")), &crate::support::config());
+    let files: Vec<String> = satex::linter::lint(&analysis)
+        .into_iter()
+        .filter(|r| r["code"] == "primitive-tex-command" && r["origin"] == "document")
+        .filter_map(|r| r["file"].as_str().map(str::to_string))
+        .collect();
+    assert!(!files.is_empty() && files.iter().all(|f| f.ends_with("main.tex")), "{files:?}");
 }

@@ -2800,6 +2800,7 @@ pub struct Lints {
     pub itemize_described: ItemizeDescribed,
     pub package_successor: PackageSuccessor,
     pub clones: Clones,
+    pub spelled_out_macro: SpelledOutMacro,
     pub quiet_arguments: QuietArguments,
     /// When an editor asks whether a frequent finding is the project's style.
     pub style_prompt: StylePrompt,
@@ -2985,6 +2986,22 @@ pub struct IndistinctColors {
 impl Default for IndistinctColors {
     fn default() -> IndistinctColors {
         IndistinctColors { below: 15.0, apart: 30.0 }
+    }
+}
+
+/// `lints.spelled-out-macro:` in `satex.yaml`.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(default, deny_unknown_fields, rename_all = "kebab-case")]
+pub struct SpelledOutMacro {
+    /// When a typed word is the command's word ([`crate::util::equiv::Level`]).
+    pub equivalence: crate::util::equiv::Level,
+    /// Words shorter than this are left alone.
+    pub min_length: usize,
+}
+
+impl Default for SpelledOutMacro {
+    fn default() -> SpelledOutMacro {
+        SpelledOutMacro { equivalence: crate::util::equiv::Level::Glyphs, min_length: 3 }
     }
 }
 

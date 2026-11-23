@@ -274,10 +274,12 @@ fn csname_is_matched_to_the_interface_for_what_it_was_formed_for() {
     // fallback, only etoolbox's: with no fix to offer, satex now reports
     // none of the three at all rather than repeating "this is plain TeX"
     // back with nothing to act on.
+    // The kernel's `\\@namedef`, `\\@ifundefined` and `\\@nameuse` are no
+    // fix for the document either: `@` is not a letter there, so the
+    // written fix would break the line. No role is reported then.
     let without = analyze(&format!("\\documentclass{{article}}\n{body}"));
     let found = fixes(&without);
-    let expected = [Some("use `\\@namedef`"), Some("use `\\@ifundefined`"), Some("use `\\@nameuse`")];
-    assert_eq!(found.iter().map(Option::as_deref).collect::<Vec<_>>(), expected);
+    assert!(found.is_empty(), "{found:?}");
 }
 
 #[test]
@@ -400,7 +402,9 @@ fn preamble_cost_speaks_only_for_a_preamble_that_is_most_of_a_costly_build() {
     let doc = |preamble: &str, body: &str| {
         format!("\\documentclass{{article}}\n{COSTLY}\n{preamble}\n\\begin{{document}}\n{body}\n\\end{{document}}")
     };
-    assert_eq!(findings(&analyze(&doc(&calls, "x")), "preamble-cost").len(), 1);
+    let found = findings(&analyze(&doc(&calls, "x")), "preamble-cost");
+    // no `\usepackage` of its own: the class is named, never "0 packages requested directly"
+    assert!(found.len() == 1 && found[0].0.starts_with("the class article reads"), "{found:?}");
     for quiet in [doc("", "x"), doc(&calls, &format!("{calls}{calls}"))] {
         assert!(findings(&analyze(&quiet), "preamble-cost").is_empty(), "{quiet}");
     }

@@ -1283,6 +1283,12 @@ fn undefined_reference(report: &mut Report) {
         .collect();
     let keys: Vec<String> = known.keys().map(|k| k.to_string()).collect();
     for (span, via, key) in missing {
+        // `\\vref[see]{x}`: a command with no optional argument reads the `[` as its label
+        if key == "[" {
+            let message = "the label read here is `[`: the command takes no optional argument".to_string();
+            report.add(span, &key, message, Some("drop the `[…]` before the label".to_string()));
+            continue;
+        }
         let message = format!("no `\\label{{{key}}}` anywhere in the document{}", via.unwrap_or_default());
         let fix = respell_fix(report, span, &key, &keys);
         match fix.filter(|_| report.unread("defined").is_none()) {

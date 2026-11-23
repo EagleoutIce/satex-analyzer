@@ -158,3 +158,4 @@ C069 conflicting-bibliography-fields
 C070 unknown-bibliography-entry-type
 C071 broken-bibliography-crossref
 S069 ignored-bibliography-field
+S070 spelled-out-macro

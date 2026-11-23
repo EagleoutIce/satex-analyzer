@@ -139,6 +139,76 @@ fn reported(name: &str, source: &str, code: &str) -> usize {
     satex::linter::lint(&analysis).iter().filter(|r| r.get("code").and_then(|c| c.as_str()) == Some(code)).count()
 }
 
+/// Intuition: a run a budget stopped never read the rest: a reference to a label there is "maybe
+/// defined later", a precision note, never "no `\\label` anywhere" (the label is made by a macro: the
+/// source text does not spell its key). Pins 3 false undefined-reference
+/// errors on a 60-section article `limits.seconds` stopped at section 9.
+#[test]
+fn a_reference_past_a_stopped_run_is_only_a_note() {
+    if !installed() {
+        return;
+    }
+    let filler = "\\relax".repeat(4000);
+    let source = format!(
+        "\\documentclass{{article}}\n\\newcommand\\mark[1]{{\\label{{sec:#1}}}}\n\\begin{{document}}\nSee \\ref{{sec:late}}.\n{filler}\n\\section{{Late}}\\mark{{late}}\n\\end{{document}}\n"
+    );
+    let dir = project("reference-stopped", &[("doc.tex", &source)]);
+    let mut cfg = Config { load: Load { classes: true, ..Default::default() }, ..crate::support::config() };
+    cfg.limits.steps =
+        Machine::analyze("\\documentclass{article}\\begin{document}x\\end{document}", None, &cfg).steps + 2000;
+    let analysis = Machine::analyze(&source, Some(&dir.join("doc.tex")), &cfg);
+    assert!(analysis.exhausted, "the budget did not stop the run");
+    let found: Vec<serde_json::Value> = (satex::linter::lint(&analysis).into_iter())
+        .filter(|r| r["code"] == "undefined-reference")
+        .map(|r| serde_json::to_value(r).unwrap())
+        .collect();
+    assert!(!found.is_empty() && found.iter().all(|r| r["category"] == "precision"), "{found:?}");
+}
+
+/// Intuition: a run that did not read everything may not have met a package's use: "unused" is then a
+/// precision note with no fix that deletes the load. Pins `xlistings` (used past the line a time limit
+/// stopped the run at) offered for deletion.
+#[test]
+fn an_unused_package_in_an_incomplete_run_is_only_a_note() {
+    if !installed() {
+        return;
+    }
+    // the chapter stays unread (`load.inputs: false`): it may use the package
+    let source =
+        "\\documentclass{article}\n\\usepackage{needspace}\n\\begin{document}\nA\n\\input{chap}\n\\end{document}\n";
+    let dir = project("unused-package-unread", &[("doc.tex", source), ("chap.tex", "\\needspace{2\\baselineskip}B\n")]);
+    let mut cfg = Config { load: Load { classes: true, ..Default::default() }, ..crate::support::config() };
+    cfg.load.inputs = false;
+    let analysis = Machine::analyze(source, Some(&dir.join("doc.tex")), &cfg);
+    let found: Vec<serde_json::Value> = (satex::linter::lint(&analysis).into_iter())
+        .filter(|r| r["code"] == "unused-package")
+        .map(|r| serde_json::to_value(r).unwrap())
+        .collect();
+    assert!(
+        !found.is_empty()
+            && found.iter().all(|r| r["category"] == "precision" && r.get("edits").is_none_or(|e| e.is_null())),
+        "{found:?}"
+    );
+}
+
+/// A package that sets a font default the text is set in acts on every character, though no name
+/// it defines is called: `\\usepackage[T1]{fontenc}` (the kernel's `\\normalfont` reads
+/// `\\encodingdefault`). Pins the false finding on nearly every thesis. Without an option fontenc
+/// selects OT1, the default already, and is unused.
+#[test]
+fn a_package_setting_the_text_font_is_used() {
+    if !installed() {
+        return;
+    }
+    let doc = |opt: &str| {
+        format!(
+            "\\documentclass{{article}}\n\\usepackage{opt}{{fontenc}}\n\\begin{{document}}\nHello.\n\\end{{document}}\n"
+        )
+    };
+    assert_eq!(reported("unused-package-t1", &doc("[T1]"), "unused-package"), 0);
+    assert_eq!(reported("unused-package-ot1", &doc(""), "unused-package"), 1);
+}
+
 /// A package whose command the text of a macro the document runs calls is
 /// used, through any number of macros, though the path calling it was not
 /// taken. A macro nothing runs uses nothing.

@@ -7,6 +7,59 @@ use crate::analysis::machine::{Analysis, Recursion};
 use crate::engine::builtins::OccKind;
 use crate::engine::tex::{FileId, Span, Sym};
 
+/// Whether the author can write `name` as a command in the document: its
+/// characters are letters there (catcode 11), or it is one character
+/// (`\\,`). `@` (`\\reserved@a`), `_` and `:` (expl3's `\\l__foo_tl`) are
+/// letters only in package code, so a finding or fix meant for the author
+/// never names such a command.
+pub fn writable(name: &str) -> bool {
+    name.chars().count() == 1 || name.chars().all(char::is_alphabetic)
+}
+
+/// `text` as the author reads it: a name the run could not compute is
+/// held under a mark of satex's own (`\u{2}unknown name:r@sec:…`), raw in
+/// TeX's messages or `^^B` as TeX prints it. Each becomes its known head and
+/// `…` (`\\r@sec:…`), an unknown text `…` alone.
+pub fn readable(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    loop {
+        let raw = rest.find("\u{2}unknown").map(|at| (at, 1));
+        let printed = rest.find("^^Bunknown").map(|at| (at, 3));
+        let Some((at, mark)) = [raw, printed].into_iter().flatten().min() else { break };
+        out.push_str(&rest[..at]);
+        // the mark (`unknown name:`), an unknown text's kind (`text of:`), then the name to a space or quote
+        let body = &rest[at + mark..];
+        let body = body.split_once(':').map_or(body, |(_, b)| b);
+        let kind = [crate::analysis::machine::TYPED_TEXT, crate::analysis::machine::explore::ONE_OF]
+            .into_iter()
+            .find(|k| body.starts_with(k));
+        let body = &body[kind.map_or(0, str::len)..];
+        let end = body.find(|c: char| c.is_whitespace() || matches!(c, '`' | '\'' | '"')).unwrap_or(body.len());
+        let head: String = match kind {
+            None => body[..end].chars().take_while(|c| !c.is_control() && *c != '^').collect(),
+            Some(_) => String::new(),
+        };
+        if kind.is_some() && out.ends_with('\\') {
+            out.pop();
+        }
+        out.push_str(&head);
+        out.push('…');
+        rest = &body[end..];
+    }
+    out.push_str(rest);
+    // a typed unknown digit's name (`\\-16384..16383#8970.8059.0`), a private-use mark (U+F0000 on), an unknown
+    // text's digest (32 hex digits): each the `…` of a value the run did not know, one `…` for a run of them
+    static RAW: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+        regex::Regex::new(r"\\?-?\d+\.\.-?\d+#[0-9.]*\d|[\u{F0000}-\u{10FFFF}]|\b[0-9a-f]{32}\b")
+            .expect("a valid pattern")
+    });
+    static RUN: std::sync::LazyLock<regex::Regex> =
+        std::sync::LazyLock::new(|| regex::Regex::new(r"…(?:[\s.,\\]*…)+").expect("a valid pattern"));
+    let out = RAW.replace_all(&out, "…");
+    RUN.replace_all(&out, "…").into_owned()
+}
+
 /// Whether the message was raised by `\\errmessage`, under whatever name
 /// the code called it (`\\tex_errmessage:D`, an alias): what stops a real
 /// run (tex.web § 1283).
@@ -560,6 +613,8 @@ struct Probed {
     /// The package's file was not there to load (a bundle that fetches on demand): the call untried.
     absent: bool,
     own: std::sync::Arc<HashSet<String>>,
+    /// Every name the package's files defined during the run, in a group too.
+    made: std::sync::Arc<HashSet<String>>,
 }
 
 /// A document of the run's class that loads `with`, then `package`, and makes `call`, run once per
@@ -571,6 +626,12 @@ struct Probed {
 pub(crate) fn missing_file(message: &str) -> Option<&str> {
     let rest = &message[message.find("File `")? + "File `".len()..];
     Some(&rest[..rest.find("' not found")?])
+}
+
+/// Whether one of the packages `chosen` defines `name` while `call` runs under it (tikz's `\\node`, set
+/// inside the `tikzpicture` only): the name is that package's, though no index lists it as its export.
+pub fn defined_by(analysis: &Analysis, chosen: &[String], name: &str, call: &str) -> bool {
+    chosen.iter().any(|p| probe(analysis, &[], p, call).made.contains(name))
 }
 
 fn probe(analysis: &Analysis, with: &[String], package: &str, call: &str) -> Probed {
@@ -611,13 +672,14 @@ fn probe(analysis: &Analysis, with: &[String], package: &str, call: &str) -> Pro
         false
     };
     let made: HashSet<Sym> = run.facts.defs.iter().filter(|d| mine(d.span.file)).map(|d| d.name).collect();
+    let all = std::sync::Arc::new(made.iter().map(|&s| run.interner.name(s).to_string()).collect::<HashSet<_>>());
     let held = made.into_iter().filter(|&s| !matches!(run.env.meaning(s), crate::engine::tex::Meaning::Undefined));
     let own = std::sync::Arc::new(held.map(|s| run.interner.name(s).to_string()).collect::<HashSet<_>>());
     let absent =
         run.facts.loads.iter().any(|l| {
             l.name == package && l.kind.is_package() && l.status == crate::analysis::facts::LoadStatus::NotFound
         });
-    let probed = Probed { clean, absent, own };
+    let probed = Probed { clean, absent, own, made: all };
     if let Ok(mut runs) = RUNS.lock() {
         runs.get_or_insert_with(HashMap::default).insert(key, probed.clone());
     }
@@ -649,7 +711,9 @@ pub fn provider_for(analysis: &Analysis, name: &str, call: &str, with: &[String]
     let mut untried = None;
     for p in packages {
         let run = probe(analysis, with, &p, call);
-        if run.clean {
+        // alone, when another name's provider beside it spoiled the call (the index names
+        // pgflibraryplotmarks for tikz's `\\node`; loaded first it broke the picture, and tcolorbox won)
+        if run.clean || !with.is_empty() && probe(analysis, &[], &p, call).clean {
             return Some(p);
         }
         if run.absent && untried.is_none() {
@@ -828,6 +892,34 @@ fn exports(analysis: &Analysis) -> Option<std::sync::Arc<crate::caches::exports:
     Some(exports)
 }
 
+/// The document's files that only define (`stats.tex`, the numbers a script writes for the text to
+/// pick from): nine in ten of its non-blank, non-comment lines state a definition. Their unused
+/// names are their data, their repeated lines a table of values.
+pub fn definition_files(
+    analysis: &crate::analysis::machine::Analysis,
+    sources: &crate::linter::fix::Edits,
+) -> crate::fixed::HashSet<crate::engine::tex::FileId> {
+    let mut lines: crate::fixed::HashMap<crate::engine::tex::FileId, crate::fixed::HashSet<u32>> =
+        crate::fixed::HashMap::default();
+    for def in analysis.facts.defs.iter().filter(|d| d.stated && d.spelled) {
+        lines.entry(def.span.file).or_default().insert(def.span.line);
+    }
+    lines
+        .into_iter()
+        .filter(|(file, defined)| {
+            let Some((_, text)) = sources.text(*file) else { return false };
+            let body = (1..=text.line_count() as u32)
+                .filter(|&l| {
+                    let t = text.line(l).trim();
+                    !t.is_empty() && !t.starts_with('%')
+                })
+                .count();
+            defined.len() >= 20 && defined.len() * 10 >= body * 9
+        })
+        .map(|(file, _)| file)
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::preamble_load;
@@ -863,5 +955,23 @@ mod tests {
                 .contains("|\\usepackage{array}\n|\\begin{document}")
         );
         assert!(at("\\begin{tabular}{l}\n\\end{tabular}\n", "usetikzlibrary", &["calc"]).is_err());
+    }
+}
+
+#[cfg(test)]
+mod readable_tests {
+    use super::readable;
+
+    /// Intuition: what the run did not know shows as one `…`, never as satex's own names for it. Pins
+    /// fse-2027's "Suggested extra height (\-16384..16383#8970.8059.0… .\… pt)" and color models listed
+    /// as 32-digit digests.
+    #[test]
+    fn unknown_values_read_as_one_ellipsis() {
+        let raw = "Suggested extra height (\\-16384..16383#8970.8059.0\u{2}unknown name:text of:x .\\\u{2}unknown name:text of:y pt)";
+        assert_eq!(readable(raw), "Suggested extra height (… pt)");
+        let hashed = "Undefined color model `\u{2}unknown name:text of:a 498e155c8bbc32aad8afc2b7edaa6b2b, 553a8a6ec0bbc32aad8afc2b7edaa6b2'";
+        assert_eq!(readable(hashed), "Undefined color model `…'");
+        assert_eq!(readable("operator `\u{10fffc}'"), "operator `…'");
+        assert_eq!(readable("width 3.5pt, 42 items"), "width 3.5pt, 42 items");
     }
 }

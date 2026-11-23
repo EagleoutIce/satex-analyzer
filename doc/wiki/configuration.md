@@ -424,6 +424,12 @@ lints:  # what a single rule reads, under its code
       #! example: `20` also reports pairs that are only hard to tell apart
     apart: 30.0  # CIELAB distance from which two colors are meant to differ for normal vision
       #! affects: output
+  spelled-out-macro:  # a word a command of the document sets, typed out by hand
+    equivalence: glyphs  # when a typed word is the command's: exact, glyphs, case or letters
+      #! affects: output
+      #! example: `case` also reports `tinynet` for `\newcommand\model{TinyNet}`
+    min-length: 3  # words shorter than this are left alone
+      #! affects: output
   clones:  # blocks of the source that repeat with only their values changed
     enabled: true  # look for clones at all
       #! affects: output
@@ -1374,16 +1380,16 @@ limits:  # what bounds the analysis: reaching one stops that part of the run, so
   hyph_words: 50000  # most words whose hyphenation points a language's patterns keep once found (a paragraph is hyphenated twice, words recur)
     #! affects: memory
     #! example: `hyph_words: 0` finds every word's points anew
-  list_items: 8388608  # most items of the lists the run records to break lines and set boxes (a paragraph's characters, glue and boxes; equal lists share theirs). Past it a list is not recorded. Past half of it a run after an edit keeps its own numbering, so it cannot take the last run's rest and runs to the document's end
+  list_items: 8388608  # most items of the lists the run records to break lines and set boxes (a paragraph's characters, glue and boxes). Equal lists share theirs. Past it a list is not recorded. Past half of it a run after an edit keeps its own numbering, so it cannot take the last run's rest and runs to the document's end
     #! affects: memory, speed, output
     #! example: a book of 1000 pages of prose records about 2 million items: with `list_items: 2097152` every edit in it runs to the end
-  paragraph_items: 4000  # most items of one recorded list (a paragraph's characters, glue and boxes; a box; the page's marks). Past it that list is not recorded and its lines and size stay unknown
+  paragraph_items: 4000  # most items of one recorded list (a paragraph's characters, glue and boxes, a box, the page's marks). Past it that list is not recorded and its lines and size stay unknown
     #! affects: speed, output
     #! example: a paragraph of 800 words is about 5000 items: with the default its line breaks stay unknown
-  nesting: 300  # how deeply steps nest inside scans, and quantities inside quantities (`\numexpr(\numexpr(…`), before the nesting is widened; the stack bounds it too
+  nesting: 300  # how deeply steps nest inside scans, and quantities inside quantities (`\numexpr(\numexpr(…`), before the nesting is widened. The stack bounds it too
     #! affects: output
     #! example: `nesting: 1000` follows deeper nesting where the stack allows it
-  probe_contexts: 4  # environments a completion's probe tries a command in when alone it raises an error before reading its arguments (`\caption` outside a float); editor only
+  probe_contexts: 4  # environments a completion's probe tries a command in when alone it raises an error before reading its arguments (`\caption` outside a float). Editor only
     #! affects: output, speed
     #! example: `probe_contexts: 0` leaves `\caption` without a completion shape
   table_reach: 4000  # most macros the table widget follows through the run's calls from an environment to the code that splits its body at `&` (tabularray)
@@ -1418,7 +1424,7 @@ A plugin picks a default from the machine, the installation and the build files.
 - **l3build.** A `build.lua` runs in a sandboxed `texlua` (else its plain assignments are read). Its source dirs are searched, `.ins`/`.dtx` pairs read through docstrip, and `typesetexe`/`stdengine` pick the engine. `l3build:` in `satex.yaml` says which build files to look for (`files`), which `--config` files to read after it (`config`), and overrides the `module`, the test patterns (`tests`) and the check engines (`engines`). `checks: true` analyzes the regression tests as documents too. Empty values keep what the bundle says.
 - **depp.** Every file read maps to its TeX Live package by TDS path. With depp loaded or its file present, `missing-dependency` and `unused-dependency` compare against it. Rules: `depp.rules`, `depp.renames`, `depp.file`.
 - **Package augmentations.** What SaTeX knows about one package lives in one module, not in the lint rules. A rule asks the module, which can veto a finding or rewrite its message and fix. It reads the package's state from the run. siunitx is the first: an `S` column that rounds keeps `inconsistent-precision` quiet, and the fix names `\sisetup{round-mode = ...}`. `plugins.augment` lists the modules that are on.
-- **Typesetting.** `plugins.typeset` holds plugins that run TeX's own algorithms again on text the last run did not set, for the playground's echo of typed text. Each reads only the run's end state: fonts, parameters, codes and hyphenation tables. `hyphenate` answers `satex/hyphenate`: where each word may take a hyphen, from the patterns, exceptions, hyphen mins and `\lccode`s in force. `linebreak` answers `satex/break`: the lines a paragraph's words break into, by the run's own Knuth–Plass breaker ([tex.web §§ 813](https://github.com/TeX-Live/texlive-source/blob/69cabeea43cf685d86cb7b58216f3a9e57fe055c/texk/web2c/tex.web#L15997)–[890](https://github.com/TeX-Live/texlive-source/blob/69cabeea43cf685d86cb7b58216f3a9e57fe055c/texk/web2c/tex.web#L17438)). It builds the list as TeX's main loop does: TFM widths, ligatures and kerns, interword glue by space factor. Fonts come from the run's paragraph at the line given, and the parameters from where the run broke that paragraph. `mathwidths` answers `satex/mathwidths`: each math symbol typed (`a`, `+`, `\alpha`) as the run's math fonts set it. Its math code or `\mathchardef` names a family and a slot, the family's `\textfont` the font, and its TFM gives width, height, depth and italic correction. Anything not known gives `null`. All three are on by default.
+- **Typesetting.** `plugins.typeset` holds plugins that run TeX's own algorithms again on text the last run did not set, for the playground's echo of typed text. Each reads only the run's end state: fonts, parameters, codes and hyphenation tables. `hyphenate` answers `satex/hyphenate`: where each word may take a hyphen, from the patterns, exceptions, hyphen mins and `\lccode`s in force. `linebreak` answers `satex/break`: the lines a paragraph's words break into, by the run's own Knuth–Plass breaker ([tex.web §§ 813](https://github.com/TeX-Live/texlive-source/blob/e73d75f8e070869316e6a148cfda73ab05abcaf3/texk/web2c/tex.web#L15997)–[890](https://github.com/TeX-Live/texlive-source/blob/e73d75f8e070869316e6a148cfda73ab05abcaf3/texk/web2c/tex.web#L17438)). It builds the list as TeX's main loop does: TFM widths, ligatures and kerns, interword glue by space factor. Fonts come from the run's paragraph at the line given, and the parameters from where the run broke that paragraph. `mathwidths` answers `satex/mathwidths`: each math symbol typed (`a`, `+`, `\alpha`) as the run's math fonts set it. Its math code or `\mathchardef` names a family and a slot, the family's `\textfont` the font, and its TFM gives width, height, depth and italic correction. Anything not known gives `null`. All three are on by default.
 - **Preloaded format.** A `%&fmt` line, `-fmt=` or `preload:` names a dumped preamble. SaTeX interprets that preamble instead (up to `\endofdump`). `pretex:` is code read before the first line (latexmk's `-usepretex`).
 
 ### Format and package caches
@@ -1569,7 +1575,7 @@ A rule's own settings live under `lints.⟨code⟩`. [Lint rules](lints.md) list
 
 ## The clock
 
-`clock` sets `\year`, `\month`, `\day`, `\time` and `\pdfcreationdate` ([tex.web § 241](https://github.com/TeX-Live/texlive-source/blob/69cabeea43cf685d86cb7b58216f3a9e57fe055c/texk/web2c/tex.web#L5240)).
+`clock` sets `\year`, `\month`, `\day`, `\time` and `\pdfcreationdate` ([tex.web § 241](https://github.com/TeX-Live/texlive-source/blob/e73d75f8e070869316e6a148cfda73ab05abcaf3/texk/web2c/tex.web#L5240)).
 
 | Value | Meaning |
 | --- | --- |

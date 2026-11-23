@@ -3244,7 +3244,7 @@
         },
         "list_items": {
           "default": 8388608,
-          "description": "most items of the lists the run records to break lines and set boxes (a paragraph's characters, glue and boxes; equal lists share theirs). Past it a list is not recorded. Past half of it a run after an edit keeps its own numbering, so it cannot take the last run's rest and runs to the document's end",
+          "description": "most items of the lists the run records to break lines and set boxes (a paragraph's characters, glue and boxes). Equal lists share theirs. Past it a list is not recorded. Past half of it a run after an edit keeps its own numbering, so it cannot take the last run's rest and runs to the document's end",
           "minimum": 0,
           "type": "integer",
           "x-affects": [
@@ -3329,7 +3329,7 @@
         },
         "nesting": {
           "default": 300,
-          "description": "how deeply steps nest inside scans, and quantities inside quantities (`\\numexpr(\\numexpr(…`), before the nesting is widened; the stack bounds it too",
+          "description": "how deeply steps nest inside scans, and quantities inside quantities (`\\numexpr(\\numexpr(…`), before the nesting is widened. The stack bounds it too",
           "minimum": 0,
           "type": "integer",
           "x-affects": [
@@ -3350,7 +3350,7 @@
         },
         "paragraph_items": {
           "default": 4000,
-          "description": "most items of one recorded list (a paragraph's characters, glue and boxes; a box; the page's marks). Past it that list is not recorded and its lines and size stay unknown",
+          "description": "most items of one recorded list (a paragraph's characters, glue and boxes, a box, the page's marks). Past it that list is not recorded and its lines and size stay unknown",
           "minimum": 0,
           "type": "integer",
           "x-affects": [
@@ -3373,7 +3373,7 @@
         },
         "probe_contexts": {
           "default": 4,
-          "description": "environments a completion's probe tries a command in when alone it raises an error before reading its arguments (`\\caption` outside a float); editor only",
+          "description": "environments a completion's probe tries a command in when alone it raises an error before reading its arguments (`\\caption` outside a float). Editor only",
           "minimum": 0,
           "type": "integer",
           "x-affects": [
@@ -4253,6 +4253,30 @@
                 "type": "string"
               },
               "type": "array"
+            }
+          },
+          "type": "object"
+        },
+        "spelled-out-macro": {
+          "description": "a word a command of the document sets, typed out by hand",
+          "properties": {
+            "equivalence": {
+              "default": "glyphs",
+              "description": "when a typed word is the command's: exact, glyphs, case or letters",
+              "type": "string",
+              "x-affects": [
+                "output"
+              ],
+              "x-example": "`case` also reports `tinynet` for `\\newcommand\\model{TinyNet}`"
+            },
+            "min-length": {
+              "default": 3,
+              "description": "words shorter than this are left alone",
+              "minimum": 0,
+              "type": "integer",
+              "x-affects": [
+                "output"
+              ]
             }
           },
           "type": "object"

@@ -387,11 +387,6 @@ pub fn doi(text: &str) -> Option<String> {
     (d.contains('/') && !d.contains(char::is_whitespace)).then(|| d.to_lowercase())
 }
 
-/// A title as a match compares it: letters and digits, lowercase.
-pub fn title_key(title: &str) -> String {
-    title.chars().filter(|c| c.is_alphanumeric()).flat_map(char::to_lowercase).collect()
-}
-
 /// Whether two entries name one work: the same DOI, else the same title (and year when both
 /// have one).
 pub fn same(a: &Entry, b: &Entry) -> bool {
@@ -399,7 +394,8 @@ pub fn same(a: &Entry, b: &Entry) -> bool {
     match (f(a, "doi").and_then(|d| doi(&d)), f(b, "doi").and_then(|d| doi(&d))) {
         (Some(x), Some(y)) => x == y,
         _ => {
-            let (x, y) = (title_key(&a.title), title_key(&b.title));
+            let title = |e: &Entry| crate::util::equiv::key(&e.title, crate::util::equiv::Level::Letters);
+            let (x, y) = (title(a), title(b));
             x.len() > 8 && x == y && (a.year.is_empty() || b.year.is_empty() || a.year == b.year)
         }
     }

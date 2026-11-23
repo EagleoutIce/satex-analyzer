@@ -405,6 +405,12 @@ lints:  # what a single rule reads, under its code
       #! example: `20` also reports pairs that are only hard to tell apart
     apart: 30.0  # CIELAB distance from which two colors are meant to differ for normal vision
       #! affects: output
+  spelled-out-macro:  # a word a command of the document sets, typed out by hand
+    equivalence: glyphs  # when a typed word is the command's: exact, glyphs, case or letters
+      #! affects: output
+      #! example: `case` also reports `tinynet` for `\newcommand\model{TinyNet}`
+    min-length: 3  # words shorter than this are left alone
+      #! affects: output
   clones:  # blocks of the source that repeat with only their values changed
     enabled: true  # look for clones at all
       #! affects: output
@@ -1355,16 +1361,16 @@ limits:  # what bounds the analysis: reaching one stops that part of the run, so
   hyph_words: 50000  # most words whose hyphenation points a language's patterns keep once found (a paragraph is hyphenated twice, words recur)
     #! affects: memory
     #! example: `hyph_words: 0` finds every word's points anew
-  list_items: 8388608  # most items of the lists the run records to break lines and set boxes (a paragraph's characters, glue and boxes; equal lists share theirs). Past it a list is not recorded. Past half of it a run after an edit keeps its own numbering, so it cannot take the last run's rest and runs to the document's end
+  list_items: 8388608  # most items of the lists the run records to break lines and set boxes (a paragraph's characters, glue and boxes). Equal lists share theirs. Past it a list is not recorded. Past half of it a run after an edit keeps its own numbering, so it cannot take the last run's rest and runs to the document's end
     #! affects: memory, speed, output
     #! example: a book of 1000 pages of prose records about 2 million items: with `list_items: 2097152` every edit in it runs to the end
-  paragraph_items: 4000  # most items of one recorded list (a paragraph's characters, glue and boxes; a box; the page's marks). Past it that list is not recorded and its lines and size stay unknown
+  paragraph_items: 4000  # most items of one recorded list (a paragraph's characters, glue and boxes, a box, the page's marks). Past it that list is not recorded and its lines and size stay unknown
     #! affects: speed, output
     #! example: a paragraph of 800 words is about 5000 items: with the default its line breaks stay unknown
-  nesting: 300  # how deeply steps nest inside scans, and quantities inside quantities (`\numexpr(\numexpr(…`), before the nesting is widened; the stack bounds it too
+  nesting: 300  # how deeply steps nest inside scans, and quantities inside quantities (`\numexpr(\numexpr(…`), before the nesting is widened. The stack bounds it too
     #! affects: output
     #! example: `nesting: 1000` follows deeper nesting where the stack allows it
-  probe_contexts: 4  # environments a completion's probe tries a command in when alone it raises an error before reading its arguments (`\caption` outside a float); editor only
+  probe_contexts: 4  # environments a completion's probe tries a command in when alone it raises an error before reading its arguments (`\caption` outside a float). Editor only
     #! affects: output, speed
     #! example: `probe_contexts: 0` leaves `\caption` without a completion shape
   table_reach: 4000  # most macros the table widget follows through the run's calls from an environment to the code that splits its body at `&` (tabularray)

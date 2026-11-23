@@ -409,9 +409,22 @@ fn definition(analysis: &Analysis, c: Rgb) -> Option<&ColorDef> {
     defs.iter().rev().filter(same).find(|d| d.package.is_none()).or_else(|| defs.iter().rev().find(same))
 }
 
-/// How a finding names a color: the name it was defined under, else `#rrggbb`.
-fn label(analysis: &Analysis, c: Rgb) -> String {
-    definition(analysis, c).map_or_else(|| hex(c), |d| format!("`{}`", d.shown))
+/// The colors the author chose: defined in the document's files or named by its own text, the name
+/// standing in the source line itself (`\\color{red}`, `\\definecolor{mine}…`), not in a theme or a
+/// macro the line calls (`\\usecolortheme`, `\\alert`).
+fn author_colors(report: &Report) -> Vec<(String, Rgb)> {
+    let analysis = report.analysis();
+    let edits = report.edits();
+    let spells = |at: Span, name: &str| edits.text(at.file).is_some_and(|(_, text)| text.line(at.line).contains(name));
+    let value = |name: &str| analysis.facts.colors.iter().rev().find(|d| d.name == name)?.value.as_ref()?.rgb();
+    let used = (analysis.facts.color_uses.iter())
+        .filter(|u| matches!(u.role, CsnameRole::Use) && u.package.is_none() && !internal(&u.name))
+        .filter(|u| spells(u.span, &u.name))
+        .filter_map(|u| Some((u.name.clone(), value(&u.name)?)));
+    let defined = (analysis.facts.colors.iter())
+        .filter(|d| d.package.is_none() && !internal(&d.shown) && spells(d.span, &d.shown))
+        .filter_map(|d| Some((d.shown.clone(), d.value.as_ref()?.rgb()?)));
+    used.chain(defined).collect()
 }
 
 /// A fix that writes `c` into `def`'s own `\definecolor{name}{model}{spec}`, in its model. The
@@ -462,6 +475,7 @@ fn low_contrast_color(report: &mut Report) {
             slot.get_or_insert(fill);
         }
     }
+    let chosen = author_colors(report);
     let mut last = None;
     for (i, (ch, spot)) in text.chars.chars().zip(&text.at).enumerate() {
         if ch.is_whitespace() {
@@ -489,8 +503,13 @@ fn low_contrast_color(report: &mut Report) {
         if ratio >= need {
             continue;
         }
-        let name = label(analysis, fg);
-        let on = if under[i].is_none() && bg == WHITE { "the page".to_string() } else { label(analysis, bg) };
+        // a name the author knows: one they chose, else the value (never pgf's `pgffillcolor`)
+        let known = |c: Rgb| {
+            (chosen.iter().find(|(_, n)| (0..3).all(|i| (n[i] - c[i]).abs() <= SAME)))
+                .map_or_else(|| hex(c), |(name, _)| format!("`{name}`"))
+        };
+        let name = known(fg);
+        let on = if under[i].is_none() && bg == WHITE { "the page".to_string() } else { known(bg) };
         let message = format!("text in {name} on {on} has a contrast of {ratio:.1}:1, below {need}:1");
         let severity = if spot.certain { Severity::Warning } else { Severity::Info };
         let shown = name.trim_matches('`').to_string();
@@ -548,6 +567,9 @@ fn indistinct_colors(report: &mut Report) {
             uses.push(((false, par), c, spot.span));
         }
     }
+    // a color the author chose (a theme's `alerted text.fg` beside its `example text.fg` is the theme's)
+    let chosen = author_colors(report);
+    let mine = |c: Rgb| chosen.iter().any(|(_, n)| (0..3).all(|i| (n[i] - c[i]).abs() <= SAME));
     let mut reported: crate::fixed::HashSet<([u8; 3], [u8; 3])> = crate::fixed::HashSet::default();
     let mut scopes: HashMap<(bool, usize), Vec<(Rgb, Span)>> = HashMap::default();
     for (scope, c, span) in uses {
@@ -558,10 +580,18 @@ fn indistinct_colors(report: &mut Report) {
         for &(other, _) in seen.iter() {
             let pair = (bytes(other).min(bytes(c)), bytes(other).max(bytes(c)));
             let names = alike(other, c, limits.apart, limits.below);
-            if names.is_empty() || !report.wanted(span) || !reported.insert(pair) {
+            if names.is_empty() || !(mine(other) || mine(c)) || !report.wanted(span) || !reported.insert(pair) {
                 continue;
             }
-            let (first, second) = (label(analysis, other), label(analysis, c));
+            // the author's name for each, else the value: never a package's internal one, never one name twice
+            let known = |c: Rgb| {
+                (chosen.iter().find(|(_, n)| (0..3).all(|i| (n[i] - c[i]).abs() <= SAME)))
+                    .map_or_else(|| hex(c), |(name, _)| format!("`{name}`"))
+            };
+            let (first, mut second) = (known(other), known(c));
+            if first == second {
+                second = hex(c);
+            }
             let message = format!("{first} and {second} look alike with {}", names.join(" or "));
             let safe = |o: &&(&str, [u8; 3])| alike(other, of_bytes(o.1), limits.apart, limits.below).is_empty();
             let nearest = OKABE_ITO

@@ -327,26 +327,36 @@ fn primitive_tex_command(report: &mut Report) {
     }
     // `csname_alternative` and `interface` both search the run: the answers
     // repeat for every `\csname` the document writes.
-    let mut roles: Vec<(CsnameRole, (&'static str, Option<Sym>))> = Vec::new();
+    // per role and whether `@` is a letter there: the alternative and the name it may write
+    type Answer = ((CsnameRole, bool), (&'static str, Option<Sym>));
+    let mut roles: Vec<Answer> = Vec::new();
     let mut interfaces: BTreeMap<Sym, String> = BTreeMap::new();
     for expansion in &analysis.facts.expansions {
         let Some(&(alternative, overridden)) = table.get(&expansion.name) else { continue };
         let primitive = analysis.env.meaning(expansion.name).prim();
-        if primitive.is_none() {
+        // a package or class of the project is code, where the primitives are its tools (`xlistings.sty`'s
+        // `\\csname`); the advice is for the document's text
+        let code_file = matches!(
+            analysis.files.get(expansion.span.file as usize).map(|f| f.kind),
+            Some(crate::engine::builtins::LoadKind::Package | crate::engine::builtins::LoadKind::Class)
+        );
+        if primitive.is_none() || code_file {
             continue;
         }
         let role = (primitive == Some(Primitive::Csname) && !overridden)
             .then(|| analysis.facts.csnames.get(&expansion.span).copied())
             .flatten();
         let name = report.cs(expansion.name);
+        // The document's own files read `@` as other: a kernel `\@namedef` written there breaks the line.
+        let document = report.index().origin(expansion.span.file) == "document";
         // The command spelled out expands one step later than the primitive,
         // which an `\expandafter` chain around it may count on.
         let alternate = role.map(|role| {
-            let found = match roles.iter().find(|(seen, _)| *seen == role) {
+            let found = match roles.iter().find(|(seen, _)| *seen == (role, document)) {
                 Some((_, found)) => *found,
                 None => {
-                    let found = csname_alternative(analysis, role);
-                    roles.push((role, found));
+                    let found = csname_alternative(analysis, role, document);
+                    roles.push(((role, document), found));
                     found
                 }
             };
@@ -396,8 +406,9 @@ fn primitive_tex_command(report: &mut Report) {
 
 /// The command that does what a `\csname` was observed doing: etoolbox's
 /// when the run defined it (etoolbox manual §§ 3.1.1, 3.1.2, 3.6.1), else the
-/// kernel's (source2e, ltdefns.dtx).
-fn csname_alternative(analysis: &Analysis, role: CsnameRole) -> (&'static str, Option<Sym>) {
+/// kernel's (source2e, ltdefns.dtx). The kernel's `\@namedef` counts only
+/// in package code: the document reads `@` as other.
+fn csname_alternative(analysis: &Analysis, role: CsnameRole, document: bool) -> (&'static str, Option<Sym>) {
     let c = &analysis.settings.conventions.csname;
     let (purpose, candidates): (&str, &[String]) = match role {
         CsnameRole::Use => ("uses a control sequence by name", &c.r#use),
@@ -413,8 +424,11 @@ fn csname_alternative(analysis: &Analysis, role: CsnameRole) -> (&'static str, O
         CsnameRole::LetTo => ("lets a control sequence to one named by text", &c.let_to),
         CsnameRole::Test => ("tests whether a control sequence is undefined", &c.test),
     };
-    let found =
-        candidates.iter().filter_map(|name| analysis.interner.lookup(name)).find(|sym| analysis.env.is_defined(*sym));
+    let found = candidates
+        .iter()
+        .filter(|name| !document || crate::linter::shared::writable(name))
+        .filter_map(|name| analysis.interner.lookup(name))
+        .find(|sym| analysis.env.is_defined(*sym));
     (purpose, found)
 }
 
@@ -631,8 +645,17 @@ fn unused_definition(report: &mut Report) {
     let reportable: crate::fixed::HashSet<Sym> = candidates.iter().map(|(def, _)| def.name).collect();
     let own = || analysis.facts.defs.iter().filter(|def| index.own_definition(def));
     let named = NamedByText::of(analysis, &reportable, own());
+    // a file that sets no text and only defines (`stats.tex`, the numbers a script writes for the text
+    // to pick from) gives one finding: its unused names are its data, not a slip each
+    let data_files = crate::linter::shared::definition_files(analysis, &report.edits());
+    let mut data: BTreeMap<crate::engine::tex::FileId, Vec<(&crate::analysis::facts::Definition, String)>> =
+        BTreeMap::new();
     for (def, name) in candidates {
         if named.has(analysis, def.name) {
+            continue;
+        }
+        if data_files.contains(&def.span.file) {
+            data.entry(def.span.file).or_default().push((def, name));
             continue;
         }
         if report.unread("used").is_some() {
@@ -646,6 +669,26 @@ fn unused_definition(report: &mut Report) {
             format!("{name} is never used"),
             Fix::new(format!("delete `{name}`"), Applicability::Unsafe, edits),
         );
+    }
+    for (file, unused) in data {
+        let report_one = |report: &mut Report, def: &crate::analysis::facts::Definition, name: &str| {
+            let edits = report.edits().delete_definition(def);
+            let fix = Fix::new(format!("delete `{name}`"), Applicability::Unsafe, edits);
+            report.add_fix(def.span, name, format!("{name} is never used"), fix);
+        };
+        if unused.len() <= 3 {
+            unused.iter().for_each(|(def, name)| report_one(report, def, name));
+            continue;
+        }
+        let shown: Vec<&str> = unused.iter().take(5).map(|(_, n)| n.as_str()).collect();
+        let message = format!(
+            "{} names {} defines are never used: {}{}",
+            unused.len(),
+            analysis.file_name(file).rsplit('/').next().unwrap_or_default(),
+            shown.join(", "),
+            if unused.len() > shown.len() { ", …" } else { "" }
+        );
+        report.add(unused[0].0.span, "file", message, None);
     }
 }
 

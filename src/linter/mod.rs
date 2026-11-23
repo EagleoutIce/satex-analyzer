@@ -29,6 +29,7 @@ pub mod repair;
 pub(crate) mod shared;
 pub mod sourcetext;
 pub mod spacing;
+pub mod spelled;
 pub mod style;
 pub mod suppress;
 pub mod tables;
@@ -77,6 +78,7 @@ pub fn all() -> impl Iterator<Item = &'static Rule> {
         .chain(lists::RULES)
         .chain(xref::RULES)
         .chain(clones::RULES)
+        .chain(spelled::RULES)
 }
 
 /// Which lint family a [`Rule`] belongs to. `satex lint --filter category=…`
@@ -499,6 +501,9 @@ impl<'a> Report<'a> {
         if !self.wanted(span) {
             return;
         }
+        // satex's own marks for what the run could not compute never reach the author
+        let (name, message) = (&*crate::linter::shared::readable(name), crate::linter::shared::readable(&message));
+        let fix = fix.map(|f| crate::linter::shared::readable(&f));
         // An error is in every run. Where the run's facts at its place are
         // not ([`Index::unsure`]), it is a possible error, and says why.
         let unsure = self.index.unsure(span).filter(|_| severity == Severity::Error);
@@ -602,8 +607,17 @@ impl<'a> Report<'a> {
         let unread = |d: &&crate::analysis::facts::Diagnostic| {
             matches!(d.code, "file-not-read" | "analysis-ended-early" | "limit-reached")
         };
-        let d = self.analysis.facts.diagnostics.iter().find(unread)?;
-        Some(format!(" (it may be {later} later: at {}, {})", self.place(d.span), d.message))
+        if let Some(d) = self.analysis.facts.diagnostics.iter().find(unread) {
+            return Some(format!(" (it may be {later} later: at {}, {})", self.place(d.span), d.message));
+        }
+        // a budget (`limits.seconds`) stopped the run: what it did not reach may hold it
+        let hit = self.analysis.exhausted.then(|| self.analysis.limits.last()).flatten()?;
+        Some(format!(
+            " (it may be {later} later: limits.{} = {} stopped the run at {})",
+            hit.key,
+            hit.value,
+            self.place(hit.at)
+        ))
     }
 
     pub fn cs(&self, sym: Sym) -> String {
