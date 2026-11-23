@@ -622,7 +622,7 @@ def kernel_caches(satex, work, project, kernel, flags):
 
 def archive_key(data):
     """The key a `satex cache export` archive was made under (src/cli/cache/archive.rs `Archive`, postcard:
-    each string a varint length, then the magic, the semantic version and the key)."""
+    each string a varint length, then the magic and the key)."""
     def varint(at):
         n = shift = 0
         while True:
@@ -631,8 +631,7 @@ def archive_key(data):
                 return n, at
     try:
         size, at = varint(0)
-        _, at = varint(at + size)
-        size, at = varint(at)
+        size, at = varint(at + size)
         return data[at:at + size].decode()
     except (IndexError, UnicodeDecodeError):
         return None

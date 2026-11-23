@@ -1042,11 +1042,12 @@ what the run that wrote it did.
 
 * The **kernel cache** holds the meanings and catcodes [`latex.ltx`][latex.ltx] leaves. It
   is keyed on the installation, the engine, the preloaded format and the
-  semantic version, and rejected when a file it was read from changed.
-* Every cache is keyed on `SEMANTIC_VERSION` (`src/caches/format.rs`), bumped by
-  hand when cache semantics change. A golden test fails when the analysis
-  changes without a bump. Builds outside the `release` profile add their
-  source digest, so local edits never replay a stale cache.
+  cache key, and rejected when a file it was read from changed.
+* Every cache is keyed on `cache_key` (`src/caches/format.rs`): the digest
+  `build.rs` takes of the interpreter's source, comments and reporting code
+  left out. No version is bumped by hand. An edit to what a cache holds or
+  how it is encoded changes the key, so no build replays another's cache.
+  Pruning keeps the newest caches of other keys and bounds the rest by size.
 * Paths are stored relative to a root tag: `$TEXMF-DIST/…`, `$TEXMF-LOCAL/…`,
   `$PROJECT/…`. A load resolves them against its own roots, so a copied or
   unpacked tree reuses its caches.
@@ -1054,9 +1055,9 @@ what the run that wrote it did.
   year of `\fmtversion` in `latex.ltx`, and the path's year or the file
   stem only when it has none. A tree at any path is named alike.
 * `satex cache export ARCHIVE` writes the caches this build can use, and the
-  content hashes, into one postcard file keyed by the semantic version and
-  key. `satex cache import ARCHIVE` unpacks them into the cache directory.
-  An archive of another version or key is skipped whole, an entry it cannot
+  content hashes, into one postcard file keyed by the cache key.
+  `satex cache import ARCHIVE` unpacks them into the cache directory.
+  An archive of another key or layout is skipped whole, an entry it cannot
   use alone, each with one line naming the reason. A directory argument
   names its `satex-cache.bin`.
 * A **bundle** (`texmf.bundle`) is a directory laid out like `texmf-dist`

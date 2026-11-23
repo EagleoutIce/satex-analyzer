@@ -132,7 +132,9 @@ export async function tikz(p, sc) {
     // the path src -> run: between the two words; run -> out (bend left=30): above the chord's middle
     const between = (a, c, lift = 0) => async () => { const x = await word(p, a), y = await word(p, c); return [(x.r + y.l) / 2, (mid(x)[1] + mid(y)[1]) / 2 - lift * (y.l - x.r)]; };
     await act(p, 'node-shape-diamond', node('run'), ['Shape', 'Diamond'], /\\node\[diamond, box, right=of src\] \(run\)/, { shot: true });
-    await act(p, 'node-shape-cloud-lib', node('run'), ['Shape', 'Cloud'], /\\usetikzlibrary\{arrows\.meta,positioning,backgrounds\}\n\\usetikzlibrary\{shapes\.symbols\}\n[^]*\\node\[cloud, box, right=of src\] \(run\)/);
+    // the library joins the preamble's list (CHANGELOG: a widget's TikZ library joins the existing list, never twice)
+    await act(p, 'node-shape-cloud-lib', node('run'), ['Shape', 'Cloud'], /\\usetikzlibrary\{arrows\.meta,positioning,backgrounds,shapes\.symbols\}\n[^]*\\node\[cloud, box, right=of src\] \(run\)/,
+      { excerpt: (t) => t.slice(0, t.indexOf('\\end{tikzpicture}') + 17) });
     await act(p, 'node-shape-polygon', node('run'), ['Shape', 'Regular polygon', '6 sides'], /\\node\[regular polygon, regular polygon sides=6, box, right=of src\] \(run\)/);
     // Shape ▸: every row shows TeX's own picture of its shape, from previews.json; a collapsed one (a trapezium drawn
     // as a line, preview.rs before its text box) counts as none

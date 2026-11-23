@@ -97,24 +97,6 @@ const MEMORY_PER_WORKER: u64 = 1 << 30;
 /// the packages where that first use is itself the problem.
 pub(crate) const EXPENSIVE_BYTES: u64 = 1_000_000;
 
-/// The package name a package cache's file name was built from (see
-/// `package_cache::family`/`cache_file`): the sanitized name between
-/// `package-` and the first `-v<digits>-` marker.
-fn package_name_of(file_name: &str) -> Option<&str> {
-    let rest = file_name.strip_prefix("package-")?;
-    let rest = rest.strip_suffix(".postcard")?;
-    let mut at = 0;
-    while let Some(found) = rest[at..].find("-v") {
-        let start = at + found;
-        let digits = rest[start + 2..].bytes().take_while(u8::is_ascii_digit).count();
-        if digits > 0 && rest.as_bytes().get(start + 2 + digits) == Some(&b'-') {
-            return Some(&rest[..start]);
-        }
-        at = start + 2;
-    }
-    None
-}
-
 /// What `cache build` prepares when nothing is configured or named: the
 /// packages whose cache files in `dir` already total at least `threshold`
 /// bytes, most expensive first. A measurement of what ordinary runs
@@ -130,7 +112,7 @@ pub(crate) fn discover_expensive(dir: &Path, threshold: u64) -> Vec<(String, u64
     for entry in entries.flatten() {
         let file_name = entry.file_name();
         let Some(file_name) = file_name.to_str() else { continue };
-        let Some(package) = package_name_of(file_name) else { continue };
+        let Some(package) = crate::caches::format::cache_holds(file_name) else { continue };
         let Ok(meta) = entry.metadata() else { continue };
         *totals.entry(package.to_string()).or_default() += meta.len();
     }
@@ -498,10 +480,11 @@ mod tests {
 
     #[test]
     fn a_package_name_is_read_back_out_of_its_cache_file_name() {
-        assert_eq!(package_name_of("package-xcolor-v1-a1b2c3d4e5f6a7b8-0123456789abcdef.postcard"), Some("xcolor"));
-        assert_eq!(package_name_of("package-koma-script-v1-abcd1234-1234abcd.postcard"), Some("koma-script"));
-        assert_eq!(package_name_of("format-pdftex-2026-v1-abcd.postcard"), None, "not a package cache");
-        assert_eq!(package_name_of("package-xcolor-v1-abcd.lock"), None, "a lock file, not a cache");
+        let holds = crate::caches::format::cache_holds;
+        assert_eq!(holds("package-xcolor-da1b2c3d4e5f6a7b8-0123456789abcdef.postcard"), Some("xcolor"));
+        assert_eq!(holds("package-koma-script-dabcd1234-1234abcd.postcard"), Some("koma-script"));
+        assert_eq!(holds("format-pdftex-2026-dabcd-0123.postcard"), None, "not a package cache");
+        assert_eq!(holds("package-xcolor-dabcd-0123.lock"), None, "a lock file, not a cache");
     }
 
     #[test]
@@ -511,10 +494,10 @@ mod tests {
         std::fs::create_dir_all(&dir).expect("dir");
         // Two cache files for the same package (different resolved paths or
         // engines) add up.
-        std::fs::write(dir.join("package-big-v1-aaaa-1111.postcard"), vec![0u8; 600]).unwrap();
-        std::fs::write(dir.join("package-big-v1-aaaa-2222.postcard"), vec![0u8; 600]).unwrap();
-        std::fs::write(dir.join("package-small-v1-bbbb-3333.postcard"), vec![0u8; 100]).unwrap();
-        std::fs::write(dir.join("package-small-v1-bbbb-3333.lock"), vec![]).unwrap();
+        std::fs::write(dir.join("package-big-aaaa-1111.postcard"), vec![0u8; 600]).unwrap();
+        std::fs::write(dir.join("package-big-aaaa-2222.postcard"), vec![0u8; 600]).unwrap();
+        std::fs::write(dir.join("package-small-bbbb-3333.postcard"), vec![0u8; 100]).unwrap();
+        std::fs::write(dir.join("package-small-bbbb-3333.lock"), vec![]).unwrap();
 
         let found = discover_expensive(&dir, 1000);
         assert_eq!(found, vec![("big".to_string(), 1200)], "only the package over the threshold, summed: {found:?}");

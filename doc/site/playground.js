@@ -1577,6 +1577,25 @@
     const nowrap = new view.MatchDecorator({ regexp: tex.unbreakable, decoration: view.Decoration.mark({ class: 'cm-nowrap' }) });
     const unbroken = view.ViewPlugin.define((v) => ({ marks: nowrap.createDeco(v), update(u) { this.marks = nowrap.updateDeco(u, this.marks); } }), { decorations: (p) => p.marks });
     const theme = new st.Compartment(), lock = new st.Compartment(), lang = new st.Compartment(), setup = new st.Compartment(), prefs = new st.Compartment();
+    // writes held in steps (editor.holdSteps): each one's own changes, rebased past the others' (keys typed meanwhile);
+    // a key typed into the written text (its caption) is part of it
+    const mine = st.Annotation.define(), holds = new Set();
+    const inside = (h, c) => {
+      const own = [];
+      h.ours.iterChangedRanges((_a, _b, from, to) => own.push([from, to]));
+      let hit = false;
+      c.iterChangedRanges((from, to) => { hit ||= own.some(([a, b]) => a <= from && to <= b); });
+      return hit;
+    };
+    const held = (u) => {
+      for (const tr of u.transactions) for (const h of holds) {
+        if (!tr.docChanged) continue;
+        if (tr.annotation(mine) === h || inside(h, tr.changes)) { h.ours = h.ours.compose(tr.changes); continue; }
+        const f = tr.changes.map(h.ours.invert(h.doc));
+        h.ours = h.ours.map(f, true);
+        h.doc = f.apply(h.doc);
+      }
+    };
     // `playground.font`, `font_size`, `wrap` and `line_numbers`
     const prefsOf = () => [EditorView.theme({ '&.cm-editor': { fontSize: `${play.font_size}px` }, ...(play.font ? { '.cm-scroller': { fontFamily: play.font } } : {}), ...(play.line_numbers ? {} : { '.cm-lineNumbers': { display: 'none !important' } }) }), play.wrap ? [EditorView.lineWrapping, unbroken] : []];
     // typing in the PDF or Typeset view writes here too: its own list opens after `\`, the source's never for its prose
@@ -1601,7 +1620,7 @@
       } }, { position: 20, render: (c) => c.symbol ? Object.assign(document.createElement('span'), { className: 'cm-math-symbol', innerHTML: c.symbol }) : null }] }),
         linkField, markField, flashField, swatchField, lensField, linkedField, heatField, mirror, st.Prec.high(closeEnvironment), view.keymap.of([{ key: 'Tab', run: tabCompletes }, { key: 'Mod-m', run: mathToggleKey }, { key: 'F2', run: () => { renameBox(); return true; } }, { key: 'Shift-F10', run: () => { const c = editor.coords() ?? { left: 40, bottom: 80 }; menuAt(c.left, c.bottom); return true; } }]),
         EditorView.updateListener.of(smartWrap),
-        EditorView.updateListener.of((u) => { if (u.docChanged) { resolves.clear(); changed(); } else if (u.selectionSet) explainSoon(); if (u.docChanged || u.selectionSet) { linkAround(u.view); scratchBubble(); } }), theme.of([]), lock.of([]), prefs.of(prefsOf())],
+        EditorView.updateListener.of((u) => { if (u.docChanged) { resolves.clear(); changed(); held(u); } else if (u.selectionSet) explainSoon(); if (u.docChanged || u.selectionSet) { linkAround(u.view); scratchBubble(); } }), theme.of([]), lock.of([]), prefs.of(prefsOf())],
     });
     ev.dom.satexView = ev; // doc/site/showcase.mjs reads the text and the places through it
     // the site's light/dark choice (site.js) picks the editor's theme, unless the Playground tab fixes one
@@ -1772,7 +1791,17 @@
         // inside what was written: `\\(|\\)`), else after the last written text
         const typed = how.userEvent === 'input.type' && changes.length && !ev.hasFocus;
         const at = typed ? how.caret ?? ev.state.changes(changes).mapPos(changes[changes.length - 1].to, 1) : null;
-        ev.dispatch({ changes, ...(typed ? { selection: { anchor: at }, scrollIntoView: true } : {}), ...(how.history === false ? { annotations: st.Transaction.addToHistory.of(false) } : {}), ...(how.userEvent ? { userEvent: how.userEvent } : {}) });
+        ev.dispatch({ changes, ...(typed ? { selection: { anchor: at }, scrollIntoView: true } : {}), ...(how.history === false || how.held ? { annotations: [st.Transaction.addToHistory.of(false), ...(how.held ? [mine.of(how.held)] : [])] } : {}), ...(how.userEvent ? { userEvent: how.userEvent } : {}) });
+      },
+      /** A write in steps (`apply` with `held`: the handle): off the history until `release`, which makes them one undo
+       * step on top of what else changed meanwhile (keys typed stay their own steps). */
+      holdSteps: () => { const h = { doc: ev.state.doc, ours: st.ChangeSet.empty(ev.state.doc.length) }; holds.add(h); return h; },
+      releaseSteps: (h) => {
+        holds.delete(h);
+        if (h.ours.empty || h.ours.apply(h.doc).toString() !== doc().toString()) return;
+        const sel = ev.state.selection;
+        ev.dispatch({ changes: h.ours.invert(h.doc), annotations: st.Transaction.addToHistory.of(false) });
+        ev.dispatch({ changes: h.ours, selection: sel, userEvent: 'pdf.insert' });
       },
       /** What changed since the text was `before`, as one undo step: back off the history, then forward on it. */
       squash: (before) => {
@@ -2826,7 +2855,8 @@
     pills(ds);
     if (checkStart) { timing('t-check', secs(performance.now() - checkStart), 'the language server analyzed the open file'); if (runInfo?.version !== version) shownTime(secs(performance.now() - checkStart)); }
     checkStart = 0;
-    phase();
+    // a build run's findings come while the next run goes: the line stays busy until the run's answer
+    if (!running) phase();
     $('fix-all').innerHTML = editableFile() ? fixAllButton('all') : '';
     // the unsafe switch only where there is something to fix
     document.querySelector('.fix-bar').hidden = !$('fix-all').innerHTML;
@@ -6408,6 +6438,8 @@
     // a click is answered at once, in the PDF pane: one build at a time, a newer request waits (the newest only) and says so.
     // A build nobody clicked for (auto, on save, after a switch) leaves the open tab alone.
     if (!cached && !auto && $('play-pdf').hidden) showPanel('play-pdf');
+    // a write's loads still being chosen (pdfLater): its text would stop at an undefined name
+    if (!cached && pdfLoadsDue) { $('play-pdf').classList.add('pdf-running'); pdfStatus.textContent = 'compiling once the packages the new text needs are loaded…'; pdfLoadsDue.then(() => compile(slice, cached, alone, auto)); return; }
     // a build for another root (an example switched to) is not waited for: it stops, its answer is dropped
     const wanted = { root: alone === null ? state.root ?? state.file : null, dir: state.dir };
     const supersedes = pdfBusy && !cached && (pdfRunning?.root !== wanted.root || pdfRunning?.dir !== wanted.dir);
@@ -8676,17 +8708,41 @@
   async function pdfWrite(target, node, body, how) {
     if (uri() !== target) return false;
     const v = version;
-    const r = await lsp('satex/dialogApply', { textDocument: { uri: target }, kind: 'snapshot', nodes: Array.isArray(node) ? node : [{ ...node, body }] }).catch((e) => ({ notes: [String(e?.message ?? e)] }));
+    // `later`: the text at once, the packages its new names need (probe runs, seconds) in a second request (pdfLater)
+    const r = await lsp('satex/dialogApply', { textDocument: { uri: target }, kind: 'snapshot', later: true, nodes: Array.isArray(node) ? node : [{ ...node, body }] }).catch((e) => ({ notes: [String(e?.message ?? e)] }));
     // the text moved on during the round trip: null, the caller may print again
     if (uri() !== target || version !== v) return uri() === target ? null : false;
     // `how.say`: a refusal without a note is said too (a menu's write that does nothing looks like a lost click)
     if (!r?.edits?.length) { if (r?.notes?.length || how?.say) toast(r?.notes?.length ? r.notes.join('; ') : 'The language server wrote nothing for this change'); return false; }
-    editor.apply(r.edits, how);
+    const h = r.later ? editor.holdSteps() : null;
+    editor.apply(r.edits, h ? { ...how, held: h } : how);
     rootLoads(r);
     push();
+    if (h) pdfLater(target, r.later, h);
     // what the printer adds beside the edit: a package loaded, a repeat it offers to extract
     if (r.notes?.length) toast(r.notes.join('; '));
     return true;
+  }
+  /** The loads of a write whose names the installation is asked for (src/lsp/snapshot.rs `Later`), while builds and
+   * findings wait (compile, publish): the write and its loads one undo step (`h`, editor.holdSteps). */
+  let pdfLoadsDue = null;
+  function pdfLater(target, later, h) {
+    const ask = async (n) => {
+      const v = version, r = await lsp('satex/dialogApply', { textDocument: { uri: target }, kind: 'snapshot', loads: later }).catch((e) => ({ notes: [String(e?.message ?? e)] }));
+      if (uri() !== target) return;
+      if (version !== v) return n ? ask(n - 1) : toast('The text changed meanwhile: the packages it needs were not loaded');
+      if (r?.edits?.length) { editor.apply(r.edits, { held: h }); rootLoads(r); push(); }
+      if (r?.notes?.length) toast(r.notes.join('; '));
+    };
+    const done = ask(20).finally(() => {
+      editor.releaseSteps(h);
+      if (pdfLoadsDue !== done) return;
+      pdfLoadsDue = null;
+      // findings of the text without its loads, held: shown unless a newer run's replace them (publish drops outdated ones)
+      const p = heldFindings;
+      if (p) publish(p, true);
+    });
+    pdfLoadsDue = done;
   }
   /** A build for a live edit: at once (`now`), else once edits rest for the auto-compile delay (TYPE_MS without one). */
   const TYPE_MS = 30;
@@ -10086,8 +10142,24 @@
   /** The page's words per page, once per build. */
 
   const pdfSame = (a, b) => a.normalize('NFKC') === b.normalize('NFKC');
-  /** How many words spelled as `word` come before it on `page` (reading order) set from line `line`. */
-  const pdfNth = (page, word, line) => pdfWordsOn(page).filter((w) => pdfSame(w[5], word[5]) && (w[4] < word[2] || Math.abs(w[4] - word[4]) < 1 && w[1] < word[1]) && pdfSource(page, w[1] + 1, w[4] - 1, w)?.line === line).length;
+  /** A word TeX hyphenated at a row's end (`car-` / `ries`) among page words `ws`: its two parts [head, tail] for
+   * either part `w`, null where `w` is no part of one. */
+  function pdfHyphPair(ws, w) {
+    const rowOf = (v) => ws.filter((u) => Math.abs(u[4] - v[4]) < 1).sort((a, b) => a[1] - b[1]), t = w[5].normalize('NFKC');
+    const near = (side) => { const r = ws.filter((u) => side * (u[4] - w[4]) > 1); return r.length ? rowOf(r.reduce((m, u) => (side * (u[4] - m[4]) < 0 ? u : m))) : []; };
+    if (/\p{L}-$/u.test(t) && rowOf(w).at(-1) === w) { const next = near(1)[0]; if (next && /^\p{Ll}/u.test(next[5])) return [w, next]; }
+    if (/^\p{Ll}/u.test(t) && rowOf(w)[0] === w) { const prev = near(-1).at(-1); if (prev && /\p{L}-$/u.test(prev[5])) return [prev, w]; }
+    return null;
+  }
+  /** Page word `w` as the source spells it: a hyphenated word's parts joined. */
+  const pdfSpelled = (ws, w) => { const p = pdfHyphPair(ws, w); return p ? p[0][5].normalize('NFKC').slice(0, -1) + p[1][5].normalize('NFKC') : w[5].normalize('NFKC'); };
+  /** How many words spelled as `word` come before it on `page` (reading order) set from line `line`: a hyphenated
+   * word counted once, at its head, as its parts joined (`Sen-` `tence` is a `Sentence`). */
+  const pdfNth = (page, word, line) => {
+    const ws = pdfWordsOn(page), at = pdfHyphPair(ws, word)?.[0] ?? word, whole = pdfSpelled(ws, word);
+    return ws.filter((w) => (w[4] < at[2] || Math.abs(w[4] - at[4]) < 1 && w[1] < at[1]) && whole.startsWith(w[5].normalize('NFKC').replace(/-$/, ''))
+      && pdfSame(pdfSpelled(ws, w), whole) && pdfHyphPair(ws, w)?.[1] !== w && pdfSource(page, w[1] + 1, w[4] - 1, w)?.line === line).length;
+  };
   /** The words of the build page image `img` shows, which may be an older build's than the pane's newest (`pdf`). */
   function pdfImgWords(img) {
     const b = img?.__build ?? pdf, page = +img?.parentElement?.dataset.page;
@@ -10475,13 +10547,8 @@
     const k0 = k;
     if (!await showFile(file, { line: line - 1, character: 0 })) return;
     // a word TeX hyphenated at a line's end (`car-` / `ries`): the source spells it whole
-    if (c.view === 'pdf' && Array.isArray(c.word)) {
-      const ws = pdfWordsOn(c.page), w0 = c.word, rowOf = (v) => ws.filter((u) => Math.abs(u[4] - v[4]) < 1).sort((a, b) => a[1] - b[1]);
-      const below = ws.filter((u) => u[4] > w0[4] + 1), next = below.length && rowOf(below.reduce((m, u) => (u[4] < m[4] ? u : m)))[0];
-      const above = ws.filter((u) => u[4] < w0[4] - 1), prev = above.length && rowOf(above.reduce((m, u) => (u[4] > m[4] ? u : m))).at(-1);
-      if (/\p{L}-$/u.test(word) && rowOf(w0).at(-1) === w0 && next && /^\p{Ll}/u.test(next[5])) { k = Math.min(k, word.length - 1); word = word.slice(0, -1) + next[5]; }
-      else if (/^\p{Ll}/u.test(word) && rowOf(w0)[0] === w0 && prev && /\p{L}-$/u.test(prev[5])) { k += prev[5].length - 1; word = prev[5].slice(0, -1) + word; }
-    }
+    const pair = c.view === 'pdf' && Array.isArray(c.word) && pdfHyphPair(pdfWordsOn(c.page), c.word);
+    if (pair) { k = pair[0] === c.word ? Math.min(k, word.length - 1) : k + pair[0][5].length - 1; word = pdfSpelled(pdfWordsOn(c.page), c.word); }
     const bare = word.replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, '');
     let text = editor.text(), from = 0, span = null, written = false, def = null, edge = null;
     // `within`: the source span the word is set from (a contents entry's title): its first occurrence there
@@ -10949,7 +11016,7 @@
       ctx.font = `${run.size}px ${face}`;
       const adv = [...new Set(run.str ?? w[5])].filter((c) => /\S/.test(c) && pdfHas(ctx, face, c)).map((c) => ctx.measureText(c).width);
       const mono = adv.length >= 3 && Math.max(...adv) - Math.min(...adv) < 0.02 * Math.max(...adv) ? adv[0] / run.size : 0;
-      return { family: `${face}, ${PDF_ECHO_FONT}`, face, fb, r: r > 0.5 && r < 2 ? r : 1, xs: xs > 0.7 && xs < 1.4 ? xs : 1, size: fit(`${face}, ${PDF_ECHO_FONT}`, run.size), base: run.y, own: true, mono };
+      return { family: `${face}, ${PDF_ECHO_FONT}`, face, fb, r: r > 0.5 && r < 2 ? r : 1, xs: xs > 0.7 && xs < 1.4 ? xs : 1, size: fit(`${face}, ${PDF_ECHO_FONT}`, run.size), base: run.y, own: true, mono, run };
     }
     return { family: PDF_ECHO_FONT, size: fit(PDF_ECHO_FONT, run?.size ?? h), base: run?.y ?? w[2] + (w[4] - w[2]) * 0.78, own: false };
   }
@@ -10990,7 +11057,8 @@
   function pdfCtxFont(img, f, ctx) {
     const b = img.__build ?? pdf, key = `${f.family}|${f.size}|${ctx}`, memo = pdfCtxOf.get(img) ?? new Map();
     pdfCtxOf.set(img, memo);
-    if (memo.has(key)) return memo.get(key);
+    // a newer build's PDF closed this one's faces: the kept font's face back, as pdfFontOf does for the row's
+    if (memo.has(key)) { const F = memo.get(key); if (F.run) pdfFaceUp(F.run); return F; }
     const B = pdfBuiltText(b) ?? '', name = ctx.replace(/[@*]/g, (c) => `\\${c}`), re = new RegExp(`\\\\${name}(?:\\*?\\s*\\{|(?![A-Za-z@]))\\s*(?=[^\\s{}\\\\])`, 'g');
     let F = null, n = 0;
     for (const m of B.matchAll(re)) {
@@ -11269,15 +11337,20 @@
       lead.forEach((q, j) => { if (j) Object.assign(q, q.gap > 2.5 * sp ? { st: 0, sh: 0 } : PE.glue(lead[j - 1].w[5] ?? '', sp)); });
       if (fits) {
         const H = pdfHyphens(), hw = width('-');
+        // the word the caret is in has no points of its own while typed: those the run gave it as built that stand
+        // before the edit in it stay (`Sen-` of `Sentence`, typed into as `SenQtence`, still breaks after `Sen`)
+        const stem = /\p{L}*$/u.exec(B.slice(0, P))[0], asBuilt = stem + B.slice(P, edit) + /^\p{L}*/u.exec(B.slice(edit))[0];
+        const typedWord = stem + g.text.slice(P, edit + dl) + /^\p{L}*/u.exec(g.text.slice(edit + dl))[0];
+        const stemCuts = (t) => t === typedWord && asBuilt !== t ? (H.get(asBuilt) ?? pdfHyphenate(asBuilt))?.filter((c) => c <= stem.length) : null;
         const split = (q) => {
-          const t = q.ix === into ? null : q.t ?? q.w?.[5]?.normalize('NFKC'), cuts = t && (H.get(t) ?? pdfHyphenate(t));
+          const t = q.t ?? q.w?.[5]?.normalize('NFKC'), cuts = t && (q.ix === into ? stemCuts(t) : H.get(t) ?? pdfHyphenate(t));
           if (!cuts?.length) return [q];
           const xs = q.t == null ? pdfBounds(page(q.w[0]), q.w) : null, at = [0, ...cuts, t.length];
           return at.slice(0, -1).map((a, i) => {
-            const b = at[i + 1], part = { ...q, gap: i ? 0 : q.gap, st: i ? 0 : q.st, sh: i ? 0 : q.sh, hy: i < at.length - 2, hw, wc: (q.wc0 ?? 0) + a };
+            const b = at[i + 1], part = { ...q, gap: i ? 0 : q.gap, st: i ? 0 : q.st, sh: i ? 0 : q.sh, hy: i < at.length - 2, hw, wc: (q.wc0 ?? 0) + a, cut: a };
             // a typed word's parts share its width as TeX sets it (a ligature spans a part's end)
             const whole = !xs && !q.ctx && pdfTexWidth.get(fkey + t), scale = whole ? whole / at.slice(0, -1).reduce((m, c, j) => m + width(t.slice(c, at[j + 1])), 0) : 1;
-            return xs ? { ...part, n: xs[b] - xs[a], w: [q.w[0], xs[a], q.w[2], xs[b], q.w[4], t.slice(a, b)] } : { ...part, n: width(t.slice(a, b), q.ctx) * scale, t: t.slice(a, b), word: t };
+            return xs ? { ...part, n: xs[b] - xs[a], w: [q.w[0], xs[a], q.w[2], xs[b], q.w[4], t.slice(a, b)] } : { ...part, n: width(t.slice(a, b), q.ctx) * scale, t: t.slice(a, b), word: t, lead: a && width(t.slice(0, a), q.ctx) };
           });
         };
         tagged.splice(0, tagged.length, ...tagged.flatMap(split));
@@ -11293,8 +11366,10 @@
         else { const o = prev.n ?? prev.w, n = [o[0], fr.x, o[2] + fr.dy, fr.x, o[4] + fr.dy, '']; r = { img: prev.img, w: null, row: [], x: fr.x, f: { ...prev.f, base: prev.f.base + fr.dy }, k: prev.k, out: fr.out, n, extra: true, dy: fr.dy }; }
         rows.push(r);
         // the caret after the typed piece it stands in
-        const q = fr.out.find((u) => u.ix === into);
-        if (q && !past && !pre) { cx = q.x + tail; if (r.n) w = r.n; }
+        // (in the part of a split word the caret's column falls in: the head's end at the cut, else after it, less
+        // the width of the parts before, measured with the word: the canvas's font is another one by now)
+        const col = before.at(-1).t?.length ?? 0, q = fr.out.find((u) => u.ix === into && (u.cut == null || u.cut <= col && col <= u.cut + u.t.length));
+        if (q && !past && !pre) { cx = q.x + tail - (q.lead ?? 0); if (r.n) w = r.n; }
         const u = past && K && xK != null && fr.out.find((v) => v.w && v.w[0] === K.w[0] && Math.abs(v.w[4] - K.w[4]) < 1 && v.w[1] - 0.5 <= xK && xK <= v.w[3] + 0.5);
         if (u) { cx = u.x + xK - u.w[1]; w = r.n ?? r.w ?? w; }
         else if (pre && xK != null) { cx = xK; w = K.w; }
@@ -11672,7 +11747,7 @@
       const raw = out.at(-1)?.disp != null ? text.slice(r.s, r.e).replace(/^\s+/, '') : text.slice(r.s, r.e);
       if (verb) { for (const [i, part] of raw.split(' ').entries()) out.push({ gap: i ? gap : 0, n: width(part), t: part }); continue; }
       // a word in a command's argument or a group's declaration measured in the font the run set such text in
-      for (const q of PE.prose(raw, pdfRefSet(text), outer)) out.push({ gap: q.gap ? gap : 0, n: width(cased(q.t), q.ctx), t: cased(q.t), par: q.par, ...(q.brk && { brk: true }), ...(q.ctx && { ctx: q.ctx }), ...(q.dim && { dim: true }) });
+      for (const q of PE.prose(raw, pdfRefSet(text), outer, (n) => self.satexMath?.sym?.(n)?.[0])) out.push({ gap: q.gap ? gap : 0, n: width(cased(q.t), q.ctx), t: cased(q.t), par: q.par, ...(q.brk && { brk: true }), ...(q.ctx && { ctx: q.ctx }), ...(q.dim && { dim: true }) });
     }
     return out.length ? out : [{ gap: 0, n: 0, t: '' }];
   }
@@ -11875,8 +11950,9 @@
    * before it. False where `c.word` is the caret's paragraph's (the word echo places it). Never another paragraph's row. */
   function pdfOwnLine(c, g, img) {
     const w = c.word, [l0, l1] = pdfParaLines(g.text, g.at);
-    const wl = w && pdfSource(c.page, w[3], w[4] - 1, w)?.line;
-    if (wl == null || wl >= l0 && wl <= l1) return false;
+    // a contents entry's word is set from the `.toc` line, no line of the file: the word echo keeps it in the entry
+    const wl = w && !c.entry && pdfSource(c.page, w[3], w[4] - 1, w)?.line;
+    if (!wl || wl >= l0 && wl <= l1) return false;
     const [pw, ph] = pageSize(img), line = pdfPos(g.text, g.at).line + 1, built = pdfBuiltText(img.__build ?? pdf) === g.text;
     const draw = (page, x, t, d, stale) => pdfImg(page)?.parentElement.insertAdjacentHTML('beforeend', `<span class="pdf-caret${stale ? ' pdf-caret-stale' : ''}" style="left:${x / pw * 100}%;top:${t / ph * 100}%;height:${(d - t) / ph * 100}%"></span>`);
     // the caret's line, else the last line of its paragraph before it that the build set; a line that set no glyph,
@@ -12737,8 +12813,8 @@
     const name = kind === 'content' ? 'content-hashes' : kind;
     const what = rest.filter((p) => !/^(v\d+|s?[0-9a-f]{8,})$/.test(p) && p !== 'hashes').join(' ');
     let [label, cls] = CACHE_KINDS[name] ?? [name, name], needs = [];
-    // a package cache names what it holds before `-v<version>`: a class by its file name
-    const held = name === 'package' && /^package-(.+?)-v\d+-/.exec(file)?.[1];
+    // `package-<held>-<key>-<hash>`: a class by its file name
+    const held = name === 'package' && /^package-(.+)-[^-]+-[^-]+\.postcard$/.exec(file)?.[1];
     if (held) {
       if (held.endsWith('.cls')) [label, cls] = ['class', 'class'];
       needs = (manifest.packages ?? []).find((p) => p.label === held)?.needs ?? [];
@@ -13748,6 +13824,8 @@
     // of a text the server no longer has: its analysis of the newer one follows, else is asked for
     if (outdated(p)) { if (p.uri === uri() && timer === null) analyze(); return; }
     if (running > 0 && p.uri === uri() && !ended) { heldFindings = p; return; }
+    // of a text whose loads are still being chosen (pdfLater): `tikzpicture` undefined until they land
+    if (pdfLoadsDue && p.uri === uri()) { heldFindings = p; return; }
     heldFindings = null;
     if (!final && namingHold(p)) return;
     // The rule's number is the LSP code: the page keys rules by name.

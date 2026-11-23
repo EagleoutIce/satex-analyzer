@@ -847,6 +847,10 @@ pub struct Checkpoints<'a> {
     /// dropped by [`Checkpoints::rest`], after the run's results went out, not before.
     pub defer_drops: bool,
     buried: Option<Prior<'a>>,
+    /// Whether the next run keeps this one to meet its state again after the edit. A build's
+    /// later run does not: it reads build files this run read otherwise, and the rest of this
+    /// run, kept, is a second run in memory.
+    pub meet: bool,
 }
 
 impl<'a> Checkpoints<'a> {
@@ -933,6 +937,7 @@ impl<'a> Checkpoints<'a> {
             hooks: RunHooks::default(),
             defer_drops: false,
             buried: None,
+            meet: true,
         }
     }
 
@@ -1038,6 +1043,10 @@ impl<'a> Checkpoints<'a> {
         if let (Some(then), Some((path, line))) = (self.hooks.preview.take(), &edit) {
             self.preview(&mut m, id, source, path, *line, then);
         }
+        // Not met, the last run's states go before this run, not after it.
+        if !self.meet {
+            old.clear();
+        }
         let next = m.out.steps + self.every;
         let edited = edit.as_ref().map(|(path, _)| path.clone());
         let taking = Taking {
@@ -1061,7 +1070,7 @@ impl<'a> Checkpoints<'a> {
                     Some((file as crate::engine::tex::FileId, c.lo, c.hi.0))
                 }),
                 stale: old,
-                end: self.end.take(),
+                end: self.end.take().filter(|_| self.meet),
                 log,
                 steps: self.steps,
                 used: self.used.clone(),

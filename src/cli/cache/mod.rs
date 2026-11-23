@@ -193,10 +193,7 @@ pub fn show(cfg: &Config, packages: &[String], json: bool, out: &mut impl Write)
         .flatten()
         .filter_map(|e| {
             let name = e.file_name().to_string_lossy().into_owned();
-            let stem = name.strip_prefix("package-")?.strip_suffix(".postcard")?;
-            // `package-<name>-v<version>-…`: the name is what stands before `-v<digit>`
-            let at = stem.match_indices("-v").find(|(i, _)| stem[i + 2..].starts_with(|c: char| c.is_ascii_digit()))?.0;
-            let package = &stem[..at];
+            let package = crate::caches::format::cache_holds(&name)?;
             (packages.is_empty() || packages.iter().any(|p| p == package))
                 .then(|| (package.to_string(), e.path(), e.metadata().map_or(0, |m| m.len())))
         })

@@ -161,6 +161,21 @@ pub(crate) struct Memo {
     minted: bool,
 }
 
+impl Memo {
+    /// About what it holds of its own: its rows and tokens, not the texts it shares with the run.
+    pub(crate) fn bytes(&self) -> usize {
+        use std::mem::size_of_val;
+        let tokens = |t: &[Token]| size_of_val(t) + 2 * size_of::<usize>();
+        size_of::<Memo>()
+            + self.args.iter().map(|a| tokens(a)).sum::<usize>()
+            + size_of_val(&self.reads[..])
+            + self.logged.as_ref().map_or(0, |l| size_of_val(&l[..]))
+            + size_of_val(&self.uses[..])
+            + size_of_val(&self.writes[..])
+            + self.rest.as_ref().map_or(0, |r| tokens(&r.1))
+    }
+}
+
 impl CallRec {
     /// This record as two runs that differ only by an edit before it are compared: the
     /// assignment count and the read log's length are absolute and move by the edit's
@@ -1368,19 +1383,20 @@ impl Machine<'_> {
     }
 
     fn keep_memo(&mut self, rec: &CallRec, start: &MemoStart, steps: u64, rest: Option<(Token, Rc<[Token]>)>) -> bool {
-        if self.memo_count >= self.limits.call_memo_entries as usize {
-            return false;
-        }
         let Ok(memo) = self.memo_effect(rec, start, steps, true, rest) else { return false };
+        // Full: all go at once, as the calls met once do. What the run calls now is kept anew.
+        let bytes = memo.bytes();
+        if self.memo_bytes + bytes > self.limits.call_memo_bytes.as_u64() as usize {
+            (self.memos, self.memo_bytes) = Default::default();
+        }
         let variants = usize::from(self.limits.call_memo_variants);
         let kept = self.memos.entry(memo_key(&rec.code, &rec.args)).or_default();
         // The oldest state gives way: loops meet the newest again.
         if kept.len() >= variants {
-            kept.remove(0);
-            self.memo_count -= 1;
+            self.memo_bytes -= kept.remove(0).bytes();
         }
         kept.push(Rc::new(memo));
-        self.memo_count += 1;
+        self.memo_bytes += bytes;
         self.out.call_memo[0] += 1;
         true
     }

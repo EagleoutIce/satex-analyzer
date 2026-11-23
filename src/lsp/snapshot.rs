@@ -720,6 +720,27 @@ pub fn printed(
     file: Option<crate::engine::tex::FileId>,
     nodes: &[Node],
 ) -> Result<Printed, String> {
+    printed_or_later(analysis, doc, file, nodes, false).map(|(p, _)| p)
+}
+
+/// The names a write asks the installation for, left to a second request ([`loads_later`]): their
+/// providers come from probe runs, which take seconds, and the written text must not wait for them.
+/// `chosen`: the packages the write's nodes named; `asked`: each name, whether it is its node's own,
+/// and the call it makes.
+#[derive(Default, Serialize, Deserialize)]
+pub struct Later {
+    chosen: Vec<String>,
+    asked: Vec<(String, bool, String)>,
+}
+
+/// [`printed`]; `defer` leaves the names asked of the installation to [`loads_later`].
+fn printed_or_later(
+    analysis: &Analysis,
+    doc: &Text,
+    file: Option<crate::engine::tex::FileId>,
+    nodes: &[Node],
+    defer: bool,
+) -> Result<(Printed, Later), String> {
     let (mut edits, mut notes, mut roots) = (Vec::new(), Vec::new(), Vec::new());
     // packages wanted in order, and names asked of the installation, by the node that wants them
     let (mut wanted, mut asked): (Vec<Package>, Vec<(String, bool, String)>) = Default::default();
@@ -772,52 +793,11 @@ pub fn printed(
         }
         edits.extend(own);
     }
-    // each name's usual provider, loaded beside the one probed: a table's call needs all of them
-    let usual: Vec<String> =
-        asked.iter().filter_map(|(name, ..)| crate::linter::shared::provider(analysis, name)).collect();
-    for (name, own, call) in asked {
-        // a name a package this write already loads defines while the call runs (`\\node` in the `tikzpicture`
-        // tikz is loaded for): no package of its own (the index named pgflibraryplotmarks for `\\node`)
-        let chosen: Vec<String> = wanted.iter().map(|p| p.name.clone()).collect();
-        if crate::linter::shared::defined_by(analysis, &chosen, &name, &call) {
-            continue;
-        }
-        // the package whose definition takes the call as written (graphicx for `[width=…]`)
-        match crate::linter::shared::provider_for(analysis, &name, &call, &usual) {
-            Some(p) => wanted.push(Package { name: p, options: String::new() }),
-            None if own => notes.push(format!("\\{name} is not defined in the run: load its package")),
-            None => {}
-        }
+    let mut later = Later { chosen: wanted.iter().map(|p| p.name.clone()).collect(), asked };
+    if !defer {
+        wanted.extend(resolve(analysis, &std::mem::take(&mut later), &mut notes));
     }
-    let mut loads: Vec<Edit> = Vec::new();
-    let mut done: Vec<String> = Vec::new();
-    let all: Vec<String> = wanted.iter().map(|p| p.name.clone()).collect();
-    for p in wanted {
-        // one another wanted package loads goes with it (tabularx loads array)
-        let by = |q: &String| crate::linter::shared::package_loads(analysis, q, &p.name);
-        if done.contains(&p.name) || all.iter().any(by) {
-            continue;
-        }
-        done.push(p.name.clone());
-        match ensure_package(analysis, doc, &p.name, &p.options) {
-            Ok(Some(e)) => {
-                let at = doc.offset(to_pos(doc, e.range.start)).unwrap_or_default();
-                notes.push(format!("adds \\usepackage{{{}}}", p.name));
-                loads.push((at, at, e.new_text));
-            }
-            Ok(None) => {}
-            // a file the root reads (`\\input{chapter}`) has no preamble: the load goes to the root's, where the run
-            // met `\\begin{document}` (else the written code would stop the build at an undefined name)
-            Err(why) => match root_load(analysis, "usepackage", &[p.name.as_str()], &p.options) {
-                Ok(Some(load)) => {
-                    notes.push(format!("adds \\usepackage{{{}}} to {}", p.name, load.file));
-                    roots.push(load);
-                }
-                Ok(None) => {}
-                Err(()) => notes.push(why),
-            },
-        }
-    }
+    let mut loads = load_edits(analysis, doc, wanted, &[], &mut notes, &mut roots);
     let run = crate::queries::preview::libraries(analysis);
     for (cmd, list) in &libs {
         // loaded by the run under either command: `\\usetikzlibrary` reads pgf's libraries too
@@ -847,7 +827,89 @@ pub fn printed(
     loads.append(&mut edits);
     let (edits, more) = super::writing::clean(analysis, doc, file, merged(loads)?);
     notes.extend(more);
+    Ok(((edits, notes, roots), later))
+}
+
+/// The packages `later`'s names need beyond the chosen ones, by probe runs.
+fn resolve(analysis: &Analysis, later: &Later, notes: &mut Vec<String>) -> Vec<Package> {
+    // each name's usual provider, loaded beside the one probed: a table's call needs all of them
+    let usual: Vec<String> =
+        later.asked.iter().filter_map(|(name, ..)| crate::linter::shared::provider(analysis, name)).collect();
+    let (mut chosen, mut wanted) = (later.chosen.clone(), Vec::new());
+    for (name, own, call) in &later.asked {
+        // a name a package this write already loads defines while the call runs (`\\node` in the `tikzpicture`
+        // tikz is loaded for): no package of its own (the index named pgflibraryplotmarks for `\\node`)
+        if crate::linter::shared::defined_by(analysis, &chosen, name, call) {
+            continue;
+        }
+        // the package whose definition takes the call as written (graphicx for `[width=…]`)
+        match crate::linter::shared::provider_for(analysis, name, call, &usual) {
+            Some(p) => {
+                chosen.push(p.clone());
+                wanted.push(Package { name: p, options: String::new() });
+            }
+            None if *own => notes.push(format!("\\{name} is not defined in the run: load its package")),
+            None => {}
+        }
+    }
+    wanted
+}
+
+/// The second request of a deferred write ([`Later`]): the loads its asked names need, over the text
+/// the first one wrote.
+pub fn loads_later(
+    analysis: &Analysis,
+    doc: &Text,
+    file: Option<crate::engine::tex::FileId>,
+    later: &Later,
+) -> Result<Printed, String> {
+    let (mut notes, mut roots) = (Vec::new(), Vec::new());
+    let wanted = resolve(analysis, later, &mut notes);
+    let loads = load_edits(analysis, doc, wanted, &later.chosen, &mut notes, &mut roots);
+    let (edits, more) = super::writing::clean(analysis, doc, file, merged(loads)?);
+    notes.extend(more);
     Ok((edits, notes, roots))
+}
+
+/// The preamble loads of `wanted` (or the root's, `roots`), less those another of them or of `beside` loads.
+fn load_edits(
+    analysis: &Analysis,
+    doc: &Text,
+    wanted: Vec<Package>,
+    beside: &[String],
+    notes: &mut Vec<String>,
+    roots: &mut Vec<RootLoad>,
+) -> Vec<Edit> {
+    let mut loads: Vec<Edit> = Vec::new();
+    let mut done: Vec<String> = Vec::new();
+    let all: Vec<String> = wanted.iter().map(|p| p.name.clone()).chain(beside.iter().cloned()).collect();
+    for p in wanted {
+        // one another wanted package loads goes with it (tabularx loads array)
+        let by = |q: &String| crate::linter::shared::package_loads(analysis, q, &p.name);
+        if done.contains(&p.name) || all.iter().any(by) {
+            continue;
+        }
+        done.push(p.name.clone());
+        match ensure_package(analysis, doc, &p.name, &p.options) {
+            Ok(Some(e)) => {
+                let at = doc.offset(to_pos(doc, e.range.start)).unwrap_or_default();
+                notes.push(format!("adds \\usepackage{{{}}}", p.name));
+                loads.push((at, at, e.new_text));
+            }
+            Ok(None) => {}
+            // a file the root reads (`\\input{chapter}`) has no preamble: the load goes to the root's, where the run
+            // met `\\begin{document}` (else the written code would stop the build at an undefined name)
+            Err(why) => match root_load(analysis, "usepackage", &[p.name.as_str()], &p.options) {
+                Ok(Some(load)) => {
+                    notes.push(format!("adds \\usepackage{{{}}} to {}", p.name, load.file));
+                    roots.push(load);
+                }
+                Ok(None) => {}
+                Err(()) => notes.push(why),
+            },
+        }
+    }
+    loads
 }
 
 /// A load the root document's preamble gets: `text` inserted at `line`, `character` (LSP units) of its file, joining a
@@ -938,8 +1000,9 @@ pub fn print(
     doc: &Text,
     file: Option<crate::engine::tex::FileId>,
     nodes: &[Node],
+    defer: bool,
 ) -> Result<Json, String> {
-    let (edits, notes, roots) = printed(analysis, doc, file, nodes)?;
+    let ((edits, notes, roots), later) = printed_or_later(analysis, doc, file, nodes, defer)?;
     // each node as it now reads: a view shows it (the class dialog's header line)
     let texts: Vec<String> = nodes
         .iter()
@@ -948,7 +1011,8 @@ pub fn print(
             None => canonical(n),
         })
         .collect();
-    Ok(json!({ "edits": lsp_edits(doc, edits), "notes": notes, "roots": roots, "texts": texts }))
+    let later = (!later.asked.is_empty()).then_some(later);
+    Ok(json!({ "edits": lsp_edits(doc, edits), "notes": notes, "roots": roots, "texts": texts, "later": later }))
 }
 
 /// `doc`'s text with `nodes` written by the printer alone, no run consulted: a new project's
@@ -972,8 +1036,15 @@ pub fn apply(
     if params["nodes"].is_object() {
         return super::plugins::bib_op(analysis, &params["nodes"]);
     }
+    // the second request of a deferred write: the loads its names need ([`Later`])
+    if params["loads"].is_object() {
+        let later: Later = serde_json::from_value(params["loads"].clone()).map_err(|e| e.to_string())?;
+        let (edits, notes, roots) = loads_later(analysis, doc, file, &later)?;
+        return Ok(json!({ "edits": lsp_edits(doc, edits), "notes": notes, "roots": roots }));
+    }
     let nodes: Vec<Node> = serde_json::from_value(params["nodes"].clone()).map_err(|e| e.to_string())?;
-    print(analysis, doc, file, &nodes)
+    // `later`: the text at once, the loads probes choose in a second request
+    print(analysis, doc, file, &nodes, params["later"] == true)
 }
 
 #[cfg(test)]

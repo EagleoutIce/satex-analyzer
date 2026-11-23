@@ -62,7 +62,7 @@
 2.719 cache_cli::lint_still_reads_the_project
 117.266 cache_concurrency::one_document_in_many_processes_at_once_reports_one_answer
 120.215 cache_concurrency::processes_racing_on_one_cache_agree_with_a_serial_run
-38.809 cache_semantics::the_cached_analysis_changes_only_with_a_semantic_version_bump
+38.809 cache_semantics::a_replay_from_the_caches_keeps_every_fact
 15.493 chktex::a_bare_reference_gets_a_name_the_document_uses
 1.972 chktex::a_brace_after_left_is_reported
 2.783 chktex::a_bracket_after_a_macro_argument_is_counted

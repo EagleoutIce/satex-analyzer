@@ -1797,8 +1797,10 @@ declare global {
    * whose braced argument holds it (`textbf` of `\\textbf{…}`), else the last command before it in its group (`bfseries`
    * of `{\\bfseries …}`: whatever state that command left), else ''. Which font that is the run tells (the playground's `pdfCtxFont`), never a name table.
    * An environment's `\\begin{name}`/`\\end{name}` sets no word (the kernel reads `name` as a csname, ltmiscen.dtx).
-   * The first piece has no gap and may be empty, as may the last (the caret's empty word after a space). */
-  function prose(raw: string, refs?: (cmd: string, arg: string) => RefSet, outer: string[] = []): Prose[] {
+   * The first piece has no gap and may be empty, as may the last (the caret's empty word after a space).
+   * A control word eats the spaces after it, one line end among them (TeX's state S); one `sym` spells (`\\S`: §)
+   * sets that glyph. */
+  function prose(raw: string, refs?: (cmd: string, arg: string) => RefSet, outer: string[] = [], sym?: (name: string) => string | undefined): Prose[] {
     const re = /(?<!\\)(%[^\n]*)|(\\\\\*?(?:\s*\[[^\]]*\])?)|\\(?:begin|end)\s*\{[^{}]*\}|\\([A-Za-z@]+)\*?\s*\{|\\([A-Za-z@]+)\*?|\\(?=[^A-Za-z@\s])|[{}$^_]|[\s~]+|[^]/gu;
     // per open group: its context
     // (`outer`: the contexts of the groups `raw` starts in, closed by its unmatched `}`)
@@ -1824,7 +1826,10 @@ declare global {
       // `\\\\` (its `*` and `[len]` too) ends the row: the next piece starts the next one (ltspace.dtx `\\@normalcr`)
       if (brk) { if (cur.t || cur.brk || !out.length) next(false); cur.brk = true; continue; }
       if (com || x[0] === '\\' && !arg && !cmd) continue;
+      if (cmd) { const sp = /[ \t]*(?:\n(?![ \t]*\n))?[ \t]*/y; sp.lastIndex = re.lastIndex; sp.exec(raw); re.lastIndex = sp.lastIndex; }
+      const glyph = cmd && sym?.(cmd);
       if (arg) groups.push({ ctx: arg });
+      else if (glyph) { if (cur.t && cur.ctx !== top().ctx) next(false); if (!cur.t) cur.ctx = top().ctx; cur.t += glyph; }
       else if (cmd) top().ctx = cmd;
       else if (x === '{') groups.push({ ctx: top().ctx });
       else if (x === '}') { if (groups.length > 1) groups.pop(); }

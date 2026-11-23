@@ -271,6 +271,12 @@ pub fn charged() -> usize {
     own.max(TOTAL.load(Ordering::Relaxed).max(0) as usize).max(resident())
 }
 
+/// Bytes live in the whole process, every run's.
+pub fn live() -> usize {
+    settle();
+    TOTAL.load(Ordering::Relaxed).max(0) as usize
+}
+
 /// Resident bytes of the process, read again once [`RESIDENT_EVERY`] passed
 /// or the count moved by a 64th of the limit since (a file read, too slow
 /// for every check); 0 where unknown.

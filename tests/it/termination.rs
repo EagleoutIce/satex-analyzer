@@ -1459,6 +1459,31 @@ fn a_repeated_call_applies_its_kept_effect() {
     assert!(kept.steps * 3 <= ran.steps * 2, "{} steps kept, {} run", kept.steps, ran.steps);
 }
 
+/// The kept effects are bounded by what they hold, `limits.call_memo_bytes`, not by their
+/// number: 100k effects of any size held a quarter of a thesis run's memory. Past the bound
+/// all go at once and the newest is kept: with room for one, `\a` and `\b` called in turn
+/// push each other out and none replays; with the default room both replay.
+#[test]
+fn kept_effects_stay_within_their_bytes() {
+    let source = format!(
+        "{}\\countdef\\n=10
+\\def\\upto#1{{{{\\n=0 \\def\\step{{\\advance\\n 1 \\ifnum\\n<#1 \\expandafter\\step\\fi}}\\step\\xdef\\got{{\\the\\n}}}}}}
+{}",
+        crate::support::PRELUDE,
+        "\\upto{300}\\upto{301}".repeat(4)
+    );
+    let replays = |bytes: u64| {
+        let mut cfg = cfg(1_000_000_000);
+        cfg.limits.call_memo_steps = 500;
+        cfg.limits.call_memo_bytes = bytesize::ByteSize::b(bytes);
+        Machine::analyze(&source, None, &cfg).call_memo
+    };
+    let roomy = replays(cfg(1).limits.call_memo_bytes.as_u64());
+    assert!(roomy[1] >= 4, "{roomy:?} kept, replayed, saved");
+    let tight = replays(1);
+    assert_eq!(tight[1], 0, "{tight:?} kept, replayed, saved");
+}
+
 /// Misses of a definition in one place say little of its calls elsewhere:
 /// short `\upto{1}` runs (below `call_memo_steps`) used up its probes,
 /// and the many long `\upto{300}` calls after them were never recorded

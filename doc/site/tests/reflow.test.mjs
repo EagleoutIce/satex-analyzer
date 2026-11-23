@@ -123,10 +123,20 @@ test('prose: plain words, the empty first and last piece', () => {
 // \textbf{Quokka} measured upright, the caret 4 px short of where the build set it.
 test('prose: the context of a command argument or a group declaration', () => {
   assert.equal(prose(' \\textbf{Quokka} x'), ' _Quokka:textbf _x');
-  assert.equal(prose('{\\bfseries Big} small'), ' _Big:bfseries _small');
+  // (no gap before Big: TeX skips the space after `\\bfseries`)
+  assert.equal(prose('{\\bfseries Big} small'), 'Big:bfseries _small');
   assert.equal(prose('Q\\textbf{uo}kka'), 'Q uo:textbf kka');
   assert.equal(prose('{a \\bfseries b} c'), 'a _b:bfseries _c');
   assert.equal(prose('a \\foo b'), 'a _b:foo');
+});
+// Intuition: TeX skips the spaces after a control word (one line end too, never a blank line), and a symbol command
+// sets its glyph. Pins title-markup: ` a\S $x_1` echoed as `a x` (a space, no §), the caret 6 px short of the build's.
+test('prose: a control word eats its spaces, a symbol sets its glyph', () => {
+  const sym = (n) => ({ S: '§' })[n];
+  const p = (raw) => E.prose(raw, undefined, [], sym).map((q) => `${q.par ? '¶' : ''}${q.gap ? '_' : ''}${q.t}`).join(' ');
+  assert.equal(p(' a\\S x'), ' _a§x');
+  assert.equal(p('a\\foo\n b'), 'a b');
+  assert.equal(p('a\\foo\n\nb'), 'a ¶_b');
 });
 // Intuition: an environment's name is a csname the kernel reads, never text on the row (`center Quokka center`).
 test('prose: \\begin and \\end set no word', () => {

@@ -1028,6 +1028,12 @@ async function dblScenario(p, sc) {
       if (!q) return null;
       q.scrollIntoView({ block: 'center' });
       const r = q.getBoundingClientRect(), t = document.createRange();
+      // a drawing: a point of the picture off its nodes' text, which types into the node (as fx, fy in the PDF)
+      const sk = q.querySelector('svg.ts-sketch')?.getBoundingClientRect();
+      if (sk) for (let j = 1; j < 8; j++) for (let i = 1; i < 16; i++) {
+        const x = sk.left + sk.width * i / 16, y = sk.top + sk.height * j / 8, e = document.elementFromPoint(x, y);
+        if (e?.closest('svg.ts-sketch') && !e.closest('text')) return [x, y];
+      }
       // a word's own box: the first text node's first characters
       const n = [...q.childNodes].find((c) => c.nodeType === 3 && c.textContent.trim()) ?? q.firstChild;
       if (n?.nodeType === 3) { const i = n.textContent.search(/\\S/); t.setStart(n, i); t.setEnd(n, i + 1); const b = t.getBoundingClientRect(); return [b.left + b.width / 2, b.top + b.height / 2]; }

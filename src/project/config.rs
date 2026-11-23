@@ -151,8 +151,10 @@ pub struct Limits {
     pub call_memo_probes: u16,
     /// Kept effects per code and arguments, one per state met.
     pub call_memo_variants: u16,
-    /// Kept effects in all; past it no more are kept.
+    /// Calls met once that are remembered, to record a call only when met again.
     pub call_memo_entries: u32,
+    /// What the kept effects may hold in all: past it they are dropped and kept anew.
+    pub call_memo_bytes: bytesize::ByteSize,
     /// Debug: a hit runs the call for real and reports where its writes
     /// differ from the kept ones. 0 off.
     pub call_memo_verify: u8,
@@ -326,6 +328,7 @@ impl Limits {
             "call_memo_probes" => self.call_memo_probes.into(),
             "call_memo_variants" => self.call_memo_variants.into(),
             "call_memo_entries" => self.call_memo_entries.into(),
+            "call_memo_bytes" => self.call_memo_bytes.as_u64(),
             "call_memo_verify" => self.call_memo_verify.into(),
             "may_run_depth" => self.may_run_depth.into(),
             "cycle_after" => self.cycle_after.into(),
@@ -434,6 +437,7 @@ impl Default for Limits {
             call_memo_probes: 8,
             call_memo_variants: 4,
             call_memo_entries: 100_000,
+            call_memo_bytes: bytesize::ByteSize::mib(256),
             call_memo_verify: 0,
             may_run_depth: 3,
             cycle_after: 2,

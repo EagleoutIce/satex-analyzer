@@ -3055,7 +3055,7 @@ impl Machine<'_> {
         ];
         let facts = &self.out.facts;
         crate::util::progress::note!(
-            "satex: memory {} MiB at {:?}: paths {:?} | env trail/journal/recent/forks {:?} | defs {} exps {} occs {} diags {} | graph {} {} | names {} | calls {} {} | sites {} {} {} diag_seen {} | undo {} copies {} written {} reads {} keys {} | summaries {} {} gaps {}",
+            "satex: memory {} MiB at {:?}: paths {:?} | env trail/journal/recent/forks {:?} | defs {} exps {} occs {} diags {} | graph {} {} | names {} | calls {} {} memo {} MiB | sites {} {} {} diag_seen {} | undo {} copies {} written {} reads {} keys {} | summaries {} {} gaps {}",
             crate::analysis::budget::in_use() >> 20,
             self.position_span(),
             groups,
@@ -3069,6 +3069,7 @@ impl Machine<'_> {
             self.out.interner.len(),
             self.call_runs.size(),
             self.call_recs.len(),
+            self.memo_bytes >> 20,
             self.definition_sites.size(),
             self.expansion_sites.size(),
             self.cond_sites.len(),

@@ -354,6 +354,67 @@ fn a_growing_document_stays_under_its_memory_limit() {
     assert!(peak << 20 <= LIMIT * 3 / 2 + (48 << 20), "peak {peak} MiB past a 64M limit");
 }
 
+/// A build's second run holds about what its first held, not both. The first run makes many
+/// definitions and writes an `.aux` the second reads on its first line, so the second runs it
+/// all again. Pins the build keeping run 1 three times while run 2 ran: its analysis (the
+/// fallback report), its end and its last checkpoint (to meet it again), all sharing its tables.
+/// On a thesis run 1's 4 GB stayed under run 2, which then stopped at the 8 GiB limit.
+#[test]
+fn a_build_run_holds_no_earlier_run() {
+    let dir = fresh("memory-build");
+    let source = "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6\n\
+        \\openin1=\\jobname.aux \\ifeof1 \\else\\closein1 \\input \\jobname.aux \\fi\n\
+        \\def\\l{\\advance\\count1 1 \\expandafter\\def\\csname m\\the\\count1\\endcsname{x}\\ifnum\\count1<300000 \\expandafter\\l\\fi}\\l\n\
+        \\immediate\\openout2=\\jobname.aux \\immediate\\write2{\\relax}\\immediate\\closeout2\n";
+    std::fs::write(dir.join("doc.tex"), source).expect("write document");
+    let peak = |runs: &str| {
+        let output = crate::support::satex()
+            .args(["lint", "--no-config", "--stats", "-v", "-f", "doc.tex"])
+            .args(["--set", "load.format=false", "--set", "limits.seconds=0", "--set", "cache.document=false"])
+            .args(["--set", &format!("limits.build_runs={runs}")])
+            .current_dir(&dir)
+            .output()
+            .expect("satex runs");
+        let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+        let peak: u64 = stderr
+            .split_whitespace()
+            .zip(stderr.split_whitespace().skip(1))
+            .find_map(|(n, unit)| (unit == "MiB").then(|| n.parse().ok()).flatten())
+            .expect("a peak in --stats");
+        (peak, stderr)
+    };
+    let (one, _) = peak("1");
+    let (two, stderr) = peak("2");
+    assert!(stderr.contains("build run 2 took"), "no second run: {stderr}");
+    // One run, its encoded report and the allocator's slack: 1.5 times, both runs held 2.3 times.
+    assert!(two * 5 <= one * 9, "two runs peak at {two} MiB, one at {one} MiB");
+}
+
+/// A build whose second run a budget stops reports its first run, now kept encoded beside the
+/// second ([`a_build_run_holds_no_earlier_run`]): run 1 defines `\First`; run 2 reads the `.aux`
+/// that run 1 wrote and loops past `limits.steps`. The report is run 1's, decoded whole, and
+/// says that run 2 was stopped.
+#[test]
+fn a_build_stopped_in_its_second_run_reports_its_first() {
+    let dir = fresh("build-fallback");
+    let source = "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6\n\
+        \\openin1=\\jobname.aux \\ifeof1 \\def\\First{}\\else\\closein1 \\input \\jobname.aux \\fi\n\
+        \\ifx\\again\\undefined\\else\\def\\l{\\advance\\count1 1 \\ifnum\\count1<100000000 \\expandafter\\l\\fi}\\l\\fi\n\
+        \\immediate\\openout2=\\jobname.aux \\immediate\\write2{\\def\\noexpand\\again{}}\\immediate\\closeout2\n";
+    let main = dir.join("doc.tex");
+    std::fs::write(&main, source).expect("write document");
+    let mut cfg = satex::project::config::Config {
+        cache: Cache { dir: Some(dir.clone()), document: false, ..Default::default() },
+        load: Load { format: false, ..Default::default() },
+        ..crate::support::config()
+    };
+    (cfg.limits.steps, cfg.limits.seconds) = (1_000_000, 0);
+    let analysis = Machine::analyze_build(source, Some(&main), &cfg);
+    assert!(crate::support::defined(&analysis, "First"), "the report is not run 1's");
+    let said = |d: &satex::analysis::facts::Diagnostic| d.code == "budget-exhausted" && d.message.contains("run 2");
+    assert!(analysis.facts.diagnostics.iter().any(said), "run 2 was not stopped: {:?}", analysis.limits);
+}
+
 /// A document that only makes small things (a name and a one-token body
 /// per round) still stops at `limits.memory` with that verdict, holding no
 /// more than the limit past what an empty run holds. Small allocations

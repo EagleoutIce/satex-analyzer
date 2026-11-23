@@ -78,8 +78,8 @@ export default [
   { name: 'fz-enter-mid', source: MARKUP, example: 'hello.tex', word: is('plain'), src: /More plain/, keys: ['Enter', 'qdaqum'], marker: 'qdaqum', endWord: is('qdaqum'),
     steps: 'MARKUP; click the end of "plain" in "More plain text"; Enter, then "qdaqum" at 30-120 ms: all six letters land (fuzz: only "qda" did, the caret gone)' },
   { name: 'fz-hyphen', source: `\\documentclass{article}\n\\usepackage[textwidth=5cm]{geometry}\n\\begin{document}\n${Array.from({ length: 14 }, (_, i) => `Sentence ${i} carries several plain words, like river${i} and stone${i}.`).join(' ')}\n\\end{document}\n`, example: 'hello.tex',
-    word: { match: '^\\p{L}{2,}-$' }, src: (t, w) => { const m = new RegExp(w.slice(0, -1) + '\\p{L}+', 'u').exec(t); return m ? m.index + w.length - 1 : -1; }, keys: ['Q'], expect: () => null, contains: [/\p{L}Q\p{L}/u],
-    steps: 'a paragraph TeX hyphenates; click the end of a hyphenated word\'s first part ("car-"); type Q: it lands at the break, inside the source word (was: refused, "comes from code satex cannot place")' },
+    word: { match: '^\\p{L}{2,}-$' }, src: (t, w) => { const m = [...t.matchAll(new RegExp(w.slice(0, -1) + '\\p{L}+', 'gu'))].find((x) => !/(^|\n\s*\n|\\begin\{document\}\s*)$/.test(t.slice(0, x.index))); return m ? m.index + w.length - 1 : -1; }, keys: ['Q'], expect: () => null, contains: [/\p{L}Q\p{L}/u],
+    steps: 'a paragraph TeX hyphenates; click the end of a hyphenated word\'s first part ("car-"); type Q: it lands at the break, inside the source word that row\'s end hyphenated (a head ends a row: never the paragraph\'s first word, `Sentence 0`, which the click went to while the same-word count went by the page spelling `Sen-`) (was: refused, "comes from code satex cannot place")' },
   { kind: 'shift', name: 'compile-shift', source: MARKUP, example: 'hello.tex',
     steps: 'a small doc built once; Compile again: the pages never move while the status and timer change (user report 16:40)' },
   // references typed after their labels (preview wish 4, 2026-11-21): the echo shows the number the run set, never the

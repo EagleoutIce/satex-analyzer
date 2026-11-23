@@ -818,16 +818,28 @@ fn uncommented(text: &str) -> String {
 /// Where the load of `items` by `\\cmd` (`usepackage`, `usetikzlibrary`, `usepgflibrary`) goes in `text`'s preamble, as
 /// (byte offset, text to insert); `None` when its calls list every item already. Packages are seen by `\\usepackage` and
 /// `\\RequirePackage`, libraries by either library command (TikZ's reads pgf's). A library missing joins the last call of
-/// its command, comma-separated in the list's own style (`{calc}` -> `{calc,positioning}`); else, and for a package, the
-/// call goes on a line of its own before `\\begin{document}`. `Err` when `text` has no `\\begin{document}` and no call to
-/// join: an `\\input` file, whose loads go in the root's preamble.
+/// its command, comma-separated in the list's own style (`{calc}` -> `{calc,positioning}`); else the call goes on a line
+/// of its own: a package's after the line of the last top-level `\\usepackage` or the `\\documentclass` (before the
+/// preamble's definitions, which a package loaded after them may clash with), a library's before `\\begin{document}`.
+/// `Err` when `text` has no `\\begin{document}` and no call to join: an `\\input` file, whose loads go in the root's preamble.
 pub fn preamble_load(text: &str, cmd: &str, items: &[&str], options: &str) -> Result<Option<(usize, String)>, String> {
     let code = uncommented(text);
     let begin = code.find("\\begin{document}");
     let pre = &code[..begin.unwrap_or(code.len())];
     let package = cmd == "usepackage";
-    let kinds: &[&str] = if package { &["usepackage", "RequirePackage"] } else { &["usetikzlibrary", "usepgflibrary"] };
-    let (mut have, mut last) = (Vec::new(), None);
+    let kinds: &[&str] =
+        if package { &["usepackage", "RequirePackage", "documentclass"] } else { &["usetikzlibrary", "usepgflibrary"] };
+    // the brace depth at a byte: a load inside a group (`\\AtEndPreamble{…}`) or a line that ends in one is no place
+    let depth = |at: usize| {
+        let b = &pre.as_bytes()[..at];
+        (0..at).fold(0i32, |d, i| match b[i] {
+            b'{' | b'}' if i > 0 && b[i - 1] == b'\\' => d,
+            b'{' => d + 1,
+            b'}' => d - 1,
+            _ => d,
+        })
+    };
+    let (mut have, mut last, mut after) = (Vec::new(), None, None);
     for k in kinds {
         for (i, _) in pre.match_indices(&format!("\\{k}")) {
             let rest = &pre[i + 1 + k.len()..];
@@ -840,9 +852,21 @@ pub fn preamble_load(text: &str, cmd: &str, items: &[&str], options: &str) -> Re
             }
             let Some(list) = r.strip_prefix('{') else { continue };
             let Some(close) = list.find('}') else { continue };
-            have.extend(list[..close].split(',').map(str::trim));
+            let end = pre.len() - list.len() + close;
+            // the class's line is a place only, its name no package
+            if *k != "documentclass" {
+                have.extend(list[..close].split(',').map(str::trim));
+            }
             if *k == cmd && !package {
-                last = Some((pre.len() - list.len() + close, &list[..close]));
+                last = Some((end, &list[..close]));
+            }
+            if package
+                && depth(i) == 0
+                && let Some(line) = pre[end..].find('\n').map(|j| end + j + 1)
+                && depth(line) == 0
+                && after.is_none_or(|a| a < line)
+            {
+                after = Some(line);
             }
         }
     }
@@ -866,7 +890,7 @@ pub fn preamble_load(text: &str, cmd: &str, items: &[&str], options: &str) -> Re
         missing.join(",")
     );
     let begin = begin.ok_or_else(|| format!("needs {call} in the preamble"))?;
-    Ok(Some((code[..begin].rfind('\n').map_or(0, |i| i + 1), format!("{call}\n"))))
+    Ok(Some((after.unwrap_or_else(|| code[..begin].rfind('\n').map_or(0, |i| i + 1)), format!("{call}\n"))))
 }
 
 /// The installation's index of what each file defines, built once and cached. The playground's
@@ -958,6 +982,24 @@ mod tests {
                 .contains("|\\usepackage{array}\n|\\begin{document}")
         );
         assert!(at("\\begin{tabular}{l}\n\\end{tabular}\n", "usetikzlibrary", &["calc"]).is_err());
+    }
+
+    /// Intuition: a new package goes right after the class or the last top-level load, before the preamble's own
+    /// definitions (a package loaded after them may clash: Insert ▸ Figure put graphicx after hello.tex's
+    /// `\\newcommand`s); a load inside a group, or a line that opens one, is no place for it.
+    #[test]
+    fn a_package_goes_after_the_loads_before_the_definitions() {
+        let at = |text: &str| {
+            preamble_load(text, "usepackage", &["graphicx"], "").unwrap().map(|(at, t)| format!("{}|{t}|", &text[..at]))
+        };
+        let defs = "\\newcommand{\\greet}[1]{Hi #1}\n\\begin{document}\nx\n\\end{document}\n";
+        let class = format!("\\documentclass[a4paper]{{article}}\n{defs}");
+        assert_eq!(at(&class).unwrap(), "\\documentclass[a4paper]{article}\n|\\usepackage{graphicx}\n|");
+        let loads =
+            format!("\\documentclass{{article}}\n\\usepackage{{amsmath}} % math\n\\RequirePackage{{xcolor}}\n{defs}");
+        assert!(at(&loads).unwrap().ends_with("\\RequirePackage{xcolor}\n|\\usepackage{graphicx}\n|"));
+        let grouped = format!("\\documentclass{{article}}\n\\AtEndPreamble{{\\usepackage{{xcolor}}\n}}\n{defs}");
+        assert!(at(&grouped).unwrap().starts_with("\\documentclass{article}\n|"));
     }
 }
 

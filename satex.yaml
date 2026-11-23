@@ -1309,7 +1309,8 @@ limits:  # what bounds the analysis: reaching one stops that part of the run, so
   call_memo_variants: 4  # kept effects per code and arguments, one per state they met
     #! affects: speed
     #! example: `\pgfmathparse{\x+1}` for four values of `\x`
-  call_memo_entries: 100000  # kept effects in all, past it none are added. Also how many calls met once are remembered
+  call_memo_entries: 100000  # how many calls met once are remembered
+  call_memo_bytes: 256MiB  # what the kept effects may hold in all. Past it they are dropped and kept anew
     #! affects: speed
     #! example: bounds the memory a long tikz document spends on them
   call_memo_verify: 0  # debug: a call a kept effect stands for runs for real instead, and where its run differs from the kept effect is printed

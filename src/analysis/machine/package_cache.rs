@@ -52,7 +52,6 @@ use crate::engine::tex::{
 };
 use crate::engine::value::Value;
 
-use crate::caches::format::PACKAGE_ENCODING_VERSION as ENCODING_VERSION;
 /// The file number that stands for "the site of this load" in a cached span.
 const LOAD_SITE: FileId = FileId::MAX;
 /// A file number no run hands out: a file a segment names that this run has
@@ -815,7 +814,6 @@ struct Tree<'a> {
 
 #[derive(Serialize, Deserialize)]
 struct CacheFile<'a> {
-    version: u32,
     #[serde(borrow)]
     trees: Vec<Tree<'a>>,
 }
@@ -1073,7 +1071,7 @@ fn held(name: &str, kind: LoadKind) -> String {
 fn family(name: &str) -> String {
     let safe: String =
         name.chars().map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '.' { c } else { '_' }).collect();
-    format!("package-{safe}-v{ENCODING_VERSION}-")
+    format!("package-{safe}")
 }
 
 /// One variant of a package cache, for `satex cache show`.
@@ -1127,11 +1125,11 @@ pub fn served(state: &str) -> bool {
 const PARTLY: &str = "% cached, rest read";
 
 pub fn prune(dir: &Path, bound: u64) -> crate::caches::format::Pruned {
-    crate::caches::format::prune_caches(dir, ENCODING_VERSION, bound)
+    crate::caches::format::prune_caches(dir, bound)
 }
 
 fn cache_file(dir: &Path, name: &str, key: u64) -> PathBuf {
-    dir.join(format!("{}{}-{key:016x}.postcard", family(name), crate::caches::format::cache_key()))
+    dir.join(format!("{}-{}-{key:016x}.postcard", family(name), crate::caches::format::cache_key()))
 }
 
 fn moved_keys<V>(change: Vec<(Span, Option<V>)>, at: impl Fn(Span) -> Span) -> Vec<(Span, Option<V>)> {
@@ -1692,7 +1690,7 @@ impl Machine<'_> {
             memos: _,
             memo_codes: _,
             memo_seen: _,
-            memo_count: _,
+            memo_bytes: _,
             memo_verify: _,
             memo_said: _,
             memo_uses: _,
@@ -3603,7 +3601,7 @@ impl Machine<'_> {
         };
         rewrite_before_store(&rec.cache);
         let bytes = std::fs::read(&rec.cache).unwrap_or_default();
-        let mut file = decode(&rec.cache, &bytes).unwrap_or(CacheFile { version: ENCODING_VERSION, trees: Vec::new() });
+        let mut file = decode(&rec.cache, &bytes).unwrap_or(CacheFile { trees: Vec::new() });
         // Streams the chain never read or wrote: any stream state replays it.
         let open: &[&str] = if self.streams_used.get() == rec.streams_from { &[STREAMS] } else { &[] };
         let target = append_target(&mut file, &rec.root, open, rec.parent, rec.parent_id);
@@ -4291,9 +4289,6 @@ fn decode<'a>(file: &Path, bytes: &'a [u8]) -> Result<CacheFile<'a>, Option<Stri
         return Err(None);
     }
     let cached: CacheFile = postcard::from_bytes(bytes).map_err(|e| Some(format!("cannot decode it: {e}")))?;
-    if cached.version != ENCODING_VERSION {
-        return Err(Some("interpreter version: written in another encoding".into()));
-    }
     crate::caches::format::touch(file);
     Ok(cached)
 }
@@ -4423,8 +4418,7 @@ mod tests {
 
     #[test]
     fn a_recording_is_appended_to_the_tree_its_root_names() {
-        let mut file =
-            CacheFile { version: ENCODING_VERSION, trees: vec![tree("other", vec![]), tree("mine", vec![node(1)])] };
+        let mut file = CacheFile { trees: vec![tree("other", vec![]), tree("mine", vec![node(1)])] };
         let id = Some(node_id(&node(1)));
         // The index the run kept is 1 and still is: the append goes there.
         assert_eq!(append_target(&mut file, &root_of("mine"), &[], Some(0), id).map(|t| t.0), Some(1));
@@ -4440,10 +4434,7 @@ mod tests {
         let id = Some(node_id(&node(1)));
         // The run read a file whose tree 0 was `mine`; another process then
         // put its own tree in front, so index 0 is now someone else's.
-        let mut file = CacheFile {
-            version: ENCODING_VERSION,
-            trees: vec![tree("theirs", vec![node(9)]), tree("mine", vec![node(1)])],
-        };
+        let mut file = CacheFile { trees: vec![tree("theirs", vec![node(9)]), tree("mine", vec![node(1)])] };
         assert_eq!(
             append_target(&mut file, &root_of("mine"), &[], Some(0), id).map(|t| t.0),
             Some(1),
@@ -4452,8 +4443,21 @@ mod tests {
         assert_eq!(file.trees[0].nodes.len(), 1, "the other tree was not written into");
         // And when the node at that index is no longer the node that was
         // replayed, there is nowhere sound to put the chain.
-        let mut file = CacheFile { version: ENCODING_VERSION, trees: vec![tree("mine", vec![node(7)])] };
+        let mut file = CacheFile { trees: vec![tree("mine", vec![node(7)])] };
         assert_eq!(append_target(&mut file, &root_of("mine"), &[], Some(0), id).map(|t| t.0), None);
+    }
+
+    /// Cache files carry no version field: a file this build cannot decode (damaged, cut
+    /// short, or another layout under a pinned `SATEX_CACHE_GUARD`) is a miss with a reason,
+    /// rebuilt by the run, never a panic.
+    #[test]
+    fn a_cache_file_that_does_not_decode_is_a_miss() {
+        let path = Path::new("package-x-d0-0.postcard");
+        let good = postcard::to_allocvec(&CacheFile { trees: vec![tree("mine", vec![node(1)])] }).unwrap();
+        for bytes in [&b"\xff\xff\xff\xff\xff"[..], &good[..good.len() / 2]] {
+            assert!(matches!(decode(path, bytes), Err(Some(_))), "{bytes:?}");
+        }
+        assert!(matches!(decode(path, b""), Err(None)), "an empty file is no cache, not a damaged one");
     }
 
     #[test]
@@ -4461,7 +4465,7 @@ mod tests {
         let id = Some(node_id(&node(1)));
         // MAX_TREES pushed `mine` off the end while this run was reading.
         let trees = (0..MAX_TREES).map(|i| tree(&format!("other{i}"), vec![node(9)])).collect();
-        let mut file = CacheFile { version: ENCODING_VERSION, trees };
+        let mut file = CacheFile { trees };
         assert_eq!(append_target(&mut file, &root_of("mine"), &[], Some(0), id).map(|t| t.0), None);
         assert_eq!(file.trees.len(), MAX_TREES, "nothing was inserted");
         assert!(file.trees.iter().all(|t| t.nodes.len() == 1), "no tree was written into");
@@ -4476,7 +4480,7 @@ mod tests {
     /// three identical 20 MB trees, one per stream state of the documents).
     #[test]
     fn a_chain_that_read_no_stream_serves_every_stream_state() {
-        let mut file = CacheFile { version: ENCODING_VERSION, trees: Vec::new() };
+        let mut file = CacheFile { trees: Vec::new() };
         assert_eq!(append_target(&mut file, &streams_root(5), &[STREAMS], None, None), Some((0, None)));
         file.trees[0].nodes.push(node(1));
         assert_eq!(file.trees[0].root, streams_root(ANY));
@@ -4496,10 +4500,7 @@ mod tests {
         let mut second = node(2);
         second.parent = Some(0);
         first.parent = None;
-        let mut file = CacheFile {
-            version: ENCODING_VERSION,
-            trees: vec![Tree { root: streams_root(ANY), nodes: vec![first, second] }],
-        };
+        let mut file = CacheFile { trees: vec![Tree { root: streams_root(ANY), nodes: vec![first, second] }] };
         let id = Some(node_id(&file.trees[0].nodes[1]));
         assert_eq!(append_target(&mut file, &streams_root(5), &[], Some(1), id), Some((0, Some(1))));
         assert_eq!(file.trees.len(), 2, "the open tree stays for other stream states");
@@ -4509,7 +4510,7 @@ mod tests {
         assert_eq!(tree_for(&file, &streams_root(5), None, None), Some(0));
         assert_eq!(tree_for(&file, &streams_root(6), None, None), Some(1));
         // From the root, a chain that read a stream starts its own exact tree.
-        let mut file = CacheFile { version: ENCODING_VERSION, trees: vec![tree("x", vec![])] };
+        let mut file = CacheFile { trees: vec![tree("x", vec![])] };
         file.trees[0].root = streams_root(ANY);
         assert_eq!(append_target(&mut file, &streams_root(5), &[], None, None), Some((0, None)));
         assert_eq!(file.trees[0].root, streams_root(5));

@@ -47,15 +47,15 @@ fn main() {
         .is_some_and(|out| out.status.success() && !out.stdout.is_empty());
     let commit = if dirty && !commit.is_empty() { format!("{commit}+changes") } else { commit };
     println!("cargo:rustc-env=SATEX_COMMIT={commit}");
-    // Caches are keyed on `format::SEMANTIC_VERSION` and the source digest:
-    // two builds of one version (a release and a later `cargo install` of a
-    // working tree) may differ in what a cache holds, and must not read or
-    // overwrite each other's.
+    // Caches are keyed on the source digest alone, never on a hand-bumped
+    // version: an edit to what a cache holds or how it is encoded changes it,
+    // so two builds that differ there never read or overwrite each other's.
     let src = std::path::Path::new("src");
     // `SATEX_CACHE_GUARD=<guard>` at build time pins it (the `d…` part of an earlier
     // build's `cache_key`): a developer who knows an edit (a speed-up, a refactor) leaves
-    // every cache's meaning as it was keeps that build's kernel and package caches. The
-    // pin is theirs to drop with the next edit that changes what a cache holds.
+    // every cache's meaning and encoding as they were keeps that build's kernel and package
+    // caches. The pin is theirs to drop with the next edit that changes what a cache holds
+    // or a type it stores.
     println!("cargo:rerun-if-env-changed=SATEX_CACHE_GUARD");
     let guard = std::env::var("SATEX_CACHE_GUARD")
         .unwrap_or_else(|_| format!("d{:016x}", source_digest(src, REPORTING, code_only)));

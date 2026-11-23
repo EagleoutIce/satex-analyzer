@@ -50,6 +50,7 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 
 ### CLI
 
+- `fix` **`satex explain` places a kernel command at its declaration** (`\textit @ latex.ltx:14219:25`, not inside `\DeclareRobustCommand`), with its column also when read from the kernel cache.
 - `fix` **`satex slice` run from the document's folder embeds each local file once, under its relative name.** It also wrote a copy under the file's absolute path, so compiling an old slice could overwrite the user's own package.
 - `fix` **A position may be a bare line** (`satex slice --at 40`): it names the line from its first column, where it said "expected LINE:COL".
 - `fix` **`satex -f chapter.tex` reads a chapter through the document that `\input`s it**, as the editor does: alone it reported `\section` as undefined on every line. A macro's bare `{#1}` no longer counts as naming a file, which also gave editors a wrong root.
@@ -57,6 +58,7 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 
 ### Analysis
 
+- `perf` **A build holds one run at a time, and the call memo is bounded by bytes (`limits.call_memo_bytes`, 256 MiB).** A 100-page thesis's second build run no longer stops at the memory limit (peak 7.8 → 5.0 GiB).
 - `feat-fix` **`limits.seconds` defaults to 600, and a probe of a package for a missing command has its own `limits.probe_seconds` (20).** A probe ran without any time limit and kept a lint of a misspelled `\usepackage` going for minutes.
 - `fix` **A walk through joined texts no longer hangs inside one step.** A text that names the one-of of the pass before many times was followed once per name, 20^8 times for twenty copies eight passes deep. Every walk through one-of texts and macro bodies now pays one budget per step (`limits.walk_texts`, 100000), past which the rest reads as unknown.
 - `fix` **A cut recursion no longer hangs counting what the dropped text would close.** Each macro is counted once; acmart's title with `\maketitle` inside `\affiliation` ran past `limits.seconds` for minutes.
@@ -146,6 +148,7 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 
 ### Lints
 
+- `fix` **Prose rules skip text only an undecided path sets** (TikZ path code a run could not follow read as `(frame.north west)` prose), and a duplicate package load names the class line that made the first load, not the kernel's.
 - `fix` **Values the run did not know read as one `…` in every finding**, never as satex's internal names for them (`\-16384..16383#8970.8059.0`, 32-digit digests, private-use marks).
 - `fix` **A run a time limit stopped no longer reports labels, packages or names as absent from the whole document**: what it did not reach may hold them, so such findings are precision notes naming where the limit stopped the run.
 - `fix` **`preamble-cost` names the class when the document loads no package itself** ("the class beamer reads 375 files"), not "0 packages requested directly".
@@ -165,6 +168,7 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 
 ### Playground
 
+- `feat-fix` **Insert ▸ TikZ picture writes at once; the package load follows** in the same undo step. A new package goes after the preamble's last `\usepackage`, before its definitions.
 - `fix` **Insert ▸ TikZ picture loads only tikz, and writes at once.** The names of one write are resolved together: `\node` inside the picture runs clean under tikz, so it no longer loaded `pgflibraryplotmarks` after seconds of probes.
 - `feat-fix` **Learning command arguments (for completion and hovers) no longer shows as a running step.** The status line reads as ready once the document is analyzed; the learning goes on quietly, named in the status line's tooltip.
 - `feat-fix` **The editor's Color menu is the pages' color picker** (swatches, the document's colors, Mix, Custom). The format bar shows each size in points (`small · 9 pt`) and each family's font (`Roman · Latin Modern`), each with a Custom entry, and the color in effect. A line with a finding offers its table, figure or placement dialog from the finding's marker too.
@@ -267,6 +271,7 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 
 ### Build and infrastructure
 
+- `fix` **Caches are keyed on the build's source digest alone.** The hand-bumped encoding and semantic versions are gone from cache file names, cache files and archives. A change to what a cache holds or how it is stored changes the digest, so no number needs bumping. Caches of an earlier satex are rebuilt once and pruned like any other build's.
 - `feat` **A container image: `docker run --rm -v "$PWD:/work" ghcr.io/eagleoutice/satex lint`.** It holds `satex`, TeX Live with the recommended LaTeX packages, latexmk and the interpreted kernel. Each release publishes it to GHCR. `lsp --host 0.0.0.0 --port 2087` serves the language server from it.
 
 ## v0.2.5 (2026-11-20)

@@ -191,6 +191,39 @@ pub struct BuildPending {
     pub written: Vec<(PathBuf, Vec<String>)>,
 }
 
+/// A build run kept while the next one runs, for the report should a budget stop that one.
+/// Encoded as the document cache stores it: its tables share no chunks with the next
+/// run's, so held whole the build held two runs at once (Lars: run 1's 5 GB under run 2).
+struct Report {
+    bytes: Vec<u8>,
+    /// What the encoding leaves out that the report shows (`--stats`).
+    timings: Timings,
+    started: Option<std::time::Instant>,
+    caching: std::time::Duration,
+    hot: Option<Box<Hot>>,
+    run: u64,
+}
+
+impl Report {
+    fn keep(mut a: Analysis, verbose: bool) -> Option<Report> {
+        let clock = std::time::Instant::now();
+        let bytes = crate::fixed::shared::with(|| postcard::to_allocvec(&a)).ok()?;
+        if verbose {
+            let (mib, took) = (bytes.len() >> 20, clock.elapsed().as_secs_f64());
+            crate::util::progress::note!("satex: build run kept as its report, {mib} MiB in {took:.2}s");
+        }
+        let (timings, hot) = (std::mem::take(&mut a.timings), a.hot.take());
+        Some(Report { bytes, timings, started: a.started, caching: a.caching, hot, run: a.run })
+    }
+
+    fn open(self) -> Option<Analysis> {
+        let mut a: Analysis = crate::fixed::shared::with(|| postcard::from_bytes(&self.bytes)).ok()?;
+        (a.timings, a.started, a.caching, a.hot, a.run) =
+            (self.timings, self.started, self.caching, self.hot, self.run);
+        Some(a)
+    }
+}
+
 thread_local! {
     /// For tests: the build takes its time as used up after this run (0: the clock decides).
     #[doc(hidden)]
@@ -2284,7 +2317,8 @@ pub struct Machine<'a> {
     memo_codes: LookupMap<usize, calls::MemoCode>,
     /// Keys of calls met once ([`calls`]).
     memo_seen: crate::fixed::LookupSet<u64>,
-    memo_count: usize,
+    /// What the kept effects hold, about ([`calls::Memo::bytes`]).
+    memo_bytes: usize,
     /// A hit that `limits.call_memo_verify` runs for real, compared at its end.
     memo_verify: Option<(Rc<calls::Memo>, Sym)>,
     /// Occurrences recorded calls said again, each already said ([`calls`]).
@@ -3403,7 +3437,7 @@ impl<'a> Machine<'a> {
             memos: Default::default(),
             memo_codes: Default::default(),
             memo_seen: Default::default(),
-            memo_count: 0,
+            memo_bytes: 0,
             memo_verify: None,
             memo_said: Vec::new(),
             memo_uses: Vec::new(),
@@ -3700,8 +3734,8 @@ impl<'a> Machine<'a> {
         let budget = std::time::Duration::from_secs(cfg.limits.seconds);
         // Later runs replay the caches the first stored: the build reports the first.
         let mut caches = None;
-        // The last run that was not stopped by a budget.
-        let mut complete: Option<Analysis> = None;
+        // The last run that was not stopped by a budget, encoded ([`Report`]).
+        let mut complete: Option<Report> = None;
         let mut history = Vec::new();
         // A build an earlier process left between two runs goes on from there. One it finished
         // left its files, as latexmk finds the last build's on disk: run 1 reads them.
@@ -3714,7 +3748,7 @@ impl<'a> Machine<'a> {
             widened = pending.widened.into_iter().collect();
             written = pending.written.into_iter().map(|(at, texts)| (at, texts.into_iter().collect())).collect();
             history = earlier.as_ref().map(|e| e.written_runs.clone()).unwrap_or_default();
-            complete = earlier.map(|e| *e);
+            complete = earlier.and_then(|e| Report::keep(*e, cfg.verbose >= 2));
         }
         let mut analysis = loop {
             let before = elapsed(checkpoints, caching);
@@ -3743,7 +3777,7 @@ impl<'a> Machine<'a> {
             // A budget stopped it: no other run, and the last one that ran
             // to its end says more than this one.
             if analysis.exhausted {
-                let Some(mut earlier) = complete.take() else { break analysis };
+                let Some(mut earlier) = complete.take().and_then(Report::open) else { break analysis };
                 // Not a green: the file table may differ, so said at no place.
                 // A hit's place names a file of this run's table: map it by path.
                 for mut hit in std::mem::take(&mut analysis.limits) {
@@ -3916,8 +3950,11 @@ impl<'a> Machine<'a> {
                 hear(&analysis);
             }
             run += 1;
-            complete = Some(analysis);
+            // Its tables would stay beside the next run's: only the report is kept.
+            complete = Report::keep(analysis, cfg.verbose >= 2);
+            checkpoints.meet = false;
         };
+        checkpoints.meet = true;
         crate::util::progress::set_run(1, 1);
         if !analysis.stopped() {
             analysis.build_files = Machine::build_files(&mut placed);
@@ -4737,7 +4774,7 @@ impl<'a> Machine<'a> {
                     self.out.kernel_sites = cached
                         .sites()
                         .iter()
-                        .map(|(sym, file, line)| (Sym(*sym), Span::new(*file, *line, 0)))
+                        .map(|&(sym, file, line, col)| (Sym(sym), Span::new(file, line, col)))
                         .collect();
                     self.wild = cached.wild().clone();
                     // The cache carries what the kernel build diagnosed.
@@ -4820,13 +4857,13 @@ impl<'a> Machine<'a> {
         let kernel: Vec<(char, u8)> = self.catcodes.diff(&plain).into_iter().filter(|(c, _)| c.is_ascii()).collect();
         self.catcodes = self.format_catcodes(&kernel);
         let preload_truncated = self.run_preload();
-        let sites: Vec<(u32, u16, u32)> = {
+        let sites: Vec<(u32, u16, u32, u32)> = {
             let mut seen: HashMap<Sym, Span> = HashMap::default();
             for def in &self.out.facts.defs {
                 seen.insert(def.name, def.span);
             }
             self.out.kernel_sites = seen.clone();
-            seen.into_iter().map(|(sym, span)| (sym.0, span.file, span.line)).collect()
+            seen.into_iter().map(|(sym, span)| (sym.0, span.file, span.line, span.col)).collect()
         };
         let definers = {
             let files = &self.out.files;
@@ -5150,7 +5187,7 @@ will look undefined",
         // visit counts, summaries, counters and the typed-name table (kept,
         // a built run forked 50x more than a cached one on the same document).
         self.call_runs = Default::default();
-        (self.memos, self.memo_codes, self.memo_seen, self.memo_count) = Default::default();
+        (self.memos, self.memo_codes, self.memo_seen, self.memo_bytes) = Default::default();
         self.call_recs = Rc::default();
         self.set_memo_floor(None);
         self.scratch = Scratch::default();
@@ -8660,9 +8697,10 @@ will look undefined",
         let within: Vec<&str> = self.within.iter().rev().take(4).map(|(sym, _)| self.name(*sym)).collect();
         let paths = if self.waiting > 0 { format!(", {} paths waiting", self.waiting) } else { String::new() };
         crate::util::progress::note!(
-            "satex: {} tokens, {} MB, at {file}:{line} in {}{paths}",
+            "satex: {} tokens, {} MB ({} MB live), at {file}:{line} in {}{paths}",
             self.out.steps,
             crate::analysis::budget::charged() >> 20,
+            crate::analysis::budget::live() >> 20,
             within.join(" < ")
         );
     }
@@ -15670,7 +15708,7 @@ will look undefined",
         // file. A file the code of some other call opens stands at the
         // `\input` that opened it.
         let span = match self.file_call {
-            Some((_, call)) if self.call_names_file(call, name) => call,
+            Some((sym, call)) if self.call_names_file(sym, call, name) => call,
             _ => self.line_naming_file(name).unwrap_or(span),
         };
         let follow = match kind {
@@ -15961,11 +15999,17 @@ will look undefined",
         (current, directory, kind, options)
     }
 
-    /// Whether the source text of the call at `call`, up to where its file
-    /// is read now, names the file `name`.
-    fn call_names_file(&self, call: Span, name: &str) -> bool {
+    /// Whether the source text of the call `sym` at `call`, up to where its
+    /// file is read now, names the file `name`, or the body of the macro it
+    /// calls does: amsart.cls `\def`s `\@tempa` to `\RequirePackage{amsmath}`
+    /// and calls `\@tempa` lines later.
+    fn call_names_file(&self, sym: Sym, call: Span, name: &str) -> bool {
         let base = std::path::Path::new(name.trim_matches('"'));
         let Some(stem) = base.file_stem().map(|s| s.to_string_lossy().into_owned()) else { return false };
+        let body = self.env.meaning(sym).as_macro().map(|m| self.text_of(&m.replacement_text));
+        if body.is_some_and(|body| body.contains(stem.as_str())) {
+            return true;
+        }
         let text = self.input.iter().rev().find_map(|frame| match frame {
             Frame::File { mouth, .. } if mouth.file == call.file => Some(mouth.text_since(call.line, call.col)),
             _ => None,
@@ -16038,7 +16082,7 @@ will look undefined",
                 // Only a request some file's text makes: one the code of a
                 // hook or a package makes has no place in the document.
                 let span = match self.file_call {
-                    Some((_, call)) if self.call_names_file(call, &current) => Some(call),
+                    Some((sym, call)) if self.call_names_file(sym, call, &current) => Some(call),
                     _ => self.line_naming_file(&current),
                 };
                 let Some(span) = span else { return };

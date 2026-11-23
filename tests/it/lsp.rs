@@ -8658,3 +8658,39 @@ fn snapshot_load_of_a_picture_is_its_package_only() {
     server.shutdown();
     std::fs::remove_dir_all(dir).ok();
 }
+
+/// Intuition: an insert's text never waits for probe runs. With `later`, the printer writes the picture
+/// at once and hands back the names it would ask the installation for; a second request chooses their
+/// loads by the same probes. Pins Insert ▸ TikZ picture writing nothing for 3-9 s in the playground while
+/// `provider_for` ran tikz with the call, twice.
+#[test]
+fn snapshot_later_writes_the_text_before_its_probed_loads() {
+    let text = "\\documentclass{article}\n\\begin{document}\nHello.\n\n\\end{document}\n";
+    let (mut server, uri, dir) = open_set("provider-later", text, &[]);
+    let views = at(&mut server, &uri, "satex/view", 2, 0);
+    assert!(views.is_array(), "{views}");
+    let body =
+        "\\begin{tikzpicture}\n  \\node[draw] (a) at (0,0) {A};\n  \\draw[->] (a) -- (1,0);\n\\end{tikzpicture}\n";
+    let range = json!({ "start": { "line": 3, "character": 0 }, "end": { "line": 3, "character": 0 } });
+    let node = json!({ "kind": "text", "name": "", "star": false, "args": [], "range": range, "text": "", "body_at": [0, 0], "body": body });
+    let params = json!({ "textDocument": { "uri": uri }, "kind": "snapshot", "later": true, "nodes": [node] });
+    let id = server.request("satex/dialogApply", params);
+    let out = server.response(id)["result"].clone();
+    let written = applied(text, &uri, &json!({ "changes": { &uri: out["edits"] } }), &[]);
+    assert!(written.contains(body) && !written.contains("\\usepackage"), "the text alone first: {written}");
+    let asked: Vec<&str> = out["later"]["asked"].as_array().unwrap().iter().filter_map(|a| a[0].as_str()).collect();
+    assert!(asked.contains(&"tikzpicture"), "{out}");
+    server.notify(
+        "textDocument/didChange",
+        json!({ "textDocument": { "uri": uri, "version": 2 }, "contentChanges": [{ "text": written }] }),
+    );
+    let params = json!({ "textDocument": { "uri": uri }, "kind": "snapshot", "loads": out["later"] });
+    let id = server.request("satex/dialogApply", params);
+    let out = server.response(id)["result"].clone();
+    let after = applied(&written, &uri, &json!({ "changes": { &uri: out["edits"] } }), &[]);
+    let loads: Vec<&str> = after.lines().filter(|l| l.starts_with("\\usepackage")).collect();
+    assert_eq!(loads, ["\\usepackage{tikz}"], "{after}");
+    assert!(after.contains(body), "{after}");
+    server.shutdown();
+    std::fs::remove_dir_all(dir).ok();
+}

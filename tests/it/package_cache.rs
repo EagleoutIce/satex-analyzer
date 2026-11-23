@@ -1320,7 +1320,7 @@ fn aged(path: &Path, bytes: u64) {
 fn own_package_cache(cache: &Path) -> String {
     files_of(cache)
         .into_iter()
-        .find(|n| n.starts_with("package-outer-v") && n.ends_with(".postcard"))
+        .find(|n| n.starts_with("package-outer-") && n.ends_with(".postcard"))
         .expect("outer cached")
 }
 
@@ -1333,16 +1333,16 @@ fn a_write_removes_what_another_build_or_encoding_left() {
     run_latex(&dir, DOCUMENT, true);
     let cache = dir.join("cache");
     let own = own_package_cache(&cache);
-    let (family, rest) = own.split_once("-v").unwrap();
-    let (version, tail) = rest.split_once('-').unwrap();
-    let (_digest, key) = tail.split_once('-').unwrap();
-    let foreign = format!("{family}-v{version}-deadbeefdeadbeef-{key}");
-    let old_encoding = format!("{family}-v1-{}", tail);
+    let (rest, hash) = own.rsplit_once('-').unwrap();
+    let (family, key) = rest.rsplit_once('-').unwrap();
+    let foreign = format!("{family}-deadbeefdeadbeef-{hash}");
+    // A name from before keys replaced encoding versions.
+    let old_encoding = format!("{family}-v16-s2{key}-{hash}");
     for name in [&foreign, &old_encoding] {
         aged(&cache.join(name), 10);
         aged(&cache.join(name.replace(".postcard", ".lock")), 0);
     }
-    let orphan = "package-gone-v1-0123456789abcdef-0123456789abcdef.lock";
+    let orphan = "package-gone-d0123456789abcdef-0123456789abcdef.lock";
     aged(&cache.join(orphan), 0);
     // A change to a package makes the next run write a cache.
     std::fs::write(dir.join("inner.sty"), "\\ProvidesPackage{inner}\n\\def\\innermacro#1{}\n").unwrap();
@@ -1354,7 +1354,7 @@ fn a_write_removes_what_another_build_or_encoding_left() {
         assert!(!left.contains(gone), "{gone} survived a write: {left:?}");
     }
     assert!(!left.iter().any(|n| n == orphan), "a lock nothing holds survived: {left:?}");
-    assert!(left.contains(&own) || left.iter().any(|n| n.starts_with("package-outer-v")), "{left:?}");
+    assert!(left.contains(&own) || left.iter().any(|n| n.starts_with("package-outer-")), "{left:?}");
 }
 
 #[test]
@@ -1367,12 +1367,10 @@ fn the_cache_directory_stays_within_its_size_bound() {
     run_latex(&dir, DOCUMENT, true);
     let cache = dir.join("cache");
     let own = own_package_cache(&cache);
-    let (family, tail) = own.split_once("-v").unwrap();
-    let (version, rest) = tail.split_once('-').unwrap();
-    let (digest, _) = rest.split_once('-').unwrap();
+    let (prefix, _) = own.rsplit_once('-').unwrap();
     // Older neighbours of this build, big enough to burst the bound.
     for (i, age) in [3000u64, 2000, 1000].iter().enumerate() {
-        let name = format!("{family}-v{version}-{digest}-{i:016x}.postcard");
+        let name = format!("{prefix}-{i:016x}.postcard");
         let path = cache.join(&name);
         aged(&path, 1_000_000);
         let file = std::fs::File::options().append(true).open(&path).unwrap();
@@ -1575,26 +1573,27 @@ fn an_imported_cache_is_rebuilt_when_the_tree_differs() {
     assert!(report.iter().any(|l| l.contains("package demo: rebuilt (content changed: ")), "{report:?}");
 }
 
-/// An archive of another semantic version is skipped, with a line saying so.
+/// An archive in another layout (one written before keys replaced versions, or a damaged one)
+/// is skipped whole with a line saying so, never a crash, and the kernel is built again.
 #[test]
-fn an_archive_of_another_semantic_version_is_skipped() {
+fn an_archive_in_another_layout_is_skipped() {
     let p = Portable::new("archive-version");
     let cfg = p.built();
     p.export(&cfg);
-    // The version is the first field after the magic string.
+    // The key's length is the first byte after the magic string.
     let mut bytes = std::fs::read(&p.archive).expect("archive");
     let at = bytes.windows(19).position(|w| w == b"satex-cache-archive").expect("magic") + 19;
     bytes[at] = bytes[at].wrapping_add(1);
     std::fs::write(&p.archive, bytes).expect("archive");
     std::fs::remove_dir_all(&p.cache).expect("cache wiped");
     let said = p.import(&cfg);
-    assert!(said.contains("skipped ") && said.contains("built for semantic version"), "{said}");
+    assert!(said.contains("skipped "), "{said}");
     assert!(said.contains("imported 0 cache file(s)"), "{said}");
     let report = p.run(&cfg).cache_report();
     assert!(report.iter().any(|l| l.contains("kernel pdftex: rebuilt")), "{report:?}");
 }
 
-/// An archive of another satex build (the same semantic version, another key: what a site build
+/// An archive of another satex build (another key: what a site build
 /// shipped from a last bundle after the interpreter changed) is skipped whole, never loaded; the
 /// kernel is built again. The bug: the playground built its kernel for minutes on a first visit.
 #[test]

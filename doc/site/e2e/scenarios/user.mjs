@@ -117,6 +117,9 @@ export default [
         return JSON.stringify({ under: (under?.dataset.title ?? under?.title) === h.title, open: !n.hidden, closed: h.flips.filter(Boolean).length }); })()` }],
     expect: [{ js: /^\{"under":true,"open":true,"closed":0\}$/ }],
     steps: 'a sentence with \\greet{world}, built; rest the pointer on the tint of "Hello, world!" until its note shows; the text gains a comma before the call, the build lands: under the resting pointer the same tint, its note open throughout' },
+  ...['TikZ picture', 'Figure with a drawing'].map((r) => ({ kind: 'user', name: `m-lat-${r.length}`, pdf: true, source: PAPER, word: { word: 'numbers.' },
+    do: [{ pdf: 'numbers.' }, INSERT, { wait: 300 }, { js: `(() => { const b = satexHealth().text, t0 = performance.now(); self.__lat = { w: -1, p: -1 }; const id = setInterval(() => { const t = satexHealth().text; if (t !== b && self.__lat.w < 0) self.__lat.w = Math.round(performance.now() - t0); if (/usepackage\\{tikz\\}/.test(t)) { self.__lat.p = Math.round(performance.now() - t0); clearInterval(id); } }, 10); return 1; })()` }, row(r), { wait: 15000 }, { js: 'JSON.stringify(self.__lat)' }],
+    expect: [{ js: /^NEVER$/ }] })),
   // every row of the PDF bar's Insert menu at a caret in prose: what it writes must build (packages loaded with it)
   ...['Inline math', 'Display math', 'Aligned', 'Figure with a drawing', 'Bulleted list', 'Numbered list', 'Equation', 'Aligned equations', 'Section heading', 'Footnote', 'Citation', 'Reference', 'TikZ picture', 'Forest tree'].map((label) => ({ entry: row(label), label })).map(({ entry, label: row }) => ({
     kind: 'user', name: `u-insert-${row.toLowerCase().replace(/\W+/g, '-')}`, pdf: true, source: PAPER, word: { word: 'numbers.' },
