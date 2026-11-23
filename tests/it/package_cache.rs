@@ -320,6 +320,22 @@ fn an_own_package_replays_every_fact_reading_it_records() {
     assert_eq!(differing_facts(&read, &replayed), Vec::<String>::new());
 }
 
+/// A package the document opened with `\\openin` before loading it is still a package: older
+/// kernels' `\\IfFileExists` open each file so, and the load kept the kind of that first read
+/// (input), so the run stopped charging the load's lines to it and no segment was ever stored.
+#[test]
+fn a_package_opened_before_its_load_is_cached() {
+    if !installed() {
+        return;
+    }
+    let dir = project("opened-first");
+    let document = preamble("\\newread\\probe \\openin\\probe=outer.sty \\closein\\probe");
+    let read = run(&dir, &document);
+    let replayed = run(&dir, &document);
+    assert_eq!(served(&read, "outer"), Some(false), "{:?}", read.package_caches);
+    assert_eq!(served(&replayed, "outer"), Some(true), "{:?}", replayed.package_caches);
+}
+
 /// A replayed load that set nothing on the main vertical list keeps its tail: `\\lastkern`
 /// after it reads the kern before it, served or read.
 #[test]

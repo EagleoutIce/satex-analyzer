@@ -15684,6 +15684,12 @@ will look undefined",
             }
         }
         if let Some(i) = self.file_index(&path) {
+            // A file opened before it is loaded (`\IfFileExists` reads it with `\openin` on older
+            // kernels) is the package or class its load makes it.
+            let known = &mut self.out.files[i].kind;
+            if *known == LoadKind::Input && kind.is_package() {
+                *known = kind;
+            }
             return i as FileId;
         }
         if self.cfg.verbose >= 1 {
