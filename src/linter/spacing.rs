@@ -205,7 +205,9 @@ verbatim and in the typewriter family (`\\ttdefault`, as `\\texttt` and
 list of single words or nothing, as in `plot(x, y)` or `c(1, 2, 3)`.  What an
 undefined command or environment leaves behind is unknown code as well, so
 every prose rule skips it: the command's arguments and the rest of its
-statement or line, an environment's body up to its `\\end`.
+statement or line, an environment's body up to its `\\end`.  So is text that
+only a path the analysis could not decide sets: it may be code whose reading
+the analysis lost, as TikZ path text in a macro body.
 
 Fix by moving the space to the other side of the parenthesis.",
         references: &[Ref { source: Source::Chktex, at: "36" }, Ref { source: Source::Chktex, at: "37" }],

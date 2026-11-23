@@ -56,6 +56,10 @@ pub struct Definition {
     /// statement on the file's own path, not a line of a macro body that
     /// runs per call.
     pub stated: bool,
+    /// The site this fact is recorded under: the defining command's, also
+    /// where `span` shows the name (`Machine::def_command`). A cache
+    /// replays it under the same site, so cold and served runs agree.
+    pub key: Span,
 }
 
 impl Definition {

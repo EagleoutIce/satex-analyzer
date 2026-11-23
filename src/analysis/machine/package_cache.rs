@@ -305,6 +305,8 @@ struct CachedDefinition {
     subject: Option<Sym>,
     mode: DefMode,
     span: Span,
+    /// [`Definition::key`], relative as `span`.
+    key: Span,
     package: Option<Sym>,
     node: VRef,
     mac: Option<Rc<MacroDef>>,
@@ -1768,6 +1770,7 @@ impl Machine<'_> {
             file_calls: _,
             counter_namespace: _,
             name_token: _,
+            def_command: _,
             own_files: _,
             file_ids: _,
             digits_made: _,
@@ -2776,14 +2779,15 @@ impl Machine<'_> {
             else {
                 continue;
             };
-            let span = span_in(d.span, site);
-            if let Some(&i) = self.definition_sites.get(&(span, d.name, d.package)) {
+            let (span, key) = (span_in(d.span, site), span_in(d.key, site));
+            if let Some(&i) = self.definition_sites.get(&(key, d.name, d.package)) {
                 crate::analysis::facts::Definition::rerun(&mut self.out.facts.defs, i, d.certain, mac);
                 continue;
             }
             let cds = self.resolve_cds(&st, &mut ids, &reached, before, site, &d.cds);
-            self.definition_sites.insert_mut((span, d.name, d.package), self.out.facts.defs.len());
+            self.definition_sites.insert_mut((key, d.name, d.package), self.out.facts.defs.len());
             self.out.facts.defs.push(Definition {
+                key,
                 name: d.name,
                 by: d.by,
                 tag: leak(&d.tag),
@@ -3889,6 +3893,7 @@ impl Machine<'_> {
                 subject: d.subject,
                 mode: d.mode,
                 span: span_out(d.span, site),
+                key: span_out(d.key, site),
                 package: d.package,
                 node: vref(d.node),
                 mac: match (spliced, edited) {
@@ -4312,14 +4317,14 @@ fn merge_sites(definitions: Vec<CachedDefinition>) -> Vec<CachedDefinition> {
     let mut at: HashMap<(Span, Sym, Option<Sym>), usize> = HashMap::default();
     let mut out: Vec<CachedDefinition> = Vec::with_capacity(definitions.len());
     for d in definitions {
-        match at.get(&(d.span, d.name, d.package)) {
+        match at.get(&(d.key, d.name, d.package)) {
             Some(&i) => {
                 let first = &mut out[i];
                 first.certain &= d.certain;
                 (first.mac, first.splice, first.edit, first.holes) = (d.mac, d.splice, d.edit, d.holes);
             }
             None => {
-                at.insert((d.span, d.name, d.package), out.len());
+                at.insert((d.key, d.name, d.package), out.len());
                 out.push(d);
             }
         }

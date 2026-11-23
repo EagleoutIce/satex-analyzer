@@ -2536,6 +2536,9 @@ pub struct Machine<'a> {
     trace_full: bool,
     /// The token the last `get_r_token` read: the name a definition makes.
     pub(crate) name_token: Option<Token>,
+    /// A definition [`Machine::definition_site`] placed at its name: the
+    /// name's place and the defining command's, which keys its fact.
+    pub(crate) def_command: Option<(Span, Span)>,
     /// [`Machine::project_file`] per file: 0 not asked, 1 no, 2 yes.
     own_files: Vec<u8>,
     /// `out.files` by path ([`Machine::file_index`]): a font's metrics are
@@ -3514,6 +3517,7 @@ impl<'a> Machine<'a> {
             reading_command: false,
             head_call: false,
             name_token: None,
+            def_command: None,
             own_files: Vec::new(),
             file_ids: HashMap::default(),
             digits_made: (0, 0),
@@ -4774,7 +4778,7 @@ impl<'a> Machine<'a> {
                     self.out.kernel_sites = cached
                         .sites()
                         .iter()
-                        .map(|(sym, file, line)| (Sym(*sym), Span::new(*file, *line, 0)))
+                        .map(|&(sym, file, line, col)| (Sym(sym), Span::new(file, line, col)))
                         .collect();
                     self.wild = cached.wild().clone();
                     // The cache carries what the kernel build diagnosed.
@@ -4857,13 +4861,13 @@ impl<'a> Machine<'a> {
         let kernel: Vec<(char, u8)> = self.catcodes.diff(&plain).into_iter().filter(|(c, _)| c.is_ascii()).collect();
         self.catcodes = self.format_catcodes(&kernel);
         let preload_truncated = self.run_preload();
-        let sites: Vec<(u32, u16, u32)> = {
+        let sites: Vec<(u32, u16, u32, u32)> = {
             let mut seen: HashMap<Sym, Span> = HashMap::default();
             for def in &self.out.facts.defs {
                 seen.insert(def.name, def.span);
             }
             self.out.kernel_sites = seen.clone();
-            seen.into_iter().map(|(sym, span)| (sym.0, span.file, span.line)).collect()
+            seen.into_iter().map(|(sym, span)| (sym.0, span.file, span.line, span.col)).collect()
         };
         let definers = {
             let files = &self.out.files;
@@ -7822,7 +7826,14 @@ will look undefined",
 
         let shown = self.cfg.trace.then(|| self.meaning_text(name));
         self.record_with(Step::Define, name, span, || shown);
-        let existing = self.definition_sites.get(&(span, name, self.package())).copied();
+        // The fact's site is the defining command's even where it is shown
+        // at the name: one command defining names handed from many places
+        // stays one site, as the run's joins of its texts expect.
+        let site = match self.def_command.take() {
+            Some((place, command)) if place == span => command,
+            _ => span,
+        };
+        let existing = self.definition_sites.get(&(site, name, self.package())).copied();
         // Kernel code re-run in a new environment (`\list`'s own `\def\@itemlabel{#1}`,
         // once per `\begin{itemize}`/`\begin{enumerate}`) hits the same site every time.
         // Without this, the first context seen there would be the only one `explain`
@@ -7879,6 +7890,7 @@ will look undefined",
                     _ => by,
                 };
                 let fact = Definition {
+                    key: site,
                     name,
                     by,
                     tag,
@@ -7918,7 +7930,7 @@ will look undefined",
                         let runs = SiteRuns { runs: vec![(self.path_id, mac.clone(), key)], ..SiteRuns::default() };
                         self.scratch.site_texts.insert(self.out.facts.defs.len(), runs);
                     }
-                    self.definition_sites.insert_mut((span, name, fact.package), self.out.facts.defs.len());
+                    self.definition_sites.insert_mut((site, name, fact.package), self.out.facts.defs.len());
                     self.out.facts.defs.push(fact);
                 } else if context_is_new {
                     self.out.facts.defs.push(fact);
@@ -15708,7 +15720,7 @@ will look undefined",
         // file. A file the code of some other call opens stands at the
         // `\input` that opened it.
         let span = match self.file_call {
-            Some((_, call)) if self.call_names_file(call, name) => call,
+            Some((sym, call)) if self.call_names_file(sym, call, name) => call,
             _ => self.line_naming_file(name).unwrap_or(span),
         };
         let follow = match kind {
@@ -15999,11 +16011,17 @@ will look undefined",
         (current, directory, kind, options)
     }
 
-    /// Whether the source text of the call at `call`, up to where its file
-    /// is read now, names the file `name`.
-    fn call_names_file(&self, call: Span, name: &str) -> bool {
+    /// Whether the source text of the call `sym` at `call`, up to where its
+    /// file is read now, names the file `name`, or the body of the macro it
+    /// calls does: amsart.cls `\def`s `\@tempa` to `\RequirePackage{amsmath}`
+    /// and calls `\@tempa` lines later.
+    fn call_names_file(&self, sym: Sym, call: Span, name: &str) -> bool {
         let base = std::path::Path::new(name.trim_matches('"'));
         let Some(stem) = base.file_stem().map(|s| s.to_string_lossy().into_owned()) else { return false };
+        let body = self.env.meaning(sym).as_macro().map(|m| self.text_of(&m.replacement_text));
+        if body.is_some_and(|body| body.contains(stem.as_str())) {
+            return true;
+        }
         let text = self.input.iter().rev().find_map(|frame| match frame {
             Frame::File { mouth, .. } if mouth.file == call.file => Some(mouth.text_since(call.line, call.col)),
             _ => None,
@@ -16076,7 +16094,7 @@ will look undefined",
                 // Only a request some file's text makes: one the code of a
                 // hook or a package makes has no place in the document.
                 let span = match self.file_call {
-                    Some((_, call)) if self.call_names_file(call, &current) => Some(call),
+                    Some((sym, call)) if self.call_names_file(sym, call, &current) => Some(call),
                     _ => self.line_naming_file(&current),
                 };
                 let Some(span) = span else { return };

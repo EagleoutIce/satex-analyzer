@@ -1648,7 +1648,7 @@ stubs:
 | `limits.checkpoint_body_share` | `8` | in the body a state is also saved between top-level lines after this fraction of `limits.checkpoint_steps` |
 | `limits.checkpoints_after_edit` | `2` | states kept on the first lines past an edit and past the next pages shipped, where the next edit's run may meet this one |
 | `limits.checkpoint_meet_steps` | `4194304` | after an edit far from every saved state the old text is run again to save states around it, at most this many steps past the edit. `0` never does |
-| `limits.seconds` | `300` | stops the run, lints after it share the same budget |
+| `limits.seconds` | `600` | stops the run, lints after it share the same budget |
 | `limits.degrade_at_percent` | `100` (off) | past that share of `limits.steps`, halves the time-only limits, reported as `precision-degraded` |
 | `limits.threads` | `0` (`min(4, cores)`) | file scans only, the interpreter is one thread |
 

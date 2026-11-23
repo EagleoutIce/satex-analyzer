@@ -50,6 +50,7 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 
 ### CLI
 
+- `fix` **`satex explain` places a kernel command at its declaration** (`\textit @ latex.ltx:14219:25`, not inside `\DeclareRobustCommand`), with its column also when read from the kernel cache.
 - `fix` **`satex slice` run from the document's folder embeds each local file once, under its relative name.** It also wrote a copy under the file's absolute path, so compiling an old slice could overwrite the user's own package.
 - `fix` **A position may be a bare line** (`satex slice --at 40`): it names the line from its first column, where it said "expected LINE:COL".
 - `fix` **`satex -f chapter.tex` reads a chapter through the document that `\input`s it**, as the editor does: alone it reported `\section` as undefined on every line. A macro's bare `{#1}` no longer counts as naming a file, which also gave editors a wrong root.
@@ -147,6 +148,7 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 
 ### Lints
 
+- `fix` **Prose rules skip text only an undecided path sets** (TikZ path code a run could not follow read as `(frame.north west)` prose), and a duplicate package load names the class line that made the first load, not the kernel's.
 - `fix` **Values the run did not know read as one `…` in every finding**, never as satex's internal names for them (`\-16384..16383#8970.8059.0`, 32-digit digests, private-use marks).
 - `fix` **A run a time limit stopped no longer reports labels, packages or names as absent from the whole document**: what it did not reach may hold them, so such findings are precision notes naming where the limit stopped the run.
 - `fix` **`preamble-cost` names the class when the document loads no package itself** ("the class beamer reads 375 files"), not "0 packages requested directly".
