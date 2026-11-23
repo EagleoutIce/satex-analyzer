@@ -487,7 +487,7 @@ pub mod fixed {
                 return;
             }
             self.0.truncate(n.div_ceil(CHUNK));
-            let keep = n - (n - 1) / CHUNK * CHUNK;
+            let keep = n - n.saturating_sub(1) / CHUNK * CHUNK;
             if let Some(last) = self.0.last_mut().filter(|c| c.len() > keep) {
                 std::rc::Rc::make_mut(last).truncate(keep);
             }

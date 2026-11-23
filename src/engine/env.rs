@@ -4608,7 +4608,7 @@ mod tests {
                     5 if n % CLEAR == 0 => env.clear_recent(),
                     // A rewind puts back what the fork saw, stamps too: a later write is undone.
                     4 if !forks.is_empty() => {
-                        let fork = forks.remove(forks.len() - 2 + i);
+                        let fork = forks.remove(forks.len() + i - 2);
                         env.rewind(&fork);
                         env.unfork(fork);
                     }

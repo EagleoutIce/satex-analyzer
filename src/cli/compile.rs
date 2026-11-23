@@ -32,6 +32,7 @@ pub struct Built {
     /// The status, when the build failed without a TeX error in the log.
     failed: Option<String>,
     /// The key of the explanation: the logged messages, the source, satex and its settings.
+    #[cfg_attr(not(unix), allow(dead_code))]
     head: String,
     /// The records the last explanation of this log gave, when nothing it read changed since.
     stored: Option<Vec<Record>>,
@@ -1027,7 +1028,6 @@ fn follow(at: &Path, job: &str, named: Option<(String, String)>) -> Followed {
             }
         }
         whole &= send(&lines);
-        drop(send);
         drop(pipe.take());
         whole &= gzip.wait().is_ok_and(|s| s.success());
         // an aborted pass removes its data: what was read of it is no file

@@ -21,6 +21,8 @@ pub fn lead(command: &mut Command) {
             Ok(())
         });
     }
+    #[cfg(not(unix))]
+    let _ = command;
 }
 
 /// `command` without the descriptors this process was handed, but its standard three: a helper
