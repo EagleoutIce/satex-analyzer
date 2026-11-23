@@ -8,8 +8,11 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 
 ### Site
 
+- `fix` **A click into an empty table cell in the PDF puts the caret there.** A cell with no text, only spaces or a `~` has no word to click, so Type mode placed no caret. The caret now goes to the cell's place in the source, between its `&`s, drawn where the column's alignment sets the first letter, and typing fills the cell.
+- `feat` **Rows and columns of a table are inserted, deleted and reordered from the PDF and the Typeset view.** A + stands on the line between two columns (under the table) or two rows (left of it) the pointer is near, a × under the pointer's column and left of its row; the controls stay while the pointer is on its way to them. They show once the pointer rests, muted until aimed at, and never during a drag (a column edge, a gap, a node) or with a menu open. The chip's name and the row's grip drag to reorder. A right click on a cell, in the PDF or the Typeset view, has Row and Column submenus. The table is rewritten as the table dialog writes it: the column spec, every row's cells, `\multicolumn` spans grown or shrunk, a rule moved with its row or column, `\cline` and `\cmidrule` renumbered. One undo takes it back.
+- `feat` **The landing page's compile numbers: a 184-page thesis with figures, one measure throughout.** A one-edit rebuild of a generated thesis (TikZ and pgfplots figures every fifth page, hyperref) takes 1.5 s against latexmk's 2.0 s. Every ratio is latexmk's time over satex's, the number on top of each tile. That the output matches latexmk is said once, as a fact.
 - `feat` **Typing in a table also wraps paragraph cells and moves `\multicolumn` spans and the column chips.** A `p`, `m`, `b` or `X` cell rewraps to its width and the rows below move down. A span keeps its place in its columns, and a span typed wider widens its last column. The column chips follow the echo.
-- `feat` **Typing in a table cell moves the whole table at once.** The column widens or narrows for every row, the columns after it and the rules follow, and a centered table stays centered, so nothing jumps when the build lands.
+- `feat` **Typing in a table cell moves the whole table at once.** The column widens or narrows for every row, the columns after it and the rules follow, and a centered table stays centered, so nothing jumps when the build lands. [`40766a3`](https://github.com/EagleoutIce/satex-analyzer/commit/40766a3)
 - `feat` **Compile benchmarks: `satex compile` against latexmk and plain engine runs.** The benchmark page compares cold builds, rebuilds with nothing changed and rebuilds after one edit per document and toolchain (pdfTeX, LuaTeX, XeTeX), with whether the output is the same; the landing page shows the main numbers.
 ### VS Code
 
@@ -47,10 +50,17 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 
 ### CLI
 
-- `fix` **`--set` before the command and after it both apply.** `satex --set limits.steps=500 lint --set load.inputs=true` kept only the second, so the first limit was lost.
+- `fix` **`satex slice` run from the document's folder embeds each local file once, under its relative name.** It also wrote a copy under the file's absolute path, so compiling an old slice could overwrite the user's own package.
+- `fix` **A position may be a bare line** (`satex slice --at 40`): it names the line from its first column, where it said "expected LINE:COL".
+- `fix` **`satex -f chapter.tex` reads a chapter through the document that `\input`s it**, as the editor does: alone it reported `\section` as undefined on every line. A macro's bare `{#1}` no longer counts as naming a file, which also gave editors a wrong root.
+- `fix` **`--set` before the command and after it both apply.** `satex --set limits.steps=500 lint --set load.inputs=true` kept only the second, so the first limit was lost. [`4cf8bfc`](https://github.com/EagleoutIce/satex-analyzer/commit/4cf8bfc)
 
 ### Analysis
 
+- `fix` **A cut recursion no longer hangs counting what the dropped text would close.** Each macro is counted once; acmart's title with `\maketitle` inside `\affiliation` ran past `limits.seconds` for minutes.
+- `fix` **A citation key or label with non-ASCII letters (`Härer2020`) under pdfTeX matches its `.bib` entry** and is shown as written, not as its bytes (`HÃ¤rer2020`); it was reported as undefined.
+- `fix` **siunitx `S` columns with braced cells (`{B}`) no longer give false errors.** A cell's braces count from where its template's first part ends, as in TeX, not from a count of the template's tokens.
+- `fix` **A label that a macro or a `\foreach` refers to itself is no longer reported as never referenced.**
 - `fix` **A `\csname` name with an unknown character keeps every meaning of the names it may spell, never just `\relax`.** Past the per-line split bound such a name read as undefined although a name of its family was defined.
 - `fix` **An `\outer` name in a macro's argument gives TeX's one error.** It reads "Forbidden control sequence found while scanning use of \\end", the call ends without a second "Paragraph ended" error, `\long` or not, and "Argument of … has an extra }" names the macro reading the argument.
 - `fix` **ACM papers end again, in seconds** (`acmart` with `\email` under `sigconf`: 9.6 s for the sample paper, where the run stopped at a limit). A command that puts nothing on a list (`\pdfnobuiltintounicode`, `\pdffontattr`, `\pdfcatalog`, `\afterassignment`) adds no atom to a formula, so the first formula of a size keeps its size with `cmap` loaded. The title box has its height and acmart's title loop is decided.
@@ -134,6 +144,17 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 
 ### Lints
 
+- `fix` **Values the run did not know read as one `…` in every finding**, never as satex's internal names for them (`\-16384..16383#8970.8059.0`, 32-digit digests, private-use marks).
+- `fix` **A run a time limit stopped no longer reports labels, packages or names as absent from the whole document**: what it did not reach may hold them, so such findings are precision notes naming where the limit stopped the run.
+- `fix` **`preamble-cost` names the class when the document loads no package itself** ("the class beamer reads 375 files"), not "0 packages requested directly".
+- `fix` **A run that did not read everything no longer offers to delete a package as unused**: the part it left may use it, so it is a precision note.
+- `fix` **`primitive-tex-command` no longer reports the project's own packages and classes**, where `\csname` and `\hskip` are the code's tools; its advice is for the document's text.
+- `fix` **Color findings name a color as the author wrote it** (`gray`), else by its value (`#a9a9a9`), never by an internal name a package made (`pgffillcolor`), and never one name for both colors of a pair.
+- `fix` **A file that only defines (statistics a script writes) is one finding, not hundreds.** Its unused names are listed in one finding, and its look-alike lines and equal values are no clones (one thesis: 1914 findings down to 268). `spelled-out-macro` reports only words that look like names (`TinyNet`, `cellR`, `CI`), not everyday words a macro holds.
+- `fix` **`\usepackage[T1]{fontenc}` is no longer reported as unused.** A package that sets a font default the text is set in acts on every character, though no name it defines is called.
+- `fix` **Fewer false style findings.** `(a+b)^2` is a note, not a warning; no missing italic correction where the next character stands in another box (forest and TikZ nodes); `indistinct-colors` reports only pairs that include a color the document itself names.
+- `fix` **No finding or fix names a command the author cannot write.** `spelled-out-macro` no longer offers `\reserved@a{}`, `\@currenvir{}` or an expl3 name like `\my_word:` as the command for a typed word, and `primitive-tex-command` no longer rewrites a `\csname` in the document to the kernel's `\@namedef`, which breaks there because `@` is not a letter. One check decides: a command the document can write has only letters in its name.
+- `feat` **New info `spelled-out-macro` (S070): a word a command of the document sets, typed out by hand.** `TinyNet` written where `\newcommand\model{TinyNet}` exists, or `cellR` where a glossary entry is named so, gets the fix `\model{}` or `\gls{cellr}`, so a renamed name changes everywhere. When a word counts as the same is one setting (`lints.spelled-out-macro.equivalence`: exact, glyphs, case or letters), from the one ladder of text equivalences the bibliography's duplicate-title check and the cross-reference keys now share.
 - `fix` **`bibliography-entry-missing-field` follows each reader's rules.** An entry with `crossref` is checked against what its parent hands down: every field with BibTeX, what biblatex's inheritance rules say with biber (a `@proceedings`' `title` arrives as `booktitle`). `xref` hands down nothing, and a parent that is not there leaves the child as it is. Before, any entry with `crossref` or `xref` went unchecked. biber's `type` of a `@phdthesis` or `@techreport` is no longer asked for, a `@set` is not asked for its members' fields, and with BibTeX `journaltitle` no longer counts as `journal`. Two broken entries cited in one `\cite{a,b}` are both named.
 - `fix` **A `.bib` entry is read by BibTeX's grammar**: fields after `"a" # b` are no longer lost, and an `@` inside a value starts no entry.
 - `fix` **`\nocite{*}` with biblatex cites every entry** for the rules on databases.
@@ -142,6 +163,28 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 
 ### Playground
 
+- `fix` **Insert ▸ TikZ picture loads only tikz, and writes at once.** The names of one write are resolved together: `\node` inside the picture runs clean under tikz, so it no longer loaded `pgflibraryplotmarks` after seconds of probes.
+- `feat-fix` **Learning command arguments (for completion and hovers) no longer shows as a running step.** The status line reads as ready once the document is analyzed; the learning goes on quietly, named in the status line's tooltip.
+- `feat-fix` **The editor's Color menu is the pages' color picker** (swatches, the document's colors, Mix, Custom). The format bar shows each size in points (`small · 9 pt`) and each family's font (`Roman · Latin Modern`), each with a Custom entry, and the color in effect. A line with a finding offers its table, figure or placement dialog from the finding's marker too.
+- `feat-fix` **Typing in a footnote shows the text at the page foot**, where the build sets it; the caret no longer jumps down when the build lands. **Enter inside an inline formula** does nothing (at its end it steps out) instead of breaking the source line. **Left and Right in math stop in every `_{…}` and `^{…}` slot**, empty ones too.
+- `feat-fix` **The PDF bar's fold button is a small chevron, and it takes no room while hidden.** Clicking an example window on the landing page opens it in the playground. The typing video shows the page number and types into the new list item.
+- `feat-fix` **Enter in a footnote starts a paragraph inside it, and a click below a footnote goes to its end.** Both used to start a body paragraph after `\footnote{…}`.
+- `feat-fix` **The first key typed into a row shows the moved words in the same frame.** They were a page background the browser painted a frame late; they are drawn on a canvas at once. The completion list marks only its chosen entry, so a pointer passing over it marks nothing.
+- `feat-fix` **The sample paper builds without an error.** Its directly recursive example macro was named `\repeat`, which LaTeX defines for `\loop`; it is `\recurse` now.
+- `feat-fix` **Typing beside a formula keeps it whole.** A row redrawn while typing (a `\newcommand` output changed) copied the page's pixels only as tall as the typed word: `\sum_i` turned into a bar and lost its `i`. The whole row's height moves now.
+- `feat-fix` **The page no longer blinks when a build lands while typing.** The page kept on screen stays drawn, so the typed text and whole pages no longer vanish for a frame at each build. A centered title stays centered while it is typed.
+- `feat-fix` **The landing claim shows its typing caret from the first letter on, as tall as the resting caret.**
+- `feat` **Ctrl+Left and Ctrl+Right move the Type caret by words.** The caret stops at word starts and ends, across lines, and never inside a command's name or a key.
+- `feat` **A finding on the PDF offers its quick fix.** Hovering its mark shows the editor's card with a fix button, and the right-click menu lists the fixes under the pointer.
+- `feat-fix` **The Type caret stays at the end of an inline formula when the build lands.** It used to jump past the words after the formula.
+- `feat-fix` **A hover or Explain asked while the analysis runs is answered at once from the last finished run** (3.2–3.7 s before, about 50 ms now): the playground's server answers every reading question during a run, as the native one does.
+- `feat-fix` **The editor's context menu opens at once again, also while an analysis runs.** It waited for the worker's widget and rename answers behind the run and showed nothing until the run ended. Those rows now follow in place.
+- `feat-fix` **A right click on the pages or the Typeset view always opens the menu.** Where the run has not placed the text yet, it says so in a disabled row instead of showing nothing.
+- `feat` **The editor's and the pages' context menus share one look: header, rows, hints and submenus alike, in light and dark.**
+- `feat` **A selection's menu starts with a format bar: B, I and T toggles pressed where that style is in force, and size and family dropdowns at their current values.** Both the editor and the pages show it.
+- `feat-fix` **The math layer no longer tints a title's author.** `\maketitle` sets the author in a `tabular`, which LaTeX builds in math mode: a math span its box fills is text.
+- `feat-fix` **A click on the page only places the caret.** The preview redrew the clicked word from its source with commands stripped (`sa\TeX` drawn as `sa` and stray glyphs).
+- `feat-fix` **The typing preview shows math symbols.** `\cdot`, `\alpha` and other commands with a symbol draw it at once (`a ⋅ b`), where they vanished until the build.
 - `feat-fix` **A command name half typed on the page no longer flashes "1 error".** Typing `\su` on the way to `\sum` started a build of the unfinished name, and its error showed until the next build. Builds and findings now wait until the name is finished, 1.5 s at most.
 - `perf-fix` **Typing into the PDF: the pages follow each key also with automatic compile on.** A build landed 1-3 s after the last key, now 0.35 s: builds up to the auto-compile delay count as live, and each key no longer restarts the timer.
 - `feat` **tikzpingus comes with the first download**, cached like tikz, so a penguin draws without a fetch.
@@ -710,4 +753,4 @@ Usable on real documents: faster and more precise analysis, the playground and `
 
 ## v0.1.0 (2026-09-25)
 
-First public version: the abstract interpreter for (La)TeX with lints, a language server, a CLI for Windows, macOS and Linux, and the wiki. [`5af9583`](https://github.com/EagleoutIce/satex-analyzer/commit/5af9583) [`5570f80`](https://github.com/EagleoutIce/satex-analyzer/commit/5570f80)
+First public version: the abstract interpreter for (La)TeX with lints, a language server, a CLI for Windows, macOS and Linux, and the wiki. [`5af9583`](https://github.com/EagleoutIce/satex-analyzer/commit/5af9583) [`5570f80`](https://github.com/EagleoutIce/satex-analyzer/commit/5570f80)**The completion list on the page never covers the picture, the formula being typed or a heading.** It opens below, above or beside the caret, narrowed into free room if needed, wherever it hides the least page text.
