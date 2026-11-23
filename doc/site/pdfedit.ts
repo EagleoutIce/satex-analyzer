@@ -23,6 +23,8 @@ type Edit = { from: number; to: number; now: string };
 /** A table's own column padding (`padding`) or one gap's space (`gap`): as written, and the edits setting it. */
 type Spacing = { now: string | null; edits(v: string | null): Edit[] };
 type Respec = { body: string; pre: string; letter: string; array: boolean };
+/** A row or column inserted before `at`, deleted at `at`, or moved from `at` to `to` (pdfedit.ts tableOp). */
+type TableOp = { what: 'row' | 'col'; act: 'insert' | 'delete' | 'move'; at: number; to?: number };
 type Form = { kind: 'len'; num: number; unit: string } | { kind: 'share'; num: number; name: string; lead: boolean };
 /** A piece of a paragraph for the echo's line breaking: its width `n` and the space before it `gap` (bp); `par` starts
  * a new paragraph (Enter), `brk` a new row of the same one (`\\\\`). Anything else it carries (its text, the page word it is) rides along. */
@@ -78,6 +80,7 @@ declare global {
       callAround(text: string, at: number): { name: string; from: number; open: number; close: number } | null;
       styleAt(text: string, at: number): { it: boolean | null; bf: boolean | null; tt: boolean | null; size: number | null };
       leave(text: string, at: number, step: number): number | null;
+      wordStep(text: string, at: number, step: number, why: (from: number, to: number) => string | null): number;
       toggle(text: string, at: number, cmd: string): [number, number, string, number];
       displayEnd(text: string, at: number): boolean;
       onRow(v: Word, r: Word): boolean;
@@ -90,6 +93,7 @@ declare global {
       cells(text: string, at: number): { rows: [number, number][][]; r: number; c: number } | null;
       cellStep(text: string, at: number, dir: number): number | null;
       rowAfter(text: string, at: number): [number, number, string, number] | null;
+      tableOp(T: any, s: any, op: TableOp): boolean;
       verbatimAt(text: string, at: number): Verb | null;
       columns(boxes: Box[], file: string, table: Table, tables: Table[], words?: Word[]): (Placed & { approx?: boolean; measured?: boolean })[];
       measure(words: Word[], box: Box, n: number, aligns?: string): ([number, number] | null)[];
@@ -551,6 +555,66 @@ declare global {
     if (at2) return [at2, at2, `\n${amp} \\\\`, 1];
     return [end, end, ` \\\\\n${amp}`, 4];
   }
+  /** The partial rules (`\cline{a-b}`, `\cmidrule(lr){a-b}`) of table `s`, each range (1-based) renumbered by `fix`;
+   * a rule whose range `fix` makes null goes. */
+  function partial(s: any, fix: (a: number, b: number) => [number, number] | null) {
+    const re = /\\(cline|cmidrule)(\s*\([^)]*\))?\s*\{(\d+)-(\d+)\}/g;
+    const redo = (list: string[]) => list.map((x) => x.replace(re, (_, name, trim = '', a, b) => {
+      const r = fix(+a, +b);
+      return r ? `\\${name}${trim}{${r[0]}-${r[1]}}` : '';
+    })).filter((x) => x.trim());
+    for (const r of s.rows) r.before = redo(r.before);
+    s.after = redo(s.after);
+  }
+  /** Rows `a` and `a + 1` swapped (their cells already): a rule goes with the row above it (`row \\\\ \\hline`), as its
+   * row end (`\\\\[2pt]`) does; the rules over the first row and under the last stay at the table's edges. */
+  function rulesSwap(s: any, a: number) {
+    const A = s.rows[a], B = s.rows[a + 1], C = s.rows[a + 2];
+    if (C) [B.before, C.before] = [C.before, B.before];
+    if (A.end && B.end) [A.end, B.end] = [B.end, A.end];
+    return true;
+  }
+  /** Columns `a` and `a + 1` swapped (their cells and specs already): an inner rule (`|`, `@{…}`) goes with the column
+   * left of it, the table's outer edges stay; a one-column `\\cline`/`\\cmidrule` follows its column. */
+  function sepsSwap(s: any, a: number) {
+    if (a + 2 < s.cols.length) [s.seps[a + 1], s.seps[a + 2]] = [s.seps[a + 2], s.seps[a + 1]];
+    partial(s, (x, y) => x === y && x === a + 1 ? [a + 2, a + 2] : x === y && x === a + 2 ? [a + 1, a + 1] : [x, y]);
+    return true;
+  }
+  /** One structural edit of a table on the dialog's model `T` (dialogs.ts `table`), state `s` changed in place: a row or
+   * column inserted before `at`, the one at `at` deleted, or moved to `to` one step at a time. A new column takes its
+   * neighbour's kind (`X` beside `X`). False, `s` untouched, when refused: the last row or column, a move across a
+   * `\multicolumn` or `\multirow`. Pure: the server's table printer writes `s` back as one edit. */
+  function tableOp(T: any, s: any, op: TableOp): boolean {
+    const row = op.what === 'row', n = row ? s.rows.length : s.cols.length;
+    if (!Number.isInteger(op.at) || op.at < 0 || op.at > n || (op.act !== 'insert' && op.at === n)) return false;
+    if (op.act === 'insert') {
+      if (row) T.insertRow(s, op.at);
+      else {
+        const like = s.cols[op.at > 0 ? op.at - 1 : 0];
+        T.insertCol(s, op.at);
+        if (like) Object.assign(s.cols[op.at], { align: like.align, arg: like.arg });
+        // a rule over the place grows, one after it moves right
+        partial(s, (a, b) => [a > op.at ? a + 1 : a, b > op.at ? b + 1 : b]);
+      }
+      return true;
+    }
+    if (op.act === 'delete') {
+      if (row) return T.deleteRows(s, op.at, op.at);
+      if (!T.deleteCols(s, op.at, op.at)) return false;
+      // a rule over the deleted column alone goes, one reaching over it shrinks, one after it moves left
+      const K = op.at + 1;
+      partial(s, (a, b) => a === K && b === K ? null : [a > K ? a - 1 : a, b >= K ? b - 1 : b]);
+      return true;
+    }
+    const to = op.to ?? -1, d = Math.sign(to - op.at);
+    if (to < 0 || to >= n || !d) return false;
+    const was = JSON.stringify(s), back = () => { Object.assign(s, JSON.parse(was)); return false; };
+    // a `\multirow` stands over rows: a row move into or out of it is refused, as the dialog's column move across a span is
+    const tall = (k: number) => T.layout(s)[k]?.some((o: { rows: number }) => o.rows > 1);
+    for (let k = op.at; k !== to; k += d) if (row ? tall(k) || tall(k + d) || !T.moveRow(s, k, d) || !rulesSwap(s, Math.min(k, k + d)) : !T.moveCol(s, k, d) || !sepsSwap(s, Math.min(k, k + d))) return back();
+    return true;
+  }
   /** A structural token of the source: `{`, `}`, a command's option `[` and `]`, `$`, `$$`, `&`, `#`, `_`, `^`, `par` (a blank line), `%` (a comment),
    * `verb` (a verbatim body), `\begin{env}`/`\end{env}` with its name, or a control sequence as written (`\emph`, `\%`). */
   type Mark = { s: number; e: number; t: string };
@@ -603,6 +667,9 @@ declare global {
     }
     return st;
   }
+  /** Commands whose argument may hold paragraphs (LaTeX reads it `\long`: \@footnotetext, \@xmpar): Enter there
+   * starts a paragraph inside the argument. */
+  const LONG = /^(footnote|footnotetext|marginpar)$/;
   /** Groups whose text is a name, not output: keys, files, packages, environments' arguments. */
   const KEYS = /^(label|ref|eqref|pageref|autoref|[cC]ref|nameref|cite\w*|nocite|input|include|includegraphics|usepackage|documentclass|bibliography(style)?|url)$/;
   /** Why `text`'s characters `from..to` may not be edited as plain text, null when they may. The file is read up to
@@ -710,7 +777,8 @@ declare global {
     }
     for (const m of added) {
       // a blank line joined to the line break beside it (Enter at a line's end) is a new one, its spaces no markup
-      if (m.t === 'par' && !o.free && (ctx.groups.length || ctx.math)) return ctx.math ? 'a paragraph cannot end in math' : `a paragraph cannot end inside ${g ? `\\${g}{…}` : 'a group'}: Shift+Enter breaks the line`;
+      const short = ctx.groups.findLast(([, n]) => !LONG.test(n));
+      if (m.t === 'par' && !o.free && (short || ctx.math)) return ctx.math ? 'a paragraph cannot end in math' : `a paragraph cannot end inside ${short![1] ? `\\${short![1]}{…}` : 'a group'}: Shift+Enter breaks the line`;
       if (m.t === 'par') continue;
       if (!ownNow(m)) return m.t[0] === '\\' ? `it would change a command's name (${m.t})` : 'it would change the markup around it';
       if (m.t === '%') return 'it would start a comment';
@@ -915,12 +983,15 @@ declare global {
     if (v) return v.block ? [at, at, '\n', 1] : 'inline verbatim holds one line';
     if (!shift && cells(text, at)) return rowAfter(text, at) ?? 'no row here';
     const st = scan(text, 0, at, start()), br = shift || st.math ? '\n' : '\n\n';
+    // an inline formula stays on one source line: Enter at its end steps out past its closer, inside it does nothing
+    if (st.math === '$' || st.math === '\\(') { const m = /^[ \t]*(?:\\\)|\$)/.exec(text.slice(at)); return m ? [at, at, '', m[0].length] : 'an inline formula holds one line: Enter at its end leaves it'; }
     if (shift || st.math) return [at, at, br, br.length];
     // at the end of a command's argument (`\\textbf{world|}`, only spaces before its `}`): the new paragraph starts
     // after the command, the argument keeps its text (a paragraph inside it is TeX's "Paragraph ended before … was
     // complete"); nested arguments ended alike are left together
     let end = at;
-    for (let k = st.groups.length - 1; k >= 0 && st.groups[k]![1]; k--) {
+    // (a `\long` command's argument keeps the new paragraph: `\footnote{text|}`)
+    for (let k = st.groups.length - 1; k >= 0 && st.groups[k]![1] && !LONG.test(st.groups[k]![1]); k--) {
       let j = end;
       while (text[j] === ' ' || text[j] === '\t') j++;
       if (text[j] !== '}') break;
@@ -1607,6 +1678,26 @@ declare global {
     }
     return { labels, bib };
   }
+  /** What label `key` names and where, from the run's aux files (`\\newlabel{key}{{number}{page}{title}{anchor}…}`):
+   * `Figure 1 · §2 Methodology · p. 1`. The kind is the anchor's counter (hyperref's `figure.1`), else the key's
+   * prefix by convention (`fig:`); the section is the last one the aux lists for the contents before the label, the
+   * order TeX wrote both in. Empty where the aux names no such label. */
+  function labelWhere(aux: string[], key: string): string {
+    const KIND: Record<string, string> = { figure: 'Figure', table: 'Table', equation: 'Equation', section: 'Section', subsection: 'Section', subsubsection: 'Section', chapter: 'Chapter', part: 'Part', item: 'Item', page: 'Page' };
+    const PREFIX: Record<string, string> = { fig: 'figure', tab: 'table', eq: 'equation', sec: 'section', ssec: 'subsection', chap: 'chapter', ch: 'chapter' };
+    let sec = '';
+    for (const text of aux) for (const line of text.split('\n')) {
+      const toc = /\\contentsline\s*\{(?:chapter|section)\}\{(?:\\numberline\s*\{([^{}]*)\})?([^{}]*)\}/.exec(line);
+      if (toc && /\\@writefile\s*\{toc\}/.test(line)) { sec = `§${toc[1] ? `${toc[1]} ` : ''}${toc[2]!.trim()}`; continue; }
+      const m = /^\s*\\newlabel\s*\{([^{}]*)\}/.exec(line);
+      if (!m || m[1]!.trim() !== key) continue;
+      const parts = braced(braced(line.slice(m[0].length))[0] ?? '');
+      const counter = /^([a-z]+)\./i.exec(parts[3] ?? '')?.[1] ?? PREFIX[/^([a-z]+):/i.exec(key)?.[1]?.toLowerCase() ?? ''] ?? '';
+      const what = KIND[counter] ?? '', num = parts[0] ?? '', own = /section|chapter|part/.test(counter);
+      return [what || num ? `${what}${what && num ? ' ' : ''}${num}` : '', own ? (parts[2] ?? '').trim() : sec, parts[1] ? `p. ${parts[1]}` : ''].filter(Boolean).join(' · ');
+    }
+    return '';
+  }
   /** The braced groups `text` starts with, spaces between them skipped. */
   function braced(text: string): string[] {
     const out: string[] = [];
@@ -1792,12 +1883,32 @@ declare global {
   /** A footer cell's text `t` as set on page `page`: the page number for `\thepage` (`\pagemark`), other commands dropped. */
   const footShown = (t: string, page: string) => t.replace(/\\(?:thepage|pagemark)(?:\{\}|(?![A-Za-z@])\s*)/g, '\u0001').replace(/\\([^A-Za-z@])/g, '$1')
     .replace(/\\[A-Za-z@]+\*?\s*/g, '').replace(/[{}]/g, '').replace(/~/g, ' ').replace(/\u0001/g, page);
+  /** The notes (`\\footnote`, `\\footnotetext`, `\\marginpar`) written in `text`'s `from..to`: each its argument's text span. */
+  function notes(text: string, from: number, to: number): [number, number][] {
+    return [...text.slice(from, to).matchAll(/\\(?:footnote|footnotetext|marginpar)\s*(?:\[[^\]]*\])?\{/g)].flatMap((m) => {
+      const c = callAround(text, from + m.index! + m[0].length);
+      return c ? [[c.open + 1, c.close] as [number, number]] : [];
+    });
+  }
+  /** The note whose argument holds offset `at` (the innermost), as its text span; null outside one. A note is set at
+   * the page's foot (or margin), apart from the paragraph it is written in: the Type caret's paragraph there is the note. */
+  function noteAt(text: string, at: number): [number, number] | null {
+    for (let c = callAround(text, at); c; c = callAround(text, c.from)) if (LONG.test(c.name)) return [c.open + 1, c.close];
+    return null;
+  }
+  /** Whether a page row of `words` sets note text `arg`: its letters and digits, the note's mark aside, are part of it. */
+  function noteRow(arg: string, words: string[]): boolean {
+    const flat = (t: string) => t.normalize('NFKC').replace(/\\[A-Za-z@]+/g, '').replace(/[^\p{L}\p{N}]/gu, '');
+    const row = flat(words.join('')).replace(/^\d+(?=\D)/, ''), a = flat(arg);
+    return row.length >= 3 && a.length >= 3 && a.includes(row);
+  }
   /** Where a click on empty page space puts the caret: `rows` the page's lines (`t`, `d`, `base`, `l`, `r` in bp, `line`
-   * the 1-based line of `text` SyncTeX sets each from), `(x, y)` the click. `{kind: 'end' | 'start' | 'near', row}` on
+   * the 1-based line of `text` SyncTeX sets each from, `words` its page words), `(x, y)` the click. Below a footnote's
+   * row: `{kind: 'end', row}`, that row's end. `{kind: 'end' | 'start' | 'near', row}` on
    * or between a paragraph's lines (its end, its start, the nearest word); `{kind: 'new', at, body, caret, ghost}` a
    * new paragraph the first key writes (`body` at `at`, the caret at `caret`): after the paragraph above (a heading's
    * line, a float's `\end`), before the page's first one; `ghost` where its first line starts (`x`, `base`, `h`). */
-  function blankPlace(text: string, rows: { t: number; d: number; base: number; l: number; r: number; line: number }[], x: number, y: number) {
+  function blankPlace(text: string, rows: { t: number; d: number; base: number; l: number; r: number; line: number; words?: Word[] }[], x: number, y: number) {
     const rs = [...rows].sort((a, b) => a.base - b.base);
     if (!rs.length) return null;
     const starts = [0];
@@ -1821,7 +1932,10 @@ declare global {
     const indent = med(rs.map((r) => r.l - left).filter((d) => d > 3 && d < 40), 15);
     const on = rs.find((r) => y >= r.t && y <= r.d);
     if (on) return { kind: x > on.r ? 'end' : x < on.l ? 'start' : 'near', row: rows.indexOf(on) };
-    const i = rs.findLastIndex((r) => r.d < y), above = rs[i], below = rs[i + 1];
+    const i = rs.findLastIndex((r) => r.d < y), above = rs[i];
+    let below = rs[i + 1];
+    // a note's row (noteRow): a click below one goes to that row's end, never to a new paragraph in the body
+    const note = (r: typeof rs[0]) => { const [a, b] = para(r); return notes(text, a, b).some((n) => noteRow(text.slice(...n), (r.words ?? []).map((w) => w[5]))); };
     const near = (r: typeof rs[0]) => ({ kind: 'near', row: rows.indexOf(r) });
     if (!above) {
       // above the page's first line: a new paragraph before it where one starts there (a heading, an indented line)
@@ -1829,6 +1943,9 @@ declare global {
       const p0 = para(below!)[0];
       return { kind: 'new', at: p0, body: '\n\n', caret: p0, ghost: { x: left + indent, base: below!.base - skip, h: below!.d - below!.t } };
     }
+    if (note(above)) return { kind: 'end', row: rows.indexOf(above) };
+    // the notes under the body text are no part of its paragraph's lines: a click above them is below the body
+    if (below && note(below)) below = undefined;
     // between two lines of one paragraph: its nearest line
     const f = floatEnd(above), end = f >= 0 ? f : para(above)[1];
     if (below && f < 0 && !heading(above) && para(below)[0] === para(above)[0]) return near(y - above.d < below.t - y ? above : below);
@@ -1917,6 +2034,43 @@ declare global {
     if (step < 0 && at === c.open + 1) return c.from;
     return null;
   }
+  /** Ctrl+Right (`step` 1) or Ctrl+Left (-1) as an editor moves: past the blanks, markup and lines before the next word
+   * to that word's end (its start going left). A word is a run of letters and digits the reader sees: `why(from, to)`
+   * (pdfWhy) null or math for its first letter, so command names, keys and comments are crossed as markup, never
+   * stopped in. No word that way: the caret stays. */
+  function wordStep(text: string, at: number, step: number, why: (from: number, to: number) => string | null): number {
+    const W = /[\p{L}\p{N}]/u, back = step < 0, char = (i: number) => text[back ? i - 1 : i] ?? '';
+    const seen = (i: number) => {
+      const k = back ? i - 1 : i;
+      if (!W.test(text[k] ?? '')) return false;
+      // a letter of a `\name` is code (cheap before the scan `why` makes)
+      if (/\\[A-Za-z@]*$/.test(text.slice(Math.max(0, k - 64), k)) && /[A-Za-z@]/.test(text[k]!)) return false;
+      const w = why(k, k + 1);
+      return !w || /math/.test(w);
+    };
+    let i = at;
+    const end = back ? 0 : text.length, go = () => { i = back ? i - 1 : i + 1; };
+    while (i !== end && !seen(i)) go();
+    if (i === end) return at;
+    // the word: letters only (a run's first letter decided for it), so `bo\textbf{ld}` stops at `bo|`
+    while (i !== end && W.test(char(i))) go();
+    return i;
+  }
+  /** Left (`step` -1) or Right (1) in math through the slots of `_{…}` and `^{…}`, as an editor moves: a brace is crossed
+   * alone, a script's `_` or `^` together with its `{`, so the caret stops inside each group, an empty one too
+   * (`^{|}`). Null outside math or where no brace or script is next. */
+  function slotStep(text: string, at: number, step: number): number | null {
+    if (!scan(text, 0, at, start()).math) return null;
+    const script = (i: number) => text[i] === '_' || text[i] === '^';
+    if (step < 0) {
+      const c = text[at - 1];
+      if (c === '{' && script(at - 2)) return at - 2;
+      return c === '{' || c === '}' || script(at - 1) ? at - 1 : null;
+    }
+    const c = text[at];
+    if (script(at) && text[at + 1] === '{') return at + 2;
+    return c === '{' || c === '}' || script(at) ? at + 1 : null;
+  }
   /** Ctrl+B (`textbf`) or Ctrl+I (`textit`) without a selection, as [from, to, text, caret] (the caret from `from`): in such
    * a command's argument at its end the caret leaves after it, at its start before it, in its middle the argument splits
    * (`\\textbf{wo}|\\textbf{rld}`, the caret between, upright); outside one an empty call starts with the caret in it. */
@@ -1929,7 +2083,7 @@ declare global {
     }
     return [at, at, `\\${cmd}{}`, cmd.length + 2];
   }
-  self.satexPdfEdit = { callAround, styleAt, centeredAt, leave, toggle, onRow, run, displayEnd, offsetAt, units, treeNodes, naming, entries, shortTitle, bothTitles, renamed, leaders, checked, grow, key, broken, scan, start, cells, cellStep, rowAfter, verbatim, verbatimAt, nearest, bands, joined, place, extent, failNote, room, form, measure, tableShift, respec, halign, HALIGN, padding, gap, widthBp, snapWidth, resized, stepped, plain, editable, spans, sender, typed, erased, cluster, mathAt, boundaries, boundaryAt, inkSnap, locate, columns, wordAt, argAt, afterCall, callStart, defining, relaid, reflow, prose, refFacts, refSet, auxLabels, hunks, fit, glue, centered, apart, tokens, unset, aligned, changed, paragraph, mathRuns, footArg, footBack, footShown, blankPlace };
+  self.satexPdfEdit = { tableOp, callAround, styleAt, centeredAt, leave, wordStep, toggle, onRow, run, displayEnd, offsetAt, units, treeNodes, naming, entries, shortTitle, bothTitles, renamed, leaders, checked, grow, key, broken, scan, start, cells, cellStep, rowAfter, verbatim, verbatimAt, nearest, bands, joined, place, extent, failNote, room, form, measure, tableShift, respec, halign, HALIGN, padding, gap, widthBp, snapWidth, resized, stepped, plain, editable, spans, sender, typed, erased, cluster, mathAt, boundaries, boundaryAt, inkSnap, locate, columns, wordAt, argAt, afterCall, callStart, defining, relaid, reflow, prose, refFacts, refSet, auxLabels, hunks, fit, glue, centered, apart, tokens, unset, aligned, changed, paragraph, mathRuns, footArg, footBack, footShown, blankPlace, notes, noteAt, noteRow, slotStep, labelWhere };
 })();
 
 // TikZ nodes moved by drag: where each `\node` and path label stands in the source, and the statement a drag

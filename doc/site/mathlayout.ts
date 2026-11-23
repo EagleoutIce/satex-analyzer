@@ -603,6 +603,6 @@ const clean = (src: string): string => {
 /** The formula drawn: empty slots as boxes. */
 const formulaSvg = (src: string, metric: Metric = roughMetric) =>
   svgOf(src.replace(/\{\}/g, '{\\Box}').replace(/(&|\\\\|\\begin\{pmatrix\})[ ]*(?=&|\\\\|\\end\{pmatrix\})/g, '$1\\Box') || '\\Box', clean(src), metric);
-self.satexMath = { layout, parts, parse, css, PARAMS, spaceMu, isMath, preview, formula: { TEMPLATES, slots, next, put, wrap, clean, svg: formulaSvg } };
+self.satexMath = { layout, parts, parse, css, PARAMS, spaceMu, isMath, preview, sym, formula: { TEMPLATES, slots, next, put, wrap, clean, svg: formulaSvg } };
 // the Typeset view's math reads them (style.css falls back to the same values where this script is not loaded)
 if (self.document) for (const [k, v] of Object.entries(css())) document.documentElement.style.setProperty(k, v);

@@ -11,8 +11,15 @@ def mixed(pages, cls):
     """About one page per unit: three paragraphs, a section every second page, a chapter every
     tenth (book classes), and one of list, table, equation, cross-reference in turn."""
     book = cls != "article"
-    s = [f"\\documentclass{{{cls}}}\n\\usepackage{{amsmath,amssymb}}\n\\begin{{document}}\n"]
+    # `thesis`: a report with what theses carry: figures drawn in TikZ and pgfplots every fifth page, booktabs, hyperref
+    thesis = cls == "thesis"
+    pre = "\\usepackage{tikz,pgfplots,booktabs,graphicx}\n\\pgfplotsset{compat=1.18}\n\\usepackage{hyperref}\n" if thesis else ""
+    s = [f"\\documentclass{{{'report' if thesis else cls}}}\n\\usepackage{{amsmath,amssymb}}\n{pre}\\begin{{document}}\n"]
     for p in range(pages):
+        if thesis and p % 5 == 4:
+            s.append(f"\\begin{{figure}}[t]\\centering\n" + ("\\begin{tikzpicture}\\begin{axis}[width=8cm,height=5cm]\\addplot{x^2};\\addplot{%d*x};\\end{axis}\\end{tikzpicture}" % (p % 7 + 1) if p % 10 == 4 else
+                     "\\begin{tikzpicture}\\draw[->] (0,0) -- (%d,0);\\foreach \\i in {1,...,%d} \\node[circle,draw] at (\\i,1) {\\i};\\end{tikzpicture}" % (p % 5 + 3, p % 5 + 2))
+                     + f"\n\\caption{{{words(p, 6)}}}\\label{{f:{p}}}\n\\end{{figure}}\nFigure~\\ref{{f:{p}}} shows it.\n\n")
         if book and p % 10 == 0:
             s.append(f"\\chapter{{Chapter {p // 10}}}\\label{{c:{p}}}\n")
         if p % 2 == 0:

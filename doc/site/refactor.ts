@@ -33,6 +33,7 @@ declare global {
       insertSpot(text: string, t: InsTarget, flow: boolean, float?: boolean): { at: number; mode: InsMode } | null;
       insertPlan(text: string, all: string, kind: string, at: number, mode: InsMode): InsPlan | null;
       lineHabit(text: string): number; wrapLine(text: string, at: number, max: number, indent?: boolean): PaEdit | null;
+      fontAt(text: string, at: number): { bold: boolean; italic: boolean; family: string; size: string; color?: string };
       formatToggle(text: string, a: number, b: number, cmd: string): { edit: PaEdit; caret: number };
       mathToggle(text: string, a: number, b: number): { edit: PaEdit; caret: number } | null;
       pieces(text: string, a: number, b: number): [number, number][];
@@ -420,7 +421,7 @@ declare global {
     const edits: PaEdit[] = [{ from: p, to: text.length - s, now: now.slice(p, now.length - s) }];
     return { edits, caret, open, widget: it.widget ?? null };
   }
-  self.satexRefactor = { formatToggle, mathToggle, pieces, inserts, insertSpot, insertPlan, lineHabit, wrapLine, blank, envs, group, wrapTarget, wrap, unwrap, slug, firstWords, mathAt, rows, targets, mathTo, mathEdit, needsAms, pkgEdit, matrixAt, matrixTo, extract, occurrences };
+  self.satexRefactor = { fontAt, formatToggle, mathToggle, pieces, inserts, insertSpot, insertPlan, lineHabit, wrapLine, blank, envs, group, wrapTarget, wrap, unwrap, slug, firstWords, mathAt, rows, targets, mathTo, mathEdit, needsAms, pkgEdit, matrixAt, matrixTo, extract, occurrences };
 
   // ---------------------------------------------------------------- the plugins
   const PA = self.satexPageActions, R = self.satexRefactor, TARGETS = ['source', 'block', 'tikz-node', 'tikz-label', 'tikz-edge', 'forest-node', 'table-column'];
@@ -571,6 +572,83 @@ declare global {
     if (text.slice(head, a).trim() || text.slice(b, foot).trim()) return null;
     return { edit: { from: m.from, to: m.to, now: m.body.trim() }, caret: m.from + m.body.trim().length };
   }
+  const SIZE_NAMES = ['tiny', 'scriptsize', 'footnotesize', 'small', 'normalsize', 'large', 'Large', 'LARGE', 'huge', 'Huge'];
+  /** A heading's size and family in the standard classes (KOMA's set headings sans serif), bold in all. */
+  const HEAD_SIZE: Record<string, string> = { part: 'Huge', chapter: 'huge', section: 'Large', subsection: 'large', subsubsection: 'normalsize', paragraph: 'normalsize', subparagraph: 'normalsize' };
+  /** The font in force at offset `at`, read from the source's switches: each group around it (`\textbf{…}`, `{\small …}`,
+   * a heading's argument, an environment) with its command, then the declarations before `at` inside it, outermost first.
+   * A sound reading of what the text says, not of what macros do: a user macro's own switches stay unknown (off). */
+  function fontAt(text: string, at: number): { bold: boolean; italic: boolean; family: string; size: string; color?: string } {
+    const t = blank(text).slice(0, at), koma = /\\documentclass\s*(?:\[[^\]]*\])?\s*\{scr/.test(t);
+    const st: { cmd: string; decl: string[]; color?: string }[] = [{ cmd: '', decl: [] }];
+    let last = '', lastEnd = -1, paint = '';
+    for (const m of t.matchAll(/\\(begin|end)\s*\{([^}]*)\}|\\([A-Za-z]+)\*?|\\.|[{}]/g)) {
+      const end = m.index! + m[0].length;
+      if (m[1] === 'begin') { st.push({ cmd: m[2]!.trim(), decl: [] }); last = ''; }
+      else if (m[1] === 'end') { while (st.length > 1 && st.pop()!.cmd !== m[2]!.trim()); last = ''; }
+      else if (m[3]) {
+        st.at(-1)!.decl.push(m[3]); last = m[3]; lastEnd = end;
+        // a color's name: `\\color{name}` a switch, `\\textcolor{name}{…}` its text group's color
+        const cn = /^(?:text)?color$/.test(m[3]) ? /^\s*(?:\[[^\]]*\])?\{([^{}]*)\}/.exec(t.slice(end))?.[1]?.trim() : undefined;
+        if (cn && m[3] === 'color') st.at(-1)!.decl.push(`color:${cn}`); else if (cn) paint = cn;
+      }
+      else if (m[0] === '{') {
+        // a command's argument: the command acts in it, not as a switch of the group around
+        const cmd = last && /^\s*(?:\[[^\]]*\]\s*)?$/.test(t.slice(lastEnd, m.index)) ? last : '', d = st.at(-1)!.decl;
+        if (cmd && d.at(-1) === cmd) d.pop();
+        st.push({ cmd, decl: [], ...cmd === 'textcolor' && paint ? { color: paint } : {} });
+      }
+      else if (m[0] === '}') { if (st.length > 1) st.pop(); lastEnd = end; }
+      else last = '';
+    }
+    const f: { bold: boolean; italic: boolean; family: string; size: string; color?: string } = { bold: false, italic: false, family: 'rm', size: 'normalsize' };
+    const apply = (n: string) => {
+      if (/^(textbf|bfseries|bf)$/.test(n)) f.bold = true; else if (/^(textmd|mdseries)$/.test(n)) f.bold = false;
+      else if (/^(textit|itshape|it|textsl|slshape|sl)$/.test(n)) f.italic = true; else if (n === 'emph' || n === 'em') f.italic = !f.italic;
+      else if (/^(textup|upshape)$/.test(n)) f.italic = false;
+      else if (/^(texttt|ttfamily|tt)$/.test(n)) f.family = 'tt'; else if (/^(textsf|sffamily|sf)$/.test(n)) f.family = 'sf'; else if (/^(textrm|rmfamily|rm)$/.test(n)) f.family = 'rm';
+      else if (/^(textnormal|normalfont)$/.test(n)) Object.assign(f, { bold: false, italic: false, family: 'rm' });
+      else if (SIZE_NAMES.includes(n)) f.size = n;
+      else if (n.startsWith('color:')) f.color = n.slice(6);
+      else if (n in HEAD_SIZE) Object.assign(f, { bold: true, size: HEAD_SIZE[n], family: koma ? 'sf' : f.family });
+    };
+    for (const g of st) { apply(g.cmd); if (g.color) f.color = g.color; g.decl.forEach(apply); }
+    return f;
+  }
+  /** The selection menu's first row (both menus): B, I, T toggles on where that style is in force at the selection's
+   * start, and the size and family dropdowns at their current values; each writes as the Format, Size and Font rows do. */
+  /** Each size's points under the class's base size (size10/11/12.clo), until the run gives them. */
+  const SIZE_PT: Record<string, number[]> = { 10: [5, 7, 8, 9, 10, 12, 14.4, 17.28, 20.74, 24.88], 11: [6, 8, 9, 10, 10.95, 12, 14.4, 17.28, 20.74, 24.88], 12: [6, 8, 10, 10.95, 12, 14.4, 17.28, 20.74, 24.88, 24.88] };
+  /** The faces the loaded packages set (roman, sans, typewriter), else Computer Modern (Latin Modern with lmodern). */
+  const FACES: [RegExp, string, string][] = [[/\b(?:mathptmx|newtxtext|times|tgtermes)\b/, 'rm', 'Times'], [/\b(?:mathpazo|palatino|newpxtext|tgpagella)\b/, 'rm', 'Palatino'],
+    [/\blibertine\b/, 'rm', 'Linux Libertine'], [/\blibertine\b/, 'sf', 'Linux Biolinum'], [/\b(?:charter|XCharter)\b/, 'rm', 'Charter'], [/\bfourier\b/, 'rm', 'Utopia'],
+    [/\b(?:helvet|tgheros)\b/, 'sf', 'Helvetica'], [/\binconsolata\b/, 'tt', 'Inconsolata'], [/\bberamono\b/, 'tt', 'Bera Mono']];
+  function formatBar(ctx: PaCtx, a: number, b: number, wrap: (pre: string, post?: string) => () => void, customSize: () => void, colorPick: (c: string | null) => void): PaItem {
+    // the style of the selection's first letter: a selection from the page may start at the command around it (`\\textbf{word`)
+    const lead = /^(?:\s|\\[A-Za-z]+\*?\s*(?:\[[^\]]*\])?\{|\{)*/.exec(ctx.text.slice(a, b))![0].length, f = fontAt(ctx.text, a + lead);
+    const toggle = (cmd: string, off: string, on: boolean) => () => {
+      const around = formatAround(ctx.text, a + lead, b), name = around && /^\\([A-Za-z]+)/.exec(ctx.text.slice(around[0]))?.[1];
+      // the selection is the call's whole argument: unwrapped; else the style set (or, where it is on, set back)
+      if (on && around && name === cmd && !ctx.text.slice(around[2], a + lead).trim() && !ctx.text.slice(b, around[3]).trim()) ctx.write([{ from: around[0], to: around[1], now: ctx.text.slice(around[2], around[3]) }]);
+      else wrap(`\\${on ? off : cmd}{`)();
+    };
+    const fam: [string, string][] = [['Roman', 'rm'], ['Sans serif', 'sf'], ['Typewriter', 'tt']];
+    const pre = blank(ctx.all), base = /\\documentclass\s*\[[^\]]*\b(1[012])pt\b/.exec(pre)?.[1] ?? '10', pt = SIZE_PT[base]!;
+    const pkgs = [...pre.matchAll(/\\usepackage\s*(?:\[[^\]]*\])?\s*\{([^}]*)\}/g)].map((m) => m[1]).join(','), lm = /\blmodern\b/.test(pkgs);
+    const face = (v: string) => FACES.find(([re, k]) => k === v && re.test(pkgs))?.[2] ?? `${lm ? 'Latin Modern' : 'Computer Modern'}${v === 'sf' ? ' Sans' : v === 'tt' ? ' Typewriter' : ''}`;
+    const known = PA.colors(ctx.all, ctx.facts), colorCss = (n: string) => [...known.doc, ...known.base, ...known.more].find(([k]) => k === n)?.[1] ?? null;
+    return { label: 'Format bar', bar: {
+      toggles: [{ label: 'B', title: f.bold ? 'Bold is on: \\textmd' : 'Bold: \\textbf', on: f.bold, run: toggle('textbf', 'textmd', f.bold) },
+        { label: 'I', title: f.italic ? 'Italic is on: \\textup' : 'Italic: \\textit', on: f.italic, run: toggle('textit', 'textup', f.italic) },
+        { label: 'T', title: f.family === 'tt' ? 'Typewriter is on: \\textrm' : 'Typewriter: \\texttt', on: f.family === 'tt', run: toggle('texttt', 'textrm', f.family === 'tt') }],
+      selects: [{ title: 'Size', value: f.size, options: [...SIZE_NAMES.map((z, k): [string, string] => [`${z} · ${pt[k]} pt`, z]), ['Custom…', '']], pick: (z: string) => { if (!z) customSize(); else if (z !== f.size) wrap(`{\\${z} `)(); } },
+        { title: 'Family', value: f.family, options: [...fam.map(([l, v]): [string, string] => [`${l} · ${face(v)}`, v]), ['Custom…', '']], pick: (v: string) => {
+          if (!v) PA.ask(ctx.x, ctx.y, '', 'a font family (NFSS name: ppl, phv, lmss)', (n) => { if (n.trim()) wrap(`{\\fontfamily{${n.trim()}}\\selectfont `)(); });
+          else if (v !== f.family) wrap(`\\text${v}{`)();
+        } }],
+      color: { css: f.color ? colorCss(f.color) : null, title: f.color ? `Color ${f.color}: pick another` : 'Color: pick one', run: () => PA.open(ctx.x, ctx.y, 'Color', [{ title: 'Color', inline: true, items: PA.colorRows(ctx, f.color ?? null, colorPick) }]) },
+    } };
+  }
   function formatMenu(t: PaTarget, ctx: PaCtx): PaGroup[] {
     const s: [number, number] | null = t.sel;
     if (!s || s[0] === s[1]) return [];
@@ -593,17 +671,19 @@ declare global {
     // color in math: \mathcolor where the kernel has it (2022-06 on), else a group, which every kernel takes
     const mc = (ctx.kernel ?? '') >= '2022-06';
     // the one color menu (PA.colorRows, as TikZ's): the document's colors, xcolor's, More, Mix…, Custom…; none takes none
-    const color = PA.colorRows(ctx, null, (n) => { if (n) (math ? wrap(mc ? `\\mathcolor{${n}}{` : `{\\color{${n}}`, '}', 'xcolor') : wrap(`\\textcolor{${n}}{`, '}', 'xcolor'))(); }).slice(1);
+    const colorPick = (n: string | null) => { if (n) (math ? wrap(mc ? `\\mathcolor{${n}}{` : `{\\color{${n}}`, '}', 'xcolor') : wrap(`\\textcolor{${n}}{`, '}', 'xcolor'))(); };
+    const color = PA.colorRows(ctx, null, colorPick).slice(1);
     const font: PaItem[] = math ? [] : [['Roman', 'textrm'], ['Sans serif', 'textsf'], ['Typewriter', 'texttt']].map(([label, cmd]) => ({ label: label!, hint: `\\${cmd}`, run: wrap(`\\${cmd}{`) }));
     const size: PaItem[] = math ? [] : ['tiny', 'scriptsize', 'footnotesize', 'small', 'normalsize', 'large', 'Large', 'LARGE', 'huge', 'Huge'].map((z) => ({ label: z, hint: `{\\${z} …}`, run: wrap(`{\\${z} `) }));
     // any size: `\fontsize{v}{1.2v}\selectfont`, the baseline at LaTeX's usual 1.2 of the size
-    if (!math) size.push({ label: 'Custom size…', hint: '\\fontsize', run: () => PA.ask(ctx.x, ctx.y, '12pt', 'the font size with its unit (12pt, 1.2em)', (v) => {
+    const customSize = () => PA.ask(ctx.x, ctx.y, '12pt', 'the font size with its unit (12pt, 1.2em)', (v) => {
       const m = /^\s*(\d+(?:\.\d+)?)\s*(pt|bp|mm|cm|in|em|ex|pc)\s*$/.exec(v);
       if (!m) { ctx.toast('A size is a number with a unit: 12pt, 4mm, 1.2em'); return; }
       const base = `${+(Number(m[1]) * 1.2).toFixed(2)}${m[2]}`;
       wrap(`{\\fontsize{${m[1]}${m[2]}}{${base}}\\selectfont `)();
-    }) });
-    return [{ title: 'Format', items: fmt }, { title: 'Color', items: color }, { title: 'Font', items: font }, { title: 'Size', items: size }].filter((g) => g.items.length);
+    });
+    if (!math) size.push({ label: 'Custom size…', hint: '\\fontsize', run: customSize });
+    return [...math ? [] : [{ title: 'Format bar', inline: true, items: [formatBar(ctx, a, b, wrap, customSize, colorPick)] }], { title: 'Format', items: fmt }, { title: 'Color', items: color }, { title: 'Font', items: font }, { title: 'Size', items: size }].filter((g) => g.items.length);
   }
   PA.register({
     name: 'format', title: 'Format', category: 'refactor', type: 'refactor', targets: ['source'],

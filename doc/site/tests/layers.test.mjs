@@ -99,6 +99,8 @@ test('math layer: spans from the SyncTeX math records', async () => {
   const boxes = [B('(', 70, 100, 300, 7, 2), B('(', 70, 112, 300, 7, 2), B('$', 100, 100), B('$', 130, 100), B('$', 340, 100), B('$', 90, 112)];
   assert.deepEqual(L.mathSpans(boxes).map((s) => [s.l, s.r, s.t, s.d]), [[100, 130, 93, 102], [340, 370, 93, 102], [70, 90, 105, 114]]);
   assert.deepEqual(L.mathSpans([B('$', 10, 50)]), [], 'an unpaired record: no span');
+  // `\maketitle`'s author: a `tabular` LaTeX builds in `$…$`, its box fills the math: text, no span (user 2026-11-22: the author tinted math)
+  assert.deepEqual(L.mathSpans([B('$', 200, 150), B('(', 200, 150, 120, 8, 3), B('$', 320, 150)]), []);
   // a display has no `$` records (user 2026-11-22: an equation stayed untinted): its source lines' boxes, the widest
   // (the display's line out to its number) dropped
   const D = (x, y, w, line) => ({ page: 2, file: 'ch/a.tex', line, kind: '(', x, y, w, h: 8, d: 3 });

@@ -1860,35 +1860,23 @@ interface Stream {
       reset.hidden = true;
     });
   }
-  // the showcase's live window: the build's run stands there until the window has been in view a moment, then the engine starts
+  // the showcase's live window: a click anywhere in it opens the playground on its source (a shared link,
+  // as the playground's permalinks write it), so it never depends on an engine starting inside the page
+  const playLink = async (file: string, text: string) => {
+    const bytes = new TextEncoder().encode(JSON.stringify({ f: file, t: text }));
+    const packed = new Uint8Array(await new Response(new Blob([bytes]).stream().pipeThrough(new CompressionStream('deflate-raw'))).arrayBuffer());
+    const b64 = btoa(String.fromCharCode(...packed)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+    return `${new URL('play/index.html', location.href).href}#s=${b64}`;
+  };
   for (const fig of document.querySelectorAll<HTMLElement>('.shot-live')) {
-    const poster = fig.querySelector<HTMLElement>('.live-poster')!, data = JSON.parse(fig.querySelector<HTMLElement>('.ex-data')!.textContent);
-    let timer: ReturnType<typeof setTimeout> | 0 = 0, started = false, typing: [number, number] | null = null;
-    const go = async () => {
-      if (started) return;
-      started = true;
-      io.disconnect();
-      const host = Object.assign(document.createElement('div'), { className: 'src live-src' });
-      host.style.minHeight = `${poster.offsetHeight}px`;
-      const t0 = performance.now(), first = data.source;
-      const live = await liveEditor(fig, host, fig.dataset.name!, first, data);
-      (poster as ChildNode).replaceWith(host);
-      // a click into the typeset text that started the engine puts the caret there once the editor stands
-      if (typing) live.typeAt(...typing);
-      await live.analyze();
-      fig.dataset.firstFinding = String(Math.round(performance.now() - t0));
-    };
-    const io = new IntersectionObserver(([e]) => { clearTimeout(timer); if (e!.isIntersecting) timer = setTimeout(go, 600); }, { threshold: .4 });
-    // a demo plays in the window until a click or a key: then it gives way to the editor, which starts at once
-    // (the clip or the bar's button)
-    const demo = fig.querySelector<HTMLElement>('.live-demo'), button = fig.querySelector<HTMLElement>('.live-demo-hint');
-    if (demo) {
-      const take = (e: Event) => { e.preventDefault(); demo.remove(); button?.remove(); go(); };
-      demo.addEventListener('click', take);
-      button?.addEventListener('click', take);
-    } else io.observe(fig);
-    poster.addEventListener('pointerdown', go, { once: true });
-    fig.querySelector<HTMLElement>('.live-ts')!.addEventListener('pointerdown', (e) => { if (!started) { typing = [e.clientX, e.clientY]; go(); } });
+    const data = JSON.parse(fig.querySelector<HTMLElement>('.ex-data')!.textContent);
+    fig.classList.add('shot-link');
+    fig.title = 'Open this example in the playground';
+    fig.addEventListener('click', async (e) => {
+      if ((e.target as Element).closest('a[href]')) return;
+      e.preventDefault();
+      location.href = await playLink(fig.dataset.name!, data.source);
+    });
   }
   const own = document.querySelector<HTMLElement>('.example.live');
   if (own) {
@@ -2087,12 +2075,23 @@ interface Stream {
     const STEP = 28, FADE = 260;
     // the line as it stands mid-sweep: a negative delay starts a letter's fade part way, so a redraw never replays it
     let sweeping = () => '';
+    // the caret rides the fade front: after the newest letter that started to appear, before the first one at k = 0;
+    // centred on the letter, as tall as the standing caret (style.css .tw-caret, `span.typing::after`)
+    const follow = (k: number) => {
+      const letters = line.querySelectorAll<HTMLElement>('.tw'), at = letters[Math.max(0, k - 1)];
+      if (!at) return;
+      let caret = line.querySelector<HTMLElement>('.tw-caret');
+      if (!caret) { caret = document.createElement('i'); caret.className = 'tw-caret'; line.append(caret); }
+      const box = line.getBoundingClientRect(), r = at.getBoundingClientRect();
+      caret.style.transform = `translate(${(k ? r.right : r.left) - box.left}px, ${r.top + (r.height - caret.offsetHeight) / 2 - box.top}px)`;
+    };
     const run = (i: number, _from: number, then: () => void) => {
       const n = length(i), start = performance.now();
       sweeping = () => typed(i, n, (k) => k * STEP - (performance.now() - start));
       line.innerHTML = sweeping();
+      follow(0);
       const tick = (now: number) => {
-        if (now - start < (n - 1) * STEP + FADE) { frame = requestAnimationFrame(tick); return; }
+        if (now - start < (n - 1) * STEP + FADE) { follow(Math.min(n, Math.floor((now - start) / STEP) + 1)); frame = requestAnimationFrame(tick); return; }
         line.innerHTML = typed(i, n);
         sweeping = () => '';
         frame = 0;

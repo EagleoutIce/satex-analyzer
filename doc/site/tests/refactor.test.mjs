@@ -442,3 +442,33 @@ test('format: Ctrl+B wraps a selection and unwraps its own call', () => {
   assert.equal(edit(w, [R.formatToggle(w, w.indexOf('bold'), w.indexOf('bold') + 4, 'textit').edit]), 'make \\textbf{\\textit{bold}} later');
   assert.equal(edit(w, [R.formatToggle(w, w.indexOf('bold'), w.indexOf('bold') + 2, 'textbf').edit]), 'make \\textbf{\\textbf{bo}ld} later');
 });
+
+// Intuition: the format bar's toggles show the style in force at the selection, read from the groups around it, a
+// heading's argument (bold, its size; KOMA's sans) and declarations before it in the same group, never after it or
+// from a group already closed. Pins B shown off inside \textbf (the bar showed nothing pressed) and a closed group leaking.
+test('fontAt: the style in force from the groups and switches around a place', () => {
+  const at = (t, w) => R.fontAt(t, t.indexOf(w));
+  assert.deepEqual(at('make \\textbf{bold word} later', 'word'), { bold: true, italic: false, family: 'rm', size: 'normalsize' });
+  assert.equal(at('make \\textbf{bold} later', 'later').bold, false);
+  assert.deepEqual(at('{\\small\\itshape a \\ttfamily here} x', 'here'), { bold: false, italic: true, family: 'tt', size: 'small' });
+  assert.equal(at('{\\small a} here', 'here').size, 'normalsize');
+  assert.equal(at('\\emph{a \\emph{b} c}', 'b').italic, false);
+  assert.deepEqual(at('\\documentclass{article}\\section{Title}', 'Title'), { bold: true, italic: false, family: 'rm', size: 'Large' });
+  assert.equal(at('\\documentclass{scrartcl}\\subsection[short]{Title}', 'Title').family, 'sf');
+  assert.equal(at('\\begin{small}\\textit{x} y\\end{small} z', 'y').size, 'small');
+  assert.equal(at('\\begin{small} y\\end{small} z', 'z').size, 'normalsize');
+  assert.equal(at('% \\bfseries\nplain', 'plain').bold, false);
+  const D = '\\documentclass{article}\n\\begin{document}\n\\section{Start}\nPlain words and \\textbf{boldword here} end.\n';
+  assert.deepEqual(at(D, 'boldword'), { bold: true, italic: false, family: 'rm', size: 'normalsize' });
+  assert.deepEqual(at(D, '\\textbf'), { bold: false, italic: false, family: 'rm', size: 'normalsize' });
+});
+
+// Intuition: the format bar's color button shows the color in force: a \textcolor's text group, a \color switch in
+// the group, none outside both. Pins the bar showing no color inside \textcolor{red}{…}.
+test('fontAt: the color in force from \\textcolor and \\color', () => {
+  const at = (t, w) => R.fontAt(t, t.indexOf(w)).color;
+  assert.equal(at('a \\textcolor{red}{here} b', 'here'), 'red');
+  assert.equal(at('a \\textcolor{red}{x} here', 'here'), undefined);
+  assert.equal(at('{\\color{blue!30} a here} b', 'here'), 'blue!30');
+  assert.equal(at('{\\color{blue} a} here', 'here'), undefined);
+});

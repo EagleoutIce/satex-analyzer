@@ -51,3 +51,20 @@ test('refs: citations', () => {
   assert.deepEqual(E.refSet(f, 'cite', 'ab,la', () => false), { t: '[3, 2]', sure: false });
   assert.equal(words('as \\cite[p.~2]{kn,la} show', f), 'as _[1, 2, p. 2] _show');
 });
+
+// Intuition: the reference picker names each label as the reader sees it, from the run's own aux: its kind (the
+// hyperref anchor's counter, else the key's prefix), its number, the section the aux listed last before it and its
+// page. Pins the picker listing bare keys (user 2026-11-22 20:40).
+test('labelWhere: a label\'s kind, number, section and page from the aux', () => {
+  const E = self.satexPdfEdit, aux = [[
+    '\\@writefile{toc}{\\contentsline {section}{\\numberline {1}Introduction}{1}{section.1}\\protected@file@percent }',
+    '\\newlabel{sec:intro}{{1}{1}{Introduction}{section.1}{}}',
+    '\\@writefile{toc}{\\contentsline {section}{\\numberline {2}Methodology}{2}{section.2}\\protected@file@percent }',
+    '\\newlabel{fig:main}{{1}{2}{Architecture}{figure.caption.1}{}}',
+    '\\newlabel{tab:plain}{{3}{4}}',
+  ].join('\n')];
+  assert.equal(E.labelWhere(aux, 'sec:intro'), 'Section 1 · Introduction · p. 1', 'a section: its own title');
+  assert.equal(E.labelWhere(aux, 'fig:main'), 'Figure 1 · §2 Methodology · p. 2', 'a float: the section around it');
+  assert.equal(E.labelWhere(aux, 'tab:plain'), 'Table 3 · §2 Methodology · p. 4', 'no hyperref: the kind by the key\'s prefix');
+  assert.equal(E.labelWhere(aux, 'nope'), '', 'not in the aux: nothing');
+});

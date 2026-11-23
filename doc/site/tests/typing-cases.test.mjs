@@ -273,3 +273,34 @@ test('Enter: a paragraph where TeX takes one', () => {
   assert.equal(ed(mid, E.key(mid, 5, 'Enter')), 'Hello\n\n there friend.', 'prose: a blank line');
   assert.equal(typeof E.key('a \\textbf{wor ld}', 9, 'Enter'), 'string', 'inside an argument: refused');
 });
+
+// Intuition: a footnote is set at the page's foot but written inside its body paragraph. A click below the footnote's
+// text goes to the end of the note (its last row's end), never to a new body paragraph after the `\footnote{…}`.
+// A click below the body text, above the note, still starts a new paragraph after the body's.
+// Pins "Generally" typed below "Foobar chicken!!" landing as a new body paragraph (user 2026-11-22 18:54).
+test('blankPlace: below a footnote, the note\'s end', () => {
+  const E = self.satexPdfEdit;
+  const t = ['\\begin{document}', 'There is merit to this, you know?!', '\\footnote{Foobar chicken!!}', '', '\\end{document}'].join('\n');
+  const word = (s, l, base) => [1, l, base - 8, l + 30, base, s];
+  const body = { t: 92, d: 102, base: 100, l: 72, r: 300, line: 3, words: [word('There', 72, 100), word('know?!1', 250, 100)] };
+  const note = { t: 692, d: 700, base: 698, l: 80, r: 200, line: 3, words: [word('1Foobar', 80, 698), word('chicken!!', 130, 698)] };
+  assert.deepEqual(E.blankPlace(t, [body, note], 150, 720), { kind: 'end', row: 1 }, 'below the note: its end');
+  const p = E.blankPlace(t, [body, note], 150, 300);
+  assert.equal(p.kind, 'new', 'below the body text, above the note: a new paragraph');
+  assert.equal(E.blankPlace(t, [body, { ...note, words: [word('Other', 80, 698)] }], 150, 720).kind, 'new', 'a row of other text: no note');
+  const two = { ...note, t: 704, d: 712, base: 710, words: [word('more', 80, 710)] }, u = t.replace('chicken!!', 'chicken!! and more');
+  assert.equal(E.blankPlace(u, [body, { ...note, words: [...note.words, word('and', 170, 698)] }, two], 150, 703).kind, 'end', 'between two rows of a note: the upper row\'s end');
+});
+
+// Intuition: a footnote is set apart from the paragraph it is written in, so the Type caret's paragraph inside one is
+// the note's text, and its page rows are those that spell that text (the mark aside). Pins the echo of text typed in
+// a footnote drawn on the body row, then the caret jumping to the foot when the build landed (e2e footnote).
+test('notes: the note around the caret and its rows', () => {
+  const E = self.satexPdfEdit, t = 'Body here.\\footnote{A footnote text goes here.} More.';
+  const arg = [t.indexOf('A footnote'), t.indexOf('.}') + 1];
+  assert.deepEqual(E.noteAt(t, t.indexOf('text')), arg, 'inside: its text span');
+  assert.equal(E.noteAt(t, t.indexOf('More')), null, 'outside: none');
+  assert.deepEqual(E.notes(t, 0, t.length), [arg]);
+  assert.equal(E.noteRow(t.slice(...arg), ['1A', 'footnote', 'text']), true, 'its row, the mark aside');
+  assert.equal(E.noteRow(t.slice(...arg), ['Body', 'here.1']), false, 'the body row');
+});

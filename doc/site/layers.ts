@@ -182,10 +182,13 @@ declare global {
     const lines = Map.groupBy(boxes.filter((b) => b.kind === '(' && b.w > 0), (b) => b.page), out: ReturnType<Window['satexLayers']['mathSpans']> = [];
     const lineOf = (b: Box) => lines.get(b.page)?.find((o) => Math.abs(o.y - b.y) < 0.5 && o.x - 0.5 <= b.x && b.x <= o.x + o.w + 0.5);
     const put = (b: Box, l: number, r: number) => { const o = lineOf(b); if (r > l) out.push({ page: b.page, l, r, t: b.y - (o?.h || 7), d: b.y + (o?.d || 2), file: b.file, line: b.line }); };
-    const marks = boxes.filter((b) => b.kind === '$');
+    const marks = boxes.flatMap((b, at) => b.kind === '$' ? [{ b, at }] : []);
     for (let i = 0; i + 1 < marks.length; i += 2) {
-      const [a, b] = [marks[i]!, marks[i + 1]!];
+      const [{ b: a, at: from }, { b, at: to }] = [marks[i]!, marks[i + 1]!];
       if (a.page !== b.page) continue;
+      // a box filling the math is text set in math mode, not a formula: `tabular` is built in `$…$` (`\@tabular`),
+      // so `\maketitle`'s author block is no math
+      if (boxes.slice(from + 1, to).some((o) => o.kind === '(' && o.w >= 0.9 * Math.abs(b.x - a.x) && o.w > 0)) continue;
       if (Math.abs(a.y - b.y) < 0.5) { put(a, a.x, b.x); continue; }
       const la = lineOf(a), lb = lineOf(b);
       put(a, a.x, la ? la.x + la.w : a.x);

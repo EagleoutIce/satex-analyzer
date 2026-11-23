@@ -46,7 +46,7 @@
    "big": true,
    "caption": "Click a word on the page and type. The text goes to its place in the source, $x_42 becomes $x_{42}$, and the page follows each key. Typing into a macro's output edits its definition, so every use changes. A TikZ node moves with the mouse along guides and lands right of its neighbour, a double click edits its text, a right click opens its menu. A table cell takes typing too, and a column chip switches its alignment. A right click inserts a table, a figure or a list where it was clicked, its widget open.",
    "open": ["panel", "play-pdf"],
-   "text": "\\documentclass{article}\n\\usepackage[paperwidth=9cm,paperheight=7.4cm,margin=6mm]{geometry}\n\\usepackage{tikz}\n\\definecolor{accent}{HTML}{0B3D91}\n\\tikzset{thick, box/.style={draw=accent, fill=accent!8,\n  rounded corners=3pt, minimum width=10mm}}\n\\newcommand{\\model}{TinyNet}\n\\begin{document}\n\\section{Results}\nWith \\model, the loss falls fast.\n\n\\begin{tikzpicture}[draw=accent]\n  \\node[box] (d) at (0,0) {data};\n  \\node[box] (m) at (2.6,-0.6) {\\model};\n  \\node[box] (l) at (5.2,0) {loss};\n  \\draw[->] (d) -- node[above] {train} (m);\n  \\draw[->] (m) -- (l);\n\\end{tikzpicture}\n\\begin{center}\n\\begin{tabular}{lr}\nRun & Steps\\\\ \\hline\nsmall & 120\\\\\nbase & 95\n\\end{tabular}\n\\end{center}\n\\end{document}\n",
+   "text": "\\documentclass{article}\n\\usepackage[paperwidth=9cm,paperheight=7.4cm,margin=6mm,includefoot]{geometry}\n\\usepackage{tikz}\n\\definecolor{accent}{HTML}{0B3D91}\n\\tikzset{thick, box/.style={draw=accent, fill=accent!8,\n  rounded corners=3pt, minimum width=10mm}}\n\\newcommand{\\model}{TinyNet}\n\\begin{document}\n\\section{Results}\nWith \\model, the loss falls fast.\n\n\\begin{tikzpicture}[draw=accent]\n  \\node[box] (d) at (0,0) {data};\n  \\node[box] (m) at (2.6,-0.6) {\\model};\n  \\node[box] (l) at (5.2,0) {loss};\n  \\draw[->] (d) -- node[above] {train} (m);\n  \\draw[->] (m) -- (l);\n\\end{tikzpicture}\n\\begin{center}\n\\begin{tabular}{lr}\nRun & Steps\\\\ \\hline\nsmall & 120\\\\\nbase & 95\n\\end{tabular}\n\\end{center}\n\\end{document}\n",
    "viewport": [960, 680],
    "steps": [
     {"do": {"toggle": {"sel": "#play-treetoggle", "attr": "aria-expanded", "want": false}}, "wait": 400},
@@ -64,8 +64,9 @@
     {"click": {"word": "fast.", "fx": 1, "dx": 1}, "glide": 470, "after": 180},
     {"until": "caret"},
     {"type": " It drops by $\\su"},
-    {"until": {"sel": ".type-complete li", "has": ".cm-math-symbol", "child": ["code", "\\sum"]}, "ms": 15000, "wait": 1200},
+    {"until": {"sel": ".type-complete li", "has": ".cm-math-symbol", "child": ["code", "\\sum"]}, "ms": 15000, "wait": 450},
     {"click": {"sel": ".type-complete li", "child": ["code", "\\sum"]}, "glide": 300, "after": 120},
+    {"hover": {"sel": ".pdf-caret", "dx": 40, "dy": 40}, "glide": 200, "after": 0},
     {"type": "_{i} x_42$ per", "wait": 60},
     {"type": " step.", "wait": 180},
     {"type": "\n", "wait": 240},
@@ -111,7 +112,9 @@
     {"until": {"sel": ".pa-sub button", "exact": "Bulleted list"}, "ms": 5000, "wait": 1600},
     {"hover": {"sel": ".pa-sub button", "exact": "Bulleted list"}, "glide": 420, "after": 900},
     {"click": {"sel": ".pa-sub button", "exact": "Bulleted list"}, "after": 400},
-    {"until": [{"srcMatch": "\\\\begin\\{itemize\\}"}, "built"], "ms": 60000, "wait": 2000}
+    {"until": [{"srcMatch": "\\\\begin\\{itemize\\}"}, "built"], "ms": 60000, "wait": 2000},
+    {"type": "Fast and sound.", "wait": 90},
+    {"until": [{"srcMatch": "Fast and sound\\."}, "built"], "ms": 60000, "wait": 2500}
    ],
    "crop": [".cm-editor", "#play-pdf"],
    "hold": 500,

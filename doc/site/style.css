@@ -399,6 +399,8 @@ body.play main { padding: 0; height: 100%; display: grid; grid-template-rows: mi
   background: var(--panel); border: 1px solid var(--border); border-radius: 10px; box-shadow: var(--shadow); font-size: .82rem; animation: fade .12s var(--ease); }
 .complete li { padding: .2rem .5rem; border-radius: 6px; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .complete li[aria-selected=true], .complete li:hover { background: color-mix(in srgb, var(--accent) 14%, transparent); }
+/* the Type caret's list is picked by keys or a click: a pointer passing over it on the way to an item marks none */
+.type-complete li:hover:not([aria-selected=true]) { background: none; }
 .complete code { background: none; padding: 0; color: var(--fg); }
 /* findings: a fix to apply, the rule's explanation unfolded */
 button.small { padding: .05rem .6rem; font-size: .78rem; border-radius: 999px; }
@@ -493,16 +495,35 @@ button.small { padding: .05rem .6rem; font-size: .78rem; border-radius: 999px; }
 .cm-hold { border-radius: 2px; background: color-mix(in srgb, var(--accent) 22%, transparent); animation: cm-hold 2.8s ease-in forwards; } @keyframes cm-hold { 0%, 55% { background: color-mix(in srgb, var(--accent) 22%, transparent); } to { background: transparent; } }
 .cm-refmark { background: color-mix(in srgb, var(--accent) 22%, transparent); border-radius: 2px; }
 .menu-wrap { position: relative; }
-.ctx { position: fixed; z-index: var(--z-menu); margin: 0; padding: .25rem; list-style: none; min-width: 12rem; background: var(--panel); border: 1px solid var(--border); border-radius: 8px; box-shadow: var(--shadow); font-size: .88rem; animation: fade .12s var(--ease); }
-.menu-wrap .ctx { position: fixed; z-index: var(--z-menu); display: flex; flex-direction: column; }
-.ctx li, .ctx button { display: flex; justify-content: space-between; gap: 1.2rem; padding: .3rem .6rem; border-radius: 6px; cursor: pointer; background: none; border: 0; color: var(--fg); font: inherit; font-weight: 400; text-align: left; white-space: nowrap; }
-.ctx li:hover, .ctx button:hover:not(:disabled) { background: color-mix(in srgb, var(--accent) 14%, transparent); transform: none; box-shadow: none; }
+/* One menu style: the editor's menus (.ctx: #play-ctx, the tabs', the tree's) and the pages' (.pa-menu, actions.ts) are
+ * separate menus that look the same: box, header, rows, hints and ▸ at the right, rules, light and dark alike */
+.ctx, .pa-menu { position: fixed; z-index: var(--z-menu); margin: 0; padding: 4px 0; list-style: none; min-width: 200px; display: flex; flex-direction: column; background: var(--panel); color: var(--fg); border: 1px solid var(--border); border-radius: 8px; box-shadow: var(--shadow); font-size: 13px; animation: fade .1s var(--ease); }
 .ctx[hidden], .menu-wrap .ctx[hidden] { display: none; }
-.ctx li:focus, .ctx li[aria-expanded=true] { outline: none; background: color-mix(in srgb, var(--accent) 14%, transparent); }
-.ctx-nested { animation: none; }
+.ctx > .ctx-head, .pa-menu > b { padding: 3px 10px; font-size: 11px; color: var(--muted); font-weight: 600; white-space: nowrap; cursor: default; }
+/* a menu's own rows start from nothing; the tabs' and tree's buttons keep their other rules, only the look is reset */
+.ctx li, .pa-menu button { all: unset; }
+.ctx button { background: none; border: 0; border-radius: 0; font: inherit; font-weight: 400; text-align: left; }
+.ctx li, .ctx button, .pa-menu button { display: flex; align-items: center; gap: 8px; padding: 3px 10px 3px 26px; cursor: pointer; position: relative; white-space: nowrap; color: var(--fg); }
+.ctx li.pa-face > span:first-of-type { flex: 1; }
+.ctx li[aria-checked=true]::before { content: '✓'; position: absolute; left: 9px; }
+.ctx li > .muted, .ctx li small, .ctx li .pa-more, .pa-menu button small, .pa-menu .pa-more { margin-left: auto; padding-left: 16px; color: var(--muted); font-size: 11px; }
+.ctx li:hover, .ctx li:focus, .ctx li[aria-expanded=true], .ctx button:hover:not(:disabled), .ctx button:focus-visible,
+.pa-menu button:hover, .pa-menu button:focus, .pa-menu button[aria-expanded="true"] { outline: none; background: color-mix(in srgb, var(--accent) 16%, transparent); transform: none; box-shadow: none; }
+.ctx li.ctx-head:hover { background: none; }
+.ctx-nested, .pa-menu.pa-sub { animation: none; }
+.pa-menu button.pa-wait { color: var(--muted); cursor: default; background: none; }
+/* the selection's format bar, the first row of both menus: B / I / T toggles (pressed where that style is in force), size and family */
+.ctx > .ctx-bar, .ctx > .ctx-bar:hover, .ctx > .ctx-bar:focus { padding: 2px 6px 4px; cursor: default; background: none; }
+.pa-bar { display: flex; align-items: center; gap: 4px; padding: 2px 6px 4px; border-bottom: 1px solid var(--border); margin-bottom: 3px; }
+.ctx .pa-bar .pa-tog, .pa-menu .pa-bar .pa-tog { all: unset; box-sizing: border-box; width: 26px; height: 24px; display: grid; place-items: center; border-radius: 5px; border: 1px solid transparent; cursor: pointer; color: var(--fg); font-weight: 600; font-size: 13px; line-height: 1; }
+.pa-bar .pa-tog:nth-child(2) { font-style: italic; font-family: Georgia, serif; } .pa-bar .pa-tog:nth-child(3) { font-family: ui-monospace, Menlo, monospace; }
+.pa-bar .pa-tog:hover, .pa-bar .pa-tog:focus-visible { background: color-mix(in srgb, var(--accent) 16%, transparent); }
+.pa-bar .pa-tog[aria-pressed=true] { background: color-mix(in srgb, var(--accent) 26%, transparent); border-color: color-mix(in srgb, var(--accent) 55%, transparent); }
+.pa-bar .pa-tog.pa-col .pa-sw { width: 14px; height: 14px; background: repeating-linear-gradient(45deg, var(--border) 0 3px, transparent 3px 6px); }
+.pa-bar select { height: 24px; max-width: 12rem; padding: 0 4px; font: inherit; font-size: 12px; color: var(--fg); background: var(--panel); border: 1px solid var(--border); border-radius: 5px; }
 /* a menu still looking its rows up, and a go-to list's peek at the focused target beside it */
 .ctx li.ctx-wait { justify-content: flex-start; align-items: center; gap: .5rem; cursor: progress; color: var(--muted); background: none; }
-.ctx-wait::before { content: ""; flex: none; width: .8rem; height: .8rem; border: 2px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: ctx-spin .8s linear infinite; } @keyframes ctx-spin { to { rotate: 1turn; } }
+.ctx-wait::before { content: ""; position: absolute; left: 7px; flex: none; width: .8rem; height: .8rem; border: 2px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: ctx-spin .8s linear infinite; } @keyframes ctx-spin { to { rotate: 1turn; } }
 .ctx-peek { position: absolute; top: -1px; left: calc(100% + 6px); width: min(34rem, 60vw); padding: .5rem .6rem; background: var(--panel); border: 1px solid var(--border); border-radius: 8px; box-shadow: var(--shadow); font-size: .8rem; cursor: default; }
 .ctx-peek.ctx-peek-left { left: auto; right: calc(100% + 6px); }
 .ctx-peek .peek-head code { font-weight: 600; } .ctx-peek .peek-does { margin: .25rem 0 .4rem; color: var(--muted); white-space: normal; }
@@ -1781,6 +1802,8 @@ canvas.pdf-echo { display: block; }
 .pdf .pdf-echo { position: absolute; background: #fff; color: #000; pointer-events: none; white-space: pre; }
 .pdf canvas.pdf-echo { background: none; }
 .pdf .pdf-relay-hid { visibility: hidden; }
+/* the moved words' pixels (pdfEcho), under the typed text */
+.pdf .pdf-echo > canvas.pdf-echo-px { position: absolute; left: 0; top: 0; width: 100%; height: 100%; }
 .pdf .pdf-echo i { position: absolute; top: 0; bottom: 0; font-style: normal; display: flex; align-items: flex-end; padding-bottom: .02em; }
 .pdf .pdf-echo span { transform-origin: left; display: inline-block; }
 /* typing goes into a definition: said below the view, with a way back */
@@ -2560,6 +2583,8 @@ pre.out-block:hover .out-meta { opacity: .85; }
 .claim .tw { opacity: 0; animation: tw-in 260ms linear forwards; }
 @keyframes tw-in { to { opacity: 1; } }
 .claim-rot > span.typing:has(.tw)::after { visibility: hidden; }
+/* while letters fade in, a caret rides their front (site.ts follow) */
+.tw-caret { position: absolute; left: 0; top: 0; width: 2px; height: 1.05em; margin-left: 2px; background: currentColor; pointer-events: none; }
 .cfg-group-about { margin-left: .9em; font-size: .85em; }
 /* `playground.widget_marks` and `playground.tips` off */
 .no-widget-marks .cm-gutter.cm-widgets, .no-tips .sx-tip { display: none !important; }
@@ -2583,16 +2608,16 @@ pre.out-block:hover .out-meta { opacity: .85; }
 .pdf .pdf-tikz-gap.pdf-tikz-gy::after { left: auto; right: 0; }
 .pdf .pdf-tikz-gap.pdf-tikz-gx::before, .pdf .pdf-tikz-gap.pdf-tikz-gx::after { left: -4px; height: 1px; width: 7px; top: 0; }
 .pdf .pdf-tikz-gap.pdf-tikz-gx::after { top: auto; bottom: 0; }
-.pa-menu { position: fixed; z-index: 1000; min-width: 200px; max-height: calc(100vh - 16px); overflow-y: auto; padding: 4px 0; display: flex; flex-direction: column; background: var(--panel, #fff); color: var(--fg, inherit); border: 1px solid var(--border, #8884); border-radius: 8px; box-shadow: var(--shadow, 0 4px 16px #0004); font-size: 13px; animation: fade .1s var(--ease); }
-.pa-menu.pa-sub { animation: none; z-index: 1001; }
-.pa-menu > b { padding: 3px 10px; font-size: 11px; color: var(--muted, #888); font-weight: 600; white-space: nowrap; }
-.pa-menu hr { width: 100%; margin: 3px 0; border: 0; border-top: 1px solid var(--border, #8884); }
-.pa-menu button { all: unset; display: flex; align-items: center; gap: 8px; padding: 3px 10px 3px 26px; cursor: pointer; position: relative; white-space: nowrap; }
+/* the pages' menu (shared look with .ctx above): above the pages' own layers, scrolled when taller than the window */
+.pa-menu { z-index: 1000; max-height: calc(100vh - 16px); overflow-y: auto; }
+.pa-menu.pa-sub { z-index: 1001; }
+.pa-menu hr { width: 100%; margin: 3px 0; border: 0; border-top: 1px solid var(--border); }
 .pa-menu button > span:first-of-type { flex: 1; }
-.pa-menu button small, .pa-menu .pa-more { color: var(--muted, #888); font-size: 11px; }
-.pa-menu button:hover, .pa-menu button:focus, .pa-menu button[aria-expanded="true"] { background: color-mix(in srgb, var(--accent, #0e7490) 16%, transparent); }
 .pa-menu button[aria-checked="true"]::before { content: '✓'; position: absolute; left: 9px; }
-.pa-img { flex: none; width: 28px; height: 14px; object-fit: contain; }
+.pa-img { flex: none; width: 32px; height: 18px; object-fit: contain; }
+/* TeX's previews are drawn in mid-grey ink (preview.rs INK): lifted on a dark menu */
+:root[data-theme=dark] .pa-img { filter: brightness(1.6); }
+@media (prefers-color-scheme: dark) { :root:not([data-theme=light]) .pa-img { filter: brightness(1.6); } }
 .pa-sw { flex: none; width: 13px; height: 13px; border-radius: 3px; border: 1px solid color-mix(in srgb, var(--fg, #000) 30%, transparent); background-clip: padding-box; }
 .pa-mix { position: fixed; z-index: 1000; display: grid; grid-template-columns: auto 1fr; align-items: center; gap: 6px 8px; padding: 8px 10px; width: 280px; background: var(--panel, #fff); color: var(--fg, inherit); border: 1px solid var(--border, #8884); border-radius: 8px; box-shadow: var(--shadow, 0 4px 16px #0004); font-size: 12px; }
 .pa-mix label { display: contents; }
@@ -2725,8 +2750,44 @@ pre.out-block:hover .out-meta { opacity: .85; }
 @media (hover: hover) { .pdf-bar #pdf-fold { opacity: 0; transition: opacity .15s var(--ease); } .pdf-bar:hover #pdf-fold, .pdf-bar:focus-within #pdf-fold, #pdf-fold[aria-pressed="true"] { opacity: 1; } }
 /* the commands around the Type caret, a gray ghost above it */
 .pdf .pdf-caret-ghost { position: absolute; z-index: 3; transform: translateY(calc(-100% - 2px)); padding: 0 3px; border-radius: 3px; font: 500 10px/1.3 var(--mono, ui-monospace, monospace); color: var(--muted); background: color-mix(in srgb, var(--bg) 80%, transparent); white-space: nowrap; pointer-events: none; }
-.stat-strip { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 9rem), 1fr)); gap: .6rem; max-width: var(--measure); margin: 0 0 .5rem; }
-.stat-strip .stat { display: flex; flex-direction: column; gap: .2rem; padding: .6rem .8rem; background: var(--panel); border: 1px solid var(--border); border-radius: 10px; }
+.stat-strip { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 8rem), 1fr)); align-items: stretch; gap: .6rem; max-width: var(--measure); margin: 0 0 .5rem; }
+@media (min-width: 700px) { .stat-strip { grid-template-columns: none; grid-auto-flow: column; grid-auto-columns: 1fr; } }
+.stat-strip .stat { display: flex; flex-direction: column; justify-content: flex-start; gap: .2rem; padding: .6rem .8rem; background: var(--panel); border: 1px solid var(--border); border-radius: 10px; }
 .stat-strip .stat span { font-size: .82rem; color: var(--muted); }
 .stat-strip .stat b { font-size: 1.6rem; font-weight: 600; line-height: 1.2; font-variant-numeric: tabular-nums; color: var(--fg); }
 .type-complete .complete-shape { color: var(--muted); }
+/* the PDF table's structure controls (playground.js pdfTabBars), each shown only while the pointer is at its place:
+   a column's × under it and a + on each line between columns, a row's grip and × left of it and a + on each line
+   between rows; the chip's name and the row's grip drag to reorder */
+.pdf .pdf-col-name[data-t] { cursor: grab; }
+.pdf .pdf-tabbar { z-index: 6; display: none; pointer-events: auto; }
+.pdf .pdf-tabbar.on, .pdf .pdf-tabbar:hover, .pdf .pdf-tabbar:focus-within, .pdf .pdf-tab-drag.pdf-tabbar { display: block; }
+.pdf .pdf-tab-ops { position: absolute; display: flex; gap: 3px; align-items: center; }
+.pdf :is(.pdf-colbar, .pdf-colgap, .pdf-rowgap) .pdf-tab-ops { left: 50%; top: 50%; translate: -50% -50%; }
+.pdf .pdf-rowbar .pdf-tab-ops { right: 0; top: 0; }
+/* calm until aimed at: small muted marks in an 18px hit area; a + turns teal and a × red only under the pointer */
+.pdf .pdf-tab-op { all: unset; box-sizing: border-box; min-width: 18px; height: 18px; padding: 2px; background-clip: content-box; font: 600 11px/14px ui-monospace, monospace; text-align: center; cursor: pointer; color: var(--muted, #64748b); background-color: color-mix(in srgb, currentColor 14%, transparent); border-radius: 9px; }
+.pdf .pdf-tab-op[data-act="delete"] { border-radius: 5px; }
+.pdf .pdf-tab-op:hover, .pdf .pdf-tab-op:focus-visible { color: #fff; background-color: #0e7490; }
+.pdf .pdf-tab-op[data-act="delete"]:hover, .pdf .pdf-tab-op[data-act="delete"]:focus-visible { background-color: #b91c1c; }
+.pdf .pdf-tab-op:focus-visible { outline: 2px solid var(--accent); outline-offset: 0; }
+/* a line's +: a hairline along the line it inserts at */
+.pdf .pdf-colgap::before { content: ""; position: absolute; left: 50%; bottom: 100%; height: 14px; border-left: 1px dashed color-mix(in srgb, #0e7490 60%, transparent); translate: -.5px 0; }
+.pdf .pdf-rowgap::before { content: ""; position: absolute; top: 50%; left: 100%; width: 14px; border-top: 1px dashed color-mix(in srgb, #0e7490 60%, transparent); translate: 0 -.5px; }
+.pdf .pdf-row-grip { display: inline-block; width: 14px; height: 18px; font: 11px/18px ui-monospace, monospace; text-align: center; color: var(--muted, #64748b); cursor: grab; border-radius: 4px; }
+.pdf .pdf-row-grip:hover { background: color-mix(in srgb, #0e7490 18%, transparent); }
+.pdf .pdf-tab-drag, .pdf .pdf-tab-drag * { cursor: grabbing !important; }
+.pdf .pdf-col.pdf-tab-target { background: color-mix(in srgb, #0e7490 22%, transparent); }
+.pdf .pdf-tabbar.pdf-tab-target { display: block; } .pdf .pdf-tabbar.pdf-tab-target .pdf-row-grip { color: #fff; background: #0e7490; }
+
+/* a landing window opens the playground on its example: the whole window is the link */
+.shot-live.shot-link, .shot-live.shot-link * { cursor: pointer; }
+
+/* the PDF bar's fold button: its chevron only (the tooltip names it), and while hidden it takes no room at all,
+   so the bar's other buttons sit where they would without it */
+.pdf-bar #pdf-fold .fold-label { display: none; }
+.pdf-bar #pdf-fold { padding: 0 .3rem; min-width: 0; gap: 0; }
+@media (hover: hover) {
+  .pdf-bar #pdf-fold { width: 0; padding: 0; border-width: 0; margin: 0; overflow: hidden; }
+  .pdf-bar:hover #pdf-fold, .pdf-bar:focus-within #pdf-fold, #pdf-fold[aria-pressed="true"] { width: auto; padding: 0 .3rem; border-width: 1px; }
+}

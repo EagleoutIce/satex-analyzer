@@ -1896,27 +1896,33 @@ def compile_stats(path):
     s, tiles = e["summary"], []
     def times(x):
         return f"{x:.2f}×" if x < 2 else f"{x:.1f}×" if x < 10 else f"{x:.0f}×"
+    # one measure for every tile: latexmk's time over satex's (above 1 faster), never "faster" and "slower" mixed
     def ratio(x, what):
-        if not x:
-            return
-        word = "faster" if x >= 1 else "slower"
-        tiles.append((times(x if x >= 1 else 1 / x), f"{word} than latexmk, {what}"))
+        if x:
+            tiles.append((times(x), f"speed vs latexmk, {what}"))
+    # a thesis as theses are: chapters, TikZ and pgfplots figures, hyperref (benches/speed/gen.py `thesis`)
+    th = {(r["scenario"], r["tool"]): r for r in e["runs"] if r["doc"].startswith("gen:thesis")}
+    mine, theirs = th.get(("edit", s.get("tool", "satex-build"))), th.get(("edit", "latexmk"))
+    if mine and theirs:
+        tiles.append((f'{mine["wall"]["median"]:.1f} s', f'one-edit rebuild, {mine["pages"]}-page thesis with figures (latexmk {theirs["wall"]["median"]:.1f} s)'))
     big = s.get("big_edit")
     if big and big.get("satex"):
         pages = big.get("pages") or next((r["pages"] for r in e["runs"] if r["doc"] == big["doc"] and r.get("pages")), None)
-        doc = f"{pages}-page document" if pages else html.escape(big["doc"])
-        tiles.append((f'{big["satex"]:.1f} s', f'one-edit rebuild of a {doc}, latexmk {big["latexmk"]:.1f} s'))
-    for key, what in (("edit", "one-edit rebuild"), ("warm", "rebuild with nothing changed"), ("cold", "cold build")):
+        doc = f"{pages} pages" if pages else html.escape(big["doc"])
+        tiles.append((f'{big["satex"]:.1f} s', f'one-edit rebuild, {doc} (latexmk {big["latexmk"]:.1f} s)'))
+    for key, what in (("edit", "one-edit rebuild"), ("cold", "cold build"), ("warm", "nothing changed")):
         ratio(s.get("speedup", {}).get(key), what)
+    # the same output is what every build must give, not a gain: said first, as a fact
     same = s.get("identical")
+    lead = ""
     if same and "/" in same:
         a, b = same.split("/")
-        tiles.append((f"{a} of {b}", "builds with the same pages and text as latexmk"))
-    strip = "".join(f"<div class=\"stat\"><span>{html.escape(t[:1].upper() + t[1:])}</span><b>{html.escape(v)}</b></div>" for v, t in tiles)
+        lead = f'<p class="muted small">{"All" if a == b else a + " of"} {b} builds give the same pages and text as latexmk.</p>'
+    strip = "".join(f"<div class=\"stat\"><b>{html.escape(v)}</b><span>{html.escape(t[:1].upper() + t[1:])}</span></div>" for v, t in tiles)
     n = e.get("repeats")
     runs = "one run each" if n == 1 else f"median of {n} runs" if n else "median of repeated runs"
     mode = {"satex-build": " (the PDF only)", "satex-warm": " (the PDF only, warm engine)"}.get(s.get("tool"), "")
-    return (f'<div class="stat-strip">{strip}</div><p class="muted small"><code>satex compile</code>{mode} against latexmk on '
+    return (f'{lead}<div class="stat-strip">{strip}</div><p class="muted small"><code>satex compile</code>{mode} against latexmk on '
             f'{html.escape(e.get("machine", {}).get("cpu", "one machine"))}, {runs}, SaTeX {html.escape(e["version"])} ({html.escape(e["date"])}). '
             f'Geometric means over the benchmark documents. {link} has every document, toolchain and spread.</p>')
 
