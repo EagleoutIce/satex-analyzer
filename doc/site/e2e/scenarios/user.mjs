@@ -1,3 +1,15 @@
+const REFS = String.raw`\documentclass{article}
+\usepackage{hyperref}
+\begin{document}
+\section{Introduction}\label{sec:intro}
+Some text.
+\section{Methodology}\label{sec:method}
+\begin{equation}\label{eq:loss} x = 1 \end{equation}
+\section{Conclusion}
+See \autoref{sec:intro} for motivation and \autoref{sec:method} for
+the method.
+\end{document}
+`;
 // User journeys (kinds/user.mjs): bugs a person hits in the first minutes, each reduced to its few actions.
 const PAPER = String.raw`\documentclass{article}
 \usepackage{amsmath}
@@ -127,6 +139,47 @@ export default [
     do: [{ pdf: 'plain', at: 'end' }, { chord: 'm' }, { wait: 600 }, { type: 'x' }, { wait: 600 }, { key: 'ArrowRight' }, { type: 'y' }, { wait: 800 }],
     expect: [{ has: /plain\\\(x\\\)y words/ }],
     steps: 'click after "plain", Ctrl+M, type x, Right, type y: plain\\(x\\)y' },
+  // Ctrl+Right and Ctrl+Left step by words as an editor does: word ends and starts, across the line, over \textbf{ and a key (user 2026-11-22)
+  ...[['right', [{ pdf: 'plain', at: 'end' }, ...Array(3).fill({ key: 'Ctrl+ArrowRight' })], /Next \\textbf\{boldX\} see/],
+    ['left', [{ pdf: 'once', at: 'start' }, ...Array(2).fill({ key: 'Ctrl+ArrowLeft' })], /\\textbf\{Xbold\} see/]].map(([dir, keys, want]) => ({
+    kind: 'user', name: `u-pdf-ctrl-${dir}-words`, pdf: true, source: '\\documentclass{article}\n\\begin{document}\nSome plain words.\nNext \\textbf{bold} see \\ref{sec:a} once more.\n\\end{document}\n', word: { word: 'plain' },
+    do: [...keys, { wait: 300 }, { type: 'X' }, { wait: 800 }], expect: [{ has: want }, { caretSync: true }],
+    steps: dir === 'right' ? 'click after "plain", Ctrl+Right three times (words, Next, bold), type X: \\textbf{boldX} (was: three characters on)'
+      : 'click before "once", Ctrl+Left twice (over the key to see, then bold), type X: \\textbf{Xbold}' })),
+  // a finding marked on the page offers its fix: on hover in its card, on right-click in the menu; one click applies it, the
+  // finding goes (user 2026-11-22, Screenshot_20261122_173544: the menu had only Work on / Insert / Show in source)
+  ...[['hover', [{ hover: { sel: '.pdf-finding[data-f]' } }, { until: { sel: '.tip-card [data-fix]', visible: true }, ms: 5000 }, { shot: 'card' }, { click: { sel: '.tip-card [data-fix]' } }]],
+    ['menu', [{ click: { sel: '.pdf-finding[data-f]' }, right: true }, { until: { sel: '.pa-menu [role=menuitem]', starts: 'Fix:' }, ms: 5000 }, { shot: 'menu' }, { click: { sel: '.pa-menu [role=menuitem]', starts: 'Fix:' } }]]].map(([how, steps]) => ({
+    kind: 'user', name: `u-pdf-finding-fix-${how}`, pdf: true, settle: true, source: '\\documentclass{article}\n\\begin{document}\nSome people find... it weird.\n\\end{document}\n', word: { word: 'weird.' },
+    do: [{ js: `(() => { const i = document.querySelector('#pdf-layer-list input[data-layer=findings]'); if (i && !i.checked) i.click(); return !!i; })()` }, { settle: true },
+      { until: { sel: '.pdf-finding[data-f]' }, ms: 30000 }, ...steps, { wait: 500 }, { settle: true }, { until: { none: { sel: '.pdf-finding[data-f]' } }, ms: 30000 }],
+    expect: [{ has: /find\\dots/ }, { noFinding: /ellipsis/ }],
+    steps: `"find..." with the findings layer on; ${how === 'hover' ? 'hover its mark: the card offers the fix' : 'right-click its mark: the menu lists "Fix: …"'}; one click: \\dots written, the mark and the finding gone (was: no fix on the page)` })),
+  // a footnote in Type mode (user 2026-11-22 18:54): Enter at its end is a paragraph inside the note (LaTeX reads its
+  // argument \long), and a click below the note puts the caret at the note's end; both kept "Generally" out of the body
+  ...[['enter', [{ pdf: 'chicken!!', at: 'end' }, { key: 'Enter' }], /\\footnote\{Foobar chicken!!\n\nGenerally\}/],
+    ['below', [{ click: { word: 'chicken!!', dy: 14, scroll: true } }, { wait: 400 }, { type: ' ' }], /\\footnote\{Foobar chicken!! Generally\}/]].map(([how, steps, want]) => ({
+    kind: 'user', name: `u-pdf-footnote-${how}`, pdf: true, settle: true, source: '\\documentclass{article}\n\\begin{document}\nThere is merit to this, you know?\\footnote{Foobar chicken!!}\n\n\\end{document}\n', word: { word: 'chicken!!' },
+    do: [...steps, { type: 'Generally' }, { wait: 800 }, { build: true }], expect: [{ has: want }, { built: true }],
+    steps: how === 'enter' ? 'click the end of "chicken!!" in the footnote, Enter, type Generally: a paragraph inside \\footnote{…}, the build clean (was: a body paragraph after the note)'
+      : 'click the empty page below the footnote, type " Generally": the note\'s end (was: a body paragraph after \\footnote{…})' })),
+  // inline math in Type mode (user 2026-11-22 20:37): Left after `^{}` goes into the empty slot; Enter at the formula's
+  // end steps out past its closer, never a line break inside the formula
+  { kind: 'user', name: 'u-pdf-math-slot-left', pdf: true, settle: true, source: '\\documentclass{article}\n\\begin{document}\nIn the magical mist of the future.\n\\end{document}\n', word: { word: 'future.' },
+    do: [{ pdf: 'future.', at: 'end' }, { type: ' ' }, { chord: 'm' }, { wait: 600 }, { type: '\\sum_{42}^{}' }, { wait: 600 }, { key: 'ArrowLeft' }, { type: 'n' }, { wait: 800 }],
+    expect: [{ has: /\\sum_\{42\}\^\{n\}/ }],
+    steps: 'click after "future.", Ctrl+M, type \\sum_{42}^{}, Left once, type n: ^{n} (was: Left skipped the slot)' },
+  { kind: 'user', name: 'u-pdf-math-enter-one-line', pdf: true, settle: true, source: '\\documentclass{article}\n\\begin{document}\nIn the magical mist of the future.\n\\end{document}\n', word: { word: 'future.' },
+    do: [{ pdf: 'future.', at: 'end' }, { type: ' ' }, { chord: 'm' }, { wait: 600 }, { type: 'a+b' }, { key: 'ArrowLeft' }, { key: 'Enter' }, { wait: 400 }, { key: 'ArrowRight' }, { key: 'Enter' }, { type: ' y' }, { wait: 800 }],
+    expect: [{ has: /future\. \\\(a\+b\\\) y/ }, { not: /\\\([^)]*\n/ }],
+    steps: 'click after "future.", Ctrl+M, type a+b, Left, Enter (inside: nothing), Right, Enter (at the end: out past \\)), " y": the formula on one line (was: a line break inside it)' },
+  // the PDF's reference picker (user 2026-11-22 20:40): a click on the plain word after a reference is a caret, never the
+  // picker; the picker's rows say what each label is and where (the run's aux: kind, number, section, page)
+  ...[['plain-word', [{ pdf: 'motivation', at: 'end' }, { wait: 500 }, { until: { none: { sel: '.ref-pick' } }, ms: 1000 }, { type: 'X' }, { wait: 600 }], [{ has: /for motivationX and/ }]],
+    ['where', [{ hover: { word: 'section', scroll: true } }, { wait: 400 }, { click: { sel: '.pdf-refpick' } }, { until: { sel: '.ref-pick li', text: 'Section 1 · Introduction · p. 1' }, ms: 8000 }, { shot: 'picker' }], [{ not: /X/ }]]].map(([how, steps, expect]) => ({
+    kind: 'user', name: `u-pdf-ref-${how}`, pdf: true, settle: true, source: REFS, word: { word: 'motivation' }, do: [{ build: true }, ...steps], expect,
+    steps: how === 'plain-word' ? 'a paper with \\autoref; click the end of "motivation" after "See section 1 for": a caret, X typed there (was: the reference picker)'
+      : 'click the printed "section" of \\autoref{sec:intro}: the picker lists sec:intro as "Section 1 · Introduction · p. 1" (was: bare keys)' })),
   { kind: 'user', name: 'u-pdf-ctrl-b-then-right', pdf: true, source: PAPER, word: { word: 'bold' },
     do: [{ select: 'bold' }, { chord: 'b' }, { wait: 800 }, { key: 'ArrowRight' }, { type: 'X' }, { wait: 800 }],
     expect: [{ has: /make \\textbf\{bold\}X later/ }],

@@ -20,7 +20,13 @@ export default [
   // typing in a table cell lays out the whole table: the other rows' cells where the build then sets them
   // a command name half typed shows no error while it is unfinished
   { kind: 'echo', name: 'naming-quiet', case: 'pdf-naming-quiet' },
+  { kind: 'echo', name: 'naming-pick', case: 'pdf-naming-pick' },
+  { kind: 'echo', name: 'land-blink', case: 'pdf-land-blink' },
+  { kind: 'echo', name: 'sum-kept', case: 'pdf-sum-kept' },
+  { kind: 'echo', name: 'first-frame', case: 'pdf-first-frame' },
+  { kind: 'echo', name: 'list-clear', case: 'pdf-list-clear' },
   { kind: 'echo', name: 'table-rows-l', case: 'pdf-table-rows-l' },
+  { kind: 'echo', name: 'title-centered', case: 'pdf-title-centered' },
   { kind: 'echo', name: 'table-rows-c', case: 'pdf-table-rows-c' },
   { kind: 'echo', name: 'table-span-under', case: 'pdf-table-span-under' },
   { kind: 'echo', name: 'table-span-typed', case: 'pdf-table-span-typed' },

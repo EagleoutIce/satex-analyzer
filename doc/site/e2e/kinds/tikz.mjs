@@ -134,6 +134,25 @@ export async function tikz(p, sc) {
     await act(p, 'node-shape-diamond', node('run'), ['Shape', 'Diamond'], /\\node\[diamond, box, right=of src\] \(run\)/, { shot: true });
     await act(p, 'node-shape-cloud-lib', node('run'), ['Shape', 'Cloud'], /\\usetikzlibrary\{arrows\.meta,positioning,backgrounds\}\n\\usetikzlibrary\{shapes\.symbols\}\n[^]*\\node\[cloud, box, right=of src\] \(run\)/);
     await act(p, 'node-shape-polygon', node('run'), ['Shape', 'Regular polygon', '6 sides'], /\\node\[regular polygon, regular polygon sides=6, box, right=of src\] \(run\)/);
+    // Shape ▸: every row shows TeX's own picture of its shape, from previews.json; a collapsed one (a trapezium drawn
+    // as a line, preview.rs before its text box) counts as none
+    {
+      const r = { name: 'node-shape-previews', fails: [], info: {} };
+      try {
+        if (!await rclick(p, await node('run')())) throw new Error('no menu');
+        const at = await p.eval(`(() => { const b = [...document.querySelectorAll('.pa-menu')].at(-1).querySelectorAll(':scope > button'); const x = [...b].find((e) => e.querySelector('span').textContent === 'Shape'); if (!x) return null; const q = x.getBoundingClientRect(); return [q.left + 30, q.top + q.height / 2]; })()`);
+        if (!at) throw new Error('no Shape');
+        await p.s('Input.dispatchMouseEvent', { type: 'mouseMoved', x: at[0], y: at[1] });
+        await p.until(`(() => { const m = [...document.querySelectorAll('.pa-menu')].at(-1); return [...m.querySelectorAll(':scope > button')].every((b) => b.querySelector('img.pa-img')?.naturalWidth > 0); })()`, 3000);
+        const got = await p.eval(`(() => { const m = [...document.querySelectorAll('.pa-menu')].at(-1), b = [...m.querySelectorAll(':scope > button')]; return { rows: b.length, bare: b.filter((e) => { const i = e.querySelector('img.pa-img'); return !(i?.naturalWidth > 4 && i.naturalHeight > 4); }).map((e) => e.querySelector('span').textContent) }; })()`);
+        r.info = got;
+        await p.shot('node-shape-previews.png');
+        if (got.rows < 15) r.fails.push(`only ${got.rows} shapes`);
+        if (got.bare.length) r.fails.push(`no picture: ${J(got.bare)}`);
+      } catch (e) { r.fails.push(String(e.message)); }
+      await p.eval(`document.querySelectorAll('.pa-menu').forEach((e) => e.remove())`);
+      results.push(r);
+    }
     await act(p, 'node-style-drawcolor', node('run'), ['Style', 'Draw color', 'red'], /\\node\[box, right=of src, draw=red\] \(run\)/, { shot: true });
     await act(p, 'node-style-fillmix', node('run'), ['Style', 'Fill color', 'Mix…'], /\\node\[box, right=of src, fill=red!30\] \(run\)/, { then: async () => {
       if (!await p.until(`document.querySelector('.pa-mix')`, 3000)) throw new Error('no mixer');

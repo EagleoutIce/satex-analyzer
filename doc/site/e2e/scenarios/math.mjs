@@ -8,6 +8,14 @@ export default [
   { name: 'math-preview', word: is('Literate'), src: /Literate/, keys: [' cost $x_1+\\alpha^2$ and $\\frac{a}{b}$ ok'], expect: () => null, contains: [/x_\{?1\}?\+\\alpha\^\{?2\}?/, /\\frac\{a\}\{b\}/],
     land: ['ok'], math: [['x', '1', 'sub'], ['α', '2', 'sup'], ['a', 'b', 'over']], italic: ['x', 'a'],
     steps: 'thesis.tex; click the end of "Literate"; type " cost $x_1+\\alpha^2$ and $\\frac{a}{b}$ ok": the echo shows x with 1 lowered, α with 2 raised, a over b' },
+  // a command's symbol in the echo (user 2026-11-22: typing `\cdot` broke the preview, `a \cdot b` echoed as `a b`):
+  // ⋅ spaced as a binary operator, α as a letter, and the build lands where the preview drew
+  { name: 'math-cdot-alpha', settle: true, source: MARKUP, example: 'hello.tex', word: is('paragraph.'), src: /second paragraph\./, keys: [' so $a\\cdot b+\\alpha$ ok'], expect: () => null, contains: [/a\\cdot b\+\\alpha *(\\\)|\$) ok/],
+    land: ['ok'], ever: [/⋅/, /α/], never: [/a\s*b\+/],
+    steps: 'hello.tex as MARKUP; click the end of "paragraph."; type " so $a\\cdot b+\\alpha$ ok": the echo shows a ⋅ b+α (was: "a b"), ok lands where the preview drew it' },
+  { name: 'math-cdot-into', source: '\\documentclass{article}\n\\begin{document}\nSome text with $x$ in it and more words.\n\\end{document}\n', example: 'hello.tex', word: { word: ['x'] }, src: /\$x/, keys: ['\\cdot y+\\alpha'], expect: () => null, contains: [/\$x\\cdot y\+\\alpha *\$/],
+    land: ['in'], ever: [/⋅/, /α/], never: [/x\s*y\+/],
+    steps: 'a line with $x$; click the end of the math x; type "\\cdot y+\\alpha" into the formula: the echo shows x ⋅ y+α, "in" lands where the preview drew it' },
   { name: 'math-display-preview', source: MARKUP, example: 'hello.tex', word: is('paragraph.'), src: /second paragraph\./, keys: [' so', 'MathDisplay', 'y=\\frac{a}{b}', 'Escape', ' ok'], expect: () => null, contains: [/\\\[\s*y=\\frac\{a\}\{b\}\s*\\\]\s*ok/],
     land: ['ok'], math: [['so', 'y', 'below'], ['y', 'ok', 'below'], ['a', 'b', 'over']],
     steps: 'hello.tex as MARKUP; click the end of "paragraph."; type " so", the display-math control, "y=\\frac{a}{b}", Escape, " ok": the formula on a row of its own below, "ok" on the next' },

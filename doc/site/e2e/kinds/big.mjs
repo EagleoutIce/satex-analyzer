@@ -104,3 +104,29 @@ export async function big(p, sc) {
   if (p.errors.length) res.fails.push(`page errors: ${p.errors.slice(0, 3).join(' | ')}`);
   return res;
 }
+
+/** A question a click asks (Explain's, the PDF's click on generated text) while a run of the whole document goes on
+ * (scenarios/big.mjs `asked-during-a-run`): answered within `answer` ms from the last finished run, never after the run.
+ * The bug it pins: the worker's pause answered only the echo's questions, so a menu waited for the run's end
+ * ("Waiting for the analysis to read the generated text…"). `into`: ms into the run the question is asked. */
+export async function asked(p, sc) {
+  const res = { name: sc.name, fails: [], perf: [], info: {} }, d = p.drv;
+  await p.until('self.satexHealth && satexHealth().text?.length > 10', 60000);
+  await d.until('quiet', 240000, 500);
+  await d.act({ text: book(sc.pages) });
+  await sleep(1000);
+  if (!await d.until('quiet', 600000, 1000)) { res.fails.push('the first run did not end'); return res; }
+  // a preamble line: the whole document runs again
+  await d.act({ insert: { at: '\\begin{document}', k: 0, text: '\\newcommand\\zz{}\n' } });
+  if (!await p.until('satexHealth().running > 0', 10000)) { res.fails.push('no run after the edit'); return res; }
+  await sleep(sc.into);
+  const a = await p.eval(`self.satexAskNow ? satexAskNow(['\\\\contentsname']) : null`);
+  res.info.ask = a;
+  if (!a) res.fails.push('the page has no satexAskNow');
+  else if (!a.running) res.fails.push(`the question was answered after ${a.ms} ms with no run under way: the run was over or the answer waited for it (more pages make the run longer)`);
+  else if (a.ms > sc.answer) res.fails.push(`the question asked during the run took ${a.ms} ms > ${sc.answer} ms`);
+  else if (!a.rows) res.fails.push('the answer during the run holds no row of the last finished run');
+  await d.until('quiet', 600000, 1000);
+  if (p.errors.length) res.fails.push(`page errors: ${p.errors.slice(0, 3).join(' | ')}`);
+  return res;
+}

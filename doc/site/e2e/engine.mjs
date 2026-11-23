@@ -601,6 +601,191 @@ async function selectScenario(p, sc) {
   return res;
 }
 
+// a table's structure edited from the page (playground.js pdfTableOp): a chip's or a row grip's control, or a grip
+// dragged; `act` says which, `want` the source after it, `cols` the column chips the next build shows
+async function tableOpsScenario(p, sc) {
+  const res = { name: sc.name, kind: 'tableops', fails: [], perf: [], info: {} };
+  await load(p, sc);
+  await idle(p);
+  await p.eval(`(() => { const i = document.querySelector('#pdf-layer-list input[data-layer=widths]'); if (i && !i.checked) i.click(); })()`);
+  await sleep(500);
+  const mid = (w) => [(w[0] + w[2]) / 2, (w[1] + w[3]) / 2];
+  const hover = async () => { const w = await wordAt(p, sc.word); if (w) await p.s('Input.dispatchMouseEvent', { type: 'mouseMoved', x: mid(w)[0], y: mid(w)[1] }); return w; };
+  if (!await hover()) { res.fails.push('setup: no table word'); return res; }
+  const centre = (sel) => p.eval(`(() => { const e = document.querySelector(${J(sel)}); if (!e) return null; const r = e.getBoundingClientRect(); return r.width ? [r.x + r.width / 2, r.y + r.height / 2] : null; })()`);
+  // the column chips first (the build's boxes are in); an answer for an older text is dropped, the next move asks again
+  for (let k = 0; k < 15 && !await p.until(`document.querySelector('#play-pdf .pdf-col')`, 2000); k++) await hover();
+  await sleep(300);
+  await hover();
+  // the pointer walks as a hand does: small steps, a frame between, never a jump onto a control
+  let here = mid(await wordAt(p, sc.word));
+  const walk = async (to, n = 14) => { const [x0, y0] = here; for (let k = 1; k <= n; k++) { await p.s('Input.dispatchMouseEvent', { type: 'mouseMoved', x: x0 + (to[0] - x0) * k / n, y: y0 + (to[1] - y0) * k / n, ...(p.down ? { button: 'left', buttons: 1 } : {}) }); await sleep(25); } here = to; };
+  // a control shows once the pointer rests at its place (a short delay), so its centre is waited for
+  const shown = (sel) => p.until(`(() => { const e = document.querySelector(${J(`#play-pdf .pdf-tabbar.on ${sel}`)}); if (!e) return null; const r = e.getBoundingClientRect(); return r.width ? [r.x + r.width / 2, r.y + r.height / 2] : null; })()`, 2000);
+  const text0 = await p.eval(`satexHealth().text`);
+  const shotAround = (name, at) => p.shot(`${sc.name}-${name}.png`, { x: Math.max(0, at[0] - 260), y: Math.max(0, at[1] - 110), width: 620, height: 240 });
+  // only the controls of the pointer's place show: in a cell its column's × and its row's grip and ×
+  res.info.shown = await p.eval(`[...document.querySelectorAll('#play-pdf .pdf-tabbar')].filter((e) => getComputedStyle(e).display !== 'none').map((e) => e.querySelector('.pdf-tab-ops').dataset.key)`);
+  if (!sc.act.menu && res.info.shown.length > 2) res.fails.push(`controls shown: ${res.info.shown}, want only the pointer's column and row`);
+  const clear = await p.eval(`(() => { const top = Math.min(...[...document.querySelectorAll('#play-pdf .pdf-col')].map((e) => e.getBoundingClientRect().top)); return [...document.querySelectorAll('#play-pdf .pdf-tabbar.on .pdf-tab-op')].every((b) => b.getBoundingClientRect().top >= top - 0.5); })()`);
+  if (!clear) res.fails.push('a control stands over the text above the table');
+  /** Walks to the control `sel` (shown at the pointer's place) and clicks it: it must stay shown all the way. */
+  const reach = async (sel) => {
+    const c = await shown(sel);
+    if (!c) { res.fails.push(`no ${sel} shown (shown: ${await p.eval(`[...document.querySelectorAll('#play-pdf .pdf-tabbar.on .pdf-tab-ops')].map((e) => e.dataset.key).join()`)})`); await shot(p, res, 'nocontrol'); return false; }
+    await walk(c);
+    await sleep(150);
+    if (!await shown(sel)) { res.fails.push(`${sel} vanished on the way to it`); await shot(p, res, 'vanished'); return false; }
+    if (sc.shot) await shotAround('hover', c);
+    await p.mouse(c[0], c[1]);
+    return true;
+  };
+  if (sc.act.edge != null) {
+    // a column edge dragged: while the button is held no structure control (bar, +, ×, grip) shows, the moment the
+    // pointer passes cells, gaps and the gutter included
+    if (!await shown(`.pdf-tab-ops[data-key$=":col:${sc.act.edge}"] [data-act=delete]`)) { res.fails.push('no column controls at rest before the drag'); return res; }
+    const g = await centre(`#play-pdf .pdf-col-grip[data-k="${sc.act.edge}"]`);
+    if (!g) { res.fails.push('no column edge to drag'); await shot(p, res, 'noedge'); return res; }
+    await walk(g);
+    await sleep(150);
+    await p.s('Input.dispatchMouseEvent', { type: 'mousePressed', x: g[0], y: g[1], button: 'left', clickCount: 1 });
+    const visible = `[...document.querySelectorAll('#play-pdf .pdf-tabbar, #play-pdf .pdf-tbar, #play-pdf .pdf-row-grip, #play-pdf .pdf-tab-op')].filter((e) => { const r = e.getBoundingClientRect(); return r.width && getComputedStyle(e).visibility !== 'hidden'; }).length`;
+    let worst = 0;
+    p.down = true;
+    for (const to of [[g[0] + 20, g[1]], [g[0] + 20, g[1] + 25], [g[0] - 30, g[1] + 25], [g[0] - 30, g[1]]]) { await walk(to, 6); await sleep(300); worst = Math.max(worst, await p.eval(visible)); }
+    p.down = false;
+    if (sc.shot) await shotAround('edge', here);
+    await p.s('Input.dispatchMouseEvent', { type: 'mouseReleased', x: here[0], y: here[1], button: 'left', clickCount: 1 });
+    res.info.visibleDuringDrag = worst;
+    if (worst) res.fails.push(`${worst} structure controls visible during the column-edge drag`);
+    return res;
+  }
+  if (sc.act.menu) {
+    // a right click on the cell: the page actions' Row and Column submenus (actions.ts table-column)
+    const w = await wordAt(p, sc.word);
+    for (const type of ['mousePressed', 'mouseReleased']) await p.s('Input.dispatchMouseEvent', { type, x: mid(w)[0], y: mid(w)[1], button: 'right', clickCount: 1 });
+    const label = `(b) => b.querySelector('span')?.textContent ?? b.textContent`;
+    res.info.items = await p.until(`(() => { const m = document.querySelector('.pa-root'); return m && [...m.querySelectorAll(':scope > button')].map(${label}); })()`, 4000);
+    if (!res.info.items) { res.fails.push('no cell menu'); await shot(p, res, 'nomenu'); return res; }
+    for (const [k, l] of sc.act.menu.entries()) {
+      const row = await p.eval(`(() => { const b = [...[...document.querySelectorAll('.pa-menu')].at(-1).querySelectorAll(':scope > button')].find((b) => (${label})(b).trim().startsWith(${J(l)})); if (!b) return null; const r = b.getBoundingClientRect(); return [r.x + Math.min(40, r.width / 2), r.y + r.height / 2]; })()`);
+      if (!row) { res.fails.push(`no ${J(l)} in the menu (${J(res.info.items)})`); await shot(p, res, 'nomenu'); return res; }
+      await p.s('Input.dispatchMouseEvent', { type: 'mouseMoved', x: row[0], y: row[1] });
+      await sleep(200);
+      if (k === sc.act.menu.length - 1) {
+        if (sc.shot) await p.shot(`${sc.name}-menu.png`, { x: Math.max(0, w[0] - 300), y: Math.max(0, w[1] - 120), width: 700, height: 420 });
+        await p.mouse(row[0], row[1]);
+      }
+    }
+  } else if (sc.act.to) {
+    // a drag: onto the chip's name or the row's grip in steps, then in steps onto the word of the column or row to go to
+    const from = sc.act.what === 'col' ? await centre(`#play-pdf .pdf-col-name[data-k="${sc.act.k}"]`) : await shown(`.pdf-tab-ops[data-key$=":row:${sc.act.k}"] .pdf-row-grip`);
+    const tw = await wordAt(p, sc.act.to), to = tw && mid(tw);
+    if (!to || !from) { res.fails.push('no drag ends'); await shot(p, res, 'nodrag'); return res; }
+    await walk(from);
+    await sleep(150);
+    await p.s('Input.dispatchMouseEvent', { type: 'mousePressed', x: from[0], y: from[1], button: 'left', clickCount: 1 });
+    p.down = true;
+    await walk(to);
+    p.down = false;
+    await sleep(150);
+    if (sc.shot) await shotAround('drag', to);
+    await p.s('Input.dispatchMouseEvent', { type: 'mouseReleased', x: to[0], y: to[1], button: 'left', clickCount: 1 });
+  } else if (sc.act.act === 'delete') {
+    if (!await reach(`.pdf-tab-ops[data-key$=":${sc.act.what}:${sc.act.k}"] [data-act=delete]`)) return res;
+  } else {
+    // an insert: along the row to the line between the columns (or rows), then to the + standing on it
+    const gap = sc.act.what === 'col' ? 'cgap' : 'rgap';
+    const line = await p.eval(`(() => { const cs = [...document.querySelectorAll('#play-pdf .pdf-col')].map((e) => e.getBoundingClientRect()).sort((a, b) => a.left - b.left); const k = ${sc.act.at}; return cs.length ? (k === 0 ? cs[0].left : k >= cs.length ? cs.at(-1).right : (cs[k - 1].right + cs[k].left) / 2) : null; })()`);
+    if (sc.act.what === 'col') await walk([line, here[1]]);
+    else {
+      // left along the line between the two rows, out to the gutter where its + stands
+      const [a, b] = [await wordAt(p, sc.act.between[0]), await wordAt(p, sc.act.between[1])], left = await p.eval(`Math.min(...[...document.querySelectorAll('#play-pdf .pdf-col')].map((e) => e.getBoundingClientRect().left))`);
+      const y = (a[3] + b[1]) / 2;
+      await walk([here[0], y], 6);
+      await walk([left - 12, y]);
+    }
+    if (!await reach(`.pdf-tab-ops[data-key$=":${gap}:${sc.act.at}"] [data-act=insert]`)) return res;
+  }
+  await p.drv.act({ mark: 'builds' });
+  if (!await p.until(`satexHealth().text !== ${J(text0)}`, 15000)) { res.fails.push(`source unchanged (toast: ${await p.eval(`document.getElementById('play-toast')?.textContent ?? ''`)})`); await shot(p, res, 'final'); return res; }
+  const text1 = await p.eval(`satexHealth().text`);
+  res.info.table = text1.match(/\\begin\{tabular\w*\}[^]*?\\end\{tabular\w*\}/)?.[0];
+  if (!sc.want.test(text1)) res.fails.push(`source: ${J(res.info.table)}, want ${sc.want}`);
+  if (!await settle(p, 40000)) res.fails.push('settle: not settled');
+  if (sc.cols) {
+    await hover();
+    const n = await p.until(`document.querySelectorAll('#play-pdf .pdf-col').length === ${sc.cols} && ${sc.cols}`, 15000);
+    if (!n) res.fails.push(`the build shows ${await p.eval(`document.querySelectorAll('#play-pdf .pdf-col').length`)} column chips, want ${sc.cols}`);
+  }
+  res.shot = await p.shot(`${sc.name}-after.png`, await p.eval(`(() => { const r = document.querySelector('#play-pdf .pdf-page').getBoundingClientRect(); return { x: r.left, y: Math.max(0, r.top), width: Math.min(900, r.width), height: 360 }; })()`));
+  // one undo step takes it all back
+  await p.eval(`document.querySelector('#play .cm-content, .cm-content').focus()`);
+  for (const type of ['rawKeyDown', 'keyUp']) await p.s('Input.dispatchKeyEvent', { type, key: 'z', code: 'KeyZ', windowsVirtualKeyCode: 90, modifiers: 2 });
+  if (!await p.until(`satexHealth().text === ${J(text0)}`, 5000)) res.fails.push('one Ctrl+Z did not restore the table');
+  return res;
+}
+// a Typeset table's cell: its right click has the page's Row and Column submenus (playground.js tsTableAt)
+async function tsTableScenario(p, sc) {
+  const res = { name: sc.name, kind: 'tstable', fails: [], perf: [], info: {} };
+  await loadTs(p, sc);
+  const cellAt = `(() => { const td = [...document.querySelectorAll('#typeset-body .ts-td')].find((e) => e.textContent.trim() === ${J(sc.cell)}); if (!td) return null; td.scrollIntoView({ block: 'center' }); const r = td.getBoundingClientRect(); return [r.x + r.width / 2, r.y + r.height / 2]; })()`;
+  const at = await p.until(cellAt, 30000);
+  if (!at) { res.fails.push(`no Typeset cell ${sc.cell}`); await shot(p, res, 'nocell'); return res; }
+  const text0 = await p.eval(`satexHealth().text`);
+  const label = `(b) => b.querySelector('span')?.textContent ?? b.textContent`;
+  // the columns as written are asked when a table is under the pointer: a move first, then the right click
+  for (let k = 0; k < 10 && !res.info.items?.includes('Row'); k++) {
+    await p.s('Input.dispatchMouseEvent', { type: 'mouseMoved', x: at[0], y: at[1] });
+    await sleep(500);
+    for (const type of ['mousePressed', 'mouseReleased']) await p.s('Input.dispatchMouseEvent', { type, x: at[0], y: at[1], button: 'right', clickCount: 1 });
+    res.info.items = await p.until(`(() => { const m = document.querySelector('.pa-root'); return m && [...m.querySelectorAll(':scope > button')].map(${label}); })()`, 3000);
+    if (!res.info.items?.includes('Row')) await p.key('Escape');
+  }
+  if (!res.info.items?.includes('Row')) { res.fails.push(`no Row submenu in ${J(res.info.items)}`); await shot(p, res, 'nomenu'); return res; }
+  for (const [k, l] of sc.menu.entries()) {
+    const row = await p.eval(`(() => { const b = [...[...document.querySelectorAll('.pa-menu')].at(-1).querySelectorAll(':scope > button')].find((b) => (${label})(b).trim().startsWith(${J(l)})); if (!b) return null; const r = b.getBoundingClientRect(); return [r.x + Math.min(40, r.width / 2), r.y + r.height / 2]; })()`);
+    if (!row) { res.fails.push(`no ${J(l)}`); return res; }
+    await p.s('Input.dispatchMouseEvent', { type: 'mouseMoved', x: row[0], y: row[1] });
+    await sleep(200);
+    if (k === sc.menu.length - 1) { await p.shot(`${sc.name}-menu.png`, { x: Math.max(0, at[0] - 300), y: Math.max(0, at[1] - 120), width: 700, height: 420 }); await p.mouse(row[0], row[1]); }
+  }
+  if (!await p.until(`satexHealth().text !== ${J(text0)}`, 15000)) { res.fails.push('source unchanged'); return res; }
+  const text1 = await p.eval(`satexHealth().text`);
+  res.info.table = text1.match(/\\begin\{tabular\w*\}[^]*?\\end\{tabular\w*\}/)?.[0];
+  if (!sc.want.test(text1)) res.fails.push(`source: ${J(res.info.table)}, want ${sc.want}`);
+  return res;
+}
+// a click into an empty table cell (no word there) puts the caret at the cell's place in the source; typing fills it
+// (playground.js pdfCellCaret)
+async function cellClickScenario(p, sc) {
+  const res = { name: sc.name, kind: 'cellclick', fails: [], perf: [], info: {} };
+  await load(p, sc);
+  await idle(p);
+  let [l, r] = [null, null];
+  // the build's words may come a moment after the page is idle
+  for (let k = 0; k < 10 && !(l && r); k++) { [l, r] = [await wordAt(p, sc.left), await wordAt(p, sc.right)]; if (!(l && r)) await sleep(500); }
+  if (!l || !r) { res.fails.push('setup: no row words'); return res; }
+  // the empty cell: between the words of the cells left and right of it, on their row
+  const at = [(l[2] + r[0]) / 2, (l[1] + l[3]) / 2];
+  await p.s('Input.dispatchMouseEvent', { type: 'mouseMoved', x: at[0], y: at[1] });
+  // the columns as written come with the pointer over the table: rest a moment, then click
+  await sleep(800);
+  await p.mouse(at[0], at[1]);
+  if (!await p.until(`document.querySelector('#play-pdf .pdf-caret')`, 4000)) { res.fails.push(`no caret after the click (toast: ${await p.eval(`document.getElementById('play-toast')?.textContent ?? ''`)})`); await shot(p, res, 'nocaret'); return res; }
+  res.shot = await p.shot(`${sc.name}-caret.png`, { x: Math.max(0, at[0] - 250), y: Math.max(0, at[1] - 100), width: 520, height: 200 });
+  await p.drv.act({ mark: 'builds' });
+  for (const k of sc.type) await p.key(k);
+  if (!await p.until(`${sc.want}.test(satexHealth().text)`, 8000)) { res.fails.push(`source: ${J((await p.eval(`satexHealth().text`)).match(/\\begin\{tabular\}[^]*?\\end\{tabular\}/)?.[0])}, want ${sc.want}`); await shot(p, res, 'final'); return res; }
+  if (!await settle(p, 40000)) res.fails.push('settle: not settled');
+  let words = [];
+  for (let k = 0; k < 20 && !(words = await p.eval(`satexPdfWords().map((w) => w[5])`)).includes(sc.type); k++) await sleep(500);
+  res.info.text = (await p.eval(`satexHealth().text`)).match(/\\begin\{tabular\}[^]*?\\end\{tabular\}/)?.[0];
+  res.info.health = await p.eval(`JSON.stringify(satexHealth()).slice(0, 600)`);
+  if (!words.includes(sc.type)) res.fails.push(`the build sets no ${J(sc.type)} (words: ${words.join(' ').slice(0, 200)})`);
+  res.shot = await p.shot(`${sc.name}-after.png`, { x: Math.max(0, at[0] - 250), y: Math.max(0, at[1] - 100), width: 520, height: 200 });
+  return res;
+}
 // a column's letter changed from its chip menu: applied like typing, the old pages shown until the new build swaps once
 async function colScenario(p, sc) {
   const res = { name: sc.name, kind: 'col', fails: [], perf: [], info: {} };
@@ -885,5 +1070,5 @@ async function dblScenario(p, sc) {
 }
 
 export const KINDS = { type: typeScenario, tint: tintScenario, bare: bareScenario, ts: tsScenario, click: clickScenario, shift: shiftScenario,
-  select: selectScenario, complete: completeScenario, col: colScenario, forest: forestScenario, dbl: dblScenario };
+  select: selectScenario, complete: completeScenario, col: colScenario, tableops: tableOpsScenario, cellclick: cellClickScenario, tstable: tsTableScenario, forest: forestScenario, dbl: dblScenario };
 export { load, settled, settle, setText, wordAt, shot, compileState, keysOf };
