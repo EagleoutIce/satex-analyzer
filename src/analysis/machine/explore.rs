@@ -1925,12 +1925,19 @@ impl Machine<'_> {
 
     /// How many conditionals and groups `t` closes, less those it opens.
     pub(super) fn closing(&self, t: &Token) -> (i64, i64) {
-        self.closing_in(t, &mut Vec::new())
+        self.closing_in(t, &mut Vec::new(), &mut crate::fixed::HashMap::default())
     }
 
     /// [`Machine::closing`], looking through parameterless macros (`\close`
-    /// for `\endgroup`) that are not already in `seen`.
-    fn closing_in(&self, t: &Token, seen: &mut Vec<Sym>) -> (i64, i64) {
+    /// for `\endgroup`) that are not already in `seen`. Each macro is counted
+    /// once (`memo`): a body naming the same macro many times (acmart's
+    /// `\@currentaffiliation`, grown per `\and`) was walked once per path, exponentially.
+    fn closing_in(
+        &self,
+        t: &Token,
+        seen: &mut Vec<Sym>,
+        memo: &mut crate::fixed::HashMap<Sym, (i64, i64)>,
+    ) -> (i64, i64) {
         use crate::engine::builtins::Primitive as P;
         let char_group = |cat: crate::engine::tex::Catcode| match cat {
             crate::engine::tex::Catcode::Begin => (0, -1),
@@ -1946,10 +1953,17 @@ impl Machine<'_> {
                 Meaning::Primitive(P::EndGroup) => (0, 1),
                 Meaning::Char(_, cat) => char_group(cat),
                 Meaning::Macro(m) if m.parameter_text.items.is_empty() && !seen.contains(&sym) => {
+                    if let Some(&known) = memo.get(&sym) {
+                        return known;
+                    }
                     seen.push(sym);
-                    let sum = m.replacement_text.iter().map(|t| self.closing_in(t, seen));
-                    let sum = sum.fold((0, 0), |a, b| (a.0 + b.0, a.1 + b.1));
+                    let mut sum = (0, 0);
+                    for t in m.replacement_text.iter() {
+                        let (a, b) = self.closing_in(t, seen, memo);
+                        sum = (sum.0 + a, sum.1 + b);
+                    }
                     seen.pop();
+                    memo.insert(sym, sum);
                     sum
                 }
                 _ => (0, 0),

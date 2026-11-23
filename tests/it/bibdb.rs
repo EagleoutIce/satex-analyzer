@@ -475,3 +475,22 @@ fn a_source_map_keeps_the_data_model_rules_silent() {
         assert_eq!((keys(&plain, code), keys(&mapped, code)), (vec!["noyear".to_string()], Vec::new()), "{code}");
     }
 }
+
+/// Intuition: pdfTeX reads a UTF-8 cite key byte by byte, BibTeX and biber match it as the bytes or
+/// the UTF-8 it is, and the author wrote `Härer2020`. Pins a false undefined citation that showed the
+/// key garbled (`HÃ¤rer2020`); a key no entry declares is still reported, readably.
+#[test]
+fn a_cite_key_with_an_umlaut_matches_its_entry() {
+    let bib = "@article{Härer2020,\n  author={J. Härer},\n  title={T},\n  journaltitle={J},\n  journal={J},\n  date={2020},\n  year={2020}\n}\n";
+    for biblatex in [true, false] {
+        let found = lint("umlaut-key", biblatex, "\\cite{Härer2020} \\cite{Müller1999}", bib);
+        if found.is_empty() {
+            return;
+        }
+        let missing: Vec<String> = (found.iter())
+            .filter(|r| r["code"] == "undefined-citation")
+            .filter_map(|r| r["message"].as_str().map(str::to_string))
+            .collect();
+        assert!(missing.len() == 1 && missing[0].contains("`Müller1999`"), "{biblatex}: {missing:?}");
+    }
+}

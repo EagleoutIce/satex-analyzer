@@ -3709,7 +3709,7 @@ impl Machine<'_> {
         // A `&&` before the `\cr` makes nothing periodic.
         local(self, "period", Value::Int(period.filter(|p| *p < columns.len()).map_or(-1, |p| p as i64)));
         local(self, "m", Value::Int(columns.len() as i64));
-        for what in ["col", "incell", "omit", "vdone", "cdepth", "spans", "moved"] {
+        for what in ["col", "incell", "omit", "vdone", "cdepth", "spans", "moved", "udepth"] {
             local(self, what, Value::Int(0));
         }
         local(self, "start", Value::Unknown);
@@ -3846,6 +3846,15 @@ impl Machine<'_> {
         self.tpl_set("ok", Value::Int(0));
     }
 
+    /// tex.web § 324: the cell's `u` list just ended (its frame at `depth` popped): the cell's
+    /// text counts its braces from here.
+    pub(crate) fn u_part_ended(&mut self, depth: usize) {
+        if self.cell_base.is_some() && self.tpl_int("udepth") == depth as i64 {
+            self.cell_base = Some(self.align_state);
+            self.tpl_set("udepth", Value::Int(0));
+        }
+    }
+
     /// tex.web § 342: an `&` or `\cr` (`\crcr`) that `get_next` reads with
     /// `align_state` zero ends the cell where it is read, whoever reads it:
     /// a `\futurelet` looking ahead meets the cell's `v` part instead
@@ -3976,7 +3985,14 @@ impl Machine<'_> {
             match self.env.value(u) {
                 Value::Toks(u) => {
                     base += Self::brace_balance(&u);
-                    self.push_tokens(u)
+                    let below = self.input_depth();
+                    self.push_tokens(u);
+                    // § 324: where the `u` list ends, `align_state` counts from there, whatever its
+                    // expansion read past it or put back (siunitx's cells peek and skip `{`): the
+                    // frame's depth, so that its end sets the base ([`Machine::u_part_ended`]); an
+                    // empty `u` pushes no frame and the static count stands
+                    let depth = if self.input_depth() > below { self.input_depth() as i64 } else { 0 };
+                    self.tpl_set("udepth", Value::Int(depth));
                 }
                 _ => {
                     self.tpl_fail();

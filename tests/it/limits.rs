@@ -879,3 +879,25 @@ fn a_run_degrades_its_precision_once_past_the_soft_limit() {
     assert_eq!(run(1), 1);
     assert_eq!(run(100), 0);
 }
+
+/// Intuition: a recursion satex cuts drops the text its open calls still hold, counting the groups and
+/// conditionals that text would close, through parameterless macros. Each macro is counted once: a
+/// tower whose every level names the one below twice was walked 2^40 times per dropped call. Pins a
+/// hang past `limits.seconds` on a cut acmart title (`\@currentaffiliation` grows per `\and`).
+#[test]
+fn a_cut_call_counts_each_macro_of_the_dropped_text_once() {
+    let name = |k: usize| format!("\\csname zt{k}\\endcsname");
+    let mut tower = format!("\\expandafter\\def{}{{\\relax}}", name(0));
+    for k in 1..=40 {
+        let below = format!("\\expandafter\\noexpand{}", name(k - 1));
+        tower += &format!("\\expandafter\\edef{}{{{below}{below}}}", name(k));
+    }
+    // every open `\\zr` holds the tower's top after it: the cut drops them all
+    let source = format!(
+        "\\catcode`\\{{=1 \\catcode`\\}}=2 {tower}\\edef\\zr{{\\noexpand\\zr\\expandafter\\noexpand{}}}\\zr",
+        name(40)
+    );
+    let started = std::time::Instant::now();
+    analyze(Engine::PdfTeX, &source);
+    assert!(started.elapsed().as_secs() < 30, "took {:?}", started.elapsed());
+}

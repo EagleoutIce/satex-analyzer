@@ -1160,10 +1160,18 @@ pub fn relate(m: &mut Machine) {
         let name = m.name(read.name);
         let key = every.iter().find_map(|(p, s, run)| {
             let key = name.strip_prefix(p.as_str())?.strip_suffix(s.as_str())?;
-            (!key.is_empty() && read.parts.iter().any(|part| part == key)).then(|| (key.to_string(), *run))
+            // a declared key is told by the shape alone: a body that builds it (`\\ref{sec:#1}` in a macro
+            // called `\\body{1}`) does not spell it in the file; an undeclared one must stand in the call
+            // (only a key a written line declares, a label: one declared as the call runs is read by
+            // code that walks them all, acro's `\\begin{document}`)
+            let told = first.get(key).is_some_and(|f| !f.1) || read.parts.iter().any(|part| part == key);
+            (!key.is_empty() && told).then(|| (key.to_string(), *run))
         });
         let Some((key, run)) = key else { continue };
-        if first.get(&key).is_some_and(|f| f.0 == read.span) {
+        // the declaring call's own read is no use, when the call declares the key as it runs (`\\newcounter`
+        // reads `\\c@x`); a key a written line declares (`\\newlabel` in the `.aux`) is read there by a use,
+        // even from the same call (`\\label{sec:#1} \\ref{sec:#1}` in one macro)
+        if first.get(&key).is_some_and(|f| f.1 && f.0 == read.span) {
             continue;
         }
         let kind = match first.get(&key) {
@@ -1171,8 +1179,12 @@ pub fn relate(m: &mut Machine) {
             None if run => OccKind::KeyUse,
             None => OccKind::Ref,
         };
+        // a use already seen there, or the declaration itself when the call declares as it runs; a key a
+        // written line declares may be used at its own declaring site (one macro labels and refers)
+        let written = first.get(&key).is_some_and(|f| !f.1);
         let related = [OccKind::Ref, OccKind::KeyUse, OccKind::Label, OccKind::BibItem, OccKind::Key]
             .iter()
+            .filter(|k| !written || matches!(k, OccKind::Ref | OccKind::KeyUse))
             .any(|k| seen.contains(&(*k, key.clone(), read.site, read.context.call.map(|c| c.1))));
         if !related && seen.insert((kind, key.clone(), read.site, read.context.call.map(|c| c.1))) {
             uses.push((kind, key, read));

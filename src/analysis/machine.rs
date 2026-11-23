@@ -6020,8 +6020,16 @@ will look undefined",
         true
     }
 
+    /// How many frames the input stack holds.
+    pub(crate) fn input_depth(&self) -> usize {
+        self.input.len()
+    }
+
     fn pop_frame(&mut self) {
         let Some(frame) = self.input.pop() else { return };
+        if self.cell_base.is_some() && matches!(&*frame, Frame::Tokens { .. }) {
+            self.u_part_ended(self.input.len() + 1);
+        }
         match &*frame {
             Frame::Boundary => {}
             Frame::Returned(tokens) => {
@@ -7349,6 +7357,11 @@ will look undefined",
         span: Span,
         context: &crate::analysis::observe::OccContext,
     ) -> NodeId {
+        // a key an 8-bit engine read byte by byte is the one the file wrote (`\\cite{Härer2020}`)
+        let key = match crate::engine::source::as_written(&key) {
+            std::borrow::Cow::Owned(written) => written,
+            std::borrow::Cow::Borrowed(_) => key,
+        };
         let name = self.intern(&key);
         // A `\label` declares a key. A `\ref` or `\cite` uses one.
         let tag = match kind {

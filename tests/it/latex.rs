@@ -6053,3 +6053,75 @@ fn a_reciprocal_of_an_unknown_integer_keeps_every_value() {
     let lost = fp_values_lost(set, r"1/\l_tmpa_int", &["-1", "1"]);
     assert!(lost.is_empty(), "values lost: {lost:?}");
 }
+
+/// Intuition: `\vref[see]{x}` reads `[` as the label, since cleveref's
+/// `\vref` has no optional argument. Pins a finding that says so: the old fix told the
+/// author to "add `\label{[}`", absurd advice for a misread argument.
+#[test]
+fn a_bracket_read_as_a_label_says_the_optional_argument_is_wrong() {
+    if !installed() {
+        return;
+    }
+    let analysis = analyze(
+        r"\documentclass{article}
+\usepackage{varioref}\usepackage{hyperref}\usepackage{cleveref}
+\begin{document}
+\section{A}\label{s:a}\vref[see]{s:a}.
+\end{document}",
+    );
+    let found: Vec<String> = satex::linter::lint(&analysis)
+        .iter()
+        .filter(|f| f.get("code").and_then(|c| c.as_str()) == Some("undefined-reference"))
+        .map(|f| format!("{} | {}", f["message"].as_str().unwrap_or_default(), f["fix"].as_str().unwrap_or_default()))
+        .collect();
+    assert_eq!(found.len(), 1, "{found:?}");
+    assert!(found[0].contains("no optional argument") && !found[0].contains("\\label{[}"), "{found:?}");
+}
+
+/// Intuition: a name the run could not compute (`\ref{sec:\s}` in a loop the
+/// analysis summarized) is held under a mark of satex's own. Pins that no
+/// finding shows that mark: the bug was `\^^Bunknown name:r@sec:^^G` and raw
+/// control characters in messages meant for the author.
+#[test]
+fn no_finding_shows_the_mark_of_an_unknown_name() {
+    if !installed() {
+        return;
+    }
+    let analysis = analyze(
+        r"\documentclass{article}
+\usepackage{pgffor,enumitem,hyperref}
+\begin{document}
+\foreach \s in {1,...,60}{\section{S \s}\label{sec:\s}\begin{enumerate}\foreach \i in {1,...,6}{\item I \i, see~\ref{sec:\s}.}\end{enumerate}}
+\end{document}",
+    );
+    let shown: Vec<String> = satex::linter::lint(&analysis)
+        .iter()
+        .flat_map(|f| {
+            ["message", "name", "fix"].map(|k| f.get(k).and_then(|v| v.as_str()).unwrap_or_default().to_string())
+        })
+        .filter(|t| {
+            t.contains("unknown name") || t.contains("^^B") || t.chars().any(|c| c.is_control() && !c.is_whitespace())
+        })
+        .collect();
+    assert!(shown.is_empty(), "{shown:?}");
+}
+
+/// Intuition: a cell's own braces count from where its `u` template ends (tex.web § 324), whatever that
+/// template's expansion read past or put back. siunitx's `S` cells peek token by token and swap `\cr`
+/// behind `\if_false: { \fi:`; a base counted from the template's tokens alone came out one too high, so
+/// that `\cr` ended the cell inside `\cs_set:Npn \cr` and a braced cell gave false certain errors.
+#[test]
+fn a_braced_siunitx_cell_ends_where_tex_ends_it() {
+    if !installed() {
+        return;
+    }
+    let text = "\\documentclass{article}\n\\usepackage{booktabs,siunitx}\n\\begin{document}\n\\begin{tabular}{lS}\n\\toprule\na & {B} \\\\ \\midrule\nb & 2.5 \\\\\n\\bottomrule\n\\end{tabular}\n\\end{document}\n";
+    let path = crate::support::tmp_root().join("siunitx-braced-cell.tex");
+    std::fs::write(&path, text).unwrap();
+    let analysis = satex::analysis::machine::Machine::analyze(text, Some(&path), &crate::support::config());
+    let errors: Vec<String> = codes(&analysis)
+        .into_iter()
+        .filter(|c| c.contains("error") || c.contains("mismatch") || c == "missing-end")
+        .collect();
+    assert!(errors.is_empty(), "{errors:?}");
+}
