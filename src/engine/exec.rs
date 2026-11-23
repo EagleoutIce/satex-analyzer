@@ -5345,6 +5345,15 @@ impl Machine<'_> {
                 self.carried.stream_paths.insert(stream, path.display().to_string());
             }
         }
+        // tex.web § 1275 only opens the file: its first `\read` takes the text
+        // ([`Machine::load_stream`]), so `\ifeof` after `\openin` reads none.
+        if let Some(path) = path.as_ref().filter(|_| self.written_text(&name).is_none()) {
+            if self.out.facts.found.len() < self.cfg.limits.facts {
+                self.out.facts.found.insert(path.display().to_string());
+            }
+            crate::project::overlay::probed(path);
+            return self.set_stream(stream, Some(vec![crate::analysis::machine::deferred_line(path)]));
+        }
         // A file this run wrote with unknown content leaves the stream unknown.
         let Some(bytes) = self.input_bytes(&name) else { return self.unknown_stream(stream) };
         let text = bytes.map(|b| self.pick_text(by, span, crate::engine::source::decode(&b)));
@@ -5362,6 +5371,7 @@ impl Machine<'_> {
         self.scan_keyword("to");
         let Some(name) = self.read_r_token() else { return };
         self.pin_stream(stream, by, Some(span));
+        self.load_stream(stream, by, span);
         let open = self.stream_open(stream);
         if open != Some(true) {
             // tex.web § 484: a stream not open reads the terminal, giving whatever

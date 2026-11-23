@@ -2249,6 +2249,9 @@ fn an_unclosed_argument_is_the_document_s_error() {
 /// `\keys_set:nn` offers its module's keys, and a choice key its choices.
 #[test]
 fn l3keys_complete_keys_and_choices() {
+    if !crate::support::kernel_has("\\ExplSyntaxOn") {
+        return;
+    }
     let text = "\\documentclass{article}\n\\ExplSyntaxOn\n\\keys_define:nn {zmod} { size .choice:, size/big .code:n = {}, size/small .code:n = {}, width .tl_set:N = \\l_tmpa_tl }\n\\NewDocumentCommand\\zset{m}{\\keys_set:nn{zmod}{#1}}\n\\ExplSyntaxOff\n\\begin{document}\n\\zset{width=1}\n\\zset{}\n\\zset{size=}\n\\end{document}\n";
     let (mut server, uri, _, dir) = open_loaded("l3keys", text);
     let keys = complete(&mut server, &uri, 7, 6);
@@ -2263,6 +2266,9 @@ fn l3keys_complete_keys_and_choices() {
 /// Hovering a key of an option list names its module, type and choices.
 #[test]
 fn hovering_a_key_shows_its_definition() {
+    if !crate::support::kernel_has("\\ExplSyntaxOn") {
+        return;
+    }
     let text = "\\documentclass{article}\n\\ExplSyntaxOn\n\\keys_define:nn {zmod} { size .choice:, size/big .code:n = {}, size/small .code:n = {}, width .tl_set:N = \\l_tmpa_tl }\n\\NewDocumentCommand\\zset{m}{\\keys_set:nn{zmod}{#1}}\n\\ExplSyntaxOff\n\\begin{document}\n\\zset{width=1, size=big} size\n\\end{document}\n";
     let (mut server, uri, _, dir) = open_loaded("keyhover", text);
     let mut hover = |character: u32| {
@@ -4485,6 +4491,9 @@ fn hovering_inline_math_shows_the_formula_set() {
 /// Keys of a keyval family (graphicx's `Gin`) show their docs on hover, with or without a value.
 #[test]
 fn hovering_a_graphics_key_shows_it() {
+    if !crate::support::installed_file_has("graphicx.sty", "{Gin}{alt}") {
+        return;
+    }
     let text = "\\documentclass{article}\n\\usepackage{graphicx}\n\\begin{document}\n\\includegraphics[width=1cm, alt={a plot}, clip]{example-image}\n\\end{document}\n";
     let (mut server, uri, dir) = open_set("gin-hover", text, &[]);
     for key in ["width", "alt", "clip"] {
@@ -4498,6 +4507,9 @@ fn hovering_a_graphics_key_shows_it() {
 /// A graphics key's item says in words what it takes, and resolves to docs read off its code.
 #[test]
 fn graphics_key_items_explain_themselves() {
+    if !crate::support::installed_file_has("graphicx.sty", "{Gin}{alt}") {
+        return;
+    }
     let text = "\\documentclass{article}\n\\usepackage{graphicx}\n\\begin{document}\n\\includegraphics[]{example-image}\n\\end{document}\n";
     let (mut server, uri, dir) = open_set("gin-complete", text, &[]);
     let items = complete(&mut server, &uri, 3, col(text, 3, "]", 0));
@@ -8483,6 +8495,9 @@ fn includegraphics_item_carries_its_optional_arguments() {
 /// ones. Pins: the probe took `d()`'s `(` for a flag (`t(`), since alone it reads to the end of the text.
 #[test]
 fn document_command_items_carry_their_delimiters() {
+    if !crate::support::kernel_has("\\NewDocumentCommand") {
+        return;
+    }
     let text = "\\documentclass{article}\n\\NewDocumentCommand\\qx{s O{d} m d() r<>}{#3}\n\\begin{document}\n\\qx\n\\end{document}\n";
     let found = shapes_of("shape-ltcmd", text, &["qx"]);
     assert_eq!(found[0], ("*[⟨options⟩]{⟨arg⟩}(⟨arg⟩)<⟨arg⟩>".to_string(), "qx{${1:arg}}<${2:arg}>$0".to_string()));

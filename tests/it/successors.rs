@@ -49,7 +49,7 @@ fn found(name: &str, preamble: &str, files: &[(&str, &str)]) -> Vec<(String, Vec
 /// wrapfig in a list of packages: named, and only its name is replaced.
 #[test]
 fn wrapfig_is_continued_by_wrapfig2() {
-    if !installed() {
+    if !crate::support::installed_file_has("wrapfig2.sty", "") {
         return;
     }
     let found = found("wrapfig", "\\usepackage{graphicx, wrapfig}\n", &[]);

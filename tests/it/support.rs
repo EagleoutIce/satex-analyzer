@@ -66,6 +66,12 @@ pub fn installed_file_has(file: &str, text: &str) -> bool {
         && std::fs::read(path).is_ok_and(|b| text.is_empty() || b.windows(text.len()).any(|w| w == text.as_bytes()))
 }
 
+/// Whether the installed kernel's `latex.ltx` names `cs`: TeX Live 2019's has no
+/// hooks (`\AddToHook`), no `\NewDocumentCommand` and loads no expl3 (`\ExplSyntaxOn`).
+pub fn kernel_has(cs: &str) -> bool {
+    installed_file_has("latex.ltx", cs)
+}
+
 /// Whether `\DocumentMetadata` has the key `tagging=on`: TeX Live 2022's
 /// latex-lab tags only with `testphase=tagpdf`.
 pub fn tagging_installed() -> bool {
@@ -112,6 +118,12 @@ pub fn engine_typeout(source: &str, tag: &str, fallback: &str) -> String {
 /// what an older class rejects (TeX Live 2022's KOMA on an unexpandable option) checks nothing there.
 pub fn engine_accepts(source: &str) -> bool {
     engine_said(source).is_none_or(|said| !said.lines().any(|l| l.starts_with("! ")))
+}
+
+/// Whether the installed pdflatex prints `text` on `source` (`true` without pdflatex): an
+/// error only some kernels raise is expected where the engine raises it.
+pub fn engine_says(source: &str, text: &str) -> bool {
+    engine_said(source).is_none_or(|said| said.contains(text))
 }
 
 /// What pdflatex prints on `source`, run in a scratch directory; `None` without pdflatex.

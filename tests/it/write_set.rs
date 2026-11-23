@@ -398,6 +398,9 @@ fn modes_and_nesting() {
 /// exact for what the loop leaves alone.
 #[test]
 fn expl3_variables() {
+    if !crate::support::kernel_has("\\ExplSyntaxOn") {
+        return;
+    }
     // etex (latex format, \N=3): \l_tmpa_tl=abxxx, \g_tmpa_int=6, the others untouched.
     // `\g_tmpa_int` may be negative: `\advance` wraps (tex.web § 1238) for a large `\N`.
     let probe = r"\ExplSyntaxOn

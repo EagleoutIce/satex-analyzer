@@ -250,6 +250,9 @@ fn newcommand_signature_survives() {
 
 #[test]
 fn document_command_signature_is_parsed() {
+    if !crate::support::kernel_has("\\NewDocumentCommand") {
+        return;
+    }
     let analysis = analyze_kernel(r"\NewDocumentCommand\qx{s O{d} m}{#3}");
     let definition = definition(&analysis, "qx").expect("qx");
     let spec = query::signature(&analysis, definition.name, definition.mac.as_ref().unwrap()).expect("signature");
@@ -607,6 +610,9 @@ fn etex_expressions_respect_precedence() {
 
 #[test]
 fn document_commands_take_the_full_argument_specification() {
+    if !crate::support::kernel_has("\\NewDocumentCommand") {
+        return;
+    }
     // pdflatex refuses `!` before a leading optional argument.
     let analysis = analyze_kernel(r"\NewDocumentCommand\qx{s o >{\TrimSpaces}m +m}{#4}");
     let definition = definition(&analysis, "qx").expect("qx");

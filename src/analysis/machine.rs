@@ -5592,6 +5592,21 @@ will look undefined",
         }
     }
 
+    /// A pinned stream `\openin` left unread takes its file's text now, at its first
+    /// `\read` (tex.web § 483): the run depends on what the file holds from here on.
+    pub(crate) fn load_stream(&mut self, stream: Option<i64>, by: Sym, span: Span) {
+        let Some(n) = stream else { return };
+        let file = self.streams.get(&n).and_then(|t| match &t[..] {
+            [at] => deferred_file(at).map(std::path::PathBuf::from),
+            _ => None,
+        });
+        let Some(path) = file else { return };
+        let bytes = crate::project::overlay::read_bytes(&path).unwrap_or_default();
+        let text = self.pick_text(by, span, crate::engine::source::decode(&bytes));
+        let lines = text.lines().map(str::to_string).collect();
+        Rc::make_mut(&mut self.streams).insert(n, Rc::new(vec![At::exact(Rc::new(lines), 0)]));
+    }
+
     pub fn take_stream_line(&mut self, stream: i64) -> Option<String> {
         self.use_streams();
         // The lines stay shared. Only the position moves, so a snapshot of
@@ -13284,7 +13299,12 @@ will look undefined",
     /// ([`Machine::compare_bounds`]): its value alone keys no package cache.
     pub(crate) fn pass_bound(&self, input: &Input, streams: &Streams) -> u64 {
         let lines = (!streams.contains_key(&ANY_STREAM)).then(|| {
-            let left = |a: &At| if a.lo == CLOSED { 0 } else { a.lines.len().saturating_sub(a.lo) };
+            // An unread stream ([`deferred_line`]) may hold any number of lines.
+            let left = |a: &At| match (a.lo == CLOSED, deferred_file(a)) {
+                (true, _) => 0,
+                (_, Some(_)) => u32::MAX as usize,
+                _ => a.lines.len().saturating_sub(a.lo),
+            };
             streams.values().map(|t| t.iter().map(left).max().unwrap_or(0)).sum::<usize>()
         });
         let tokens = self.input_bound(input);
@@ -16076,13 +16096,17 @@ will look undefined",
     fn note_repeated_load(&mut self, sym: Sym, arguments: &[Vec<Token>]) {
         let is = |args: &[Token], name: &str| matches!(args, [t] if t.cs().is_some_and(|s| self.out.interner.name(s) == name));
         match self.name(sym) {
-            "@ifl@aded" if arguments.len() == 2 && is(&arguments[0], "@currext") && is(&arguments[1], "@currname") => {
+            "@ifl@aded" if arguments.len() == 2 && is(&arguments[0], "@currext") => {
                 let text = |m: &Self, cs: &str| {
                     let sym = m.out.interner.lookup(cs)?;
                     let macro_ = m.env.slot(sym)?.meaning.as_macro()?;
                     Some(m.text_of(&macro_.replacement_text))
                 };
                 let (Some(current), Some(ext)) = (text(self, "@currname"), text(self, "@currext")) else { return };
+                // An older kernel (TeX Live 2019) passes the name itself: `\@ifl@aded\@currext{#1}`.
+                if !is(&arguments[1], "@currname") && self.text_of(&arguments[1]) != current {
+                    return;
+                }
                 let loaded = self.out.interner.lookup(&format!("ver@{current}.{ext}")).is_some_and(|v| {
                     let meaning = self.env.meaning(v);
                     meaning != Meaning::Undefined && meaning.prim() != Some(crate::engine::builtins::Primitive::Relax)
@@ -18193,6 +18217,17 @@ fn unknown_line(file: &mut Option<String>) {
 /// A line [`unknown_line`] wrote: any number of lines, none too.
 fn is_unknown_line(line: &str) -> bool {
     line.trim_end() == crate::engine::tex::UNKNOWN_ANY.to_string()
+}
+
+/// The one line a stream `\openin` opened on `path` holds until its first `\read`
+/// ([`Machine::load_stream`]): no line of a file has a `\n` in it.
+pub(crate) fn deferred_line(path: &Path) -> String {
+    format!("\n{}", path.display())
+}
+
+/// The file of a stream standing before its first line, unread ([`deferred_line`]).
+fn deferred_file(at: &At) -> Option<&str> {
+    (at.lo == 0 && at.hi == 0 && at.lines.len() == 1).then(|| at.lines[0].strip_prefix('\n')).flatten()
 }
 
 /// The texts a written file may hold ([`crate::engine::tex::TEXT_OR`]).

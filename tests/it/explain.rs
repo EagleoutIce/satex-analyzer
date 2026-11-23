@@ -23,6 +23,9 @@ fn str_field<'a>(record: &'a Record, field: &str) -> Option<&'a str> {
 
 #[test]
 fn takes_is_a_min_max_object() {
+    if !crate::support::kernel_has("\\NewDocumentCommand") {
+        return;
+    }
     // `s O{d} m`: one mandatory argument, three items total (star included).
     let analysis = analyze_kernel(r"\NewDocumentCommand\x{s O{d} m}{#3}");
     let record = explain_one(&analysis, "x");
@@ -215,6 +218,9 @@ fn section_is_star_optional_mandatory() {
 
 #[test]
 fn document_command_signature_from_the_probe() {
+    if !crate::support::kernel_has("\\NewDocumentCommand") {
+        return;
+    }
     let analysis = analyze_kernel(r"\NewDocumentCommand\qx{s O{d} m}{#3}");
     let record = explain_one(&analysis, "qx");
     assert_eq!(str_field(&record, "effective"), Some(r"\qx*?[d]{2}"));
@@ -494,6 +500,9 @@ fn delimited_macros_called_anywhere_are_followed() {
 
 #[test]
 fn document_commands_of_every_argument_type() {
+    if !crate::support::kernel_has("\\NewDocumentCommand") {
+        return;
+    }
     let analysis = analyze_kernel(
         r"\NewDocumentCommand\na{s t+ o O{df} m}{}
 \NewDocumentCommand\nb{r() R<>{rr} m}{}

@@ -379,7 +379,7 @@ fn document_class_options_reach_the_class() {
 
 #[test]
 fn hook_rules_and_the_kind_of_hook_decide_the_order_its_code_runs_in() {
-    if !installed() {
+    if !crate::support::kernel_has("\\AddToHook") {
         return;
     }
     let analysis = analyze(
@@ -425,7 +425,7 @@ fn hook_rules_and_the_kind_of_hook_decide_the_order_its_code_runs_in() {
 
 #[test]
 fn the_document_hooks_run_around_the_body_and_what_they_define_survives() {
-    if !installed() {
+    if !crate::support::kernel_has("\\AddToHook") {
         return;
     }
     let analysis = analyze(
@@ -448,7 +448,7 @@ fn the_document_hooks_run_around_the_body_and_what_they_define_survives() {
 
 #[test]
 fn a_one_time_hook_runs_code_added_after_it_has_fired() {
-    if !installed() {
+    if !crate::support::kernel_has("\\AddToHook") {
         return;
     }
     let analysis = analyze(
@@ -466,7 +466,7 @@ fn a_one_time_hook_runs_code_added_after_it_has_fired() {
 
 #[test]
 fn the_environment_hooks_fire_around_the_environment_and_its_group() {
-    if !installed() {
+    if !crate::support::kernel_has("\\AddToHook") {
         return;
     }
     let analysis = analyze(
@@ -489,7 +489,7 @@ fn the_environment_hooks_fire_around_the_environment_and_its_group() {
 
 #[test]
 fn the_file_and_package_hooks_fire_around_a_load() {
-    if !installed() {
+    if !crate::support::kernel_has("\\AddToHook") {
         return;
     }
     let analysis = analyze(
@@ -507,7 +507,7 @@ fn the_file_and_package_hooks_fire_around_a_load() {
 
 #[test]
 fn a_command_hook_wraps_the_command_it_names() {
-    if !installed() {
+    if !crate::support::kernel_has("\\AddToHook") {
         return;
     }
     let analysis = analyze(
@@ -523,7 +523,7 @@ fn a_command_hook_wraps_the_command_it_names() {
 
 #[test]
 fn add_to_hook_next_runs_last_and_only_once() {
-    if !installed() {
+    if !crate::support::kernel_has("\\AddToHook") {
         return;
     }
     let analysis = analyze(
@@ -540,7 +540,7 @@ fn add_to_hook_next_runs_last_and_only_once() {
 
 #[test]
 fn removing_a_label_takes_its_code_out_of_the_hook() {
-    if !installed() {
+    if !crate::support::kernel_has("\\AddToHook") {
         return;
     }
     let analysis = analyze(
@@ -1023,7 +1023,7 @@ fn a_noalign_inside_a_cell_is_misplaced() {
 /// and leaves the command undefined.
 #[test]
 fn an_error_the_run_raises_is_reported() {
-    if !installed() {
+    if !crate::support::kernel_has("\\NewDocumentCommand") {
         return;
     }
     let analysis = analyze(
@@ -5688,7 +5688,9 @@ fn errors_met_while_expanding_or_computing_are_error_findings() {
         r"\par\count1=\spacefactor ",                                  // Improper \spacefactor.
         r"x\dimen0=\prevdepth ",                                       // Improper \prevdepth.
     ];
-    for body in cases {
+    // A kernel that does not load expl3 (TeX Live 2019) has no `\ExplSyntaxOn` to test.
+    let expl3 = crate::support::kernel_has("\\ExplSyntaxOn");
+    for body in cases.into_iter().filter(|b| expl3 || !b.contains("ExplSyntax")) {
         let analysis =
             analyze(&format!("\\documentclass{{article}}\n\\begin{{document}}\n{body}\n\\end{{document}}\n"));
         let errors = satex::linter::lint(&analysis).into_iter().filter(|f| f["severity"] == "error" && f["line"] == 3);
@@ -5767,7 +5769,8 @@ fn a_recursion_that_never_returns_exceeds_tex_s_capacity() {
     {
         let found = errors(body);
         assert!(found.iter().any(|e| e.starts_with(capacity)), "{body}: {found:?}");
-        if let Some(also) = also {
+        // TeX Live 2019's `\begin` overflows before it misses its `\endcsname`.
+        if let Some(also) = also.filter(|also| crate::support::engine_says(&doc(body), also)) {
             assert!(found.iter().any(|e| e.starts_with(also)), "{body}: {found:?}");
         }
     }

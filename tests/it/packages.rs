@@ -69,7 +69,7 @@ fn a_package_that_redefines_a_kernel_command_keeps_the_observed_meaning() {
 
 #[test]
 fn expl3_code_keeps_its_names_and_its_catcodes() {
-    if !installed() {
+    if !crate::support::kernel_has("\\NewDocumentCommand") {
         return;
     }
     let analysis = analyze(

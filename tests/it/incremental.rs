@@ -1127,6 +1127,37 @@ fn an_edit_in_an_included_file_resumes_where_it_is_included() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// Intuition: `\openin` only opens a file (tex.web § 1275), its first `\read` takes the text, so
+/// `\openin` + `\ifeof` (TeX Live 2022's `\IfFileExists`) asks only whether the file is there.
+/// An edit in the file then resumes inside it. Bug: `\openin` read the whole text, so the file
+/// counted as read twice and every checkpoint in it fell with the edit.
+#[test]
+fn an_edit_in_a_file_tested_by_openin_resumes_inside_it() {
+    if !installed() {
+        return;
+    }
+    let dir = crate::support::scratch_dir(crate::support::tmp_root().join("incremental-openin"));
+    let main = dir.join("main.tex");
+    let main_text = "\\documentclass{article}\n\\newread\\probe\n\\begin{document}\nBefore.\n\
+                     \\openin\\probe=chapter.tex \\ifeof\\probe\\else\\closein\\probe\\fi\n\\input{chapter}\nAfter.\n\\end{document}\n";
+    std::fs::write(&main, main_text).unwrap();
+    let paragraphs: Vec<String> = (0..30).map(|i| format!("Paragraph {i} of the chapter.\n")).collect();
+    std::fs::write(dir.join("chapter.tex"), paragraphs.join("\n")).unwrap();
+    let cfg = crate::support::config();
+    let mut checkpoints = Checkpoints::new(&cfg).every(64);
+    Machine::build(&mut checkpoints, main_text, &main, &cfg, true);
+    for edit in ["edited", "edited again"] {
+        let edited = paragraphs.join("\n").replacen("Paragraph 20 of", &format!("Paragraph 20, {edit}, of"), 1);
+        std::fs::write(dir.join("chapter.tex"), &edited).unwrap();
+        let incremental = Machine::build(&mut checkpoints, main_text, &main, &cfg, true);
+        let at = checkpoints.resumed.clone();
+        let full = Machine::build(&mut Checkpoints::new(&cfg), main_text, &main, &cfg, true);
+        assert_eq!(first_difference(&said(&incremental), &said(&full)), None, "{edit}: resumed at {at:?}");
+        let inside = |(path, line): &(String, u32)| path.ends_with("chapter.tex") && *line > 1;
+        assert!(at.as_ref().is_some_and(inside), "{edit}: resumed at {at:?}, not inside the chapter");
+    }
+}
+
 /// A build that makes its kernel and class caches and the next build, served from them, say
 /// the same, row for row. An edit's rerun resumes from the first build's checkpoints and
 /// splices its rest, so any row the two kinds of run record differently breaks the rerun.
