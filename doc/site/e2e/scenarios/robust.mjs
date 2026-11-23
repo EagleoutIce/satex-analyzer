@@ -13,7 +13,8 @@ export default [
     want: /\\end\{tabular\}\n\n\\begin\{table\}[^]*\\end\{table\}\n\nAfter it\./,
     steps: 'a tabular; the caret in cell b; Insert, Table: the float after \\end{tabular}, builds (was: written into the cell, "Not in outer par mode")' },
   { kind: 'robust', check: 'insert', name: 'ins-caret-math', text: DOC('So $a+b$ and more.\n\nNext.'), caret: 'a+b', k: 1, item: 'Equation', type: 'x',
-    want: /So \$a\+b\$ and more\.\n\n?\\begin\{equation\}\n\s*x\n\\end\{equation\}\n/,
+    // the caret's line shares the `\end` (refactor.ts insertPlan: a line of blanks is a \par, the insert must build as written)
+    want: /So \$a\+b\$ and more\.\n\n?\\begin\{equation\}\n\s*x\n?\s*\\end\{equation\}\n/,
     steps: 'inline math; the caret after a; Insert, Equation, x: after the line, never inside $…$ (was: an equation inside math)' },
   { kind: 'robust', check: 'table', name: 'table-nested-edit', text: NESTED, at: '\\begin{tabular}{lll}', cell: 'beta', to: 'BETA', want: (t) => t.replace('& beta &', '& BETA &'),
     steps: 'booktabs, \\multicolumn, \\multirow, a nested tabular, math, a braced cell, \\\\*; the table dialog: Apply untouched writes nothing; beta set to BETA: only that cell changes' },

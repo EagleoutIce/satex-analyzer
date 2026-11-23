@@ -9,7 +9,7 @@ export default [
     steps: 'thesis.tex, PDF, Type on; click the end of "Literate"; type " Quokka zebu" at 20-60 ms a key' },
   { name: 'prose-burst', word: is('Literate'), src: /Literate/, keys: [' Quokka zebu wombat'], speed: 'burst', marker: 'Quokka', endWord: is('wombat'), forward: true,
     steps: 'click the end of "Literate"; send " Quokka zebu wombat" with no delay' },
-  { kind: 'click', name: 'click-repeated', source: `\\documentclass{article}\n\\newcommand{\\yr}[1]{The year #1 is a year.\\par}\n\\begin{document}\n\\yr{2000}\n\\yr{2004}\n\\yr{2000}\n\\end{document}\n`, example: 'hello.tex', word: `(t) => t === '2004'`, src: (t) => t.indexOf('2004'),
+  { kind: 'click', name: 'click-repeated', source: `\\documentclass{article}\n\\newcommand{\\yr}[1]{The year #1 is a year.\\par}\n\\begin{document}\n\\yr{2000}\n\\yr{2004}\n\\yr{2000}\n\\end{document}\n`, example: 'hello.tex', word: is('2004'), src: (t) => t.indexOf('2004'),
     steps: 'three rows set by one macro line, 2000 / 2004 / 2000 (the leapyear report 16:53): a click on 2004 puts the caret in 2004, drawn on its own row' },
   // the visual helper's strip (ui-26/tyP-strip.png): a click just past "Inside", before `\\texttt{lstlisting}`, typed into the
   // \\texttt's argument; the caret at a word's end before a command inserts before the command

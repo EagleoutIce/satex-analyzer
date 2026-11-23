@@ -599,7 +599,7 @@
   }
   /** `p`, or an error naming `what` once `ms` pass without its answer. */
   const within = (p, ms, what) => Promise.race([p, new Promise((_, reject) => setTimeout(() => reject(new Error(`${what} got no answer in ${Math.round(ms / 1000)} s`)), ms))]);
-  const act = { phase: '', text: '', shown: '', lastSecond: /** @type {number | null} */ (null), since: 0, changed: 0, got: 0, all: 0, started: 0, rest: '', steps: [], run: 0, after: '', version: -1, ended: 0, note: '' };
+  const act = { phase: '', text: '', shown: '', lastSecond: /** @type {number | null} */ (null), since: 0, changed: 0, got: 0, all: 0, started: 0, rest: '', steps: [], run: 0, after: '', version: -1, ended: 0, note: '', idleDue: false };
   setInterval(() => {
     // a status that says Analyzing with nothing in flight is stale: findings held back are shown, the bar goes
     if (act.phase === 'Analyzing' && !running && !analysisQueued && !pending.size && performance.now() - act.changed > 10000) { if (heldFindings) publish(heldFindings); phase(); }
@@ -975,7 +975,8 @@
     analyze();
   }
   /** A running check shows in the status bar like any other work (`busy`); the worker reports how much of the file is read once the engine says. */
-  const phase = (text, done = null, stage = null) => text ? busy('Analyzing', text[0].toUpperCase() + text.slice(1), { done, stage }) : idle();
+  // the engine's idle while the page's message is still out (a build between its runs) is no end: that comes with the answer
+  const phase = (text, done = null, stage = null) => text ? busy('Analyzing', text[0].toUpperCase() + text.slice(1), { done, stage }) : running > 0 ? void (act.idleDue = true) : idle();
   function checking() { phase(`Analyzing ${state.file}…`); checkStart = performance.now(); }
 
   /** Completion order and the lists kept for a busy worker (views.ts `complete`). */
@@ -1062,8 +1063,19 @@
   function loadSeed() {
     try { const seed = JSON.parse(localStorage.getItem(seedKey()) ?? 'null'); if (Array.isArray(seed)) { commandItems.set('\\', seed); remember(commandMemo, seed); } } catch {}
   }
-  /** The kept items of a kind of place (`\\`: the names in force too), or null where none were asked yet. */
-  const keptFor = (place, file = uri()) => place ? keptList(commandItems.get(place), place === '\\' ? scopeItems.get(file) : undefined) : null;
+  /** The kept items of a kind of place (`\\`: the names in force too), or null where none were asked yet. `\\end{`
+   * names what `\\begin{` does: its kept items where it has none of its own. */
+  const keptFor = (place, file = uri()) => place ? keptList(commandItems.get(place) ?? (place === 'end' ? commandItems.get('begin') : undefined), place === '\\' ? scopeItems.get(file) : undefined) : null;
+  /** What `\\end{` at offset `at` of `text` offers, from the text alone (a run may hold the worker): the environments
+   * still open there, innermost first, then the others the text begins (`\\end{tabu` may name one not open), then
+   * the kept ones. */
+  function endItems(text, at, file = uri()) {
+    const before = text.slice(0, at).replace(/(^|[^\\])%.*$/gm, '$1'), open = [];
+    for (const m of before.matchAll(/\\(begin|end)\s*\{([^{}]*)\}/g)) { if (m[1] === 'begin') open.push(m[2]); else { const k = open.lastIndexOf(m[2]); if (k >= 0) open.length = k; } }
+    const firsts = [...new Set(open.reverse())], used = [...new Set([...text.matchAll(/\\begin\s*\{([^{}]+)\}/g)].map((m) => m[1]))].filter((n) => !firsts.includes(n));
+    const names = [...firsts, ...used], items = names.map((label, i) => ({ label, kind: 22, sortText: String(i).padStart(3, '0'), detail: i >= firsts.length ? 'environment' : i ? 'open environment' : 'closes the innermost environment' }));
+    return [...items, ...(keptFor('end', file) ?? []).filter((i) => !names.includes(i.label))];
+  }
   /** Whether a list shown during a run came from the kept items: once the worker is free, the open list takes the server's. */
   let keptShown = false;
   function refreshKept() {
@@ -1080,13 +1092,8 @@
     const k = `${file}|${version}|${position.line}:${position.character}`, word = `${file}|${position.line}:${start}`;
     if (running && lastItems?.length && lastWord === word && !patient) { keptShown = true; return lastItems; }
     if (place === '\\' && !scopeItems.has(file) && !prefetching) primeScope(file);
-    // `\end{`: the environments still open at the caret, innermost first, from the text alone: no wait for a busy run
-    if (place === 'end' && file === uri()) {
-      const lines = editor.text().split('\n'), before = [...lines.slice(0, position.line), (lines[position.line] ?? '').slice(0, start)].join('\n').replace(/(^|[^\\])%.*$/gm, '$1');
-      const open = [];
-      for (const m of before.matchAll(/\\(begin|end)\s*\{([^{}]*)\}/g)) { if (m[1] === 'begin') open.push(m[2]); else { const k = open.lastIndexOf(m[2]); if (k >= 0) open.length = k; } }
-      if (open.length) return [...new Set(open.reverse())].map((label, i) => ({ label, kind: 22, sortText: String(i).padStart(3, '0'), detail: i ? 'open environment' : 'closes the innermost environment' }));
-    }
+    // `\end{`: from the text alone, no wait for a busy run (endItems)
+    if (place === 'end' && file === uri()) return endItems(editor.text(), offsetIn(editor.text(), { line: position.line, character: start }), file);
     const kept = keptFor(place, file);
     // A run keeps the worker busy, so a question would wait behind it. The last items answer,
     // else the bundle's classes and packages, else nothing, and the server's answer is kept for next time.
@@ -1140,7 +1147,7 @@
       // a command's name ends where the letters there end (`\\sum_` in the body: none typed)
       const L = lettersAt(letterTables.get(state.file), line.number, head - line.from + 1), name = nameBefore(before, L), cmd = name ? [null, name] : null, word = cmd?.[1] ?? /[\w@*:./-]*$/.exec(before)[0];
       const kept = cmd ? typeableItems(keptFor('\\') ?? [], L) : null;
-      const place = cmd ? '\\' : placeAt(before.slice(0, before.length - word.length)), item = place && word && rank(kept ?? keptFor(place) ?? [], word, !!cmd && inMath(v.state.sliceDoc(Math.max(0, head - 20000), head), Math.min(head, 20000) - word.length - 1)).find((i) => i.label.toLowerCase().includes(word.toLowerCase()));
+      const place = cmd ? '\\' : placeAt(before.slice(0, before.length - word.length)), item = place && word && rank(kept ?? (place === 'end' ? endItems(v.state.doc.toString(), head - word.length) : keptFor(place)) ?? [], word, !!cmd && inMath(v.state.sliceDoc(Math.max(0, head - 20000), head), Math.min(head, 20000) - word.length - 1)).find((i) => i.label.toLowerCase().includes(word.toLowerCase()));
       if (item) {
         const from = head - word.length, a = itemApply(item);
         if (typeof a === 'function') a(v, null, from, head); else v.dispatch({ changes: { from, to: head, insert: a }, selection: { anchor: from + a.length }, userEvent: 'input.complete' });
@@ -1575,7 +1582,8 @@
     // typing in the PDF or Typeset view writes here too: its own list opens after `\`, the source's never for its prose
     const ev = new EditorView({
       parent, doc: text,
-      extensions: [setup.of(basicSetup), closing, lang.of(texLanguage(tex)), language.syntaxHighlighting(tex.highlighter), heatGutter, lint.lintGutter({ tooltipFilter: () => [] }), widgetGutter, lint.linter(null, { tooltipFilter: () => [] }), st.Prec.highest(view.keymap.of([{ key: 'Enter', run: symbolEnter }])), ac.autocompletion({ override: [(c) => (c.explicit || play.complete_while_typing !== false) && !document.activeElement?.matches('.pdf-type-in') ? complete(c) : null], activateOnTypingDelay: 40, addToOptions: [{ position: 80, render: (c) => {
+      // (symbolEnter first: basicSetup's completion keymap, as highest, would take Enter for the list's `\\\\` before it)
+      extensions: [st.Prec.highest(view.keymap.of([{ key: 'Enter', run: symbolEnter }])), setup.of(basicSetup), closing, lang.of(texLanguage(tex)), language.syntaxHighlighting(tex.highlighter), heatGutter, lint.lintGutter({ tooltipFilter: () => [] }), widgetGutter, lint.linter(null, { tooltipFilter: () => [] }), ac.autocompletion({ override: [(c) => (c.explicit || play.complete_while_typing !== false) && !document.activeElement?.matches('.pdf-type-in') ? complete(c) : null], activateOnTypingDelay: 40, addToOptions: [{ position: 80, render: (c) => {
         // the detail: a usage line colored like the hover's, then where it comes from
         const span = Object.assign(document.createElement('span'), { className: 'cm-completionDetail' });
         const [, use, from] = (c.usage ?? '').match(/^(.*?)(?:\s+(\([^)]*\)))?$/) ?? [];
@@ -3346,8 +3354,10 @@
     let at = -1;
     for (const tr of u.transactions) if (tr.isUserEvent('input.type')) tr.changes.iterChangedRanges((_a, _b, _f, to) => { at = Math.max(at, to); });
     const v = u.view, text = v.state.doc.toString(), max = +(configSet['conventions.lines.length'] ?? 0) || self.satexRefactor.lineHabit(text);
-    // only typing past the length: an edit inside a long line written before stays as it is
-    const e = at - text.lastIndexOf('\n', at - 1) - 1 > max && self.satexRefactor.wrapLine(text, at, max, v.hasFocus);
+    // only typing past the length: an edit inside a line already longer before it stays as it is (a page selection
+    // replaced in a one-line paragraph rewrapped it)
+    const was = u.startState.doc.lineAt(u.changes.invertedDesc.mapPos(at, -1)).length;
+    const e = was <= max && at - text.lastIndexOf('\n', at - 1) - 1 > max && self.satexRefactor.wrapLine(text, at, max, v.hasFocus);
     // after this update: a listener may not dispatch inside one
     // The page's caret typed this line: it moves with the wrap and stays this text's (else the next key found it stale).
     if (e) queueMicrotask(() => {
@@ -6774,7 +6784,9 @@
       }
       if (!shown()) { for (const d of drawn) URL.revokeObjectURL(d.img.__url); return; }
       for (const d of drawn) pdfPageSwap(d, typed(d.el) < 0, gen);
-      if (drawn.length && pdfCaret?.view === 'pdf') pdfCaretDraw();
+      // tints held from the build these pages showed (pdfOverlayBuild) go with it, in the same frame
+      if (drawn.length && pdfTintsOf && pdfTintsOf.pdf !== pdf) pdfOverlay();
+      else if (drawn.length && pdfCaret?.view === 'pdf') pdfCaretDraw();
       if (drawn.length) { pdfFacesPrune(); pdfLoaded_(); }
     } finally { if (pdfDrawing === view) pdfDrawing = null; pdfDrawNext(); }
   }
@@ -8499,11 +8511,12 @@
       const drawn = (page) => pdfBody.querySelector(`.pdf-page[data-page="${page}"] img`)?.classList.contains('pdf-drawn') ? 'd' : '';
       const of = near ? [...near].sort((a, b) => a - b).map((p) => `${p}${drawn(p)}`).join() : `all${pdfBody.querySelectorAll('.pdf-page img.pdf-drawn').length}`;
       const same = !lag && pdfTintsOf?.pdf === pdf && pdfTintsOf.rows === finalRows && pdfTintsOf.of === of;
-      // (none kept, a build that landed under the keys: the run's rows on its pages by their lines there (pdfBuiltLine), but
-      // those of the lines edited between the two texts, whose words are other ones)
-      const tints = kept || same ? [...pdfTintsOf.tints] : [], edited = (r) => pdfRowLines(r).some(([path, line]) => { const f = fileOf(path); return f && pdfLineMap(f, 'rows')?.changed(line); });
+      // (none kept, a build that landed under the keys: the run's rows on its pages by their lines there (pdfBuiltLine);
+      // a line edited between the two texts too, each run found by its own spelling among that line's words (PE.locate):
+      // one typed into is not found, the others keep their tints, the typed row's to relay)
+      let tints = kept || same ? [...pdfTintsOf.tints] : [];
       for (const r of kept || same ? [] : finalRows ?? []) {
-        if (!r.sites || !rowOn(r) || edited(r)) continue;
+        if (!r.sites || !rowOn(r)) continue;
         const chars = rowOrigins(r), runs = originRuns(chars);
         if (!runs.length) continue;
         // each run found by its place in the row among the page words its lines set: a `!` of a macro is the one
@@ -8525,7 +8538,12 @@
           }
         }
       }
-      if (!lag && !same) pdfTintsOf = { pdf, tints: [...tints], rows: finalRows, of };
+      // a page that still shows the build the last tints were found on (a newer one landed under the keys, its pages
+      // not drawn yet) keeps those: the new build's places lie where its typed rows already moved them, and the echo
+      // pushes the shown page's rows again (FINDINGS 34: the node's tint a row below the node)
+      const hold = !kept && !same && pdfTintsOf?.pdf !== pdf ? pdfTintsOf : null, held = (q) => !!hold && pdfImg(q.page)?.__build === hold.pdf;
+      if (hold) tints = [...tints.filter((q) => !held(q)), ...hold.tints.filter(held)];
+      if (!lag && !same && !tints.some(held)) pdfTintsOf = { pdf, tints: [...tints], rows: finalRows, of };
       // one tint per spot: a word set inside a wider run (an argument in its macro's text) keeps its own
       pdfOriginKinds = tints.map(originKey);
       if (pdfOverlayOn.origins) for (const q of PE.apart(tints)) if (pdfShown('origins', 'kind', originKey(q))) box(q.page, `pdf-orig pdf-orig-${q.kind}${q.key === 'generated' ? ' pdf-orig-generated' : q.made ? ` pdf-orig-made pdf-orig-${q.key}` : ''}`, q.l, q.t, q.r, q.d, q.title);
@@ -10529,10 +10547,12 @@
     else if (!span) {
       let got = bare && read();
       // rows of an older text or of the file shown before (a click right after an edit or a switch): this text's first
-      const current = () => tsShown === `${uri()}@${sentVersions.get(uri())}`;
+      // while work goes on (a run, a package load and the run after it) the rows shown may be of a run that lacked a
+      // package: this text's rows once it is done
+      const current = () => tsShown === `${uri()}@${sentVersions.get(uri())}`, working = () => running > 0 || !!act.phase;
       // while a run is under way its rows come when it ends (a document with TikZ: well past 10 s), then 10 s more
-      for (let n = 0, last = 0; bare && !got && !current() && n < last + 40 && n < 480; n++) {
-        if (running > 0 || act.phase) last = n;
+      for (let n = 0, last = 0; bare && !got && (working() || !current()) && n < last + 40 && n < 480; n++) {
+        if (working()) last = n;
         if (n === 2) toast(READ_WAIT, null);
         await new Promise((ok) => setTimeout(ok, 250));
         got = read();
@@ -10784,6 +10804,9 @@
   /** `\\begin{name}` and `\\end{name}` (with a `[…]` option): an environment's name is a key, set nowhere. */
   const PDF_ENV_MARK = /\\(?:begin|end)\s*\{[^{}]*\}(?:\s*\[[^\]]*\])?/g;
   const pdfPlainOf = (t, verb) => verb ? t : t.replace(/(?<!\\)%[^\n]*/g, '').replace(PDF_ENV_MARK, '').replace(/\\[A-Za-z@]+\*?|\\(?=[^A-Za-z@\s])|[{}$^_]/g, '').replace(/[\s~]+/g, ' ');
+  /** Whether page word `shown` is source word `src` set in capitals it spells in small letters (amsart's
+   * `\\MakeUppercase` title): the echo sets typed text so too. */
+  const pdfCaps = (shown, src) => shown !== src && shown === src.toUpperCase();
   /** Whether page word `v` stands on the row of word `r` (pdfedit.ts `onRow`). */
   const pdfOnRow = (v, r) => PE.onRow(v, r);
   /** The words of row `line` from word `w` on while they follow each other (pdfedit.ts `run`). */
@@ -11146,8 +11169,11 @@
       const upto = past ? upto0 : Math.max(g.at, upto0);
       // the command arguments A stands in (`\\textbf{world|}`): typed text inside them keeps their font, text after their
       // `}` (a paragraph Enter started after the command) takes the paragraph's own, from a word in no command's argument
-      const par0 = Math.max(0, g.text.lastIndexOf('\n\n', A.e)), outer = pdfOuterCtx(g.text, par0, A.e);
-      const plain = outer.some(Boolean) && para.find((t) => t.w && !pdfOuterCtx(B, Math.max(0, B.lastIndexOf('\n\n', t.s)), t.s).some(Boolean));
+      // (while the caret stays in A's groups A's own font is the base: a group a declaration opens, `\\centering`
+      // `{\\Huge …}`, reads as that command's argument, and its other uses' face at the paragraph's size is no title's)
+      const par0 = Math.max(0, g.text.lastIndexOf('\n\n', A.e)), outer = pdfOuterCtx(g.text, par0, A.e), inner = pdfOuterCtx(g.text, par0, g.at);
+      const exited = inner.length < outer.length || outer.some((c, i) => inner[i] !== c);
+      const plain = exited && outer.some(Boolean) && para.find((t) => t.w && !pdfOuterCtx(B, Math.max(0, B.lastIndexOf('\n\n', t.s)), t.s).some(Boolean));
       const f = pdfFontOf(img, plain ? plain.w : w[5] ? w : para[0].w), ctx = pdfEchoCtx ??= document.createElement('canvas').getContext('2d');
       ctx.font = `${f.size * k}px ${f.family}`;
       // the row's word space as the page set it, else a third of an em (TeX's text fonts)
@@ -11160,7 +11186,10 @@
       const fkey = `${f.family}|${f.size}|`, pieces = [];
       const width = (t, cx) => cx ? pdfWidthIn(pdfCtxFont(img, f, cx), t, k) : pdfTexWidth.get(fkey + t) ?? pdfTextWidth(ctx, f, t, f.size * k) / k;
       // the text typed as pieces, its formulas laid out as math; the caret in the last piece of the text up to it
-      const M = pdfMathOf(img, f), typed = (to) => pdfPieces(g.text, A.e, to, verb, width, gap, M, outer);
+      // a row set in capitals (pdfCaps): typed text as well
+      const lower = para.filter((t) => pdfOnRow(t.w, w) && /\p{Ll}/u.test(pdfPlainOf(B.slice(t.s, t.e), verb)));
+      const upper = !verb && lower.length > 0 && lower.every((t) => pdfCaps(t.w[5].normalize('NFKC'), pdfPlainOf(B.slice(t.s, t.e), verb).trim()));
+      const M = pdfMathOf(img, f), typed = (to) => pdfPieces(g.text, A.e, to, verb, width, gap, M, outer, upper ? (t) => t.toUpperCase() : undefined);
       pieces.push(...typed(upto));
       // the words kept as the page set them, macro output among them (`[1]` of a \\cite), not only the source's words
       const keptW = F ? pdfRun(line, F.w) : [];
@@ -11541,11 +11570,11 @@
         const st = el.style;
         if (!st.left.endsWith('%') || !st.top.endsWith('%')) continue;
         const l = parseFloat(st.left) / 100 * pw, t = parseFloat(st.top) / 100 * ph, r = l + (parseFloat(st.width) || 0) / 100 * pw, d = t + (parseFloat(st.height) || 0) / 100 * ph;
-        // one the push reaches but cannot move whole (a picture's or table's tint, one across the line pushed from):
-        // hidden until the build lands, never left on what the push moved away
-        const Q = pdfPushed;
-        if (Q && Q.page === pg && d > Q.top + 0.5 && (d - t > 30 || t < Q.top - 0.5)) { el.classList.add('pdf-relay-hid'); continue; }
-        if (d - t > 30) continue;
+        // one across the line pushed from or the text's foot cannot move whole: hidden until the build lands, never left
+        // on what the push moved away; a taller one wholly between them (an environment's frame) moves with the block
+        const Q = pdfPushed, reached = Q && Q.page === pg && d > Q.top + 0.5;
+        if (reached && (t < Q.top - 0.5 || d > Q.foot)) { el.classList.add('pdf-relay-hid'); continue; }
+        if (d - t > 30 && !reached) continue;
         const row = (m) => m.from[0] === pg && m.from[2] < d && m.from[4] > t, on = pdfMoved.filter((m) => row(m) && m.from[1] < r - 0.5 && m.from[3] > l + 0.5);
         // reaching into the text typed: left of the first word the change kept on that row
         const tr = pdfPainted.find((q) => q.page === pg && q.t < d && q.d > t && r > q.x0 + 0.5), P = pdfPushed, stays = (m) => m.page === pg && Math.abs(m.dy) < 1;
@@ -11620,7 +11649,7 @@
   /** The contexts of the groups open at `at` (read from `from`, a paragraph's start): per group the command whose
    * argument it is, else the one it inherits (prose's `ctx`). */
   const pdfOuterCtx = (text, from, at) => PE.scan(text, from, at, PE.start()).groups.reduce((out, [, c]) => [...out, c || out.at(-1) || ''], []);
-  function pdfPieces(text, from, to, verb, width, gap, M, outer = []) {
+  function pdfPieces(text, from, to, verb, width, gap, M, outer = [], cased = (t) => t) {
     /** @type {{ gap: number, n: number, t?: string, math?: any, M?: any, disp?: number, dshort?: number, below?: number, par?: any, brk?: boolean, ctx?: any }[]} */
     const out = [];
     for (const r of verb ? [{ s: from, e: to, kind: '' }] : PE.mathRuns(text, from, to)) {
@@ -11643,7 +11672,7 @@
       const raw = out.at(-1)?.disp != null ? text.slice(r.s, r.e).replace(/^\s+/, '') : text.slice(r.s, r.e);
       if (verb) { for (const [i, part] of raw.split(' ').entries()) out.push({ gap: i ? gap : 0, n: width(part), t: part }); continue; }
       // a word in a command's argument or a group's declaration measured in the font the run set such text in
-      for (const q of PE.prose(raw, pdfRefSet(text), outer)) out.push({ gap: q.gap ? gap : 0, n: width(q.t, q.ctx), t: q.t, par: q.par, ...(q.brk && { brk: true }), ...(q.ctx && { ctx: q.ctx }), ...(q.dim && { dim: true }) });
+      for (const q of PE.prose(raw, pdfRefSet(text), outer)) out.push({ gap: q.gap ? gap : 0, n: width(cased(q.t), q.ctx), t: cased(q.t), par: q.par, ...(q.brk && { brk: true }), ...(q.ctx && { ctx: q.ctx }), ...(q.dim && { dim: true }) });
     }
     return out.length ? out : [{ gap: 0, n: 0, t: '' }];
   }
@@ -11809,7 +11838,10 @@
     // and only pages built from the text as now up to the caret's word place it: a lagging build's word (the rest of
     // the word typed into) stands where the text was, the caret would bounce between rows
     const built = img.__build ?? pdf, fresh = !m || pdfBuiltText(built) == null || pdfBuiltText(built).slice(0, m[0] + m[1].length) === g.text.slice(0, m[0] + m[1].length);
-    const same = m && fresh ? pdfImgWords(img).filter((w) => (verb ? w[5].normalize('NFKC') : bare(w)) === now && ahead(w)).sort((a, b) => dist(a) - dist(b)) : [];
+    // a word set in capitals (pdfCaps): typed text as well
+    const a0 = c.anchor ?? m?.[0] ?? g.at, sh0 = c.word[5].normalize('NFKC'), caps = !verb && pdfCaps(sh0, g.text.slice(a0, a0 + sh0.length));
+    const cased = (t) => caps ? t.toUpperCase() : t;
+    const same = m && fresh ? pdfImgWords(img).filter((w) => (verb ? w[5].normalize('NFKC') : bare(w)) === cased(now) && ahead(w)).sort((a, b) => dist(a) - dist(b)) : [];
     // past a line break (Enter) the word stands far off: the one SyncTeX sets from the caret's line
     const line = pdfPos(g.text, g.at).line + 1, near = same[0] && dist(same[0]) < 40 ? same[0] : same.find((w) => pdfSource(c.page, w[1] + 1, w[4] - 1, w)?.line === line);
     // `anchor`: where the page's word `c.word` starts in the text. The text typed from there on is laid into its row at
@@ -11822,12 +11854,12 @@
     if (set) c.word = near;
     // verbatim is set as written, one fixed-width column a character: nothing to strip, the caret at its column
     const w = c.word, shown = w[5].normalize('NFKC'), plain = (t) => verb ? t : t.replace(PDF_ENV_MARK, '').replace(/\\([A-Za-z@]+)\s*/g, (_, n) => pdfSymbol(n)).replace(/\\[()[\]]|[{}$\\^_~]/g, '').replace(/\s+/g, ' ');
-    const typed = g.text.slice(c.anchor, Math.max(g.at, m ? m[0] + m[1].length : g.at)), into = m ? g.at - m[0] : 0, col = Math.min(shown.length, (m ? Math.max(0, shown.indexOf(now)) : 0) + into);
+    const typed = g.text.slice(c.anchor, Math.max(g.at, m ? m[0] + m[1].length : g.at)), into = m ? g.at - m[0] : 0, col = Math.min(shown.length, (m ? Math.max(0, shown.indexOf(cased(now))) : 0) + into);
     let cx = verb ? w[1] + (w[3] - w[1]) / Math.max(1, shown.length) * col : pdfBounds(img, w)[col], cy = 0;
     // the pages lag the text: the row is laid out again at once with the text as now written, until the build lands
     // an environment begun in the typed text (Insert ▸ Aligned) is a block of its own, no text of the word's row
     // nothing typed since the build (a click only placed the caret): the page as built, never redrawn
-    if (!set && typed !== bare(w) && pdfBuiltText(built) !== g.text && !(verb && pdf?.text === g.text) && (verb || !/\\begin\s*\{/.test(typed)) && (verb || !/\\[A-Za-z@]*$/.test(g.text.slice(c.anchor, g.at)))) { const e = pdfEcho(img, w, plain(typed), plain(g.text.slice(c.anchor, g.at)).length, verb, verb ? null : pdfStyleShift(g.text, c.anchor, g.at), PE.centeredAt(g.text, cells?.rows[0]?.[0] ? g.text.lastIndexOf('\\begin', cells.rows[0][0][0]) : g.at)); [cx, cy] = Array.isArray(e) ? e : [e ?? cx, 0]; pdfRelay(); }
+    if (!set && typed !== bare(w) && pdfBuiltText(built) !== g.text && !(verb && pdf?.text === g.text) && (verb || !/\\begin\s*\{/.test(typed)) && (verb || !/\\[A-Za-z@]*$/.test(g.text.slice(c.anchor, g.at)))) { const e = pdfEcho(img, w, cased(plain(typed)), plain(g.text.slice(c.anchor, g.at)).length, verb, verb ? null : pdfStyleShift(g.text, c.anchor, g.at), PE.centeredAt(g.text, cells?.rows[0]?.[0] ? g.text.lastIndexOf('\\begin', cells.rows[0][0][0]) : g.at)); [cx, cy] = Array.isArray(e) ? e : [e ?? cx, 0]; pdfRelay(); }
     img.parentElement.insertAdjacentHTML('beforeend', `<span class="pdf-caret" style="left:${cx / pw * 100}%;top:${(w[2] + cy) / ph * 100}%;height:${(w[4] - w[2]) / ph * 100}%"></span>`);
     pdfCaretAnchor();
   }
@@ -13550,6 +13582,7 @@
   /** Work that starts this soon after other work ended, with no edit between, goes on in its timeline (a package fetched, the server restarted for it). */
   const FOLLOW_MS = 1500;
   function busy(name, text, { done = null, got = 0, all = 0, stage = null } = {}) {
+    act.idleDue = false;
     // learning a command's arguments (for completion and hovers) is background work the page never waits for:
     // a quiet note on the ready line, no run step, no bar, no Stop (user 2026-11-22: "can't this happen in the background?")
     if (stage?.phase === 'probe') {
@@ -13621,7 +13654,7 @@
     // a phase that ends with no run to come (the command list, a package fetch): what waited for a run goes now,
     // a moment later, so a run's own results land first
     if (act.phase && afterRun) { const then = afterRun; setTimeout(() => { if (afterRun === then && !running && !act.phase) { afterRun = null; then(); } }, 300); }
-    act.phase = ''; act.text = '';
+    act.phase = ''; act.text = ''; act.idleDue = false;
     delete status.dataset.busy;
     // a hover card answered while the worker was busy is asked again
     if (!running) editor?.hoverAgain?.();
@@ -13809,6 +13842,7 @@
         } else notified(m);
       }
       drainAnalysis();
+      if (!running && act.idleDue) idle();
       // a hover a run held back is asked again once no run goes on
       if (!running) editor?.hoverAgain?.();
     } else if (data.type === 'status') {

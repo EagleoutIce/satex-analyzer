@@ -25,6 +25,16 @@ const J = JSON.stringify;
 const SAMPLER = `(() => { if (self.__swap) return; const S = self.__swap = { on: false, frames: [], ids: new WeakMap(), n: 0 };
   const id = (o) => { if (!o) return 0; if (!S.ids.has(o)) S.ids.set(o, ++S.n); return S.ids.get(o); };
   const seen = (e) => e.checkVisibility({ visibilityProperty: true, opacityProperty: true });
+  // the origin tints shown on page element e that lie on no word as the frame draws it: the words of the build its image
+  // shows, moved as the echo moved them (satexPdfBlock: the words it set elsewhere, the block it pushed)
+  const offWords = (e, img) => {
+    const b = img.__build, n = +e.dataset.page, ir = img.getBoundingClientRect(), k = ir.width / (img.naturalWidth * 72 / (b?.dpi ?? 72)), B = self.satexPdfBlock?.(n);
+    if (!b?.wordList || !B) return [];
+    const same = (u, v) => u[0] === v[0] && [1, 2, 3, 4].every((i) => Math.abs(u[i] - v[i]) < 0.01), P = B.pushed;
+    const words = b.wordList.filter((w) => w[0] === n).map((w) => { const m = B.moved.find((m) => same(m.from, w)); return m ? (m.page === n ? [w[1] + m.dx, w[2] + m.dy, w[3] + m.dx, w[4] + m.dy, w[5]] : null) : P && P.page === n && w[2] >= P.top - 0.5 ? [w[1], w[2] + P.dy, w[3], w[4] + P.dy, w[5]] : [w[1], w[2], w[3], w[4], w[5]]; }).filter(Boolean);
+    return [...e.querySelectorAll(':scope > .pdf-orig')].filter(seen).map((o) => { const r = o.getBoundingClientRect(); return [(r.left - ir.left) / k, (r.top - ir.top) / k, (r.right - ir.left) / k, (r.bottom - ir.top) / k]; })
+      .filter(([l, t, r, d]) => r - l > 0.5 && !words.some((w) => w[0] < r - 0.2 && w[2] > l + 0.2 && w[1] < d - 0.5 && w[3] > t + 0.5)).map((x) => x.map(Math.round));
+  };
   const tick = () => {
     if (S.on) {
       const sc = document.querySelector('#play-pdf .pdf-pages'), view = sc?.getBoundingClientRect();
@@ -32,7 +42,7 @@ const SAMPLER = `(() => { if (self.__swap) return; const S = self.__swap = { on:
         const img = e.querySelector(':scope > img:not(.pdf-fade)'), layers = {};
         for (const o of e.querySelectorAll('.pdf-ov')) { const c = o.classList[1]; if (!c) continue; const l = layers[c] ??= [0, 0, 1]; l[0]++; if (seen(o)) l[1]++; l[2] = Math.min(l[2], +getComputedStyle(o).opacity); }
         const drawn = !!img && img.complete && img.naturalWidth > 0 && !/^data:image\\/svg/.test(img.currentSrc || img.src);
-        return { n: +e.dataset.page, el: id(e), drawn, op: img ? +getComputedStyle(img).opacity : 0, gen: img?.__build?.gen ?? 0, layers };
+        return { n: +e.dataset.page, el: id(e), drawn, op: img ? +getComputedStyle(img).opacity : 0, gen: img?.__build?.gen ?? 0, layers, off: drawn ? offWords(e, img) : [] };
       });
       S.frames.push({ t: performance.now(), box: id(sc), scroll: sc ? Math.round(sc.scrollTop) : null, count: sc ? sc.querySelectorAll('.pdf-page').length : 0, pages,
         running: !!document.querySelector('#play-pdf.pdf-running'), echo: document.querySelectorAll('.pdf-echo').length });
@@ -61,6 +71,8 @@ export function judge(frames, sc) {
     hit(`layer ${c} dimmed`, frames.filter((f) => shown(f, c) && dimmest(f, c) < 0.99), (f) => ({ opacity: dimmest(f, c) }));
   }
   for (const c of sc.layerClasses ?? []) if (!classes.includes(c)) fails.push(`layer ${c} not shown ${shown(first, c) ? 'after' : 'before'} the typing (before ${shown(first, c)}, after ${shown(end, c)})`);
+  // `onWords`: every origin tint lies on a word as drawn (a tint relaid by a push it was measured after lies a row off)
+  if (sc.onWords) hit('a tint on no word', frames.filter((f) => f.pages.some((p) => p.off?.length)), (f) => f.pages.filter((p) => p.off?.length).map((p) => [p.n, p.gen, p.off]));
   const boxes = new Set(frames.map((f) => f.box)), els = new Map();
   for (const f of frames) for (const p of f.pages) (els.get(p.n) ?? els.set(p.n, new Set()).get(p.n)).add(p.el);
   const remade = [...els].filter(([, s]) => s.size > 1).map(([n, s]) => `page ${n}: ${s.size} elements`);

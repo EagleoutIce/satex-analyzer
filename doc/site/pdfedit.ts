@@ -1451,9 +1451,10 @@ declare global {
    * index of the page word that shows it, -1 where none does. Equal spellings pair up in order; one missing or extra
    * on either side (a macro's text, a dropped command) is skipped by looking a few words ahead; a word the page
    * hyphenated across rows (`consec-` `tetur`) is its first part; one that starts the other (`here.\footnote{A` is
-   * `here.A`, the page sets `here.` and the `A` in the footnote) pairs with it before looking ahead. */
+   * `here.A`, the page sets `here.` and the `A` in the footnote) pairs with it before looking ahead. Case aside: TeX
+   * sets a `\\MakeUppercase`d title (amsart's) in capitals its source spells in small letters. */
   function aligned(toks: string[], words: string[]): number[] {
-    const n = (t: string) => t.normalize('NFKC').replace(/[\u2010-\u2014]/g, '-');
+    const n = (t: string) => t.normalize('NFKC').replace(/[\u2010-\u2014]/g, '-').toLowerCase();
     const walk = (A: string[], B: string[], hyph: boolean) => {
       const out = A.map(() => -1), eq = (i: number, j: number) => A[i] === B[j] || hyph && B[j]!.endsWith('-') && j + 1 < B.length && A[i] === B[j]!.slice(0, -1) + B[j + 1];
       const LOOK = 4;

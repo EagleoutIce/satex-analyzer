@@ -21,6 +21,12 @@ test('aligned: monotone, in range, identity on equal lists', () => {
   }
 });
 
+// Intuition: TeX may set a source word in capitals (amsart's title, `\MakeUppercase`): it still shows that word. Pins
+// a title typed into that paired no word (the echo fell back to a span in the source's case, the landed caret jumped).
+test('aligned: a word set in capitals pairs with its source', () => {
+  assert.deepEqual(E.aligned(['Plain', 'Title', 'Quokka', 'Words'], ['PLAIN', 'TITLE', 'QUOKKA', 'WORDS']), [0, 1, 2, 3]);
+});
+
 // Intuition: `changed` gives the longest common start and then the longest common end that does not overlap it, so a
 // typed run is found exactly where it went. Pins an end that overlapped the start (`aaa` → `aaaa`).
 test('changed: the longest common start and end, never overlapping', () => {

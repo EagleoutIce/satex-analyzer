@@ -61,8 +61,9 @@ async function load(p, sc) {
 }
 
 /** The page's checks done (a fresh context fetches the TeX bundle first, slow on a loaded machine): what a widget or
- * menu asks of the language server is answered at once, not queued behind the fetch. */
-async function idle(p, ms = 240000) { if (!await p.drv.until({ health: { busy: false } }, ms)) throw new Error('setup: the page stayed busy (its first check never ended)'); }
+ * menu asks of the language server is answered at once, not queued behind the fetch. No run going on or due either: the
+ * status is not busy between a run that lacked a package, the load and the run after it. */
+async function idle(p, ms = 240000) { if (!await p.drv.until('quiet', ms)) throw new Error('setup: the page stayed busy (its first check never ended)'); }
 /** No run going on, due or queued for 1.5 s (a fresh profile's first run builds the kernel cache: minutes at most). */
 const settled = (p, ms = 240000) => p.drv.until('quiet', ms, 1500);
 /** A page word (a probe.js word target, `nth` of them, on page `pageNo`) in client px: [x0, y0, x1, y1, page, text,
@@ -591,7 +592,9 @@ async function selectScenario(p, sc) {
   res.info.painted = painted;
   if (!sc.refused && !painted) res.fails.push('the taken words were not painted over at once');
   const text1 = await p.eval(`satexHealth().text`);
-  if (text1 !== want) res.fails.push(`source: want ${J(want.slice(s0 - 20, s0 + 20))}, got ${J(text1.slice(s0 - 20, s0 + 20))} (toast: ${await p.eval(`document.getElementById('play-toast')?.textContent ?? ''`)})`);
+  // (shown around the first character that differs: the selection's place may hold the edit while another lost text)
+  const d0 = [...want].findIndex((c, i) => c !== text1[i]), d = d0 < 0 ? want.length : d0;
+  if (text1 !== want) res.fails.push(`source: want ${J(want.slice(d - 20, d + 20))}, got ${J(text1.slice(d - 20, d + 20))} at ${d} (toast: ${await p.eval(`document.getElementById('play-toast')?.textContent ?? ''`)})`);
   if (sc.refused) { const t = await p.eval(`document.getElementById('play-toast')?.textContent ?? ''`); if (!/Not typed here/.test(t)) res.fails.push(`no refusal note (toast: ${t})`); return res; }
   const ok = await settle(p);
   if (!ok) res.fails.push('settle: not settled');
@@ -981,9 +984,10 @@ async function tsScenario(p, sc) {
     res.info.tints = before ? before.split(' ').length : 0;
     if (!before) res.fails.push('no origin tints in the Typeset view');
     // tints over no text: each tint's middle point lies on a text node's line box
-    // (in view only: elementFromPoint sees nothing outside it; a tint of no area draws nothing)
+    // (in the view's scrolled box only: one past its edge is clipped, and elementFromPoint there sees what lies
+    // beside the view, the status line; a tint of no area draws nothing)
     res.info.flat = await p.eval(`[...document.querySelectorAll('#typeset-body .ts-orig')].filter((t) => { const r = t.getBoundingClientRect(); return !r.width || !r.height; }).length`);
-    const off = await p.eval(`[...document.querySelectorAll('#typeset-body .ts-orig')].filter((t) => { const r = t.getBoundingClientRect(); if (!r.width || !r.height || r.bottom < 0 || r.top > innerHeight || r.right < 0 || r.left > innerWidth) return false; t.style.pointerEvents = 'none'; const e = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2); t.style.pointerEvents = ''; return !e?.closest('.ts-text'); }).map((t) => { const r = t.getBoundingClientRect(); t.style.pointerEvents = 'none'; const e = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2); t.style.pointerEvents = ''; return t.className.replace(/.*ts-orig-/, '') + ':' + JSON.stringify(t.textContent.slice(0, 20)) + '/' + Math.round(r.width) + 'x' + Math.round(r.height) + ' over ' + (e ? e.tagName + '.' + [...e.classList].join('.') : '-') + ' in ' + (t.parentElement?.className ?? ''); })`);
+    const off = await p.eval(`[...document.querySelectorAll('#typeset-body .ts-orig')].filter((t) => { const r = t.getBoundingClientRect(), v = t.parentElement.getBoundingClientRect(), x = r.left + r.width / 2, y = r.top + r.height / 2; if (!r.width || !r.height || y < v.top || y > v.bottom || x < v.left || x > v.right) return false; t.style.pointerEvents = 'none'; const e = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2); t.style.pointerEvents = ''; return !e?.closest('.ts-text'); }).map((t) => { const r = t.getBoundingClientRect(); t.style.pointerEvents = 'none'; const e = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2); t.style.pointerEvents = ''; return t.className.replace(/.*ts-orig-/, '') + ':' + JSON.stringify(t.textContent.slice(0, 20)) + '/' + Math.round(r.width) + 'x' + Math.round(r.height) + ' over ' + (e ? e.tagName + '.' + [...e.classList].join('.') : '-') + ' in ' + (t.parentElement?.className ?? ''); })`);
     if (off.length) res.fails.push(`${off.length} tints over no text: ${off.slice(0, 4).join(' | ')}`);
     const n = await p.eval(`document.querySelectorAll('#typeset-layers input[type=checkbox]').length`);
     res.info.layers = n;

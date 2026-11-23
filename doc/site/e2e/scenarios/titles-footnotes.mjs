@@ -21,6 +21,7 @@ export default [
     steps: 'article with \\author{Some Author\\thanks{..}}; click the start of "Author"; type "Quokka ": all keys land in \\author (was: the rest lost after 3 keys)' },
   { name: 'fz-thanks-mark', source: TITLES.article, example: 'hello.tex', word: is('Author'), src: /Some Author/, keys: [' Quokka'], marker: 'Quokka', endWord: is('Quokka'),
     steps: 'article; click the end of "Author" (∗ of \\thanks after it); type " Quokka": the echo moves the raised ∗ along, never paints over half of it (fuzz class overlap)' },
-  ...['report', 'scrartcl', 'amsart', 'beamer', 'custom', 'breaks', 'titlepage'].map((c) => ({ name: `fz-title-${c}`, source: TITLES[c], example: 'hello.tex', word: is(c === 'amsart' ? 'TITLE' : 'Title'), src: c === 'titlepage' ? /Plain Title/ : /\\title\{Plain Title/, keys: [' Quokka'], marker: 'Quokka', endWord: is('Quokka'),
+  // amsart sets its title in capitals (`\MakeUppercase`): the page's words, the typed one too, are TITLE and QUOKKA
+  ...['report', 'scrartcl', 'amsart', 'beamer', 'custom', 'breaks', 'titlepage'].map((c) => ({ name: `fz-title-${c}`, source: TITLES[c], example: 'hello.tex', word: is(c === 'amsart' ? 'TITLE' : 'Title'), src: c === 'titlepage' ? /Plain Title/ : /\\title\{Plain Title/, keys: [' Quokka'], marker: c === 'amsart' ? 'QUOKKA' : 'Quokka', endWord: is(c === 'amsart' ? 'QUOKKA' : 'Quokka'),
     steps: `titles/${c}.tex; click the end of the title word "Title"; type " Quokka": it lands in the title's argument, never after \\maketitle or in the class` })),
 ];

@@ -33,15 +33,16 @@ function png(file) {
   }
   return { w, h, at: (x, y) => { const o = Math.round(y) * st + Math.round(x) * ch; return [px[o], px[o + 1], px[o + 2]]; } };
 }
-/** Colours in a client rect: dominant (binned by 8, mean) and the one farthest from it with real presence. */
-function colours(img, [l, t, w, h]) {
+/** Colours in a client rect: dominant (binned by 8, mean) and the one farthest from it with real presence, the
+ * overlays' own colours (`skip`: a tint's line, the caret) aside. */
+function colours(img, [l, t, w, h], skip = []) {
   const bins = new Map();
   for (let y = Math.ceil(t); y < t + h; y++) for (let x = Math.ceil(l); x < l + w; x++) {
     const c = img.at(x, y), k = c.map((v) => v >> 3).join(), b = bins.get(k) ?? [0, 0, 0, 0];
     b[0]++; b[1] += c[0]; b[2] += c[1]; b[3] += c[2]; bins.set(k, b);
   }
   const all = [...bins.values()].map(([n, r, g, b]) => [n, [r / n, g / n, b / n]]).sort((a, b) => b[0] - a[0]), dom = all[0][1], total = all.reduce((s, [n]) => s + n, 0);
-  const far = all.filter(([n]) => n >= total * 0.004).map(([, c]) => c).sort((a, b) => dist(b, dom) - dist(a, dom))[0];
+  const far = all.filter(([n, c]) => n >= total * 0.004 && !skip.some((s) => dist(s, c) < 24)).map(([, c]) => c).sort((a, b) => dist(b, dom) - dist(a, dom))[0];
   return { dom, far, share: all[0][0] / total };
 }
 const dist = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
@@ -114,7 +115,8 @@ export async function paper(p, sc) {
         const relaid = [...pg.querySelectorAll('.pdf-relaid')].length, hid = pg.querySelectorAll('.pdf-relay-hid').length;
         // the echo sits under the overlays: every overlay later in the page than it
         const kids = [...pg.children], under = cv ? kids.filter((e) => e.matches('.pdf-orig, .pdf-mark, .pdf-ov')).every((e) => kids.indexOf(e) > kids.indexOf(cv) || getComputedStyle(e).zIndex !== 'auto') : null;
-        return { echo: cv && rect(cv), caret: caret && rect(caret), caretBg: caret && getComputedStyle(caret).backgroundColor, tint, relaid, hid, under, paper: pg.dataset.paper,
+        const lines = [...pg.querySelectorAll('.pdf-orig')].map((e) => getComputedStyle(e).boxShadow);
+        return { lines, echo: cv && rect(cv), caret: caret && rect(caret), caretBg: caret && getComputedStyle(caret).backgroundColor, tint, relaid, hid, under, paper: pg.dataset.paper,
           tintLine: orig && getComputedStyle(orig).boxShadow, filter: getComputedStyle(pg.querySelector('img')).filter, texts: cv ? cv.tagName + ' ' + (cv.__texts?.map((q) => q.t).join(' ') ?? cv.textContent) : null };
       })()`);
       res.st = st;
@@ -122,7 +124,8 @@ export async function paper(p, sc) {
       if (!st.echo) { res.fails.push('no echo canvas'); continue; }
       const A = png(after), B = png(before), toClip = ([l, t2, w2, h2]) => [l - rowClip.x, t2 - rowClip.y, w2, h2];
       const ce = st.echo, inner = toClip([ce[0] + 1, ce[1] + 1, ce[2] - 2, ce[3] - 2]);
-      const ca = colours(A, inner), cb = colours(B, inner);
+      // the typed ink: the tints' lines and the caret over the echo are no ink (their contrast is checked below)
+      const overlays = [...st.lines, st.caretBg].map(rgbOf).filter(Boolean), ca = colours(A, inner, overlays), cb = colours(B, inner);
       res.echoPaper = fmt(ca.dom); res.pagePaper = fmt(cb.dom);
       // no white box: the echo's background is the paper (with its tint) the row showed before
       if (dist(ca.dom, cb.dom) > 18) res.fails.push(`echo paper ${fmt(ca.dom)} differs from the row's before ${fmt(cb.dom)}`);
