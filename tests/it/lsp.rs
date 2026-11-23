@@ -8616,3 +8616,45 @@ fn a_request_at_the_caret_places_the_checkpoints_of_the_next_edit() {
     server.shutdown();
     std::fs::remove_dir_all(dir).ok();
 }
+
+/// Intuition: a column spec with `>{…}` (array's per-column code) and a paragraph column is still a
+/// table: the editor offers "Edit table…" on it. Pins the lens missing on
+/// `l>{\centering\arraybackslash}p{.45\linewidth}` (user 2026-11-22).
+#[test]
+fn a_table_with_array_column_code_has_the_table_lens() {
+    for array in ["\\usepackage{array}\n", ""] {
+        let text = "\\documentclass{article}\nARRAY\\begin{document}\n\\begin{table}[ht]\n\\centering\n\\begin{tabular}{l>{\\centering\\arraybackslash}p{.45\\linewidth}}\nMethod & Score \\\\ \\hline\nOurs & 0.92 \\\\\n & \\\\\n\\end{tabular}\n\\end{table}\n\\end{document}\n".replace("ARRAY", array);
+        let (mut server, uri, _dir) = open_set(&format!("table-array-spec{}", array.len()), &text, &[]);
+        let id = server.request("textDocument/codeLens", json!({ "textDocument": { "uri": uri } }));
+        let lenses = server.response(id)["result"].clone();
+        let line = text.lines().position(|l| l.contains("\\begin{tabular}")).unwrap() as u64;
+        let titles: Vec<&str> = (lenses.as_array().unwrap().iter())
+            .filter(|l| l["range"]["start"]["line"] == line)
+            .filter_map(|l| l["command"]["title"].as_str())
+            .collect();
+        assert!(titles.contains(&"Edit table…"), "{array:?}: {lenses}");
+    }
+}
+
+/// Intuition: the names of one write are resolved together. `\node` and `\draw` exist only inside
+/// the `tikzpicture` tikz is loaded for: the call runs clean under tikz, so they load nothing of
+/// their own. Pins Insert ▸ TikZ picture loading `pgflibraryplotmarks` beside tikz, after seconds of
+/// probes for `\node` alone.
+#[test]
+fn snapshot_load_of_a_picture_is_its_package_only() {
+    let text = "\\documentclass{article}\n\\begin{document}\nHello.\n\n\\end{document}\n";
+    let (mut server, uri, dir) = open_set("provider-picture", text, &[]);
+    let views = at(&mut server, &uri, "satex/view", 2, 0);
+    assert!(views.is_array(), "{views}");
+    let body = "\\begin{tikzpicture}\n  \\node[draw] (a) at (0,0) {A};\n  \\node[draw] (b) at (3,0) {B};\n  \\draw[->] (a) -- (b);\n\\end{tikzpicture}\n";
+    let range = json!({ "start": { "line": 3, "character": 0 }, "end": { "line": 3, "character": 0 } });
+    let node = json!({ "kind": "text", "name": "", "star": false, "args": [], "range": range, "text": "", "body_at": [0, 0], "body": body });
+    let id = server
+        .request("satex/dialogApply", json!({ "textDocument": { "uri": uri }, "kind": "snapshot", "nodes": [node] }));
+    let out = server.response(id)["result"].clone();
+    let written = applied(text, &uri, &json!({ "changes": { &uri: out["edits"] } }), &[]);
+    let loads: Vec<&str> = written.lines().filter(|l| l.starts_with("\\usepackage")).collect();
+    assert_eq!(loads, ["\\usepackage{tikz}"], "{written}");
+    server.shutdown();
+    std::fs::remove_dir_all(dir).ok();
+}

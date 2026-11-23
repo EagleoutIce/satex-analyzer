@@ -51,7 +51,8 @@ const DEPTH: usize = 3;
 const PX: f64 = 2.0;
 /// The ink of every preview, readable on light and dark backgrounds.
 const INK: &str = "#888888";
-/// A shape sample's minimum width and height (cm).
+/// The text box (cm) a shape sample is drawn around. A box, not `minimum width`/`height` on no text: those
+/// collapse a `trapezium` into a line and stand a `single arrow` upright (its height is its length).
 pub const SAMPLE_W: f64 = 1.0;
 pub const SAMPLE_H: f64 = 0.5;
 /// The line an arrow sprite draws its tips on, in cm.
@@ -318,8 +319,8 @@ struct Sheet {
 static SHEET: Mutex<Sheet> = Mutex::new(Sheet { svgs: BTreeMap::new(), loaded: false, busy: false, failed: false });
 
 fn sheet_path() -> Option<std::path::PathBuf> {
-    // `-v2`: the sprites drawn since the tips' room; an older sheet holds cut-off tips
-    crate::caches::format::default_cache_dir().map(|d| d.join("previews-v2.json"))
+    // `-v3`: shapes drawn around a text box; an older sheet holds cut-off tips or collapsed shapes
+    crate::caches::format::default_cache_dir().map(|d| d.join("previews-v3.json"))
 }
 
 fn load(sheet: &mut Sheet) {
@@ -435,9 +436,9 @@ fn render(libs: &[String], wanted: &[String]) -> Option<BTreeMap<String, String>
                 ARROW_W + TIP_ROOM,
                 h = TIP_ROOM / 2.0
             ),
-            // twice as wide as high: a shape that keeps its own proportions shows it
+            // around a box twice as wide as high: a shape that keeps its own proportions shows it
             Some(("shape", name)) => format!(
-                "\\tikz\\node[draw=ink,fill=ink,fill opacity=.15,shape={{{name}}},inner sep=0pt,minimum width={SAMPLE_W}cm,minimum height={SAMPLE_H}cm] {{}};" // not prose
+                "\\tikz\\node[draw=ink,fill=ink,fill opacity=.15,shape={{{name}}},inner sep=0pt] {{\\rule{{{SAMPLE_W}cm}}{{0pt}}\\rule{{0pt}}{{{SAMPLE_H}cm}}}};" // not prose
             ),
             Some((_, name)) => {
                 format!("\\tikz\\path[pattern={{{name}}},pattern color=ink] (0,0) rectangle (0.9,0.45);") // not prose

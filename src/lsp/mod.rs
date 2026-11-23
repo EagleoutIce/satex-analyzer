@@ -1716,22 +1716,25 @@ impl Engine {
             let (docs, hovers, blank) = (self.docs.clone(), self.hovers.clone(), self.blank.clone());
             let pause = Box::new(move || {
                 while let Some(req) = wasm::mail() {
-                    if !matches!(
-                        req.method.as_str(),
-                        "satex/hyphenate" | "satex/break" | "satex/mathwidths" | "satex/holds"
-                    ) {
-                        wasm::reply(&Response::new_err(
-                            req.id,
-                            ErrorCode::RequestCanceled as i32,
-                            "not during a run".into(),
-                        ));
-                        continue;
-                    }
+                    let id = req.id.clone();
+                    // As a native server's pause: whatever only reads is answered from the analyses there are.
                     let mut send = |msg| {
-                        crate::analysis::probe::apart(|| answer(&docs, &hovers, blank.as_deref(), msg));
+                        crate::analysis::probe::apart(|| match msg {
+                            EngineMsg::ExecuteCommand(body, reply) => {
+                                if let Some(found) = held_query(&docs, &body) {
+                                    let _ = reply.send(Ok(found));
+                                }
+                            }
+                            msg => drop(answer(&docs, &hovers, blank.as_deref(), msg)),
+                        });
                         true
                     };
-                    wasm::reply(&respond(&mut send, req));
+                    let out = respond(&mut send, req);
+                    // What needs the engine itself is asked again in the worker's order.
+                    wasm::reply(&match out.response_result {
+                        Ok(_) => out,
+                        Err(_) => Response::new_err(id, ErrorCode::RequestCanceled as i32, "not during a run".into()),
+                    });
                 }
             });
             return crate::util::progress::pausing(pause, || f(self));
@@ -2206,6 +2209,15 @@ impl Engine {
             }
         }
     }
+}
+
+/// A `satex/query` about an open document, from the analysis it has: the last finished run's
+/// while another goes on. `None` where no open document's analysis answers it.
+#[cfg(target_os = "emscripten")]
+fn held_query(docs: &HashMap<Uri, Doc>, body: &Json) -> Option<Vec<Json>> {
+    let file = body.get("file").and_then(Json::as_str).map(PathBuf::from);
+    let (uri, _) = docs.iter().find(|(_, d)| file.as_ref().is_none_or(|f| *f == d.path))?;
+    with_doc(docs, uri, |a, text| crate::cli::query::answer_request(body, a, text.body()))?
 }
 
 /// Answers `msg` from the analyses in `docs` when it only reads one; any

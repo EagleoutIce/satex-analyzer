@@ -776,6 +776,12 @@ pub fn printed(
     let usual: Vec<String> =
         asked.iter().filter_map(|(name, ..)| crate::linter::shared::provider(analysis, name)).collect();
     for (name, own, call) in asked {
+        // a name a package this write already loads defines while the call runs (`\\node` in the `tikzpicture`
+        // tikz is loaded for): no package of its own (the index named pgflibraryplotmarks for `\\node`)
+        let chosen: Vec<String> = wanted.iter().map(|p| p.name.clone()).collect();
+        if crate::linter::shared::defined_by(analysis, &chosen, &name, &call) {
+            continue;
+        }
         // the package whose definition takes the call as written (graphicx for `[width=…]`)
         match crate::linter::shared::provider_for(analysis, &name, &call, &usual) {
             Some(p) => wanted.push(Package { name: p, options: String::new() }),
