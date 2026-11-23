@@ -110,7 +110,8 @@ fn a_short_table_keeps_its_rules() {
 /// false "prints its numbers as written" on a thesis whose `\sisetup` rounds.
 #[test]
 fn an_s_column_that_rounds_is_quiet() {
-    if !installed() {
+    // siunitx 3 (it ships `siunitx-v2.sty`); TeX Live 2019 has siunitx 2.
+    if !crate::support::installed_file_has("siunitx-v2.sty", "") {
         return;
     }
     let rows = "a & 0.057291666 & 1 \\\\\nb & 0.5 & 0.32791606 \\\\\nc & 1 & 0.6 \\\\\n";
@@ -129,7 +130,8 @@ fn an_s_column_that_rounds_is_quiet() {
 /// quiet, while an `l` column still mixes precisions.  Pins the switch.
 #[test]
 fn an_s_column_is_not_judged_without_the_siunitx_augmentation() {
-    if !installed() {
+    // siunitx 3 (it ships `siunitx-v2.sty`); TeX Live 2019 has siunitx 2.
+    if !crate::support::installed_file_has("siunitx-v2.sty", "") {
         return;
     }
     let body = "\\begin{tabular}{lSl}\nName & A & B \\\\\na & 0.05 & 0.5 \\\\\nb & 0.5 & 0.125 \\\\\nc & 1 & 1 \\\\\n\\end{tabular}";

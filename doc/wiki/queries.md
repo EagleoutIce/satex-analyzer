@@ -390,7 +390,7 @@ The names the installed packages define, read off their text, each with the file
 
 ## tagging
 
-PDF tagging as `\DocumentMetadata` set it up, read from the run with the kernel's own `\GetDocumentProperties`: whether tagging is on and under which engine, the PDF standards claimed (`UA-2`, `A-4F`), the language (and, under `set`, the one the preamble wrote, before LaTeX guesses one), the title the XMP gets, and the PDF version. Then each loaded package and class with its status in TeX Live's `latex-tagging-status.ltx`, which satex runs as TeX. Nothing without `\DocumentMetadata`. The tagging lints read the same facts.
+PDF tagging as `\DocumentMetadata` set it up, read from the run with the kernel's own `\GetDocumentProperties`: whether tagging is on and under which engine, the PDF standards claimed (`UA-2`, `A-4F`), the language (and, under `set`, the one the preamble wrote, before LaTeX guesses one), the title the XMP gets, and the PDF version. `running` is the tagging code's own answer at `\begin{document}` (`\tag_if_active:TF`), which `\tagpdfsetup` can turn against the declaration. `modules` are the tagging code's files the run read, `marked` the marked-content sequences it wrote by tag (pdfTeX). Then each loaded package and class with its status in TeX Live's `latex-tagging-status.ltx`, which satex runs as TeX: `unlisted` where the list has no entry. Without `\DocumentMetadata` only these statuses: what turning tagging on would meet. An installation without the list gives none. The tagging lints read the same facts.
 
 ## type-plugins
 

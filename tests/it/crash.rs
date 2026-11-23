@@ -311,6 +311,8 @@ fn survives(dir: &Path, args: &[&str], stdin: &str) -> Result<String, String> {
 pub(crate) fn child(dir: &Path, args: &[&str], stdin: &str, stack: Option<usize>) -> Result<(String, String), String> {
     use std::io::Write;
     use std::process::Stdio;
+    // Children run under `CHILD_SECONDS`: the kernel is built once, without a limit.
+    crate::support::warm_suite_kernel();
     let mut command = match stack {
         // The main thread's stack is the shell's limit.
         Some(stack) if cfg!(unix) => {

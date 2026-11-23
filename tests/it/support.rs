@@ -127,6 +127,27 @@ pub fn engine_says(source: &str, text: &str) -> bool {
 }
 
 /// What pdflatex prints on `source`, run in a scratch directory; `None` without pdflatex.
+/// What plain `engine` (`xetex`) makes `\out` after running `source`, its meaning's body
+/// as `\meaning` prints it; `None` without the engine. Font data differ between TeX
+/// Live releases, so a font query is checked against the installed engine.
+pub fn engine_out(engine: &str, source: &str) -> Option<String> {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    static RUN: AtomicUsize = AtomicUsize::new(0);
+    let binary = satex::project::paths::which(engine).ok()?;
+    let dir = scratch_dir(tmp_root().join(format!("engine-out-{}", RUN.fetch_add(1, Ordering::Relaxed))));
+    let text = format!("{source}\n\\immediate\\write-1{{OUT=\\expandafter\\strip@\\meaning\\out}}\\end\n");
+    let text = format!("\\catcode`\\@=11 \\def\\strip@#1->{{}}{text}");
+    std::fs::write(dir.join("t.tex"), text).ok()?;
+    std::process::Command::new(binary)
+        .args(["-interaction=batchmode", "t.tex"])
+        .env("max_print_line", "100000")
+        .current_dir(&dir)
+        .output()
+        .ok()?;
+    let log = std::fs::read_to_string(dir.join("t.log")).ok()?;
+    log.lines().find_map(|l| l.strip_prefix("OUT=").map(str::to_string))
+}
+
 fn engine_said(source: &str) -> Option<String> {
     use std::sync::atomic::{AtomicUsize, Ordering};
     static RUN: AtomicUsize = AtomicUsize::new(0);
@@ -235,6 +256,19 @@ pub fn satex() -> std::process::Command {
     // Never the first-start question: a test's stdin may be a terminal.
     command.env("SATEX_CACHE", test_cache()).env("SATEX_NO_SETUP", "1");
     command
+}
+
+/// Builds the pdfLaTeX kernel and article caches of [`test_cache`] once per process, with no time
+/// limit. A child run under a short `limits.seconds` (shorter than an older TeX Live's kernel
+/// build) is cut before it stores the kernel, so every child would build it again and be cut.
+pub fn warm_suite_kernel() {
+    static DONE: std::sync::OnceLock<()> = std::sync::OnceLock::new();
+    DONE.get_or_init(|| {
+        let dir = scratch_dir(tmp_root().join("warm-suite-kernel"));
+        std::fs::write(dir.join("main.tex"), "\\documentclass{article}\n\\begin{document}x\\end{document}\n")
+            .expect("the warming document");
+        let _ = satex().args(["lint", "-f", "main.tex", "--set", "limits.seconds=0"]).current_dir(&dir).output();
+    });
 }
 
 /// Appends `label steps` to the file named by `SATEX_STEPS_LOG` (set by

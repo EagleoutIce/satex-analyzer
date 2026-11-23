@@ -100,6 +100,7 @@ mod tex_semantics;
 mod trace_range;
 mod typed_mistakes;
 mod units;
+mod updates;
 mod warm;
 mod write_set;
 mod xref;

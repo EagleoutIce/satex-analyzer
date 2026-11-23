@@ -2500,15 +2500,15 @@ fn key_value_options_offer_keys_and_values() {
 #[test]
 fn completion_offers_at_names_only_where_at_is_a_letter() {
     let text =
-        "\\documentclass{article}\n\\begin{document}\n\\@ab\n\\makeatletter\n\\@ab\n\\makeatother\n\\end{document}\n";
+        "\\documentclass{article}\n\\begin{document}\n\\@ifn\n\\makeatletter\n\\@ifn\n\\makeatother\n\\end{document}\n";
     let (mut server, uri, _, dir) = open_loaded("at-letter", text);
     let at = |server: &mut Server, line: usize| {
         let items = complete(server, &uri, line as u32, 4);
         labels(&items).iter().any(|l| l.starts_with("@") && l.len() > 1)
     };
     let lines: Vec<&str> = text.lines().collect();
-    let first = lines.iter().position(|l| *l == "\\@ab").unwrap();
-    let inside = lines.iter().rposition(|l| *l == "\\@ab").unwrap();
+    let first = lines.iter().position(|l| *l == "\\@ifn").unwrap();
+    let inside = lines.iter().rposition(|l| *l == "\\@ifn").unwrap();
     assert!(!at(&mut server, first), "@ names offered where @ is not a letter");
     assert!(at(&mut server, inside), "no @ names after \\makeatletter");
     drop(server);
@@ -4894,6 +4894,9 @@ fn switched_off_dialog_plugins_offer_nothing() {
 /// lens and dialog (none before: no `\@array`) and both conversions' text.
 #[test]
 fn tblr_tables_open_the_dialog_and_convert() {
+    if !crate::support::installed_file_has("tabularray.sty", "") {
+        return;
+    }
     let text = "\\documentclass{article}\n\\usepackage{booktabs}\n\\usepackage{tabularray}\n\\begin{document}\n\\begin{tblr}{colspec={lX[r]}, hlines}\na & b \\\\\nc & d \\\\\n\\end{tblr}\n\n\\begin{tabular}{lr}\n\\toprule\nx & 1 \\\\\n\\midrule\ny & 2 \\\\\n\\bottomrule\n\\end{tabular}\n\\end{document}\n";
     let (tblr, tabular) = (4, 9);
     let (mut server, uri, dir) = open_set("tblr-dialog", text, &[]);

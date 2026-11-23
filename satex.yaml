@@ -1076,6 +1076,32 @@ templates:  # where satex new and the New document dialog get the provider files
     #! affects: output
     #! example: `max_files: 10000` imports a large repository
 
+updates:  # how satex updates learns the newest release of each package the document loads, and what changed in it
+  fetch: false  # ask the index and the archives over HTTPS. Off, only the cache and file:// sources serve, and a package without a record is unknown
+    #! affects: output
+    #! example: `fetch: true`: satex updates asks CTAN for each package
+  index: https://ctan.org/json/2.0/pkg/{name}  # the release record of package {name}, with its version number and date. A file:// path serves a local copy
+    #! affects: output
+    #! example: `index: file:///srv/ctan/json/{name}.json` reads a local mirror
+  archives: ['https://mirrors.ctan.org/install{install}', 'https://mirrors.ctan.org{path}.zip']  # where a release's files come from, tried in order. {install} and {path} are the record's install and ctan.path. A zip, or a file:// folder
+    #! affects: output
+    #! example: `archives: ['file:///srv/ctan{path}']` reads releases from a local mirror
+  changes: false  # run the newest release of each outdated package and list what it defines differently: commands, environments, options
+    #! affects: output
+    #! example: `changes: true`: an outdated enumitem lists its added, removed and changed commands
+  refresh_days: 1  # days a fetched record counts as current. Past that a package is outdated or unknown, never current
+    #! affects: output
+    #! example: `refresh_days: 0` asks the index on every run
+  timeout: 20  # seconds a download may take before it is given up
+    #! affects: output
+    #! example: `timeout: 5` gives up sooner on a slow network
+  max_bytes: 50MiB  # the most a release archive may unpack to
+    #! affects: output
+    #! example: `max_bytes: 200MiB` takes a large bundle
+  max_files: 5000  # the most files a release archive may hold
+    #! affects: output
+    #! example: `max_files: 20000` takes a large bundle
+
 docs:  # where a package's documentation is looked for and which conventions of it are read
   source_root: source  # the folder of a TDS tree that holds the documented sources
     #! affects: output

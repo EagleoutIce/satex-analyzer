@@ -692,6 +692,7 @@ fn run_on(cli: &mut Cli, file: Option<PathBuf>, explaining: bool, piped: Option<
     let mut out = anstream::stdout().lock();
     let mut output = match compiled {
         Some((built, analyzed)) => satex::cli::compile::explained(built, &analysis, analyzed),
+        None if matches!(cli.command, Some(Command::Updates)) => satex::cli::updates::run(&analysis, &cfg)?,
         None => cli.command().run(&context, &mut out)?,
     };
     if matches!(cli.command, Some(Command::Summary { .. })) && cli.format.is_text() {

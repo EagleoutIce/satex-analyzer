@@ -64,9 +64,10 @@ element, which needs alternative text (PDF/UA, ISO 14289-1 § 7.3).  Without
 then reads out.  A purely decorative graphic is marked `artifact` instead,
 and `actualtext=` stands for a graphic that shows text.
 
-The rule reads the keys of the call as written. A call whose options come
-from a macro is left alone.  There is no automatic fix: only the author knows
-what the graphic shows. The image dialog has a field for it.",
+The rule reports where the run itself raised that warning. A graphic set
+while tagging is suspended (`\\SuspendTagging`, `\\tag_stop:`) raises none.  There
+is no automatic fix: only the author knows what the graphic shows. The image
+dialog has a field for it.",
         references: &[
             Ref { source: Source::LatexLab, at: "latex-lab-graphic" },
             Ref { source: Source::PdfUa, at: "13" },
@@ -224,103 +225,24 @@ fn incompatible_packages(report: &mut Report) {
     }
 }
 
-/// Whether latex-lab tags a graphic with these keys without warning `alt-text-missing`:
-/// its keys in order, the last mode key winning (latex-lab-testphase-graphic.sty, keys `Gin`
-/// and `tag/graphic`). Mode `alt` (the default, and `tag=⟨struct⟩`) warns when `alt` is empty.
-/// `None` when a key name is not plain text.
-fn tagged(entries: &[(String, String)]) -> Option<bool> {
-    // (mode is `alt`, `alt` is not empty, suspended)
-    fn fold(entries: &[(String, String)], state: &mut (bool, bool, bool)) -> Option<()> {
-        for (name, value) in entries {
-            match (name.as_str(), value.as_str()) {
-                ("alt", v) => (state.0, state.1) = (true, !v.is_empty()),
-                ("artifact" | "actualtext", _) | ("tag", "artifact") => state.0 = false,
-                // `\tag_suspend:n`: the graphic is not tagged at all
-                ("tag", "false") => state.2 = true,
-                ("tag", _) => state.0 = true,
-                ("tagging-setup", v) => fold(&entries_of(v)?, state)?,
-                _ => {}
-            }
-        }
-        Some(())
-    }
-    let mut state = (true, false, false);
-    fold(entries, &mut state)?;
-    Some(!state.0 || state.1 || state.2)
-}
+/// latex-lab's warning `tag/alt-text-missing` as the run prints it. The graphic's own tagging
+/// code raises it, so only where the graphic is tagged (not suspended, no artifact) without `alt`.
+const ALT_MISSING: &str = "Alternative text for graphic is missing";
 
 fn graphics_without_alt(report: &mut Report) {
-    let Some(_) = tagging::of(report.analysis()).filter(|t| t.active()) else { return };
     let a = report.analysis();
-    // graphicx takes `alt` (latex-lab defines it on load, recent graphicx ignores it untagged)
-    if !a.defined("KV@Gin@alt") {
-        return;
-    }
     let mut seen: Vec<Span> = Vec::new();
-    for o in a.facts.occurrences.iter().filter(|o| o.kind == OccKind::Graphics) {
+    for o in a.facts.occurrences.iter().filter(|o| o.kind == OccKind::Message && o.key.contains(ALT_MISSING)) {
         if seen.contains(&o.span) || !report.wanted(o.span) {
             continue;
         }
         seen.push(o.span);
-        let Some(entries) = graphic_keys(report, o.span) else { continue };
-        if tagged(&entries) != Some(false) {
-            continue;
-        }
-        let message = format!("`{}` has no alternative text: tagging reads out its file name", o.key);
+        // `Using '⟨file⟩' instead.`
+        let file = o.key.split('\'').nth(1).unwrap_or_default();
+        let message = format!("`{file}` has no alternative text: tagging reads out its file name");
         let fix = "add `alt={…}` describing it, or `artifact` if it is decoration".to_string();
-        report.add(o.span, &o.key, message, Some(fix));
+        report.add(o.span, file, message, Some(fix));
     }
-}
-
-/// The keys and values of the `\includegraphics` written at `span`, empty without options;
-/// `None` where something else stands there, or a key name is not plain text (a macro of options).
-pub(crate) fn graphic_keys(report: &Report, span: Span) -> Option<Vec<(String, String)>> {
-    let edits = report.edits();
-    let (_, text, mut scan, cs) = edits.command(span)?;
-    if scan.name(&cs)? != "includegraphics" {
-        return None;
-    }
-    scan.star();
-    // without `[`, the file name's group follows, else the options come from elsewhere
-    let Some(opt) = scan.optional() else { return scan.group().map(|_| Vec::new()) };
-    entries_of(text.slice(opt.inner_start, opt.inner_end)?)
-}
-
-/// A key list's entries as (name, value), the value trimmed and one brace pair stripped (keyval
-/// does both); `None` when a name is not plain text.
-fn entries_of(body: &str) -> Option<Vec<(String, String)>> {
-    let mut out = Vec::new();
-    for entry in split_top(body) {
-        let (name, value) = entry.split_once('=').unwrap_or((entry, ""));
-        let name = name.trim();
-        if name.contains(['\\', '{', '}', '%']) {
-            return None;
-        }
-        let value = value.trim();
-        let value = value.strip_prefix('{').and_then(|v| v.strip_suffix('}')).unwrap_or(value);
-        if !name.is_empty() {
-            out.push((name.to_string(), value.to_string()));
-        }
-    }
-    Some(out)
-}
-
-/// The entries of a key list, split at commas outside braces.
-fn split_top(body: &str) -> Vec<&str> {
-    let (mut depth, mut from, mut out) = (0i32, 0, Vec::new());
-    for (i, c) in body.char_indices() {
-        match c {
-            '{' => depth += 1,
-            '}' => depth -= 1,
-            ',' if depth == 0 => {
-                out.push(&body[from..i]);
-                from = i + 1;
-            }
-            _ => {}
-        }
-    }
-    out.push(&body[from..]);
-    out
 }
 
 fn pdfua_without_title(report: &mut Report) {

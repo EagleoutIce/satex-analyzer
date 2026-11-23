@@ -1111,6 +1111,48 @@ impl Default for TemplatesConfig {
     }
 }
 
+/// `updates:` in `satex.yaml`: how `satex updates` learns the newest release of each package the
+/// document loads, and whether it runs that release to tell what changed.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct UpdatesConfig {
+    /// Asks `index` and `archives` over HTTPS. Off, only the cache and `file://` sources serve.
+    pub fetch: bool,
+    /// The release record of package `{name}`: CTAN's JSON API, or a `file://` path.
+    pub index: String,
+    /// Where a release's files come from, tried in order: `{install}` and `{path}` are the
+    /// record's `install` and `ctan.path`. A zip, or a `file://` folder.
+    pub archives: Vec<String>,
+    /// Runs the newest release of each outdated package and lists what it defines differently.
+    pub changes: bool,
+    /// Days a fetched record counts as current. Past that a package is never reported current.
+    pub refresh_days: u32,
+    /// Seconds a download may take.
+    pub timeout: u32,
+    /// The most a release archive may unpack to.
+    pub max_bytes: bytesize::ByteSize,
+    /// The most files a release archive may hold.
+    pub max_files: usize,
+}
+
+impl Default for UpdatesConfig {
+    fn default() -> Self {
+        Self {
+            fetch: false,
+            index: "https://ctan.org/json/2.0/pkg/{name}".into(),
+            archives: vec![
+                "https://mirrors.ctan.org/install{install}".into(),
+                "https://mirrors.ctan.org{path}.zip".into(),
+            ],
+            changes: false,
+            refresh_days: 1,
+            timeout: 20,
+            max_bytes: bytesize::ByteSize::mib(50),
+            max_files: 5000,
+        }
+    }
+}
+
 /// `playground:` in `satex.yaml`: what only the web playground reads. The
 /// analysis ignores it, and changing it starts no new run.
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -2473,6 +2515,9 @@ pub struct Config {
     /// Where `satex new` gets provider files, and what an imported archive may hold.
     #[serde(default)]
     pub templates: TemplatesConfig,
+    /// Where `satex updates` learns of new releases and gets them.
+    #[serde(default)]
+    pub updates: UpdatesConfig,
     #[serde(default)]
     pub playground: PlaygroundConfig,
     /// The editor features each type plugin adds.
@@ -2538,6 +2583,7 @@ impl Default for Config {
             docs: DocsConfig::default(),
             slice: SliceConfig::default(),
             templates: TemplatesConfig::default(),
+            updates: UpdatesConfig::default(),
             playground: PlaygroundConfig::default(),
             type_plugins: TypePlugins::default(),
             l3build: L3buildConfig::default(),

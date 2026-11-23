@@ -52,7 +52,12 @@ fn each_installed_template_builds() {
     }
     let base = folder("builds");
     let mut failed = Vec::new();
-    for t in templates::catalog().iter().filter(|t| t.fetch.is_none()) {
+    // A class the installation does not ship yet (llncs before TeX Live 2020) has nothing to build.
+    let ships = |t: &&templates::Template| {
+        t.class.as_ref().is_none_or(|c| crate::support::installed_file_has(&format!("{c}.cls"), ""))
+            && t.package.as_ref().is_none_or(|p| crate::support::installed_file_has(&format!("{p}.sty"), ""))
+    };
+    for t in templates::catalog().iter().filter(|t| t.fetch.is_none()).filter(ships) {
         let dir = base.join(&t.id);
         let (ok, _, err) = new(&["-t", &t.id, "--no-check", dir.to_str().unwrap()], None);
         assert!(ok, "{}: {err}", t.id);
@@ -133,7 +138,7 @@ fn each_site_example_reaches_its_end() {
 /// Pins the round trip options in, header line out, class seeing them.
 #[test]
 fn new_writes_the_options_and_reports_the_version() {
-    if !crate::support::installed() {
+    if !crate::support::installed() || !crate::support::installed_file_has("llncs.cls", "") {
         return;
     }
     let dir = folder("version").join("paper");

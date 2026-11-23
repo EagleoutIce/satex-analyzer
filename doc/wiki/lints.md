@@ -743,7 +743,7 @@ See [interface3 § Naming conventions](https://ctan.org/pkg/l3kernel).
 
 With tagging on, every `\includegraphics` becomes a `Figure` structure element, which needs alternative text (PDF/UA, ISO 14289-1 [§§ 7](https://github.com/TeX-Live/texlive-source/blob/e73d75f8e070869316e6a148cfda73ab05abcaf3/texk/web2c/tex.web#L290), [3](https://github.com/TeX-Live/texlive-source/blob/e73d75f8e070869316e6a148cfda73ab05abcaf3/texk/web2c/tex.web#L195)). Without `alt=`, latex-lab warns and uses the file name instead, which a screen reader then reads out. A purely decorative graphic is marked `artifact` instead, and `actualtext=` stands for a graphic that shows text.
 
-The rule reads the keys of the call as written. A call whose options come from a macro is left alone. There is no automatic fix: only the author knows what the graphic shows. The image dialog has a field for it.
+The rule reports where the run itself raised that warning. A graphic set while tagging is suspended (`\SuspendTagging`, `\tag_stop:`) raises none. There is no automatic fix: only the author knows what the graphic shows. The image dialog has a field for it.
 
 See [latex-lab § latex-lab-graphic](https://ctan.org/pkg/latex-lab), [Matterhorn Protocol § 13](https://pdfa.org/resource/the-matterhorn-protocol/).
 

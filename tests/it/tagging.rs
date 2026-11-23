@@ -192,8 +192,8 @@ fn metadata_after_the_class_is_reported() {
 }
 
 /// With tagging on, `\includegraphics` without `alt`, `artifact` or `actualtext` is reported;
-/// one with them is not, and one whose options come from a macro is left alone (its keys
-/// are not known from the text).
+/// one with them is not. One whose options come from a macro is reported too: the run knows
+/// its keys (latex-lab warns there), where the source text did not.
 #[test]
 fn a_graphic_without_alternative_text_is_reported() {
     if !crate::support::tagging_installed() {
@@ -202,7 +202,7 @@ fn a_graphic_without_alternative_text_is_reported() {
     let body = "\\includegraphics[width=1cm]{a}\n\\includegraphics[alt={A dot}]{a}\n\\includegraphics[artifact]{a}\n\\def\\opts{width=1cm}\\expandafter\\includegraphics\\expandafter[\\opts]{a}";
     let a = analyze(&metadata("lang=en,tagging=on", "\\usepackage{graphicx}\n", body));
     let msgs = found(&a, "graphic-without-alt");
-    assert_eq!(msgs.len(), 1, "{msgs:?}");
+    assert_eq!(msgs.len(), 2, "{msgs:?}");
 }
 
 /// A 1×1 PNG: a figure the graphics driver reads the size of.
@@ -425,7 +425,7 @@ fn a_graphic_is_tagged_by_its_last_mode_key() {
 /// and C007 as certain. `clip` skips latex-lab's BBox trim fp and its forks.
 #[test]
 fn a_tagged_graphic_raises_no_error_at_the_end() {
-    if !crate::support::installed() {
+    if !crate::support::kernel_has("\\DocumentMetadata") {
         return;
     }
     let source =
@@ -461,4 +461,96 @@ fn an_approximated_tagged_float_is_no_missing_end() {
         })
         .collect();
     assert!(bad.is_empty(), "{bad:?}");
+}
+
+/// `tagging=on` declares tagging (`document/tagging` is `active`), but `\tagpdfsetup` after the
+/// class switches it off again: pdflatex prints `\tag_if_active:TF` as false and writes no
+/// structure tree. Bug pinned: satex read only the declaration, called the document tagged and
+/// reported listings as incompatible with a tagging that never runs.
+#[test]
+fn the_tagging_code_says_whether_it_tags() {
+    if !crate::support::tagging_installed() {
+        return;
+    }
+    let off = "\\usepackage{listings}\n\\tagpdfsetup{activate/all=false}\n";
+    let a = analyze(&metadata("lang=en,tagging=on", off, "x"));
+    let t = tagging::of(&a).expect("tagging facts");
+    assert_eq!(t.tagging, Val::Text("active".into()));
+    assert_eq!(t.running, Val::Text("0".into()));
+    assert!(!t.active());
+    assert_eq!(found(&a, "tagging-incompatible-package"), Vec::<String>::new());
+    let on = analyze(&metadata("lang=en,tagging=on", "", BODY));
+    let t = tagging::of(&on).expect("tagging facts");
+    assert_eq!(t.running, Val::Text("1".into()));
+    assert!(t.active());
+}
+
+/// Four graphics without `alt`: one under `\SuspendTagging`, one tagged, one in a group after
+/// `\tag_stop:`, one an artifact. pdflatex warns `alt-text-missing` once, for the second. Bug
+/// pinned: the rule read the keys of each call from the source and knew nothing of the tagging
+/// state where the graphic stands, so it reported three. Now it reports where the run raised
+/// latex-lab's warning. The run's marked content says the same: one `Figure` sequence.
+#[test]
+fn a_graphic_set_while_tagging_is_suspended_is_no_finding() {
+    if !crate::support::tagging_installed() {
+        return;
+    }
+    let body = "Text one\n\\SuspendTagging{x}%\n\\includegraphics{a}%\n\\ResumeTagging{x}%\n\\includegraphics{a}%\n\
+                {\\ExplSyntaxOn\\tag_stop:\\ExplSyntaxOff\n\\includegraphics{a}}\n\\includegraphics[artifact]{a}\nText two.";
+    let a = analyze(&metadata("lang=en,tagging=on", "\\usepackage{graphicx}\n", body));
+    let msgs = found(&a, "graphic-without-alt");
+    assert_eq!(msgs.len(), 1, "{msgs:?}");
+    let t = tagging::of(&a).expect("tagging facts");
+    let count = |tag: &str| t.marked.iter().find(|(t, _)| t == tag).map_or(0, |(_, n)| *n);
+    assert_eq!(count("Figure"), 1, "{:?}", t.marked);
+    assert!(count("Artifact") >= 1, "{:?}", t.marked);
+}
+
+/// Whether the installation ships the tagging project's status list (TeX Live 2026 does, 2022 does not).
+fn status_list_installed() -> bool {
+    crate::support::installed_file_has("latex-tagging-status.ltx", "")
+}
+
+/// A package the status list has no entry for (the document's own `mine.sty`) is `unlisted`,
+/// not left out: nobody checked it. The tagging code's own files (status 8) are the modules
+/// the run loaded, not packages to judge. Before, an unlisted file was silently missing.
+#[test]
+fn an_unlisted_package_is_named_and_the_tagging_code_is_a_module() {
+    if !crate::support::tagging_installed() || !status_list_installed() {
+        return;
+    }
+    let source = metadata("lang=en,tagging=on", "\\usepackage{mine}\n", "x");
+    let dir = crate::support::tmp_root().join(format!("tagging-{:x}", fxhash(&source)));
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("mine.sty"), "\\ProvidesPackage{mine}\n").unwrap();
+    let a = analyze(&source);
+    let t = tagging::of(&a).expect("tagging facts");
+    let mine = t.statuses.iter().find(|s| s.file == "mine.sty").expect("mine.sty has a status");
+    assert_eq!((mine.code, mine.meaning()), (None, "unlisted"));
+    assert!(!mine.incompatible() && !mine.flagged());
+    assert!(t.modules.iter().any(|m| m == "tagpdf.sty"), "{:?}", t.modules);
+    assert!(t.statuses.iter().all(|s| !t.modules.contains(&s.file)));
+}
+
+/// A document without `\DocumentMetadata` has no tagging state, but its packages have a status:
+/// what turning tagging on would meet (listings is incompatible). Before, the statuses were
+/// only there once tagging was set up. Where the installation has no status list (TeX Live
+/// 2022), there are no statuses at all, and no file is called unlisted.
+#[test]
+fn packages_have_a_status_before_tagging_is_set_up() {
+    if !crate::support::installed() {
+        return;
+    }
+    let a = analyze("\\documentclass{article}\n\\usepackage{listings}\n\\begin{document}\ny\n\\end{document}\n");
+    assert!(tagging::of(&a).is_none());
+    let loaded = tagging::loaded(&a);
+    if !status_list_installed() {
+        assert!(loaded.is_empty(), "{loaded:?}");
+        return;
+    }
+    let listings = loaded.iter().find(|s| s.file == "listings.sty").expect("listings.sty has a status");
+    assert!(listings.incompatible(), "{listings:?}");
+    let rows =
+        satex::queries::query::run(&a, satex::queries::query::Query::Tagging, &satex::queries::query::Filter::Always);
+    assert!(!rows.is_empty() && rows.iter().all(|r| r["kind"] == "status"), "{rows:?}");
 }

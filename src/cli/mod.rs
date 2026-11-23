@@ -16,6 +16,7 @@ pub mod query;
 pub mod render;
 mod summary;
 mod tokens;
+pub mod updates;
 #[cfg(target_os = "linux")]
 pub mod warm;
 
@@ -282,6 +283,9 @@ pub enum Command {
         #[arg(long)]
         usermode: bool,
     },
+    /// Whether each package the document loads is its newest release (`updates.index`), and
+    /// with `updates.changes` what the newest defines differently, from running both.
+    Updates,
     /// The token stream the mouth produces.
     Tokens,
     /// Print the shell completion script: bash, zsh, fish, elvish or
@@ -618,6 +622,8 @@ impl Command {
                 install::run(context, packages, options, out)
             }
             Command::Tokens => tokens::run(context),
+            // `main.rs` runs it with the config
+            Command::Updates => Ok(Output::Done),
         }
     }
 }

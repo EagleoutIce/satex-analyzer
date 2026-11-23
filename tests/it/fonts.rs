@@ -353,9 +353,16 @@ fn opentype_languages_features_and_glyph_names() {
     // xetex: `3,1096434976,26,1835102827|7,0,0,12,1801810542,0|acute.dup,127,space` and `0,201,.`
     let source = r#"\font\x="[LibertinusSans-Italic.otf]" \font\c="[clarar.otf]" \font\l="[lmroman10-regular]" \font\a="[Andika-Regular.ttf]"
 \l\edef\out{\the\XeTeXOTcountlanguages\x"68656272,\the\XeTeXOTlanguagetag\x"68656272 0,\the\XeTeXOTcountfeatures\x"44464C54 0,\the\XeTeXOTfeaturetag\x"44464C54 0 25|\the\XeTeXOTcountlanguages\c"6C61746E,\the\XeTeXOTlanguagetag\c"6C61746E 5,\the\XeTeXOTlanguagetag\c"6C61746E 6,\the\XeTeXOTcountfeatures\c"6C61746E "454E4720,\the\XeTeXOTfeaturetag\c"6C61746E "454E4720 9,\the\XeTeXOTcountfeatures\c"6C61746E "64666C74|\XeTeXglyphname\l 1,\the\XeTeXglyphindex "Aacute" ,\XeTeXglyphname\a 3}"#;
-    assert_eq!(out_in(Engine::XeTeX, source), "3,1096434976,26,1835102827|7,0,0,12,1801810542,0|acute.dup,127,space");
+    // The installed xetex decides: its fonts differ between releases (TeX Live 2022's
+    // LibertinusSans has no `hebr` languages).
+    let want =
+        |source: &str, tl2026: &str| crate::support::engine_out("xetex", source).unwrap_or_else(|| tl2026.into());
+    assert_eq!(
+        out_in(Engine::XeTeX, source),
+        want(source, "3,1096434976,26,1835102827|7,0,0,12,1801810542,0|acute.dup,127,space")
+    );
     let source = r#"\font\a="[Andika-Regular.ttf]" \a\edef\out{\the\XeTeXglyphindex "nonexist" ,\the\XeTeXglyphindex "Aacute" ,\XeTeXglyphname\a 99999.}"#;
-    assert_eq!(out_in(Engine::XeTeX, source), "0,201,.");
+    assert_eq!(out_in(Engine::XeTeX, source), want(source, "0,201,."));
 }
 
 /// xetex.web `load_native_font`: a font with a `MATH` table has 65

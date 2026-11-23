@@ -1315,7 +1315,7 @@ fn an_arm_taken_by_assumption_learns_no_value() {
 /// shipped after `\clearpage`, where pdflatex has 2 and 1 (2 and 2 at the end).
 #[test]
 fn a_forced_break_the_output_routine_leaves_fires_it_again() {
-    if !installed() {
+    if !crate::support::kernel_has("\\AddToHook") {
         return;
     }
     for (class, after) in [("[twocolumn]", "2/1"), ("", "2/1")] {

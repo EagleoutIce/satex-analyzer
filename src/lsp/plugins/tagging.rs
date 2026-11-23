@@ -116,7 +116,7 @@ fn document(cx: &Cx, t: Option<&Tagging>, class: usize) -> Json {
         None => why = Some("\\DocumentMetadata is written in a way this dialog cannot rewrite: edit it in the source."),
     }
     let rows: Vec<Json> = t
-        .map(|t| t.statuses.iter().filter(|s| s.code < 4).map(|s| json!([s.file, s.meaning()])).collect())
+        .map(|t| t.statuses.iter().filter(|s| s.flagged()).map(|s| json!([s.file, s.meaning()])).collect())
         .unwrap_or_default();
     let table =
         (!rows.is_empty()).then(|| json!({ "kind": "table", "columns": ["file", "tagging status"], "rows": rows }));

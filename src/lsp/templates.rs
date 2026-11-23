@@ -356,7 +356,7 @@ pub fn sha256(bytes: &[u8]) -> String {
 }
 
 /// `url`'s body over HTTPS, by curl: redirects followed, a time limit, a size limit.
-fn download(url: &str, cfg: &TemplatesConfig) -> Result<Vec<u8>, String> {
+pub(crate) fn download(url: &str, cfg: &TemplatesConfig) -> Result<Vec<u8>, String> {
     if !url.starts_with("https://") {
         return Err("only https:// URLs are fetched".into());
     }
@@ -538,7 +538,7 @@ pub fn main_of(files: &BTreeMap<String, Vec<u8>>) -> Option<String> {
 }
 
 /// A local folder's files, as an archive's are taken: links not followed, sizes capped.
-fn folder(dir: &Path, cfg: &TemplatesConfig) -> Result<Vec<(String, Vec<u8>)>, String> {
+pub(crate) fn folder(dir: &Path, cfg: &TemplatesConfig) -> Result<Vec<(String, Vec<u8>)>, String> {
     let (mut out, mut total) = (Vec::new(), 0u64);
     for e in walkdir::WalkDir::new(dir).follow_links(false).into_iter().filter_map(Result::ok) {
         if !e.file_type().is_file() {

@@ -1068,7 +1068,7 @@ fn an_error_raised_after_the_mode_widened_is_no_certain_error() {
 /// unused definition of its own: the name the document wrote is.
 #[test]
 fn an_unused_command_is_reported_once_not_with_its_implementation() {
-    if !installed() {
+    if !crate::support::kernel_has("\\NewDocumentCommand") {
         return;
     }
     let analysis = analyze(
@@ -3671,6 +3671,10 @@ fn siunitx_table_cells_end_at_their_v_part() {
             (b'a' + i as u8) as char
         ));
     }
+    // The widths are the installed pdflatex's: siunitx's cell layout differs between releases.
+    let oracle: String =
+        (0..cases.len()).map(|i| format!("\\typeout{{S{c} \\S{c}}}", c = (b'a' + i as u8) as char)).collect();
+    let oracle = format!("{src}{oracle}\\end{{document}}");
     src.push_str("\\end{document}");
     let analysis = analyze(&src);
     let codes = codes(&analysis);
@@ -3678,7 +3682,9 @@ fn siunitx_table_cells_end_at_their_v_part() {
         assert!(!codes.iter().any(|c| c == code), "{codes:?}");
     }
     for (i, (f, want)) in cases.iter().enumerate() {
-        let got = body(&analysis, &format!("S{}", (b'a' + i as u8) as char));
+        let c = (b'a' + i as u8) as char;
+        let want = crate::support::engine_typeout(&oracle, &format!("S{c}"), want);
+        let got = body(&analysis, &format!("S{c}"));
         for (g, w) in got.split('/').zip(want.split('/')) {
             assert!(g == w || g.contains("unknown"), "{f}: {got}");
         }

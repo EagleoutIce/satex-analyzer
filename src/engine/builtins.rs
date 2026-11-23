@@ -1306,7 +1306,9 @@ fn probe_absent(engine: Engine) -> Option<crate::fixed::HashSet<String>> {
     Some(lines[..lines.len() - 1].iter().map(|n| n.to_string()).collect())
 }
 
-fn catalog(it: &mut Interner, engine: Engine) -> HashMap<Sym, Meaning> {
+/// Every primitive satex models for `engine`, as the newest engine has it;
+/// [`initial_meanings`] drops what the installed binary lacks.
+pub fn catalog(it: &mut Interner, engine: Engine) -> HashMap<Sym, Meaning> {
     use Primitive as P;
     let mut table: HashMap<Sym, Meaning> = HashMap::with_capacity_and_hasher(512, Default::default());
     let mut put = |it: &mut Interner, name: &str, p: Primitive| {

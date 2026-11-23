@@ -6,7 +6,7 @@
 
 use satex::fixed::HashMap;
 
-use satex::engine::builtins::{Primitive, initial_meanings};
+use satex::engine::builtins::{Primitive, catalog};
 use satex::engine::tex::{Interner, Meaning, Sym};
 use satex::project::config::Engine;
 
@@ -14,7 +14,7 @@ const ENGINES: [Engine; 4] = [Engine::Tex, Engine::PdfTeX, Engine::XeTeX, Engine
 
 fn table(engine: Engine) -> (Interner, HashMap<Sym, Meaning>) {
     let mut it = Interner::default();
-    let table = initial_meanings(&mut it, engine);
+    let table = catalog(&mut it, engine);
     (it, table)
 }
 

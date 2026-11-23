@@ -87,6 +87,18 @@ A file that is not UTF-8 is never overwritten, and a file with `\r\n` line ends 
 
 The pages come from a built site: `share/satex/site` beside the binary, or `--site DIR`. In a checkout of satex, `cargo playground` builds one in `target/site`, which `satex gui` finds by itself.
 
+## Package updates
+
+`satex updates main.tex` lists each package and class the document loads with its status. `outdated` means the index knows a newer release. `current` means the installed one is the newest. `unknown` means satex cannot tell.
+
+The installed version is what the file's `\ProvidesPackage` set when it ran. The newest comes from `updates.index`, by default CTAN's JSON API. Network access is off by default (`updates.fetch: false`). Without a fresh record a package is `unknown`, never `current`. Records are cached in the cache directory under `updates` for `updates.refresh_days`.
+
+With `updates.changes: true` satex also gets the newest release of each outdated package from `updates.archives` and unpacks it under the cache. It then runs a document that loads the package once with each release. The columns `added`, `removed` and `changed` name the commands (`\x`), environments (`{x}`) and options (`[x]`) whose meaning differs. A command changed when its arity, prefixes or body differ. Internal names are only counted. A release that ships only `.dtx` sources is reported in `note`.
+
+```sh
+satex updates main.tex --set updates.fetch=true --set updates.changes=true
+```
+
 ## Command tree as JSON
 
 `satex completions json` prints the subcommands, flags, value names, possible values, query names and config keys as JSON. It is hidden from `--help`. Tools such as the web playground use it.

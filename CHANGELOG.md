@@ -50,6 +50,7 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 
 ### CLI
 
+- `feat` **`satex updates` says which loaded packages have a newer release, and what changed in it.** The installed version is what `\ProvidesPackage` set when it ran, the newest is CTAN's record (`updates.index`). Network access is opt-in (`updates.fetch`), and without a fresh record a package is `unknown`, never `current`. With `updates.changes` both releases run, and the commands, environments and options whose meaning differs are listed.
 - `fix` **`satex explain` places a kernel command at its declaration** (`\textit @ latex.ltx:14219:25`, not inside `\DeclareRobustCommand`), with its column also when read from the kernel cache.
 - `fix` **`satex slice` run from the document's folder embeds each local file once, under its relative name.** It also wrote a copy under the file's absolute path, so compiling an old slice could overwrite the user's own package.
 - `fix` **A position may be a bare line** (`satex slice --at 40`): it names the line from its first column, where it said "expected LINE:COL".
@@ -153,6 +154,10 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 
 ### Lints
 
+- `feat` **`satex query tagging` says more.** `running` is the tagging code's own answer, `modules` the tagging files loaded, `marked` the marked content written by tag. A package the status list lacks is `unlisted`. Without `\DocumentMetadata` it lists each package's status, to judge a document before tagging is on.
+- `fix` **`graphic-without-alt` follows the tagging state where the graphic stands.** It reports where the run raised latex-lab's warning. A graphic under `\SuspendTagging` or `\tag_stop:` is no finding, and one whose options come from a macro is checked too.
+- `fix` **Tagging lints ask the tagging code whether it tags** (`\tag_if_active:TF`), not only what `\DocumentMetadata` declared. A document that switches tagging off with `\tagpdfsetup` gets no tagging findings.
+- `fix` **The hand-set quantity fix writes `\SI` where the installed siunitx is version 2.** With siunitx not loaded yet, the fix wrote `\qty`, which siunitx 2 does not define.
 - `fix` **Prose rules skip text only an undecided path sets** (TikZ path code a run could not follow read as `(frame.north west)` prose), and a duplicate package load names the class line that made the first load, not the kernel's.
 - `fix` **Values the run did not know read as one `…` in every finding**, never as satex's internal names for them (`\-16384..16383#8970.8059.0`, 32-digit digests, private-use marks).
 - `fix` **A run a time limit stopped no longer reports labels, packages or names as absent from the whole document**: what it did not reach may hold them, so such findings are precision notes naming where the limit stopped the run.

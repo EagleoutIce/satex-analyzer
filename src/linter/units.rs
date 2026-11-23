@@ -63,7 +63,16 @@ fn spaced(q: &Quantity) -> bool {
 /// siunitx 2 called `\qty` `\SI`.
 fn call(analysis: &Analysis, number: &str, unit: &str) -> String {
     let units = &analysis.settings.conventions.units;
-    let defined = |name: &str| analysis.defined(name);
+    // Not loaded yet: the siunitx the fix loads has it, as its source spells it.
+    let installed = || {
+        crate::caches::distribution::tex_file(&analysis.distribution.roots, "siunitx.sty")
+            .and_then(|f| std::fs::read_to_string(f).ok())
+    };
+    let loaded = analysis.defined(&units.quantity) || analysis.defined(&units.legacy);
+    let defined = |name: &str| match loaded {
+        true => analysis.defined(name),
+        false => installed().is_none_or(|text| text.contains(&format!("\\{name}"))),
+    };
     let name = match !defined(&units.quantity) && defined(&units.legacy) {
         true => &units.legacy,
         false => &units.quantity,

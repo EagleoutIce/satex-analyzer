@@ -6444,6 +6444,93 @@
       },
       "type": "object"
     },
+    "updates": {
+      "description": "how satex updates learns the newest release of each package the document loads, and what changed in it",
+      "properties": {
+        "archives": {
+          "default": [
+            "https://mirrors.ctan.org/install{install}",
+            "https://mirrors.ctan.org{path}.zip"
+          ],
+          "description": "where a release's files come from, tried in order. {install} and {path} are the record's install and ctan.path. A zip, or a file:// folder",
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "x-affects": [
+            "output"
+          ],
+          "x-example": "`archives: ['file:///srv/ctan{path}']` reads releases from a local mirror"
+        },
+        "changes": {
+          "default": false,
+          "description": "run the newest release of each outdated package and list what it defines differently: commands, environments, options",
+          "type": "boolean",
+          "x-affects": [
+            "output"
+          ],
+          "x-example": "`changes: true`: an outdated enumitem lists its added, removed and changed commands"
+        },
+        "fetch": {
+          "default": false,
+          "description": "ask the index and the archives over HTTPS. Off, only the cache and file:// sources serve, and a package without a record is unknown",
+          "type": "boolean",
+          "x-affects": [
+            "output"
+          ],
+          "x-example": "`fetch: true`: satex updates asks CTAN for each package"
+        },
+        "index": {
+          "default": "https://ctan.org/json/2.0/pkg/{name}",
+          "description": "the release record of package {name}, with its version number and date. A file:// path serves a local copy",
+          "type": "string",
+          "x-affects": [
+            "output"
+          ],
+          "x-example": "`index: file:///srv/ctan/json/{name}.json` reads a local mirror"
+        },
+        "max_bytes": {
+          "default": "50.0 MiB",
+          "description": "the most a release archive may unpack to",
+          "type": "string",
+          "x-affects": [
+            "output"
+          ],
+          "x-example": "`max_bytes: 200MiB` takes a large bundle"
+        },
+        "max_files": {
+          "default": 5000,
+          "description": "the most files a release archive may hold",
+          "minimum": 0,
+          "type": "integer",
+          "x-affects": [
+            "output"
+          ],
+          "x-example": "`max_files: 20000` takes a large bundle"
+        },
+        "refresh_days": {
+          "default": 1,
+          "description": "days a fetched record counts as current. Past that a package is outdated or unknown, never current",
+          "minimum": 0,
+          "type": "integer",
+          "x-affects": [
+            "output"
+          ],
+          "x-example": "`refresh_days: 0` asks the index on every run"
+        },
+        "timeout": {
+          "default": 20,
+          "description": "seconds a download may take before it is given up",
+          "minimum": 0,
+          "type": "integer",
+          "x-affects": [
+            "output"
+          ],
+          "x-example": "`timeout: 5` gives up sooner on a slow network"
+        }
+      },
+      "type": "object"
+    },
     "verbose": {
       "default": 0,
       "minimum": 0,

@@ -2711,21 +2711,27 @@ fn distribution(analysis: &Analysis) -> Vec<Record> {
 }
 
 /// One row per fact of [`crate::analysis::tagging`], then one per loaded file the status list
-/// names: nothing when the run never called `\DocumentMetadata`.
+/// names or lacks. Without `\DocumentMetadata` only the statuses: what turning tagging on meets.
 fn tagging(analysis: &Analysis) -> Vec<Record> {
-    let Some(t) = crate::analysis::tagging::of(analysis) else { return Vec::new() };
     let row = |kind: &str, name: Json, detail: Json| {
         Record::from_iter([("kind".into(), json!(kind)), ("name".into(), name), ("detail".into(), detail)])
+    };
+    let status = |s: &crate::analysis::tagging::Status| row("status", json!(s.file), json!(s.meaning()));
+    let Some(t) = crate::analysis::tagging::of(analysis) else {
+        return crate::analysis::tagging::loaded(analysis).iter().map(status).collect();
     };
     let val = |v: &crate::analysis::tagging::Val| json!(v);
     let mut out = vec![
         row("tagging", val(&t.tagging), json!(analysis.plugins.engine.as_str())),
+        row("running", val(&t.running), Json::Null),
+        row("modules", json!(t.modules), Json::Null),
+        row("marked", json!(t.marked.iter().map(|(tag, n)| format!("{tag} ×{n}")).collect::<Vec<_>>()), Json::Null),
         row("standard", json!(t.standards), Json::Null),
         row("lang", val(&t.lang), json!({ "set": t.lang_set })),
         row("title", val(&t.title), Json::Null),
         row("pdfversion", val(&t.pdfversion), Json::Null),
     ];
-    out.extend(t.statuses.iter().map(|s| row("status", json!(s.file), json!(s.meaning()))));
+    out.extend(t.statuses.iter().map(status));
     out
 }
 

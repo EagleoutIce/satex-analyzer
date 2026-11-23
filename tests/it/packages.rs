@@ -147,7 +147,9 @@ fn an_image_is_looked_for_where_graphicspath_says_and_in_what_the_driver_reads()
         .collect();
     // pdflatex's log: `<figs/tree.png, id=1, ...>` and
     // `! LaTeX Error: File `nowhere' not found.`
-    assert!(found.contains(&("figs/tree.png".to_string(), true)), "{found:?}");
+    // TeX Live 2022's graphics joins `figs/` and the name with one more `/`, and its
+    // pdflatex logs `<figs//tree.png, …>` too.
+    assert!(found.iter().any(|(k, d)| k.replace("//", "/") == "figs/tree.png" && *d), "{found:?}");
     let missing: Vec<String> = satex::linter::lint(&analysis)
         .iter()
         .filter(|f| f.get("code").and_then(|c| c.as_str()) == Some("missing-graphic"))
@@ -385,7 +387,7 @@ fn biblatex_citations_and_resources_are_observed_from_what_it_writes() {
 
 #[test]
 fn acro_acronyms_are_observed_from_what_acro_writes_and_its_errors() {
-    if !installed() {
+    if !crate::support::installed_file_has("acro2.sty", "") {
         return;
     }
     let analysis = analyze(
@@ -514,7 +516,7 @@ fn a_package_alone_is_read_as_a_document_loads_it() {
 \\DeclareOption*{\\PackageWarning{alonedemo}{Unknown~option~`\\CurrentOption'}}
 \\ProcessOptions\\relax
 \\RequirePackage{geometry}
-\\tl_const:Ne \\c__alonedemo_name_tl { \\@currname . \\@currext }
+\\tl_const:Nx \\c__alonedemo_name_tl { \\@currname . \\@currext }
 \\cs_new:Npn \\__alonedemo_orphan: { }
 ";
     std::fs::write(&path, source).unwrap();
