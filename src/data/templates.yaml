@@ -264,6 +264,7 @@ templates:
     files: { references.bib: *bib }
     main: |
       \documentclass[a4paper,fleqn]{cas-dc}
+      \usepackage[numbers]{natbib}
 
       \begin{document}
 

@@ -507,7 +507,9 @@ impl Search<'_> {
             .sum();
         let total = self.tokens(a0, a1).max(self.tokens(b0, b1)).max(1);
         let units = (a1 - a0).max(b1 - b0);
-        let lines = |from: u32, to: u32| self.u[to as usize - 1].end.line - self.u[from as usize].start.line + 1;
+        // a place whose units come from different files may end on an earlier line than it starts
+        let lines =
+            |from: u32, to: u32| self.u[to as usize - 1].end.line.saturating_sub(self.u[from as usize].start.line) + 1;
         shared as usize >= self.cfg.min_tokens
             && f64::from(total - shared) <= self.cfg.max_value_share * f64::from(total)
             && f64::from(pair.matched()) >= self.cfg.similarity * f64::from(units)

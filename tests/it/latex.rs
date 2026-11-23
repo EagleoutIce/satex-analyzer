@@ -862,7 +862,8 @@ fn lastbox_after_unvbox_takes_a_plain_box() {
 /// compiles.
 #[test]
 fn a_file_a_shell_program_may_write_may_exist() {
-    if !installed() {
+    // minted before version 3 runs `pygmentize`, which needs `-shell-escape`.
+    if !crate::support::installed_file_has("minted.sty", "latexminted") {
         return;
     }
     let analysis = analyze(
@@ -1564,7 +1565,8 @@ fn a_conditional_that_returns_without_aftergroup_is_clean() {
 /// it is where the defect showed on real documents.
 #[test]
 fn figureversions_selects_a_figure_style_without_a_gap() {
-    if !installed() {
+    // The package is newer than some distributions.
+    if !crate::support::installed_file_has("figureversions.sty", "") {
         return;
     }
     let analysis = analyze(
@@ -1597,7 +1599,7 @@ fn a_floating_point_zero_is_sanitized_and_keeps_its_terminator() {
 \cs_new_protected:Npn \myshow:n #1
   {
     \fp_set:Nn \l_my_fp {#1}
-    \tl_put_right:Ne \l_my_tl { [ \fp_to_tl:N \l_my_fp ] }
+    \tl_put_right:Nx \l_my_tl { [ \fp_to_tl:N \l_my_fp ] }
   }
 \ExplSyntaxOff
 \begin{document}
@@ -1632,33 +1634,35 @@ fn exponentials_divide_by_repeating_digits() {
     if !installed() {
         return;
     }
-    let analysis = analyze(
-        r"\documentclass{article}
+    // l3fp's block separator: `;` before `\__fp_sep:` (TeX Live 2022: `…{0000};`)
+    let sep = if crate::support::installed_file_has("expl3-code.tex", "\\__fp_sep:") { "\\__fp_sep: " } else { ";" };
+    let analysis = analyze(&format!(
+        r"\documentclass{{article}}
 \ExplSyntaxOn
 \fp_new:N \l_my_fp
 \tl_new:N \l_my_tl
 \cs_new_protected:Npn \myshow:n #1
-  {
-    \fp_set:Nn \l_my_fp {#1}
-    \tl_put_right:Ne \l_my_tl { [ \fp_to_tl:N \l_my_fp ] }
-  }
+  {{
+    \fp_set:Nn \l_my_fp {{#1}}
+    \tl_put_right:Nx \l_my_tl {{ [ \fp_to_tl:N \l_my_fp ] }}
+  }}
 \ExplSyntaxOff
-\begin{document}
+\begin{{document}}
 \ExplSyntaxOn
-\myshow:n { exp(1) }
-\myshow:n { ln(2) }
-\myshow:n { 2 ^ 3 }
-\myshow:n { .8 ^ 3 }
-\tl_put_right:Ne \l_my_tl
-  { [ \__fp_fixed_div_int:wwN {10000}{0000}{0000}{0000}{0000}{0000} \__fp_sep: 10 \__fp_sep: \use:n ] }
+\myshow:n {{ exp(1) }}
+\myshow:n {{ ln(2) }}
+\myshow:n {{ 2 ^ 3 }}
+\myshow:n {{ .8 ^ 3 }}
+\tl_put_right:Nx \l_my_tl
+  {{ [ \__fp_fixed_div_int:wwN {{10000}}{{0000}}{{0000}}{{0000}}{{0000}}{{0000}} {sep} 10 {sep} \use:n ] }}
 \ExplSyntaxOff
 x
-\end{document}",
-    );
+\end{{document}}",
+    ));
     assert_eq!(unsupported(&analysis), Vec::<String>::new());
     assert_eq!(
         last_body(&analysis, "l_my_tl"),
-        "[2.718281828459045][0.6931471805599453][8][0.512][1000{0000}{0000}{0000}{0000}{0000}\\__fp_sep: ]"
+        format!("[2.718281828459045][0.6931471805599453][8][0.512][1000{{0000}}{{0000}}{{0000}}{{0000}}{{0000}}{sep}]")
     );
 }
 
@@ -1861,7 +1865,7 @@ fn a_widened_if_in_a_number_scan_leaves_text_after_the_number() {
     }
     let mut cfg = crate::support::config();
     cfg.limits.site_forks = 1;
-    let source = "\\documentclass{article}\n\\ExplSyntaxOn\n\\tl_gset:Ne \\g_a_tl { \\int_rand:n {16777215} }\n\\ExplSyntaxOff\n\\begin{document}\nx\n\\end{document}\n";
+    let source = "\\documentclass{article}\n\\ExplSyntaxOn\n\\tl_gset:Nx \\g_a_tl { \\int_rand:n {16777215} }\n\\ExplSyntaxOff\n\\begin{document}\nx\n\\end{document}\n";
     let analysis = satex::analysis::machine::Machine::analyze(source, None, &cfg);
     assert_eq!(gaps_of(&analysis), Vec::new());
     assert!(body(&analysis, "g_a_tl").contains("unknown digits"), "{}", body(&analysis, "g_a_tl"));
@@ -2523,7 +2527,8 @@ fn an_error_in_the_document_is_recovered_like_tex() {
 /// missing-endcsname and unbalanced-group by the dozen). Four gaps remain.
 #[test]
 fn resized_picture_with_styles_keeps_file_name_scans() {
-    if !installed() {
+    // The package is newer than some distributions.
+    if !crate::support::installed_file_has("commalists-tools.sty", "") {
         return;
     }
     let analysis = analyze(

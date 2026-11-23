@@ -55,6 +55,112 @@ pub fn installed() -> bool {
     satex::project::paths::which("kpsewhich").is_ok()
 }
 
+/// Whether the installation's `file` (found by `kpsewhich`) contains `text`
+/// (exists, for an empty `text`):
+/// a test of a feature newer than some installations (`\NeedsDocumentMetadata`
+/// in `latex.ltx`) skips itself where the feature is not there.
+pub fn installed_file_has(file: &str, text: &str) -> bool {
+    let Ok(out) = std::process::Command::new("kpsewhich").arg(file).output() else { return false };
+    let path = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    !path.is_empty()
+        && std::fs::read(path).is_ok_and(|b| text.is_empty() || b.windows(text.len()).any(|w| w == text.as_bytes()))
+}
+
+/// Whether `\DocumentMetadata` has the key `tagging=on`: TeX Live 2022's
+/// latex-lab tags only with `testphase=tagpdf`.
+pub fn tagging_installed() -> bool {
+    installed() && installed_file_has("documentmetadata-support.ltx", "tagging / on")
+}
+
+/// The lines `pdflatex -file-line-error` names for errors in `source`'s own
+/// text, sorted, once each; `None` without `pdflatex`. For an expectation that
+/// is whatever the installed kernel does.
+pub fn pdflatex_error_lines(source: &str) -> Option<Vec<u32>> {
+    let pdflatex = satex::project::paths::which("pdflatex").ok()?;
+    let hash = source.bytes().fold(0xcbf2_9ce4_8422_2325u64, |h, b| (h ^ u64::from(b)).wrapping_mul(0x0100_0000_01b3));
+    let dir = scratch_dir(tmp_root().join(format!("pdflatex-{hash:x}")));
+    std::fs::write(dir.join("main.tex"), source).ok()?;
+    std::process::Command::new(pdflatex)
+        .args(["-interaction=nonstopmode", "-file-line-error", "main.tex"])
+        .current_dir(&dir)
+        .output()
+        .ok()?;
+    let log = std::fs::read_to_string(dir.join("main.log")).ok()?;
+    let mut lines: Vec<u32> =
+        log.lines().filter_map(|l| l.strip_prefix("./main.tex:")?.split(':').next()?.parse().ok()).collect();
+    lines.sort_unstable();
+    lines.dedup();
+    Some(lines)
+}
+
+/// Whether `tool` with `args` exits successfully in `dir`: an installed tool its
+/// runtime no longer runs (TeX Live 2022's arara on Java 21) counts as absent.
+pub fn tool_runs(tool: &str, args: &[&str], dir: &Path) -> bool {
+    std::process::Command::new(tool).args(args).current_dir(dir).output().is_ok_and(|o| o.status.success())
+}
+
+/// The line pdflatex prints after `\typeout{<tag> …}` in `source`, `<tag> ` cut off, or
+/// `fallback` without pdflatex. An expectation the kernel decides (what `\newcommand`
+/// makes, which page a hook sees) is read off the installed engine, not one release.
+pub fn engine_typeout(source: &str, tag: &str, fallback: &str) -> String {
+    let Some(said) = engine_said(source) else { return fallback.to_string() };
+    let line = said.lines().find_map(|l| l.strip_prefix(tag)?.strip_prefix(' ').map(str::to_string));
+    line.unwrap_or_else(|| panic!("pdflatex printed no `{tag}` line:\n{said}"))
+}
+
+/// Whether the installed pdflatex runs `source` without an error (`true` without pdflatex):
+/// what an older class rejects (TeX Live 2022's KOMA on an unexpandable option) checks nothing there.
+pub fn engine_accepts(source: &str) -> bool {
+    engine_said(source).is_none_or(|said| !said.lines().any(|l| l.starts_with("! ")))
+}
+
+/// What pdflatex prints on `source`, run in a scratch directory; `None` without pdflatex.
+fn engine_said(source: &str) -> Option<String> {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    static RUN: AtomicUsize = AtomicUsize::new(0);
+    satex::project::paths::which("pdflatex").ok()?;
+    let dir = scratch_dir(tmp_root().join(format!("engine-typeout-{}", RUN.fetch_add(1, Ordering::Relaxed))));
+    std::fs::write(dir.join("t.tex"), source).expect("the engine's input");
+    let out = std::process::Command::new("pdflatex")
+        .args(["-interaction=nonstopmode", "t.tex"])
+        .current_dir(&dir)
+        .output()
+        .expect("pdflatex runs");
+    Some(String::from_utf8_lossy(&out.stdout).into_owned())
+}
+
+/// Whether the installed LaTeX defines the expl3 function `name` (`tl_set:Ne`) after
+/// `\documentclass{article}`: TeX Live 2022's expl3 has no `e` variants of most setters.
+/// Without pdflatex it is taken as defined, so the test runs.
+pub fn engine_defines(name: &str) -> bool {
+    let source = format!(
+        "\\documentclass{{article}}\\typeout{{HAS \\ifcsname {name}\\endcsname yes\\else no\\fi}}\\begin{{document}}\\end{{document}}"
+    );
+    engine_typeout(&source, "HAS", "yes") == "yes"
+}
+
+/// Whether `kpsewhich`, run in `dir`, finds every class and package `source` loads
+/// by `\documentclass`, `\usepackage` or `\RequirePackage`: a fixture written for a
+/// package an older TeX Live does not ship yet (memoize before 2023) has nothing to check.
+pub fn ships_what_it_loads(dir: &Path, source: &str) -> bool {
+    let mut files = Vec::new();
+    for (call, ext) in [("\\documentclass", "cls"), ("\\usepackage", "sty"), ("\\RequirePackage", "sty")] {
+        for rest in source.split(call).skip(1) {
+            let rest = rest.trim_start();
+            let rest = match rest.strip_prefix('[') {
+                Some(r) => r.split_once(']').map_or("", |(_, r)| r).trim_start(),
+                None => rest,
+            };
+            let Some(names) = rest.strip_prefix('{').and_then(|r| r.split_once('}')).map(|(n, _)| n) else { continue };
+            let plain = |n: &&str| !n.is_empty() && n.chars().all(|c| c.is_ascii_alphanumeric() || "-_.".contains(c));
+            files.extend(names.split(',').map(str::trim).filter(plain).map(|n| format!("{n}.{ext}")));
+        }
+    }
+    files.iter().all(|f| {
+        std::process::Command::new("kpsewhich").arg(f).current_dir(dir).output().is_ok_and(|o| o.status.success())
+    })
+}
+
 /// `config()` with package, class, input and format loading all off, and
 /// `kpsewhich` off too: nothing but the modeled primitives, so no TeX
 /// installation is needed to run the analysis.

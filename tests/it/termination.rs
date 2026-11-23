@@ -912,6 +912,9 @@ mod convergence {
   }
 }
 \ExplSyntaxOff";
+        if !crate::support::engine_defines("cs_new:cpe") {
+            return;
+        }
         let Some(a) = latex("expl3-maps", &document(preamble, "Text."), |_| {}) else { return };
         converged(&a, 0);
         assert!(crate::support::diagnosed(&a, "site-forks-widened").is_empty());
@@ -1266,6 +1269,9 @@ Some text with microtype protrusion and expansion.
     /// the code the wrap runs before it (#3, the text's expansion) still
     /// runs, and a wrap over known text runs for real.
     fn wrap_call(name: &str, text: &str, assume: bool) -> Option<Analysis> {
+        if !crate::support::engine_defines("cs_gset:Npe") {
+            return None;
+        }
         let preamble = format!(
             r"\ExplSyntaxOn
 \int_new:N \g_my_int

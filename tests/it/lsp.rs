@@ -3933,6 +3933,9 @@ fn page_names_the_paper_from_class_options() {
 /// may load, from the installation's status file, loaded or not.
 #[test]
 fn page_tagging_statuses_of_its_packages() {
+    if !crate::support::tagging_installed() {
+        return;
+    }
     let text = "\\DocumentMetadata{tagging=on}\n\\documentclass{article}\n\\begin{document}\nText\n\\end{document}\n";
     let (mut server, uri, dir) = open_set("page-tagging", text, &[]);
     let views = at(&mut server, &uri, "satex/view", 1, 2);
@@ -7605,7 +7608,10 @@ fn lean_scope_records_carry_arguments_math_and_doc() {
     for math in ["\\sum", "\\alpha", "\\frac", "\\leq"] {
         assert_eq!(row(math)["math"], true, "{}", row(math));
     }
-    for text in ["\\textbf", "\\section", "\\NeedsDocumentMetadata"] {
+    // An older kernel has no `\NeedsDocumentMetadata` to list.
+    let metadata = crate::support::installed_file_has("latex.ltx", "\\NeedsDocumentMetadata");
+    let texts = ["\\textbf", "\\section", "\\NeedsDocumentMetadata"];
+    for text in texts.into_iter().filter(|t| metadata || *t != "\\NeedsDocumentMetadata") {
         assert!(row(text).get("math").is_none(), "{}", row(text));
     }
     let doc = row("\\textbf")["doc"].as_str().map(str::to_string).unwrap_or_default();

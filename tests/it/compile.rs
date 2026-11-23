@@ -86,6 +86,10 @@ fn arara_directives_pick_arara_and_unknown_systems_are_named() {
         "% arara: pdflatex\n\\documentclass{article}\n\\begin{document}\nHi.\n\\end{document}\n",
     )
     .unwrap();
+    if !crate::support::tool_runs("arara", &["doc.tex"], &dir) {
+        return;
+    }
+    let _ = std::fs::remove_file(dir.join("doc.pdf"));
     let run = |extra: &[&str]| {
         crate::support::satex()
             .args(["compile", "-f", "doc.tex", "--set", "limits.seconds=0"])

@@ -716,21 +716,22 @@ fn a_genuinely_recursive_plain_newcommand_is_still_reported() {
 
 /// latex.ltx defines `\@empty` as an empty macro, and a zero-argument
 /// `\newcommand` is not `\long` (`\@yargd@f`), so all of these compare
-/// equal.  `pdflatex`: `[T][T][T][T]`.
+/// equal.  `pdflatex`: `[T][T][T][T]`. Kernels before that rule (TeX Live 2022)
+/// make `\qb` `\long`: `[T][F][T][T]`, so the installed engine gives the answer.
 #[test]
 fn ifx_compares_empty_macros_the_way_the_engine_does() {
     if !installed() {
         return;
     }
-    let analysis = document(
-        r"\documentclass{article}
+    let source = r"\documentclass{article}
 \makeatletter
 \newcommand*\qa{}\newcommand\qb{}\newcommand*\qc[1]{#1}\def\qd#1{#1}\edef\qe{}
 \xdef\qv{[\ifx\qa\@empty T\else F\fi][\ifx\qb\@empty T\else F\fi][\ifx\qc\qd T\else F\fi][\ifx\qe\@empty T\else F\fi]}
+\typeout{QV \qv}
 \begin{document}
-\end{document}",
-    );
-    assert_eq!(last_body(&analysis, "qv"), "[T][T][T][T]");
+\end{document}";
+    let analysis = document(source);
+    assert_eq!(last_body(&analysis, "qv"), crate::support::engine_typeout(source, "QV", "[T][T][T][T]"));
 }
 
 /// `\ifmmode` outside any math group is false: a display opened in its
@@ -1318,17 +1319,20 @@ fn a_forced_break_the_output_routine_leaves_fires_it_again() {
         return;
     }
     for (class, after) in [("[twocolumn]", "2/1"), ("", "2/1")] {
-        let analysis = document(&format!(
+        let source = format!(
             r"\documentclass{class}{{article}}
-\AddToHook{{enddocument/afterlastpage}}{{\xdef\last{{\the\count0/\the\ReadonlyShipoutCounter}}}}
+\AddToHook{{enddocument/afterlastpage}}{{\xdef\last{{\the\count0/\the\ReadonlyShipoutCounter}}\typeout{{LAST \last}}}}
 \begin{{document}}
 x
 \clearpage
 \xdef\after{{\the\count0/\the\ReadonlyShipoutCounter}}
 y
 \end{{document}}"
-        ));
-        for (name, pages) in [("after", after), ("last", "2/2")] {
+        );
+        let analysis = document(&source);
+        // Older kernels step `\count0` once more before the hook: TeX Live 2022 gives 3/2.
+        let last = crate::support::engine_typeout(&source, "LAST", "2/2");
+        for (name, pages) in [("after", after), ("last", last.as_str())] {
             assert!(
                 covers(&analysis, name, pages),
                 "{class} \\{name} is {:?}, pdflatex gives {pages}",

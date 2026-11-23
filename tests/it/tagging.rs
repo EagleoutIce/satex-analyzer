@@ -63,7 +63,7 @@ fn metadata(options: &str, preamble: &str, body: &str) -> String {
 /// The class's status comes from the installation's `latex-tagging-status.ltx`, run as TeX.
 #[test]
 fn the_run_says_what_tagging_it_set_up() {
-    if !crate::support::installed() {
+    if !crate::support::tagging_installed() {
         return;
     }
     let a = analyze(&metadata("lang=de-DE,pdfstandard=ua-2,tagging=on", "", "x"));
@@ -98,7 +98,7 @@ fn without_document_metadata_there_is_nothing_to_tag() {
 /// `inactive`, and a package the status list marks incompatible breaks nothing.
 #[test]
 fn metadata_without_tagging_is_inactive() {
-    if !crate::support::installed() {
+    if !crate::support::tagging_installed() {
         return;
     }
     let a = analyze(&metadata("", "\\usepackage{listings}\n", "x"));
@@ -111,7 +111,7 @@ fn metadata_without_tagging_is_inactive() {
 /// reported where the document loads it; one marked compatible (graphicx) is not.
 #[test]
 fn an_incompatible_package_is_reported_from_the_status_list() {
-    if !crate::support::installed() {
+    if !crate::support::tagging_installed() {
         return;
     }
     let a = analyze(&metadata("lang=en,tagging=on", "\\usepackage{graphicx}\n\\usepackage{listings}\n", "x"));
@@ -127,7 +127,7 @@ fn an_incompatible_package_is_reported_from_the_status_list() {
 /// unknown object number printed nothing, `useobjnum` read no number), joining the end.
 #[test]
 fn pdfua_without_any_title_is_reported() {
-    if !crate::support::installed() {
+    if !crate::support::tagging_installed() {
         return;
     }
     let titled =
@@ -145,7 +145,7 @@ fn pdfua_without_any_title_is_reported() {
 /// the MathML file alone; with `$x$` under pdfLaTeX and no `main-mathml.html` it fires.
 #[test]
 fn a_pdf_title_is_no_finding_and_a_formula_wants_mathml() {
-    if !crate::support::installed() {
+    if !crate::support::tagging_installed() {
         return;
     }
     let a = analyze(&metadata(
@@ -162,7 +162,7 @@ fn a_pdf_title_is_no_finding_and_a_formula_wants_mathml() {
 /// fix writes the guess, which leaves the PDF as it is.
 #[test]
 fn a_guessed_language_is_reported_and_written() {
-    if !crate::support::installed() {
+    if !crate::support::tagging_installed() {
         return;
     }
     let a = analyze(&metadata("tagging=on", "\\usepackage{graphicx}\n", BODY));
@@ -196,7 +196,7 @@ fn metadata_after_the_class_is_reported() {
 /// are not known from the text).
 #[test]
 fn a_graphic_without_alternative_text_is_reported() {
-    if !crate::support::installed() {
+    if !crate::support::tagging_installed() {
         return;
     }
     let body = "\\includegraphics[width=1cm]{a}\n\\includegraphics[alt={A dot}]{a}\n\\includegraphics[artifact]{a}\n\\def\\opts{width=1cm}\\expandafter\\includegraphics\\expandafter[\\opts]{a}";
@@ -349,7 +349,8 @@ fn an_fp_eval_of_an_unknown_integer_forks_only_on_its_length() {
 /// behind the brace: no text of several digits, and one arm read past the body.
 #[test]
 fn an_fp_eval_of_an_unknown_integer_covers_its_digits() {
-    if !crate::support::installed() {
+    // expl3 without e-type variants (TeX Live 2022) has no `\tl_gset:Ne`.
+    if !crate::support::installed_file_has("expl3-code.tex", "\\cs_gset_nopar:Npe") {
         return;
     }
     let source = "\\documentclass{article}\n\\begin{document}\n\\ExplSyntaxOn\\tl_gset:Ne\\x{\\int_use:N\\pdflastxpos}\\tl_gset:Ne\\y{\\fp_eval:n{\\x}}\\ExplSyntaxOff\n\\gdef\\after{reached}\n\\end{document}\n";
@@ -399,7 +400,7 @@ fn lualatex_without_unicode_math_writes_no_mathml() {
 /// of `a` after the first one had none and was never checked.
 #[test]
 fn a_graphic_is_tagged_by_its_last_mode_key() {
-    if !crate::support::installed() {
+    if !crate::support::tagging_installed() {
         return;
     }
     let warned = ["alt={}", "tag=Figure", "artifact,alt="];
