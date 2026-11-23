@@ -478,6 +478,20 @@ fn run() -> Result<(), String> {
 }
 
 /// One run of the command on `file`, on what `cli` names, or on the `piped` text.
+/// The document an input file `path` is read through: none for a document, a literate source
+/// (`.dtx`, `.ins`), or a file no project document names.
+fn root_of_input(path: &std::path::Path, text: &str) -> Option<PathBuf> {
+    use satex::plugins::discovery;
+    let literate = path.extension().is_some_and(|e| matches!(e.to_str(), Some("dtx" | "ins" | "fdd" | "sty" | "cls")));
+    if literate || discovery::is_document(text) {
+        return None;
+    }
+    let dir = satex::project::paths::dir_of(path);
+    discovery::declared_root(path, text)
+        .or_else(|| discovery::scan(&dir).naming_roots(path).into_iter().next())
+        .filter(|root| !satex::project::paths::same_file(root, path))
+}
+
 fn run_on(cli: &mut Cli, file: Option<PathBuf>, explaining: bool, piped: Option<String>) -> Result<(), String> {
     cli.file = file.or(cli.file.take());
     let mut source = match (piped, cli.file.as_deref()) {
@@ -490,6 +504,16 @@ fn run_on(cli: &mut Cli, file: Option<PathBuf>, explaining: bool, piped: Option<
         }
         (None, None) => EMPTY_DOCUMENT.to_string(),
     };
+    // An input file (no `\\documentclass`) is read through the document that reads it, as the editor
+    // reads it: its `% !TeX root` line, else the first root a scan finds naming it. Alone, a chapter
+    // reads `\\section` as undefined.
+    if let Some(path) = cli.file.clone().filter(|_| cli.command().needs_source())
+        && let Some(root) = root_of_input(&path, &source)
+    {
+        eprintln!("satex: {} is read through its root {}", path.display(), root.display());
+        source = satex::project::overlay::read_to_string(&root).map_err(|e| format!("{}: {e}", root.display()))?;
+        cli.file = Some(root);
+    }
     if cli.file.is_none() && explaining && cli.command().needs_source() && source.trim().is_empty() {
         note_minimal_document("nothing was piped in");
         source = EMPTY_DOCUMENT.to_string();
@@ -1190,6 +1214,7 @@ fn read_stdin() -> Result<String, String> {
 }
 
 /// The config and limit flags as given, for the runs `satex gui` starts.
+#[cfg(not(target_os = "emscripten"))]
 fn config_flags(cli: &Cli) -> Vec<String> {
     let mut flags = Vec::new();
     let mut add = |flag: &str, value: Option<String>| flags.extend([flag.to_string()].into_iter().chain(value));

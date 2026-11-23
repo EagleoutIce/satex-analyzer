@@ -639,8 +639,9 @@ pub fn known_fields(filter: &crate::queries::query::Filter, found: &[Record], wh
     Err(format!("no {what} has the field `{field}`. They have: {}", fields.join(", ")))
 }
 
+/// `LINE:COL`, or a bare `LINE`: its first column.
 pub fn parse_position(text: &str) -> Result<(u32, u32), String> {
-    let (line, col) = text.split_once(':').ok_or("expected LINE:COL")?;
+    let (line, col) = text.split_once(':').unwrap_or((text, "1"));
     Ok((
         line.trim().parse().map_err(|_| "line must be a number")?,
         col.trim().parse().map_err(|_| "column must be a number")?,
@@ -731,4 +732,15 @@ pub fn trace_file(specs: &[Option<&str>]) -> Result<Option<String>, String> {
         }
     }
     Ok(found)
+}
+
+#[cfg(test)]
+mod position_tests {
+    /// `slice --at 40` names line 40 from its first column; it said "expected LINE:COL".
+    #[test]
+    fn a_bare_line_is_its_first_column() {
+        assert_eq!(super::parse_position("40"), Ok((40, 1)));
+        assert_eq!(super::parse_position("40:7"), Ok((40, 7)));
+        assert!(super::parse_position("x").is_err());
+    }
 }

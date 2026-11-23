@@ -612,10 +612,9 @@ fn a_filled_page_is_marked_where_it_breaks() {
     assert_eq!(pages, ["page 1 → 2 by here", "page 2"]);
 }
 
-/// The sample paper with `\\drafttrue` and `booktabs`, as pdflatex sets it (pdftotext): `\\repeat`
-/// is `\\fi`, so the skipped branch ends early and sets `[1]11` in the preamble, on a page of its
-/// own; `\\maketitle` breaks it. The figure's rule stays in the figure, and the table fills page
-/// 2, so the conclusion opens page 3.
+/// The sample paper with `\\drafttrue` and `booktabs`, as pdflatex sets it (pdftotext): the
+/// title, the figure (its rule stays in it) and the table fill page 1, so the conclusion's heading
+/// opens page 2.
 #[test]
 fn the_sample_paper_breaks_its_pages_where_pdflatex_does() {
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("typeset-sample-pages");
@@ -652,8 +651,6 @@ fn the_sample_paper_breaks_its_pages_where_pdflatex_does() {
         })
         .collect();
     let expected = [
-        "[1]11",
-        "page 1 → 2",
         "A",
         "satex",
         "November",
@@ -668,10 +665,10 @@ fn the_sample_paper_breaks_its_pages_where_pdflatex_does() {
         "Equation",
         "Table",
         "Method",
-        "page 2 → 3 by here",
+        "page 1 → 2 by here",
         "4",
         "satex",
-        "page 3",
+        "page 2",
     ];
     assert_eq!(seq, expected, "{rows:?}");
 }

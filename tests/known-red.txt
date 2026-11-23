@@ -27,7 +27,7 @@ documents::pgfmath_divides_learn_past_their_scratch_names
 tagging::lualatex_without_unicode_math_writes_no_mathml
 # owner reds (speed): l3backend-pdftex.def is an `\input`, not a package, so no cache serves it; caching library inputs needs body-time facts in the segment (12 tests differed cold vs cached).
 package_cache::the_backend_loaded_by_begin_document_is_served_from_a_cache
-# owner pages (2026-11-21): all pages decided and the page count right. One row differs: "page 2 → 3 by here" comes after the heading "4" instead of before it. satex reports a break where the page's length passes `\vsize` (observe::page_fill); TeX breaks at the best legal breakpoint before that (tex.web § 1005), here before the heading (`\nobreak` after it). Needs the last legal breakpoint of the main list (glue after a non-discardable item, a penalty under 10000; inside a paragraph its interline penalties). MWE target/scratch/pages/mwe/paper.
+# owner pages (2026-11-21): all pages decided and the page count right. One row differs: "page 1 → 2 by here" (2026-11-22: sample renamed \\repeat to \\recurse, one page less) comes after the heading "4" instead of before it. satex reports a break where the page's length passes `\vsize` (observe::page_fill); TeX breaks at the best legal breakpoint before that (tex.web § 1005), here before the heading (`\nobreak` after it). Needs the last legal breakpoint of the main list (glue after a non-discardable item, a penalty under 10000; inside a paragraph its interline penalties). MWE target/scratch/pages/mwe/paper.
 differential::the_sample_paper_breaks_its_pages_where_pdflatex_does
 # owner pgf (Root L): 3869 forks against 543, false extra-else/extra-fi at pgfmath trig 385.
 documents::tcolorbox_of_unknown_height_keeps_its_anchors_local

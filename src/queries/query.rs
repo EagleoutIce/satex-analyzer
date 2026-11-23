@@ -3409,9 +3409,12 @@ fn example_image(dir: &Path, file: &str, options: &str) -> Option<String> {
 pub fn project_files(analysis: &Analysis, text: &str) -> Vec<(PathBuf, PathBuf)> {
     let main_dir = Path::new(analysis.file_name(analysis.main_file)).parent().unwrap_or_else(|| Path::new(""));
     let local = |path: &Path| !analysis.distribution.roots.iter().any(|root| path.starts_with(root));
+    // both sides canonical: a main file named without a folder (`-f paper.tex`) has the folder `""`, which every
+    // absolute path starts with, and its copy was named by the absolute path (filecontents writing the user's file)
+    let canonical = |p: &Path| std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
+    let main_abs = canonical(if main_dir.as_os_str().is_empty() { Path::new(".") } else { main_dir });
     let relative_to_main = |path: &Path| -> PathBuf {
-        path.strip_prefix(main_dir)
-            .map(Path::to_path_buf)
+        (canonical(path).strip_prefix(&main_abs).map(Path::to_path_buf))
             .unwrap_or_else(|_| PathBuf::from(path.file_name().unwrap_or_default()))
     };
     let mut seen: BTreeSet<PathBuf> = BTreeSet::new();
@@ -3421,7 +3424,7 @@ pub fn project_files(analysis: &Analysis, text: &str) -> Vec<(PathBuf, PathBuf)>
             continue;
         }
         let Some(path) = load.path.as_deref().map(Path::new) else { continue };
-        if !local(path) || !text.contains(&load.name) || !seen.insert(path.to_path_buf()) {
+        if !local(path) || !text.contains(&load.name) || !seen.insert(canonical(path)) {
             continue;
         }
         out.push((path.to_path_buf(), relative_to_main(path)));
@@ -3442,7 +3445,7 @@ pub fn project_files(analysis: &Analysis, text: &str) -> Vec<(PathBuf, PathBuf)>
                 ["pdf", "png", "jpg", "jpeg", "eps"].iter().map(|ext| main_dir.join(format!("{key}.{ext}"))).collect()
             };
             let Some(found) = candidates.into_iter().find(|p| p.is_file()) else { continue };
-            if seen.insert(found.clone()) {
+            if seen.insert(canonical(&found)) {
                 let relative = relative_to_main(&found);
                 out.push((found, relative));
             }
