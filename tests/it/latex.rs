@@ -2496,7 +2496,9 @@ x\label{after}
 /// cut, no budget cascade into `\begin{document}`.
 #[test]
 fn an_error_in_the_document_is_recovered_like_tex() {
-    if !installed() {
+    // l3flag's `\flag_raise:n` of a name (`l_#1_flag`): TeX Live 2022's raises an undeclared
+    // flag without an error, as its pdflatex does.
+    if !crate::support::installed_file_has("expl3-code.tex", "\\flag_raise:c { l_#1_flag }") {
         return;
     }
     let analysis = analyze(
@@ -2841,8 +2843,21 @@ fn an_eps_image_converted_through_the_shell_has_its_bounding_box() {
         cfg.shell_escape = Some(mode);
         let analysis = Machine::analyze(source, Some(&doc), &cfg);
         if mode == ShellEscape::None {
-            assert_eq!(body(&analysis, "scaled"), "207.70511pt,207.71666pt", "a draft box, as pdflatex makes");
-            assert!(raised(&analysis).contains(&"error".to_string()), "{mode:?}");
+            // pdftex.def of TeX Live 2022 finds no file to draw a draft box for: `0.0pt,0.0pt`.
+            let oracle = format!(
+                "\\begin{{filecontents*}}{{logo.eps}}\n{eps}\\end{{filecontents*}}\n{}",
+                source.replace("\\end{document}", "\\typeout{SCALED \\scaled}\\end{document}")
+            );
+            let want = crate::support::engine_typeout_with(
+                &oracle,
+                "SCALED",
+                "207.70511pt,207.71666pt",
+                &["-no-shell-escape"],
+            );
+            assert_eq!(body(&analysis, "scaled"), want, "a draft box, as pdflatex makes");
+            // TeX Live 2022's graphics stops at "File `./logo' not found", the missing graphic.
+            let errs = raised(&analysis).contains(&"error".to_string());
+            assert!(errs || codes(&analysis).contains(&"missing-graphic".to_string()), "{mode:?}");
             continue;
         }
         assert_eq!(body(&analysis, "nat"), "286.06805pt,81.30354pt", "{mode:?}");

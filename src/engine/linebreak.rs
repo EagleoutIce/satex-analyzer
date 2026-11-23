@@ -135,7 +135,7 @@ impl Machine<'_> {
     /// The last item of the recorded list `items` and the list before it.
     pub(crate) fn kp_last(&self, items: Option<u32>) -> Option<(Kp, u32)> {
         let id = items.filter(|&i| i > 0)?;
-        let (item, prev, _) = self.kp.nodes[id as usize - 1];
+        let &(item, prev, _) = self.kp.nodes.get(id as usize - 1)?;
         Some((item, prev))
     }
 
@@ -144,7 +144,11 @@ impl Machine<'_> {
         let Some(prev) = *items else { return };
         let chars = self.out.facts.text.at.len() as u32;
         let a = &mut self.kp;
-        let len = if prev == 0 { 0 } else { a.nodes[prev as usize - 1].2 };
+        // A list whose nodes a restored path no longer holds is not recorded any more.
+        let Some(len) = (prev == 0).then_some(0).or_else(|| a.nodes.get(prev as usize - 1).map(|n| n.2)) else {
+            *items = None;
+            return;
+        };
         let full = a.nodes.len() >= self.cfg.limits.list_items;
         if full || len as usize >= self.cfg.limits.paragraph_items {
             // This list (or every later one) is not recorded: said, with the setting to raise.

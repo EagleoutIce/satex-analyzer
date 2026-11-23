@@ -4001,7 +4001,11 @@ impl Machine<'_> {
             }
         }
         self.tpl_set("omit", Value::Int(i64::from(omit)));
-        self.cell_base = (!omit).then_some(base);
+        // § 791: while the `u` list is read `align_state` is 1000000, so no `&` or `\cr`
+        // its expansion reads ends the cell (siunitx 3.2 defines `\cr` there); the base
+        // is set where the list ends ([`Self::u_part_ended`]).
+        let reading_u = !omit && self.tpl_int("udepth") != 0;
+        self.cell_base = (!omit).then_some(if reading_u { i64::MIN } else { base });
         self.tpl_set("cdepth", Value::Int(self.env.depth() as i64));
         self.tpl_set("incell", Value::Int(1));
         self.tpl_set("vdone", Value::Int(0));

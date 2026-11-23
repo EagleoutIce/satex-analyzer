@@ -764,3 +764,22 @@ fn parameters_start_where_the_measured_engines_start_them() {
         assert!(wrong.is_empty(), "{engine:?} starts these parameters elsewhere:\n{}", wrong.join("\n"));
     }
 }
+
+/// Intuition: TeX opens the job's log before it reads the first line (tex.web § 534), so the
+/// log exists for `\IfFileExists`, `\pdffilesize` and `\pdffilemoddate`, its text unknown.
+/// Bug: satex had no such file. TeX Live 2022's pdfmanagement takes its XMP date from
+/// `\file_get_timestamp:nN {\jobname.log}`, got `\q_no_value`, and purified that quark,
+/// which expands to itself: 500M steps at `\end{document}` of a `\DocumentMetadata` document.
+#[test]
+fn the_jobs_log_exists_while_the_job_runs() {
+    if !crate::support::installed() {
+        return;
+    }
+    let analysis = crate::support::analyze_latex(
+        "\\documentclass{article}\n\\IfFileExists{\\jobname.log}{\\def\\haslog{}}{}\n\
+         \\edef\\size{\\pdffilesize{\\jobname.log}}\\ifx\\size\\empty\\else\\def\\sized{}\\fi\n\
+         \\begin{document}\\end{document}\n",
+    );
+    assert!(crate::support::defined(&analysis, "haslog"), "\\IfFileExists finds no log");
+    assert!(crate::support::defined(&analysis, "sized"), "the log has no size");
+}

@@ -186,9 +186,15 @@ const READ_ONLY: [(&str, &str); 6] = [
     ("mathscriptcharmode", "1"),
 ];
 
+/// [`READ_ONLY`] as far as the installed LuaTeX has them: TeX Live 2019's has no
+/// `\mathdefaultsmode`, which satex then leaves undefined as the engine does.
+fn installed_read_only() -> impl Iterator<Item = (&'static str, &'static str)> {
+    READ_ONLY.into_iter().filter(|(name, _)| crate::support::luatex_has(name))
+}
+
 #[test]
 fn the_read_only_math_mode_parameters_ignore_a_write() {
-    for (name, reads) in READ_ONLY {
+    for (name, reads) in installed_read_only() {
         assert_eq!(the(Engine::LuaTeX, "", &format!("\\{name}")), reads, "\\{name} before a write");
         let source = format!("\\{name}=2 ");
         let (after, refused) = if math_modes_assignable() { ("2", 0) } else { (reads, 1) };
@@ -202,7 +208,7 @@ fn the_read_only_math_mode_parameters_ignore_a_write() {
 /// read-only whatever was written.
 #[test]
 fn a_read_only_parameter_stays_exact_under_an_unpinnable_write() {
-    for (name, reads) in READ_ONLY {
+    for (name, reads) in installed_read_only() {
         let source = format!("\\{name}=\\uniformdeviate 2 \\relax ");
         let value = the(Engine::LuaTeX, &source, &format!("\\{name}"));
         // Where the engine takes the write, the value is the one written:
@@ -216,7 +222,7 @@ fn a_read_only_parameter_stays_exact_under_an_unpinnable_write() {
 
 #[test]
 fn the_read_only_math_mode_parameters_are_luatex_names_only() {
-    for (name, _) in READ_ONLY {
+    for (name, _) in installed_read_only() {
         assert!(defined(Engine::LuaTeX, name), "\\{name} under LuaTeX");
         for engine in [Engine::Tex, Engine::PdfTeX, Engine::XeTeX] {
             assert!(!defined(engine, name), "\\{name} must be undefined under {engine:?}");

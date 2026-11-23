@@ -4828,6 +4828,7 @@ impl<'a> Machine<'a> {
         self.catcodes = plain.clone();
         self.catcodes.at_letter(true);
         let id = self.register_file(source.display().to_string(), LoadKind::Input);
+        let below = self.input.len();
         self.input.push(Frame::File {
             mouth: Rc::new(Mouth::file(&text, id)),
             package: None,
@@ -4844,6 +4845,11 @@ impl<'a> Machine<'a> {
         (self.building_kernel, self.out.graph.vertices_only) = (true, true);
         self.run();
         (self.building_kernel, self.out.graph.vertices_only) = (false, false);
+        // A kernel cut short leaves its files open: the format ends where the cut was, and the
+        // document never reads the rest of latex.ltx as its own text.
+        while self.input.len() > below {
+            self.pop_frame();
+        }
         // tex.web § 1335: `\dump` ended the format's job, not the document's.
         self.job_ended = false;
         let kernel_steps = self.out.steps;
@@ -5451,6 +5457,7 @@ will look undefined",
 
     /// What this run wrote to the file `\input` or `\openin` names: `None`
     /// when it wrote no such file, `Some(None)` when what it holds is unknown.
+    /// The job's log is open from the first line on (tex.web § 534), its text unknown.
     pub(crate) fn written_text(&self, name: &str) -> Option<Option<String>> {
         let name = name.trim();
         let name = name.strip_prefix("./").unwrap_or(name);
@@ -5458,6 +5465,7 @@ will look undefined",
             .into_iter()
             .find_map(|n| self.outputs.get(&n).cloned())
             .or_else(|| self.outputs.get(ANY_OUTPUT).cloned().filter(|_| !name.is_empty()))
+            .or_else(|| (name.strip_suffix(".log") == Some(&self.job_name())).then_some(None))
     }
 
     /// Counts a read or write of the `\read` streams: a package cache
@@ -8538,7 +8546,14 @@ will look undefined",
 
     fn report_unread_inputs(&mut self) {
         let real = |p: &Path| std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
-        let read: HashSet<PathBuf> = self.out.files.iter().map(|f| real(Path::new(&f.path))).collect();
+        // Read as input: a file `\openin` only tested (an older `\IfFileExists`) was not.
+        let read: HashSet<PathBuf> = (self.out.facts.loads.iter())
+            .filter(|l| l.status == LoadStatus::Read)
+            .filter_map(|l| l.file)
+            .chain([self.out.main_file])
+            .filter_map(|f| self.out.files.get(usize::from(f)))
+            .map(|f| real(Path::new(&f.path)))
+            .collect();
         let main = self
             .out
             .files
@@ -11691,6 +11706,9 @@ will look undefined",
     /// frame's next place, looked at without reading. A peek would give
     /// the token back as a frame of its own, and loop keys see it.
     pub(crate) fn note_test_end(&mut self, at: Span) {
+        if !self.packages.is_empty() {
+            return;
+        }
         let Some(&index) = self.cond_sites.get(&at) else { return };
         let end = match self.input.last() {
             Some(Frame::Tokens { toks, pos, .. }) => toks.get(*pos).map(|t| t.span),
@@ -11704,6 +11722,10 @@ will look undefined",
     /// The `\else`, `\or` or (`fi`) `\fi` at `mark` of the conditional at
     /// `at`. One in another file does not make the two one construct.
     pub(crate) fn note_cond_mark(&mut self, at: Span, mark: Span, fi: bool) {
+        // As [`Machine::note_conditional`]: what package code meets, a replay of it would not.
+        if !self.packages.is_empty() {
+            return;
+        }
         let Some(&index) = self.cond_sites.get(&at).filter(|_| mark.file == at.file) else { return };
         let fact = &mut self.out.facts.conditionals[index];
         if fi {

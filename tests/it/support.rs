@@ -109,9 +109,7 @@ pub fn tool_runs(tool: &str, args: &[&str], dir: &Path) -> bool {
 /// `fallback` without pdflatex. An expectation the kernel decides (what `\newcommand`
 /// makes, which page a hook sees) is read off the installed engine, not one release.
 pub fn engine_typeout(source: &str, tag: &str, fallback: &str) -> String {
-    let Some(said) = engine_said(source) else { return fallback.to_string() };
-    let line = said.lines().find_map(|l| l.strip_prefix(tag)?.strip_prefix(' ').map(str::to_string));
-    line.unwrap_or_else(|| panic!("pdflatex printed no `{tag}` line:\n{said}"))
+    engine_typeout_with(source, tag, fallback, &[])
 }
 
 /// Whether the installed pdflatex runs `source` without an error (`true` without pdflatex):
@@ -126,7 +124,6 @@ pub fn engine_says(source: &str, text: &str) -> bool {
     engine_said(source).is_none_or(|said| said.contains(text))
 }
 
-/// What pdflatex prints on `source`, run in a scratch directory; `None` without pdflatex.
 /// What plain `engine` (`xetex`) makes `\out` after running `source`, its meaning's body
 /// as `\meaning` prints it; `None` without the engine. Font data differ between TeX
 /// Live releases, so a font query is checked against the installed engine.
@@ -148,13 +145,26 @@ pub fn engine_out(engine: &str, source: &str) -> Option<String> {
     log.lines().find_map(|l| l.strip_prefix("OUT=").map(str::to_string))
 }
 
+/// What pdflatex prints on `source`, run in a scratch directory; `None` without pdflatex.
 fn engine_said(source: &str) -> Option<String> {
+    engine_said_with(source, &[])
+}
+
+/// [`engine_typeout`] with pdflatex given `flags` too (`-no-shell-escape`).
+pub fn engine_typeout_with(source: &str, tag: &str, fallback: &str, flags: &[&str]) -> String {
+    let Some(said) = engine_said_with(source, flags) else { return fallback.to_string() };
+    let line = said.lines().find_map(|l| l.strip_prefix(tag)?.strip_prefix(' ').map(str::to_string));
+    line.unwrap_or_else(|| panic!("pdflatex printed no `{tag}` line:\n{said}"))
+}
+
+fn engine_said_with(source: &str, flags: &[&str]) -> Option<String> {
     use std::sync::atomic::{AtomicUsize, Ordering};
     static RUN: AtomicUsize = AtomicUsize::new(0);
     satex::project::paths::which("pdflatex").ok()?;
     let dir = scratch_dir(tmp_root().join(format!("engine-typeout-{}", RUN.fetch_add(1, Ordering::Relaxed))));
     std::fs::write(dir.join("t.tex"), source).expect("the engine's input");
     let out = std::process::Command::new("pdflatex")
+        .args(flags)
         .args(["-interaction=nonstopmode", "t.tex"])
         .current_dir(&dir)
         .output()
@@ -256,6 +266,31 @@ pub fn satex() -> std::process::Command {
     // Never the first-start question: a test's stdin may be a terminal.
     command.env("SATEX_CACHE", test_cache()).env("SATEX_NO_SETUP", "1");
     command
+}
+
+/// Whether the installed `luatex` has the primitive `name`, asked with `\ifcsname` in an
+/// INITEX run with LuaTeX's extra primitives enabled; `true` without the binary. TeX Live
+/// 2019's LuaTeX has no `\mathdefaultsmode`.
+pub fn luatex_has(name: &str) -> bool {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    static RUN: AtomicUsize = AtomicUsize::new(0);
+    if satex::project::paths::which("luatex").is_err() {
+        return true;
+    }
+    let dir = scratch_dir(tmp_root().join(format!("luatex-has-{}", RUN.fetch_add(1, Ordering::Relaxed))));
+    let probe = format!(
+        "\\catcode`\\{{=1 \\catcode`\\}}=2 \\directlua{{tex.enableprimitives('',tex.extraprimitives())}}\
+         \\immediate\\write16{{HAS \\ifcsname {name}\\endcsname yes\\else no\\fi}}\\end\n"
+    );
+    std::fs::write(dir.join("probe.tex"), probe).expect("the probe");
+    let out = std::process::Command::new("luatex")
+        .args(["-ini", "-interaction=batchmode", "probe.tex"])
+        .current_dir(&dir)
+        .output()
+        .expect("luatex runs");
+    let log = std::fs::read_to_string(dir.join("probe.log")).unwrap_or_default();
+    let said = format!("{}{log}", String::from_utf8_lossy(&out.stdout));
+    !said.contains("HAS no")
 }
 
 /// Builds the pdfLaTeX kernel and article caches of [`test_cache`] once per process, with no time

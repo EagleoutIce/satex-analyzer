@@ -6519,6 +6519,10 @@ fn overlay_and_frame_plugins_switch_off() {
 /// or the seed without Pygments); hover says where it is defined; listings' unknown name is a finding.
 #[test]
 fn code_languages_complete_hover_and_lint() {
+    // minted 3 (`latexminted`): minted 2 runs `pygmentize`, which needs `-shell-escape`.
+    if !crate::support::installed_file_has("minted.sty", "latexminted") {
+        return;
+    }
     let text = "\\documentclass{article}\n\\usepackage{listings}\n\\usepackage{minted}\n\\lstdefinelanguage{MyLang}{morekeywords={foo}}\n\\lstset{language=Python}\n\\begin{document}\n\\begin{lstlisting}[language=]\nx\n\\end{lstlisting}\n\\begin{lstlisting}[language=Nope]\nx\n\\end{lstlisting}\n\\mintinline{}{x}\n\\end{document}\n";
     let (mut server, uri, published, dir) = open_loaded("codelang", text);
     let line = |n: usize| text.lines().nth(n).unwrap();

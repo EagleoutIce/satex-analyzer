@@ -59,6 +59,8 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 
 ### Analysis
 
+- `fix` **The job's log exists while the job runs.** `\IfFileExists{\jobname.log}` is true and its size and date are unknown, as in TeX, which opens the log before the first line. TeX Live 2022's tagging took its XMP date from the log, got `\q_no_value` and spent 500M steps at `\end{document}`.
+- `fix` **A kernel cut by `limits.format_steps` no longer leaves its files to the document.** The document read latex.ltx and expl3 on as its own text and ran for minutes on TeX Live 2022.
 - `perf-fix` **A package the document or kernel opens before loading it is cached again.** Older kernels' `\IfFileExists` open each file with `\openin` first, and such a package never got its cache.
 - `fix` **`\openin` only opens a file, and its text is read at the first `\read`.** A file that is only tested for existence no longer ties the run to its content, so an edit there resumes inside it instead of rerunning from the main file.
 - `perf-fix` **A package that opens and closes its own stream is served from its cache while the document holds another stream open.**

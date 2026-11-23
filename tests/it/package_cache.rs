@@ -2026,6 +2026,13 @@ fn a_truncated_kernel_starts_the_document_alike_with_or_without_a_cache() {
     bare.cache.enabled = false;
     let (a, b) = (Machine::analyze(source, None, &cached), Machine::analyze(source, None, &bare));
     assert!(a.format.as_ref().is_some_and(|f| f.cache.is_some()), "the kernel run had a cache directory");
+    // The format ends at the cut: the document is its one line, fewer steps than the cut
+    // kernel took. Bug: the kernel's open files were read on as the document's text until
+    // `limits.steps` (TeX Live 2022: more than 17 minutes).
+    for x in [&a, &b] {
+        let kernel = x.format.as_ref().map_or(0, |f| f.steps);
+        assert!(x.steps <= 2 * kernel, "the document read on in the kernel: {} steps, the kernel {kernel}", x.steps);
+    }
     let calls = |x: &Analysis| -> std::collections::BTreeSet<(String, String)> {
         let name = |i: usize| x.interner.name(x.calls.nodes[i]).to_string();
         (0..x.calls.nodes.len()).flat_map(|i| x.calls.edges[i].iter().map(move |&j| (name(i), name(j)))).collect()

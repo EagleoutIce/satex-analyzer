@@ -505,7 +505,7 @@ pub(super) fn splice_out(new: &Analysis, at: &Analysis, end: &mut Analysis, wind
     let crate::analysis::facts::Facts { defs, written_files, absent, found, shapes, types, length_fonts, vars,
         letters, expansions, loads, occurrences, literals, diagnostics, csnames, slots, groups, raised, spaces,
         kept_spaces, paragraph_enders, conditionals, quantities, colors, items, color_uses, color_stack, text,
-        overfull, lines: line_reads } = facts;
+        overfull, lines: line_reads, label_counters: _ } = facts;
     let (n, a) = (&new.facts, &at.facts);
     // What this run recorded must be what the last one had here: the rest then leaves the same.
     let alike = [
@@ -568,6 +568,8 @@ pub(super) fn splice_out(new: &Analysis, at: &Analysis, end: &mut Analysis, wind
         (rows(&n.conditionals, &a.conditionals, conditionals, |r| s(&r.at)), "conditionals"),
         (rows(&n.quantities, &a.quantities, quantities, |r| s(&r.span)), "quantities"),
         (rows(&n.colors, &a.colors, colors, |r| s(&r.span)), "colors"), (rows(&n.items, &a.items, items, |r| s(&r.span)), "items"),
+        // Keyed by label, not by place: the end keeps the last run's where they agree.
+        (n.label_counters == a.label_counters, "label counters"),
         (rows(&n.color_uses, &a.color_uses, color_uses, |r| s(&r.span)), "color uses"),
         (rows(&n.color_stack, &a.color_stack, color_stack, |r| s(&r.span)), "color stack"),
         (rows(&new.limits, &at.limits, limits, |r| s(&r.at)), "limits"), (rows(&new.trace, &at.trace, trace, |r| s(&r.span)), "trace"),

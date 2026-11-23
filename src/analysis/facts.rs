@@ -889,6 +889,10 @@ pub struct Facts {
     pub colors: crate::fixed::Chunked<ColorDef>,
     /// Every `\item` of the document's files that stepped a list counter, in order.
     pub items: Vec<ListItem>,
+    /// Each label's `\@currentcounter` where its `\newlabel` was written, for a kernel whose
+    /// `\label` writes no anchor naming the counter (TeX Live 2022).
+    #[serde(default)]
+    pub label_counters: Vec<(String, String)>,
     /// Every `\color@⟨name⟩` the run formed a control sequence for.
     #[serde(with = "crate::fixed::flat")]
     pub color_uses: crate::fixed::Chunked<ColorUse>,

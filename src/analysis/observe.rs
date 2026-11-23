@@ -830,6 +830,28 @@ fn line(m: &mut Machine, tokens: &[Token], span: Span) {
         let steps = sandbox.out.steps;
         m.out.timings.written_line((span.file, span.line), steps, &text);
     }
+    // The counter latex.ltx's `\refstepcounter` last stepped names the label's kind.
+    // Only where the line names no anchor: `{⟨label⟩}{⟨page⟩}`, no `{⟨name⟩}{⟨anchor⟩}…`.
+    let groups = |t: &str| {
+        t.chars()
+            .scan(0i32, |d, c| {
+                let top = c == '{' && *d == 0;
+                *d += i32::from(c == '{') - i32::from(c == '}');
+                Some(top)
+            })
+            .filter(|&top| top)
+            .count()
+    };
+    if head == "newlabel"
+        && args.get(1).is_some_and(|data| groups(data) < 4)
+        && let Some(key) = args.first()
+        && m.out.facts.label_counters.len() < m.cfg.limits.facts
+    {
+        let current = m.out.interner.lookup("@currentcounter").and_then(|s| m.env.slot(s)?.meaning.as_macro().cloned());
+        if let Some(counter) = current.map(|mac| m.text_of(&mac.replacement_text)).filter(|c| !c.is_empty()) {
+            m.out.facts.label_counters.push((key.clone(), counter));
+        }
+    }
     let parts = call_parts(m, span);
     m.written_lines.push(WrittenLine { head, elements: Vec::new(), args, keys, parts, defined, span, context, copies });
 }

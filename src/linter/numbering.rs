@@ -378,6 +378,11 @@ pub(crate) fn label_counters(analysis: &Analysis) -> HashMap<&str, String> {
                 .find(|n| counter(n))
                 .map(str::to_string)
         });
+        // No anchor names it (an older kernel's `\label`): the counter the run had stepped.
+        let found = found.filter(|c| !c.is_empty()).or_else(|| {
+            let at_label = analysis.facts.label_counters.iter().find(|(k, _)| k == label);
+            at_label.map(|(_, c)| c.clone()).filter(|c| counter(c))
+        });
         if let Some(c) = found.filter(|c| !c.is_empty()) {
             out.entry(label).or_insert(c);
         }

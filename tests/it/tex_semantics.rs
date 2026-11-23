@@ -294,6 +294,11 @@ pin! {
     p_omit: r#"\count1=0 \halign{\global\advance\count1 1 #\cr\omit a\cr b\cr}\edef\R{\the\count1}"# => "1";
     /// `\everycr` (tex.web § 785): inserted after the preamble and after every `\cr`.
     p_everycr_effect: r#"\count1=0 \everycr={\noalign{\global\advance\count1 1 }}\halign{#\cr a\cr b\cr}\edef\R{\the\count1}"# => "3";
+    /// The `u` part (tex.web § 791) is read with `align_state` 1000000: a `\cr` its
+    /// expansion reads ends no cell, also after the `{` a LaTeX-style `u` part opens.
+    /// Pins siunitx 3.2 (TeX Live 2022), whose cell code lets `\cr` mean more: the `\cr`
+    /// ended the cell there, its `v` part ran in its place.
+    p_cr_in_u_part: r#"\def\setup{\global\let\x\cr}\count1=0 \halign{{\setup\global\advance\count1 1 #}\cr a\cr b\cr}\edef\R{\the\count1\ifx\x\cr=\fi}"# => "2=";
 }
 
 // Part 48: math (tex.web § 1136-1206).
