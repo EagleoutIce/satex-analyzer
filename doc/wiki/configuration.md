@@ -1246,16 +1246,20 @@ limits:  # what bounds the analysis: reaching one stops that part of the run, so
   walk_per_step: 1  # map entries a join, compare or resume of waiting paths walks per step charged to the line, so line_steps also bounds that work
     #! affects: speed
     #! example: 100 paths waiting at one line are joined at a cost the line's budget sees
+  walk_texts: 100000  # texts the walks inside one step may open (macro bodies, one-of members); past them a walk reads the rest as unknown
+    #! affects: precision, speed
+    #! example: a text naming the one before it twenty times, eight deep, is not walked 20^8 times
   scan_site_factor: 16  # site_forks inside a value scan, as a factor: its arms join where the scan ends
     #! affects: precision, speed
     #! example: expl3's walker over an unknown file name widens instead of forking per token without end
   replay_steps: 50000  # how long satex may rerun a line the document wrote to a file, to learn the labels in it
     #! affects: precision, speed
     #! example: a huge `\write` to the `.aux` is read without its labels past this
-  seconds: 300  # most seconds one run may take, a safety net. 0 for no limit
+  seconds: 600  # most seconds one run may take, a safety net. 0 for no limit
     #! affects: speed
     #! example: `seconds: 30` for an editor that should never wait long
   lock_seconds: 60  # how long a run waits for another one building the same cache before it builds it itself
+  probe_seconds: 20  # most seconds one probe document may take (a package tried for a command the run lacks); one that runs out does not take the call. 0 = no limit
     #! affects: speed
   repeat_failures: 8  # how often satex may meet the same thing it cannot follow at one place before skipping that expansion
     #! affects: precision, speed

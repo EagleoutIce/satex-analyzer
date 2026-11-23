@@ -57,6 +57,8 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 
 ### Analysis
 
+- `feat-fix` **`limits.seconds` defaults to 600, and a probe of a package for a missing command has its own `limits.probe_seconds` (20).** A probe ran without any time limit and kept a lint of a misspelled `\usepackage` going for minutes.
+- `fix` **A walk through joined texts no longer hangs inside one step.** A text that names the one-of of the pass before many times was followed once per name, 20^8 times for twenty copies eight passes deep. Every walk through one-of texts and macro bodies now pays one budget per step (`limits.walk_texts`, 100000), past which the rest reads as unknown.
 - `fix` **A cut recursion no longer hangs counting what the dropped text would close.** Each macro is counted once; acmart's title with `\maketitle` inside `\affiliation` ran past `limits.seconds` for minutes.
 - `fix` **A citation key or label with non-ASCII letters (`Härer2020`) under pdfTeX matches its `.bib` entry** and is shown as written, not as its bytes (`HÃ¤rer2020`); it was reported as undefined.
 - `fix` **siunitx `S` columns with braced cells (`{B}`) no longer give false errors.** A cell's braces count from where its template's first part ends, as in TeX, not from a count of the template's tokens.

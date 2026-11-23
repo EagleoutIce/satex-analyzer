@@ -50,6 +50,9 @@ pub struct Limits {
     /// Map entries a join, compare or resume of paths walks per step charged
     /// to the line: work between steps counts against `line_steps` too.
     pub walk_per_step: u64,
+    /// Texts the walks inside one step may open (macro bodies, one-of members): past them a
+    /// walk reads what is left as unknown. A walk is not a step, so it is bounded here.
+    pub walk_texts: u64,
     /// Steps a line a run wrote may take where satex replays it to see
     /// what it names (labels, keys). Past them that line names nothing.
     pub replay_steps: u64,
@@ -65,6 +68,9 @@ pub struct Limits {
     /// Seconds a run waits for another process that builds the same cache before it builds
     /// the cache itself. The wait counts toward no step budget, so it is bounded here.
     pub lock_seconds: u64,
+    /// Wall-clock seconds one probe document may take (a package tried for a command the run
+    /// lacks). A probe that runs out counts as not taking the call. 0 for no limit.
+    pub probe_seconds: u64,
     /// How many undecided `\if` one command may split into paths. Past them
     /// the command's result is unknown text, reported as an `assumption`.
     /// Higher keeps more combinations apart and costs time.
@@ -294,6 +300,7 @@ impl Limits {
             "output_forks" => self.output_forks,
             "line_overruns" => self.line_overruns.into(),
             "walk_per_step" => self.walk_per_step,
+            "walk_texts" => self.walk_texts,
             "probe_steps" => self.probe_steps,
             "provider_probes" => self.provider_probes.into(),
             "replay_steps" => self.replay_steps,
@@ -388,6 +395,8 @@ impl Default for Limits {
             // Measured on a thesis stalled at 60 waiting paths: an entry walked
             // takes ~300 ns, a step ~150 ns, so one entry costs at least a step.
             walk_per_step: 1,
+            // Real walks open a few dozen texts in a step; past this many they take ~0.1 s.
+            walk_texts: 100_000,
             // Measured: a `\newlabel` or `\@writefile` line takes a few
             // thousand steps; one of unknown text may take any number.
             replay_steps: 50_000,
@@ -396,8 +405,9 @@ impl Default for Limits {
             // document needed more than a few before the path repeated
             // itself.
             repeat_failures: 8,
-            seconds: 300,
+            seconds: 600,
             lock_seconds: 60,
+            probe_seconds: 20,
             choices: 8,
             site_forks: 64,
             // Measured: `\the` of a count below 1000 reads apart into one,

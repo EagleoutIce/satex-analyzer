@@ -645,7 +645,8 @@ fn probe(analysis: &Analysis, with: &[String], package: &str, call: &str) -> Pro
         "\\documentclass{{{class}}}\n{loads}\\usepackage{{{package}}}\n\\begin{{document}}\n{call}\n\\end{{document}}\n"
     );
     let mut settings = analysis.settings.clone();
-    settings.limits.seconds = 0;
+    // its own wall budget, never the run's: a probe of 100 paths ran past any limit (limits.seconds was 0 here)
+    settings.limits.seconds = analysis.settings.limits.probe_seconds;
     let digest = crate::caches::format::digest(serde_json::to_string(&settings).unwrap_or_default().as_bytes());
     let key = (digest, analysis.distribution.roots.clone(), text);
     if let Some(p) = RUNS.lock().ok().and_then(|r| r.as_ref()?.get(&key).cloned()) {
@@ -655,7 +656,9 @@ fn probe(analysis: &Analysis, with: &[String], package: &str, call: &str) -> Pro
     // a file the probe's document does not have (`example-image` where the playground's bundle
     // has not fetched it) says nothing about whether the package takes the call
     let fault = |e: &crate::analysis::facts::RaisedError| e.certain && missing_file(&e.text).is_none();
-    let clean = !run.facts.raised.iter().any(fault) && !run.facts.diagnostics.iter().any(|d| d.code == "missing-end");
+    let clean = !run.exhausted
+        && !run.facts.raised.iter().any(fault)
+        && !run.facts.diagnostics.iter().any(|d| d.code == "missing-end");
     let base =
         |file: FileId| run.files.get(usize::from(file)).map_or("", |f| f.path.rsplit('/').next().unwrap_or(&f.path));
     // a file is the package's own when the nearest package or class up its chain of loads is it

@@ -3263,6 +3263,15 @@
             "speed"
           ]
         },
+        "probe_seconds": {
+          "default": 20,
+          "description": "most seconds one probe document may take (a package tried for a command the run lacks); one that runs out does not take the call. 0 = no limit",
+          "minimum": 0,
+          "type": "integer",
+          "x-affects": [
+            "speed"
+          ]
+        },
         "loop_entries": {
           "default": 256,
           "description": "how often calls at one place may enter a loop afresh before it is summarized",
@@ -3470,7 +3479,7 @@
           "x-example": "expl3's walker over an unknown file name widens instead of forking per token without end"
         },
         "seconds": {
-          "default": 300,
+          "default": 600,
           "description": "most seconds one run may take, a safety net. 0 for no limit",
           "minimum": 0,
           "type": "integer",
@@ -3605,6 +3614,17 @@
             "speed"
           ],
           "x-example": "100 paths waiting at one line are joined at a cost the line's budget sees"
+        },
+        "walk_texts": {
+          "default": 100000,
+          "description": "texts the walks inside one step may open (macro bodies, one-of members); past them a walk reads the rest as unknown",
+          "minimum": 0,
+          "type": "integer",
+          "x-affects": [
+            "precision",
+            "speed"
+          ],
+          "x-example": "a text naming the one before it twenty times, eight deep, is not walked 20^8 times"
         },
         "widen_after": {
           "default": 3,

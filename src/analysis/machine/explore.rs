@@ -72,6 +72,9 @@ struct Tag {
     after: Vec<Vec<Tok>>,
 }
 
+/// What [`Machine::closing`] counted per macro.
+pub(super) type Closing = crate::fixed::HashMap<Sym, (i64, i64)>;
+
 /// The one-of tokens being walked into, innermost last. A run's own: a copy starts with none.
 #[derive(Default)]
 pub(crate) struct Open(Rc<std::cell::RefCell<Vec<Sym>>>);
@@ -1924,20 +1927,24 @@ impl Machine<'_> {
     }
 
     /// How many conditionals and groups `t` closes, less those it opens.
-    pub(super) fn closing(&self, t: &Token) -> (i64, i64) {
-        self.closing_in(t, &mut Vec::new(), &mut crate::fixed::HashMap::default())
+    /// `memo` holds the macros counted already: one per text whose meanings stay.
+    pub(super) fn closing(&self, t: &Token, memo: &mut Closing) -> (i64, i64) {
+        self.closing_in(t, &mut Vec::new(), memo)
+    }
+
+    /// Charges `n` texts a walk inside this step opens: whether the step's
+    /// walks stay within `limits.walk_texts`. Every walk through macro bodies
+    /// or one-of texts pays here, so their work counts against the line
+    /// ([`Machine::charge`]), and one past the budget over-approximates.
+    pub(crate) fn walk(&self, n: usize) -> bool {
+        self.env.walked.spend(n, self.limits.walk_texts)
     }
 
     /// [`Machine::closing`], looking through parameterless macros (`\close`
     /// for `\endgroup`) that are not already in `seen`. Each macro is counted
     /// once (`memo`): a body naming the same macro many times (acmart's
     /// `\@currentaffiliation`, grown per `\and`) was walked once per path, exponentially.
-    fn closing_in(
-        &self,
-        t: &Token,
-        seen: &mut Vec<Sym>,
-        memo: &mut crate::fixed::HashMap<Sym, (i64, i64)>,
-    ) -> (i64, i64) {
+    fn closing_in(&self, t: &Token, seen: &mut Vec<Sym>, memo: &mut Closing) -> (i64, i64) {
         use crate::engine::builtins::Primitive as P;
         let char_group = |cat: crate::engine::tex::Catcode| match cat {
             crate::engine::tex::Catcode::Begin => (0, -1),
@@ -1956,6 +1963,8 @@ impl Machine<'_> {
                     if let Some(&known) = memo.get(&sym) {
                         return known;
                     }
+                    // Linear in the macros by the memo: paid, never cut, as a cut would miscount.
+                    self.walk(1);
                     seen.push(sym);
                     let mut sum = (0, 0);
                     for t in m.replacement_text.iter() {
@@ -1990,8 +1999,9 @@ impl Machine<'_> {
                 Some(Frame::Returned(t)) => t.clone(),
                 _ => Vec::new(),
             };
+            let memo = &mut Closing::default();
             for t in &left {
-                let (c, g) = self.closing(t);
+                let (c, g) = self.closing(t, memo);
                 closes = (closes.0 + c, closes.1 + g);
             }
             at = lower(at, self.input.last());
@@ -2989,7 +2999,10 @@ impl Machine<'_> {
     /// or nest one-of tokens pass by pass, so such a walk ends only with
     /// this: a token it is inside of already is [`Nested::Again`], one past
     /// `limits.meaning_set` levels [`Nested::Deep`], and the walker says what
-    /// holds there. The texts stay open until the value is dropped.
+    /// holds there. The texts stay open until the value is dropped. Texts
+    /// that name the one-of below many times make the walk a tree far larger
+    /// than the texts: past the step's walk budget ([`Machine::walk`]) a
+    /// token is [`Nested::Deep`] too.
     pub(crate) fn one_of_nested(&self, t: Token) -> Nested {
         let Some(texts) = self.one_of_members(t) else { return Nested::No };
         let sym = t.cs().expect("a one-of token is a name");
@@ -2997,7 +3010,7 @@ impl Machine<'_> {
         if open.contains(&sym) {
             return Nested::Again;
         }
-        if open.len() >= usize::from(self.limits.meaning_set) {
+        if open.len() >= usize::from(self.limits.meaning_set) || !self.walk(texts.len()) {
             return Nested::Deep;
         }
         open.push(sym);

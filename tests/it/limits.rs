@@ -901,3 +901,21 @@ fn a_cut_call_counts_each_macro_of_the_dropped_text_once() {
     analyze(Engine::PdfTeX, &source);
     assert!(started.elapsed().as_secs() < 30, "took {:?}", started.elapsed());
 }
+
+/// Intuition: a walk into one-of tokens (balanced, printed, classified, first meanings) follows the
+/// texts each one stands for, and a text may name the one-of of the pass before many times. Such a
+/// tower is a small graph but a huge tree: every level names the one below twenty times, so a walk
+/// that follows each name visits 20^8 texts inside one step, where no budget check runs. Pins walks
+/// that count each one-of they open against a per-step walk budget, past which it reads as nested too deep.
+#[test]
+fn a_walk_into_one_of_texts_stops_at_the_walk_budget() {
+    let copies = "\\y".repeat(20);
+    let mut source = String::from("\\def\\y{a}");
+    for _ in 0..8 {
+        source += &format!("\\edef\\y{{\\ifnum\\pdfuniformdeviate 2=0 {copies}\\fi}}");
+    }
+    source += "\\edef\\z{\\detokenize\\expandafter{\\y}}\\message{\\y}\\ifx\\y\\z\\fi";
+    let started = std::time::Instant::now();
+    analyze(Engine::PdfTeX, &source);
+    assert!(started.elapsed().as_secs() < 30, "took {:?}", started.elapsed());
+}

@@ -333,7 +333,9 @@ impl Machine<'_> {
     /// names, `depth` deep.
     fn signs_within(&self, sym: Sym, depth: u8) -> bool {
         let Some(may) = self.env.slot(sym).and_then(|b| b.may.clone()) else { return false };
+        // Past the walk budget the name parts as any other ([`Machine::walk`]).
         depth > 0
+            && self.walk(may.len())
             && may.iter().all(|m| {
                 m.as_macro().is_some_and(|m| {
                     m.parameter_text.items.is_empty()

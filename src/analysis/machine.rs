@@ -10761,7 +10761,7 @@ will look undefined",
                         continue;
                     }
                 }
-                _ => fis += self.closing(&t).0,
+                _ => fis += self.closing(&t, &mut Default::default()).0,
             }
             if fis > 0 {
                 *pops += 1;
@@ -10798,7 +10798,7 @@ will look undefined",
                     // A `}` of its own ends the scan, as in TeX.
                     Tok::Chr(_, Catcode::End) if depth == 0 => return (0..pops).for_each(|_| self.pop_conditional()),
                     Tok::Chr(_, Catcode::End) => depth -= 1,
-                    _ => fis += self.closing(&t).0,
+                    _ => fis += self.closing(&t, &mut Default::default()).0,
                 }
                 if fis > 0 {
                     (pops, fis) = (pops + 1, 0);
@@ -10844,9 +10844,9 @@ will look undefined",
     /// counted (`\if_false: { \fi: }`): the `}`'s index.
     fn emitted_close(&self, text: &[Token]) -> Option<usize> {
         use crate::engine::builtins::Cond;
-        let mut ifs = 0i64;
+        let (mut ifs, memo) = (0i64, &mut Default::default());
         for (i, t) in text.iter().enumerate() {
-            let c = self.closing(t).0;
+            let c = self.closing(t, memo).0;
             let prim = |p: Primitive| matches!(t.tok, Tok::Cs(s) if self.env.meaning(s).prim() == Some(p));
             if ifs > 0 {
                 // `\else` at its own level ends the skipped span.
@@ -14173,6 +14173,9 @@ will look undefined",
             return None;
         }
         if let Some(members) = self.one_of_members(f) {
+            if !self.walk(members.len()) {
+                return None;
+            }
             let (mut rests, mut empty) = (Vec::new(), false);
             for m in members.iter() {
                 let joined: Vec<Token> = m.iter().chain(&text[1..]).copied().collect();
