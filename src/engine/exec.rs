@@ -667,18 +667,13 @@ impl Machine<'_> {
         }))
     }
 
-    /// Where a definition is placed: at the name's own place when a macro
-    /// does the defining for a name it was handed (expl3's `\cs_new:Npn`
-    /// reaches `\tex_gdef:D` in `expl3-code.tex`, `\DeclareRobustCommand`
-    /// the `\edef#1` of `\declare@robustcommand@auxiii` in the same file),
-    /// else at the defining command, whose name follows it on its line.
+    /// Where a definition is placed: at the name's own file when a macro of
+    /// another file does the defining (expl3's `\cs_new:Npn` reaches
+    /// `\tex_gdef:D` in `expl3-code.tex`), else at the defining command.
     pub(crate) fn definition_site(&mut self, span: Span) -> Span {
         self.skip_spaces();
-        let at = |s: Span| (s.file, s.line);
         match self.peek() {
-            Some(token) if token.span.line > 0 && (at(token.span) != at(span) || token.span.col < span.col) => {
-                token.span
-            }
+            Some(token) if token.span.file != span.file && token.span.line > 0 => token.span,
             _ => span,
         }
     }

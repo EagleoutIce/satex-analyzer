@@ -1042,20 +1042,6 @@ fn a_parenthesis_in_math_is_not_reported() {
     assert!(findings(&doc.analysis, "parenthesis-spacing").is_empty());
 }
 
-/// Text only a path the run could not decide sets is no prose to report:
-/// it may be code the analysis lost track of. Pins the false
-/// `parenthesis-spacing` on TikZ path text (`(a.north west) -- ([xshift=…]b)`)
-/// in a `\newcommand` body that pgf's parser gave up on. The same text on
-/// the decided path is still reported.
-#[test]
-fn text_set_only_on_an_undecided_path_is_not_prose() {
-    let source = "\\documentclass{article}\n\\newcommand\\Edge{\\ifdim\\pdfuniformdeviate 5pt>1pt \
-                  (a.north west)--([xshift=1pt]b )\\fi}\n\\begin{document}\nPlain (bad )text.\n\\Edge\n\\end{document}\n";
-    let Some(doc) = on_disk("undecided-path-prose", source, true) else { return };
-    let found = findings(&doc.analysis, "parenthesis-spacing");
-    assert_eq!(found.len(), 1, "only the sentence: {found:?}");
-}
-
 /// An undefined command tells nobody what its arguments and the rest of its
 /// statement mean, so the letters TeX sets for them are not the author's prose.
 /// Pins the false `parenthesis-spacing` on `\node (@)at(x) {y};` and on

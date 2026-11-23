@@ -5869,9 +5869,10 @@ fn redefinition_chain(analysis: &Analysis, def: &crate::analysis::facts::Definit
     if prior.is_empty() && kernel.is_none_or(|k| k.file == def.span.file && k.line == def.span.line) {
         return None;
     }
-    // The kernel's own meaning, which a `\let` before any redefinition copies.
-    let kernel_body =
-        analysis.kernel.as_ref().and_then(|k| k.meaning(def.name).as_macro().map(|m| m.replacement_text.clone()));
+    // The kernel macro's text lies between its site and the next one.
+    let next = kernel.and_then(|k| {
+        analysis.kernel_sites.values().filter(|s| s.file == k.file && s.line > k.line).map(|s| s.line).min()
+    });
     let copies: Vec<&Definition> = analysis
         .facts
         .defs
@@ -5884,19 +5885,23 @@ fn redefinition_chain(analysis: &Analysis, def: &crate::analysis::facts::Definit
             .iter()
             .filter(|c| c.node > from.map_or(0, |f| f.node) && c.span.file == to.span.file && c.node < to.node)
             .filter(|c| {
-                let b = &c.mac.as_ref().expect("filtered").replacement_text;
-                let original = match from {
-                    Some(f) => f.mac.as_ref().map(|m| &m.replacement_text),
-                    None => kernel_body.as_ref(),
-                };
-                // `\let` copies the body: the same tokens from the same places. A body replayed
-                // from a cache is a copy of its own, so identity alone differs cold and warm.
-                original.is_some_and(|a| {
-                    Rc::ptr_eq(a, b)
-                        || !a.is_empty()
-                            && a.len() == b.len()
-                            && a.iter().zip(b.iter()).all(|(x, y)| x == y && x.span == y.span)
-                })
+                let text = &c.mac.as_ref().expect("filtered").replacement_text;
+                match from {
+                    // `\let` copies the body: the same tokens from the same places. A body replayed
+                    // from a cache is a copy of its own, so identity alone differs cold and warm.
+                    Some(f) => f.mac.as_ref().is_some_and(|m| {
+                        let (a, b) = (&m.replacement_text, text);
+                        Rc::ptr_eq(a, b)
+                            || !a.is_empty()
+                                && a.len() == b.len()
+                                && a.iter().zip(b.iter()).all(|(x, y)| x == y && x.span == y.span)
+                    }),
+                    None => text.first().is_some_and(|t| {
+                        kernel.is_some_and(|k| {
+                            t.span.file == k.file && t.span.line >= k.line && next.is_none_or(|n| t.span.line < n)
+                        })
+                    }),
+                }
             })
             .map(|c| analysis.interner.cs(c.name))
             .collect();

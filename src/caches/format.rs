@@ -46,7 +46,7 @@ pub struct Format {
     hashes: Vec<Option<u64>>,
     /// Where the kernel defined each name, so that `explain` can point at
     /// `latex.ltx:1234` for a name the cache brought in.
-    sites: Vec<(u32, u16, u32, u32)>,
+    sites: Vec<(u32, u16, u32)>,
     /// [`Env::aliases`]: which primitive each copy the kernel made is.
     aliases: Vec<(u32, u32)>,
     /// The patterns of names the kernel may have defined from unknown text.
@@ -692,7 +692,7 @@ impl Format {
         interner: &Interner,
         env: &Env,
         files: Vec<(String, LoadKind)>,
-        sites: Vec<(u32, u16, u32, u32)>,
+        sites: Vec<(u32, u16, u32)>,
         wild: &crate::analysis::machine::Wild,
         roots: &Roots,
     ) -> Option<Format> {
@@ -843,7 +843,7 @@ impl Format {
         self
     }
 
-    pub fn sites(&self) -> &[(u32, u16, u32, u32)] {
+    pub fn sites(&self) -> &[(u32, u16, u32)] {
         &self.sites
     }
 

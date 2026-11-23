@@ -183,14 +183,11 @@ impl<'a> View<'a> {
         self.span(index).is_some_and(|span| self.document(span.file))
     }
 
-    /// [`View::is_ours`], [`View::certain`] and no [`View::code`]: what a
-    /// rule that measures the font (an italic correction, an accent) may
-    /// report, in any font and mode.  A character only an undecided path
-    /// sets may be code the analysis lost track of (TikZ path text a
-    /// `\newcommand` body holds, where pgf's parser gave up), so no rule
-    /// reports it.
+    /// [`View::is_ours`], and no [`View::code`]: what a rule that measures
+    /// the font (an italic correction, an accent) may report, in any font
+    /// and mode.
     pub fn is_prose(&self, index: usize) -> bool {
-        self.is_ours(index) && self.certain(index) && !self.code(index)
+        self.is_ours(index) && !self.code(index)
     }
 
     /// Whether the character is set in the typewriter family, where a
@@ -206,10 +203,10 @@ impl<'a> View<'a> {
         !self.math(index) && !self.code(index) && !self.typewriter(index)
     }
 
-    /// The document's own prose: [`View::is_prose`] and [`View::is_text`].
+    /// The document's own prose: [`View::is_ours`] and [`View::is_text`].
     /// The characters a prose rule may report.
     pub fn is_word_prose(&self, index: usize) -> bool {
-        self.is_prose(index) && self.is_text(index)
+        self.is_ours(index) && self.is_text(index)
     }
 
     /// The document's own formula: what a rule that reads math may report.
