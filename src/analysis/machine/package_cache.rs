@@ -1043,6 +1043,8 @@ pub(super) struct Recorder {
     resume: Option<u32>,
     /// [`Machine::streams_used`] when the recording began.
     streams_from: u64,
+    /// [`Machine::stream_writes`] when the recording began.
+    pub(super) stream_writes_from: u64,
 }
 
 /// A load whose recording a nested cacheable load interrupted: it resumes
@@ -1669,6 +1671,8 @@ impl Machine<'_> {
             carried: _,
             // A count of uses: the store reads it, a replay keeps the run's.
             streams_used: _,
+            stream_writes: _,
+            streams_written: _,
             scratch: _,
             // Same throughout a load.
             cfg: _,
@@ -2338,6 +2342,7 @@ impl Machine<'_> {
             kind,
             resume: resume.filter(|_| at == parent),
             streams_from: self.streams_used.get(),
+            stream_writes_from: self.stream_writes,
         };
         recorder.log.origins = origins;
         self.package_capture = Some(Box::new(recorder));
@@ -4048,7 +4053,16 @@ impl Machine<'_> {
             .iter()
             .map(|(load, provided)| (*load as i64 - before.loads as i64, provided.clone()))
             .collect();
-        let lists = self.lists().changed_since(&before.lists);
+        let now = self.lists();
+        let streams = now.streams.clone();
+        let mut lists = now.changed_since(&before.lists);
+        // A stream the load set is stored as it ends, unchanged too: a replay over another
+        // stream state (one a cache with an open stream key serves) sets it the same.
+        let set: Vec<i64> = (self.streams_written_since(rec.stream_writes_from))
+            .filter(|n| lists.streams.binary_search_by_key(n, |e| e.0).is_err())
+            .collect();
+        lists.streams.extend(set.into_iter().map(|n| (n, streams.iter().find(|e| e.0 == n).and_then(|e| e.1.clone()))));
+        lists.streams.sort_by_key(|e| e.0);
         let lists = (rec.lists.as_ref() != Some(&lists)).then_some(lists);
         let identifying = self.identifying.map(|i| i as i64 - before.loads as i64);
         let scalars = Scalars {

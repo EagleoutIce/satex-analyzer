@@ -724,6 +724,37 @@ fn a_stream_the_package_never_reads_does_not_key_its_cache() {
     same_facts(&run_cold(&dir, &other), &warm);
 }
 
+/// Intuition: a package that opens, tests and closes a stream of its own (TeX Live 2022's
+/// `\IfFileExists` is `\openin`+`\ifeof`) reads only what it set itself, so another stream the
+/// document holds open does not key its cache, and the replay closes its stream as reading does.
+/// Bug: any use of any stream keyed the load on every stream's state.
+#[test]
+fn a_package_testing_its_own_stream_is_served_where_another_is_open() {
+    let dir = project("own-stream");
+    std::fs::write(
+        dir.join("own.sty"),
+        "\\ProvidesPackage{own}\n\\openin14=own.sty \\ifeof14 \\def\\ownmissing{}\\else\\closein14 \\def\\ownfound{}\\fi\n",
+    )
+    .expect("own.sty");
+    let document = |pre: &str| {
+        format!(
+            "\\documentclass{{article}}\n{pre}\\usepackage{{own}}\n\\ifeof14 \\def\\shut{{}}\\fi\\ifeof15 \\def\\atend{{}}\\fi\n\\begin{{document}}\\end{{document}}\n"
+        )
+    };
+    run(&dir, &document(""));
+    let open = document("\\openin15=doc.tex\n");
+    let warm = run(&dir, &open);
+    assert_eq!(served(&warm, "own"), Some(true), "{:?}", warm.package_caches);
+    assert!(defined(&warm, "ownfound") && defined(&warm, "shut") && undefined(&warm, "atend"));
+    same_facts(&run_cold(&dir, &open), &warm);
+    // Its own stream open before: the replay closes it, as the recording ended with it closed.
+    let reopened = document("\\openin14=doc.tex\n");
+    let again = run(&dir, &reopened);
+    assert_eq!(served(&again, "own"), Some(true), "{:?}", again.package_caches);
+    assert!(defined(&again, "shut"), "the replay left stream 14 open");
+    same_facts(&run_cold(&dir, &reopened), &again);
+}
+
 /// The other side: a package that tests a stream recorded with every stream
 /// closed is never replayed where one is open, it reads it again.
 #[test]

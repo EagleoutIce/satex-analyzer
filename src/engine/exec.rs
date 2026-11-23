@@ -5206,7 +5206,7 @@ impl Machine<'_> {
         let text = self.read_general_text();
         if !immediate {
             // What the call records: its text as a shipout now would expand it.
-            let shown = crate::analysis::observe::shipped(self, &text);
+            let shown = crate::analysis::observe::shipped_later(self, &text);
             self.write_facts(stream, &shown, false, span);
             return self.defer(crate::analysis::machine::Whatsit::Write { stream, text: text.into(), span });
         }

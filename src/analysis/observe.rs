@@ -740,6 +740,22 @@ pub(crate) fn shipped(m: &mut Machine, tokens: &[Token]) -> Vec<Token> {
     out
 }
 
+/// [`shipped`] for a `\write` made now: the groups its command opened since
+/// the last source token are closed by the shipout, under the same assumption
+/// (`\protected@write` lets `\thepage` be `\relax` only in its own group).
+pub(crate) fn shipped_later(m: &mut Machine, tokens: &[Token]) -> Vec<Token> {
+    if m.env.depth() <= m.source_depth() {
+        return shipped(m, tokens);
+    }
+    let (fork, catcodes) = (m.env.fork(), m.catcodes.clone());
+    while m.env.depth() > m.source_depth() && m.env.pop_group(&mut m.catcodes).is_some() {}
+    let out = shipped(m, tokens);
+    m.env.rewind(&fork);
+    m.env.unfork(fork);
+    m.catcodes = catcodes;
+    out
+}
+
 /// A written line, run where its file is read back: the kernel's state at
 /// `\begin{document}`, where the `.aux` file is read. A line an argument
 /// carries (`\@writefile{toc}{\contentsline…}`) is written onward.

@@ -58,6 +58,11 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 
 ### Analysis
 
+- `perf-fix` **A package the document or kernel opens before loading it is cached again.** Older kernels' `\IfFileExists` open each file with `\openin` first, and such a package never got its cache.
+- `fix` **`\openin` only opens a file, and its text is read at the first `\read`.** A file that is only tested for existence no longer ties the run to its content, so an edit there resumes inside it instead of rerunning from the main file.
+- `perf-fix` **A package that opens and closes its own stream is served from its cache while the document holds another stream open.**
+- `fix` **satex asks the installed engine which primitives it has**, so an older LuaTeX or XeTeX is no longer said to define `\partokenname` or `\showstream`.
+- `fix` **Older kernels (TeX Live 2019, 2022) report a repeated `\usepackage` and its option clash**, and a label built from a counter is recorded expanded where `\protected@write` writes inside its group.
 - `perf` **A build holds one run at a time, and the call memo is bounded by bytes (`limits.call_memo_bytes`, 256 MiB).** A 100-page thesis's second build run no longer stops at the memory limit (peak 7.8 → 5.0 GiB).
 - `feat-fix` **`limits.seconds` defaults to 600, and a probe of a package for a missing command has its own `limits.probe_seconds` (20).** A probe ran without any time limit and kept a lint of a misspelled `\usepackage` going for minutes.
 - `fix` **A walk through joined texts no longer hangs inside one step.** A text that names the one-of of the pass before many times was followed once per name, 20^8 times for twenty copies eight passes deep. Every walk through one-of texts and macro bodies now pays one budget per step (`limits.walk_texts`, 100000), past which the rest reads as unknown.

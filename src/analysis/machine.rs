@@ -2041,6 +2041,9 @@ pub struct Machine<'a> {
     /// How often the streams were read or written: a package recording
     /// that never moved it leaves its cache's stream key open.
     pub(super) streams_used: std::cell::Cell<u64>,
+    /// How often a stream was set, and the count at each stream's last setting.
+    stream_writes: u64,
+    streams_written: Rc<HashMap<i64, u64>>,
     /// What this run has written to its `\openout` files.
     pub(crate) outputs: Outputs,
     pending: Pending,
@@ -3407,6 +3410,8 @@ impl<'a> Machine<'a> {
             section: None,
             streams: Rc::default(),
             streams_used: Default::default(),
+            stream_writes: 0,
+            streams_written: Rc::default(),
             outputs: Rc::default(),
             pending: Rc::default(),
             docstrip_dir: None,
@@ -5461,10 +5466,30 @@ will look undefined",
         self.streams_used.set(self.streams_used.get() + 1);
     }
 
+    /// Reads stream `n`'s state: a use, unless the recording load set the stream itself
+    /// before, so what it reads is its own doing whatever stream it began with.
+    fn use_stream(&self, n: i64) {
+        let own = self.package_capture.as_ref().map(|c| c.stream_writes_from);
+        if own.is_none_or(|from| self.streams_written.get(&n).is_none_or(|&at| at <= from)) {
+            self.use_streams();
+        }
+    }
+
+    /// Stream `n` is set (opened, closed, moved on): a recording stores its state as it ends.
+    fn wrote_stream(&mut self, n: i64) {
+        self.stream_writes += 1;
+        Rc::make_mut(&mut self.streams_written).insert(n, self.stream_writes);
+    }
+
+    /// The streams set since write `from` ([`Machine::wrote_stream`]).
+    pub(super) fn streams_written_since(&self, from: u64) -> impl Iterator<Item = i64> + '_ {
+        self.streams_written.iter().filter(move |&(_, &at)| at > from).map(|(&n, _)| n)
+    }
+
     pub fn set_stream(&mut self, stream: Option<i64>, lines: Option<Vec<String>>) {
-        self.use_streams();
         self.side_effects += 1;
         let Some(stream) = stream else { return self.forget_streams() };
+        self.wrote_stream(stream);
         match lines {
             Some(lines) => {
                 Rc::make_mut(&mut self.streams).insert(stream, Rc::new(vec![At::exact(Rc::new(lines), 0)]));
@@ -5492,7 +5517,6 @@ will look undefined",
     }
 
     pub fn close_in(&mut self, stream: Option<i64>) {
-        self.use_streams();
         self.side_effects += 1;
         let Some(stream) = stream else { return self.forget_streams() };
         self.mark_closed(stream);
@@ -5501,9 +5525,12 @@ will look undefined",
     /// A stream is closed. Dropping it says so, except after a widening, where the
     /// table has to say it outright, keeping it unchanged when no widening happened.
     fn mark_closed(&mut self, stream: i64) {
-        self.use_streams();
         self.side_effects += 1;
+        self.wrote_stream(stream);
         let widened = self.streams.contains_key(&ANY_STREAM);
+        if widened {
+            self.use_streams();
+        }
         let streams = Rc::make_mut(&mut self.streams);
         match widened {
             true => {
@@ -5530,7 +5557,7 @@ will look undefined",
     /// `\ifeof` false.
     /// `None` once a number satex could not pin down opened or closed one.
     pub fn stream_at_end(&self, stream: i64) -> Option<bool> {
-        self.use_streams();
+        self.use_stream(stream);
         // What the table holds was learned after the last widening.
         if let Some(texts) = self.streams.get(&stream) {
             // Before unknown lines only, the stream may be at its end.
@@ -5566,7 +5593,10 @@ will look undefined",
     /// for each place (a text and a line of it), exact on it. Past the
     /// paths a choice may part into, it is unknown.
     pub(crate) fn pin_stream(&mut self, stream: Option<i64>, by: Sym, span: Option<Span>) {
-        self.use_streams();
+        match stream {
+            Some(n) => self.use_stream(n),
+            None => self.use_streams(),
+        }
         let span = span.unwrap_or(self.region.span);
         let Some(texts) = stream.and_then(|n| self.streams.get(&n)).cloned() else { return };
         let mut places: Vec<At> = Vec::new();
@@ -5608,7 +5638,7 @@ will look undefined",
     }
 
     pub fn take_stream_line(&mut self, stream: i64) -> Option<String> {
-        self.use_streams();
+        self.use_stream(stream);
         // The lines stay shared. Only the position moves, so a snapshot of
         // the streams costs nothing however long the file is.
         let texts = Rc::make_mut(&mut self.streams).get_mut(&stream)?;
@@ -6859,6 +6889,12 @@ will look undefined",
         if !self.region.catcodes.iter().any(|r| r.0 == c) {
             self.region.catcodes.push((c, self.catcodes.get(c), self.catcodes.may(c)));
         }
+    }
+
+    /// The group depth at the last source token: groups past it were opened
+    /// by the code that token started.
+    pub(crate) fn source_depth(&self) -> usize {
+        self.region.depth
     }
 
     /// A source token was read. The main loop reading a command from a file
