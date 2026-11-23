@@ -41,7 +41,9 @@ fn a_typed_section_number_names_its_label() {
                 \\begin{equation}x\\label{eq:x}\\end{equation}\nBy Eq. (1) and Table 9.\n\
                 \\appendix\n\\section{B}\\label{app:b}\nIn Appendix A.\n\\end{document}\n";
     let found = records("typed", body, "", "hand-written-reference");
-    if !crate::support::installed() {
+    // A kernel without `\@currentcounter` (TeX Live 2019) and without anchors in `\newlabel`
+    // names no label's counter, so no number is known to be a section's.
+    if !crate::support::kernel_has("\\@currentcounter") {
         return;
     }
     // the fix writes `\Cref` after a capital word and loads cleveref, which prints the word itself

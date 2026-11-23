@@ -9100,6 +9100,9 @@ will look undefined",
                 "That makes 100 errors; please try again: TeX would stop here (tex.web § 82); satex gives up the expansion and reads on".into(),
             );
             self.tex_errors = 0;
+            // The give-up is no segment's effect: a load recorded to here is stored up to its
+            // last checkpoint, and every run reads on to the hundredth error itself.
+            self.spoil_recording("the hundredth error gave up the text");
             // The document's command keeps its closing code (`\\include`).
             self.give_up_lists(false, true);
         }

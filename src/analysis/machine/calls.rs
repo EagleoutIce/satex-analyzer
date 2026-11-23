@@ -84,7 +84,8 @@ impl Stand {
     /// (`\currentiflevel`), the latter only the group's end reads, which a run that
     /// `closes` it is.
     fn fits(&self, now: &Stand, closes: bool) -> bool {
-        let braces = |s: &Stand| s.cell.map(|base| s.pending.2 - base);
+        // Wrapping: the base is `i64::MIN` while a `u` part is read (§ 791), and equal bases give equal counts.
+        let braces = |s: &Stand| s.cell.map(|base| s.pending.2.wrapping_sub(base));
         (self.mode == now.mode && self.page == now.page && self.natural == now.natural && self.tail == now.tail)
             && (self.catcodes == now.catcodes && self.certain == now.certain)
             && (self.pending.0 == now.pending.0 && self.pending.1 == now.pending.1 && braces(self) == braces(now))

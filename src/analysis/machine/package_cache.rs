@@ -417,6 +417,9 @@ struct Scalars {
     builder: (super::ListsState, super::ListsState),
     /// The counters names are made of ([`Machine::digits_in`]) where the load changed them.
     names: NameCounters,
+    /// tex.web § 82 `error_count` at the segment's end: the hundredth error ends the job, so
+    /// a replay leaves the count a read leaves (the root keys the count at the load's start).
+    errors: u32,
 }
 
 /// What a load did to the counters names are made of: how many lines of the user's files it
@@ -1466,6 +1469,8 @@ impl Machine<'_> {
             hash.put(&(self.prefixes.global, self.prefixes.long, self.prefixes.outer, self.prefixes.protected));
             hash.put(&self.after_assignment);
             hash.put(&(self.long_argument, self.runaway, self.out.document_depth, self.docstrip));
+            // The errors counted so far: the hundredth ends the job (tex.web § 82).
+            hash.put(&self.tex_errors);
             parts.push(("prefixes and flags".into(), std::mem::replace(&mut hash, Fnv::new()).0));
             hash.put(&self.section.as_deref());
             parts.push(("section".into(), std::mem::replace(&mut hash, Fnv::new()).0));
@@ -3072,6 +3077,7 @@ impl Machine<'_> {
         self.names_in(before, &s.names, site);
         self.skip_replayed_steps(s.steps);
         self.source_progress = before.progress + s.progress;
+        self.tex_errors = s.errors;
         self.env.assignments = before.assignments + s.assignments;
         self.env.set_recent(s.recent.clone());
         let now = self.site_progress();
@@ -4085,6 +4091,7 @@ impl Machine<'_> {
             last_named_cs: self.last_named_cs,
             builder: (rec.before.builder, self.lists_state()),
             names: self.names_out(&rec.before, site),
+            errors: self.tex_errors,
             recent_file_spans: {
                 let before = &rec.before.recent_file_spans;
                 let kept = (0..=before.len())

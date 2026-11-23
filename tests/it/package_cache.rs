@@ -400,6 +400,31 @@ fn tagpdf_replays_whole_and_reports_the_same() {
     same_facts(&first, &second);
 }
 
+/// Intuition: TeX counts errors (tex.web § 82) and gives up at the hundredth, so a replayed
+/// load leaves the count a read leaves. A package of 60 errors, then 60 in the document: the
+/// document's 40th is the hundredth, cold and warm alike. Bug: a replay left the count where
+/// it was, so the warm run never reached a hundred (TeX Live 2022's tagpdf without
+/// `\DocumentMetadata`: 51 errors in pdflatex, and its warm run loaded two packages the cold
+/// run never reached).
+#[test]
+fn a_replayed_load_counts_its_errors_toward_the_hundred() {
+    if !installed() {
+        return;
+    }
+    let dir = project("error-count");
+    let errors: String = (0..60).map(|_| "\\count255=\\relax\n").collect();
+    std::fs::write(dir.join("erra.sty"), format!("\\ProvidesPackage{{erra}}\n{errors}")).expect("the package");
+    let document = format!(
+        "\\documentclass{{article}}\n\\usepackage{{erra}}\n{errors}\\begin{{document}}\nx\n\\end{{document}}\n"
+    );
+    let cold = run(&dir, &document);
+    let warm = run(&dir, &document);
+    assert_eq!(served(&warm, "erra"), Some(true), "{:?}", warm.package_caches);
+    let stops = |a: &Analysis| a.facts.diagnostics.iter().filter(|d| d.code == "too-many-errors").count();
+    assert_eq!(stops(&cold), 1, "a hundred errors in the cold run");
+    assert_eq!(stops(&warm), stops(&cold), "the warm run counts the replayed errors");
+}
+
 /// Runs 2 and 3 of `document` on one cache rebuild nothing: every key a
 /// cache entry has is what the next run sees again. The project and run 3.
 fn rebuilds_nothing_warm(name: &str, document: &str) -> Option<(PathBuf, Analysis)> {

@@ -731,6 +731,8 @@ fn parameters_start_where_the_measured_engines_start_them() {
             let Some(Meaning::Primitive(p)) = meaning(&it, &table, &fact.name) else { continue };
             if !matches!(p, Primitive::IntegerParameter | Primitive::DimenParameter)
                 || satex::engine::builtins::owned(&fact.name).is_some()
+                // An older installed engine has no such parameter: a run knows none.
+                || !satex::engine::builtins::primitive_names(engine).contains_key(&fact.name)
                 // The clock and the interaction the probe ran in.
                 || matches!(fact.name.as_str(), "year" | "month" | "day" | "time" | "interactionmode")
                 // The output plugin sets them, as the run's driver does.
