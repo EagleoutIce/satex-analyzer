@@ -1229,6 +1229,29 @@ fn a_loop_of_two_heads_met_in_turns_ends_in_its_summary() {
     }
 }
 
+/// An enclosing loop that replays a copy of one text (beamer's slide loop
+/// over a frame) meets a call in it again, at an earlier place of the copy.
+/// That is another call, as in the same list read further, not a pass of the
+/// call's conditional. Bug pinned: a copy counted as another list, so the
+/// meeting was a pass; after three the bounding-box `\ifdim` was summarized,
+/// the box held anything, and a rounded shadow box on slide 2 of a beamer
+/// frame raised false errors.
+#[test]
+fn a_call_met_again_in_a_replayed_copy_of_its_text_is_not_a_pass() {
+    let analysis = analyze(
+        r"\dimendef\mx=1
+          \def\upd#1{\ifdim#1>\mx \global\mx=#1\relax\fi}
+          \def\run#1{#1}
+          \def\body{\run{\global\mx=\pdfuniformdeviate 19660800sp \upd{1pt}x\upd{2pt}y\upd{3pt}z}}
+          \count1=0
+          \def\iterate{\advance\count1 1 \body\ifnum\count1<3 \expandafter\iterate\fi}\iterate
+          \ifdim\mx<3pt \def\Bad{}\else\def\Good{}\fi",
+    );
+    assert!(with_code(&analysis, "recursion-widened").is_empty(), "{:?}", with_code(&analysis, "recursion-widened"));
+    assert!(crate::support::defined(&analysis, "Good"));
+    assert!(!crate::support::maybe_defined(&analysis, "Bad"));
+}
+
 /// Two lists a join left paired, as a float on the top list or deferred
 /// but never both: one `\xdef` of both holds the float once on every arm.
 #[test]

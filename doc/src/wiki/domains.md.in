@@ -476,7 +476,7 @@ Calls nested deeper than `limits.call_rec_depth` are neither learned from nor su
 Rules that keep cuts sound and convergent:
 
 - **Paths.** A path parked before a cut takes the same cut later. A `\csname` site that parted `limits.meaning_set` times on one line keeps the names as one family on one path. That name may mean `\relax` or any meaning of its family, never `\relax` alone.
-- **Loop entries.** A summary unwinds only to where its loop was entered. A head met after the entry's caller read on is a new entry, so a summary never closes its caller's groups.
+- **Loop entries.** A summary unwinds only to where its loop was entered. A head met after the entry's caller read on is a new entry, so a summary never closes its caller's groups. So is one met at another place of a copy of the caller's text: an enclosing loop's next pass replays it (beamer's slides of one frame).
 - **Page loops.** A head met again after an output routine fired, while an enclosing loop passed since, is a new entry of that loop's next pass. It is not counted, and its heads from earlier pages are dropped. Only the outermost loop joins and summarizes passes that ship pages, so the output routine's own tests are never summarized per page.
 - **What a pass wrote** is compared against the fork's binding, so a name set back (`\thepage` around `\protected@write`) is not widened. The body runs once more from the widened state before the cut, so names it opens arrive as a family.
 - **Paths a summary covers** are widened toward its state, except code: a path that carries the summary, stands in no more groups than the loop head and wrote a macro after the summary keeps that macro. The head's code belongs to another point of the program.

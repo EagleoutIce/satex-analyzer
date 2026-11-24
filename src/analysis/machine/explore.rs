@@ -227,6 +227,16 @@ impl PartialEq for Level {
     }
 }
 
+impl Level {
+    /// The same list, or one with the same text.
+    fn same_text(&self, other: &Level) -> bool {
+        match (self, other) {
+            (Level::Tokens(a), Level::Tokens(b)) => Rc::ptr_eq(a, b) || a[..] == b[..],
+            _ => self == other,
+        }
+    }
+}
+
 fn level(frame: &Frame) -> Option<Level> {
     Some(match place(frame)? {
         Place::Tokens(t, _) => Level::Tokens(t),
@@ -1169,7 +1179,9 @@ impl Machine<'_> {
                 while m < l.levels.len().min(levels.len()) {
                     let equal = here.key.places.get(m) == Some(&l.places[m]);
                     if !equal {
-                        read = l.levels[m] == levels[m];
+                        // The same text at another place, or a copy of it (an
+                        // enclosing loop's next pass replays it): another call.
+                        read = l.levels[m].same_text(&levels[m]);
                         break;
                     }
                     m += 1;

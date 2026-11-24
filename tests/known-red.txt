@@ -4,10 +4,6 @@
 # entry: owner, root guess, MWE. S = target/scratch. Clean with target/scratch/reds/ledger-clean.py.
 
 # == soundness ==
-# Open (2026-11-24, owner: T1): green on TL2025 since memo keys name definitions by text (calls::code_id); red on TL2022 (first difference: page-one-arm vs undecided-loop at beamerbasemisc.sty:27). Root: a rounded shadow beamercolorbox on slide 2 of a frame loses precision (extra-else gap, ~600 forks), so the beamer runs explode. MWE: S/tlfix/wt-T1b/target/scratch/mwe/w12.
-incremental::a_resumed_beamer_build_after_an_overlay_edit_says_what_a_fresh_build_says
-
-
 
 # == precision ==
 # owner pgf (found by night 2026-11-22, root of the digit-walk cluster): `\csname` over a typed digit in a small interval parts a path per value (exec.rs name_step) and per name (scan_csname_chars) at every lookup, though the names hold one meaning: 40 forks for 3 lookups of a digit in 0..3, 0 for one in 0..9. Keeping such names one token (one_of_spelled) takes the ledger's signed count from 2548 to 259 forks but lets arms join earlier and lose their pairing (tikz_bend 7 s -> 58 s). Experiment + traces: S/night/p2-experiment.patch, S/night/LAND.md.
