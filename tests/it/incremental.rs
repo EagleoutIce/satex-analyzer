@@ -1451,3 +1451,47 @@ fn checkpoints_placed_at_the_caret_make_the_first_edit_run_its_paragraph() {
     assert_eq!(first_difference(&said(&incremental), &said(&full)), None, "typed in the document");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// A paragraph typed into between generated sections (`blindtext`): every later line's text
+/// comes from a package, so the last character the document itself set stays on the edited
+/// line, and the edit's own characters move it. Typing on, each run still meets the last one
+/// after the paragraph and splices its rest, with a full run's result.
+/// Pins: the run never met the last one ("a place on the edited lines"), and every keystroke
+/// ran the rest of the document again.
+#[test]
+fn letters_typed_between_generated_sections_meet_the_last_run() {
+    if !installed() {
+        return;
+    }
+    /// An edit may run this share of the document's steps.
+    const SHARE: u64 = 50;
+    let dir = crate::support::tmp_root().join("incremental-generated");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let main = dir.join("main.tex");
+    let sections = "\\Blinddocument\n".repeat(3);
+    let text = |typed: &str| {
+        format!(
+            "\\documentclass{{article}}\n\\usepackage{{blindtext}}\n\\begin{{document}}\n{sections}\nLet's look at an example{typed} we know.\n\n{sections}\\end{{document}}\n"
+        )
+    };
+    let cfg = crate::support::config();
+    let mut checkpoints = Checkpoints::new(&cfg);
+    std::fs::write(&main, text("")).unwrap();
+    Machine::build(&mut checkpoints, &text(""), &main, &cfg, true);
+    let line = 1 + text("").lines().position(|l| l.starts_with("Let's")).unwrap() as u32;
+    checkpoints.place_at(&text(""), &main, line);
+    let mut typed = String::new();
+    for c in ["X", "Y", "Z"] {
+        typed.push_str(c);
+        std::fs::write(&main, text(&typed)).unwrap();
+        let incremental = Machine::build(&mut checkpoints, &text(&typed), &main, &cfg, true);
+        let (at, (ran, all)) = ((checkpoints.resumed.clone(), checkpoints.converged.clone()), checkpoints.ran);
+        let full = Machine::build(&mut Checkpoints::new(&cfg), &text(&typed), &main, &cfg, true);
+        assert_eq!(first_difference(&said(&incremental), &said(&full)), None, "typed {typed} (resumed, met: {at:?})");
+        assert_eq!(incremental.graph.len(), full.graph.len(), "typed {typed}: vertices");
+        assert!(at.1.is_some(), "typed {typed}: the runs never met");
+        assert!(ran * SHARE <= all, "typed {typed}: ran {ran} of {all} steps");
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}

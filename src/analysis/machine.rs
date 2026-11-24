@@ -11456,6 +11456,12 @@ will look undefined",
         // that came out of a macro body is part of the call already running.
         if self.last_file == Some(span.file) {
             self.text_site = None;
+            // Text set before the new call is never raised at again ([`Machine::raised_at`]):
+            // a file reads on, and no call before it comes back while the file is open once.
+            let once = self.file_calls.iter().filter(|(f, _)| *f == span.file).count() <= 1;
+            if once && self.typed_at.is_some_and(|t| t.file == span.file && (t.line, t.col) <= (span.line, span.col)) {
+                self.typed_at = None;
+            }
             self.file_call = Some((sym, span));
             self.finish_shape();
             self.call_shape = Some(Rc::new((sym, span, String::new(), self.within.len())));
