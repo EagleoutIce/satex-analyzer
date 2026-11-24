@@ -74,6 +74,7 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 
 ### Analysis
 
+- `perf` **A package that loads other packages replays whole from its cache.** A cached package such as tagpdf now replays the packages it loads itself together with them, instead of reading again from each nested load. The cache fills one nesting level per run, so a package with nested loads replays whole by the third run.
 - `fix` **A line-budget cut inside library code drops the whole call.** Library code that held some of the document's tokens as data (an l3fp expression, the items of a `\clist_map_inline:nn`) was kept as if it called the document's text, so satex read on in the middle of it with its outer calls gone: a second cut, many paths and false errors inside expl3 (an `\fp_set:Nn` loop under TeX Live 2026: 4.0M steps, now 1.9M).
 - `fix` **The kernel cache is keyed on the settings that change what it holds.** A kernel built under other limits or assumptions (`choices`, `assume_compiles` …) was loaded by every later run on the same cache directory, so a run's result depended on which run built the kernel first. Tracing and `controls`' own switches do not count [`080cf74`].
 - `fix` `TL ≤ 2021` **`\creationdate` under an older XeTeX may print more than the date.** XeTeX before 0.999994 reads string-pool bytes after it. satex was sure of the date alone.

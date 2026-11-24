@@ -2364,6 +2364,9 @@ pub struct Machine<'a> {
     /// The cacheable package or class being loaded: its end forgets what a
     /// replay of it would not bring ([`Machine::end_cacheable_load`]).
     cacheable_load: Option<FileId>,
+    /// A nested load served whole inside a recording, and the recorded load its end hands
+    /// back to ([`Machine::open_package`]).
+    pub(super) served_inside: Option<(FileId, FileId)>,
     /// The outermost cacheable load and the lock other processes building
     /// its cache wait on, until its file closes ([`crate::caches::format::build_lock`]).
     building: Option<(FileId, Rc<crate::caches::format::BuildLock>)>,
@@ -3493,6 +3496,7 @@ impl<'a> Machine<'a> {
             scanning: 0,
             scan_undecided: false,
             cacheable_load: None,
+            served_inside: None,
             building: None,
             par_kept: false,
             open_spaces: Vec::new(),
@@ -5256,6 +5260,15 @@ will look undefined",
     pub(crate) fn end_cacheable_load(&mut self) {
         self.cacheable_load = None;
         (self.guard.lines, self.guard.forks) = std::mem::take(&mut self.guard.held);
+        self.settle_guard();
+        #[cfg(test)]
+        package_cache::note_load_end(&self.carried, self.guard.lines.len(), (self.line_seq, self.digits_made));
+        self.leave_load();
+    }
+
+    /// What the end of a cacheable load leaves alike after a read and after a replay: also
+    /// where a replayed segment spans a nested load's end.
+    pub(crate) fn leave_load(&mut self) {
         self.drop_call_recs();
         self.forget_settled_calls();
         self.scratch = Scratch::default();
@@ -5263,9 +5276,6 @@ will look undefined",
         // options) after a read, and where they were after a replay: a later row is raised
         // at the call either way ([`Machine::raised_at`]).
         (self.project_site, self.project_call, self.typed_at, self.text_site, self.built_name) = Default::default();
-        self.settle_guard();
-        #[cfg(test)]
-        package_cache::note_load_end(&self.carried, self.guard.lines.len(), (self.line_seq, self.digits_made));
         let fresh = self.expansion_sites.iter().map(|(k, s)| (*k, Site::fresh(s.fact)));
         self.expansion_sites = fresh.collect();
     }
@@ -6223,7 +6233,7 @@ will look undefined",
                     self.suspended.pop();
                 }
                 if self.cacheable_load == Some(mouth.file) {
-                    self.end_cacheable_load();
+                    self.end_nested_load(mouth.file);
                 }
                 if self.building.as_ref().is_some_and(|(file, _)| *file == mouth.file) {
                     self.building = None;
@@ -8651,7 +8661,7 @@ will look undefined",
     /// or any assignment.  Only reading on is progress (tex.web § 366),
     /// but an assignment is what tells apart the many calls one site sees
     /// between two tokens of a file, which are not one loop.
-    fn site_progress(&self) -> u64 {
+    pub(super) fn site_progress(&self) -> u64 {
         self.source_progress ^ self.env.assignments.rotate_left(32)
     }
 

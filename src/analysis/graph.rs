@@ -290,6 +290,11 @@ impl DependencyGraph {
         id
     }
 
+    /// A vertex a replayed segment reached: reached by a recording around it too.
+    pub fn reach(&mut self, id: NodeId) {
+        self.touch(id);
+    }
+
     fn touch(&mut self, id: NodeId) {
         if let Some((seen, order)) = &mut self.touched
             && seen.insert(id)

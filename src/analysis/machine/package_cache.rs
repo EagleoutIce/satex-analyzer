@@ -651,6 +651,9 @@ struct Effect {
     scalars: Scalars,
     lists: Option<Lists>,
     carried: CarriedDelta,
+    /// Nested loads served whole inside the segment: name and cache, said
+    /// `cached` again where the segment is replayed.
+    children: Vec<(String, String)>,
 }
 
 /// An [`Effect`] with its bulk lists cut into chunks, so a replay decodes them in parallel.
@@ -845,6 +848,8 @@ struct CacheFile<'a> {
 pub(super) struct Log {
     /// Definition facts in order, including pre-existing sites; whether redefinition was in initial state.
     pub(super) definitions: Vec<(Definition, bool)>,
+    /// Nested loads served whole while this one is recorded ([`Effect::children`]).
+    children: Vec<(String, String)>,
     /// Call sites this run already had: the fact and count.
     pub(super) touched: HashMap<(Span, Sym), (Expansion, u32)>,
     /// Call sites reached since last checkpoint, in order, with prior count.
@@ -974,6 +979,7 @@ struct Marks {
     diagnostics: usize,
     metadata: usize,
     files: usize,
+    children: usize,
     steps: u64,
 }
 
@@ -1142,10 +1148,14 @@ pub fn tree_sizes(bytes: &[u8]) -> Option<Vec<TreeSize>> {
 /// Delete the caches no build can use and bound the rest: see
 /// [`crate::caches::format::prune_caches`].
 /// Whether a run's state for a package cache says it was replayed: whole,
-/// or up to the last line its end left at rest, the rest read.
+/// or up to the last line its end left at rest, the rest read, or as far as
+/// any run stored it, the rest stored for the first time (nothing in it was stale).
 pub fn served(state: &str) -> bool {
-    state == "cached" || state.ends_with(PARTLY)
+    state == "cached" || state.ends_with(PARTLY) || (state.ends_with(EXTENDED) && !state.contains(" ("))
 }
+
+/// The state of a cache replayed as far as it went, the rest stored.
+const EXTENDED: &str = "% cached, rest stored";
 
 /// The state of a cache replayed up to a line its end cannot be resumed from.
 const PARTLY: &str = "% cached, rest read";
@@ -1898,6 +1908,7 @@ impl Machine<'_> {
             command_text: _,
             // Used at next step, never across load.
             cacheable_load: _,
+            served_inside: _,
             building: _,
             par_kept: _,
             open_spaces: _,
@@ -2000,7 +2011,14 @@ impl Machine<'_> {
         // waiting: a hit must not queue behind other readers.
         let outermost = self.package_capture.is_none() && self.suspended.is_empty() && self.building.is_none();
         self.drop_call_recs();
-        self.suspend_recording();
+        // A load being recorded goes on through a nested load its cache serves whole
+        // ([`Machine::replay_from`] suspends it where not): its state is left as when a read
+        // suspends it here. After a nested load on its line it is no load of its own yet, as
+        // a read resumes it only where the next line starts.
+        let parent = self.package_capture.as_ref().map(|rec| rec.file);
+        if parent.is_some() && self.cacheable_load == parent {
+            self.end_load_quietly();
+        }
         self.cacheable_load = Some(id);
         self.guard.held = (std::mem::take(&mut self.guard.lines), std::mem::take(&mut self.guard.forks));
         let Some(dir) = self.cache_dir() else { return Mouth::file(source, id) };
@@ -2040,10 +2058,43 @@ impl Machine<'_> {
             parent: None,
             parent_id: None,
         };
-        match self.replay_from(load, None, source.lines().count() as u64) {
+        let end = self.replay_from(load, None, source.lines().count() as u64);
+        // Served whole inside a recording: the nested file is read as part of its parent's,
+        // which its end hands back to ([`Machine::end_nested_load`]).
+        if let Some(parent) = parent
+            && self.package_capture.as_ref().is_some_and(|rec| rec.file == parent)
+        {
+            self.served_inside = Some((id, parent));
+        }
+        match end {
             Some((mark, _)) => Mouth::resumed(source, id, mark),
             None => Mouth::file(source, id),
         }
+    }
+
+    /// A cacheable load's file ended: a nested load served inside a recording ends as a read
+    /// one does, and the recording goes on as a suspended one, which the next line resumes
+    /// ([`Machine::checkpoint`]).
+    pub(super) fn end_nested_load(&mut self, file: FileId) {
+        match self.served_inside.take() {
+            Some((nested, parent))
+                if nested == file && self.package_capture.as_ref().is_some_and(|r| r.file == parent) =>
+            {
+                self.end_load_quietly();
+            }
+            other => {
+                self.served_inside = other.filter(|(nested, _)| *nested != file);
+                self.end_cacheable_load();
+            }
+        }
+    }
+
+    /// [`Machine::end_cacheable_load`] inside a recording: the bookkeeping it does is no read
+    /// of the recorded load.
+    fn end_load_quietly(&mut self) {
+        let paused = self.env.pause_reads(true);
+        self.end_cacheable_load();
+        self.env.pause_reads(paused);
     }
 
     /// A cacheable load inside one being recorded: store the outer chain
@@ -2055,7 +2106,10 @@ impl Machine<'_> {
         let (cache, site, root, rest, started) =
             (rec.cache.clone(), rec.site, rec.root.clone(), rec.rest.clone(), rec.started);
         let stored = self.finish_recording(true);
-        self.end_cacheable_load();
+        // A load still live ends here; after a nested load on its line it already has.
+        if self.cacheable_load == Some(file) {
+            self.end_cacheable_load();
+        }
         if let Some((parent, parent_id)) = stored {
             self.suspended.push(Suspended {
                 file,
@@ -2136,7 +2190,8 @@ impl Machine<'_> {
         let Some(mark) = mouth.quiet_line_mark(&self.catcodes).filter(|m| !m.ended && mouth.file == load.file) else {
             return;
         };
-        if !self.file_on_top(load.frame) || self.rest_state(load.frame + 1) != load.rest {
+        // At rest as a checkpoint is: a replay goes on from either alike.
+        if !self.file_on_top(load.frame) || !self.at_rest(load.frame + 1, &load.rest) {
             return;
         }
         let Some(load) = self.suspended.pop() else { return };
@@ -2172,7 +2227,10 @@ impl Machine<'_> {
         } = load;
         let name = name.as_str();
         let started = std::time::Instant::now();
-        let before = self.before_state();
+        // The state the load begins in is no read of a recording around it.
+        let paused = self.env.pause_reads(true);
+        let mut before = self.before_state();
+        self.env.pause_reads(paused);
         let base = self.base.clone();
         let mut at: Option<u32> = parent;
         let mut parent_id: Option<u64> = start_id;
@@ -2206,32 +2264,79 @@ impl Machine<'_> {
                 Some(t) => {
                     let tree = &file.trees[t];
                     let mut children: HashMap<Option<u32>, Vec<u32>> = HashMap::default();
+                    let mut resuming: HashMap<u32, Vec<u32>> = HashMap::default();
                     for (i, node) in tree.nodes.iter().enumerate() {
                         children.entry(node.parent).or_default().push(i as u32);
+                        if let Some(line) = node.resume {
+                            resuming.entry(line).or_default().push(i as u32);
+                        }
                     }
                     let mut want = resume;
-                    'chain: while let Some(kids) = children.get(&at) {
+                    // A recording around this load takes on what the served segments read.
+                    let adopting = self.package_capture.is_some();
+                    if adopting && tree.root.iter().any(|(part, v)| part == STREAMS && *v != ANY) {
+                        self.streams_used.set(self.streams_used.get() + 1);
+                    }
+                    'chain: loop {
                         // The first child that fits and applies: one that fails before it changed
-                        // anything yields to its siblings, a later recording among them.
-                        let mut chosen = None;
-                        for &k in kids.iter().filter(|&&k| tree.nodes[k as usize].resume == want) {
+                        // anything yields to its siblings, a later recording among them. Then any
+                        // node that resumed a recording on the line `at` ends on (or the one asked
+                        // for): such a node keys all it read where it resumed, so a segment over a
+                        // line with a nested load in it goes on where a read of that line went on.
+                        let own =
+                            children.get(&at).into_iter().flatten().filter(|&&k| tree.nodes[k as usize].resume == want);
+                        let line = want.or(at.map(|k| tree.nodes[k as usize].end.line));
+                        let resumes = line.and_then(|l| resuming.get(&l)).into_iter().flatten().rev();
+                        // Each reads on past the line: the chain never comes back to it.
+                        let resumes = resumes.filter(|&&k| {
                             let node = &tree.nodes[k as usize];
-                            let moved = match self.segment_fits(node, &base) {
+                            !(want.is_some() && node.parent == at)
+                                && line.is_some_and(|l| node.end.line > l || node.last)
+                        });
+                        let candidates: Vec<u32> = own.rev().chain(resumes).copied().collect();
+                        if candidates.is_empty() {
+                            break;
+                        }
+                        let mut chosen = None;
+                        // A node that resumed a recording is keyed by the state where it resumed.
+                        let mut resumed: Option<Before> = None;
+                        for k in candidates {
+                            let node = &tree.nodes[k as usize];
+                            let restart = node.resume.is_some() && at != parent;
+                            if restart && resumed.is_none() {
+                                let paused = self.env.pause_reads(true);
+                                resumed = Some(self.before_state());
+                                self.env.pause_reads(paused);
+                            }
+                            let from = if restart { resumed.as_ref().unwrap_or(&before) } else { &before };
+                            let paused = self.env.pause_reads(true);
+                            let fits = self.segment_fits(node, &base);
+                            self.env.pause_reads(paused);
+                            let moved = match fits {
                                 Ok(moved) => moved,
                                 Err(why) => {
                                     reason.get_or_insert(why);
                                     continue;
                                 }
                             };
+                            if adopting {
+                                self.adopt_keys(node, &base);
+                            }
                             if self.out.steps + node.steps >= self.cfg.limits.steps {
                                 reason = Some("the run could not afford it within its budgets".into());
                                 break 'chain;
                             }
-                            match self.apply_segment(node, span, &moved, &before, &mut origins, &mut carried, &mut ambs)
-                            {
+                            let paused = self.env.pause_reads(true);
+                            let applied =
+                                self.apply_segment(node, span, &moved, from, &mut origins, &mut carried, &mut ambs);
+                            self.env.pause_reads(paused);
+                            match applied {
                                 Ok(marks) => {
                                     written.extend(marks);
                                     chosen = Some(k);
+                                    if restart && let Some(fresh) = resumed.take() {
+                                        before = fresh;
+                                    }
                                     break;
                                 }
                                 Err((why, false)) => {
@@ -2276,10 +2381,25 @@ impl Machine<'_> {
             if self.cfg.verbose >= 1 {
                 crate::util::progress::note!("satex: {name} from its cache in {:?}", started.elapsed());
             }
-            self.out.package_caches.push((name.to_string(), cache_text, "cached".into()));
+            if let Some(rec) = self.package_capture.as_mut() {
+                rec.log.children.push((name.to_string(), cache_text.clone()));
+            }
+            // A tail served after this run found the load stale is no reuse of it: the
+            // report keeps why it was read again.
+            let stale = resume.is_some()
+                && self
+                    .out
+                    .package_caches
+                    .iter()
+                    .any(|(n, c, s)| n == name && *c == cache_text && s.starts_with("stale: "));
+            if !stale {
+                self.out.package_caches.push((name.to_string(), cache_text, "cached".into()));
+            }
             crate::util::progress::cache_loaded();
             return end;
         }
+        // Not served whole: a load still recorded around it stops here, as before a read.
+        self.suspend_recording();
         if let Some(why) = &reason {
             if self.cfg.verbose >= 1 {
                 let line = end.map_or(from as u32, |(mark, _)| mark.line).max(1);
@@ -2430,6 +2550,86 @@ impl Machine<'_> {
         Ok(Relocated::new(moved))
     }
 
+    /// A segment served inside a recording: the recording reads what the segment read,
+    /// as a read of the nested file would. The files and lookups it checked, the names
+    /// it read with their parts, the gaps it relied on, and the leaves its value tests,
+    /// passed-on values and copied texts depend on, which the recording keys exactly.
+    fn adopt_keys(&mut self, node: &Node, base: &Path) {
+        let roots = self.cache_roots();
+        for (path, _) in &node.stamps {
+            self.note_opened(&roots.decode(path));
+        }
+        for (looked, kind, _) in &node.lookups {
+            let _ = self.resolver.resolve(looked, *kind, base);
+        }
+        let local: Vec<Sym> = (0..node.names.len() as u32).map(Sym).collect();
+        let files = self.lookup_files(&node.paths);
+        let (decoded, _) = codec::with(Mode::Decode { syms: local, files, moved: Relocated::default() }, || {
+            postcard::from_bytes::<Reads>(&node.reads)
+        });
+        let Ok(reads) = decoded else { return self.spoil_recording("a nested segment cannot be decoded") };
+        let here = |m: &Self, sym: Sym| node.names.get(sym.0 as usize).and_then(|n| m.out.interner.lookup(n));
+        const PARTS: [ReadKind; 8] = [
+            ReadKind::Meaning,
+            ReadKind::Value,
+            ReadKind::Kept,
+            ReadKind::Defined,
+            ReadKind::Skip,
+            ReadKind::Defs,
+            ReadKind::Copy,
+            ReadKind::Shape,
+        ];
+        for (sym, kinds, _) in &reads.bindings {
+            let Some(sym) = here(self, *sym) else { continue };
+            for (bit, kind) in PARTS.iter().enumerate() {
+                if kinds >> bit & 1 != 0 {
+                    self.env.note_read(sym, *kind);
+                }
+            }
+        }
+        for (code, sym) in &reads.gaps {
+            if let (Some(sym), Some(rec)) = (here(self, *sym), self.package_capture.as_mut()) {
+                rec.log.gaps_seen.push((leak(code), sym));
+            }
+        }
+        // A test or passed-on value over leaves the recording has not written stands as
+        // it was served; one over a leaf it wrote is read exactly.
+        let mut exact = Vec::new();
+        let mut open = |m: &Self, exprs: &[&Rc<Expr>]| -> Option<Vec<Rc<Expr>>> {
+            let mut leaves = Vec::new();
+            exprs.iter().for_each(|e| e.leaves(&mut leaves));
+            let here: Vec<Sym> = leaves.iter().filter_map(|sym| here(m, *sym)).collect();
+            if here.len() == leaves.len() && here.iter().all(|sym| !m.env.written_part(*sym, ReadKind::Value)) {
+                let names = &node.names;
+                let rename = |sym: Sym| names.get(sym.0 as usize).and_then(|n| m.out.interner.lookup(n));
+                return exprs.iter().map(|e| e.renamed(&rename)).collect();
+            }
+            exact.extend(here);
+            None
+        };
+        for (a, relation, b, out) in &reads.guards {
+            if let Some(ab) = open(self, &[a, b]) {
+                self.env.guard((ab[0].clone(), *relation, ab[1].clone(), *out));
+            }
+        }
+        for e in &reads.flows {
+            if let Some(e) = open(self, &[e]) {
+                self.env.keep(e[0].clone());
+            }
+        }
+        exact.into_iter().for_each(|sym| self.env.note_read(sym, ReadKind::Value));
+        for (sym, len, room) in &reads.copies {
+            let Some(sym) = here(self, *sym) else { continue };
+            match (self.env.written_part(sym, ReadKind::Meaning), self.package_capture.as_mut()) {
+                (false, Some(rec)) => {
+                    let entry = rec.seg_copies.entry(sym).or_insert((*len as usize, *room));
+                    entry.1 = entry.1.min(*room);
+                }
+                _ => self.env.note_read(sym, ReadKind::Meaning),
+            }
+        }
+    }
+
     /// This run's file numbers for a segment's paths (unregistered).
     fn lookup_files(&self, paths: &[String]) -> Vec<FileId> {
         let roots = self.cache_roots();
@@ -2519,6 +2719,23 @@ impl Machine<'_> {
         // Segment's files registered above (in order read); unread files stay unread.
         let files = self.lookup_files(&node.paths);
         let st = decode_effect(&node.effect, &syms, &files, moved).ok_or(("a segment cannot be decoded", false))?;
+        // A segment over nested loads served whole ends them as their reads did.
+        if !st.children.is_empty() {
+            self.leave_load();
+        }
+        // Inside a recording a text served spliced into or edited from the one here is
+        // read exactly; holes stay holes ([`Env::set_amb`] below).
+        if self.package_capture.is_some() {
+            let spliced = st
+                .bindings
+                .iter()
+                .filter_map(|(sym, b, _)| b.as_ref().filter(|b| b.splice.is_some() || b.edit.is_some()).map(|_| *sym));
+            let defined = st.definitions.iter().filter(|d| d.splice.is_some() || d.edit.is_some()).map(|d| d.name);
+            let texts: Vec<Sym> = spliced.chain(defined).collect();
+            let paused = self.env.pause_reads(false);
+            texts.into_iter().for_each(|sym| self.env.note_read(sym, ReadKind::Meaning));
+            self.env.pause_reads(paused);
+        }
         if st.scalars.builder.0 != before.builder {
             return Err(("the lists differ", false));
         }
@@ -2575,6 +2792,9 @@ impl Machine<'_> {
             });
         }
         origins.extend(st.origins.iter().copied());
+        if let Some(rec) = self.package_capture.as_mut() {
+            rec.log.origins.extend(st.origins.iter().copied());
+        }
         for (path, _, entry) in &st.files {
             let path = roots.decode(path);
             if let Some(id) = self.file_index(&path)
@@ -2733,6 +2953,11 @@ impl Machine<'_> {
                 may: b.may.clone().map(Into::into),
             };
             self.env.set(*sym, binding, !b.local);
+            if self.package_capture.is_some()
+                && let Some(amb) = &b.amb
+            {
+                self.adopt_amb(*sym, amb.clone());
+            }
         }
         for (counter, _, after, defs) in &st.moved {
             let sym = self.register_sym(RegKind::Count, i64::from(*counter));
@@ -2779,6 +3004,10 @@ impl Machine<'_> {
             let (span, key) = (span_in(d.span, site), span_in(d.key, site));
             if let Some(&i) = self.definition_sites.get(&(key, d.name, d.package)) {
                 crate::analysis::facts::Definition::rerun(&mut self.out.facts.defs, i, d.certain, mac);
+                let fact = self.out.facts.defs[i].clone();
+                if let Some(rec) = self.package_capture.as_mut() {
+                    rec.log.definitions.push((fact, d.relative));
+                }
                 continue;
             }
             let cds = self.resolve_cds(&st, &mut ids, &reached, before, site, &d.cds);
@@ -2813,10 +3042,20 @@ impl Machine<'_> {
                 context: Rc::from(Vec::new()),
                 via: None,
             });
+            if self.package_capture.is_some() {
+                let fact = self.out.facts.defs.last().cloned().expect("pushed");
+                let holes = (!d.holes.is_empty() && self.env.amb(d.name).is_some()).then(|| d.holes.clone());
+                let Some(rec) = self.package_capture.as_mut() else { unreachable!("checked") };
+                rec.log.definitions.push((fact, d.relative));
+                if let Some(holes) = holes {
+                    rec.log.def_holes.insert(rec.log.definitions.len() - 1, holes);
+                }
+            }
         }
         let mut sites = Vec::with_capacity(st.expansions.len());
         for e in &st.expansions {
             let key = (span_in(e.span, site), e.name);
+            self.note_replayed_site(key, e.mode);
             if let Some(existing) = self.expansion_sites.get(&key) {
                 let fact = existing.fact;
                 let previous = &mut self.out.facts.expansions[fact];
@@ -2899,8 +3138,9 @@ impl Machine<'_> {
             });
         }
         for (load, provided) in &st.identifications {
-            if let Some(entry) = usize::try_from(base_loads + load).ok().and_then(|i| self.out.facts.loads.get_mut(i)) {
-                entry.provided = provided.clone();
+            if let Some(i) = usize::try_from(base_loads + load).ok().filter(|&i| i < self.out.facts.loads.len()) {
+                self.out.facts.loads[i].provided = provided.clone();
+                self.note_identification(i, provided.clone());
             }
         }
         // The cache keeps no order between occurrences and diagnostics:
@@ -2966,6 +3206,9 @@ impl Machine<'_> {
             if let Some((gap_code, sym)) = gap
                 && self.gaps.iter().any(|(c, s)| c == gap_code && s == sym)
             {
+                if let Some(rec) = self.package_capture.as_mut() {
+                    rec.log.gaps_seen.push((leak(gap_code), *sym));
+                }
                 continue;
             }
             let span = span_in(*span, site);
@@ -2974,10 +3217,12 @@ impl Machine<'_> {
             let (severity, code, message) =
                 (SEVERITIES[*severity as usize], leak(code), relocate_text(message, &relocate));
             let key = super::diag_key(code, span, &message, origin);
-            match self.diag_row(key, severity, &message) {
+            let row = match self.diag_row(key, severity, &message) {
                 Some(i) => {
+                    self.note_row(i);
                     let d = &mut self.out.facts.diagnostics[i];
                     d.count = d.count.saturating_add(*count);
+                    i
                 }
                 None => {
                     let row = Diagnostic { severity, code, message, span, count: *count, origin, after: replayed_from };
@@ -2985,7 +3230,11 @@ impl Machine<'_> {
                     if !live {
                         self.retract_row();
                     }
+                    self.out.facts.diagnostics.len() - 1
                 }
+            };
+            if let (Some((gap_code, sym)), Some(rec)) = (gap, self.package_capture.as_mut()) {
+                rec.log.gaps_new.push((leak(gap_code), *sym, row));
             }
         }
         for (code, sym) in &st.gaps {
@@ -2999,13 +3248,23 @@ impl Machine<'_> {
             crate::analysis::observe::read_name(self, &name);
         }
         for (span, kind, global, expand) in &st.csnames {
-            self.out.facts.csnames.entry(span_in(*span, site)).or_insert(role_in(*kind, *global, *expand));
+            self.note_csname(span_in(*span, site), role_in(*kind, *global, *expand));
         }
         for (sym, shape) in &st.shapes {
+            if let Some(rec) = self.package_capture.as_mut() {
+                rec.log.shapes.push((*sym, shape.clone()));
+            }
             let slot = self.out.facts.shapes.entry(*sym).or_default();
             if shape.len() > slot.len() {
                 *slot = shape.clone();
             }
+        }
+
+        for (name, cache) in &st.children {
+            if let Some(rec) = self.package_capture.as_mut() {
+                rec.log.children.push((name.clone(), cache.clone()));
+            }
+            self.out.package_caches.push((name.clone(), cache.clone(), "cached".into()));
         }
 
         // Restore checkpoint state.
@@ -3146,6 +3405,7 @@ impl Machine<'_> {
         let tag = TAGS[v.tag as usize];
         if let Some(id) = self.out.graph.find(span, v.name, tag) {
             ids[i] = Some(id);
+            self.out.graph.reach(id);
             return vec![id];
         }
         // Unreached or too-deep vertices won't be made by reading the package.
@@ -3173,6 +3433,7 @@ impl Machine<'_> {
             }
         }
         ids[i] = Some(id);
+        self.out.graph.reach(id);
         vec![id]
     }
 
@@ -3234,6 +3495,7 @@ impl Machine<'_> {
             diagnostics: self.out.facts.diagnostics.len(),
             metadata: self.out.metadata.len(),
             files: self.out.files.len(),
+            children: rec.log.children.len(),
             steps: self.out.steps,
         };
         let seg_gaps = self.gaps.clone();
@@ -3276,7 +3538,11 @@ impl Machine<'_> {
         let Some(mark) = mouth.quiet_line_mark(&self.catcodes) else { return };
         let long_enough = self.out.steps - rec.marks.steps >= SEGMENT_TOKENS;
         let tail = mouth.left() <= self.cfg.cache.tail;
-        if mark.line <= rec.last_line || !(long_enough || mark.ended || tail) || !self.at_rest(rec.frame + 1, &rec.rest)
+        // A segment over a nested load ends where a read resumes its load: the next line.
+        let bridged = rec.log.children.len() > rec.marks.children;
+        if mark.line <= rec.last_line
+            || !(long_enough || mark.ended || tail || bridged)
+            || !self.at_rest(rec.frame + 1, &rec.rest)
         {
             return;
         }
@@ -3336,6 +3602,32 @@ impl Machine<'_> {
         Some((copy.at + start, len))
     }
 
+    /// A served binding inside a recording holds `amb`: the recording keeps it as a
+    /// function of its sources, as [`Machine::keep_holes`] does, where it wrote none of them.
+    fn adopt_amb(&mut self, name: Sym, amb: Amb) {
+        let holes = match &amb {
+            Amb::Text(holes) => holes.clone(),
+            Amb::Int(_) => Vec::new(),
+        };
+        self.env.set_amb(name, amb, true);
+        if self.env.amb(name).is_some() {
+            self.note_hole_copies(name, &holes);
+        }
+    }
+
+    /// Texts `name`'s holes copy may grow up to what its text leaves of the token limit.
+    fn note_hole_copies(&mut self, name: Sym, holes: &[crate::engine::env::Hole]) {
+        let text = self.env.peek(name.0).and_then(|b| b.meaning.as_macro()).map(|m| m.replacement_text.clone());
+        let limit = self.cfg.limits.expansion_tokens as i64 - 1 - text.map_or(0, |t| t.len()) as i64;
+        let Some(rec) = self.package_capture.as_mut() else { return };
+        for hole in holes {
+            if let crate::engine::env::Src::TextOf(sym) = hole.src {
+                let entry = rec.seg_copies.entry(sym).or_insert((hole.len as usize, limit));
+                entry.1 = entry.1.min(limit);
+            }
+        }
+    }
+
     /// `name` was just defined by an `\edef` whose body met `holes`: its text keeps them
     /// where it holds what each stands for (`plain`: no copy of its own old text shifts
     /// them), as does the definition fact. Else what the holes name is read exactly.
@@ -3374,15 +3666,9 @@ impl Machine<'_> {
         if self.env.amb(name).is_none() {
             return;
         }
-        let limit = self.cfg.limits.expansion_tokens as i64 - 1 - text.map_or(0, |t| t.len()) as i64;
         let Some(rec) = self.package_capture.as_mut() else { return };
         rec.log.def_holes.insert(last, holes.to_vec());
-        for hole in holes {
-            if let Src::TextOf(sym) = hole.src {
-                let entry = rec.seg_copies.entry(sym).or_insert((hole.len as usize, limit));
-                entry.1 = entry.1.min(limit);
-            }
-        }
+        self.note_hole_copies(name, holes);
     }
 
     /// Definition used text from start of segment at offset `at`, length `len`.
@@ -3459,7 +3745,27 @@ impl Machine<'_> {
 
     /// Call site about to expand: note it and call count on first segment reach.
     pub(super) fn note_site(&mut self, span: Span, name: Sym) {
-        let mode = self.mode;
+        self.note_site_in(span, name, self.mode);
+    }
+
+    /// A site a served segment expanded, inside a recording: as [`Machine::note_site`], with
+    /// the fact of a site from before the recording as the template it extends.
+    fn note_replayed_site(&mut self, key: (Span, Sym), mode: crate::engine::mode::Modes) {
+        let Some(rec) = self.package_capture.as_ref() else { return };
+        if let Some(site) = self.expansion_sites.get(&key)
+            && site.fact < rec.expansions_start
+            && !rec.log.touched.contains_key(&key)
+        {
+            let fact = Expansion { count: 0, ..self.out.facts.expansions[site.fact].clone() };
+            let count = self.out.facts.expansions[site.fact].count;
+            if let Some(rec) = self.package_capture.as_mut() {
+                rec.log.touched.insert(key, (fact, count));
+            }
+        }
+        self.note_site_in(key.0, key.1, mode);
+    }
+
+    fn note_site_in(&mut self, span: Span, name: Sym, mode: crate::engine::mode::Modes) {
         let Some(rec) = self.package_capture.as_mut() else { return };
         let modes = rec.log.site_modes.entry((span, name)).or_default();
         *modes = modes.union(mode);
@@ -3550,6 +3856,7 @@ impl Machine<'_> {
             Rc::make_mut(mouth).note_partial_line();
         }
         self.note_pending_lines();
+        let bridged = self.package_capture.as_ref().is_some_and(|rec| rec.log.children.len() > rec.marks.children);
         let Some(mut node) = self.encode_segment(mark) else {
             return self.spoil_recording("a segment could not be written");
         };
@@ -3557,6 +3864,12 @@ impl Machine<'_> {
         rec.last_line = mark.line;
         node.resume = rec.resume.filter(|_| rec.chain.is_empty());
         rec.chain.push(node);
+        // A segment over a nested load served whole: what was stored after a read of it
+        // may go on from here ([`Machine::maybe_resume`]).
+        if bridged && !mark.ended {
+            self.suspend_recording();
+            return self.maybe_resume();
+        }
         self.start_segment();
     }
 
@@ -4176,6 +4489,7 @@ impl Machine<'_> {
             scalars,
             lists: lists.clone(),
             carried: self.carried.delta(&before.carried),
+            children: rec.log.children[m.children..].to_vec(),
         };
 
         // Reads against initial state (allocation counters are no dependencies; replay uses its own).

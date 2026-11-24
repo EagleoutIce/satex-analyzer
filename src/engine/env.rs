@@ -485,6 +485,16 @@ impl Expr {
         }
     }
 
+    /// The expression with each leaf renamed by `name`; `None` where a leaf has no name.
+    pub fn renamed(&self, name: &dyn Fn(Sym) -> Option<Sym>) -> Option<Rc<Expr>> {
+        Some(Rc::new(match self {
+            Expr::Leaf(sym) => Expr::Leaf(name(*sym)?),
+            Expr::Const(c) => Expr::Const(*c),
+            Expr::Op(op, a, b) => Expr::Op(*op, a.renamed(name)?, b.renamed(name)?),
+            Expr::Neg(a) => Expr::Neg(a.renamed(name)?),
+        }))
+    }
+
     /// Its value where `leaf` gives each leaf's. `None` where a leaf is no known integer or
     /// TeX reports "Arithmetic overflow" (tex.web §§ 1238-1240).
     pub fn eval(&self, leaf: &dyn Fn(Sym) -> Option<i64>) -> Option<i64> {
@@ -602,6 +612,8 @@ struct Reads {
     /// The reader accounts for the slot's [`Amb`] itself.
     #[serde(skip)]
     quiet: bool,
+    /// Reads go unnoted while writes are noted ([`Env::pause_reads`]).
+    paused: bool,
 }
 
 impl Reads {
@@ -836,6 +848,9 @@ impl Env {
             return;
         }
         let mut reads = self.reads.borrow_mut();
+        if reads.paused {
+            return;
+        }
         reads.moot.remove(&sym.0);
         reads.shared |= kind == ReadKind::Value && reads.pending.contains(&sym.0);
         if !reads.quiet && !reads.ambient.is_empty() {
@@ -1134,6 +1149,19 @@ impl Env {
         true
     }
 
+    /// Whether the load recorded wrote `kind` of `sym` since tracking began.
+    pub fn written_part(&self, sym: Sym, kind: ReadKind) -> bool {
+        self.reads.borrow().written.get(&sym.0).copied().unwrap_or(0) & kind.bit() != 0
+    }
+
+    /// An expression a served segment kept in place of exact reads: the load recorded
+    /// around it keeps it too ([`Env::take_guards`]).
+    pub fn keep(&self, expr: Rc<Expr>) {
+        if self.tracking.get() {
+            self.reads.borrow_mut().kept.push(expr);
+        }
+    }
+
     /// A test the load decided on its leaves.
     pub fn guard(&self, guard: Guard) {
         self.reads.borrow_mut().guards.push(guard);
@@ -1398,6 +1426,12 @@ impl Env {
         met.sort_unstable();
         met.dedup();
         Some(met)
+    }
+
+    /// Reads while `on` are not noted, writes still are: a served segment inside a
+    /// recording, whose reads the recording takes on by name. The previous setting.
+    pub fn pause_reads(&self, on: bool) -> bool {
+        std::mem::replace(&mut self.reads.borrow_mut().paused, on)
     }
 
     pub fn track_reads(&self, on: bool) -> bool {

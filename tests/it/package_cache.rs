@@ -384,7 +384,11 @@ fn a_register_assigned_in_the_served_front_keys_the_recorded_rest_as_it_stands()
 
 /// tagpdf replays whole: the random ids (`\\int_rand:n`) its namespaces
 /// get fork, and their paths leave fewer finished input levels below the
-/// file than it opened on. The replay reports what reading it did.
+/// file than it opened on. The replay reports what reading it did. Run 2
+/// still reads the request lines of tagpdf's nested loads (their caches
+/// only exist from run 1 on) and stores them with the loads they serve, so
+/// run 3 is the one that serves nearly all of it (TeX Live 2019's tagpdf
+/// requests more packages than a newer one).
 #[test]
 fn tagpdf_replays_whole_and_reports_the_same() {
     if !installed() {
@@ -395,9 +399,11 @@ fn tagpdf_replays_whole_and_reports_the_same() {
     let first = run(&dir, document);
     let second = run(&dir, document);
     assert_eq!(served(&second, "tagpdf"), Some(true), "{:?}", second.package_caches);
-    assert!(second.served_steps * 10 > second.load_steps * 9, "{} of {}", second.served_steps, second.load_steps);
-    assert_eq!(first.steps, second.steps);
-    same_facts(&first, &second);
+    let third = run(&dir, document);
+    assert_eq!(served(&third, "tagpdf"), Some(true), "{:?}", third.package_caches);
+    assert!(third.served_steps * 10 > third.load_steps * 9, "{} of {}", third.served_steps, third.load_steps);
+    assert_eq!(first.steps, third.steps);
+    same_facts(&first, &third);
 }
 
 /// Intuition: TeX counts errors (tex.web § 82) and gives up at the hundredth, so a replayed
@@ -1476,31 +1482,40 @@ fn the_cache_directory_stays_within_its_size_bound() {
 /// A class that assigns only the value of a register (a box, an uccode) is
 /// read again by the next segment from the state replayed so far: the
 /// replay agrees with the live run, so runs after the first reuse the cache
-/// whole and the cache file stops growing.
+/// whole and the caches stop growing. Each run adds the request lines of the
+/// nested loads the run before served whole first (a bridge needs the load it
+/// serves cached whole), one nesting level a run: the caches stop growing
+/// within as many runs as the class has loads.
 #[test]
 fn a_class_assigning_register_values_is_reused_whole() {
     let dir = project("register-values");
     let cfg = latex(&dir);
     let source = "\\documentclass{scrbook}\n\\begin{document}x\\end{document}\n";
-    let class_file = |dir: &Path| -> (PathBuf, u64) {
+    // What the package caches hold: a run that adds nothing leaves the next alike.
+    let stored_bytes = |dir: &Path| -> u64 {
         std::fs::read_dir(dir.join("cache"))
             .unwrap()
             .flatten()
-            .filter(|e| e.file_name().to_string_lossy().starts_with("package-scrbook.cls-"))
+            .filter(|e| e.file_name().to_string_lossy().starts_with("package-"))
             .filter(|e| e.file_name().to_string_lossy().ends_with(".postcard"))
-            .map(|e| (e.path(), e.metadata().unwrap().len()))
-            .next()
-            .expect("the class cache file")
+            .map(|e| e.metadata().unwrap().len())
+            .sum()
     };
     let first = analyze(&dir, source, &cfg);
-    let (_, stored) = class_file(&dir);
     assert_eq!(served(&first, "scrbook"), Some(false), "{:?}", first.package_caches);
-    for run in 2..=3 {
+    let loads: std::collections::HashSet<&str> = first.package_caches.iter().map(|(n, ..)| n.as_str()).collect();
+    let (mut stored, mut run) = (stored_bytes(&dir), 1);
+    loop {
+        run += 1;
         let again = analyze(&dir, source, &cfg);
         let state = again.package_caches.iter().rev().find(|(n, ..)| n == "scrbook").map(|(.., s)| s.clone());
         assert_eq!(state.as_deref(), Some("cached"), "run {run}: {:?}", again.package_caches);
-        let (_, size) = class_file(&dir);
-        assert_eq!(size, stored, "run {run}: the cache file grew");
+        let size = stored_bytes(&dir);
+        if size == stored {
+            break;
+        }
+        assert!(run <= loads.len(), "run {run}: the caches still grow ({stored} to {size})");
+        stored = size;
     }
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -2117,4 +2132,33 @@ fn a_package_ending_in_an_input_file_replays_whole() {
     let warm = run(&dir, document);
     assert_eq!(cache_state(&warm, "ender"), Some("cached"), "{:?}", warm.package_caches);
     assert_eq!(differing_facts(&run_cold(&dir, document), &warm), Vec::<String>::new());
+}
+
+/// A package that requests cached packages from its own lines: each request line is the
+/// kernel's work around a served load. The second run records each line with the load it
+/// serves (the nested caches only exist from the first run on), the third replays the
+/// package whole and serves nearly all of the load.
+#[test]
+fn request_lines_of_cached_children_replay_with_their_parent() {
+    if !installed() {
+        return;
+    }
+    let dir = project("request-lines");
+    let children = ["ca", "cb", "cc", "cd", "ce", "cf"];
+    for c in children {
+        std::fs::write(dir.join(format!("{c}.sty")), format!("\\ProvidesPackage{{{c}}}\n\\def\\{c}macro{{}}\n"))
+            .expect("child");
+    }
+    let lines: String = children.iter().map(|c| format!("\\RequirePackage{{{c}}}\n")).collect();
+    std::fs::write(dir.join("many.sty"), format!("\\ProvidesPackage{{many}}\n{lines}\\def\\manydone{{}}\n"))
+        .expect("many");
+    let document = "\\documentclass{article}\n\\usepackage{many}\n\\begin{document}x\\end{document}\n";
+    run(&dir, document);
+    let second = run(&dir, document);
+    assert!(children.iter().all(|c| served(&second, c) == Some(true)), "{:?}", second.package_caches);
+    let third = run(&dir, document);
+    assert_eq!(cache_state(&third, "many"), Some("cached"), "{:?}", third.package_caches);
+    assert!(children.iter().all(|c| served(&third, c) == Some(true)), "{:?}", third.package_caches);
+    assert!(third.served_steps * 20 > third.load_steps * 19, "{} of {}", third.served_steps, third.load_steps);
+    assert_eq!(differing_facts(&run_cold(&dir, document), &third), Vec::<String>::new());
 }
