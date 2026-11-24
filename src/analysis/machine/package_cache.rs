@@ -2017,7 +2017,7 @@ impl Machine<'_> {
         // a read resumes it only where the next line starts.
         let parent = self.package_capture.as_ref().map(|rec| rec.file);
         if parent.is_some() && self.cacheable_load == parent {
-            self.end_load_quietly();
+            self.unnoted(Self::end_cacheable_load);
         }
         self.cacheable_load = Some(id);
         self.guard.held = (std::mem::take(&mut self.guard.lines), std::mem::take(&mut self.guard.forks));
@@ -2080,7 +2080,7 @@ impl Machine<'_> {
             Some((nested, parent))
                 if nested == file && self.package_capture.as_ref().is_some_and(|r| r.file == parent) =>
             {
-                self.end_load_quietly();
+                self.unnoted(Self::end_cacheable_load);
             }
             other => {
                 self.served_inside = other.filter(|(nested, _)| *nested != file);
@@ -2089,12 +2089,21 @@ impl Machine<'_> {
         }
     }
 
-    /// [`Machine::end_cacheable_load`] inside a recording: the bookkeeping it does is no read
-    /// of the recorded load.
-    fn end_load_quietly(&mut self) {
+    /// `f` with reads not tracked at all ([`Env::track_reads`]).
+    pub(crate) fn untracked<R>(&mut self, f: impl FnOnce(&mut Self) -> R) -> R {
+        let tracking = self.env.track_reads(false);
+        let r = f(self);
+        self.env.track_reads(tracking);
+        r
+    }
+
+    /// `f` with the environment's reads unnoted, its writes still noted ([`Env::pause_reads`]):
+    /// bookkeeping inside a recording is no read of the recorded load.
+    fn unnoted<R>(&mut self, f: impl FnOnce(&mut Self) -> R) -> R {
         let paused = self.env.pause_reads(true);
-        self.end_cacheable_load();
+        let r = f(self);
         self.env.pause_reads(paused);
+        r
     }
 
     /// A cacheable load inside one being recorded: store the outer chain
@@ -2228,9 +2237,7 @@ impl Machine<'_> {
         let name = name.as_str();
         let started = std::time::Instant::now();
         // The state the load begins in is no read of a recording around it.
-        let paused = self.env.pause_reads(true);
-        let mut before = self.before_state();
-        self.env.pause_reads(paused);
+        let mut before = self.unnoted(|m| m.before_state());
         let base = self.base.clone();
         let mut at: Option<u32> = parent;
         let mut parent_id: Option<u64> = start_id;
@@ -2304,14 +2311,10 @@ impl Machine<'_> {
                             let node = &tree.nodes[k as usize];
                             let restart = node.resume.is_some() && at != parent;
                             if restart && resumed.is_none() {
-                                let paused = self.env.pause_reads(true);
-                                resumed = Some(self.before_state());
-                                self.env.pause_reads(paused);
+                                resumed = Some(self.unnoted(|m| m.before_state()));
                             }
                             let from = if restart { resumed.as_ref().unwrap_or(&before) } else { &before };
-                            let paused = self.env.pause_reads(true);
-                            let fits = self.segment_fits(node, &base);
-                            self.env.pause_reads(paused);
+                            let fits = self.unnoted(|m| m.segment_fits(node, &base));
                             let moved = match fits {
                                 Ok(moved) => moved,
                                 Err(why) => {
@@ -2326,10 +2329,9 @@ impl Machine<'_> {
                                 reason = Some("the run could not afford it within its budgets".into());
                                 break 'chain;
                             }
-                            let paused = self.env.pause_reads(true);
-                            let applied =
-                                self.apply_segment(node, span, &moved, from, &mut origins, &mut carried, &mut ambs);
-                            self.env.pause_reads(paused);
+                            let applied = self.unnoted(|m| {
+                                m.apply_segment(node, span, &moved, from, &mut origins, &mut carried, &mut ambs)
+                            });
                             match applied {
                                 Ok(marks) => {
                                     written.extend(marks);

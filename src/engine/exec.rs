@@ -2362,17 +2362,14 @@ impl Machine<'_> {
     /// Read untracked: the test records what of each meaning it reads.
     fn ifx_members(&mut self, t: Token) -> Vec<Meaning> {
         let sym = t.cs().or_else(|| self.active_cs(t));
-        let tracking = self.env.track_reads(false);
-        let members = match sym.and_then(|s| self.env.slot(s)?.may.clone().or_else(|| self.typed_meanings(s))) {
+        self.untracked(|m| match sym.and_then(|s| m.env.slot(s)?.may.clone().or_else(|| m.typed_meanings(s))) {
             Some(may) => may.to_vec(),
             None => vec![match (t.tok, sym) {
                 (Tok::Chr(c, cat), None) if cat != Catcode::Active => Meaning::Char(c, cat),
-                (_, Some(sym)) => self.env.meaning(sym),
+                (_, Some(sym)) => m.env.meaning(sym),
                 _ => Meaning::Unknown,
             }],
-        };
-        self.env.track_reads(tracking);
-        members
+        })
     }
 
     /// Split `\ifx` on operands with multiple meanings, comparing each separately.
@@ -3362,13 +3359,9 @@ impl Machine<'_> {
                 // texts is that text on a path per text (tex.web § 507
                 // compares one token), so the test is decided per member.
                 let (a, firsts_a) = self.ifx_operand()?;
-                let tracking = self.env.track_reads(false);
-                let ma = self.ifx_meaning(a);
-                self.env.track_reads(tracking);
+                let ma = self.untracked(|m| m.ifx_meaning(a));
                 let (b, firsts_b) = self.ifx_operand()?;
-                let tracking = self.env.track_reads(false);
-                let mb = self.ifx_meaning(b);
-                self.env.track_reads(tracking);
+                let mb = self.untracked(|m| m.ifx_meaning(b));
                 // One name compared with itself, both expandable or both not:
                 // one meaning, whatever it is.
                 if a.tok == b.tok
@@ -4279,14 +4272,10 @@ impl Machine<'_> {
         let Some(name) = self.read_cs() else { return };
         // A package cache replays an allocation by allocating again. The
         // counters it advances are its effect, not something the package read.
-        let tracking = self.env.track_reads(false);
-        let index = self.allocation_number(kind);
-        self.env.track_reads(tracking);
+        let index = self.untracked(|m| m.allocation_number(kind));
         self.define(name, Meaning::Register(kind, index), by, DefMode::New, span);
         let storage = self.storage(name);
-        let tracking = self.env.track_reads(false);
-        self.env.set_value(storage, zero_of(kind), true);
-        self.env.track_reads(tracking);
+        self.untracked(|m| m.env.set_value(storage, zero_of(kind), true));
         // `\newbox`, `\newread` and `\newwrite` are `\chardef`s of the number
         // they allocate (The TeXbook, appendix B).
         if matches!(kind, RegKind::Box | RegKind::Read | RegKind::Write) && index != crate::engine::tex::UNNUMBERED {
