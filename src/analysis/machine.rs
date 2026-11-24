@@ -2601,6 +2601,9 @@ pub struct Machine<'a> {
     /// The running path approximated since the paths parted: its errors
     /// are not certain.
     pub(crate) approximated: bool,
+    /// The Rust stack ran low and an expansion was widened ([`Machine::abandon_nesting`]):
+    /// what was read depends on the thread, so no cache keeps it.
+    pub(crate) stack_cut: bool,
     /// The running path took an arm of a box test whose box it cannot see
     /// into: a library fault on it is no run (`analysis.assume_compiles`).
     pub(crate) blind: bool,
@@ -3552,6 +3555,7 @@ impl<'a> Machine<'a> {
             dropping_nested: false,
             keep_errors: false,
             approximated: false,
+            stack_cut: false,
             blind: false,
             arm: false,
             enclosing_unknown_arm: false,
@@ -4978,7 +4982,8 @@ will look undefined",
         // runs `ltluatex`, luaotfload and expl3's Lua again (LuaTeX manual, "Lua
         // general"). So the cache, which carries no Lua state, loses nothing.
         crate::plugins::lua::fresh(self);
-        let cacheable = self.cfg.cache.enabled && !truncated && !preload_truncated && complete;
+        // A kernel the stack cut is the thread's, not the kernel's: another thread reads more of it.
+        let cacheable = self.cfg.cache.enabled && !truncated && !preload_truncated && complete && !self.stack_cut;
         // Every file the kernel was read from, in order, minus the document itself,
         // so installing this cache hands out the same file numbers the cached spans carry.
         let files: Vec<(String, LoadKind)> =
@@ -10060,6 +10065,8 @@ will look undefined",
     /// An expansion nested deeper than satex follows: its assignments become
     /// unknown, its pending lists are dropped, and the run continues.
     pub(crate) fn abandon_nesting(&mut self) {
+        self.stack_cut = true;
+        self.spoil_recording("the Rust stack ran low");
         let balanced = Self::closed_note(self.give_up_lists(false, true, false));
         let (file, line) = self.position();
         self.diagnose(

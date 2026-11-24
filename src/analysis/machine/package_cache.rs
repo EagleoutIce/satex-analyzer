@@ -1778,6 +1778,7 @@ impl Machine<'_> {
             dropping_nested: _,
             keep_errors: _,
             approximated: _,
+            stack_cut: _,
             blind: _,
             arm: _,
             enclosing_unknown_arm: _,

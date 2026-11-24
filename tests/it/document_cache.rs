@@ -332,3 +332,24 @@ fn stats_builds_from_the_last_builds_files() {
     assert_eq!(String::from_utf8_lossy(&warm), String::from_utf8_lossy(&cold), "differs from a build from nothing");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// A run whose Rust stack ran low widens the expansion it was in (`nesting-widened`): how far it
+/// got depends on the thread's stack, not on anything the cache keys on. Such a run is not
+/// stored, so a run on a larger stack reads the document itself.
+/// Pins: kernel and document caches kept what a test thread's stack cut, and later tests in the
+/// same process read that widened state (order-dependent reds on TeX Live 2019 and 2022).
+#[test]
+fn a_run_the_stack_cut_is_not_stored() {
+    if !installed() {
+        return;
+    }
+    let dir = project("stack-cut");
+    let cfg = config(&dir);
+    let doc = dir.join("doc.tex");
+    // a register number read as a register's value, nested: a quantity inside a quantity
+    let deep = format!("\\count0={}0\\relax\n\\bye\n", "\\count".repeat(5000));
+    let first = analyze(&doc, &deep, &cfg);
+    assert!(first.facts.diagnostics.iter().any(|d| d.code == "nesting-widened"), "the stack did not run low");
+    assert!(!served(&analyze(&doc, &deep, &cfg)), "a stack-cut run was served from the cache");
+    let _ = std::fs::remove_dir_all(&dir);
+}

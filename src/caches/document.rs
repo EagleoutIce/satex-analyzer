@@ -223,6 +223,8 @@ impl Recording {
         // A run `limits.memory` stopped is not encoded: that holds it twice, past the limit.
         if analysis.stopped() && pending.is_none() && analysis.caches_built() > 0
             || analysis.limits.iter().any(|l| l.key == "memory")
+            // What a run reads past a stack cut depends on its thread, not on its key.
+            || analysis.facts.diagnostics.iter().any(|d| d.code == "nesting-widened")
         {
             return;
         }
