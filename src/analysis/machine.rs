@@ -2317,7 +2317,7 @@ pub struct Machine<'a> {
     call_runs: crate::fixed::HotMap<calls::CallKey, Rc<calls::CallRuns>>,
     /// Kept effects of calls, by code and arguments ([`calls`]).
     memos: LookupMap<u64, Vec<Rc<calls::Memo>>>,
-    memo_codes: LookupMap<usize, calls::MemoCode>,
+    memo_codes: LookupMap<u64, calls::MemoCode>,
     /// Keys of calls met once ([`calls`]).
     memo_seen: crate::fixed::LookupSet<u64>,
     /// What the kept effects hold, about ([`calls::Memo::bytes`]).

@@ -181,6 +181,39 @@ fn a_package_that_runs_lua_says_the_same_built_and_served() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// A kept call effect is found by the definition's text, not by where it lives in memory: a
+/// run that reads two packages shares one definition between `\work` and the `\let` copy the
+/// second makes, a run served from their caches holds two equal ones apart.
+/// Pins: the third call replayed the second's kept effect when built and ran again when served,
+/// so the two runs took different steps (a beamer title page also said its fonts elsewhere).
+#[test]
+fn a_let_copy_of_a_cached_definition_replays_kept_calls_built_and_served() {
+    if !installed() {
+        return;
+    }
+    let dir = crate::support::tmp_root().join("coldwarm-let-memo");
+    let _ = std::fs::remove_dir_all(&dir);
+    // Packages outside the document's folder: a kept effect of the user's own code is never kept.
+    let (doc, lib) = (dir.join("doc"), dir.join("lib"));
+    std::fs::create_dir_all(&doc).unwrap();
+    std::fs::create_dir_all(&lib).unwrap();
+    let steps = "\\count@=5 ".repeat(100);
+    std::fs::write(lib.join("worker.sty"), format!("\\ProvidesPackage{{worker}}\n\\def\\work{{{steps}}}\n")).unwrap();
+    std::fs::write(lib.join("copier.sty"), "\\ProvidesPackage{copier}\n\\let\\alias\\work\n").unwrap();
+    let text = "\\documentclass{article}\n\\usepackage{worker}\n\\usepackage{copier}\n\\begin{document}\n\\work\\work\\alias\\alias\n\\end{document}\n";
+    let main = doc.join("main.tex");
+    std::fs::write(&main, text).unwrap();
+    let mut cfg = crate::support::config();
+    cfg.search_paths.push(lib);
+    cfg.cache.dir = Some(dir.join("cache"));
+    crate::support::seed_kernel(&cfg);
+    cfg.cache.document = false;
+    let built = Machine::analyze(text, Some(&main), &cfg);
+    let served = Machine::analyze(text, Some(&main), &cfg);
+    assert_eq!(difference(&said(&built), &said(&served)), "", "packages built vs served");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// A build runs the document again once its `.aux` settles, from a checkpoint of the first
 /// run. The Lua state is not part of a checkpoint: it has gone on to the first run's end. A
 /// run from a checkpoint before a Lua chunk would run that chunk a second time on it.

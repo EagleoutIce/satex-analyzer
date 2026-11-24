@@ -4,7 +4,7 @@
 # entry: owner, root guess, MWE. S = target/scratch. Clean with target/scratch/reds/ledger-clean.py.
 
 # == soundness ==
-# Open (2026-11-20, owner: Fable p0-cache, from cex-edit): a beamer build resumed at \begin{document} after `\only<2>{two}` is put into the title frame differs from a fresh build from the .aux on (first difference: an unknown-text-run assumption at main.aux:10 vs :7). Slow: 3 beamer builds, ~35 min under load 40. LSP replay: target/scratch/cex-edit/mwe/beamer-4.json via session.py.
+# Open (2026-11-24, owner: T1): green on TL2025 since memo keys name definitions by text (calls::code_id); red on TL2022 (first difference: page-one-arm vs undecided-loop at beamerbasemisc.sty:27). Root: a rounded shadow beamercolorbox on slide 2 of a frame loses precision (extra-else gap, ~600 forks), so the beamer runs explode. MWE: S/tlfix/wt-T1b/target/scratch/mwe/w12.
 incremental::a_resumed_beamer_build_after_an_overlay_edit_says_what_a_fresh_build_says
 
 

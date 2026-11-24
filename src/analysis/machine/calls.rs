@@ -205,7 +205,6 @@ impl CallRec {
 /// Whether a definition's calls are still recorded for kept effects.
 #[derive(Clone)]
 pub(crate) struct MemoCode {
-    _code: Rc<crate::engine::tex::MacroDef>,
     misses: u16,
     kept: u32,
     /// Calls not recorded since its probes ran out, and how often they ran
@@ -228,10 +227,39 @@ fn carries(b: &Binding, spans: &[Span]) -> bool {
     text(&b.meaning) || b.may.iter().flat_map(|m| m.iter()).any(text) || value(&b.value, spans)
 }
 
+/// A definition by its text and where that text stands, not by its allocation: a run that
+/// read a package and one that replayed it hold equal definitions in different allocations
+/// (shared by `\let` in one, apart in the other), and must keep and replay alike.
+/// Each call asks, so the hash is kept per allocation; the entry holds the definition, so
+/// its address names no other while it stands.
+pub(crate) fn code_id(code: &Rc<crate::engine::tex::MacroDef>) -> u64 {
+    use std::hash::{BuildHasher, Hash, Hasher};
+    thread_local! {
+        static IDS: std::cell::RefCell<crate::fixed::HashMap<usize, (Rc<crate::engine::tex::MacroDef>, u64)>> =
+            Default::default();
+    }
+    let at = Rc::as_ptr(code) as usize;
+    if let Some(id) = IDS.with_borrow(|ids| ids.get(&at).map(|e| e.1)) {
+        return id;
+    }
+    let mut h = crate::engine::tex::NameHash.build_hasher();
+    (code.arity(), code.parameter_text.items.len(), code.parameter_text.brace_end).hash(&mut h);
+    (code.long, code.outer, code.protected, code.arg_spec.is_some()).hash(&mut h);
+    code.replacement_text.iter().for_each(|t| (t.tok, t.span).hash(&mut h));
+    let id = h.finish();
+    IDS.with_borrow_mut(|ids| {
+        if ids.len() >= 1 << 14 {
+            ids.clear();
+        }
+        ids.insert(at, (code.clone(), id));
+    });
+    id
+}
+
 fn memo_key(code: &Rc<crate::engine::tex::MacroDef>, args: &[Vec<Token>]) -> u64 {
     use std::hash::{BuildHasher, Hash, Hasher};
     let mut h = crate::engine::tex::NameHash.build_hasher();
-    (Rc::as_ptr(code) as usize).hash(&mut h);
+    code_id(code).hash(&mut h);
     for a in args {
         a.len().hash(&mut h);
         a.iter().for_each(|t| t.tok.hash(&mut h));
@@ -1284,7 +1312,7 @@ impl Machine<'_> {
             return false;
         }
         let probes = self.limits.call_memo_probes;
-        let Some(c) = self.memo_codes.get_mut(&(Rc::as_ptr(code) as usize)) else { return true };
+        let Some(c) = self.memo_codes.get_mut(&code_id(code)) else { return true };
         if probes == 0 || c.kept > 0 || c.misses < probes {
             return true;
         }
@@ -1386,8 +1414,7 @@ impl Machine<'_> {
 
     /// Counts a recorded run of `code` as kept or missed ([`Self::memo_records`]).
     fn memo_verdict(&mut self, code: &Rc<crate::engine::tex::MacroDef>, kept: bool) {
-        let entry = self.memo_codes.entry(Rc::as_ptr(code) as usize).or_insert_with(|| MemoCode {
-            _code: code.clone(),
+        let entry = self.memo_codes.entry(code_id(code)).or_insert_with(|| MemoCode {
             misses: 0,
             kept: 0,
             refused: 0,
