@@ -1335,7 +1335,10 @@
       const p = position(v.state.doc, pos), found = findingsAt(p.line, p.character);
       const tools = value && !running ? await typedTools(p) : [];
       // a command: the same card as the Explain panel, the server's Markdown until its records are there
-      const macro = word?.[3] && !running ? macroCard(`\\${word[2]}`, p, await Promise.race([explainRecords(`\\${word[2]}`), new Promise((r) => setTimeout(() => r([]), 1500))])) : '';
+      // (during a run the last records it was explained with: the card stays the same card when the run ends, never the
+      // server's Markdown swapped for it, a flicker)
+      const macro = !word?.[3] ? '' : running ? macroCard(`\\${word[2]}`, p, explainedLast.get(`\\${word[2]}`) ?? [])
+        : macroCard(`\\${word[2]}`, p, await Promise.race([explainRecords(`\\${word[2]}`), new Promise((r) => setTimeout(() => r([]), 1500))]));
       // a command not asked before waits for the run: say so instead of showing nothing
       if (!value && !opens && !found.length && running && word?.[3]) return { from: line.from + word[0], to: line.from + word[1], html: `<div class="hover hover-busy muted">\\${escape(word[2])}: the hover shows once the analysis under way ends</div>` };
       if (!value && !opens && !found.length) return null;
@@ -1604,7 +1607,9 @@
     const ev = new EditorView({
       parent, doc: text,
       // (symbolEnter first: basicSetup's completion keymap, as highest, would take Enter for the list's `\\\\` before it)
-      extensions: [st.Prec.highest(view.keymap.of([{ key: 'Enter', run: symbolEnter }])), setup.of(basicSetup), closing, lang.of(texLanguage(tex)), language.syntaxHighlighting(tex.highlighter), heatGutter, lint.lintGutter({ tooltipFilter: () => [] }), widgetGutter, lint.linter(null, { tooltipFilter: () => [] }), ac.autocompletion({ override: [(c) => (c.explicit || play.complete_while_typing !== false) && !document.activeElement?.matches('.pdf-type-in') ? complete(c) : null], activateOnTypingDelay: 40, addToOptions: [{ position: 80, render: (c) => {
+      // the page's own card shows a finding: CodeMirror's lint hover makes none (`null`, not `[]`: an empty list still opened
+      // an empty bordered box above the word, which came and went with each run's findings, a flicker)
+      extensions: [st.Prec.highest(view.keymap.of([{ key: 'Enter', run: symbolEnter }])), setup.of(basicSetup), closing, lang.of(texLanguage(tex)), language.syntaxHighlighting(tex.highlighter), heatGutter, lint.lintGutter({ tooltipFilter: () => [] }), widgetGutter, lint.linter(null, { tooltipFilter: () => null }), ac.autocompletion({ override: [(c) => (c.explicit || play.complete_while_typing !== false) && !document.activeElement?.matches('.pdf-type-in') ? complete(c) : null], activateOnTypingDelay: 40, addToOptions: [{ position: 80, render: (c) => {
         // the detail: a usage line colored like the hover's, then where it comes from
         const span = Object.assign(document.createElement('span'), { className: 'cm-completionDetail' });
         const [, use, from] = (c.usage ?? '').match(/^(.*?)(?:\s+(\([^)]*\)))?$/) ?? [];
@@ -1687,8 +1692,9 @@
         const c = await hoverCard(ev, pos);
         // a run holds the answer back (or the server has not read this text yet): asked once more when a run ends,
         // while the pointer rests on the word
-        if ((!c || /hover-busy/.test(c.html)) && !again) hoverRetry = () => { if (doc() === version && parent.matches(':hover')) { if (hovered) { hovered = null; tips.card.hide(); } show(true); } };
-        if (!c || doc() !== version || !parent.matches(':hover')) return;
+        // (the card shown meanwhile stays until the answer replaces it: hidden and drawn again, it flickered)
+        if ((!c || /hover-busy/.test(c.html)) && !again) hoverRetry = () => { if (doc() === version && parent.matches(':hover')) show(true); };
+        if (!c || doc() !== version || !parent.matches(':hover')) { if (again && hovered) { hovered = null; tips.card.hide(); } return; }
         const a = ev.coordsAtPos(c.from), b = ev.coordsAtPos(c.to) ?? a;
         if (!a) return;
         hovered = c;
@@ -3618,6 +3624,8 @@
   }
   /** `satex explain name`, answered by the language server from the analysis it holds,
    *  unless the same text was explained already. */
+  /** The last records each name was explained with, whatever text they were of: a hover during a run shows them. */
+  const explainedLast = new Map();
   async function explainRecords(name) {
     sync();
     const target = state.root ?? (state.file in state.ro ? manifest.sample : state.file);
@@ -3627,7 +3635,7 @@
       // asked during a run: the last finished run's answer, shown now and not kept
       const early = running > 0;
       explanations.set(k, lsp('workspace/executeCommand', { command: 'satex/query', arguments: [request] }, false, true)
-        .then((r) => r?.[0]?.records ?? []).catch(() => []).finally(() => { if (early) explanations.delete(k); }));
+        .then((r) => { const rs = r?.[0]?.records ?? []; if (rs.length) explainedLast.set(name, rs); return rs; }).catch(() => []).finally(() => { if (early) explanations.delete(k); }));
     }
     return explanations.get(k);
   }
@@ -7762,7 +7770,6 @@
   /** Go to page n: a number and Enter scrolls there; while scrolling it shows the page in view (`page 12 / 2086`). */
   const pdfPageGo = Object.assign(document.createElement('input'), { id: 'pdf-page-go', type: 'number', min: '1', title: 'Go to page (Enter)', placeholder: 'page' });
   pdfPageGo.setAttribute('aria-label', 'go to page');
-  pdfPageGo.style.width = '5.5em';
   pdfViewsSel.after(pdfPageGo);
   const pdfGoPage = (n) => {
     const all = pdfBody.querySelectorAll('.pdf-page'), page = all[Math.min(Math.max(1, n), all.length) - 1];
@@ -11761,9 +11768,34 @@
       const raw = out.at(-1)?.disp != null ? text.slice(r.s, r.e).replace(/^\s+/, '') : text.slice(r.s, r.e);
       if (verb) { for (const [i, part] of raw.split(' ').entries()) out.push({ gap: i ? gap : 0, n: width(part), t: part }); continue; }
       // a word in a command's argument or a group's declaration measured in the font the run set such text in
-      for (const q of PE.prose(raw, pdfRefSet(text), outer, (n) => self.satexMath?.sym?.(n)?.[0])) out.push({ gap: q.gap ? gap : 0, n: width(cased(q.t), q.ctx), t: cased(q.t), par: q.par, ...(q.brk && { brk: true }), ...(q.ctx && { ctx: q.ctx }), ...(q.dim && { dim: true }) });
+      // a math symbol's glyph, else what the run sets for the command alone (`\\TeX`: its kerns and lowered E), a box
+      const spelled = (n) => self.satexMath?.sym?.(n)?.[0] ?? pdfCommandBox(n);
+      for (const q of PE.prose(raw, pdfRefSet(text), outer, spelled)) {
+        if (q.box) { out.push({ gap: q.gap ? gap : 0, n: q.box.w * M.em, math: q.box, M }); continue; }
+        out.push({ gap: q.gap ? gap : 0, n: width(cased(q.t), q.ctx), t: cased(q.t), par: q.par, ...(q.brk && { brk: true }), ...(q.ctx && { ctx: q.ctx }), ...(q.dim && { dim: true }) });
+      }
     }
     return out.length ? out : [{ gap: 0, n: 0, t: '' }];
+  }
+  /** What a control word sets alone in the run's state (`satex/commandText`: its characters, kerns and raised or
+   * lowered boxes, in font sizes) as a box mathlayout draws (pdfMathPaint, the page's text face), its letters `t`:
+   * `undefined` until known, each name asked once per run (published findings), the echo drawn again when the answer comes. */
+  let pdfCmdRun = { key: null, by: new Map() };
+  function pdfCommandBox(name) {
+    if (!texReady) return undefined;
+    // per run, not per text version (runKey): the keys typed while it is asked would drop each answer
+    const key = `${uri(state.root ?? state.file)}@${runsOf}`;
+    if (pdfCmdRun.key !== key) pdfCmdRun = { key, by: new Map() };
+    const at = pdfCmdRun;
+    if (at.by.has(name)) return at.by.get(name) ?? undefined;
+    at.by.set(name, null);
+    lsp('satex/commandText', { textDocument: { uri: uri(state.root ?? state.file) }, names: [name] }).then((r) => {
+      const b = Array.isArray(r) && r[0];
+      if (at !== pdfCmdRun || !b?.g?.length) return;
+      at.by.set(name, { t: b.g.map((g) => g[0]).join(''), box: { g: b.g.map(([c, x, y, z]) => [c, x, y, z, 'rm']), r: [], w: b.w, h: b.h, d: b.d } });
+      if (pdfCaret) { pdfCaretDrawNow(); pdfCaretGhost(); }
+    }).catch(() => {});
+    return undefined;
   }
   /** The run's metrics of math symbols (`satex/mathwidths`: their math codes, family fonts and TFM boxes, in em), by
    * face and glyph as mathlayout draws them, per run: each symbol a formula types asked once, the echo drawn again when
@@ -11942,7 +11974,7 @@
     if (set || c.anchor == null || g.at < c.anchor) c.anchor = m ? m[0] : g.at;
     if (set) c.word = near;
     // verbatim is set as written, one fixed-width column a character: nothing to strip, the caret at its column
-    const w = c.word, shown = w[5].normalize('NFKC'), plain = (t) => verb ? t : t.replace(PDF_ENV_MARK, '').replace(/\\([A-Za-z@]+)\s*/g, (_, n) => pdfSymbol(n)).replace(/\\[()[\]]|[{}$\\^_~]/g, '').replace(/\s+/g, ' ');
+    const w = c.word, shown = w[5].normalize('NFKC'), plain = (t) => verb ? t : t.replace(PDF_ENV_MARK, '').replace(/\\([A-Za-z@]+)\s*/g, (_, n) => pdfSymbol(n) || (pdfCommandBox(n)?.t ?? '')).replace(/\\[()[\]]|[{}$\\^_~]/g, '').replace(/\s+/g, ' ');
     const typed = g.text.slice(c.anchor, Math.max(g.at, m ? m[0] + m[1].length : g.at)), into = m ? g.at - m[0] : 0, col = Math.min(shown.length, (m ? Math.max(0, shown.indexOf(cased(now))) : 0) + into);
     let cx = verb ? w[1] + (w[3] - w[1]) / Math.max(1, shown.length) * col : pdfBounds(img, w)[col], cy = 0;
     // the pages lag the text: the row is laid out again at once with the text as now written, until the build lands

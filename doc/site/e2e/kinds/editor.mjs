@@ -296,3 +296,47 @@ export async function catcomplete(p, sc) {
   if (colored('\\l_tmpa_tl', 1) !== 'CCCCCCCCCC') fail(`expl3 \\l_tmpa_tl colored ${colored('\\l_tmpa_tl', 1)} (want whole)`);
   return res;
 }
+
+/** `hoversteady`: the pointer rests on a finding's word of `line` (from 1, `word`) while a run goes on (a comment line
+ * added at the end starts it): the card shows from the last run and is asked again when the run ends. It never hides
+ * and is written again only when its text changes. It offers Ignore here and Ignore rule. */
+export async function hoversteady(p, sc) {
+  const res = { name: sc.name, fails: [], perf: [], info: {} };
+  const fail = (m) => res.fails.push(m);
+  const quiet = () => p.until(`(() => { const h = satexHealth(); if (h.busy || h.due || h.running || h.queued || h.pending) { self.__q = null; return false; } self.__q ??= performance.now(); return performance.now() - self.__q > 1500; })()`, 240000);
+  if (!await started(p) || !await example(p, sc.example ?? 'hello.tex')) { fail('the playground did not start'); return res; }
+  await quiet();
+  const word = `(() => { const l = document.querySelectorAll('.cm-line')[${sc.line - 1}]; const w = l && document.createTreeWalker(l, NodeFilter.SHOW_TEXT); let n; while (w && (n = w.nextNode())) { const i = n.textContent.indexOf(${J(sc.word)}); if (i >= 0) { const r = document.createRange(); r.setStart(n, i + 1); r.setEnd(n, i + 2); const b = r.getBoundingClientRect(); return [b.x + b.width / 2, b.y + b.height / 2]; } } return null; })()`;
+  const card = `[...document.querySelectorAll('.tip-card')].find((t) => !t.hidden && t.querySelector('.tip-lint'))`;
+  // every write of the card once it shows: the same text written again (a redraw) or the card hidden is a flicker
+  await p.eval(`(() => { self.__hs = { writes: 0, same: 0, hidden: 0, shown: 0, text: '' };
+    const watch = (el) => new MutationObserver((ms) => { const s = self.__hs; if (!s.on) return; if (ms.some((m) => m.type === 'attributes') && el.hidden) s.hidden++;
+      if (ms.some((m) => m.type === 'childList')) { s.writes++; if (el.textContent === s.text) s.same++; s.text = el.textContent; } })
+      .observe(el, { childList: true, subtree: true, attributes: true, attributeFilter: ['hidden'] });
+    const el = document.querySelector('.tip-card'); if (el) watch(el); else self.__hsWatch = watch; })()`);
+  // each round: a comment line added at the end of the file (a run starts), the pointer onto the word at once, resting
+  // there while the run ends (the card answered from the last run, then asked again)
+  for (let i = 0; i < (sc.runs ?? 3); i++) {
+    await p.s('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 5, y: 5 });
+    await sleep(300);
+    await p.drv.act({ insert: { at: '\\end{document}', k: 14, text: '\n%' } });
+    const at = await p.eval(word);
+    if (!at) { fail(`setup: no ${sc.word} on line ${sc.line}`); return res; }
+    await p.s('Input.dispatchMouseEvent', { type: 'mouseMoved', x: at[0] - 1, y: at[1] });
+    await p.s('Input.dispatchMouseEvent', { type: 'mouseMoved', x: at[0], y: at[1] });
+    if (!await p.until(`!!${card}`, 8000)) { fail(`round ${i}: hovering the finding shows no card`); return res; }
+    await p.eval(`(() => { const el = document.querySelector('.tip-card'); if (self.__hsWatch) { self.__hsWatch(el); self.__hsWatch = null; } Object.assign(self.__hs, { on: true, text: el.textContent }); self.__hs.shown++; })()`);
+    await sleep(200);
+    await quiet();
+    await sleep(1500);
+    await p.eval(`self.__hs.on = false`);
+  }
+  res.info.steady = await p.eval(`(({ writes, same, hidden, shown }) => ({ writes, same, hidden, shown }))(self.__hs)`);
+  const { writes, same, hidden } = res.info.steady;
+  if (same || hidden) fail(`the resting card flickered: ${same} rewrites of the same text, ${hidden} hides (of ${writes} writes)`);
+  const buttons = await p.eval(`[...(${card})?.querySelectorAll('button[data-fix]') ?? []].map((b) => b.textContent)`);
+  res.info.buttons = buttons;
+  if (!buttons.some((b) => /^Ignore \S+ here$/.test(b)) || !buttons.some((b) => /^Ignore rule /.test(b))) fail(`the card offers ${J(buttons)}, want Ignore here and Ignore rule`);
+  await p.shot(`${sc.name}-card.png`);
+  return res;
+}

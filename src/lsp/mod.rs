@@ -595,7 +595,7 @@ fn dispatch(engine_tx: Send<'_>, req: Request) -> Result<Json, String> {
             Ok(Json::Array(ask(engine_tx, |reply| EngineMsg::Typeset(uri, reply))?))
         }
         // The typesetting plugins (`crate::plugins::typeset`), from the last finished run: never wait for a run.
-        "satex/hyphenate" | "satex/break" | "satex/mathwidths" => {
+        "satex/hyphenate" | "satex/break" | "satex/mathwidths" | "satex/commandText" => {
             let uri: Uri = serde_json::from_value(params["textDocument"]["uri"].clone()).map_err(|e| e.to_string())?;
             let method = req.method.clone();
             Ok(ask(engine_tx, |reply| EngineMsg::Typesetting(uri, method, params, reply))?)

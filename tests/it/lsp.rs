@@ -7484,6 +7484,42 @@ fn mathwidths_reads_the_run_s_math_fonts() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// `satex/commandText` (the PDF echo of a command typed): what a control word sets alone, from a sandbox of the
+/// run. `\TeX` is T, a kern back, an E lowered by half an ex in an `\hbox`, X (latex.ltx): the E below the baseline
+/// and left of where T's width ends. `\LaTeX`'s A is set smaller, in a `\vbox` as high as T. A user's logo `\Me`
+/// raises its second letter. `\textbf` reads an argument and `\relax` sets nothing: none. Pins the echo dropping
+/// every text macro until the build (it knew math symbols only).
+#[test]
+fn command_text_sets_a_logo_with_its_kerns_and_shifts() {
+    let text =
+        "\\documentclass{article}\n\\newcommand\\Me{M\\raise1ex\\hbox{e}}\n\\begin{document}\nHi.\n\\end{document}\n";
+    let (mut server, uri, dir) = open_set("commandtext", text, &[]);
+    let id = server.request("satex/typeset", json!({ "textDocument": { "uri": uri } }));
+    let _ = server.response(id);
+    let id = server.request(
+        "satex/commandText",
+        json!({ "textDocument": { "uri": uri }, "names": ["TeX", "Me", "textbf", "relax", "LaTeX"] }),
+    );
+    let got = server.response(id)["result"].clone();
+    let glyphs = |i: usize| got[i]["g"].as_array().cloned().unwrap_or_default();
+    let letters = |i: usize| glyphs(i).iter().map(|g| g[0].as_str().unwrap_or("").to_string()).collect::<String>();
+    let x = |i: usize, k: usize| glyphs(i)[k][1].as_f64().unwrap();
+    let y = |i: usize, k: usize| glyphs(i)[k][2].as_f64().unwrap();
+    assert_eq!(letters(0), "TEX", "{got}");
+    let (te, ee, xe) = (x(0, 0), x(0, 1), x(0, 2));
+    assert!(te == 0.0 && ee > 0.4 && xe > ee, "TeX's letters in order: {got}");
+    assert!(y(0, 1) < -0.1 && y(0, 0) == 0.0 && y(0, 2) == 0.0, "the E lowered alone: {got}");
+    assert!(got[0]["w"].as_f64().is_some_and(|w| w > xe), "{got}");
+    assert_eq!(letters(1), "Me", "{got}");
+    assert!(y(1, 1) > 0.3, "the e raised by an ex: {got}");
+    assert!(got[2].is_null() && got[3].is_null(), "an argument read, nothing set: {got}");
+    assert_eq!(letters(4), "LATEX", "{got}");
+    let small_a = &glyphs(4)[1];
+    assert!(y(4, 1) > 0.1 && small_a[3].as_f64().is_some_and(|s| s < 0.9), "LaTeX's A raised and smaller: {got}");
+    server.shutdown();
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// `satex/break` (the PDF echo's line breaking): the thesis example's paragraphs, their words as the page shows
 /// them, break where pdfTeX broke them (doc/site/tests/fixtures/thesis-paragraphs.json holds pdfTeX's rows). The
 /// breaker is the run's own Knuth–Plass over a list of the run's TFM widths, ligatures and kerns, interword glue by

@@ -1562,8 +1562,8 @@ impl Machine<'_> {
     }
 
     /// What LuaTeX's `\fontname` writes after a luaotfload font's name: ` at ⟨size⟩` always
-    /// in LuaTeX 1.24 (TeX Live 2026), before only where the size is not
-    /// the design size (TeX Live 2022). luaotfload's design sizes are whole
+    /// from LuaTeX 1.22 (TeX Live 2025 and 2026, both checked), in 1.15 only where the size is not
+    /// the design size (TeX Live 2022). The versions between are not known. luaotfload's design sizes are whole
     /// tenths of a point, so a size between them is never one. `None` where
     /// that cannot be told.
     fn luaotfload_size_suffix(&mut self, font: u32) -> Option<String> {
@@ -1574,7 +1574,7 @@ impl Machine<'_> {
         let k = size * 10 / 65536;
         let between = (k - 1..=k + 1).all(|k| k * 65536 / 10 != size && (k * 65536 + 9) / 10 != size);
         match version {
-            124.. => Some(suffix),
+            122.. => Some(suffix),
             ..=115 if between => Some(suffix),
             _ => None,
         }

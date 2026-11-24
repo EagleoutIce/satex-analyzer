@@ -755,7 +755,7 @@ fn enter_environment(machine: &mut Machine, env: Sym) {
     machine.run_probe(begin, &format!("{{{name}}}\\relax "));
 }
 
-fn sandbox_config(base: &Config) -> Config {
+pub(crate) fn sandbox_config(base: &Config) -> Config {
     Config {
         load: crate::project::config::Load {
             packages: false,

@@ -987,7 +987,9 @@ pub fn typeset_each(analysis: &Analysis, sink: &mut dyn FnMut(Record)) {
             foot_places = Places::default();
             breaks(&mut out, i, site);
             style = "";
-            (places.on_line, places.last_origin) = (None, None);
+            // each row marks its own sites: the next paragraph set by the same call (`\maketitle`'s
+            // date after its author) has no mark of this one to follow
+            places = Places::default();
         }
         put_keys(&named[cut..upto], &mut line, &mut choice, &mut keys);
         put_keys(&named[read_keys], &mut line, &mut choice, &mut keys);

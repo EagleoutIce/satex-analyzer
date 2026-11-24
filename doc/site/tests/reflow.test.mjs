@@ -138,6 +138,14 @@ test('prose: a control word eats its spaces, a symbol sets its glyph', () => {
   assert.equal(p('a\\foo\n b'), 'a b');
   assert.equal(p('a\\foo\n\nb'), 'a ¶_b');
 });
+// Intuition: a command the run sets as a box of its own (`\TeX`: T, a kern, a lowered E, X) is one piece holding that
+// box, its spaces eaten, the words around it apart. Pins the echo dropping text macros until the build.
+test('prose: a command set as a box is a piece of its own', () => {
+  const box = { w: 1.6 }, sym = (n) => (n === 'TeX' ? { t: 'TEX', box } : undefined);
+  const q = E.prose('a \\TeX{} b', undefined, [], sym);
+  assert.deepEqual(q.map((x) => `${x.gap ? '_' : ''}${x.t}${x.box ? '#' : ''}`), ['a', '_TEX#', '_b']);
+  assert.equal(q[1].box, box);
+});
 // Intuition: an environment's name is a csname the kernel reads, never text on the row (`center Quokka center`).
 test('prose: \\begin and \\end set no word', () => {
   assert.equal(prose(' \\begin{center}\nQuokka\n\\end{center} more'), ' _Quokka _more');

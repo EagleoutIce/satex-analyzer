@@ -1714,7 +1714,9 @@ fn a_key_opening_a_paragraph_is_its_own() {
 }
 
 /// A character read in the user's file elsewhere than where it is set (`\\title`'s argument, set by
-/// `\\maketitle`) names where it was read; text read where it is set names nothing.
+/// `\\maketitle`) names where it was read; text read where it is set names nothing. Every row
+/// names its own sites: the date, set by the same call as the author, had none, so the playground
+/// placed none of its characters ("not typed here").
 #[test]
 fn title_text_knows_where_it_was_read() {
     if !crate::support::installed() {
@@ -1724,6 +1726,7 @@ fn title_text_knows_where_it_was_read() {
     let rows = typeset_doc("origins", source, &[]);
     for (text, line, col) in [("Alpha", 2, 8), ("Carol", 3, 9), ("Today", 4, 7)] {
         let row = paragraph(&rows, text);
+        assert_eq!(row["sites"][0]["at"], 0, "{text}: a site from the row's first character: {row}");
         let at = row["detail"].as_str().and_then(|d| d.find(text)).expect("in detail") as u64;
         let o =
             row["origins"].as_array().into_iter().flatten().rfind(|o| o["at"].as_u64() <= Some(at)).expect("an origin");

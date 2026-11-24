@@ -32,6 +32,9 @@ export default [
   // sweep 2026-11-19: `%` typed before \newcommand{\section}, then erased: the finding stayed gone until the next edit
   { kind: 'heldback', name: 'finding-after-pause', line: 3, key: '%',
     steps: 'hello.tex; type % at the start of line 3 (its finding goes), Backspace; once typing pauses the finding is back' },
+  // user 2026-11-24: the finding card under a resting pointer flickered as runs came and went (each rewrote it)
+  { kind: 'hoversteady', name: 'hover-finding-steady', line: 3, word: 'section',
+    steps: 'hello.tex; rest the pointer on \\section of line 3 (already-defined) while three runs come and go: the card never hides or redraws its text; it offers Ignore here and Ignore rule' },
   // user 2026-11-19: "\toprule: not reached by the analysis" stayed on the card while booktabs was loaded and the status said Ready
   { kind: 'hoverlate', name: 'hover-after-load', text: '\\documentclass{article}\n\\begin{document}\nIn the\n\n\\begin{tabular}{llr}\n  \n  a & b & c \\\\\n\\end{tabular}\n\\end{document}\n',
     line: 6, keys: ['\\', 't', 'o', 'p', 'r', 'u', 'l'], word: '\\toprule', want: /booktabs\.sty:\d+/,

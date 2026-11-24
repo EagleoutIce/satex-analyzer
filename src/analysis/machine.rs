@@ -2679,6 +2679,8 @@ pub struct Machine<'a> {
     ending_output: bool,
     /// Set in a sandbox run by [`crate::analysis::probe`]: what it watches for.
     pub(crate) probe: Option<Box<crate::analysis::probe::Watch>>,
+    /// Set in a sandbox run of `satex/commandText`: each character and box it sets.
+    pub(crate) command_text: Option<Box<crate::plugins::typeset::commands::Recorder>>,
     /// Where this run keeps its checkpoints, if anywhere ([`Checkpoints`]).
     checkpoints: checkpoint::Taker<'a>,
 }
@@ -3573,6 +3575,7 @@ impl<'a> Machine<'a> {
             call_in_library: false,
             ending_output: false,
             probe: None,
+            command_text: None,
             material: 0,
             page_touched: false,
             page_grew: false,
@@ -5028,16 +5031,24 @@ will look undefined",
 
     /// What the preloaded format contributes to the cache key: a document starting
     /// from its own format cannot share a cache with one starting from the stock kernel.
+    /// What a kernel cache is keyed by beside its source and engine: the preload it
+    /// ends with and the configuration it was interpreted under
+    /// ([`crate::project::config::Config::interpretation`]), so a run never loads a
+    /// kernel another configuration built.
     fn preload_key(&self) -> u64 {
+        let roots = self.cache_roots();
+        let local = |p: &PathBuf| PathBuf::from(roots.canonical(&p.display().to_string()));
+        let settings = self.cfg.interpretation(&local, self.out.plugins.shell_escape);
+        let config = crate::caches::format::digest(serde_json::to_string(&settings).unwrap_or_default().as_bytes());
         let Some(source) = self.out.plugins.preload.as_ref().and_then(|p| p.source.as_ref()) else {
-            return 0;
+            return config;
         };
         let encoded = self.cache_roots().encode(&source.display().to_string());
         let mut hash = crate::caches::format::digest(encoded.as_bytes());
         if let Some(content) = crate::caches::format::content_hash(source) {
             hash ^= crate::caches::format::digest(&content.to_le_bytes());
         }
-        hash
+        hash ^ config
     }
 
     /// Interpret the preamble a project dumps into its own format (what a `.fmt`
@@ -7022,7 +7033,11 @@ will look undefined",
         if self.output_active() {
             return;
         }
+        let before = self.out.facts.text.at.len();
         crate::analysis::observe::typeset(self, c, span);
+        if self.command_text.is_some() {
+            self.command_char(c, before);
+        }
         if self.cfg.trace
             && self.cfg.trace_lines.is_some()
             && self.out.typeset.len() < LIMIT

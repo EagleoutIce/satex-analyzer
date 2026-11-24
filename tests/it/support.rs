@@ -346,7 +346,10 @@ pub fn seed_kernel(cfg: &Config) {
     static BUILT: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
     let dir = cfg.cache.dir.clone().expect("a cache directory to seed");
     let shared = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/scratch/test-kernel");
-    let key = format!("{:?}", (cfg.engine, &cfg.load, &cfg.kernel, &cfg.texmf));
+    // the kernel cache is keyed by all that changes the interpretation, so each such config builds its own
+    let interpreted =
+        serde_json::to_string(&cfg.interpretation(&|p| p.clone(), Default::default())).unwrap_or_default();
+    let key = format!("{:?}{interpreted}", (cfg.engine, &cfg.kernel, &cfg.texmf));
     static START: std::sync::OnceLock<std::time::SystemTime> = std::sync::OnceLock::new();
     let start = *START.get_or_init(|| std::time::SystemTime::now() - std::time::Duration::from_secs(1));
     let mut used = Vec::new();

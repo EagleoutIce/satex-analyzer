@@ -40,7 +40,7 @@ export const SCENARIOS = Object.entries(AREAS).flatMap(([area, list]) => list.ma
 export const TIERS = {
   quick: ['title-human', 'prose-burst', 'caption', 'pagebreak', 'fz-thanks-mark', 'click-footnote', 'click-macro-start',
     'math-display-preview', 'select-backspace', 'tint-bang', 'col-align', 'forest-child', 'tc-src-ref', 'dbl-pdf-tikz',
-    'plain-before-number', 'newpara-pdf', 'newpara-ts', 'after-macro-pdf', 'gutter-marker', 'close-untouched-page', 'close-edited-x'],
+    'plain-before-number', 'click-date-thesis', 'newpara-pdf', 'newpara-ts', 'after-macro-pdf', 'gutter-marker', 'close-untouched-page', 'close-edited-x'],
   perf: ['prose-burst', 'title-human', 'caption', 'burst-3rows', 'math-burst', 'bold', 'cold-first-findings', 'book-300-pages'],
 };
 

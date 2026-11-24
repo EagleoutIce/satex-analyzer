@@ -325,7 +325,7 @@ pub fn run(
     let dir = cfg.cache.dir.clone().or_else(crate::caches::format::default_cache_dir).ok_or("no cache directory")?;
     let dir = std::path::absolute(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
     std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
-    let Some(_lock) = try_lock(&file(&dir, "run")).map_err(|e| e.to_string())? else {
+    let Some(lock) = try_lock(&file(&dir, "run")).map_err(|e| e.to_string())? else {
         let _ = writeln!(out, "a background build runs already");
         return Ok(());
     };
@@ -360,6 +360,9 @@ pub fn run(
         true => "full",
     };
     set_state(&dir, end);
+    // Unlocked before the file closes: a child another thread forks meanwhile shares the open file
+    // until it execs, and would hold the lock past this return (`status` would say "running").
+    let _ = lock.unlock();
     let _ = writeln!(out, "{end}: {built} built of {} item(s)", prepared.len());
     Ok(())
 }

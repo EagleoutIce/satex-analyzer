@@ -5293,6 +5293,10 @@
         },
         "typeset": {
           "properties": {
+            "commands": {
+              "default": true,
+              "type": "boolean"
+            },
             "hyphenate": {
               "default": true,
               "type": "boolean"

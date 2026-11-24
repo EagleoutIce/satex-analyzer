@@ -773,9 +773,13 @@ details.more[open] > summary { margin-bottom: .3rem; }
 .rootmark { flex: none; font-size: .64rem; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; padding: 0 .35rem; border-radius: 999px; color: var(--accent); border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent); }
 .tcount { flex: none; min-width: 1.1rem; padding: 0 .3rem; border-radius: 999px; text-align: center; font-size: .68rem; font-weight: 700; color: var(--sev); background: color-mix(in srgb, var(--sev) 14%, transparent); }
 .tcount::before { content: none; }
-.tacts { display: none; flex: none; gap: .05rem; }
-.tree .file:is(:hover, :focus-within) .tacts { display: inline-flex; }
-.tree .file:is(:hover, :focus-within) .tcount { display: none; }
+/* a file's actions keep their room at the row's end, shown while it is hovered: they move nothing (shown into the flow
+   they pushed the name and its root mark aside). The findings count stands in that room until then */
+.tree .file { position: relative; }
+.tacts { display: inline-flex; visibility: hidden; flex: none; gap: .05rem; }
+.tree .tcount { position: absolute; right: .4rem; top: 50%; transform: translateY(-50%); }
+.tree .file:is(:hover, :focus-within) .tacts { visibility: visible; }
+.tree .file:is(:hover, :focus-within) .tcount { visibility: hidden; }
 .tact { font: inherit; font-size: .8rem; font-weight: 400; line-height: 1; padding: .12rem .28rem; border: 0; border-radius: .25rem; background: none; color: var(--muted); }
 .tact:hover:not(:disabled) { color: var(--accent); background: color-mix(in srgb, var(--fg) 8%, transparent); transform: none; box-shadow: none; }
 .tact[data-act=delete]:hover:not(:disabled), .tact.sure { color: var(--error); }
@@ -2153,7 +2157,15 @@ a.cmd-edit:hover, a.cmd-edit:focus-visible { background: color-mix(in srgb, var(
 /* the views as tabs where they fit, else one menu */
 #pdf-views-sel { display: none; field-sizing: content; box-sizing: border-box; height: var(--bar-h, 1.6rem); max-width: 100%; font-size: .72rem; font-weight: 500; padding: 0 .4rem; border-radius: 999px; border: 1px solid var(--pill-line); background: var(--bg); color: var(--fg); cursor: pointer; }
 #pdf-views-sel.pdf-err { color: var(--error); border-color: var(--error); }
-#pdf-views-sel:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+#pdf-views-sel:focus-visible, #pdf-page-go:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+/* the view menu and the page field as the bar's pills: the native arrow (large, in the error's red) a small chevron in
+   the text's colour, the field a pill of the same height, font and line with no spinner */
+#pdf-views-sel { appearance: none; padding: 0 1.2rem 0 .6rem; background-image: linear-gradient(45deg, transparent 50%, currentColor 50%), linear-gradient(135deg, currentColor 50%, transparent 50%); background-position: calc(100% - .82rem) 60%, calc(100% - .55rem) 60%; background-size: .28rem .28rem; background-repeat: no-repeat; }
+#pdf-views-sel:hover, #pdf-page-go:hover { border-color: var(--accent); }
+#pdf-page-go { appearance: textfield; -moz-appearance: textfield; box-sizing: border-box; width: 4.6rem; height: var(--bar-h, 1.6rem); min-height: var(--btn-h-sm); padding: 0 .6rem; font-family: inherit; font-size: .72rem; font-weight: 500; line-height: 1.2; font-variant-numeric: tabular-nums; text-align: center; border: 1px solid var(--pill-line); border-radius: 999px; background: var(--bg); color: var(--fg); }
+#pdf-page-go::-webkit-inner-spin-button, #pdf-page-go::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+#pdf-page-go::placeholder { color: var(--muted); opacity: 1; }
+#play-pdf.pdf-folded #pdf-page-go { display: none; }
 .pdf-bar.views-menu #pdf-views-sel { display: inline-block; }
 .pdf-bar.views-menu .pdf-views { display: none; }
 #play-pdf.pdf-folded #pdf-views-sel { display: none; }
@@ -2784,11 +2796,11 @@ pre.out-block:hover .out-meta { opacity: .85; }
 /* a landing window opens the playground on its example: the whole window is the link */
 .shot-live.shot-link, .shot-live.shot-link * { cursor: pointer; }
 
-/* the PDF bar's fold button: its chevron only (the tooltip names it), and while hidden it takes no room at all,
-   so the bar's other buttons sit where they would without it */
+/* the PDF bar's fold button: its chevron only (the tooltip names it). Hidden until the bar is hovered, it keeps its
+   room: shown it moves nothing (it took no width while hidden, so its showing shifted the buttons beside it) */
 .pdf-bar #pdf-fold .fold-label { display: none; }
 .pdf-bar #pdf-fold { padding: 0 .3rem; min-width: 0; gap: 0; }
 @media (hover: hover) {
-  .pdf-bar #pdf-fold { width: 0; padding: 0; border-width: 0; margin: 0; overflow: hidden; }
-  .pdf-bar:hover #pdf-fold, .pdf-bar:focus-within #pdf-fold, #pdf-fold[aria-pressed="true"] { width: auto; padding: 0 .3rem; border-width: 1px; }
+  .pdf-bar #pdf-fold { opacity: 0; transition: opacity var(--quick, .12s); }
+  .pdf-bar:hover #pdf-fold, .pdf-bar:focus-within #pdf-fold, #pdf-fold[aria-pressed="true"] { opacity: 1; }
 }

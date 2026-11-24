@@ -377,9 +377,10 @@ interface Stream {
   };
   function floating(cls: string): SiteFloat {
     const el = Object.assign(document.createElement('div'), { className: `tip ${cls}`, hidden: true, role: 'tooltip' });
-    let timer = 0;
+    // the HTML shown: the same card asked again (a run's end, a rehover) is not written again, which redrew it (a flicker)
+    let timer = 0, shown = '';
     const later = (f: () => void, ms: number) => { clearTimeout(timer); timer = setTimeout(f, ms); };
-    const hide = (ms = 0) => later(() => { el.hidden = true; delete el.dataset.pin; }, ms);
+    const hide = (ms = 0) => later(() => { el.hidden = true; shown = ''; delete el.dataset.pin; }, ms);
     el.addEventListener('mouseenter', () => clearTimeout(timer));
     el.addEventListener('mouseleave', () => { if (!el.dataset.pin) hide(120); });
     /** Below `at` (an element or a rect), else above it; beside `host` when that is a card it would cover. */
@@ -389,7 +390,7 @@ interface Stream {
       // a modal dialog's top layer hides anything outside it
       const layer = (at as Element).closest?.('dialog[open]') ?? document.querySelector('dialog[open]') ?? document.body;
       if (el.parentElement !== layer) layer.append(el);
-      el.innerHTML = html;
+      if (el.hidden || html !== shown) { el.innerHTML = html; shown = html; }
       el.hidden = false;
       const a = (at as Element).getBoundingClientRect?.() ?? (at as DOMRect), h = host?.getBoundingClientRect() ?? a, w = el.offsetWidth, ht = el.offsetHeight;
       let left = clamp(a.left, 8, innerWidth - w - 8), top = h.bottom + 6 + ht <= innerHeight ? h.bottom + 6 : h.top - ht - 6;

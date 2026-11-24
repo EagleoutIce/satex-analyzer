@@ -39,7 +39,9 @@ type Line<P> = { right: number; left: number; indent: number; skip: number; pars
 /** Rows laid out: each its left edge, its pieces placed (`x`), the page row it takes (`from`: -2 the first, -1 a new
  * one) and a new row's baseline shift from the row before (`dy`); `freed` the page rows whose words all went up. */
 /** A piece of prose as typed (pdfedit.ts `prose`). */
-type Prose = { t: string; gap: boolean; par: boolean; ctx: string; brk?: boolean; dim?: boolean };
+type Prose = { t: string; gap: boolean; par: boolean; ctx: string; brk?: boolean; dim?: boolean; box?: unknown };
+/** What a control word sets in the echo: a glyph's text, or a box the run set (`box`, its letters `t`). */
+type Spelled = string | { t: string; box: unknown } | undefined;
 /** What a key command's call sets in the echo (pdfedit.ts `refSet`): its text, `sure` false for a guess. */
 type RefSet = { t: string; sure: boolean };
 /** A typeset row as `satex/typeset` sends it, the parts `refFacts` reads. */
@@ -112,7 +114,7 @@ declare global {
       apart<B extends Flat>(boxes: B[]): B[];
       relaid(row: [number, number, string][], k: number, now: string, width: (s: string) => number): [number, number, string][];
       reflow<P extends Piece>(pieces: P[], x0: number, line: Line<P>): Flow<P>;
-      prose(raw: string, refs?: (cmd: string, arg: string) => RefSet, outer?: string[]): Prose[];
+      prose(raw: string, refs?: (cmd: string, arg: string) => RefSet, outer?: string[], sym?: (name: string) => Spelled): Prose[];
       refFacts(rows: RefRow[], textOf: (path: string) => string | null, aux: string[]): RefFacts;
       refSet(f: RefFacts, cmd: string, arg: string, labelled: (key: string) => boolean): RefSet;
       auxLabels(aux: string[]): { labels: Map<string, string[]>; bib: Map<string, string[]> };
@@ -1799,8 +1801,8 @@ declare global {
    * An environment's `\\begin{name}`/`\\end{name}` sets no word (the kernel reads `name` as a csname, ltmiscen.dtx).
    * The first piece has no gap and may be empty, as may the last (the caret's empty word after a space).
    * A control word eats the spaces after it, one line end among them (TeX's state S); one `sym` spells (`\\S`: §)
-   * sets that glyph. */
-  function prose(raw: string, refs?: (cmd: string, arg: string) => RefSet, outer: string[] = [], sym?: (name: string) => string | undefined): Prose[] {
+   * sets that glyph; one it gives a box (`\\TeX` as the run set it) is a piece of its own holding that box. */
+  function prose(raw: string, refs?: (cmd: string, arg: string) => RefSet, outer: string[] = [], sym?: (name: string) => Spelled): Prose[] {
     const re = /(?<!\\)(%[^\n]*)|(\\\\\*?(?:\s*\[[^\]]*\])?)|\\(?:begin|end)\s*\{[^{}]*\}|\\([A-Za-z@]+)\*?\s*\{|\\([A-Za-z@]+)\*?|\\(?=[^A-Za-z@\s])|[{}$^_]|[\s~]+|[^]/gu;
     // per open group: its context
     // (`outer`: the contexts of the groups `raw` starts in, closed by its unmatched `}`)
@@ -1827,8 +1829,10 @@ declare global {
       if (brk) { if (cur.t || cur.brk || !out.length) next(false); cur.brk = true; continue; }
       if (com || x[0] === '\\' && !arg && !cmd) continue;
       if (cmd) { const sp = /[ \t]*(?:\n(?![ \t]*\n))?[ \t]*/y; sp.lastIndex = re.lastIndex; sp.exec(raw); re.lastIndex = sp.lastIndex; }
-      const glyph = cmd && sym?.(cmd);
-      if (arg) groups.push({ ctx: arg });
+      // a box the run set for the command alone (`\\TeX{}`): it reads no argument, its braces are a group of their own
+      const glyph = sym?.(cmd ?? arg ?? ''), boxed = !!glyph && typeof glyph === 'object';
+      if (boxed) { if (cur.t) next(false); Object.assign(cur, { t: glyph.t, box: glyph.box, ctx: top().ctx }); next(false); if (arg) groups.push({ ctx: top().ctx }); }
+      else if (arg) groups.push({ ctx: arg });
       else if (glyph) { if (cur.t && cur.ctx !== top().ctx) next(false); if (!cur.t) cur.ctx = top().ctx; cur.t += glyph; }
       else if (cmd) top().ctx = cmd;
       else if (x === '{') groups.push({ ctx: top().ctx });

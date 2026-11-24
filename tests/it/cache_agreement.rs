@@ -559,3 +559,36 @@ fn a_global_then_local_write_in_a_group_load_leaves_the_global_value() {
                          \\begin{document}\nx\n\\end{document}\n";
     in_group_runs("mix-group", "mix", STY, GROUP, &[GROUP]);
 }
+
+/// Intuition: a kernel cache holds what the kernel's code did under the
+/// configuration that read it, so another configuration never loads it. A
+/// kernel built under `limits.choices: 1` first, then a run under the
+/// default configuration over the same cache, gives what a fresh default
+/// run gives. Pins the kernel cache keyed without its configuration: the
+/// first test of a CI shard to build it decided what every later one
+/// loaded (a cut l3fp loop took 5.96M steps there, 1.89M alone).
+#[test]
+fn a_kernel_built_under_another_configuration_is_never_loaded() {
+    if !installed() {
+        return;
+    }
+    // the l3fp loop a line budget cuts, as in `documents::cut_inside_library_call_drops_the_call`
+    let fixture =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/documents/cut_inside_library_call/main.tex");
+    let source = std::fs::read_to_string(fixture).expect("the fixture");
+    let (shared, fresh) = (project("kernel-config-shared"), project("kernel-config-fresh"));
+    let mut other = config(&shared);
+    other.limits.choices = 1;
+    analyze(&shared, "\\relax\n", &other);
+    let cut = |dir: &Path| Config {
+        limits: satex::project::config::Limits { line_steps: 1_000_000, ..config(dir).limits },
+        ..config(dir)
+    };
+    let after = analyze(&shared, &source, &cut(&shared));
+    let alone = analyze(&fresh, &source, &cut(&fresh));
+    let steps = |a: &Analysis| a.steps - a.load_steps;
+    let codes = |a: &Analysis| a.facts.diagnostics.iter().map(|d| (d.code, d.span, d.count)).collect::<Vec<_>>();
+    assert_eq!(steps(&after), steps(&alone), "the other configuration's kernel was loaded");
+    assert_eq!(codes(&after), codes(&alone));
+    let _ = (std::fs::remove_dir_all(shared), std::fs::remove_dir_all(fresh));
+}

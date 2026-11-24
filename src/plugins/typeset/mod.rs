@@ -3,6 +3,7 @@
 //! only through [`Facts`], the state it ended in: parameters, codes, fonts and
 //! hyphenation tables. `plugins.typeset.<name>` in `satex.yaml` switches each.
 
+pub mod commands;
 pub mod hyphenate;
 pub mod linebreak;
 pub mod lines;
@@ -30,7 +31,7 @@ pub struct Plugin {
     pub answer: fn(&mut Facts, &str, &Json) -> Json,
 }
 
-pub const PLUGINS: [Plugin; 3] = [
+pub const PLUGINS: [Plugin; 4] = [
     Plugin {
         name: "hyphenate",
         request: "satex/hyphenate",
@@ -54,6 +55,13 @@ pub const PLUGINS: [Plugin; 3] = [
         about: "math symbols as the run's math fonts set them: their math codes, family fonts and metrics",
         enabled: |s| s.mathwidths,
         answer: |facts, _, params| mathwidths::answer(facts, params),
+    },
+    Plugin {
+        name: "commands",
+        request: "satex/commandText",
+        about: "what a control word typesets alone: its characters, kerns and raised or lowered boxes",
+        enabled: |s| s.commands,
+        answer: |facts, _, params| commands::answer(facts, params),
     },
 ];
 

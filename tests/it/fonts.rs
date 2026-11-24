@@ -429,7 +429,7 @@ fn a_font_without_metrics_leaves_the_node_type_unknown() {
 /// luaotfload finds a font by its family name in the trees, and hands out one
 /// font per face, size and features: `\fontname` is the name of the first
 /// request of that face, so two spellings of a family are the same font and
-/// its bold is another. Expected values: `lualatex` (TeX Live 2022 and 2026).
+/// its bold is another. Expected values: `lualatex` (TeX Live 2022, 2025 and 2026).
 /// Pins every LuaTeX font given by name being of unknown existence and name:
 /// fontspec's `\ifx\font\nullfont` and its bold and italic tests forked on them
 /// without end (`\setmainfont{Libertinus Serif}`).

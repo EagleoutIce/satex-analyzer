@@ -538,11 +538,13 @@ pub struct TypesetSwitches {
     pub linebreak: bool,
     /// `satex/mathwidths`: math symbols' widths from the run's math fonts.
     pub mathwidths: bool,
+    /// `satex/commandText`: what a control word typesets alone, from a sandbox of the run.
+    pub commands: bool,
 }
 
 impl Default for TypesetSwitches {
     fn default() -> TypesetSwitches {
-        TypesetSwitches { hyphenate: true, linebreak: true, mathwidths: true }
+        TypesetSwitches { hyphenate: true, linebreak: true, mathwidths: true, commands: true }
     }
 }
 
@@ -3513,6 +3515,67 @@ fn read_config_value(path: &Path) -> Result<serde_yaml_ng::Value, String> {
 }
 
 impl Config {
+    /// What of the configuration changes the interpretation, the rest at its
+    /// default: the key every cache of interpreted code (the kernel, a
+    /// package) is stored under. `local` writes a path as the cache's trees
+    /// do, and `shell_escape` is the `\write18` access in effect.
+    pub fn interpretation(&self, local: &dyn Fn(&PathBuf) -> PathBuf, shell_escape: ShellEscape) -> Config {
+        let mut settings = self.clone();
+        settings.source = None;
+        settings.cache = crate::project::config::Cache::default();
+        // Only what changes the interpretation keys a cache: not how a
+        // run reports, lints or traces, not its resource limits, and not
+        // the engine as configured (the engine in effect is keyed above).
+        let defaults = crate::project::config::Config::default();
+        settings.verbose = 0;
+        settings.timings = false;
+        settings.gaps = defaults.gaps.clone();
+        settings.lint_off = Vec::new();
+        settings.lints = defaults.lints.clone();
+        settings.latex_alternatives = Default::default();
+        // conventions past these steer only reports and completion
+        let c = settings.conventions;
+        settings.conventions = crate::project::config::Conventions {
+            internal: c.internal,
+            definers: c.definers,
+            signatures: c.signatures,
+            ..defaults.conventions.clone()
+        };
+        settings.profile = None;
+        settings.profiles = defaults.profiles.clone();
+        settings.depp = defaults.depp.clone();
+        settings.lsp = defaults.lsp.clone();
+        // Which files the project takes as given steers reports and fixes only
+        // (`linter::Frozen`); its globs are absolute, so they would key a cache by the folder.
+        // The build, the documentation shown and slices are tools after the run.
+        settings.project = defaults.project.clone();
+        (settings.compile, settings.docs, settings.slice) =
+            (defaults.compile.clone(), defaults.docs.clone(), defaults.slice.clone());
+        // kept call arguments are a report (completion reads them), not interpretation
+        settings.record_arguments = false;
+        settings.engine = None;
+        // the `\write18` access in effect, which build files may set (`\shellescape`)
+        settings.shell_escape = Some(shell_escape);
+        // a segment keys on what it makes of the clock, not on the setting: one tree
+        // serves every date
+        settings.clock = Default::default();
+        // Where the trees are is no part of what a package does: each
+        // segment checks its lookups and file contents itself.
+        settings.texlive.root = None;
+        settings.texmf.bundle = None;
+        settings.texmf.roots.clear();
+        settings.search_paths = settings.search_paths.iter().map(local).collect();
+        settings.preload = settings.preload.as_ref().map(local);
+        (settings.trace, settings.trace_lines, settings.trace_col, settings.trace_file) = (false, None, 0, None);
+        (settings.trace_end_col, settings.trace_steps) = (0, None);
+        let l = &mut settings.limits;
+        (l.seconds, l.memory, l.threads, l.cache_size) = (0, Default::default(), 0, Default::default());
+        (l.degrade_at_percent, l.facts, l.vertices, l.trace, l.steps) = (0, 0, 0, 0, 0);
+        // the editor's probes only: no part of what a package does
+        l.probe_contexts = 0;
+        settings
+    }
+
     pub fn distribution_request(&self) -> crate::caches::distribution::Request {
         crate::caches::distribution::Request {
             roots: self.texmf.roots.clone(),

@@ -2744,6 +2744,9 @@ impl Machine<'_> {
         }
         let now = self.out.facts.text.at.len() as u32;
         let inside = nest.list.within(Modes::INTERNAL_VERTICAL.union(Modes::RESTRICTED_HORIZONTAL));
+        if self.command_text.is_some() {
+            self.command_box(&nest, now, kind == BoxState::VBox, dims, nest.placed && nest.target.is_none());
+        }
         if let Some((register, global, within)) = nest.target {
             let ranges = self.gather_chars(&nest, now);
             self.set_aside(nest.from, now);

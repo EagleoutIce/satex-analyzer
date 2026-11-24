@@ -25,6 +25,10 @@ export default [
   // the user's 18:18 report: the inline math n of "A run of $n$ lines" (thesis chapter.tex, before a display formula) was refused
   { kind: 'click', name: 'click-math-thesis', word: { word: 'n', after: 'of' }, src: at(/A run of \$(n)\$/),
     steps: 'thesis.tex, PDF, Type on; click the start and end of the math n in "A run of n lines with k paths costs": the caret in $n$ of chapter.tex' },
+  // the user's 2026-11-24 report: "2026" of \date{November 2026}, set by \maketitle after the author in the same call, was
+  // refused ("comes from code satex cannot place"): its typeset row had no sites, so no character of it was placed
+  { kind: 'click', name: 'click-date-thesis', word: is('2026'), src: at(/\\date\{November (2026)\}/),
+    steps: 'thesis.tex, PDF, Type on; click the start, middle and end of "2026" of the title page\'s date: the caret in \\date\'s argument (was refused)' },
   // display math in thesis chapter.tex: a click in the equation and in an align row puts the caret into the source math
   { kind: 'click', name: 'click-eq-thesis', word: { word: 'T', beside: '(n,' }, src: at(/\n  (T)\(n, k\)/),
     steps: 'thesis.tex, PDF, Type on; click the start and end of T in the displayed T(n, k) = …: the caret before and after the T of chapter.tex\'s equation' },

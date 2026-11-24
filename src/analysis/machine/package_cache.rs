@@ -1430,61 +1430,9 @@ impl Machine<'_> {
             let mut hash = Fnv::new();
             hash.put(&(crate::caches::format::cache_key(), self.out.plugins.engine.as_str()));
             parts.push(("engine".into(), std::mem::replace(&mut hash, Fnv::new()).0));
-            let mut settings = self.cfg.clone().into_owned();
-            settings.source = None;
-            settings.cache = crate::project::config::Cache::default();
-            // Only what changes the interpretation keys a cache: not how a
-            // run reports, lints or traces, not its resource limits, and not
-            // the engine as configured (the engine in effect is keyed above).
-            let defaults = crate::project::config::Config::default();
-            settings.verbose = 0;
-            settings.timings = false;
-            settings.gaps = defaults.gaps.clone();
-            settings.lint_off = Vec::new();
-            settings.lints = defaults.lints.clone();
-            settings.latex_alternatives = Default::default();
-            // conventions past these steer only reports and completion
-            let c = settings.conventions;
-            settings.conventions = crate::project::config::Conventions {
-                internal: c.internal,
-                definers: c.definers,
-                signatures: c.signatures,
-                ..defaults.conventions.clone()
-            };
-            settings.profile = None;
-            settings.profiles = defaults.profiles.clone();
-            settings.depp = defaults.depp.clone();
-            settings.lsp = defaults.lsp.clone();
-            // Which files the project takes as given steers reports and fixes only
-            // (`linter::Frozen`); its globs are absolute, so they would key a cache by the folder.
-            // The build, the documentation shown and slices are tools after the run.
-            settings.project = defaults.project.clone();
-            (settings.compile, settings.docs, settings.slice) =
-                (defaults.compile.clone(), defaults.docs.clone(), defaults.slice.clone());
-            // kept call arguments are a report (completion reads them), not interpretation
-            settings.record_arguments = false;
-            settings.engine = None;
-            // the `\write18` access in effect, which build files may set (`\shellescape`)
-            settings.shell_escape = Some(self.out.plugins.shell_escape);
-            // a segment keys on what it makes of the clock, not on the setting: one tree
-            // serves every date
-            settings.clock = Default::default();
-            // Where the trees are is no part of what a package does: each
-            // segment checks its lookups and file contents itself.
             let roots = self.cache_roots();
-            settings.texlive.root = None;
-            settings.texmf.bundle = None;
-            settings.texmf.roots.clear();
             let local = |p: &PathBuf| PathBuf::from(roots.canonical(&p.display().to_string()));
-            settings.search_paths = settings.search_paths.iter().map(local).collect();
-            settings.preload = settings.preload.as_ref().map(local);
-            (settings.trace, settings.trace_lines, settings.trace_col, settings.trace_file) = (false, None, 0, None);
-            (settings.trace_end_col, settings.trace_steps) = (0, None);
-            let l = &mut settings.limits;
-            (l.seconds, l.memory, l.threads, l.cache_size) = (0, Default::default(), 0, Default::default());
-            (l.degrade_at_percent, l.facts, l.vertices, l.trace, l.steps) = (0, 0, 0, 0, 0);
-            // the editor's probes only: no part of what a package does
-            l.probe_contexts = 0;
+            let settings = self.cfg.interpretation(&local, self.out.plugins.shell_escape);
             hash.write(serde_json::to_string(&settings).unwrap_or_default().as_bytes());
             parts.push(("configuration".into(), std::mem::replace(&mut hash, Fnv::new()).0));
             hash.put(&(self.prefixes.global, self.prefixes.long, self.prefixes.outer, self.prefixes.protected));
@@ -1947,6 +1895,7 @@ impl Machine<'_> {
             call_in_library: _,
             ending_output: _,
             probe: _,
+            command_text: _,
             // Used at next step, never across load.
             cacheable_load: _,
             building: _,

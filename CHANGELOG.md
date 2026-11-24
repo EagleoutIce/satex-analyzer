@@ -9,6 +9,11 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 
 ### Site
 
+- `fix` **A command typed into the PDF echoes what it typesets.** `\TeX`, `\LaTeX` or a logo of your own showed nothing until the build. The echo now sets what the run sets for the command alone, with its kerns and its raised and lowered letters (`satex/commandText`).
+- `fix` **A click on the date of a title page puts the caret into `\date`.** Text that `\maketitle` sets from a stored argument after another one (the date after the author) was refused as "code satex cannot place".
+- `fix` **A finding's hover card no longer flickers while runs come and go.** The card is written again only when its text changes.
+- `fix` **Controls that show on hover keep their place.** The PDF bar's fold button and the file tree's row actions no longer push their neighbours aside.
+- `fix` **The PDF bar's page selection looks like the bar's other buttons.**
 - `perf` **The benchmark page shows the results for 0.2.5.** [`0a6f260`] [`247e3fb`]
 - `fix` **A click into an empty table cell in the PDF puts the caret there.** A cell with no text, only spaces or a `~` has no word to click, so Type mode placed no caret. The caret now goes to the cell's place in the source, between its `&`s, drawn where the column's alignment sets the first letter, and typing fills the cell.
 - `feat` **Rows and columns of a table are inserted, deleted and reordered from the PDF and the Typeset view.** A + stands on the line between two columns (under the table) or two rows (left of it) the pointer is near, a × under the pointer's column and left of its row; the controls stay while the pointer is on its way to them. They show once the pointer rests, muted until aimed at, and never during a drag (a column edge, a gap, a node) or with a menu open. The chip's name and the row's grip drag to reorder. A right click on a cell, in the PDF or the Typeset view, has Row and Column submenus. The table is rewritten as the table dialog writes it: the column spec, every row's cells, `\multicolumn` spans grown or shrunk, a rule moved with its row or column, `\cline` and `\cmidrule` renumbered. One undo takes it back.
@@ -65,6 +70,7 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 
 ### Analysis
 
+- `fix` **The kernel cache is keyed on the settings that change what it holds.** A kernel built under other limits or assumptions (`choices`, `assume_compiles` …) was loaded by every later run on the same cache directory, so a run's result depended on which run built the kernel first.
 - `fix` `TL ≤ 2021` **`\creationdate` under an older XeTeX may print more than the date.** XeTeX before 0.999994 reads string-pool bytes after it. satex was sure of the date alone.
 - `fix` **The names a file defines are found again for other definers.** A memo kept the first caller's answer for every later one.
 - `fix` **`\parshape` with an unknown count reads its pairs as the shape's lines, and any count stays within the budgets** (`limits.parshape_lines`, default 64 kept). An unknown count left the pairs unread, so wrapfig's `\z@ \hsize` ran as an assignment and set `\z@` to 345pt. The next shape asked for 22 million lines and ran out of memory on TeX Live 2019.
@@ -307,6 +313,7 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 
 ### Build and infrastructure
 
+- `fix` **`satex cache status` no longer says "running" right after the background builder ended.** The builder unlocks its lock file before closing it, so a child process another thread started at that moment cannot hold it.
 - `fix` **Caches are keyed on the build's source digest alone.** The hand-bumped encoding and semantic versions are gone from cache file names, cache files and archives. A change to what a cache holds or how it is stored changes the digest, so no number needs bumping. Caches of an earlier satex are rebuilt once and pruned like any other build's.
 - `feat` **A container image: `docker run --rm -v "$PWD:/work" ghcr.io/eagleoutice/satex lint`.** It holds `satex`, TeX Live with the recommended LaTeX packages, latexmk and the interpreted kernel. Each release publishes it to GHCR. `lsp --host 0.0.0.0 --port 2087` serves the language server from it.
 
