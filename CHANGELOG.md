@@ -75,6 +75,7 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 
 ### Analysis
 
+- `fix` **A TikZ `to[bend …]` path to a point of unknown width no longer reports false pgfmath errors.** A widened loop head now keeps pgfmath's operation stack paired with its top, so a pop never takes `neg` or the empty operator from a stack that never held it. Climbing numbers and the typed cells each pass mints leave the pairing, so the loop still converges.
 - `fix` **A beamer slide repeats a picture as exactly as the first slide.** Beamer typesets each slide from a copy of the frame's text. A conditional met again in that copy was taken for another pass of the same loop, summarized after three, and a picture's size became unknown on the second slide (false errors in rounded shadow boxes). A copy met at another place is now another call.
 - `fix` **A run served from the package cache reports what a run that reads the packages reports.** Kept call effects were keyed by where a definition sat in memory, which a `\let` copy shares only in a run that reads the package. They are now keyed by the definition's text and shape, so cold and warm runs replay the same calls.
 - `fix` **A run that ran out of Rust stack is not cached.** Where an expansion nests too deep, satex widens it; how deep it gets depends on the thread. Such a kernel, package segment or document result is no longer stored, so a later run never reads the widened state as if it were complete.
