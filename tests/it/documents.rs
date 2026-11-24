@@ -755,6 +755,7 @@ fn cut_inside_library_call_drops_the_call() {
     assert!(defined(&a, "SatexReachedEnd"), "{}", crate::support::presence(&a, "SatexReachedEnd"));
     assert_eq!(count(&a, "caused-library-error"), 0, "{:#?}", codes(&a));
     let steps = a.steps - a.load_steps;
+    crate::support::record_steps("cut-library", steps);
     assert!(steps < CUT_LIBRARY_STEPS, "{steps} analysis steps, budget {CUT_LIBRARY_STEPS}");
 }
 

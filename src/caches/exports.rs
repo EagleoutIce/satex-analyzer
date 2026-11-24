@@ -471,12 +471,16 @@ impl Exports {
     }
 }
 
-/// Whether the text of `file` defines `name` with one of `definers`: its names read once per process.
+/// Whether the text of `file` defines `name` with one of `definers`: its names read once per
+/// process for each set of definers, so what one run's definers found never answers another's.
 pub fn defined_in(file: &Path, definers: &HashSet<&str>, name: &str) -> bool {
     type Names = std::sync::Arc<HashSet<String>>;
-    static READ: std::sync::Mutex<Option<HashMap<PathBuf, Names>>> = std::sync::Mutex::new(None);
+    type Memo = HashMap<(PathBuf, Vec<String>), Names>;
+    static READ: std::sync::Mutex<Option<Memo>> = std::sync::Mutex::new(None);
+    let mut by: Vec<String> = definers.iter().map(|d| d.to_string()).collect();
+    by.sort_unstable();
     let Ok(mut read) = READ.lock() else { return false };
-    let names = read.get_or_insert_with(HashMap::default).entry(file.to_path_buf()).or_insert_with(|| {
+    let names = read.get_or_insert_with(HashMap::default).entry((file.to_path_buf(), by)).or_insert_with(|| {
         let text = std::fs::read(file).map(|b| String::from_utf8_lossy(&b).into_owned()).unwrap_or_default();
         std::sync::Arc::new(scan(&text, definers).0.into_iter().collect())
     });
@@ -593,6 +597,23 @@ fn group(tokens: &[crate::engine::tex::Token]) -> String {
 
 #[cfg(test)]
 mod tests {
+    /// The names a file defines depend on the definers asked with: a second
+    /// run that knows `\newcommand` finds `\a`, though a first run that knew
+    /// only `\def` read the file. Pins a process-wide memo keyed by the file
+    /// alone, whose answer was the first caller's in every later run.
+    #[test]
+    fn a_file_is_read_again_for_other_definers() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("target/scratch/defined-in-test");
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join(format!("p{}.sty", std::process::id()));
+        std::fs::write(&file, "\\newcommand\\a{}\\def\\b{}").unwrap();
+        let def = ["def"].into_iter().collect();
+        let both = ["def", "newcommand"].into_iter().collect();
+        assert!(super::defined_in(&file, &def, "b") && !super::defined_in(&file, &def, "a"));
+        assert!(super::defined_in(&file, &both, "a"), "the second set's answer, not the first's");
+        let _ = std::fs::remove_file(&file);
+    }
+
     #[test]
     fn definitions_and_loads_are_read_off_the_text() {
         let definers = ["def", "newcommand", "newrobustcmd"].into_iter().collect();

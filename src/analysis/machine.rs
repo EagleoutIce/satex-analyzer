@@ -4597,7 +4597,8 @@ impl<'a> Machine<'a> {
         use crate::engine::builtins::{Convert, TextOf};
         let name = match meaning.prim()? {
             Primitive::Text(TextOf::JobName) => JOB_NAME,
-            Primitive::Convert(Convert::CreationDate) => CREATION_DATE,
+            // an older XeTeX's date is no copy of the input ([`Machine::creation_date`])
+            Primitive::Convert(Convert::CreationDate) if !self.date_overreads() => CREATION_DATE,
             _ => return None,
         };
         Some(self.intern(name))
@@ -4648,10 +4649,22 @@ impl<'a> Machine<'a> {
     /// assignments to `\year` and its like do not move (pdfTeX manual).
     pub(crate) fn creation_date(&mut self, span: Span) -> Vec<Token> {
         self.clock_read(span);
-        match self.ambient_text(CREATION_DATE, span) {
+        let mut text = match self.ambient_text(CREATION_DATE, span) {
             Some(text) => text,
             None => self.unknown_pdf_date(span),
+        };
+        // an older XeTeX's date runs on into the string pool: printed characters, perhaps none
+        if self.date_overreads() {
+            let printed = crate::engine::tex::TextClass::PRINTED;
+            text.push(self.unknown_text(Unk::Class(printed, false, None, &[]), span));
         }
+        text
+    }
+
+    /// Whether `\creationdate` prints more than the date ([`crate::engine::commands::xetex_date_overreads`]).
+    fn date_overreads(&self) -> bool {
+        self.out.plugins.engine == crate::project::config::Engine::XeTeX
+            && crate::engine::commands::xetex_date_overreads()
     }
 
     /// A date of the form `\pdfcreationdate` gives, its digits unknown:

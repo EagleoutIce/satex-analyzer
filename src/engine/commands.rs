@@ -83,6 +83,13 @@ fn xetex_release() -> (i64, String) {
     parsed.unwrap_or((XETEX_VERSION, XETEX_REVISION.to_string()))
 }
 
+/// Whether the installed XeTeX's `\creationdate` prints string-pool bytes after the date:
+/// XeTeX 0.999991 (TeX Live 2019) writes `D:…Z` and then whatever followed it in the pool,
+/// 0.999994 (TeX Live 2022) the date alone. Releases between are taken as the older.
+pub(crate) fn xetex_date_overreads() -> bool {
+    xetex_release().1.strip_prefix('.').and_then(|r| r.parse::<u32>().ok()).is_some_and(|r| r < 999_994)
+}
+
 thread_local! {
     /// pdfTeX's `\ifincsname`: how many `\csname`/`\ifcsname` scans are open. Nest only while running, so a counter is exact.
     static IN_CSNAME: Cell<usize> = const { Cell::new(0) };

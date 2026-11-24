@@ -9,6 +9,7 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 
 ### Site
 
+- `perf` **The benchmark page shows the results for 0.2.5.** [`0a6f260`] [`247e3fb`]
 - `fix` **A click into an empty table cell in the PDF puts the caret there.** A cell with no text, only spaces or a `~` has no word to click, so Type mode placed no caret. The caret now goes to the cell's place in the source, between its `&`s, drawn where the column's alignment sets the first letter, and typing fills the cell.
 - `feat` **Rows and columns of a table are inserted, deleted and reordered from the PDF and the Typeset view.** A + stands on the line between two columns (under the table) or two rows (left of it) the pointer is near, a × under the pointer's column and left of its row; the controls stay while the pointer is on its way to them. They show once the pointer rests, muted until aimed at, and never during a drag (a column edge, a gap, a node) or with a menu open. The chip's name and the row's grip drag to reorder. A right click on a cell, in the PDF or the Typeset view, has Row and Column submenus. The table is rewritten as the table dialog writes it: the column spec, every row's cells, `\multicolumn` spans grown or shrunk, a rule moved with its row or column, `\cline` and `\cmidrule` renumbered. One undo takes it back.
 - `feat` **The landing page's compile numbers: a 184-page thesis with figures, one measure throughout.** A one-edit rebuild of a generated thesis (TikZ and pgfplots figures every fifth page, hyperref) takes 1.5 s against latexmk's 2.0 s. Every ratio is latexmk's time over satex's, the number on top of each tile. That the output matches latexmk is said once, as a fact.
@@ -64,6 +65,8 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 
 ### Analysis
 
+- `fix` `TL ≤ 2021` **`\creationdate` under an older XeTeX may print more than the date.** XeTeX before 0.999994 reads string-pool bytes after it. satex was sure of the date alone.
+- `fix` **The names a file defines are found again for other definers.** A memo kept the first caller's answer for every later one.
 - `fix` **`\parshape` with an unknown count reads its pairs as the shape's lines, and any count stays within the budgets** (`limits.parshape_lines`, default 64 kept). An unknown count left the pairs unread, so wrapfig's `\z@ \hsize` ran as an assignment and set `\z@` to 345pt. The next shape asked for 22 million lines and ran out of memory on TeX Live 2019.
 - `fix` **A lint probe is bounded by steps, not the clock** (`limits.provider_steps`). A probe the clock stopped counted as "does not take the call" and was kept, so a finding could depend on machine load.
 - `fix` **Without a configured year, satex reads the TeX Live whose `tex` is on `PATH`**, not the newest one under `/usr/local/texlive`.
