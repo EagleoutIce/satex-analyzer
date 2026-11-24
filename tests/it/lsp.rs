@@ -5764,13 +5764,16 @@ fn glossary_manager_round_trips() {
 
 #[test]
 fn managers_switch_off() {
-    for plugin in ["glossary", "theorem", "bibliography", "index"] {
-        let set = format!("type_plugins.{plugin}.enabled=false");
-        let (mut server, uri, dir) = open_set(&format!("off-{plugin}"), GLOSSARY, &[&set]);
+    // one server with every manager off: each switch is read on its own, one run is enough
+    let plugins = ["glossary", "theorem", "bibliography", "index"];
+    let sets: Vec<String> = plugins.iter().map(|p| format!("type_plugins.{p}.enabled=false")).collect();
+    let sets: Vec<&str> = sets.iter().map(String::as_str).collect();
+    let (mut server, uri, dir) = open_set("off-managers", GLOSSARY, &sets);
+    for plugin in plugins {
         assert_eq!(manager(&mut server, &uri, plugin), Value::Null, "{plugin}");
-        server.shutdown();
-        std::fs::remove_dir_all(dir).ok();
     }
+    server.shutdown();
+    std::fs::remove_dir_all(dir).ok();
     let (mut server, uri, dir) = open_set("off-savebox", SAVEBOX, &["type_plugins.savebox.enabled=false"]);
     let actions = at(&mut server, &uri, "textDocument/codeAction", 4, 9);
     assert!(!actions.to_string().contains("in a box"), "{actions}");
