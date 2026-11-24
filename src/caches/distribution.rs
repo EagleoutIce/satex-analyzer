@@ -168,6 +168,11 @@ pub fn files_with(roots: &[PathBuf], ext: &str) -> Vec<(String, PathBuf)> {
     files
 }
 
+/// Whether the index of `roots` (their ls-R files, the playground's bundle) names a file `name`.
+pub fn has_file(roots: &[PathBuf], name: &str) -> bool {
+    index_for(roots, None).0.get(name).is_some_and(|paths| !paths.is_empty())
+}
+
 /// Which index `roots` have now: changes when they are indexed again, so a
 /// table built from [`files_with`] knows when to build again.
 pub fn index_id(roots: &[PathBuf]) -> usize {

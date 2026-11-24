@@ -9,6 +9,8 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 
 ### Site
 
+- `feat` **The playground's examples compile without a download.** The site build runs each example with pdfLaTeX and ships every TeX Live file the build reads, fonts too, beside the playground. Compile in the browser now asks the site first and the package server only for the rest. What TeX Live lacks (a font's `.vf`) is asked of nobody, and an example whose build looks for a missing file is reported by the build.
+- `feat` **The font picker offers what the engine can set, each with a sample.** pdfLaTeX offers the font packages installed (EB Garamond, Fira Sans, Kp Fonts, STIX Two, XCharter and more), fontspec the OpenType fonts, plus the machine's own fonts as a list to filter. Each offer shows "Aa Bb 123" as TeX sets it, drawn into the preview sheet with the TikZ pictures (`font:` sprites), which the site ships.
 - `fix` **The showcase videos are recorded on an idle machine only, one compiling take at a time, at low priority.** Taken during a busy build they showed a compile five times as slow as it is and loaded the machine further (`SATEX_SHOTS=force` records anyway).
 - `fix` **A command typed into the PDF echoes what it typesets.** `\TeX`, `\LaTeX` or a logo of your own showed nothing until the build. The echo now sets what the run sets for the command alone, with its kerns and its raised and lowered letters (`satex/commandText`).
 - `fix` **A click on the date of a title page puts the caret into `\date`.** Text that `\maketitle` sets from a stored argument after another one (the date after the author) was refused as "code satex cannot place".

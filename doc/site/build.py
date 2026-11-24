@@ -1373,8 +1373,9 @@ TEX_FILES = {
     "pdfjs.tgz": ("https://registry.npmjs.org/pdfjs-dist/-/pdfjs-dist-6.5.438.tgz", "7461aefcd27c4ef0dd76f9ca5760f09466eb6b3f934432670c12132e7b3d6faa"),
 }
 # The package sources Compile asks by default, in order (`SATEX_TEX_SOURCES`, one per line, overrides them at build time):
-# TeXlyre's TeX Live 2026 server, then this site's own mirror of the packages it offers.
-TEX_SOURCES = ["https://texlive2026.texlyre.org/{format}/{name}", "play/texfiles/{name}"]
+# this site's own mirror of the packages it offers and of every file an example's build reads, then TeXlyre's
+# TeX Live 2026 server for the rest. An example's build asks no other host (`compile_reads`).
+TEX_SOURCES = ["play/texfiles/{name}", "https://texlive2026.texlyre.org/{format}/{name}"]
 TEX_TIMEOUT_MS = 8000
 TEX_NOT_MIRRORED = re.compile(r"\.(bin|satex-docs|lua|otf|ttf|pdf|txt|md|json|html)$|/(README|LICENSE|CHANGES)[^/]*$")
 TEX_MAP = "texmf-var/fonts/map/pdftex/updmap/pdftex.map"
@@ -1405,10 +1406,11 @@ def tex_core(tar, pdftex_map):
     return files, bytes(blob + pdftex_map)
 
 
-def tex_mirror(out, tables, packages, core, pdftex_map):
+def tex_mirror(out, tables, packages, core, pdftex_map, compiles):
     """`play/texfiles/NAME`: the pdfTeX files of the packages the playground offers, flat, the first of a name kept,
-    and the Type 1 fonts and encodings the font map names for their metrics. What the core has stays out.
-    The second source of Compile, on the site's own host. Its bytes in all."""
+    the Type 1 fonts, encodings and virtual fonts of their metrics, and every file an example's build reads
+    (`compiles`, name -> path). What the core has stays out. The first source of Compile, on the site's own host.
+    Returns the virtual fonts TeX Live lacks of those metrics: asked of nobody."""
     have, size = {Path(p).name for p, _ in core}, 0
     keep = out / "play/texfiles"
     keep.mkdir(parents=True, exist_ok=True)
@@ -1430,11 +1432,21 @@ def tex_mirror(out, tables, packages, core, pdftex_map):
     for line in pdftex_map.decode("latin-1").splitlines():
         if line.split(" ", 1)[0] + ".tfm" in metrics:
             fonts.update(re.findall(r"<+\[?([\w.-]+\.(?:pfb|enc))", line))
+    # pdfTeX asks for a virtual font of every metric it loads: TeX Live's ships here, the others are absent
     fonts = sorted(fonts - have)
-    for at in range(0, len(fonts), 200):
-        for path in proc(["kpsewhich", *fonts[at:at + 200]], capture_output=True, text=True).stdout.split():
-            write(Path(path).name, Path(path).read_bytes())
+    metrics |= {n for found, _ in compiles.values() for n in found if n.endswith(".tfm")}
+    virtual = sorted({f"{Path(m).stem}.vf" for m in metrics} - have)
+    found = set()
+    for names in (fonts, virtual):
+        for at in range(0, len(names), 200):
+            for path in proc(["kpsewhich", *names[at:at + 200]], capture_output=True, text=True).stdout.split():
+                write(Path(path).name, Path(path).read_bytes())
+                found.add(Path(path).name)
+    # an example's own reads, whatever their kind: its build then asks no other host
+    for name, path in sorted({n: p for found, _ in compiles.values() for n, p in found.items()}.items()):
+        write(name, Path(path).read_bytes())
     print(f"playground: site mirror of TeX files: {sum(1 for _ in keep.iterdir())} files, {size / 2**20:.0f} MiB", file=sys.stderr)
+    return sorted(set(virtual) - found)
 
 
 def seeds(satex, work, project, packages):
@@ -1464,7 +1476,50 @@ def seeds(satex, work, project, packages):
     return out
 
 
-def browser_tex(out, work, tables, packages):
+# kpathsea's answer to one lookup (`-kpathsea-debug=32`): the names tried, then the paths found, none when absent
+KPSE_SEARCH = re.compile(r"^kdebug:returning from (?:generic )?search\(\[?([^\])]*)\]?\) =>(.*)$", re.M)
+
+
+def compile_reads(work, project):
+    """Per document the playground offers, what the installation's pdfLaTeX looks up building it (kpathsea's trace,
+    two passes with their PDF, so the fonts too; BibTeX's style from the .aux), as `(found, absent)`: the TeX Live files
+    it read (name -> path) with the preamble format's `mylatexformat.ltx`, and the names TeX Live lacks (`cmr10.vf`,
+    `lstlocal.cfg`). The browser's pdfTeX finds the first on the site and asks nobody for the second.
+    A file LaTeX says is not found is said loudly: the browser would ask a package server for it."""
+    trees = [Path(t).resolve() for v in ("TEXMFDIST", "TEXMFLOCAL", "TEXMFSYSVAR") if (t := run("kpsewhich", "-var-value", v).strip())]
+    def one(doc):
+        build = work / "compile-reads" / doc.stem
+        shutil.rmtree(build, ignore_errors=True)
+        shutil.copytree(project, build, ignore=shutil.ignore_patterns("satex.yaml"))
+        read, absent = {run("kpsewhich", "mylatexformat.ltx").strip()}, set()
+        for _ in range(2):
+            trace = proc(["pdflatex", "-kpathsea-debug=32", "-no-shell-escape", "-interaction=nonstopmode", doc.name],
+                         cwd=build, capture_output=True, text=True, errors="replace", timeout=300, check=False).stderr
+            for names, found in KPSE_SEARCH.findall(trace):
+                if found.split():
+                    read |= set(found.split())
+                else:
+                    absent |= set(names.split())
+            aux = build / f"{doc.stem}.aux"
+            styles = [f"{b.strip()}.bst" for b in re.findall(r"\\bibstyle\{([^}]*)\}", aux.read_text(errors="replace") if aux.is_file() else "")]
+            read |= {str(p) for p in kpsewhich(styles, build).values()}
+        log = build / f"{doc.stem}.log"
+        missing = re.findall(r"^! LaTeX Error: File `([^']+)' not found", log.read_text(errors="replace") if log.is_file() else "", re.M)
+        paths = {(build / r).resolve() for r in read if r}
+        own = {p.name for p in build.iterdir()}
+        shutil.rmtree(build, ignore_errors=True)
+        found = {p.name: str(p) for p in sorted(paths) if p.is_file() and any(p.is_relative_to(t) for t in trees) and p.suffix not in (".fmt", ".map", ".cnf") and p.name != "ls-R"}
+        # the document's own files and what its runs write are the build's, never TeX Live's
+        return missing, found, sorted(n for n in absent - set(found) if n not in own and Path(n).stem.split(".")[0] != doc.stem and "/" not in n and n != "aliases")
+    docs = [d for d in sources() if d.suffix == ".tex"]
+    done = parallel("[4/4] files each example's build reads", docs, one)
+    for d, (missing, _, _) in zip(docs, done):
+        if missing:
+            print(f"::warning::playground: {d.name}'s build looks for files TeX Live lacks, the browser's TeX asks the package server: {', '.join(missing)}", file=sys.stderr)
+    return {d.name: (found, absent) for d, (_, found, absent) in zip(docs, done)}
+
+
+def browser_tex(out, work, tables, packages, project):
     """The manifest's `tex`, or None when a download fails: Compile on a static host then says it has none."""
     keep = work / "browser-tex"
     keep.mkdir(parents=True, exist_ok=True)
@@ -1484,9 +1539,16 @@ def browser_tex(out, work, tables, packages):
     except (OSError, ValueError, subprocess.CalledProcessError) as e:
         print(f"::warning::playground: no browser TeX, Compile on this site says so: {e}", file=sys.stderr)
         return None
+    # the installation's font map lines the release's lacks (sansmathaccent's `mathkerncmssi10`): without one pdfTeX
+    # looks for a bitmap font of that name, at a package server
+    have = {l.split(" ", 1)[0] for l in map_.decode("latin-1").splitlines()}
+    local = Path(run("kpsewhich", "pdftex.map").strip()).read_text("latin-1").splitlines()
+    map_ += "".join(f"{l}\n" for l in local if l and l[0] not in "%#" and l.split(" ", 1)[0] not in have).encode("latin-1")
     files, blob = tex_core(tar, map_)
     packed = gz(blob)
-    tex_mirror(out, tables, packages, files, map_)
+    texts = [(d.name, d.read_bytes()) for d in sources()] + [(c, (d.parent / c).read_bytes()) for d in sources() for c in projects()[d.name]]
+    compiles = memo(work, "compile-reads", [texts, installation_stamp(), inspect.getsource(compile_reads)], lambda: compile_reads(work, project))
+    novf = tex_mirror(out, tables, packages, files, map_, compiles)
     with tarfile.open(fileobj=io.BytesIO(pdfjs)) as t:
         lib, worker, pdfjs_licence = (t.extractfile(f"package/{n}").read() for n in ("legacy/build/pdf.min.mjs", "legacy/build/pdf.worker.min.mjs", "LICENSE"))
     with tarfile.open(fileobj=io.BytesIO(tar)) as t:
@@ -1496,7 +1558,11 @@ def browser_tex(out, work, tables, packages):
             "engine": emit(out, "play/busytex.engine.js", engine), "wasm": emit(out, "play/busytex.wasm", wasm), "wasmSize": len(wasm),
             "core": emit(out, "play/tex-core.bin.gz", packed), "coreSize": len(packed), "files": files,
             "pdfjs": emit(out, "play/pdf.min.mjs", lib), "pdfWorker": emit(out, "play/pdf.worker.min.mjs", worker),
-            "notice": emit(out, "play/tex-NOTICE.txt", b"\n\n".join((notice, licence, pdfjs_licence, terms))), "sources": os.environ.get("SATEX_TEX_SOURCES", "\n".join(TEX_SOURCES)).split(), "timeoutMs": TEX_TIMEOUT_MS}
+            "notice": emit(out, "play/tex-NOTICE.txt", b"\n\n".join((notice, licence, pdfjs_licence, terms))), "sources": os.environ.get("SATEX_TEX_SOURCES", "\n".join(TEX_SOURCES)).split(), "timeoutMs": TEX_TIMEOUT_MS,
+            # per example, what its build reads beyond the core: fetched side by side before its first pass;
+            # and what any example's build looks up that TeX Live lacks (a font's `.vf`): asked of nobody
+            "reads": {doc: sorted(set(found) - {Path(p).name for p, _ in files}) for doc, (found, _) in compiles.items()},
+            "absent": sorted({n for _, absent in compiles.values() for n in absent} | set(novf))}
 
 
 def playground(satex, wasm, work, out):
@@ -1577,7 +1643,7 @@ def playground(satex, wasm, work, out):
         "js": emit_local(out, "play/satex.js", (wasm / "satex.js").read_bytes()),
         "wasm": emit_local(out, "play/satex.wasm", wasm_bytes), "wasmSize": len(wasm_bytes),
         "kernels": kernels, "packages": extra, "seeds": seeds(satex, work, project, packages), "preload": first_download(), "unavailable": UNAVAILABLE, "queries": queries, "queryAbout": query_about, "filtered": filtered, "rules": rules,
-        "tex": browser_tex(out, work, tables, packages), "tips": [t[0] for t in json.loads((SITE / "tips.json").read_text())],
+        "tex": browser_tex(out, work, tables, packages, project), "tips": [t[0] for t in json.loads((SITE / "tips.json").read_text())],
         "completion": completion, "samples": samples, "sample": "hello.tex", "root": "../",
         "commands": {name: command for name, command in commands().items() if command != "lint"}, "projects": projects(), "plugins": plugins(), "typePlugins": tiles,
         "symbols": emit(out, "play/symbols.json", json.dumps({**table, "glyphs": emit(out, "play/glyphs.bin.gz", gz(table["glyphs"])),

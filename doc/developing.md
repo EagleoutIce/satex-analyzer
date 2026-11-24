@@ -212,6 +212,9 @@ Write the documentation in American English, in short sentences.
 - Further packages are a gzip file each: those `doc/site/packages.txt` names, then `cache.index.common` of satex.yaml.
   The build runs satex on a document loading each one, once per kernel, and keeps the files that kernel's download lacks.
   The playground fetches a package when a finding or a run says it is not in this installation, then starts over.
+- Compile in the browser runs BusyTeX's pdfTeX on the core of TeX Live's basic tree. `play/texfiles` holds the pdfTeX files of the offered packages and every file an example's build reads: the build runs each example twice with the installation's pdfLaTeX and reads kpathsea's trace (`compile_reads`).
+  It also holds the virtual font of every metric there, and the font map gains the installation's lines the release lacks.
+  The page asks the site first, then TeXlyre's package server. What the trace looked up and TeX Live lacks (`tex.absent`, a metric's missing `.vf` too) is asked of nobody.
 - The page also carries data from satex itself: `satex query --list`, the rules with their explanations (`satex lint --rules`, `satex lint --explain`),
   and `satex completions json` (the command tree, the config keys and the rule codes) for the argument line's completion.
 

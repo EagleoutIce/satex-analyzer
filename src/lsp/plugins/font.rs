@@ -9,7 +9,7 @@ use super::styles::macro_text;
 use super::{Cx, Hit, TypePlugin, rewrite, span};
 use crate::analysis::machine::Analysis;
 use crate::analysis::roles::Ty;
-use crate::linter::shared::loaded;
+use crate::linter::shared::{installed_package, loaded};
 use crate::project::config::{Engine, TypePlugins};
 use crate::text::Text;
 use lsp_types::{CodeAction, CodeLens, TextEdit};
@@ -43,7 +43,8 @@ impl TypePlugin for Font {
         let Some((_, choices)) = here(cx) else { return Vec::new() };
         choices
             .into_iter()
-            .filter(|c| !c.on && !c.edits.is_empty())
+            // the machine's fonts stay in the view's list: hundreds of actions would bury the others
+            .filter(|c| !c.on && !c.edits.is_empty() && c.group != "System fonts")
             .map(|c| rewrite(cx, format!("{}: {}", c.group, c.title), c.edits))
             .collect()
     }
@@ -53,14 +54,20 @@ impl TypePlugin for Font {
             choices
                 .iter()
                 .filter(|c| c.group == g)
-                .map(|c| json!({ "title": c.title, "detail": c.detail, "on": c.on, "edits": c.edits }))
+                .map(|c| json!({ "title": c.title, "detail": c.detail, "on": c.on, "edits": c.edits, "svg": c.svg }))
                 .collect()
         };
-        Some(json!({ "title": "Font and size", "sections": [
-            { "kind": "text", "markdown": state.about() },
-            { "kind": "actions", "title": "Base size", "items": items("Base size") },
-            { "kind": "actions", "title": "Font", "items": items("Font") },
-        ]}))
+        let mut sections = vec![
+            json!({ "kind": "text", "markdown": state.about() }),
+            json!({ "kind": "actions", "title": "Base size", "items": items("Base size") }),
+            json!({ "kind": "actions", "title": "Font", "items": items("Font") }),
+        ];
+        // fontspec finds the machine's fonts by name too: a list to filter
+        let system = items("System fonts");
+        if !system.is_empty() {
+            sections.push(json!({ "kind": "choices", "title": "System fonts", "placeholder": "a font of this machine", "focus": false, "items": system }));
+        }
+        Some(json!({ "title": "Font and size", "sections": sections }))
     }
     fn lenses(&self, analysis: &Analysis, doc: &Text, path: &str) -> Vec<CodeLens> {
         let class = Parts::of(analysis, doc, path).and_then(|p| p.class);
@@ -99,13 +106,15 @@ impl State {
     }
 }
 
-/// A choice of the view: its group, title, whether it is the run's, and the edits writing it.
+/// A choice of the view: its group, title, whether it is the run's, the edits writing it and
+/// its sample as TeX set it (the preview sheet's `font:` sprite).
 struct Choice {
     group: &'static str,
     title: String,
     detail: String,
     on: bool,
     edits: Vec<TextEdit>,
+    svg: Option<String>,
 }
 
 /// The letters and digits of a font's name, lower case: `LibertinusSerif(0)` and `Libertinus Serif` agree.
@@ -124,6 +133,24 @@ fn current(a: &Analysis, fonts: &[(String, Vec<String>)], family: Option<&str>) 
     }
     let family = family?;
     fonts.iter().find(|(_, v)| v.get(1).is_some_and(|f| plain(f) == plain(family))).map(|(n, _)| n.clone())
+}
+
+/// The families fontconfig knows (what fontspec finds by name beyond the TeX tree), sorted, once
+/// per process; none where `fc-list` cannot be run (the browser).
+fn system_families() -> &'static [String] {
+    static FAMILIES: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new();
+    FAMILIES.get_or_init(|| {
+        let out = std::process::Command::new("fc-list").args([":", "family"]).output();
+        let text = out.ok().filter(|o| o.status.success()).map(|o| String::from_utf8_lossy(&o.stdout).into_owned());
+        // `DejaVu Sans,DejaVu Sans Condensed`: a font's family names, its first the plain one
+        let names = text.iter().flat_map(|t| t.lines()).filter_map(|l| l.split(',').next()).map(str::trim);
+        names
+            .filter(|n| !n.is_empty())
+            .map(String::from)
+            .collect::<std::collections::BTreeSet<_>>()
+            .into_iter()
+            .collect()
+    })
 }
 
 /// The state and choices on the class's line, none elsewhere.
@@ -146,16 +173,38 @@ fn here(cx: &Cx) -> Option<(State, Vec<Choice>)> {
             detail: String::new(),
             on,
             edits: edits(a, doc, &nodes),
+            svg: None,
         });
     }
+    let field = |spec: &[String], i: usize| spec.get(i).filter(|f| !f.is_empty()).cloned();
     for (name, spec) in &fonts {
         let on = state.font.as_deref() == Some(name.as_str());
-        let nodes = font_nodes(cx, &parts, &state, &fonts, spec);
+        // what this engine can set: a font name for fontspec, an installed package for pdfLaTeX
         let detail = match state.unicode {
-            true => format!("\\setmainfont{{{}}}", spec.get(1).map_or(name.as_str(), String::as_str)),
-            false => format!("\\usepackage{{{}}}", spec.first().map_or("", String::as_str)),
+            true => field(spec, 1).map(|f| format!("\\setmainfont{{{f}}}")),
+            false => field(spec, 0).filter(|p| on || installed_package(a, p)).map(|p| format!("\\usepackage{{{p}}}")),
         };
-        out.push(Choice { group: "Font", title: name.clone(), detail, on, edits: edits(a, doc, &nodes) });
+        let Some(detail) = detail else { continue };
+        let nodes = font_nodes(cx, &parts, &state, &fonts, spec);
+        let svg = crate::queries::preview::font_sample(a, name);
+        out.push(Choice { group: "Font", title: name.clone(), detail, on, edits: edits(a, doc, &nodes), svg });
+    }
+    if state.unicode {
+        let named: Vec<String> = fonts.iter().filter_map(|(_, v)| field(v, 1)).collect();
+        for family in system_families().iter().filter(|f| !named.contains(f)) {
+            let spec = [String::new(), family.clone()];
+            let nodes = font_nodes(cx, &parts, &state, &fonts, &spec);
+            let detail = format!("\\setmainfont{{{family}}}");
+            let on = state.family.as_deref().is_some_and(|f| plain(f) == plain(family));
+            out.push(Choice {
+                group: "System fonts",
+                title: family.clone(),
+                detail,
+                on,
+                edits: edits(a, doc, &nodes),
+                svg: None,
+            });
+        }
     }
     Some((state, out))
 }
@@ -202,8 +251,11 @@ fn font_nodes(cx: &Cx, parts: &Parts, state: &State, fonts: &[(String, Vec<Strin
         spec.get(1).map_or("", String::as_str),
         spec.get(2).is_some_and(|s| s == "sans"),
     );
-    let others: Vec<&str> =
-        fonts.iter().filter_map(|(_, v)| v.first().map(String::as_str)).filter(|p| *p != package).collect();
+    let others: Vec<&str> = fonts
+        .iter()
+        .filter_map(|(_, v)| v.first().map(String::as_str))
+        .filter(|p| !p.is_empty() && *p != package)
+        .collect();
     let mut out = Vec::new();
     // each call loading another offered font: that name out, the call dropped when it loads nothing else,
     // on pdfLaTeX the first such call loads the new package in its place

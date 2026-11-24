@@ -7956,7 +7956,8 @@ fn font_pick(text: &str, uri: &str, section: &Value, title: &str) -> String {
 /// The font view marks what the run set, not what a regex finds: 11pt from `\f@size` (10.95)
 /// and Pagella from the package the run loaded. A new font replaces the old one's load in its
 /// place and adds the T1 encoding pdfLaTeX fonts want; a size rewrites the class's option.
-/// Pins the base size and font being read from the run and written through the printer.
+/// Pins the base size and font being read from the run and written through the printer, the
+/// offers being the installed packages, and each offer's sample TeX set (the preview sheet).
 #[test]
 fn font_view_reads_the_run_and_writes_packages() {
     let text = "\\documentclass[11pt]{article}\n\\usepackage{tgpagella}\n\\begin{document}\nText\n\\end{document}\n";
@@ -7980,6 +7981,25 @@ fn font_view_reads_the_run_and_writes_packages() {
         out.contains("\\usepackage{tgheros}") && out.contains("\\renewcommand{\\familydefault}{\\sfdefault}"),
         "{out}"
     );
+    // pdfLaTeX offers the installed packages, those with no OpenType counterpart too
+    let titles = |s: &Value| s["items"].as_array().unwrap().iter().map(|i| i["title"].clone()).collect::<Vec<_>>();
+    if crate::support::installed() {
+        assert!(titles(&fonts).contains(&json!("Kp Fonts")), "{fonts}");
+    }
+    // each offer's sample, set by TeX in the background: a later view has it
+    if crate::support::installed() && std::process::Command::new("dvisvgm").arg("--version").output().is_ok() {
+        let sampled = (0..120).any(|_| {
+            let fonts = font_section(&mut server, &uri, "Font");
+            let item = fonts["items"].as_array().unwrap().iter().find(|i| i["title"] == "Libertinus").cloned();
+            let svg =
+                item.is_some_and(|i| i["svg"].as_str().is_some_and(|s| s.starts_with("<svg") && s.contains("<path")));
+            if !svg {
+                std::thread::sleep(std::time::Duration::from_millis(500));
+            }
+            svg
+        });
+        assert!(sampled, "no sample of Libertinus");
+    }
     // the same choices as code actions on the class line, the current ones left out
     let actions = at(&mut server, &uri, "textDocument/codeAction", 0, 1);
     let titles: Vec<&str> = actions.as_array().unwrap().iter().filter_map(|a| a["title"].as_str()).collect();
@@ -8007,6 +8027,8 @@ fn font_view_koma_and_fontspec() {
     assert!(font_pick(text, &uri, &sizes, "12pt").contains("\\documentclass[fontsize=12pt]{scrartcl}"));
     let out = font_pick(text, &uri, &fonts, "TeX Gyre Pagella");
     assert!(out.contains("\\setmainfont{TeX Gyre Pagella}\n") && !out.contains("Libertinus"), "{out}");
+    // fontspec offers fonts by name: a pdfLaTeX-only package is none
+    assert!(!fonts["items"].as_array().unwrap().iter().any(|i| i["title"] == "Kp Fonts"), "{fonts}");
     server.shutdown();
     std::fs::remove_dir_all(dir).ok();
     let (mut server, uri, dir) = open_set("font-off", text, &["type_plugins.font.enabled=false"]);

@@ -288,11 +288,13 @@ const satexViews = (() => {
   const RENDER: Record<string, Renderer> = {
     text: (s, view, ctx) => el('div', 'tv-text', ctx.markdown(s.markdown)),
     table: (s) => el('table', 'tv-table', `<thead><tr>${s.columns.map((c: Rec) => `<th>${esc(c)}</th>`).join('')}</tr></thead><tbody>${s.rows.map((r: Rec) => `<tr>${r.map((c: Rec) => `<td>${esc(c)}</td>`).join('')}</tr>`).join('')}</tbody>`),
-    // buttons that apply their edits: `on` marks the run's own choice (pressed, nothing to write), `detail` is what one writes
+    // buttons that apply their edits: `on` marks the run's own choice (pressed, nothing to write), `detail` is what one writes,
+    // `svg` a sample TeX drew of it (a font's): an image, so the glyph ids of two samples never meet
     actions: (s, view, ctx) => {
-      const box = el('div', 'tv-actions');
+      const box = el('div', s.items.some((a: Rec) => a.svg) ? 'tv-actions tv-samples' : 'tv-actions');
       for (const a of s.items) {
-        const b = el('button', a.on ? 'tv-button tv-on' : 'tv-button', esc(a.title));
+        const sample = a.svg ? `<img class="tv-sample" alt="" src="data:image/svg+xml,${encodeURIComponent(a.svg)}">` : '';
+        const b = el('button', a.on ? 'tv-button tv-on' : 'tv-button', sample + (sample ? `<span>${esc(a.title)}</span>` : esc(a.title)));
         b.type = 'button';
         if (a.detail) b.title = a.detail;
         if (a.on != null) b.setAttribute('aria-pressed', String(!!a.on));
@@ -323,8 +325,12 @@ const satexViews = (() => {
       input.onkeydown = (e) => { if (e.key === 'Enter') { e.preventDefault(); list.querySelector('button')?.click(); } };
       draw();
       box.append(input, list);
-      setTimeout(() => input.focus(), 0);
-      return box;
+      // a list beside other sections (`focus: false`) leaves the keys where they are
+      if (s.focus !== false) setTimeout(() => input.focus(), 0);
+      if (!s.title) return box;
+      const group = el('div', 'tv-group');
+      group.append(el('div', 'tv-h', esc(s.title)), box);
+      return group;
     },
     // a load's options (src/lsp/plugins/class.rs): the declared ones to tick, a template's common choices first,
     // others typed as a key list; the header line as the server's printer writes it, to copy, and Write
@@ -3468,6 +3474,7 @@ button.tv-spec-value { cursor: pointer; } button.tv-spec-value:hover, button.tv-
 .tv-options { display: grid; gap: .5rem; } .tv-opts { display: grid; grid-template-columns: repeat(auto-fill, minmax(10rem, 1fr)); gap: .1rem .6rem; max-height: 40vh; overflow: auto; }
 .tv-opt { display: flex; align-items: center; gap: .3rem; font-size: .85rem; } .tv-opt.tv-hint code { color: var(--tv-accent); font-weight: 600; } .tv-opt[hidden] { display: none; }
 .tv-headline { margin: 0; padding: .45rem .6rem; border-radius: 6px; background: var(--tv-sunk); border: 1px solid var(--tv-border); white-space: pre-wrap; word-break: break-all; font-size: .85rem; user-select: all; }
+.tv-samples .tv-button { display: inline-flex; flex-direction: column; align-items: flex-start; gap: .2rem; } .tv-samples .tv-button span { font-size: .78rem; } .tv-sample { height: 1.2rem; width: auto; display: block; }
 .tv-choices { display: grid; gap: .5rem; } .tv-list { display: grid; gap: .2rem; max-height: 50vh; overflow: auto; }
 .tv-choice { font: inherit; display: flex; justify-content: space-between; gap: 1rem; padding: .35rem .6rem; border-radius: 6px; border: 1px solid transparent; background: none; color: var(--tv-fg); cursor: pointer; text-align: left; }
 .tv-choice:hover, .tv-choice:focus { border-color: var(--tv-accent); background: var(--tv-sunk); } .tv-choice span { color: var(--tv-muted); font-family: ui-monospace, monospace; font-size: .8rem; }

@@ -918,7 +918,7 @@ type_plugins:  # editor features by type, grouped by category: widget, hover, co
     sizes: [10pt, 11pt, 12pt]  # the base sizes offered
       #! affects: output
       #! example: `sizes: [11pt, 12pt]`
-    fonts: {Latin Modern: [lmodern, Latin Modern Roman], Libertinus: [libertinus, Libertinus Serif], Source Serif: [sourceserifpro, Source Serif Pro], TeX Gyre Heros: [tgheros, TeX Gyre Heros, sans], TeX Gyre Pagella: [tgpagella, TeX Gyre Pagella], TeX Gyre Termes: [tgtermes, TeX Gyre Termes]}  # the fonts offered: the package pdfLaTeX loads, the font fontspec names, sans for a sans serif main font
+    fonts: {EB Garamond: [ebgaramond, EB Garamond], Fira Sans: [FiraSans, Fira Sans, sans], Kp Fonts: [kpfonts, ''], Latin Modern: [lmodern, Latin Modern Roman], Libertinus: [libertinus, Libertinus Serif], Noto Serif: [noto-serif, Noto Serif], STIX Two: [stix2, STIX Two Text], Source Serif: [sourceserifpro, Source Serif Pro], TeX Gyre Heros: [tgheros, TeX Gyre Heros, sans], TeX Gyre Pagella: [tgpagella, TeX Gyre Pagella], TeX Gyre Termes: [tgtermes, TeX Gyre Termes], XCharter: [XCharter, XCharter]}  # the fonts offered: the package pdfLaTeX loads, the font fontspec names (empty: pdfLaTeX only), sans for a sans serif main font
       #! affects: output
       #! example: `fonts: {Charter: [XCharter, XCharter]}`
   tagging:  # PDF tagging: \DocumentMetadata

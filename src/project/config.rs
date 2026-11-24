@@ -1011,19 +1011,26 @@ pub struct FontPlugin {
     /// The base sizes offered, as class options.
     pub sizes: Vec<String>,
     /// The fonts offered: a name, then the package pdfLaTeX loads, the font fontspec names, and
-    /// `sans` for a sans serif face that becomes the default family.
+    /// `sans` for a sans serif face that becomes the default family. pdfLaTeX offers those whose
+    /// package is installed, fontspec those with a font name. An empty entry offers it on neither.
     pub fonts: BTreeMap<String, Vec<String>>,
 }
 
 impl Default for FontPlugin {
     fn default() -> Self {
         let fonts = [
-            ("Latin Modern", &["lmodern", "Latin Modern Roman"][..]),
+            ("EB Garamond", &["ebgaramond", "EB Garamond"][..]),
+            ("Fira Sans", &["FiraSans", "Fira Sans", "sans"]),
+            ("Kp Fonts", &["kpfonts", ""]),
+            ("Latin Modern", &["lmodern", "Latin Modern Roman"]),
             ("Libertinus", &["libertinus", "Libertinus Serif"]),
+            ("Noto Serif", &["noto-serif", "Noto Serif"]),
             ("Source Serif", &["sourceserifpro", "Source Serif Pro"]),
+            ("STIX Two", &["stix2", "STIX Two Text"]),
             ("TeX Gyre Heros", &["tgheros", "TeX Gyre Heros", "sans"]),
             ("TeX Gyre Pagella", &["tgpagella", "TeX Gyre Pagella"]),
             ("TeX Gyre Termes", &["tgtermes", "TeX Gyre Termes"]),
+            ("XCharter", &["XCharter", "XCharter"]),
         ];
         Self {
             enabled: true,

@@ -352,7 +352,13 @@ fn load(sheet: &mut Sheet, analysis: &Analysis) {
     let path = sheet_path(analysis);
     if sheet.loaded.as_ref() != Some(&path) {
         *sheet = Sheet { loaded: Some(path.clone()), ..Sheet::default() };
-        sheet.svgs = path.map(|p| read_sheet(&p)).unwrap_or_default();
+        // else the sheet a site build drew (`previews.json`, the playground's): no TeX draws one in the browser
+        let read = |p: std::path::PathBuf| {
+            Some(read_sheet(&p))
+                .filter(|s| !s.is_empty())
+                .unwrap_or_else(|| read_sheet(&p.with_file_name("previews.json")))
+        };
+        sheet.svgs = path.map(read).unwrap_or_default();
     }
 }
 
@@ -364,30 +370,38 @@ fn read_sheet(path: &std::path::Path) -> BTreeMap<String, String> {
     svgs.into_iter().filter(|(_, svg)| !svg.is_empty()).collect()
 }
 
-/// The picture of a tip or pattern TeX drew. One the sheet lacks is drawn
-/// in the background, with every other the run declared, for a later ask.
+/// The picture of a tip or pattern TeX drew ([`sprite_of`]).
 pub fn drawn(analysis: &Analysis, kind: Stroke, name: &str) -> Option<Preview> {
-    let key = sprite(kind, name);
+    let svg = sprite_of(analysis, &sprite(kind, name))?;
+    let what = match kind {
+        Stroke::Arrows => "arrows",
+        Stroke::Shape => "shape",
+        _ => "pattern",
+    };
+    Some(Preview { text: format!("{what}={}", name.trim()), svg })
+}
+
+/// The sample of offered font `name` (`type_plugins.font.fonts`) TeX set ([`sprite_of`]).
+pub fn font_sample(analysis: &Analysis, name: &str) -> Option<String> {
+    sprite_of(analysis, &font_sprite(name))
+}
+
+/// The sprite `key` of the sheet. One the sheet lacks is drawn in the
+/// background, with every other the run wants, for a later ask.
+fn sprite_of(analysis: &Analysis, key: &str) -> Option<String> {
     let mut sheet = SHEET.lock().ok()?;
     load(&mut sheet, analysis);
-    match sheet.svgs.get(&key) {
-        Some(svg) if !svg.is_empty() => {
-            let what = match kind {
-                Stroke::Arrows => "arrows",
-                Stroke::Shape => "shape",
-                _ => "pattern",
-            };
-            Some(Preview { text: format!("{what}={}", name.trim()), svg: svg.clone() })
-        }
+    match sheet.svgs.get(key) {
+        Some(svg) if !svg.is_empty() => Some(svg.clone()),
         Some(_) => None,
         None => {
             if !cfg!(target_os = "emscripten") && !sheet.busy && !sheet.failed {
                 sheet.busy = true;
-                let (all, libs) = wanted(analysis);
-                let wanted: Vec<String> = all.into_iter().filter(|w| !sheet.svgs.contains_key(w)).collect();
+                let mut plan = wanted(analysis);
+                plan.names.retain(|w| !sheet.svgs.contains_key(w));
                 let path = sheet.loaded.clone().flatten();
                 std::thread::spawn(move || {
-                    let svgs = render(&libs, &wanted);
+                    let svgs = render(&plan);
                     if let Ok(mut sheet) = SHEET.lock()
                         && sheet.loaded.as_ref() == Some(&path)
                     {
@@ -416,16 +430,41 @@ fn save(path: Option<&std::path::Path>, svgs: &BTreeMap<String, String>) {
     }
 }
 
-/// Every tip, pattern and shape the run declared and every shape the installation's libraries
-/// declare, as sprite names, with the loads that draw them.
-fn wanted(analysis: &Analysis) -> (Vec<String>, Vec<String>) {
+/// The sprites a sheet holds and what draws them: the TikZ loads, and each font sprite's preamble.
+struct Plan {
+    names: Vec<String>,
+    libs: Vec<String>,
+    fonts: BTreeMap<String, String>,
+}
+
+/// The text a font's sample sets.
+const FONT_SAMPLE: &str = "Aa Bb 123";
+
+/// A font sample's sprite name in `previews.json`: `font:Libertinus`.
+fn font_sprite(name: &str) -> String {
+    format!("font:{name}")
+}
+
+/// Every tip, pattern and shape the run declared, every shape the installation's libraries
+/// declare and every offered font the installation has a package of, as sprite names, with
+/// what draws them. A font is drawn by its pdfLaTeX package, as `type_plugins.font` writes it.
+fn wanted(analysis: &Analysis) -> Plan {
     let more = library_shapes(analysis);
-    let mut loads = libraries(analysis);
-    loads.extend(more.iter().map(|(_, l)| l.clone()).filter(|l| !loads.contains(l)).collect::<BTreeSet<_>>());
+    let mut libs = libraries(analysis);
+    libs.extend(more.iter().map(|(_, l)| l.clone()).filter(|l| !libs.contains(l)).collect::<BTreeSet<_>>());
     let arrows = arrow_specs(analysis).into_iter().map(|s| sprite(Stroke::Arrows, &s));
     let patterns = pattern_names(analysis).into_iter().map(|p| sprite(Stroke::Pattern, &p));
     let shapes = shape_names(analysis).into_iter().chain(more.into_iter().map(|(n, _)| n));
-    (arrows.chain(patterns).chain(shapes.map(|s| sprite(Stroke::Shape, &s))).collect(), loads)
+    let fonts: BTreeMap<String, String> = (analysis.settings.type_plugins.font.fonts.iter())
+        .filter_map(|(name, spec)| {
+            let package = spec.first().filter(|p| crate::linter::shared::installed_package(analysis, p))?;
+            let sans = spec.get(2).is_some_and(|s| s == "sans").then_some("\\renewcommand\\familydefault\\sfdefault");
+            let preamble = format!("\\usepackage[T1]{{fontenc}}\\usepackage{{{package}}}{}", sans.unwrap_or_default());
+            Some((font_sprite(name), preamble))
+        })
+        .collect();
+    let names = arrows.chain(patterns).chain(shapes.map(|s| sprite(Stroke::Shape, &s))).chain(fonts.keys().cloned());
+    Plan { names: names.collect(), libs, fonts }
 }
 
 /// The pgf and TikZ libraries the run loaded, by their files' names.
@@ -446,23 +485,25 @@ pub fn libraries(analysis: &Analysis) -> Vec<String> {
 /// Every sprite of `previews.json` the run needs, drawn now: what the
 /// `previews` query gives and the site ships for the playground.
 pub fn sheet(analysis: &Analysis) -> BTreeMap<String, String> {
-    let (wanted, libs) = wanted(analysis);
+    let mut plan = wanted(analysis);
     let Ok(mut sheet) = SHEET.lock() else { return BTreeMap::new() };
     load(&mut sheet, analysis);
-    let missing: Vec<String> = wanted.iter().filter(|w| !sheet.svgs.contains_key(*w)).cloned().collect();
-    if !missing.is_empty() {
-        sheet.svgs.extend(render(&libs, &missing).unwrap_or_default());
+    let wanted = plan.names.clone();
+    plan.names.retain(|w| !sheet.svgs.contains_key(w));
+    if !plan.names.is_empty() {
+        sheet.svgs.extend(render(&plan).unwrap_or_default());
         save(sheet.loaded.clone().flatten().as_deref(), &sheet.svgs);
     }
     wanted.into_iter().filter_map(|w| Some((w.clone(), sheet.svgs.get(&w)?.clone()))).collect()
 }
 
-/// Draws each sprite on its own page with `latex` and `dvisvgm`, `None`
-/// when they cannot run. A sprite TeX could not draw maps to nothing.
-fn render(libs: &[String], wanted: &[String]) -> Option<BTreeMap<String, String>> {
+/// Draws each sprite of `plan` on its own page with `latex` and `dvisvgm`, `None`
+/// when they cannot run. A sprite TeX could not draw maps to nothing. The TikZ
+/// sprites share a document, each font sample has one of its own (its package's).
+fn render(plan: &Plan) -> Option<BTreeMap<String, String>> {
     let dir = crate::caches::format::default_cache_dir()?.join(format!("previews-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).ok()?;
+    let (fonts, wanted): (Vec<String>, Vec<String>) =
+        plan.names.iter().cloned().partition(|w| plan.fonts.contains_key(w));
     let pictures: Vec<String> = wanted
         .iter()
         .map(|w| match w.split_once(':') {
@@ -483,9 +524,36 @@ fn render(libs: &[String], wanted: &[String]) -> Option<BTreeMap<String, String>
             None => String::new(),
         })
         .collect();
+    let tikz = format!(
+        "\\def\\pgfsysdriver{{pgfsys-dvisvgm.def}}\\documentclass{{article}}\\usepackage{{tikz}}\n{}",
+        plan.libs.join("\n")
+    );
+    let mut svgs = BTreeMap::new();
+    if !wanted.is_empty() {
+        svgs.extend(draw(&dir, &tikz, &wanted, &pictures)?);
+    }
+    for (i, font) in fonts.iter().enumerate() {
+        let preamble = format!("\\documentclass{{article}}\\usepackage{{xcolor}}{}", plan.fonts[font]);
+        let picture = format!("\\mbox{{\\color{{ink}}{FONT_SAMPLE}}}");
+        svgs.extend(
+            draw(&dir.join(format!("font-{i}")), &preamble, std::slice::from_ref(font), &[picture]).unwrap_or_default(),
+        );
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+    Some(svgs)
+}
+
+/// Each of `pictures` on a page of its own after `preamble`, in `dir`, as the sprites `wanted`.
+fn draw(
+    dir: &std::path::Path,
+    preamble: &str,
+    wanted: &[String],
+    pictures: &[String],
+) -> Option<BTreeMap<String, String>> {
+    let _ = std::fs::remove_dir_all(dir);
+    std::fs::create_dir_all(dir).ok()?;
     let tex = format!(
-        "\\def\\pgfsysdriver{{pgfsys-dvisvgm.def}}\\documentclass{{article}}\\usepackage{{tikz}}\n{}\n\\pagestyle{{empty}}\\definecolor{{ink}}{{HTML}}{{{}}}\n\\begin{{document}}\n{}\n\\end{{document}}\n",
-        libs.join("\n"),
+        "{preamble}\n\\pagestyle{{empty}}\\definecolor{{ink}}{{HTML}}{{{}}}\n\\begin{{document}}\n{}\n\\end{{document}}\n",
         INK.trim_start_matches('#'),
         // Each page names its sprite: a library's error may ship a page of its own.
         pictures
@@ -496,18 +564,17 @@ fn render(libs: &[String], wanted: &[String]) -> Option<BTreeMap<String, String>
             .join("\n")
     );
     std::fs::write(dir.join("previews.tex"), tex).ok()?;
-    let run = |program: &str, args: &[&str]| std::process::Command::new(program).args(args).current_dir(&dir).output();
+    let run = |program: &str, args: &[&str]| std::process::Command::new(program).args(args).current_dir(dir).output();
     run("latex", &["-interaction=batchmode", "previews.tex"]).ok()?;
     // a page drawn: dvisvgm 2.6 (TeX Live 2019) ends well on an option it lacks
     let drawn =
-        || std::fs::read_dir(&dir).is_ok_and(|d| d.flatten().any(|e| e.path().extension() == Some("svg".as_ref())));
+        || std::fs::read_dir(dir).is_ok_and(|d| d.flatten().any(|e| e.path().extension() == Some("svg".as_ref())));
     let svg = |exact: &[&str]| {
         let args = [exact, &["--no-fonts", "--page=1-", "--output=p%p.svg", "previews.dvi"]].concat();
         run("dvisvgm", &args).is_ok_and(|o| o.status.success()) && drawn()
     };
     // that dvisvgm has no `--exact-bbox`; glyph-free sprites need none
     if !svg(&["--exact-bbox"]) && !svg(&[]) {
-        let _ = std::fs::remove_dir_all(&dir);
         return None;
     }
     static MARK: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
@@ -516,7 +583,7 @@ fn render(libs: &[String], wanted: &[String]) -> Option<BTreeMap<String, String>
     static SIZE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
     let size = SIZE.get_or_init(|| regex::Regex::new(r"(width|height)='([0-9.]+)pt'").unwrap());
     let mut svgs: BTreeMap<String, String> = wanted.iter().map(|w| (w.clone(), String::new())).collect();
-    for entry in std::fs::read_dir(&dir).ok()?.flatten() {
+    for entry in std::fs::read_dir(dir).ok()?.flatten() {
         let Ok(svg) = std::fs::read_to_string(entry.path()) else { continue };
         let n = mark.captures(&svg).and_then(|c| c[1].parse::<usize>().ok());
         let (Some(at), Some(w)) = (svg.find("<svg"), n.and_then(|n| wanted.get(n))) else { continue };
@@ -526,7 +593,6 @@ fn render(libs: &[String], wanted: &[String]) -> Option<BTreeMap<String, String>
         });
         svgs.insert(w.clone(), svg.into_owned());
     }
-    let _ = std::fs::remove_dir_all(&dir);
     Some(svgs)
 }
 

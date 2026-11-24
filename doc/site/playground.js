@@ -6567,7 +6567,8 @@
       const parser = pdfWorker;
       const files = alone === null ? pdfFiles((d) => d) : { [root]: alone };
       pdfSent = files[state.file]; pdfSentAll = files; pdfSentVersion = version;
-      const want = alone === null ? texWants() : [];
+      // an example's root: what its build reads, as the site's build saw it, side by side before the first pass
+      const want = alone === null ? texWants().then((w) => [...new Set([...(state.root ?? state.file) === state.example ? TEX.reads?.[state.example] ?? [] : [], ...w])]) : [];
       self.satexTex.build(TEX, files, root, manifest.kernels[state.kernel].engine ?? manifest.kernels[state.kernel].id, (said) => { step = said; }, texSources(), want)
         .catch((e) => ({ answer: { browser: true, error: `The browser's TeX stopped: ${e?.message ?? e}`, note: `${GUI} builds with your own TeX and packages.` }, gz: null }))
         .then(({ answer, gz }) => { step = answer.pdf ? 'opening the PDF, reading SyncTeX' : 'reading the log'; pdfOpen(answer); parser.postMessage({ answer, gz }); });

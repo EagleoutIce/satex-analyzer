@@ -6002,8 +6002,39 @@
               "x-example": "`enabled: false`: no font lens, action or dialog"
             },
             "fonts": {
-              "description": "the fonts offered: the package pdfLaTeX loads, the font fontspec names, sans for a sans serif main font",
+              "description": "the fonts offered: the package pdfLaTeX loads, the font fontspec names (empty: pdfLaTeX only), sans for a sans serif main font",
               "properties": {
+                "EB Garamond": {
+                  "default": [
+                    "ebgaramond",
+                    "EB Garamond"
+                  ],
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                "Fira Sans": {
+                  "default": [
+                    "FiraSans",
+                    "Fira Sans",
+                    "sans"
+                  ],
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                "Kp Fonts": {
+                  "default": [
+                    "kpfonts",
+                    ""
+                  ],
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
                 "Latin Modern": {
                   "default": [
                     "lmodern",
@@ -6018,6 +6049,26 @@
                   "default": [
                     "libertinus",
                     "Libertinus Serif"
+                  ],
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                "Noto Serif": {
+                  "default": [
+                    "noto-serif",
+                    "Noto Serif"
+                  ],
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                "STIX Two": {
+                  "default": [
+                    "stix2",
+                    "STIX Two Text"
                   ],
                   "items": {
                     "type": "string"
@@ -6059,6 +6110,16 @@
                   "default": [
                     "tgtermes",
                     "TeX Gyre Termes"
+                  ],
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                "XCharter": {
+                  "default": [
+                    "XCharter",
+                    "XCharter"
                   ],
                   "items": {
                     "type": "string"

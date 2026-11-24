@@ -763,9 +763,12 @@ pub fn export_names(analysis: &Analysis) -> Vec<(String, String)> {
     exports(analysis).map(|e| e.names(analysis.settings.limits.provider_probes as usize)).unwrap_or_default()
 }
 
-/// Whether package `name` is installed: the installation's index lists `name.sty`.
+/// Whether package `name` is installed: the exports index lists `name.sty`, or the installation's
+/// file index does (a package that only loads others, as `libertinus` does, defines no name of its own).
 pub fn installed_package(analysis: &Analysis, name: &str) -> bool {
-    exports(analysis).is_some_and(|e| e.files.iter().any(|f| f == &format!("{name}.sty")))
+    let file = format!("{name}.sty");
+    exports(analysis).is_some_and(|e| e.files.contains(&file))
+        || crate::caches::distribution::has_file(&analysis.distribution.roots, &file)
 }
 
 /// Whether installed package `a` loads package `b`, itself or through what it loads.
