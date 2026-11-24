@@ -3568,6 +3568,8 @@ impl Config {
         settings.preload = settings.preload.as_ref().map(local);
         (settings.trace, settings.trace_lines, settings.trace_col, settings.trace_file) = (false, None, 0, None);
         (settings.trace_end_col, settings.trace_steps) = (0, None);
+        // `*` opens only the document's own switches, never the kernel's or a package's
+        settings.opaque_conditionals.retain(|n| n != EVERY_SWITCH);
         // tracing watches the run, it changes nothing it does
         (settings.trace_document_only, settings.trace_state, settings.trace_stop) = (false, false, None);
         let l = &mut settings.limits;
