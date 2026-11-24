@@ -11,9 +11,9 @@ use satex::engine::builtins::OccKind;
 /// Steps a fixture may take.
 const STEP_BUDGET: u64 = 20_000_000;
 /// Target 20M; measured 43.2M on 2026-11-04 (rerun-checked), see plan.
-/// Target three of the fixture's line budgets (1M); measured 4.12M on 2026-11-16, reaching
-/// the end with no library error; 1.25 times that.
-const CUT_LIBRARY_STEPS: u64 = 5_150_000;
+/// Three of the fixture's line budgets (1M); measured 1.89M on 2026-11-24 on TL2025 and TL2026,
+/// reaching the end with no library error (4.01M on TL2026 while a cut kept l3fp's lists).
+const CUT_LIBRARY_STEPS: u64 = 3_000_000;
 const NOTEBOOK_A4_STEPS: u64 = 53_952_069;
 /// Target 20M; measured 44.2M on 2026-11-04 (rerun-checked), see plan.
 const FLOAT_AFTER_TITLE_STEPS: u64 = 55_299_093;
@@ -757,6 +757,38 @@ fn cut_inside_library_call_drops_the_call() {
     let steps = a.steps - a.load_steps;
     crate::support::record_steps("cut-library", steps);
     assert!(steps < CUT_LIBRARY_STEPS, "{steps} analysis steps, budget {CUT_LIBRARY_STEPS}");
+}
+
+/// A `\clist_map_inline:nn` over 400 of the document's items runs past the
+/// line budget. Wherever the cut lands, l3clist's list below it holds the
+/// items not mapped yet beside its own tokens. The cut drops the whole map,
+/// so its line costs one budget. The bug: a library list holding document
+/// tokens was kept as if it called the document's text, so the map read on
+/// with its outer calls gone, over the rest of the items, until the budget
+/// cut it a second time (on TL2026 the l3fp parser of
+/// [`cut_inside_library_call_drops_the_call`] went the same way: 4.0M steps
+/// and 36 paths, where TL2025 cut elsewhere and took 1.9M).
+#[test]
+fn cut_inside_a_map_over_document_items_drops_the_map() {
+    if !installed() {
+        return;
+    }
+    let root = dir("cut_inside_library_map");
+    let path = root.join("main.tex");
+    let source = std::fs::read_to_string(&path).expect("fixture source");
+    let cfg = crate::support::discover(&root);
+    let a = Machine::analyze(&source, Some(&path), &cfg);
+    assert!(defined(&a, "SatexReachedEnd"), "{}", crate::support::presence(&a, "SatexReachedEnd"));
+    // The document without the map: what the other lines cost.
+    let rest: String = source.lines().filter(|l| !l.contains("clist_map")).map(|l| format!("{l}\n")).collect();
+    let b = Machine::analyze(&rest, Some(&path), &cfg);
+    let line = (a.steps - a.load_steps).saturating_sub(b.steps - b.load_steps);
+    // One budget, and what the cut leaves to read: less than half another.
+    let budget = cfg.limits.line_steps;
+    assert!(
+        line < budget + budget / 2,
+        "the map's line took {line} steps, its budget {budget}: it read on after the cut"
+    );
 }
 
 /// [`cut_inside_library_call_drops_the_call`], then `\fp_use:N` of the fp

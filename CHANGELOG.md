@@ -9,6 +9,7 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 
 ### Site
 
+- `fix` **The showcase videos are recorded on an idle machine only, one compiling take at a time, at low priority.** Taken during a busy build they showed a compile five times as slow as it is and loaded the machine further (`SATEX_SHOTS=force` records anyway).
 - `fix` **A command typed into the PDF echoes what it typesets.** `\TeX`, `\LaTeX` or a logo of your own showed nothing until the build. The echo now sets what the run sets for the command alone, with its kerns and its raised and lowered letters (`satex/commandText`).
 - `fix` **A click on the date of a title page puts the caret into `\date`.** Text that `\maketitle` sets from a stored argument after another one (the date after the author) was refused as "code satex cannot place".
 - `fix` **A finding's hover card no longer flickers while runs come and go.** The card is written again only when its text changes.
@@ -70,6 +71,7 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 
 ### Analysis
 
+- `fix` **A line-budget cut inside library code drops the whole call.** Library code that held some of the document's tokens as data (an l3fp expression, the items of a `\clist_map_inline:nn`) was kept as if it called the document's text, so satex read on in the middle of it with its outer calls gone: a second cut, many paths and false errors inside expl3 (an `\fp_set:Nn` loop under TeX Live 2026: 4.0M steps, now 1.9M).
 - `fix` **The kernel cache is keyed on the settings that change what it holds.** A kernel built under other limits or assumptions (`choices`, `assume_compiles` …) was loaded by every later run on the same cache directory, so a run's result depended on which run built the kernel first.
 - `fix` `TL ≤ 2021` **`\creationdate` under an older XeTeX may print more than the date.** XeTeX before 0.999994 reads string-pool bytes after it. satex was sure of the date alone.
 - `fix` **The names a file defines are found again for other definers.** A memo kept the first caller's answer for every later one.

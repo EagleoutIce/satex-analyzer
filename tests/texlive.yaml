@@ -8,6 +8,7 @@ installs:
   2019: ~/texlive-old/2019
   2022: ~/texlive-old/2022
   2025: /usr/local/texlive/2025
+  2026: /usr/local/texlive/2026
 
 # Tests not run on a TeX Live older than `before`, because that installation lacks what the test
 # checks.  Only for a missing feature, never for a satex bug: a test satex gets wrong stays red.

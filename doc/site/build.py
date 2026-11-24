@@ -2326,9 +2326,21 @@ def recapture(out):
     server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), functools.partial(quiet, directory=str(out)))
     threading.Thread(target=server.serve_forever, daemon=True).start()
     began = time.monotonic()
-    # browsers by what the machine has free now: about 3 GB each with the engine, two idle cores each, six at most
-    idle = (os.cpu_count() or 2) - os.getloadavg()[0]
-    slots = max(1, min(6, available_memory() // (3 * 2**30), int(idle) // 2))
+    # The recordings show how fast the playground is: taken on a busy machine they show a compile five times as slow
+    # as it is, and their browsers load it further. A busy machine (load over a quarter of the cores) keeps the last
+    # captures; SATEX_SHOTS=force takes them anyway.
+    cores = os.cpu_count() or 2
+    if os.getloadavg()[0] > cores / 4 and os.environ.get("SATEX_SHOTS") != "force":
+        server.shutdown()
+        print(f"showcase: {len(due)} captures out of date, kept: the machine is busy (load {os.getloadavg()[0]:.1f} of {cores} cores); "
+              "build again when it is idle, or SATEX_SHOTS=force", file=sys.stderr)
+        return False
+    # browsers by what the machine has free now: about 3 GB each with the engine, two idle cores each, two at most;
+    # shots that compile one at a time, so no take waits for another's engine
+    idle = cores - os.getloadavg()[0]
+    slots = max(1, min(2, available_memory() // (3 * 2**30), int(idle) // 2))
+    if any(n in served for n in due):
+        slots = 1
     names, url = list(due), f"http://127.0.0.1:{server.server_address[1]}/"
     urls, playground = {}, None
     if any(n in served for n in names):
@@ -2350,7 +2362,7 @@ def recapture(out):
 
     def run(part):
         t0 = time.monotonic()
-        out = subprocess.run(["node", str(SITE / "showcase/capture.mjs"), urls.get(part[0], url), str(img)],
+        out = subprocess.run(["nice", "-n", "10", "node", str(SITE / "showcase/capture.mjs"), urls.get(part[0], url), str(img)],
                              env=dict(os.environ, ONLY=",".join(part), CHROME=str(chrome)), capture_output=True, text=True).stdout
         finished[0] += 1
         got = sorted(set(re.findall(r"^ok +\S+ (light|dark)", out, re.M)))

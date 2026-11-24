@@ -9701,11 +9701,11 @@ will look undefined",
     /// with them, so otherwise the file's next `}` or `\fi` would close one of
     /// their levels instead of its own (tex.web § 336 balances a file end the
     /// same way). With `own`, stop at the first list that still holds the
-    /// document's text. With `called`, stop at the first library list that
-    /// holds the document's text: a command the document called continues, so
-    /// its closers and resets stay (`\include` resets `\@auxout`). The list
-    /// the cut command reads from always goes, since its rest is mid-command.
-    /// Returns the groups and conditionals closed.
+    /// document's text. With `called`, stop at the first list entered before
+    /// the document's text was last read: a command the document called
+    /// continues, so its closers and resets stay (`\include` resets
+    /// `\@auxout`). The list the cut command reads from always goes, since
+    /// its rest is mid-command. Returns the groups and conditionals closed.
     fn give_up_lists(&mut self, own: bool, called: bool) -> (usize, usize) {
         let mut at = None;
         // The list the cut command read from is cut mid-command, so it always goes.
@@ -9718,15 +9718,15 @@ will look undefined",
                     None => break,
                 },
             };
-            let mine = pending.iter().filter(|&&f| self.own_file(f)).count();
-            if own && mine > 0 {
+            if own && pending.iter().any(|&f| self.own_file(f)) {
                 break;
             }
             // A list below it that was entered before the document's text was
-            // last read is a caller of that text (`\include` around a chapter),
-            // as is library code holding it. It continues.
+            // last read is a caller of that text (`\include` around a chapter):
+            // it continues. One entered since is part of the cut call, also
+            // when it holds document tokens (an argument, a map's items).
             let entered = matches!(self.input.last(), Some(Frame::Tokens { at, .. }) if at.2 < self.doc_mark);
-            if called && !reading && (entered || mine > 0 && mine < pending.len()) {
+            if called && !reading && entered {
                 break;
             }
             reading &= self.input.last().is_some_and(read_out);

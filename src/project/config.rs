@@ -3568,6 +3568,8 @@ impl Config {
         settings.preload = settings.preload.as_ref().map(local);
         (settings.trace, settings.trace_lines, settings.trace_col, settings.trace_file) = (false, None, 0, None);
         (settings.trace_end_col, settings.trace_steps) = (0, None);
+        // tracing watches the run, it changes nothing it does
+        (settings.trace_document_only, settings.trace_state, settings.trace_stop) = (false, false, None);
         let l = &mut settings.limits;
         (l.seconds, l.memory, l.threads, l.cache_size) = (0, Default::default(), 0, Default::default());
         (l.degrade_at_percent, l.facts, l.vertices, l.trace, l.steps) = (0, 0, 0, 0, 0);
