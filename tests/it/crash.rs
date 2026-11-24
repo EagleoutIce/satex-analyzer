@@ -360,7 +360,13 @@ pub(crate) fn child(dir: &Path, args: &[&str], stdin: &str, stack: Option<usize>
         return Err(format!("`satex {}` was ended by a signal ({status}): {}", args.join(" "), tail(&err)));
     }
     match DEATHS.iter().find(|d| err.contains(**d) || out.contains(**d)) {
-        Some(death) => Err(format!("`satex {}` said `{death}`: {}", args.join(" "), tail(&err))),
+        Some(death) => {
+            // The death's own line and the two after it (the panic's site and message): a backtrace
+            // after them pushes them out of the tail.
+            let text = if err.contains(*death) { &err } else { &out };
+            let at: String = text.lines().skip_while(|l| !l.contains(*death)).take(3).collect::<Vec<_>>().join("\n");
+            Err(format!("`satex {}` said `{death}`:\n{at}\n…\n{}", args.join(" "), tail(&err)))
+        }
         None => Ok((out, err)),
     }
 }

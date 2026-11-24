@@ -346,7 +346,7 @@
 0.025 counterexamples::undecided_arms_join_global_assignments
 0.110 counterexamples::undecided_arms_join_their_assignments
 0.023 counterexamples::undecided_arms_join_their_meanings
-1200.000 crash::the_benchmark_documents_survive_lint
+1800.000 crash::the_benchmark_documents_survive_lint
 900.000 crash::the_site_examples_survive_lint_and_a_session
 600.000 crash::the_templates_survive_lint_and_a_session
 0.262 depp::a_load_under_an_undecided_conditional_is_not_certain
