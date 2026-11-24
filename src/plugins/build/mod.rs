@@ -1,14 +1,3 @@
-/// Mapping of build configuration filenames to the build system that reads them.
-pub const BUILD_FILES: [(&str, &str); 7] = [
-    ("latexmkrc", "latexmk"),
-    (".latexmkrc", "latexmk"),
-    ("GNUmakefile", "make"),
-    ("makefile", "make"),
-    ("Makefile", "make"),
-    ("Tectonic.toml", "tectonic"),
-    ("tectonic.toml", "tectonic"),
-];
-
 /// Build systems recognized by satex: what a `latexmkrc` or `Makefile`
 /// beside the document turns out to be. Named in
 /// [`crate::plugins::Plugins::build`].

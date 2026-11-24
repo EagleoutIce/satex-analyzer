@@ -5209,13 +5209,6 @@ pub fn signature(
     probed(analysis, sym, Some(mac), Some(crate::analysis::probe::State::End)).filter(|p| p.complete).map(|p| p.spec)
 }
 
-/// What a call of the macro `sym` reads as the probe found it (`\\greet[hi]{2}`), for one name
-/// where a listing gave only its definition's own text.
-pub fn effective_probed(analysis: &Analysis, sym: crate::engine::tex::Sym) -> String {
-    let meaning = analysis.env.meaning(sym);
-    effective_of(analysis, sym, meaning.as_macro().map(|m| &**m), Some(crate::analysis::probe::State::End))
-}
-
 /// `view` is `None` where a listing reports many names at once and only
 /// what the definition itself says is wanted: its ltcmd specification or
 /// its parameter text.  Otherwise the probe says what a call reads.  Either
