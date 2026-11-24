@@ -3074,6 +3074,8 @@ struct GuardSeen {
     line: GuardKey,
     level: u8,
     cut: bool,
+    /// The cut is a line-budget overrun: it gives up the document's whole command.
+    budget: bool,
     /// The cut ends this running call with its learned effect.
     call_cut: Option<usize>,
 }
@@ -5859,7 +5861,9 @@ will look undefined",
                 if !(self.reading_command && self.step_depth == 1) {
                     return None;
                 }
-                if !self.guard_seen.call_cut.take().is_some_and(|at| self.end_learned_call(at)) {
+                if self.guard_seen.call_cut.take().is_some_and(|at| self.end_learned_call(at)) {
+                    self.guard_seen.budget = false;
+                } else {
                     self.resync();
                 }
             }
@@ -9147,7 +9151,7 @@ will look undefined",
             // last checkpoint, and every run reads on to the hundredth error itself.
             self.spoil_recording("the hundredth error gave up the text");
             // The document's command keeps its closing code (`\\include`).
-            self.give_up_lists(false, true);
+            self.give_up_lists(false, true, false);
         }
     }
 
@@ -9714,9 +9718,11 @@ will look undefined",
     /// document's text. With `called`, stop at the first list entered before
     /// the document's text was last read: a command the document called
     /// continues, so its closers and resets stay (`\include` resets
-    /// `\@auxout`). The list the cut command reads from always goes, since
-    /// its rest is mid-command. Returns the groups and conditionals closed.
-    fn give_up_lists(&mut self, own: bool, called: bool) -> (usize, usize) {
+    /// `\@auxout`). Without `whole`, also at a library list holding tokens
+    /// placed at the document's text beside its own. The list the cut command
+    /// reads from always goes, since its rest is mid-command. Returns the
+    /// groups and conditionals closed.
+    fn give_up_lists(&mut self, own: bool, called: bool, whole: bool) -> (usize, usize) {
         let mut at = None;
         // The list the cut command read from is cut mid-command, so it always goes.
         let mut reading = true;
@@ -9728,15 +9734,22 @@ will look undefined",
                     None => break,
                 },
             };
-            if own && pending.iter().any(|&f| self.own_file(f)) {
+            let mine = pending.iter().filter(|&&f| self.own_file(f)).count();
+            if own && mine > 0 {
                 break;
             }
             // A list below it that was entered before the document's text was
             // last read is a caller of that text (`\include` around a chapter):
-            // it continues. One entered since is part of the cut call, also
-            // when it holds document tokens (an argument, a map's items).
+            // it continues. A line-budget cut (`whole`) gives up the rest of the
+            // command: a list entered since is part of it, also when it holds
+            // document tokens (an argument, a map's items). Any other cut gives
+            // up only the expansion it is in, so library code holding such
+            // tokens (or the unknowns an earlier cut left there) continues, and
+            // the command around it still runs its closers (a tagged graphic's
+            // structure end).
             let entered = matches!(self.input.last(), Some(Frame::Tokens { at, .. }) if at.2 < self.doc_mark);
-            if called && !reading && entered {
+            let holds = !whole && mine > 0 && mine < pending.len();
+            if called && !reading && (entered || holds) {
                 break;
             }
             reading &= self.input.last().is_some_and(read_out);
@@ -10015,7 +10028,7 @@ will look undefined",
             return;
         }
         let span = self.position_span();
-        let balanced = Self::closed_note(self.give_up_lists(true, false));
+        let balanced = Self::closed_note(self.give_up_lists(true, false, false));
         self.diagnose(
             Severity::Imprecision,
             "fault-contained",
@@ -10047,7 +10060,7 @@ will look undefined",
     /// An expansion nested deeper than satex follows: its assignments become
     /// unknown, its pending lists are dropped, and the run continues.
     pub(crate) fn abandon_nesting(&mut self) {
-        let balanced = Self::closed_note(self.give_up_lists(false, true));
+        let balanced = Self::closed_note(self.give_up_lists(false, true, false));
         let (file, line) = self.position();
         self.diagnose(
             Severity::Unsupported,
@@ -10168,6 +10181,7 @@ will look undefined",
             );
             return true;
         }
+        self.guard_seen.budget = true;
         self.cut();
         false
     }
@@ -10269,7 +10283,8 @@ will look undefined",
                 "a skipped expansion opened groups of different kinds; they are closed as its rest might, and assumed not left open".to_string(),
             );
         }
-        self.give_up_lists(false, true);
+        let whole = std::mem::take(&mut self.guard_seen.budget);
+        self.give_up_lists(false, true, whole);
         // An output routine's text goes nowhere, so it gets no unknown token.
         if std::mem::take(&mut self.guard_seen.cut) && !(output && !self.output_active()) {
             let at = self.position_span();
