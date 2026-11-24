@@ -1527,7 +1527,8 @@ fn early_misses_do_not_stop_recording_for_good() {
 /// lie in an interval: it met no choice, so what it wrote holds for each value the
 /// interval stands for. Such runs kept nothing ("vague read"), and in a thesis whose
 /// box sizes, marks and page numbers are unknown that was most repeated calls (a third
-/// of all steps). `\r` is 300 plus the unknown `\k`, replayed or run.
+/// of all steps). `\r` is 300 plus the unknown `\k`, replayed or run. Three calls
+/// of `\upto` replay, and the loop of `\step` (defined anew, same text) in the second.
 #[test]
 fn a_call_that_reads_an_unknown_value_without_a_choice_keeps_its_effect() {
     let [kept, ran] = memo_runs(
@@ -1540,7 +1541,7 @@ fn a_call_that_reads_an_unknown_value_without_a_choice_keeps_its_effect() {
     for a in [&kept, &ran] {
         assert!(crate::support::defined(a, "Kept") && !crate::support::maybe_defined(a, "Lost"));
     }
-    assert_eq!(kept.call_memo[1], 3, "{:?} kept, replayed, saved", kept.call_memo);
+    assert_eq!(kept.call_memo[1], 4, "{:?} kept, replayed, saved", kept.call_memo);
 }
 
 /// The other side of the rule above: a run that gave an unknown value a name of its own
@@ -1633,7 +1634,10 @@ fn a_chardef_in_a_call_keeps_its_effect() {
 
 /// A kept effect holds only while every name its run read holds what it
 /// held: `\calc` reads `\base`, so after `\def\base{2}` it runs again and
-/// leaves `2300`, not the `1300` its first runs kept.
+/// leaves `2300`, not the `1300` its first runs kept. `\step` is defined
+/// anew with the same text in each call, so it is one definition by its code
+/// and its loop replays in the second and the fourth call (three replays, one
+/// of `\calc`).
 #[test]
 fn a_kept_effect_misses_when_a_name_it_read_changed() {
     let [kept, ran] = memo_runs(
@@ -1646,12 +1650,13 @@ fn a_kept_effect_misses_when_a_name_it_read_changed() {
     for a in [&kept, &ran] {
         assert!(crate::support::defined(a, "Fresh") && !crate::support::maybe_defined(a, "Stale"));
     }
-    assert_eq!(kept.call_memo[1], 1, "only the third call replays");
+    assert_eq!(kept.call_memo[1], 3, "the third call and two loops replay");
 }
 
 /// A name the run set in a group of its own and read after that group
 /// ended holds what it held before the run: `\calc` reads `\x` so, and
-/// after `\def\x{2}` it runs again and leaves `2300`.
+/// after `\def\x{2}` it runs again and leaves `2300`. Its loop `\step`
+/// (defined anew, same text) replays in the second and the fourth call.
 #[test]
 fn a_name_read_after_its_group_undid_the_write_is_read_from_before() {
     let [kept, ran] = memo_runs(
@@ -1664,14 +1669,15 @@ fn a_name_read_after_its_group_undid_the_write_is_read_from_before() {
     for a in [&kept, &ran] {
         assert!(crate::support::defined(a, "Fresh") && !crate::support::maybe_defined(a, "Stale"));
     }
-    assert_eq!(kept.call_memo[1], 1, "only the third call replays");
+    assert_eq!(kept.call_memo[1], 3, "the third call and two loops replay");
 }
 
 /// pgfmath's pattern: `\outer` opens a group, `\inner` computes in it and
 /// ends it with `\endgroup`, handing its result out. Such a run keeps its
 /// effect up to that `\endgroup` and the text it had left: a replay makes
 /// the global writes, closes the group (`\tmp` is gone again) and reads the
-/// rest (`\def\res{300}`).
+/// rest (`\def\res{300}`). Two calls of `\outer` replay, and the loop
+/// of `\step` (defined anew, same text) in the second.
 #[test]
 fn a_call_that_ends_its_callers_group_replays_the_end() {
     let [kept, ran] = memo_runs(
@@ -1687,7 +1693,7 @@ fn a_call_that_ends_its_callers_group_replays_the_end() {
         assert!(crate::support::defined(a, "Right") && crate::support::defined(a, "seen"));
         assert!(!crate::support::maybe_defined(a, "Leak"));
     }
-    assert_eq!(kept.call_memo[1], 2, "{:?} kept, replayed, saved", kept.call_memo);
+    assert_eq!(kept.call_memo[1], 3, "{:?} kept, replayed, saved", kept.call_memo);
 }
 
 /// babel's `\csname extras<lang>\endcsname\relax` around cleveref's
@@ -1718,7 +1724,9 @@ fn a_put_back_token_of_a_call_stays_its_own() {
 /// Only a call the main loop expands keeps or replays an effect. Under
 /// `\expandafter\mark\bump` TeX expands `\bump` first but runs `\mark`
 /// before `\bump`'s text, so `\mark` still sees `\done` as `\relax`. A
-/// replay there would set `\done` before `\mark` runs.
+/// replay there would set `\done` before `\mark` runs. The third `\bump`
+/// replays, and the loop `\step` inside it (defined anew, same text) in the
+/// second and the last: that one only assigns `\n`, in the main loop.
 #[test]
 fn a_call_an_expandafter_expands_replays_no_effect() {
     let [kept, ran] = memo_runs(
@@ -1733,13 +1741,14 @@ fn a_call_an_expandafter_expands_replays_no_effect() {
     for a in [&kept, &ran] {
         assert!(crate::support::defined(a, "Right") && !crate::support::maybe_defined(a, "Wrong"));
     }
-    assert_eq!(kept.call_memo[1], 1, "only the third call replays");
+    assert_eq!(kept.call_memo[1], 3, "the third call and two loops replay");
 }
 
 /// A replayed local assignment stays local: `\bump` sets the count register
 /// `\k` at its caller's level. Replayed inside a group, the group's end must
 /// restore `\k` to 5. Registers start as global bindings, so taking the
 /// binding's own `global` flag for the write's kind made it leak out.
+/// The loop `\step` (defined anew, same text) replays in the second call.
 #[test]
 fn a_kept_local_assignment_stays_in_its_group() {
     let [kept, ran] = memo_runs(
@@ -1753,7 +1762,7 @@ fn a_kept_local_assignment_stays_in_its_group() {
     for a in [&kept, &ran] {
         assert!(crate::support::defined(a, "Local") && !crate::support::maybe_defined(a, "Leaked"));
     }
-    assert_eq!(kept.call_memo[1], 1, "the call in the group replays");
+    assert_eq!(kept.call_memo[1], 2, "the call in the group and one loop replay");
 }
 
 /// A macro redefined at one place before each call (`\use:x`'s scratch
