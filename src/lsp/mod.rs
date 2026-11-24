@@ -424,6 +424,48 @@ fn style_prompt(id: lsp_server::RequestId, candidate: &Json) -> Request {
     Request::new(id, "window/showMessageRequest".into(), params)
 }
 
+/// The two ways out of every finding: "ignore here" writes the magic comment
+/// `% satex-disable-next-line CODE` above its line, "ignore rule" turns the
+/// rule off in the project's `satex.yaml` ([`STYLE_COMMAND`], `off`).
+fn ignore_actions(uri: &Uri, diagnostics: &[lsp_types::Diagnostic]) -> Vec<Json> {
+    let mut seen = Vec::new();
+    let mut out = Vec::new();
+    for d in diagnostics {
+        // the rule's name, which reads in a comment (`hand-set-quantity`), else its number
+        let rule = d.data.as_ref().and_then(|x| x["rule"].as_str()).map(str::to_string);
+        let Some(code) = rule.or_else(|| match &d.code {
+            Some(lsp_types::NumberOrString::String(c)) => Some(c.clone()),
+            _ => None,
+        }) else {
+            continue;
+        };
+        let code = &code;
+        if seen.contains(&(code.clone(), d.range.start.line)) {
+            continue;
+        }
+        seen.push((code.clone(), d.range.start.line));
+        let at = lsp_types::Position { line: d.range.start.line, character: 0 };
+        let edit = serde_json::json!({ "range": { "start": at, "end": at }, "newText": format!("% satex-disable-next-line {code}\n") });
+        out.push(serde_json::json!({
+            "title": format!("Ignore {code} here"),
+            "kind": "quickfix",
+            "diagnostics": [d],
+            "data": { "ignore": true },
+            "edit": { "changes": { uri.as_str(): [edit] } },
+        }));
+        if !out.iter().any(|a| a["command"]["arguments"][0]["code"] == code.as_str()) {
+            out.push(serde_json::json!({
+                "title": format!("Ignore rule {code} in this project"),
+                "kind": "quickfix",
+                "diagnostics": [d],
+                "data": { "ignore": true },
+                "command": { "title": "Ignore rule", "command": STYLE_COMMAND, "arguments": [{ "code": code, "answer": "off" }] },
+            }));
+        }
+    }
+    out
+}
+
 /// What a client's answer to [`style_prompt`] records, `None` for no.
 fn style_choice(answer: &Response) -> Option<crate::project::config::StyleChoice> {
     let title = answer_title(answer)?;
@@ -2649,9 +2691,10 @@ fn publish(
         let Some(group_uri) = group.get("uri").and_then(Json::as_str).and_then(|s| s.parse::<Uri>().ok()) else {
             continue;
         };
-        let diagnostics =
+        let diagnostics: Vec<lsp_types::Diagnostic> =
             group.get("diagnostics").cloned().and_then(|d| serde_json::from_value(d).ok()).unwrap_or_default();
-        let code_actions = group.get("codeActions").and_then(|a| a.as_array()).cloned().unwrap_or_default();
+        let mut code_actions = group.get("codeActions").and_then(|a| a.as_array()).cloned().unwrap_or_default();
+        code_actions.extend(ignore_actions(&group_uri, &diagnostics));
         actions.insert(group_uri.clone(), code_actions);
         published.push(PublishDiagnosticsParams { uri: group_uri, diagnostics, version: None });
     }

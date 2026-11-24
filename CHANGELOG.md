@@ -1,6 +1,7 @@
 # Changelog
 
 Newest first, fixes first in each group. Every entry has a badge: `feat` a feature, `fix` a bug fix, `perf` speed, `docs` documentation.
+An entry that matters only on some TeX Live versions has a second badge naming them, such as `TL 2019` or `TL ≤ 2022`.
 Commit and pull request links point to the details.
 Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, see [doc/releasing.md](doc/releasing.md)).
 
@@ -20,6 +21,9 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 
 ### LSP
 
+- `feat` **Every finding offers "Ignore here" and "Ignore rule".** The first writes `% satex-disable-next-line ⟨rule⟩` above its line, the second turns the rule off in the project's `satex.yaml`. No Fix all applies them.
+- `fix` **TikZ previews are kept per installation**, and a picture that failed to draw is drawn again on the next ask.
+- `fix` `TL 2019` **TikZ previews draw with TeX Live 2019's dvisvgm**, which has no `--exact-bbox`.
 - `perf` **A word typed into a paragraph of a long chapter is analyzed in its paragraph.** A paragraph whose lines are not known (a box or kern of unknown width in it) counts 1 to n lines, n its breakpoints: every typed word raised n, and the page's length with it, so the run after the edit met the last one only past the next forced page break. The bound is now rounded up to a power of two and stays as it was. A 150-page thesis: 12M → 0.84M steps per typed word (6.6–8.1 s → 4.2–4.6 s). A splice that fails at one line no longer keeps every later line from meeting the last run. `-vv` says what each part of serving an edit took and names the slowest rules.
 - `perf` **The first word typed at a place no longer waits for the text before it.** The server places the states an edit resumes from and meets the last run at for the line of the caret (the last code action, highlight or completion request) while it is idle, and stops for any message. The same thesis: the first edit at a place 137M steps (29.9 s) → 0.84M, as every later one. `satex/runInfo` says what an edit's run still placed itself (`placedSteps`). The placing run passes states inside a paragraph, where no run can meet: a first edit in a 250-page document 5.8M → 4.0M steps and 4.2 → 0.9 s. Meeting the last run copies only the fact rows the edit changed.
 - `perf` **A typed character no longer waits for the last one's findings.** The rules of a run stop at the next rule once a newer text came, and what a completion reads of the whole run is built while the server is idle (or by the first request that reads it), not before the findings. Meeting the last run after an edit writes only the rows, graph vertices and table entries the edit changed (a 150-page thesis: 0.5 s → 0.03 s of each edit). `-vv` says what each part of a splice, of concluding a run and of the lint took.
@@ -38,6 +42,7 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 
 ### Compile
 
+- `fix` `TL 2019` **`satex compile` rests on TeX Live 2019**: the first pass's `.aux` follows the installed kernel, which never writes `\@abspage@last`.
 - `perf` **`compile.warm` is on by default on Linux.** A build whose preamble has a format leaves one pdfTeX waiting for the next build in the same clock minute and says so; it ends a second after that minute. Small edits rebuild in about half the time.
 - `perf` **XeLaTeX builds run their passes without the PDF driver and xdvipdfmx once at the end, as latexmk does; helpers that outlive a build release the locks and descriptors it inherited; a warm engine is taken only when TeX's environment is the build's.**
 - `perf` **`satex compile` returns with the PDF.** Rule-level explanations come at once, the analysis runs detached and its findings show on the next call (`compile.wait` waits for them): a one-word edit of a big book returns in about latexmk's time instead of 18 s.
@@ -59,14 +64,29 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 
 ### Analysis
 
+- `fix` **`\parshape` with an unknown count reads its pairs as the shape's lines, and any count stays within the budgets** (`limits.parshape_lines`, default 64 kept). An unknown count left the pairs unread, so wrapfig's `\z@ \hsize` ran as an assignment and set `\z@` to 345pt. The next shape asked for 22 million lines and ran out of memory on TeX Live 2019.
+- `fix` **A lint probe is bounded by steps, not the clock** (`limits.provider_steps`). A probe the clock stopped counted as "does not take the call" and was kept, so a finding could depend on machine load.
+- `fix` **Without a configured year, satex reads the TeX Live whose `tex` is on `PATH`**, not the newest one under `/usr/local/texlive`.
+- `perf` **A call that forked learns its effect even where its runs wrote different names** (`call-learned-effect`). A name only some runs wrote is widened, and a result some run left a number in counts as a number. `\pgfmathparse` in a `\loop` was refused a summary, ran in full each pass and kept forking: a typed-number parse took 45.7M steps on TeX Live 2022, now 708k.
+- `fix` **A widened expl3 variable keeps the form of its kind** (assumption `variable-kind-shape`, `analysis.assume_variable_kind_shape`). An fp widened after a cut lost l3fp's delimiters, so `\fp_use:N` ran away to the end of the file on TeX Live 2019 and 2022. The form comes from the kind's own constants as the run defined them.
+- `fix` **LuaTeX finds a font by its name, as luaotfload does** (`\setmainfont{Libertinus Serif}`). A font given by name was unknown, so fontspec's checks of its bold and italic faces forked without end: over a billion steps on TeX Live 2022, now under a million. `\fontname` of a face requested twice is the first request's, as in LuaTeX.
+- `fix` **A package cache stays served when lines above the load move.** TeX Live 2019's kernel keeps the `\usepackage` tokens in `\@currname`, so every cache key held document positions and an added line made all caches stale. Positions in project files are now keyed as placeholders and replayed where the text stands now.
+- `fix` `TL 2019` **A class whose last line inputs a project file is cached to its end**, and a limit a cached load reached is named once on replay.
+- `fix` `TL 2019` **Options of a repeated load reach the option-clash check on TeX Live 2019**, whose kernel has no `\@onefilewithoptions@clashchk`.
+- `fix` `TL 2019` **`\{` and other symbols read as TeX Live 2019's `tuenc.def` declares them** (`\DeclareTextSymbol` with `\UnicodeEncodingName`).
+- `fix` **`\openin` of the job's log is not at its end**, and a label like `Step\nobreakspace 2` gives the word "Step" (TeX Live 2022).
+- `fix` **`\XeTeXglyphname` on a TFM font leaves the number unread**, as xetex does.
+- `fix` **A digit slice open to the end of a number has no known width.** It overflowed and gave exactly 2147483647 in release builds.
+- `fix` `TL 2019` **Biber's `datatype=date` constraint no longer flags dates.** Only ISBN, ISSN and ISMN values are checked for their check digit.
+- `fix` `TL 2019` **Package completion works on TeX Live 2019**: the kernel's hooks for a missing package no longer decide what the argument is.
 - `fix` **A replayed package load counts its errors toward TeX's hundred.** A cold run that gave up at the hundredth error and a warm run that read on now agree: the replay restores the error count, and a load cut at the hundredth error is not replayed past it.
-- `fix` **The job's log exists while the job runs.** `\IfFileExists{\jobname.log}` is true and its size and date are unknown, as in TeX, which opens the log before the first line. TeX Live 2022's tagging took its XMP date from the log, got `\q_no_value` and spent 500M steps at `\end{document}`.
-- `fix` **A kernel cut by `limits.format_steps` no longer leaves its files to the document.** The document read latex.ltx and expl3 on as its own text and ran for minutes on TeX Live 2022.
+- `fix` `TL 2022` **The job's log exists while the job runs.** `\IfFileExists{\jobname.log}` is true and its size and date are unknown, as in TeX, which opens the log before the first line. TeX Live 2022's tagging took its XMP date from the log, got `\q_no_value` and spent 500M steps at `\end{document}`.
+- `fix` `TL 2022` **A kernel cut by `limits.format_steps` no longer leaves its files to the document.** The document read latex.ltx and expl3 on as its own text and ran for minutes on TeX Live 2022.
 - `perf-fix` **A package the document or kernel opens before loading it is cached again.** Older kernels' `\IfFileExists` open each file with `\openin` first, and such a package never got its cache.
 - `fix` **`\openin` only opens a file, and its text is read at the first `\read`.** A file that is only tested for existence no longer ties the run to its content, so an edit there resumes inside it instead of rerunning from the main file.
 - `perf-fix` **A package that opens and closes its own stream is served from its cache while the document holds another stream open.**
 - `fix` **satex asks the installed engine which primitives it has**, so an older LuaTeX or XeTeX is no longer said to define `\partokenname` or `\showstream`.
-- `fix` **Older kernels (TeX Live 2019, 2022) report a repeated `\usepackage` and its option clash**, and a label built from a counter is recorded expanded where `\protected@write` writes inside its group.
+- `fix` `TL ≤ 2022` **Older kernels (TeX Live 2019, 2022) report a repeated `\usepackage` and its option clash**, and a label built from a counter is recorded expanded where `\protected@write` writes inside its group.
 - `perf` **A build holds one run at a time, and the call memo is bounded by bytes (`limits.call_memo_bytes`, 256 MiB).** A 100-page thesis's second build run no longer stops at the memory limit (peak 7.8 → 5.0 GiB).
 - `feat-fix` **`limits.seconds` defaults to 600, and a probe of a package for a missing command has its own `limits.probe_seconds` (20).** A probe ran without any time limit and kept a lint of a misspelled `\usepackage` going for minutes.
 - `fix` **A walk through joined texts no longer hangs inside one step.** A text that names the one-of of the pass before many times was followed once per name, 20^8 times for twenty copies eight passes deep. Every walk through one-of texts and macro bodies now pays one budget per step (`limits.walk_texts`, 100000), past which the rest reads as unknown.
@@ -160,7 +180,7 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 - `feat` **`satex query tagging` says more.** `running` is the tagging code's own answer, `modules` the tagging files loaded, `marked` the marked content written by tag. A package the status list lacks is `unlisted`. Without `\DocumentMetadata` it lists each package's status, to judge a document before tagging is on.
 - `fix` **`graphic-without-alt` follows the tagging state where the graphic stands.** It reports where the run raised latex-lab's warning. A graphic under `\SuspendTagging` or `\tag_stop:` is no finding, and one whose options come from a macro is checked too.
 - `fix` **Tagging lints ask the tagging code whether it tags** (`\tag_if_active:TF`), not only what `\DocumentMetadata` declared. A document that switches tagging off with `\tagpdfsetup` gets no tagging findings.
-- `fix` **The hand-set quantity fix writes `\SI` where the installed siunitx is version 2.** With siunitx not loaded yet, the fix wrote `\qty`, which siunitx 2 does not define.
+- `fix` `TL ≤ 2020` **The hand-set quantity fix writes `\SI` where the installed siunitx is version 2.** With siunitx not loaded yet, the fix wrote `\qty`, which siunitx 2 does not define.
 - `fix` **Prose rules skip text only an undecided path sets** (TikZ path code a run could not follow read as `(frame.north west)` prose), and a duplicate package load names the class line that made the first load, not the kernel's.
 - `fix` **Values the run did not know read as one `…` in every finding**, never as satex's internal names for them (`\-16384..16383#8970.8059.0`, 32-digit digests, private-use marks).
 - `fix` **A run a time limit stopped no longer reports labels, packages or names as absent from the whole document**: what it did not reach may hold them, so such findings are precision notes naming where the limit stopped the run.

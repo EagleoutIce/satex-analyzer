@@ -43,6 +43,17 @@ fn builds(dir: &Path) -> Result<(), String> {
     }
 }
 
+/// Templates written for a class newer than some installations: elsarticle before 3.3 and
+/// els-cas-templates of TeX Live 2019 have no `\affiliation` (the latter also lacks the
+/// `thumbnails/cas-email.jpeg` its `\ead` includes), so the sample text cannot build there.
+const NEWER: [(&str, &str, &str); 2] =
+    [("elsarticle", "elsarticle.cls", "\\def\\affiliation"), ("elsevier-cas", "cas-common.sty", "\\affiliation")];
+
+/// Whether the installed class is as new as template `id`'s text.
+fn current(id: &str) -> bool {
+    NEWER.iter().all(|&(t, file, text)| t != id || crate::support::installed_file_has(file, text))
+}
+
 /// Intuition: every template the TeX installation serves, written by `satex new`, builds with
 /// its engine. Pins templates whose sample text drifts from what the class accepts.
 #[test]
@@ -56,6 +67,7 @@ fn each_installed_template_builds() {
     let ships = |t: &&templates::Template| {
         t.class.as_ref().is_none_or(|c| crate::support::installed_file_has(&format!("{c}.cls"), ""))
             && t.package.as_ref().is_none_or(|p| crate::support::installed_file_has(&format!("{p}.sty"), ""))
+            && current(&t.id)
     };
     for t in templates::catalog().iter().filter(|t| t.fetch.is_none()).filter(ships) {
         let dir = base.join(&t.id);
@@ -112,7 +124,7 @@ fn each_template_reaches_its_end_without_an_error() {
         return;
     }
     let failed: Vec<String> = (crate::crash::templates("templates-end").iter())
-        .filter_map(|(id, dir)| reaches_its_end(id, dir, true).err().map(|why| format!("{id}: {why}")))
+        .filter_map(|(id, dir)| reaches_its_end(id, dir, current(id)).err().map(|why| format!("{id}: {why}")))
         .collect();
     assert!(failed.is_empty(), "{}", failed.join("\n"));
 }

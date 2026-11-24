@@ -254,6 +254,7 @@ thread_local! {
     static INDEX: RefCell<SearchIndex> = RefCell::new(HashMap::default());
     static LOADED: RefCell<HashMap<PathBuf, Option<Rc<Metrics>>>> = RefCell::new(HashMap::default());
     static INSTALLED: RefCell<Option<Option<HashSet<String>>>> = const { RefCell::new(None) };
+    static NAMED: RefCell<HashMap<Vec<PathBuf>, Rc<Named>>> = RefCell::new(HashMap::default());
 }
 
 /// The font directories of a TeX tree kpathsea searches for `\font`:
@@ -324,6 +325,176 @@ pub fn installed_font(name: &str) -> Option<bool> {
         });
         names.as_ref().map(|names| names.contains(&name.to_lowercase()))
     })
+}
+
+/// A font name as luaotfload compares it (`sanitize_fontname` in
+/// luaotfload-database.lua): casefolded, letters and digits only.
+pub fn sanitized(name: &str) -> String {
+    name.to_lowercase().chars().filter(|c| c.is_alphanumeric()).collect()
+}
+
+/// The names luaotfload's database holds, and per family the styles its
+/// faces are named with ([`style_bit`]).
+#[derive(Default)]
+struct Named {
+    /// What fontconfig knows by name, beside the trees' fonts.
+    names: HashSet<String>,
+    styles: HashMap<String, u8>,
+    /// The faces each family, full or PostScript name names.
+    faces: HashMap<String, Vec<u32>>,
+}
+
+/// luaotfload's `regular_synonym` and `style_synonym`: the bit of a face's
+/// sanitized subfamily, 0 for one that is neither.
+fn style_bit(subfamily: &str) -> u8 {
+    match subfamily {
+        "book" | "normal" | "plain" | "regular" | "roman" => 1,
+        "bold" => 2,
+        "oblique" | "slanted" | "italic" => 4,
+        "boldoblique" | "boldslanted" | "bolditalic" => 8,
+        _ => 0,
+    }
+}
+
+fn named(roots: &[PathBuf]) -> Rc<Named> {
+    NAMED.with(|cache| {
+        cache
+            .borrow_mut()
+            .entry(roots.to_vec())
+            .or_insert_with(|| {
+                let files = INDEX
+                    .with(|i| i.borrow_mut().entry(roots.to_vec()).or_insert_with(|| Rc::new(index(roots))).clone());
+                let mut named = Named::default();
+                let mut count = 0;
+                for (file, path) in files.iter() {
+                    let file = file.to_lowercase();
+                    if ![".otf", ".ttf", ".otc", ".ttc"].iter().any(|ext| file.ends_with(ext)) {
+                        continue;
+                    }
+                    for face in font_names(path) {
+                        let style = face.subfamily.iter().map(|s| style_bit(&sanitized(s))).fold(0, |a, b| a | b);
+                        for family in &face.families {
+                            *named.styles.entry(sanitized(family)).or_default() |= style;
+                        }
+                        for name in face.families.iter().chain(&face.names) {
+                            named.faces.entry(sanitized(name)).or_default().push(count);
+                        }
+                        count += 1;
+                    }
+                }
+                let _ = installed_font("");
+                INSTALLED.with(|i| named.names.extend(i.borrow().iter().flatten().flatten().map(|n| sanitized(n))));
+                Rc::new(named)
+            })
+            .clone()
+    })
+}
+
+/// Whether luaotfload's name lookup finds `name`: a family, full or
+/// PostScript name of an OpenType or TrueType font in the trees, or of a
+/// font fontconfig knows. A family found serves every style asked of it
+/// (luaotfload falls back to the closest face).
+pub fn named_font(roots: &[PathBuf], name: &str) -> bool {
+    let wanted = sanitized(name);
+    let named = named(roots);
+    !wanted.is_empty() && (named.faces.contains_key(&wanted) || named.names.contains(&wanted))
+}
+
+/// Whether two names may name one face: they share a font of the trees,
+/// or one is known only to fontconfig.
+pub fn may_share(roots: &[PathBuf], a: &str, b: &str) -> bool {
+    let named = named(roots);
+    match (named.faces.get(&sanitized(a)), named.faces.get(&sanitized(b))) {
+        (Some(a), Some(b)) => a.iter().any(|f| b.contains(f)),
+        _ => true,
+    }
+}
+
+/// The face luaotfload picks for `style` (`""`, `B`, `I`, `BI`) of a family
+/// in the trees, as the style's bit: only where the family has a face named
+/// with that style and a regular one, so the pick is that style's own face
+/// and not the regular one. `None` where that cannot be told.
+pub fn named_face(roots: &[PathBuf], family: &str, style: &str) -> Option<u8> {
+    let bit = match style {
+        "" => 1,
+        "B" => 2,
+        "I" => 4,
+        "BI" | "IB" => 8,
+        _ => return None,
+    };
+    let styles = *named(roots).styles.get(&sanitized(family))?;
+    (styles & bit != 0 && styles & 1 != 0).then_some(bit)
+}
+
+/// One font's names: its families (1, 16), subfamilies (2, 17) and full and
+/// PostScript names (4, 6).
+#[derive(Default)]
+struct FaceNames {
+    families: Vec<String>,
+    subfamily: Vec<String>,
+    names: Vec<String>,
+}
+
+/// The names in the `name` tables of an OpenType or TrueType file, one
+/// entry per font of a collection.
+fn font_names(path: &Path) -> Vec<FaceNames> {
+    use std::io::{Read, Seek, SeekFrom};
+    let Ok(mut file) = std::fs::File::open(path) else { return Vec::new() };
+    let mut read = |at: u64, len: usize| -> Option<Vec<u8>> {
+        let mut bytes = vec![0; len];
+        file.seek(SeekFrom::Start(at)).ok()?;
+        file.read_exact(&mut bytes).ok()?;
+        Some(bytes)
+    };
+    let be16 = |b: &[u8], i: usize| b.get(i..i + 2).map(|s| u16::from_be_bytes([s[0], s[1]]) as usize);
+    let be32 = |b: &[u8], i: usize| b.get(i..i + 4).map(|s| u32::from_be_bytes([s[0], s[1], s[2], s[3]]) as u64);
+    let Some(head) = read(0, 12) else { return Vec::new() };
+    let fonts: Vec<u64> = match &head[..4] {
+        b"ttcf" => {
+            let count = be32(&head, 8).unwrap_or(0).min(256) as usize;
+            let offsets = read(12, count * 4).unwrap_or_default();
+            (0..count).filter_map(|i| be32(&offsets, i * 4)).collect()
+        }
+        _ => vec![0],
+    };
+    let mut names = Vec::new();
+    for font in fonts {
+        let Some(dir) = read(font, 12) else { continue };
+        let tables = be16(&dir, 4).unwrap_or(0);
+        let Some(records) = read(font + 12, tables * 16) else { continue };
+        let Some((at, len)) = (0..tables)
+            .find(|i| records.get(i * 16..i * 16 + 4) == Some(b"name"))
+            .and_then(|i| Some((be32(&records, i * 16 + 8)?, be32(&records, i * 16 + 12)? as usize)))
+        else {
+            continue;
+        };
+        let Some(table) = read(at, len.min(1 << 20)) else { continue };
+        let mut face = FaceNames::default();
+        let (count, strings) = (be16(&table, 2).unwrap_or(0), be16(&table, 4).unwrap_or(0));
+        for r in 0..count {
+            let field = |k: usize| be16(&table, 6 + r * 12 + k);
+            let (Some(platform), Some(id), Some(length), Some(offset)) = (field(0), field(6), field(8), field(10))
+            else {
+                continue;
+            };
+            let into = match id {
+                1 | 16 => &mut face.families,
+                2 | 17 => &mut face.subfamily,
+                4 | 6 => &mut face.names,
+                _ => continue,
+            };
+            let Some(bytes) = table.get(strings + offset..strings + offset + length) else { continue };
+            into.push(match platform {
+                // Macintosh Roman, read as Latin-1: names are ASCII in practice.
+                1 => bytes.iter().map(|&b| b as char).collect(),
+                _ => String::from_utf16_lossy(
+                    &bytes.as_chunks::<2>().0.iter().map(|c| u16::from_be_bytes(*c)).collect::<Vec<_>>(),
+                ),
+            });
+        }
+        names.push(face);
+    }
+    names
 }
 
 pub fn load(path: &Path) -> Option<Rc<Metrics>> {

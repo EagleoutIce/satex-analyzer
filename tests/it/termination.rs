@@ -135,9 +135,13 @@ mod repeated_failures {
     /// carries the same code and the same span (tex.web § 1248: the count
     /// says how much follows, so what is read after it is unknown). The
     /// engine's own errors (`extra-fi`) are recovered as TeX recovers them
-    /// and never cut.
+    /// and never cut. A `\relax` after each use: the next `\x`'s
+    /// `\parshape` could be read as a line's dimension of the one before.
     fn same_gap_n_times() -> String {
-        format!("\\catcode`\\{{=1 \\catcode`\\}}=2 \\def\\x{{\\parshape\\pdfelapsedtime }}{}", "\\x".repeat(USES))
+        format!(
+            "\\catcode`\\{{=1 \\catcode`\\}}=2 \\def\\x{{\\parshape\\pdfelapsedtime }}{}",
+            "\\x\\relax ".repeat(USES)
+        )
     }
 
     fn cfg(bound: u32) -> Config {

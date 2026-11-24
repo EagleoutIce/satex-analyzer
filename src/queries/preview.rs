@@ -311,26 +311,57 @@ fn sprite(kind: Stroke, name: &str) -> String {
 #[derive(Default)]
 struct Sheet {
     svgs: BTreeMap<String, String>,
-    loaded: bool,
+    /// The file the sheet was read from, once read: the installation it was drawn with.
+    loaded: Option<Option<std::path::PathBuf>>,
     busy: bool,
     failed: bool,
 }
 
-static SHEET: Mutex<Sheet> = Mutex::new(Sheet { svgs: BTreeMap::new(), loaded: false, busy: false, failed: false });
+static SHEET: Mutex<Sheet> = Mutex::new(Sheet { svgs: BTreeMap::new(), loaded: None, busy: false, failed: false });
 
-fn sheet_path() -> Option<std::path::PathBuf> {
+/// The sheet of the installation `analysis` ran on: TeX draws the sprites,
+/// so one drawn by another release (its tips, its `dvisvgm`) is not this one's.
+fn sheet_path(analysis: &Analysis) -> Option<std::path::PathBuf> {
     // `-v3`: shapes drawn around a text box; an older sheet holds cut-off tips or collapsed shapes
-    crate::caches::format::default_cache_dir().map(|d| d.join("previews-v3.json"))
+    let name = format!("previews-v3-{:016x}.json", installation_key(analysis));
+    crate::caches::format::default_cache_dir().map(|d| d.join(name))
 }
 
-fn load(sheet: &mut Sheet) {
-    if !sheet.loaded {
-        sheet.loaded = true;
-        let read = sheet_path().and_then(|p| std::fs::read(p).ok());
-        sheet
-            .svgs
-            .extend(read.and_then(|b| serde_json::from_slice::<BTreeMap<String, String>>(&b).ok()).unwrap_or_default());
+/// The installation a sprite is drawn with: its trees, release and format,
+/// and the `dvisvgm` on `PATH` ([`installation_hash`]).
+fn installation_key(analysis: &Analysis) -> u64 {
+    static DVISVGM: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    let dvisvgm = DVISVGM.get_or_init(|| {
+        let out = std::process::Command::new("dvisvgm").arg("--version").output();
+        out.map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string()).unwrap_or_default()
+    });
+    let d = &analysis.distribution;
+    installation_hash(&d.roots, d.year, d.format_version.as_deref(), dvisvgm)
+}
+
+/// [`installation_key`] of its parts, hashed (FNV-1a) the same in every process.
+fn installation_hash(roots: &[std::path::PathBuf], year: Option<u32>, format: Option<&str>, dvisvgm: &str) -> u64 {
+    let roots: Vec<String> = roots.iter().map(|r| r.display().to_string()).collect();
+    let text = format!("{}\n{year:?}\n{format:?}\n{dvisvgm}", roots.join("\n"));
+    text.bytes().fold(0xcbf2_9ce4_8422_2325, |h, b| (h ^ u64::from(b)).wrapping_mul(0x0100_0000_01b3))
+}
+
+/// The sheet of `analysis`'s installation, read once; another
+/// installation's is set aside.
+fn load(sheet: &mut Sheet, analysis: &Analysis) {
+    let path = sheet_path(analysis);
+    if sheet.loaded.as_ref() != Some(&path) {
+        *sheet = Sheet { loaded: Some(path.clone()), ..Sheet::default() };
+        sheet.svgs = path.map(|p| read_sheet(&p)).unwrap_or_default();
     }
+}
+
+/// The sprites drawn in the sheet at `path`. One TeX could not draw is never
+/// read back: a later run tries it again.
+fn read_sheet(path: &std::path::Path) -> BTreeMap<String, String> {
+    let read = std::fs::read(path).ok();
+    let svgs = read.and_then(|b| serde_json::from_slice::<BTreeMap<String, String>>(&b).ok()).unwrap_or_default();
+    svgs.into_iter().filter(|(_, svg)| !svg.is_empty()).collect()
 }
 
 /// The picture of a tip or pattern TeX drew. One the sheet lacks is drawn
@@ -338,7 +369,7 @@ fn load(sheet: &mut Sheet) {
 pub fn drawn(analysis: &Analysis, kind: Stroke, name: &str) -> Option<Preview> {
     let key = sprite(kind, name);
     let mut sheet = SHEET.lock().ok()?;
-    load(&mut sheet);
+    load(&mut sheet, analysis);
     match sheet.svgs.get(&key) {
         Some(svg) if !svg.is_empty() => {
             let what = match kind {
@@ -354,13 +385,16 @@ pub fn drawn(analysis: &Analysis, kind: Stroke, name: &str) -> Option<Preview> {
                 sheet.busy = true;
                 let (all, libs) = wanted(analysis);
                 let wanted: Vec<String> = all.into_iter().filter(|w| !sheet.svgs.contains_key(w)).collect();
+                let path = sheet.loaded.clone().flatten();
                 std::thread::spawn(move || {
                     let svgs = render(&libs, &wanted);
-                    if let Ok(mut sheet) = SHEET.lock() {
+                    if let Ok(mut sheet) = SHEET.lock()
+                        && sheet.loaded.as_ref() == Some(&path)
+                    {
                         sheet.busy = false;
                         sheet.failed = svgs.is_none();
                         sheet.svgs.extend(svgs.unwrap_or_default());
-                        save(&sheet.svgs);
+                        save(path.as_deref(), &sheet.svgs);
                     }
                 });
             }
@@ -369,8 +403,11 @@ pub fn drawn(analysis: &Analysis, kind: Stroke, name: &str) -> Option<Preview> {
     }
 }
 
-fn save(svgs: &BTreeMap<String, String>) {
-    if let (Some(path), Ok(json)) = (sheet_path(), serde_json::to_vec(svgs)) {
+/// The sheet written to `path`, without the sprites TeX did not draw: a
+/// failure is this process's, never a later one's.
+fn save(path: Option<&std::path::Path>, svgs: &BTreeMap<String, String>) {
+    let drawn: BTreeMap<&String, &String> = svgs.iter().filter(|(_, svg)| !svg.is_empty()).collect();
+    if let (Some(path), Ok(json)) = (path, serde_json::to_vec(&drawn)) {
         let _ = path.parent().map(std::fs::create_dir_all);
         let tmp = path.with_extension("json.tmp");
         if std::fs::write(&tmp, json).is_ok() {
@@ -411,11 +448,11 @@ pub fn libraries(analysis: &Analysis) -> Vec<String> {
 pub fn sheet(analysis: &Analysis) -> BTreeMap<String, String> {
     let (wanted, libs) = wanted(analysis);
     let Ok(mut sheet) = SHEET.lock() else { return BTreeMap::new() };
-    load(&mut sheet);
+    load(&mut sheet, analysis);
     let missing: Vec<String> = wanted.iter().filter(|w| !sheet.svgs.contains_key(*w)).cloned().collect();
     if !missing.is_empty() {
         sheet.svgs.extend(render(&libs, &missing).unwrap_or_default());
-        save(&sheet.svgs);
+        save(sheet.loaded.clone().flatten().as_deref(), &sheet.svgs);
     }
     wanted.into_iter().filter_map(|w| Some((w.clone(), sheet.svgs.get(&w)?.clone()))).collect()
 }
@@ -461,8 +498,15 @@ fn render(libs: &[String], wanted: &[String]) -> Option<BTreeMap<String, String>
     std::fs::write(dir.join("previews.tex"), tex).ok()?;
     let run = |program: &str, args: &[&str]| std::process::Command::new(program).args(args).current_dir(&dir).output();
     run("latex", &["-interaction=batchmode", "previews.tex"]).ok()?;
-    let done = run("dvisvgm", &["--no-fonts", "--exact-bbox", "--page=1-", "--output=p%p.svg", "previews.dvi"]);
-    if !done.is_ok_and(|o| o.status.success()) {
+    // a page drawn: dvisvgm 2.6 (TeX Live 2019) ends well on an option it lacks
+    let drawn =
+        || std::fs::read_dir(&dir).is_ok_and(|d| d.flatten().any(|e| e.path().extension() == Some("svg".as_ref())));
+    let svg = |exact: &[&str]| {
+        let args = [exact, &["--no-fonts", "--page=1-", "--output=p%p.svg", "previews.dvi"]].concat();
+        run("dvisvgm", &args).is_ok_and(|o| o.status.success()) && drawn()
+    };
+    // that dvisvgm has no `--exact-bbox`; glyph-free sprites need none
+    if !svg(&["--exact-bbox"]) && !svg(&[]) {
         let _ = std::fs::remove_dir_all(&dir);
         return None;
     }
@@ -583,4 +627,37 @@ pub fn formula(
         "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"{width:.0}\" height=\"{height:.0}\"><text x=\"4\" fill=\"{INK}\" font-family=\"Latin Modern Math, STIX Two Math, Cambria Math, serif\" xml:space=\"preserve\">{spans}</text></svg>"
     );
     Some(Preview { text: plain, svg })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A sheet is the installation's: another TeX Live release, format or
+    /// `dvisvgm` draws its sprites anew. Pins one sheet shared by all, whose
+    /// sprite an older release could not draw stayed undrawn after an upgrade.
+    #[test]
+    fn each_installation_has_its_own_sheet() {
+        let roots = [std::path::PathBuf::from("/texlive/2022/texmf-dist")];
+        let key = |year, dvisvgm| installation_hash(&roots, Some(year), Some("2022-06-01"), dvisvgm);
+        assert_eq!(key(2022, "dvisvgm 2.13"), key(2022, "dvisvgm 2.13"));
+        assert_ne!(key(2022, "dvisvgm 2.13"), key(2025, "dvisvgm 2.13"));
+        assert_ne!(key(2022, "dvisvgm 2.13"), key(2022, "dvisvgm 3.4"));
+    }
+
+    /// A sprite TeX did not draw (`""`) is this process's failure: it is
+    /// neither written nor read back, so a later run draws it again.
+    #[test]
+    fn an_undrawn_sprite_is_not_kept() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("target/scratch/preview-sheet-test");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join(format!("sheet-{}.json", std::process::id()));
+        let svgs =
+            BTreeMap::from([("arrow:a".to_string(), "<svg/>".to_string()), ("arrow:b".to_string(), String::new())]);
+        save(Some(&path), &svgs);
+        assert_eq!(read_sheet(&path).keys().collect::<Vec<_>>(), ["arrow:a"]);
+        std::fs::write(&path, r#"{"arrow:a":"<svg/>","arrow:c":""}"#).unwrap();
+        assert_eq!(read_sheet(&path).keys().collect::<Vec<_>>(), ["arrow:a"]);
+        let _ = std::fs::remove_file(&path);
+    }
 }

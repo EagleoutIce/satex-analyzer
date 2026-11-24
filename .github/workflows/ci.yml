@@ -436,6 +436,11 @@ jobs:
       - name: The distribution is really there
         run: kpsewhich latex.ltx
 
+      # TL2019-historic ships no xelatex.fmt, and mktexfmt writes one under /root, which the
+      # job's HOME never searches: every xelatex pass would dump it anew, so no build rests.
+      - name: The XeLaTeX format is there
+        run: kpsewhich -engine=xetex xelatex.fmt || fmtutil-sys --byfmt xelatex
+
       - name: Test
         if: matrix.shard != 'compliance'
         env:

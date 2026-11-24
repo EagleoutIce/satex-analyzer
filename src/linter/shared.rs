@@ -610,7 +610,8 @@ fn own_names(analysis: &Analysis, package: &str) -> std::sync::Arc<HashSet<Strin
 #[derive(Clone)]
 struct Probed {
     clean: bool,
-    /// The package's file was not there to load (a bundle that fetches on demand): the call untried.
+    /// The package's file was not there to load (a bundle that fetches on demand), or the clock
+    /// stopped the probe: the call untried.
     absent: bool,
     own: std::sync::Arc<HashSet<String>>,
     /// Every name the package's files defined during the run, in a group too.
@@ -645,7 +646,9 @@ fn probe(analysis: &Analysis, with: &[String], package: &str, call: &str) -> Pro
         "\\documentclass{{{class}}}\n{loads}\\usepackage{{{package}}}\n\\begin{{document}}\n{call}\n\\end{{document}}\n"
     );
     let mut settings = analysis.settings.clone();
-    // its own wall budget, never the run's: a probe of 100 paths ran past any limit (limits.seconds was 0 here)
+    // its own budget, never the run's: a probe of 100 paths ran past any limit (limits.seconds was 0 here).
+    // Steps decide; the clock only stops a stuck one.
+    settings.limits.steps = analysis.settings.limits.provider_steps;
     settings.limits.seconds = analysis.settings.limits.probe_seconds;
     let digest = crate::caches::format::digest(serde_json::to_string(&settings).unwrap_or_default().as_bytes());
     let key = (digest, analysis.distribution.roots.clone(), text);
@@ -682,8 +685,11 @@ fn probe(analysis: &Analysis, with: &[String], package: &str, call: &str) -> Pro
         run.facts.loads.iter().any(|l| {
             l.name == package && l.kind.is_package() && l.status == crate::analysis::facts::LoadStatus::NotFound
         });
-    let probed = Probed { clean, absent, own, made: all };
-    if let Ok(mut runs) = RUNS.lock() {
+    // A probe the clock stopped says how loaded the machine was, not what the package does:
+    // untried, for this ask only, and a later one runs it again.
+    let timed = run.limits.iter().any(|l| l.key == "seconds");
+    let probed = Probed { clean: clean && !timed, absent: absent || timed, own, made: all };
+    if !timed && let Ok(mut runs) = RUNS.lock() {
         runs.get_or_insert_with(HashMap::default).insert(key, probed.clone());
     }
     probed
@@ -1018,5 +1024,31 @@ mod readable_tests {
         assert_eq!(readable(hashed), "Undefined color model `…'");
         assert_eq!(readable("operator `\u{10fffc}'"), "operator `…'");
         assert_eq!(readable("width 3.5pt, 42 items"), "width 3.5pt, 42 items");
+    }
+}
+
+#[cfg(test)]
+mod probe_tests {
+    /// A package probe is bounded by `limits.provider_steps`, the same on
+    /// every machine: past them the package is tried and does not take the
+    /// call, under any load. Pins the probe's wall-clock budget
+    /// (`probe_seconds`) deciding, so a loaded machine changed the answer and
+    /// the memo kept it for the process.
+    #[test]
+    fn a_probe_is_bounded_by_steps_not_the_clock() {
+        if crate::project::paths::which("kpsewhich").is_err() {
+            return;
+        }
+        let mut cfg = crate::project::config::Config::default();
+        cfg.cache.dir = Some(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("target/scratch/probe-steps-test"));
+        (cfg.limits.seconds, cfg.limits.probe_seconds) = (0, 0);
+        let doc = "\\documentclass{article}\\begin{document}\\end{document}";
+        let call = "\\tikz\\node{x};";
+        let analysis = crate::analyze(doc, None, &cfg);
+        assert!(super::probe(&analysis, &[], "tikz", call).clean, "tikz takes `\\tikz` within the default steps");
+        cfg.limits.provider_steps = 1;
+        let analysis = crate::analyze(doc, None, &cfg);
+        let cut = super::probe(&analysis, &[], "tikz", call);
+        assert!(!cut.clean && !cut.absent, "cut by steps: tried, and it did not take the call");
     }
 }

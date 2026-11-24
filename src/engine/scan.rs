@@ -847,10 +847,11 @@ impl Machine<'_> {
                     next = self.next_x_token();
                     continue;
                 }
-                // a slice of a number's places is as wide as the places it holds, leading zeros too
+                // a slice of a number's places is as wide as the places it holds, leading zeros too;
+                // one open to the number's end has no known width
                 let width = |d: i64| match token.cs().and_then(|c| self.typed_slice(c)) {
-                    Some((_, _, i, j)) => j - i,
-                    None => d.to_string().len() as u32,
+                    Some((_, _, i, j)) => (j != OPEN).then(|| j - i),
+                    None => Some(d.to_string().len() as u32),
                 };
                 let whole = token.cs().filter(|&c| typed.is_some_and(|n| n.lo >= 0) && self.typed_slice(c).is_none());
                 spell = match (spell, whole) {
@@ -860,8 +861,8 @@ impl Machine<'_> {
                 hull = match (hull, typed) {
                     (Some((lo, hi)), Some(n)) if n.lo >= 0 => {
                         let append =
-                            |v: i64, d: i64| v.saturating_mul(10i64.saturating_pow(width(d))).saturating_add(d);
-                        Some((cap(append(lo, n.lo)), cap(append(hi, n.hi))))
+                            |v: i64, d: i64| Some(v.saturating_mul(10i64.saturating_pow(width(d)?)).saturating_add(d));
+                        append(lo, n.lo).zip(append(hi, n.hi)).map(|(lo, hi)| (cap(lo), cap(hi)))
                     }
                     _ => None,
                 };
@@ -1241,7 +1242,7 @@ impl Machine<'_> {
     }
 
     /// A token whose meaning is unknown: it may stand for any text.
-    fn is_unknown(&mut self, token: Token) -> bool {
+    pub(crate) fn is_unknown(&mut self, token: Token) -> bool {
         let sym = token.cs().or_else(|| self.active_cs(token));
         let unknown = sym.is_some_and(|sym| {
             self.is_unknown_digits(sym)

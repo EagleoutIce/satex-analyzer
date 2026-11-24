@@ -1726,7 +1726,7 @@ impl Machine<'_> {
     /// known and alike.
     fn uniform_par_shape(&mut self) -> Option<(Scaled, Scaled)> {
         let lines = self.engine_slot_int("parshape", "parshape")?;
-        if !(1..=64).contains(&lines) {
+        if !(1..=i64::from(self.limits.parshape_lines)).contains(&lines) {
             return None;
         }
         let mut shape = None;

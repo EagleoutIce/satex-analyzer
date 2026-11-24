@@ -472,7 +472,9 @@
   const hoverFixes = [];
   /** A finding as a card; `fixes`: with a button per fix, applied in place. */
   const findingCard = (d, fixes = false) => {
-    const buttons = fixes && d.fixes?.length ? `<div class="hover-tools">${d.fixes.map((f) => `<button type="button" class="small${f.safety === 'safe' ? '' : ' ghost'}" data-fix="${hoverFixes.push(f) - 1}" title="${escape(f.safety)} fix">${escape(f.title)}</button>`).join('')}</div>` : '';
+    // the fixes, then always the two ways to ignore it: here, or the rule in the project
+    const all = [...d.fixes ?? [], ...d.ignores ?? []];
+    const buttons = fixes && all.length ? `<div class="hover-tools">${all.map((f) => `<button type="button" class="small${f.safety === 'safe' ? '' : ' ghost'}" data-fix="${hoverFixes.push(f) - 1}" title="${f.data?.ignore ? 'ignore' : `${escape(f.safety)} fix`}">${escape(f.title)}</button>`).join('')}</div>` : '';
     return `<div class="tip-lint f-${sev(d)}"><p><span class="sev sev-${sev(d)}">${sev(d)}</span> <code>${escape(d.code)}</code> ${inline(d.message)}</p>${buttons}</div>`;
   };
   /** A command in text, or alone in a code span, explains itself on hover (`tips.card`), as the editor's hover does. */
@@ -2803,7 +2805,10 @@
     ranOn('findings', target, of);
     const by = new Map();
     fixAlls[target] = (actions ?? []).filter((a) => a.data?.scope);
+    // "ignore here" and "ignore rule" (`data.ignore`) stand apart from the fixes: no Fix all ever takes them
+    const ignores = new Map();
     for (const a of (actions ?? []).filter((x) => !x.data?.scope)) for (const d of a.diagnostics ?? []) {
+      if (a.data?.ignore) { ignores.set(key(d), [...(ignores.get(key(d)) ?? []), a]); continue; }
       const safety = a.data?.applicability ?? d.data?.applicability ?? (a.isPreferred ? 'safe' : 'unsafe');
       by.set(key(d), [...(by.get(key(d)) ?? []), { ...a, safety }]);
     }
@@ -2814,7 +2819,7 @@
     if (ds.some(unfinished)) setTimeout(() => { if (diagnosticVersions[target] === of) show(target, ds, of); }, TYPING_HOLD_MS - since);
     // a file the build writes (.aux, .toc …) is no source of the reader's: its lines are never marked
     const generated = writtenFiles.some((f) => target.endsWith(`/${f.name}`));
-    diagnostics[target] = generated ? [] : ds.filter((d) => !unfinished(d)).map((d) => ({ ...d, fixes: by.get(key(d)) ?? [] }));
+    diagnostics[target] = generated ? [] : ds.filter((d) => !unfinished(d)).map((d) => ({ ...d, fixes: by.get(key(d)) ?? [], ignores: ignores.get(key(d)) ?? [] }));
     // another file's findings count in the list too: they may come after the open file's were drawn
     if (target === uri() || !act.phase || act.phase === 'Waiting') render();
     drawTree();
@@ -2872,7 +2877,7 @@
     const item = (d, i) => `<li class="f-${sev(d)}${unfolded.has(key(d)) ? ' open' : ''}"${dimmed(d)} data-i="${i}" tabindex="0">` +
       `<span class="msg">${d.number ? `<code class="rno" title="rule number">${escape(d.number)}</code> ` : ''}<b class="rn">${escape(d.code ?? '')}</b>: ${commandRefs(inline(d.message))}</span>` +
       `<span class="where"><b class="loc">${d.file ? `<span class="loc-file">${escape(d.file)}:</span>` : ''}${d.range.start.line + 1}:${d.range.start.character + 1}</b><span class="shape" title="${sev(d)}" aria-label="${sev(d)}"></span></span>` +
-      `<span class="acts">${d.fixes.map(fixButton).join('')}${!d.file && editableFile() ? fixAllButton('rule', d.code, `Fix all ${d.code}`) : ''}<button class="small ghost why">${unfolded.has(key(d)) ? 'Hide rule' : 'Explain rule'}</button></span>` +
+      `<span class="acts">${d.fixes.map(fixButton).join('')}${editableFile() || d.file ? (d.ignores ?? []).map((g, j) => `<button class="small ghost ignore" data-g="${j}" title="${escape(g.title)}">${/^Ignore rule/.test(g.title) ? 'Ignore rule' : 'Ignore here'}</button>`).join('') : ''}${!d.file && editableFile() ? fixAllButton('rule', d.code, `Fix all ${d.code}`) : ''}<button class="small ghost why">${unfolded.has(key(d)) ? 'Hide rule' : 'Explain rule'}</button></span>` +
       (unfolded.has(key(d)) ? explanation(d) : '') + '</li>';
     /** Findings of one object (`group`, "table@12:1") fold together under a header; a lone one stays flat. */
     const fold = (id, cls, head, rows, inner) => `<li class="${cls}"><details${folded.has(id) ? '' : ' open'} data-fold="${escape(id)}"><summary class="cat-head" aria-label="${escape(head)}">${inner}</summary>` +
@@ -2975,6 +2980,8 @@
     const d = listed[li.dataset.i];
     const apply = e.target.closest('.apply');
     if (apply) return fix(d.fixes[apply.dataset.j]);
+    const ignore = e.target.closest('.ignore');
+    if (ignore) return fix(d.ignores[ignore.dataset.g]);
     if (e.target.closest('.explain a')) return;
     // another file's finding opens that file at its place
     if (d.target && !e.target.closest('.why')) return openPlace(Object.keys(state.texts).find((n) => d.target.endsWith(`/${n}`)) ?? d.file, d.range.start);
@@ -2982,6 +2989,13 @@
     unfold(+li.dataset.i);
   };
   function fix(action) {
+    // "ignore rule": the server records it in satex.yaml, the settings keep it (as a style prompt's answer)
+    if (!action.edit && action.command?.command === 'satex/style') {
+      const arg = action.command.arguments?.[0] ?? {}, had = configSet['lint_off+'] ?? [];
+      lsp('workspace/executeCommand', { command: 'satex/style', arguments: [arg] }).catch((err) => toast(`Not recorded: ${err.message}`));
+      if (!had.includes(arg.code)) configKeep({ ...configSet, 'lint_off+': [...had, arg.code] });
+      return toast(`Applied: ${action.title}`);
+    }
     const changes = { ...action.edit?.changes };
     for (const d of action.edit?.documentChanges ?? []) if (d.edits) changes[d.textDocument.uri] = d.edits;
     const files = Object.keys(changes).map((u) => u.split('/').pop());

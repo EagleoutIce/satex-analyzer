@@ -1792,6 +1792,7 @@ const PRECISION_LIMITS: &[&str] = &[
     "choices",
     "site_forks",
     "digit_lengths",
+    "parshape_lines",
     "paths",
     "meaning_splits",
     "widen_after",

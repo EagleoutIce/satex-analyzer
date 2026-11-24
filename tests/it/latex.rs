@@ -1250,10 +1250,12 @@ fn verbatim_bodies_are_read_line_by_line_with_an_active_end_of_line() {
 \\begin{Verbatim}\n\\def\\bad{}\n\\end{Verbatim}\n{\\obeylines\\gdef\\r{a\nb}}\n\\def\\after{}\n\\end{document}\n",
     );
     let saved = body(&analysis, "FV@SV@V");
-    assert!(
-        saved.ends_with("\\FV@ProcessLine {a  b}\\advance \\c@FancyVerbLine \\@ne \\FV@ProcessLine { \\c%}"),
-        "{saved}"
-    );
+    // TeX Live 2019's fancyvrb (3.5) counts no lines there
+    let oracle = "\\documentclass{article}\n\\usepackage{fancyvrb}\n\\begin{document}\n\\begin{SaveVerbatim}{V}\na  b   \n \\c%\n\\end{SaveVerbatim}\n\\makeatletter\\typeout{SV \\meaning\\FV@SV@V}\n\\end{document}\n";
+    let lines = "\\FV@ProcessLine {a  b}\\advance \\c@FancyVerbLine \\@ne \\FV@ProcessLine { \\c%}";
+    let want = crate::support::engine_typeout(oracle, "SV", lines);
+    let want = &want[want.find("\\FV@ProcessLine").expect("a line")..];
+    assert!(saved.ends_with(want), "{saved}");
     // tex.web § 49: the active end of line prints as `^^M`, not raw.
     assert_eq!(body(&analysis, "r"), "a^^Mb");
     assert!(undefined(&analysis, "bad"));
@@ -3207,7 +3209,8 @@ fn a_uniform_parshape_keeps_the_lines_known() {
 /// end, packed to the height asked), `\unvbox`es it, takes it back with
 /// `\lastbox` and reads pdfTeX's `\leftmarginkern` of it: `\lpcode`
 /// thousandths of the quad; of a ligature first, its own character's
-/// (pdfTeX's `char_pw` reads `lig_char`). Sizes as `pdflatex` prints.
+/// (pdfTeX's `char_pw` reads `lig_char`). Sizes as the installed `pdflatex`
+/// prints (TeX Live 2019's microtype protrudes `A` and `--` less).
 #[test]
 fn left_protrusion_of_a_line_is_known() {
     if !installed() {
@@ -3245,7 +3248,9 @@ fn left_protrusion_of_a_line_is_known() {
         ("Mn", "8.27576pt"),
         ("Mo", "-2.99927pt"),
     ];
-    for (name, want) in want {
+    let typeouts: String = want.iter().map(|(name, _)| format!("\\typeout{{{name} \\{name}}}")).collect();
+    let oracle = src.replace("\\end{document}", &format!("{typeouts}\\end{{document}}"));
+    for ((name, _), want) in want.iter().zip(crate::support::engine_typeouts(&oracle, &want, &[])) {
         assert_eq!(body(&analysis, name), want, "{name}");
     }
 }

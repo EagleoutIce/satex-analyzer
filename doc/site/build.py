@@ -493,9 +493,10 @@ def title_of(text):
 
 
 def intro(text):
-    """The README's opening paragraphs, up to its first rule, with its link definitions."""
+    """The README's block between its first two rules (who makes SaTeX, and how), with its link
+    definitions. The opening above the first rule says what the landing page's hero already does."""
     refs = "\n".join(re.findall(r"^\[[^\]]+\]: .*$", text, flags=re.M))
-    return strip_banner(text).split("\n----", 1)[0] + "\n\n" + refs
+    return strip_banner(text).split("\n----", 2)[1] + "\n\n" + refs
 
 
 def section(text, heading):
@@ -2063,6 +2064,8 @@ def main():
             body = rewrite(markdown(text), src, table | lean_table, homepage, repo, out, "../" * dst.count("/"))
             if dst == "changelog.html":
                 body = re.sub(r"<li>(?:<p>)?<code>(feat|fix|perf|docs|build)</code>", lambda m: f'<li><span class="badge b-{m[1]}">{m[1]}</span>', body)
+                # the TeX Live versions an entry is for, as a second badge
+                body = re.sub(r'(<span class="badge b-\w+">\w+</span>)\s*<code>(TL [^<]+)</code>', r'\1<span class="badge b-tl">\2</span>', body)
                 body = commit_ranges(body)
             if dst == "wiki/formal-semantics.html":
                 body = formal(body)

@@ -671,6 +671,9 @@ analysis:  # where paths join, and what the run assumes
   assume_call_learned_effect: true  # assume a call that keeps forking on unknown values leaves what other runs of its definition left, values widened to their type
     #! affects: precision, soundness, speed
     #! example: off: `\pgfmathparse{\the\wd0}` walks the printed width digit by digit
+  assume_variable_kind_shape: true  # assume a widened expl3 variable holds a value of its kind (an fp stays an fp), as the module's functions write
+    #! affects: precision, soundness
+    #! example: off: an `fp` widened by a cut is any text, and `\fp_use:N` of it runs away
 
 # shell_escape: restricted # which programs \write18 may run: none, restricted or full. Unset: what the build files ask for
 #! affects: precision, soundness
@@ -1242,6 +1245,8 @@ limits:  # what bounds the analysis: reaching one stops that part of the run, so
   provider_probes: 4  # packages a write may try, most loaded first, for a name it adds that the run lacks: each a small run of the call. 0 loads the most loaded untried
     #! affects: speed, precision
     #! example: `\includegraphics[width=5cm]` loads graphicx, whose definition takes the key, not graphics
+  provider_steps: 100000000  # tokens one such run may read. Past them the package does not take the call. The same on every machine
+    #! affects: speed, precision
   format_steps: 9000000000  # the same for reading the LaTeX format, which is cached after the first time
     #! affects: speed
     #! example: rarely needs a change
@@ -1285,7 +1290,7 @@ limits:  # what bounds the analysis: reaching one stops that part of the run, so
     #! affects: speed
     #! example: `seconds: 30` for an editor that should never wait long
   lock_seconds: 60  # how long a run waits for another one building the same cache before it builds it itself
-  probe_seconds: 20  # most seconds one probe document may take (a package tried for a command the run lacks). One that runs out does not take the call. 0 = no limit
+  probe_seconds: 20  # most seconds one probe document may take (a package tried for a command the run lacks), a backstop past provider_steps. One it stops counts as untried and is tried again later. 0 = no limit
     #! affects: speed
   repeat_failures: 8  # how often satex may meet the same thing it cannot follow at one place before skipping that expansion
     #! affects: precision, speed
@@ -1299,6 +1304,9 @@ limits:  # what bounds the analysis: reaching one stops that part of the run, so
   digit_lengths: 3  # how many digit counts a number of unknown digits is read apart into, one path each. Past them the longer counts are one path
     #! affects: precision, speed
     #! example: lower: `\int_rand:n {16777215}` read digit by digit forks less. Higher: pgfmath tells two from three digits
+  parshape_lines: 64  # how many lines of a \parshape satex keeps. Lines past them are read but unknown
+    #! affects: precision, memory
+    #! example: higher: `\parshapelength 100` of a 200-line shape is known
   paths: 16  # how many alternative paths satex keeps at once before merging the oldest two. Higher is more precise and slower
     #! affects: precision, speed, memory
     #! example: `\ifdraft ... \fi` many times over: more paths keep each combination apart
@@ -1650,6 +1658,8 @@ analysis:
 `analysis.assume_unknown_char_catcode` (default `true`): Assumes a `\catcode` through a character satex could not pin down (a summarized loop's counter) never names a structural character, one of category neither letter nor other (`\ { } % $ & # ^ _`, space, end of line, active). Reported as `unknown-char-catcode`. `false` lets it reach them: the reader splits a path per category.
 
 `analysis.assume_call_learned_effect` (default `true`): Assumes a call whose run keeps forking on unknown values leaves what runs of its definition on other values left, each value widened to its type, and raises nothing. Reported as `call-learned-effect`. `false` walks every such call.
+
+`analysis.assume_variable_kind_shape` (default `true`): Assumes a widened expl3 variable (`\l_x_fp`) holds a value of its kind: the ends its kind's constants share stay around typed text. Reported as `variable-kind-shape`. `false` widens it to any text.
 
 ## Stubs
 

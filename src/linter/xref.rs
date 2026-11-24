@@ -150,7 +150,7 @@ fn label_text(analysis: &Analysis, key: &str) -> Option<String> {
         }
         depth == 0
     })?;
-    Some(crate::engine::tex::text_of(&toks[1..end], &analysis.interner))
+    Some(crate::engine::tex::label_text_of(&toks[1..end], &analysis.interner))
 }
 
 /// The document's numbered items that no `\label` names, each once:

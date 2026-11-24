@@ -2067,3 +2067,54 @@ fn a_truncated_kernel_starts_the_document_alike_with_or_without_a_cache() {
     assert_eq!(ca, cb, "the call graphs differ");
     same_facts(&a, &b);
 }
+
+/// The state a run reports for a package's cache.
+fn cache_state<'a>(analysis: &'a Analysis, package: &str) -> Option<&'a str> {
+    analysis.package_caches.iter().rfind(|(name, ..)| name == package).map(|(.., state)| state.as_str())
+}
+
+/// A package copies a preamble macro, whose tokens stand in the document.
+/// Lines added above both move that text, not what it says: the copy is
+/// served, and its tokens point where the text stands now. Pins the cache
+/// keyed by the positions of document tokens a package read (TeX Live
+/// 2019's `\@currname` is such a copy, so every edit above a load missed).
+#[test]
+fn a_package_copying_document_text_that_moved_is_served_where_it_stands() {
+    if !installed() {
+        return;
+    }
+    let dir = project("moved-text");
+    std::fs::write(dir.join("copier.sty"), "\\ProvidesPackage{copier}\n\\edef\\copied{\\mytext}\n")
+        .expect("copier.sty");
+    let document = |above: &str| {
+        format!(
+            "\\documentclass{{article}}\n{above}\\def\\mytext{{abc}}\n\\usepackage{{copier}}\n\\begin{{document}}\\copied\\end{{document}}\n"
+        )
+    };
+    run(&dir, &document(""));
+    let moved = document("%\n%\n");
+    let warm = run(&dir, &moved);
+    assert_eq!(cache_state(&warm, "copier"), Some("cached"), "{:?}", warm.package_caches);
+    assert_eq!(differing_facts(&run_cold(&dir, &moved), &warm), Vec::<String>::new());
+}
+
+/// A package whose last line inputs a project file through a macro: the
+/// file's commands are read on no call's behalf, so the package ends with
+/// no call charged. Its end is at rest all the same and the package replays
+/// whole. Pins the end-of-file checkpoint that wanted the charged call of
+/// the load's start back (TeX Live 2019's `\InputIfFileExists`).
+#[test]
+fn a_package_ending_in_an_input_file_replays_whole() {
+    if !installed() {
+        return;
+    }
+    let dir = project("ends-in-input");
+    std::fs::write(dir.join("part.tex"), "\\def\\frompart{x}\n").expect("part.tex");
+    std::fs::write(dir.join("ender.sty"), "\\ProvidesPackage{ender}\n\\def\\inp{\\input{part.tex}}\n\\inp\n")
+        .expect("ender.sty");
+    let document = "\\documentclass{article}\n\\usepackage{ender}\n\\begin{document}\\frompart\\end{document}\n";
+    run(&dir, document);
+    let warm = run(&dir, document);
+    assert_eq!(cache_state(&warm, "ender"), Some("cached"), "{:?}", warm.package_caches);
+    assert_eq!(differing_facts(&run_cold(&dir, document), &warm), Vec::<String>::new());
+}

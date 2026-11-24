@@ -293,6 +293,21 @@ fn a_load_that_was_cut_leaves_the_same_doubt_built_and_served() {
     assert_eq!(difference(&built, &served), "", "packages built vs served");
 }
 
+/// A limit is named once per run. A load that reached it, served from its
+/// cache, leaves it reached: a document line over the same limit is not named
+/// again. Pins the replay that forgot the limits its load reached.
+#[test]
+fn a_limit_a_served_load_reached_is_named_once() {
+    if !installed() {
+        return;
+    }
+    let package = "\\count255=0 \\loop\\advance\\count255 1 \\ifnum\\count255<9000000 \\repeat";
+    let body = "\\count1=0 \\loop\\advance\\count1 1 \\ifnum\\count1<9000000 \\repeat";
+    let (built, served) = built_and_served("limit-once", package, body, SHORT_LINE);
+    assert_eq!(built.iter().filter(|row| row.contains("|limit-reached|")).count(), 1, "{built:?}");
+    assert_eq!(difference(&built, &served), "", "packages built vs served");
+}
+
 /// A package that draws a random number while it loads makes a typed unknown, named by a
 /// serial. The document draws another and shows both: the names the two runs give them, and
 /// every row that prints them, must not depend on whether the package was read or served.

@@ -217,6 +217,20 @@ fn a_label_format_gives_its_own_word() {
     assert_eq!(found, [r"\label{item:step2}", r"\ref{item:step2}"]);
 }
 
+/// Intuition: a robust hard space in the item's number (`\protect\nobreakspace␣` after
+/// `\protected@edef`, what `~` leaves before LaTeX made it `\protected`) prints as `~` does.
+/// Bug: on TeX Live 2022 the label read `Stepprotectnobreakspace 2`, so no word was found.
+#[test]
+fn a_robust_hard_space_in_the_label_is_a_space() {
+    let preamble = "\\renewcommand\\theenumi{Step\\nobreakspace\\arabic{enumi}}\n";
+    let lists = "\\begin{enumerate}\n\\item a\n\\item b\n\\end{enumerate}";
+    let found = item_fixes("item-robust", preamble, lists, "Then step 2 follows.");
+    if !crate::support::installed() {
+        return;
+    }
+    assert_eq!(found, [r"\label{item:step2}", r"\ref{item:step2}"]);
+}
+
 #[test]
 fn a_nested_item_number_names_both_levels() {
     let lists = "\\begin{enumerate}\n\\item a\n\\item b\n\\begin{enumerate}\n\\item c\n\\item d\n\\end{enumerate}\n\\end{enumerate}";

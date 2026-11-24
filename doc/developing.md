@@ -88,6 +88,14 @@ Use `tests/it/latex.rs` for documents loading packages, `tests/it/semantics.rs` 
 Keep examples anonymous: generic text, the `article` class, no names or paths from the original document.
 `broken_gaps` and `document_gaps` in `tests/it/latex.rs` collect gaps a test can assert are absent.
 
+### Older TeX Live
+
+CI runs the suite on the current TeX Live and on TeX Live 2022 and 2019.
+`tests/texlive.yaml` lists the local installations by year, and `TEXLIVE=<year>` runs against one: `TEXLIVE=2019 scripts/t.sh xref::` puts its binaries first on `PATH`.
+`TEXLIVE` also takes an installation directory. `scripts/test-tier.sh` and `scripts/ci-test.sh` accept it too.
+The same file lists tests that do not run on a TeX Live older than a given year, each with the feature that installation lacks.
+A test that satex gets wrong on an old TeX Live is a bug. It stays red and is not listed there.
+
 ### One command for CI
 
 `scripts/regress.sh` runs what CI runs: the 8 shards, `lib`, the quick modules and compliance, each through the known-red gate of `scripts/ci-test.sh`. It uses `target/scratch/lock2.sh` when that exists.

@@ -365,6 +365,15 @@ fn opentype_languages_features_and_glyph_names() {
     assert_eq!(out_in(Engine::XeTeX, source), want(source, "0,201,."));
 }
 
+/// xetex.web `not_native_font_error`: `\XeTeXglyphname` of a TFM font (or of a
+/// native font that failed to load, so `\nullfont`) answers empty and leaves
+/// the glyph number unread. satex read it, losing a `3` that TeX Live 2019's
+/// missing Andika left in the text.
+#[test]
+fn a_tfm_font_has_no_glyph_names_and_leaves_the_number() {
+    assert_eq!(out_in(Engine::XeTeX, r"\edef\out{[\XeTeXglyphname\nullfont 3]}"), "[3]");
+}
+
 /// xetex.web `load_native_font`: a font with a `MATH` table has 65
 /// parameters, the ninth their count and the tenth on its constants
 /// (`get_ot_math_constant`), percentages unscaled.
@@ -415,4 +424,27 @@ fn a_font_without_metrics_leaves_the_node_type_unknown() {
     let certain: Vec<bool> =
         analysis.facts.defs.iter().filter(|d| analysis.interner.name(d.name) == "L").map(|d| d.certain).collect();
     assert_eq!(certain, [false, false], "both arms, neither certain");
+}
+
+/// luaotfload finds a font by its family name in the trees, and hands out one
+/// font per face, size and features: `\fontname` is the name of the first
+/// request of that face, so two spellings of a family are the same font and
+/// its bold is another. Expected values: `lualatex` (TeX Live 2022 and 2026).
+/// Pins every LuaTeX font given by name being of unknown existence and name:
+/// fontspec's `\ifx\font\nullfont` and its bold and italic tests forked on them
+/// without end (`\setmainfont{Libertinus Serif}`).
+#[test]
+fn luatex_finds_a_font_by_name_and_shares_its_face() {
+    if !installed() || !crate::support::installed_file_has("LibertinusSerif-Bold.otf", "") {
+        return;
+    }
+    let out = out_in(
+        Engine::LuaTeX,
+        r#"\expandafter\def\csname ver@luaotfload.sty\endcsname{}
+        \font\a="LibertinusSerif:mode=node;" at 655361sp \font\b="LibertinusSerif/B:mode=node;" at 655361sp
+        \font\c="Libertinus Serif:mode=node;" at 655361sp
+        \edef\x{\fontname\a}\edef\y{\fontname\c}\edef\z{\fontname\b}
+        \edef\out{\ifx\a\nullfont null\else found\fi,\ifx\x\y same\else diff\fi,\ifx\x\z same\else diff\fi}"#,
+    );
+    assert_eq!(out, "found,same,diff");
 }

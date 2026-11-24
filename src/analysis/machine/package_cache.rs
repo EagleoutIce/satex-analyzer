@@ -37,7 +37,7 @@ use std::rc::Rc;
 
 use serde::{Deserialize, Serialize};
 
-use super::{Carried, CarriedDelta, Frame, Machine, Metadata, RECENT_FILE_SPANS, Site};
+use super::{Carried, CarriedDelta, Frame, LimitHit, Machine, Metadata, RECENT_FILE_SPANS, Site};
 use crate::analysis::facts::{
     ColorDef, ColorStack, ColorUse, CsnameRole, Definition, Diagnostic, Expansion, Load, LoadStatus, MeaningKind,
     Occurrence, StackOp,
@@ -380,6 +380,9 @@ struct CachedOccurrence {
 struct Reads {
     /// Names read: their binding parts and digest.
     bindings: Vec<(Sym, u8, u64)>,
+    /// The spans in project files the digests of `bindings` passed over, in
+    /// order: where a replay finds the same text now, its spans move there.
+    places: Vec<Span>,
     /// Gaps found already reported.
     gaps: Vec<(String, Sym)>,
     /// Text copies (by `[ReadKind::Copy]`): name, original length, growth room.
@@ -408,6 +411,11 @@ struct Scalars {
     call_shape: Option<(Sym, Span, String, usize)>,
     /// Segment completed the pending call at its start.
     finished_call: bool,
+    /// A call is charged with what is read at the segment's end: the load's,
+    /// unless a command read from a file cleared it.
+    reader: bool,
+    /// The limits reached since the load began, each counted since then.
+    limits: Vec<LimitHit>,
     last_named_cs: Option<Sym>,
     /// File spans yielded back (lookahead from files); before are the run's own.
     recent_file_spans: Vec<Span>,
@@ -692,8 +700,17 @@ fn encode_effect(e: &Effect) -> Result<Vec<u8>, postcard::Error> {
     })
 }
 
-fn decode_part<T: serde::de::DeserializeOwned>(bytes: &[u8], syms: &[Sym], files: &[FileId]) -> Option<T> {
-    codec::with(Mode::Decode { syms: syms.to_vec(), files: files.to_vec() }, || postcard::from_bytes(bytes)).0.ok()
+/// Where text in project files a segment read stands now ([`Reads::places`]).
+type Relocated = std::sync::Arc<HashMap<Span, Span>>;
+
+fn decode_part<T: serde::de::DeserializeOwned>(
+    bytes: &[u8],
+    syms: &[Sym],
+    files: &[FileId],
+    moved: &Relocated,
+) -> Option<T> {
+    let mode = Mode::Decode { syms: syms.to_vec(), files: files.to_vec(), moved: moved.clone() };
+    codec::with(mode, || postcard::from_bytes(bytes)).0.ok()
 }
 
 /// Drops edges a replay would add again to no effect: a later copy of a raw
@@ -724,18 +741,18 @@ enum Chunk {
     Expansions(Vec<CachedExpansion>),
 }
 
-fn decode_chunk(kind: u8, bytes: &[u8], syms: &[Sym], files: &[FileId]) -> Option<Chunk> {
+fn decode_chunk(kind: u8, bytes: &[u8], syms: &[Sym], files: &[FileId], moved: &Relocated) -> Option<Chunk> {
     Some(match kind {
-        0 => Chunk::Vertices(decode_part(bytes, syms, files)?),
-        1 => Chunk::Edges(decode_part(bytes, syms, files)?),
-        2 => Chunk::Definitions(decode_part(bytes, syms, files)?),
-        _ => Chunk::Expansions(decode_part(bytes, syms, files)?),
+        0 => Chunk::Vertices(decode_part(bytes, syms, files, moved)?),
+        1 => Chunk::Edges(decode_part(bytes, syms, files, moved)?),
+        2 => Chunk::Definitions(decode_part(bytes, syms, files, moved)?),
+        _ => Chunk::Expansions(decode_part(bytes, syms, files, moved)?),
     })
 }
 
-fn decode_effect(bytes: &[u8], syms: &[Sym], files: &[FileId]) -> Option<Effect> {
+fn decode_effect(bytes: &[u8], syms: &[Sym], files: &[FileId], moved: &Relocated) -> Option<Effect> {
     let s: Sections = postcard::from_bytes(bytes).ok()?;
-    let mut e: Effect = decode_part(&s.rest, syms, files)?;
+    let mut e: Effect = decode_part(&s.rest, syms, files, moved)?;
     let jobs: Vec<(u8, &[u8])> = [&s.vertices, &s.edges, &s.definitions, &s.expansions]
         .iter()
         .enumerate()
@@ -754,7 +771,7 @@ fn decode_effect(bytes: &[u8], syms: &[Sym], files: &[FileId]) -> Option<Effect>
         loop {
             let i = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             let Some(&(kind, bytes)) = jobs.get(i) else { break };
-            done.push((i, Moved(decode_chunk(kind, bytes, syms, files))));
+            done.push((i, Moved(decode_chunk(kind, bytes, syms, files, moved))));
         }
         done
     };
@@ -877,6 +894,8 @@ struct Before {
     recent_file_spans: Vec<Span>,
     /// Call the load is read on behalf of.
     reader: Option<NodeId>,
+    /// The limits reached before: a limit is named once, so a load names only those it reaches first.
+    limits: Vec<LimitHit>,
     builder: super::ListsState,
     carried: Carried,
     facts: FactMaps,
@@ -1236,7 +1255,8 @@ const KINDS: [&str; 8] =
     ["meaning", "value", "kept part", "definedness", "conditional role", "definition sites", "copied text", "shape"];
 
 /// The codec mode that writes names and paths out in full.
-fn hash_mode(m: &Machine) -> Mode {
+/// `placeless`: spans in project files are written as marks, so text that moved digests the same.
+fn hash_mode(m: &Machine, placeless: bool) -> Mode {
     let roots = m.cache_roots();
     let files = (0..m.out.files.len())
         .map(|i| match i as FileId == m.out.main_file {
@@ -1244,7 +1264,8 @@ fn hash_mode(m: &Machine) -> Mode {
             false => Rc::from(roots.canonical(&m.out.files[i].path)),
         })
         .collect();
-    Mode::Hash { names: m.out.interner.names(), files }
+    let own = (0..m.out.files.len() * usize::from(placeless)).map(|i| m.out.project_file(i as FileId)).collect();
+    Mode::Hash { names: m.out.interner.names(), files, own, seen: Vec::new() }
 }
 
 /// `\count10` to `\count19`: the last register of each kind allocated,
@@ -1404,7 +1425,7 @@ impl Machine<'_> {
 
     /// State every package sees, no read set tracks: config, engine, prefixes, first expansion repeats.
     fn fixed_state(&self, site: Span) -> Vec<(String, u64)> {
-        let (digest, _) = codec::with(hash_mode(self), || {
+        let (digest, _) = codec::with(hash_mode(self, false), || {
             let mut parts: Vec<(String, u64)> = Vec::new();
             let mut hash = Fnv::new();
             hash.put(&(crate::caches::format::cache_key(), self.out.plugins.engine.as_str()));
@@ -1601,6 +1622,7 @@ impl Machine<'_> {
             def_owner: std::cell::OnceCell::new(),
             vertices: graph.len(),
             reader: graph.reader,
+            limits: self.out.limits.clone(),
             builder: self.lists_state(),
             loads: self.out.facts.loads.len(),
             counters,
@@ -1724,6 +1746,7 @@ impl Machine<'_> {
             unknown_digits: _,
             unknown_more: _,
             typed_syms: _,
+            kind_constants: _,
             minted: _,
             clock: _,
             clock_read_at: _,
@@ -2148,6 +2171,14 @@ impl Machine<'_> {
         }
     }
 
+    /// The state below `frame` is the load's `rest`, or that but for a call
+    /// charged then that a command read from a file since cleared: the
+    /// segment's [`Scalars::reader`] clears it on replay too.
+    fn at_rest(&self, frame: usize, rest: &Rest) -> bool {
+        let now = self.rest_state(frame);
+        now == *rest || (rest.reader && Rest { reader: true, ..now } == *rest)
+    }
+
     /// A suspended load's file at the start of a line, at rest: replay
     /// what follows from its cache, else record it.
     pub(super) fn maybe_resume(&mut self) {
@@ -2236,8 +2267,8 @@ impl Machine<'_> {
                         let mut chosen = None;
                         for &k in kids.iter().filter(|&&k| tree.nodes[k as usize].resume == want) {
                             let node = &tree.nodes[k as usize];
-                            match self.segment_fits(node, &base) {
-                                Ok(()) => {}
+                            let moved = match self.segment_fits(node, &base) {
+                                Ok(moved) => moved,
                                 Err(why) => {
                                     reason.get_or_insert(why);
                                     continue;
@@ -2247,7 +2278,8 @@ impl Machine<'_> {
                                 reason = Some("the run could not afford it within its budgets".into());
                                 break 'chain;
                             }
-                            match self.apply_segment(node, span, &before, &mut origins, &mut carried, &mut ambs) {
+                            match self.apply_segment(node, span, &moved, &before, &mut origins, &mut carried, &mut ambs)
+                            {
                                 Ok(marks) => {
                                     written.extend(marks);
                                     chosen = Some(k);
@@ -2372,7 +2404,7 @@ impl Machine<'_> {
 
     /// Whether segment's files are unchanged and this run agrees with what it read.
     /// Whether the segment can be replayed here; else why not.
-    fn segment_fits(&self, node: &Node, base: &Path) -> Result<(), String> {
+    fn segment_fits(&self, node: &Node, base: &Path) -> Result<Relocated, String> {
         let roots = self.cache_roots();
         for (path, hash) in &node.stamps {
             let path = roots.decode(path);
@@ -2389,8 +2421,9 @@ impl Machine<'_> {
         // Decoded with segment's name numbers (may not exist here; looked up, not interned).
         let local: Vec<Sym> = (0..node.names.len() as u32).map(Sym).collect();
         let files = self.lookup_files(&node.paths);
-        let (decoded, _) =
-            codec::with(Mode::Decode { syms: local, files }, || postcard::from_bytes::<Reads>(&node.reads));
+        let (decoded, _) = codec::with(Mode::Decode { syms: local, files, moved: Relocated::default() }, || {
+            postcard::from_bytes::<Reads>(&node.reads)
+        });
         let reads = decoded.map_err(|e| format!("cannot decode it: {e}"))?;
         let here = |sym: Sym| node.names.get(sym.0 as usize).and_then(|n| self.out.interner.lookup(n));
         for (code, sym) in &reads.gaps {
@@ -2399,7 +2432,7 @@ impl Machine<'_> {
                 return Err("a gap it relied on being reported is not".into());
             }
         }
-        let (mismatch, _) = codec::with(hash_mode(self), || {
+        let (mismatch, hashed) = codec::with(hash_mode(self, true), || {
             for (sym, kinds, digest) in &reads.bindings {
                 let sym = here(*sym);
                 let binding = sym.and_then(|sym| self.env.get(sym));
@@ -2417,6 +2450,8 @@ impl Machine<'_> {
         if let Some(reason) = mismatch {
             return Err(reason);
         }
+        let Mode::Hash { seen, .. } = hashed else { unreachable!("the hash mode comes back") };
+        let moved: HashMap<Span, Span> = reads.places.iter().copied().zip(seen).filter(|(was, is)| was != is).collect();
         // Tests on values it did not key on come out as they did, and what it passes on
         // has a value here.
         let leaf = |sym: Sym| here(sym).and_then(|sym| self.env.slot(sym)).and_then(|b| b.value.as_int());
@@ -2443,7 +2478,7 @@ impl Machine<'_> {
                 return Err(format!("{} is too long to copy", self.out.interner.cs(sym)));
             }
         }
-        Ok(())
+        Ok(Relocated::new(moved))
     }
 
     /// This run's file numbers for a segment's paths (unregistered).
@@ -2471,10 +2506,12 @@ impl Machine<'_> {
 impl Machine<'_> {
     /// Install one segment: names, files, vertices, edges, bindings, facts, state.
     /// Returns names written and their parts, or why not and whether it changed state first.
+    #[allow(clippy::too_many_arguments)]
     fn apply_segment(
         &mut self,
         node: &Node,
         site: Span,
+        moved: &Relocated,
         before: &Before,
         origins: &mut Vec<((RegKind, u16), u8)>,
         carried: &mut Vec<Sym>,
@@ -2482,7 +2519,8 @@ impl Machine<'_> {
     ) -> Result<Vec<(Sym, u8)>, (&'static str, bool)> {
         // Read with segment's numbers (for allocations and name order).
         let local: Vec<Sym> = (0..node.names.len() as u32).map(Sym).collect();
-        let (provisional, _) = codec::with(Mode::Decode { syms: local, files: self.lookup_files(&node.paths) }, || {
+        let mode = Mode::Decode { syms: local, files: self.lookup_files(&node.paths), moved: moved.clone() };
+        let (provisional, _) = codec::with(mode, || {
             postcard::from_bytes::<Sections>(&node.effect)
                 .and_then(|s| postcard::take_from_bytes::<EffectHead>(&s.rest).map(|(head, _)| head))
         });
@@ -2531,7 +2569,7 @@ impl Machine<'_> {
         }
         // Segment's files registered above (in order read); unread files stay unread.
         let files = self.lookup_files(&node.paths);
-        let st = decode_effect(&node.effect, &syms, &files).ok_or(("a segment cannot be decoded", false))?;
+        let st = decode_effect(&node.effect, &syms, &files, moved).ok_or(("a segment cannot be decoded", false))?;
         if st.scalars.builder.0 != before.builder {
             return Err(("the lists differ", false));
         }
@@ -3059,6 +3097,14 @@ impl Machine<'_> {
         self.after_assignment = s.after_assignment;
         self.last_file = s.last_file.map(|span| span.file);
         self.file_call = s.file_call.map(|(sym, span)| (sym, span_in(span, site)));
+        self.out.graph.set_reader(before.reader.filter(|_| s.reader));
+        self.out.limits.clone_from(&before.limits);
+        for hit in &s.limits {
+            match self.out.limits.iter_mut().find(|h| h.key == hit.key) {
+                Some(h) => h.count += hit.count,
+                None => self.out.limits.push(LimitHit { at: span_in(hit.at, site), ..hit.clone() }),
+            }
+        }
         self.identifying = s.identifying.and_then(|i| usize::try_from(base_loads + i).ok());
         // Unfinished pending call remains this run's own.
         if s.call_shape.is_some() || st.scalars.finished_call || pending.is_none() {
@@ -3281,10 +3327,8 @@ impl Machine<'_> {
         let Some(mark) = mouth.quiet_line_mark(&self.catcodes) else { return };
         let long_enough = self.out.steps - rec.marks.steps >= SEGMENT_TOKENS;
         let tail = mouth.left() <= self.cfg.cache.tail;
-        if mark.line <= rec.last_line || !(long_enough || mark.ended || tail) {
-            return;
-        }
-        if self.rest_state(rec.frame + 1) != rec.rest {
+        if mark.line <= rec.last_line || !(long_enough || mark.ended || tail) || !self.at_rest(rec.frame + 1, &rec.rest)
+        {
             return;
         }
         self.checkpoint(mark);
@@ -3446,7 +3490,7 @@ impl Machine<'_> {
             return;
         }
         let Some(mark) = mouth.line_mark().filter(|m| m.ended) else { return };
-        if self.rest_state(rec.frame + 1) != rec.rest {
+        if !self.at_rest(rec.frame + 1, &rec.rest) {
             return;
         }
         self.out.steps -= 1;
@@ -4088,6 +4132,20 @@ impl Machine<'_> {
                 .filter(|(sym, span, ..)| rec.seg_call != Some((*sym, *span)))
                 .map(|(sym, span, shape, depth)| (sym, span_out(span, site), shape, depth)),
             finished_call: rec.seg_call_finished,
+            reader: self.out.graph.reader.is_some(),
+            limits: self
+                .out
+                .limits
+                .iter()
+                .filter_map(|hit| {
+                    let was = rec.before.limits.iter().find(|h| h.key == hit.key).map_or(0, |h| h.count);
+                    (hit.count > was).then(|| LimitHit {
+                        count: hit.count - was,
+                        at: span_out(hit.at, site),
+                        ..hit.clone()
+                    })
+                })
+                .collect(),
             last_named_cs: self.last_named_cs,
             builder: (rec.before.builder, self.lists_state()),
             names: self.names_out(&rec.before, site),
@@ -4182,8 +4240,8 @@ impl Machine<'_> {
         let mut copies: Vec<(Sym, u32, i64)> =
             rec.seg_copies.iter().map(|(sym, (len, room))| (*sym, *len as u32, *room)).collect();
         copies.sort_by_key(|(sym, ..)| *sym);
-        let hash = hash_mode(self);
-        let (read_bindings, _) = codec::with(hash, || {
+        let hash = hash_mode(self, true);
+        let (read_bindings, hashed) = codec::with(hash, || {
             reads
                 .iter()
                 .map(|(sym, bits)| {
@@ -4230,7 +4288,8 @@ impl Machine<'_> {
         leaves.dedup();
         flows.retain(|e| !matches!(**e, Expr::Leaf(_)));
         flows.extend(leaves.into_iter().map(|sym| Rc::new(Expr::Leaf(sym))));
-        let reads = Reads { copies, bindings: read_bindings, gaps, guards, flows };
+        let Mode::Hash { seen: places, .. } = hashed else { unreachable!("the hash mode comes back") };
+        let reads = Reads { copies, bindings: read_bindings, places, gaps, guards, flows };
 
         // Files opened and new ones, and first-time name lookups.
         let mut stamps = Vec::new();

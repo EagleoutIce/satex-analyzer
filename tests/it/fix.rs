@@ -149,13 +149,12 @@ fn a_reference_past_a_stopped_run_is_only_a_note() {
         return;
     }
     let filler = "\\relax".repeat(4000);
-    let source = format!(
-        "\\documentclass{{article}}\n\\newcommand\\mark[1]{{\\label{{sec:#1}}}}\n\\begin{{document}}\nSee \\ref{{sec:late}}.\n{filler}\n\\section{{Late}}\\mark{{late}}\n\\end{{document}}\n"
-    );
+    let head = "\\documentclass{article}\n\\newcommand\\seclabel[1]{\\label{sec:#1}}\n\\begin{document}\nSee \\ref{sec:late}.\n";
+    let source = format!("{head}{filler}\n\\section{{Late}}\\seclabel{{late}}\n\\end{{document}}\n");
     let dir = project("reference-stopped", &[("doc.tex", &source)]);
     let mut cfg = Config { load: Load { classes: true, ..Default::default() }, ..crate::support::config() };
-    cfg.limits.steps =
-        Machine::analyze("\\documentclass{article}\\begin{document}x\\end{document}", None, &cfg).steps + 2000;
+    // past the `\ref`, by what this kernel spends up to it, and well before the filler's end
+    cfg.limits.steps = Machine::analyze(head, None, &cfg).steps + 2000;
     let analysis = Machine::analyze(&source, Some(&dir.join("doc.tex")), &cfg);
     assert!(analysis.exhausted, "the budget did not stop the run");
     let found: Vec<serde_json::Value> = (satex::linter::lint(&analysis).into_iter())
@@ -915,7 +914,10 @@ fn a_format_line_waits_for_its_format() {
     );
     let path = dir.join("doc.tex");
     let source = std::fs::read_to_string(&path).unwrap();
-    let cfg = Config { load: Load { classes: true, ..Default::default() }, ..crate::support::config() };
+    let mut cfg = Config { load: Load { classes: true, ..Default::default() }, ..crate::support::config() };
+    // what the preamble costs is the installation's (TeX Live 2019's hyperref reads fewer files):
+    // any that is most of the build counts here
+    cfg.lints.build_cost.tokens = 0;
     let analysis = Machine::analyze(&source, Some(&path), &cfg);
     let cost: Vec<Record> =
         satex::linter::lint(&analysis).into_iter().filter(|r| r["code"] == "preamble-cost").collect();

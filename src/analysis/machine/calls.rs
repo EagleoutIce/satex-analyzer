@@ -951,9 +951,7 @@ impl Machine<'_> {
         let all = |test: &dyn Fn(&Binding) -> bool| {
             runs.iter().all(|r| of(r, sym).is_some_and(|b| b.may.is_none() && test(b)))
         };
-        if all(
-            &|b| matches!(&b.meaning, Meaning::Macro(d) if d.parameter_text.arity == 0 && self.spells_number(&d.replacement_text)),
-        ) {
+        if all(&|b| self.holds_number(b)) {
             Some(Written::Number)
         } else if all(&|b| matches!(b.value, crate::engine::value::Value::Num { .. })) {
             Some(Written::Register)
@@ -970,7 +968,9 @@ impl Machine<'_> {
             // that differ were chosen from data, as a third run may do.
             let vague = runs.iter().any(|r| of(r, sym).is_some_and(|b| !b.certain || self.imprecise(b)));
             let output = runs.iter().all(|r| of(r, sym).is_none() || r.outputs.contains(&sym));
-            ((vague || output) && runs.iter().any(|r| r.loose)).then_some(Written::Any)
+            // A name some runs left alone is state another run's data reached: the join with what it holds now.
+            let partial = runs.iter().any(|r| of(r, sym).is_none());
+            ((vague || output || partial) && runs.iter().any(|r| r.loose)).then_some(Written::Any)
         }
     }
 
@@ -985,8 +985,19 @@ impl Machine<'_> {
     /// Runs can be learned only if every name they wrote has a type to widen
     /// to (or is the same in all runs), and at least one holds a number.
     fn typed_effect(&self, runs: &[Run]) -> bool {
-        let types: Option<Vec<_>> = Self::learned_names(runs).into_iter().map(|s| self.written_type(runs, s)).collect();
-        types.is_some_and(|t| t.iter().any(|t| matches!(t, Written::Number | Written::Register)))
+        let names = Self::learned_names(runs);
+        let types: Option<Vec<_>> = names.iter().map(|&s| self.written_type(runs, s)).collect();
+        // A number some run left in a name that the others left vague counts too.
+        let number = |&s: &Sym| {
+            runs.iter().flat_map(|r| &r.writes).any(|w| w.0 == s && w.1.as_ref().is_some_and(|b| self.holds_number(b)))
+        };
+        types.is_some_and(|t| {
+            t.iter().zip(&names).any(|(t, s)| match t {
+                Written::Number | Written::Register => true,
+                Written::Any => number(s),
+                _ => false,
+            })
+        })
     }
 
     /// Sets each name the runs wrote to its type: number text becomes an
@@ -1047,6 +1058,11 @@ impl Machine<'_> {
             }
         }
         self.mint();
+    }
+
+    /// A parameterless macro whose text spells a number.
+    fn holds_number(&self, b: &Binding) -> bool {
+        matches!(&b.meaning, Meaning::Macro(d) if d.parameter_text.arity == 0 && self.spells_number(&d.replacement_text))
     }
 
     /// Text that spells a number: digits, a sign, a point, typed digits.

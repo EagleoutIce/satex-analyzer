@@ -3842,7 +3842,9 @@ fn units_plugin_converts_lengths() {
     // switched off: none of it
     let (mut server, uri, dir) = open_set("units-off", text, &["type_plugins.units.enabled=false"]);
     assert!(!hover_md(&at(&mut server, &uri, "textDocument/hover", 2, c)).contains("| cm |"));
-    assert_eq!(at(&mut server, &uri, "textDocument/codeAction", 2, c), json!([]));
+    // (every finding still offers its two ignore actions; no conversion)
+    let acts = at(&mut server, &uri, "textDocument/codeAction", 2, c);
+    assert!(acts.as_array().unwrap().iter().all(|a| a["data"]["ignore"] == true), "{acts}");
     assert_eq!(at(&mut server, &uri, "satex/view", 2, c), json!([]));
     server.shutdown();
     std::fs::remove_dir_all(dir).ok();
@@ -4388,7 +4390,12 @@ fn color_plugin_with_xcolor() {
         color["defined"].as_array().unwrap().iter().find(|d| d["name"] == name).map(|d| d["group"].clone())
     };
     // each color names who defined it: the document's own, else the package file
-    assert_eq!((group("brand"), group("red")), (Some(json!("document")), Some(json!("kernel"))), "{color}");
+    // (TeX Live 2019's expl3 defines no `red`: its `expl3-code.tex` has no such `\color_set:nnn`)
+    let red = match crate::support::installed_file_has("expl3-code.tex", "\\color_set:nnn { red }") {
+        true => "kernel",
+        false => "xcolor",
+    };
+    assert_eq!((group("brand"), group("red")), (Some(json!("document")), Some(json!(red))), "{color}");
     let id = server.request(
         "textDocument/colorPresentation",
         json!({ "textDocument": { "uri": uri }, "color": { "red": 1.0, "green": 0.0, "blue": 0.0, "alpha": 1.0 },

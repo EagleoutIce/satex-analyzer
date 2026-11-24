@@ -5354,8 +5354,13 @@ impl Machine<'_> {
             crate::project::overlay::probed(path);
             return self.set_stream(stream, Some(vec![crate::analysis::machine::deferred_line(path)]));
         }
-        // A file this run wrote with unknown content leaves the stream unknown.
-        let Some(bytes) = self.input_bytes(&name) else { return self.unknown_stream(stream) };
+        // A file this run surely wrote is open on unknown lines; one it may have written leaves the stream unknown.
+        let Some(bytes) = self.input_bytes(&name) else {
+            return match self.written_named(&name) {
+                Some(None) => self.set_stream(stream, Some(vec![crate::engine::tex::UNKNOWN_ANY.to_string()])),
+                _ => self.unknown_stream(stream),
+            };
+        };
         let text = bytes.map(|b| self.pick_text(by, span, crate::engine::source::decode(&b)));
         let lines = text.map(|t| t.lines().map(str::to_string).collect::<Vec<_>>());
         self.set_stream(stream, lines);

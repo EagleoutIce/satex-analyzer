@@ -3371,7 +3371,7 @@ fn macro_hull(b: &Binding, hull: &TextHull<'_>) -> Option<Meaning> {
     let mut first: Option<&crate::engine::tex::MacroDef> = None;
     for m in &members {
         let Meaning::Macro(d) = m else { return None };
-        let plain = d.parameter_text.items.is_empty() && !d.parameter_text.brace_end && d.arg_spec.is_none();
+        let plain = d.plain();
         let f = *first.get_or_insert(d);
         if !plain || (d.long, d.outer, d.protected) != (f.long, f.outer, f.protected) {
             return None;
@@ -4032,6 +4032,52 @@ fn maybe_undefined(set: &[Meaning]) -> Option<&Meaning> {
     }
 }
 
+/// How many tokens all `texts` share at their beginning and at their end,
+/// the end not reaching into the beginning. Widened, typed text next to the
+/// middle joins it: the next pass then meets one typed token, not one more
+/// beside it.
+fn common_ends(texts: &[&[Token]], typed: &Typed, widen: bool) -> (usize, usize) {
+    let first = texts[0];
+    let mut head =
+        (0..first.len()).take_while(|&i| texts.iter().all(|t| t.get(i).is_some_and(|x| x.tok == first[i].tok))).count();
+    let mut tail = (0..first.len() - head)
+        .take_while(|&i| {
+            texts.iter().all(|t| t.len() - head > i && t[t.len() - 1 - i].tok == first[first.len() - 1 - i].tok)
+        })
+        .count();
+    while widen && head > 0 && typed.classify(&first[head - 1]).is_some() {
+        head -= 1;
+    }
+    while widen && tail > 0 && typed.classify(&first[first.len() - tail]).is_some() {
+        tail -= 1;
+    }
+    (head, tail)
+}
+
+/// The shape of a family of texts (an expl3 kind's constants): the ends all
+/// share around typed text of the classes between them, at least one token
+/// when each middle has one. `None` for fewer than two texts or no common end.
+pub fn ends_hull(texts: &[&[Token]], typed: &Typed) -> Option<Vec<Token>> {
+    let (head, tail) = (texts.len() >= 2).then(|| common_ends(texts, typed, true))?;
+    if head + tail == 0 {
+        return None;
+    }
+    let first = texts[0];
+    let (mut class, mut one) = (TextClass::EMPTY, true);
+    for t in texts {
+        let middle = &t[head..t.len() - tail];
+        one &= typed.holds_one(middle);
+        for x in middle {
+            class = class.union(typed.class_of(x).map_or_else(|| TextClass::of(x.tok), |c| c.0));
+        }
+    }
+    let span = first.get(head).or(first.last()).map_or(Span::default(), |t| t.span);
+    let mut text = first[..head].to_vec();
+    text.extend(typed.text(class, one, None, span));
+    text.extend_from_slice(&first[first.len() - tail..]);
+    Some(text)
+}
+
 /// One macro for the parameterless macros `set`: their common beginning
 /// and end, and typed unknown text for what lies between, when that is
 /// balanced and holds no control sequence. `None` otherwise.
@@ -4049,21 +4095,7 @@ fn typed_join(set: &[Meaning], typed: &Typed, widen: bool) -> Option<Meaning> {
         def.get_or_insert(d);
     }
     let first = texts[0];
-    let mut head =
-        (0..first.len()).take_while(|&i| texts.iter().all(|t| t.get(i).is_some_and(|x| x.tok == first[i].tok))).count();
-    let mut tail = (0..first.len() - head)
-        .take_while(|&i| {
-            texts.iter().all(|t| t.len() - head > i && t[t.len() - 1 - i].tok == first[first.len() - 1 - i].tok)
-        })
-        .count();
-    // Widened, typed text next to the middle joins it: the next pass then
-    // meets one typed token, not one more beside it.
-    while widen && head > 0 && typed.classify(&first[head - 1]).is_some() {
-        head -= 1;
-    }
-    while widen && tail > 0 && typed.classify(&first[first.len() - tail]).is_some() {
-        tail -= 1;
-    }
+    let (head, tail) = common_ends(&texts, typed, widen);
     let mut class = TextClass::EMPTY;
     let mut one = true;
     // The hull of the middles' bounds, each the sum of its tokens'.
@@ -4185,6 +4217,36 @@ mod tests {
         env.get(Sym(3));
         env.kept(Sym(1));
         assert_eq!(reads(env.memo_since(outer)), [(1, false), (2, true), (3, true), (5, true), (7, false)]);
+    }
+
+    /// The shape of a family is the ends all its texts share: l3fp's
+    /// constants all are `\s__fp \__fp_chk:w` ... `;`, so a widened fp keeps
+    /// the delimiters its parsers read. Pins a widened fp read as any text,
+    /// whose `;` scan ran away to the end of the file.
+    #[test]
+    fn the_ends_a_family_shares_stay_around_typed_text() {
+        let mut interner = Interner::default();
+        for pad in ["x0", "x1", "x2"] {
+            interner.intern(pad);
+        }
+        let cs = |n: &str, i: &mut Interner| Token::new(Tok::Cs(i.intern(n)), Span::default());
+        let (fp, chk, exact) =
+            (cs("s__fp", &mut interner), cs("__fp_chk:w", &mut interner), cs("s__fp_exact", &mut interner));
+        let syms: Vec<Sym> = (0..TYPED_NAMES as u32).map(|i| Sym(1000 + i)).collect();
+        let minted = Default::default();
+        let typed = Typed { interner: &interner, syms: &syms, digits: Sym(1), more: Sym(2), minted: &minted };
+        let chr = |c, cat| Token::new(Tok::Chr(c, cat), Span::default());
+        let other = |c| chr(c, Catcode::Other);
+        let zero = [fp, chk, other('0'), other('0'), exact, other(';')];
+        let one =
+            [fp, chk, other('1'), other('0'), chr('{', Catcode::Begin), other('1'), chr('}', Catcode::End), other(';')];
+        let shape = ends_hull(&[&zero, &one], &typed).expect("a shape");
+        assert_eq!(shape.len(), 4, "{shape:?}");
+        assert_eq!((shape[0], shape[1], shape[3]), (fp, chk, other(';')));
+        let middle = shape[2];
+        assert!(middle.cs().is_some() && !zero.contains(&middle) && !one.contains(&middle), "the middle is typed text");
+        assert!(ends_hull(&[&zero], &typed).is_none(), "one text tells no shape");
+        assert!(ends_hull(&[&zero, &[other('x')]], &typed).is_none(), "no common end");
     }
 
     /// Macros alike but for `\long` join to that text, nothing in between.

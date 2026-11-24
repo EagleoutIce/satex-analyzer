@@ -2534,6 +2534,7 @@ header .hd-feedback:hover:not(:disabled) { background: var(--sunk); color: var(-
 /* changelog badges: the kind of change, then the entry; commit links stay quiet */
 .badge { display: inline-block; min-width: 2.6rem; margin-right: .35rem; padding: 0 .35rem; border-radius: 5px; font: 600 .72rem/1.45 var(--mono, monospace); text-align: center; vertical-align: .08em; color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); }
 .badge.b-fix { color: var(--error); background: color-mix(in srgb, var(--error) 12%, transparent); }
+.badge.b-tl { min-width: 0; color: var(--muted); background: color-mix(in srgb, currentColor 12%, transparent); }
 .badge.b-perf { color: var(--warning); background: color-mix(in srgb, var(--warning) 14%, transparent); }
 .badge.b-docs, .badge.b-build { color: var(--info); background: color-mix(in srgb, var(--info) 10%, transparent); }
 main li:has(> .badge) a[href*="/commit/"] code, main li:has(> .badge) a[href*="/compare/"] code { font-size: .72rem; opacity: .7; }

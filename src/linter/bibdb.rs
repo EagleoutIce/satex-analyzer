@@ -985,6 +985,9 @@ pub fn dated(value: &str) -> bool {
 /// 13-digit forms weigh 1 and 3 in turn modulo 10. Hyphens and spaces do not count. A
 /// kind or length not known here passes.
 pub fn check_digit(kind: &str, value: &str) -> bool {
+    if !matches!(kind, "isbn" | "issn" | "ismn") {
+        return true;
+    }
     let code: Vec<char> = value.chars().filter(|c| !matches!(c, '-' | ' ')).collect();
     let digit = |c: char, last: bool| match c {
         'X' | 'x' if last => Some(10),
@@ -1000,8 +1003,7 @@ pub fn check_digit(kind: &str, value: &str) -> bool {
     match kind {
         "isbn" => (n == 10 && down()) || ean(),
         "issn" => n == 8 && down(),
-        "ismn" => ean(),
-        _ => true,
+        _ => ean(),
     }
 }
 
@@ -1308,7 +1310,8 @@ mod tests {
     }
 
     /// Intuition: a check digit catches a mistyped number. The codes are the ones biber was
-    /// run on. A form not known here passes: no finding without a reason.
+    /// run on. A form not known here passes: no finding without a reason, so the
+    /// `datatype=date` constraint of TeX Live 2019's biblatex flags no date range.
     #[test]
     fn check_digits() {
         for (kind, code, valid) in [
@@ -1322,6 +1325,7 @@ mod tests {
             ("ismn", "979-0-2600-0043-8", true),
             ("ismn", "M-2306-7118-7", true),
             ("ean", "1", true),
+            ("date", "2001-05-21/2001-05-23", true),
         ] {
             assert_eq!(check_digit(kind, code), valid, "{kind} {code}");
         }

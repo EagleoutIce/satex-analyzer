@@ -30,11 +30,13 @@
 # whose process is killed (OOM) reruns its unfinished tests, then one at a
 # time; what still does not finish is reported. All shards share the
 # suite's caches (target/scratch/test-cache), which lock their builds.
-# Env as scripts/t.sh (PROFILE, JOBS, CARGO_TARGET_DIR), and SHARD_SECONDS
+# Env as scripts/t.sh (PROFILE, JOBS, CARGO_TARGET_DIR, TEXLIVE), and SHARD_SECONDS
 # (1800), the most one shard may run.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 export LC_ALL=C
+source scripts/texlive.sh
+texlive_use
 tier=${1:?usage: $0 smoke|quick|changed|fast|slow|reds|measure [filter...] [-- libtest args]}; shift
 case $tier in smoke|changed) export LOCK_CLASS=${LOCK_CLASS:-short} PROFILE=${PROFILE:-edit} ;; esac
 [ "$tier" != smoke ] || { tier=quick; QUICK_SECONDS=${QUICK_SECONDS:-0.3} QUICK_MIN=${QUICK_MIN:-0} QUICK_NEW=${QUICK_NEW:-0}; }
@@ -70,7 +72,10 @@ export RUST_MIN_STACK=${RUST_MIN_STACK:-$(sed -n 's/^RUST_MIN_STACK *= *"\([0-9]
 all=$("$it" --list 2>/dev/null | sed -n 's/: test$//p' | sort)
 stale=$(comm -23 <(printf '%s\n' "${slow[@]}" "${reds[@]}" | sort -u) <(echo "$all"))
 [ -z "$stale" ] || { echo "tests/slow.txt or tests/known-red.txt names tests that no longer exist:" >&2; echo "$stale" >&2; exit 1; }
-skip=$(printf '%s\n' "${slow[@]}" "${reds[@]}" | sort -u)
+# Plus the tests that do not apply to this TeX Live (tests/texlive.yaml).
+tlskip=$(texlive_skips "$(texlive_year)")
+[ -z "$tlskip" ] || printf 'not on TeX Live %s: %s\n' "$(texlive_year)" "$tlskip" >&2
+skip=$(printf '%s\n' "${slow[@]}" "${reds[@]}" $(cut -f1 <<<"$tlskip") | sed '/^$/d' | sort -u)
 # The quick tier's set of the tests on stdin.
 quick_set() {
     local timed

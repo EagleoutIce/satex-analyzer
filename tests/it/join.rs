@@ -1366,6 +1366,21 @@ fn digits_of_any_length_part_into_few_lengths_above_any_small_bound() {
     assert!(negative.peak_paths <= signs, "{} paths", negative.peak_paths);
 }
 
+/// Intuition: the rest of a number of open length after its first digit has no known width, so
+/// the digits read back together are any number of that length, not one value. `\count1` is 4 or
+/// more: `#1#2` read again is `\count1` itself, 4 among its values.
+/// Bug: the rest's width was its end place minus its start, its open end 0: an overflow (the
+/// benchmark tcolorbox document under TeX Live 2019, `PROFILE=ci`), else a width of 4 billion
+/// places that made the number exactly 2147483647.
+#[test]
+fn the_rest_of_a_number_of_open_length_has_no_known_width() {
+    let analysis = analyze(
+        r"\count1=\pdflastypos \ifnum\count1<4 \count1=4 \fi \edef\x{\the\count1}
+          \def\f#1#2\end{\count2=#1#2\relax \ifnum\count2=4 \gdef\four{}\fi}\expandafter\f\x\end",
+    );
+    assert!(crate::support::maybe_defined(&analysis, "four"), "{:?}", with_code(&analysis, "raised-error"));
+}
+
 /// Intuition: a printed number is one `-` at most, first, then digits. No `--` can start in it, so
 /// a scan for `--` over it finds only the delimiter after it.
 /// Bug: the scan asked whether the number may hold a `-` and cut the argument inside it. hyperref

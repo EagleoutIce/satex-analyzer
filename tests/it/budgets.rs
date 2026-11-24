@@ -81,6 +81,8 @@ const OVERFULL: u64 = 2287795;
 // 2026-11-22: a typed rest that may be empty is read a token per argument, never whole (sound),
 // so pgfmath's digit walks take a pass per digit. Target 1_740_671.
 const PGFMATH_TYPED: u64 = 2_830_219;
+/// Measured 2026-11-24 on TeX Live 2025 (2022: 657k, 2019: 132k).
+const PGFMATH_LOOP: u64 = 1_104_426;
 const GRAPHIC: u64 = 1181589;
 const REGEX_SCAN: u64 = 10924212;
 
@@ -125,7 +127,8 @@ fn recorded_lists_past_their_limit_are_reported() {
 // termination: a kernel build is bounded by `limits.seconds` too.
 #[test]
 fn a_kernel_build_over_the_seconds_limit_stops_with_the_limit_named() {
-    if !crate::support::installed() {
+    // A kernel without expl3 (before 2020-02) is built well within the smallest limit, one second.
+    if !crate::support::installed() || !crate::support::kernel_has("\\ExplSyntaxOn") {
         return;
     }
     let dir = fresh("kernel-seconds");
@@ -211,6 +214,23 @@ fn pgfmath_parse_of_typed_numbers() {
     }
 }
 
+/// Intuition: a `\pgfmathparse` met again in a loop, whose run forks on an unknown
+/// number, applies what its earlier runs left (`call-learned-effect`) instead of
+/// parsing again. Bug: the runs never taught their effect, since the `rand` run wrote
+/// the seed and the forked run left `\pgfmathresult` vague. TeX Live 2022's parser then
+/// joined paths at different parser states: 506M tokens for two passes.
+#[test]
+fn a_parse_in_a_loop_learns_its_effect() {
+    let analysis = budget(
+        "pgfmath-loop",
+        "\\documentclass{article}\\usepackage{pgfmath}\\newcount\\k\\loop\\pgfmathparse{rand}\\pgfmathparse{\\pdfuniformdeviate 1000 + 1}\\advance\\k1 \\ifnum\\k<2 \\repeat\\begin{document}x\\end{document}",
+        PGFMATH_LOOP,
+    );
+    if let Some(analysis) = analysis {
+        without("pgfmath-loop", &analysis, &["limit-reached", "repeated-failure"]);
+    }
+}
+
 /// The steps a warm run runs: the second of two in one cache directory,
 /// less what the package caches replayed.
 fn warm_steps(name: &str, source: &str) -> Option<u64> {
@@ -266,7 +286,8 @@ const WARM_TESTPHASE_LOADING: u64 = 4_620_000;
 /// Cold and warm must find the same.
 #[test]
 fn testphase_latest_loads_from_cache_warm() {
-    if !crate::support::installed() {
+    // TeX Live 2022 has no `testphase=latest` ("LaTeX-lab package 'latest' not found"), 2019 no `\DocumentMetadata`.
+    if !crate::support::installed_file_has("latex-lab-testphase-latest.sty", "") {
         return;
     }
     let source = "\\DocumentMetadata{testphase=latest,lang=en}\n\\documentclass{article}\n\\begin{document}\nx\n\\end{document}\n";

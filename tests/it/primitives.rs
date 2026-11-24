@@ -785,3 +785,13 @@ fn the_jobs_log_exists_while_the_job_runs() {
     assert!(crate::support::defined(&analysis, "haslog"), "\\IfFileExists finds no log");
     assert!(crate::support::defined(&analysis, "sized"), "the log has no size");
 }
+
+/// Intuition: `\openin` of a file the run surely wrote, its text unknown (the job's log), opens it:
+/// `\ifeof` right after it is false (tex.web § 1275), whatever the file holds.
+/// Bug: satex left such a stream unknown, so TeX Live 2022's `\IfFileExists`, an `\openin`
+/// and `\ifeof`, could not tell that `\jobname.log` exists.
+#[test]
+fn openin_of_the_jobs_log_is_not_at_its_end() {
+    let analysis = crate::support::analyze_plain("\\openin1=\\jobname.log \\ifeof1 \\else\\def\\haslog{}\\fi\n");
+    assert!(crate::support::defined(&analysis, "haslog"), "{}", crate::support::presence(&analysis, "haslog"));
+}

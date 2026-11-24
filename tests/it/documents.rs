@@ -762,8 +762,9 @@ fn cut_inside_library_call_drops_the_call() {
 /// variable the cut widened. Its hull is text of a class, with none of
 /// l3fp's delimiters, so `\__fp_to_decimal:w` runs away to the end of the
 /// file on every arm, each refuted as an arm over unknown text: no path
-/// is left, `\end{document}` was eaten, and `missing-end` is false. Open
-/// root: a widened structured value (fp, seq) read by its own parser.
+/// is left, `\end{document}` was eaten, and `missing-end` is false. The
+/// widened fp keeps its kind's shape (`variable-kind-shape`): the ends
+/// l3fp's constants share around typed text.
 #[test]
 fn cut_widened_fp_read_back_reaches_the_end() {
     if !installed() {
@@ -775,6 +776,10 @@ fn cut_widened_fp_read_back_reaches_the_end() {
     let a = Machine::analyze(&source, Some(&path), &crate::support::discover(&root));
     assert!(defined(&a, "SatexReachedEnd"), "{}", crate::support::presence(&a, "SatexReachedEnd"));
     assert_eq!(count(&a, "missing-end"), 0, "{:#?}", codes(&a));
+    let meaning = a.interner.lookup("l_tmpa_fp").map(|sym| a.env.meaning(sym));
+    let text = meaning.as_ref().and_then(|m| m.as_macro()).map(|m| m.replacement_text.clone()).unwrap_or_default();
+    let fp = satex::engine::tex::detokenize(&text, &a.interner);
+    assert!(fp.starts_with("\\s__fp \\__fp_chk:w "), "the fp lost its shape: {fp}");
 }
 
 /// The diagnostic codes of `a` with their counts, for failure messages.

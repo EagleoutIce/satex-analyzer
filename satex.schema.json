@@ -86,6 +86,16 @@
           ],
           "x-example": "off: `\\catcode\\count@=11` after a summarized loop may make `{` a letter, one path each way"
         },
+        "assume_variable_kind_shape": {
+          "default": true,
+          "description": "assume a widened expl3 variable holds a value of its kind (an fp stays an fp), as the module's functions write",
+          "type": "boolean",
+          "x-affects": [
+            "precision",
+            "soundness"
+          ],
+          "x-example": "off: an `fp` widened by a cut is any text, and `\\fp_use:N` of it runs away"
+        },
         "join_paths_at": {
           "default": [
             {
@@ -3265,7 +3275,7 @@
         },
         "probe_seconds": {
           "default": 20,
-          "description": "most seconds one probe document may take (a package tried for a command the run lacks). One that runs out does not take the call. 0 = no limit",
+          "description": "most seconds one probe document may take (a package tried for a command the run lacks), a backstop past provider_steps. One it stops counts as untried and is tried again later. 0 = no limit",
           "minimum": 0,
           "type": "integer",
           "x-affects": [
@@ -3368,6 +3378,17 @@
           ],
           "x-example": "a paragraph of 800 words is about 5000 items: with the default its line breaks stay unknown"
         },
+        "parshape_lines": {
+          "default": 64,
+          "description": "how many lines of a \\parshape satex keeps. Lines past them are read but unknown",
+          "minimum": 0,
+          "type": "integer",
+          "x-affects": [
+            "precision",
+            "memory"
+          ],
+          "x-example": "higher: `\\parshapelength 100` of a 200-line shape is known"
+        },
         "paths": {
           "default": 16,
           "description": "how many alternative paths satex keeps at once before merging the oldest two. Higher is more precise and slower",
@@ -3412,6 +3433,16 @@
             "precision"
           ],
           "x-example": "`\\includegraphics[width=5cm]` loads graphicx, whose definition takes the key, not graphics"
+        },
+        "provider_steps": {
+          "default": 100000000,
+          "description": "tokens one such run may read. Past them the package does not take the call. The same on every machine",
+          "minimum": 0,
+          "type": "integer",
+          "x-affects": [
+            "speed",
+            "precision"
+          ]
         },
         "recursion_depth": {
           "default": 100,

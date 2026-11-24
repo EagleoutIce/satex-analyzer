@@ -1519,11 +1519,7 @@ fn encoding_slots(analysis: &Analysis) -> HashMap<String, HashMap<u32, char>> {
         return out;
     }
     let Some(unicode) = read("tuenc.def") else { return out };
-    let code = regex::Regex::new(r#"\\DeclareUnicodeSymbol\{\\(\w+)\}\s*\{"([0-9A-Fa-f]+)\}"#).expect("tuenc regex");
-    let points: HashMap<&str, char> = code
-        .captures_iter(&unicode)
-        .filter_map(|c| Some((c.get(1)?.as_str(), char::from_u32(u32::from_str_radix(&c[2], 16).ok()?)?)))
-        .collect();
+    let points = unicode_points(&unicode);
     for encoding in encodings {
         let Some(def) = read(&format!("{}enc.def", encoding.to_lowercase())) else { continue };
         let symbol = regex::Regex::new(&format!(
@@ -1541,6 +1537,18 @@ fn encoding_slots(analysis: &Analysis) -> HashMap<String, HashMap<u32, char>> {
         out.insert(encoding.to_string(), table);
     }
     out
+}
+
+/// The code point `tuenc.def` gives each text symbol: `\DeclareUnicodeSymbol`,
+/// before 2020 `\DeclareTextSymbol` with `\UnicodeEncodingName`.
+fn unicode_points(tuenc: &str) -> HashMap<&str, char> {
+    let code = regex::Regex::new(
+        r#"\\Declare(?:Unicode|Text)Symbol\{\\(\w+)\}\s*(?:\\UnicodeEncodingName\s*)?\{"([0-9A-Fa-f]+)\}"#,
+    )
+    .expect("tuenc regex");
+    code.captures_iter(tuenc)
+        .filter_map(|c| Some((c.get(1)?.as_str(), char::from_u32(u32::from_str_radix(&c[2], 16).ok()?)?)))
+        .collect()
 }
 
 /// A character as typeset text: satex's private-use sentinels vanish.
@@ -7589,4 +7597,21 @@ pub(crate) fn defined_at(analysis: &Analysis, sym: Sym) -> Span {
         .maker(def.node)
         .and_then(|call| analysis.graph.vertices.get(call as usize))
         .map_or(def.span, |vertex| vertex.span)
+}
+
+#[cfg(test)]
+mod tests {
+    /// `tuenc.def` names a symbol's code point both ways: TeX Live 2019's
+    /// `\DeclareTextSymbol` with `\UnicodeEncodingName` and the later
+    /// `\DeclareUnicodeSymbol`. Pins `\{` read as OMS slot 102, `f`, where
+    /// only the later form was read.
+    #[test]
+    fn both_forms_of_a_unicode_symbol_give_its_code_point() {
+        let old = r#"\DeclareTextSymbol{\textbraceleft}       \UnicodeEncodingName{"007B}"#;
+        let new = r#"\DeclareUnicodeSymbol{\textbraceright}{"007D}"#;
+        let text = format!("{old}\n{new}");
+        let points = super::unicode_points(&text);
+        assert_eq!(points.get("textbraceleft"), Some(&'{'));
+        assert_eq!(points.get("textbraceright"), Some(&'}'));
+    }
 }

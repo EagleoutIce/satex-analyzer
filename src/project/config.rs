@@ -21,6 +21,9 @@ pub struct Limits {
     /// Packages a write may try for a name it adds that the run lacks, most loaded first, each a
     /// small run of the call ([`crate::linter::shared::provider_for`]). 0: the most loaded, untried.
     pub provider_probes: u32,
+    /// Tokens one such run may read: past them the package counts as not taking the call. The
+    /// probe's bound, the same on every machine; `probe_seconds` only stops a stuck one.
+    pub provider_steps: u64,
     pub format_steps: u64,
     /// How deep `\input` may nest.
     pub file_depth: u16,
@@ -69,7 +72,8 @@ pub struct Limits {
     /// the cache itself. The wait counts toward no step budget, so it is bounded here.
     pub lock_seconds: u64,
     /// Wall-clock seconds one probe document may take (a package tried for a command the run
-    /// lacks). A probe that runs out counts as not taking the call. 0 for no limit.
+    /// lacks): a backstop past `provider_steps`. A probe it stops counts as untried, and is
+    /// tried again by a later ask. 0 for no limit.
     pub probe_seconds: u64,
     /// How many undecided `\if` one command may split into paths. Past them
     /// the command's result is unknown text, reported as an `assumption`.
@@ -88,6 +92,11 @@ pub struct Limits {
     /// compares or prints the count, and forks more for wide ranges
     /// (`\int_rand:n {16777215}`).
     pub digit_lengths: u8,
+    /// How many lines of a `\parshape` satex keeps, each its indent and
+    /// length. TeX reads every line the count names (tex.web § 1248). The
+    /// lines past these are read but unknown. A count no budget reads
+    /// to its end leaves the shape unknown. Higher keeps long shapes.
+    pub parshape_lines: u32,
     /// How many alternative paths satex keeps at once. Past them the two
     /// oldest at one place are merged into one. Higher is more precise,
     /// slower and takes more memory.
@@ -305,12 +314,14 @@ impl Limits {
             "walk_texts" => self.walk_texts,
             "probe_steps" => self.probe_steps,
             "provider_probes" => self.provider_probes.into(),
+            "provider_steps" => self.provider_steps,
             "replay_steps" => self.replay_steps,
             "repeat_failures" => self.repeat_failures.into(),
             "seconds" => self.seconds,
             "choices" => self.choices.into(),
             "site_forks" => self.site_forks.into(),
             "digit_lengths" => self.digit_lengths.into(),
+            "parshape_lines" => self.parshape_lines.into(),
             "paths" => self.paths.into(),
             "alike" => self.alike.into(),
             "heads_apart" => self.heads_apart.into(),
@@ -378,6 +389,8 @@ impl Default for Limits {
             steps: 4_000_000_000,
             probe_steps: 2_000_000,
             provider_probes: 4,
+            // Measured: tikz with a `\node` reads 8M tokens on a cold cache.
+            provider_steps: 100_000_000,
             // The real expl3 reads the Unicode data files while the kernel
             // is built; that is done once and then cached.
             format_steps: 9_000_000_000,
@@ -418,6 +431,8 @@ impl Default for Limits {
             // when merged); a 24-bit random number into eight would fork
             // past `site_forks`.
             digit_lengths: 3,
+            // `\list` sets one line per nesting level, wrapfig a few dozen.
+            parshape_lines: 64,
             paths: 16,
             alike: 8,
             heads_apart: 32,
@@ -2243,6 +2258,10 @@ pub struct AnalysisConfig {
     /// its type, and raises nothing. Reported as `call-learned-effect`.
     /// `false` walks every such call.
     pub assume_call_learned_effect: bool,
+    /// Assumes a widened expl3 variable (`\l_x_fp`) holds a value of its
+    /// kind: the ends its kind's constants share stay around typed text.
+    /// Reported as `variable-kind-shape`. `false` widens it to any text.
+    pub assume_variable_kind_shape: bool,
 }
 
 impl Default for AnalysisConfig {
@@ -2257,6 +2276,7 @@ impl Default for AnalysisConfig {
             assume_messages_output_only: true,
             assume_unknown_char_catcode: true,
             assume_call_learned_effect: true,
+            assume_variable_kind_shape: true,
         }
     }
 }

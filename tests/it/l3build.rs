@@ -71,7 +71,9 @@ fn documents_are_typeset_with_typesetexe_and_tests_checked_with_the_first_engine
     let doc = analyze(&dir.join("demo-doc.tex"));
     assert_eq!(doc.plugins.engine, Engine::LuaTeX);
     let test = analyze(&dir.join("testfiles/basic.lvt"));
-    assert_eq!(test.plugins.engine, Engine::XeTeX);
+    // Older l3build (TeX Live 2019) defaults `stdengine` to `pdftex`, not to the first check engine.
+    let first = crate::support::installed_file_has("l3build-variables.lua", "checkengines[1]");
+    assert_eq!(test.plugins.engine, if first { Engine::XeTeX } else { Engine::PdfTeX });
     let config = test.project.l3build.as_ref().expect("found from a subdirectory");
     assert_eq!(config.check_engines(), vec![Engine::XeTeX, Engine::PdfTeX]);
     assert_eq!(config.tests().len(), 1);

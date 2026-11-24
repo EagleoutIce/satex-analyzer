@@ -36,12 +36,14 @@ pub mod codec {
 
     pub enum Mode {
         /// Names and paths are written out in full: equal bytes mean equal
-        /// values in any run.
-        Hash { names: super::Names, files: Vec<Rc<str>> },
+        /// values in any run. A span in an `own` file is written as a mark
+        /// and kept in `seen`: text that moved digests the same.
+        Hash { names: super::Names, files: Vec<Rc<str>>, own: Vec<bool>, seen: Vec<Span> },
         /// Numbers are written as indices into tables built on the way.
         Encode { syms: HashMap<u32, u32>, sym_order: Vec<u32>, files: HashMap<FileId, u32>, file_order: Vec<FileId> },
-        /// Indices are read back through the tables of the run installing it.
-        Decode { syms: Vec<Sym>, files: Vec<FileId> },
+        /// Indices are read back through the tables of the run installing it,
+        /// and spans through `moved` where their text now stands.
+        Decode { syms: Vec<Sym>, files: Vec<FileId>, moved: std::sync::Arc<HashMap<Span, Span>> },
     }
 
     thread_local! {
@@ -128,6 +130,16 @@ pub mod codec {
     impl Serialize for Span {
         fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
             let (line, col) = (self.line, self.col);
+            let own = MODE.with(|m| match &mut *m.borrow_mut() {
+                Some(Mode::Hash { own, seen, .. }) if own.get(self.file as usize) == Some(&true) => {
+                    seen.push(*self);
+                    true
+                }
+                _ => false,
+            });
+            if own {
+                return SpanRepr { file: "", line: 0, col: 0 }.serialize(s);
+            }
             match file_out(self.file) {
                 Out::Plain => SpanRepr { file: self.file, line, col }.serialize(s),
                 Out::Text(path) => SpanRepr { file: &*path, line, col }.serialize(s),
@@ -139,11 +151,14 @@ pub mod codec {
     impl<'de> Deserialize<'de> for Span {
         fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Span, D::Error> {
             let raw = SpanRepr::<u32>::deserialize(d)?;
-            let file = MODE.with(|m| match &*m.borrow() {
-                Some(Mode::Decode { files, .. }) => files.get(raw.file as usize).copied().unwrap_or(0),
-                _ => raw.file as FileId,
-            });
-            Ok(Span { file, line: raw.line, col: raw.col })
+            Ok(MODE.with(|m| match &*m.borrow() {
+                Some(Mode::Decode { files, moved, .. }) => {
+                    let file = files.get(raw.file as usize).copied().unwrap_or(0);
+                    let span = Span { file, line: raw.line, col: raw.col };
+                    moved.get(&span).copied().unwrap_or(span)
+                }
+                _ => Span { file: raw.file as FileId, line: raw.line, col: raw.col },
+            }))
         }
     }
 }
@@ -1415,10 +1430,25 @@ pub fn text_with_groups(toks: &[Token], it: &Interner) -> String {
 
 /// Text value of a token list (braces dropped, control sequences bare).
 pub fn text_of(toks: &[Token], it: &Interner) -> String {
+    text_with(toks, it, |name, out| out.push_str(name))
+}
+
+/// What `\ref` prints of a label's tokens, as [`text_of`] spells it: `\protect` prints
+/// nothing, and the hard space `~` leaves in a `\protected@edef` of an older kernel
+/// (`\protect\nobreakspace␣`, a robust command's inner name) prints as `~` again.
+pub fn label_text_of(toks: &[Token], it: &Interner) -> String {
+    text_with(toks, it, |name, out| match name.trim_end() {
+        "protect" => {}
+        "nobreakspace" => out.push('~'),
+        _ => out.push_str(name),
+    })
+}
+
+fn text_with(toks: &[Token], it: &Interner, mut cs: impl FnMut(&str, &mut String)) -> String {
     let mut out = String::new();
     for t in toks {
         match t.tok {
-            Tok::Cs(sym) => out.push_str(it.name(sym)),
+            Tok::Cs(sym) => cs(it.name(sym), &mut out),
             Tok::Chr(_, Catcode::Begin | Catcode::End) => {}
             Tok::Chr(c, _) => out.push(c),
             Tok::Param(_) => {}
@@ -2567,6 +2597,11 @@ pub struct MacroDef {
 }
 
 impl MacroDef {
+    /// Whether the macro takes no parameters: its text is all it is.
+    pub fn plain(&self) -> bool {
+        self.parameter_text.items.is_empty() && !self.parameter_text.brace_end && self.arg_spec.is_none()
+    }
+
     pub fn arity(&self) -> u8 {
         self.arg_spec.as_ref().map_or(self.parameter_text.arity, ArgSpec::arity)
     }

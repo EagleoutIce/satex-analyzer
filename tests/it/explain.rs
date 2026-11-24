@@ -1044,8 +1044,14 @@ fn a_package_overwriting_a_package_shows_the_whole_chain() {
     let chain = chain_of(&record);
     let packages: Vec<&str> = chain.iter().map(|(_, p)| p.as_str()).collect();
     assert_eq!(packages.first(), Some(&"kernel"), "{chain:?}");
-    // hyperref's own `\let\ref` is a scoped copy in `\pdfstringdef`, no definition
-    assert_eq!(packages, ["kernel", "nameref"], "{chain:?}");
+    // hyperref's own `\let\ref` is a scoped copy in `\pdfstringdef`, no definition.
+    // Before 2020 hyperref defines `\ref` itself and nameref skips its own.
+    let last = if crate::support::installed_file_has("hyperref.sty", "\\DeclareRobustCommand\\ref{") {
+        "hyperref"
+    } else {
+        "nameref"
+    };
+    assert_eq!(packages, ["kernel", last], "{chain:?}");
     assert_eq!(chain.last().map(|(r, _)| r.as_str()), Some("in force"));
 }
 

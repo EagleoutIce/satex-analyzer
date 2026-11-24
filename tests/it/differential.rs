@@ -1016,6 +1016,10 @@ fn names_one_call_defines_are_defined_together() {
     let together = |name: &str| field(name, "together");
     assert!(together("\\c@steps").iter().any(|n| n == "\\thesteps"), "{rows:?}");
     assert!(together("\\note").iter().any(|n| n == "\\endnote"), "{rows:?}");
+    // TeX Live 2019's kernel has no `\NewDocumentCommand`, so no `\pick`
+    if !crate::support::kernel_has("\\NewDocumentCommand") {
+        return;
+    }
     // the code's own partners (`\pick code`) are folded apart, never shown as names to write
     assert!(together("\\pick").is_empty(), "{rows:?}");
     assert!(!field("\\pick", "together_internal").is_empty(), "{rows:?}");

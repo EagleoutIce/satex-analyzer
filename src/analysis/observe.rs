@@ -180,7 +180,7 @@ pub fn list_item(m: &mut Machine, name: &str, meaning: &Meaning) {
         return;
     }
     let Some(mac) = meaning.as_macro() else { return };
-    let label = crate::engine::tex::text_of(&mac.replacement_text, &m.out.interner);
+    let label = crate::engine::tex::label_text_of(&mac.replacement_text, &m.out.interner);
     // `\usecounter{\@enumctr}` keeps the name behind a macro: follow
     // parameterless one-token bodies to the text.
     let mut counter = m.out.interner.lookup("@listctr");

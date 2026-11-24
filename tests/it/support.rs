@@ -152,9 +152,17 @@ fn engine_said(source: &str) -> Option<String> {
 
 /// [`engine_typeout`] with pdflatex given `flags` too (`-no-shell-escape`).
 pub fn engine_typeout_with(source: &str, tag: &str, fallback: &str, flags: &[&str]) -> String {
-    let Some(said) = engine_said_with(source, flags) else { return fallback.to_string() };
-    let line = said.lines().find_map(|l| l.strip_prefix(tag)?.strip_prefix(' ').map(str::to_string));
-    line.unwrap_or_else(|| panic!("pdflatex printed no `{tag}` line:\n{said}"))
+    engine_typeouts(source, &[(tag, fallback)], flags).remove(0)
+}
+
+/// [`engine_typeout_with`] for several `(tag, fallback)` pairs, from one pdflatex run.
+pub fn engine_typeouts(source: &str, tags: &[(&str, &str)], flags: &[&str]) -> Vec<String> {
+    let said = engine_said_with(source, flags);
+    let line = |said: &str, tag: &str| {
+        let line = said.lines().find_map(|l| l.strip_prefix(tag)?.strip_prefix(' ').map(str::to_string));
+        line.unwrap_or_else(|| panic!("pdflatex printed no `{tag}` line:\n{said}"))
+    };
+    tags.iter().map(|(tag, fallback)| said.as_deref().map_or_else(|| fallback.to_string(), |s| line(s, tag))).collect()
 }
 
 fn engine_said_with(source: &str, flags: &[&str]) -> Option<String> {
@@ -166,6 +174,7 @@ fn engine_said_with(source: &str, flags: &[&str]) -> Option<String> {
     let out = std::process::Command::new("pdflatex")
         .args(flags)
         .args(["-interaction=nonstopmode", "t.tex"])
+        .env("max_print_line", "100000")
         .current_dir(&dir)
         .output()
         .expect("pdflatex runs");
@@ -185,6 +194,8 @@ pub fn engine_defines(name: &str) -> bool {
 /// Whether `kpsewhich`, run in `dir`, finds every class and package `source` loads
 /// by `\documentclass`, `\usepackage` or `\RequirePackage`: a fixture written for a
 /// package an older TeX Live does not ship yet (memoize before 2023) has nothing to check.
+/// Nor has one calling `\NewDocumentEnvironment` or the like without xparse where
+/// the kernel lacks it (TeX Live 2019).
 pub fn ships_what_it_loads(dir: &Path, source: &str) -> bool {
     let mut files = Vec::new();
     for (call, ext) in [("\\documentclass", "cls"), ("\\usepackage", "sty"), ("\\RequirePackage", "sty")] {
@@ -198,6 +209,10 @@ pub fn ships_what_it_loads(dir: &Path, source: &str) -> bool {
             let plain = |n: &&str| !n.is_empty() && n.chars().all(|c| c.is_ascii_alphanumeric() || "-_.".contains(c));
             files.extend(names.split(',').map(str::trim).filter(plain).map(|n| format!("{n}.{ext}")));
         }
+    }
+    let xparse = ["New", "Renew", "Provide", "Declare"].iter().any(|c| source.contains(&format!("\\{c}Document")));
+    if xparse && !files.iter().any(|f| f == "xparse.sty") && !kernel_has("\\NewDocumentCommand") {
+        return false;
     }
     files.iter().all(|f| {
         std::process::Command::new("kpsewhich").arg(f).current_dir(dir).output().is_ok_and(|o| o.status.success())

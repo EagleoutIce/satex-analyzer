@@ -2226,6 +2226,52 @@ fn a_parshape_count_satex_cannot_pin_down_leaves_the_shape_unknown() {
     assert!(!diagnosed(&analysis, "unknown-parshape").is_empty());
 }
 
+/// Intuition: the pairs after a `\parshape` count satex cannot pin down are its lines, not
+/// commands. Bug: left unread, wrapfig's `\@@parshape\c@WF@wrappedlines … \z@ \hsize` (TeX
+/// Live 2019, box height unknown) ran `\z@ \hsize` as an assignment: `\z@` became 345pt,
+/// `\prevgraf` then read 22609920, and the next shape asked for 22 million lines.
+#[test]
+fn the_pairs_after_an_unknown_parshape_count_are_read_as_its_lines() {
+    let analysis = analyze(
+        r"\hsize=345pt \dimen1=0pt \parshape=\pdfuniformdeviate 9 \dimen1 \hsize \dimen1 \hsize \edef\x{\the\dimen1}",
+    );
+    assert_eq!(body(&analysis, "x"), "0.0pt");
+    assert!(!diagnosed(&analysis, "unknown-parshape").is_empty());
+    // the pairs a loop built, joined with the count after its group (wrapfig's `\WF@ps`)
+    let joined = analyze(
+        r"\hsize=345pt \dimen1=0pt \count1=\numexpr3+\pdfuniformdeviate 2\relax \count2=1 \gdef\ps{}
+          \begingroup\loop\ifnum\count2<\count1 \xdef\ps{\ps 1pt 2pt }\advance\count2 1 \repeat\endgroup
+          \parshape\count1 \ps\dimen1 \hsize \edef\x{\the\dimen1}",
+    );
+    assert_eq!(body(&joined, "x"), "0.0pt");
+}
+
+/// Intuition: TeX reads every line a `\parshape` count names (tex.web § 1248), however many.
+/// satex keeps `limits.parshape_lines` of them and the budgets bound the reading, so a huge
+/// known count ends. Bug: each of 2147483647 lines got two names of its own (wrapfig under
+/// TeX Live 2019): memory ran out before any budget stopped it.
+#[test]
+fn a_huge_parshape_count_is_read_within_the_budgets() {
+    let analysis = analyze(r"\parshape 2147483647 \def\after{}");
+    assert!(analysis.interner.len() < 1_000_000, "{} names", analysis.interner.len());
+}
+
+/// Intuition: a line past the kept ones reads back unknown; a kept one stays known.
+#[test]
+fn a_parshape_line_past_the_kept_ones_is_unknown() {
+    let kept = analyze("").settings.limits.parshape_lines as usize;
+    let pairs = (0..kept + 2).map(|_| "0pt 2pt ").collect::<String>();
+    let source = format!(
+        r"\parshape {} {pairs}\ifdim\parshapelength 1=2pt \def\first{{}}\else\def\notfirst{{}}\fi
+          \ifdim\parshapelength {}=2pt \def\past{{}}\else\def\notpast{{}}\fi",
+        kept + 2,
+        kept + 1
+    );
+    let defined = names(&analyze(&source));
+    let has = |n: &str| defined.contains(&n.to_string());
+    assert!(has("first") && !has("notfirst") && has("past") && has("notpast"), "{defined:?}");
+}
+
 /// tex.web § 1370: `\write` to a stream satex could not pin down may reach
 /// the shell, so the run says a shell escape may have happened.
 #[test]
@@ -2286,6 +2332,10 @@ fn an_argument_whose_braces_hide_unknown_text_is_not_known() {
 /// `unbalanced-argument` 98297 times inside expl3's file-name scanners.
 #[test]
 fn a_scan_that_cannot_find_its_delimiter_does_not_run_out_the_site_budget() {
+    // TeX Live 2019's kernel has no expl3, so no file-name scanners
+    if !crate::support::kernel_has("\\ExplSyntaxOn") {
+        return;
+    }
     let analysis = analyze_kernel(r"\count0=\pdfuniformdeviate 9 \catcode`\Q=\count0 \IfFileExists{x/Q}{}{}");
     let raised: u32 = analysis
         .facts

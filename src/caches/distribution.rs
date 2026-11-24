@@ -246,16 +246,28 @@ fn roots_without_bundle(request: &Request, cache: Option<&Path>) -> Roots {
     if !request.probe_fallback {
         return (Vec::new(), Discovery::None);
     }
-    let roots = fallback_roots(request.year, request.platform);
+    let tex = crate::project::paths::which("tex").ok().and_then(|t| t.canonicalize().ok());
+    let roots = fallback_roots(request.year, request.platform, tex.as_deref().and_then(installation_of));
     let discovery = if roots.is_empty() { Discovery::None } else { Discovery::Fallback };
     (roots, discovery)
 }
 
-fn fallback_roots(year: Option<u32>, platform: Platform) -> Vec<PathBuf> {
+/// The TeX Live tree of the installation whose `bin/<arch>/` holds `tex`.
+fn installation_of(tex: &Path) -> Option<PathBuf> {
+    let tree = tex.ancestors().nth(3)?.join("texmf-dist");
+    tree.is_dir().then_some(tree)
+}
+
+/// The well-known trees. Without a year asked for, the installation whose
+/// `tex` is on the path (`on_path`) stands for every versioned one: the
+/// engine that runs is that one, whatever newer release is installed.
+fn fallback_roots(year: Option<u32>, platform: Platform, on_path: Option<PathBuf>) -> Vec<PathBuf> {
     let mut roots = Vec::new();
     // More than one personal tree can exist per platform; probe each.
     roots.extend(platform.home_trees().into_iter().filter(|tree| tree.is_dir()));
-    for pattern in platform.roots() {
+    let on_path = on_path.filter(|_| year.is_none());
+    roots.extend(on_path.clone());
+    for pattern in platform.roots().iter().filter(|p| on_path.is_none() || !p.contains('*')) {
         // A pattern matches one directory per installed version: the wanted
         // year wins, otherwise the newest.
         let mut found: Vec<PathBuf> =
@@ -684,6 +696,27 @@ mod tests {
         assert_eq!(trees.get_under("pack/thumbnails/x.jpeg"), Some(&at.join("x.jpeg")));
         assert_eq!(trees.get_under("nails/x.jpeg"), None);
         assert_eq!(trees.get_under("../thumbnails/x.jpeg"), None);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Intuition: with no year asked for, the fallback takes the tree of the TeX Live whose
+    /// `tex` runs, not the newest under `/usr/local/texlive`. Bug: an older release first on
+    /// the path was analysed against the newest's files (fonts it lacks found).
+    #[test]
+    fn the_fallback_takes_the_installation_on_the_path() {
+        let dir = std::env::temp_dir().join(format!("satex-onpath-{}", std::process::id()));
+        let bin = dir.join("2019/bin/x86_64-linux");
+        std::fs::create_dir_all(&bin).unwrap();
+        std::fs::create_dir_all(dir.join("2019/texmf-dist")).unwrap();
+        std::fs::write(bin.join("tex"), "").unwrap();
+        let tree = installation_of(&bin.join("tex"));
+        assert_eq!(tree, Some(dir.join("2019/texmf-dist")));
+        let roots = fallback_roots(None, Platform::Linux, tree.clone());
+        assert!(roots.contains(&dir.join("2019/texmf-dist")), "{roots:?}");
+        assert!(!roots.iter().any(|r| r.starts_with("/usr/local/texlive/") && r.ends_with("texmf-dist")), "{roots:?}");
+        // a year asked for still wins
+        assert!(!fallback_roots(Some(2019), Platform::Linux, tree).contains(&dir.join("2019/texmf-dist")));
+        assert_eq!(installation_of(Path::new("/usr/bin/tex")), None);
         let _ = std::fs::remove_dir_all(&dir);
     }
 

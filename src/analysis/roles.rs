@@ -841,8 +841,15 @@ fn roles_at(analysis: &Analysis, typed: &Typed, cmd: &str, depth: usize) -> Vec<
         out.extend(flow(analysis, typed, body, depth));
     }
     // A command the project defines anew is what its body says; the
-    // conventions stand in only where the run saw nothing of it.
-    if body.is_none() && !out.iter().any(|r| matches!(r.kind, RoleKind::Occ(_) | RoleKind::Load(_))) {
+    // conventions stand in only where the run saw nothing of it. Names the
+    // call builds from the argument (TeX Live 2019's `\ver@x.sty` for a
+    // missing `x`) say nothing of what it is.
+    let decides = |r: &Role| match r.kind {
+        RoleKind::Occ(k) => !matches!(k, OccKind::Key | OccKind::KeyUse),
+        RoleKind::Load(_) => true,
+        RoleKind::Type(_) => false,
+    };
+    if body.is_none() && !out.iter().any(decides) {
         out.extend(seed(cmd));
     }
     out

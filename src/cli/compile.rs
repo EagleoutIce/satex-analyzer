@@ -366,13 +366,25 @@ pub fn rests(ext: &str) -> bool {
 pub const KEEP: &str = ".satex-build";
 
 /// What LaTeX writes into the `.aux` of a one-page document without references, and what latexmk
-/// puts there before a first pass: a pass that reads it and writes it again is at rest.
-const SEED: &str = "\\relax \n\\gdef \\@abspage@last{1}\n";
+/// puts there before a first pass: a pass that reads it and writes it again is at rest. A kernel
+/// before 2020-10 (TeX Live 2019) writes no `\@abspage@last`.
+fn seed() -> &'static str {
+    static SEED: std::sync::OnceLock<&str> = std::sync::OnceLock::new();
+    SEED.get_or_init(|| {
+        let found = Command::new("kpsewhich").arg("latex.ltx").output().map(|o| o.stdout).unwrap_or_default();
+        let ltx = std::fs::read(String::from_utf8_lossy(&found).trim()).unwrap_or_default();
+        let needle = b"\\@abspage@last";
+        match ltx.windows(needle.len()).any(|w| w == needle) {
+            true => "\\relax \n\\gdef \\@abspage@last{1}\n",
+            false => "\\relax \n",
+        }
+    })
+}
 
 /// satex's own build in `at`: the engine until the build files rest (at most `passes`), BibTeX,
 /// Biber and makeindex where their inputs changed, a LaTeX preamble read from a format dumped once
 /// per preamble, beside the first pass that needs it. A build without an `.aux` starts from
-/// [`SEED`]. SyncTeX data is compressed beside the pass ([`follow`]). With `warm`, a pass is fed to the engine
+/// [`seed`]. SyncTeX data is compressed beside the pass ([`follow`]). With `warm`, a pass is fed to the engine
 /// the last build left waiting where it runs that pass's command (`warm.rs`), and the build leaves
 /// one for the next. A build whose inputs are as the last rested one left them runs no pass
 /// (`current`). With `memoize`, the build extracts memoize's externs itself where the document may
@@ -459,7 +471,7 @@ fn own(
     let asked = [ask(&["-all", "ls-R"]), ask(&["-show-path=tex"])];
     let aux = at.join(format!("{job}.aux"));
     if latex && !aux.exists() {
-        std::fs::write(&aux, SEED).map_err(|e| format!("{}: {e}", aux.display()))?;
+        std::fs::write(&aux, seed()).map_err(|e| format!("{}: {e}", aux.display()))?;
     }
     let mut was = rested();
     // a stale format is dumped aside: the passes read the preamble until it is there
@@ -874,7 +886,7 @@ impl Dump {
         // its own `.aux`, found before the build's: a pass may be writing that one
         let written = std::fs::create_dir_all(probe.parent().unwrap_or(&at)).is_ok()
             && std::fs::write(&probe, text).is_ok()
-            && std::fs::write(at.join(format!("{job}.aux")), SEED).is_ok();
+            && std::fs::write(at.join(format!("{job}.aux")), seed()).is_ok();
         let args = [
             "-interaction=nonstopmode".to_string(),
             "-file-line-error".into(),

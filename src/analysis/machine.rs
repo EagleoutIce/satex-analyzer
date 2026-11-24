@@ -2387,6 +2387,9 @@ pub struct Machine<'a> {
     /// per class and lower bound, once made: widening at a loop head names
     /// them without the interner.
     typed_syms: Option<Rc<[Sym]>>,
+    /// The interned names of expl3 constants (`\c_zero_fp`) and how many
+    /// names were looked at for them ([`Machine::kind_shape`]).
+    kind_constants: (u32, Vec<Sym>),
     /// Typed names an env call made, interned by [`Machine::mint`].
     pub(crate) minted: std::cell::RefCell<Vec<String>>,
     /// The `edef_depth` of the expansion that makes a definition's
@@ -3465,6 +3468,7 @@ impl<'a> Machine<'a> {
             unknown_digits,
             unknown_more,
             typed_syms: None,
+            kind_constants: Default::default(),
             minted: Default::default(),
             def_body_depth: None,
             definition_sites: Default::default(),
@@ -5218,6 +5222,7 @@ will look undefined",
         // Bound before any path parts, so every path has them.
         self.typed_syms = None;
         self.typed_syms();
+        self.kind_constants = Default::default();
     }
 
     /// A package read and the same package replayed from its cache must
@@ -5459,12 +5464,17 @@ will look undefined",
     /// when it wrote no such file, `Some(None)` when what it holds is unknown.
     /// The job's log is open from the first line on (tex.web § 534), its text unknown.
     pub(crate) fn written_text(&self, name: &str) -> Option<Option<String>> {
+        self.written_named(name).or_else(|| self.outputs.get(ANY_OUTPUT).cloned().filter(|_| !name.trim().is_empty()))
+    }
+
+    /// [`Machine::written_text`] of a file the run surely made: not one a command that
+    /// may write any file may have made.
+    pub(crate) fn written_named(&self, name: &str) -> Option<Option<String>> {
         let name = name.trim();
         let name = name.strip_prefix("./").unwrap_or(name);
         [Self::output_name(name), name.to_string()]
             .into_iter()
             .find_map(|n| self.outputs.get(&n).cloned())
-            .or_else(|| self.outputs.get(ANY_OUTPUT).cloned().filter(|_| !name.is_empty()))
             .or_else(|| (name.strip_suffix(".log") == Some(&self.job_name())).then_some(None))
     }
 
@@ -5568,15 +5578,9 @@ will look undefined",
         self.use_stream(stream);
         // What the table holds was learned after the last widening.
         if let Some(texts) = self.streams.get(&stream) {
-            // Before unknown lines only, the stream may be at its end.
-            let ends = |p: At| match p.lo == CLOSED {
-                true => vec![true],
-                false if p.lines.get(p.lo..).is_some_and(|r| !r.is_empty() && r.iter().all(|l| is_unknown_line(l))) => {
-                    vec![false, true]
-                }
-                false => vec![false],
-            };
-            let mut ends = texts.iter().flat_map(|t| t.places().flat_map(ends).collect::<Vec<_>>());
+            // Only a `\read` past the last line closes it (tex.web § 486): a read of an
+            // unknown line counts the closed place among its places ([`Machine::take_stream_line`]).
+            let mut ends = texts.iter().flat_map(|t| t.places().map(|p| p.lo == CLOSED).collect::<Vec<_>>());
             let first = ends.next()?;
             return ends.all(|e| e == first).then_some(first);
         }
@@ -8245,6 +8249,7 @@ will look undefined",
         m.unknown_more = m.out.interner.intern("\u{2}unknown more digits:");
         m.typed_syms = None;
         m.typed_syms();
+        m.kind_constants = Default::default();
         m.pseudo_file = m.out.interner.intern("\u{2}pseudo file:");
         m.output_sym = m.out.interner.intern("output");
         m.halted = false;
@@ -9581,7 +9586,7 @@ will look undefined",
         self.limits.walk_per_step.max(1)
     }
 
-    fn over_budget(&mut self) -> bool {
+    pub(crate) fn over_budget(&mut self) -> bool {
         if self.halted {
             return true;
         }
@@ -9791,6 +9796,60 @@ will look undefined",
                 "the output routine ended inside conditionals it opened; they are assumed closed with it".into(),
             );
         }
+    }
+
+    /// Any value of `name`'s expl3 kind (`\l_x_fp` is an fp): the ends the
+    /// kind's constants (`\c_zero_fp`, `\c_nan_fp`, ...) share around typed
+    /// text of their middles' classes ([`crate::engine::env::ends_hull`]).
+    /// `None` for other names or kinds whose constants share no ends.
+    fn kind_shape(&mut self, name: Sym) -> Option<Vec<Token>> {
+        if !self.cfg.analysis.assume_variable_kind_shape {
+            return None;
+        }
+        let full = self.name(name);
+        let rest = full.strip_prefix(['l', 'g', 'c']).and_then(|r| r.strip_prefix('_'))?;
+        let kind = rest.rsplit_once('_')?.1;
+        let kind = crate::analysis::roles::VarKind::ALL.into_iter().find(|k| k.as_str() == kind)?.as_str();
+        let suffix = format!("_{kind}");
+        let interner = &self.out.interner;
+        let (seen, names) = &mut self.kind_constants;
+        names.extend((*seen..interner.len() as u32).map(Sym).filter(|&s| interner.name(s).starts_with("c_")));
+        *seen = interner.len() as u32;
+        let constants: Vec<Rc<[Token]>> = (names.iter().copied())
+            .filter(|&s| interner.name(s).ends_with(&suffix))
+            .filter_map(|s| match self.env.meaning(s) {
+                Meaning::Macro(d) if d.plain() => Some(d.replacement_text.clone()),
+                _ => None,
+            })
+            .collect();
+        let syms = self.typed_syms();
+        let texts: Vec<&[Token]> = constants.iter().map(|t| &t[..]).collect();
+        crate::engine::env::ends_hull(&texts, &crate::engine::env::typed!(self, syms))
+    }
+
+    /// A widened expl3 variable whose text lost its kind's shape
+    /// ([`Machine::kind_shape`]) is assumed to hold a value of its kind, as
+    /// only the module's functions write one (`variable-kind-shape`).
+    fn shape_by_kind(&mut self, sym: Sym) {
+        let Meaning::Macro(def) = self.env.meaning(sym) else { return };
+        if !def.plain() {
+            return;
+        }
+        let Some(shape) = self.kind_shape(sym) else { return };
+        let (head, tail) = (shape.first().map(|t| t.tok), shape.last().map(|t| t.tok));
+        let text = &def.replacement_text;
+        if text.first().map(|t| t.tok) == head && text.last().map(|t| t.tok) == tail {
+            return;
+        }
+        let shown = self.out.interner.cs(sym);
+        self.diagnose(
+            Severity::Assumption,
+            "variable-kind-shape",
+            self.position_span(),
+            format!("{shown} was widened past its kind's shape; it is assumed to hold a value of its kind, as the module's functions write"),
+        );
+        let meaning = Meaning::Macro(Rc::new(MacroDef { replacement_text: shape.into(), ..(*def).clone() }));
+        self.env.refine(sym, meaning, &[]);
     }
 
     /// Called when a scan begins: records the input depth, not counting used-up levels.
@@ -16152,8 +16211,8 @@ will look undefined",
 
     /// A load request for a file the kernel has already loaded: latex.ltx's
     /// `\@onefilewithoptions` asks `\@ifl@aded\@currext\@currname` and, for
-    /// a file it has, compares the options with `\@onefilewithoptions@clashchk`
-    /// instead of reading it.  The request is a load all the same.
+    /// a file it has, compares the options instead of reading it. The request
+    /// is a load all the same.
     fn note_repeated_load(&mut self, sym: Sym, arguments: &[Vec<Token>]) {
         let is = |args: &[Token], name: &str| matches!(args, [t] if t.cs().is_some_and(|s| self.out.interner.name(s) == name));
         match self.name(sym) {
@@ -16206,8 +16265,15 @@ will look undefined",
                     call: None,
                 });
             }
-            "@onefilewithoptions@clashchk" if arguments.len() == 1 => {
-                let options = crate::engine::tex::comma_split(&self.text_of(&arguments[0]));
+            // The request's options, compared with the first load's by
+            // `\@expandtwoargs\@if@pti@ns{\@ptionlist{⟨name⟩.\@currext}}{⟨options⟩}`
+            // (`\@ifpackagewith` asks with `\@pkgextension`).
+            "@expandtwoargs"
+                if arguments.len() == 3
+                    && is(&arguments[0], "@if@pti@ns")
+                    && arguments[1].iter().any(|t| t.cs().is_some_and(|s| self.out.interner.name(s) == "@currext")) =>
+            {
+                let options = crate::engine::tex::comma_split(&self.text_of(&arguments[2]));
                 if let Some(load) = self.out.facts.loads.last_mut()
                     && load.status == LoadStatus::AlreadyLoaded
                 {
@@ -17087,6 +17153,9 @@ impl Machine<'_> {
         let syms = self.typed_syms();
         self.env.widen(written, None, &crate::engine::env::typed!(self, syms));
         self.mint();
+        for &sym in written {
+            self.shape_by_kind(sym);
+        }
         // After: widening writes, and those are no news.
         self.env.clear_recent();
     }

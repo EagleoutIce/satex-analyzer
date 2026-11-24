@@ -895,15 +895,39 @@ impl Machine<'_> {
         None
     }
 
-    /// `\XeTeXglyphname font n`: empty for a TFM font or a glyph without
-    /// a name.
+    /// `\XeTeXglyphname font n`: empty for a glyph without a name. A TFM
+    /// font answers empty and leaves `n` unread (`not_native_font_error`).
     fn xetex_glyph_name(&mut self) -> Option<String> {
         let font = self.scan_font_ident()?;
+        if self.font_native(font) == Some(false) {
+            return Some(String::new());
+        }
         let map = self.native_charmap(font);
         let n = self.scan_int();
-        match map {
-            Some(map) => Some(map.glyph_name(n?).to_string()),
-            None => (self.font_native(font) == Some(false)).then(String::new),
+        Some(map?.glyph_name(n?).to_string())
+    }
+
+    /// Whether the next token, expanded, starts a dimension: a digit, sign or
+    /// point, or an internal quantity (tex.web §§ 440-448). One of several
+    /// texts is read a path per text; unknown text may be a dimension.
+    fn dimen_follows(&mut self) -> bool {
+        let Some(t) = self.next_non_blank_x_token() else { return false };
+        // one of several texts (wrapfig's lines joined after its loop): a path per text
+        if self.one_of_members(t).is_some() && self.split_one_of(t) {
+            return self.dimen_follows();
+        }
+        self.unread(t);
+        // unknown text may be the pairs: read as a dimension (wrapfig's joined `\WF@ps`)
+        if self.is_unknown(t) {
+            return true;
+        }
+        match t.tok {
+            Tok::Chr(c, Catcode::Other) => c.is_ascii_digit() || ".,+-'\"`".contains(c),
+            Tok::Cs(sym) => {
+                let meaning = self.env.meaning(sym).clone();
+                self.internal_level(&meaning).is_some_and(|k| k != RegKind::Toks)
+            }
+            _ => false,
         }
     }
 
@@ -921,6 +945,9 @@ impl Machine<'_> {
             _ => (n, false),
         };
         let line = line.min(lines);
+        if line > i64::from(self.limits.parshape_lines) {
+            return None;
+        }
         let key = format!("parshape.{}{line}", if indent { 'i' } else { 'l' });
         let sym = self.engine_sym(&key);
         self.env.value(sym).as_dimen()
@@ -1000,22 +1027,39 @@ impl Machine<'_> {
                 let scanned = self.scan_int();
                 let global = self.take_global();
                 // tex.web § 1248: the count says how many ⟨dimen⟩ pairs
-                // follow. An unpinned count leaves both the shape and what
-                // to read for it unknown.
+                // follow. An unpinned count leaves the shape unknown and is
+                // assumed to name the pairs written after it: left unread,
+                // they ran as assignments (wrapfig's `\z@ \hsize` set `\z@`).
                 let Some(lines) = scanned.map(|n| n.max(0)) else {
                     self.weaken_engine("parshape", global);
+                    while self.dimen_follows() {
+                        let _ = (self.scan_dimen(), self.scan_dimen());
+                        self.out.steps += 1;
+                        if self.over_budget() || self.cutting() {
+                            break;
+                        }
+                    }
                     return self.diagnose(
                         crate::analysis::facts::Severity::Unsupported,
                         "unknown-parshape",
                         span,
-                        "\\parshape was given a number satex could not pin down, so its lines were not read".into(),
+                        "\\parshape was given a number satex could not pin down: its lines are unknown, and the dimensions written after it were read as them".into(),
                     );
                 };
+                // Lines past `limits.parshape_lines` are read, not kept; a count the
+                // budgets stop before its end leaves the shape unknown.
+                let kept = i64::from(self.limits.parshape_lines);
                 for k in 1..=lines {
                     let indent = self.scan_dimen().map_or(Value::Unknown, Value::Dimen);
                     let length = self.scan_dimen().map_or(Value::Unknown, Value::Dimen);
-                    self.set_engine(&format!("parshape.i{k}"), indent, global);
-                    self.set_engine(&format!("parshape.l{k}"), length, global);
+                    if k <= kept {
+                        self.set_engine(&format!("parshape.i{k}"), indent, global);
+                        self.set_engine(&format!("parshape.l{k}"), length, global);
+                    }
+                    self.out.steps += 1;
+                    if self.over_budget() || self.cutting() {
+                        return self.weaken_engine("parshape", global);
+                    }
                 }
                 self.set_engine("parshape", Value::Int(lines), global);
             }
@@ -1482,13 +1526,96 @@ impl Machine<'_> {
     }
 
     /// LuaTeX with luaotfload's `define_font` callback, which LaTeX's format installs (and
-    /// then defines `\ver@luaotfload.sty`), and a `[file]` name of a font file it finds.
+    /// then defines `\ver@luaotfload.sty`), and a font it finds: a `[file]` or `file:` it
+    /// finds, or a `name:` (or bare) name its names database holds
+    /// (luaotfload-database.lua, `lookup_font_name`). A name it does not find stays open.
     pub(crate) fn luaotfload_finds(&mut self, name: &str) -> bool {
         let sym = self.intern("ver@luaotfload.sty");
-        self.out.plugins.engine == crate::project::config::Engine::LuaTeX
-            && name.starts_with('[')
-            && !matches!(self.env.meaning(sym), Meaning::Undefined)
-            && self.native_font_exists(name) == Some(true)
+        if self.out.plugins.engine != crate::project::config::Engine::LuaTeX
+            || matches!(self.env.meaning(sym), Meaning::Undefined)
+        {
+            return false;
+        }
+        if name.starts_with('[') {
+            return self.native_font_exists(name) == Some(true);
+        }
+        let spec = name.trim_matches('"');
+        if let Some(file) = spec.strip_prefix("file:") {
+            let file = file.split(':').next().unwrap_or(file);
+            return self.native_font_exists(&format!("[{file}]")) == Some(true);
+        }
+        let spec = spec.strip_prefix("name:").unwrap_or(spec);
+        let family = spec.split(':').next().unwrap_or(spec).split('/').next().unwrap_or(spec);
+        // A name with characters satex does not know may be any other name.
+        if family.chars().any(|c| c >= '\u{10FF00}') {
+            return false;
+        }
+        let roots = self.resolver_mut().distribution().roots.clone();
+        crate::engine::tfm::named_font(&roots, family)
+    }
+
+    /// What LuaTeX's `\fontname` writes after a luaotfload font's name: ` at ⟨size⟩` always
+    /// in LuaTeX 1.24 (TeX Live 2026), before only where the size is not
+    /// the design size (TeX Live 2022). luaotfload's design sizes are whole
+    /// tenths of a point, so a size between them is never one. `None` where
+    /// that cannot be told.
+    fn luaotfload_size_suffix(&mut self, font: u32) -> Option<String> {
+        let size = self.font_size(font)?;
+        let suffix = format!(" at {}pt", crate::engine::value::render_dimen(size).trim_end_matches("pt"));
+        let sym = self.intern("luatexversion");
+        let version = self.env.value(sym).as_int()?;
+        let k = size * 10 / 65536;
+        let between = (k - 1..=k + 1).all(|k| k * 65536 / 10 != size && (k * 65536 + 9) / 10 != size);
+        match version {
+            124.. => Some(suffix),
+            ..=115 if between => Some(suffix),
+            _ => None,
+        }
+    }
+
+    /// LuaTeX's `\fontname` of a font luaotfload found by name: luaotfload hands
+    /// out one font for one face, size and features, so the name is that of
+    /// the first such request. `Some(None)` where an earlier request may be
+    /// that face; `None` for a font that is no such request.
+    fn luaotfload_shared(&mut self, font: u32) -> Option<Option<String>> {
+        let request = |m: &mut Self, font: u32| -> Option<(String, String, Vec<String>, Option<Scaled>)> {
+            if m.font_native(font).is_some() || m.font_field(font, "exists") != Value::Int(1) {
+                return None;
+            }
+            let name = m.font_name(font)?;
+            let spec = name.trim_matches('"');
+            if spec.starts_with('[') || spec.starts_with("file:") {
+                return None;
+            }
+            let spec = spec.strip_prefix("name:").unwrap_or(spec);
+            let (face, features) = spec.split_once(':').unwrap_or((spec, ""));
+            let (family, style) = face.split_once('/').unwrap_or((face, ""));
+            let mut features: Vec<String> = features.split(';').filter(|f| !f.is_empty()).map(str::to_string).collect();
+            features.sort();
+            Some((family.to_string(), style.to_string(), features, m.font_size(font)))
+        };
+        let (family, style, features, size) = request(self, font)?;
+        let roots = self.resolver_mut().distribution().roots.clone();
+        let face = crate::engine::tfm::named_face(&roots, &family, &style);
+        for earlier in 1..font {
+            let Some((other, other_style, other_features, other_size)) = request(self, earlier) else { continue };
+            if other_features != features || !crate::engine::tfm::may_share(&roots, &family, &other) {
+                continue;
+            }
+            match (size, other_size) {
+                (Some(a), Some(b)) if a != b => continue,
+                (Some(_), Some(_)) => {}
+                _ => return Some(None),
+            }
+            let other_face = crate::engine::tfm::named_face(&roots, &other, &other_style);
+            let same_family = crate::engine::tfm::sanitized(&family) == crate::engine::tfm::sanitized(&other);
+            match (face, other_face) {
+                (Some(a), Some(b)) if same_family && a != b => continue,
+                (Some(a), Some(b)) if same_family && a == b => return Some(self.font_name(earlier)),
+                _ => return Some(None),
+            }
+        }
+        Some(self.font_name(font))
     }
 
     /// A LuaTeX font luaotfload loads: one loaded before LaTeX's `\everyjob` installed it
@@ -1780,6 +1907,9 @@ impl Machine<'_> {
     /// isn't the design size (tex.web § 1261). XeTeX quotes an installed font's name.
     pub(crate) fn font_name_known(&mut self, font: u32) -> Option<String> {
         let name = self.font_name(font)?;
+        if let Some(shared) = self.luaotfload_shared(font) {
+            return shared.zip(self.luaotfload_size_suffix(font)).map(|(name, suffix)| name + &suffix);
+        }
         match self.font_native(font) {
             Some(false) => {}
             Some(true) if self.font_field(font, "request") == Value::Dimen(-SCALE_UNITY) => {

@@ -20,6 +20,13 @@
 # their analysis steps to steps-<name>.txt there (scripts/regress.sh reads them).
 set -euo pipefail
 cd "$(dirname "$0")/.."
+# TEXLIVE=<year|dir> picks the TeX Live; tests/texlive.yaml names the tests that do not apply to it.
+source scripts/texlive.sh
+texlive_use
+tl=$(texlive_year)
+skipped=$(texlive_skips "$tl")
+while IFS=$'\t' read -r t why; do [[ -z "$t" ]] || echo "not on TeX Live $tl (tests/texlive.yaml): $t: $why"; done <<<"$skipped"
+skipped=$(cut -f1 <<<"$skipped" | sed '/^$/d')
 
 profile="${CARGO_PROFILE:-ci}"
 # The integration and unit test binaries: prebuilt ones when CI's build job handed them over
@@ -45,8 +52,6 @@ gated() {
     local failed known new
     failed=$(sed -n 's/^test \(.*\) \.\.\. FAILED$/\1/p' "$log" | LC_ALL=C sort -u)
     # Plus the reds of this TeX Live only (tests/known-red-tl<year>.txt).
-    local tl
-    tl=$(tex --version 2>/dev/null | sed -n 's/.*TeX Live \([0-9]\{4\}\).*/\1/p' | head -1)
     known=$(cat tests/known-red.txt ${tl:+$(ls tests/known-red-tl"$tl".txt 2>/dev/null)} | grep -v '^#' | LC_ALL=C sort -u)
     new=$(comm -23 <(printf '%s\n' "$failed" | sed '/^$/d') <(printf '%s\n' "$known"))
     while read -r t; do
@@ -72,7 +77,7 @@ gated() {
 if [[ "${1-}" == quick ]]; then
     shift
     # Known reds run in `reds` only: an open one may hang.
-    skips=(); while read -r t; do skips+=(--skip "$t"); done < <(grep -v '^#' tests/known-red.txt | sed '/^$/d')
+    skips=(); while read -r t; do skips+=(--skip "$t"); done < <({ grep -v '^#' tests/known-red.txt; echo "$skipped"; } | sed '/^$/d')
     gated quick cargo test --locked --profile "$profile" --no-fail-fast --test it -- "$@" "${skips[@]}"
     exit
 fi
@@ -102,11 +107,11 @@ mapfile -t tests < <(
         awk '
             FILENAME == "tests/times.txt" { t[$2] = $1; next }
             FILENAME == "tests/slow.txt" { slow[$0] = 1; next }
-            FILENAME == "tests/known-red.txt" { red[$0] = 1; next }
+            FILENAME == "tests/known-red.txt" || FILENAME == "/dev/fd/3" { red[$0] = 1; next }
             $0 in red { next }
             /^compliance_matrix::/ { next }
             { print ($0 in t ? t[$0] : ($0 in slow ? 60 : 1)), $0 }
-        ' tests/times.txt tests/slow.txt tests/known-red.txt - |
+        ' tests/times.txt tests/slow.txt tests/known-red.txt /dev/fd/3 - 3<<<"$skipped" |
         LC_ALL=C sort -k1,1gr -k2,2 |
         awk -v k="$k" -v n="$n" '
             { b = 1; for (i = 2; i <= n; i++) if (s[i] < s[b]) b = i; s[b] += $1; if (b == k) print $2 }
