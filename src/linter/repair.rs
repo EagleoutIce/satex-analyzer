@@ -163,12 +163,16 @@ fn drop_brace(edits: &Edits, span: Span, _: &str) -> Option<Vec<Fix>> {
 /// A math-only token in text (tex.web § 1047 `insert_dollar_sign`): the
 /// token with its nucleus and its scripts,
 /// or the command with its arguments, set as a formula, in the delimiters
-/// the file already uses most.
+/// of [`crate::linter::shared::inline_math`]. A command whose arguments are
+/// all `*`, `[…]` and `{…}` that the run knows it reads is set alone, the
+/// text around it left text: safe. A nucleus found in the source needs a review.
 fn wrap_math(edits: &Edits, span: Span, _: &str) -> Option<Vec<Fix>> {
+    use crate::engine::tex::ArgType as A;
     let (path, text) = edits.text(span.file)?;
     let mut scan = Scan::at(&text, Pos::of(span), edits.cats(span.file))?;
     let first = scan.advance()?;
     let mut end = first.end;
+    let mut safety = Applicability::Unsafe;
     let start = match first.tok {
         // the nucleus: the atom right before the script (tex.web § 1176)
         Tok::Chr(_, Catcode::Sup | Catcode::Sub) => {
@@ -177,9 +181,45 @@ fn wrap_math(edits: &Edits, span: Span, _: &str) -> Option<Vec<Fix>> {
             Pos::new(span.line, atom_start(&before).unwrap_or(before.len()) as u32 + 1)
         }
         Tok::Cs(_) => {
-            let sym = edits.analysis.interner.lookup(scan.name(&first)?)?;
-            for _ in 0..edits.analysis.env.meaning(sym).as_macro().map_or(0, |m| m.arity()) {
-                end = scan.argument()?.end;
+            let analysis = edits.analysis;
+            let sym = analysis.interner.lookup(scan.name(&first)?)?;
+            let meaning = analysis.env.meaning(sym);
+            let mac = meaning.as_macro();
+            // a macro without parameters whose text ends in a letter, `}` or other character reads no further
+            let ends = |m: &crate::engine::tex::MacroDef| {
+                m.arity() == 0
+                    && m.replacement_text
+                        .last()
+                        .is_some_and(|t| matches!(t.tok, Tok::Chr(_, Catcode::Letter | Catcode::Other | Catcode::End)))
+            };
+            // none read is known only of a command that cannot read on (`\\sqrt` is `\\protect\\sqrt␣`)
+            let known = crate::queries::query::call_items(analysis, sym, mac.map(|m| &**m), false)
+                .filter(|items| !items.is_empty() || mac.is_none_or(|m| ends(m)))
+                .or_else(|| mac.filter(|m| ends(m)).map(|_| Vec::new()))
+                .filter(|items| items.iter().all(|i| matches!(i, A::Star | A::Optional(_) | A::Mandatory)));
+            if known.is_some() || matches!(meaning, Meaning::Register(..)) {
+                safety = Applicability::Safe;
+            }
+            let guess = known.is_none();
+            for item in known.unwrap_or_else(|| vec![A::Mandatory; mac.map_or(0, |m| m.arity().into())]) {
+                match item {
+                    A::Star => {
+                        scan.skip_spaces();
+                        if scan.peek().is_some_and(|l| l.tok == Tok::Chr('*', Catcode::Other)) {
+                            end = scan.advance()?.end;
+                        }
+                    }
+                    A::Optional(_) => end = scan.optional().map_or(end, |g| g.end),
+                    _ => end = scan.argument()?.end,
+                }
+            }
+            // arguments not known: the `[…]` and `{…}` right after it, for a review
+            while guess
+                && scan.peek().is_some_and(|l| {
+                    l.start == end && matches!(l.tok, Tok::Chr('[', Catcode::Other) | Tok::Chr(_, Catcode::Begin))
+                })
+            {
+                end = scan.optional().or_else(|| scan.group())?.end;
             }
             first.start
         }
@@ -193,13 +233,9 @@ fn wrap_math(edits: &Edits, span: Span, _: &str) -> Option<Vec<Fix>> {
         scan.advance();
         end = scan.argument()?.end;
     }
-    let body = text.body();
-    let (open, close) = match body.matches("\\(").count() > body.matches('$').count() / 2 {
-        true => ("\\(", "\\)"),
-        false => ("$", "$"),
-    };
+    let (open, close) = crate::linter::shared::inline_math(edits.analysis, text.body());
     let edits = vec![insert(&path, start, open), insert(&path, end, close)];
-    one(format!("set it as a formula, `{open}…{close}`"), Applicability::Unsafe, edits)
+    one(format!("set it as a formula, `{open}…{close}`"), safety, edits)
 }
 
 /// The table environment last begun before `span` in its file, when it has

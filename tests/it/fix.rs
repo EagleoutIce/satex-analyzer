@@ -732,6 +732,17 @@ fn a_package_s_command_is_named_with_its_package() {
     assert!(record["fix"].as_str().unwrap_or_default().contains("pick another name"), "{record:?}");
 }
 
+/// Without a LaTeX kernel (plain TeX defines no `\(`) a math-only command in text is set in `$…$`.
+/// Pins the fix writing `\(`, undefined there.
+#[test]
+fn math_command_in_plain_tex_takes_dollars() {
+    if !installed() {
+        return;
+    }
+    let fixed = fix("err-plain", "% !TeX program = tex\nLook at \\sum here.\n\\bye\n", "raised-error", false);
+    assert_eq!(fixed.text, "% !TeX program = tex\nLook at $\\sum$ here.\n\\bye\n");
+}
+
 /// An article whose body is `body`.
 fn article(body: &str) -> String {
     format!("\\documentclass{{article}}\n\\begin{{document}}\n{body}\\end{{document}}\n")
@@ -749,8 +760,18 @@ fix_cases! {
     runaway_closes_every_open_group("err-nested", article("\\textbf{a \\emph{b % c}\n"), "raised-error", true, &article("\\textbf{a \\emph{b}} % c}\n"));
     /// TeX ignores a `}` that closes no group: deleting it is safe.
     extra_brace_is_deleted("err-brace", article("Some text} more.\n"), "raised-error", false, &article("Some text more.\n"));
-    /// A script in text sets its nucleus and argument as a formula, one at a time.
-    math_only_tokens_become_formulas("err-dollar", article("Let x^{10}_i be and \\alpha too.\n"), "raised-error", true, &article("Let $x^{10}_i$ be and $\\alpha$ too.\n"));
+    /// A script in text sets its nucleus and argument as a formula, one at a time, in LaTeX's `\(…\)`
+    /// where the file has no formula of its own.
+    math_only_tokens_become_formulas("err-dollar", article("Let x^{10}_i be and \\alpha too.\n"), "raised-error", true, &article("Let \\(x^{10}_i\\) be and \\(\\alpha\\) too.\n"));
+    /// A math-only command in text is set as a formula with the arguments the run knows it reads, the
+    /// text around it left text: a safe fix. Pins "Let's look at an example \sum" giving pdfTeX's
+    /// `Missing $ inserted` with only a fix to review, and `\frac{1}{2}` wrapped without its arguments.
+    math_command_in_text_is_a_safe_formula("err-sum", article("Let's look at an example \\sum here, \\frac{1}{2} too.\n"), "raised-error", false, &article("Let's look at an example \\(\\sum\\) here, \\(\\frac{1}{2}\\) too.\n"));
+    /// A file that sets its formulas with `$` and never `\(` gets `$`: the project's own style.
+    math_command_follows_a_dollar_file("err-sum-dollar", article("We have $x$ and \\alpha here.\n"), "raised-error", false, &article("We have $x$ and $\\alpha$ here.\n"));
+    /// A command whose arguments the run cannot tell (`\sqrt` hands on through `\protect`) takes the
+    /// `[…]` and `{…}` right after it, for a review. Pins `\(\sqrt\)[3]{x}`, a new error.
+    math_command_with_unknown_arguments_takes_its_groups("err-sqrt", article("Roots \\sqrt[3]{x} here.\n"), "raised-error", true, &article("Roots \\(\\sqrt[3]{x}\\) here.\n"));
     /// The file's own spelling of formulas wins.
     math_follows_the_files_delimiters("err-paren", article("\\(a\\) and \\(b\\), then x_1.\n"), "raised-error", true, &article("\\(a\\) and \\(b\\), then \\(x_1\\).\n"));
     /// An `&` past the last column adds a column of the last one's kind.

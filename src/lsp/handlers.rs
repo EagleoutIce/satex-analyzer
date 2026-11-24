@@ -1723,6 +1723,9 @@ fn completion_at(analysis: &Analysis, doc: &Text, path: &str, position: Position
                     }
                 }
             }
+            if !math && symbol.is_none() && analysis.settings.conventions.completion.wrap_math {
+                wrap_math(analysis, doc, file, pos, typed, &mut items);
+            }
             // a symbol's items replace it from the character after its `\` (an editor's word would not hold it)
             if symbol.is_some() {
                 items.retain(|i| i.label.starts_with(typed));
@@ -3293,6 +3296,55 @@ fn unloaded_items(analysis: &Analysis, doc: &Text, typed: &str, env: bool) -> Ve
             Some((it, name))
         })
         .collect()
+}
+
+/// Math-only items (`data.math`, tex.web § 1046) typed at `pos` in text, as the run set the text around
+/// it, write their math's delimiters ([`crate::linter::shared::inline_math`]), the caret inside: their
+/// edit takes the `\\` and the name typed (`data.wrap`). Pins `\\sum` taken in a paragraph giving TeX's
+/// `Missing $ inserted`.
+fn wrap_math(
+    analysis: &Analysis,
+    doc: &Text,
+    file: crate::engine::tex::FileId,
+    pos: Pos,
+    typed: &str,
+    items: &mut [CompletionItem],
+) {
+    if !text_around(analysis, doc, file, pos) {
+        return;
+    }
+    let (open, close) = crate::linter::shared::inline_math(analysis, doc.body());
+    let start = Pos::new(pos.line, pos.col.saturating_sub(typed.chars().count() as u32 + 1));
+    let range = Range { start: to_lsp(doc, start), end: to_lsp(doc, pos) };
+    for it in items.iter_mut().filter(|i| i.data.as_ref().is_some_and(|d| d["math"] == true)) {
+        let body = it.insert_text.take().unwrap_or_else(|| it.label.clone());
+        let new_text = format!("{open}\\{body}$0{close}");
+        it.text_edit = Some(lsp_types::CompletionTextEdit::Edit(TextEdit { range, new_text }));
+        it.insert_text_format = Some(InsertTextFormat::SNIPPET);
+        it.filter_text = Some(format!("\\{}", it.label));
+        if let Some(data) = it.data.as_mut() {
+            data["wrap"] = serde_json::json!([open, close]);
+        }
+    }
+}
+
+/// Whether the run set the characters next to `pos` in `file` in text: the last one before and the first one
+/// after it in the same paragraph of `doc`, those it set at all, each in a known mode. None of them is text too.
+fn text_around(analysis: &Analysis, doc: &Text, file: crate::engine::tex::FileId, pos: Pos) -> bool {
+    use crate::engine::mode::Modes;
+    let at = |s: &crate::analysis::facts::Spot| (s.span.line, s.span.col);
+    let here = (pos.line, pos.col);
+    let ours = || analysis.facts.text.at.iter().filter(|s| s.span.file == file);
+    let before = ours().filter(|s| at(s) < here).max_by_key(|s| at(s));
+    let after = ours().filter(|s| at(s) >= here).min_by_key(|s| at(s));
+    // a blank line between ends the paragraph: what stands past it says nothing of this one
+    let near =
+        |line: u32| (line.min(pos.line)..=line.max(pos.line)).all(|l| l == pos.line || !doc.line(l).trim().is_empty());
+    [before, after]
+        .into_iter()
+        .flatten()
+        .filter(|s| near(s.span.line))
+        .all(|s| !s.modes.is_empty() && !s.modes.meets(Modes::ANY_MATH))
 }
 
 /// Whether `pos` of `doc` is in math: a `$`, `$$`, `\\(`, `\\[` or one of `environments` (starred

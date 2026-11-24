@@ -28,6 +28,7 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 
 ### LSP
 
+- `feat` **A math command typed in text is set in math.** Completing `\sum`, `\frac` or a macro of your own that ends in math-only material where the text is text writes `\(\sum\)` with the caret inside, `$\sum$` in plain TeX or in a file that uses `$`, and never inside a formula. TeX's `Missing $ inserted` before such a command gets a safe quick fix that sets the command and its arguments in the same delimiters (`completion.wrap_math`, `conventions.math.inline`).
 - `feat` **Every finding offers "Ignore here" and "Ignore rule".** The first writes `% satex-disable-next-line ⟨rule⟩` above its line, the second turns the rule off in the project's `satex.yaml`. No Fix all applies them.
 - `fix` **TikZ previews are kept per installation**, and a picture that failed to draw is drawn again on the next ask.
 - `fix` `TL 2019` **TikZ previews draw with TeX Live 2019's dvisvgm**, which has no `--exact-bbox`.
@@ -72,7 +73,7 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 ### Analysis
 
 - `fix` **A line-budget cut inside library code drops the whole call.** Library code that held some of the document's tokens as data (an l3fp expression, the items of a `\clist_map_inline:nn`) was kept as if it called the document's text, so satex read on in the middle of it with its outer calls gone: a second cut, many paths and false errors inside expl3 (an `\fp_set:Nn` loop under TeX Live 2026: 4.0M steps, now 1.9M).
-- `fix` **The kernel cache is keyed on the settings that change what it holds.** A kernel built under other limits or assumptions (`choices`, `assume_compiles` …) was loaded by every later run on the same cache directory, so a run's result depended on which run built the kernel first.
+- `fix` **The kernel cache is keyed on the settings that change what it holds.** A kernel built under other limits or assumptions (`choices`, `assume_compiles` …) was loaded by every later run on the same cache directory, so a run's result depended on which run built the kernel first. Tracing and `controls`' own switches do not count [`080cf74`].
 - `fix` `TL ≤ 2021` **`\creationdate` under an older XeTeX may print more than the date.** XeTeX before 0.999994 reads string-pool bytes after it. satex was sure of the date alone.
 - `fix` **The names a file defines are found again for other definers.** A memo kept the first caller's answer for every later one.
 - `fix` **`\parshape` with an unknown count reads its pairs as the shape's lines, and any count stays within the budgets** (`limits.parshape_lines`, default 64 kept). An unknown count left the pairs unread, so wrapfig's `\z@ \hsize` ran as an assignment and set `\z@` to 345pt. The next shape asked for 22 million lines and ran out of memory on TeX Live 2019.

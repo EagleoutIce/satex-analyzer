@@ -815,6 +815,15 @@
                 "output"
               ],
               "x-example": "`unloaded_seed+: {\\pgfplotsset: pgfplots}`"
+            },
+            "wrap_math": {
+              "default": true,
+              "description": "a math-only command completed in text is set in math (math.inline), the caret inside",
+              "type": "boolean",
+              "x-affects": [
+                "output"
+              ],
+              "x-example": "`wrap_math: false`: the command is written as typed"
             }
           },
           "type": "object"
@@ -1074,6 +1083,15 @@
                 "output"
               ],
               "x-example": "`after: 8`"
+            },
+            "inline": {
+              "default": "auto",
+              "description": "the inline math delimiters satex writes (a quick fix, a completion): \\(, $, or auto, which takes $ without a LaTeX kernel or in a file that sets formulas with $ and never \\(, else \\(",
+              "type": "string",
+              "x-affects": [
+                "output"
+              ],
+              "x-example": "`inline: $`"
             },
             "lexemes": {
               "default": 400000,

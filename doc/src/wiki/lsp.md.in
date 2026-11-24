@@ -50,6 +50,7 @@ satex lsp --port 9257 --host 0.0.0.0
 | after `\` | commands in scope: the signature beside the name (`[⟨options⟩]{⟨label⟩}`), a tab stop per argument named by its type (an optional one with its brackets), the signature help once accepted, the command's card as documentation. `data` carries `args` (`m`, `som`), `math` and a one-line `doc` |
 | after `\` or `\begin{` with 3 letters | below the names in scope, those of packages not loaded yet (the installation's index), each with the `\usepackage` it adds as `additionalTextEdits` (`completion.unloaded`) |
 | after `\` in math | math commands first (`$…$`, `\(…\)`, `\[…\]`, `completion.math_environments`): a command is math when its body reaches material only math mode takes within `completion.math_depth` expansions |
+| after `\` in text | a math command's edit sets it in math, the caret inside: `\(\sum\)`, or `$\sum$` without a LaTeX kernel or in a file that uses `$` (`conventions.math.inline`). Text is where the run set the characters around the cursor in text. `data.wrap` holds the delimiters. Off with `completion.wrap_math: false` |
 | `\begin{` | environment names |
 | a reference or citation argument | the document's labels or keys, by the argument's key kind (`\ref{` never offers citations) |
 | a file argument | matching files of its kind, the project's and the installation's |

@@ -7712,6 +7712,61 @@ fn command_items_rank_math_first_in_math_and_carry_braces() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// The edit of the item `label` completed at `line`:`col` (0-based), with the column its range starts at.
+fn completed_edit(server: &mut Server, uri: &str, line: u32, col: u32, label: &str) -> (String, u64) {
+    let items = complete(server, uri, line, col);
+    let it = items.iter().find(|i| i["label"] == label).unwrap_or_else(|| panic!("{label}: {:?}", labels(&items)));
+    let edit = &it["textEdit"];
+    let text = edit["newText"].as_str().or(it["insertText"].as_str()).unwrap_or_default().to_string();
+    (text, edit["range"]["start"]["character"].as_u64().unwrap_or(u64::MAX))
+}
+
+/// A math-only command completed where the run set text gets math's delimiters, the caret inside: LaTeX's
+/// `\(…\)`, its edit taking the `\` typed. A text command, a command in a formula, in a math environment
+/// only the run knows is one (`\newenvironment` over `\[`), or right after a `$` typed is left alone. Pins
+/// "Let's look at an example \sum" in the playground giving pdfTeX's `Missing $ inserted`.
+#[test]
+fn a_math_command_completed_in_text_is_set_in_math() {
+    let text = "\\documentclass{article}\n\\newenvironment{eq}{\\[}{\\]}\n\\begin{document}\nLet's look at an example \\su then \\fr\n\n\\(x + \\su\\)\n\n\\begin{eq}\nx = \\su\n\\end{eq}\n\nAn \\text and $\\su\n\\end{document}\n";
+    let (mut server, uri, _, dir) = open_loaded("wrap-math", text);
+    let typed = "Let's look at an example \\su";
+    let (sum, start) = completed_edit(&mut server, &uri, 3, typed.len() as u32, "sum");
+    assert_eq!(sum, "\\(\\sum$0\\)");
+    assert_eq!(start, typed.len() as u64 - 3, "the edit takes the `\\`");
+    let (frac, _) = completed_edit(&mut server, &uri, 3, format!("{typed} then \\fr").len() as u32, "frac");
+    assert!(frac.starts_with("\\(\\frac{") && frac.ends_with("$0\\)"), "{frac}");
+    let (bf, _) = completed_edit(&mut server, &uri, 11, "An \\text".len() as u32, "textbf");
+    assert!(!bf.contains("\\("), "{bf}");
+    for (line, at) in [(5, "\\(x + \\su"), (8, "x = \\su"), (11, "An \\text and $\\su")] {
+        let (sum, _) = completed_edit(&mut server, &uri, line, at.len() as u32, "sum");
+        assert_eq!(sum, "sum", "{at}");
+    }
+    server.shutdown();
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Plain TeX defines no `\(`, and a LaTeX file that sets its formulas with `$` alone keeps to it: a math
+/// command completed in text there is set in `$…$`. `completion.wrap_math: false` leaves it as typed.
+/// Pins the LaTeX spelling written into a plain TeX file, where it is undefined.
+#[test]
+fn a_math_command_in_text_follows_the_kernel_and_the_file() {
+    let plain = "% !TeX program = tex\nLook at \\su\n\\bye\n";
+    let (mut server, uri, _, dir) = open_loaded("wrap-plain", plain);
+    assert_eq!(completed_edit(&mut server, &uri, 1, "Look at \\su".len() as u32, "sum").0, "$\\sum$0$");
+    server.shutdown();
+    let _ = std::fs::remove_dir_all(&dir);
+    let dollars = "\\documentclass{article}\n\\begin{document}\nWe have $x$ and \\su\n\\end{document}\n";
+    let (mut server, uri, _, dir) = open_loaded("wrap-dollar", dollars);
+    assert_eq!(completed_edit(&mut server, &uri, 2, "We have $x$ and \\su".len() as u32, "sum").0, "$\\sum$0$");
+    server.shutdown();
+    let _ = std::fs::remove_dir_all(&dir);
+    let (mut server, uri, dir) = open_with("wrap-off", dollars, &[], &["conventions.completion.wrap_math=false"]);
+    let (sum, _) = completed_edit(&mut server, &uri, 2, "We have $x$ and \\su".len() as u32, "sum");
+    assert!(!sum.contains('$'), "{sum}");
+    server.shutdown();
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// A name a package not loaded yet defines is offered below those in scope, says the package it
 /// adds and loads it when taken: `\begin{tikzpic` offers `tikzpicture` with `\usepackage{tikz}`
 /// before `\begin{document}`, from the installation's index of what each package defines. Pins

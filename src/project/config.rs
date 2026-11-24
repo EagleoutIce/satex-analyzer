@@ -1731,6 +1731,9 @@ area! {
         near: usize = 400,
         /// How far past a display the sentence's punctuation is looked for.
         after: usize = 24,
+        /// The inline delimiters satex writes around math: `\\(`, `$`, or `auto`: `$` without a
+        /// LaTeX kernel (no `\\(` defined) or in a file that uses `$` and no `\\(`, else `\\(`.
+        inline: String = "auto".into(),
     }
 }
 
@@ -1791,6 +1794,8 @@ area! {
         unloaded_min: usize = 3,
         /// Expansions a command's body is followed to find math-only material, which ranks it first in math.
         math_depth: u8 = 2,
+        /// A math-only command completed in text is set in math (`conventions.math.inline`), the caret inside.
+        wrap_math: bool = true,
         /// Environments whose body is math, where completion ranks math commands first.
         math_environments: Vec<String> = strs(&["equation", "align", "gather", "multline", "flalign", "alignat", "eqnarray", "math", "displaymath", "dmath"]),
         /// Characters of an undocumented body its hover shows as what it expands to.

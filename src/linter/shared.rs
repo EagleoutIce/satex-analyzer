@@ -1052,3 +1052,25 @@ mod probe_tests {
         assert!(!cut.clean && !cut.absent, "cut by steps: tried, and it did not take the call");
     }
 }
+
+/// The inline math delimiters to write in a file whose text is `body` (`conventions.math.inline`):
+/// `auto` takes `$` where the run defined no `\\(` (plain TeX) or the file sets inline math with
+/// `$` and never with `\\(`, else LaTeX's `\\(` (ltmath.dtx).
+pub fn inline_math(analysis: &Analysis, body: &str) -> (&'static str, &'static str) {
+    const LATEX: (&str, &str) = ("\\(", "\\)");
+    match analysis.settings.conventions.math.inline.as_str() {
+        "$" => return ("$", "$"),
+        "\\(" => return LATEX,
+        _ => {}
+    }
+    let defined = analysis
+        .interner
+        .lookup("(")
+        .is_some_and(|s| !matches!(analysis.env.meaning(s), crate::engine::tex::Meaning::Undefined));
+    // `$` an inline formula opens: not `\\$`, not one of a display's `$$`
+    let dollars = body.replace("\\\\", "").replace("\\$", "").replace("$$", "").contains('$');
+    match !defined || (dollars && !body.contains("\\(")) {
+        true => ("$", "$"),
+        false => LATEX,
+    }
+}

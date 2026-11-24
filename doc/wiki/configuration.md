@@ -226,6 +226,9 @@ conventions:  # how TeX is usually written, where the text alone does not say
     after: 24  # characters past a display its sentence's punctuation is looked for
       #! affects: output
       #! example: `after: 8`
+    inline: auto  # the inline math delimiters satex writes (a quick fix, a completion): \(, $, or auto, which takes $ without a LaTeX kernel or in a file that sets formulas with $ and never \(, else \(
+      #! affects: output
+      #! example: `inline: $`
   csname:  # commands that do a \csname's job, the first one defined is advised
     use: [csuse, '@nameuse']  # using a control sequence by name
       #! affects: output
@@ -293,6 +296,9 @@ conventions:  # how TeX is usually written, where the text alone does not say
     math_depth: 2  # expansions a command's body is followed to find math-only material (\over, a \mathchardef), which ranks it first in math
       #! affects: output, speed
       #! example: `math_depth: 0`: only math characters and primitives count
+    wrap_math: true  # a math-only command completed in text is set in math (math.inline), the caret inside
+      #! affects: output
+      #! example: `wrap_math: false`: the command is written as typed
     math_environments: [equation, align, gather, multline, flalign, alignat, eqnarray, math, displaymath, dmath]  # environments whose body is math (starred too): completion ranks math commands first there
       #! affects: output
       #! example: `math_environments+: [IEEEeqnarray]`
@@ -1684,7 +1690,7 @@ stubs:
 | `limits.checkpoint_body_share` | `8` | in the body a state is also saved between top-level lines after this fraction of `limits.checkpoint_steps` |
 | `limits.checkpoints_after_edit` | `2` | states kept on the first lines past an edit and past the next pages shipped, where the next edit's run may meet this one |
 | `limits.checkpoint_meet_steps` | `4194304` | after an edit far from every saved state the old text is run again to save states around it, at most this many steps past the edit. `0` never does |
-| `limits.seconds` | `600` | stops the run, lints after it share the same budget |
+| `limits.seconds` | `300` | stops the run, lints after it share the same budget |
 | `limits.degrade_at_percent` | `100` (off) | past that share of `limits.steps`, halves the time-only limits, reported as `precision-degraded` |
 | `limits.threads` | `0` (`min(4, cores)`) | file scans only, the interpreter is one thread |
 

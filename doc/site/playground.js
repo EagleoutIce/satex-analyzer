@@ -1231,7 +1231,7 @@
       // typed before the server read it: analyze now, ask again when that run ends
       if (!items.length && !ctx.explicit) { retryCompletion = true; sync(); }
       // an item that replaces a range (a key path) starts where that range does
-      const edit = items.find((i) => i.textEdit)?.textEdit;
+      const edit = items.find((i) => i.textEdit && !i.data?.wrap)?.textEdit;
       const from = edit ? at(ctx.state.doc, edit.range.start) : before === '\\' ? word.from : key.from;
       const typed = ctx.state.sliceDoc(from, ctx.pos), made = new Map();
       // in math (`\\(x - \\su`) math commands first; the text before the caret's paragraph is all that is read
@@ -1256,7 +1256,7 @@
         doc: before === '\\' ? docOf(i) : '', symbol: before === '\\' ? symbolOf(i) : '',
         // the side panel: a command's card, the one hover and Explain show; else the server's documentation
         info: before === '\\' ? () => itemInfo(i) : i.documentation ? () => Object.assign(document.createElement('div'), { className: 'hover cm-item-card', innerHTML: card(i.documentation.value ?? i.documentation) }) : i.data?.key ? () => itemInfo(i, true) : undefined,
-        apply: itemApply(i),
+        apply: i.data?.wrap && !math ? wrapApply(i) : itemApply(i),
       });
       return { from, to: edit ? Math.max(at(ctx.state.doc, edit.range.end), ctx.pos) : ctx.pos, filter: false, options: options(typed), update };
     }
@@ -1276,6 +1276,8 @@
     }
     /** What taking `i` writes: its snippet (fields as CodeMirror's `#{n:text}`) or text. */
     const itemApply = (i) => again(i, closing1(i, i.additionalTextEdits?.length ? withLoads(i) : i.insertTextFormat === 2 ? ac.snippet((i.insertText ?? i.textEdit?.newText ?? i.label).replace(/\$\{(\d+)(:[^}]*)?\}|\$(\d+)/g, (_, n, text, bare) => `#{${n ?? bare}${text ?? ''}}`)) : i.textEdit?.newText ?? i.insertText ?? i.label));
+    /** A math command taken in text (`data.wrap`): the server's snippet, set in math, written over the `\\` too. */
+    const wrapApply = (i) => { const snip = ac.snippet(i.textEdit.newText.replace(/\$\{(\d+)(:[^}]*)?\}|\$(\d+)/g, (_, n, text, bare) => `#{${n ?? bare}${text ?? ''}}`)); return (v, c, from, to) => snip(v, c, from - (v.state.sliceDoc(from - 1, from) === '\\' ? 1 : 0), to); };
     /** An item that writes its name's closing brace (`tabular}` after `\\end{tab`) takes the `}` already after the caret along, so
      * the name never ends in two (`\\end{tabular}}`, a list kept from another place has no range that would cover it). */
     function closing1(i, apply) {
@@ -12677,13 +12679,16 @@
   function pdfMenuApply(item, from, now = false) {
     // a name from the list of names in force: the server's item of that name brings its snippet
     item = pdfServed(item);
-    let caret = -1, hint = '';
-    const body = '\\' + String(item.insertText ?? item.textEdit?.newText ?? item.label).replace(/\$\{(\d+)(?::([^}]*))?\}|\$(\d+)/g, (_, n, text = '', bare, off) => {
+    let caret = -1, hint = '', zero = -1;
+    // a math command typed in text (`data.wrap`): the server's edit sets it in math, its `\\` included
+    const wrap = !!item.data?.wrap && !!item.textEdit && !inMath(editor.text(), from), lead = wrap ? 0 : 1;
+    const body = (wrap ? '' : '\\') + String(wrap ? item.textEdit.newText : item.insertText ?? item.textEdit?.newText ?? item.label).replace(/\$\{(\d+)(?::([^}]*))?\}|\$(\d+)/g, (_, n, text = '', bare, off) => {
       if (caret < 0 && (n ?? bare) !== '0') { caret = off; hint = text; }
+      if ((n ?? bare) === '0' && zero < 0) zero = off;
       return text;
     });
     // the offset counted before the replacement: the fields before the first one are none
-    (now ? pdfWritten : pdfEdit)((text, at) => [from, at, body, caret < 0 ? body.length : caret + 1], { free: true });
+    (now ? pdfWritten : pdfEdit)((text, at) => [from, at, body, caret >= 0 ? caret + lead : zero >= 0 ? zero + lead : body.length], { free: true });
     // the first field's default text (`\\emph{arg}`) is a hint: the first key typed there replaces it, as a selected field
     const hinted = () => {
       if (!pdfCaret) return;

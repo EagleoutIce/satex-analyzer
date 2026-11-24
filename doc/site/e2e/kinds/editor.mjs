@@ -340,3 +340,44 @@ export async function hoversteady(p, sc) {
   await p.shot(`${sc.name}-card.png`);
   return res;
 }
+
+/** `mathwrap`: `\sum` typed in a paragraph and taken from the list is set in math, `\(\sum\)` with the caret inside, from
+ * the server's item (`data.wrap`); `_i` lands in the formula and the PDF builds without `Missing $ inserted`. Typed in a
+ * formula it stays `\sum`. */
+export async function mathwrap(p, sc) {
+  const res = { name: sc.name, fails: [], perf: [], info: {} };
+  const fail = (m) => res.fails.push(m);
+  const { setText } = await import('../engine.mjs');
+  const quiet = () => p.until(`(() => { const h = satexHealth(); if (h.busy || h.due || h.running || h.queued || h.pending) { self.__q = null; return false; } self.__q ??= performance.now(); return performance.now() - self.__q > 1500; })()`, 240000);
+  if (!await started(p) || !await example(p, 'hello.tex')) { fail('the playground did not start'); return res; }
+  await setText(p, sc.text);
+  await quiet();
+  const take = async (needle, keys) => {
+    const at = await p.eval(`(() => { const t = satexHealth().text; return t.indexOf(${J(needle)}) + ${J(needle)}.length; })()`);
+    await p.eval(`(document.querySelector('.cm-content').focus(), satexEditorSelect(${at}))`);
+    for (const ch of '\\sum') { await p.s('Input.insertText', { text: ch }); await sleep(120); }
+    // the server's answer for this place, once its run has ended
+    await quiet();
+    await p.until(`[...document.querySelectorAll('.cm-tooltip-autocomplete li')].some((l) => /^sum/.test(l.textContent))`, 10000);
+    await p.shot(`${sc.name}-${keys}-list.png`);
+    await p.key('Tab');
+    for (const ch of keys) { await p.s('Input.insertText', { text: ch }); await sleep(60); }
+    await sleep(300);
+  };
+  await take('example ', '_i');
+  const text = await p.eval(`satexHealth().text`);
+  res.info.text = J(text.slice(text.indexOf('example'), text.indexOf('example') + 30));
+  if (!text.includes(sc.want)) fail(`text ${res.info.text}, want ${J(sc.want)}`);
+  await take('\\(x + ', '_k');
+  const math = await p.eval(`satexHealth().text`);
+  if (!math.includes('\\(x + \\sum_k\\)')) fail(`in a formula: ${J(math.slice(math.indexOf('\\(x'), math.indexOf('\\(x') + 30))}`);
+  await p.eval(`document.querySelector('.side-tabs [data-panel=play-pdf]').click()`);
+  await p.eval(`document.getElementById('pdf-compile').click()`);
+  const now = await p.eval(`satexHealth().text`);
+  if (!await p.until(`[...document.querySelectorAll('#play-pdf .pdf-page img')].some((i) => i.__build?.text === ${J(now)}) && !document.querySelector('#play-pdf.pdf-running')`, 90000)) fail('no build of the text landed');
+  const bar = await p.eval(`document.getElementById('pdf-status').textContent`), banner = await p.eval(`document.querySelector('#play-pdf .pdf-fail')?.textContent ?? ''`);
+  res.info.bar = bar;
+  if (banner || /error/.test(bar)) fail(`the build failed: ${J(banner || bar)}`);
+  await p.shot(`${sc.name}-pdf.png`);
+  return res;
+}
