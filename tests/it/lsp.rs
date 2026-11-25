@@ -8238,10 +8238,16 @@ fn font_view_offers_the_installation_s_math_fonts() {
     let on: Vec<&Value> = items.iter().filter(|i| i["on"] == true).map(|i| &i["title"]).collect();
     assert_eq!(on, [&json!("Latin Modern Math")], "{math}");
     let stix = items.iter().find(|i| i["title"] == "STIX Two Math").expect("STIX Two Math");
-    assert_eq!(stix["detail"], "\\setmathfont{STIXTwoMath-Regular.otf}", "{stix}");
+    // the font's file as this installation names it (TeX Live 2019 ships `STIX2Math.otf`)
+    let file = ["STIXTwoMath-Regular.otf", "STIX2Math.otf"]
+        .into_iter()
+        .find(|f| crate::support::installed_file_has(f, ""))
+        .expect("STIX Two Math installed");
+    let set = format!("\\setmathfont{{{file}}}");
+    assert_eq!(stix["detail"], set.as_str(), "{stix}");
     assert!(!items.iter().any(|i| i["title"] == "newtxmath"), "unicode-math sets OpenType fonts: {math}");
     let out = font_pick(text, &uri, &math, "STIX Two Math");
-    assert!(out.contains("\\setmathfont{STIXTwoMath-Regular.otf}\n") && !out.contains("latinmodern-math"), "{out}");
+    assert!(out.contains(&format!("{set}\n")) && !out.contains("latinmodern-math"), "{out}");
     server.shutdown();
     std::fs::remove_dir_all(dir).ok();
 }

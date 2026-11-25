@@ -6316,7 +6316,7 @@
           "properties": {
             "enabled": {
               "default": true,
-              "description": "\"Browse all labels…\": kind, number, caption or title, place and references; a choice writes the label",
+              "description": "\"Browse all labels…\": kind, number, caption or title, place and references. A choice writes the label",
               "type": "boolean",
               "x-affects": [
                 "output"

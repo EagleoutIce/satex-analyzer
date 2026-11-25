@@ -930,7 +930,7 @@ type_plugins:  # editor features by type, grouped by category: widget, hover, co
       #! affects: output
   labels:  # every label the run met, from a reference's completion
     #! category: widget
-    enabled: true  # "Browse all labels…": kind, number, caption or title, place and references; a choice writes the label
+    enabled: true  # "Browse all labels…": kind, number, caption or title, place and references. A choice writes the label
       #! affects: output
   page:  # the page geometry the run computed: \documentclass, geometry's calls and keys, a sectioning command, a blank line
     #! category: widget
