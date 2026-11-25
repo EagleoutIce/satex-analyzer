@@ -399,15 +399,39 @@ fn a_build_returns_before_its_explanation_and_shows_it_later() {
             .to_string();
         (fix, said)
     };
-    // the explanation of the text as it is now: its key is written last
+    // the explanation of the text as it is now: its key is written last. The satex aside runs at
+    // the lowest priority, so on a busy machine it may wait long for the processor: the test waits
+    // while it lives (its pid in `doc.explaining`), and fails once it ended without explaining.
     let explained = |since: std::time::SystemTime| {
-        let key = dir.join(".satex-build/doc.explained");
-        let until = std::time::Instant::now() + std::time::Duration::from_secs(300);
+        let (key, pid) = (dir.join(".satex-build/doc.explained"), dir.join(".satex-build/doc.explaining"));
         let fresh = || std::fs::metadata(&key).and_then(|m| m.modified()).is_ok_and(|t| t >= since);
-        while !fresh() && std::time::Instant::now() < until {
+        let mine = || std::fs::metadata(&pid).and_then(|m| m.modified()).is_ok_and(|t| t >= since);
+        let alive = || {
+            let id = std::fs::read_to_string(&pid).unwrap_or_default();
+            let ok = |o: std::process::Output| o.status.success();
+            mine() && std::process::Command::new("kill").args(["-0", id.trim()]).output().is_ok_and(ok)
+        };
+        let begun = std::time::Instant::now();
+        // backstops: the aside never seen, and one that never ends
+        let (unseen, never) = (std::time::Duration::from_secs(600), std::time::Duration::from_secs(1800));
+        let mut seen = false;
+        while !fresh() && begun.elapsed() < never {
+            // where no process can be asked (Windows), only the backstops end the wait
+            if cfg!(unix) {
+                let live = alive();
+                if seen && !live {
+                    break;
+                }
+                seen |= live;
+            }
+            if !seen && !mine() && begun.elapsed() > unseen {
+                break;
+            }
             std::thread::sleep(std::time::Duration::from_millis(50));
         }
-        assert!(fresh(), "no explanation after five minutes");
+        // the key is written last: an aside that just ended may have written it
+        std::thread::sleep(std::time::Duration::from_millis(200));
+        assert!(fresh(), "no explanation: the satex aside ended without one, or never started");
     };
     let start = std::time::SystemTime::now();
     let (fix, said) = build();
