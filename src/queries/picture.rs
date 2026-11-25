@@ -81,6 +81,9 @@ fn moved(d: &str, (dx, dy): (f64, f64)) -> String {
     d.split(' ').map(word).collect::<Vec<_>>().join(" ")
 }
 
+/// A box made for a register: its text ranges and the literals it holds.
+type RegisterBox = (Vec<(u32, u32)>, std::ops::Range<usize>);
+
 /// What one picture draws: its painted paths and placed texts, in points
 /// with y growing downwards as SVG has it.
 #[derive(Default)]
@@ -97,7 +100,7 @@ struct Canvas {
     bounds: Option<[f64; 4]>,
     paths: Vec<Drawn>,
     /// The boxes made for registers: their text ranges and the literals they hold.
-    boxes: Vec<(Vec<(u32, u32)>, std::ops::Range<usize>)>,
+    boxes: Vec<RegisterBox>,
     /// The literal being read.
     at: usize,
     /// Each text's characters, where it stands, its color, and whether a box placed it there.
