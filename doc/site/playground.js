@@ -2425,6 +2425,8 @@
     // over the words between (which a row may set apart: a footnote mark, a line's end)
     const edits = PE.hunks(was, now), marks = [];
     if (!edits?.length) return;
+    // `shift`: what the edits before this one added to the text: its typed text's place in the open text
+    let shift = 0;
     for (const [a, e, typed] of edits) {
       const old = was.slice(a, e);
       if (!old.trim() || !typed.trim() || /[^\p{L}\p{N} .,;:!?'()-]/u.test(old + typed)) return;
@@ -2458,16 +2460,18 @@
       if (at < 0 || !from || !to) return;
       const r = document.createRange();
       r.setStart(...from); r.setEnd(...to);
-      marks.push({ p, r, typed });
+      marks.push({ p, r, typed, at: a + shift });
+      shift += typed.length - (e - a);
     }
     // placed on the view as the run set it, then each written from the last (the ranges before it keep their places)
     tsPend = [marks[0].p, marks[0].p.cloneNode(true)];
-    for (const { r, typed } of marks.reverse()) {
+    for (const { r, typed, at } of marks.reverse()) {
       r.deleteContents();
       const mark = document.createElement('span');
       mark.className = 'ts-pending';
       mark.title = 'as typed: the analysis has not set it yet';
       mark.textContent = typed;
+      mark.dataset.at = String(at);
       r.insertNode(mark);
     }
   }
@@ -2492,14 +2496,17 @@
     }
     if (e.target.closest('.ts-page-label')) return;
     if (tsTyping && e.target.closest('p.ts[data-line] .ts-text')) return tsCaretAt(e);
-    const p = e.target.closest('.ts, .ts-envmark');
+    tsOpen(e.target.closest('.ts, .ts-envmark'));
+  });
+  /** The editor at the source place of paragraph or environment mark `p` of the Typeset view. */
+  function tsOpen(p) {
     if (!p) return;
     const at = { line: +p.dataset.line - 1, character: Math.max(+(p.dataset.col ?? 1) - 1, 0) };
     if (p.dataset.path && !p.dataset.path.endsWith(state.file)) {
       const name = Object.keys(state.texts).find((n) => !(n in state.ro) && p.dataset.path.endsWith(n));
       openPlace(name ?? p.dataset.path, at);
     } else editor.focus({ start: at, end: at });
-  });
+  }
   /** The document's own text in header or footer field `hf` (a call's line), null for generated text or none. */
   const tsHfOwn = (hf) => { const src = hf.dataset.src; return src && !/^\\(thepage|leftmark|rightmark)$/.test(src.trim()) && pdfHeadText(hf.textContent) || null; };
   /** A double click on a header or footer field without the document's own text opens the Page layout widget at that
@@ -2576,9 +2583,12 @@
   };
   /** The caret at a click in the Typeset view: the word under it, its characters' sites and origins from the run. */
   function tsCaretAt(e) {
-    // an unknown value (⟨?⟩) is explained, never typed into
+    // an unknown value (⟨?⟩) is explained, never typed into; a click on it moves the editor to its paragraph's source
     const unknown = e.target.closest('.ts-note[title]');
-    if (unknown) return toast(unknown.title, 6000);
+    if (unknown) {
+      if (e.type === 'click') { if (pdfCaret?.view === 'ts') pdfCaretOff(); tsOpen(unknown.closest('p.ts[data-line]')); }
+      return toast(unknown.title, 6000);
+    }
     const p = e.target.closest('p.ts[data-line]'), box = p?.querySelector('.ts-text'), row = p && tsRowOf(p);
     const pos = document.caretPositionFromPoint?.(e.clientX, e.clientY) ?? (() => { const r = document.caretRangeFromPoint?.(e.clientX, e.clientY); return r && { offsetNode: r.startContainer, offset: r.startOffset }; })();
     // a picture's node text: its own word, at its place among the row's characters (the texts set one after another)
@@ -2595,7 +2605,7 @@
       const r = document.createRange();
       r.setStart(box, 0); r.setEnd(st.firstChild ?? st, 0);
       const vi = r.toString().length + m.index;
-      return caretPut({ view: 'ts', p: { path: p.dataset.path, line: p.dataset.line, col: p.dataset.col }, idx: vi }, file, ch.line, m[0], Math.min(ci, m.index + m[0].length) - m.index, () => 0, () => readOf(ch.from, chars[at + m[0].length - 1].from), !!ch.from);
+      return caretPut({ view: 'ts', p: { path: p.dataset.path, line: p.dataset.line, col: p.dataset.col }, idx: vi }, file, ch.line, m[0], Math.min(ci, m.index + m[0].length) - m.index, () => 0, () => readIn(chars, at, m[0].length), !!ch.from);
     }
     if (!row || !pos || !box.contains(pos.offsetNode) || pos.offsetNode.nodeType !== Node.TEXT_NODE) return typeHint();
     const range = document.createRange();
@@ -2608,6 +2618,14 @@
     const punct = !w && words.findLast((m) => m.index + m[0].length < idx && /^[^\p{L}\p{N}\s]+$/u.test(all.slice(m.index + m[0].length, idx)));
     if (punct) w = Object.assign([all.slice(punct.index, idx)], { index: punct.index });
     if (!w) return typeHint();
+    const where = { view: 'ts', p: { path: p.dataset.path, line: p.dataset.line, col: p.dataset.col }, idx: w.index };
+    // text typed since the run (tsTyped's pending mark): its place in the source is known, the run's row has it not yet
+    const pend = pos.offsetNode.parentElement?.closest('.ts-pending[data-at]');
+    if (pend && !punct) {
+      range.setEnd(pend, 0);
+      const s0 = +pend.dataset.at + w.index - range.toString().length;
+      return caretPut(where, state.file, pdfPos(editor.text(), s0).line + 1, w[0], idx - w.index, () => 0, () => null, false, [s0, s0 + w[0].length]);
+    }
     // the same word's occurrences before it in the view and in the run's row: the j-th is the one clicked
     const chars = rowOrigins(row), whole = (ws) => ws.filter((m) => m[0] === (punct || w)[0]).map((m) => m.index);
     const j = whole(words).indexOf(w.index), seen = whole(tsUnits(chars.map((ch) => ch.c).join(''), (i) => !!chars[i]?.math));
@@ -2618,8 +2636,8 @@
     if (ch.made) return madeOpen(file, ch, { view: 'ts', pt: { left: e.clientX, bottom: e.clientY + 8 } });
     // on a line, the occurrences before it read there
     const nth = (n) => seen.filter((a) => a < at && chars[a].line === n && !chars[a].from).length;
-    const read = () => readOf(ch.from, chars[at + (punct || w)[0].length - 1].from);
-    caretPut({ view: 'ts', p: { path: p.dataset.path, line: p.dataset.line, col: p.dataset.col }, idx: w.index }, file, ch.line, w[0], idx - w.index, nth, read, !!ch.from);
+    const read = () => readIn(chars, at, (punct || w)[0].length);
+    caretPut(where, file, ch.line, w[0], idx - w.index, nth, read, !!ch.from);
   }
   // the tints and the caret are placed from the view's layout: one drawn while its tab was hidden (a run the PDF's
   // typing started) has none, so each is drawn again once the view is shown or resized
@@ -8062,13 +8080,16 @@
       // rowOrigins: a stored argument's text has its place even where the run sent no origins
       const chars = rowOrigins(r).filter((ch) => ch.path.endsWith(file)), text = chars.map((ch) => ch.c).join('');
       for (let at = text.indexOf(bare); at >= 0; at = text.indexOf(bare, at + 1)) {
-        const first = chars[at], d = first.line >= l0 && first.line <= l1 ? -1 : Math.abs(first.line - line), got = readOf(first.from, chars[at + bare.length - 1].from);
+        const first = chars[at], d = first.line >= l0 && first.line <= l1 ? -1 : Math.abs(first.line - line), got = readIn(chars, at, bare.length);
         // the row's characters with it: the glyphs around a click tell the call's output from what stands beside it (pdfCallEdge)
-        if (got && d < near) { near = d; best = { ...got, chars, i0: at }; }
+        if (got && d < near) { near = d; best = got; }
       }
     }
     return best;
   }
+  /** Where the `n` characters of row characters `chars` from `i0` were read, as readAt answers (with the row's
+   * characters, which pdfCallEdge reads): null outside the open files. */
+  const readIn = (chars, i0, n) => { const got = readOf(chars[i0]?.from, chars[i0 + n - 1]?.from); return got && { ...got, chars, i0 }; };
   /** Where the characters `first..last` of a row were read (rowChars' `from`), as readAt answers: null outside the open files. */
   function readOf(first, last) {
     const file = first && last && Object.keys(state.texts).find((n) => String(first.path).endsWith(n));
@@ -10571,6 +10592,9 @@
    * `miss()`: tried where the word is in no file of the project, true when it took the click. */
   async function caretPut(c, file, line, word, k, nth, read, first = false, within = null, miss = null) {
     const k0 = k;
+    // SyncTeX's line is the build's, a row's the run's: moved to this text's by the edits since (no wait for the next run);
+    // `within` is of this text already
+    if (!within) line = c.view === 'pdf' ? lineNow(pdfBuiltText(c.build ?? pdf), file, line) : rowLine(file, line);
     if (!await showFile(file, { line: line - 1, character: 0 })) return;
     // a word TeX hyphenated at a line's end (`car-` / `ries`): the source spells it whole
     const pair = c.view === 'pdf' && Array.isArray(c.word) && pdfHyphPair(pdfWordsOn(c.page), c.word);
@@ -10643,14 +10667,17 @@
       // while work goes on (a run, a package load and the run after it) the rows shown may be of a run that lacked a
       // package: this text's rows once it is done
       const current = () => tsShown === `${uri()}@${sentVersions.get(uri())}`, working = () => running > 0 || !!act.phase;
-      // while a run is under way its rows come when it ends (a document with TikZ: well past 10 s), then 10 s more
-      for (let n = 0, last = 0; bare && !got && (working() || !current()) && n < last + 40 && n < 480; n++) {
+      // the shown rows of this file, though older, place the click at once (their lines moved by rowLine); only without
+      // any (the first run, a file just switched to) the click waits for a run's: it ends within a document's run, then 10 s more
+      const none = () => !typesetRows || !tsShown?.startsWith(`${uri()}@`);
+      for (let n = 0, last = 0; bare && !got && none() && (working() || !current()) && n < last + 40 && n < 480; n++) {
         if (working()) last = n;
         if (n === 2) toast(READ_WAIT, null);
         await new Promise((ok) => setTimeout(ok, 250));
         got = read();
       }
       toast.off(READ_WAIT);
+      if (got) got = { ...got, line: rowLine(got.file, got.line) };
       if ((!got || !(got.file in state.texts)) && await miss?.()) return;
       // a math glyph no source character spells (`−` of `-`, `∑` of `\\sum`): placed by the run's typeset row (pdfMathAt)
       const glyph = !got && !bare && c.view === 'pdf' && Array.isArray(c.word) ? pdfMathAt(text, file, line, c.page, c.word, k) : null;
@@ -10683,6 +10710,8 @@
     // past a glyph the source does not spell there (`world!` of `\\greet{world}`: the macro's body sets `!` after its
     // argument): the caret after the call, never in the argument
     const call = k > span[1] - span[0] + past && tail.length > past ? PE.afterCall(text, from + span[1] + past) : null;
+    // a caret ends a page selection: the keys go to the caret, never to words selected before (in another view)
+    pdfSelOff();
     pdfCaret = { ...c, file: state.file, target: uri(), anchor: c.view === 'pdf' ? edge ?? from + span[0] : null, at: edge ?? call ?? from + span[0] + Math.min(Math.max(k, 0), span[1] - span[0] + past), v: version };
     // the clicked paragraph's start: a blank line typed after it (Enter) starts another (tsCaretDraw)
     if (c.view === 'ts') Object.assign(pdfCaret, { p0: PE.paragraph(text, pdfCaret.at)[0], s0: from + span[0] });
@@ -10693,6 +10722,17 @@
     pdfNote(def);
     pdfCaretDraw();
   }
+  /** Line `line` of text `was` of `file` (a build's, a run's) as a line of the open text: moved by the lines the edits
+   * since added or took before it, the change's first line where the edits took it. As is for another file. */
+  function lineNow(was, file, line) {
+    const now = editor.text();
+    if (file !== state.file || typeof was !== 'string' || was === now) return line;
+    const nl = (t, a = 0, b = t.length) => { let n = 0; for (let i = t.indexOf('\n', a); i >= 0 && i < b; i = t.indexOf('\n', i + 1)) n++; return n; };
+    const [p, q] = PE.changed(was, now), first = nl(was, 0, p) + 1, last = nl(was, 0, was.length - q) + 1;
+    return line <= first ? line : line > last ? line + nl(now) - nl(was) : first;
+  }
+  /** Line `line` of the shown run's text of `file` (its rows' and their characters' lines) as a line of the open text. */
+  const rowLine = (file, line) => lineNow(tsText[0] === file ? tsText[1] : null, file, line);
   /** A click at boundary `k` of page word `word` whose letters the run read in a macro's definition (readAt's `got`,
    * with the row's characters): the edges of a call's output are the call's own. The run sets all of a call's output
    * (its body's characters and its arguments') at one site, the call's last character. Where the glyphs on both sides
@@ -10703,10 +10743,12 @@
   function pdfCallEdge(text, got, word, k) {
     const { chars, i0 } = got, b = i0 - Math.max(0, word.search(/[\p{L}\p{N}]/u)) + k, site = chars[i0];
     if (!site || !String(site.path).endsWith(state.file)) return null;
-    const ours = (ch) => !!ch && !!ch.c.trim() && ch.path === site.path && ch.line === site.line && ch.col === site.col;
+    const at = (ch) => !!ch && ch.path === site.path && ch.line === site.line && ch.col === site.col, ours = (ch) => at(ch) && !!ch.c.trim();
+    // the glyph from `i` on in direction `d` past the output's own spaces (`is |not`: the boundary is inside the output)
+    const glyph = (i, d) => { while (at(chars[i]) && !chars[i].c.trim()) i += d; return ours(chars[i]); };
     const L = ours(chars[b - 1]), R = ours(chars[b]);
-    if (L && R) return null;
-    const end = (pdfLineStarts(text)[site.line - 1] ?? -1) + site.col, start = end > 0 ? PE.callStart(text, end) : null;
+    if (L && R || glyph(b - 1, -1) && glyph(b, 1)) return null;
+    const end = (pdfLineStarts(text)[rowLine(state.file, site.line) - 1] ?? -1) + site.col, start = end > 0 ? PE.callStart(text, end) : null;
     if (start == null) return null;
     // a parameterless call's own `{}` (`\\model{}`) belongs to it
     const past = end + (text.startsWith('{}', end) ? 2 : 0);

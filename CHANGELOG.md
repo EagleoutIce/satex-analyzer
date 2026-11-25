@@ -221,6 +221,7 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 
 ### Playground
 
+- `fix` **Clicks and keys in the Typeset view work on every row, at once.** A click on macro text, an undecided arm (`[not]`) or an unknown value (`⟨?⟩`) no longer fails with "can't access property": the caret goes into the definition, the unknown value explains itself and the editor goes to its line. Text typed in the Typeset view can be clicked and deleted before the run lands, and a word selected in the PDF no longer takes keys typed in the Typeset view. A click while a run is under way places the caret at once from the last run's rows and the last build, their lines moved by the edits since, instead of waiting for the analysis.
 - `fix` **Fix and ignore buttons are short pills.** A finding's buttons use a smaller font and fit several to a line; "Ignore here" and "Ignore rule" name the rule only in their tooltip, and `already-defined` offers one action, `\renewcommand`, with the other way out in its message.
 - `feat-fix` **Insert ▸ TikZ picture writes at once; the package load follows** in the same undo step. A new package goes after the preamble's last `\usepackage`, before its definitions.
 - `fix` **Insert ▸ TikZ picture loads only tikz, and writes at once.** The names of one write are resolved together: `\node` inside the picture runs clean under tikz, so it no longer loaded `pgflibraryplotmarks` after seconds of probes.
