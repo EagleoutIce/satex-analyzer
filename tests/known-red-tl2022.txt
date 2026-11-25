@@ -1,0 +1,3 @@
+# Red with TeX Live 2022 only (scripts/ci-test.sh adds this list when `tex --version` says 2022); green with TL2025.
+# owner incremental (2026-11-25, precision: step count only, accepted by the user): the resumed beamer build counts ~3k steps more than a fresh one (32,065,825 vs 32,068,804); findings are equal.
+incremental::a_resumed_beamer_build_after_an_overlay_edit_says_what_a_fresh_build_says

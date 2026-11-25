@@ -1,3 +1,7 @@
 # Red with TeX Live 2019 only (scripts/ci-test.sh adds this list when `tex --version` says 2019); green with TL2022 and TL2025.
 # owner loop (W2, 2026-11-25, precision): TL2019's pgf forks more per bounding-box update, so limits.site_forks (64 per source line) is spent across both slides of a frame and later \pgf@protocolsizes \ifdim s are widened (site-forks-widened x4, recursion-widened x2). No false errors: the run reaches the end. A refund for fresh single-path loop entries (wt-W2/target/scratch/fix.patch) fixes it but turns documents::pgfmath_parses_a_signed_random_count_and_adds red; root open.
 classes::a_rounded_shadow_box_on_a_second_slide_is_sized_as_on_the_first
+# owner incremental (2026-11-25, precision: step count only, accepted by the user): the resumed beamer build counts ~3k steps more than a fresh one (32,065,825 vs 32,068,804 on TL2022 CI); findings are equal.
+incremental::a_resumed_beamer_build_after_an_overlay_edit_says_what_a_fresh_build_says
+# owner loop (2026-11-25, speed, open root): since d8d88b30 (a replayed copy is another call) this run takes 3387 s on TL2019 instead of 100 s; \foreach replays its body as copies, which now count as fresh calls, so the 30 nodes are not summarized. Result still correct. Past CI's 45-min job limit.
+observed::literals_around_skipped_code_have_unknown_balance
