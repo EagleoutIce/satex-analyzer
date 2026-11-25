@@ -1771,43 +1771,13 @@ const ALIGN: &str = "align";
 /// The kind of a [`KEY`] before a ligature: what the font joined, `\u{1}`, the glyph set.
 const LIG: &str = "lig";
 
-/// Each row of [`Analysis::font_states`] as its family, series and shape
-/// among the kernel's defaults (`\sfdefault`, `\ttdefault`, `\bfdefault`,
-/// `\itdefault`, `\sldefault`, `\scdefault`, fntguide § 2.5): `sf`, `tt`,
-/// `bf`, `it`, `sl`, `sc`, space-separated; empty for the defaults or an
-/// unknown font.
+/// [`crate::plugins::typeset::fontat::font_styles`], each with `\u{1}` and its CSS color when it has one.
 pub(crate) fn font_styles(analysis: &Analysis) -> Vec<String> {
-    // A default's text up to the kernel's `\@empty` end marker (`b\@empty`).
-    let axis = |names: &[&'static str]| -> Vec<(&'static str, String)> {
-        let text = |n| Some(crate::linter::shared::macro_text(analysis, n)?.split('\\').next()?.trim().to_string());
-        names.iter().filter_map(|n| Some((&n[..2], text(n)?))).collect()
-    };
-    // `\bfseries` sets the family's own bold series (`\bfseries@rm`, `bx`) when the kernel has one.
-    let (family, series, shape) = (
-        axis(&["sfdefault", "ttdefault"]),
-        axis(&["bfdefault", "bfseries@rm", "bfseries@sf", "bfseries@tt"]),
-        axis(&["itdefault", "sldefault", "scdefault"]),
-    );
-    let pick = |axis: &[(&'static str, String)], value: &str| axis.iter().find(|(_, d)| d == value).map(|(k, _)| *k);
-    // a series is the default's when its weight (the first letter) is: `\fontseries{b}` is as bold as `bx`
-    let weight = |value: &str| series.iter().find(|(_, d)| d.chars().next() == value.chars().next()).map(|(k, _)| *k);
-    analysis
-        .font_states
-        .iter()
-        .map(|s| {
-            let style = [
-                pick(&family, &s.family),
-                pick(&series, &s.series).or_else(|| weight(&s.series)),
-                pick(&shape, &s.shape),
-            ]
-            .into_iter()
-            .flatten()
-            .collect::<Vec<_>>()
-            .join(" ");
-            match css_color(&s.color) {
-                Some(color) => format!("{style}\u{1}{color}"),
-                None => style,
-            }
+    let styles = crate::plugins::typeset::fontat::font_styles(analysis);
+    (styles.into_iter().zip(&analysis.font_states))
+        .map(|(style, s)| match css_color(&s.color) {
+            Some(color) => format!("{style}\u{1}{color}"),
+            None => style,
         })
         .collect()
 }
