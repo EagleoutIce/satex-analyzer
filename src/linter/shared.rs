@@ -598,6 +598,13 @@ pub fn providing_package(analysis: &Analysis, name: &str) -> Option<String> {
     proposed.into_iter().take(tries).find(|p| own_names(analysis, p).contains(name)).or(pick)
 }
 
+/// The installed packages that define `name` and all that `package` defines ([`Exports::wider`]).
+///
+/// [`Exports::wider`]: crate::caches::exports::Exports::wider
+pub fn wider_packages(analysis: &Analysis, package: &str, name: &str) -> Vec<String> {
+    exports(analysis).map_or(Vec::new(), |e| e.wider(package, name))
+}
+
 /// The names `package` defines in its own files and holds at the end of a run that loads it
 /// ([`probe`]).
 fn own_names(analysis: &Analysis, package: &str) -> std::sync::Arc<HashSet<String>> {

@@ -430,10 +430,15 @@ impl<'a> Report<'a> {
     /// [`Report::add_fix`] with the other ways to repair the finding: an
     /// editor offers each (`alternatives`), `--fix` applies the first only.
     pub fn add_fixes(&mut self, span: Span, name: &str, message: String, fixes: Vec<fix::Fix>) {
+        self.add_fixes_as(self.rule.severity, span, name, message, fixes);
+    }
+
+    /// [`Report::add_fixes`] at `severity`.
+    pub fn add_fixes_as(&mut self, severity: Severity, span: Span, name: &str, message: String, fixes: Vec<fix::Fix>) {
         let mut fixes = fixes.into_iter();
-        let Some(first) = fixes.next() else { return self.add(span, name, message, None) };
+        let Some(first) = fixes.next() else { return self.add_as(severity, span, name, message, None) };
         let before = self.out.len();
-        self.add_fix(span, name, message, first);
+        self.add_fix_as(severity, span, name, message, first);
         let editable = |f: &fix::Fix| f.edits.iter().all(|e| self.sources.editable(self.analysis, &e.path));
         let others: Vec<serde_json::Value> = fixes
             .filter(|f| !f.edits.is_empty() && editable(f))
