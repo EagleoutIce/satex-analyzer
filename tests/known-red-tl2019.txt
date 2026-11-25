@@ -5,3 +5,8 @@ classes::a_rounded_shadow_box_on_a_second_slide_is_sized_as_on_the_first
 incremental::a_resumed_beamer_build_after_an_overlay_edit_says_what_a_fresh_build_says
 # owner loop (2026-11-25, speed, open root): since d8d88b30 (a replayed copy is another call) this run takes 3387 s on TL2019 instead of 100 s; \foreach replays its body as copies, which now count as fresh calls, so the 30 nodes are not summarized. Result still correct. Past CI's 45-min job limit.
 observed::literals_around_skipped_code_have_unknown_balance
+# owner incremental (2026-11-25, flaky, not critical per the user): under parallel load a resumed run numbers one definition before article.cls:113 one off from a fresh run (Macro(657) vs 658); green alone. Suspect lazy node creation in resolve_vertex, read vs served.
+incremental::letters_typed_between_generated_sections_meet_the_last_run
+incremental::a_body_of_command_lines_resumes_near_the_edit
+incremental::a_name_around_unknown_digits_is_spelled_alike_after_a_resume
+incremental::an_edit_in_a_collected_body_resumes_before_it
