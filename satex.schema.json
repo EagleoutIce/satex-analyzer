@@ -161,6 +161,16 @@
           ],
           "x-example": "`backend: bibtex`\n`\\usepackage{biblatex}` then runs bibtex in the build, not biber",
           "x-plugin": "bib"
+        },
+        "early": {
+          "default": true,
+          "description": "a build run makes the .bbl itself when it first looks for it, from what it cited so far: a bibliography after its citations settles a run sooner. Off, the bibliography tool runs between two runs only",
+          "type": "boolean",
+          "x-affects": [
+            "speed"
+          ],
+          "x-example": "off: `\\cite{k}` before `\\bibliography{refs}` finds its label in run 3, not run 2",
+          "x-plugin": "bib"
         }
       },
       "type": "object"
@@ -306,6 +316,10 @@
           "type": "object"
         },
         "rebuild": {
+          "default": false,
+          "type": "boolean"
+        },
+        "reruns": {
           "default": false,
           "type": "boolean"
         },
@@ -2897,6 +2911,18 @@
           "x-example": "`1`: `\\ref` and `\\tableofcontents` read nothing from an earlier run",
           "x-plugin": "build"
         },
+        "build_widen_after": {
+          "default": 2,
+          "description": "the build run after which a file whose lines a run changed again is read as the join of both texts. 1 widens what the second run changed: one run fewer, page numbers that moved are unknown digits",
+          "minimum": 0,
+          "type": "integer",
+          "x-affects": [
+            "precision",
+            "speed"
+          ],
+          "x-example": "`1`: a page number that run 2 moved is read as any digit in run 3, and the build ends there if run 3 writes one it covers",
+          "x-plugin": "build"
+        },
         "cache_size": {
           "default": "2.0 GiB",
           "description": "most disk the caches may take, the least recently used go first. 0 for no bound",
@@ -2928,15 +2954,20 @@
           ],
           "x-example": "1 ends `\\pgfmathparse{\\the\\wd0}` at its first undecided digit"
         },
-        "call_memo_entries": {
-          "default": 100000,
-          "description": "kept effects in all, past it none are added. Also how many calls met once are remembered",
-          "minimum": 0,
-          "type": "integer",
+        "call_memo_bytes": {
+          "default": "256.0 MiB",
+          "description": "what the kept effects may hold in all. Past it they are dropped and kept anew",
+          "type": "string",
           "x-affects": [
             "speed"
           ],
           "x-example": "bounds the memory a long tikz document spends on them"
+        },
+        "call_memo_entries": {
+          "default": 100000,
+          "description": "how many calls met once are remembered",
+          "minimum": 0,
+          "type": "integer"
         },
         "call_memo_longest": {
           "default": 200000,
@@ -3286,19 +3317,7 @@
           "default": 60,
           "description": "how long a run waits for another one building the same cache before it builds it itself",
           "minimum": 0,
-          "type": "integer",
-          "x-affects": [
-            "speed"
-          ]
-        },
-        "probe_seconds": {
-          "default": 20,
-          "description": "most seconds one probe document may take (a package tried for a command the run lacks), a backstop past provider_steps. One it stops counts as untried and is tried again later. 0 = no limit",
-          "minimum": 0,
-          "type": "integer",
-          "x-affects": [
-            "speed"
-          ]
+          "type": "integer"
         },
         "loop_entries": {
           "default": 256,
@@ -3429,6 +3448,15 @@
             "speed"
           ],
           "x-example": "`probe_contexts: 0` leaves `\\caption` without a completion shape"
+        },
+        "probe_seconds": {
+          "default": 20,
+          "description": "most seconds one probe document may take (a package tried for a command the run lacks), a backstop past provider_steps. One it stops counts as untried and is tried again later. 0 = no limit",
+          "minimum": 0,
+          "type": "integer",
+          "x-affects": [
+            "speed"
+          ]
         },
         "probe_steps": {
           "default": 2000000,
@@ -5312,6 +5340,10 @@
         "typeset": {
           "properties": {
             "commands": {
+              "default": true,
+              "type": "boolean"
+            },
+            "fonts": {
               "default": true,
               "type": "boolean"
             },

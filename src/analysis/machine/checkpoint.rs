@@ -419,7 +419,8 @@ impl Machine<'_> {
         let Some(old) = old.pop() else { return };
         let (reads, old) = (old.reads, old.machine);
         let clock = std::time::Instant::now();
-        let differs = self.differs_from(&old, false);
+        let all = self.differences(&old, false);
+        let differs = all.first().copied();
         let compared = clock.elapsed();
         let differs = differs.or_else(|| self.splice(&old, reads).err());
         if matches!(differs, Some("page so far" | "mode or pages" | "path state")) {
@@ -427,8 +428,10 @@ impl Machine<'_> {
         }
         if self.cfg.verbose >= 2 {
             crate::util::progress::note!(
-                "satex: state at {path}:{line} vs the last run's: {} ({:.3}s, of it comparing {:.3}s)",
+                "satex: state at {path}:{line} vs the last run's: {}{} at its step {} of {total} ({:.3}s, of it comparing {:.3}s)",
                 differs.unwrap_or("alike"),
+                all.get(1..).unwrap_or_default().iter().map(|d| format!(", {d}")).collect::<String>(),
+                old.out.steps,
                 clock.elapsed().as_secs_f64(),
                 compared.as_secs_f64()
             );
@@ -572,6 +575,11 @@ impl Machine<'_> {
     /// The first part of the state that differs from `old`'s, a necessary
     /// condition for both runs to go on alike. Facts are compared by count.
     pub(super) fn differs_from(&self, old: &Machine, lax: bool) -> Option<&'static str> {
+        self.differences(old, lax).first().copied()
+    }
+
+    /// Every part of the state that differs from `old`'s ([`Machine::differs_from`]).
+    fn differences(&self, old: &Machine, lax: bool) -> Vec<&'static str> {
         let since = self.checkpoints.on.as_ref().map_or((0, 0, 0), |t| t.since);
         let (f, g) = (&self.out.facts, &old.out.facts);
         let counts = |f: &crate::analysis::facts::Facts| {
@@ -591,7 +599,8 @@ impl Machine<'_> {
             (counts(f) != counts(g), "facts"),
         ]
         .into_iter()
-        .find_map(|(differs, what)| differs.then_some(what))
+        .filter_map(|(differs, what)| differs.then_some(what))
+        .collect()
     }
 
     /// Whether the run stands between paragraphs on a line past the edit (the line), or
@@ -1019,7 +1028,9 @@ impl<'a> Checkpoints<'a> {
         // name is only ever asked for its meaning (tex.web § 259 `id_lookup`: one never seen
         // and one undefined are the same to TeX), so more names change nothing.
         // After an edit only: a rerun of the same text meets nothing, and numbers as a run from the start does.
-        if let Some(end) = self.end.as_ref().filter(|_| self.resumed.is_some() && change.is_some()) {
+        // `cache.reruns`: a build's rerun is numbered like the run before too, to be compared with it.
+        let like_last = change.is_some() || self.cfg.cache.reruns && !self.meet;
+        if let Some(end) = self.end.as_ref().filter(|_| self.resumed.is_some() && like_last) {
             match m.kp.grown(&end.kp, self.cfg.limits.list_items) {
                 Some(lists) => m.kp = lists,
                 // This run numbers its lists apart from the last run's: it cannot take that
@@ -1044,7 +1055,7 @@ impl<'a> Checkpoints<'a> {
             self.preview(&mut m, id, source, path, *line, then);
         }
         // Not met, the last run's states go before this run, not after it.
-        if !self.meet {
+        if !self.meet && !self.cfg.cache.reruns {
             old.clear();
         }
         let next = m.out.steps + self.every;

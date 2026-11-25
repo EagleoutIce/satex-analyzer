@@ -76,6 +76,8 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 
 ### Analysis
 
+- `perf` **A bibliography after its citations settles a run sooner.** Where `\bibliography` stands after every `\cite`, the first build run makes the `.bbl` itself when it looks for it and reads the entries: citation labels are known in run 2 instead of run 3 (`bib.early`, on). The build still compares it with the file made from the whole run, so a later citation sends it round again.
+- `feat` **`limits.build_widen_after` names the build run after which changing lines are widened** (2, as before). `1` widens what the second run changed: one run fewer, with page numbers that moved read as unknown digits.
 - `fix` **A beamer slide repeats a picture as exactly as the first slide.** Beamer typesets each slide from a copy of the frame's text. A conditional met again in that copy was taken for another pass of the same loop, summarized after three, and a picture's size became unknown on the second slide (false errors in rounded shadow boxes). A copy met at another place is now another call.
 - `fix` **A run served from the package cache reports what a run that reads the packages reports.** Kept call effects were keyed by where a definition sat in memory, which a `\let` copy shares only in a run that reads the package. They are now keyed by the definition's text and shape, so cold and warm runs replay the same calls.
 - `fix` **A run that ran out of Rust stack is not cached.** Where an expansion nests too deep, satex widens it; how deep it gets depends on the thread. Such a kernel, package segment or document result is no longer stored, so a later run never reads the widened state as if it were complete.

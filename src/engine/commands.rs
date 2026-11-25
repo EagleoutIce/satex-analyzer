@@ -2880,6 +2880,7 @@ impl Machine<'_> {
 
     pub(crate) fn locate_input(&mut self, name: &str) -> Option<std::path::PathBuf> {
         let base = self.base().to_path_buf();
+        self.early_tool_file(name);
         self.resolver_mut().resolve(name, crate::engine::builtins::LoadKind::Input, &base)
     }
 

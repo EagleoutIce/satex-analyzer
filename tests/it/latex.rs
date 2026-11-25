@@ -4168,6 +4168,15 @@ fn the_build_reruns_only_for_what_it_read() {
         "\\def\\N{0}\\openin2=\\jobname.lof \\ifeof2 \\else\\closein2 \\input\\jobname.lof \\fi\\immediate\\openout1=\\jobname.lof \\immediate\\write1{\\string\\gdef\\string\\N{\\number\\numexpr\\N+1\\relax}}\\edef\\X{\\N}\n",
     );
     assert_eq!(counting.build_runs, 4);
+    // `limits.build_widen_after` names that run. Widened a run earlier, the third run reads the
+    // join of what the first two wrote and writes a number it covers: one run fewer, and `\N`
+    // is no longer one exact number.
+    let source = std::fs::read_to_string(dir.join("count.tex")).unwrap();
+    let mut early = crate::support::config();
+    early.limits.build_widen_after = 1;
+    let sooner = Machine::analyze(&source, Some(&dir.join("count.tex")), &early);
+    assert_eq!(sooner.build_runs, counting.build_runs - 1);
+    assert!(crate::support::body(&sooner, "X").parse::<u32>().is_err(), "{}", crate::support::body(&sooner, "X"));
     // A line only the first run wrote shifts the rest: the join aligns on
     // what each line sets, so the line between the moving ones stays exact.
     let shifted = run(
@@ -4231,6 +4240,54 @@ fn the_build_makes_a_bbl_from_the_cited_entries() {
     std::fs::write(&path, source).unwrap();
     let analysis = Machine::analyze(source, Some(&path), &crate::support::config());
     assert!(defined(&analysis, "Found") && undefined(&analysis, "Missing"), "{:?}", analysis.build_runs);
+    std::fs::remove_dir_all(dir).ok();
+}
+
+/// BibTeX's input is complete where `\bibliography` stands after every citation, so the run
+/// that writes the citations makes the `.bbl` itself when it looks for it and reads their
+/// entries: the labels settle a run sooner. The build still makes the file from the whole
+/// run at its end and compares, so a citation after the bibliography, whose entry the early
+/// file lacks, sends the build round again and is found all the same.
+#[test]
+fn a_bibliography_after_its_citations_is_read_in_the_first_run() {
+    if !installed() {
+        return;
+    }
+    let dir = crate::support::tmp_root().join(format!("satex-early-bbl-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        dir.join("refs.bib"),
+        "@book{k1, author={Doe, Jane}, title={One}, year=2001}\n@book{k2, author={Poe, Edgar}, title={Two}, year=1999}\n",
+    )
+    .unwrap();
+    let probe = "\\makeatletter\\@ifundefined{b@k1}{}{\\gdef\\One{}}\\@ifundefined{b@k2}{}{\\gdef\\Two{}}\\makeatother";
+    let run = |name: &str, body: &str| {
+        let source = format!(
+            "\\documentclass{{article}}\\begin{{document}}\\bibliographystyle{{plain}}{body}{probe}\\end{{document}}\n"
+        );
+        let path = dir.join(name);
+        std::fs::write(&path, &source).unwrap();
+        Machine::analyze(&source, Some(&path), &crate::support::config())
+    };
+    // Run 1 reads the entry and writes its label, run 2 reads the label.
+    let after = run("after.tex", "\\cite{k1}\\bibliography{refs}");
+    assert!(defined(&after, "One") && undefined(&after, "Two"));
+    assert_eq!(after.build_runs, 2);
+    // `bib.early` off: the tool runs between two runs only, as in a LaTeX build.
+    let mut late = crate::support::config();
+    late.bib.early = false;
+    let source = std::fs::read_to_string(dir.join("after.tex")).unwrap();
+    let off = Machine::analyze(&source, Some(&dir.join("after.tex")), &late);
+    assert!(defined(&off, "One") && undefined(&off, "Two"));
+    assert_eq!(off.build_runs, after.build_runs + 1);
+    // No citation yet: nothing to make, the bibliography tool runs after the first run.
+    let before = run("before.tex", "\\bibliography{refs}\\cite{k1}");
+    assert!(defined(&before, "One") && undefined(&before, "Two"));
+    assert_eq!(before.build_runs, after.build_runs + 1);
+    // The early file lacks `k2`: the file of the whole run differs, and the build goes on.
+    let both = run("both.tex", "\\cite{k1}\\bibliography{refs}\\cite{k2}");
+    assert!(defined(&both, "One") && defined(&both, "Two"));
+    assert_eq!(both.build_runs, after.build_runs + 1);
     std::fs::remove_dir_all(dir).ok();
 }
 

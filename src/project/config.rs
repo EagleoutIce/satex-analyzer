@@ -126,6 +126,9 @@ pub struct Limits {
     /// reach the files' fixpoint; past them what still changes is unknown.
     /// 1 runs once, with no file of an earlier run.
     pub build_runs: u16,
+    /// The build run after which a file whose lines a run changed again is read as the join of
+    /// both texts. 1 widens what the second run changed: a run fewer, less exact.
+    pub build_widen_after: u16,
     /// How deep a macro that calls itself while an `\if` is undecided is
     /// followed before the recursion is assumed to end there.
     pub recursion_depth: u16,
@@ -440,6 +443,7 @@ impl Default for Limits {
             widen_after: 3,
             loop_entries: 256,
             build_runs: 5,
+            build_widen_after: 2,
             recursion_depth: 100,
             loop_heads: 512,
             call_summary_after: 2,
@@ -2198,6 +2202,9 @@ pub struct Cache {
     /// Keep each document's whole analysis: a rerun of a document whose
     /// text, settings and every file it read are unchanged executes nothing.
     pub document: bool,
+    /// Experimental: a build's rerun keeps the saved states of the run before and compares its
+    /// own with them between paragraphs. `-vv` says how they differ. Nothing is reused yet.
+    pub reruns: bool,
     /// Whether satex prepares the kernels and installed packages in a
     /// low-priority background process (`satex cache build --background`).
     /// `ask` asks once, at the first interactive start or in the editor, and
@@ -2226,6 +2233,7 @@ impl Default for Cache {
             index: CacheIndex::default(),
             tail: 256,
             document: true,
+            reruns: false,
             background: Background::Ask,
         }
     }

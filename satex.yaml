@@ -740,6 +740,10 @@ bib:  # the bibliography as the build makes it
     #! example: `backend: bibtex`
     #! example: `\usepackage{biblatex}` then runs bibtex in the build, not biber
     #! plugin: bib
+  early: true  # a build run makes the .bbl itself when it first looks for it, from what it cited so far: a bibliography after its citations settles a run sooner. Off, the bibliography tool runs between two runs only
+    #! affects: speed
+    #! example: off: `\cite{k}` before `\bibliography{refs}` finds its label in run 3, not run 2
+    #! plugin: bib
 
 lua:  # \directlua code, run by satex's own Lua 5.3 with no io, os or debug library
   run: true  # run the code. Off, every \directlua result is unknown
@@ -1319,6 +1323,10 @@ limits:  # what bounds the analysis: reaching one stops that part of the run, so
   build_runs: 5  # how many LaTeX runs satex simulates to settle .aux, .toc and the rest. 1 runs once with no earlier files
     #! affects: precision, speed
     #! example: `1`: `\ref` and `\tableofcontents` read nothing from an earlier run
+    #! plugin: build
+  build_widen_after: 2  # the build run after which a file whose lines a run changed again is read as the join of both texts. 1 widens what the second run changed: one run fewer, page numbers that moved are unknown digits
+    #! affects: precision, speed
+    #! example: `1`: a page number that run 2 moved is read as any digit in run 3, and the build ends there if run 3 writes one it covers
     #! plugin: build
   recursion_depth: 100  # how deep an undecided recursion is followed before it is assumed to end
     #! affects: precision, speed

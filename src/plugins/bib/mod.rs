@@ -21,10 +21,20 @@ named_enum! {
 }
 
 /// `bib:` in `satex.yaml`.
-#[derive(Clone, Debug, Default, serde::Deserialize, serde::Serialize)]
+#[derive(Clone, Debug, serde::Deserialize, serde::Serialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct BibConfig {
     pub backend: Backend,
+    /// Whether a build run makes the `.bbl` itself when it first looks for it, from what it
+    /// cited so far ([`crate::analysis::machine::Machine`]'s `early_tool_file`). Off, the
+    /// bibliography tool runs between two runs only, as in a LaTeX build.
+    pub early: bool,
+}
+
+impl Default for BibConfig {
+    fn default() -> BibConfig {
+        BibConfig { backend: Backend::default(), early: true }
+    }
 }
 
 /// One entry of a `.bib` file: its key, the line its `@type{` opens on,

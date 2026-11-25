@@ -5323,6 +5323,7 @@ impl Machine<'_> {
         self.read_equals();
         let name = self.read_file_name();
         let base = self.base().to_path_buf();
+        self.early_tool_file(&name);
         // A file this run wrote is read as written (tex.web § 537), as `\input` does.
         let path = match self.written_text(&name).flatten() {
             Some(_) => Some(base.join(name.trim())),

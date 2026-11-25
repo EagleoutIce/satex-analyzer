@@ -230,6 +230,12 @@ thread_local! {
     pub static BUILD_CUT: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
 }
 
+thread_local! {
+    /// Whether a build runs on this thread: its runs may make a tool's file themselves
+    /// ([`Machine::early_tool_file`]), which the build then checks and clears.
+    static IN_BUILD: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
 /// A build to go on with: its last run's analysis, and where it stood. Without an analysis: the
 /// files a finished build of an earlier text left, which this build starts from.
 pub type Unfinished = (Option<Box<Analysis>>, BuildPending);
@@ -3776,13 +3782,25 @@ impl<'a> Machine<'a> {
             history = earlier.as_ref().map(|e| e.written_runs.clone()).unwrap_or_default();
             complete = earlier.and_then(|e| Report::keep(*e, cfg.verbose >= 2));
         }
+        let was = IN_BUILD.replace(true);
         let mut analysis = loop {
             let before = elapsed(checkpoints, caching);
             crate::util::progress::set_run(run, runs);
             let mut laps = crate::util::progress::Laps::new(cfg.verbose >= 2, "build run");
+            let bbl = Machine::bbl_path(&base, path);
+            let early = bbl.as_ref().filter(|at| !crate::project::overlay::holds(at));
             let mut analysis = checkpoints.analyze(source, path);
             laps.lap("run");
             analysis.build_runs = run;
+            // A `.bbl` the run made itself when it looked for one ([`Machine::early_tool_file`]) is
+            // the build's. One the run then did not read is no file of this run: gone, so the one
+            // made below from the whole run counts as new, as it did before runs made any.
+            if let Some(at) = early.filter(|at| crate::project::overlay::holds(at)) {
+                placed.push(at.clone());
+                if !analysis.files.iter().any(|f| Path::new(&f.path).components().eq(at.components())) {
+                    crate::project::overlay::remove(at);
+                }
+            }
             // The bibliography tool's and makeindex's files, made from what the run wrote. One a
             // tool makes no more is gone, as in a fresh build: a copy an earlier build left stays
             // no input (an entry removed from the `.bib` leaves its `\cite` undefined).
@@ -3894,7 +3912,7 @@ impl<'a> Machine<'a> {
                     // added (`\bibcite`) stay exact. Once widened, a file is only
                     // joined, so its text only grows.
                     let widen = widened.contains(&at)
-                        || run > 2
+                        || run > u32::from(cfg.limits.build_widen_after)
                             && text
                                 .as_ref()
                                 .is_some_and(|t| !line_changes(now.as_deref().unwrap_or_default(), t).is_empty());
@@ -3980,6 +3998,7 @@ impl<'a> Machine<'a> {
             complete = Report::keep(analysis, cfg.verbose >= 2);
             checkpoints.meet = false;
         };
+        IN_BUILD.set(was);
         checkpoints.meet = true;
         crate::util::progress::set_run(1, 1);
         if !analysis.stopped() {
@@ -3998,6 +4017,35 @@ impl<'a> Machine<'a> {
         placed.sort();
         placed.dedup();
         placed.iter().filter_map(|at| Some((at.clone(), crate::project::overlay::text(at)?))).collect()
+    }
+
+    /// Where the build's bibliography tool leaves its `.bbl`.
+    fn bbl_path(base: &Path, path: &Path) -> Option<PathBuf> {
+        Some(base.join(path.file_stem()?).with_extension("bbl"))
+    }
+
+    /// The build's `.bbl`, made when its first run looks for it, from what the run cited so
+    /// far: where `\bibliography` stands after the citations, the bibliography tool's input
+    /// is complete, so the run that writes the citations reads their entries too and the
+    /// build needs a run less. At the run's end the build makes the file from the whole run
+    /// and compares: a citation that came later changes it, and the build goes round again.
+    pub(crate) fn early_tool_file(&mut self, name: &str) {
+        let name = name.trim();
+        if !name.ends_with(".bbl") || !IN_BUILD.get() || !self.cfg.bib.early || self.cfg.load.build_files {
+            return;
+        }
+        let Some(main) = self.out.file_path(self.out.main_file).map(Path::to_path_buf) else { return };
+        let base = Machine::base_of(Some(&main));
+        let Some(at) = Machine::bbl_path(&base, &main) else { return };
+        if at.file_name() != Path::new(name).file_name() || crate::project::overlay::holds(&at) {
+            return;
+        }
+        // What the run wrote so far, related as its end relates it: the same keys, the same file.
+        let mut so_far = self.clone();
+        crate::analysis::observe::relate(&mut so_far);
+        if let Some((at, Some(text))) = Machine::virtual_bbl(&so_far.out, &base, &main) {
+            crate::project::overlay::set(&at, text);
+        }
     }
 
     /// The `.bbl` the build's bibliography tool would make from the
@@ -4029,7 +4077,7 @@ impl<'a> Machine<'a> {
         } else {
             keys.iter().filter_map(|k| known.iter().find(|e| e.key == *k)).collect()
         };
-        let at = base.join(path.file_stem()?).with_extension("bbl");
+        let at = Machine::bbl_path(base, path)?;
         if cited.is_empty() {
             return Some((at, None));
         }
@@ -15957,6 +16005,7 @@ will look undefined",
         };
         let resolved = if status == LoadStatus::NotFound {
             let base = self.base.clone();
+            self.early_tool_file(name);
             let mut found = self.resolver.resolve(&search, kind, &base);
             // The directory is only where the kernel itself looked, so a
             // name that resolves without it names the same file.
