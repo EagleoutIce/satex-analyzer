@@ -516,11 +516,17 @@ button.small { padding: .05rem .6rem; font-size: .78rem; border-radius: 999px; }
 .ctx > .ctx-bar, .ctx > .ctx-bar:hover, .ctx > .ctx-bar:focus { padding: 2px 6px 4px; cursor: default; background: none; }
 .pa-bar { display: flex; align-items: center; gap: 4px; padding: 2px 6px 4px; border-bottom: 1px solid var(--border); margin-bottom: 3px; }
 .ctx .pa-bar .pa-tog, .pa-menu .pa-bar .pa-tog { all: unset; box-sizing: border-box; width: 26px; height: 24px; display: grid; place-items: center; border-radius: 5px; border: 1px solid transparent; cursor: pointer; color: var(--fg); font-weight: 600; font-size: 13px; line-height: 1; }
-.pa-bar .pa-tog:nth-child(2) { font-style: italic; font-family: Georgia, serif; } .pa-bar .pa-tog:nth-child(3) { font-family: ui-monospace, Menlo, monospace; }
+.pa-bar .pa-tog.pa-i, .pa-bar .pa-tog.pa-e { font-style: italic; font-family: Georgia, serif; } .pa-bar .pa-tog.pa-e { font-weight: 400; } .pa-bar .pa-tog.pa-t { font-family: ui-monospace, Menlo, monospace; }
+/* B I E T sit as one group of pills, the dropdowns apart */
+.pa-bar .pa-tog.pa-b, .pa-bar .pa-tog.pa-i, .pa-bar .pa-tog.pa-e, .pa-bar .pa-tog.pa-t { width: 22px; margin-right: -3px; }
+.pa-bar .pa-tog.pa-t { margin-right: 2px; }
 .pa-bar .pa-tog:hover, .pa-bar .pa-tog:focus-visible { background: color-mix(in srgb, var(--accent) 16%, transparent); }
 .pa-bar .pa-tog[aria-pressed=true] { background: color-mix(in srgb, var(--accent) 26%, transparent); border-color: color-mix(in srgb, var(--accent) 55%, transparent); }
 .pa-bar .pa-tog.pa-col .pa-sw { width: 14px; height: 14px; background: repeating-linear-gradient(45deg, var(--border) 0 3px, transparent 3px 6px); }
-.pa-bar select { height: 24px; max-width: 12rem; padding: 0 4px; font: inherit; font-size: 12px; color: var(--fg); background: var(--panel); border: 1px solid var(--border); border-radius: 5px; }
+.ctx .pa-bar .pa-dd, .pa-menu .pa-bar .pa-dd { all: unset; box-sizing: border-box; height: 24px; max-width: 12rem; padding: 0 18px 0 6px; font-size: 12px; color: var(--fg); background: var(--panel); border: 1px solid var(--border); border-radius: 5px; cursor: pointer; line-height: 22px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; position: relative; }
+.pa-bar .pa-dd::after { content: '▾'; position: absolute; right: 5px; top: 50%; transform: translateY(-50%); font-size: 10px; opacity: .7; }
+.pa-bar .pa-dd:hover, .pa-bar .pa-dd:focus-visible { border-color: color-mix(in srgb, var(--accent) 55%, transparent); }
+.pa-sample { flex: none; margin-left: auto; padding-left: 1em; font-size: 15px; line-height: 1; color: var(--fg); }
 /* a menu still looking its rows up, and a go-to list's peek at the focused target beside it */
 .ctx li.ctx-wait { justify-content: flex-start; align-items: center; gap: .5rem; cursor: progress; color: var(--muted); background: none; }
 .ctx-wait::before { content: ""; position: absolute; left: 7px; flex: none; width: .8rem; height: .8rem; border: 2px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: ctx-spin .8s linear infinite; } @keyframes ctx-spin { to { rotate: 1turn; } }
@@ -2647,6 +2653,13 @@ pre.out-block:hover .out-meta { opacity: .85; }
 .tikz-input { position: fixed; z-index: 1000; width: 240px; padding: 6px; display: grid; gap: 3px; background: var(--bg, #fff); border: 1px solid #7c3aed; border-radius: 6px; box-shadow: var(--shadow, 0 4px 16px #0004); }
 .tikz-input input { font: inherit; padding: 3px 6px; }
 .tikz-input small { color: var(--muted, #888); font-size: 11px; }
+.tikz-input:has(.pa-suggest:not([hidden])) { width: 320px; }
+.pa-suggest { max-height: 260px; overflow-y: auto; display: grid; }
+.pa-suggest button { all: unset; display: flex; align-items: center; gap: 6px; padding: 3px 6px; border-radius: 4px; cursor: pointer; font-size: 12px; }
+.pa-suggest button > span { white-space: nowrap; }
+.pa-suggest button small { margin-left: auto; color: var(--muted, #888); font-size: 11px; }
+.pa-suggest button .pa-img { width: 64px; height: 18px; }
+.pa-suggest button:hover, .pa-suggest button.on { background: color-mix(in srgb, var(--accent) 16%, transparent); }
 .pdf .pdf-tikz-on { opacity: .35; }
 .pdf .pdf-tikz-grip { position: absolute; left: -9px; top: -9px; width: 14px; height: 14px; border-radius: 50%; pointer-events: auto; cursor: move; touch-action: none; background: #7c3aed; box-shadow: 0 0 0 2px var(--bg, #fff); }
 .pdf svg.pdf-tikz-path { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 3; overflow: visible; }

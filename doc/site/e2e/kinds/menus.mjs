@@ -34,7 +34,7 @@ async function editorMenu(p, fails, ms, word = null) {
   (p.menuLog ??= []).push({ running, ms: Date.now() - t0, status: await p.eval(`self.satexHealth().status.slice(0, 50)`) });
   if (!shown) { fails.push(`no editor menu within ${ms} ms of the right click (a run going on: ${running})`); return null; }
   await sleep(250);
-  return p.eval(`(() => { ${pick} const m = document.getElementById('play-ctx'); return { bar: [...m.querySelectorAll('.pa-bar .pa-tog:not(.pa-col)')].map((b) => b.textContent + (b.getAttribute('aria-pressed') === 'true' ? '+' : '-')).join('') + [...m.querySelectorAll('.pa-bar select')].map((s) => ' ' + s.value).join(''), picked: (() => { const v = ${view}, r = v.state.selection.main; return v.state.sliceDoc(r.from, r.to); })(), head: pk(m.querySelector(':scope > .ctx-head')), row: pk(m.querySelector(':scope > li[role=menuitem]:not(.ctx-sub):not(.ctx-wait)')), sub: pk(m.querySelector(':scope > li.ctx-sub')), hint: pk(m.querySelector(':scope > li > .muted')) }; })()`);
+  return p.eval(`(() => { ${pick} const m = document.getElementById('play-ctx'); return { bar: [...m.querySelectorAll('.pa-bar .pa-tog:not(.pa-col)')].map((b) => b.textContent + (b.getAttribute('aria-pressed') === 'true' ? '+' : '-')).join('') + [...m.querySelectorAll('.pa-bar .pa-dd')].map((s) => ' ' + s.dataset.value).join(''), picked: (() => { const v = ${view}, r = v.state.selection.main; return v.state.sliceDoc(r.from, r.to); })(), head: pk(m.querySelector(':scope > .ctx-head')), row: pk(m.querySelector(':scope > li[role=menuitem]:not(.ctx-sub):not(.ctx-wait)')), sub: pk(m.querySelector(':scope > li.ctx-sub')), hint: pk(m.querySelector(':scope > li > .muted')) }; })()`);
 }
 /** The pages' menu on page word `w`, selected first by a double click when `select`. */
 async function pageMenu(p, fails, ms, w, select = false) {
@@ -45,13 +45,13 @@ async function pageMenu(p, fails, ms, w, select = false) {
   await right(p, ...c);
   if (!await p.until(`!!document.querySelector('.pa-root')`, ms)) { fails.push(`no page menu within ${ms} ms`); return null; }
   await sleep(250);
-  return p.eval(`(() => { ${pick} const m = document.querySelector('.pa-root'); return { bar: [...m.querySelectorAll('.pa-bar .pa-tog:not(.pa-col)')].map((b) => b.textContent + (b.getAttribute('aria-pressed') === 'true' ? '+' : '-')).join('') + [...m.querySelectorAll('.pa-bar select')].map((s) => ' ' + s.value).join(''), picked: (() => { const v = ${view}, r = v.state.selection.main; return v.state.sliceDoc(r.from, r.to); })(), head: pk(m.querySelector(':scope > b')), row: pk(m.querySelector(':scope > button:not([aria-haspopup]):not(.pa-wait)')), sub: pk(m.querySelector(':scope > button[aria-haspopup]')), hint: pk(m.querySelector(':scope small, :scope .pa-more')) }; })()`);
+  return p.eval(`(() => { ${pick} const m = document.querySelector('.pa-root'); return { bar: [...m.querySelectorAll('.pa-bar .pa-tog:not(.pa-col)')].map((b) => b.textContent + (b.getAttribute('aria-pressed') === 'true' ? '+' : '-')).join('') + [...m.querySelectorAll('.pa-bar .pa-dd')].map((s) => ' ' + s.dataset.value).join(''), picked: (() => { const v = ${view}, r = v.state.selection.main; return v.state.sliceDoc(r.from, r.to); })(), head: pk(m.querySelector(':scope > b')), row: pk(m.querySelector(':scope > button:not([aria-haspopup]):not(.pa-wait)')), sub: pk(m.querySelector(':scope > button[aria-haspopup]')), hint: pk(m.querySelector(':scope small, :scope .pa-more')) }; })()`);
 }
 
 const DOC = '\\documentclass{article}\n\\begin{document}\n\\section{Start}\nPlain words and \\textbf{boldword here} end.\n\\end{document}\n';
 /** The open menu's bar dropdowns and color button, and its Color ▸ submenu's swatches (the row hovered). */
 async function barAndColors(p, rowSel, subSel) {
-  const bar = await p.eval(`(() => { const s = [...document.querySelectorAll('.pa-bar select')].map((x) => [...x.options].map((o) => o.textContent)); return { size: s[0], family: s[1], color: !!document.querySelector('.pa-bar .pa-col') }; })()`);
+  const bar = await p.eval(`(() => { const s = [...document.querySelectorAll('.pa-bar .pa-dd')].map((x) => x.dataset.labels.split('\\n')); return { size: s[0], family: s[1], color: !!document.querySelector('.pa-bar .pa-col') }; })()`);
   const at = await p.eval(`(() => { const r = [...document.querySelectorAll(${JSON.stringify(rowSel)})].find((x) => x.textContent.trim().replace('▸', '') === 'Color')?.getBoundingClientRect(); return r && [r.left + 20, r.top + r.height / 2]; })()`);
   if (at) { await p.s('Input.dispatchMouseEvent', { type: 'mouseMoved', x: at[0], y: at[1] }); await sleep(300); }
   bar.swatches = await p.eval(`document.querySelectorAll(${JSON.stringify(subSel)}).length`);
@@ -87,7 +87,7 @@ export async function menus(p, sc) {
   if (process.env.MENU_SHOTS) await p.shot(`menu-editor-color-${process.env.MENU_SHOTS}.png`);
   if (process.env.MENU_SHOTS) await p.shot(`menu-editor-${process.env.MENU_SHOTS}.png`);
   await p.key('Escape').catch(() => {});
-  if (sel?.bar !== 'B+I-T- normalsize rm') fails.push(`the editor's selection menu: format bar ${JSON.stringify(sel?.bar)}, want B on, normalsize, Roman`);
+  if (sel?.bar !== 'B+I-E-T- normalsize rm') fails.push(`the editor's selection menu: format bar ${JSON.stringify(sel?.bar)}, want B on, normalsize, Roman`);
   const b = await build(p, 300000);
   if (!b.ok) fails.push(`no build: ${b.status.slice(0, 120)}`);
   const pg = await pageMenu(p, fails, 1500, 'Plain');
@@ -97,7 +97,7 @@ export async function menus(p, sc) {
   if (process.env.MENU_SHOTS) await p.shot(`menu-page-color-${process.env.MENU_SHOTS}.png`);
   if (process.env.MENU_SHOTS) await p.shot(`menu-page-${process.env.MENU_SHOTS}.png`);
   await p.key('Escape').catch(() => {});
-  if (ps?.bar !== 'B+I-T- normalsize rm') fails.push(`the page's selection menu: format bar ${JSON.stringify(ps?.bar)}, want B on, normalsize, Roman`);
+  if (ps?.bar !== 'B+I-E-T- normalsize rm') fails.push(`the page's selection menu: format bar ${JSON.stringify(ps?.bar)}, want B on, normalsize, Roman`);
   info.colors = { editor: ec, page: pc };
   // one color picker: the editor's Color ▸ draws the same swatches as the page's
   if (!(ec.swatches > 5) || ec.swatches !== pc.swatches) fails.push(`Color ▸ swatches: editor ${ec.swatches}, page ${pc.swatches}`);

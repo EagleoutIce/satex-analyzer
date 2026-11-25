@@ -150,7 +150,7 @@ test('plugins: one Refactor group per target', () => {
     assert.deepEqual(gs.map((g) => g.title), ['Refactor']);
     assert.deepEqual(gs[0].items.map((i) => i.label), ['Wrap in a figure']);
     const ms = 'a \\[ x = 1 \\] b', mg = PA.groups({ kind: 'source', at: 5, sel: [5, 10] }, { ...ctx, text: ms, all: ms });
-    assert.deepEqual(mg.map((g) => g.title), ['Format', 'Color', 'Refactor'], 'the shared order: Format ▸ before Refactor ▸');
+    assert.deepEqual(mg.map((g) => g.title), ['Format', 'Color', 'Font', 'Refactor'], 'the shared order: Format ▸ before Refactor ▸');
     assert.deepEqual(mg.find((g) => g.title === 'Refactor').items.map((i) => i.label), ['Math', 'Extract to \\newcommand…']);
     assert.ok(PA.plugins.filter((p) => p.category === 'refactor').length === 4, 'wrap, math, extract, format');
   } finally { self.satexStore = was; }
@@ -375,8 +375,14 @@ test('format: a selection wrapped, math-aware, unwrapped', () => {
   const colored = written.pop();
   assert.match(colored, /\\textcolor\{red\}\{world\}/); assert.match(colored, /\\usepackage\{xcolor\}\n/);
   const x = text.indexOf('x+y'), mm = menu(x, x + 3);
-  assert.deepEqual(mm.Format.map((r) => r.hint), ['\\boldsymbol', '\\mathrm', '\\mathsf', '\\mathtt']);
-  assert.ok(!mm.Size && !mm.Font, 'no text sizes or families in math');
+  assert.deepEqual(mm.Format.map((r) => r.hint), ['\\boldsymbol']);
+  assert.ok(!mm.Size, 'no text sizes in math');
+  // in math Font ▸ lists the alphabets, each with the selection set in it; \mathbb and \mathfrak load amssymb
+  assert.deepEqual(mm.Font.map((r) => r.hint), ['\\mathrm', '\\mathit', '\\mathbf', '\\mathsf', '\\mathtt', '\\mathcal', '\\mathbb · amssymb', '\\mathfrak · amssymb']);
+  assert.deepEqual(mm.Font.map((r) => r.sample.text), ['xy', '𝑥𝑦', '𝐱𝐲', '𝗑𝗒', '𝚡𝚢', '𝓍𝓎', '𝕩𝕪', '𝔵𝔶']);
+  mm.Font.find((r) => r.label === 'Blackboard bold').run();
+  const bb = written.pop();
+  assert.match(bb, /\$\\mathbb\{x\+y\}\$/); assert.match(bb, /\\usepackage\{amssymb\}\n/);
   mm.Color.find((r) => r.label === 'red').run();
   assert.match(written.pop(), /\$\{\\color\{red\}x\+y\}\$/, 'a group where the kernel date is unknown');
   const h = text.indexOf('hello'), um = menu(h + 1, h + 3);
@@ -471,4 +477,37 @@ test('fontAt: the color in force from \\textcolor and \\color', () => {
   assert.equal(at('a \\textcolor{red}{x} here', 'here'), undefined);
   assert.equal(at('{\\color{blue!30} a here} b', 'here'), 'blue!30');
   assert.equal(at('{\\color{blue} a} here', 'here'), undefined);
+});
+
+// Intuition: a math alphabet's sample is Unicode's math letters, with the letters Unicode keeps outside the block
+// (ℝ, ℋ, ℎ) in their places: a hole drew a missing glyph box in the font picker.
+test('alphabet: math letters, holes, digits', () => {
+  assert.equal(R.alphabet('mathbb', 'RZ1'), 'ℝℤ𝟙');
+  assert.equal(R.alphabet('mathcal', 'HA'), 'ℋ𝒜');
+  assert.equal(R.alphabet('mathit', 'h2'), 'ℎ2', 'no italic digits');
+  assert.equal(R.alphabet('mathfrak', 'Cg'), 'ℭ𝔤');
+  assert.equal(R.alphabet('nosuch', 'ab'), 'ab');
+});
+
+// Intuition: letters typed in math come back as upright text: the selection or the word at the caret, as \text with
+// amsmath and as the kernel's \mbox without it, never a command's name (user 2026-11-25).
+test('math: letters as text, \\text or \\mbox', () => {
+  const was = self.satexStore;
+  self.satexStore = { get: () => null, set: () => {} };
+  try {
+    const run = (t, at, sel = null) => {
+      const out = [], ctx = { text: t, all: t, x: 0, y: 0, facts: null, write: (e) => out.push(edit(t, e)), toast() {}, pick() {}, colAlign() {} };
+      const row = PA.groups({ kind: 'source', at, sel }, ctx).find((g) => g.title === 'Refactor')?.items.find((i) => i.label === 'Math')?.items.find((i) => /as text$/.test(i.label));
+      row?.run();
+      return row && [row.label, out.pop()];
+    };
+    const plain = 'a $x where y$ b', ams = '\\usepackage{amsmath}\n' + plain;
+    assert.deepEqual(run(plain, plain.indexOf('here')), ['“where” as text', 'a $x \\mbox{where} y$ b']);
+    assert.deepEqual(run(ams, ams.indexOf('where') + 5), ['“where” as text', '\\usepackage{amsmath}\na $x \\text{where} y$ b']);
+    const sel = ams.indexOf('where');
+    assert.equal(run(ams, sel, [sel, sel + 7])[1], '\\usepackage{amsmath}\na $x \\text{where y}$ b');
+    const cs = 'a $\\alpha$ b';
+    assert.equal(run(cs, cs.indexOf('pha')), undefined, 'a command name is no word');
+    assert.equal(run(plain, plain.indexOf('x') + 1), undefined, 'one letter is a variable');
+  } finally { self.satexStore = was; }
 });

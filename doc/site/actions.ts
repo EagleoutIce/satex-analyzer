@@ -6,9 +6,11 @@
 export {};
 declare global {
   /** A menu row: a choice (`run`), a submenu (`items`), radio state `on`, a color `swatch`, a picture `img` (SVG), a rule and caption `head` above it. */
-  type PaItem = { label: string; run?: () => void; items?: PaItem[]; on?: boolean; swatch?: string; hint?: string; img?: string | null; head?: string; title?: string; disabled?: boolean; bar?: PaBar };
+  type PaItem = { label: string; run?: () => void; items?: PaItem[]; on?: boolean; swatch?: string; hint?: string; img?: string | null; sample?: PaSample; head?: string; title?: string; disabled?: boolean; bar?: PaBar };
+  /** Text set in a face the page loaded (`font`, a CSS family list): a font or math alphabet's sample. */
+  type PaSample = { text: string; font: string };
   /** A toolbar row (the selection menu's first): toggles on or off, dropdowns at their current value. */
-  type PaBar = { color?: { css: string | null; title: string; run: () => void }; toggles: { label: string; title: string; on: boolean; run: () => void }[]; selects: { title: string; value: string; options: [string, string][]; pick: (v: string) => void }[] };
+  type PaBar = { color?: { css: string | null; title: string; run: () => void }; toggles: { label: string; title: string; on: boolean; run: () => void }[]; selects: { title: string; value: string; options: [string, string, PaSample?][]; pick: (v: string) => void }[] };
   /** A group of rows: a submenu row by its title, or its rows inline. */
   type PaGroup = { title: string; items: PaItem[]; inline?: boolean };
   type PaEdit = { from: number; to: number; now: string };
@@ -29,6 +31,9 @@ declare global {
     file?: string;
     /** Whether the grid of the picture at offset `at` shows; with `on` it is switched (this session). */
     grid?(at: number, on?: boolean): boolean;
+    /** The fonts the engine can set (the font widget's offers, src/lsp/plugins/font.rs): name, what it writes
+     * (`\\usepackage{…}` on pdfLaTeX, `\\setmainfont{…}` with fontspec), TeX's sample, and `main()` making it the main font. */
+    fonts?(): Promise<{ title: string; detail: string; svg?: string | null; main(): void }[]>;
     /** TeX's pictures by `kind:name` (`arrow:-Stealth`), previews.json. */
     previews?: Record<string, string> | null;
   }
@@ -43,10 +48,12 @@ declare global {
   /** `category`: the Settings → Plugins group it is listed in (`page actions` when none). */
   interface PaPlugin { name: string; title: string; about: string; type: string; category?: string; targets: string[]; groups(t: PaTarget, ctx: PaCtx): PaGroup[] }
   interface Window {
+    /** Loads the samples' face, Latin Modern Math (playground.js pdfLmLoad). */
+    satexLmLoad?: () => void;
     satexPageActions: {
       register(p: PaPlugin): void; plugins: PaPlugin[]; on(name: string, cfg?: Record<string, unknown>): boolean; setOn(name: string, on: boolean): void;
       groups(t: PaTarget, ctx: PaCtx, cfg?: Record<string, unknown>): PaGroup[]; open(x: number, y: number, title: string, groups: PaGroup[]): HTMLElement | null; close(): void;
-      ask(x: number, y: number, value: string, what: string, done: (v: string) => void, always?: boolean): void;
+      ask(x: number, y: number, value: string, what: string, done: (v: string) => void, always?: boolean, suggest?: Promise<PaItem[]>): void;
       bar(b: PaBar, done: () => void): HTMLElement; face(r: PaItem): string;
       libEdit(text: string, all: string, loaded: string[], lib: string): { have: true } | { edit: PaEdit } | { line: string };
       colors(all: string, facts: Rec | null): { doc: [string, string][]; base: [string, string][]; more: [string, string][] };
@@ -128,17 +135,23 @@ declare global {
   function toolbar(b: PaBar, done: () => void): HTMLElement {
     const el = Object.assign(document.createElement('div'), { className: 'pa-bar' });
     el.setAttribute('role', 'toolbar');
-    el.innerHTML = b.toggles.map((t, k) => `<button type="button" class="pa-tog" data-k="${k}" aria-pressed="${t.on}" title="${esc(t.title)}">${esc(t.label)}</button>`).join('') +
+    el.innerHTML = b.toggles.map((t, k) => `<button type="button" class="pa-tog pa-${esc(t.label.toLowerCase())}" data-k="${k}" aria-pressed="${t.on}" title="${esc(t.title)}">${esc(t.label)}</button>`).join('') +
       (b.color ? `<button type="button" class="pa-tog pa-col" title="${esc(b.color.title)}" aria-label="${esc(b.color.title)}"><i class="pa-sw"${b.color.css ? ` style="background:${esc(b.color.css)}"` : ''}></i></button>` : '') +
-      b.selects.map((s, k) => `<select data-s="${k}" title="${esc(s.title)}" aria-label="${esc(s.title)}">${s.options.map(([l, v]) => `<option value="${esc(v)}"${v === s.value ? ' selected' : ''}>${esc(l)}</option>`).join('')}</select>`).join('');
-    el.addEventListener('click', (e) => { const x = (e.target as HTMLElement).closest?.('.pa-tog') as HTMLElement | null; if (!x) return; e.stopPropagation(); done(); if (x.classList.contains('pa-col')) b.color!.run(); else b.toggles[+x.dataset.k!]!.run(); });
-    el.addEventListener('change', (e) => { const x = (e.target as HTMLElement).closest?.('select') as HTMLSelectElement | null; if (!x) return; const v = x.value; done(); b.selects[+x.dataset.s!]!.pick(v); });
-    // the menu's keys stay off a dropdown: its arrows pick
-    el.addEventListener('keydown', (e) => { if ((e.target as HTMLElement).tagName === 'SELECT' && e.key !== 'Escape') e.stopPropagation(); });
+      // a dropdown is a button opening a menu of its choices, each with its sample (a native select shows text only)
+      b.selects.map((s, k) => `<button type="button" class="pa-dd" data-s="${k}" data-value="${esc(s.value)}" data-labels="${esc(s.options.map(([l]) => l).join('\n'))}" title="${esc(s.title)}" aria-label="${esc(s.title)}" aria-haspopup="menu">${esc(s.options.find(([, v]) => v === s.value)?.[0] ?? s.title)}</button>`).join('');
+    el.addEventListener('click', (e) => {
+      const x = (e.target as HTMLElement).closest?.('.pa-tog, .pa-dd') as HTMLElement | null;
+      if (!x) return;
+      e.stopPropagation();
+      const r = x.getBoundingClientRect();
+      done();
+      if (x.classList.contains('pa-dd')) { const s = b.selects[+x.dataset.s!]!; open(r.left, r.bottom + 2, s.title, [{ title: s.title, inline: true, items: s.options.map(([label, v, sample]) => ({ label, sample, on: v === s.value, run: () => s.pick(v) })) }]); }
+      else if (x.classList.contains('pa-col')) b.color!.run(); else b.toggles[+x.dataset.k!]!.run();
+    });
     return el;
   }
   /** A row's face, in the pages' menu and the editor's alike (playground.js showMenu): swatch, picture, label, hint or ▸. */
-  const face = (r: PaItem) => `${r.swatch ? `<i class="pa-sw" style="background:${esc(r.swatch)}"></i>` : ''}${r.img ? `<img class="pa-img" alt="" src="data:image/svg+xml;charset=utf-8,${esc(encodeURIComponent(r.img))}">` : ''}<span>${esc(r.label)}</span>${r.items ? '<span class="pa-more">▸</span>' : r.hint ? `<small>${esc(r.hint)}</small>` : ''}`;
+  const face = (r: PaItem) => `${r.swatch ? `<i class="pa-sw" style="background:${esc(r.swatch)}"></i>` : ''}${r.img ? `<img class="pa-img" alt="" src="data:image/svg+xml;charset=utf-8,${esc(encodeURIComponent(r.img))}">` : ''}<span>${esc(r.label)}</span>${r.sample ? (self.satexLmLoad?.(), `<span class="pa-sample" style="font-family:${esc(r.sample.font)}">${esc(r.sample.text)}</span>`) : ''}${r.items ? '<span class="pa-more">▸</span>' : r.hint ? `<small>${esc(r.hint)}</small>` : ''}`;
   /** Opens the submenu of row `b`, its first row focused when `focus`. */
   function sub(b: HTMLElement, focus: boolean) {
     const m = b.closest('.pa-menu') as any, it: PaItem = m.acts[+b.dataset.i!];
@@ -187,7 +200,6 @@ declare global {
       if (b.getAttribute('aria-haspopup')) sub(b, false);
     };
     const key = (e: KeyboardEvent) => {
-      if ((document.activeElement as HTMLElement | null)?.closest?.('.pa-bar select') && e.key !== 'Escape') return;
       const b = document.activeElement?.closest?.('.pa-menu button') as HTMLElement | null, mm = (b?.closest('.pa-menu') ?? m) as any;
       const bs = [...mm.querySelectorAll(':scope > button')] as HTMLElement[], i = bs.indexOf(b!);
       const go: Record<string, () => void> = {
@@ -207,8 +219,9 @@ declare global {
     (m.querySelector('button') as HTMLElement | null)?.focus();
     return m;
   }
-  /** A one-line input at (x, y): Enter writes `done(value)` (a value unchanged only when `always`), Escape leaves it. */
-  function ask(x: number, y: number, value: string, what: string, done: (v: string) => void, always = false) {
+  /** A one-line input at (x, y): Enter writes `done(value)` (a value unchanged only when `always`), Escape leaves it.
+   * `suggest`: rows listed under it as they come, those matching the typed text; a click or Down and Enter takes one. */
+  function ask(x: number, y: number, value: string, what: string, done: (v: string) => void, always = false, suggest?: Promise<PaItem[]>) {
     hold();
     close();
     const b = Object.assign(document.createElement('div'), { className: 'tikz-input' });
@@ -219,10 +232,24 @@ declare global {
     const input = b.querySelector('input')!;
     input.value = value;
     input.focus(); input.select();
+    let rows: PaItem[] = [], shown: PaItem[] = [], at = -1;
+    const list = Object.assign(document.createElement('div'), { className: 'pa-suggest' });
+    const draw = () => {
+      const q = input.value.trim().toLowerCase();
+      shown = rows.filter((r) => !q || `${r.label} ${r.hint ?? ''}`.toLowerCase().includes(q)).slice(0, 40);
+      at = Math.min(at, shown.length - 1);
+      list.innerHTML = shown.map((r, k) => `<button type="button" data-k="${k}"${k === at ? ' class="on"' : ''}>${face(r)}</button>`).join('');
+      list.hidden = !shown.length;
+    };
+    const take = (r: PaItem) => { close(); r.run?.(); };
+    if (suggest) { b.querySelector('small')!.before(list); list.hidden = true; suggest.then((r) => { rows = r; if (b.isConnected) draw(); }).catch(() => {}); }
+    input.oninput = () => { at = -1; draw(); };
+    list.onclick = (e) => { const r = shown[+((e.target as HTMLElement).closest('button') as HTMLElement | null)?.dataset.k!]; if (r) take(r); };
     input.onkeydown = (k) => {
       k.stopPropagation();
       if (k.key === 'Escape') { k.preventDefault(); close(); }
-      if (k.key === 'Enter') { k.preventDefault(); const t = input.value; close(); if (always || t !== value) done(t); }
+      if ((k.key === 'ArrowDown' || k.key === 'ArrowUp') && shown.length) { k.preventDefault(); at = (at + (k.key === 'ArrowDown' ? 1 : shown.length - 1)) % shown.length; draw(); list.querySelector('.on')?.scrollIntoView({ block: 'nearest' }); }
+      if (k.key === 'Enter') { k.preventDefault(); if (shown[at]) return take(shown[at]!); const t = input.value; close(); if (always || t !== value) done(t); }
     };
     const away = (e: PointerEvent) => { if (!(e.target as HTMLElement).closest?.('.tikz-input')) { b.remove(); removeEventListener('pointerdown', away, true); } };
     addEventListener('pointerdown', away, true);

@@ -37,6 +37,7 @@ declare global {
       formatToggle(text: string, a: number, b: number, cmd: string): { edit: PaEdit; caret: number };
       mathToggle(text: string, a: number, b: number): { edit: PaEdit; caret: number } | null;
       pieces(text: string, a: number, b: number): [number, number][];
+      alphabet(cmd: string, t: string): string;
     };
   }
 }
@@ -421,7 +422,7 @@ declare global {
     const edits: PaEdit[] = [{ from: p, to: text.length - s, now: now.slice(p, now.length - s) }];
     return { edits, caret, open, widget: it.widget ?? null };
   }
-  self.satexRefactor = { fontAt, formatToggle, mathToggle, pieces, inserts, insertSpot, insertPlan, lineHabit, wrapLine, blank, envs, group, wrapTarget, wrap, unwrap, slug, firstWords, mathAt, rows, targets, mathTo, mathEdit, needsAms, pkgEdit, matrixAt, matrixTo, extract, occurrences };
+  self.satexRefactor = { alphabet, fontAt, formatToggle, mathToggle, pieces, inserts, insertSpot, insertPlan, lineHabit, wrapLine, blank, envs, group, wrapTarget, wrap, unwrap, slug, firstWords, mathAt, rows, targets, mathTo, mathEdit, needsAms, pkgEdit, matrixAt, matrixTo, extract, occurrences };
 
   // ---------------------------------------------------------------- the plugins
   const PA = self.satexPageActions, R = self.satexRefactor, TARGETS = ['source', 'block', 'tikz-node', 'tikz-label', 'tikz-edge', 'forest-node', 'table-column'];
@@ -463,10 +464,15 @@ declare global {
       if (t.at == null) return [];
       const m = R.mathAt(ctx.text, t.at, t.end ?? t.at), x = R.matrixAt(ctx.text, t.at, t.end ?? t.at), items: PaItem[] = [];
       if (m) for (const to of R.targets(m)) items.push({ label: `To ${LABELS[to] ?? to}`, run: () => ctx.write([...ams(ctx, to), R.mathEdit(ctx.text, m, to)]) });
-      // text mode in and out (Ctrl/Cmd+M, mathToggle): a selection in math as upright text `\text{…}` (amsmath), the
-      // formula back to text; a text selection into inline math
+      // text mode in and out (Ctrl/Cmd+M, mathToggle): letters in math as upright text (below), the formula back to
+      // text; a text selection into inline math
       const a = t.sel?.[0] ?? t.at, b = t.sel?.[1] ?? t.end ?? t.at, flip = R.mathToggle(ctx.text, m ? m.from + m.open.length : a, m ? m.to - m.close.length : b);
-      if (m && t.sel && a < b) items.push({ label: 'Selection as text', hint: '\\text{…}', run: () => ctx.write([...ams(ctx, 'text'), ...pieces(ctx.text, a, b).map(([x0, y0]) => ({ from: x0, to: y0, now: `\\text{${ctx.text.slice(x0, y0)}}` }))]) });
+      // letters typed in math as upright text: the selection, else the word at the caret (no command's name):
+      // `\\text` where amsmath (or amstext) is loaded, else the kernel's `\\mbox`
+      const word = m && !(t.sel && a < b) ? /[A-Za-z]+$/.exec(ctx.text.slice(m.from, a))?.[0].length ?? 0 : 0, w0 = a - word, w1 = a + (/^[A-Za-z]*/.exec(ctx.text.slice(a))![0].length);
+      const span: [number, number] | null = !m ? null : t.sel && a < b ? [a, b] : ctx.text[w0 - 1] !== '\\' && w1 - w0 > 1 ? [w0, w1] : null;
+      const txt = /\\(?:usepackage|RequirePackage)\s*(?:\[[^\]]*\])?\s*\{[^}]*\b(?:amsmath|amstext|mathtools)\b/.test(blank(ctx.all)) ? 'text' : 'mbox';
+      if (span) items.push({ label: t.sel && a < b ? 'Selection as text' : `“${ctx.text.slice(...span)}” as text`, hint: `\\${txt}{…}`, run: () => ctx.write(pieces(ctx.text, ...span).map(([x0, y0]) => ({ from: x0, to: y0, now: `\\${txt}{${ctx.text.slice(x0, y0)}}` }))) });
       if (m && flip) items.push({ label: 'Back to text', hint: 'Ctrl+M', run: () => ctx.write([flip.edit]) });
       if (!m && t.sel && a < b) items.push({ label: 'To inline math', hint: 'Ctrl+M', run: () => { const r = R.mathToggle(ctx.text, a, b); if (r) ctx.write([r.edit]); } });
       if (x) {
@@ -496,7 +502,7 @@ declare global {
    * Bold in math is `\bm` with bm loaded, `\boldsymbol` with amsmath, else `\mathbf`; Underline needs ulem (`\uline`) or
    * soul (`\ul`). A selection inside or around one of them unwraps it (Remove formatting). */
   const TEXT_FMT: [string, string][] = [['Bold', 'textbf'], ['Italic', 'textit'], ['Emphasis', 'emph'], ['Monospace', 'texttt'], ['Small caps', 'textsc']];
-  const FMT_CMDS = /^(textbf|textit|emph|texttt|textsc|textrm|textsf|uline|ul|underline|mathbf|bm|boldsymbol|mathrm|mathsf|mathtt|textcolor|mathcolor|tiny|scriptsize|footnotesize|small|normalsize|large|Large|LARGE|huge|Huge)$/;
+  const FMT_CMDS = /^(textbf|textit|emph|texttt|textsc|textrm|textsf|uline|ul|underline|mathbf|bm|boldsymbol|mathrm|mathit|mathsf|mathtt|mathcal|mathbb|mathfrak|textcolor|mathcolor|tiny|scriptsize|footnotesize|small|normalsize|large|Large|LARGE|huge|Huge)$/;
   /** The format command whose argument (or `{\size …}` group) is exactly `a`..`b` or holds it: [from, to, inner from, inner to]. */
   function formatAround(text: string, a: number, b: number): [number, number, number, number] | null {
     let best: [number, number, number, number] | null = null;
@@ -575,6 +581,29 @@ declare global {
   const SIZE_NAMES = ['tiny', 'scriptsize', 'footnotesize', 'small', 'normalsize', 'large', 'Large', 'LARGE', 'huge', 'Huge'];
   /** A heading's size and family in the standard classes (KOMA's set headings sans serif), bold in all. */
   const HEAD_SIZE: Record<string, string> = { part: 'Huge', chapter: 'huge', section: 'Large', subsection: 'large', subsubsection: 'normalsize', paragraph: 'normalsize', subparagraph: 'normalsize' };
+  /** Math alphabets by command: the Unicode Mathematical Alphanumeric block's first capital, small letter and digit
+   * (UTS #25; 0 where the alphabet has none), the letters Unicode keeps elsewhere (ℬ, ℂ, ℎ) and the package it needs. */
+  const ALPHABETS: Record<string, { name: string; at: [number, number, number]; holes: string; pkg?: string }> = {
+    mathrm: { name: 'Roman', at: [0x41, 0x61, 0x30], holes: '' }, mathit: { name: 'Italic', at: [0x1D434, 0x1D44E, 0], holes: 'hℎ' },
+    mathbf: { name: 'Bold', at: [0x1D400, 0x1D41A, 0x1D7CE], holes: '' }, mathsf: { name: 'Sans serif', at: [0x1D5A0, 0x1D5BA, 0x1D7E2], holes: '' },
+    mathtt: { name: 'Typewriter', at: [0x1D670, 0x1D68A, 0x1D7F6], holes: '' }, mathcal: { name: 'Calligraphic', at: [0x1D49C, 0x1D4B6, 0], holes: 'BℬEℰFℱHℋIℐLℒMℳRℛeℯgℊoℴ' },
+    mathbb: { name: 'Blackboard bold', at: [0x1D538, 0x1D552, 0x1D7D8], holes: 'CℂHℍNℕPℙQℚRℝZℤ', pkg: 'amssymb' }, mathfrak: { name: 'Fraktur', at: [0x1D504, 0x1D51E, 0], holes: 'CℭHℌIℑRℜZℨ', pkg: 'amssymb' },
+  };
+  /** Text `t` as alphabet `cmd` sets it, in Unicode's math letters (a face such as Latin Modern Math draws them). */
+  function alphabet(cmd: string, t: string): string {
+    const a = ALPHABETS[cmd];
+    if (!a) return t;
+    return [...t].map((c) => {
+      const k = a.holes.indexOf(c);
+      if (k >= 0 && k % 2 === 0) return a.holes[k + 1]!;
+      const [cap, small, digit] = a.at, n = c.charCodeAt(0);
+      if (c >= 'A' && c <= 'Z') return String.fromCodePoint(cap + n - 65);
+      if (c >= 'a' && c <= 'z') return String.fromCodePoint(small + n - 97);
+      return c >= '0' && c <= '9' && digit ? String.fromCodePoint(digit + n - 48) : c;
+    }).join('');
+  }
+  /** The face samples are set in: Latin Modern Math, the playground's math face (its ASCII letters are Latin Modern Roman's). */
+  const SAMPLE_FONT = "satex-lm, 'Latin Modern Math', 'STIX Two Math', 'Cambria Math', serif";
   /** The font in force at offset `at`, read from the source's switches: each group around it (`\textbf{…}`, `{\small …}`,
    * a heading's argument, an environment) with its command, then the declarations before `at` inside it, outermost first.
    * A sound reading of what the text says, not of what macros do: a user macro's own switches stay unknown (off). */
@@ -623,7 +652,7 @@ declare global {
   const FACES: [RegExp, string, string][] = [[/\b(?:mathptmx|newtxtext|times|tgtermes)\b/, 'rm', 'Times'], [/\b(?:mathpazo|palatino|newpxtext|tgpagella)\b/, 'rm', 'Palatino'],
     [/\blibertine\b/, 'rm', 'Linux Libertine'], [/\blibertine\b/, 'sf', 'Linux Biolinum'], [/\b(?:charter|XCharter)\b/, 'rm', 'Charter'], [/\bfourier\b/, 'rm', 'Utopia'],
     [/\b(?:helvet|tgheros)\b/, 'sf', 'Helvetica'], [/\binconsolata\b/, 'tt', 'Inconsolata'], [/\bberamono\b/, 'tt', 'Bera Mono']];
-  function formatBar(ctx: PaCtx, a: number, b: number, wrap: (pre: string, post?: string) => () => void, customSize: () => void, colorPick: (c: string | null) => void): PaItem {
+  function formatBar(ctx: PaCtx, a: number, b: number, wrap: (pre: string, post?: string, pkg?: string | null) => () => void, customSize: () => void, colorPick: (c: string | null) => void): PaItem {
     // the style of the selection's first letter: a selection from the page may start at the command around it (`\\textbf{word`)
     const lead = /^(?:\s|\\[A-Za-z]+\*?\s*(?:\[[^\]]*\])?\{|\{)*/.exec(ctx.text.slice(a, b))![0].length, f = fontAt(ctx.text, a + lead);
     const toggle = (cmd: string, off: string, on: boolean) => () => {
@@ -632,18 +661,30 @@ declare global {
       if (on && around && name === cmd && !ctx.text.slice(around[2], a + lead).trim() && !ctx.text.slice(b, around[3]).trim()) ctx.write([{ from: around[0], to: around[1], now: ctx.text.slice(around[2], around[3]) }]);
       else wrap(`\\${on ? off : cmd}{`)();
     };
+    // emphasis is on where the selection is a call's whole argument of \\emph (its italic is relative: no style to read)
+    const ar = formatAround(ctx.text, a + lead, b), emph = !!ar && /^\\emph\b/.test(ctx.text.slice(ar[0]));
     const fam: [string, string][] = [['Roman', 'rm'], ['Sans serif', 'sf'], ['Typewriter', 'tt']];
     const pre = blank(ctx.all), base = /\\documentclass\s*\[[^\]]*\b(1[012])pt\b/.exec(pre)?.[1] ?? '10', pt = SIZE_PT[base]!;
     const pkgs = [...pre.matchAll(/\\usepackage\s*(?:\[[^\]]*\])?\s*\{([^}]*)\}/g)].map((m) => m[1]).join(','), lm = /\blmodern\b/.test(pkgs);
     const face = (v: string) => FACES.find(([re, k]) => k === v && re.test(pkgs))?.[2] ?? `${lm ? 'Latin Modern' : 'Computer Modern'}${v === 'sf' ? ' Sans' : v === 'tt' ? ' Typewriter' : ''}`;
+    // each family's sample in Latin Modern (Computer Modern's outlines): its sans and typewriter as Latin Modern Math's
+    // alphabets; a font package's face has no sample here
+    const own = blank(ctx.text.slice(a, b)).replace(/\\[A-Za-z@]+\*?|[{}\\]/g, '').replace(/\s+/g, ' ').trim().slice(0, 14) || 'Aa Bb 123';
+    const sample = (v: string): PaSample | undefined => FACES.some(([re, k]) => k === v && re.test(pkgs)) ? undefined : { text: alphabet({ sf: 'mathsf', tt: 'mathtt' }[v] ?? 'mathrm', own), font: SAMPLE_FONT };
     const known = PA.colors(ctx.all, ctx.facts), colorCss = (n: string) => [...known.doc, ...known.base, ...known.more].find(([k]) => k === n)?.[1] ?? null;
     return { label: 'Format bar', bar: {
       toggles: [{ label: 'B', title: f.bold ? 'Bold is on: \\textmd' : 'Bold: \\textbf', on: f.bold, run: toggle('textbf', 'textmd', f.bold) },
         { label: 'I', title: f.italic ? 'Italic is on: \\textup' : 'Italic: \\textit', on: f.italic, run: toggle('textit', 'textup', f.italic) },
+        { label: 'E', title: emph ? 'Emphasis is on: unwrap \\emph' : 'Emphasis: \\emph', on: emph, run: toggle('emph', 'emph', emph) },
         { label: 'T', title: f.family === 'tt' ? 'Typewriter is on: \\textrm' : 'Typewriter: \\texttt', on: f.family === 'tt', run: toggle('texttt', 'textrm', f.family === 'tt') }],
       selects: [{ title: 'Size', value: f.size, options: [...SIZE_NAMES.map((z, k): [string, string] => [`${z} · ${pt[k]} pt`, z]), ['Custom…', '']], pick: (z: string) => { if (!z) customSize(); else if (z !== f.size) wrap(`{\\${z} `)(); } },
-        { title: 'Family', value: f.family, options: [...fam.map(([l, v]): [string, string] => [`${l} · ${face(v)}`, v]), ['Custom…', '']], pick: (v: string) => {
-          if (!v) PA.ask(ctx.x, ctx.y, '', 'a font family (NFSS name: ppl, phv, lmss)', (n) => { if (n.trim()) wrap(`{\\fontfamily{${n.trim()}}\\selectfont `)(); });
+        { title: 'Family', value: f.family, options: [...fam.map(([l, v]): [string, string, PaSample?] => [`${l} · ${face(v)}`, v, sample(v)]), ['Custom…', '']], pick: (v: string) => {
+          // the fonts this engine can set as suggestions: with fontspec a font by name for the selection; on pdfLaTeX a
+          // font is a package, which sets the main font (its NFSS family is the package's own), so it says so
+          const offers = (ctx.fonts?.() ?? Promise.resolve([])).then((fs) => fs.map((o): PaItem => /^\\setmainfont/.test(o.detail)
+            ? { label: o.title, hint: '\\fontspec', img: o.svg, run: wrap(`{\\fontspec{${o.title}}`, '}', /\bfontspec\b/.test(pkgs) ? null : 'fontspec') }
+            : { label: o.title, hint: `main font · ${o.detail}`, img: o.svg, run: o.main }));
+          if (!v) PA.ask(ctx.x, ctx.y, '', 'a font family (NFSS name: ppl, phv, lmss)', (n) => { if (n.trim()) wrap(`{\\fontfamily{${n.trim()}}\\selectfont `)(); }, false, offers);
           else if (v !== f.family) wrap(`\\text${v}{`)();
         } }],
       color: { css: f.color ? colorCss(f.color) : null, title: f.color ? `Color ${f.color}: pick another` : 'Color: pick one', run: () => PA.open(ctx.x, ctx.y, 'Color', [{ title: 'Color', inline: true, items: PA.colorRows(ctx, f.color ?? null, colorPick) }]) },
@@ -662,7 +703,7 @@ declare global {
       ctx.write([...'edit' in load ? [load.edit] : [], ...parts]);
     };
     const fmt: PaItem[] = math
-      ? [{ label: 'Bold', hint: has('bm') ? '\\bm' : has('(?:amsmath|amsbsy|mathtools)') ? '\\boldsymbol' : '\\mathbf' }, { label: 'Roman', hint: '\\mathrm' }, { label: 'Sans serif', hint: '\\mathsf' }, { label: 'Monospace', hint: '\\mathtt' }]
+      ? [{ label: 'Bold', hint: has('bm') ? '\\bm' : has('(?:amsmath|amsbsy|mathtools)') ? '\\boldsymbol' : '\\mathbf' }]
         .map((r) => ({ ...r, run: wrap(`${r.hint}{`) }))
       : [...TEXT_FMT.map(([label, c]) => ({ label, hint: `\\${c}`, run: wrap(`\\${c}{`) })),
         ...has('ulem') ? [{ label: 'Underline', hint: '\\uline', run: wrap('\\uline{') }] : has('soul') ? [{ label: 'Underline', hint: '\\ul', run: wrap('\\ul{') }] : []];
@@ -673,7 +714,10 @@ declare global {
     // the one color menu (PA.colorRows, as TikZ's): the document's colors, xcolor's, More, Mix…, Custom…; none takes none
     const colorPick = (n: string | null) => { if (n) (math ? wrap(mc ? `\\mathcolor{${n}}{` : `{\\color{${n}}`, '}', 'xcolor') : wrap(`\\textcolor{${n}}{`, '}', 'xcolor'))(); };
     const color = PA.colorRows(ctx, null, colorPick).slice(1);
-    const font: PaItem[] = math ? [] : [['Roman', 'textrm'], ['Sans serif', 'textsf'], ['Typewriter', 'texttt']].map(([label, cmd]) => ({ label: label!, hint: `\\${cmd}`, run: wrap(`\\${cmd}{`) }));
+    // in math the alphabets, each with the selection set in it (its letters; `Ab1` for a command alone), the package
+    // it needs loaded with it
+    const letters = body.replace(/\\[A-Za-z@]+\*?|[^A-Za-z0-9]/g, '').slice(0, 10) || 'Ab1', symb = has('(?:amssymb|amsfonts)');
+    const font: PaItem[] = math ? Object.entries(ALPHABETS).map(([cmd, x]) => ({ label: x.name, hint: `\\${cmd}${x.pkg && !symb ? ` · ${x.pkg}` : ''}`, sample: { text: alphabet(cmd, letters), font: SAMPLE_FONT }, run: wrap(`\\${cmd}{`, '}', x.pkg && !symb ? x.pkg : null) })) : [['Roman', 'textrm'], ['Sans serif', 'textsf'], ['Typewriter', 'texttt']].map(([label, cmd]) => ({ label: label!, hint: `\\${cmd}`, run: wrap(`\\${cmd}{`) }));
     const size: PaItem[] = math ? [] : ['tiny', 'scriptsize', 'footnotesize', 'small', 'normalsize', 'large', 'Large', 'LARGE', 'huge', 'Huge'].map((z) => ({ label: z, hint: `{\\${z} …}`, run: wrap(`{\\${z} `) }));
     // any size: `\fontsize{v}{1.2v}\selectfont`, the baseline at LaTeX's usual 1.2 of the size
     const customSize = () => PA.ask(ctx.x, ctx.y, '12pt', 'the font size with its unit (12pt, 1.2em)', (v) => {
@@ -687,7 +731,7 @@ declare global {
   }
   PA.register({
     name: 'format', title: 'Format', category: 'refactor', type: 'refactor', targets: ['source'],
-    about: 'The selection bold, italic, emphasized, monospace, small caps or underlined (with ulem or soul), in a color (xcolor loaded), a font family or a size; in math \\bm, \\boldsymbol or \\mathbf, \\mathrm, \\mathsf, \\mathtt and \\mathcolor. Remove formatting unwraps the command around it',
+    about: 'The selection bold, italic, emphasized, monospace, small caps or underlined (with ulem or soul), in a color (xcolor loaded), a font family or a size; in math \\bm, \\boldsymbol or \\mathbf, the math alphabets (\\mathrm to \\mathfrak, each with the selection set in it) and \\mathcolor. Remove formatting unwraps the command around it',
     groups: formatMenu,
   });
   /** Insert's rows by group (Math ▸, Floats ▸, Lists ▸, Structure ▸, References ▸, Pictures ▸), each hinted with the LaTeX

@@ -2336,6 +2336,14 @@
       .then((views) => (views ?? []).find((v) => v.plugin === 'page')?.sections?.find((x) => x.kind === 'page') ?? null) };
     return pageAsk.got;
   }
+  /** The font widget's offers (src/lsp/plugins/font.rs) for the format bar's Custom… family: asked on the root's
+   * `\\documentclass` line, each with its edits making it the main font. */
+  async function fontOffers() {
+    const root = state.root ?? state.file, target = uri(root), line = (state.texts[root] ?? '').slice(0, Math.max(0, (state.texts[root] ?? '').search(/\\documentclass\b/))).split('\n').length - 1;
+    const views = await lsp('satex/view', { textDocument: { uri: target }, position: { line, character: 0 } }).catch(() => null);
+    const items = (views ?? []).find((v) => v.plugin === 'font')?.sections?.filter((x) => /^(Font|System fonts)$/.test(x.title)).flatMap((x) => x.items ?? []) ?? [];
+    return items.filter((i) => !i.on && i.edits?.length).map((i) => ({ title: i.title, detail: i.detail, svg: i.svg, main: () => fix({ title: `Font: ${i.title}`, edit: { changes: { [target]: i.edits } } }) }));
+  }
   async function tsHeadFoot() {
     const key = runKey();
     if (tsHf.key !== key) {
@@ -3446,7 +3454,7 @@
    * a selection, Refactor). */
   function paRows(x, y) {
     const text = editor.text(), [a, b] = editor.cursor().slice().sort((p, q) => p - q);
-    const ctx = { text, all: docTexts(), x, y, facts: null, kernel: kernelDate, write: (edits) => paWrite(text, edits), toast, pick: tikzPick, colAlign: () => {}, insert: insertAt, caret: (o) => { editor.select([o, o]); editor.refocus?.(); } };
+    const ctx = { text, all: docTexts(), x, y, facts: null, kernel: kernelDate, write: (edits) => paWrite(text, edits), toast, pick: tikzPick, colAlign: () => {}, insert: insertAt, fonts: fontOffers, caret: (o) => { editor.select([o, o]); editor.refocus?.(); } };
     // a toolbar row (the selection's format bar) as it is: showMenu draws it with the pages' menu's own (PA.bar)
     // the plugin's row kept as the 4th entry: showMenu draws it with the pages' menu's face (swatch, picture, check)
     const row = (it) => it.bar ? it : [it.label, it.hint ?? '', it.items ? it.items.map(row) : it.run ?? (() => {}), it];
@@ -3580,7 +3588,6 @@
       else for (const o of li.closest('.ctx').querySelectorAll(':scope > li[aria-expanded=true]')) shut(o);
     };
     ctxMenu.onkeydown = (e) => {
-      if (e.target.closest?.('.pa-bar select') && e.key !== 'Escape') return;
       const li = document.activeElement?.closest?.('#play-ctx li'), box = li?.closest('.ctx') ?? ctxMenu;
       const rows = [...box.querySelectorAll(':scope > li[role=menuitem]')], i = rows.indexOf(li), parent = box.parentElement?.closest('li');
       const go = { ArrowDown: () => rows[(i + 1) % rows.length]?.focus(), ArrowUp: () => rows[(i - 1 + rows.length) % rows.length]?.focus(),
@@ -8065,7 +8072,11 @@
       if (!w) return '';
       [from, to] = [[from[0], w[0] + 1], [from[0], w[1] + 1]];
     }
-    return (typesetRows ?? []).map((r) => siteHits(r, file, (p) => !before(p, from) && before(p, to)).text).filter(Boolean).join(' ');
+    const set = (typesetRows ?? []).map((r) => siteHits(r, file, (p) => !before(p, from) && before(p, to)).text).filter(Boolean).join(' ');
+    if (set || from[0] !== to[0]) return set;
+    // a macro's argument (`\\textcolor{c}{word}`) is set where reading stood after it, not at its letters: the
+    // range's own letters then, as the line's words are matched (pdfWordsOf)
+    return (state.texts[file]?.split('\n')[from[0] - 1] ?? '').slice(from[1] - 1, to[1] - 1).replace(/\\[A-Za-z@]+\*?|[{}]/g, ' ').replace(/\s+/g, ' ').trim();
   }
   /** Where `word`, set while about line `line` of `file` was read (SyncTeX's line, within a few), was itself read (the
    * run's `origins`): its file, first line and column, and its last character's place; null when it was read where set. */
@@ -9497,7 +9508,7 @@
   /** The menu of target `t` at screen point (x, y): the run's facts of a picture waited for a moment, then the plugins' groups. */
   async function paOpen(x, y, t, more = []) {
     const text = editor.text(), at = t.n?.from ?? t.e?.from;
-    const ctx = { text, all: docTexts(), x, y, facts: null, kernel: kernelDate, write: (edits) => paWrite(text, edits), toast, pick: tikzPick, grid: tikzGrid, file: state.file, scratch: (b) => scratchOpen(b.file, b.from, b.to), insert: insertAt,
+    const ctx = { text, all: docTexts(), x, y, facts: null, kernel: kernelDate, write: (edits) => paWrite(text, edits), toast, pick: tikzPick, grid: tikzGrid, file: state.file, fonts: fontOffers, scratch: (b) => scratchOpen(b.file, b.from, b.to), insert: insertAt,
       colAlign: (i, k, a, w, h) => { pdfColMenu = null; pdfColAlign({ dataset: { t: i, k, a, ...(w != null ? { w } : {}), ...(h ? { h } : {}) } }); },
       tableOp: (i, op) => { pdfColMenu = null; pdfTableOp(i, op); } };
     // the block around what was clicked, for a scratch slice of it
@@ -11139,8 +11150,17 @@
       if (was) pdfEchoCtx.font = was;
       break;
     }
-    memo.set(key, F ? { ...F, size: f.size, base: f.base } : f);
+    memo.set(key, F ? { ...F, size: f.size, base: f.base } : pdfStyled(f, ctx));
     return memo.get(key);
+  }
+  /** Row font `f` restyled as command `ctx` sets text where the build shows no word of it yet (a `\\textbf` just typed):
+   * the fallback face in the series, shape and family the source's font model gives (refactor.ts `fontAt`, the format
+   * bar's), `f` itself for a command that changes none of them. */
+  function pdfStyled(f, ctx) {
+    const s = self.satexRefactor?.fontAt(`\\${ctx}{x`, ctx.length + 3);
+    if (!s || !s.bold && !s.italic && s.family === 'rm') return f;
+    const family = s.family === 'tt' ? PDF_MONO_FONT : s.family === 'sf' ? "'Latin Modern Sans', 'CMU Sans Serif', sans-serif" : PDF_ECHO_FONT;
+    return { family, size: f.size, base: f.base, own: false, xs: f.xs, fb: `${s.bold ? 'bold ' : ''}${s.italic ? 'italic ' : ''}` };
   }
   /** The width of `t` in echo font `f` with `ctx.font` set to it at `px` px: a character its face lacks counts at the
    * fallback's width times `f.r`, as TeX sets it in the page's font, not the fallback's (the word is drawn in one
@@ -11161,6 +11181,7 @@
   /** Latin Modern (the symbols table's Latin Modern Math: its ASCII letters are Latin Modern Roman's) as the echo's
    * fallback, loaded once on the first word the page's subset lacks a glyph of; the caret drawn again when in. */
   let pdfLm = null;
+  self.satexLmLoad = () => pdfLmLoad();
   function pdfLmLoad() {
     if (!manifest.symbols) return;
     pdfLm ??= fetch(`${base}${manifest.symbols}`).then((r) => r.json()).then((t) => {

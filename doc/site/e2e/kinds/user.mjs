@@ -11,7 +11,7 @@
 //   · { watch: target, ms } the first text of `target` as it changes · { drag: word, dx, dy } a mouse drag from a page word
 //   { build: true } Compile, wait · { settle: true } the checks done · { findingsWithin: ms } the edit's findings shown
 //   in time · { wait: ms } · { shot: tag } · any other step of the drivers' vocabulary (page.mjs: { do: action },
-//   { click: target }, { until: cond } …)
+//   { click: target }, { until: cond } …) · { right: text, k, ms } a right click into the editor at text (+k), the selection kept, or on a target ({ word }) · { row: { sel, starts }, click, ms } the mouse onto an element by its text
 // Asserts (`expect`, at the end): { changed: true } the steps wrote, { has: regex } / { not: regex } on the root's text, { once: str } typed text once,
 // { noFinding: regex }, { finding: regex }, { buildErrorsCovered: true } each build error's line has a finding there,
 // { built: true } the last build has no error, { first: target, want } the first element's text, { selected: text } the editor's selection, { caretSync: true } the
@@ -132,6 +132,22 @@ export async function user(p, sc) {
         }
       } else if (a.settle) { if (!await d.until('quiet', 120000, 1200)) fail(`step ${i + 1}: the checks never settled`); }
       else if (a.shot) await p.shot(`${sc.name}-${a.shot}.png`);
+      else if (a.row) {
+        // the mouse onto the first `row.sel` whose text starts with `row.starts` (a menu row: hovered opens its submenu), clicked with `click`
+        const at = await p.eval(`(() => { const e = [...document.querySelectorAll(${J(a.row.sel)})].find((x) => x.textContent.trim().startsWith(${J(a.row.starts)})); if (!e) return null; const r = e.getBoundingClientRect(); return [r.left + Math.min(30, r.width / 2), r.top + r.height / 2]; })()`);
+        if (!at) throw new Error(`no ${J(a.row)}`);
+        await p.s('Input.dispatchMouseEvent', { type: 'mouseMoved', x: at[0] - 10, y: at[1] });
+        await p.s('Input.dispatchMouseEvent', { type: 'mouseMoved', x: at[0], y: at[1] });
+        if (a.click) for (const type of ['mousePressed', 'mouseReleased']) await p.s('Input.dispatchMouseEvent', { type, x: at[0], y: at[1], button: 'left', buttons: type === 'mousePressed' ? 1 : 0, clickCount: 1 });
+        await sleep(a.ms ?? 600);
+      }
+      else if (a.right) {
+        // a right click into the editor at `right` (its first occurrence, `k` on), the selection kept (a src target moves the caret)
+        const [x, y] = typeof a.right === 'object' ? await d.target(a.right) : await p.eval(`(() => { const v = document.querySelector('#play-editor .cm-editor').satexView, c = v.coordsAtPos(v.state.doc.toString().indexOf(${J(a.right)}) + ${a.k ?? 0}); return [c.left + 1, (c.top + c.bottom) / 2]; })()`);
+        await p.s('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y });
+        for (const type of ['mousePressed', 'mouseReleased']) await p.s('Input.dispatchMouseEvent', { type, x, y, button: 'right', clickCount: 1 });
+        await sleep(a.ms ?? 500);
+      }
       else await d.step(a);
     } catch (e) { fail(`step ${i + 1} ${J(a).slice(0, 80)}: ${String(e?.message ?? e).slice(0, 200)}`); await p.shot(`${sc.name}-step${i + 1}.png`).catch(() => {}); return res; }
     await sleep(a.pause ?? 150);
