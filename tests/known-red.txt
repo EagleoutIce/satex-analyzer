@@ -26,11 +26,13 @@ package_cache::the_backend_loaded_by_begin_document_is_served_from_a_cache
 # owner pages (2026-11-21): all pages decided and the page count right. One row differs: "page 1 → 2 by here" (2026-11-22: sample renamed \\repeat to \\recurse, one page less) comes after the heading "4" instead of before it. satex reports a break where the page's length passes `\vsize` (observe::page_fill); TeX breaks at the best legal breakpoint before that (tex.web § 1005), here before the heading (`\nobreak` after it). Needs the last legal breakpoint of the main list (glue after a non-discardable item, a penalty under 10000; inside a paragraph its interline penalties). MWE target/scratch/pages/mwe/paper.
 differential::the_sample_paper_breaks_its_pages_where_pdflatex_does
 # owner pgf (Root L): 3869 forks against 543, false extra-else/extra-fi at pgfmath trig 385.
-documents::tcolorbox_of_unknown_height_keeps_its_anchors_local
 documents::tikz_loop_of_unknown_height_nodes_converges
+# owner Root X (pgfkeys key of unknown text, 2026-11-25): both tcolorbox reds end in this gap. A later pgf node is taken for a pass of the summarized node loop at pgfmoduleshapes:963 (tail chain, explore.rs reentry), end_covered widens \tcb@split@state with Reach::Havoc to letters, skin@\csname kvtcb@skin@@…\endcsname is then a key of unknown text, pgfkeys' split loop runs out of paths, `#1/\relax` reads on past `\relax\fi` (unforked_end), \ifcsname pgfk@… meets \relax. MWE: the pgfkeys test. S/tlfix/wt-X/target/scratch/REPORT.md.
+documents::a_pgfkeys_key_of_unknown_text_keeps_its_name_whole
+documents::tcolorbox_of_unknown_height_keeps_its_anchors_local
 # owner pgf (Root D): the parser's digit rests keep forking.
 documents::graph_arrow_to_a_node_of_unknown_width_joins_its_digit_arms
-# owner pgf (Root T): out of steps.
+# owner Root X (see the pgfkeys test above): same 4 gaps as the anchors box, no longer out of steps.
 documents::a_breakable_blanker_box_around_a_rule_of_unknown_height_ends
 # owner reds-fp: l3fp's 4-digit packing forks on the length of typed digits, 1176 forks, bound 100. MWE S/fp/d.tex.
 tagging::an_fp_eval_of_an_unknown_integer_stays_on_few_paths

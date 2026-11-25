@@ -51,6 +51,18 @@ fn check_allowing(id: &str, main: &str, also: &[&str], allowed: &[&str]) -> Opti
 
 /// `check_allowing`, with a step budget of the fixture's own.
 fn check_within(id: &str, main: &str, also: &[&str], allowed: &[&str], budget: u64) -> Option<Analysis> {
+    check_with(id, main, also, allowed, budget, |_| {})
+}
+
+/// `check_within`, the discovered configuration changed by `edit` first.
+fn check_with(
+    id: &str,
+    main: &str,
+    also: &[&str],
+    allowed: &[&str],
+    budget: u64,
+    edit: impl Fn(&mut satex::project::config::Config),
+) -> Option<Analysis> {
     if !installed() {
         return None;
     }
@@ -64,6 +76,7 @@ fn check_within(id: &str, main: &str, also: &[&str], allowed: &[&str], budget: u
     cfg.cache.dir = Some(crate::support::scratch_dir(
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/scratch").join(format!("documents-{id}")),
     ));
+    edit(&mut cfg);
     crate::support::seed_kernel(&cfg);
     // A cut fails the fixture: an open one must not hold up the suite.
     cfg.limits.seconds = satex::project::config::Limits::default().seconds;
@@ -425,6 +438,21 @@ fn tcolorbox_with_a_footnote_in_a_list_item_ends() {
 fn tcolorbox_of_unknown_height_keeps_its_anchors_local() {
     let Some(analysis) = check("tcolorbox_unknown_height_anchors", "mwe.tex", &[]) else { return };
     assert!(undefined(&analysis, "southwest"), "\\southwest leaked out of the box's groups");
+}
+
+/// Unknown text in a pgfkeys key name: pgfkeys splits the key at its `/`s
+/// and strips the path's last `/` with `#1/\relax`, so for no text without
+/// control sequences does a key name hold `\relax`. Bug pinned: the split
+/// loop runs out of paths, the strip reads on past `\relax\fi` to cover
+/// both ends (`unforked-argument-end`), and `\ifcsname pgfk@…` meets that
+/// `\relax`: missing-endcsname at pgfkeys.code.tex:214, the gap of the
+/// unknown-height tcolorbox reds (their key is `skin@` and a widened state).
+/// RED (owner: Root X, pgfkeys key of unknown text).
+#[test]
+fn a_pgfkeys_key_of_unknown_text_keeps_its_name_whole() {
+    // The fixture's stub is its source of unknown text: the suite clears stubs.
+    let stubs = satex::project::config::Config::discover(&dir("pgfkeys_key_of_unknown_text")).stubs;
+    check_with("pgfkeys_key_of_unknown_text", "main.tex", &[], &[], STEP_BUDGET, |cfg| cfg.stubs = stubs.clone());
 }
 
 /// Mutations of the box above: known height, a nested box, and anchors

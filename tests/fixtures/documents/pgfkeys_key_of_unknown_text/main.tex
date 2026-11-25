@@ -1,0 +1,13 @@
+% A pgfkeys key whose name holds unknown text (\U is stubbed: any text
+% without control sequences). pgfkeys splits the key at its slashes and
+% strips the path's last one with `#1/\relax`. For no such text does TeX
+% put `\relax` into a key name.
+\documentclass{article}
+\usepackage{pgfkeys}
+\usepackage{unknowntext}
+\edef\t{\U}
+\pgfkeys{/tcb/.unknown/.code={}}
+\pgfkeys{/tcb/skin@\t}
+\gdef\SatexReachedEnd{}
+\begin{document}
+\end{document}
