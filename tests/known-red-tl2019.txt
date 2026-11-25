@@ -10,6 +10,3 @@ incremental::letters_typed_between_generated_sections_meet_the_last_run
 incremental::a_body_of_command_lines_resumes_near_the_edit
 incremental::a_name_around_unknown_digits_is_spelled_alike_after_a_resume
 incremental::an_edit_in_a_collected_body_resumes_before_it
-# owner package_cache (2026-11-25, speed only, not critical per the user): on the TL2019 CI image something writes $HOME/.texlive2019/texmf-var/tex/generic/config/language.dat mid-run (a user-mode format dump; suspect the math-font preview's latex/xelatex call, src/queries/preview.rs), so the kernel cache sees changed hyphenation and rebuilds between warm runs. Sound, slower. `fmtutil-sys --missing` first did not stop it.
-package_cache::biblatex_rebuilds_nothing_warm
-package_cache::document_metadata_rebuilds_nothing_warm
