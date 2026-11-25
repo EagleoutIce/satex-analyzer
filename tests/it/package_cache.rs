@@ -438,22 +438,22 @@ fn rebuilds_nothing_warm(name: &str, document: &str) -> Option<(PathBuf, Analysi
         return None;
     }
     let dir = project(name);
-    let mut since = std::time::SystemTime::now();
     run(&dir, document);
-    // A file that really changed meanwhile keys a rebuild rightly: on an image that lacks a
-    // format, another test's TeX run regenerates the user's `language.dat` (its date line).
-    let changed = |line: &str, since: std::time::SystemTime| {
+    // A file TeX itself writes into the user's TEXMFVAR keys a rebuild rightly once it changed. On
+    // an image that lacks a format, another test's TeX run regenerates `language.dat` there (its
+    // date line), and a satex that read the old one may write its cache after this one.
+    let var = std::process::Command::new("kpsewhich").arg("-var-value=TEXMFVAR").output();
+    let var = var.map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string()).unwrap_or_default();
+    let generated = |line: &str| {
         let file = line.split_once("content changed: ").map(|(_, f)| f.trim_end_matches(')'));
-        file.is_some_and(|f| std::fs::metadata(f).and_then(|m| m.modified()).is_ok_and(|t| t >= since))
+        !var.is_empty() && file.is_some_and(|f| Path::new(f).starts_with(&var))
     };
     let mut last = None;
     for warm in [2, 3] {
-        let started = std::time::SystemTime::now();
         let analysis = run(&dir, document);
         let report = analysis.cache_report();
-        let rebuilt: Vec<_> = report.iter().filter(|l| l.contains("rebuilt") && !changed(l, since)).collect();
+        let rebuilt: Vec<_> = report.iter().filter(|l| l.contains("rebuilt") && !generated(l)).collect();
         assert!(rebuilt.is_empty(), "run {warm}: {rebuilt:?}");
-        since = started;
         last = Some(analysis);
     }
     Some((dir, last?))
