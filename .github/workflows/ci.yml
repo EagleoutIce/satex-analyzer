@@ -436,11 +436,10 @@ jobs:
       - name: The distribution is really there
         run: kpsewhich latex.ltx
 
-      # Old historic images lack some formats (TL2019: xelatex.fmt). mktexfmt would then dump
-      # one per pass, under /root or the job's HOME, and rewrite language.dat there mid-run:
-      # the kernel cache sees changed hyphenation and rebuilds. All formats exist first.
-      - name: The formats are there
-        run: fmtutil-sys --missing > /dev/null || true; kpsewhich -engine=xetex xelatex.fmt
+      # TL2019-historic ships no xelatex.fmt, and mktexfmt writes one under /root, which the
+      # job's HOME never searches: every xelatex pass would dump it anew, so no build rests.
+      - name: The XeLaTeX format is there
+        run: kpsewhich -engine=xetex xelatex.fmt || fmtutil-sys --byfmt xelatex
 
       - name: Test
         if: matrix.shard != 'compliance'
