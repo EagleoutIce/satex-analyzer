@@ -1562,9 +1562,8 @@ impl Machine<'_> {
         // reach it. Only a loop that keeps growing is summarized.
         let widen = paths.heads[h].passes >= widen_after || forced_join || !self.site_affords(span);
         // After a join at the head, the next pass runs from the join ([`Reach::Joined`]).
-        // Widened or not, its arms stay paired: pgfmath's operation stack and its top.
         let reach = widen.then_some(Reach::Joined);
-        let (joined, mut growth) = self.join_passes(&fork, &paths.heads[h].config, &here, reach, true);
+        let (joined, mut growth) = self.join_passes(&fork, &paths.heads[h].config, &here, reach, !widen);
         if input_grew {
             growth.parts.push("input");
         }

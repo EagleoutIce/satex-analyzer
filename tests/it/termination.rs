@@ -947,10 +947,8 @@ mod convergence {
         converged(&a, TIKZ_NODES_FORKS);
     }
 
-    /// Forks the thirty nodes of [`tikz_nodes_of_unknown_width`] may take. Widened loop heads
-    /// keep pgfmath's stack paired, which re-runs passes the arms do not cover yet: TeX Live
-    /// 2022 takes about 35k, TeX Live 2025 fewer.
-    const TIKZ_NODES_FORKS: u64 = 40_000;
+    /// Forks the thirty nodes of [`tikz_nodes_of_unknown_width`] may take.
+    const TIKZ_NODES_FORKS: u64 = 32_000;
 
     /// (2a) One node's color of (2): `\colorlet` over a pgfmath result of
     /// unknown value. xcolor reads the percentage digit by digit

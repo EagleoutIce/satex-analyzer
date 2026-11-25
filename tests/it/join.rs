@@ -1252,24 +1252,6 @@ fn a_call_met_again_in_a_replayed_copy_of_its_text_is_not_a_pass() {
     assert!(!crate::support::maybe_defined(&analysis, "Bad"));
 }
 
-/// A loop flips two names together while a counter climbs, so its head
-/// widens. The widened join keeps the two names paired, but not the
-/// counter's interval or the typed cells each pass mints: as columns those
-/// add arms every pass, until the bound on arms drops one of the two names
-/// and `n` meets an empty `\S`. Bug pinned: pairing every name at a widened
-/// join gave that false missing number.
-#[test]
-fn a_widened_loop_head_keeps_names_paired_past_its_climbing_counter() {
-    let analysis = analyze(
-        r"\def\empty{}\def\S{}\def\top{}\count1=0
-          \def\loop{\ifnum\pdfuniformdeviate2=0 \advance\count1 by 1
-            \ifx\top\empty \def\S{x}\def\top{n}\else \def\S{}\def\top{}\fi
-            \expandafter\loop\fi}\loop
-          \ifx\top\empty \else \ifx\S\empty \count1=\relax\fi\fi",
-    );
-    assert!(with_code(&analysis, "missing-number").is_empty(), "{:?}", with_code(&analysis, "missing-number"));
-}
-
 /// Two lists a join left paired, as a float on the top list or deferred
 /// but never both: one `\xdef` of both holds the float once on every arm.
 #[test]

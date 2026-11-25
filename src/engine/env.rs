@@ -2708,9 +2708,8 @@ impl Env {
             let joined = match widen {
                 Some(reach) => {
                     let widened = widen_slot(&old, joined.clone(), self.sets, typed, reach);
-                    // Arms stay paired in what the widening left as the join,
-                    // but not in a number that still climbs (`numbers_grow`).
-                    if !identical(&joined, &widened) || numbers_grow(&old, &widened) {
+                    // Arms stay paired in what the widening left as the join.
+                    if !identical(&joined, &widened) {
                         lost.push(sym);
                     }
                     widened
@@ -2744,24 +2743,7 @@ impl Env {
         }
         let low = a.low.min(b.low);
         let journal = self.join_journals(fork, a, b, low, &mut marks);
-        // Widened, the cells of typed unknowns leave the pairing too: each pass
-        // mints its own, so as columns they would grow the arms every pass.
-        if widen.is_some() {
-            let cell = |s: u32| {
-                let name = typed.interner.name(Sym(s));
-                name.starts_with(crate::engine::scan::TYPED_DIGITS)
-                    || name.starts_with(crate::analysis::machine::UNKNOWN_NAME)
-            };
-            let carried = [&a.corr, &b.corr].into_iter().flatten().flat_map(|c| c.syms.iter().copied());
-            lost.extend(apart.iter().copied().chain(carried).filter(|&s| cell(s)));
-        }
-        // Widened, the arms may not outnumber the head's either: rows merge
-        // instead of growing, so the pairing converges like the bindings.
-        let cap = match widen {
-            Some(_) => a.corr.as_ref().map_or(2, |c| c.arms.len()).clamp(2, self.sets.arms),
-            None => self.sets.arms,
-        };
-        let corr = paired.then(|| self.correlated(apart, a, b, &lost, cap)).flatten();
+        let corr = paired.then(|| self.correlated(apart, a, b, &lost)).flatten();
         (PathEnv { slots, journal, marks: Rc::new(marks), low, corr }, grown, waiting)
     }
 
@@ -2809,7 +2791,7 @@ impl Env {
     /// The arms of a join of `a` and `b` that differ in `apart`, each
     /// path's own arms if it came from a join: `None` past `sets.meanings`
     /// arms, or when fewer than two names differ.
-    fn correlated(&self, mut apart: Vec<u32>, a: &PathEnv, b: &PathEnv, lost: &[u32], cap: usize) -> Option<Rc<Corr>> {
+    fn correlated(&self, mut apart: Vec<u32>, a: &PathEnv, b: &PathEnv, lost: &[u32]) -> Option<Rc<Corr>> {
         for c in [&a.corr, &b.corr].into_iter().flatten() {
             for &sym in &c.syms {
                 if !apart.contains(&sym) {
@@ -2850,7 +2832,7 @@ impl Env {
         // forgotten first: few-valued pairings (an operation stacked or
         // not) are what tells the arms apart.
         let mut corr = Corr { syms: apart, arms };
-        while corr.arms.len() > cap && corr.syms.len() > 2 {
+        while corr.arms.len() > self.sets.arms && corr.syms.len() > 2 {
             let distinct = |n: usize| {
                 let mut seen: Vec<&Option<Binding>> = Vec::new();
                 for row in &corr.arms {
@@ -2872,7 +2854,7 @@ impl Env {
             }
             corr.arms = rows;
         }
-        (corr.arms.len() >= 2 && corr.arms.len() <= cap).then(|| Rc::new(corr))
+        (corr.arms.len() >= 2 && corr.arms.len() <= self.sets.arms).then(|| Rc::new(corr))
     }
 
     /// Whether every state of `here` is one of `head`'s arms, where
@@ -3239,22 +3221,6 @@ fn same_meaning(x: &Binding, y: &Binding) -> bool {
 /// reflexively, and paths mostly hold the definition they copied.
 fn one_meaning(a: &Meaning, b: &Meaning) -> bool {
     matches!((a, b), (Meaning::Macro(p), Meaning::Macro(q)) if Rc::ptr_eq(p, q)) || a == b
-}
-
-/// Whether a widened slot holds a number that grew over `old`'s. Intervals
-/// climb without end, so arms keyed by them would grow every pass, while
-/// meanings and texts form sets bounded by `limits.meaning_set`.
-fn numbers_grow(old: &Option<Binding>, widened: &Option<Binding>) -> bool {
-    fn number(v: &Value) -> bool {
-        match v {
-            Value::Int(_) | Value::Dimen(_) | Value::Glue(_) | Value::MuGlue(_) => true,
-            Value::Num { .. } | Value::GlueNum { .. } => true,
-            Value::OneOf(vs) => vs.iter().any(number),
-            _ => false,
-        }
-    }
-    let Some(w) = widened else { return false };
-    number(&w.value) && old.as_ref().is_none_or(|o| !same_value(&o.value, &w.value))
 }
 
 fn same_value(a: &Value, b: &Value) -> bool {

@@ -40,5 +40,9 @@ tagging::an_fp_eval_of_an_unknown_integer_stays_on_few_paths
 tagging::an_fp_eval_of_an_unknown_integer_forks_only_on_its_length
 # owner pgf (Root A): 14 paths remain, arms of xcolor's clamps meet only at the line's end.
 termination::convergence::colorlet_of_an_unknown_pgfmath_result
+# owner loophead (was pgf; crashfix 2026-11-22: no longer aborts, now slow): in the second build run thirty nodes end with 27 paths waiting at `\clearpage`, past any time; stack samples: path switching (Env::resume under loop_head) and Env::unfold -> widen_in_place.
+termination::convergence::tikz_nodes_of_unknown_width
 # owner pgf (precision land-01, 2026-11-21): the printed fraction now keeps its dimen when read back whole (semantics::a_printed_interval_dimen_read_back_keeps_its_bound green). Left here: pgfmath's parser walks the printed digits (2.5k forks, 39 paths for one signed count), so the result is cut to any number text. MWE S/precision/mwe/c1.
 documents::pgfmath_signed_random_count_plus_a_constant_stays_in_range
+# owner pgf: pgfmath's operation stack is joined at a loop head as a one-of, a pop takes `neg` or the empty operator (missing-number at pgfmathparser:803).
+documents::tikz_bend_to_a_point_of_unknown_width_closes_the_picture

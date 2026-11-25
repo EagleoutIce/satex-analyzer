@@ -519,11 +519,10 @@ Every domain joins the same way: **hull plus bounded union**. Keep the exact mem
 
 ### Arms kept paired
 
-A join keeps its arms paired (`Corr`, [`src/engine/env.rs`](https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/env.rs)): per arm, the bindings of the names that differ. pgfmath's operation stack and its top differ together. Joined apart, a later split pairs `neg` with a stack that never held it (a false missing number).
+A join that is not widened keeps its arms paired (`Corr`, [`src/engine/env.rs`](https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/env.rs)): per arm, the bindings of the names that differ. pgfmath's operation stack and its top differ together. Joined apart, a later split pairs `neg` with a stack that never held it (a false missing number).
 
 - Learning one paired name narrows the others to the arms that allow it. An undecided test of a joined switch teaches each arm the switch's value (`\iftrue` where it holds), so the names paired with it follow.
 - An expanding scan (`\edef`, `\expanded`) that expands paired names settles them at its end: when every arm gives the same text, with each name's text in its place, that text is the result (two float lists copied together hold the float once). Each expanded on its own, the copies would pair arms no run has. Arms that differ keep one token per name: a common start and end around one token for either middle would cut a macro's argument apart.
-- A loop head's widened join keeps its arms paired too, in the names the widening left as their join. A number that still grows leaves the pairing, and so do the cells of typed unknowns, since every pass mints its own: as columns they would add arms every pass, so the loop would never meet its head. Nor may a widened join hold more arms than the head did (two at least): past them, rows merge as past `limits.join_arms`. So the pairing converges like the bindings. Unpaired, pgfmath's operation stack joined at the loop of `\pgfmath@operation@@process` gave a pop `neg` or the empty operator from a stack that never held it.
 - A name written after the join leaves the pairing. Past `limits.join_arms` arms, the name with the most bindings leaves first.
 - Arms only remove combinations no arm had, so the join stays sound.
 
