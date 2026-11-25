@@ -884,6 +884,13 @@ fn labels(items: &[Value]) -> Vec<&str> {
     items.iter().filter_map(|i| i["label"].as_str()).collect()
 }
 
+/// [`labels`] of a reference's completion without its "Browse all labels…" entry, which opens a
+/// view instead of naming a key.
+fn ref_keys(items: &[Value]) -> Vec<&str> {
+    let keys = items.iter().filter(|i| i["command"]["command"] != "satex.openView");
+    keys.filter_map(|i| i["label"].as_str()).collect()
+}
+
 /// [`open_unsaved`] with the real kernel, classes and packages, on a cache
 /// the completion tests share.
 fn open_loaded(tag: &str, text: &str) -> (Server, String, Value, std::path::PathBuf) {
@@ -999,7 +1006,7 @@ fn completion_knows_the_argument_it_is_in() {
     let keys = complete(&mut server, &uri, 11, 16);
     assert!(["label", "leftmargin"].iter().all(|k| labels(&keys).contains(k)), "{:?}", labels(&keys));
     let refs = complete(&mut server, &uri, 12, 11);
-    assert_eq!(labels(&refs), vec!["s"]);
+    assert_eq!(ref_keys(&refs), vec!["s"]);
     // `.search also` adds /fb after /fa; /fc is not searched.
     let pgf = labels(&complete(&mut server, &uri, 12, 18)).join(" ");
     assert!(pgf.starts_with("wide width wild"), "{pgf}");
@@ -1027,7 +1034,7 @@ fn first_ref_offers_labels() {
     let text = "\\documentclass{article}\n\\newcommand{\\greet}[1]{\\label{foo:#1}Hello, #1!}\n\\begin{document}\n\\greet{world}\n\\ref{\n\\end{document}\n";
     let (mut server, uri, _, dir) = open_loaded("firstref", text);
     let refs = complete(&mut server, &uri, 4, 5);
-    assert_eq!(labels(&refs), vec!["foo:world"]);
+    assert_eq!(ref_keys(&refs), vec!["foo:world"]);
     server.shutdown();
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -7421,7 +7428,7 @@ fn labels_show_and_are_found_by_what_they_point_at() {
     assert_eq!(about(&items, "eq:c"), "equation 1");
     for line in [6, 7] {
         let items = complete(&mut server, &uri, line, "\\ref{delivery".len() as u32);
-        assert_eq!(labels(&items), ["fig:b"], "line {line}");
+        assert_eq!(ref_keys(&items), ["fig:b"], "line {line}");
     }
     server.shutdown();
     let _ = std::fs::remove_dir_all(&dir);
