@@ -410,9 +410,17 @@ const satexViews = (() => {
         if (r.why) body.append(el('div', 'tv-text', `<p>${esc(r.why)}</p>`));
         if (r.table?.rows.length) body.append(RENDER.table!(r.table, view, ctx));
         // deleting is kept, but behind the uses: what a record is used by comes first
-        if (r.actions?.length) {
+        // a record's own choice (a label written into the reference) stands first, unfolded
+        const picks = (r.actions ?? []).filter((a: Rec) => a.close);
+        if (picks.length) {
           const acts = el('div', 'tv-actions');
-          for (const a of r.actions) {
+          for (const a of picks) acts.append(Object.assign(el('button', 'tv-button tv-primary', esc(a.title)), { type: 'button', onclick: () => { ctx.apply(a.edit, kept()); ctx.close?.(); } }));
+          body.children[0]!.after(acts);
+        }
+        const rest = (r.actions ?? []).filter((a: Rec) => !a.close);
+        if (rest.length) {
+          const acts = el('div', 'tv-actions');
+          for (const a of rest) {
             const b = el('button', 'tv-button' + (a.danger ? ' tv-danger' : ''), esc(a.title));
             b.type = 'button';
             b.disabled = !!a.disabled;
@@ -420,8 +428,8 @@ const satexViews = (() => {
             b.onclick = () => ctx.apply(a.edit, kept());
             acts.append(b);
           }
-          const why = r.actions.filter((a: Rec) => a.disabled || a.note).map((a: Rec) => `${a.title}: ${a.disabled ?? a.note}`);
-          body.append(fold(r.actions.some((a: Rec) => a.danger) ? 'Delete…' : 'More actions', acts, why.length ? el('div', 'tv-text', why.map((w: Rec) => `<p>${esc(w)}</p>`).join('')) : null));
+          const why = rest.filter((a: Rec) => a.disabled || a.note).map((a: Rec) => `${a.title}: ${a.disabled ?? a.note}`);
+          body.append(fold(rest.some((a: Rec) => a.danger) ? 'Delete…' : 'More actions', acts, why.length ? el('div', 'tv-text', why.map((w: Rec) => `<p>${esc(w)}</p>`).join('')) : null));
         }
         // one primary button in the pane: the record's own form, the others plain
         body.querySelectorAll('.tv-form .tv-primary').forEach((b, k) => { if (k) b.classList.remove('tv-primary'); });

@@ -74,6 +74,32 @@ async function tableFromGutter(p, fails, info) {
   if (!ok) fails.push(`the table line's gutter mark (${g.kind}) offers no Edit table… (menu: ${await p.eval(`document.getElementById('play-ctx').hidden ? 'none' : document.getElementById('play-ctx').textContent.slice(0, 120)`)})`);
   await p.key('Escape').catch(() => {});
 }
+/** Theorems: a gutter mark on each instance's \\begin opens the theorem manager; a reference's completion
+ * ends with "Browse all labels…", which opens the labels list, and a label's Insert writes it into the reference. */
+const THEOREMS = '\\documentclass{article}\n\\usepackage{amsthm}\n\\newtheorem{theorem}{Theorem}[section]\n\\begin{document}\n\\section{A}\n\\begin{theorem}\\label{thm:a}\nX.\n\\end{theorem}\nSee \\ref{}.\n\\end{document}\n';
+async function theorems(p, fails, info) {
+  await p.eval(`(() => { const v = ${view}; v.dispatch({ changes: { from: 0, to: v.state.doc.length, insert: ${JSON.stringify(THEOREMS)} } }); })()`);
+  await p.drv.until({ findingsCurrent: true }, 60000);
+  await sleep(500);
+  const g = await p.eval(`(() => { const v = ${view}, top = v.coordsAtPos(v.state.doc.line(6).from)?.top; if (top == null) return null;
+    const m = [...document.querySelectorAll('.cm-wmark')].find((m) => Math.abs(m.getBoundingClientRect().top + m.getBoundingClientRect().height / 2 - top - 9) < 9);
+    if (!m) return { none: true }; const r = m.getBoundingClientRect(); return { title: m.title, x: r.left + r.width / 2, y: r.top + r.height / 2 }; })()`);
+  info.theoremGutter = g;
+  if (!g || g.none) { fails.push('no gutter mark on the \\begin{theorem} line'); return; }
+  await p.mouse(g.x, g.y);
+  if (!await p.until(`/Theorem-like environments/.test(document.querySelector('dialog[open]')?.textContent ?? '')`, 8000)) fails.push(`the \\begin{theorem} gutter mark (${g.title}) opens no theorem manager`);
+  if (process.env.MENU_SHOTS) await p.shot(`theorem-gutter-${process.env.MENU_SHOTS}.png`);
+  await p.key('Escape').catch(() => {});
+  // the reference: a letter typed in its braces completes, the last item opens the list
+  await p.eval(`(() => { const v = ${view}, at = v.state.doc.toString().indexOf('\\\\ref{}') + 5; v.focus(); v.dispatch({ selection: { anchor: at } }); })()`);
+  await p.key('t');
+  if (!await p.until(`[...document.querySelectorAll('.cm-tooltip-autocomplete li')].some((l) => /Browse all labels/.test(l.textContent))`, 8000)) { fails.push('no "Browse all labels…" in a reference\'s completion'); return; }
+  await p.eval(`[...document.querySelectorAll('.cm-tooltip-autocomplete li')].find((l) => /Browse all labels/.test(l.textContent)).dispatchEvent(new MouseEvent('mousedown', { bubbles: true }))`);
+  if (!await p.until(`!!document.querySelector('dialog[open] .tv-actions .tv-primary')`, 8000)) { fails.push('"Browse all labels…" opens no labels list with Insert'); return; }
+  if (process.env.MENU_SHOTS) await p.shot(`labels-browse-${process.env.MENU_SHOTS}.png`);
+  await p.eval(`document.querySelector('dialog[open] .tv-actions .tv-primary').click()`);
+  if (!await p.until(`${view}.state.doc.toString().includes('\\\\ref{thm:a}')`, 4000)) fails.push('Insert wrote no thm:a into \\ref{}');
+}
 export async function menus(p, sc) {
   const fails = [], info = {};
   if (process.env.MENU_SHOTS === 'dark') await p.s('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-color-scheme', value: 'dark' }] });
@@ -108,6 +134,7 @@ export async function menus(p, sc) {
     if (!c.color) fails.push(`${n} bar: no color button`);
   }
   await tableFromGutter(p, fails, info);
+  await theorems(p, fails, info);
   info.log = p.menuLog; info.editor = ed; info.page = pg; info.editorSel = sel; info.pageSel = ps;
   // the same look: each part's computed style equal where both menus show it
   if (ed && pg) for (const k of ['head', 'row', 'sub', 'hint']) if (ed[k] && pg[k] && ed[k] !== pg[k]) fails.push(`${k}: editor ${ed[k]} ≠ page ${pg[k]}`);

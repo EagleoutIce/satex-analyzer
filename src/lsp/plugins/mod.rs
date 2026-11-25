@@ -21,6 +21,7 @@ mod image;
 pub(super) mod incremental;
 mod index;
 mod keys;
+mod labelled;
 mod language;
 pub(super) mod listing;
 mod overlay;
@@ -157,6 +158,7 @@ pub(super) static PLUGINS: &[&dyn TypePlugin] = &[
     &bibliography::Bibliography,
     &index::Index,
     &theorem::Theorem,
+    &labelled::Labelled,
     &overlay::Overlay,
     &frame::Frame,
     &page::Page,
@@ -266,9 +268,14 @@ pub(super) fn views(analysis: &Analysis, doc: &Text, path: &str, pos: Pos) -> Ve
     out
 }
 
+/// What a feature asked at no typed place sees.
+fn no_types() -> At {
+    At { hits: Vec::new(), place: None, item: super::type_at::Item { typed: String::new(), col: 1 } }
+}
+
 /// `satex/view` with a plugin and no position: its manager.
 pub(super) fn manager(analysis: &Analysis, doc: &Text, path: &str, name: &str) -> Option<Json> {
-    let at = At { hits: Vec::new(), place: None, item: super::type_at::Item { typed: String::new(), col: 1 } };
+    let at = no_types();
     let cx = context(analysis, doc, path, Pos::new(1, 1), &at);
     let mut v = on(analysis).find(|p| p.name() == name)?.manage(&cx)?;
     v["plugin"] = json!(name);
@@ -294,7 +301,7 @@ pub(super) fn lenses(analysis: &Analysis, doc: &Text, path: &str) -> Vec<CodeLen
         let text = doc.body();
         for name in names {
             if let Some((at, ..)) = page::calls(text, name, 0, text.len()).first() {
-                out.push(lens(doc, path, doc.pos(*at).line, title, p.name()));
+                out.push(lens(doc, path, (doc.pos(*at).line, 1), title, p.name()));
             }
         }
     }
@@ -456,12 +463,12 @@ pub(super) fn env_lenses(
     title: &str,
     plugin: &str,
 ) -> Vec<CodeLens> {
-    pairs(analysis, path, env).into_iter().map(|(b, _)| lens(doc, path, b.span.line, title, plugin)).collect()
+    pairs(analysis, path, env).into_iter().map(|(b, _)| lens(doc, path, (b.span.line, 1), title, plugin)).collect()
 }
 
-/// A lens `title` on `line`, opening `plugin`'s view there.
-pub(super) fn lens(doc: &Text, path: &str, line: u32, title: &str, plugin: &str) -> CodeLens {
-    let at = super::handlers::to_lsp(doc, Pos::new(line, 1));
+/// A lens `title` on `line`, opening `plugin`'s view at its column `col`.
+pub(super) fn lens(doc: &Text, path: &str, (line, col): (u32, u32), title: &str, plugin: &str) -> CodeLens {
+    let at = super::handlers::to_lsp(doc, Pos::new(line, col));
     let command = Command {
         title: title.into(),
         command: "satex.openView".into(),
@@ -640,6 +647,17 @@ pub(super) fn range(doc: &Text, line: u32, from: u32, to: u32) -> lsp_types::Ran
         start: super::handlers::to_lsp(doc, Pos::new(line, from)),
         end: super::handlers::to_lsp(doc, Pos::new(line, to)),
     }
+}
+
+/// "Browse all labels…" for a reference's key at `pos`, when the labels plugin is on.
+pub(super) fn label_browser(
+    analysis: &Analysis,
+    path: &str,
+    pos: lsp_types::Position,
+    typed: &str,
+) -> Option<CompletionItem> {
+    let on = analysis.settings.type_plugins.labels.enabled;
+    on.then(|| labelled::browse(super::handlers::path_uri(path).as_str(), pos, typed))
 }
 
 /// Every color the run defined, for a key's value: none when the color plugin is off.

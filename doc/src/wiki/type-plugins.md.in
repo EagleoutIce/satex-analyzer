@@ -213,6 +213,11 @@ Every term an index line carried (`\index{graph!directed}`), by its top level, s
 <picture><source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/EagleoutIce/satex-analyzer/main/doc/site/showcase/img/theorem-dark.png"><img src="https://raw.githubusercontent.com/EagleoutIce/satex-analyzer/main/doc/site/showcase/img/theorem-light.png" alt="Theorems: the theorem plugin in the playground" width="640"></picture>
 
 Every environment a document call defined together with its number (`\the⟨env⟩`), with any package: the counter it owns, shares or is numbered within, and the commands its code has that the others lack (its style). Each instance shows its labels and the lines referencing them. Renaming rewrites the definition, both ends of each instance and the kinds that share its counter. Numbering writes the group the document's own calls of the same command use for a shared counter or a parent counter. A new kind copies the document's first call of its command. These forms send snapshots the view fills, and the snapshot printer writes them.
+A gutter icon stands on each kind's definition and each instance's `\begin`. It opens the manager on that kind.
+
+### labels
+
+Every `\label` the run met, with what it points at: the environment, the number the build wrote and a caption or title. Each shows where it stands and where it is referenced. Search by label, number, caption or file. Completing a reference's key (`\ref`, `\cref`, `\autoref`, any command reading a label) offers "Browse all labels…" last. It opens this list, and choosing a label writes it into the reference.
 
 ## forest
 

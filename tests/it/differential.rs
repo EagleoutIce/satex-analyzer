@@ -1525,6 +1525,41 @@ fn a_forest_tree_is_drawn_with_its_nodes_and_edges() {
     assert_eq!(tree["approximate"], false);
 }
 
+/// Intuition: forest draws each node into a box first and places the boxes later, so a
+/// node's frame goes where its box goes, around its text.
+/// Pins the bug where `for tree={draw}` drew every frame where the boxes were made, stacked
+/// on the root, and no node elsewhere had one.
+#[test]
+fn a_forest_node_frame_moves_with_its_box() {
+    if !crate::support::installed() {
+        return;
+    }
+    let body = "\\begin{forest}\nfor tree={draw}\n[A [B][C]]\n\\end{forest}";
+    let rows = typeset_rows("forest-frames", "\\usepackage{forest}", body);
+    let tree = rows.iter().map(|r| &r["sketch"]).find(|p| p.is_object());
+    let tree = tree.unwrap_or_else(|| panic!("a drawn tree: {rows:?}"));
+    let numbers = |p: &serde_json::Value| -> Vec<f64> {
+        p["d"].as_str().unwrap().split(' ').filter_map(|w| w.parse().ok()).collect()
+    };
+    let paths = tree["paths"].as_array().unwrap();
+    // a frame is a closed path, an edge an open line
+    let frames: Vec<Vec<f64>> = paths.iter().filter(|p| p["d"].as_str().unwrap().ends_with('Z')).map(numbers).collect();
+    let texts = tree["texts"].as_array().unwrap();
+    assert_eq!(frames.len(), texts.len(), "one frame per node: {tree}");
+    // each node's text starts inside exactly one frame (SVG's y grows down, a text's from its baseline up)
+    for t in texts {
+        let (x, y) = (t["x"].as_f64().unwrap() + 1.0, t["y"].as_f64().unwrap() - 1.0);
+        let around = |f: &&Vec<f64>| {
+            let (xs, ys) = (f.iter().step_by(2), f.iter().skip(1).step_by(2));
+            let (lo, hi) = (xs.clone().copied().fold(f64::MAX, f64::min), xs.copied().fold(f64::MIN, f64::max));
+            let (top, bottom) = (ys.clone().copied().fold(f64::MAX, f64::min), ys.copied().fold(f64::MIN, f64::max));
+            lo < x && x < hi && top < y && y < bottom
+        };
+        assert_eq!(frames.iter().filter(around).count(), 1, "{} in one frame: {tree}", t["text"]);
+    }
+    assert_eq!(tree["approximate"], false);
+}
+
 /// The char offset of byte offset `b` in `text`.
 fn text_offset(text: &[char], b: usize) -> usize {
     let mut bytes = 0;

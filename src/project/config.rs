@@ -865,6 +865,7 @@ pub struct TypePlugins {
     pub bibliography: Switch,
     pub index: Switch,
     pub theorem: Switch,
+    pub labels: Switch,
     pub savebox: Switch,
     pub history: HistoryPlugin,
     pub pretty: PrettyPlugin,

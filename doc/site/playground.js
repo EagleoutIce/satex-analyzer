@@ -1306,6 +1306,12 @@
      * caret stands in its braces (`\\usepackage{|}` packages, `\\begin{|}` environments, `\\input{|}` files), or where its command
      * asks for it (`triggerSuggest`, a key family's `/demo/`): one rule for every command, the server knows what each argument takes. */
     function again(item, apply) {
+      // an item that opens a view (a reference's "Browse all labels…"): its text, then the view
+      if (item.command?.command === 'satex.openView') return (v, c, from, to) => {
+        if (typeof apply === 'function') apply(v, c, from, to);
+        else v.dispatch({ changes: { from, to, insert: apply }, selection: { anchor: from + apply.length }, userEvent: 'input.complete' });
+        setTimeout(() => openViews(item.command.arguments[1], item.command.arguments[2]), 0);
+      };
       const hints = item.command?.command === 'editor.action.triggerParameterHints', suggest = item.command?.command === 'editor.action.triggerSuggest' || opensArgument(item);
       if (!hints && !suggest) return apply;
       return (v, c, from, to) => {

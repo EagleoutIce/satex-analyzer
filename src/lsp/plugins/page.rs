@@ -91,7 +91,7 @@ impl TypePlugin for Page {
         lines.extend(parts.geometry_calls(doc.body()).iter().map(|c| doc.pos(c.0).line));
         lines.sort_unstable();
         lines.dedup();
-        lines.into_iter().map(|l| super::lens(doc, path, l, LENS, "page")).collect()
+        lines.into_iter().map(|l| super::lens(doc, path, (l, 1), LENS, "page")).collect()
     }
 }
 

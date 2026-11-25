@@ -148,6 +148,8 @@ pub struct Nest {
     pub from: u32,
     /// How many ranges boxes used before carried when it opened: the rest are its own.
     pub carried: u32,
+    /// How many literals the run had written when it opened: the rest are in it.
+    pub literals: u32,
     /// An `\halign`'s rows, or a `\noalign` in one.
     pub align: Option<Align>,
     /// How many conditionals were open when the group opened.
@@ -210,6 +212,7 @@ impl Nest {
             placed: self.placed && other.placed,
             from: self.from.min(other.from),
             carried: self.carried.min(other.carried),
+            literals: self.literals.min(other.literals),
             conds: self.conds.min(other.conds),
             graf: self.graf.zip(other.graf).map(|(a, b)| a.join(&b)),
             align: match (self.align, other.align) {
@@ -2474,6 +2477,7 @@ impl Machine<'_> {
             placed: false,
             from: self.out.facts.text.at.len() as u32,
             carried: self.carried_chars.len() as u32,
+            literals: self.out.facts.literals.len() as u32,
             align: None,
             conds: self.conds.len() as u32,
             graf: None,
@@ -2749,6 +2753,7 @@ impl Machine<'_> {
         }
         if let Some((register, global, within)) = nest.target {
             let ranges = self.gather_chars(&nest, now);
+            crate::analysis::observe::boxed(self, nest.literals, &ranges);
             self.set_aside(nest.from, now);
             self.set_box_chars(register, ranges, global);
             self.set_box(register, kind, global, within);

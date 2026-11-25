@@ -336,6 +336,25 @@ pub fn placed(m: &mut Machine, ranges: &[(u32, u32)], shift: crate::engine::mode
     m.out.facts.literals.push(crate::analysis::facts::Literal { at, text, chars });
 }
 
+/// The literals a box going into a register holds, with its text: `%boxed n a:b …`, the `n`
+/// literals before this one and the ranges counted back as [`placed`] counts them.
+/// Where the box is placed later, they are drawn (pgf's nodes positioned later, forest's).
+pub const BOXED: &str = "%boxed";
+
+pub fn boxed(m: &mut Machine, from: u32, ranges: &[(u32, u32)]) {
+    let lits = &m.out.facts.literals;
+    let n = (lits.len() as u32).saturating_sub(from);
+    let Some(last) = lits.last().filter(|_| n > 0 && !ranges.is_empty() && lits.len() < m.cfg.limits.facts) else {
+        return;
+    };
+    let (at, chars) = (last.at, m.out.facts.text.at.len() as u32);
+    let mut text = format!("{BOXED} {n}");
+    for (a, b) in ranges {
+        text.push_str(&format!(" {}:{}", chars.saturating_sub(*a), chars.saturating_sub(*b)));
+    }
+    m.out.facts.literals.push(crate::analysis::facts::Literal { at, text, chars });
+}
+
 /// A `\pdfcolorstack` the run executed (pdfTeX manual § 8.9.8): `stack` is
 /// `None` when [`Machine::scan_int`] could not decide it.
 pub fn color_stack(m: &mut Machine, stack: Option<i64>, op: crate::analysis::facts::StackOp, span: Span) {

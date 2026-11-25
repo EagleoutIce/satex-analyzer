@@ -73,7 +73,7 @@ impl TypePlugin for Font {
     }
     fn lenses(&self, analysis: &Analysis, doc: &Text, path: &str) -> Vec<CodeLens> {
         let class = Parts::of(analysis, doc, path).and_then(|p| p.class);
-        class.map(|c| super::lens(doc, path, doc.pos(c.0).line, LENS, "font")).into_iter().collect()
+        class.map(|c| super::lens(doc, path, (doc.pos(c.0).line, 1), LENS, "font")).into_iter().collect()
     }
 }
 

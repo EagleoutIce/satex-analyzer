@@ -43,7 +43,7 @@ impl TypePlugin for Class {
             .into_iter()
             .map(|(at, kind, _)| {
                 let title = if kind == LoadKind::Class { "Class options…" } else { "Style options…" };
-                super::lens(doc, path, doc.pos(at).line, title, "class")
+                super::lens(doc, path, (doc.pos(at).line, 1), title, "class")
             })
             .collect()
     }

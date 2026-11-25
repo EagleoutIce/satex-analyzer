@@ -1891,7 +1891,9 @@ fn typed_items(
                     }
                 });
                 searched = true;
-                super::search::found(labels.collect(), typed, shown, described)
+                let mut items = super::search::found(labels.collect(), typed, shown, described);
+                items.extend(super::plugins::label_browser(analysis, path, to_lsp(doc, pos), typed));
+                items
             }
             (Ty::Key(KeyKind::Cite), _) => {
                 searched = true;

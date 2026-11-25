@@ -6127,6 +6127,68 @@ fn theorem_manager_round_trips() {
     std::fs::remove_dir_all(dir).ok();
 }
 
+/// Intuition: the gutter marks a widget where a lens stands, so each theorem kind's definition
+/// and each instance's `\\begin` gets one, at the kind's name, and it opens the manager there.
+/// Pins the bug where amsthm documents had no lens: the theorem manager had no way in from the editor.
+#[test]
+fn theorem_lenses_mark_definitions_and_instances() {
+    let (mut server, uri, dir) = open_set("thmlens", THEOREMS, &[]);
+    let _ = at(&mut server, &uri, "textDocument/hover", 8, 9);
+    let id = server.request("textDocument/codeLens", json!({ "textDocument": { "uri": uri } }));
+    let lenses = server.response(id)["result"].clone();
+    let mine: Vec<&Value> =
+        (lenses.as_array().unwrap().iter()).filter(|l| l["command"]["arguments"][2] == "theorem").collect();
+    let places: Vec<(u64, u64)> = (mine.iter())
+        .map(|l| (l["range"]["start"]["line"].as_u64().unwrap(), l["range"]["start"]["character"].as_u64().unwrap()))
+        .collect();
+    let lines: Vec<&str> = THEOREMS.lines().collect();
+    // each place is the `{` of its line's kind name plus one
+    for &(line, col) in &places {
+        assert_eq!(&lines[line as usize][col as usize - 1..col as usize], "{", "{line}:{col} {lenses}");
+    }
+    let mut on: Vec<u64> = places.iter().map(|p| p.0).collect();
+    on.sort();
+    let want: Vec<u64> = (lines.iter().enumerate())
+        .filter(|(_, l)| {
+            l.starts_with("\\newtheorem") || l.starts_with("\\begin{theorem}") || l.starts_with("\\begin{lemma}")
+        })
+        .map(|(i, _)| i as u64)
+        .collect();
+    assert_eq!(on, want, "{lenses}");
+    // an instance's lens opens the theorem view there, on its kind
+    let (line, col) = *places.iter().find(|p| lines[p.0 as usize].starts_with("\\begin{theorem}")).unwrap();
+    let views = at(&mut server, &uri, "satex/view", line as u32, col as u32);
+    let view = views.as_array().unwrap().iter().find(|v| v["plugin"] == "theorem");
+    assert!(view.is_some_and(|v| v["sections"][0]["focus"] == "theorem"), "{views}");
+    server.shutdown();
+    std::fs::remove_dir_all(dir).ok();
+}
+
+/// Intuition: a reference's completion ends with "Browse all labels…", which opens the labels
+/// view at the reference; each label there says what it points at and writes itself into
+/// the reference's braces.
+#[test]
+fn reference_completion_browses_labels() {
+    let (mut server, uri, dir) = open_set("labelbrowse", THEOREMS, &[]);
+    let line = THEOREMS.lines().position(|l| l.starts_with("See \\ref{")).unwrap() as u32;
+    let items = complete(&mut server, &uri, line, 9);
+    let browse = items.iter().find(|i| i["label"] == "Browse all labels…").unwrap_or_else(|| panic!("{items:?}"));
+    assert_eq!(browse["command"]["arguments"][2], "labels", "{browse}");
+    let views = at(&mut server, &uri, "satex/view", line, 9);
+    let view = views.as_array().unwrap().iter().find(|v| v["plugin"] == "labels").unwrap_or_else(|| panic!("{views}"));
+    let thm = &view["sections"][0]["items"][0];
+    assert_eq!(thm["title"], "thm:a", "{view}");
+    assert!(thm["detail"].as_str().unwrap().contains("theorem 1.1"), "{thm}");
+    let edit = &thm["actions"][0]["edit"]["changes"][&uri][0];
+    assert_eq!(
+        (edit["newText"].as_str(), edit["range"]["start"]["character"].as_u64()),
+        (Some("thm:a"), Some(9)),
+        "{thm}"
+    );
+    server.shutdown();
+    std::fs::remove_dir_all(dir).ok();
+}
+
 const SAVEBOX: &str = "\\documentclass{article}\n\\usepackage{tikz}\n\\usepackage{listings}\n\\begin{document}\n\\begin{tikzpicture}\n\\draw (0,0) -- (1,1);\n\\end{tikzpicture}\n\\begin{tikzpicture}\n\\draw (0,0) -- (1,1);\n\\end{tikzpicture}\n\\begin{lstlisting}\nx = {a % b}\n\\end{lstlisting}\n\\begin{tikzpicture}\n\\node {\\thepage};\n\\end{tikzpicture}\n\\begin{minipage}{2cm}Hi\\end{minipage}\n\\end{document}\n";
 
 /// "Store in a box": a picture moves to the preamble in an `lrbox` (tikz changes catcodes),

@@ -7,11 +7,14 @@
 //! use for it.
 
 use super::{Cx, Group, Hit, TypePlugin, call_at, edit_of, key_values, unbraced};
+use crate::analysis::machine::Analysis;
 use crate::analysis::roles::{KeyKind, Ty};
 use crate::engine::builtins::OccKind;
 use crate::engine::tex::{Span, Tok};
 use crate::lsp::snapshot::{self, Node};
 use crate::project::config::TypePlugins;
+use crate::text::Text;
+use lsp_types::CodeLens;
 use serde_json::{Value as Json, json};
 use std::collections::BTreeSet;
 
@@ -31,7 +34,7 @@ impl TypePlugin for Theorem {
         &[Ty::Key(KeyKind::Environment)]
     }
     fn features(&self) -> &'static [&'static str] {
-        &["view", "manage"]
+        &["view", "manage", "lens"]
     }
     fn enabled(&self, cfg: &TypePlugins) -> bool {
         cfg.theorem.enabled
@@ -47,7 +50,32 @@ impl TypePlugin for Theorem {
     fn manage(&self, cx: &Cx) -> Option<Json> {
         render(cx, &kinds(cx))
     }
+    /// A lens on each kind's definition and each instance's `\begin`, at the kind's name.
+    fn lenses(&self, analysis: &Analysis, doc: &Text, path: &str) -> Vec<CodeLens> {
+        let at = super::no_types();
+        let cx = super::context(analysis, doc, path, crate::text::Pos::new(1, 1), &at);
+        let file = super::super::type_at::file_of(analysis, path);
+        let mut out = Vec::new();
+        // the name's column on `line`, spelled `{env}` after `before`
+        let mut add = |line: u32, before: &str, env: &str| {
+            let start = doc.offset(crate::text::Pos::new(line, 1))?;
+            let at = doc.line(line).find(&format!("{before}{{{env}}}"))? + before.len() + 1;
+            out.push(super::lens(doc, path, (line, doc.pos(start + at).col), TITLE, "theorem"));
+            Some(())
+        };
+        for k in kinds(&cx) {
+            if Some(k.span.file) == file {
+                add(k.span.line, "", &k.env);
+            }
+            for (b, _) in super::pairs(analysis, path, &k.env) {
+                add(b.span.line, "\\begin", &k.env);
+            }
+        }
+        out
+    }
 }
+
+const TITLE: &str = "Manage theorem-like environments…";
 
 /// A theorem-like environment and the call that defined it.
 struct Kind {

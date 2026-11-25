@@ -221,6 +221,9 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 
 ### Playground
 
+- `fix` **A forest tree's sketch draws each node's frame around the node.** With `for tree={draw}` every frame stood stacked on the root and no other node had one. forest draws a node into a box and places the box later, and what a box drew now moves with it.
+- `fix` **Theorem-like environments have a gutter icon.** Each `\newtheorem` and each `\begin` of a theorem, lemma or definition opens the theorem manager on its kind.
+- `feat` **A reference's completion browses all labels.** "Browse all labels…" opens every label with its kind, number, caption or title and place, and choosing one writes it into the reference.
 - `feat` **`satex/fontAt` gives the font the run set text in at a place**, as its family, series and shape (`plugins.typeset.fonts`).
 - `feat` **The font widget lists the installation's math fonts.** A package that declares the math symbol fonts is one on pdfLaTeX, an OpenType font with a `MATH` table one with unicode-math. Each comes with TeX's sample and the edit that loads it.
 - `fix` **Letters typed in the PDF inside a new `\textbf{…}` or `\textit{…}` echo bold or italic at once.** The echo took the font from another word the build set with that command, and with none it stayed regular until the build landed. Once the language server has run the text, the echo takes the font the run set there, so a command of your own (`\kw{…}`) echoes in its font too.
