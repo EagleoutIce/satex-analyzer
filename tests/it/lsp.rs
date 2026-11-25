@@ -6172,11 +6172,24 @@ fn theorem_lenses_mark_definitions_and_instances() {
         .map(|(i, _)| i as u64)
         .collect();
     assert_eq!(on, want, "{lenses}");
-    // an instance's lens opens the theorem view there, on its kind
+    // an instance's lens opens the theorem view there, on its kind and the instance
     let (line, col) = *places.iter().find(|p| lines[p.0 as usize].starts_with("\\begin{theorem}")).unwrap();
     let views = at(&mut server, &uri, "satex/view", line as u32, col as u32);
     let view = views.as_array().unwrap().iter().find(|v| v["plugin"] == "theorem");
     assert!(view.is_some_and(|v| v["sections"][0]["focus"] == "theorem"), "{views}");
+    assert!(view.is_some_and(|v| v["sections"][1]["focus"].as_str().is_some_and(|f| f.contains("1.1"))), "{views}");
+    // the counter and the one resetting it are two facets
+    let view = manager(&mut server, &uri, "theorem");
+    assert_eq!(record(&view, "theorem")["facets"], json!({ "counter": "own counter", "within": "within section" }));
+    assert_eq!(record(&view, "lemma")["facets"], json!({ "counter": "shares theorem" }));
+    // every instance, numbered as typeset, at its place and where it is referenced
+    let instances = &view["sections"][1]["items"];
+    let titles: Vec<&str> = instances.as_array().unwrap().iter().map(|i| i["title"].as_str().unwrap()).collect();
+    assert_eq!(titles, ["Theorem 1.1", "Lemma 1.2"], "{instances}");
+    let sites: Vec<u64> =
+        instances[0]["sites"].as_array().unwrap().iter().map(|s| s["line"].as_u64().unwrap()).collect();
+    assert_eq!(sites, [9, 15], "the \\begin, then the \\ref: {instances}");
+    assert_eq!(instances[0]["detail"], "thm:a");
     server.shutdown();
     std::fs::remove_dir_all(dir).ok();
 }

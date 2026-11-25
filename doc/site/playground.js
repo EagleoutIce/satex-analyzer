@@ -8982,7 +8982,12 @@
       const seen = new Set(), all = pdfBoxesAt(state.file, line).filter((b) => { const k = `${b.page},${b.x},${b.y},${b.w}`; return b.kind === '(' && b.w > 0 && !seen.has(k) && seen.add(k); });
       // a box inside another (a logo's lowered letter) is part of that node's text
       const bs = all.filter((b) => !all.some((o) => o !== b && o.page === b.page && o.x <= b.x && b.x + b.w <= o.x + o.w && o.y - o.h <= b.y - b.h && b.y + b.d <= o.y + o.d));
-      if (bs.length === here.length) here.forEach((n, i) => { const b = bs[i]; list.push({ n, page: b.page, l: b.x, t: b.y - b.h, r: b.x + b.w, d: b.y + b.d, c: [b.x + b.w / 2, b.y + (b.d - b.h) / 2] }); });
+      // a turned node: pdfTeX shifts its text box to the baseline's left end and turns it there (pgfsys-pdftex.def
+      // \pgfsys@hboxsynced), so SyncTeX records the box unturned at that point: its centre turns about it
+      if (bs.length === here.length) here.forEach((n, i) => {
+        const b = bs[i], deg = n.kind === 'node' ? TM.angle(text.slice(n.from, n.to), n.i) : 0;
+        list.push({ n, page: b.page, l: b.x, t: b.y - b.h, r: b.x + b.w, d: b.y + b.d, deg, base: [b.x, b.y], c: tikzTurned({ deg, base: [b.x, b.y] }, b.x + b.w / 2, b.y + (b.d - b.h) / 2) });
+      });
     }
     for (const p of list) {
       const o = list.find((q) => q.n.pic === p.n.pic && q.n.plain && q.n.kind === 'node');
@@ -8990,6 +8995,12 @@
     }
     tikzSeen = { text, boxes, list };
     return list;
+  }
+  /** Page point `x`, `y` of node `p`'s unturned box where its text turned by `p.deg` (counterclockwise) stands; `back`: the other way. */
+  function tikzTurned(p, x, y, back = false) {
+    if (!p.deg) return [x, y];
+    const a = (back ? -p.deg : p.deg) * Math.PI / 180, [bx, by] = p.base, u = x - bx, v = y - by;
+    return [bx + u * Math.cos(a) + v * Math.sin(a), by - u * Math.sin(a) + v * Math.cos(a)];
   }
   /** Point `s` of a path in picture `pic` on the page: a node's centre and half size (its frame), a coordinate from the origin; else null. */
   function tikzEnd(pic, s, all) {
@@ -9011,7 +9022,9 @@
     const host = pdfBody.querySelector(`.pdf-page[data-page="${p.page}"]`), img = host?.querySelector('img');
     if (!img?.naturalWidth) return;
     const [w, h] = pageSize(img), el = Object.assign(document.createElement('span'), { className: cls });
-    el.style.cssText = pdfPlace((p.l - 2 + dx) / w, (p.t - 2 + dy) / h, (p.r - p.l + 4) / w, (p.d - p.t + 4) / h);
+    // the outline stands around the centre, turned as the node is
+    const bw = p.r - p.l, bh = p.d - p.t;
+    el.style.cssText = pdfPlace((p.c[0] - bw / 2 - 2 + dx) / w, (p.c[1] - bh / 2 - 2 + dy) / h, (bw + 4) / w, (bh + 4) / h) + (p.deg ? `;rotate:${-p.deg}deg` : '');
     const what = p.n.name ? `node ${p.n.name}` : 'this node';
     // the grip's lock: locked, the nodes placed from this one move with it; a click unlocks it
     const deps = p.n.kind === 'node' ? TM.dependents(editor.text(), p.n).all.length : 0, free = tikzFree.has(tikzKey(p.n));
@@ -9036,10 +9049,11 @@
   function tikzHit(pt) {
     if (!pt) return null;
     const [page, x, y, px] = pt, band = Math.max(2, 5 * px), out = TIKZ_SEP + band;
-    const p = tikzPlaced().find((q) => q.page === page && x >= q.l - out && x <= q.r + out && y >= q.t - out && y <= q.d + out && (q.n.kind === 'node' || tikzSegment(q, tikzSeen.list)));
+    // a turned node is hit in its own unturned frame
+    const at = (q) => tikzTurned(q, x, y, true), within = (q, m) => { const [u, v] = at(q); return u > q.l - m && u < q.r + m && v > q.t - m && v < q.d + m; };
+    const p = tikzPlaced().find((q) => q.page === page && within(q, out) && (q.n.kind === 'node' || tikzSegment(q, tikzSeen.list)));
     if (!p) return null;
-    const inner = TIKZ_SEP - band;
-    return { p, frame: !(x > p.l - inner && x < p.r + inner && y > p.t - inner && y < p.d + inner) };
+    return { p, frame: !within(p, TIKZ_SEP - band) };
   }
   /** Whether a press at `hit` drags: outside Type mode always, in it on the frame or with Alt. */
   const tikzDrags = (hit, e) => !!hit && (!pdfTyping || hit.frame || e.altKey);
@@ -9753,7 +9767,7 @@
   /** A feature model's toggles added to hovered node `f`'s toolbar `el` once the run's feature styles are known (forest plugin `features`). */
   function forestFeatures(f, el, done = () => {}) {
     forestFactsOf(f.from).then((sec) => {
-      const feats = sec?.features;
+      const feats = FOREST.featuresIn(f.t, sec?.features);
       if (forestHover !== f || !el.isConnected || !feats) return;
       f.feats = feats;
       const html = FOREST.featureToggles(f.n, FOREST.parentOf(f.t, f.n), feats).map((x) => { const t = `${FOREST.featureName(x.pair, x.now)}: switch to ${FOREST.featureName(x.pair, x.next)}`;

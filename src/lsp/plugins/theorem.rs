@@ -221,6 +221,9 @@ fn render(cx: &Cx, all: &[Kind]) -> Option<Json> {
     let envs: Vec<&str> = all.iter().map(|k| k.env.as_str()).collect();
     let file_name = |s: Span| a.files.get(usize::from(s.file)).map_or(cx.path, |f| f.path.as_str());
     let mut items = Vec::new();
+    let mut instances = Vec::new();
+    let numbers = super::super::labels::Labels::of(a);
+    let heads = heads(cx, all);
     for k in all {
         // the instances: each \begin…\end of this file, its labels and their references
         let mut ends: Vec<(u32, OccKind)> = (occ.iter())
@@ -256,14 +259,17 @@ fn render(cx: &Cx, all: &[Kind]) -> Option<Json> {
                 }
             ));
             found.extend(labels.iter().map(|l| l.to_string()));
+            instances.push(instance(cx, &numbers, heads.get(b).map(String::as_str), k, *b, &labels));
             rows.push(json!([format!("line {b}"), labels.into_iter().collect::<Vec<_>>().join(", "), refs.join(", ")]));
         }
-        let numbering = match (&k.shared, &k.within, k.own) {
-            (Some(s), _, _) => format!("shares {s}"),
-            (_, Some(w), _) => format!("own counter within {w}"),
-            (_, _, true) => "own counter".into(),
+        // the counter it numbers by, and the one that resets it: two facets
+        let counter = match (&k.shared, k.own || k.within.is_some()) {
+            (Some(s), _) => format!("shares {s}"),
+            (_, true) => "own counter".into(),
             _ => "unnumbered".into(),
         };
+        let within = k.within.as_ref().map(|w| format!("within {w}"));
+        let numbering = within.iter().fold(counter.clone(), |c, w| format!("{c} · {w}"));
         let style: Vec<&str> = k.body.iter().map(|s| s.as_str()).filter(|s| *s != k.env).collect();
         let mut fields = Vec::new();
         let mut forms = Vec::new();
@@ -364,18 +370,111 @@ fn render(cx: &Cx, all: &[Kind]) -> Option<Json> {
             "search": format!("{} {} {numbering} {} {}", k.env, k.head, found.join(" "), places.join(" ")),
             "uses": if places.is_empty() { format!("Defined at `{}:{}`. No instance.", file_name(k.span), k.span.line) } else { format!("Defined at `{}:{}`. Instances: {}", file_name(k.span), k.span.line, places.join(" · ")) },
             "sites": super::sites(begins.iter().map(|b| (cx.path, *b))),
-            "facets": { "numbering": numbering },
+            "facets": match &within { Some(w) => json!({ "counter": counter, "within": w }), None => json!({ "counter": counter }) },
             "sort": { "name": k.env, "line": format!("{:06}", k.span.line), "uses": format!("{:06}", begins.len()) },
             "fields": fields,
             "forms": forms,
             "table": { "columns": ["instance", "labels", "referenced on lines"], "rows": rows },
         }));
     }
+    instances.sort_by_key(|i| i["sort"]["line"].as_str().map(String::from));
+    // the instance at the asked line, as the gutter opens it
+    let focus = instances.iter().find(|i| i["sites"][0]["line"] == cx.pos.line).map(|i| i["title"].clone());
     Some(json!({
         "title": "Theorem-like environments",
         "sections": [{ "kind": "records", "placeholder": "search kinds, labels, files", "sorts": ["line", "name", "uses"], "items": items,
-                       "empty": "no theorem-like environment", "add": add(cx, all, &slots, &counters) }],
+                       "empty": "no theorem-like environment", "add": add(cx, all, &slots, &counters) },
+                     { "kind": "records", "heading": "Instances", "placeholder": "search numbers, notes, labels", "sorts": ["line", "number"],
+                       "items": instances, "focus": focus, "empty": "no instance" }],
     }))
+}
+
+/// The head the run typeset for each instance of this file, by its `\\begin` line: the
+/// characters set first from the instance's lines, all at one place (where the body's first
+/// character started the paragraph), without that character.
+fn heads(cx: &Cx, all: &[Kind]) -> std::collections::HashMap<u32, String> {
+    let (a, mut out) = (cx.analysis, std::collections::HashMap::new());
+    let Some(file) = cx.file() else { return out };
+    let envs: Vec<&str> = all.iter().map(|k| k.env.as_str()).collect();
+    let mut open: Vec<u32> = Vec::new();
+    let mut spans: Vec<(u32, u32)> = Vec::new();
+    let mut ends: Vec<_> = (a.facts.occurrences.iter())
+        .filter(|o| matches!(o.kind, OccKind::BeginEnvironment | OccKind::EndEnvironment))
+        .filter(|o| o.span.file == file && envs.contains(&o.key.as_str()))
+        .map(|o| (o.span.line, o.kind == OccKind::EndEnvironment))
+        .collect();
+    ends.sort();
+    ends.dedup();
+    for (line, end) in ends {
+        match end {
+            false => open.push(line),
+            true => spans.extend(open.pop().map(|b| (b, line))),
+        }
+    }
+    spans.sort();
+    let t = &a.facts.text;
+    let chars: Vec<char> = t.chars.chars().collect();
+    let n = t.site.len().min(chars.len());
+    let mut i = 0;
+    while i < n {
+        let s = t.site[i];
+        // the innermost instance whose lines hold the place, not yet headed
+        let within = spans.iter().rev().find(|(b, e)| s.file == file && *b <= s.line && s.line <= *e);
+        let Some(&(b, _)) = within.filter(|(b, _)| !out.contains_key(b)) else {
+            i += 1;
+            continue;
+        };
+        let same = (i..n).take_while(|&j| t.site[j] == s).count();
+        // the paragraph began at the body's first character: the run ends with it, after a space
+        let words: Vec<String> =
+            chars[i..i + same].iter().collect::<String>().split_whitespace().map(String::from).collect();
+        let cut = words.len() - usize::from(words.len() > 1 && words.last().is_some_and(|w| w.chars().count() == 1));
+        // a space alone (the line end after `\\label`) is no head
+        if cut > 0 {
+            out.insert(b, words[..cut].join(" ").trim_end_matches('.').to_string());
+        }
+        i += same;
+    }
+    out
+}
+
+/// One instance from its `\\begin` on line `b`: its number as typeset, its note, labels and the
+/// places that reference them.
+fn instance(
+    cx: &Cx,
+    numbers: &super::super::labels::Labels,
+    head: Option<&str>,
+    k: &Kind,
+    b: u32,
+    labels: &BTreeSet<&str>,
+) -> Json {
+    let a = cx.analysis;
+    // the head the run set (`Theorem 1.2 (note)`), else the label's number
+    let number = labels.iter().find_map(|l| numbers.number(l));
+    let title = match (head.filter(|h| !h.is_empty()), number) {
+        (Some(h), _) => h.to_string(),
+        (None, Some(n)) => format!("{} {n}", k.env),
+        (None, None) => k.env.clone(),
+    };
+    // the note: the optional argument right after `\\begin{env}`
+    let line = cx.doc.line(b);
+    let after = line.find(&format!("\\begin{{{}}}", k.env)).map(|i| &line[i + k.env.len() + 8..]);
+    let note = after.filter(|r| r.starts_with('[')).and_then(|r| Some(&r[1..r.find(']')?]));
+    let refs: Vec<&crate::analysis::facts::Occurrence> =
+        a.facts.occurrences.iter().filter(|o| o.kind == OccKind::Ref && labels.contains(o.key.as_str())).collect();
+    let path = |o: &crate::analysis::facts::Occurrence| {
+        a.files.get(usize::from(o.span.file)).map_or(cx.path, |f| f.path.as_str())
+    };
+    let detail: Vec<String> = note.map(String::from).into_iter().chain(labels.iter().map(|l| l.to_string())).collect();
+    json!({
+        "title": title,
+        "detail": detail.join(" · "),
+        "search": format!("{title} {} {}", k.env, detail.join(" ")),
+        // where it stands, then where it is referenced
+        "sites": super::sites([(cx.path, b)].into_iter().chain(refs.iter().map(|o| (path(o), o.span.line)))),
+        "facets": { "kind": k.env },
+        "sort": { "line": format!("{b:06}"), "number": number.unwrap_or("") },
+    })
 }
 
 /// A new kind, written like the document's first call of each command with positional

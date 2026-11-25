@@ -74,7 +74,7 @@ async function tableFromGutter(p, fails, info) {
   if (!ok) fails.push(`the table line's gutter mark (${g.kind}) offers no Edit table… (menu: ${await p.eval(`document.getElementById('play-ctx').hidden ? 'none' : document.getElementById('play-ctx').textContent.slice(0, 120)`)})`);
   await p.key('Escape').catch(() => {});
 }
-/** Theorems: a gutter mark on each instance's \\begin opens the theorem manager; a reference's completion
+/** Theorems: a gutter mark on each instance's \\begin opens the theorem manager on that instance; a reference's completion
  * ends with "Browse all labels…", which opens the labels list, and a label's Insert writes it into the reference. */
 const THEOREMS = '\\documentclass{article}\n\\usepackage{amsthm}\n\\newtheorem{theorem}{Theorem}[section]\n\\begin{document}\n\\section{A}\n\\begin{theorem}\\label{thm:a}\nX.\n\\end{theorem}\nSee \\ref{}.\n\\end{document}\n';
 async function theorems(p, fails, info) {
@@ -88,6 +88,7 @@ async function theorems(p, fails, info) {
   if (!g || g.none) { fails.push('no gutter mark on the \\begin{theorem} line'); return; }
   await p.mouse(g.x, g.y);
   if (!await p.until(`/Theorem-like environments/.test(document.querySelector('dialog[open]')?.textContent ?? '')`, 8000)) fails.push(`the \\begin{theorem} gutter mark (${g.title}) opens no theorem manager`);
+  else if (!await p.until(`[...document.querySelectorAll('dialog[open] tr.on')].some((r) => /Theorem 1\\.1/.test(r.textContent))`, 4000)) fails.push('the theorem manager does not select instance Theorem 1.1');
   if (process.env.MENU_SHOTS) await p.shot(`theorem-gutter-${process.env.MENU_SHOTS}.png`);
   await p.key('Escape').catch(() => {});
   // the reference: a letter typed in its braces completes, the last item opens the list

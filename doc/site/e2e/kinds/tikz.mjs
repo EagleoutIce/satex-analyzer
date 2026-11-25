@@ -329,6 +329,17 @@ export async function tikz(p, sc) {
         const t1 = await p.until(`satexHealth().text !== ${J(t0)} && satexHealth().text`, 5000);
         if (!t1 || !/\\node\[box, right=of src, rotate=180\] \(run\)|\\node\[box, right=of src, rotate=90\] \(run\)/.test(t1)) r.fails.push(`text: ${J((t1 || '').match(/\\node[^;]*\(run\)/)?.[0])}`);
         r.info.wrote = (t1 || '').match(/\\node[^;]*\(run\)/)?.[0];
+        // built turned, the hover outline turns with the node and stays on its text
+        await build(p);
+        const w = await word(p, 'run');
+        if (w) {
+          await p.s('Input.dispatchMouseEvent', { type: 'mouseMoved', x: mid(w)[0], y: mid(w)[1] });
+          const o = await p.until(`(() => { const e = document.querySelector('#play-pdf .pdf-tikz'); if (!e) return null; const q = e.getBoundingClientRect(); return { rot: e.style.rotate, c: [q.left + q.width / 2, q.top + q.height / 2] }; })()`, 3000);
+          r.info.outline = o;
+          if (!o || !/^-(90|180)deg$/.test(o.rot)) r.fails.push(`the outline does not turn: ${J(o)}`);
+          else if (Math.hypot(o.c[0] - mid(w)[0], o.c[1] - mid(w)[1]) > 6) r.fails.push(`the outline stands off the turned node: ${J(o.c)} vs ${J(mid(w))}`);
+          if (process.env.MENU_SHOTS) await p.shot(`node-rotate-outline-${process.env.MENU_SHOTS}.png`);
+        }
         await undo(p);
         await build(p);
       } catch (e) { r.fails.push(String(e.message)); }

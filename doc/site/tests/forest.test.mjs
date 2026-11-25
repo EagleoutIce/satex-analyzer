@@ -198,4 +198,7 @@ test('feature toggles: one style per pair, the run\'s names', () => {
   assert.equal(F.featureMark('group', ''), '∧');
   F.settle(t);
   assert.match(F.emit(t), /\[Car \[Body, optional\] \[Extras, draw/);
+  // a tree using none of the styles (a syntax tree in the same document) gets no toggles
+  assert.equal(F.featuresIn(F.parse('\n  [S [NP] [VP]]\n'), feats), null);
+  assert.equal(F.featuresIn(F.parse('\n  [Car [Body, fm mandatory]]\n'), feats), feats);
 });

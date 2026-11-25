@@ -378,6 +378,7 @@ const satexViews = (() => {
     // its uses, its fields (edited through edit templates, `${value}` the new text), a table and actions; `add` is a form of templates
     records: (s, view, ctx) => {
       const box = el('div', 'tv-records');
+      if (s.heading) box.append(el('h3', 'tv-records-head', esc(s.heading)));
       const sitesOf = (r: Rec) => r.sites ?? [];
       // what the run reports of each record sets the chips: every facet with two values or more, and which are used
       const facets = [...new Set<string>(s.items.flatMap((r: Rec) => Object.keys(r.facets ?? {})))];
@@ -385,11 +386,13 @@ const satexViews = (() => {
       const chips: Rec[] = facets.flatMap<Rec>((f: string) => values(f).length > 1 ? values(f).map((v) => ({ id: `${f}:${v}`, group: f, html: esc(v), title: f, test: (r: Rec) => r.facets?.[f] === v })) : [])
         .concat([{ id: 'used', html: 'used', test: (r: Rec) => sitesOf(r).length > 0 }, { id: 'unused', html: 'unused', test: (r: Rec) => !sitesOf(r).length }]);
       const first = (r: Rec) => Object.values(r.facets ?? {})[0];
+      // the facets after the first: a pill each, beside the title in the list and in the detail
+      const pills = (r: Rec, from: number) => Object.values(r.facets ?? {}).slice(from).map((v) => `<span class="tv-type" style="--h:${hue(v)}">${esc(v)}</span>`).join('');
       const md = masterDetail({
         label: s.title ?? 'records', placeholder: s.placeholder ?? 'search', query: s.query, rows: s.items, chips, head: [first(s.items[0] ?? {}) ? 'Kind' : '', 'Entry'],
         hay: (r: Rec) => (r.search ?? r.title).toLowerCase(),
         sorts: (s.sorts ?? []).map((k: string) => ({ id: k, label: k, key: (r: Rec) => String(r.sort?.[k] ?? r.title) })),
-        row: (r: Rec) => ({ kind: first(r), title: r.title, sub: r.detail, flags: r.badge ? `<span class="tv-flag">${esc(r.badge)}</span>` : '' }),
+        row: (r: Rec) => ({ kind: first(r), title: r.title, sub: r.detail, flags: pills(r, 1) + (r.badge ? `<span class="tv-flag">${esc(r.badge)}</span>` : '') }),
         selected: s.items.find((r: Rec) => r.title === s.focus) ?? s.items[0] ?? null, none: s.empty ?? 'nothing found',
         show: (r: Rec, pane: Rec) => pane.replaceChildren(record(r)),
       });
@@ -397,7 +400,7 @@ const satexViews = (() => {
       const kept = () => ({ q: md.search.value, open: md.selected()?.title });
       const record = (r: Rec) => {
         const body = el('div', 'tv-body');
-        body.append(el('div', 'tv-md-title', `<b>${esc(r.title)}</b>${r.detail ? `<span class="tv-muted">${esc(r.detail)}</span>` : ''}`));
+        body.append(el('div', 'tv-md-title', `<b>${esc(r.title)}</b>${pills(r, 0)}${r.detail ? `<span class="tv-muted">${esc(r.detail)}</span>` : ''}`));
         // every use, from the run: one view for all managers; a place opens in the editor and the manager steps aside
         if (r.sites) body.append(usesView(r.sites, ctx));
         else if (r.uses) body.append(Object.assign(el('div', 'tv-text tv-uses', ctx.markdown(r.uses)), { onclick: (e: Rec) => { if (e.target.closest('a.place')) ctx.close?.(); } }));
@@ -2547,6 +2550,12 @@ const satexViews = (() => {
   const featureToggles = (n: TNode, parent: TNode | undefined, feats: Rec | null | undefined) => !feats ? [] : (['kind', 'edge', 'group'] as const)
     .filter((p) => FEATURE_PAIRS[p]!.some((r) => feats[r]) && (p !== 'edge' || parent) && (p !== 'group' || n.children.length > 1))
     .map((p) => ({ pair: p, now: featureOf(n, feats, p), next: nextFeature(n, feats, p) }));
+  /** The run's feature styles when tree `t` uses one of them (a node's option or a `for tree` key), else null: a
+   * syntax tree beside a feature model in one document gets no toggles. */
+  const featuresIn = (t: Tree, feats: Rec | null | undefined) => {
+    const used = new Set(Object.values(feats ?? {}));
+    return used.size && (order(t.root).some((n) => n.opts.some((o) => used.has(o.trim()))) || forTreeKeys(t).some((k) => used.has(k))) ? feats! : null;
+  };
   const featureName = (pair: string, role: string) => role || (pair === 'kind' ? 'concrete' : pair === 'group' ? 'and' : 'unmarked');
   // presets of the tree dialog: a preset names option sets (each a choice of keys, '' none) and the styles that
   // define the keys; it is on when a tree uses its keys, or started from its template
@@ -2603,7 +2612,7 @@ const satexViews = (() => {
     return out;
   }
   const forestFns = { splitTop, head, parse: treeParse, emit: treeEmit, settle, fresh, outlineIn, outlineOut, move, forTree, setForTree, layout: treeLayout, PRESETS, presetOf, optOf, setOpt: setPresetOpt, addChild, addSibling, remove, shift, constraintsOf, setConstraints, parentOf,
-    FEATURE_PAIRS, featureMark, featureOf, setFeature, nextFeature, featureToggles, featureName, valOf, setKey, edgeLabel, setEdgeLabel, nameFor, linksOf, link, unlink, whereLevel, setWhereLevel, forTreeKeys, forTreeToggle };
+    FEATURE_PAIRS, featureMark, featureOf, featuresIn, setFeature, nextFeature, featureToggles, featureName, valOf, setKey, edgeLabel, setEdgeLabel, nameFor, linksOf, link, unlink, whereLevel, setWhereLevel, forTreeKeys, forTreeToggle };
 
   function forest(s: Rec, view: Rec, ctx: ViewCtx) {
     const root = el('div', 'tv-draw tv-forest');
@@ -2758,7 +2767,8 @@ const satexViews = (() => {
         tool('→', 'Move after its right sibling', act(() => shift(t, n, 1)), k === parent.children.length - 1);
       }
       // a feature model's toggles, from the styles the run found (forest plugin `features`)
-      for (const f of featureToggles(n, parent, s.features)) tool(featureMark(f.pair, f.now), `${featureName(f.pair, f.now)}: switch to ${featureName(f.pair, f.next)}`, () => { setFeature(n, s.features, f.pair, f.next); touch(); });
+      const feats = featuresIn(t, s.features);
+      for (const f of featureToggles(n, parent, feats)) tool(featureMark(f.pair, f.now), `${featureName(f.pair, f.now)}: switch to ${featureName(f.pair, f.next)}`, () => { setFeature(n, feats!, f.pair, f.next); touch(); });
       tool('⤳', 'Draw a line to another node: click it next', () => { linking = n; status.textContent = `click the node the line from ${n.content || 'this node'} goes to`; });
       // a subtree goes as one undoable step; the status says what went
       if (parent) tool('✕', n.children.length ? `Delete this node and the ${size(n) - 1} below it (Ctrl+Z undoes)` : 'Delete this node',
@@ -2784,7 +2794,6 @@ const satexViews = (() => {
       } else form.replaceChildren(el('h4', 'tv-h', 'Selected node'),
         field('content', n.content, (v: string) => { n.content = v; n.dirty = true; }, ['tex']),
         field('options', n.opts.join(', '), (v: string) => { n.opts = splitTop(v); n.dirty = true; }));
-      const feats = s.features && Object.keys(s.features).length ? s.features : null;
       if (feats && !edge && line == null) for (const f of featureToggles(n, parent, feats)) {
         const roles = f.pair === 'group' || FEATURE_PAIRS[f.pair]!.filter((r) => feats[r]).length < 2 ? ['', ...FEATURE_PAIRS[f.pair]!.filter((r) => feats[r])] : FEATURE_PAIRS[f.pair]!.filter((r) => feats[r]);
         form.append(choice({ kind: 'feature is', edge: 'its edge', group: 'children are' }[f.pair], roles, f.now, (k) => setFeature(n, feats, f.pair, k), Object.fromEntries(roles.map((r) => [r, `${featureName(f.pair, r)} ${featureMark(f.pair, r)}`]))));
@@ -3667,6 +3676,8 @@ button.tv-spec-value { cursor: pointer; } button.tv-spec-value:hover, button.tv-
 .tv-more { padding-left: .5rem; color: var(--tv-muted); }
 .tv-chip i { width: .9rem; height: .9rem; border-radius: 50%; border: 1px solid #8886; }
 .tv-md { --md-w: 35%; display: grid; grid-template-columns: var(--md-w) .7rem minmax(0, 1fr); height: min(66vh, 38rem); min-height: 20rem; min-width: 0; }
+/* two lists in one view (a manager's kinds and their instances): both fit the dialog */
+.tv-records:has(+ .tv-records) .tv-md, .tv-records + .tv-records .tv-md { height: min(34vh, 22rem); min-height: 13rem; }
 .tv-md-left, .tv-md-right { display: flex; flex-direction: column; gap: .45rem; min-width: 0; min-height: 0; } .tv-md-right { overflow: auto; }
 .tv-md-bar { cursor: col-resize; touch-action: none; position: relative; outline: none; }
 .tv-md-bar::before { content: ''; position: absolute; inset: 0 auto 0 50%; width: 1px; background: var(--tv-border); transition: background .12s, width .12s; }
@@ -3687,6 +3698,7 @@ button.tv-spec-value { cursor: pointer; } button.tv-spec-value:hover, button.tv-
 .tv-md-table th.k, .tv-md-table td.k { width: 8rem; } .tv-md-table td { padding: .3rem .4rem; border-bottom: 1px solid color-mix(in srgb, var(--tv-border) 50%, transparent); vertical-align: top; overflow: hidden; }
 .tv-md-table td.m { white-space: nowrap; text-overflow: ellipsis; } .tv-md-table td.m small { display: block; overflow: hidden; text-overflow: ellipsis; color: var(--tv-muted); }
 .tv-md-table tbody tr { cursor: pointer; } .tv-md-table tbody tr:hover { background: color-mix(in srgb, var(--tv-accent) 6%, transparent); } .tv-md-table tr.on { background: color-mix(in srgb, var(--tv-accent) 16%, transparent); }
+td.m > .tv-type { margin-left: .3rem; } .tv-records-head { margin: .8rem 0 .3rem; font-size: .8rem; text-transform: uppercase; letter-spacing: .04em; color: var(--tv-muted); }
 .tv-flag { font-size: .66rem; padding: 0 .3rem; border-radius: 4px; margin-left: .25rem; background: var(--tv-sunk); color: var(--tv-muted); } .tv-flag.warn { background: color-mix(in srgb, #e0a000 22%, transparent); color: inherit; }
 .tv-md-empty { color: var(--tv-muted); padding: 1rem; text-align: center; } .tv-md-title { display: flex; flex-wrap: wrap; gap: .2rem .6rem; align-items: baseline; } .tv-md-title b { font-size: 1rem; }
 .tv-uses-view { display: grid; gap: .3rem; } .tv-uses-list { display: grid; max-height: 11rem; overflow: auto; border-radius: 6px; background: var(--tv-sunk); }
