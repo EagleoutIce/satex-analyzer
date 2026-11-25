@@ -376,7 +376,7 @@ test('writes prefer a matching document style', withStore(() => {
 // in both group styles), keeps every other key, ticks the value in force, and the document still parses as a tree. Pins
 // a growth switch that left the old anchors (edges from the south of a tree growing right).
 test('forest: feature model look via its styles', withStore(() => {
-  const SITE = new URL('../', import.meta.url), text = readFileSync(new URL('examples/feature-model.tex', SITE), 'utf8'), F = self.satexViews.forest;
+  const SITE = new URL('../', import.meta.url), text = readFileSync(new URL('tests/fixtures/feature-model.tex', SITE), 'utf8'), F = self.satexViews.forest;
   const from = text.indexOf('\\begin{forest}') + 14, to = text.indexOf('\\end{forest}'), t = F.parse(text.slice(from, to));
   const rows = (tx) => PA.groups({ kind: 'forest-node', f: { from, to, body: tx.slice(from, to), t, n: t.root } }, ctxOf(tx)).find((g) => g.title === 'Feature model look').items;
   const run = (tx, ...path) => { const c = ctxOf(tx); const its = PA.groups({ kind: 'forest-node', f: { from, to, body: tx.slice(from, to), t, n: t.root } }, c).find((g) => g.title === 'Feature model look').items;

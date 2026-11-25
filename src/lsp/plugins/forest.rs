@@ -79,6 +79,7 @@ impl TypePlugin for Forest {
         };
         section["kind"] = json!("forest");
         section["strut"] = json!(super::tikz::strut_key(cx.analysis));
+        section["features"] = json!(features(cx.analysis));
         Some(json!({ "title": title, "sections": [section] }))
     }
 
@@ -171,6 +172,29 @@ fn tree_start(body: &str) -> Option<usize> {
         i += 1;
     }
     None
+}
+
+/// The roles of a feature model's nodes: what a node is, how its edge binds it, how its children group.
+const ROLES: [&str; 6] = ["abstract", "concrete", "mandatory", "optional", "or", "alternative"];
+
+/// The feature-model styles the run defined under `/forest/`, by role: a style of the document or a
+/// package, not of forest itself, whose name has the role as a word (`fm mandatory`, `optional`), the
+/// convention feature-model trees are written by. The last one defined wins.
+fn features(a: &Analysis) -> serde_json::Map<String, Json> {
+    let mut out = serde_json::Map::new();
+    for r in crate::queries::query::pgfkeys(a, Some("/forest/")) {
+        let field = |k: &str| r.get(k).and_then(Json::as_str).unwrap_or_default().to_string();
+        let (key, from) = (field("key"), field("path"));
+        let Some(name) = key.strip_prefix("/forest/").filter(|n| !n.contains('/')) else { continue };
+        if field("kind") != "style" || from.rsplit('/').next().is_some_and(|f| f.starts_with("forest")) {
+            continue;
+        }
+        let words: Vec<&str> = name.split(|c: char| !c.is_alphabetic()).collect();
+        if let Some(role) = ROLES.iter().find(|r| words.contains(r)) {
+            out.insert(role.to_string(), json!(name));
+        }
+    }
+    out
 }
 
 /// The anchors of the shapes the run gave the tree's named nodes (`pgf@sh@ns@⟨name⟩`), as pgf

@@ -221,6 +221,9 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 
 ### Playground
 
+- `feat` **Feature models are edited with toggles.** When the document defines feature-model styles for forest (named abstract, concrete, mandatory, optional, or, alternative, with or without a prefix such as `fm`), the tree widget and the PDF node toolbar show toggles for them. They switch a node abstract or concrete and mandatory or optional, and a parent's children between and, or and alternative, writing the style names into the node's options. The analysis finds the styles by their names, so a document's own feature-model styles work too.
+- `fix` **The playground no longer ships a feature-model example.** The document is kept as a test fixture.
+- `fix` **A forest node's toolbar in the PDF stands above the node.** Beside it, the toolbar hid the next sibling.
 - `fix` **A forest tree's sketch draws each node's frame around the node.** With `for tree={draw}` every frame stood stacked on the root and no other node had one. forest draws a node into a box and places the box later, and what a box drew now moves with it.
 - `fix` **Theorem-like environments have a gutter icon.** Each `\newtheorem` and each `\begin` of a theorem, lemma or definition opens the theorem manager on its kind.
 - `feat` **A reference's completion browses all labels.** "Browse all labels…" opens every label with its kind, number, caption or title and place, and choosing one writes it into the reference.

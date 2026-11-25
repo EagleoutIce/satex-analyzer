@@ -176,3 +176,26 @@ test('preamble: level styles and for tree keys', () => {
   F.setWhereLevel(bare, 0, 'draw');
   assert.equal(F.emit(bare), '\n  where level=0{draw}{}\n  [S [NP]]\n');
 });
+
+// Intuition: the feature toggles flip a pair's style on the node (abstract ↔ concrete, mandatory ↔ optional, and → or →
+// alternative) with the styles the run named, never two of one pair, and a role without a style is the bare default.
+// Pins a toggle that adds `optional` beside `mandatory`, or offers a group toggle on a leaf.
+test('feature toggles: one style per pair, the run\'s names', () => {
+  const feats = { abstract: 'fm abstract', mandatory: 'fm mandatory', optional: 'optional', or: 'or', alternative: 'fm alternative' };
+  const t = F.parse('\n  [Car, fm abstract [Body, fm mandatory] [Extras, draw [Radio] [Nav]]]\n'), [body, extras] = t.root.children;
+  assert.deepEqual(F.featureToggles(t.root, undefined, feats).map((x) => x.pair), ['kind', 'group']);
+  assert.deepEqual(F.featureToggles(body, t.root, feats).map((x) => x.pair), ['kind', 'edge']);
+  // no concrete style: abstract toggles off and on
+  assert.equal(F.nextFeature(t.root, feats, 'kind'), '');
+  F.setFeature(t.root, feats, 'kind', '');
+  assert.deepEqual(t.root.opts, []);
+  F.setFeature(body, feats, 'edge', F.nextFeature(body, feats, 'edge'));
+  assert.deepEqual(body.opts, ['optional']);
+  const cycle = [];
+  for (let k = 0; k < 3; k++) { F.setFeature(extras, feats, 'group', F.nextFeature(extras, feats, 'group')); cycle.push(F.featureOf(extras, feats, 'group')); }
+  assert.deepEqual(cycle, ['or', 'alternative', '']);
+  assert.deepEqual(extras.opts, ['draw']);
+  assert.equal(F.featureMark('group', ''), '∧');
+  F.settle(t);
+  assert.match(F.emit(t), /\[Car \[Body, optional\] \[Extras, draw/);
+});

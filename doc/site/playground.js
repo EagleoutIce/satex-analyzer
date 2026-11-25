@@ -9738,13 +9738,29 @@
     const f = forestAt(pt), w = f && pdfWordUnder(pt[0], pt[1], pt[2]), img = pt[4];
     if (!w) return;
     const [pw, ph] = pageSize(img), el = Object.assign(document.createElement('span'), { className: 'pdf-forest-add' });
-    el.style.cssText = `left:${(w[3] + 1) / pw * 100}%;top:${(w[2] + w[4]) / 2 / ph * 100}%`;
+    // above the node's text, so it hides no sibling
+    el.style.cssText = `left:${(w[1] - 2) / pw * 100}%;top:${(w[2] - 4) / ph * 100}%`;
     el.innerHTML = forestButtons(f, true);
     img.parentElement.append(el);
     // the bridge: the word and the toolbar with a margin, in page units; the pointer crossing it keeps the toolbar
-    const r = el.getBoundingClientRect(), ir = img.getBoundingClientRect(), u = pw / ir.width, m = 6 * u;
-    const box = [w[1] - m, Math.min(w[2], (r.top - ir.top) * u) - m, (r.right - ir.left) * u + m, Math.max(w[4], (r.bottom - ir.top) * u) + m];
-    forestHover = { ...f, img, box };
+    const bridge = () => {
+      const r = el.getBoundingClientRect(), ir = img.getBoundingClientRect(), u = pw / ir.width, m = 6 * u;
+      return [w[1] - m, Math.min(w[2], (r.top - ir.top) * u) - m, (r.right - ir.left) * u + m, Math.max(w[4], (r.bottom - ir.top) * u) + m];
+    };
+    const hover = forestHover = { ...f, img, box: bridge() };
+    forestFeatures(hover, el, () => { hover.box = bridge(); });
+  }
+  /** A feature model's toggles added to hovered node `f`'s toolbar `el` once the run's feature styles are known (forest plugin `features`). */
+  function forestFeatures(f, el, done = () => {}) {
+    forestFactsOf(f.from).then((sec) => {
+      const feats = sec?.features;
+      if (forestHover !== f || !el.isConnected || !feats) return;
+      f.feats = feats;
+      const html = FOREST.featureToggles(f.n, FOREST.parentOf(f.t, f.n), feats).map((x) => { const t = `${FOREST.featureName(x.pair, x.now)}: switch to ${FOREST.featureName(x.pair, x.next)}`;
+        return `<button type="button" class="pdf-forest-feat" data-add="feat-${x.pair}" title="${t}" aria-label="${t}">${FOREST.featureMark(x.pair, x.now)}</button>`; }).join('');
+      el.querySelector('[data-add=link]')?.insertAdjacentHTML('beforebegin', html);
+      done();
+    });
   }
   /** Whether page point `pt` is in the hovered forest node's bridge: the toolbar stays. */
   const forestKeeps = (pt) => { const b = forestHover?.box; return !!(b && pt && pt[4] === forestHover.img && pt[1] >= b[0] && pt[1] <= b[2] && pt[2] >= b[1] && pt[2] <= b[3] && pdfBody.querySelector('.pdf-forest-add')); };
@@ -9778,11 +9794,13 @@
     if (add === 'drag') return forestDrag(e, f, text);
     tikzClear('.pdf-forest-add'); for (const el of document.querySelectorAll('.ts-forest-add')) el.remove();
     if (add === 'link') return forestLink(f);
-    const done = add === 'child' ? FOREST.addChild(f.n) : add === 'sibling' ? FOREST.addSibling(f.t, f.n) : add === 'delete' ? FOREST.remove(f.t, f.n) : FOREST.shift(f.t, f.n, add === 'left' ? -1 : 1);
+    // a feature toggle (`feat-kind`) sets the pair's next role
+    const pair = add.startsWith('feat-') && add.slice(5);
+    const done = pair ? (FOREST.setFeature(f.n, f.feats, pair, FOREST.nextFeature(f.n, f.feats, pair)), true)
+      : add === 'child' ? FOREST.addChild(f.n) : add === 'sibling' ? FOREST.addSibling(f.t, f.n) : add === 'delete' ? FOREST.remove(f.t, f.n) : FOREST.shift(f.t, f.n, add === 'left' ? -1 : 1);
     if (!done) return;
     f.n.dirty = true;
     FOREST.settle(f.t);
-    tikzClear('.pdf-forest-add'); for (const el of document.querySelectorAll('.ts-forest-add')) el.remove();
     paWrite(text, [{ from: f.from, to: f.to, now: FOREST.emit(f.t) }]);
   }, true);
   // the Typeset view's sketch: the same + buttons beside a forest node's text
@@ -9800,8 +9818,9 @@
     el.style.cssText = `left:${r.right + 2}px;top:${r.top - 2}px`;
     el.innerHTML = forestButtons(f, false);
     document.body.append(el);
-    const q = el.getBoundingClientRect();
-    el.box = [r.left, Math.min(r.top, q.top), q.right, Math.max(r.bottom, q.bottom)];
+    const box = () => { const q = el.getBoundingClientRect(); el.box = [r.left, Math.min(r.top, q.top), q.right, Math.max(r.bottom, q.bottom)]; };
+    box();
+    forestFeatures(f, el, box);
   });
   typesetBody.addEventListener('pointerleave', (e) => { if (!e.relatedTarget?.closest?.('.ts-forest-add')) for (const el of document.querySelectorAll('.ts-forest-add')) el.remove(); });
   /** The nodes of a tree in the order they are written. */

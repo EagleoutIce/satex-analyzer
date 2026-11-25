@@ -12,7 +12,7 @@ export const MARKUP = `\\documentclass{article}\n\\begin{document}\n\\section{Pl
 export const BANG = `\\documentclass{article}\n\\newcommand{\\greet}[1]{Hello, #1!}\n\\begin{document}\n\\greet{loool Das ist doch witzig oder?}\n$x_{42}+ 2 - 41$Generally I'd say this is nice wouldn't you!\nFoo bar baz ban chicken asmana \\greet{Walter}\n\\end{document}\n`;
 
 // the forest example as a hello.tex text: the examples list does not offer it
-export const FM = readFileSync(new URL('../../examples/feature-model.tex', import.meta.url), 'utf8');
+export const FM = readFileSync(new URL('../../tests/fixtures/feature-model.tex', import.meta.url), 'utf8');
 
 // word targets (e2e/probe.js): data the page's word index answers, no code sent to the page
 export const is = (s) => ({ word: s });

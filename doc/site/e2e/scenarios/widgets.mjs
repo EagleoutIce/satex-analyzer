@@ -69,6 +69,8 @@ export default [
     steps: 'feature-model.tex, PDF; hover the node Radio, its +→ button: a [new] node between Radio and Navigation' },
   { kind: 'forest', name: 'forest-plus-glide', source: FM, example: 'hello.tex', word: is('Radio'), plus: 'right', glide: true, want: /\[Navigation\]\s*\[Radio\]\]/,
     steps: 'feature-model.tex, PDF; hover the node Radio, glide the pointer over the gap to its → button and click: Radio after Navigation (the toolbar vanished on the way)' },
+  { kind: 'forest', name: 'forest-feature-edge', source: FM, example: 'hello.tex', word: is('Body'), plus: 'feat-edge', glide: true, want: /\[Body, fm optional\]/,
+    steps: 'feature-model.tex, PDF; hover the node Body, its ● toggle (the run found fm mandatory and fm optional): Body becomes optional' },
   { kind: 'forest', name: 'forest-drag-after', source: FM, example: 'hello.tex', word: is('Radio'), plus: 'drag', to: is('Navigation'), want: /\[Navigation\]\s*\[Radio\]\]/,
     steps: 'feature-model.tex, PDF; hover the node Radio, drag its ⠿ handle onto the right part of Navigation: [Navigation] [Radio], one undo step' },
   { kind: 'forest', name: 'forest-look-lsep', source: FM, example: 'hello.tex', word: is('Engine'), choose: ['Feature model look', 'Level distance (l sep)', '12mm'], outside: true,

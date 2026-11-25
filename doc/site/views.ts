@@ -2524,6 +2524,30 @@ const satexViews = (() => {
   const forTreeToggle = (t: Tree, key: string, on: boolean) => setForTree(t, [...forTreeKeys(t).filter((k) => k !== key), ...on ? [key] : []].join(', '));
   /** Where an edge meets a node box of half width `w` and half height `h` at anchor `a` (forest's default: `dflt`), as an offset. */
   const treeAnchor = (a: string | null, w: number, h: number, dflt: string) => { const s = a || dflt; return [/east/.test(s) ? w : /west/.test(s) ? -w : 0, /north/.test(s) ? -h : /south/.test(s) ? h : 0]; };
+  // a feature model's roles in pairs, each set by a style the run found by its name (forest plugin `features`): what a
+  // node is, how its edge binds it, how its children group; '' is the pair's unstyled default (concrete, none, and)
+  const FEATURE_PAIRS: Record<string, string[]> = { kind: ['abstract', 'concrete'], edge: ['mandatory', 'optional'], group: ['or', 'alternative'] };
+  const MARKS: Record<string, string> = { abstract: 'A', concrete: 'C', mandatory: '●', optional: '○', or: '∨', alternative: '⊕' };
+  /** A role's mark on a toggle; the unstyled default's: C, –, ∧. */
+  const featureMark = (pair: string, role: string) => MARKS[role] ?? { kind: 'C', edge: '–', group: '∧' }[pair] ?? '';
+  /** The role of pair `pair` node `n` has: the role whose style (`feats[role]`) is among its options, else ''. */
+  const featureOf = (n: TNode, feats: Rec, pair: string) => FEATURE_PAIRS[pair]!.find((r) => feats[r] && n.opts.some((o) => o.trim() === feats[r])) ?? '';
+  /** Gives node `n` role `role` of pair `pair` ('' none): the pair's other styles go. */
+  function setFeature(n: TNode, feats: Rec, pair: string, role: string) {
+    const keys = FEATURE_PAIRS[pair]!.map((r) => feats[r]).filter(Boolean);
+    n.opts = [...n.opts.filter((o) => !keys.includes(o.trim())), ...role && feats[role] ? [feats[role]] : []];
+    n.dirty = true;
+  }
+  /** A toggle's next role: abstract ↔ concrete, mandatory ↔ optional (a role without a style is ''), and → or → alternative. */
+  function nextFeature(n: TNode, feats: Rec, pair: string) {
+    const have = FEATURE_PAIRS[pair]!.filter((r) => feats[r]), states = pair === 'group' || have.length < 2 ? ['', ...have] : have, now = featureOf(n, feats, pair);
+    return states[(states.indexOf(now) + 1) % states.length]!;
+  }
+  /** The toggles node `n` (child of `parent`) offers with the run's feature styles: [pair, its role now, the next]. */
+  const featureToggles = (n: TNode, parent: TNode | undefined, feats: Rec | null | undefined) => !feats ? [] : (['kind', 'edge', 'group'] as const)
+    .filter((p) => FEATURE_PAIRS[p]!.some((r) => feats[r]) && (p !== 'edge' || parent) && (p !== 'group' || n.children.length > 1))
+    .map((p) => ({ pair: p, now: featureOf(n, feats, p), next: nextFeature(n, feats, p) }));
+  const featureName = (pair: string, role: string) => role || (pair === 'kind' ? 'concrete' : pair === 'group' ? 'and' : 'unmarked');
   // presets of the tree dialog: a preset names option sets (each a choice of keys, '' none) and the styles that
   // define the keys; it is on when a tree uses its keys, or started from its template
   // a group's arc between its first and last edge, 3mm below the parent (calc comes with forest)
@@ -2579,7 +2603,7 @@ const satexViews = (() => {
     return out;
   }
   const forestFns = { splitTop, head, parse: treeParse, emit: treeEmit, settle, fresh, outlineIn, outlineOut, move, forTree, setForTree, layout: treeLayout, PRESETS, presetOf, optOf, setOpt: setPresetOpt, addChild, addSibling, remove, shift, constraintsOf, setConstraints, parentOf,
-    valOf, setKey, edgeLabel, setEdgeLabel, nameFor, linksOf, link, unlink, whereLevel, setWhereLevel, forTreeKeys, forTreeToggle };
+    FEATURE_PAIRS, featureMark, featureOf, setFeature, nextFeature, featureToggles, featureName, valOf, setKey, edgeLabel, setEdgeLabel, nameFor, linksOf, link, unlink, whereLevel, setWhereLevel, forTreeKeys, forTreeToggle };
 
   function forest(s: Rec, view: Rec, ctx: ViewCtx) {
     const root = el('div', 'tv-draw tv-forest');
@@ -2733,6 +2757,8 @@ const satexViews = (() => {
         tool('←', 'Move before its left sibling', act(() => shift(t, n, -1)), k === 0);
         tool('→', 'Move after its right sibling', act(() => shift(t, n, 1)), k === parent.children.length - 1);
       }
+      // a feature model's toggles, from the styles the run found (forest plugin `features`)
+      for (const f of featureToggles(n, parent, s.features)) tool(featureMark(f.pair, f.now), `${featureName(f.pair, f.now)}: switch to ${featureName(f.pair, f.next)}`, () => { setFeature(n, s.features, f.pair, f.next); touch(); });
       tool('⤳', 'Draw a line to another node: click it next', () => { linking = n; status.textContent = `click the node the line from ${n.content || 'this node'} goes to`; });
       // a subtree goes as one undoable step; the status says what went
       if (parent) tool('✕', n.children.length ? `Delete this node and the ${size(n) - 1} below it (Ctrl+Z undoes)` : 'Delete this node',
@@ -2758,7 +2784,12 @@ const satexViews = (() => {
       } else form.replaceChildren(el('h4', 'tv-h', 'Selected node'),
         field('content', n.content, (v: string) => { n.content = v; n.dirty = true; }, ['tex']),
         field('options', n.opts.join(', '), (v: string) => { n.opts = splitTop(v); n.dirty = true; }));
-      if (fm && !edge && line == null) {
+      const feats = s.features && Object.keys(s.features).length ? s.features : null;
+      if (feats && !edge && line == null) for (const f of featureToggles(n, parent, feats)) {
+        const roles = f.pair === 'group' || FEATURE_PAIRS[f.pair]!.filter((r) => feats[r]).length < 2 ? ['', ...FEATURE_PAIRS[f.pair]!.filter((r) => feats[r])] : FEATURE_PAIRS[f.pair]!.filter((r) => feats[r]);
+        form.append(choice({ kind: 'feature is', edge: 'its edge', group: 'children are' }[f.pair], roles, f.now, (k) => setFeature(n, feats, f.pair, k), Object.fromEntries(roles.map((r) => [r, `${featureName(f.pair, r)} ${featureMark(f.pair, r)}`]))));
+      }
+      else if (fm && !edge && line == null) {
         const P = PRESETS[fm];
         if (parent) form.append(choice('feature', P.node.kind, optOf(fm, n, 'kind'), (k) => setPresetOpt(fm, n, 'kind', k), P.labels));
         form.append(choice('kind', P.node.abstract, optOf(fm, n, 'abstract'), (k) => setPresetOpt(fm, n, 'abstract', k), { ...P.labels, '': 'concrete' }));

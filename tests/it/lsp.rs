@@ -5293,6 +5293,23 @@ fn forest_plugin_levels_anchors_and_strut() {
     std::fs::remove_dir_all(dir).ok();
 }
 
+/// A feature model's styles found by their names in the run: abstract, mandatory, optional, or and
+/// alternative from the document's `\\forestset` (prefixed or not), none of forest's own keys, and
+/// nothing for a role no style names (concrete). Pins the widget's feature toggles: they come from
+/// the document's styles, not a table of one preset.
+#[test]
+fn forest_plugin_finds_feature_styles() {
+    let text = "\\documentclass{article}\n\\usepackage{forest}\n\\forestset{fm abstract/.style={fill=black!8}, mandatory/.style={edge={thick}}, fm optional/.style={edge={dashed}}, or/.style={}, fm alternative/.style={}}\n\\begin{document}\n\\begin{forest}\n  [Car, fm abstract [Body, mandatory] [Extras, fm optional, or [Radio] [Navigation]]]\n\\end{forest}\n\\end{document}\n";
+    let (mut server, uri, dir) = open_set("forest-features", text, &[]);
+    let _ = at(&mut server, &uri, "textDocument/hover", 5, 3);
+    let views = at(&mut server, &uri, "satex/view", 5, 3);
+    let tree = &views.as_array().unwrap().iter().find(|v| v["plugin"] == "forest").expect("a tree")["sections"][0];
+    let want = json!({ "abstract": "fm abstract", "mandatory": "mandatory", "optional": "fm optional", "or": "or", "alternative": "fm alternative" });
+    assert_eq!(tree["features"], want, "{tree}");
+    server.shutdown();
+    std::fs::remove_dir_all(dir).ok();
+}
+
 /// "Strut every node" in a picture: TikZ's strut key in its `every node` style, the options kept.
 #[test]
 fn tikz_plugin_struts_every_node() {
