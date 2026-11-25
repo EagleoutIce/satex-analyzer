@@ -19,7 +19,7 @@ impl TypePlugin for Labelled {
         "widget"
     }
     fn about(&self) -> &'static str {
-        "browse every label: kind, number, caption or title, place and references; a choice writes it into the reference"
+        "browse every label: kind, number, caption or title, place and references. A choice writes it into the reference"
     }
     fn types(&self) -> &'static [Ty] {
         &[Ty::Key(KeyKind::Label)]

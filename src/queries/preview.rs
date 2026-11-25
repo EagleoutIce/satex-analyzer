@@ -468,7 +468,7 @@ struct Plan {
 const FONT_SAMPLE: &str = "\\mbox{\\color{ink}Aa Bb 123}";
 
 /// The formula a math font's sample sets: big operators, then letters.
-const MATH_SAMPLE: &str = "\\mbox{\\color{ink}$\\displaystyle\\sum_{i}\\prod_{k}\\int f\\,dx\\; \\alpha+\\Gamma x$}";
+const MATH_SAMPLE: &str = "\\mbox{\\color{ink}$\\displaystyle\\sum_{i}\\prod_{k}\\int f\\,dx\\; \\alpha+\\Gamma x$}"; // not prose
 
 /// A font sample's sprite name in `previews.json`: `font:Libertinus`.
 fn font_sprite(name: &str) -> String {
