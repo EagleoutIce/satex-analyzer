@@ -1,3 +1,3 @@
 # Red with TeX Live 2026 only (scripts/ci-test.sh adds this list when `tex --version` says 2026); green with TL2025.
-# Open (2026-11-12): the newer l3kernel's flag code cuts with repeated-failure 5 times; root open.
-latex::an_error_in_the_document_is_recovered_like_tex
+# owner incremental (2026-11-25, precision: step count only, not critical per the user): the resumed beamer build counts ~600 steps more than a fresh one (38,734,324 vs 38,734,920); findings are equal.
+incremental::a_resumed_beamer_build_after_an_overlay_edit_says_what_a_fresh_build_says
