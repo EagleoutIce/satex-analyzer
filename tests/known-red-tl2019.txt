@@ -1,0 +1,3 @@
+# Red with TeX Live 2019 only (scripts/ci-test.sh adds this list when `tex --version` says 2019); green with TL2022 and TL2025.
+# owner loop (W2, 2026-11-25, precision): TL2019's pgf forks more per bounding-box update, so limits.site_forks (64 per source line) is spent across both slides of a frame and later \pgf@protocolsizes \ifdim s are widened (site-forks-widened x4, recursion-widened x2). No false errors: the run reaches the end. A refund for fresh single-path loop entries (wt-W2/target/scratch/fix.patch) fixes it but turns documents::pgfmath_parses_a_signed_random_count_and_adds red; root open.
+classes::a_rounded_shadow_box_on_a_second_slide_is_sized_as_on_the_first
